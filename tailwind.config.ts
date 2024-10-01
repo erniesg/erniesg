@@ -28,7 +28,7 @@ const config: Config = {
         },
         mountain: {
           light: '#9CA3AF', // gray-400
-          dark: '#6B7280', // gray-500 (lighter than before)
+          dark: '#4FD1C5', // A cyan color for better visibility in dark mode
         },
       },
       fontFamily: {

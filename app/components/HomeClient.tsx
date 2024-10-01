@@ -9,16 +9,8 @@ const HomeClient = () => {
   const [darkMode, setDarkMode] = useState(false)
 
   useEffect(() => {
-    // Check system preference
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    setDarkMode(prefersDark)
-
-    // Listen for changes in system preference
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handleChange = (e: MediaQueryListEvent) => setDarkMode(e.matches)
-    mediaQuery.addEventListener('change', handleChange)
-
-    return () => mediaQuery.removeEventListener('change', handleChange)
+    const hour = new Date().getHours()
+    setDarkMode(hour < 6 || hour >= 18) // Dark mode between 6 PM and 6 AM
   }, [])
 
   useEffect(() => {
@@ -30,10 +22,10 @@ const HomeClient = () => {
   }, [darkMode])
 
   return (
-    <>
+    <div className="flex flex-col min-h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
       <Navbar darkMode={darkMode} setDarkMode={setDarkMode} />
-      <main className="space-y-8">
-        <section className="h-screen flex flex-col relative">
+      <main className="flex-grow">
+        <section className="h-[calc(100vh-4rem)] relative">
           <div className="absolute inset-0">
             <Mountain isDarkMode={darkMode} />
           </div>
@@ -43,7 +35,7 @@ const HomeClient = () => {
         </section>
         {/* Other sections */}
       </main>
-    </>
+    </div>
   )
 }
 

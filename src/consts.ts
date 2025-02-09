@@ -13,25 +13,25 @@ export type Link = {
 }
 
 export const SITE: Site = {
-  TITLE: 'astro-erudite',
+  TITLE: 'Ernie.SG',
   DESCRIPTION:
-    'astro-erudite is a opinionated, no-frills blogging template—built with Astro, Tailwind, and shadcn/ui.',
-  EMAIL: 'jason@enscribe.dev',
-  NUM_POSTS_ON_HOMEPAGE: 2,
-  POSTS_PER_PAGE: 3,
-  SITEURL: 'https://astro-erudite.vercel.app',
+    'Full-stack A.I. Engineer and Editorial AI Lead. Writing about multimodal A.I., open source, generative agents and more in plain language.',
+  EMAIL: 'hello@ernie.sg',
+  NUM_POSTS_ON_HOMEPAGE: 5,
+  POSTS_PER_PAGE: 10,
+  SITEURL: 'https://ernie.sg',
 }
 
 export const NAV_LINKS: Link[] = [
   { href: '/blog', label: 'blog' },
-  { href: '/authors', label: 'authors' },
   { href: '/about', label: 'about' },
   { href: '/tags', label: 'tags' },
 ]
 
 export const SOCIAL_LINKS: Link[] = [
-  { href: 'https://github.com/jktrn', label: 'GitHub' },
-  { href: 'https://twitter.com/enscry', label: 'Twitter' },
-  { href: 'jason@enscribe.dev', label: 'Email' },
+  { href: 'https://github.com/erniesg', label: 'GitHub' },
+  { href: 'https://twitter.com/erniesg', label: 'Twitter' },
+  { href: 'https://www.linkedin.com/in/erniesg', label: 'LinkedIn' },
+  { href: 'mailto:hello@ernie.sg', label: 'Email' },
   { href: '/rss.xml', label: 'RSS' },
 ]

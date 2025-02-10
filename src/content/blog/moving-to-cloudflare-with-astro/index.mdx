@@ -8,47 +8,68 @@ authors: ['erniesg']
 
 # Moving to Cloudflare Pages with Astro
 
+Over the years, I've moved around from Wordpress to Ghost to GoDaddy to Pubpub.org to Vercel, ever searching for the perfect hosting solution that is seamless and least costly... I might have found it.
+
 Making the switch to Cloudflare Pages for hosting my website was driven by several compelling factors. Here's why I made this decision:
+
+## TLDR
+Would you like to write Markdown, enjoy version control and auto-deploy, lightning-fast SEO and setup, as well as a custom domain with SSL and unlimited bandwidth - all for FREE? Then read on!
 
 ## Why Astro?
 
-Astro has become my framework of choice because:
-- Zero JavaScript by default
-- Excellent build performance
-- Component Islands architecture
-- First-class Markdown support
-- Built-in image optimization
+Astro has become my framework of choice for several compelling reasons:
+
+### ✅ Lightning-Fast SEO
+- Zero JavaScript by default, resulting in blazing-fast page loads
+- [99/100 Lighthouse scores](https://pagespeed.web.dev/analysis/https-ernie-sg/n5kl6txhdm?form_factor=mobile) out of the box
+- Automated meta tags and structured data
+
+### ✅ Content-Driven
+- First-class Markdown/MDX support for technical documentation
+- Native LaTeX support for mathematical equations and formulas
+- Rich code block highlighting with line numbers and file names for 100+ languages
+
+### ✅ Flexible Developer Experience
+- Framework-agnostic: Use React, Vue, Svelte, or HTMX where needed
+- Static output means hosting anywhere, no vendor lock-in
 
 ## The Benefits of Cloudflare Pages
 
 ### ✅ Unlimited Bandwidth
-One of the main reasons I switched was Cloudflare Pages' generous free tier offering unlimited bandwidth. This means:
-- No traffic limits
-- No surprise bills
-- Perfect for growing sites
+One of the main reasons I switched was Cloudflare Pages' generous free tier offering unlimited bandwidth. This means no surprise bills just in case I become famous!
 
 ### ✅ Automated CI/CD
 The development workflow is seamless with:
 - Automatic deployments from Git
 - Preview deployments for pull requests
 - Easy rollbacks
-- Built-in SSL certificates
 
-## ✅ Custom Domains and More
+### ✅ Custom Domains and More
 - Global CDN with edge caching
 - Automatic asset optimization
-- Custom domains with easy setup
+- Custom domains with easy setup (you do have to pay for this yourself of course)
+- Built-in SSL certificates
 - Built-in analytics
 - Great documentation
 
 ## The Migration Process
 
-The migration process was straightforward:
-1. Set up a new Astro project
-2. Connected my GitHub repository to Cloudflare Pages
-3. Configured the build settings
-4. Deployed!
+To do so, here's what I did:
+
+1. Cloned the [astro-erudite](https://github.com/jktrn/astro-erudite) template
+
+2. Customized and pushed to GitHub
+
+3. Set up Cloudflare Pages and deployed:
+   - Navigated to [Cloudflare dashboard](https://dash.cloudflare.com/) > Compute (Workers)
+   - Connected GitHub repository
+   - Selected main branch for deployment
+   - Selected Astro as the framework
+
+4. Connected custom domain and let Cloudflare take care of the rest from hereon
+
+The entire process was as easy as it gets. I get free version control and the site automatically redeploys when I push to `main`.
 
 ## Conclusion
 
-The combination of Astro's performance-first approach and Cloudflare's robust infrastructure provides an excellent foundation for modern web development. The best part? It's all available for free, making it an ideal choice for personal projects and blogs.
+The combination of Astro's performance-first approach and Cloudflare's robust infrastructure provides an excellent foundation for developers looking for a quick home on the internet. The best part? It's all available for free, making it an ideal choice for personal projects and blogs.

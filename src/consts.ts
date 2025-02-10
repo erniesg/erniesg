@@ -15,7 +15,7 @@ export type Link = {
 export const SITE: Site = {
   TITLE: 'Ernie.SG',
   DESCRIPTION:
-    'Full-stack A.I. Engineer and Editorial AI Lead. Writing about multimodal A.I., open source, generative agents and more in plain language.',
+    'Ernie is a full-stack A.I. Engineer and Editorial AI Lead based in Singapore. I write about multimodal AI, open source, generative agents and more in plain language.',
   EMAIL: 'hello@ernie.sg',
   NUM_POSTS_ON_HOMEPAGE: 5,
   POSTS_PER_PAGE: 10,
@@ -32,6 +32,6 @@ export const SOCIAL_LINKS: Link[] = [
   { href: 'https://github.com/erniesg', label: 'GitHub' },
   { href: 'https://twitter.com/erniesg', label: 'Twitter' },
   { href: 'https://www.linkedin.com/in/erniesg', label: 'LinkedIn' },
-  { href: 'mailto:hello@ernie.sg', label: 'Email' },
+  { href: 'hello@ernie.sg', label: 'Email' },
   { href: '/rss.xml', label: 'RSS' },
 ]

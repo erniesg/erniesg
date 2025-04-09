@@ -15,11 +15,15 @@ image: ./1200x630.png
 
 # Model Context Protocol (MCP) for Dummies, or, Why Not Just APIs?
 
-If like me, you've wondered: isn't MCP just like APIs? This post will clarify why MCP is useful for lazy developers who want to build as many AI applications as possible with minimal effort. Inspired by Gang Rui's sharing at 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9) hosted by Lorong AI, I consolidate key takeaways with how to use MCP for end users.
+If like me, you've wondered: isn't MCP just like APIs? This post will clarify why MCP is useful for lazy developers. Inspired by Gang Rui's sharing at 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9) hosted by Lorong AI, I consolidate key takeaways with how to use MCP for end users.
+
+## TLDR
+
+MCP decouples business logic (Host) from tool logic (Server), with Clients as the standardized bridge between them. Hosts manage user interaction and LLM reasoning, while Servers expose capabilities — tools, data, APIs, and scripts — as clean, reusable interfaces. By standardizing this flow, MCP unleashes AI agents to reason, act, and evolve across systems. It’s the missing link for modular, recursive, self-extending AI-native software.
 
 ## The Problem: Combinatorial Explosion of Developmental Effort
 
-Suppose we want to send emails from our AI application serving doctors for a hospital. Before MCP, you'd write the integration logic to call an email API, handle its response, and wire it to the model. Now imagine doing this for appointment reminders over patient phone-calls, and for other apps like e-commerce sale notifications — all using the same email API. Without MCP, you'd re-implement the same integration logic across multiple clients, use cases, and environments. Any breaking change in the email API? I hope you enjoy refactoring in n² places. 😤
+Suppose we want to send emails from our AI application serving doctors for a hospital. Before MCP, you'd write the integration logic to call an email API, handle its response, and wire it to the model. Now imagine doing this for appointment reminders over patient phone-calls, and for other apps like e-commerce sale notifications — all using the same email API. Without MCP, you'd re-implement the same integration logic across multiple clients, use cases, and environments. Any breaking change in the email API? I hope you enjoy refactoring all over the place. 😤
 
 MCP ✨ solves this by letting developers implement the logic *once* in a standard format, and reuse it *everywhere*. It’s like what React components did for UI — modular, declarative, and composable.
 
@@ -37,9 +41,11 @@ Anyone can write their own host, client, or server — or simply plug into the 4
 
 User starts your AI application → makes a request (e.g. “Remind so-and-so about their appointment”) → the MCP client checks if it has the right tool (like `send_email`) and enough context → it invokes the tool via an MCP server — a small process running locally (via `stdio`) or remotely (via [HTTP+SSE](https://modelcontextprotocol.io/docs/concepts/architecture#transport-layer)) → the server processes the request and returns the result → the AI includes it in its response → user sees the final reply.
 
+For more details into its inner workings, see specification of architecture [here](https://modelcontextprotocol.io/specification/2025-03-26/architecture/index).
+
 ## Why MCP?
 
-MCP enforces **separation of concerns**, promotes **reusability**, and drastically simplifies **maintenance**. If your goal is to reimagine software for an AI-native world, MCP keeps you from repeating yourself to death. In an MCP world, you can reuse what is already available, write what you need, and let the AI decide *what*, *when* and *how* to use tools.
+MCP enforces **separation of concerns**, promotes **reusability**, and drastically simplifies **maintenance**.
 
 ### The Magic: AI Healthcare App Example
 
@@ -53,21 +59,16 @@ Here’s how you'd structure it with MCP:
 - **3 clients inside each host** - One for each channel: email, SMS, in-app
 - **Each client connects 1:1 to an MCP server** that handles the actual logic
 
-Want to support WhatsApp next? Just reuse something if it exists or write a new server and it is immediately available to all hosts.
-
-This model gives developers plug-and-play extensibility, minimal coupling, and consistent behavior across devices — all without duplicating effort.
+Want to support WhatsApp next? Just reuse something if it exists or write a new server and it is immediately available to all hosts - no duplication of effort required.
 
 ## Beyond APIs
 
-APIs are great, but MCP is better. It standardizes how integrations work in an AI-native world, enabling developers to move faster, reuse more, and scale smarter.
+APIs are limited compared to MCP in two key ways:
 
-1. **Composable by Design** - APIs require you to manually wire logic for each use case, tightly coupling integration and interface. MCP's' separation of tools from usage makes it easy to remix capabilities, swap parts, and extend features without touching the rest of the system.
-2. **Universally Reusable** – APIs make functions reusable within one app. MCP tools are reusable across apps. Build once, use anywhere. Fix once, everywhere benefits.
-3. **AI-Native Execution** – Rather than hardcoded triggers used by APIs, MCP allows your application to flexibly adapt to free-form interactions and context.
+1. Function vs. **Architecture** - APIs expose functions within a single application. MCP provides architecture that works across applications. Build once, use anywhere.
+2. Fixed vs. **Adaptive** - APIs use hardcoded triggers. MCP allows AI to decide what tools to use based on context, enabling flexible, intelligent workflows."
 
-In short: APIs expose functions. MCP enables architecture — composable, scalable, and orchestrated by AI.
-
-It’s the difference between calling a service and orchestrating intelligent, flexible workflows at scale. Just as web devs moved from static HTML to reusable components, MCP helps AI engineers move from integrations that are brittle and fixed to dynamic, context-aware agentic software that respond to user needs in real time. 🚀
+MCP turns APIs into agent-ready capabilities - enabling agents to autonomously reason and compose over APIs as necessary. It’s the difference between calling a service and orchestrating intelligent, flexible workflows at scale. Just as web devs moved from static HTML to reusable components, MCP helps AI engineers move from integrations that are brittle and fixed to dynamic, context-aware agentic software that respond to user needs in real time. 🚀
 
 ## Beyond Anthropic
 
@@ -79,6 +80,10 @@ Introduced by Anthropic, MCP is growing rapidly with support from major LLM play
 * Many official language SDKs available: [Python](https://github.com/modelcontextprotocol/python-sdk) (Anthropic), [TypeScript](https://github.com/modelcontextprotocol/typescript-sdk) (Anthropic), [Java](https://github.com/modelcontextprotocol/java-sdk) (Spring AI), [C#](https://github.com/modelcontextprotocol/csharp-sdk) (Microsoft), [Kotlin](https://github.com/modelcontextprotocol/kotlin-sdk) (JetBrains), [Swift](https://github.com/modelcontextprotocol/swift-sdk) (Loopwork AI), and [Rust](https://github.com/modelcontextprotocol/rust-sdk) (Anthropic)
 
 The ecosystem is in its early days, and the quickest way to test waters is to connect a host to tools yourself.
+
+## Limitations
+
+The usual caveats apply. Already when I installed some servers to try them out, the Obsidian one was failing. MCP is still experimental and mostly local, and I see it as a blueprint for an emergent future.
 
 ## Getting Started
 
@@ -92,6 +97,6 @@ I've found it easiest to try MCP out as a user as follows:
 
 ## What Will You Build Next? 👩🏻‍💻
 
-My current blog writing workflow involves dumping ideas into a Claude window on my laptop, generating Markdown that I like to iterate on Obsidian desktop next, all while sending image generation prompts to 4o. Finally, I manually move the outputs into an Astro folder then do a `git push`. With MCP, I could consolidate everything into one app instead of constantly context-switching. We are just scratching the surface of what this protocol is enabling.
+With MCP, I could consolidate my blog writing workflow (currently split between Claude, Obsidian, and image generation) into a single app instead of constantly context-switching.
 
-The next time you're tempted to write another API integration, remember: MCP lets you write once, use everywhere, and focus on what matters - building great AI applications. So what will you build next?
+The next time you are tempted to write another API integration, remember: MCP lets you write once, use everywhere, and focus on what matters - building great AI applications. So what will you build next?

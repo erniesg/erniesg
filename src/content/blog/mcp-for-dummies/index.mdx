@@ -39,7 +39,7 @@ Anyone can write their own host, client, or server — or simply plug into the 4
 
 ## How It Works
 
-User starts your AI application → makes a request (e.g. “Remind so-and-so about their appointment”) → the MCP client checks if it has the right tool (like `send_email`) and enough context → it invokes the tool via an MCP server — a small process running locally (via `stdio`) or remotely (via [HTTP+SSE](https://modelcontextprotocol.io/docs/concepts/architecture#transport-layer)) → the server processes the request and returns the result → the AI includes it in its response → user sees the final reply.
+User starts your AI application → makes a request (e.g. “Remind so-and-so about their appointment”) → the MCP client checks if it has the right tool (like `send_email`) and enough context → it invokes the tool via an MCP server — a small process running locally (via `stdio`) or remotely (via [HTTP Streamable](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) or even custom) → the server processes the request and returns the result → the AI includes it in its response → user sees the final reply.
 
 For more details into its inner workings, see specification of architecture [here](https://modelcontextprotocol.io/specification/2025-03-26/architecture/index).
 
@@ -68,7 +68,7 @@ APIs are limited compared to MCP in two key ways:
 1. Function vs. **Architecture** - APIs expose functions within a single application. MCP provides architecture that works across applications. Build once, use anywhere.
 2. Fixed vs. **Adaptive** - APIs use hardcoded triggers. MCP allows AI to decide what tools to use based on context, enabling flexible, intelligent workflows."
 
-MCP turns APIs into agent-ready capabilities - enabling agents to autonomously reason and compose over APIs as necessary. It’s the difference between calling a service and orchestrating intelligent, flexible workflows at scale. Just as web devs moved from static HTML to reusable components, MCP helps AI engineers move from integrations that are brittle and fixed to dynamic, context-aware agentic software that respond to user needs in real time. 🚀
+MCP turns APIs into agent-ready capabilities - enabling agents to autonomously reason and compose over APIs as necessary. It’s the difference between calling a service and orchestrating intelligent, flexible workflows at scale. Just as web devs moved from static HTML to reusable components, MCP helps AI engineers move from integrations that are brittle and fixed to dynamic, context-aware agentic software that respond to user needs in real-time. 🚀
 
 ## Beyond Anthropic
 
@@ -78,6 +78,7 @@ Introduced by Anthropic, MCP is growing rapidly with support from major LLM play
 * **Microsoft** developed the [official C# SDK](https://github.com/modelcontextprotocol/csharp-sdk) for MCP, integrating the protocol into Copilot Studio, VS Code's GitHub Copilot agent mode, and Semantic Kernel
 * Major platforms like [GitHub](https://github.com/modelcontextprotocol/servers), [Slack](https://modelcontextprotocol.io/clients), and [Cloudflare](https://developers.cloudflare.com/agents/model-context-protocol/) added official MCP connections
 * Many official language SDKs available: [Python](https://github.com/modelcontextprotocol/python-sdk) (Anthropic), [TypeScript](https://github.com/modelcontextprotocol/typescript-sdk) (Anthropic), [Java](https://github.com/modelcontextprotocol/java-sdk) (Spring AI), [C#](https://github.com/modelcontextprotocol/csharp-sdk) (Microsoft), [Kotlin](https://github.com/modelcontextprotocol/kotlin-sdk) (JetBrains), [Swift](https://github.com/modelcontextprotocol/swift-sdk) (Loopwork AI), and [Rust](https://github.com/modelcontextprotocol/rust-sdk) (Anthropic)
+* [Authorization](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization) using OAuth 2.1 was released on March 26
 
 The ecosystem is in its early days, and the quickest way to test waters is to connect a host to tools yourself.
 

@@ -15,7 +15,7 @@ image: ./mcp-dummies.png
 
 # Model Context Protocol (MCP) for Dummies, or, Why Not Just APIs?
 
-If like me, you've wondered: isn't MCP just like APIs? This post will clarify why MCP is useful for lazy developers. Inspired by Gang Rui's sharing at 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9) hosted by Lorong AI, I consolidate key takeaways with how to use MCP for end users. Usual caveats apply.
+If like me, you've wondered: isn't MCP just like APIs? This post will clarify why MCP is useful for lazy developers. Inspired by Gang Rui's sharing at 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9) hosted by Lorong AI, I consolidate key takeaways with how to use MCP for end users.
 
 ## TLDR
 
@@ -23,7 +23,7 @@ MCP decouples business logic (Host) from tool logic (Server), with Clients as th
 
 ## The Problem: Combinatorial Explosion of Developmental Effort
 
-Suppose we want to send emails from our AI application serving doctors for a hospital. Before MCP, you'd write the integration logic to call an email API, handle its response, and wire it to the model. Now imagine doing this for appointment reminders over patient phone-calls, and for other apps like e-commerce sale notifications — all using the same email API. Without MCP, you'd re-implement the same integration logic across multiple clients, use cases, and environments. Any breaking change in the email API? I hope you enjoy refactoring all over the place. 😤
+Suppose we want to send emails from our AI application serving doctors for a hospital. Before MCP, you'd write the integration logic to call an email API, handle its response, wire it to the model and glue on business logic. Now imagine doing this for appointment reminders over patient phone-calls, and for other apps like e-commerce sale notifications — all using the same email API. Without MCP, you'd re-implement the same integration logic across multiple clients and use cases. Any breaking change in the email API? I hope you enjoy refactoring all over the place. 😤
 
 MCP ✨ is a linear solution to the quadratic problem of integration complexity. It’s like what React components did for UI — modular, declarative, and composable.
 

@@ -31,7 +31,10 @@ export const NAV_LINKS: Link[] = [
 export const SOCIAL_LINKS: Link[] = [
   { href: 'https://github.com/erniesg', label: 'GitHub' },
   { href: 'https://twitter.com/erniesg', label: 'Twitter' },
-  { href: 'https://www.linkedin.com/in/erniesg', label: 'LinkedIn' },
+  { href: 'https://www.linkedin.com/in/erniesg/', label: 'LinkedIn' },
+  { href: 'https://www.youtube.com/@erniesg-ai/', label: 'YouTube' },
+  { href: 'https://www.facebook.com/ernie1688/', label: 'Facebook' },
+  { href: 'https://www.instagram.com/ernie0529/', label: 'Instagram' },
   { href: 'hello@ernie.sg', label: 'Email' },
   { href: '/rss.xml', label: 'RSS' },
 ]

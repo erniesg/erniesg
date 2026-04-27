@@ -5,6 +5,10 @@ bio: 'Full-stack AI Engineer / Editorial AI and Automation Lead at Tech in Asia.
 website: 'https://ernie.sg'
 twitter: 'https://twitter.com/erniesg'
 github: 'https://github.com/erniesg'
+linkedin: 'https://www.linkedin.com/in/erniesg/'
+youtube: 'https://www.youtube.com/@erniesg-ai/'
+facebook: 'https://www.facebook.com/ernie1688/'
+instagram: 'https://www.instagram.com/ernie0529/'
 mail: 'hello@ernie.sg'
 discord: 'https://discord.com/users/erniesg'
 ---

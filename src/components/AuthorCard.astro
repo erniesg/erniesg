@@ -19,6 +19,9 @@ const {
   github,
   twitter,
   linkedin,
+  youtube,
+  facebook,
+  instagram,
   website,
   mail,
 } = author.data
@@ -28,6 +31,9 @@ const socialLinks: SocialLink[] = [
   github && { href: github, label: 'GitHub' },
   twitter && { href: twitter, label: 'Twitter' },
   linkedin && { href: linkedin, label: 'LinkedIn' },
+  youtube && { href: youtube, label: 'YouTube' },
+  facebook && { href: facebook, label: 'Facebook' },
+  instagram && { href: instagram, label: 'Instagram' },
   mail && { href: mail, label: 'Email' },
 ].filter(Boolean) as SocialLink[]
 ---

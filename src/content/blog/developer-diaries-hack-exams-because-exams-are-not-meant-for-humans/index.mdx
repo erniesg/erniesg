@@ -1,0 +1,49 @@
+---
+title: "Developer Diaries: hack exams because exams are not meant…"
+description: "Also because exam papers are every data scientist's wet dream"
+date: 2024-03-15
+authors: ["erniesg"]
+draft: false
+---
+
+# Some Software Smell Like Sewer
+
+Many organisations want to hydroelectric power dams to deliver business results, but more often than not, they’re stuck in a data sewer with leaky pipes situation instead. Every day I have to use a particular dedicated SQL pool, I wonder what had I done wrong in my previous life to have to deal with a dedicated SQL service that:
+
+-   does not allow you to rename the database
+    
+-   20mb limit when running Python scripts on it
+    
+-   what do you mean you want to copy tables across databases or even in the same database - don’t you know that your tables have different column index stores and you need to define when copying?
+    
+-   you want to apply a filter on Get Metadata? This does not exist
+    
+-   write an if within for each? Does not exist
+    
+-   Get the item that you are currently iterating through in a loop? Try getting pixie dust instead
+    
+
+There’s a special place in hell for consultants who talk other people into using this to the benefit of God-knows-what-or-why. Anyway, enough complaining. This is why I recently got interested in playing with exam papers as a dataset.
+
+# Exams as Data
+
+Think about it - is there a more **structured**, more **consistent**, **cleaner** dataset than standardised exams!?!?!? They always have the same number of questions, question types, within a defined syllabi, etc. It’s like every data scientist’s wet dream… Until you start to process PDFs. I also find the idea of generating exams for practice, have an LLM beat it and then maybe an AI tutor for all to be extremely interesting because to me the point is simply that exams are not made for humans. It is such a poor measure of intelligence though extremely convenient for the purpose of administration and paperwork. What the world really lacks on the path to AGI seems to be a good measure of what general intelligence actually is, and if this bidirectional tension between LLMs and exams can lead to a future in which we swap standardised examinations for something better - that would have been a great service to humanity already.
+
+# Finetuning GPT 3.5 to Generate IB Exams for Demonstration Purposes ONLY
+
+Next to the special place in hell for consultants are people who give you PDFs and excels as datasets. Turns out Document AI does a pretty good job of parsing out the text but I didn’t want to pay anything (in retrospect, it was probably more wasteful to not simply pay and use the API) so lots of strangling my hands on the keyboard later, I passed just 44 examples to finetune GPT 3.5. It was very interesting in that:
+
+-   It faithfully reproduced some of the random spacing in my words - so it’s truly parroting the distribution of what was fed in
+    
+-   At times it’s pure gibberish, and turns out PDFs are a demonic force to reckon with because there are SO MANY UNSEEN UNICODE CHARACTERS
+    
+
+<iframe alt="Finetuning GPT 3.5 to generate IB exam papers" src="https://www.youtube.com/embed/TjujuFbFx3w?feature=oembed" aria-describedby="nhopbvg5m49-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Finetuning GPT 3.5 to generate IB exam papers
+
+But all in all I’m just surprised by how easy it was, and can’t wait to finetune some models on that 64gb of VRAM that I got on my M2 Max that hasn’t been used at all. I’m really interested in Chinese civil servant examinations in particular because neutral and goody-two-shoes LLMs are so boring and so harmless that they’re next to useless. I think it’ll be really interesting to merge models and see if there’s a way to capture some internal representation of the Chinese state as a prior and who knows - that could turn out to be immensely valuable as a predictor of behaviour!?
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/jqeeg1f8](https://erniesg.pubpub.org/pub/jqeeg1f8).*

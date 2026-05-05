@@ -1,0 +1,72 @@
+---
+title: "Developer Diaries: deep learning in data-poor regimes I"
+description: "Strategies, and why intelligence is exponential power"
+date: 2024-04-08
+authors: ["erniesg"]
+draft: false
+---
+
+One of the things that puzzled me a great deal was how come more data did not result in better “results”, when I was training a Realtime Audio Variational autoEncoder (RAVE) to recreate Malay drum sounds on my 3070. Then I realised it’s just basic statistics isn’t it - small sample size, high variance meaning any 1 data point which is a bit of an outlier will end up having disproportionate influence on model performance. Such data-poor regimes is the default state of affairs for most use cases in the world. The good news as usual, is that, there’s a lot that we can bootstrap simply by taking a large powerful model and tuning it on our limited dataset, [as illustrated before here](https://www.youtube.com/watch?v=nwwEVWCHMxU).
+
+One major clue of what was happening came from how my kingfisher sound got translated into more hadrah-sounding ones with bells than the very “drummy” one from before. On the one hand you could say that the model is generalising better because it’s mapping that more high pitch input to something that minimises error in terms of deviation, but this is where it does not stack up nicely against what I hear. I expect to hear only drums, instead I’m picking up on some of these bells that come with the drum in the training data used for learning representations. At the end of the day, this is yet another choice to be made in terms of letting the creative direction drive the technical development. We reverted to using a model from that initial set of very drummy-sounding training data.
+
+It’s also worth mentioning that the measurement of model performance is not as straightforward as it seems in the realm of sound. Our loss can still be going down but the human ear’s interpretation of sound as a signal do not line up nicely with such loss metrics all the time, so I’ve found it useful to just listen to reconstructions and hear the predictions. Sometimes when you think about it it’s crazy how efficient the human computer is, it’s crazy how in a world inundated with signal, we are somehow able to generalise and focus on the specifics very quickly - even if a group of people are talking all at once. Our brain has somehow figured out that calculation of speaker diarisation and just does it on-the-fly.
+
+# Strategies for Effective Training in a Data-Poor Regime
+
+The architecture used was just `v2` with `wasserstein` regularisation if I don’t remember wrongly. The danger of overfitting so much that you are just memorising the examples and not performing well enough out-of-sample is mitigated to some extent by regularisation, and some other typical possibilities are as listed below. I will talk about the latter 2 points in more detail.
+
+-   Data augmentation
+    
+-   Small learning schedules or more epochs
+    
+-   Better models\*
+    
+-   Transfer learning\*
+    
+
+Both of the points in asterisk has to do with leveraging existing, encoded knowledge for better application in a specific domain. The “free lunch” for organisations that are quick to adopt A.I. is effectively this: you can enjoy a best-in-class model trained on your data to handle specific tasks, this means more agency and control over your own processes, if you have access to expertise and GPUs.
+
+# LLMs Encode Knowledge of the World
+
+What a lot of people do not realise is that the transformers architecture on which much of modern A.I. applications are built upon is surprisingly resilient and robust across problems and data modalities.
+
+<iframe alt="Transformers: The best idea in AI | Andrej Karpathy and Lex Fridman" src="https://www.youtube.com/embed/9uw3F6rndnA?feature=oembed" aria-describedby="nzyl85rxj5x-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Transformers: The best idea in AI | Andrej Karpathy and Lex Fridman
+
+One of my most confusing moments recently was when an audience member asked me how long does it take to scale “The Sound of Stories” from 1 to 100, or n stories; the answer is: as long as it takes for me to ingest that data, i.e. most likely &lt;1 seconds in most cases? I built “The Sound of Stories” to be inherently scalable and not locked into any 1 model, hence all the upfront investment into thinking through design patterns to use (though the codebase just got messier and messier leading up to the final demo). I found out later that she thought I had trained the A.I. to think like 1 particular culture, which then made me realise perhaps people outside of A.I. don’t even realise how transformers has solved the context problem and that what differentiate this era of deep learning to previous epochs is just how general and smarter the systems are becoming.
+
+When I fired GPT-4 for Claude 3 Opus, I didn’t have to bother about engineering story progression - all I did was pass in one huge ass prompt cause I am too lazy to linguistics that way, append assistant and user responses into the API call; keep doing that, and just instruct the model to interact with users and end accordingly. Before this, GPT-4 would either ignore or not know what to do with out-of-the-blue responses from users but Opus has really proven to be smarter, and far more bilingual so far. The Mandarin responses it outputted were reasonable enough that I didn’t see the need to use any of the Chinese LLMs I investigated.
+
+Given the wealth of large, open models trained on internet-scale data that is available for fine-tuning and training, companies that are quickest to do so will get ahead with better margins and new capabilities, and those that doesn’t may soon find themselves in trouble. In fact a resounding theme amidst this Cambrian of explosion in A.I. is just how much bottom-up user adoption there is. I don’t think the young people today will want to work in any company that is an A.I. dinosaur when they reach working age - and that’s wonderful. Competition is beautiful.
+
+<iframe alt="Use for work is the breakout A.I. use case" src="https://open.spotify.com/embed/episode/177GUGJp8SKd6NjxwPDeiX?utm_source=generator" height="419" aria-describedby="nw25ittuu7o-figure-caption" allowfullscreen="true" style="width: 100%; height: auto; border: 0; "></iframe>
+
+Use for work is the breakout A.I. use case
+
+This is why I think that the only thing stopping us from very low-hanging fruit implementations such as scaling multilingual translations, and remixing different modalities with data is… Organisational inertia perhaps? This war is one for organisations to lose because we already have all the ingredients we need to build our own best-in-class models (again, assuming you have the talent, GPUs and some data). User behaviour is actually on our side this time, just reading the signals of how much people are doing with A.I. in their own hands. Luckily, hopefully we can leave the market to sort out the winners and losers in this race to adopt A.I.
+
+As an end user, the use of A.I. for work is shaping up to be the “killer app” of this general technology. I find that fascinating on so many different levels - the internet and mobile phones changed the way we communicated and exchanged information, but arguably the way that we work hadn’t changed all that much in comparison. Your boss gives you a prompt, you process that prompt in your brain (the weights and biases of your inner workings are inaccessible to you), perform some transformations then produce an output. We rely on human cognition and intelligence to perform tasks that run the whole gamut of routine to complex multi-stakeholder negotiations, or like, a stateless microservice architecture delivering a real-time experience premised on slooow LLMs with so many commensurate dependencies and moving parts across the entire value chain from a local computer to a removte VM… :’)
+
+I wouldn’t have been able to turn “The Sound of Stories” into a scalable experience leveraging multiple A.I. modalities and served over WhatsApp in real-time if it were not for my A.I. pair programmer.
+
+# Intelligence as Exponential Power
+
+Something I’ve wondered about is whether bigger models that can do a whole range of things is always better than smaller, more specific and faster ones; and something that has becoming abundantly clear in the process of building with A.I./LLMs is that perhaps I should reframe this perspective - it’s not so much how many parameter count do you have, but just how generally intelligent is your model? More general, underlying intelligence, the better - because this means it can follow instructions more reliably, predict better with limited data, perform novel transformations on data, transfer learning from other domains into a new area - i.e. doing the kind of intelligence that humans do.
+
+Some part of this is just engineering, breaking tasks down and distributing them to different endpoints for processing, leveraging an ensemble of models; but more general intelligence (as related in my use of GPT-4 vs. Claude 3 Opus earlier) is always better. Getting to know these systems is one of the best ways to learn to appreciate what humans and societies are capable of.
+
+More intelligence means you can do more with less, and ain’t it crazy that despite the ~2T parameters trained on 40T tokens for a model like Claude 3 Opus these models with an underlying knowledge of the world is still underparameterised in relation to the job that they are trying to perform? Obviously, 2 trillion parameters is insufficient to capture the entire complexity of a world knowledge so there is a lot of superposition in high dimensions as the models try to compress and represent so much data within its limited architecture. Perhaps having access to a knowledge of the world entire is an impossible task for any 1 individual, let less a model. So in the case of human societies we have other embodied agents of knowledge in specific domains (experts), there is a lot of scaffolding and extension of our minds by relying on libraries, museums, external repositories of knowledge and even just in the everyday sense of a person with a notebook. Such is how we have parcelled out and distributed our knowledge of the world.
+
+And we are the most energy, sample and compute-efficient biological computers that ever existed. There’s a lot of reinforcement learning, Direct Preference Optimisation and Kahneman-Tversky Optimisation that was done to better align model behaviour with what’s desired yet the sparsity of data is a consistent challenge. In contrast to this, isn’t it remarkable how we as humans learn to conform and operate as a member of a social species despite the sparsity of signals? And perhaps that’s the entire role of the media and culture - to inject an eigenvector of preference into individual desires. Evolution, like competition, is beautiful.
+
+It seems to be the case that our ability to forget, abstract, analogise, imagine and make plans, amongst others are the missing pieces in current A.I. systems that is inhibiting their further general learning and extension. Our human ability to explore and experiment within an environment, organise and make use of the cultural, social and intellectual resources at our disposal is unparalleled.
+
+So I’ve reached that meta state where I realised if I had thought on it a bit more, I would have made different training choices rather than jump straight into it. Similarly, is it any surprise then that LLMs do better when instructed to employ a Chain-of-Thought reasoning?
+
+In the next follow-up, I will further substantiate why more intelligence matters, and some proposals for how individual users, communities and companies can bootstrap and leverage such intelligence for their own purposes; most of which are already discussed in this post: high quality, extensive and varied datasets, external repositories of knowledge, talent, social sharing, compute and better models. The first bit on datasets is something I want to pick up on because I suspect that a lot of organisations already has sufficient data to build something interesting - they’re just held back by gridlock. I want to examine synthetic datasets in relation to this in particular because it was something I tried but couldn’t get to work when I was preparing for my data science graduation project, thankfully the world has changed and I know more now. ;)
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/1eogiw8s](https://erniesg.pubpub.org/pub/1eogiw8s).*

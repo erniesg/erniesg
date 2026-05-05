@@ -15,7 +15,18 @@ pnpm-debug.log*
 
 # environment variables
 .env
+.env.local
 .env.production
+
+# migration scratch
+scripts/pubpub-migrate/work/
+work/
+
+# migration tooling — kept locally for re-runs before PubPub sunset (2026-12-31)
+scripts/
+
+# Claude Code local agent state
+.claude/
 
 # macOS-specific files
 .DS_Store

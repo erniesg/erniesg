@@ -1,0 +1,55 @@
+---
+title: "Developer Diaries: digitalise any instrument and start…"
+description: "Struggles of the GPU-poor with RAVE (Realtime Audio Variational autoEncoder) and Neutone, to train my own model for neural audio synthesis"
+date: 2024-02-17
+authors: ["erniesg"]
+draft: false
+---
+
+I first realised how much more accessible and democratic sound is as a form of data and for content consumption when I was in Malaysia and heard a tune through the driver’s handphone that was the same tune that came through videos that mum had watched, they just had different language narrations and content to them. There’s something about sound, and oral communication, if you will, that reaches far more echelons of society than text or image alone are capable of. Those tend to require an education, some training, I have a tertiary education and I am not fluent in the -isms that people use to discuss the visual arts. But sound is as democratic and as accessible as it gets in that regard.
+
+And it carries so much content, superposition, and even as a form of data representation its complexity is many times that of text or image, which makes it super interesting. I’m just like: just give it to me multimodal, I wanna play with as many different types of data and as much data as possible. So when the artists on the team asked me to limit my RAVE model training to 1 pack of drums it felt to me like, asking an artist to paint with only 1 colour which is extremely puzzling from a technical standpoint. But I can understand where this might come from, from a sentimental standpoint wherein a sample size of 1 is special and unique, wherein that sample size of 1 is quite specific and natural to the making of art, cultural and even social worlds in general. Whereas, where I’m coming from, this stream of data on drum A to that stream of data on drum B are one and the same, A == B; it’s that similar concern I saw described [elsewhere](https://listening-through.pubpub.org/pub/work/release/22):
+
+> I’m troubled by what is implied by OpenAI’s Jukebox project: to model a kind of “universal” music by training on an extremely large dataset (1.2 million songs), using information about genre and artist to condition the data. How can each piece of music be considered as equivalent in meaning to all other pieces of music (in all contexts, to all listeners)?
+
+Thankfully, I am blessed with access to GPUs so I didn’t have to pick and choose. I figure I’d just run lots of training in parallel by sending custom training jobs to Google Vertex AI (which failed persistently despite my best efforts ZZZ)… In the end I exhausted all free GPU hours on CoLab for the month and got me one model with 9000 epochs of training, and another locally after finishing 20000 epochs on my 3070, and hearing white-throated kingfisher as Malay drums got me feeling like: OMO this means we iz can digitalise ANY instrument in hours with deep learning, rather than weeks or months????
+
+Looking at the speed of training on CPU on the CoLab notebook after my GPU hours are exhausted vs. my local training speed which is easily 5x faster be like: being GPU-rich or GPU-poor is a real thing.
+
+<iframe alt="RAVE Timbre Transfer to Neutone" src="https://www.youtube.com/embed/nwwEVWCHMxU?feature=oembed" aria-describedby="nlgnwhoyvu4-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+RAVE Timbre Transfer to Neutone
+
+I didn’t do any preprocessing aside from the lazy implementation already in the package and the input data for inference has a noisy background so there’s still some weird digital signals coming out. But the fact that this is the result of a model trained on a measly 229 seconds of Rebana and Rentak sounds over 1000 epochs on free Nvidia T4 made available on Google CoLab compared to [a training run on 2h of drum data, over 13 hours and 39 epochs](https://www.instagram.com/p/C3DDPxSSmyX/) from before is just mind-blowing. How is it so good at learning all the nuances and representations of a drum just with 229 seconds, 1 validation data point and error minimisation!? The trajectory of progress in A.I. is unthinkable from a human scale.
+
+I’ll let ChatGPT explain the significance of this learning below.
+
+## What is timbre?
+
+Timbre, often referred to as the "quality" or "tone color" of a sound, is what distinguishes different musical instruments or voices, even when they are producing the same pitch at the same volume. It's essentially the unique character or texture of a sound that makes it recognisable and distinct from other sounds.
+
+## What is timbre transfer?
+
+Timbre transfer, in the context of neural audio synthesis, refers to the process of modifying the timbral characteristics of a sound while preserving other aspects such as pitch and rhythm.
+
+## What is happening when I do a RAVE model training or, how did the machine learn to recreate an instrument on so little data?
+
+Essentially, by training your model on a specific type of drums, you're effectively creating a virtual instrument tailored to those drums. The model learns the characteristics and nuances of those drums during training, and when you use it for timbre transfer or sound generation, it applies that learned knowledge to transform input sounds into the style of the trained drums. This can simplify the process of creating virtual instruments because you don't need to manually map different parameters like pitch or volume to achieve the desired sound. Instead, you can rely on the trained model to handle the transformation based on the learned characteristics of the drums.
+
+Timbre transfer is a technique used in audio processing to alter the sound characteristics of one audio signal to match those of another. In the context of neural audio synthesis, like with the RAVE model you've been working with, timbre transfer involves transforming the timbral characteristics of an input sound to resemble those of a target sound, such as a specific type of drum.
+
+In the case of the RAVE model you've been using, it learns the timbral characteristics of a set of drums during training. This learning process involves capturing the subtle features and nuances of the drum sounds from the provided training data. The model then uses this learned information to transform the timbre of input sounds to resemble the trained drums.
+
+Even with a relatively small amount of training data, neural network models like RAVE can learn to generalise and capture the essential characteristics of the sound source. By manipulating the latent space, which represents the learned features of the input sounds, you can control various aspects of the output sound, such as pitch, volume, and other timbral attributes, without needing to explicitly record data for all possible variations.
+
+So, rather than needing to record separate samples for each possible variation in pitch, volume, or other parameters, you can manipulate the latent space of the trained model to achieve similar effects. This makes the process more efficient and versatile, as you can explore a wide range of sound variations without the need for extensive manual recording and processing.
+
+# A Tutorial to Make All the Sounds
+
+As it turns out, my inability to submit custom training jobs might be indicative of a general shortage of GPU resources, seems like it could be a real outage problem due to too many people submitting so many custom training jobs all the time and across so many regions that I’d have much better luck with dedicated servers instead!? I also went through hours of unnecessary pain during training because I didn’t bother to read the code and nowhere does it say in documentation that such and such flags are required… So I hope to find time to do a bit of a how-to tutorial video for people who might be interested.
+
+This one’s for LET THERE BE MORE NOVEL, DIGITAL SOUNDS IN THE WORLD!
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/r4a1ex9r](https://erniesg.pubpub.org/pub/r4a1ex9r).*

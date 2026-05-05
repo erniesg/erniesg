@@ -1,0 +1,54 @@
+---
+title: "Demo: The Sound of Stories"
+description: "Built with: Twilio, Firebase, Firestore, Claude 3 Opus, Elevenlabs and what I'd like to work on next"
+date: 2024-05-02
+authors: ["erniesg"]
+draft: false
+---
+
+[In August 2023](https://erniesg.pubpub.org/pub/9tss8q7y/), I outlined 3 key themes I’d like to work on for A.I., namely: multi-modality, open source and generative agents. “The Sound of Stories” demo serves as a case-in-point for how I served a interactive, narrative-bind storytelling experience that is bilingual and adapting to the user (I also experimented with transforming user voice inputs into drum sounds and image cover generation but have not yet served them into the live environment) in an interface that is all-too-familiar: WhatsApp. This was before Meta AI and if you look at the evolution of the interface (Streamlit -> Chainlit -> WhatsApp), that final selection is basically informed by seeing how people struggle with other options on the one hand, and just plain laziness on my part on the other.
+
+These are the design constraints I had in mind:
+
+-   The story should be that of “The Boy and the Drum” so there are these people that are met along the way, and at each turn there is an exchange of items; overall the narrative needs to adhere to this
+    
+-   While localising things like market names, food item exchanged, etc.
+    
+-   And always trying to engage the user by inviting for their inputs where relevant
+    
+-   It should start and end appropriately
+    
+-   And handle crazy user responses logically (like how it responded to the user’s suggestion to sell Ray-ban Meta glasses)
+    
+
+<iframe alt="Demo: The Sound of Stories" src="https://www.youtube.com/embed/PchZnZ-M884?feature=oembed" aria-describedby="nt6zespi0sk-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Demo: The Sound of Stories
+
+The Performing Arts x Tech Lab started in August 2023, and there was a lot of prompt engineering and hacks I implemented initially to make sure that at each turn, only the appropriate story segment is generated, then you incorporate the user response into the next story segment generation, all while trying to end the story within a certain number of turns which is suboptimal because it’s not very robust to nonsensical user inputs. Luckily, more intelligence is all you need.
+
+The story of A.I.’s progress has been one of we need to lead from the future as models will become smarter, cheaper, faster. In fact, they already have. I “fired” GPT-4 and Kimi in this project and used Claude 3 Opus literally after hearing a recommendation by Hugh on March 19 and trying it for a bit. Our final public demo was on April 5.
+
+Note: the generation of audio is not optimised so it will take ~15s to be done and play in the demo; such latency is addressed in a phone call version that you can read about belowh
+
+## Why does this project matter?
+
+From a storytelling standpoint, this is your modern choose-your-own-adventure which is always plenty of fun. Learnings here can be applicable for reimagining role-playing games. The bilingual (and there is no reason why this cannot be multilingual) nature of it increases access and reach to new audiences. One question that confused me at our public presentation at The Esplanade was someone’s question about how long it will take for me to handle more stories. I realise I just didn’t quite understand that question because as its builder, I am unable to see it from the perspective of someone who’s completely new to this - but the short answer is that I can scale this to as many stories as desired within seconds if not milliseconds. The context that people are missing is that: large language models (LLMs) have become so powerful that they have captured within them knowledge of at least as much cultures as were ingested via pretraining data. By which I mean that the story can update locations and items to adapt to the user’s profile, such as the mum going to Dongdaemun Market in the demo of a user who claimed to be from Korea. It is a **MYTH** that A.I. cannot understand your unique context or vocabulary. We actually can. The shorthand for that is usually that a lot of organisations might not have such data digitalised or lack the capabilities to optimise on their own datasets.
+
+I also view this architecturally in the sense that this general idea of constraining to some corpus, taking in user input and then generating a response based on that user input is really much a “design pattern” that is broadly applicable to use cases ranging from an interview prep bot, to a customer support agent, etc.
+
+During our live demo and the period of our exhibition, the audience can also call a phone number (yes, literally a phone number) I set up where you could talk to A.I. Kamini and have her tell you the story over the phone. It’s a similar experience as text chat except that you are solely in the domain of voice, and the streaming of voice output is actually way better due to optimisations. It feels like an actual phone conversation though the intelligence of the system is lower than that of Claude 3 Opus.
+
+## What’s Next?
+
+I deployed this over GCP while I was away in China and generally it seemed to have done its job as intended as in there was no bug fixes needed, whatever issues or limitations it had are known ones that I didn’t work on because uh, time? So some possible areas to fix post-Lab might be to use WebSockets for streaming of audio responses to speed things up, and also handling multiple user inputs instead of expecting 1 user response in string. These will be on my backlog. Aside to that, I’m eagerly awaiting better Mandarin voice cloning technologies if anyone has anything better than Elevenlabs to offer.
+
+Now that I have a working codebase, I want to deploy and serve generative agents. I want to automate workflows through the appropriate use of LLMs at the relevant junctures, such that the output of this pipeline results in an action, a changed state of the world. It can be as simple as an automated transcription, translation and generation of subtitles for my own videos that results in an upload; or even more sophisticated in terms of an agent that will take any unstructured data you give to it, figure out the appropriate schema to use and then output structured data from unstructured data; this latter agent I think will be relevant for researchers that want to extract data from field recordings, GLAM institutions that want to enrich their collections data and automate the whole damn thing (i.e. not only generate rich embeddings over images, but generate transcriptions and text and relevant metadata over videos, letters, etc.) and even for these exam and interview prep bots that I’m supposed to be working on.
+
+We are at extremely early days in terms of rethinking how software is built, and how powerful A.I.-native experiences can be. How much more productive they are. And how extensible, how stackable they become. It should be a crime to work with any solution that does not interface well with other software via APIs (unless you really, really have to).
+
+Stay tuned for my updates!
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/xlkdc79p](https://erniesg.pubpub.org/pub/xlkdc79p).*

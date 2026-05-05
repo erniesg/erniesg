@@ -1,0 +1,181 @@
+---
+title: "Berlayar: building a stable, extensible, flexible and…"
+description: "How one weekend prototype led to another and all the new things I learned along the way"
+date: 2023-08-29
+authors: ["erniesg"]
+draft: false
+---
+
+I’m fascinated by A.I. in particular because it’s a piece of technology that comes closest to poking and probing our ideas of what it means to be human, at least on a cognitive and creative level. Not a lot of technologies can lay claim to that. And I don’t think the weight of this A.I. moment has settled fully on our shoulders yet - this whole idea of what it means to be living in [living, moving history](https://marginalrevolution.com/marginalrevolution/2023/03/existential-risk-and-the-turn-in-human-history.html), as the mean of content production drops dramatically. In fact, most of our species living through such moments could never have foreseen the Reformation and all the things that came after with the printing press; or the internet and presidential elections; so a couple of Proof of Concepts (PoCs) here and there later, I’m landing in this zone where I see a fundamental difference in how software is written traditionally and how data-driven development is to take place. That difference between traditional programming and machine learning is like that adage:
+
+> “Give a man a fish, and you feed him for a day. Teach a man to fish, and you feed him for a lifetime.”
+
+# **ML/LLM-driven Development is a Paradigm Shift in Software Development**
+
+It’s bad enough that most of us have very little idea over what actually goes on in software development, data-driven development throws a lot of “pseudo-scientific” tinkering and probabilistic thinking to this mix which means that a lot of the processes, workflows and tools involved are a whole new world even for seasoned engineers. [This article gave a pretty good historical timeline and differentiation](https://www.linkedin.com/pulse/machine-learning-vs-traditional-software-development-ml4devs-gupta/) of these two practices (though sadly something I’ve noticed is also that the speed and propagation of technology varies so much by geography that we are all already living in a time machine - SFTP comes to mind…).
+
+The heart of the problem comes down to: how do you teach machines to learn? How do we serve stable services to end users while continuously experimenting on every step of that delivery process: from the data you collect, to dimensionality reduction, to model selection, to hyperparameter tuning and so forth? Large language models bring a powerful arsenal of natural language, knowledge and reasoning tools to the table but they have their peculiarities too. Hence the sum of these challenges brought me to the realisation (with the help of ChatGPT, of course) that I need a registry-based, interface-driven approach to scaling and serving these systems.
+
+It’s a bit like the scientific process where there are recurring tasks, workflows, and this need to constantly monitor results (and ideally automate triggers to serve) so I will list down some experiments I’ve built before, the recurring patterns and share in broad strokes how I’m thinking about building this system.
+
+# **Weekend Prototypes**
+
+What can you built in a weekend? Turns out to be a whole lot of things. One thing led to another, there’s a whole universe of new apps and experiences that can be built but the ultimate constraint is developer time and that’s why my current focus is really on building the building blocks that will enable any developer to 100x, if not 1000x their efficiency (I hope).
+
+## **Bertrand - prompt to publish**
+
+Motivation/Use Cases: I wanted to work on this as I was thinking about what could I build to have 1000 people pay me $100 a month per year with minimal effort and maintenance, and it seemed like prompt-to-publish or a fully-automated social media agency would be it and technically feasible; so I tried to generate flash cards for a course I’m doing just to play with the functionalities above to see if responses are more relevant, and how much we can stretch the generation capabilities of LLMs in a very limited scenario
+
+Hypothesis: by ingesting new knowledge into LLMs and giving it a memory, we can do better Retrieval Augmented Generation (RAG) and personalise experiences
+
+<iframe alt="Bertrand - a ChatGPT prompt-to-publish plugin" src="https://www.youtube.com/embed/aztjmgs7Qkc?feature=oembed" aria-describedby="nkc27aw0uzr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Bertrand - a ChatGPT prompt-to-publish plugin
+
+Results and what I learned: This was my first contact with GraphQL and a vector database - specifically, Weaviate - and I gained a much better understanding of embeddings which I was ranting on all about in [a previous presentation](https://www.youtube.com/watch?v=hKrO-bxXXgY). I thought: what I needed is a way to chain discrete processes together to automate the process of learning new trends, generating then scheduling and publishing content end-to-end - and of course there is! I discovered Langchain and Deep Lake and started to tinker with them more in my next PoCs.
+
+## **Arthur - search and retrieve**
+
+Motivation/Use Cases: In the process of building with ChatGPT and just out of a general fondness for minimum resourcing for maximum return, I’m finding that it would be great if my LLM-powered pair programmer can be constantly learning new things (from documentation, documents, web search, etc.) all on its own, even better if it can autonomously code on command, compile and fix itself based on errors encountered. Searching and reading is slower than having a response returned to you that gives you the answer you’re seeking. I was also very frustrated with how challenging and time-consuming human-to-human communication can get with accents and turnaround time, why not just have A.I. learn existing codebases and ask it questions instead? Once A.I. is equipped with a knowledge of existing project structure and codebase, it seems like prompt-to-feature shouldn’t be too much of a leap away
+
+Hypothesis: by creating strategies for LLMs to deal with different sources of knowledge meaningfully, we can query and generate over anything
+
+<iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="ns8whgyf7bu-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Arthur - Search and Retrieve Anything
+
+[Results](https://www.youtube.com/watch?v=42HSVAGfxIo) and what I learned: Quality of generated content is a bit of an issue if that really matters, so the larger point is that LLM-powered apps take agility and iteration to a whole new level, as every step along the way can be iterated upon and optimised. Maybe if I feed it more content, it’ll generate better content. Maybe if I help it better understand the semantics of the content, it’ll do better retrieval and generation. I created a way to chunk .json on an object level as it seemed sensible but I ran into issues with token limits so I had to limit the number of chunks I retrieve; on every possible data source to be ingested - be it documents, code, audio, video, images, etc. - there are so many different ways to split it into smaller or more meaningful units, different embedding models that could be used, vector stores (I used Deep Lake in this one) and retrieval strategies - so I really need a system in production that is:
+
+-   Stable - so users can enjoy consistent experiences
+    
+-   Extensible - so I can easily add in new sources for data ingestion, new embedding models, etc.
+    
+
+And ZOMG [virtual environments and containerisation](https://erniesg.pubpub.org/pub/i8a0vp8z) is so important. They’re like 3/4 the setup process before you can even write a line of code…
+
+## **The Sound of Stories**
+
+Motivation/Use Cases: I’m just interested in deploying these technologies in an actual performance taking place in real-time and augmenting human capabilities with A.I. - to enable us to do new things that were not previously possible. Having experimented with different components of what could culminate in an interactive storytelling experience for an audience to hear stories told to them in the voice of a narrator in multiple languages, whether it’s the storyteller or a loved one, it just seemed like a natural next step to take to put all these things together and in front of people
+
+Hypothesis: new experiences and capabilities can be unlocked and stacked together with A.I., for instance, chaining text generation and other services to have a generated story narrated to you
+
+<iframe alt="The Sound of Stories" src="https://www.youtube.com/embed/0cBbG0SkSCo?feature=oembed" aria-describedby="nlu4kddkcrr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+The Sound of Stories
+
+[Results](https://www.youtube.com/watch?v=0cBbG0SkSCo) and what I learned: Streamlit kinda sucks for prototyping UI for LLM-based apps, Chainlit seems better; [SeamlessM4T](https://ai.meta.com/blog/seamless-m4t/) is kinda disappointing but text-to-text, text-to-speech and voice cloning are solved problems for languages that I know well, latency and other languages might be the real obstacles here. All 3 PoCs have this recurring pattern of me performing ingestion over a data source, chunking it in one way or another (split at a certain character, split by object, etc.) then generating embeddings that are stored in a vector database for retrieval for the first two, for this one it’s a lot of “prompt engineering”.
+
+Side note: After this PoC, I actually don’t think prompt engineering will be a real job. And even if it does become one it would be the modern day equivalent of a job performing the duties of a typewriter; this whole process of iterating on prompts feels like one of those things that can be much better done automated and indeed, one of the biggest challenges at scale is going to be: how do you monitor and evaluate the performance of your tweaks effectively? Introduce human-in-the-loop? Automate the process end-to-end as much as possible with MLOps?
+
+On this particular PoC, I wanted to pass data between different services and play more on multimodality. So the consumption of LLM-generated outputs can be by other services, as I pass the generated text to SeamlessM4T for audio generation, for instance; it can also be rendered to the end user in some form. In other words, the consumption or presentation layer of such RAG is also customisable.
+
+Hence, aside from a system in development and production that is stable and extensible, the system also needs to be:
+
+-   Flexible - so I can easily reconfigure workflows or swap out components
+    
+-   Scalable - so there’s a certain level of latency and quality guarantee in real-time, essentially I’m concerned about performance at actual scale
+    
+
+# Part I: Designing an Extensible Ingestion, Chunking, and Embedding System
+
+So how does this system look like in practice? I’m still refactoring and stepping through the process, picking up new terms and processes as I’m building along. Meanwhile, just to parse some broad strokes below:
+
+We will have a registry.
+
+This registry will keep a mapping of file extensions to their respective processors. Each processor should know how to chunk and parse the respective file type.
+
+```text
+FILE_TYPE_PROCESSORS = {
+    ".py": PythonFileProcessor,
+    ".md": MarkdownFileProcessor,
+    # Add other file types and their processors here...
+}
+```
+
+There will be base classes.
+
+```python
+from abc import ABC, abstractmethod
+
+class DataSource(ABC):
+    """
+    Base class for any data source. This provides a generic interface for data ingestion.
+    """
+
+    @abstractmethod
+    def ingest(self):
+        """
+        Ingest data and return a consistent format for further processing.
+        """
+        pass
+
+    @abstractmethod
+    def get_metadata(self):
+        """
+        Extract metadata from the data source. This metadata can vary depending on the source type.
+        """
+        pass
+
+class GitRepoSource(DataSource):
+    def ingest(self):
+        # Logic to clone/pull git repos and filter relevant files.
+        pass
+
+    def get_metadata(self):
+        # Extract metadata specific to git repositories.
+        pass
+
+class PDFSource(DataSource):
+    def ingest(self):
+        # Logic to ingest PDFs.
+        pass
+
+    def get_metadata(self):
+```
+
+We repeat for file processors, chunking, embedding and other steps along the pipeline as necessary.
+
+```text
+CHUNKING_STRATEGIES = {
+    ".py": PythonCodeChunker,
+    ".md": MarkdownChunker,
+    # ... other chunkers
+}
+```
+
+That means we will need configurable and flexible processing logic, such as below:
+
+```python
+def process_files(files, embedding_strategy_name):
+    embedding_strategy = EMBEDDING_STRATEGIES[embedding_strategy_name]()
+
+    for file_path in files:
+        file_extension = os.path.splitext(file_path)[1]
+        file_processor = FILE_TYPE_PROCESSORS.get(file_extension)
+
+        if not file_processor:
+            print(f"No processor found for {file_extension}. Skipping...")
+            continue
+
+        chunks = file_processor().process(file_path)
+        for chunk in chunks:
+            embedded_text = embedding_strategy.embed(chunk["content"])
+            # Store embedded_text and metadata...
+```
+
+Such a registry and abstract classes approach provide the following benefits:
+
+-   **Scalability:** Uses dictionaries (**`FILE_TYPE_PROCESSORS`** and **`EMBEDDING_STRATEGIES`**) to easily map file types and embedding strategies to their corresponding processors. This design is inherently scalable since adding support for a new file type or embedding method is as simple as extending the dictionary.
+    
+-   **Robustness**: Separates concerns more distinctly and can isolate failures more effectively. Changes in one file processor shouldn't affect others.
+    
+-   **Extensibility**: Designed for extensibility. As mentioned earlier, supporting a new file type or embedding strategy requires creating a new class and adding it to the respective registry, which minimises changes to the existing code.
+    
+-   **Flexibility**: High flexibility. Since the components are registered in dictionaries, swapping out or adding new components is straightforward. For instance, changing the processor for ".py" files is as simple as updating an entry in the **`FILE_TYPE_PROCESSORS`** dictionary.
+    
+
+The above will be highly advantageous for rapid development and collaboration, but recall that we want a stable and consistent system in production, which is where the interface-driven part of the picture comes in. I’ll touch on that in a follow-up post.
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/zc0zx741](https://erniesg.pubpub.org/pub/zc0zx741).*

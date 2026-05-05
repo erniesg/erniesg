@@ -1,0 +1,41 @@
+---
+title: "Developer Diaries: A.I. development be like (scarcer than)…"
+description: "What can't you get at 02:42am? An A100 VM..."
+date: 2024-02-27
+authors: ["erniesg"]
+image: "./image-11709039506768.jpg"
+draft: false
+---
+
+As I lay in bed at 02:42 thinking it can’t get anymore off-peak than this and what could be the harm in checking before I go to sleep right, I opened GCP on my mobile and tried to get a A100 VM but then…
+
+![](./image-11709039506768.jpg)
+
+This is worse than pre-dial-up internet days. Even back then I got as much internet as my pocket money could pay for at the library before we got the internet at home. Turns out that initial model training is a breeze, but perfecting the craft, going that last mile, I’m just at a stage where I’ve banged my head at the same wall enough and the gain-to-pain ratio is so unbalanced that I’m just going to switch to pitch and showcase mode before returning to this and approach it from first principles - like, read the paper and get into model architecture level. Regardless, I’m totally loving how coding with GPT-4 has made it possible for me to ship “The Sound of Stories” to all devices with Chainlit and Ngrok on a Thursday, then when we ran into multi-user issue and I noticed that the Chainlit UI is really clunky for people to use from our user test Friday night I got it up on WhatsApp served by a Flask backend; then Saturday morning through further research I realised that FastAPI and Uvicorn is far more performant, with the ability to handle asynchronous methods and validations which were important differentiators to me because:
+
+1.  why wait
+    
+2.  talk to me about data engineering being 90% fixing typing validations, or rather the lack of, from sources other than me… :)
+    
+
+The demo that you see below is all recorded on my phone in real-time. There are still noticeable lags here and there - all of which can be fixed in a production environment; I think all in all I’m pretty pleased with the progress we’ve been making, and the things that I’ve been learning so far. I tend to see projects and commissions as forcing functions to make me utilise my time productively. Like, if I wasn’t spending my spare time on this, I’ll either be gaming or on Netflix instead, so… It’s all good. I’ll articulate some of my learnings and thoughts from building with A.I. and LLMs below.
+
+<iframe alt="The Sound of Stories WIP (Mobile)" src="https://www.youtube.com/embed/dKqtKKXI0w8?feature=oembed" aria-describedby="nny38rsz3pw-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+The Sound of Stories WIP (Mobile)
+
+## THIS TIME IT’S DIFFERENT
+
+It truly is, so much so that this warrants a standalone post all by itself. My high-level summary for now is that this is the first time in human history we are making commodities out of intelligence. Tool-using animals that we are, if we are able to leverage A.I. effectively as a society, I really think that it’s the key to curing cancer or limitless clean energy. It can be a great leveler, giving every human our own Jarvis or Gundam to play a multiplicity of roles in our lives. ChatGPT has become somewhat of a philosophical sounding board, sometimes surprisingly therapeutic logician, everything tutor, helpful and eager but overly verbose assistant, clueless intern, and mostly - an extension of my own mind, giving me artificially more arms, knowledge and access to information than what I already have. And I can’t wait to see what new capabilities Gemini 1.5, Groq and Sora will unleash for us.
+
+## Innovation requires openness. Period.
+
+I have a few personal episodes in relation to this. One, I had [early developer access to GPT-3 in July 2022](https://www.instagram.com/p/CgWkVnHv6Tg/?img_index=1), used it to write a rap about Xi Jinping and basically didn’t use it any further than that. It wasn’t until ChatGPT got a public release, and suddenly there’s an explosion of exploration by so many different people from all around the world that I was able to benefit from their experiments and learn to use ChatGPT effectively. This little episode, considered alongside incidents like how a few days before our scheduled user testing, my code broke because I itchy fingers went to remove my virtual environment - I was kind of like trying to set up everything properly for a Docker deployment - and I was just having all kinds of dependency conflicts between LangChain &lt;> OpenAI &lt;> Chainlit that I was sorting through literally by hand… It was so frustrating that there was no easy way to just find the version numbers that worked automatically plus I found it appalling that a $20m funded software is not yet updated for OpenAI 1.0.0 which was released back in Nov 7, 2023 but anyway, I managed to get it working but that pain is one I never want to experience again.
+
+Days when GPT-4 is down are days that I feel less productive. Which is why I got a local LLM running on my M2 Max and has been trying to subscribe to Gemini Advanced (to no avail zzz). Competition, alternatives and open source are good for innovation. It’s what keeps the pressure on for companies to innovate rather than engage in regulatory capture or rent-seeking behaviour.
+
+On the more technical front, I’m certainly gaining a firmer grasp on CI/CD, Docker and a microservices architecture which is fun. And I’ll be looking forward to building out on WhatsApp and WeChat mini-programmes further to reach consumers directly. In my next update I aim to record a tutorial about how you can train your own RAVE model for free on Google CoLab and elaborate more on the technical learnings.
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/7b4nk0ao](https://erniesg.pubpub.org/pub/7b4nk0ao).*

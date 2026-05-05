@@ -1,0 +1,90 @@
+---
+title: "MLOps for Museums"
+description: "From digital dinosaurs to spacefarers"
+date: 2022-11-24
+authors: ["erniesg"]
+image: "./21669034022304.png"
+draft: false
+---
+
+Our biggest fear about A.I. could be its biggest saving grace when it comes to adoption in resource-strapped sectors, i.e. A.I.’s unique position to augment human labour, enabling us to do more with less, could free up staff time in museums to work on more interesting problems. While MLOps is cutting-edge even within the deep learning community and literally unheard of in museums, I will argue that features unique to the museum work setting make this the most rewarding technology stack for adoption, and that by engaging with the open source community, the lack of in-house technical capabilities can be resolved while spotlighting the unique role of museums in society - as spaces for dialogue and critical engagements with the tools that we use. This post therefore aims to discuss the areas below for non-technical audiences:
+
+1.  key challenges in the museum technology ecosystem
+    
+2.  opportunities - why MLOps for museums
+    
+3.  case studies
+    
+4.  what MLOps looks like
+    
+5.  overview of xOps (DevOps, DataOps and MLOps)
+    
+6.  architectural principles, toolings and best practices
+    
+7.  recommendations
+    
+
+I will look at this through the lens of collections management and the relevant use cases, but the general flavour of the principles and processes discussed can also be applicable to other systems within an institution’s technology ecosystem.
+
+# Key Challenges in the Museum Technology Ecosystem
+
+An oft-cited challenge of museum technology professionals has to do with misunderstandings about time and effort required of museum technology projects \[1\]. This is hardly surprising since digital skill gaps in the museum sector can be especially dire, with 37% of Arts Council England’s organisations “saying that a lack of capability and knowledge was a major barrier to achieving their digital aspirations” \[2\]. When projects are not scoped properly or have bad estimates due to a lack of technical proficiency, everyone ends up frustrated. This is challenging not only for the museum sector, but even within IT as the landscape of technology is simply way too vast and rapidly evolving: blockchain, native app development, web development, cloud technologies, serverless, mixed reality, data science, machine learning, algorithms, etc. are all very different, highly specialised skillsets though they all belong to the superset of IT and digital.
+
+Institutions with procurement processes that mandate a waterfall style of development and without in-house developers usually end up a set of disconnected, disparate systems that do not talk to each other. This happens either because these were inherited legacies and/or vendors not having the incentive to build interoperability into their modus operandi. This results in various downstream disruptions in which there are lots of duplicated processes (something is updated in one place that does not automatically sync to another), and different people may be referencing different document sources, resulting in confusion.
+
+It is as if you do not own the key to your own chest of gold and every time you want to come find something, you get charged for entry to your own asset. Worse still, you may not know where it is exactly. Even with clear documentation, vendors A, B and C building and supporting different systems will have no incentive to collaborate with each other and may end up pushing blame onto each other instead if ever they are required to work together. This is not to say that museums should become technology companies1. Rather, it is important to understand the inherent constraints and map out the ideal end states so that the optimal route(s) to get there can be designed with these in mind.
+
+# What is MLOps?
+
+MLOps is like the engineering side of the coin to the scientific research of model-building in “lab” conditions. It is the missing ingredient in turning computer vision PoCs \[3\] into production.
+
+> “All of AI, .., has a proof-of-concept-to-production gap. The full cycle of a machine learning project is not just modelling. It is finding the right data, deploying it, monitoring it, feeding data back \[into the model\], showing safety—doing all the things that need to be done \[for a model\] to be deployed. \[That goes\] beyond doing well on the test set, which fortunately or unfortunately is what we in machine learning are great at.” — Andrew Ng
+
+# Opportunities - Why MLOps for Museums
+
+First and foremost, one principal reason for doing MLOps in museums is to operationalise A.I. technologies that can offer the greatest possible Return on Investment as illustrated in Figure 1 \[4\] below.
+
+![](./21669034022304.png)
+
+**Figure 1**. Popular AI subcategories, mapped to axes of museum relevancy and effort/cost.
+
+Relative to much hyped technologies such as blockchain and the metaverse for which the design space is way broader than the range of possible use cases so these technologies are much further out on the time horizon, A.I. has already been deployed en masse across the MATANA2 group of companies and ready to go mainstream. From Figure 2 below, notice how much of A.I. innovations that are especially relevant for the museum sector is now in the “Slope of Enlightenment” phase in contrast to other emerging technologies such as NFT and Web3 in Figure 3.
+
+[![](./41669034988888.png)](https://www.gartner.com/en/articles/what-s-new-in-artificial-intelligence-from-the-2022-gartner-hype-cycle)
+
+**Figure 2**. … “innovations expected to hit mainstream adoption in two to five years… Early adoption of these innovations can drive significant competitive advantage and business value and ease problems associated with the fragility of AI models.”
+
+[![](./71669034952241.png)](https://www.gartner.com/en/articles/what-s-new-in-the-2022-gartner-hype-cycle-for-emerging-technologies)
+
+**Figure 3**. Emerging technologies for 2022 fit into three main themes: evolving/expanding immersive experiences, accelerated artificial intelligence automation, and optimized technologist delivery.
+
+Barriers to adoption and the accumulation of past learnings from PoCs has brought us to this present moment when what used to require entire research teams can now be done by a small group of people, and museums are especially well-positioned to take advantage of such innovations via MLOps because of features unique to its data and applications: the cold-start problem, the need for discourse and last but not least, the lack of in-house manpower resources and technical capabilities.
+
+The cold-start problem is especially acute in the case of museums. In an environment where much data is simply non-existent, i.e. there is no abundance of existing training data and high-functioning pipelines to learn from, the role of MLOps to operationalise the pipeline from dataset-building, labeling all the way through deployment to acquire actual data that feeds back into the system is especially pertinent. Automating this process end-to-end as much as possible therefore allows us to do more with less.
+
+# What MLOps Looks Like
+
+The theory then, is that a few people and some gaming PCs are all that is needed to build A.I. models for automated annotations of artworks; operationalising such models in production via MLOps will then provide the further fine-tuning necessary to build a robust system that makes museum collections a lot more accessible and discoverable.
+
+Below, you will see a demonstration of automated colour extraction and adding to a database for querying:
+
+<iframe alt="Art API Update: Extract Colours &amp; Add to Collection 19.11.2022" src="https://www.youtube.com/embed/QN8Jn0KidMU?feature=oembed" aria-describedby="nogcdodrxpi-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Art API Update: Extract Colours & Add to Collection 19.11.2022
+
+# **Architectural Principles, Toolings and Best Practices**
+
+-   Cloud-based
+    
+-   Open APIs
+    
+-   Federated access  
+      
+    
+    [![](./41669297260948.png)](https://jumpcap.com/insights/mlops-the-key-to-scaling-machine-learning-in-an-enterprise)
+    
+    **Figure 4**. Overview of DevOps and MLOps tools.
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/gcdzise9](https://erniesg.pubpub.org/pub/gcdzise9).*

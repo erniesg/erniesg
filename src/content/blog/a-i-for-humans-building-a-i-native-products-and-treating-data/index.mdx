@@ -1,0 +1,48 @@
+---
+title: "A.I. for humans: building A.I.-native products and…"
+description: "Can you teach an old dog new tricks? Yes you can but a dog will never be a cat"
+date: 2024-03-25
+authors: ["erniesg"]
+draft: false
+---
+
+<iframe alt="Use WhatsApp to Onboard &amp; Create New Users" src="https://www.youtube.com/embed/N6XBV5-9qJQ?feature=oembed" aria-describedby="nfetbb3epfg-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Use WhatsApp to Onboard & Create New Users
+
+Onboarding and creating new users asynchronously over the internet so you can handle multiple users at once turns out to be one of those problems where it’s like: why did I even bother? This is a web developer’s job. All I wanna do is crunch data and build models. But I’m glad I figured it out with Cursor powered by GPT-4.
+
+I’m very looking forward to the time when my niece grows up and be like: how did y’all tolerate dumb software and/or services for so long!? Like, why do companies deploy chatbots whose only purpose seems to suck you into frustration and automated phone recordings so you don’t ever think about calling them ever again? Once you’ve had a taste of intelligent systems that get back to you right away with a good enough answer, it’s hard not to compare every human service agent you interact with versus that.
+
+I’ve been trying to optimise my coding workflow for a while now - my grudging default was just having a ChatGPT window side-by-side with Visual Studio Code but it’s not the most reliable cookie in the world. I hate having to repeat myself, I hate it when the A.I. forgets my context, between pulling my hair out and banging the keyboard when it gets lazy I usually fall on the latter, and then when 1 conversation gets too extended it becomes really slow, there’s random weird errors on the UI/consumer front every now and then and worst of all are the rate limits. Omg the rate limits. So I’ve been trying to find a better alternative.
+
+I skipped GitHub Copilot cause I didn’t see much recommendations online, also it didn’t seem to allow you to chat with the codebase which I really liked, so I tried out Gemini Advanced, some local models on LM Studio, using VSCode with Continue and so forth but GPT-4 still has the best in-class capability to me, Continue with LM Studio is just very clunky so I never used it all that much… Until a speaker at an event I went to recently mentioned Cursor which was 1 of those names that came up but I hadn’t tried before so I decided to give it a go and I think I have seen a brief glimpse of how future software and services ought to be built - as A.I.-native products with data as a first-class citizen. It just feels and works so much better than trying to retrofit things into an existing workflow.
+
+Kudos to Cursor I was finally able to complete an onboarding and user creation feature over WhatsApp with a stateless design powered by Firestore and FastAPI. I am using the same underlying model but the problem was excruciatingly to resolve with my default setup and I was about to give it up altogether. There’s a few things that stood out to me that feels pretty A.I.-native and attributable for why I was able to do things on Cursor that would have left me going nowhere on all those other tools and processes that I had tried as below:
+
+-   Debugging with ReAct
+    
+    -   This to me was a killer feature that got me sold right away, it was extremely powerful for my own learning just to be able to watch the A.I. think, act and observe in real-time. I think often times when we use A.I. ourselves we’re limited by our own knowledge and imagination, so seeing A.I. take a piece of instruction and search through a space of solutions is absolutely fascinating and great for meta-learning about the kind of mental models and primitives I’d need for my own software engineering.
+        
+-   Codebase indexing
+    
+-   In-context generation and replacements
+    
+-   Truncation/treatment of extended text chunks
+    
+-   Up-to-date code libraries with access to the internet
+    
+
+Building A.I.-native products and experiences with data as a first-class citizen to me feels like software eating the world on parallelisable steroids multiplied by data to the power of an exponent; maybe that’s why everything was so slow and impossible for so long, and suddenly it’s everything everywhere all at once. It’s also really interesting how a lot of these is old architecture, ideas from decades ago, it’s just that we’ve finally gotten the compute and internet-size data to run them on now. All the foundations, building blocks, data and infrastructure was in Google yet they’re such a laggard in terms of public perception so far. It’s a completely new paradigm so it’s just this strange new world where everyone old and young is learning as they build forwards into the future. Everything is moving so fast and it’s just X -> ŷ with a varying number of layers in between - I find that so, so fascinating. Can’t wait to sit with probability, statistics and just A.I. in Tibet for a decent bit in April.
+
+Old habits die hard so I expect many of today’s giants to live long and prosper as they slap A.I. into their systems. But I can’t wait to live in an A.I.-native world with data as first-class citizens. Once that primitive is possible, it’s just stupid not to build software and/or services that will get better with more user data, right? This [A.I. cold call agents](https://www.youtube.com/watch?v=WCYf2Agml-s) and [music-making](https://app.suno.ai/song/94941829-e7fe-477b-8eb3-e8bf22c001ea/) is just WILD. Google’s supposed A.I. assistant that could make appointments for hairdressing which everyone forgot about so I supposed it didn’t work seemed like it happened only yesterday. Smartphones changed the way we consume information to a great degree for the most part, but most of work still involved some human processing inputs, running it through their internal computers, then produce output at the end. For the first time ever in human history - instead of encoding all that business logic into the embodied computer that is human labour, we can leverage compute which is a lot more scalable and reproducible. Maybe it’s worth reflecting on how - I wonder if there’s a name for this - but it almost feels like our bar of expectations for technology is set as high, and for humans we excuse ourselves all the time. I’m having a bad day. Not enough sleep. Things are rough. We don’t know what to do with our lives so we get by. Yet at the same time we expect technology to just work consistently and persistently. Which is totally reasonable except for the thing about writing software and building services powered by software is increasingly making me wonder: just how much of the underlying mechanics does one have to know in order to manage these tools effectively and at scale?
+
+I highly suspect that it is increasingly critical to have the right blend of technical expertise (by which I mean being able to sink your teeth into and reason about these systems at a pro level especially if you are in the business of leveraging intelligence for competitive advantage, though I’m undecided about is it good enough to know that machines learn from data to see patterns and predict or like be able to write your own loss functions if you needed to; cause it’s like how does one form good intuitions about why they’re so darn good as prediction machines without knowledge of flexible functional forms, loss minimisation and backpropagation? Even knowledge of these does not necessarily lead to an ability to form better predictive models of the world and where progress is headed, so either you’ll have to know it or trust someone else with that role and you’ll be fighting with the world’s largest companies for that someone else I suppose), communication and leadership skills which simply means that reasoning and critical thinking is not going away anytime soon.
+
+At the end of the day, is it not a bit of a miracle, and the beauty of economics, capital and compute coming together that these bits and bytes over cables laid deep down in the oceans transmit so much and made so many things possible, and just work, even where governments and institutions sometimes fail? This is not to say that technology is a silver bullet or that the industry is not fraught with problems of course - this issue of access is something I talked about [here](https://erniesg.pubpub.org/pub/4nrd812x/) - but I just wanna soak here in the warm glow of A.I. for a brief moment. :)
+
+I hope to build something of value in this space with my time too. It’s just one of those things in life where it’s like if it works and I’m lucky enough I could make a lot of money, if it doesn’t I’d have enjoyed myself tremendously anyway so why not!?
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/161hmmds](https://erniesg.pubpub.org/pub/161hmmds).*

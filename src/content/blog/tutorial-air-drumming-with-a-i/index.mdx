@@ -1,0 +1,108 @@
+---
+title: "Tutorial: Air drumming with A.I."
+description: "And some thoughts on how a marriage between A.I. and neural audio synthesis and DJ-ing and Taylor Swift and shiny new toys (Erae II) could look like"
+date: 2024-03-19
+authors: ["erniesg"]
+draft: false
+---
+
+I have been posting videos about my explorations in A.I. for months now as a way to catalogue my learning, so it’s really nice that people are curious enough to ask me how it’s done for the first time! 😊
+
+I built a script to “air drum” with a closed first, playing this generated sound from a RAVE model I had trained on Malay drums as a little time-boxed experiment - it was like one of those silly, stupid little things you’d build just cause you can so I’m super pleased that people are liking it than all my previous posts about A.I. combined. Maybe I have been using Instagram wrong, lol.
+
+<iframe alt="Air drum with a closed fist" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Air drum with a closed fist
+
+# Getting Started
+
+Anyway, this was coded in the Godfather of all A.I. apps - Python. When it comes to Python, dependency management is inversely proportional to the human-friendliness of the language. You’ll need to install Python, know how to do `pip install` and run a Python script from the command line in order to follow this tutorial. The code itself is just 115 lines that I wrote by “pair programming” with ChatGPT as usual, lol.
+
+Here’s my system config and package versions:
+
+-   Apple M2 Max
+    
+-   `Python 3.10.6`
+    
+-   `mediapipe 0.10.9`
+    
+-   `pygame 2.5.2`
+    
+
+The video below is not so much a tutorial as an explainer of the thinking process and logic decomposition that went into building the demo - which are a lot more valuable and important for transferability to other technical tasks anyway. If you know what ingredients you’ll need to bring to the table, and can instruct A.I. clearly on how to do what you want it to do step-by-step, you can just sit back while code gets generated for you which you’ll need to know how to run and debug, of course.
+
+<iframe alt="Tutorial: Air Drum With A.I." src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Tutorial: Air Drum With A.I.
+
+# 114 Lines of Code
+
+Note: You’ll need to place the [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer) and the .mp3 file you want to play in the same directory as the script or update your paths. The sound file I used was basically audio generated from [a RAVE model](https://github.com/acids-ircam/RAVE) I had trained on Malay drums. I’m planning to make a tutorial on how you can do your own training with free Google CoLab notebooks as well so stay tuned!
+
+```python
+import mediapipe as mp
+import cv2
+import pygame
+import time
+
+mp_drawing = mp.solutions.drawing_utils
+mp_hands = mp.solutions.hands
+
+# For webcam input:
+hands = mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+last_sound_time = 0  # Tracks when the sound was last played
+sound_cooldown = 2  # Cooldown in seconds
+
+pygame.mixer.init()
+sound = pygame.mixer.Sound('sample_out.mp3')
+
+BaseOptions = mp.tasks.BaseOptions
+GestureRecognizer = mp.tasks.vision.GestureRecognizer
+GestureRecognizerOptions = mp.tasks.vision.GestureRecognizerOptions
+GestureRecognizerResult = mp.tasks.vision.GestureRecognizerResult
+VisionRunningMode = mp.tasks.vision.RunningMode
+
+# Function to draw hand landmarks on the frame
+def draw_hand_landmarks(frame, landmarks):
+    # Assuming landmarks is a list of landmarks with x, y, z coordinates normalized to the image size
+    for landmark in landmarks:
+        x = int(landmark.x * frame.shape[1])
+        y = int(landmark.y * frame.shape[0])
+        cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+
+# Create a gesture recognizer instance with the live stream mode:
+def print_result(result: GestureRecognizerResult, output_image: mp.Image, timestamp_ms: int):
+    print('gesture recognition result: {}'.format(result))
+    handle_gesture(result)
+```
+
+I removed `numpy` since it wasn’t used; also exiting the loop by pressing `q` doesn’t seem to work. I usually just terminate the script from my command line directly.
+
+This is also available in my [GitHub repository](https://github.com/erniesg/berlayar/blob/openai_migration_backup/demos/sound/showcase.py) where I try to post and share my code as regularly as I can so do follow me there if you’d like to be kept updated on what I am working on!
+
+# Inspiration
+
+I was inspired to work on this by Antoine’s (creator of RAVE) work and just wanted to explore the idea of music-making in the air. ;) Because WHY NOT AIR DRUM!!! It looks sooooo cool and 800+ likes on Instagram agrees!
+
+# How I Built it
+
+Once I had that thought, I basically went through the [`hand_osc` repository](https://github.com/caillonantoine/hand_osc) and focused on implementing something minimal that will allow me to try what’s possible without spending too much time on it. So after an evening of scrolling, chatting with ChatGPT, debugging and providing clearer instructions - I ended up with this.
+
+The biggest hurdle came from how outdated the `mediapipe` code in GPT-4 was, so I had to read the documentation properly, give A.I. examples and debug as I go along. It’s obviously a lot more painful than as described above. But as I like to say, building with A.I. is so torturously fun.
+
+# What’s Next
+
+Immediately after realising what is possible and streaming Taylor Swift’s concert on Disney+, I just feel like: it would be so cool to **DJ on her music with A.I. and Embodme Erae II**. I really enjoyed that transition from Don’t Blame Me to Look What You Made Me Do - it was as smooth as butter and when I wikipedia-ed DJing and it started talking about how it’s blending tracks together by aligning beats I’m just like: I don’t know anything about music but this “music” I can do with A.I. This sounds like a wonderful job for A.I.
+
+With `time` on your x-axis and `bpm` on your y-axis, it’s as if one can plot the evolution of energy in her concert over time and wouldn’t it be cool to have A.I. pick and cross-fade into the next song for you!?
+
+In fact, we can convert all that sound input from the audience into midi and neural audio synthesis over it in real-time and incorporate it into a performance! Of course Spotify [already has a library](https://basicpitch.spotify.com/) for you to do that.
+
+If you don’t want to DJ and just play, there are ways too. #ideas
+
+It would be super fun to try these ideas out when I get around to them, but I expect I should be updating about model merging and fine-tuning LLMs next!
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q).*

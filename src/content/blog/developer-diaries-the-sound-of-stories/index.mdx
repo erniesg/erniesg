@@ -1,0 +1,70 @@
+---
+title: "Developer Diaries: The Sound of Stories"
+description: "A \"lazy completion\" of an interactive storytelling experience that is both structured and dynamic"
+date: 2024-02-13
+authors: ["erniesg"]
+draft: false
+---
+
+I bring to you, the first “lazy completion” of The Sound of Stories in which I’ve managed to generate an interactive story that respects a narrative structure, while responding flexibly to user inputs.
+
+<iframe alt="The Sound of Stories WIP Demo" src="https://www.youtube.com/embed/ZKlHXE8_TOc?feature=oembed" aria-describedby="n07qdehbcig-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+The Sound of Stories WIP Demo
+
+Completing that pass through is something that’s been bothering me since our first presentation to the public as it was easy to get the initial generation going, but what bothered me was: how do I not only remember the user’s inputs, but incorporate it logically within the constraints of a structured narration that has a definite start and end? One framing of this problem could be that of a discrete, infinite distribution which sounds exciting to my geek mind, but is not helpful at all in terms of getting me started on how to solve it exactly.
+
+What helped in the end was talking the problem through with another human to clarify my thinking - in particular, we were talking about how my problem is similar to the D&D problem and Jia Qi reminded me about checkpoints, games like Baldur’s Gate offers you an array of choice in achieving certain objectives, yes, but you still need to reach a definite checkpoint. So I sat with the structure of the narrative, started to think about how I could decompose it into checkpoints and turned it into a `.json` like the below:
+
+```json
+{
+  "title": "The Boy Who Wanted a Drum – by Kamini Ramachandran",
+  "story_details": {
+    "protagonist_gender": "male",
+    "protagonist_name": "the boy",
+    "story_setting": "a small hut"
+  },
+  "checkpoints": [
+    {
+      "id": "intro",
+      "text": "Once upon a time, there lived a poor woman and her little son. They lived in a small hut together. The little boy wanted a drum. A drum he could tap, beat, and play. Ta Di Gin A Thom! I want a drum! The boy kept asking his mother for a drum, all day and all night long. And so it was, that the next morning, the woman went to the market to sell the cloth that she had woven.",
+      "choice": "drum"
+    },
+    {
+      "id": "encounter_0",
+      "text": "And when she had sold all the cloth, she realised that the coins were not enough to buy her son a drum. As she walked on her way back home, she saw a stick. She picked up the stick and took it home. Ta Di Gin A Thom! I want a drum! Son, take this stick and pretend that it is a drum. The boy took the stick, and he tapped it on the ground (sound effects) He tapped it on the water pot (sound effects) He tapped it on the door (sound effect) He was delighted by the sound it made!",
+      "choice": "continue"
+    },
+    {
+      "id": "encounter_1",
+      "text": "Ta Di Gin A Thom! I have a stick! On the way he met an old woman looking very sad. She sat beside a small wood stove trying to fan the flames. Grandmother, grandmother, why do you look so sad? I have no wood to make the fire to cook the chapatti. The boy remembered his stick! He gave it to the old woman who used the stick to start the fire to cook some chapati. Thank you boy! Here, take some chapatis with you, I have no need for so many.",
+      "gift": "chapati"
+    },
+    ...
+```
+
+The other thing that was very useful was adhering to my own mental note of: **do not overcomplicate** this, let’s start to hack away at it with the simplest possible solution first, we can always layer on the difficulty later… So instead of going crazy with agents (what if I build a team of hierarchal agents with the roles of a `director`, a `scriptwriter` and an `assistant`!?), I managed to deliver a very dumb, “lazy completion” of the story with 2 LLM chains, simple conversational memory and a simple `if` check:
+
+```text
+if next_segment_id < len(story_data["checkpoints"]):
+# then you continue the story and use memory to-date as well as the next segment as context
+```
+
+Pats self on back for taking my own advice on not overly complicating development at this stage.
+
+Aside from that, here are some interesting things I’ve learned along the way:
+
+-   **Dependency management**: I think I’ve finally figured out how `pyenv`, `virtualenv` and `poetry` all fit together to instantiate a directory-specific development environment. So `pyenv` is for managing Python versions, `virtualenv` to create the isolated environment, and `poetry` for managing package dependencies and eventual distribution.
+    
+-   **Prompt “engineering”**: 80% of my time is spent on just trying to find the optimal prompts to use. I think all LLM-based development will benefit tremendously from just iterating on the [best prompts to use](https://platform.openai.com/playground) from the get-go, before you start working on anything else. I find this to be very boring, and I see this as a potential professional path for linguistic majors that I’d love to collaborate with in the future to outsource this part of the development to indeed.
+    
+-   **Deterministic vs. probabilistic systems**: While there are the usual hyperparameters that can be tuned in these systems, I always get a little queasy when I hear people say that they want to show results only with absolute certainty. Fact of the matter is that nothing in life has an absolute 100% certainty apart from the reality of our existence in the moment, and for everything else we may have our expectations which usually turn out to be the case, but the fact remains that there are very little things in life that has a probability of 1. A lot of the iteration I had to do simply centered around the `temperature` parameter and there, at some point, I just had to throw my hands up and accept that stories cannot be reproduced 100% reliably, even with the same inputs. This makes me think about the role of managers and QA/QC in human organisations, about how we try to manage the variance of human inputs and outputs - maybe there’s something we can learn there to transpose into creating reliable A.I. systems?
+    
+-   **Need for diversity in A.I.**: While I was quite pleasantly surprised by the short snippet of Kamini’s generated voice in Mandarin (inferred from an instant voice clone based on about 1 minute of her voice recording in English over a handphone) initially, it quickly became obvious that the quality of the generation suffers tremendously when the generated sequences are longer, i.e. the Mandarin voice output gets more tones wrong, is speaking at weird speeds, does not break up words properly, etc. Same goes for text generation. It was evident that GPT-4 is doing a naïve, direct English-to-Mandarin generation of the story in text for the most part. Needless to say, this has really helped me to understand and to see why more diverse, and more specific LLM models are necessary. I also started thinking about what extra dominance English as a language will come to have on the internet, given that it is so much easier to churn out English content because the most prominent models are all tuned around this. It leaves me feeling a little sad if my mother tongue were to further diminish in the future because of this, because when you lose a language it’s like you are losing another way, another window to look at the world? But then when I start to think about the quality of the input data that could be used to train a Chinese LLM model, hurhur. The point is: we cannot talk about digital inclusion and diversity in A.I. without talking about what investments are we making to make more datasets available for training? Yes bias is a problem. But what is being done to digitalise more culturally diverse and representative datasets for training? Then people start to talk about fair payment for input data training, opting out, etc. All of which can stand to benefit from just better understanding the mechanics and processes of A.I. training for one to very quickly realise how unpractical or misinformed some notions can be but anyway, that’s a topic for another time I guess.
+    
+
+Back to The Sound of Stories, I think there’s something interesting that can be said about an infinite game of a story that is simply never-ending versus what I’ve done here with a definite start and end, as some kind of artistic statement or intention blah blah blah - that’s a lesson or a parallel to be drawn here against life itself; but this will be on the backburner as I turn my attention next to training VAE models for neural audio synthesis that I hope to incorporate into the experience directly. Stay tuned! ;)
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/g6zjtf2s](https://erniesg.pubpub.org/pub/g6zjtf2s).*

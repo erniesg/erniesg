@@ -21,7 +21,35 @@ import icon from 'astro-icon'
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://astro-erudite.vercel.app',
+  site: 'https://ernie.sg',
+  redirects: {
+    // PubPub legacy slugs → new readable slugs (migrated 2026-05)
+    '/blog/161hmmds': '/blog/a-i-for-humans-building-a-i-native-products-and-treating-data',
+    '/blog/1bt4uylj': '/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content-zh',
+    '/blog/1eogiw8s': '/blog/developer-diaries-deep-learning-in-data-poor-regimes-i',
+    '/blog/33ietk6v': '/blog/sound-before-symbols-on-human-creativity-and-intelligence',
+    '/blog/4nrd812x': '/blog/a-i-for-humans-be-like-its-just-x',
+    '/blog/6p2l328i': '/blog/developer-diaries-were-all-bayesian-inference-machines-now',
+    '/blog/7b4nk0ao': '/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet',
+    '/blog/7t92wlwf': '/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china',
+    '/blog/9hq39jmi': '/blog/sound-before-symbols-on-human-creativity-and-intelligence-zh',
+    '/blog/9tss8q7y': '/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human',
+    '/blog/ap22r9st': '/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human-zh',
+    '/blog/ayldd7lx': '/blog/sight-before-sound-seeing-and-searching-with-machines-zh',
+    '/blog/eog11k9z': '/blog/a-i-art-and-anti-discrimination',
+    '/blog/ettc9fqh': '/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums',
+    '/blog/g6zjtf2s': '/blog/developer-diaries-the-sound-of-stories',
+    '/blog/gcdzise9': '/blog/mlops-for-museums',
+    '/blog/hnn0p7d9': '/blog/sight-before-sound-seeing-and-searching-with-machines',
+    '/blog/i8a0vp8z': '/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead',
+    '/blog/jqeeg1f8': '/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans',
+    '/blog/r2map92q': '/blog/tutorial-air-drumming-with-a-i',
+    '/blog/r4a1ex9r': '/blog/developer-diaries-digitalise-any-instrument-and-start-playing',
+    '/blog/wpnv7rhs': '/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack',
+    '/blog/xlkdc79p': '/blog/demo-the-sound-of-stories',
+    '/blog/z40gi88t': '/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content',
+    '/blog/zc0zx741': '/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2',
+  },
   integrations: [
     tailwind({
       applyBaseStyles: false,

@@ -125,7 +125,7 @@ export const STATIC_TRANSLATIONS: Record<
     'ui.scrollToTop': '回到顶部',
     'footer.rights': '版权所有。',
     'footer.madeWith': '用心制作：',
-    'home.eyebrow': 'Chen Enjiao 的主页',
+    'home.eyebrow': '陈恩娇的主页',
     'home.welcome': '欢迎！',
     'home.intro':
       '关于在真实世界中构建 AI 的随笔与实验：把模糊想法和复杂工作流变成有用的系统和可玩的工具，也顺手记下沿途遇到的其他一切。',
@@ -147,7 +147,7 @@ export const STATIC_TRANSLATIONS: Record<
       '我持续关注的一些关键词包括：多模态人工智能、生成式智能体和开源。闲暇时，我喜欢运动、阅读、学习，或者单纯旅行。下面是我的一些项目。',
     'about.featuredProjects': '精选项目',
     'author.erniesg.bio':
-      '陈恩姣目前是 SPH Media Limited 的高级 AI 工程师（自 2026 年 4 月起）。此前曾任 Tech in Asia 编辑部 AI 与自动化负责人。热衷于多语言、多模态 AI，以及构建有实际影响力的解决方案。曾创办 Code for Asia（2016-2023），推动技术知识民主化。目前正在修读 MITx DEDP，并探索 AI、文化与经济之间的交汇。',
+      '陈恩娇目前是 SPH Media Limited 的高级 AI 工程师（自 2026 年 4 月起）。此前曾任 Tech in Asia 编辑部 AI 与自动化负责人。热衷于多语言、多模态 AI，以及构建有实际影响力的解决方案。曾创办 Code for Asia（2016-2023），推动技术知识民主化。目前正在修读 MITx DEDP，并探索 AI、文化与经济之间的交汇。',
     'project.neural-art-search.description':
       '面向新加坡国家美术馆馆藏的神经搜索系统，让用户通过先进语义搜索能力更直观地发现艺术作品。',
     'project.storylabs.description':

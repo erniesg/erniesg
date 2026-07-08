@@ -10,7 +10,10 @@ type Props = {
 }
 
 const { project } = Astro.props
+const nameKey = `project.${project.id}.name`
 const descriptionKey = `project.${project.id}.description`
+const fallbackName = getStaticTranslation(nameKey, 'en')
+const displayName = fallbackName === nameKey ? project.data.name : fallbackName
 ---
 
 <div
@@ -26,7 +29,8 @@ const descriptionKey = `project.${project.id}.description`
         <div class="max-w-[200px] sm:flex-shrink-0">
           <Image
             src={project.data.image}
-            alt={project.data.name}
+            alt={displayName}
+            data-i18n-key={nameKey}
             width={1200}
             height={630}
             class="object-cover"
@@ -36,7 +40,7 @@ const descriptionKey = `project.${project.id}.description`
     }
     <div class="flex-grow">
       <h3 class="mb-1 text-lg font-semibold">
-        {project.data.name}
+        <span data-i18n-key={nameKey}>{displayName}</span>
       </h3>
       <p
         class="mb-2 text-sm text-muted-foreground"

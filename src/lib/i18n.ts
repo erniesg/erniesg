@@ -94,10 +94,13 @@ export const STATIC_TRANSLATIONS: Record<
     'about.featuredProjects': 'Featured Projects',
     'author.erniesg.bio':
       'Senior AI Engineer at SPH Media Limited (since April 2026). Previously Editorial AI and Automation Lead at Tech in Asia. Passionate about multilingualism, multimodal AI, and building impactful solutions. Founded Code for Asia (2016-2023) to democratize tech knowledge. Currently pursuing MITx DEDP, exploring the intersection of AI, culture and economics.',
+    'project.neural-art-search.name': 'Neural Art Search',
     'project.neural-art-search.description':
       'A neural search system for artworks on the National Gallery Singapore collection. Enables intuitive discovery of art pieces through advanced semantic search capabilities.',
+    'project.storylabs.name': 'StoryLabs',
     'project.storylabs.description':
       "A full-stack, multimedia story generator and reader that personalizes content to a child's diverse interests.",
+    'project.the-sound-of-stories.name': 'The Sound of Stories',
     'project.the-sound-of-stories.description':
       'Featured at the Esplanade as part of National Arts Council’s Arts x Tech Lab 2023/24, this bilingual storyteller personalizes "The Boy and the Drum" for each reader on WhatsApp.',
     '404.title': '404',
@@ -148,10 +151,13 @@ export const STATIC_TRANSLATIONS: Record<
     'about.featuredProjects': '精选项目',
     'author.erniesg.bio':
       '陈恩娇目前是 SPH Media Limited 的高级 AI 工程师（自 2026 年 4 月起）。此前曾任 Tech in Asia 编辑部 AI 与自动化负责人。热衷于多语言、多模态 AI，以及构建有实际影响力的解决方案。曾创办 Code for Asia（2016-2023），推动技术知识民主化。目前正在修读 MITx DEDP，并探索 AI、文化与经济之间的交汇。',
+    'project.neural-art-search.name': '神经艺术搜索 (Neural Art Search)',
     'project.neural-art-search.description':
       '面向新加坡国家美术馆馆藏的神经搜索系统，让用户通过先进语义搜索能力更直观地发现艺术作品。',
+    'project.storylabs.name': '故事实验室 (StoryLabs)',
     'project.storylabs.description':
       '一个全栈多媒体故事生成器和阅读器，会根据孩子多元的兴趣个性化生成内容。',
+    'project.the-sound-of-stories.name': '故事之声 (The Sound of Stories)',
     'project.the-sound-of-stories.description':
       '作为 National Arts Council Arts x Tech Lab 2023/24 的一部分在滨海艺术中心亮相，这个双语讲故事工具会为 WhatsApp 上的每位读者个性化改写《男孩与鼓》。',
     '404.title': '404',
@@ -202,10 +208,13 @@ export const STATIC_TRANSLATIONS: Record<
     'about.featuredProjects': '주요 프로젝트',
     'author.erniesg.bio':
       'Chen Enjiao는 SPH Media Limited의 시니어 AI 엔지니어입니다(2026년 4월부터). 이전에는 Tech in Asia에서 Editorial AI and Automation Lead로 일했습니다. 다국어, 멀티모달 AI, 영향력 있는 솔루션 구축에 관심이 많습니다. 기술 지식의 민주화를 위해 Code for Asia(2016-2023)를 창립했으며, 현재 MITx DEDP를 이수하며 AI, 문화, 경제의 교차점을 탐구하고 있습니다.',
+    'project.neural-art-search.name': '신경 예술 검색 (Neural Art Search)',
     'project.neural-art-search.description':
       'National Gallery Singapore 컬렉션의 작품을 위한 신경 검색 시스템입니다. 고급 의미 검색 기능으로 예술 작품을 직관적으로 발견할 수 있게 합니다.',
+    'project.storylabs.name': '이야기 연구소 (StoryLabs)',
     'project.storylabs.description':
       '아이의 다양한 관심사에 맞춰 콘텐츠를 개인화하는 풀스택 멀티미디어 이야기 생성기이자 리더입니다.',
+    'project.the-sound-of-stories.name': '이야기의 소리 (The Sound of Stories)',
     'project.the-sound-of-stories.description':
       'National Arts Council의 Arts x Tech Lab 2023/24 일부로 Esplanade에서 소개된 이 이중언어 스토리텔러는 WhatsApp에서 각 독자에게 맞춰 "The Boy and the Drum"을 개인화합니다.',
     '404.title': '404',
@@ -256,10 +265,13 @@ export const STATIC_TRANSLATIONS: Record<
     'about.featuredProjects': '注目プロジェクト',
     'author.erniesg.bio':
       'Chen Enjiao は SPH Media Limited のシニア AI エンジニアです（2026年4月より）。以前は Tech in Asia で Editorial AI and Automation Lead を務めました。多言語性、マルチモーダル AI、実際に影響を生むソリューション構築に関心があります。技術知識の民主化を目指して Code for Asia（2016-2023）を創設し、現在は MITx DEDP を履修しながら AI、文化、経済の交差点を探求しています。',
+    'project.neural-art-search.name': 'ニューラルアート検索 (Neural Art Search)',
     'project.neural-art-search.description':
       'National Gallery Singapore のコレクション作品のためのニューラル検索システムです。高度な意味検索によって、作品を直感的に発見できます。',
+    'project.storylabs.name': 'ストーリーラボ (StoryLabs)',
     'project.storylabs.description':
       '子どもの多様な興味に合わせてコンテンツを個別化する、フルスタックのマルチメディア物語生成・読書ツールです。',
+    'project.the-sound-of-stories.name': '物語の音 (The Sound of Stories)',
     'project.the-sound-of-stories.description':
       'National Arts Council の Arts x Tech Lab 2023/24 の一環として Esplanade で紹介されたこのバイリンガル storyteller は、WhatsApp 上で読者ごとに "The Boy and the Drum" を個別化します。',
     '404.title': '404',

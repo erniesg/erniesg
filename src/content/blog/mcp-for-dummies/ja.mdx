@@ -1,0 +1,105 @@
+---
+title: モデルコンテキストプロトコル（MCP）入門
+description: MCP が単なる API ではなく、AI 駆動アプリケーション構築の未来である理由と始め方を、実例と平易な説明で理解する
+date: 2025-04-09
+tags:
+  - MCP
+  - AI
+  - API
+  - engineering
+  - tools
+authors:
+  - erniesg
+image: ./mcp-dummies.png
+lang: "ja"
+translationKey: "mcp-for-dummies"
+---
+
+# モデルコンテキストプロトコル（MCP）入門、あるいは、なぜただの API ではないのか？
+
+私と同じように、MCP って API と同じようなものでは？と思ったことがあるなら、この投稿は MCP が怠け者の開発者にとってなぜ役に立つのかを明らかにする。Lorong AI が主催した 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9) での Gang Rui の共有に触発され、主要な要点とエンドユーザーが MCP を使う方法を整理した。
+
+## TLDR
+
+MCP はビジネスロジック（ホスト）とツール実行（サーバー）を分離し、クライアントを標準化された橋渡しとして置くことで、「何をするか」と「どうするか」を切り分ける。ホストはユーザーとのやり取りと AI 推論を管理し、サーバーは機能を再利用可能なインターフェースとして公開する。標準化によって、MCP はエージェント型 AI がシステムを横断して機能を動的に発見し、編成し、組み合わせることを可能にする。
+
+## 問題：開発労力の組み合わせ爆発
+
+病院の医師向け AI アプリケーションからメールを送信したいとしよう。MCP 以前なら、メール API を呼び出す統合ロジックを書き、レスポンスを処理し、それをモデルに接続し、ビジネスロジックを貼り合わせる必要があった。今度は同じメール API を使って、患者への電話での予約リマインダーや、EC セール通知のような別のアプリにも対応すると想像してほしい。MCP がなければ、複数のクライアントと利用場面で同じ統合ロジックを再実装することになる。メール API に破壊的変更が入ったら？あちこちをリファクタリングするのを楽しめるといい。😤
+
+MCP ✨ は統合の複雑さという二次的な問題に対する線形の解法だ。ユーザーインターフェースに対して React コンポーネントがしたことに似ている。モジュール式で、宣言的で、組み合わせ可能だ。
+
+## MCP とは？
+
+USB-C が複数のケーブルやポートの必要性をなくしたように、MCP は AI アプリケーションが外部ツールやデータソースとやり取りするための普遍的な方法を提供する。[主要な構成要素](https://modelcontextprotocol.io/docs/concepts/architecture) は次の通り：
+
+- 💻 **MCP ホスト**：リクエストを開始し、ユーザーとのやり取りを処理する AI アプリケーション。たとえば [Claude Desktop](https://claude.ai/download)。ホストはクライアントを通じて複数の MCP サーバーに接続できる。
+- 🔌 **MCP クライアント**：ホストに組み込まれており、サーバーとのやり取りを担う。各クライアントは単一の MCP サーバーに接続する。
+- ⚙️ **MCP サーバー**：クライアントが使うツール、プロンプト、リソースを公開する。
+
+誰でも自分のホスト、クライアント、サーバーを書けるし、[Smithery.ai](https://smithery.ai) にある 4200 以上の既存機能にそのまま接続することもできる。
+
+## 仕組み
+
+ユーザーが AI アプリケーションを起動する → リクエストを出す（例：「誰々に予約を思い出させて」）→ MCP クライアントが適切なツール（`send_email` など）と十分な文脈を持っているか確認する → MCP サーバー経由でツールを呼び出す。このサーバーはローカルで動く小さなプロセス（`stdio` 経由）でも、リモート（[HTTP Streamable](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) 経由、あるいは独自方式）でもよい → サーバーがリクエストを処理して結果を返す → AI がそれを応答に含める → ユーザーが最終的な返答を見る。
+
+内部の仕組みをより詳しく知りたい場合は、[アーキテクチャ仕様](https://modelcontextprotocol.io/specification/2025-03-26/architecture/index)を参照。
+
+## なぜ MCP？
+
+MCP は**関心の分離**を強制し、**再利用性**を促進し、**保守**を大幅に簡単にする。
+
+### 魔法：AI 医療アプリケーションの例
+
+現実世界では、ユーザーの需要はすぐに増え、サポートすべきプラットフォームも増えていく。
+
+**メール**、**SMS**、**アプリ内ポータルメッセージ**で予約リマインダーを送る AI 駆動の医療アプリケーションを作っているとしよう。
+
+MCP なら次のように構成できる：
+
+- **プラットフォームごとに 1 つのホスト**（例：ウェブ、モバイル）
+- **各ホストの中に 3 つのクライアント** - チャネルごとに 1 つ：メール、SMS、アプリ内メッセージ
+- **各クライアントは実際のロジックを扱う MCP サーバーに 1:1 で接続**
+
+次に WhatsApp をサポートしたい？既存のものがあれば再利用し、なければ新しいサーバーを書けばよい。それはすぐにすべてのホストで利用可能になり、重複した作業は不要だ。
+
+## API を超えて
+
+API は MCP と比べると、主に 2 つの点で制限されている：
+
+1. 機能 vs. **アーキテクチャ** - API は単一アプリケーション内で機能を公開する。MCP はアプリケーションを横断して機能するアーキテクチャを提供する。一度作ればどこでも使える。
+2. 固定型 vs. **適応型** - API はハードコードされたトリガーを使う。MCP は AI が文脈に基づいてどのツールを使うか判断できるため、柔軟で知的なワークフローを可能にする。
+
+MCP は API をエージェントがすぐ使える機能へ変える。エージェントが必要に応じて API の上で自律的に推論し、組み合わせられるようにするのだ。これはサービスを呼ぶことと、スケールした環境で知的で柔軟なワークフローを編成することの違いだ。ウェブ開発者が静的 HTML から再利用可能なコンポーネントへ移ったように、MCP は AI エンジニアが脆く固定された統合から、ユーザーのニーズにリアルタイムで応答する動的で文脈を理解するエージェント型ソフトウェアへ移ることを助ける。🚀
+
+## Anthropic を超えて
+
+Anthropic によって導入された MCP は、主要な大規模言語モデル企業とコミュニティの貢献に支えられて急速に成長している。
+
+* **OpenAI** は [Agents SDK](https://openai.github.io/openai-agents-python/mcp/) で MCP を公式サポートしており、OpenAI API と ChatGPT デスクトップアプリも[近日対応予定](https://x.com/OpenAIDevs/status/1904957755829481737)
+* **Microsoft** は MCP の[公式 C# SDK](https://github.com/modelcontextprotocol/csharp-sdk) を開発し、このプロトコルを Copilot Studio、VS Code の GitHub Copilot エージェントモード、Semantic Kernel に統合した
+* [GitHub](https://github.com/modelcontextprotocol/servers)、[Slack](https://modelcontextprotocol.io/clients)、[Cloudflare](https://developers.cloudflare.com/agents/model-context-protocol/) などの主要プラットフォームも公式 MCP 接続を追加した
+* 多くの公式言語 SDK がある：[Python](https://github.com/modelcontextprotocol/python-sdk) (Anthropic)、[TypeScript](https://github.com/modelcontextprotocol/typescript-sdk) (Anthropic)、[Java](https://github.com/modelcontextprotocol/java-sdk) (Spring AI)、[C#](https://github.com/modelcontextprotocol/csharp-sdk) (Microsoft)、[Kotlin](https://github.com/modelcontextprotocol/kotlin-sdk) (JetBrains)、[Swift](https://github.com/modelcontextprotocol/swift-sdk) (Loopwork AI)、[Rust](https://github.com/modelcontextprotocol/rust-sdk) (Anthropic)
+* OAuth 2.1 を使う[認可仕様](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization)が 3 月 26 日にリリースされた
+
+エコシステムはまだ初期段階にあり、最速で試す方法はホストをツールに自分で接続してみることだ。
+
+## 制約と可能性
+
+通常の大規模言語モデルに関する注意点は当てはまる。いくつかサーバーをインストールして試した時点で、Obsidian のものは失敗していた。MCP はまだ実験的で、ほとんどはローカルで動くものだが、私はこれを浮かび上がりつつある未来の設計図と見ている。本当にモジュール式で、再帰的で、自己拡張できる AI ネイティブアプリケーションを作るための欠けていたピースだ。
+
+## 始め方
+
+ユーザーとして MCP を試すなら、次が一番簡単だった：
+
+1. **クライアントを入手する**：Claude Desktop をダウンロードする：[claude.ai/download](https://claude.ai/download)、または任意の[既存ホスト](https://modelcontextprotocol.io/clients)を使う。
+
+2. **依存関係を処理する**：まだ持っていなければ [Node.js](https://nodejs.org/en/download) をインストールする。
+
+3. **サーバーを探す**：[smithery.ai](https://smithery.ai) を見て、設定を任せる。
+
+## 次に何を作る？👩🏻‍💻
+
+MCP があれば、私のブログ執筆ワークフロー（現在は異なるデバイス上の Claude、Obsidian、ChatGPT に分散している）を、常に文脈を切り替える代わりに、単一で一貫した体験へ統合できる。
+
+次にまた API 統合を書きたくなったら思い出してほしい。MCP は一度書けばどこでも使えるようにし、本当に重要なこと、つまり優れた AI アプリケーションを作ることに集中させてくれる。では、あなたは次に何を作るだろうか？

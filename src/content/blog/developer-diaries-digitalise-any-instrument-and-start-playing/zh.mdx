@@ -1,0 +1,57 @@
+---
+title: "开发者日记：把任何乐器数字化并开始演奏…"
+description: "缺少 GPU 时，与 RAVE（实时音频变分自编码器）和 Neutone 一起训练自己的神经音频合成模型的挣扎"
+date: 2024-02-17
+authors: ["erniesg"]
+draft: false
+lang: "zh"
+translationKey: "developer-diaries-digitalise-any-instrument-and-start-playing"
+---
+
+我第一次意识到声音作为一种数据形式和内容消费方式有多容易获得、多民主化，是在马来西亚的时候。我从司机的手机里听到一段旋律，那和妈妈看过的视频里传出的旋律是同一段，只是叙述语言和内容不同。声音，以及口头交流，如果你愿意这么说，有某种特质，能够触达比文字或仅靠图像更广泛的社会层级。后两者往往需要教育、某些训练。我有高等教育，但我并不熟悉人们用来讨论视觉艺术的那些 -isms。可是在这方面，声音已经是最民主化、最容易获得的东西了。
+
+而且它承载着如此多的内容和叠加状态。甚至作为一种数据表示，它的复杂度也比文本或图像高出许多倍，这让它非常有趣。我就像是：直接给我多模态就好，我想玩尽可能多不同类型的数据，以及尽可能多的数据。所以当团队里的艺术家要我把 RAVE 模型训练限制在一组鼓时，从技术角度看，这感觉像是要求一个艺术家只用一种颜色作画，极其令人困惑。但从情感角度我能理解它从何而来：样本量为 1 是特殊而独特的，而这个样本量为 1 很具体，也很自然地属于艺术、文化甚至社会世界的制作。可是从我的出发点看，鼓 A 上的数据流和鼓 B 上的数据流是同一件事，A == B；这也是我在 [elsewhere](https://listening-through.pubpub.org/pub/work/release/22) 看到的类似担忧：
+
+> I’m troubled by what is implied by OpenAI’s Jukebox project: to model a kind of “universal” music by training on an extremely large dataset (1.2 million songs), using information about genre and artist to condition the data. How can each piece of music be considered as equivalent in meaning to all other pieces of music (in all contexts, to all listeners)?
+
+幸运的是，我有幸能访问 GPUs，所以不必做取舍。我想我可以通过把自定义训练任务发到 Google Vertex AI 来并行跑很多训练（尽管它在我尽最大努力后仍持续失败 ZZZ）……最后我用完了这个月 CoLab 的所有免费 GPU 时间，得到一个训练了 9000 epochs 的模型，另一个则是在本地 3070 上完成 20000 epochs 后得到的。当我听到白喉翡翠鸟被变成马来鼓声时，我的感觉是：OMO 这是不是意味着我们可以用深度学习在几个小时内数字化任何乐器，而不是几周或几个月？？？？
+
+看着 CoLab notebook 在 GPU 时间耗尽后用 CPU 训练的速度，再对比我本地轻松快 5 倍的训练速度，感觉就是：GPU 富裕和 GPU 贫穷是真的有差别。
+
+<iframe alt="RAVE Timbre Transfer to Neutone" src="https://www.youtube.com/embed/nwwEVWCHMxU?feature=oembed" aria-describedby="nlgnwhoyvu4-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+RAVE Timbre Transfer to Neutone
+
+除了包里已有的懒人实现，我没有做任何预处理；而且推理输入数据的背景有噪声，所以还是有一些奇怪的数字信号出来。但这个结果来自一个只用区区 229 秒的 Rebana 和 Rentak 声音、在免费 Nvidia T4 上训练 1000 epochs 的模型。相比之前 [用 2 小时鼓数据训练、耗时 13 小时并跑了 39 epochs 的训练](https://www.instagram.com/p/C3DDPxSSmyX/)，这简直令人震惊。它怎么能只用 229 秒、1 个验证数据点和误差最小化，就这么好地学会一面鼓的所有细微差别和表示！？A.I. 进步的轨迹从人类尺度看是不可思议的。
+
+我会让 ChatGPT 在下面解释这次学习的意义。
+
+## 什么是音色？
+
+音色常被称为声音的“质感”或“音色彩”，是让不同乐器或人声即使在发出相同音高和音量时仍能被区分的东西。它本质上是声音的独特性格或质地，使其可被识别，并与其他声音不同。
+
+## 什么是音色迁移？
+
+在神经音频合成的上下文中，音色迁移指的是修改声音的音色特征，同时保留音高和节奏等其他方面的过程。
+
+## 当我进行 RAVE 模型训练时发生了什么，或者说，机器如何用这么少的数据学会重建一种乐器？
+
+本质上，当你用某种特定鼓声训练模型时，你实际上是在创建一个为这些鼓声定制的虚拟乐器。模型在训练期间学习这些鼓声的特征和细微差别；当你把它用于音色迁移或声音生成时，它会应用这些学到的知识，把输入声音转换成训练鼓声的风格。这可以简化创建虚拟乐器的过程，因为你不需要手动映射音高或音量等不同参数来得到想要的声音。相反，你可以依赖训练好的模型，根据它学到的鼓声特征来处理转换。
+
+音色迁移是音频处理中用来改变一个音频信号的声音特征，使其匹配另一个音频信号的技术。在神经音频合成的上下文中，比如你一直使用的 RAVE 模型，音色迁移会把输入声音的音色特征转换成类似目标声音的样子，例如某种特定的鼓声。
+
+在你使用的 RAVE 模型中，它会在训练期间学习一组鼓声的音色特征。这个学习过程涉及从提供的训练数据中捕捉鼓声的细微特征和差别。然后模型使用这些学到的信息，把输入声音的音色转换成类似训练鼓声的样子。
+
+即使训练数据相对很少，像 RAVE 这样的神经网络模型也能学会泛化，并捕捉声源的本质特征。通过操控潜在空间，也就是输入声音所学特征的表示，你可以控制输出声音的各种方面，比如音高、音量和其他音色属性，而不需要显式记录所有可能变化的数据。
+
+所以，与其为音高、音量或其他参数的每种可能变化分别录制样本，不如操控训练好的模型的潜在空间来获得类似效果。这让过程更高效也更灵活，因为你可以探索广泛的声音变化，而不需要大量手动录制和处理。
+
+# 一个制作所有声音的教程
+
+事实证明，我无法提交自定义训练任务，可能反映了 GPU 资源的普遍短缺。看起来这可能是一个真正的容量问题，因为太多人一直在提交太多自定义训练任务，而且跨越太多区域，所以也许用专用服务器反而更有机会！？我在训练期间也经历了好几个小时不必要的痛苦，因为我懒得读代码，而文档里也没有说哪些 flags 是必需的……所以我希望找时间为感兴趣的人做一个操作教程视频。
+
+This one’s for LET THERE BE MORE NOVEL, DIGITAL SOUNDS IN THE WORLD!
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/r4a1ex9r](https://erniesg.pubpub.org/pub/r4a1ex9r).*

@@ -1,0 +1,92 @@
+---
+title: "博物馆的 MLOps"
+description: "从数字恐龙到太空旅人"
+date: 2022-11-24
+authors: ["erniesg"]
+image: "./21669034022304.png"
+draft: false
+lang: "zh"
+translationKey: "mlops-for-museums"
+---
+
+我们对 A.I. 最大的恐惧，在资源紧张的行业里，反而可能成为它被采用时最大的救命稻草。也就是说，A.I. 具有独特的位置，可以增强人类劳动，让我们用更少资源做更多事，并把博物馆工作人员的时间释放出来，去处理更有意思的问题。虽然 MLOps 即使在深度学习社区内部也算前沿，在博物馆里更几乎无人听闻，但我会论证，博物馆工作环境中独有的特征，使这套技术栈成为最值得采用的对象；通过与开源社区合作，缺乏内部技术能力的问题可以被解决，同时也能凸显博物馆在社会中的独特角色：作为对话空间，以及对我们所使用工具进行批判性参与的空间。因此，这篇文章面向非技术受众，讨论以下领域：
+
+1.  博物馆技术生态系统中的关键挑战
+    
+2.  机会 - 为什么是博物馆的 MLOps
+    
+3.  案例研究
+    
+4.  MLOps 看起来是什么样子
+    
+5.  xOps（DevOps、DataOps 和 MLOps）概览
+    
+6.  架构原则、工具和最佳实践
+    
+7.  建议
+    
+
+我会从馆藏管理和相关使用场景的角度来看这个问题，但这里讨论的原则和流程的总体思路，也可以适用于机构技术生态系统中的其他系统。
+
+# 博物馆技术生态系统中的关键挑战
+
+博物馆技术专业人员经常提到的一个挑战，是大家对博物馆技术项目所需时间和投入的误解 \[1\]。这并不令人意外，因为博物馆行业的数字技能差距可能尤其严重，英格兰艺术委员会的机构中有 37% “称缺乏能力和知识是实现数字化愿景的主要障碍” \[2\]。当项目因缺乏技术熟练度而没有被合理界定范围，或估算很糟糕时，所有人最终都会沮丧。这不仅对博物馆行业是挑战，即使在 IT 内部也是如此，因为技术版图实在太广阔且迅速演变：区块链、原生 app 开发、web 开发、云技术、无服务器、混合现实、数据科学、机器学习、算法等等，都是非常不同且高度专门化的技能集，尽管它们都属于 IT 和数字技术这个超集。
+
+如果机构的采购流程强制瀑布式开发，而又没有内部开发人员，通常最终会得到一组彼此断开的异构系统，彼此不能沟通。这可能是因为这些是继承来的遗留系统，也可能是供应商没有动力把互操作性纳入他们的工作方式。结果是下游出现各种中断：大量重复流程（某个地方更新了，却不会自动同步到另一个地方），不同的人可能引用不同的文档来源，造成混乱。
+
+这就像你不拥有自己一箱黄金的钥匙，每次想去找东西时，都要为进入自己的资产付费。更糟的是，你可能甚至不知道它究竟在哪里。即使有清楚的文档，供应商 A、B 和 C 构建并支持不同系统，也没有动力彼此协作；如果他们被要求一起工作，最后还可能互相推卸责任。这不是说博物馆应该变成科技公司。相反，重要的是理解内在约束，并勾勒理想终态，这样才能在这些约束下设计到达那里的最佳路线。
+
+# 什么是 MLOps？
+
+MLOps 就像是“实验室”条件下模型构建科学研究的另一面：工程侧。它是把计算机视觉概念验证 \[3\] 转化为生产环境所缺失的要素。
+
+> “All of AI, .., has a proof-of-concept-to-production gap. The full cycle of a machine learning project is not just modelling. It is finding the right data, deploying it, monitoring it, feeding data back \[into the model\], showing safety—doing all the things that need to be done \[for a model\] to be deployed. \[That goes\] beyond doing well on the test set, which fortunately or unfortunately is what we in machine learning are great at.” — Andrew Ng
+
+# 机会 - 为什么是博物馆的 MLOps
+
+首先，博物馆做 MLOps 的一个主要原因，是把能提供最大可能投资回报的 A.I. 技术投入运营，如下方 Figure 1 \[4\] 所示。
+
+![](./21669034022304.png)
+
+**Figure 1**. Popular AI subcategories, mapped to axes of museum relevancy and effort/cost.
+
+相较于区块链和元宇宙这类被大肆炒作的技术，它们的设计空间远比可能使用场景宽广，因此在时间轴上还要远得多；A.I. 已经在 MATANA2 公司群中大规模部署，并且准备进入主流。从下面 Figure 2 可以看到，与 Figure 3 中的 NFT 和 Web3 等其他新兴技术相比，许多对博物馆行业尤其相关的 A.I. 创新现在已经处在 “Slope of Enlightenment” 阶段。
+
+[![](./41669034988888.png)](https://www.gartner.com/en/articles/what-s-new-in-artificial-intelligence-from-the-2022-gartner-hype-cycle)
+
+**图 2**. … “预计在两到五年内进入主流采用阶段的创新……及早采用这些创新可以带来显著的竞争优势和商业价值，并缓解与 AI 模型脆弱性相关的问题。”
+
+[![](./71669034952241.png)](https://www.gartner.com/en/articles/what-s-new-in-the-2022-gartner-hype-cycle-for-emerging-technologies)
+
+**图 3**. 2022 年的新兴技术可归入三大主题：演进和扩展的沉浸式体验、加速的人工智能自动化，以及优化的技术人员交付方式。
+
+采用障碍和过去 PoC 经验的积累，把我们带到了当下这个时刻：过去需要整个研究团队才能完成的事情，现在可以由一小群人完成。博物馆尤其适合通过 MLOps 利用这类创新，因为其数据和应用具有独特特征：冷启动问题、对论述的需求，以及最后但同样重要的，内部人力资源和技术能力不足。
+
+在博物馆场景中，冷启动问题尤其尖锐。在一个大量数据根本不存在的环境中，也就是说，没有丰富的现有训练数据和高效运行的流程可供学习，MLOps 在把从数据集构建、标注到部署的流程投入运行，并获取实际数据再反馈进系统方面，就尤其重要。因此，尽可能端到端地自动化这个过程，让我们能够以更少资源做更多事情。
+
+# MLOps 看起来是什么样子
+
+理论上，只需要几个人和几台游戏 PC，就足以为艺术品的自动标注构建 A.I. 模型；再通过 MLOps 把这些模型投入生产环境，就能提供进一步微调所需的数据，构建出一个稳健系统，让博物馆馆藏更易获取和发现。
+
+下面可以看到自动提取颜色并添加到数据库以便查询的演示：
+
+<iframe alt="Art API Update: Extract Colours &amp; Add to Collection 19.11.2022" src="https://www.youtube.com/embed/QN8Jn0KidMU?feature=oembed" aria-describedby="nogcdodrxpi-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Art API Update: Extract Colours & Add to Collection 19.11.2022
+
+# **Architectural Principles, Toolings and Best Practices**
+
+-   Cloud-based
+    
+-   Open APIs
+    
+-   Federated access  
+      
+    
+    [![](./41669297260948.png)](https://jumpcap.com/insights/mlops-the-key-to-scaling-machine-learning-in-an-enterprise)
+    
+    **Figure 4**. Overview of DevOps and MLOps 工具.
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/gcdzise9](https://erniesg.pubpub.org/pub/gcdzise9).*

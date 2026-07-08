@@ -1,15 +1,57 @@
 ---
 import Link from '@/components/Link.astro'
 import { buttonVariants } from '@/components/ui/button'
+import { DEFAULT_LOCALE, getPostLocalePath, type SupportedLocale } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { Icon } from 'astro-icon/components'
+import type { CollectionEntry } from 'astro:content'
 
-const { prevPost, nextPost } = Astro.props
+type Labels = {
+  nextPost: string
+  previousPost: string
+  latestPost: string
+  lastPost: string
+}
+
+const POST_NAV_LABELS: Record<SupportedLocale, Labels> = {
+  en: {
+    nextPost: 'Next Post',
+    previousPost: 'Previous Post',
+    latestPost: 'Latest post!',
+    lastPost: 'Last post!',
+  },
+  zh: {
+    nextPost: '下一篇',
+    previousPost: '上一篇',
+    latestPost: '最新文章',
+    lastPost: '最后一篇',
+  },
+  ko: {
+    nextPost: '다음 글',
+    previousPost: '이전 글',
+    latestPost: '최신 글',
+    lastPost: '마지막 글',
+  },
+  ja: {
+    nextPost: '次の記事',
+    previousPost: '前の記事',
+    latestPost: '最新記事',
+    lastPost: '最後の記事',
+  },
+}
+
+const { prevPost, nextPost, locale = DEFAULT_LOCALE } = Astro.props as {
+  prevPost: CollectionEntry<'blog'> | null
+  nextPost: CollectionEntry<'blog'> | null
+  locale?: SupportedLocale
+}
+
+const labels = POST_NAV_LABELS[locale]
 ---
 
 <div class="col-start-2 flex flex-col gap-4 sm:flex-row">
   <Link
-    href={nextPost ? `/blog/${nextPost.id}` : '#'}
+    href={nextPost ? getPostLocalePath(nextPost.id, locale) : '#'}
     class={cn(
       buttonVariants({ variant: 'outline' }),
       'rounded-xl group flex items-center justify-start w-full sm:w-1/2 h-fit',
@@ -24,14 +66,16 @@ const { prevPost, nextPost } = Astro.props
       />
     </div>
     <div class="flex flex-col items-start overflow-hidden">
-      <span class="text-left text-xs text-muted-foreground">Next Post</span>
+      <span class="text-left text-xs text-muted-foreground"
+        >{labels.nextPost}</span
+      >
       <span class="w-full truncate text-left text-sm"
-        >{nextPost?.data.title || 'Latest post!'}</span
+        >{nextPost?.data.title || labels.latestPost}</span
       >
     </div>
   </Link>
   <Link
-    href={prevPost ? `/blog/${prevPost.id}` : '#'}
+    href={prevPost ? getPostLocalePath(prevPost.id, locale) : '#'}
     class={cn(
       buttonVariants({ variant: 'outline' }),
       'rounded-xl group flex items-center justify-end w-full sm:w-1/2 h-fit',
@@ -40,10 +84,11 @@ const { prevPost, nextPost } = Astro.props
     aria-disabled={!prevPost}
   >
     <div class="flex flex-col items-end overflow-hidden">
-      <span class="text-right text-xs text-muted-foreground">Previous Post</span
+      <span class="text-right text-xs text-muted-foreground"
+        >{labels.previousPost}</span
       >
       <span class="w-full truncate text-right text-sm"
-        >{prevPost?.data.title || 'Last post!'}</span
+        >{prevPost?.data.title || labels.lastPost}</span
       >
     </div>
     <div class="ml-2 flex-shrink-0">

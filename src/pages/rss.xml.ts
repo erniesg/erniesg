@@ -1,4 +1,5 @@
 import { SITE } from '@/consts'
+import { isCanonicalDefaultPostId, isLegacyChinesePostId } from '@/lib/i18n'
 import rss from '@astrojs/rss'
 import type { APIContext } from 'astro'
 import { getCollection } from 'astro:content'
@@ -6,7 +7,10 @@ import { getCollection } from 'astro:content'
 export async function GET(context: APIContext) {
   try {
     const blog = (await getCollection('blog')).filter(
-      (post) => !post.data.draft,
+      (post) =>
+        !post.data.draft &&
+        isCanonicalDefaultPostId(post.id) &&
+        !isLegacyChinesePostId(post.id),
     )
 
     // Sort posts by date

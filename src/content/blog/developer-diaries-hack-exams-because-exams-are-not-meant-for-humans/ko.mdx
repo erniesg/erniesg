@@ -1,0 +1,51 @@
+---
+title: "개발자 일기: 시험은 인간을 위해 만들어진 것이 아니므로 해킹하자…"
+description: "시험지는 모든 데이터 과학자의 꿈같은 데이터셋이기도 하니까"
+date: 2024-03-15
+authors: ["erniesg"]
+draft: false
+lang: "ko"
+translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-humans"
+---
+
+# 어떤 소프트웨어는 하수구 냄새가 난다
+
+많은 조직은 비즈니스 성과를 내기 위해 수력 발전 댐 같은 것을 원하지만, 대개는 새는 파이프가 있는 데이터 하수구 상황에 갇혀 있다. 내가 어떤 dedicated SQL pool 을 써야 하는 날마다, 전생에 무슨 잘못을 했길래 이런 dedicated SQL 서비스 를 상대해야 하는지 궁금해진다. 그것은:
+
+-   데이터base 이름 변경을 허용하지 않는다
+    
+-   그 위에서 Python scripts 를 실행할 때 20mb 제한이 있다
+    
+-   데이터base 를跨거나 같은 데이터base 안에서 tables 를 복사하고 싶다고? 너의 tables 에 서로 다른 column index stores 가 있고 복사할 때 정의해야 한다는 걸 모르는 건가?
+    
+-   Get Meta데이터 에 filter 를 적용하고 싶다고? 그런 건 없다
+    
+-   for each 안에 if 를 쓰고 싶다고? 없다
+    
+-   loop 에서 현재 반복 중인 item 을 가져오고 싶다고? pixie dust 나 찾아보는 게 낫다
+    
+
+도대체 무엇을 위해, 누구에게 이득이 되는지도 모를 이것을 다른 사람들에게 쓰라고 설득하는 consultants 를 위한 특별한 지옥 자리가 있다. 어쨌든 불평은 이쯤 하자. 그래서 최근 나는 시험지를 데이터set 으로 가지고 노는 데 관심이 생겼다.
+
+# Exams as Data
+
+생각해보자. 표준화 시험보다 더 **structured** 하고, 더 **consistent** 하며, 더 **cleaner** 한 데이터set 이 있을까!?!?!? 항상 같은 수의 문제, 같은 question 유형s, 정의된 syllabi 등이 있다. 그야말로 모든 데이터 scientist 의 wet dream 같다... PDF 를 처리하기 전까지는. 나는 연습용 시험을 생성하고, LLM 이 그것을 이기게 하고, 어쩌면 모두를 위한 AI tutor 로 이어지는 아이디어도 매우 흥미롭다고 본다. 내게 핵심은 단순하다. 시험은 인간을 위해 만들어진 것이 아니다. 시험은 intelligence 를 재는 형편없는 척도이지만, 행정과 문서 작업에는 매우 편리하다. AGI 로 가는 길에서 세상에 정말 부족한 것은 general intelligence 가 실제로 무엇인지 측정하는 좋은 척도인 듯하다. 그리고 LLMs 와 exams 사이의 이 양방향 긴장이, 우리가 standardized examinations 를 더 나은 것으로 바꾸는 미래로 이어질 수 있다면, 그것만으로도 이미 인류에 큰 기여가 될 것이다.
+
+# Finetuning GPT 3.5 to Generate IB Exams for Demonstration Purposes ONLY
+
+consultants 를 위한 특별한 지옥 자리 옆에는 PDFs 와 excels 를 데이터sets 라며 넘겨주는 사람들이 있다. 알고 보니 Document AI 는 텍스트 파싱을 꽤 잘했지만, 나는 돈을 쓰고 싶지 않았다. 돌이켜보면 그냥 돈을 내고 API 를 쓰는 편이 덜 낭비였을 것이다. 그래서 키보드 위에서 손을 쥐어뜯는 시간을 많이 보낸 끝에, 겨우 44 examples 만 넘겨 GPT 3.5 를 finetune 했다. 흥미로웠던 점은:
+
+-   내 단어들 속 일부 무작위 spacing 을 충실히 재현했다. 그러니까 입력으로 들어간 distribution 을 정말로 parroting 하고 있는 것이다
+    
+-   때때로 완전한 gibberish 가 나오는데, PDF 는 맞서 싸워야 할 악마적 힘이라는 사실도 드러났다. SO MANY UNSEEN UNICODE CHARACTERS 가 있기 때문이다
+    
+
+<iframe alt="Finetuning GPT 3.5 to generate IB exam 논문s" src="https://www.youtube.com/embed/TjujuFbFx3w?feature=oembed" aria-describedby="nhopbvg5m49-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Finetuning GPT 3.5 to generate IB exam 논문s
+
+하지만 전반적으로는 얼마나 쉬웠는지에 놀랐고, 아직 전혀 쓰지 않은 내 M2 Max의 64gb VRAM으로 몇몇 모델을 미세 조정해보고 싶어 견딜 수가 없다. 특히 중국 공무원 시험에 관심이 많다. 중립적이고 모범생 같은 LLMs는 너무 지루하고 너무 무해해서 거의 쓸모가 없기 때문이다. 모델을 병합해서 중국 국가를 선험값으로 하는 어떤 내부 표상을 포착할 방법이 있는지 보는 것은 정말 흥미로울 것 같다. 누가 알겠는가. 그것이 행동을 예측하는 데 엄청나게 가치 있는 것이 될 수도 있다!?
+
+---
+
+*원래 PubPub 에 [erniesg.pubpub.org/pub/jqeeg1f8](https://erniesg.pubpub.org/pub/jqeeg1f8) 로 게시되었습니다.*

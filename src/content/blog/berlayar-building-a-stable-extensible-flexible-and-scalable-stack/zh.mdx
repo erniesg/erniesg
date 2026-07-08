@@ -1,0 +1,397 @@
+---
+title: "Berlayar：稳定、可扩展的人工智能技术栈"
+description: "分享我对人工智能与大语言模型驱动应用通用架构的粗略草图，覆盖感兴趣的使用场景与开发路线"
+date: 2023-09-07
+authors: ["erniesg"]
+image: "./1ac10d28-6395-44d6-97ed-33cfe28c0609_23-71693538430433.png"
+draft: false
+lang: "zh"
+translationKey: "berlayar-building-a-stable-extensible-flexible-and-scalable-stack"
+---
+
+在 [第一部分](https://erniesg.pubpub.org/pub/zc0zx741) 中，我谈到过自己迄今构建的一些简单原型，以及它们如何把我带到这里：我需要一个稳定、可扩展、灵活且可伸缩的技术栈来构建基于大语言模型的产品，因为有太多有趣的东西值得做。我们讨论过如何用注册表和基类，在拟议的 A.I. 驱动软件套件中灵活替换组件，让开发者更容易协作。但终端用户体验呢？对于我追求的灵活性和模块化，把注册表模式与接口驱动设计结合起来可能是理想方法。这篇文章会介绍我拟议的 A.I./LLM 工程技术栈，它有潜力泛化到所有我感兴趣的部署场景，无论是自动重构遗留代码库、基于邮件和文档的知识库、社交媒体内容生成与发布，还是让受众以新方式消费数据。
+
+继续之前，先回顾传统软件开发和基于机器学习的方法在艺术作品注释问题上的差异。
+
+**标准**
+
+**用于艺术作品注释与标记的传统软件开发**
+
+**用于艺术作品注释与标记的机器学习开发（例如 OpenAI 的 CLIP）**
+
+**作用**
+
+使用预定义规则和元数据来注释和标记艺术作品。
+
+使用从数据中学到的模式来动态注释和标记艺术作品。
+
+**注释深度**
+
+受限于明确规则和可用元数据。
+
+可以识别更广泛的特征、主题和元素。
+
+**适应性**
+
+新风格与趋势需要手动更新。
+
+可以通过重新训练适应新风格与趋势。
+
+**用户参与**
+
+手动纳入用户反馈。
+
+可以自动纳入用户反馈进行模型微调。
+
+**计算复杂度**
+
+通常计算量较低。
+
+需要更多计算资源做更深入分析。
+
+**可解释性**
+
+因为规则明确，所以更容易解释。
+
+常被视为“黑箱”，更难解释。
+
+**覆盖范围**
+
+依赖元数据的可用性和准确性。
+
+可以直接处理艺术作品的视觉元素。
+
+**人工投入**
+
+定义规则和模板需要大量工作。
+
+由于模型能从训练数据中泛化，人工投入较少。
+
+由于方法上有这些差异，对任何希望获得 A.I. 优势的组织来说，在工作流和开发上也存在关键差异，需要认真关注。两者的交集和差异如下：
+
+### **交集：**
+
+1.  **集成**：机器学习模型常作为更大型软件系统中的组件，而这些系统使用传统软件工程技术构建。
+    
+2.  **测试与验证**：两种方法都会使用测试来验证代码或模型是否按预期表现，尽管具体测试方式可能不同。
+    
+3.  **部署与维护**：无论使用机器学习模型还是传统软件，两者都需要部署、监控和维护。
+    
+4.  **版本控制**：两类开发都常使用 Git 等版本控制系统管理变更和历史。不过机器学习还需要为数据、模型、超参数和结果做版本管理。
+    
+
+### **差异：**
+
+1.  **确定性与概率性**：传统软件工程通常是确定性的，遵循明确规则和逻辑；机器学习则是概率性的，并从数据中学习模式。
+    
+2.  **可解释性**：传统软件通常更容易调试和解释；机器学习模型，尤其是复杂模型，则更难理解。
+    
+3.  **数据依赖**：机器学习高度依赖数据进行训练、验证和测试；传统软件工程在这些阶段并不天然需要数据。
+    
+4.  **反馈循环**：机器学习常包含持续反馈循环，让模型从新数据中学习；传统软件并不天然具备这一特征。
+    
+5.  **技能组合**：传统软件工程和机器学习需要不同的技能组合，尽管随着软件工程师更懂数据、数据科学家学习更多软件最佳实践，二者重叠正在增加。
+    
+    -   **机器学习专项技能**：包括统计与数学理解（概率、统计、线性代数、微积分）、数据技能（数据清洗、预处理、特征工程、可视化）、模型训练与评估（算法选择、超参数调优、评估指标）、专业工具与库（机器学习框架、数据处理库）以及实验能力（A/B 测试、模型可解释性）。
+        
+
+我希望以上例子能更好说明，为什么 A.I. 工程的架构和设计模式正在成为一门新兴技艺。
+
+# 基于注册表、由接口驱动的设计模式
+
+在面向对象编程中，尤其是 Java、C# 和 TypeScript 这样的语言里，“接口”是一种类型定义，用来指定契约：一个类必须实现的方法（以及可能的属性）集合。接口本身不包含任何实现。它只是定义声称实现该接口的类中应该存在什么方法。
+
+对于需要稳定性和实验灵活性的 A.I. 驱动或 LLM 驱动应用，使用接口和抽象类尤其有益。A.I. 开发常包含大量实验：调整模型、改变预处理步骤、使用不同数据源。如果你的系统以模块化为设计目标（由接口和抽象设计模式支撑），那么为实验替换组件就会容易得多，也不会冒着破坏系统其他部分的风险。此外，在扩展或部署 A.I. 系统时，模块化设计能确保稳定性和可维护性。
+
+简而言之，接口提供了清晰的契约，说明可以期待什么。
+
+结合注册表、抽象类和接口：
+
+-   你会为每种功能准备接口（例如文件处理、分块、嵌入、存储、检索）。这让每个组件应该做什么变得清晰。
+    
+-   注册表随后可用于在运行时管理并提供这些接口的合适实现。这让系统能动态适应不同场景或配置。
+    
+
+例如，考虑处理不同文件类型：
+
+1.  **接口驱动部分**：
+    
+    -   先定义一个接口。例如，考虑一个 **`DataSource`** 接口，它有摄取数据和获取元数据的方法。这个接口为每个数据源处理器应该做什么设定清晰契约。
+        
+        ```python
+        from abc import ABC, abstractmethod
+        
+        class DataSource(ABC):
+            @abstractmethod
+            def ingest(self):
+                pass
+        
+            @abstractmethod
+            def get_metadata(self):
+                pass
+        ```
+        
+2.  **注册表部分**：
+    
+    -   一旦数据被摄取（比如来自 Git 仓库的文件），系统可以查询 **`FILE_TYPE_PROCESSORS`** 注册表，根据每个文件的扩展名找到合适的处理器。
+        
+        ```text
+        FILE_TYPE_PROCESSORS = {
+            ".py": PythonFileProcessor,
+            ".md": MarkdownFileProcessor,
+            # ...
+        }
+        ```
+        
+
+当系统需要摄取数据时，它可以查询这个注册表，根据每个文件的扩展名找到合适的处理器。
+
+3.  **`DataSource` 子类中的统一工作流**：
+    
+    -   在 **`DataSource`** 子类中，你可以把这两步结合起来。先摄取数据，然后对每个已摄取文件使用合适的文件处理器。
+        
+
+```python
+class GitRepoSource(DataSource):
+    def ingest(self):
+        files = self._clone_and_filter_files()
+        processed_data = []
+        
+        for file_path in files:
+            ext = self._get_file_extension(file_path)
+            processor_class = FILE_TYPE_PROCESSORS.get(ext)
+            if processor_class:
+                processor = processor_class()
+                processed_data.append(processor.process(file_path))
+                
+        return processed_data
+```
+
+### **组合优势**
+
+这种组合方法有几个优点：
+
+1.  **易于扩展**：未来需要支持新的数据源类型时，只需创建一个遵循 **`DataSource`** 接口的新类，并把它注册到 **`DataSourceRegistry`**。现有代码不必被改动。
+    
+2.  **清晰预期**：**`DataSource`** 接口确保每个数据源都遵守共同 API，使摄取流水线的行为可预测。
+    
+3.  **动态适应性**：有中央注册表后，不同数据源处理器可以轻松替换，不影响主工作流，从而提供大量灵活性。
+    
+
+对于拥有不同智能体的多样化使用场景（一个处理文档和 PDF，另一个处理代码仓库），这个组合既通过接口提供清晰契约，又通过注册表保留扩展或适应的能力。稳定性来自接口，灵活性来自注册表。
+
+当我们想给 A.I./LLM 应用加入新能力时会发生什么？
+
+### **扩展交互和消费方式：**
+
+以我想在 “[The Sound of Stories](https://www.youtube.com/watch?v=0cBbG0SkSCo)” 中做的事为例：解析大语言模型生成的文本，作为附加消费方式来制作多语言旁白。你也可能想[基于生成的故事来生成图像](https://www.activeloop.ai/resources/ai-story-generator-open-ai-function-calling-lang-chain-stable-diffusion/)。消费可以由其他工具或人完成。对于我面向社交媒体内容生成的使用场景，还需要输出结构化 `.json`，供社交媒体 API 消费。基于注册表、由接口驱动的方法让我们能按下面方式扩展消费。
+
+1.  **创建注册表**：和前面的例子一样，你可以有一个消费方式注册表（例如文本显示、语音输出、动画视频）。
+    
+2.  **消费接口**：
+    
+
+```python
+class ConsumptionInterface(ABC):
+    
+    @abstractmethod
+    def display(self, content):
+        pass
+```
+
+3.  **具体实现**:
+    
+
+```python
+class TextDisplay(ConsumptionInterface):
+    def display(self, content):
+        # Simply print the content
+
+class VoiceOutput(ConsumptionInterface):
+    def display(self, content):
+        # Use Text-to-Speech to vocalise the content
+
+class AnimatedVideo(ConsumptionInterface):
+    def display(self, content):
+        # Convert content into animated video
+```
+
+现在，让我们退一步，从端到端角度看人工智能应用的整个数据驱动开发周期。
+
+# A.I. 应用的通用简化端到端架构
+
+A.I./LLM 应用栈才刚刚成形，[a16z 很有帮助地](https://a16z.com/2023/06/20/emerging-architectures-for-llm-applications/) 将它围绕提示构建（检索）、提示执行（推理）以及生态系统中的若干工具阶段来组织。数据流和流水线是这个生态系统的后端管道，这也是它相对于传统软件工程的另一项重要区别。下面是我简化后的通用架构和开发重点组件：
+
+![](./1ac10d28-6395-44d6-97ed-33cfe28c0609_23-71693538430433.png)
+
+### **示例：艺术作品神经搜索流程**
+
+此前，我构建过一个[艺术作品神经搜索演示](https://www.youtube.com/watch?v=x373QM6uHY8)。把这个演示扩展到生产环境，可以包含下面这些步骤。
+
+**步骤**
+
+**涉及组件**
+
+**动作**
+
+**备注**
+
+1
+
+Orchestrator
+
+初始摄取艺术作品元数据和图像嵌入
+
+批处理模式
+
+2
+
+User Interface (UI)
+
+用户输入搜索查询或筛选条件
+
+  
+
+3
+
+Main Application
+
+验证用户输入并获取配置
+
+Checks with Configuration Manager
+
+4
+
+Orchestrator
+
+从向量数据库中检索相关嵌入
+
+Possibly uses Retrieval Engine
+
+5
+
+Response Generator
+
+构建用户友好的输出
+
+格式化艺术作品元数据和图像以便展示
+
+6
+
+Logging Module
+
+记录操作
+
+存储用户查询、响应时间等
+
+7
+
+Validation & Evaluation
+
+自动评估结果
+
+基本安全检查
+
+8
+
+User Interface (UI)
+
+向用户显示搜索结果
+
+  
+
+9
+
+Feedback Collector
+
+收集用户反馈（如有）
+
+  
+
+# 四个月开发路线图的优先级安排
+
+在这个通用框架和架构内，可以做很多我感兴趣的事情：
+
+-   艺术作品神经搜索
+    
+-   生成故事的实时多语言旁白
+    
+-   为代码库重构并编写测试
+    
+-   与基于文档和数据的知识库对话
+    
+-   代码生成
+    
+-   社交媒体内容生成与发布
+    
+
+为了安排优先级，考虑到阅读理解和创意写作是两套不同技能，而前者会对后者非常有价值，我的计划是优先教大语言模型学习，并从复杂度较低的使用场景开始，例如艺术作品神经搜索和知识库。粗略时间线可能如下：
+
+-   **第 1-2 个月**：**艺术作品神经搜索** - 用于打好数据流水线基础。
+    
+-   **第 2-3 个月**：**与基于文档和数据的知识库对话** - 开发摄取与检索方法，以及 UI 组件。
+    
+-   **第 3-4 个月**：**为代码库重构并编写测试** - 利用知识库对话阶段形成的洞察和方法，实现更智能的自动化测试与重构。
+    
+
+基于以上，即便我们重点放在构建神经搜索和知识库上，我也在想最好开始一个简化工作流：利用大语言模型查询代码库，把结果传给代码质量服务，再串联或使用提示模板执行相关自动化任务，例如重构和编写测试；这些任务一开始可以拆到不同分支中供人工审查，之后如果所有测试都通过，再逐步自动化。
+
+同时，这是我在[自己的 Git 仓库](https://github.com/erniesg/berlayar)中尝试组织项目的方式。我预计它还会继续演变，因此下面仍然很半成品，但我目前认为不同文件夹应该处理：
+
+-   db - 所有数据库相关操作，例如 CRUD
+    
+-   demos - 定义一些“稳定”的演示和工作流
+    
+-   gui - 用户看到的一切
+    
+-   src - 接口和实现的大部分源代码
+    
+-   tests - 单元测试、集成测试以及测试用夹具
+    
+
+我仍然缺少 CI/CD、监控和评估组件，项目结构也还在整理。不过我希望能和其他开发者分工协作，因为我还需要为 [National Arts Council Arts x Tech Lab](https://www.nac.gov.sg/singapore-arts-scene/technology-and-innovation/arts-x-tech-lab) 交付 “[The Sound of Stories](https://www.youtube.com/watch?v=0cBbG0SkSCo)”（实时、多语言讲述生成故事）。如果一切顺利，这些开发工作应该高度协同，并给我构建 Berlayar A.I. 这家公司所需的基础模块。;)
+
+```text
+├── agents
+│   └── __init__.py
+├── dataloader.ipynb
+├── db
+│   ├── chunks.py
+│   ├── connectors.py
+│   ├── __init__.py
+│   ├── main.py
+│   ├── ops
+│   │   ├── deeplake.py
+│   │   └── __init__.py
+│   └── utils.py
+├── demos
+│   ├── chat_adf
+│   │   ├── chat.py
+│   │   ├── tests.py
+│   │   └── utils.py
+│   ├── neural_search
+│   │   └── upload.py
+│   └── thesoundofstories
+│       ├── audio
+│       └── chat.py
+├── diagram.py
+├── gui
+│   └── __init__.py
+├── ingest_pdf.log
+├── __init__.py
+├── log_init.py
+├── main.py
+├── notebooks
+│   ├── architecture.ipynb
+│   ├── chat_adf.ipynb
+│   └── dataloader.ipynb
+├── poetry.lock
+├── pyproject - Copy.toml
+├── pyproject.toml
+```
+
+与此同时，我先把这件事暂时搁置，去专心准备即将到来的 “[Good Economics for Bad Times](https://mitxonline.mit.edu/courses/course-v1:MITxT+14.009x/)” 考试。
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/wpnv7rhs](https://erniesg.pubpub.org/pub/wpnv7rhs).*

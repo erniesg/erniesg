@@ -1,0 +1,409 @@
+---
+title: "RAGgaeton：用人工智能增强写作以规模化生成任何内容"
+description: "通过使用人工智能支持的研究、检索和自然语言生成（甚至可以帮助你头韵！)，从粗糙的草稿到经润色的文章，看看输出结果如何比较"
+date: 2024-06-23
+authors: ["erniesg"]
+tags: ["zh"]
+image: "./IMG_20240603_121737_00_238-21719066032683.jpg"
+draft: false
+---
+
+我把一些笔记丢给了原生以及RAGgaeton驱动的Claude 3.5和GPT - 4o，这样你就比较他们针对我于2024年6月3日徒步攀登浮盖山的经历的写作能力。
+
+![](./IMG_20240603_121737_00_238-21719066032683.jpg)
+
+RAGgaeton是一个人机协作的实验，旨在利用人类创造力和人工智能（A.I.）的优势来扩大原创内容的创作。在这篇博文中，我将回顾RAGgaeton背后的灵感，解释其主要功能和优点，展示演示，讨论技术挑战和学习，并探索人工智能增强内容创作的未来可能性。
+
+## RAGgaeton背后的灵感
+
+事实是世界正在耗尽训练人工智能的数据。于是我有了一个想法——何不使用人工智能来增强人类原创内容的生成呢？训练数据变得越来越少的同时，原创内容的数量和质量一直都欠缺，想当然尔人工智能在这个领域还有很大的发挥空间。
+
+对我来说，进行*原创*写作时，系统1和系统2思维之间总是存在着巨大的鸿沟。我脑海中一般会有一些草图，对我想要提出的论点有一个粗略的大纲。但是收集和整理信息，坐下来把它们打造成完整的句子和段落的任务呢？它们永远不会被完成。要是我们有一大批研究助理任我们支配就好了……
+
+由检索增强生成（RAG）支撑的大型语言模型（LLM）可以让我们获救！
+
+RAGgaeton利用LLM和RAG的力量来弥合这一差距，使我们能够大规模生产原创内容的同时把基础立于我们选择的真相来源。
+
+## 演示：如何使用RAGgaeton
+
+RAGgaeton是我构建的一个包，可以从你的数据中自动生成任何类型的内容。它旨在解决我，以及你们，在写作中遇到的几个问题:
+
+1\. LLM写作看起来太陈词滥调了
+
+2\. 需要从各种来源收集和检索信息
+
+3\. 保持连贯性和一致性
+
+4\. 获得可扩展，可重复的创意输出，以随意编辑和迭代
+
+下面是RAGgaeton功能的快速演示：
+
+<iframe alt="Try Things #:2 Claude 3.5 vs. GPT-4o for Automated Travel Writing with RAGgaeton" src="https://www.youtube.com/embed/DjiAUkD7tfM?feature=oembed" aria-describedby="nq0tj29bz5n-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Try Things #:2 Claude 3.5 vs. GPT-4o for Automated Travel Writing with RAGgaeton
+
+-   [B站视频](https://www.bilibili.com/视频/BV1yRgXeGE6s/)
+    
+-   在[RAGgaeton Git存储库](https://erniesg.pubpub.org/pub/1bt4uylj#nrwp1quoutk)中查看我的实现
+    
+
+我最喜欢的生成标题是`“From Sea to Sky: Unraveling the Mysteries of Fu Gai Mountain's 'Floating Cap'“（从海到天：解开浮盖山“浮帽”之谜）`，`edit-content`后的最终输出全文如下。
+
+> **Introduction**
+> 
+> **Hook**: What if I told you that the mountain you're about to climb was once submerged beneath an ancient sea, leaving behind a legacy of otherworldly rock formations?
+> 
+> **Thesis**: Fu Gai Mountain's geological history and unique landscape offer hikers an opportunity to explore a captivating blend of natural history and breathtaking scenery in Zhejiang province.
+> 
+> Beneath your feet lies a mountain with a secret: it was once submerged under an ancient sea. \[TextFX: POV\] As you lace up your hiking boots at the base of Fu Gai Mountain in Zhejiang province, you're not just preparing for a climb – you're about to embark on a journey through time itself. This geological wonder, with its otherworldly rock formations, stands as a silent sentinel, guarding the mysteries of our planet's past. \[TextFX: SIMILE\] Like a book written in stone, each step up the mountain's slopes reveals a new chapter in Earth's epic saga, waiting for intrepid explorers to decipher its cryptic pages.
+> 
+> Fu Gai Mountain's geological tapestry weaves together millions of years of Earth's history with breathtaking vistas. \[TextFX: ALLITERATION\] From fantastic formations to peculiar peaks, the mountain's unique features captivate climbers, geologists, and casual tourists alike. As you ascend, you'll encounter the mountain's famous 'floating cap', a gravity-defying display of nature's artistry. \[TextFX: SCENE\] The air grows thin and crisp, carrying whispers of ancient tales and the faint scent of pine. This isn't just a hike; it's a pilgrimage through time, offering a rare glimpse into both the Earth's tumultuous past and China's rich cultural heritage.
+> 
+> **Setting the Scene**
+> 
+> Straddling the border of Zhejiang and Fujian provinces, Fu Gai Mountain rises like a sleeping giant from the surrounding landscape. \[TextFX: CHAIN\] Its imposing silhouette - peak, ridge, slope, valley, forest, trail, hiker, adventure - beckons to those seeking communion with nature's grandeur. \[TextFX: UNEXPECT\] Once a formidable barrier to southward expansion during the Tang dynasty, this geological marvel now serves as a bridge between epochs, inviting modern-day explorers to scale its heights and unravel its secrets. The mountain's strategic location offers not just a physical challenge, but a journey through the annals of Chinese history and natural evolution.
+> 
+> 这座山的“四绝”营造出一种仿佛从奇幻小说中走出的异世界氛围。\[TextFX: ACRONYM\] CAPE - Clouds, Abysses, Peaks, and Enigmatic springs - 概括了浮盖山的独特特征。\[TextFX: FUSE\] 在山顶，巨石惊险地相互叠压，形成著名的“浮盖”或“纱帽”景观，这是一种既令人困惑又令人惊叹的地质幻象。怪云在嶙峋山峰间流动，形态不断变换。神秘洞穴仿佛低语着山的过去，而奇特泉水无论季节如何都保持恒温。\[TextFX: EXPLODE\] 这些元素共同构成了一片真正“out of this whirl”的景观，一个令人目眩的自然奇观，挑战我们对现实的感知。
+
+我更喜欢Sonnet的写作，我喜欢它按照指示应用了TextFX，尽管最后的文章看起来有些不完整。我怀疑这可能与我们指定的600字`desired_length` 有关，所以也许优化提示或根据不同的长度进一步调整操作链会更好。这是它[生成的内容块和主题句的完整草稿](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/80fd9327-6f17-48e9-a56e-019c5daa4c5b?observation=9194ce51-c4c2-4279-a3f9-7ac9c8516a30)仅供参考。
+
+如果你想分别比较Claude 3.5 Sonnet和GPT - 4o的客户端以及软件包输出，请向下滚动。
+
+## RAGgaeton 可以做什么
+
+不够时间写作？没问题！RAGgaeton可以从头到尾自动化内容生成。
+
+1\. 为你提炼关键词搜索哦（当然，你仍然需要提供主题）
+
+2\. 进行搜索研究
+
+3\. 生成标题
+
+4\. 起草全文
+
+5\. 应用TextFX（用头韵润色、扩展等）
+
+你可以使用RAGgaeton来播种一个最初的想法，让它自己完成工作，然后编辑和修改生成的草稿。在未来的迭代中，我计划实现一个编辑友好的界面，这样你就可以一次编写并到处发布。
+
+## 主要特性和优点
+
+我将它构建为可扩展的，适用于不同的内容类型和链接内容上不同操作的方式，同时利用最先进的ColBERT检索模型（研究人员的话，不是我的）。这确保你为生成获取最相关的分块。
+
+### 可扩展的内容生成
+
+用户只需要定义一次可重用的内容块，然后混合和匹配以创建任何想要的文章类型。下面是它的工作原理。
+
+1.  首先在`content_blocks.json` 中定义一个可重用的内容块
+    
+
+```json
+  "Setting the Scene": {
+    "description": "Introduce the setting with vivid descriptions to immerse the reader.",
+    "details": {
+      "optional": [
+        "Time of Day",
+        "Weather Conditions"
+      ],
+      "required": [
+        "Location Description",
+        "Atmosphere"
+      ]
+    }
+  }
+```
+
+2.  接下来，复制并编辑一个提示符，以便将这些内容块组合成`article_{article_type).yaml` 中的可能结构
+    
+
+```yaml
+generate_draft_travel:
+  system_prompt: |
+    You are an expert travel writer skilled in creating compelling and engaging content for online publications. Always respond with a structured, valid JSON, adhering strictly to the provided example format. Do not include any other text or explanations outside of the JSON structure.
+  message_prompt: |
+    Task: Given the following context, generate an updated structure for a Travel Article to be published.
+
+    Context:
+    - Headline: {headline}
+    - Hook: {hook}
+    - Thesis: {thesis}
+    - Article Types: {article_type}
+    - Topics: {topics}
+    - Context: {context}
+    - Data: {optional_params[data]}
+    - Publication: {optional_params[publication]}
+    - Country: {optional_params[country]}
+    - Personas: {optional_params[personas]}
+    - Desired Length: {optional_params[desired_length]} words
+    - Scratchpad: {optional_params[scratchpad]}
+
+    You may use the possible structures below as a starting point. Each structure is composed of content blocks. Rewrite, reorder, substitute, remove, add new or simply flesh out further details for the structure and content blocks so as to be coherent with your headline, hook and thesis.
+
+    Please provide the response in the following structured JSON format:
+
+    {{
+      "draft_outlines": [
+        {{
+          "content_block": "Introduction",
+          "details": "[Content Block Details]"
+        }},
+        {{
+          "content_block": "Personal Circumstances",
+          "details": "[Content Block Details]"
+        }},
+        {{
+          "content_block": "Destination Overview",
+```
+
+3.  只需调用带有相关参数和`article_type`值的`generate_draft`端点，并开始生成！
+    
+
+附注：我们可以通过算法将内容块排列成结构，而不是将它们写出来，这可能是未来可以进行的工作。
+
+### 人工智能研究与检索
+
+RAGgaeton不只是进行写作；它还可以做研究。它会生成一系列关键词，以便在不同的平台上进行进一步的研究，执行搜索，然后将信息储存到数据库中。通过利用基于令牌的后期交互机制，而不是文档级嵌入，RAGgaeton可以为你的内容找到最相关的信息，确保准确性和深度。目前的实现支持`you.com` 和`Obsidian vaults` ，未来会持续加入更多信息源。
+
+### TextFX的创意增强
+
+用TextFX将普通的文章变成引人入胜的内容。添加头韵、展开复杂的思想、将一个单词分解成发音相似的短语等等——所有这些都只需要一个简单的`edit-content` 命令。
+
+## 技术栈
+
+如果你对科技感到好奇，RAGgaeton是由以下的组件所组成的:
+
+1.  Claude 3.5 Sonnet和GPT - 4o自然语言生成
+    
+2.  Supabase用于数据库管理
+    
+3.  Langfuse用于跟踪和监控
+    
+4.  Llama Index用于高效的信息检索（以及随后与文档和数据进行有状态聊天！）
+    
+5.  Pydantic用于数据验证
+    
+6.  FastAPI用于开发利于原子操作的API端点，如`generate-research-questions`、`do-research`、`generate-headlines`、`generate-draft`、`generate-topic-sentences`、`generate-full-content`和`edit-content`
+    
+
+这种结合使RAGgaeton能够在保持一致性和连贯性的同时提供高质量的、与上下文相关的内容。
+
+## 回顾RAGgaeton在行动中的输入和输出
+
+为了真正理解RAGgaeton的威力，我们来比较一下不同模型的输出。我们将使用you.com和一份关于浮盖山的提纲草稿作为我们的起点——一份旅行作家可能会在旅行结束后草草写下的粗略笔记。
+
+### 输入：一个作家的草稿笔记
+
+以下是我们可能投入到RAGgaeton数据库中的信息类型的示例：
+
+```html
+An A.I. Engineer Goes Gradient Descent on Floating Cap Mountain
+
+<Intro>
+Just wanted to climb a mountain somewhere after seeing Yu Yan's concert in Suzhou and it has this 仙霞古道 (got part of my mum's name in it) which seemed interesting, the mountains 江郎山 and 浮盖山 seemed fun too
+
+<Getting There>
+Jiang Shan train station was under renovation, so I took public buses and another super long ride that locals told me to get on; should have went another route instead. I think that sometimes locals also don't always have the best source of info, or even if they do, what suits them might not suit me?
+
+<Destination Vibes>
+I stayed in the accommodation for many days to work on a coding assignment and finally found the time on 3 June to go hiking
+Lived near Nian Ba Du Ancient Town and the whole area had strong calligraphy vibes, like many families hung these couplets down their front doors, owner of the place I stayed in would practice calligraphy every now and then
+
+<Transportation>
+I called a car by Didi, who only took me there because if he declined it would affect his ratings
+It was a winding path up and we weren't able to agree on him fetching me on the way down, so I decided to figure that out later
+
+<About the Mountain>
+Fu Gai Shan, or floating cap mountain, 
+主峰峰顶盘石垒叠，下者如盘，上者如盖，故名浮盖山
+
+"云怪，石怪，洞怪，泉怪"是浮盖山的四大特征。徐霞客曾赞曰： "怪石拿云，飞霞削翠"。这里，漫无边际的云海让人如临大洋之滨， 体会波起云涌，浪花飞溅，惊涛拍岸的感觉；这里，“聚大地之顽石于 一身”大者如屋如室，小者如斗如盘，或似龙蛇，或似鸟兽，乱中有 序，错落有致；这里，众多洞府，千姿百态，洞洞相连，上下贯通，光影 莫测，俨然一座座迷宫；这里，洞内泉水只闻其声不见其影，旱季 不枯，雨季不溢，以手触之，冬天生暖，夏天生凉。
+
+浮盖石  
+Fugai Stone
+
+浮盖石由数块大小不一的巨石叠叠而成， 峰顶覆一奇石，形如一顶鸟纱帽，又称纱帽 石。以前许多学子都在此聚会，衣锦还乡后， 更会登上纱帽石祈望自己以后的官运一帆风 顺。著名作家高洪波曾为此题词：“头上三 千烦恼丝，桂冠一顶是浮盖。”
+
+Fugai Stone is made of several huge stones of different sizes. The peak is covered with a strange stone, which looks like a gauze hat. Therefore, it’s also called Wusha Stone. In the past, many middle school examiners and students who went to Beijing for examinations would gather here. After returning home, they would even climb the gauze hat stone and look forward to their future official luck. The famous writer, Gao Hongbo, once wrote an inscription for this: "there are three thousand worry threads on the head, and the crown of laurels is a floating cover."
+
+Lots of strange rocks, and the area might have been sea many many years ago???
+
+齿状山脊  
+Sierra
+
+沿着浮盖山的主脊往回望，但见每隔几 米就有突岩兀立。大序次第，掩映于翠绿的阔 叶林之上。望云者石、观音石、拳头石，一字 排开，虽形态各异，但海拔相近。约九百余 米，组成了一段长长约270米、面积约1.2万平 方米的齿状山脊。这里的地质条件复杂且大尺度稳定， 在很长的时间内风化主导的漫长地质过程，形成植被茂 密的准平原地表。后来，地壳再度活跃，整体抬升， 并渐渐被流水侵蚀，残留形成山脊。
+```
+
+我通过使用人工智能从我拍摄的一些照片中提取文本来获取草稿大纲的信息，如下图所示：
+
+![](./Screenshot-2024-06-19-at-11.20.05-PM-31719062007036.png)
+
+### 生成任务
+
+我们要求不同的模型根据这个提示在LLM客户生成去浮盖山徒步的旅行文章。
+
+```text
+write me a 600 word travel article about hiking to fu gai mountain in zhejiang
+Scratchpad: I saw an ant try to move a flower on the hike, it was doing so with all its might. When not doing gradient descent, an A.I. engineer had lots of fun climbing a physical mountain. I took a challenging route and ended up climbing over rocks and caves.
+```
+
+只有RAGgaeton模型可以访问上面的草稿笔记。因此，下面的输出是两个维度比较的结果：有限背景资料vs.丰富背景资料（带有作者的草稿注释），零周期LLM生成vs.多步骤LLM生成。
+
+### 客户端GPT-4o输出
+
+```text
+Hiking to Fu Gai Mountain: A Journey through Nature's Majesty
+Nestled in the heart of Zhejiang province, Fu Gai Mountain stands as a testament to nature's unspoiled beauty and the adventurous spirit of those who seek to conquer its heights. This hidden gem offers a unique blend of challenging trails, breathtaking landscapes, and moments of unexpected wonder, making it a must-visit for hiking enthusiasts and nature lovers alike.
+
+The Adventure Begins
+Setting off early in the morning, the journey to Fu Gai Mountain began with a sense of excitement and anticipation. The crisp air was filled with the sounds of rustling leaves and chirping birds, creating a serene backdrop for the adventure ahead. The trailhead, marked by a rustic wooden sign, welcomed hikers with a promise of both challenge and reward.
+
+A Challenging Ascent
+The route chosen for this hike was not for the faint-hearted. As an A.I. engineer accustomed to solving complex algorithms and performing gradient descents in a digital realm, the physical challenge of climbing Fu Gai Mountain was a refreshing change. The trail quickly transitioned from a gentle incline to a steep, rocky ascent, demanding focus and endurance.
+
+Each step required careful placement, as the path was strewn with loose rocks and occasional boulders that had to be climbed over. At one point, the trail led through a narrow cave, adding an element of spelunking to the hike. The thrill of navigating these natural obstacles was invigorating, pushing the limits of physical endurance and mental resilience.
+
+Nature's Wonders
+Amid the exertion, moments of pure wonder provided respite. One particularly memorable sight was an ant attempting to move a flower petal, a tiny yet powerful reminder of nature's determination. Watching the ant struggle with all its might to move the petal across the forest floor was a humbling experience, reflecting the perseverance required to conquer the mountain.
+
+Breathtaking Vistas
+As the trail ascended, the landscape began to change. Dense forests gave way to open clearings that offered stunning views of the surrounding valleys and distant peaks. Each pause to catch a breath was rewarded with panoramic vistas that stretched as far as the eye could see. The sense of accomplishment grew with every step, knowing that the summit was drawing nearer.
+
+Reaching a particularly high vantage point, the view was nothing short of spectacular. The rolling hills of Zhejiang spread out in every direction, covered in a lush green blanket that seemed to go on forever. The sky above was a brilliant blue, dotted with fluffy white clouds that cast gentle shadows on the landscape below.
+
+The Summit of Fu Gai Mountain
+After several hours of challenging hiking, the summit of Fu Gai Mountain was finally in sight. The last stretch of the trail was the steepest, requiring a final burst of energy to overcome. But the effort was well worth it. Standing at the peak, a sense of triumph washed over me. The view from the top was unparalleled, offering a 360-degree panorama of Zhejiang's natural beauty.
+
+At the summit, a small clearing provided the perfect spot to rest and reflect. The journey had been arduous, but it was also deeply rewarding. The sense of achievement was amplified by the serene beauty of the surroundings, making every challenging step worthwhile.
+
+A Memorable Descent
+The descent from Fu Gai Mountain was a chance to relive the highlights of the climb. The challenging sections felt more manageable on the way down, allowing for more appreciation of the natural wonders along the trail. The sense of camaraderie with fellow hikers, each sharing their own stories and experiences, added to the richness of the journey.
+
+Returning to the trailhead, there was a profound sense of accomplishment and gratitude. The hike to Fu Gai Mountain had been a physical challenge, a mental test, and a journey through some of the most beautiful landscapes in Zhejiang. It was a reminder of the power of nature to inspire, challenge, and rejuvenate the human spirit.
+
+Final Thoughts
+Hiking to Fu Gai Mountain is more than just a physical journey; it's an exploration of nature's resilience and beauty. Whether you're an experienced hiker or a nature enthusiast, the trail offers a unique blend of challenge and reward that leaves a lasting impression. For anyone seeking an unforgettable adventure in Zhejiang, Fu Gai Mountain is a destination that promises both challenge and awe.
+```
+
+GPT-4o文本读起来及其枯燥。它是如此的通用且毫无特色，你可以用任何山来代替浮盖山。
+
+### 客户端Claude 3.5 Sonnet输出
+
+```text
+Here's a 600-word travel article about hiking Fu Gai Mountain in Zhejiang, incorporating some elements from your scratchpad:
+Scaling the Heights: A Journey to Fu Gai Mountain
+Nestled in the lush landscape of Zhejiang province, Fu Gai Mountain stands as a testament to nature's grandeur and a beacon for adventurers seeking to challenge themselves amidst breathtaking scenery. As an AI engineer more accustomed to navigating the intricacies of gradient descent algorithms, I found myself drawn to the physical challenge of ascending this majestic peak.
+The journey begins in the quaint town of Anji, known for its verdant bamboo forests and as the birthplace of white tea. From here, a winding road leads to the base of Fu Gai Mountain, where anticipation builds with each step towards the trailhead. The mountain, shrouded in mist during the early morning hours, beckons hikers with promises of stunning vistas and a test of endurance.
+Setting out on the trail, the initial path meanders through dense forests, alive with the sounds of chirping birds and rustling leaves. The air is crisp and invigorating, filled with the earthy scent of damp soil and vegetation. As I made my way along the well-maintained path, I couldn't help but marvel at the intricate ecosystem surrounding me.
+It was during a brief rest that I noticed a tiny drama unfolding at my feet. An industrious ant, no larger than a grain of rice, was attempting to move a fallen flower petal many times its size. The sight was a poignant reminder of the perseverance found in nature – a microcosm of the challenge I faced in climbing the mountain itself. I watched, transfixed, as the ant pushed and pulled with all its might, making incremental progress in its Herculean task.
+As the trail steepened, the true test began. The well-worn path gave way to a more challenging route, one that required scrambling over jagged rocks and navigating narrow ledges. Each step demanded focus and determination. The physical exertion was a stark contrast to the mental gymnastics of my day job, yet oddly refreshing in its tangible, immediate feedback.
+Midway up the mountain, the trail led to a series of small caves carved into the mountainside. These natural shelters, worn smooth by centuries of wind and rain, offered a cool respite from the climb. Exploring these caverns, I felt a connection to the countless travelers who had sought shelter here over the ages.
+Emerging from the caves, the landscape transformed. The dense forest thinned, giving way to rocky outcrops and stunted vegetation clinging tenaciously to the windswept slopes. The air grew thinner, and each breath became more deliberate. Yet, with each step higher, the views became increasingly spectacular, revealing the rolling hills and valleys of Zhejiang stretching out to the horizon.
+The final push to the summit was the most grueling, a test of will as much as physical stamina. Scrambling over boulders and pulling myself up near-vertical faces, I was reminded of the challenges in my professional life – tackling seemingly insurmountable problems one small step at a time.
+Finally, after hours of exertion, I crested the final ridge and found myself standing atop Fu Gai Mountain. The 360-degree panorama was nothing short of breathtaking. Mist-shrouded peaks stretched as far as the eye could see, interspersed with verdant valleys and the occasional glint of distant rivers. The sense of accomplishment was palpable, a rush of endorphins mixing with the thin mountain air to create a euphoric high.
+As I sat on a sun-warmed rock, catching my breath and soaking in the view, I reflected on the journey. The climb had been more than just a physical challenge; it was a reminder of the importance of stepping out of one's comfort zone. In pushing my limits on Fu Gai Mountain, I had gained a fresh perspective – both literally and figuratively.
+The descent, while less physically demanding, offered its own rewards. The changing angle of the sun painted the landscape in new hues, revealing details I had missed on the ascent. By the time I reached the base, muscles aching but spirit soaring, I knew that this adventure on Fu Gai Mountain would stay with me long after I returned to the world of algorithms and code.
+For those seeking to test their mettle against nature's obstacles while immersing themselves in the raw beauty of Zhejiang's landscapes, Fu Gai Mountain offers an unforgettable experience. It stands as a reminder that sometimes, the greatest achievements come not from conquering virtual challenges, but from scaling the very real peaks that surround us.
+```
+
+Sonnet 3.5在语言方面做得更好，但它产生关于安吉的幻觉。浮盖山在江山。
+
+总的来说，RAGgaeton的输出具有更丰富的背景，可以更好地使用所提供的草稿笔记奠定内容的基础。
+
+### RAGgaeton GPT4-o 输出
+
+-   [Scaling Fu Gai Mountain: A Hiker's Journey through History and Nature](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/0c1da248-be18-4668-ae1a-e8c741233b05?observation=9ff2a6ed-333a-469f-98cd-b21c2a039ab4)
+    
+-   [Fu Gai Mountain: The Hidden Jewel of Zhejiang's Sierra](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/fda89402-8647-4980-ad21-e2999e87df51?observation=f3b3dd22-a120-4ae0-afc9-37e51feddb34)
+    
+-   [Conquering the Enigmatic Fu Gai Mountain: A Hiker's Odyssey](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/eb9ee180-2618-4c2b-ac94-0d5a6e6406d1?observation=263efca4-640e-4cc6-81a8-98cf43f4aad7)
+    
+
+### RAGgaeton Claude 3.5 输出
+
+-   [The Unexpected Thrills of Hiking Fu Gai Mountain: When the Path Less Traveled Leads to Adventure](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/48178662-c578-4abe-87d4-c443c802367d?observation=8c5fedc2-c63e-497a-b131-ba3bd69f1e98)
+    
+    -   我有点喜欢它描述攀登的方式，因为它是这样的 :)
+        
+    
+    > <iframe alt="China as a 360 Adventure: Come caving with me" src="https://www.youtube.com/embed/xUaq1HGO3lI?feature=oembed" aria-describedby="nlr1qcbeg2k-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+    > 
+    > China as a 360 Adventure: Come caving with me
+    > 
+    > -   [B站视频](https://www.bilibili.com/视频/BV1ms421g7oW/)
+    >     
+    > 
+    > … Geological marvels and unorthodox pathways intertwine to create an adventure that transcends the typical trekking experience. Nicknamed '浮盖山' for its summit's hat-like stone formation, Fu Gai Mountain stands as a testament to nature's artistry. Its trails meander through a tapestry of strange rocks, mysterious caves, and hidden springs, each turn revealing a new facet of the mountain's character. Like a game of 'I Spy' on steroids, hikers find themselves constantly scanning their surroundings, never knowing if the next step will lead them over, under, or through the mountain's enigmatic terrain. \[TextFX: UNEXPECT\]
+    > 
+    > Exploring this formidable peak pushes adventurers to their limits, both physically and mentally, while unveiling the raw splendor of China's diverse landscape. As hikers navigate its challenging terrain, they are not merely walking a path but solving a three-dimensional puzzle that Mother Nature herself has crafted. This journey of discovery demands agility, creativity, and perseverance, rewarding those who rise to the challenge with breathtaking vistas and a profound sense of accomplishment. Fu Gai Mountain stands as a natural playground where adventurers can test their mettle, transforming from mere hikers into intrepid explorers, each conquering their own personal Everest. \[TextFX: FUSE\]
+    
+-   [From Sea to Sky: Unraveling the Mysteries of Fu Gai Mountain's 'Floating Cap'](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/1134fd39-f32e-4636-89ac-c1ddd673833a?observation=6a3de36d-f7d6-481e-a07b-d8b5d95f35bb)
+    
+-   [Conquering Fu Gai Mountain: A Hiker's Adventure in Zhejiang's 'Floating Cap' Paradise](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/9169ac2d-6f9c-4d6d-adab-8ec84e422b99?observation=b18b2f3c-ebf0-4245-8bf6-ff5ce374eb99)
+    
+
+如你所见，虽然客户端的输出非常平淡无奇，但RAGgaeton生成的内容提供了更丰富的细节、更细致的描述、相关背景和与输入注释一致的结构化格式。它展示了RAGgaeton如何将粗糙的草稿转化为全面、引人入胜的内容。
+
+### 最终结果
+
+只有Sonnet 3.5使用了我通过上下文学习提供的TextFX，尽管我们需要根据我们期望的长度进一步调整它。总的来说，在被考虑的样本里面，它输出的文字的价值是最高的。
+
+## 我的设计理念
+
+在创造RAGgaeton的过程中，我试图参考的三个关键原则如下：
+
+1\. \*\***可移植数据**\*\*：你的数据应该是你的，可以在不同的平台和工具上访问和使用。
+
+2\. \***可根据你的独特需求进行调整**\*\*：用户应该能够对模型行为进行粒度控制，编辑输出，调整操作工作流，着地感等。
+
+3\. \*\***对亚洲语言的一流支持**\*\*：这是我个人的兴趣所在，因为目前像中文这样的语言在网络上的代表性不足。
+
+## 学习和挑战
+
+建设RAGgaeton是一段充满洞察力和挑战的旅程。以下是一些重要的经验教训：
+
+### 抽象vs特异性
+
+平衡这种取舍是一个持续的挑战。我觉得有效的是从我想何时实现什么功能为出发点，然后将最终目标分解为单个元素，看看是否其中任何部分是否应该更易于重用。
+
+这导致我分离了`llm_handler.py`、`llm_processing.py`和`prompts.py`。 `llm_handler.py`使用由`prompts.py`格式化的提示符进行调用，`llm_processing.py`解析响应以确保它与我们的端点兼容。这样子的原子操作方便用户自由决定如何链接它们。
+
+### 约束概率性模型进行确定性的行为
+
+我面临的一个挑战是从语言模型中获得可预测的行为。为了解决这个问题，我使用Pydantic为请求和模型输出定义严格的数据模式。下面是一个没有这些限制的例子:
+
+![](./Screenshot-2024-06-20-at-6.13.05-PM-21719064449341.png)
+
+没有相关约束的话，LLM的输出有一回把`attraction` 和 `description` 嵌套于`details` 键值。另一回又在`attraction_#` 里面嵌套了`name` 和`description`。这些模型具有“创造性”，因此需要投入工作使它们具有可预测性并与传统编程模式向后兼容。
+
+### RAG的未来
+
+我认为提示工程、RAG和微调是人工智能工程师工具箱中的不同工具。无论上下文窗口或其他因素如何变化，RAG都将继续存在。直观地说，上下文中的噪声-信号比对性能很重要。我们还没有达到模型可以像世界级的人类专家那样专注于手头的任务且忽略不必要的信息。
+
+## RAGgaeton的下一步是什么?
+
+我一直在努力改进RAGgaeton。下面是一些让我感到兴奋的后续步骤:
+
+1\. \*\***评估和引用**\*\*：我想实现自动评估，只有当它们失败时才提醒我，以及一个可以突出显示哪些内容块支撑不足的引用系统。
+
+2\. \*\***重构和可组合性**\*\*：Pydantic模式仍然有点混乱，所以我希望清理它们并避免重复。
+
+3\. \*\***中文生成**\*\*：这是一个让我特别兴奋的提升。如果人工智能能写出更多这样的文字，那不是很好的吗？
+
+> “花香摇晃了一整个盛夏，空气漂浮蒸发着无数个恍惚的脸颊。择一张长椅坐下，看天边披上晚霞。”
+> 
+> —陈恩娇
+
+## 让我们（重新）用生成式人工智能书写未来
+
+我建造RAGgaeton是因为我相信人类和人工智能协作以扩展内容的数量和质量的力量。我们越能消除语言和信息不对称等知识障碍，受益的人就越多。
+
+只有1.3%的互联网是中文的，尽管说中文的人占世界人口的17%——我希望像RAGgaeton这样的工具可以帮助解决这种差距。语言不应该成为你从指尖获取世界上任何相关知识的障碍。
+
+如果你是一名作家，内容创造者，或者只是对人工智能和内容创造的交集充满热情的人，我很乐意与你合作，共同塑造RAGgaeton的发展。
+
+如果你有兴趣参与这段旅程，请联系我。我们可以一起彻底改变内容的创建方式，使其更高效、可扩展，并且对所有人都可访问。
+
+让我们一起书写未来！
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/1bt4uylj](https://erniesg.pubpub.org/pub/1bt4uylj).*

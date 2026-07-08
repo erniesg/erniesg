@@ -1,0 +1,183 @@
+---
+title: "Berlayar：构建稳定可扩展的人工智能技术栈"
+description: "一个周末原型如何引出另一个原型，以及我在过程中学到的新东西"
+date: 2023-08-29
+authors: ["erniesg"]
+draft: false
+lang: "zh"
+translationKey: "berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2"
+---
+
+我之所以特别着迷 A.I.，是因为它几乎是最接近于触碰和追问“何以为人”这个问题的技术，至少在认知和创造力层面是这样。能这样说的技术并不多。我也不认为这个人工智能时刻的重量已经完全落到我们肩上。随着内容生产成本大幅下降，我们正在 [living, moving history](https://marginalrevolution.com/marginalrevolution/2023/03/existential-risk-and-the-turn-in-human-history.html) 里生活。事实上，人类大多数经历这类时刻的人，都无法预见印刷机之后的宗教改革和一切后果，或互联网与总统选举之间的关系。所以做了几个概念验证 (PoCs) 之后，我开始看见传统软件编写方式与数据驱动开发之间的根本差异。传统编程和机器学习的区别，有点像那句谚语：
+
+> “授人以鱼, 只够一日；授人以渔, 则受用终身.”
+
+# **ML/大语言模型驱动开发 是软件开发的范式转移**
+
+已经够糟的是，我们大多数人其实对软件开发里到底发生了什么没什么概念；数据驱动开发又把大量“伪科学式”的试错和概率式思维加进来，这意味着相关流程、工作流和工具对许多资深工程师来说也像一个全新世界。[这篇文章给出了相当不错的历史脉络和区分](https://www.linkedin.com/pulse/machine-learning-vs-traditional-software-development-ml4devs-gupta/)（不过遗憾的是，我也注意到技术传播速度因地理位置差异极大，我们其实都已经生活在时间机器里——SFTP 就是一个例子……）。
+
+问题的核心是：你如何教机器学习？当你持续在交付流程的每一步实验，从你收集的数据，到降维、模型选择、超参数调优等等，同时又要向终端用户提供稳定服务，该怎么做？大语言模型带来了强大的自然语言、知识和推理工具，但它们也有自己的怪脾气。因此这些挑战的总和让我意识到（当然是在 ChatGPT 的帮助下），我需要一种基于注册表、由接口驱动的方法，来扩展和服务化这些系统。
+
+这有点像科学过程：有重复任务、工作流，以及持续监控结果的需要（理想情况下还能自动触发服务动作）。所以我会列出一些以前做过的实验、其中反复出现的模式，并粗略分享我如何思考这个系统。
+
+# **周末原型**
+
+一个周末能做什么？结果是很多东西。一个东西引出另一个，可以被构建的新应用和新体验像是一个完整宇宙，但最终限制还是开发者时间。所以我现在真正关注的是构建基础模块，让任何开发者都能把效率提高 100 倍，甚至 1000 倍（我希望）。
+
+## **Bertrand - 从提示到发布**
+
+动机/使用场景：我想做这个，是因为我在想能不能构建一个东西，让 1000 个人每年每月付我 100 美元，同时投入和维护成本最小。从提示到发布，或者一个全自动社交媒体代理，看起来就是这样的东西，而且技术上可行。所以我尝试为正在上的课程生成闪卡，只是为了玩一玩上面的功能，看看回复是否更相关，以及在非常受限的场景里，大语言模型的生成能力能被拉伸到什么程度。
+
+假设：通过把新知识摄入到大语言模型里并给它记忆，我们可以做更好的检索增强生成 (RAG)，并个性化体验。
+
+<iframe alt="Bertrand - a ChatGPT prompt-to-publish plugin" src="https://www.youtube.com/embed/aztjmgs7Qkc?feature=oembed" aria-describedby="nkc27aw0uzr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Bertrand - 一个 ChatGPT 从提示到发布插件
+
+结果和我学到的东西：这是我第一次接触 GraphQL 和向量数据库，具体来说是 Weaviate；我也更好地理解了嵌入，这正是我在[之前一个演示](https://www.youtube.com/watch?v=hKrO-bxXXgY) 里一直念叨的内容。我想：我需要的是一种把离散流程串起来的方法，自动完成学习新趋势、生成内容、再排期和发布的端到端过程。当然，这东西真的存在！我发现了 Langchain 和 Deep Lake，并在后续概念验证中继续折腾。
+
+## **Arthur - 搜索与检索**
+
+动机/使用场景：在用 ChatGPT 构建的过程中，也出于对“用最少资源换最大回报”的一般喜爱，我发现如果我的大语言模型结对程序员可以自己不断学习新东西（从文档、资料、网页搜索等），那会很棒；更好的是，如果它能按命令自主写代码、编译，并根据遇到的错误自我修复。相比搜索和阅读，直接得到回答要快得多。我也很沮丧于人与人沟通会因为口音和等待时间变得又难又耗时；为什么不直接让 A.I. 学习现有代码库，然后问它问题？一旦 A.I. 具备对现有项目结构和代码库的知识，从提示到功能看起来也不应该太远。
+
+假设：通过为大语言模型创建有意义的策略来处理不同知识来源，我们可以在任何东西之上查询和生成。
+
+<iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="ns8whgyf7bu-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Arthur - Search and Retrieve Anything
+
+结果和我学到的东西：如果质量真的重要，生成内容的质量是个问题。所以更大的重点是，大语言模型驱动应用把敏捷性和迭代提升到全新层次，因为沿途每一步都可以被迭代和优化。也许我喂它更多内容，它就会生成更好的内容。也许我帮助它更好理解内容语义，它就会做得更好的检索和生成。我创建了一种按对象层级切分 .json 的方式，因为这看起来合理，但遇到了 token 限制，所以不得不限制检索片段数量。对每一种可能被摄入的数据源，无论是文档、代码、音频、视频、图片等，都有很多不同方式把它切分成更小或更有意义的单元，也有不同的嵌入模型、向量存储（这次我用了 Deep Lake）和检索策略。因此我真的需要一个生产环境系统，它是：
+
+-   稳定 - 让用户能享受一致体验
+    
+-   可扩展 - 让我能轻松加入新的数据摄入来源、新的嵌入模型等等
+    
+
+而且 ZOMG，[虚拟环境和容器化](https://erniesg.pubpub.org/pub/i8a0vp8z) 太重要了。它们就像你能写第一行代码前设置过程的 3/4……
+
+## **The Sound of Stories**
+
+动机/使用场景：我只是对把这些技术部署到一个实时发生的实际表演里，并用 A.I. 增强人的能力很感兴趣，让我们能做以前不可能的事情。在实验了可能汇聚成交互式讲故事体验的不同组件之后，让观众听到用讲述者声音、用多种语言讲述的故事，无论讲述者是说故事的人还是亲人，把所有东西放到一起并呈现给人们似乎就是自然的下一步。
+
+假设：A.I. 可以解锁并叠加新的体验和能力，例如把文本生成和其他服务串起来，让生成的故事被朗读给你听。
+
+<iframe alt="The Sound of Stories" src="https://www.youtube.com/embed/0cBbG0SkSCo?feature=oembed" aria-describedby="nlu4kddkcrr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+The Sound of Stories
+
+结果和我学到的东西：Streamlit 用来为大语言模型应用原型化 UI 有点糟，Chainlit 看起来更好；[SeamlessM4T](https://ai.meta.com/blog/seamless-m4t/) 有点令人失望，但在我熟悉的语言里，文本转文本、文本转语音和语音克隆已经算是解决的问题，延迟和其他语言才可能是真正障碍。所有 3 个概念验证都有一个反复出现的模式：我对数据源执行摄入，以某种方式切分（按字符数、按对象等），然后生成嵌入，并存到向量数据库供前两个概念验证检索；而这个概念验证则很大程度上是“提示工程”。
+
+旁注：这个概念验证之后，我其实不认为提示工程会成为真正职业。即使真的成为职业，它也会是现代版打字员职责；整个迭代提示词的过程感觉像那种更适合自动化的事情。确实，在规模化时最大的挑战之一会是：你如何有效监控和评估这些调整的表现？引入人在回路中？尽可能端到端自动化整个过程并用 MLOps 管理？
+
+在这个特定概念验证中，我想在不同服务之间传递数据，并更多尝试多模态。因此，大语言模型生成输出的消费可以由其他服务完成，比如我把生成文本传给 SeamlessM4T 做音频生成；它也可以以某种形式呈现给终端用户。换句话说，这类 RAG 的消费或呈现层也是可定制的。
+
+因此，除了一个稳定且可扩展的开发和生产环境系统，这个系统还需要：
+
+-   灵活 - 让我能轻松重新配置工作流或替换组件
+    
+-   可伸缩 - 在实时场景中提供一定程度的延迟和质量保证，本质上我关心真实规模下的性能
+    
+
+# 第一部分：设计可扩展的摄入、切分与嵌入系统
+
+那么这个系统在实践中是什么样子？我还在重构，并逐步走过整个过程，一边构建一边学习新术语和新流程。与此同时，先粗略勾勒一下：
+
+我们会有一个注册表。
+
+这个注册表会维护文件扩展名到对应处理器的映射。每个处理器都应该知道如何切分和解析对应的文件类型。
+
+```text
+FILE_TYPE_PROCESSORS = {
+    ".py": PythonFileProcessor,
+    ".md": MarkdownFileProcessor,
+    # Add other file types and their processors here...
+}
+```
+
+我们会有基类。
+
+```python
+from abc import ABC, abstractmethod
+
+class DataSource(ABC):
+    """
+    Base class for any data source. This provides a generic interface for data ingestion.
+    """
+
+    @abstractmethod
+    def ingest(self):
+        """
+        Ingest data and return a consistent format for further processing.
+        """
+        pass
+
+    @abstractmethod
+    def get_metadata(self):
+        """
+        Extract metadata from the data source. This metadata can vary depending on the source type.
+        """
+        pass
+
+class GitRepoSource(DataSource):
+    def ingest(self):
+        # Logic to clone/pull git repos and filter relevant files.
+        pass
+
+    def get_metadata(self):
+        # Extract metadata specific to git repositories.
+        pass
+
+class PDFSource(DataSource):
+    def ingest(self):
+        # Logic to ingest PDFs.
+        pass
+
+    def get_metadata(self):
+```
+
+我们会按需要对文件处理器、切分、嵌入和流水线的其他步骤重复这个模式。
+
+```text
+CHUNKING_STRATEGIES = {
+    ".py": PythonCodeChunker,
+    ".md": MarkdownChunker,
+    # ... other chunkers
+}
+```
+
+这意味着我们需要可配置且灵活的处理逻辑，例如下面这样：
+
+```python
+def process_files(files, embedding_strategy_name):
+    embedding_strategy = EMBEDDING_STRATEGIES[embedding_strategy_name]()
+
+    for file_path in files:
+        file_extension = os.path.splitext(file_path)[1]
+        file_processor = FILE_TYPE_PROCESSORS.get(file_extension)
+
+        if not file_processor:
+            print(f"No processor found for {file_extension}. Skipping...")
+            continue
+
+        chunks = file_processor().process(file_path)
+        for chunk in chunks:
+            embedded_text = embedding_strategy.embed(chunk["content"])
+            # Store embedded_text and metadata...
+```
+
+这样的注册表和抽象类方法带来以下好处：
+
+-   **可伸缩性：** 使用字典（**`FILE_TYPE_PROCESSORS`** 和 **`EMBEDDING_STRATEGIES`**）轻松把文件类型和嵌入策略映射到相应处理器。这个设计天然可扩展，因为新增文件类型或嵌入方法只需要扩展字典。
+    
+-   **鲁棒性：** 更清晰地分离关注点，也能更有效地隔离失败。一个文件处理器的变化不应该影响其他处理器。
+    
+-   **可扩展性：** 为扩展而设计。如前所述，支持新的文件类型或嵌入策略只需要创建新类并加入相应注册表，从而最小化对现有代码的改动。
+    
+-   **灵活性：** 高度灵活。因为组件注册在字典里，替换或新增组件都很直接。例如改变 ".py" 文件的处理器，只需更新 **`FILE_TYPE_PROCESSORS`** 字典里的条目。
+    
+
+以上对快速开发和协作非常有利，但别忘了我们想要的是生产环境中稳定且一致的系统，而这就是接口驱动部分登场的地方。我会在后续文章里谈到。
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/zc0zx741](https://erniesg.pubpub.org/pub/zc0zx741).*

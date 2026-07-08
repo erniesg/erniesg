@@ -1,6 +1,7 @@
 ---
 import Link from '@/components/Link.astro'
 import { Badge } from '@/components/ui/badge'
+import { getStaticTranslation } from '@/lib/i18n'
 import { Image } from 'astro:assets'
 import type { CollectionEntry } from 'astro:content'
 
@@ -9,6 +10,7 @@ type Props = {
 }
 
 const { project } = Astro.props
+const descriptionKey = `project.${project.id}.description`
 ---
 
 <div
@@ -36,8 +38,13 @@ const { project } = Astro.props
       <h3 class="mb-1 text-lg font-semibold">
         {project.data.name}
       </h3>
-      <p class="mb-2 text-sm text-muted-foreground">
-        {project.data.description}
+      <p
+        class="mb-2 text-sm text-muted-foreground"
+        data-i18n-key={descriptionKey}
+      >
+        {getStaticTranslation(descriptionKey, 'en') === descriptionKey
+          ? project.data.description
+          : getStaticTranslation(descriptionKey, 'en')}
       </p>
       {
         project.data.tags && (

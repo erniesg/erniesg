@@ -1,0 +1,128 @@
+---
+title: "Fork Work：有自主智能体还工作什么？"
+description: "人类在沟通和会议上浪费太多时间；A.I. 能即时回应和写代码，所以我们为什么还要工作那么多？"
+date: 2023-08-11
+authors: ["erniesg"]
+image: "./00281-807328077-11691761226672.png"
+draft: false
+lang: "zh"
+translationKey: "fork-work-why-work-when-we-can-use-autonomous-agents-instead"
+---
+
+与其对着键盘崩溃，或者[对着继承来的 codebase 掉几滴眼泪](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)，不如把这些信息交给 A.I.，然后和它聊天。当你开始利用 大语言模型 (LLMs) 在这些信息上的知识和推理能力，下一步自然就是 synthesis：生成可以跑在现有 codebase 之上的新代码，让世界上任何人都能从 提示-to-feature。为了解决这些挑战，下面这个 demo 是我周末用一两天做出来的成果。做起来很有趣，因为过程中学到很多新东西，也更深刻理解了一些概念。
+
+<iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Arthur - Search and Retrieve Anything
+
+# 为什么还要工作 Leh？
+
+![](./00281-807328077-11691761226672.png)
+
+我当时想做的是，把关于我的数据工厂的信息传进 `Deep Lake` 向量存储，然后利用 ChatGPT 对我的自定义知识库进行推理，理解现有设置里到底发生了什么。我发现这比试图理解人类留下来的遗留代码库好玩多了（不好意思但也不不好意思），因为有太多时候，沟通和会议完全是在浪费时间，而等待回复的延迟，那种人类回复查询的滞后，我真的无话可说……所以就是这样。一旦把第一块砖放下，我们就能搭建一座自主智能体工厂，让它们研究、检索、推理各种信息，并综合、生成新的有价值输出，无论是社交媒体内容还是代码。对我来说，这就是为什么 A.I. 对劳动力市场的影响值得全社会认真讨论。
+
+当即便是零散的 A.I. 智能都已经是超人类智能，当我们可以实现 [1000 倍生产力](https://www.youtube.com/watch?v=ji5rdhzT53o)，也就是说，也许根本没有足够的工作可以分配时，我们该怎么办？退一步看，我们为什么本来就希望人类工作这么多？也许我们真正需要做的是重新配置、重新画出工作、收入和意义之间的箭头。我会很乐意投票支持每周工作 4 小时，然后把剩下时间拿来玩和学习，就这样说说。
+
+# 遇到的挑战
+
+![](./00283-1392154050-21691764412914.png)
+
+在构建这个 智能体 的过程中，最让我卡住的难点是：
+
+1.  **使用正确的 package versions**
+    
+
+为了开始，我决定先从[一个现有项目 (chat-with-code)](https://github.com/priya-dwivedi/chat-with-code) 学起，但我一直遇到下面这样的错误：
+
+```text
+RuntimeError: no validator found for <class 're.Pattern'>, see `arbitrary_types_allowed` in Config
+Traceback:
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/streamlit/scriptrunner/script_runner.py", line 557, in _run_script
+    exec(code, module.__dict__)
+File "chatbot.py", line 2, in <module>
+    import utils
+File "/home/erniesg/code/erniesg/chat-with-code/utils.py", line 1, in <module>
+    from langchain.document_loaders import TextLoader
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/__init__.py", line 6, in <module>
+    from langchain.agents import MRKLChain, ReActChain, SelfAskWithSearchChain
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/__init__.py", line 40, in <module>
+    from langchain.agents.agent_toolkits import (
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_toolkits/__init__.py", line 12, in <module>
+    from langchain.agents.agent_toolkits.csv.base import create_csv_agent
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_toolkits/csv/base.py", line 4, in <module>
+    from langchain.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_toolkits/pandas/base.py", line 18, in <module>
+    from langchain.agents.types import AgentType
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/types.py", line 5, in <module>
+    from langchain.agents.chat.base import ChatAgent
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/chat/base.py", line 6, in <module>
+    from langchain.agents.chat.output_parser import ChatOutputParser
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/chat/output_parser.py", line 12, in <module>
+    class ChatOutputParser(AgentOutputParser):
+File "pydantic/main.py", line 229, in pydantic.main.ModelMetaclass.__new__
+File "pydantic/fields.py", line 491, in pydantic.fields.ModelField.infer
+File "pydantic/fields.py", line 421, in pydantic.fields.ModelField.__init__
+File "pydantic/fields.py", line 542, in pydantic.fields.ModelField.prepare
+File "pydantic/fields.py", line 804, in pydantic.fields.ModelField.populate_validators
+File "pydantic/validators.py", line 723, in find_validators
+```
+
+或者像这样：
+
+```text
+➜  chat-with-code git:(main) ✗ poetry run streamlit run chatbot.py                                         [🐍 lewagon]
+2023-08-04 19:39:49.759 INFO    numexpr.utils: Note: NumExpr detected 12 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 8.
+2023-08-04 19:39:49.760 INFO    numexpr.utils: NumExpr defaulting to 8 threads.
+
+  You can now view your Streamlit app in your browser.
+
+  Network URL: http://172.19.237.74:8501
+  External URL: http://180.129.59.54:8501
+
+2023-08-04 19:39:51.484 Uncaught app exception
+Traceback (most recent call last):
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/streamlit/scriptrunner/script_runner.py", line 557, in _run_script
+    exec(code, module.__dict__)
+  File "/home/erniesg/code/erniesg/chat-with-code/chatbot.py", line 2, in <module>
+    import utils
+  File "/home/erniesg/code/erniesg/chat-with-code/utils.py", line 1, in <module>
+    from langchain.document_loaders import TextLoader
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/__init__.py", line 6, in <module>
+    from langchain.agents import MRKLChain, ReActChain, SelfAskWithSearchChain
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/__init__.py", line 31, in <module>
+    from langchain.agents.agent import (
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent.py", line 15, in <module>
+    from langchain.agents.agent_iterator import AgentExecutorIterator
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_iterator.py", line 21, in <module>
+    from langchain.callbacks.manager import (
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/callbacks/__init__.py", line 10, in <module>
+    from langchain.callbacks.aim_callback import AimCallbackHandler
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/callbacks/aim_callback.py", line 5, in <module>
+    from langchain.schema import AgentAction, AgentFinish, LLMResult
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/schema/__init__.py", line 4, in <module>
+    from langchain.schema.memory import BaseChatMessageHistory, BaseMemory
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/schema/memory.py", line 7, in <module>
+    from langchain.schema.messages import AIMessage, BaseMessage, HumanMessage
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/schema/messages.py", line 147, in <module>
+    class HumanMessageChunk(HumanMessage, BaseMessageChunk):
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/pydantic/main.py", line 352, in __new__
+```
+
+Solution：结果发现，我必须使用特定的 `streamlit (1.25.0)` 和 `pydanic version (1.10.12)`；各种 packages 之间的 compatibility issue 反复出现，所以我想我需要多学一点相关工具和 最佳实践。也许具体版本应该永远定义在 `poetry` 里！？
+
+2.  **弄清楚如何 ingest 和 chunk 用 .json 文件定义的 Azure Data Factory 资源**
+    
+
+结果发现，处理 文档、.PDFs、GitHub 代码仓库 等等有很多教程，但很少有人提到 .json。所以在让 ChatGPT 生成无果之后，我仔细看了 .json 和 `langchain` JSON loader，一步步引导 ChatGPT 按照我认为应该做的方式处理，最后终于成功了。至少根据我在 Google 和 YouTube 第一页的搜索结果，还没有人针对 Azure Resource Manager (ARM) template 做过这件事，所以我只能创新一下。
+
+Solution：我的推理是，对于这个初始 原型，我希望能够保留 Azure Data Factory 的 `parameters`、`variables` 和 `resources`，以及 `resources` 里的 individual objects，因为那些会是我的 pipelines、activities 等等。结合 few shot instructions 和 上下文，ChatGPT 最后给了我需要的东西。
+
+# 前路
+
+这就是我如何最终把 75 个 items chunk 到我的 `Deep Lake` 数据set 里。现在我已经在思考 ingest 更多 数据源s 的需求（让我们查询所有 SQL schemas、stored procedures 和 数据 itself！）、围绕 memory 更新 meta数据、对 multi-modal 数据 lake cum vector store 执行 CRUD 操作、优化 检索 strategies 和 token 上下文s。事实上，为什么不直接让 LLM 通过 工具 执行并采取行动？更进一步，为什么不让 LLM 写自己的 tests、调试 并 validate 自己？所有这些对于把一个 autonomous 智能体 投入生产都很关键，它将让任何规模的团队或组织保守估计也能实现 1000x productivity。
+
+Fun times! 🤩🤩🤩
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z).*

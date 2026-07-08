@@ -5,6 +5,11 @@ import Container from '@/components/Container.astro'
 import PaginationComponent from '@/components/ui/pagination'
 import { SITE } from '@/consts'
 import Layout from '@/layouts/Layout.astro'
+import {
+  getStaticTranslation,
+  isCanonicalDefaultPostId,
+  isLegacyChinesePostId,
+} from '@/lib/i18n'
 import type { PaginateFunction } from 'astro'
 import { type CollectionEntry, getCollection } from 'astro:content'
 
@@ -13,7 +18,13 @@ export async function getStaticPaths({
 }: {
   paginate: PaginateFunction
 }) {
-  const allPosts = await getCollection('blog', ({ data }) => !data.draft)
+  const allPosts = await getCollection(
+    'blog',
+    (post) =>
+      !post.data.draft &&
+      isCanonicalDefaultPostId(post.id) &&
+      !isLegacyChinesePostId(post.id),
+  )
   return paginate(
     allPosts.sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf()),
     { pageSize: SITE.POSTS_PER_PAGE },
@@ -38,8 +49,13 @@ const years = Object.keys(postsByYear).sort((a, b) => parseInt(b) - parseInt(a))
   <Container class="flex grow flex-col gap-y-6">
     <Breadcrumbs
       items={[
-        { label: 'Blog', href: '/blog', icon: 'lucide:archive' },
-        { label: `Page ${page.currentPage}`, icon: 'lucide:folder-open' },
+        { label: getStaticTranslation('blog.title', 'en'), href: '/blog', icon: 'lucide:archive', i18nKey: 'blog.title' },
+        {
+          label: `${getStaticTranslation('blog.page', 'en')} ${page.currentPage}`,
+          icon: 'lucide:folder-open',
+          i18nKey: 'blog.page',
+          suffix: ` ${page.currentPage}`,
+        },
       ]}
     />
 

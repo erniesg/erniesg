@@ -1,0 +1,73 @@
+---
+title: 'Astro로 Cloudflare Pages로 이전하기'
+description: 'Astro를 사용해 내 웹사이트를 Cloudflare Pages로 옮긴 이유와 이 현대적인 웹 기술 스택의 장점'
+date: 2025-02-10
+tags: ['cloudflare', 'astro', 'webdev', 'hosting']
+authors: ['erniesg']
+image: './astro.png'
+lang: ko
+translationKey: moving-to-cloudflare-with-astro
+---
+
+# Astro로 Cloudflare Pages로 이전하기
+
+Markdown으로 글을 쓰고, 버전 관리와 자동 배포를 누리며, 번개처럼 빠른 SEO와 설정을 얻고, 개인 사이트에 SSL과 무제한 대역폭이 포함된 자체 도메인을 사용하고 싶나요? 그것도 모두 무료로요? 그렇다면 계속 읽어 보세요!
+
+## 왜 Astro인가?
+
+Astro는 몇 가지 설득력 있는 이유로 제가 선택하는 프레임워크가 되었습니다.
+
+### 번개처럼 빠른 SEO
+- 기본적으로 JavaScript가 0이라 눈부시게 빠른 페이지 로드를 제공합니다
+- 별도 설정 없이 [99/100 Lighthouse 점수](https://pagespeed.web.dev/analysis/https-ernie-sg/n5kl6txhdm?form_factor=mobile)
+- 자동화된 meta 태그와 구조화된 데이터
+
+### 콘텐츠 중심
+- 일급 Markdown/MDX 지원으로 원하는 방식으로 콘텐츠를 쉽게 다시 렌더링할 수 있습니다
+- 수학을 위한 네이티브 LaTeX 지원
+- 100개 이상의 언어를 위한 풍부한 구문 강조
+
+### 유연한 개발자 경험
+- 프레임워크에 구애받지 않음: 필요한 곳에 React, Vue, Svelte 또는 HTMX를 사용하세요
+- 정적 출력은 어디서든 호스팅할 수 있다는 뜻이며, 벤더 종속이 없습니다
+
+## Cloudflare Pages의 장점
+
+### 무제한 대역폭
+제가 전환한 주요 이유 중 하나는 무제한 대역폭을 제공하는 Cloudflare Pages의 [넉넉한 무료 티어](https://pages.cloudflare.com/)였습니다. 혹시 제가 유명해지더라도 예상치 못한 청구서가 없다는 뜻입니다!
+
+### 자동화된 CI/CD
+개발 워크플로는 다음 덕분에 매끄럽습니다.
+- Git에서 자동 배포
+- pull request용 미리보기 배포
+- 쉬운 롤백
+
+### 사용자 지정 도메인과 그 밖의 기능
+- 엣지 캐싱을 갖춘 글로벌 CDN
+- 자동 자산 최적화
+- 쉬운 설정의 사용자 지정 도메인(물론 이 비용은 직접 내야 합니다)
+- 내장 SSL 인증서
+- 내장 분석
+- 훌륭한 문서
+
+## 마이그레이션 과정
+
+이를 위해 제가 한 일은 다음과 같습니다.
+
+1. [astro-erudite](https://github.com/jktrn/astro-erudite) 템플릿을 클론했습니다
+
+2. 커스터마이즈한 뒤 GitHub에 푸시했습니다
+
+3. Cloudflare Pages를 설정하고 배포했습니다.
+   - [Cloudflare dashboard](https://dash.cloudflare.com/) > Compute (Workers)로 이동
+   - GitHub 저장소 연결
+   - 배포할 main 브랜치 선택
+   - 프레임워크로 Astro 선택
+
+4. 사용자 지정 도메인을 연결하고, 그 이후의 나머지는 Cloudflare가 처리하게 했습니다
+
+전체 과정은 더할 나위 없이 쉬웠습니다. 저는 무료 버전 관리를 얻었고, `main`에 푸시할 때마다 사이트가 자동으로 다시 배포됩니다.
+
+## 결론
+
+Astro의 성능 우선 접근 방식과 Cloudflare의 탄탄한 인프라가 결합되어, 인터넷에서 빠르게 자기 공간을 마련하려는 개발자에게 훌륭한 기반을 제공합니다. 가장 좋은 점은요? 이 모든 것을 무료로 사용할 수 있어 개인 프로젝트와 블로그에 이상적인 선택이라는 점입니다.

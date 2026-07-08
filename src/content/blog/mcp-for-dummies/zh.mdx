@@ -1,0 +1,105 @@
+---
+title: 模型上下文协议（MCP）入门指南
+description: 用简单易懂的实践例子，理解为什么 MCP 不只是 API，而是构建人工智能驱动应用的未来，以及如何开始
+date: 2025-04-09
+tags:
+  - MCP
+  - AI
+  - API
+  - engineering
+  - tools
+authors:
+  - erniesg
+image: ./mcp-dummies.png
+lang: "zh"
+translationKey: "mcp-for-dummies"
+---
+
+# 模型上下文协议（MCP）入门指南，或者，为什么它不只是 API？
+
+如果你也和我一样想过：MCP 不就是 API 吗？这篇文章会说明为什么 MCP 对懒惰的开发者很有用。受 Gang Rui 在 Lorong AI 主办的 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9) 分享启发，我把关键要点整理出来，并说明终端用户如何使用 MCP。
+
+## TLDR
+
+MCP 通过把业务逻辑（主机）和工具执行（服务器）解耦，将“要做什么”和“如何去做”分离开来，而客户端则作为二者之间的标准化桥梁。主机负责用户交互和人工智能推理，服务器则把能力暴露为可复用接口。通过标准化，MCP 让智能体式人工智能能够在不同系统之间动态发现、编排并组合能力。
+
+## 问题：开发工作量的组合爆炸
+
+假设我们想在一个服务医院医生的人工智能应用中发送邮件。在 MCP 之前，你需要编写集成逻辑来调用邮件 API、处理响应、把它接到模型上，再粘合业务逻辑。现在想象一下，还要为病人电话中的预约提醒做这件事，以及为电商促销通知等其他应用做这件事，而它们都使用同一个邮件 API。没有 MCP，你就会在多个客户端和使用场景中反复实现同样的集成逻辑。邮件 API 一旦有破坏性变更？希望你喜欢到处重构。😤
+
+MCP ✨ 是集成复杂性这个二次问题的线性解法。它有点像 React 组件之于用户界面：模块化、声明式、可组合。
+
+## 什么是 MCP？
+
+就像 USB-C 消除了对多种线缆和端口的需求，MCP 为人工智能应用与外部工具和数据源沟通提供了一种通用方式。[关键组件](https://modelcontextprotocol.io/docs/concepts/architecture)包括：
+
+- 💻 **MCP 主机**：发起请求并处理用户交互的人工智能应用，例如 [Claude Desktop](https://claude.ai/download)。一个主机可以通过客户端连接到多个 MCP 服务器。
+- 🔌 **MCP 客户端**：内置于主机中，负责与服务器交互。每个客户端连接到一个 MCP 服务器。
+- ⚙️ **MCP 服务器**：暴露工具、提示词或资源供客户端使用。
+
+任何人都可以编写自己的主机、客户端或服务器，也可以直接接入 [Smithery.ai](https://smithery.ai) 上已有的 4200+ 种能力。
+
+## 它如何运作
+
+用户启动你的人工智能应用 → 发出请求（例如“提醒某某他的预约”）→ MCP 客户端检查自己是否有合适的工具（如 `send_email`）以及足够的上下文 → 它通过 MCP 服务器调用该工具，这个服务器可以是本地运行的小进程（通过 `stdio`），也可以是远程进程（通过 [HTTP Streamable](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)，甚至自定义方式）→ 服务器处理请求并返回结果 → 人工智能把结果纳入回复 → 用户看到最终回答。
+
+想了解更多内部机制，可以查看[架构规范](https://modelcontextprotocol.io/specification/2025-03-26/architecture/index)。
+
+## 为什么是 MCP？
+
+MCP 强制实现**关注点分离**，促进**可复用性**，并大幅简化**维护**。
+
+### 魔法：人工智能医疗应用示例
+
+在现实世界中，用户需求增长很快，我们需要支持的平台也一样。
+
+假设你正在构建一个人工智能驱动的医疗应用，用**邮件**、**短信**和**应用内门户消息**发送预约提醒。
+
+用 MCP 可以这样组织：
+
+- **每个平台 1 个主机**（例如网页端、移动端）
+- **每个主机内 3 个客户端** - 每个渠道一个：邮件、短信、应用内消息
+- **每个客户端 1:1 连接到一个 MCP 服务器**，由服务器处理实际逻辑
+
+接下来想支持 WhatsApp？如果已有服务器就直接复用，否则写一个新的服务器，它立刻对所有主机可用，不需要重复劳动。
+
+## 超越 API
+
+与 MCP 相比，API 在两个关键方面有局限：
+
+1. 功能 vs. **架构** - API 在单一应用内部暴露功能。MCP 提供跨应用运作的架构。构建一次，到处使用。
+2. 固定 vs. **自适应** - API 使用硬编码触发器。MCP 允许人工智能根据上下文决定使用哪些工具，从而支持灵活、智能的工作流。
+
+MCP 把 API 变成可供智能体使用的能力，让智能体能够在需要时自主推理并组合 API。它的区别，就像调用一个服务和在规模化环境中编排智能、灵活工作流的区别。正如网页开发者从静态 HTML 走向可复用组件，MCP 帮助人工智能工程师从脆弱、固定的集成走向动态、具备上下文意识的智能体软件，实时响应用户需求。🚀
+
+## 超越 Anthropic
+
+MCP 由 Anthropic 推出，目前在主要大语言模型厂商和社区贡献的支持下快速成长。
+
+* **OpenAI** 在其 [Agents SDK](https://openai.github.io/openai-agents-python/mcp/) 中正式支持 MCP，OpenAI API 和 ChatGPT 桌面应用也[即将支持](https://x.com/OpenAIDevs/status/1904957755829481737)
+* **Microsoft** 开发了 MCP 的[官方 C# SDK](https://github.com/modelcontextprotocol/csharp-sdk)，并把该协议集成进 Copilot Studio、VS Code 的 GitHub Copilot 智能体模式和 Semantic Kernel
+* [GitHub](https://github.com/modelcontextprotocol/servers)、[Slack](https://modelcontextprotocol.io/clients) 和 [Cloudflare](https://developers.cloudflare.com/agents/model-context-protocol/) 等主要平台增加了官方 MCP 连接
+* 已有多种官方语言 SDK：[Python](https://github.com/modelcontextprotocol/python-sdk)（Anthropic）、[TypeScript](https://github.com/modelcontextprotocol/typescript-sdk)（Anthropic）、[Java](https://github.com/modelcontextprotocol/java-sdk)（Spring AI）、[C#](https://github.com/modelcontextprotocol/csharp-sdk)（Microsoft）、[Kotlin](https://github.com/modelcontextprotocol/kotlin-sdk)（JetBrains）、[Swift](https://github.com/modelcontextprotocol/swift-sdk)（Loopwork AI）和 [Rust](https://github.com/modelcontextprotocol/rust-sdk)（Anthropic）
+* 使用 OAuth 2.1 的[授权规范](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization)已于 3 月 26 日发布
+
+这个生态系统还处在早期，最快试水的方式就是自己把一个主机接到工具上。
+
+## 局限与潜力
+
+常见的大语言模型注意事项仍然适用。我安装一些服务器试用时，Obsidian 那个已经失败了。MCP 仍然是实验性的，而且大多仍在本地运行，但我把它看作一种正在浮现的未来蓝图。它是构建真正模块化、递归式、自我扩展的人工智能原生应用所缺失的那块拼图。
+
+## 开始使用
+
+我发现作为用户，最容易这样试用 MCP：
+
+1. **获取客户端**：下载 Claude Desktop：[claude.ai/download](https://claude.ai/download)，或任何[现有主机](https://modelcontextprotocol.io/clients)。
+
+2. **处理依赖**：如果还没有安装 [Node.js](https://nodejs.org/en/download)，先安装。
+
+3. **寻找服务器**：浏览 [smithery.ai](https://smithery.ai)，并使用它帮你完成设置。
+
+## 你接下来会构建什么？👩🏻‍💻
+
+借助 MCP，我可以把自己的博客写作工作流（目前分散在不同设备上的 Claude、Obsidian 和 ChatGPT 之间）整合成一个单一、连贯的体验，而不是不断切换上下文。
+
+下次当你想再写一个 API 集成时，请记住：MCP 让你一次编写，到处使用，并把注意力放在真正重要的事上，也就是构建出色的人工智能应用。那么你接下来会构建什么？

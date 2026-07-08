@@ -3,11 +3,20 @@ import { ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import { type ButtonProps, buttonVariants } from '@/components/ui/button'
+import { getStaticText, useSiteLocale } from '@/lib/use-site-locale'
 
-const Pagination = ({ className, ...props }: React.ComponentProps<'nav'>) => (
+type TranslatedPaginationProps = React.ComponentProps<'nav'> & {
+  locale: ReturnType<typeof useSiteLocale>
+}
+
+const Pagination = ({
+  className,
+  locale,
+  ...props
+}: TranslatedPaginationProps) => (
   <nav
     role="navigation"
-    aria-label="pagination"
+    aria-label={getStaticText(locale, 'ui.pagination')}
     className={cn('mx-auto flex w-full justify-center', className)}
     {...props}
   />
@@ -65,17 +74,20 @@ PaginationLink.displayName = 'PaginationLink'
 const PaginationPrevious = ({
   className,
   isDisabled,
+  locale,
   ...props
-}: React.ComponentProps<typeof PaginationLink>) => (
+}: React.ComponentProps<typeof PaginationLink> & {
+  locale: ReturnType<typeof useSiteLocale>
+}) => (
   <PaginationLink
-    aria-label="Go to previous page"
+    aria-label={getStaticText(locale, 'ui.previousPage')}
     size="default"
     className={cn('gap-1 pl-2.5', className)}
     isDisabled={isDisabled}
     {...props}
   >
     <ChevronLeft className="h-4 w-4" />
-    <span>Previous</span>
+    <span>{getStaticText(locale, 'ui.previous')}</span>
   </PaginationLink>
 )
 PaginationPrevious.displayName = 'PaginationPrevious'
@@ -83,16 +95,19 @@ PaginationPrevious.displayName = 'PaginationPrevious'
 const PaginationNext = ({
   className,
   isDisabled,
+  locale,
   ...props
-}: React.ComponentProps<typeof PaginationLink>) => (
+}: React.ComponentProps<typeof PaginationLink> & {
+  locale: ReturnType<typeof useSiteLocale>
+}) => (
   <PaginationLink
-    aria-label="Go to next page"
+    aria-label={getStaticText(locale, 'ui.nextPage')}
     size="default"
     className={cn('gap-1 pr-2.5', className)}
     isDisabled={isDisabled}
     {...props}
   >
-    <span>Next</span>
+    <span>{getStaticText(locale, 'ui.next')}</span>
     <ChevronRight className="h-4 w-4" />
   </PaginationLink>
 )
@@ -100,15 +115,18 @@ PaginationNext.displayName = 'PaginationNext'
 
 const PaginationEllipsis = ({
   className,
+  locale,
   ...props
-}: React.ComponentProps<'span'>) => (
+}: React.ComponentProps<'span'> & {
+  locale: ReturnType<typeof useSiteLocale>
+}) => (
   <span
     aria-hidden
     className={cn('flex h-9 w-9 items-center justify-center', className)}
     {...props}
   >
     <MoreHorizontal className="h-4 w-4" />
-    <span className="sr-only">More pages</span>
+    <span className="sr-only">{getStaticText(locale, 'ui.morePages')}</span>
   </span>
 )
 PaginationEllipsis.displayName = 'PaginationEllipsis'
@@ -124,6 +142,7 @@ const PaginationComponent: React.FC<PaginationProps> = ({
   totalPages,
   baseUrl,
 }) => {
+  const locale = useSiteLocale()
   const pages = Array.from({ length: totalPages }, (_, i) => i + 1)
 
   const getPageUrl = (page: number) => {
@@ -132,10 +151,11 @@ const PaginationComponent: React.FC<PaginationProps> = ({
   }
 
   return (
-    <Pagination>
+    <Pagination locale={locale}>
       <PaginationContent className="flex-wrap">
         <PaginationItem>
           <PaginationPrevious
+            locale={locale}
             href={currentPage > 1 ? getPageUrl(currentPage - 1) : undefined}
             isDisabled={currentPage === 1}
           />
@@ -154,12 +174,13 @@ const PaginationComponent: React.FC<PaginationProps> = ({
 
         {totalPages > 5 && (
           <PaginationItem>
-            <PaginationEllipsis />
+            <PaginationEllipsis locale={locale} />
           </PaginationItem>
         )}
 
         <PaginationItem>
           <PaginationNext
+            locale={locale}
             href={
               currentPage < totalPages ? getPageUrl(currentPage + 1) : undefined
             }

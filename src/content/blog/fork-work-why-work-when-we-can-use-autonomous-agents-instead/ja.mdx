@@ -1,0 +1,128 @@
+---
+title: "Fork Work：自律エージェントがあるのになぜ働く？"
+description: "人間はコミュニケーションや会議に時間を浪費しすぎている。A.I. が即答しコードも書けるなら、なぜそんなに働くのか？"
+date: 2023-08-11
+authors: ["erniesg"]
+image: "./00281-807328077-11691761226672.png"
+draft: false
+lang: "ja"
+translationKey: "fork-work-why-work-when-we-can-use-autonomous-agents-instead"
+---
+
+苛立ってキーボードを叩いたり、[引き継いだ codebase を前に少し涙を流したり](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)するより、その情報を A.I. に渡してチャットするほうがずっと理にかなっている。大規模言語モデル (LLMs) の知識と推論能力をそうした情報に対して使い始めると、自然な次のステップは synthesis になる。既存の codebase の上で動く新しいコードを生成し、世界中の誰もが プロンプト-to-feature に進めるようにすることだ。この課題に取り組むため、下の demo は週末の 1、2 日で作った成果である。新しい学びが多く、いくつもの概念をより深く理解できたので、作るのはかなり楽しかった。
+
+<iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Arthur - Search and Retrieve Anything
+
+# なぜ働く Leh？
+
+![](./00281-807328077-11691761226672.png)
+
+私がやろうとしたのは、自分のデータ工場に関する情報を `Deep Lake` ベクトルストアに渡し、カスタム知識ストアの上で ChatGPT の推論能力を活用して、既存設定で何が起きているのか理解することだった。人間が残したレガシーコードベースを読み解こうとするより、ずっと楽しかった。コミュニケーションや会議が大きな時間の無駄だったことは十分すぎるほどあったし、返事の遅さ、質問への人間側の遅延には言葉もない……だから、こうして始める。一つ目のレンガを置けば、あらゆる情報を調査し、検索し、推論し、ソーシャルメディアコンテンツでもコードでも新しい価値ある出力を統合して生成する自律エージェントの工場を作れる。私にとって、これこそ A.I. の労働市場への影響が社会全体で真剣に議論されるべき理由だ。
+
+断片的な A.I. 知能でさえ超人的知能になり、[生産性を 1000 倍](https://www.youtube.com/watch?v=ji5rdhzT53o)にできるとき、つまり、そもそも十分な仕事が残らないかもしれないとき、私たちは何をすればいいのか？一歩引いて考えると、そもそもなぜ人間にそんなに働いてほしいのだろう？本当に必要なのは、仕事、収入、意味の間にある矢印を再構成し、描き直すことかもしれない。私は喜んで週 4 時間労働に投票し、残りの時間を遊びと学びに使う。まあ、そう思うだけだ。
+
+# 直面した課題
+
+![](./00283-1392154050-21691764412914.png)
+
+エージェント を作るなかで、最も詰まった難所は次の通りだった：
+
+1.  **正しい package versions を使う**
+    
+
+始めるにあたり、[既存プロジェクト (chat-with-code)](https://github.com/priya-dwivedi/chat-with-code) から学ぶことにしたが、以下のようなエラーに何度も遭遇した：
+
+```text
+RuntimeError: no validator found for <class 're.Pattern'>, see `arbitrary_types_allowed` in Config
+Traceback:
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/streamlit/scriptrunner/script_runner.py", line 557, in _run_script
+    exec(code, module.__dict__)
+File "chatbot.py", line 2, in <module>
+    import utils
+File "/home/erniesg/code/erniesg/chat-with-code/utils.py", line 1, in <module>
+    from langchain.document_loaders import TextLoader
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/__init__.py", line 6, in <module>
+    from langchain.agents import MRKLChain, ReActChain, SelfAskWithSearchChain
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/__init__.py", line 40, in <module>
+    from langchain.agents.agent_toolkits import (
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_toolkits/__init__.py", line 12, in <module>
+    from langchain.agents.agent_toolkits.csv.base import create_csv_agent
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_toolkits/csv/base.py", line 4, in <module>
+    from langchain.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_toolkits/pandas/base.py", line 18, in <module>
+    from langchain.agents.types import AgentType
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/types.py", line 5, in <module>
+    from langchain.agents.chat.base import ChatAgent
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/chat/base.py", line 6, in <module>
+    from langchain.agents.chat.output_parser import ChatOutputParser
+File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/chat/output_parser.py", line 12, in <module>
+    class ChatOutputParser(AgentOutputParser):
+File "pydantic/main.py", line 229, in pydantic.main.ModelMetaclass.__new__
+File "pydantic/fields.py", line 491, in pydantic.fields.ModelField.infer
+File "pydantic/fields.py", line 421, in pydantic.fields.ModelField.__init__
+File "pydantic/fields.py", line 542, in pydantic.fields.ModelField.prepare
+File "pydantic/fields.py", line 804, in pydantic.fields.ModelField.populate_validators
+File "pydantic/validators.py", line 723, in find_validators
+```
+
+あるいは、こんなものもあった：
+
+```text
+➜  chat-with-code git:(main) ✗ poetry run streamlit run chatbot.py                                         [🐍 lewagon]
+2023-08-04 19:39:49.759 INFO    numexpr.utils: Note: NumExpr detected 12 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 8.
+2023-08-04 19:39:49.760 INFO    numexpr.utils: NumExpr defaulting to 8 threads.
+
+  You can now view your Streamlit app in your browser.
+
+  Network URL: http://172.19.237.74:8501
+  External URL: http://180.129.59.54:8501
+
+2023-08-04 19:39:51.484 Uncaught app exception
+Traceback (most recent call last):
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/streamlit/scriptrunner/script_runner.py", line 557, in _run_script
+    exec(code, module.__dict__)
+  File "/home/erniesg/code/erniesg/chat-with-code/chatbot.py", line 2, in <module>
+    import utils
+  File "/home/erniesg/code/erniesg/chat-with-code/utils.py", line 1, in <module>
+    from langchain.document_loaders import TextLoader
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/__init__.py", line 6, in <module>
+    from langchain.agents import MRKLChain, ReActChain, SelfAskWithSearchChain
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/__init__.py", line 31, in <module>
+    from langchain.agents.agent import (
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent.py", line 15, in <module>
+    from langchain.agents.agent_iterator import AgentExecutorIterator
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/agents/agent_iterator.py", line 21, in <module>
+    from langchain.callbacks.manager import (
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/callbacks/__init__.py", line 10, in <module>
+    from langchain.callbacks.aim_callback import AimCallbackHandler
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/callbacks/aim_callback.py", line 5, in <module>
+    from langchain.schema import AgentAction, AgentFinish, LLMResult
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/schema/__init__.py", line 4, in <module>
+    from langchain.schema.memory import BaseChatMessageHistory, BaseMemory
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/schema/memory.py", line 7, in <module>
+    from langchain.schema.messages import AIMessage, BaseMessage, HumanMessage
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/langchain/schema/messages.py", line 147, in <module>
+    class HumanMessageChunk(HumanMessage, BaseMessageChunk):
+  File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/pydantic/main.py", line 352, in __new__
+```
+
+Solution：結局、特定の `streamlit (1.25.0)` と `pydanic version (1.10.12)` を使う必要があった。こうした package 間の compatibility issue はかなり頻繁に起きるので、管理するための ツール と ベストプラクティス をもっと学ぶ必要がありそうだ。もしかすると、使う具体的な version は常に `poetry` の中で定義すべきなのかもしれない！？
+
+2.  **.json files で定義された Azure Data Factory リソース を ingest and chunk する方法を理解する**
+    
+
+文書、.PDFs、GitHub コードリポジトリ などを処理するチュートリアルはたくさんあるのに、.json への言及はほとんどなかった。ChatGPT に生成させても失敗したので、.json と `langchain` JSON loader をじっくり見て、私が正しいと思う手順を ChatGPT に段階的に案内したところ、ようやく動いた。少なくとも Google と YouTube の検索 1 ページ目を見る限り、Azure Resource Manager (ARM) template に対してこれをやった人はいなかったので、創意工夫が必要だった。
+
+Solution：この初期 プロトタイプ では、Azure Data Factory の `parameters`、`variables`、`resources` と、`resources` 内の individual objects を保持したかった。そこに pipelines や activities などが入るからだ。これに few shot instructions と 文脈 を組み合わせることで、ChatGPT は必要なものを出してくれた。
+
+# これから
+
+こうして 75 個の items を `Deep Lake` データset に chunk することになり、すでにもっと多くの データソースs を ingest する必要性を考えている。すべての SQL schemas、stored procedures、そして データ itself を query できるようにしよう！memory に関連する metaデータ の更新、multi-modal データ lake cum vector store 上での CRUD 操作、検索 strategies と token 文脈s の最適化も必要だ。実際、ツール を使って LLM 内で直接 execute and take an action してはいけない理由があるだろうか？さらに、LLM に自分の tests を書かせ、デバッグ and validate させればどうだろう？これらはすべて、どんな規模の team や organisation でも控えめに言って 1000x productivity を実現する autonomous エージェント を 本番環境 に投入するうえで不可欠になる。
+
+Fun times! 🤩🤩🤩
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z).*

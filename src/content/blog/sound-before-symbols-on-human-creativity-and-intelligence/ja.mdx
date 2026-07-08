@@ -1,0 +1,64 @@
+---
+title: "記号より先に音：人間の創造性と知性について"
+description: "女性人物の写実画像を生成する私の一番のコツ: ネガティブプロンプトに\"large breasts\"関連語を入れること"
+date: 2023-06-18
+authors: ["erniesg"]
+image: "./00185-868031166-51687095691763.png"
+draft: false
+lang: "ja"
+translationKey: "sound-before-symbols-on-human-creativity-and-intelligence"
+---
+
+<iframe alt="A.I. &quot;Stefanie Sun&quot; Cover of Cung Đàn Vỡ Đôi by Chi Pu" src="https://www.youtube.com/embed/F9EO8H1o6Bg?feature=oembed" aria-describedby="n97vsvzjb56-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+A.I. "Stefanie Sun" Cover of Cung Đàn Vỡ Đôi by Chi Pu
+
+# データであるものはすべて空気に溶ける
+
+“The Three-Body Problem” の冒頭では、宇宙へ送られた一つのメッセージが、人類を科学者の失踪、社会的対立、政治的陰謀が連鎖する道へと押し流す。異星種との遭遇の中で、人間の生命と尊厳は天秤にかけられる。A.I. も同じことをするのだろうか、という問いは私たちにとってまったく新しいものではない。たぶん、私たちは弱い者や脆弱な者をどう扱うかを知っていて、それが決して美しくないからだ。私は、意識とそれに伴う self の感覚を、創造性や知性とは別のものとして扱う方に傾いている。そうすることで、私たちが [life arose from non-life](https://www.youtube.com/watch?v=Zaws82fUOA8) をよりよく理解しようとしている間、少し時間を稼げることを願っている。
+
+![](./00185-868031166-51687095691763.png)
+
+Stable Diffusion WebUI で生成。
+
+最近、Vision Transformer と Stable Diffusion を使って、非常に多様な styles の songs と images を生成して遊んでみた。私は今や、自分が一生かかってもできないほど速く、うまく「描ける」ことをとても喜んでいる一方で、このすべてがどれほど empirical exercise になったのかに、不穏さと不安も覚えている。私が格闘しようとしてきたのは、この考えだ。私たち人間が誇りにしている多くのもの、つまり創造性や知性は、もしかすると computational データ と statistical phenomena にすぎないのではないか？そしてその点で、私たちは機械の相手にならない。ある意味ではこれは完全に真実で解放的だが、別の次元では多くの重要な細部が失われる。人間の営みの多くをこのように考えるのは、不気味なほど恐ろしく、不安を誘う。
+
+![](./00083-1632150837_inpainting-21687095905533.png)
+
+Stable Diffusion WebUI で生成。
+
+Stable Diffusion なら、私は絵にまったく興味がなく、完全に苦手であるにもかかわらず、3070 GPU 上で30秒もかからず style を自由に切り替え、4つの variations を生成できる。いくつかの出力はここに示した通りだ。明らかに A.I. は、私たちの現実の非常に特定の側面だけを捉えるという点で奇妙だ。モデルがそうしなければばかげた形の女性人物を出し続けるので、私は “large breasts” と関連語を negative プロンプト に一貫して入れている。この全体は [この podcast で議論されているように非常に奇妙](https://www.nytimes.com/2023/05/02/podcasts/ezra-klein-podcast-transcript-erik-davis.html) で、そこで投げかけられた力強い問いは、私がずっと頭の中で噛み続けてきた同じものだ。
+
+> EZRA KLEIN: So to be McLuhanite for a minute and to take his famous saying, “The medium is the message,” if the medium is the message, if the medium encodes certain ways of being and thinking that change the people who use it, what do you think the message of the A.I. chatbot medium is? Which it’s worth noting is a medium being built on top of a technology. Chatbotting is just one of many, many applications. And the fact that that’s the one taking off is going to also shape the technology 異なるly than it might otherwise shape. But yeah, what’s the message of the medium?
+
+![](./00204-987422162-01687100617415.png)
+
+Stable Diffusion WebUI で生成。
+
+人間の創造性と知性を モデルing し、prediction machines として構築することがここまでうまくいくとき、それは私たち個人にとって何を意味し、私たちはどう応答すべきなのか。この考えに身を寄せながらの私の暫定的な答えは、mystery の喪失と wonder の感覚が同じコインの両面のように感じられる、というものだ。このように私たちの知性と創造性を *小さく* 見せることで、肯定的な結果としては、人間であるとは何か、そして各個人の知性や創造性の水準に関係なく私たちは互いに何を負っているのかを、本当に再評価できるかもしれない。しかしより不穏な面では、A.I. に思慮深く向き合わなければ、貿易と ソーシャルメディア の影響を合わせたものよりも深い亀裂を global societies に作り出すのではないかと心配している。
+
+# Dataset Biases と効果的な Prompting
+
+私が 本番環境ise しようとしている一般的な 利用場面 は automated コンテンツ 生成 だ。A.I. に、望む コンテンツ topics についてさまざまな formats と languages の 動画 scripts と images を作らせ、それを複数 プラットフォーム に自動的に publish できるようにする。この投稿は残念ながらまだ手作業だ。その過程で、A.I. の bias がすべてこちらに投げ返されるのを見るのは興味深い。large breasts を返さないよう明示するまで、生成される女性人物がすべてデフォルトで voluptuous だったからだ。訓練 に使われた データsets のこと、そして media で私たちが見るもののどれほどが reality の airbrushed versions なのかを考えさせられる。では実際、誰を責めればいいのだろう？
+
+インターネットからそのままダウンロードできる複数のモデルを試した後、私は[グラフィックノベル風のスタイル](https://civitai.com/models/30711/m4rv3ls-and-dungeons-new-v25)を選ぶことにした。驚くことではないが、成人向けコンテンツ制作に特化したモデルはたくさんある。そこに [textual inversion](https://www.youtube.com/watch?v=2ityl_dNRNw) で自分の Stable Diffusion モデルをカスタマイズし、訓練するのがいかに簡単かを組み合わせると…つまり、平均的なゲーミング PC を持つ人なら誰でもディープフェイクの成人向けコンテンツを生成できる。
+
+政府、学校、親たちが A.I. にきちんと向き合っていることを願っている。その希望を持ってもいいだろうか？
+
+# A.I. が違う理由
+
+少しだけネガティブさを脇に置くと、私は A.I. に魅了されている。1956年 Dartmouth Conference における Nativity according to the flesh の瞬間から、最初の single-layer neural networks、perceptrons、そして現代の deep learning まで、短期間で大きく進んできたからだ。そして今の私たちの周りを見渡すだけで、A.I. がすでに何をできるのかが分かり、既存の evidence に根ざした forward projections を立てることができる。他の多くの technologies は、現在に traction を見つけようとする未来の possible visions と呼ばれるものだが、たいてい惨めに失敗する。その点で A.I. は独特な種だ。だから私は steam engine との等価性を見るようになったし、たぶん fire や electricity と比較する人がいるのもそのためだ。
+
+> “I've always thought of AI as the most profound technology humanity is working on—more profound than fire or electricity or anything that we've done in the past.” - Sundar Pichai, CEO of Google
+
+![](./perceptron-smithsonian-01687094176744.jpg)
+
+Smithsonian museum に展示された Mark I Perceptron. (Source: https://ronkowitz.blogspot.com/2017/11/perceptron.html)
+
+1958年、単層パーセプトロンは実際の配線と巨大な機械を必要とした。私が2022年にマルチラベル分類を行うために畳み込みニューラルネットワークのモデルで遊んだときには、ResNet-512 のようなモデルは512層の深さで、リビングにあるごく普通のゲーミング PC 上で動いていた。
+
+A.I. は、機械に考える能力を与えたいという人間の関心を冷ますことのなかった、数多くの冬の物語だ。A.I. の冬の長い夜、統計への転回、データと GPUs が古いモデルの上で合流したことで可能になったカンブリア爆発、そしてニューラルネットワークの究極の復活は、次に掘り下げたいことばかりだ！
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/33ietk6v](https://erniesg.pubpub.org/pub/33ietk6v).*

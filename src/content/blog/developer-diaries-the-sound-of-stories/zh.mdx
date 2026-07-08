@@ -1,0 +1,72 @@
+---
+title: "开发者日记：故事之声"
+description: "一次互动叙事体验的“懒完成”：既有结构，又能动态回应用户输入"
+date: 2024-02-13
+authors: ["erniesg"]
+draft: false
+lang: zh
+translationKey: developer-diaries-the-sound-of-stories
+---
+
+我带来的是 The Sound of Stories 的第一次“懒完成”：我成功生成了一个互动故事，它既尊重叙事结构，又能灵活回应用户输入。
+
+<iframe alt="The Sound of Stories WIP Demo" src="https://www.youtube.com/embed/ZKlHXE8_TOc?feature=oembed" aria-describedby="n07qdehbcig-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+The Sound of Stories WIP Demo
+
+完成这一轮其实从我们第一次对公众展示以来就一直困扰着我。让最初的生成跑起来很容易，但真正困扰我的是：我怎样才能不仅记住用户的输入，还能在一个有明确开始和结束的结构化叙事约束中，合乎逻辑地把它纳入进去？这个问题的一种表述可以是离散的、无限的分布，这对我的 geek 脑来说听起来很兴奋，但对我究竟该如何开始解决它完全没有帮助。
+
+最后真正有帮助的是和另一个人把问题讲清楚，借此梳理我的思考。尤其是我们谈到我的问题和 D&D 问题很相似，而 Jia Qi 提醒我 checkpoints 这件事：像 Baldur’s Gate 这样的游戏会给你一组选择，让你达成某些目标，没错，但你仍然需要抵达一个明确的 checkpoint。所以我坐下来审视叙事结构，开始思考如何把它拆解成 checkpoints，并把它变成如下这样的 `.json`：
+
+```json
+{
+  "title": "The Boy Who Wanted a Drum – by Kamini Ramachandran",
+  "story_details": {
+    "protagonist_gender": "male",
+    "protagonist_name": "the boy",
+    "story_setting": "a small hut"
+  },
+  "checkpoints": [
+    {
+      "id": "intro",
+      "text": "Once upon a time, there lived a poor woman and her little son. They lived in a small hut together. The little boy wanted a drum. A drum he could tap, beat, and play. Ta Di Gin A Thom! I want a drum! The boy kept asking his mother for a drum, all day and all night long. And so it was, that the next morning, the woman went to the market to sell the cloth that she had woven.",
+      "choice": "drum"
+    },
+    {
+      "id": "encounter_0",
+      "text": "And when she had sold all the cloth, she realised that the coins were not enough to buy her son a drum. As she walked on her way back home, she saw a stick. She picked up the stick and took it home. Ta Di Gin A Thom! I want a drum! Son, take this stick and pretend that it is a drum. The boy took the stick, and he tapped it on the ground (sound effects) He tapped it on the water pot (sound effects) He tapped it on the door (sound effect) He was delighted by the sound it made!",
+      "choice": "continue"
+    },
+    {
+      "id": "encounter_1",
+      "text": "Ta Di Gin A Thom! I have a stick! On the way he met an old woman looking very sad. She sat beside a small wood stove trying to fan the flames. Grandmother, grandmother, why do you look so sad? I have no wood to make the fire to cook the chapatti. The boy remembered his stick! He gave it to the old woman who used the stick to start the fire to cook some chapati. Thank you boy! Here, take some chapatis with you, I have no need for so many.",
+      "gift": "chapati"
+    },
+    ...
+```
+
+另一件非常有用的事，是坚持我自己的心理提醒：**不要把事情过度复杂化**。先用尽可能简单的方案开始 hack，之后总可以再叠加难度……所以我没有疯狂地上 智能体（要是我搭一个由 `director`、`scriptwriter` 和 `assistant` 组成的层级化 智能体 团队会怎样！？），而是用 2 条 LLM chains、简单的 conversational memory 和一个简单的 `if` check，交付了一个非常笨的、“懒完成”的故事：
+
+```text
+if next_segment_id < len(story_data["checkpoints"]):
+# then you continue the story and use memory to-date as well as the next segment as context
+```
+
+拍拍自己的背，因为在这个阶段我终于听了自己关于不要把开发过度复杂化的建议。
+
+除此之外，这一路上我还学到了一些有意思的东西：
+
+-   **Dependency 管理**：我觉得我终于弄明白 `pyenv`、`virtualenv` 和 `poetry` 如何配合起来，为某个目录实例化一个专属的开发环境。所以 `pyenv` 用来管理 Python 版本，`virtualenv` 用来创建隔离环境，而 `poetry` 用来管理包依赖和最终的分发。
+    
+-   **Prompt “engineering”**：我 80% 的时间都花在寻找最优 提示词 上。我认为所有基于 LLM 的开发，都会极大受益于一开始就不断迭代 [best 提示词 to use](https://platform.openai.com/playground)，然后再开始做其他事情。我觉得这很无聊，也把它看作一个潜在的职业路径，适合语言学专业的人。我很希望未来能和他们合作，把这部分开发真正外包出去。
+    
+-   **确定性系统 vs. 概率系统**：虽然这些系统里有常见的超参数可以调整，但每次听到有人说他们只想展示绝对确定的结果时，我总会有点不舒服。事实是，人生里除了此刻我们存在的现实之外，没有什么有绝对 100% 的确定性。其他事情我们最多有预期，而且通常确实会如此，但事实仍然是，人生中概率为 1 的事情非常少。我不得不做的很多迭代都集中在 `temperature` 参数上；到某个时刻，我只能举手投降，接受故事即使用相同输入也无法 100% 可靠复现。这让我想到人类组织中经理和 QA/QC 的角色，想到我们如何试图管理人类输入和输出的方差。也许其中有些东西可以转置到创建可靠的 A.I. 系统上？
+    
+-   **A.I. 多样性的必要性**：起初，Kamini 生成的普通话声音小片段让我相当惊喜（这是基于她大约 1 分钟英文手机录音做出的即时声音克隆推断出来的），但很快就明显发现，一旦生成序列变长，生成质量就会严重下降。也就是说，普通话语音输出会错更多声调，语速奇怪，断词不对，等等。文本生成也是如此。很明显，GPT-4 大体上是在做一种天真的、直接的英文到普通话故事文本生成。不用说，这真的帮助我理解并看见为什么更具多样性、也更具体的 LLM 模型是必要的。我也开始思考，鉴于最主流的模型都围绕英语调优，而英语内容如此容易被大量生产，英语作为一种语言会在互联网上获得怎样额外的支配地位。如果我的母语未来因此进一步衰退，我会有点难过，因为失去一种语言，就像失去了另一种方式、另一扇看世界的窗。但当我开始想到可用于训练中文 LLM 模型的输入数据质量时，呵呵。重点是：如果不谈我们正在投入什么来让更多数据集可用于训练，我们就无法谈数字包容和 A.I. 多样性。是的，偏见是个问题。但为了把更多文化多元且有代表性的数据集数字化用于训练，究竟正在做什么？然后人们开始谈训练输入数据的公平付费、退出机制等等。所有这些都可以受益于更好地理解 A.I. 训练的机制和流程，因为这样人们会很快意识到某些观念有多不切实际或被误导。不过算了，那大概是另一个话题。
+    
+
+回到 The Sound of Stories，我觉得关于一个永不结束的故事所构成的无限游戏，与我这里所做的有明确开始和结束的故事之间，或许可以说出一些有意思的东西，作为某种艺术声明或意图之类的云云。这里也有一堂课，或者一条可以和人生本身对照的平行线；但这件事会先放到一边，因为我接下来要把注意力转向训练用于神经音频合成的 VAE 模型，并希望把它直接纳入体验中。敬请期待！;)
+
+---
+
+*最初发布于 PubPub：[erniesg.pubpub.org/pub/g6zjtf2s](https://erniesg.pubpub.org/pub/g6zjtf2s)。*

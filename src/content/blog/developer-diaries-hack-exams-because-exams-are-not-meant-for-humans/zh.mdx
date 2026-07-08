@@ -1,0 +1,51 @@
+---
+title: "开发者日记：破解考试，因为考试本来就不是为人类设计的…"
+description: "也因为试卷就是每个数据科学家的梦幻数据集"
+date: 2024-03-15
+authors: ["erniesg"]
+draft: false
+lang: "zh"
+translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-humans"
+---
+
+# 有些软件闻起来像下水道
+
+很多组织想要水力发电大坝来交付商业成果，但更多时候，他们其实被困在一个漏水管道的数据下水道里。每一天我不得不用某个 dedicated SQL pool，我都会想，上辈子到底做错了什么，才要应付一个 dedicated SQL 服务，它竟然：
+
+-   不允许你重命名 数据base
+    
+-   在上面跑 Python scripts 有 20mb 限制
+    
+-   什么叫你想跨 数据base 复制 tables，甚至在同一个 数据base 里复制 - 难道你不知道你的 tables 有不同的 column index stores，复制时还需要定义吗？
+    
+-   你想在 Get Meta数据 上 apply a filter？不存在
+    
+-   在 for each 里面写 if？不存在
+    
+-   在 loop 里拿到你当前正在迭代的 item？不如去抓 pixie dust
+    
+
+有些 consultants 把别人说服去用这东西，还不知道到底让谁、为了什么受益，他们在地狱里应该有一个特别的位置。总之，抱怨够了。这就是为什么我最近开始对把试卷当作 数据set 来玩感兴趣。
+
+# Exams as Data
+
+想一想 - 还有比标准化考试更 **structured**、更 **consistent**、更 **cleaner** 的 数据set 吗!?!?!? 它们总是有相同数量的问题、题型、定义清楚的 syllabi 等等。这简直像每个 数据 scientist 的 wet dream... 直到你开始处理 PDFs。我也觉得生成练习考试、让 LLM 打败它，然后也许为所有人做一个 AI tutor 这个想法非常有趣，因为对我来说，重点很简单：考试不是为人类设计的。它是衡量 intelligence 的非常糟糕的方式，尽管对行政和文书工作来说极其方便。通往 AGI 的道路上，世界真正缺少的似乎是一个能衡量 general intelligence 到底是什么的好指标；如果 LLMs 和 exams 之间这种双向张力，能带来一个我们用更好的东西取代 standardized examinations 的未来 - 那已经是对人类很大的服务了。
+
+# Finetuning GPT 3.5 to Generate IB Exams for Demonstration Purposes ONLY
+
+在那些 consultants 的地狱特别位置旁边，应该坐着把 PDFs 和 excels 当 数据sets 给你的人。结果 Document AI 对解析文本做得相当不错，但我不想付钱（回头看，也许不直接付钱用 API 反而更浪费）所以在键盘上各种痛苦挣扎之后，我只传了 44 个 examples 去 finetune GPT 3.5。很有意思的是：
+
+-   它忠实复现了我文字里一些随机的 spacing - 所以它真的在 parroting 输入给它的 distribution
+    
+-   有时候它完全是 gibberish，而且事实证明 PDFs 是一种需要认真对付的恶魔力量，因为里面有 SO MANY UNSEEN UNICODE CHARACTERS
+    
+
+<iframe alt="Finetuning GPT 3.5 to generate IB exam 论文s" src="https://www.youtube.com/embed/TjujuFbFx3w?feature=oembed" aria-describedby="nhopbvg5m49-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Finetuning GPT 3.5 to generate IB exam 论文s
+
+但总的来说，我只是惊讶它竟然这么容易，也迫不及待想在我 M2 Max 上那 64gb 还完全没用过的 VRAM 上微调一些模型。我特别感兴趣的是中国公务员考试，因为中立、乖宝宝式的 LLMs 太无聊，也太无害，几乎没什么用。我觉得合并模型会很有意思，看看有没有办法捕捉某种以中国国家为先验的内部表征，谁知道呢 - 这说不定会成为行为预测器，价值巨大！？
+
+---
+
+*最初发表于 PubPub：[erniesg.pubpub.org/pub/jqeeg1f8](https://erniesg.pubpub.org/pub/jqeeg1f8)。*

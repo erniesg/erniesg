@@ -1,0 +1,92 @@
+---
+title: "博物館のための MLOps"
+description: "デジタル恐竜から宇宙を旅する人々まで"
+date: 2022-11-24
+authors: ["erniesg"]
+image: "./21669034022304.png"
+draft: false
+lang: "ja"
+translationKey: "mlops-for-museums"
+---
+
+A.I. に対する私たちの最大の恐れは、リソース不足の分野での導入に関しては、むしろ最大の救いになり得る。つまり、A.I. は人間の労働を拡張し、より少ない資源でより多くのことを可能にする独自の位置にあり、博物館スタッフの時間をより興味深い問題に使えるよう解放できる。MLOps は深層学習コミュニティの中でさえ最先端で、博物館では文字通りほとんど知られていないが、私は博物館の業務環境に固有の特徴があるからこそ、これは導入にとって最も報われる技術スタックだと論じる。またオープンソースコミュニティと関わることで、内部技術能力の不足を解決しながら、社会における博物館の独自の役割、つまり私たちが使うツールについて対話と批判的な関与を行う空間としての役割を際立たせることができる。この投稿は therefore、非技術者の読者向けに以下の領域を論じる：
+
+1.  博物館技術エコシステムにおける主要課題
+    
+2.  機会 - なぜ博物館に MLOps なのか
+    
+3.  事例研究
+    
+4.  MLOps がどのように見えるか
+    
+5.  xOps（DevOps, DataOps と MLOps）の概要
+    
+6.  アーキテクチャ原則、ツールとベストプラクティス
+    
+7.  提言
+    
+
+私はコレクション管理と関連する利用場面の視点からこれを見るが、ここで論じる原則とプロセスの全体的な方向性は、組織の技術エコシステム内の他のシステムにも適用できる。
+
+# 博物館技術エコシステムにおける主要な課題
+
+博物館技術専門家がよく挙げる課題の一つは、博物館技術プロジェクトに必要な時間と労力についての誤解に関係している \[1\]。博物館分野のデジタル技能の格差が特に深刻であり得ることを考えれば、これは驚くことではない。イングランド芸術評議会の組織の 37% が “能力と知識の不足がデジタル面の目標達成における大きな障壁だと述べている” と答えている \[2\]。プロジェクトが適切に範囲設定されていなかったり、技術的熟練度の不足によって見積もりが悪かったりすると、最終的に全員が苛立つ。これは博物館分野だけでなく IT の内部でも難しい問題だ。技術の地形があまりに広大で急速に進化しているからである。ブロックチェーン、ネイティブ app 開発、web 開発、クラウド技術、サーバーレス、複合現実、データサイエンス、機械学習、アルゴリズムなどはすべて IT とデジタルという上位集合に属するが、それぞれ非常に異なる高度に専門化された技能群だ。
+
+調達プロセスがウォーターフォール型開発を義務づけ、内部開発者がいない組織は、たいてい互いに話さない断片的でばらばらなシステムの集合を抱えることになる。これは継承されたレガシーが原因である場合もあれば、供給業者が相互運用性を自分たちの仕事の進め方に組み込む動機を持たないためでもある。その結果、さまざまな下流の混乱が起きる。重複したプロセスが多く（ある場所で更新されたものが別の場所へ自動的に同期されない）、異なる人が異なる文書情報源を参照し、混乱が生じる。
+
+それはまるで、自分の金の箱の鍵を持っておらず、何かを探しに行くたびに自分の資産に入るための料金を取られるようなものだ。さらに悪いことに、それが正確にどこにあるのか分からないかもしれない。明確な文書があっても、供給業者 A、B、C が異なるシステムを構築し支援しているなら、互いに協力する動機はない。もし一緒に働く必要が出ても、互いに責任を押し付け合うことになりかねない。これは博物館が技術企業になるべきだと言っているのではない。むしろ内在する制約を理解し、理想的な最終状態を描き、そのうえでそこへ向かう最適な経路を設計することが重要だ。
+
+# MLOps とは？
+
+MLOps は、“実験室”条件でのモデル構築という科学的研究に対するエンジニアリング側のようなものだ。コンピュータビジョンの概念実証 \[3\] を本番環境に変えるための欠けている要素である。
+
+> “All of AI, .., has a proof-of-concept-to-production gap. The full cycle of a machine learning project is not just modelling. It is finding the right data, deploying it, monitoring it, feeding data back \[into the model\], showing safety—doing all the things that need to be done \[for a model\] to be deployed. \[That goes\] beyond doing well on the test set, which fortunately or unfortunately is what we in machine learning are great at.” — Andrew Ng
+
+# 機会 - なぜ博物館に MLOps なのか
+
+まず第一に、博物館で MLOps を行う主な理由は、下の Figure 1 \[4\] に示すように、最大限の投資収益率を提供できる A.I. 技術を運用化することだ。
+
+![](./21669034022304.png)
+
+**Figure 1**. Popular AI subcategories, mapped to axes of museum relevancy and effort/cost.
+
+ブロックチェーンやメタバースのように大きく煽られた技術と比べると、それらは設計空間が可能な利用場面の範囲よりはるかに広く、時間軸上ではずっと先にある。一方 A.I. は MATANA2 企業群全体ですでに大規模に展開され、主流に進む準備ができている。下の Figure 2 から、博物館分野に特に関連する A.I. 革新の多くが、Figure 3 の NFT や Web3 など他の新興技術と対照的に、いま “Slope of Enlightenment” 段階にあることが分かる。
+
+[![](./41669034988888.png)](https://www.gartner.com/en/articles/what-s-new-in-artificial-intelligence-from-the-2022-gartner-hype-cycle)
+
+**図 2**. … “2年から5年以内に主流として採用されると予想される革新……これらの革新を早期に採用することで、大きな競争優位とビジネス価値を生み出し、AI モデルの脆弱性に関連する問題を和らげることができる。”
+
+[![](./71669034952241.png)](https://www.gartner.com/en/articles/what-s-new-in-the-2022-gartner-hype-cycle-for-emerging-technologies)
+
+**図 3**. 2022年の新興技術は、進化し拡張する没入型体験、加速する人工知能の自動化、最適化された技術者の提供体制という三つの主題に分類される。
+
+導入への障壁と PoC から蓄積された学びは、私たちを現在の地点へ連れてきた。以前なら研究チーム全体が必要だったことが、今では少人数でできるようになっている。そして博物館は MLOps を通じてそのような革新を活用するうえで特に適した位置にある。なぜなら、そのデータとアプリケーションには独自の特徴があるからだ。コールドスタート問題、言説の必要性、そして最後に、内部人材と技術能力の不足である。
+
+コールドスタート問題は博物館の場合、特に深刻だ。多くのデータがそもそも存在しない環境、つまり既存の訓練データと高機能なパイプラインが豊富にない環境では、データセット構築とラベリングからデプロイまでのパイプラインを運用化し、システムへフィードバックされる実データを獲得する MLOps の役割が特に重要になる。したがって、このプロセスを可能な限りエンドツーエンドに自動化することで、より少ないリソースでより多くを実現できる。
+
+# MLOps はどのように見えるか
+
+理論上、数人と数台のゲーミング PC があれば、作品の自動注釈のための A.I. モデルを構築できる。そのようなモデルを MLOps によって本番環境で運用化すれば、博物館コレクションをよりアクセスしやすく、発見しやすくする堅牢なシステムを構築するために必要な追加の微調整データが得られる。
+
+以下では、色を自動抽出し、検索用にデータベースへ追加するデモを見ることができる。
+
+<iframe alt="Art API Update: Extract Colours &amp; Add to Collection 19.11.2022" src="https://www.youtube.com/embed/QN8Jn0KidMU?feature=oembed" aria-describedby="nogcdodrxpi-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Art API Update: Extract Colours & Add to Collection 19.11.2022
+
+# **Architectural Principles, Toolings and Best Practices**
+
+-   Cloud-based
+    
+-   Open APIs
+    
+-   Federated access  
+      
+    
+    [![](./41669297260948.png)](https://jumpcap.com/insights/mlops-the-key-to-scaling-machine-learning-in-an-enterprise)
+    
+    **Figure 4**. Overview of DevOps and MLOps ツール.
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/gcdzise9](https://erniesg.pubpub.org/pub/gcdzise9).*

@@ -1,0 +1,183 @@
+---
+title: "Berlayar：安定し拡張できる AI 技術スタック"
+description: "週末のプロトタイプが次のプロトタイプにつながり、その過程で学んだ新しいこと"
+date: 2023-08-29
+authors: ["erniesg"]
+draft: false
+lang: "ja"
+translationKey: "berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2"
+---
+
+私が A.I. に特に惹かれるのは、それが「人間であるとはどういうことか」という私たちの考えを、少なくとも認知と創造性のレベルで最も近くから突き、探る技術だからだ。そう言える技術は多くない。そして、この人工知能の時代の重みはまだ完全には私たちの肩に乗っていないと思う。コンテンツ生産のコストが劇的に下がるなかで、私たちは [living, moving history](https://marginalrevolution.com/marginalrevolution/2023/03/existential-risk-and-the-turn-in-human-history.html) の中にいる。実際、こうした瞬間を生きた人類の多くは、印刷機後の宗教改革とその後の出来事、あるいはインターネットと大統領選挙を予見できなかったはずだ。いくつかの概念実証 (PoCs) を経て、私は従来のソフトウェアの書き方とデータ駆動開発の進め方には根本的な違いがあるという場所にたどり着いた。従来型プログラミングと機械学習の違いは、あの格言に少し似ている：
+
+> “人に魚を与えれば, 一日食べさせられる。魚の釣り方を教えれば, 一生食べさせられる.”
+
+# **ML/大規模言語モデル駆動開発はソフトウェア開発のパラダイム転換**
+
+私たちの多くがソフトウェア開発の内部で実際に何が起きているのかほとんど知らないだけでも十分厄介なのに、データ駆動開発はそこへ大量の「疑似科学的な」試行錯誤と確率的思考を投げ込む。つまり関わるプロセス、ワークフロー、ツールは、経験豊かなエンジニアにとっても全く新しい世界になる。[この記事は、二つの手法の歴史的な流れと違いをかなりうまく示していた](https://www.linkedin.com/pulse/machine-learning-vs-traditional-software-development-ml4devs-gupta/)。ただし残念ながら、技術の速度と伝播は地域によってあまりに違い、私たちはすでにタイムマシンの中で暮らしているようなものだとも感じている。SFTP が思い浮かぶ…
+
+問題の核心は、機械にどう学ばせるかだ。データ収集から次元削減、モデル選択、ハイパーパラメータ調整まで、提供プロセスのあらゆる段階で実験を続けながら、エンドユーザーに安定したサービスをどう提供するのか。大規模言語モデルは自然言語、知識、推論ツールという強力な武器をもたらすが、独自の癖もある。したがって、これらの課題の総和が、もちろん ChatGPT の助けを借りて、システムを拡張し提供するには登録表ベースでインターフェース駆動のアプローチが必要だという気づきに至らせた。
+
+これは科学的プロセスに少し似ている。反復作業やワークフローがあり、結果を常に監視する必要がある（理想的にはサービス提供のためのトリガーも自動化する）。そこで、以前作った実験と繰り返し現れるパターンを列挙し、このシステムをどう作ろうとしているのか大まかに共有する。
+
+# **週末プロトタイプ**
+
+週末に何が作れるのか。実はかなり多くのものが作れる。一つが別の一つにつながり、構築できる新しいアプリや体験の宇宙がある。ただし最終的な制約は開発者の時間だ。だから現在の私の焦点は、どんな開発者でも効率を 100 倍、できれば 1000 倍にできる基礎ブロックを作ることにある（そう願っている）。
+
+## **Bertrand - プロンプトから公開まで**
+
+動機/ユースケース：最小限の労力と保守で、1000 人に毎月 100 ドルを 1 年払ってもらうには何を作ればよいか考えていて、これに取り組みたいと思った。プロンプトから公開までの仕組み、あるいは完全自動化されたソーシャルメディア代理店がそれに見え、技術的にも実現可能だった。そこで、受講中の講座のフラッシュカードを生成してみて、上の機能を試し、応答がより関連性の高いものになるか、非常に限られたシナリオで大規模言語モデルの生成能力をどこまで伸ばせるかを見た。
+
+仮説：新しい知識を大規模言語モデルに取り込み、記憶を与えれば、より良い検索拡張生成 (RAG) ができ、体験を個別化できる。
+
+<iframe alt="Bertrand - a ChatGPT prompt-to-publish plugin" src="https://www.youtube.com/embed/aztjmgs7Qkc?feature=oembed" aria-describedby="nkc27aw0uzr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Bertrand - ChatGPT のプロンプト公開プラグイン
+
+結果と学んだこと：これは GraphQL とベクトルデータベース、具体的には Weaviate との初接触だった。埋め込みについてもずっと理解が深まり、それは[以前の発表](https://www.youtube.com/watch?v=hKrO-bxXXgY) で私が延々と話していたものでもある。私が必要だと思ったのは、個別のプロセスをつなぎ、新しいトレンドの学習、コンテンツ生成、予約投稿と公開をエンドツーエンドで自動化する方法だった。そしてもちろん、そんなものは存在した！Langchain と Deep Lake を発見し、次の概念実証でさらに試し始めた。
+
+## **Arthur - 検索と取得**
+
+動機/ユースケース：ChatGPT で作っている過程で、そして「最小の資源で最大のリターン」を得ることへの一般的な好みから、私の大規模言語モデル搭載のペアプログラマーが、ドキュメント、文書、ウェブ検索などから自力で常に新しいことを学べたら素晴らしいと思った。さらに良いのは、コマンドに応じて自律的にコードを書き、コンパイルし、遭遇したエラーに基づいて自分で修正できることだ。検索して読むのは、求める答えを返してもらうより遅い。また、アクセントと待ち時間によって人同士のコミュニケーションが難しく時間を食うことにもかなり不満を感じていた。既存のコードベースを A.I. に学習させ、代わりに質問すればよいのでは？A.I. が既存のプロジェクト構造とコードベースの知識を備えれば、プロンプトから機能までの距離はそれほど大きな飛躍ではないように見える。
+
+仮説：大規模言語モデルがさまざまな知識源を意味のある形で扱う戦略を作れば、どんなものの上でも問い合わせと生成ができる。
+
+<iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="ns8whgyf7bu-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+Arthur - Search and Retrieve Anything
+
+結果と学んだこと：生成コンテンツの品質は、それが本当に重要なら少し問題だ。より大きな点は、大規模言語モデル駆動アプリが俊敏性と反復を全く新しい水準に引き上げることだ。途中のすべての段階を反復し、最適化できる。もっとコンテンツを与えれば、より良いコンテンツを生成するかもしれない。コンテンツの意味をより理解させれば、検索と生成が良くなるかもしれない。.json をオブジェクト単位で分割する方法を作った。妥当に見えたが token 制限にぶつかり、取得する断片数を制限する必要があった。文書、コード、音声、動画、画像など、取り込まれ得るあらゆるデータソースには、より小さく、あるいはより意味のある単位に分割する多くの方法、異なる埋め込みモデル、ベクトルストア（今回は Deep Lake を使った）、検索戦略がある。だから本番環境には本当に次のようなシステムが必要だ：
+
+-   安定性 - ユーザーが一貫した体験を楽しめるように
+    
+-   拡張性 - 新しいデータ取り込み元や新しい埋め込みモデルなどを簡単に追加できるように
+    
+
+そして ZOMG、[仮想環境とコンテナ化](https://erniesg.pubpub.org/pub/i8a0vp8z) はとても重要だ。コードを 1 行書く前の設定作業の 3/4 みたいなものだ…
+
+## **The Sound of Stories**
+
+動機/ユースケース：私はこれらの技術をリアルタイムに行われる実際の公演に導入し、A.I. で人間の能力を拡張することに興味がある。以前は不可能だった新しいことを可能にするためだ。観客が語り手や大切な人の声で複数言語の物語を聞くインタラクティブなストーリーテリング体験につながり得る構成要素をいくつか実験してきて、これらを一つにまとめ、人々の前に置くのが自然な次の段階に思えた。
+
+仮説：A.I. によって新しい体験と能力を解き放ち、積み重ねることができる。たとえばテキスト生成と他のサービスをつなぎ、生成された物語を朗読として聞かせることができる。
+
+<iframe alt="The Sound of Stories" src="https://www.youtube.com/embed/0cBbG0SkSCo?feature=oembed" aria-describedby="nlu4kddkcrr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+The Sound of Stories
+
+結果と学んだこと：Streamlit は大規模言語モデルアプリの UI プロトタイプにはやや向かず、Chainlit のほうが良さそうだ。[SeamlessM4T](https://ai.meta.com/blog/seamless-m4t/) は少し期待外れだが、私がよく知る言語ではテキスト間変換、テキスト読み上げ、音声クローニングは解決済みに近く、遅延と他の言語が本当の障害かもしれない。3 つの概念実証にはすべて繰り返し現れるパターンがある。データソースに対して取り込みを行い、何らかの方法で分割（一定文字数で分割、オブジェクトで分割など）し、埋め込みを生成してベクトルデータベースに保存し検索に使う。今回のものは多くが「プロンプトエンジニアリング」だった。
+
+補足：この概念実証の後、私はプロンプトエンジニアリングが本当の職業になるとは思わなくなった。仮になったとしても、タイプライター業務の現代版だろう。プロンプトを反復改善するこの全過程は、もっと自動化されたほうがよいものに見える。実際、規模が大きくなると最大の課題の一つは、調整の性能をどう効果的に監視し評価するかだ。人間を途中に入れるのか？MLOps で過程をできるだけエンドツーエンドに自動化するのか？
+
+この特定の概念実証では、異なるサービスの間でデータを渡し、マルチモダリティをもっと試したかった。したがって大規模言語モデルが生成した出力は、他のサービスによって消費できる。たとえば生成されたテキストを SeamlessM4T に渡して音声を生成する。またエンドユーザーに何らかの形で表示することもできる。言い換えれば、このような RAG の消費層や提示層もカスタマイズ可能だ。
+
+したがって安定し拡張可能な開発および本番環境システムに加えて、そのシステムは次も必要とする：
+
+-   柔軟性 - ワークフローを簡単に再構成したり、構成要素を差し替えたりできるように
+    
+-   スケーラビリティ - リアルタイムに一定水準の遅延と品質保証を提供できるように。基本的に私は実際の規模での性能を気にしている
+    
+
+# 第1部：拡張可能な取り込み、分割、埋め込みシステムの設計
+
+では、このシステムは実際にはどのようなものになるのか。私はまだリファクタリングし、過程を一歩ずつ進めながら、構築の途中で新しい用語や手順を拾っている。ひとまず大まかな形を下に書く：
+
+登録表を用意する。
+
+この登録表は、ファイル拡張子と対応する処理器の対応関係を保持する。各処理器は、対応するファイル種類をどう分割し解析するかを知っている必要がある。
+
+```text
+FILE_TYPE_PROCESSORS = {
+    ".py": PythonFileProcessor,
+    ".md": MarkdownFileProcessor,
+    # Add other file types and their processors here...
+}
+```
+
+基底クラスも用意する。
+
+```python
+from abc import ABC, abstractmethod
+
+class DataSource(ABC):
+    """
+    Base class for any data source. This provides a generic interface for data ingestion.
+    """
+
+    @abstractmethod
+    def ingest(self):
+        """
+        Ingest data and return a consistent format for further processing.
+        """
+        pass
+
+    @abstractmethod
+    def get_metadata(self):
+        """
+        Extract metadata from the data source. This metadata can vary depending on the source type.
+        """
+        pass
+
+class GitRepoSource(DataSource):
+    def ingest(self):
+        # Logic to clone/pull git repos and filter relevant files.
+        pass
+
+    def get_metadata(self):
+        # Extract metadata specific to git repositories.
+        pass
+
+class PDFSource(DataSource):
+    def ingest(self):
+        # Logic to ingest PDFs.
+        pass
+
+    def get_metadata(self):
+```
+
+必要に応じて、ファイル処理器、分割、埋め込み、パイプラインの他の段階でもこれを繰り返す。
+
+```text
+CHUNKING_STRATEGIES = {
+    ".py": PythonCodeChunker,
+    ".md": MarkdownChunker,
+    # ... other chunkers
+}
+```
+
+つまり、次のような設定可能で柔軟な処理ロジックが必要になる：
+
+```python
+def process_files(files, embedding_strategy_name):
+    embedding_strategy = EMBEDDING_STRATEGIES[embedding_strategy_name]()
+
+    for file_path in files:
+        file_extension = os.path.splitext(file_path)[1]
+        file_processor = FILE_TYPE_PROCESSORS.get(file_extension)
+
+        if not file_processor:
+            print(f"No processor found for {file_extension}. Skipping...")
+            continue
+
+        chunks = file_processor().process(file_path)
+        for chunk in chunks:
+            embedded_text = embedding_strategy.embed(chunk["content"])
+            # Store embedded_text and metadata...
+```
+
+この登録表と抽象クラスのアプローチは、次の利点をもたらす：
+
+-   **スケーラビリティ:** 辞書（**`FILE_TYPE_PROCESSORS`** と **`EMBEDDING_STRATEGIES`**）を使って、ファイル種別と埋め込み戦略を対応する処理器に簡単に対応付ける。この設計は本質的に拡張可能であり、新しいファイル種類や埋め込み方法のサポートは辞書を拡張するだけで済む。
+    
+-   **堅牢性**：関心事をより明確に分離し、失敗をより効果的に隔離できる。あるファイル処理器の変更が他に影響すべきではない。
+    
+-   **拡張性**：拡張を前提に設計されている。前述の通り、新しいファイル種類や埋め込み戦略をサポートするには、新しいクラスを作成し対応する登録表に追加すればよく、既存コードへの変更を最小化できる。
+    
+-   **柔軟性**：高い柔軟性。構成要素は辞書に登録されているため、差し替えや新規追加が分かりやすい。たとえば ".py" ファイルの処理器を変えることは、**`FILE_TYPE_PROCESSORS`** 辞書の項目を更新するだけで済む。
+    
+
+上記は素早い開発と協業に非常に有利だが、本番環境では安定し一貫したシステムが欲しいことを思い出してほしい。そこでインターフェース駆動の部分が登場する。これは後続の記事で触れる。
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/zc0zx741](https://erniesg.pubpub.org/pub/zc0zx741).*

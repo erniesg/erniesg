@@ -1,11 +1,23 @@
 ---
 import Container from '@/components/Container.astro'
 import Link from '@/components/Link.astro'
+import { LanguageToggle } from '@/components/ui/language-toggle'
 import MobileMenu from '@/components/ui/mobile-menu'
 import { ModeToggle } from '@/components/ui/mode-toggle'
 import { NAV_LINKS, SITE } from '@/consts'
+import {
+  LOCALE_HTML_LANG,
+  STATIC_TRANSLATIONS,
+  SUPPORTED_LOCALES,
+  TAG_LABELS,
+} from '@/lib/i18n'
 import { Image } from 'astro:assets'
 import logo from '../../public/static/logo.svg'
+
+const staticTranslations = JSON.stringify(STATIC_TRANSLATIONS)
+const localeHtmlLang = JSON.stringify(LOCALE_HTML_LANG)
+const tagLabels = JSON.stringify(TAG_LABELS)
+const supportedLocales = JSON.stringify(SUPPORTED_LOCALES)
 ---
 
 <header
@@ -28,6 +40,7 @@ import logo from '../../public/static/logo.svg'
               <Link
                 href={item.href}
                 class="capitalize text-foreground/60 transition-colors hover:text-foreground/80"
+                data-i18n-key={`nav.${item.label}`}
               >
                 {item.label}
               </Link>
@@ -35,8 +48,150 @@ import logo from '../../public/static/logo.svg'
           }
         </nav>
         <MobileMenu client:load transition:persist />
+        <LanguageToggle client:load transition:persist />
         <ModeToggle client:load transition:persist />
       </div>
     </div>
   </Container>
 </header>
+
+<script
+  is:inline
+  define:vars={{ staticTranslations, localeHtmlLang, tagLabels, supportedLocales }}
+>
+  const staticTranslationsData = JSON.parse(staticTranslations)
+  const localeHtmlLangData = JSON.parse(localeHtmlLang)
+  const tagLabelsData = JSON.parse(tagLabels)
+  const supportedLocaleData = JSON.parse(supportedLocales)
+  const supportedLocaleSet = new Set(supportedLocaleData)
+
+  function getBlogRouteLocale() {
+    const parts = window.location.pathname.split('/').filter(Boolean)
+    if (parts[0] !== 'blog' || parts.length < 2) return null
+
+    const lastPart = parts.at(-1)
+    if (lastPart && supportedLocaleSet.has(lastPart)) return lastPart
+
+    return null
+  }
+
+  function getPreferredLocale() {
+    const routeLocale = getBlogRouteLocale()
+    if (routeLocale) {
+      localStorage.setItem('blogLang', routeLocale)
+      return routeLocale
+    }
+
+    return localStorage.getItem('blogLang') ?? 'en'
+  }
+
+  function updateStaticText(locale) {
+    const translations = staticTranslationsData
+    const content = translations[locale] ?? translations.en ?? {}
+
+    document.documentElement.lang =
+      localeHtmlLangData[locale] ?? localeHtmlLangData.en ?? 'en'
+
+    document.querySelectorAll('[data-i18n-key]').forEach((element) => {
+      const key = element.getAttribute('data-i18n-key')
+      if (!key || !content[key]) return
+      element.textContent = content[key]
+    })
+
+    document.querySelectorAll('[data-i18n-title]').forEach((element) => {
+      const key = element.getAttribute('data-i18n-title')
+      if (!key || !content[key]) return
+      element.setAttribute('title', content[key])
+    })
+
+    document.querySelectorAll('[data-i18n-aria-label]').forEach((element) => {
+      const key = element.getAttribute('data-i18n-aria-label')
+      if (!key || !content[key]) return
+      element.setAttribute('aria-label', content[key])
+    })
+
+    document.querySelectorAll('[data-i18n-prefix]').forEach((element) => {
+      const key = element.getAttribute('data-i18n-prefix')
+      if (!key || !content[key]) return
+      element.textContent = content[key]
+    })
+
+    document.querySelectorAll('[data-i18n-tag]').forEach((element) => {
+      const tag = element.getAttribute('data-i18n-tag')
+      if (!tag) return
+      element.textContent = tagLabelsData[locale]?.[tag] ?? tag
+    })
+  }
+
+  function updateBlogCards(locale) {
+    document.querySelectorAll('[data-i18n-card]').forEach((card) => {
+      const localizationsValue = card.getAttribute('data-localizations')
+      if (!localizationsValue) return
+
+      let localizations
+      try {
+        localizations = JSON.parse(localizationsValue)
+      } catch {
+        return
+      }
+
+      const content = localizations[locale] ?? localizations.en
+      if (!content) return
+
+      card.querySelectorAll('[data-i18n-card-link]').forEach((link) => {
+        link.setAttribute('href', content.url)
+      })
+
+      const title = card.querySelector('[data-i18n-card-title]')
+      if (title) title.textContent = content.title
+
+      const description = card.querySelector('[data-i18n-card-description]')
+      if (description) description.textContent = content.description
+
+      const date = card.querySelector('[data-i18n-card-date]')
+      if (date) date.textContent = content.date
+
+      const readTime = card.querySelector('[data-i18n-card-read-time]')
+      if (readTime) readTime.textContent = content.readTime
+
+      const image = card.querySelector('[data-i18n-card-image]')
+      if (image) image.setAttribute('alt', content.imageAlt)
+
+      const tagContainer = card.querySelector('[data-i18n-card-tags]')
+      if (tagContainer && Array.isArray(content.tags)) {
+        tagContainer
+          .querySelectorAll('[data-i18n-card-tag-label]')
+          .forEach((tag, index) => {
+            if (content.tags[index]) tag.textContent = content.tags[index]
+          })
+      }
+    })
+  }
+
+  document.addEventListener('astro:page-load', () => {
+    const preferredLocale = getPreferredLocale()
+    updateStaticText(preferredLocale)
+    updateBlogCards(preferredLocale)
+
+    if (document.documentElement.dataset.blogLanguageChoiceListener) return
+    document.documentElement.dataset.blogLanguageChoiceListener = 'true'
+
+    document.addEventListener('click', (event) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+
+      const choice = target.closest('[data-language-choice]')
+      const locale = choice?.getAttribute('data-language-choice')
+      if (locale) localStorage.setItem('blogLang', locale)
+    })
+
+    window.addEventListener('blog-language-change', (event) => {
+      if (!(event instanceof CustomEvent)) return
+      const locale = event.detail?.locale
+      if (locale) {
+        updateStaticText(locale)
+        updateBlogCards(locale)
+      }
+    })
+  })
+</script>

@@ -13,6 +13,9 @@ export interface BreadcrumbItem {
   href?: string
   label: string
   icon?: string
+  i18nKey?: string
+  tagKey?: string
+  suffix?: string
 }
 
 interface Props {
@@ -39,14 +42,26 @@ const { items, class: className } = Astro.props
               <BreadcrumbPage>
                 <span class="flex items-center gap-x-2">
                   {item.icon && <Icon name={item.icon} class="size-4" />}
-                  {item.label}
+                  <span
+                    data-i18n-key={item.i18nKey}
+                    data-i18n-tag={item.tagKey}
+                  >
+                    {item.label}
+                  </span>
+                  {item.suffix}
                 </span>
               </BreadcrumbPage>
             ) : (
               <BreadcrumbLink href={item.href}>
                 <span class="flex items-center gap-x-2">
                   {item.icon && <Icon name={item.icon} class="size-4" />}
-                  {item.label}
+                  <span
+                    data-i18n-key={item.i18nKey}
+                    data-i18n-tag={item.tagKey}
+                  >
+                    {item.label}
+                  </span>
+                  {item.suffix}
                 </span>
               </BreadcrumbLink>
             )}

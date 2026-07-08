@@ -12,10 +12,20 @@ import {
 } from '@/components/ui/card'
 import { SITE } from '@/consts'
 import Layout from '@/layouts/Layout.astro'
+import {
+  getStaticTranslation,
+  isCanonicalDefaultPostId,
+  isLegacyChinesePostId,
+} from '@/lib/i18n'
 import { getCollection } from 'astro:content'
 
 const blog = (await getCollection('blog'))
-  .filter((post) => !post.data.draft)
+  .filter(
+    (post) =>
+      !post.data.draft &&
+      isCanonicalDefaultPostId(post.id) &&
+      !isLegacyChinesePostId(post.id),
+  )
   .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
   .slice(0, SITE.NUM_POSTS_ON_HOMEPAGE)
 ---
@@ -27,40 +37,27 @@ const blog = (await getCollection('blog'))
         <CardHeader>
           <CardTitle className="text-3xl">Ernie.SG</CardTitle>
           <CardDescription
-            >Home of Chen Enjiao &bull; <span class="font-semibold">Welcome!</span
+            ><span data-i18n-key="home.eyebrow"
+              >{getStaticTranslation('home.eyebrow', 'en')}</span
+            > &bull; <span class="font-semibold" data-i18n-key="home.welcome"
+              >{getStaticTranslation('home.welcome', 'en')}</span
             ></CardDescription
           >
         </CardHeader>
         <CardContent>
-          <p class="mb-2 text-sm text-muted-foreground">
-            Powered by astro-erudite, an opinionated, no-frills static blogging template
-            built with <Link
-              href="https://astro.build"
-              class="text-foreground"
-              external
-              underline>Astro</Link
-            >, <Link
-              href="https://tailwindcss.com"
-              class="text-foreground"
-              external
-              underline>Tailwind</Link
-            >, and <Link
-              href="https://ui.shadcn.com"
-              class="text-foreground"
-              external
-              underline>shadcn/ui</Link
-            >. Extraordinarily loosely based on the <Link
-              href="https://astro-micro.vercel.app/"
-              class="text-foreground"
-              external
-              underline>Astro Micro</Link
-            > theme.
+          <p
+            class="mb-2 text-sm text-muted-foreground"
+            data-i18n-key="home.intro"
+          >
+            {getStaticTranslation('home.intro', 'en')}
           </p>
         </CardContent>
       </Card>
     </section>
     <section class="flex flex-col gap-y-4">
-      <h2 class="text-2xl font-bold">Latest posts</h2>
+      <h2 class="text-2xl font-bold" data-i18n-key="home.latestPosts">
+        {getStaticTranslation('home.latestPosts', 'en')}
+      </h2>
       <ul class="not-prose flex flex-col gap-y-4">
         {
           blog.map((post) => (
@@ -75,7 +72,9 @@ const blog = (await getCollection('blog'))
           href="/blog"
           class={buttonVariants({ variant: 'ghost' }) + ' group'}
         >
-          See all posts <span
+          <span data-i18n-key="home.seeAllPosts"
+            >{getStaticTranslation('home.seeAllPosts', 'en')}</span
+          > <span
             class="ml-1.5 transition-transform group-hover:translate-x-1"
             >&rarr;</span
           >

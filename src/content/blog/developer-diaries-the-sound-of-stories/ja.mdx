@@ -1,0 +1,72 @@
+---
+title: "開発者日記：物語の音"
+description: "構造的でありながら動的でもあるインタラクティブな物語体験の「怠惰な完成」"
+date: 2024-02-13
+authors: ["erniesg"]
+draft: false
+lang: ja
+translationKey: developer-diaries-the-sound-of-stories
+---
+
+The Sound of Stories の最初の “怠惰な完成” をお届けする。物語構造を尊重しつつ、ユーザー入力に柔軟に反応するインタラクティブな物語を生成できるところまで来た。
+
+<iframe alt="The Sound of Stories WIP Demo" src="https://www.youtube.com/embed/ZKlHXE8_TOc?feature=oembed" aria-describedby="n07qdehbcig-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+The Sound of Stories WIP Demo
+
+この一周を完成させることは、最初に一般公開で発表して以来ずっと気になっていた。最初の生成を動かすのは簡単だったが、気になっていたのはこういうことだった。ユーザーの入力を覚えるだけでなく、明確な始まりと終わりを持つ構造化されたナレーションの制約の中に、それをどう論理的に組み込むのか。この問題は、離散的で無限の分布として捉えることもできる。自分の geek な頭には刺激的に聞こえるが、具体的にどう解けばいいのかを始める助けにはまったくならなかった。
+
+最終的に役に立ったのは、別の人間と話しながら自分の考えを整理することだった。特に、私の問題は D&D の問題に似ているという話をしていて、Jia Qi が checkpoints のことを思い出させてくれた。Baldur’s Gate のようなゲームは、特定の目標を達成するためにさまざまな選択肢を提供するが、それでも明確な checkpoint には到達しなければならない。そこで私は物語の構造と向き合い、それを checkpoints に分解する方法を考え、以下のような `.json` にした。
+
+```json
+{
+  "title": "The Boy Who Wanted a Drum – by Kamini Ramachandran",
+  "story_details": {
+    "protagonist_gender": "male",
+    "protagonist_name": "the boy",
+    "story_setting": "a small hut"
+  },
+  "checkpoints": [
+    {
+      "id": "intro",
+      "text": "Once upon a time, there lived a poor woman and her little son. They lived in a small hut together. The little boy wanted a drum. A drum he could tap, beat, and play. Ta Di Gin A Thom! I want a drum! The boy kept asking his mother for a drum, all day and all night long. And so it was, that the next morning, the woman went to the market to sell the cloth that she had woven.",
+      "choice": "drum"
+    },
+    {
+      "id": "encounter_0",
+      "text": "And when she had sold all the cloth, she realised that the coins were not enough to buy her son a drum. As she walked on her way back home, she saw a stick. She picked up the stick and took it home. Ta Di Gin A Thom! I want a drum! Son, take this stick and pretend that it is a drum. The boy took the stick, and he tapped it on the ground (sound effects) He tapped it on the water pot (sound effects) He tapped it on the door (sound effect) He was delighted by the sound it made!",
+      "choice": "continue"
+    },
+    {
+      "id": "encounter_1",
+      "text": "Ta Di Gin A Thom! I have a stick! On the way he met an old woman looking very sad. She sat beside a small wood stove trying to fan the flames. Grandmother, grandmother, why do you look so sad? I have no wood to make the fire to cook the chapatti. The boy remembered his stick! He gave it to the old woman who used the stick to start the fire to cook some chapati. Thank you boy! Here, take some chapatis with you, I have no need for so many.",
+      "gift": "chapati"
+    },
+    ...
+```
+
+もう一つとても役に立ったのは、自分へのメモである **これを複雑にしすぎるな** を守ったことだった。まずはできるだけ単純な解法で hack し始めればよく、難しさは後からいくらでも重ねられる……。だから エージェント に突っ走ることはしなかった（`director`、`scriptwriter`、`assistant` という役割を持つ階層型 エージェント チームを作ったらどうなる！？）。代わりに、2 つの LLM chains、単純な conversational memory、単純な `if` check で、とても愚直な “怠惰な完成” の物語を届けることができた。
+
+```text
+if next_segment_id < len(story_data["checkpoints"]):
+# then you continue the story and use memory to-date as well as the next segment as context
+```
+
+この段階で開発を過度に複雑にしないという自分の助言に従えたので、自分で自分の背中をたたいておく。
+
+それ以外にも、道中で学んだ面白いことがいくつかある。
+
+-   **Dependency 管理**: `pyenv`、`virtualenv`、`poetry` が、ディレクトリ固有の開発環境を立ち上げるためにどう組み合わさるのか、ようやくわかった気がする。`pyenv` は Python バージョンの管理、`virtualenv` は隔離環境の作成、`poetry` はパッケージ依存関係と最終的な配布の管理に使う。
+    
+-   **Prompt “engineering”**: 自分の時間の 80% は、最適な プロンプト を見つけようとすることに費やされている。LLM ベースの開発はすべて、他の作業に入る前に、最初から [best プロンプト to use](https://platform.openai.com/playground) を反復することで大きな恩恵を受けると思う。私はこれをとても退屈だと感じていて、言語学専攻の人たちにとって潜在的な専門職の道になり得るとも見ている。将来はこの開発部分を本当に外部化するために、ぜひ協働したい。
+    
+-   **決定論的システム vs. 確率的システム**: こうしたシステムには調整できる一般的なハイパーパラメータがあるが、絶対的な確実性を持つ結果だけを見せたいと言う人の話を聞くと、いつも少し落ち着かない。実際のところ、この瞬間に私たちが存在しているという現実を除けば、人生に絶対 100% の確実性などない。それ以外については期待を持つことはできるし、たいていはその通りになるが、確率が 1 のものは人生にほとんどない。私が行った反復の多くは単に `temperature` パラメータを中心にしていて、ある時点で両手を上げ、同じ入力でも物語は 100% 確実には再現できないと受け入れるしかなかった。これは人間組織におけるマネージャーや QA/QC の役割、人間の入力と出力の分散をどう管理しようとしているかについて考えさせる。信頼できる A.I. システムを作るために転用できる何かが、そこにあるのかもしれない。
+    
+-   **A.I. における多様性の必要性**: 最初、Kamini の生成された中国語音声の短い断片にはかなりうれしく驚いた。彼女の英語での約 1 分間の携帯録音をもとにした即席の音声クローンから推論されたものだ。しかし生成シーケンスが長くなると、品質が大きく落ちることがすぐに明らかだった。つまり中国語の音声出力は声調をより多く間違え、奇妙な速度で話し、単語の区切りも適切でない、などだ。テキスト生成も同じだった。GPT-4 は大部分において、物語を素朴に英語から中国語へ直接変換していることが明らかだった。言うまでもなく、この経験は、より多様で、より具体的な LLM モデルがなぜ必要なのかを理解し、実感する助けになった。また、最も目立つモデルがすべて英語を中心に調整されているため英語コンテンツを量産しやすいことを考えると、英語という言語がインターネット上でさらにどんな支配力を持つようになるのかも考え始めた。もしこのために自分の母語が将来さらに弱まるなら、少し悲しい。言語を失うことは、世界を見る別の方法、別の窓を失うようなものだからだ。とはいえ、中国語 LLM モデルの学習に使える入力データの品質を考え始めると、ふふ。要点はこうだ。訓練に利用できるデータセットを増やすためにどんな投資をしているのかを語らずに、デジタル包摂や A.I. における多様性を語ることはできない。もちろん偏りは問題だ。だが、文化的により多様で代表性のあるデータセットを訓練用にデジタル化するために、何が行われているのか。そこから人々は入力データ訓練への公正な支払い、オプトアウトなどを語り始める。こうした議論はすべて、A.I. 訓練の仕組みとプロセスをよりよく理解することで恩恵を受けるはずだ。そうすれば、いくつかの考えがどれほど非現実的、あるいは誤解に基づいているかをすぐに理解できるからだ。とはいえ、それはまた別の機会の話だろう。
+    
+
+The Sound of Stories に戻ると、終わることのない物語という無限ゲームと、ここで私が作った明確な始まりと終わりを持つものとの間には、何か芸術的なステートメントや意図として語れる面白いことがある気がする。人生そのものに対して引ける教訓や並行関係もあるだろう。ただしこれはしばらく脇に置き、次は体験に直接組み込みたい神経音声合成のための VAE モデルの学習に集中する。楽しみにしていてほしい！;)
+
+---
+
+*初出は PubPub の [erniesg.pubpub.org/pub/g6zjtf2s](https://erniesg.pubpub.org/pub/g6zjtf2s)。*

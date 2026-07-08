@@ -1,0 +1,415 @@
+---
+title: "リアルタイム生成アーキテクチャ図"
+description: "AIモデルが生成する複雑な構造化データを、ノードごと、エッジごとにリアルタイムで流すアーキテクチャ図生成器。"
+date: 2024-12-19
+tags: ["ai", "streaming", "cloudflare", "vercel", "architecture", "real-time"]
+authors: ["erniesg"]
+draft: true
+lang: ja
+translationKey: streaming-generated-diagrams
+---
+
+# 作り方：Cloudflare Workers x Vercel AI SDK でシステムアーキテクチャをリアルタイムストリーミングする
+
+*AI モデルが複雑な構造化データを生成するたびに、ノードごと、エッジごとにリアルタイムで流すアーキテクチャ図生成器を作る。*
+
+## 問題：テキストストリーミングの先へ
+
+ほとんどの AI streaming 実装はテキスト生成に集中している。ChatGPT のタイプライター効果を思い浮かべればよい。だが、複雑な構造化データをリアルタイムで stream する必要がある場合はどうだろう。AI モデルがネットワーク図を生成するにつれて、ノードごと、エッジごとに可視化したい場合は？
+
+それこそが、**vibetoprod** を作る中で取り組んだことだった。vibetoprod は、インタラクティブなクラウドアーキテクチャ比較を生成するツールだ。完全なレスポンスを 10 秒以上待つのではなく、AI が考えるにつれて図がリアルタイムに現れていく様子をユーザーに見せたかった。
+
+## 私たちのスタック：Edge-First Streaming
+
+現代的で edge に最適化したスタックはこうだ。
+
+**Backend:**
+- **Cloudflare Workers** - グローバル低遅延のための edge compute
+- **Hono** - 軽量 web framework（Workers 向けの Express のようなもの）
+- **Vercel AI SDK** - 構造化 streaming の秘密のソース
+- **OpenAI GPT-4** - 私たちのアーキテクチャ脳
+- **Zod** - Runtime schema 検証
+
+**Frontend:**
+- **React + TypeScript** - 型安全な UI components
+- **React Flow** - インタラクティブな図の可視化
+- **Server-Sent Events** - リアルタイムのブラウザ streaming
+
+## 魔法：`partialObjectStream`
+
+突破口は Vercel AI SDK の `partialObjectStream` から来た。多くの開発者は `streamText()` を知っているが、`streamObject()` を知る人は少ない。ましてや、その partial streaming 機能を知る人はさらに少ない。
+
+仕組みはこうだ。
+
+### 1. Schema を定義する
+
+```typescript
+// src/schemas/architecture.ts
+import { z } from 'zod';
+
+const diagramNodeSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  name: z.string(),
+  subtitle: z.string().optional(),
+  position: z.object({
+    x: z.number().default(0),
+    y: z.number().default(0)
+  }).optional().default({ x: 0, y: 0 }),
+  color: z.string().optional(),
+});
+
+export const architectureResponseSchema = z.object({
+  cloudflare: z.object({
+    nodes: z.array(diagramNodeSchema),
+    edges: z.array(diagramEdgeSchema),
+    advantages: z.array(z.string())
+  }),
+  competitor: z.object({
+    nodes: z.array(diagramNodeSchema),
+    edges: z.array(diagramEdgeSchema)
+  }),
+  priorityValueProps: z.array(priorityValuePropSchema)
+    .describe('Priority-specific value propositions with metrics')
+});
+```
+
+### 2. Backend：部分オブジェクトを stream する
+
+```typescript
+// functions/services/modernOpenAIService.ts
+import { streamObject } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
+
+export class ModernOpenAIService {
+  private model: any;
+
+  constructor(private apiKey: string) {
+    const openai = createOpenAI({
+      apiKey: this.apiKey
+    });
+    this.model = openai('gpt-4o-2024-08-06');
+  }
+
+  async streamArchitecture(input: UserInput) {
+    const prompt = this.buildPrompt(input);
+
+    return await streamObject({
+      model: this.model,
+      schema: architectureResponseSchema,
+      prompt,
+      mode: 'json'
+    });
+  }
+}
+```
+
+### 3. Cloudflare Workers：Server-Sent Events
+
+```typescript
+// functions/[[route]].ts
+app.post('/api/generate-architecture-v2', async (c) => {
+  const userInput = await c.req.json();
+  const modernOpenAI = new ModernOpenAIService(c.env.OPENAI_API_KEY);
+  const result = await modernOpenAI.streamArchitecture(userInput);
+
+  // Stream partial objects as Server-Sent Events
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+
+      // This is where the magic happens
+      for await (const partialObject of result.partialObjectStream) {
+        const chunk = `data: ${JSON.stringify(partialObject)}\n\n`;
+        controller.enqueue(encoder.encode(chunk));
+      }
+
+      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+      controller.close();
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+});
+```
+
+## Frontend の課題：部分オブジェクトは messy
+
+ここが面白いところだ。AI は完全なオブジェクトを送らない。時間をかけて組み上がっていく **partial objects** を送ってくる。
+
+```json
+// First chunk
+{
+  "cloudflare": {
+    "nodes": [
+      { "id": "workers" }
+    ]
+  }
+}
+
+// Second chunk
+{
+  "cloudflare": {
+    "nodes": [
+      {
+        "id": "workers",
+        "type": "workers",
+        "name": "Workers"
+      }
+    ]
+  }
+}
+
+// Third chunk
+{
+  "cloudflare": {
+    "nodes": [
+      {
+        "id": "workers",
+        "type": "workers",
+        "name": "Workers",
+        "subtitle": "Serverless Functions",
+        "position": { "x": 100, "y": 200 }
+      }
+    ]
+  }
+}
+```
+
+### 4. Auto-Layout：リアルタイム Dagre 配置
+
+重要な洞察の一つは、**AI にレイアウトを任せない**ことだ。LLMs は空間配置が苦手だが、論理的な関係を生成するのは得意だ。そこで私たちは次のようにした。
+
+1. `position: { x: 0, y: 0 }` を持つ nodes を生成する（無視される）
+2. streaming update のたびに Dagre layout を再実行する
+3. 図が成長するにつれて viewport を自動で fit する
+
+```typescript
+// src/utils/autoLayout.ts
+import dagre from '@dagrejs/dagre';
+import type { Node, Edge } from '@xyflow/react';
+
+const nodeWidth = 172;
+const nodeHeight = 50;
+
+export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
+  if (nodes.length === 0) return { nodes: [], edges };
+
+  // Create fresh graph for each layout (no shared state)
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+  dagreGraph.setGraph({
+    rankdir: direction,
+    nodesep: 150,  // Space between nodes on same rank
+    ranksep: 200,  // Space between ranks (layers)
+    marginx: 80,   // Graph margin
+    marginy: 80
+  });
+
+  nodes.forEach((node) => {
+    dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  const newNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    return {
+      ...node,
+      position: {
+        x: nodeWithPosition.x - nodeWidth / 2,
+        y: nodeWithPosition.y - nodeHeight / 2,
+      },
+    };
+  });
+
+  return { nodes: newNodes, edges };
+};
+```
+
+魔法は streaming component で起きる。layout は**ノードが追加されるたびに**再計算される。
+
+```typescript
+// src/components/streaming/StreamingReactFlow.tsx
+useEffect(() => {
+  if (reactFlowNodes.length > 0) {
+    // Re-layout on every streaming update
+    const { nodes: layoutedNodesResult, edges: layoutedEdgesResult } = getLayoutedElements(
+      reactFlowNodes,
+      reactFlowEdges,
+      'LR'  // Left-to-right layout
+    );
+
+    setLayoutedNodes(layoutedNodesResult);
+    setLayoutedEdges(layoutedEdgesResult);
+
+    // Auto-fit viewport to new layout
+    setTimeout(() => {
+      if (reactFlowInstanceRef.current) {
+        reactFlowInstanceRef.current.fitView({ padding: 0.2 });
+      }
+    }, 50);
+  }
+}, [reactFlowNodes.length, reactFlowEdges.length]); // Re-run on every count change
+```
+
+この方法により、**レスポンシブでリアルタイムなレイアウト**が得られる。各 node が stream されるたびに Dagre が全体の layout を再計算し、viewport が滑らかに調整される。**AI が論理アーキテクチャを生成し、Dagre が視覚的な完成度を担う**。
+
+### 5. Frontend：部分オブジェクトを穏当に扱う
+
+```typescript
+// src/hooks/useStreamingArchitectureV2.ts
+export function useStreamingArchitectureV2() {
+  const [object, setObject] = useState<Partial<ArchitectureResponse> | null>(null);
+
+  // Filter out incomplete objects before rendering
+  const allCloudflareNodes = object?.cloudflare?.nodes || [];
+  const cloudflareNodes = allCloudflareNodes.filter(node => {
+    const isComplete = node &&
+      typeof node === 'object' &&
+      node.id &&
+      node.type &&
+      node.name &&
+      node.position &&
+      typeof node.position === 'object' &&
+      typeof node.position.x === 'number' &&
+      typeof node.position.y === 'number';
+
+    if (!isComplete && node?.id) {
+      console.log(`⏳ Incomplete node ${node.id}:`, node);
+    }
+
+    return isComplete;
+  });
+
+  // Stream processing
+  const generateArchitecture = useCallback(async (userInput: UserInput) => {
+    const response = await fetch('/api/generate-architecture-v2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: userInput }),
+    });
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6);
+          if (dataStr === '[DONE]') break;
+
+          try {
+            const partialObject = JSON.parse(dataStr);
+            setObject(partialObject); // React re-renders with new data
+          } catch (parseError) {
+            console.warn('Failed to parse chunk:', dataStr);
+          }
+        }
+      }
+    }
+  }, []);
+
+  return {
+    cloudflareNodes, // Only complete nodes
+    // ... other filtered data
+    generateArchitecture,
+  };
+}
+```
+
+## 主な学び：わかったこと
+
+### 1. **部分オブジェクトは段階的に到着する**
+AI モデルは一つの node を完成させてから次に進むわけではない。ID だけの Node A を送り、次に部分的なデータを持つ Node B を送り、その後で Node A を完成させることもある。frontend はこれを穏当に処理しなければならない。
+
+### 2. **Validation は重要**
+レンダリング前に必ず partial objects を検証する。必須フィールドが欠けていると React Flow はクラッシュする。不完全なオブジェクトをスキップする方が、UI をクラッシュさせるよりよい。
+
+### 3. **AI ロジックと視覚レイアウトを分ける**
+LLMs に位置計算を頼んではいけない。空間推論が苦手だからだ。AI には論理アーキテクチャを生成させ、Dagre.js で automatic layout を行う。これにより、きれいで適切に間隔の空いた図が得られる。
+
+### 4. **Server-Sent Events > WebSockets**
+一方向のストリーミングには、SSE の方が WebSockets より単純だ。接続管理が不要で、自動再接続があり、ブラウザサポートもよい。
+
+### 5. **Cloudflare Workers は Streaming に向いている**
+Workers は streaming を驚くほどうまく扱う。`ReadableStream` API は Vercel AI SDK の `partialObjectStream` と完璧に組み合わさる。
+
+### 6. **Progressive Rendering はより良い UX を作る**
+ユーザーは図がリアルタイムに組み上がっていく様子を見るのが好きだ。総時間が同じでも、loading spinner よりインタラクティブに感じられる。
+
+## 結果：リアルタイムアーキテクチャ可視化
+
+私たちが作ったのは、次のようなシステムだ。
+- 複雑な構造化データをリアルタイムで stream する
+- partial objects を穏当に扱う
+- 即時の視覚フィードバックを提供する
+- Cloudflare の edge network でグローバルにスケールする
+- pipeline 全体で 種類 safety を保つ
+
+ユーザーが "Generate Architecture" をクリックすると、AI が考えるにつれて nodes と connections がすぐに現れ始める。建築家がリアルタイムで設計図をスケッチしているのを見るようなものだ。
+
+## 自分で試す
+
+中核となるパターンは単純だ。
+1. Vercel AI SDK の `streamObject()` と `partialObjectStream` を使う
+2. Server-Sent Events で stream する
+3. frontend で不完全なオブジェクトをフィルタする
+4. オブジェクトが完成するにつれて段階的にレンダリングする
+
+この方法は、データbase schemas、API responses、configuration files、複雑な visualizations など、どんな構造化データにも使える。
+
+## Edge 上のハイパーパーソナライズ UI にとっての意味
+
+この streaming アーキテクチャ pattern は、より大きなものを解き放つ。**リアルタイムに適応する hyperpersonalized インターフェース** だ。
+
+単に速く読み込まれるだけではなく、読み込みながら各ユーザーの文脈に合わせて*進化*するインターフェースを想像してほしい。
+
+- **Dashboard widgets** が現在の project state に基づいて現れる
+- **Navigation menus** が利用パターンに基づいて再編成される
+- **Form fields** が過去の入力に基づいて具体化する
+- **Product recommendations** が閲覧中に更新される
+- **Code completion** が入力に合わせて提案を stream する
+
+Cloudflare Workers の edge compute と Vercel AI SDK の structured streaming の組み合わせは、新しいパラダイムを作る。**自分で構築される 文脈ual インターフェース** だ。
+
+同じ UI を全員に送り、クライアント-side JavaScript でパーソナライズする代わりに、私たちは次のことができる。
+1. edge で **ユーザー文脈を分析** する（location、device、behavior）
+2. AI モデルで**パーソナライズされた UI 構造を生成**する
+3. 作成されるたびに **インターフェース components を stream** する
+4. 即時に感じられる性能のために **段階的にレンダリング** する
+
+これは特に次のようなものに強力だ。
+- **SaaS dashboards** がユーザーロールごとに自分で構成される
+- **E-commerce インターフェース** が購買行動に適応する
+- **Developer ツール** が文脈に合う機能を浮かび上がらせる
+- **Content プラットフォーム** が engagement パターン に基づいて再構成される
+
+Edge は速度を与える。AI は知性を与える。Streaming は流動性を与える。
+
+私たちは単に速いウェブサイトを作っているのではない。各ユーザーに固有で、思考の速度で、リアルタイムに考え、適応し、形を取るインターフェースを作っている。
+
+Web 開発 の未来は、ただコードを速く shipping することではない。各ユーザーに *異なる code* を shipping することだ。edge で生成され stream され、本当にパーソナライズされた、魔法のように感じられる体験を作ることだ。
+
+---
+
+*完全な実装を見たい場合は、GitHub の [erniesg/vibetoprod](https://github.com/erniesg/vibetoprod) にコードがある。*

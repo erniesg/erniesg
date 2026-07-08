@@ -7,10 +7,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { NAV_LINKS } from '@/consts'
+import { getStaticText, useSiteLocale } from '@/lib/use-site-locale'
 import { Menu } from 'lucide-react'
 
 const MobileMenu = () => {
   const [isOpen, setIsOpen] = useState(false)
+  const locale = useSiteLocale()
+  const t = (key: string) => getStaticText(locale, key)
 
   useEffect(() => {
     const handleViewTransitionStart = () => {
@@ -34,10 +37,10 @@ const MobileMenu = () => {
           variant="outline"
           size="icon"
           className="md:hidden"
-          title="Menu"
+          title={t('ui.menu')}
         >
           <Menu className="h-5 w-5" />
-          <span className="sr-only">Toggle menu</span>
+          <span className="sr-only">{t('ui.toggleMenu')}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="bg-background">
@@ -48,7 +51,7 @@ const MobileMenu = () => {
               className="w-full text-lg font-medium capitalize"
               onClick={() => setIsOpen(false)}
             >
-              {item.label}
+              {t(`nav.${item.label}`)}
             </a>
           </DropdownMenuItem>
         ))}

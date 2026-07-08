@@ -1,0 +1,415 @@
+---
+title: "实时流式生成架构图"
+description: "构建实时架构图生成器，在 AI 模型生成时逐个节点、逐条边流式输出复杂结构化数据。"
+date: 2024-12-19
+tags: ["ai", "streaming", "cloudflare", "vercel", "architecture", "real-time"]
+authors: ["erniesg"]
+draft: true
+lang: zh
+translationKey: streaming-generated-diagrams
+---
+
+# 我如何构建它：用 Cloudflare Workers x Vercel AI SDK 实时流式生成系统架构
+
+*构建一个实时架构图生成器，在 AI 模型生成复杂结构化数据时，逐个节点、逐条边地流式呈现。*
+
+## 问题：超越文本流式输出
+
+大多数 AI streaming 实现都专注于文本生成，也就是 ChatGPT 那种打字机效果。但如果你需要实时流式输出复杂的结构化数据呢？如果你想在 AI 模型生成网络图时，逐个节点、逐条边地把它可视化呢？
+
+这正是我们在构建 **vibetoprod** 时处理的问题。vibetoprod 是一个生成交互式云架构对比的工具。我们不想让用户等 10 多秒才看到完整响应，而是希望他们能在 AI 思考时实时看到图表逐步显现。
+
+## 我们的技术栈：Edge-First Streaming
+
+这是我们现代化、针对 edge 优化的技术栈：
+
+**Backend:**
+- **Cloudflare Workers** - 用于全球低延迟的 edge compute
+- **Hono** - 轻量级 web framework（类似 Workers 上的 Express）
+- **Vercel AI SDK** - 结构化 streaming 的关键酱料
+- **OpenAI GPT-4** - 我们的架构大脑
+- **Zod** - Runtime schema 验证
+
+**Frontend:**
+- **React + TypeScript** - 类型安全的 UI components
+- **React Flow** - 交互式图表可视化
+- **Server-Sent Events** - 实时浏览器 streaming
+
+## 魔法：`partialObjectStream`
+
+突破来自 Vercel AI SDK 的 `partialObjectStream`。大多数开发者知道 `streamText()`，但较少人知道 `streamObject()`，更少人知道它的 partial streaming 能力。
+
+它的工作方式如下：
+
+### 1. 定义你的 Schema
+
+```typescript
+// src/schemas/architecture.ts
+import { z } from 'zod';
+
+const diagramNodeSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  name: z.string(),
+  subtitle: z.string().optional(),
+  position: z.object({
+    x: z.number().default(0),
+    y: z.number().default(0)
+  }).optional().default({ x: 0, y: 0 }),
+  color: z.string().optional(),
+});
+
+export const architectureResponseSchema = z.object({
+  cloudflare: z.object({
+    nodes: z.array(diagramNodeSchema),
+    edges: z.array(diagramEdgeSchema),
+    advantages: z.array(z.string())
+  }),
+  competitor: z.object({
+    nodes: z.array(diagramNodeSchema),
+    edges: z.array(diagramEdgeSchema)
+  }),
+  priorityValueProps: z.array(priorityValuePropSchema)
+    .describe('Priority-specific value propositions with metrics')
+});
+```
+
+### 2. Backend：流式输出部分对象
+
+```typescript
+// functions/services/modernOpenAIService.ts
+import { streamObject } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
+
+export class ModernOpenAIService {
+  private model: any;
+
+  constructor(private apiKey: string) {
+    const openai = createOpenAI({
+      apiKey: this.apiKey
+    });
+    this.model = openai('gpt-4o-2024-08-06');
+  }
+
+  async streamArchitecture(input: UserInput) {
+    const prompt = this.buildPrompt(input);
+
+    return await streamObject({
+      model: this.model,
+      schema: architectureResponseSchema,
+      prompt,
+      mode: 'json'
+    });
+  }
+}
+```
+
+### 3. Cloudflare Workers：Server-Sent Events
+
+```typescript
+// functions/[[route]].ts
+app.post('/api/generate-architecture-v2', async (c) => {
+  const userInput = await c.req.json();
+  const modernOpenAI = new ModernOpenAIService(c.env.OPENAI_API_KEY);
+  const result = await modernOpenAI.streamArchitecture(userInput);
+
+  // Stream partial objects as Server-Sent Events
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+
+      // This is where the magic happens
+      for await (const partialObject of result.partialObjectStream) {
+        const chunk = `data: ${JSON.stringify(partialObject)}\n\n`;
+        controller.enqueue(encoder.encode(chunk));
+      }
+
+      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+      controller.close();
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+});
+```
+
+## Frontend 挑战：部分对象很混乱
+
+有意思的地方来了。AI 不会发送完整对象，而是发送会随时间逐步构建起来的 **partial objects**：
+
+```json
+// First chunk
+{
+  "cloudflare": {
+    "nodes": [
+      { "id": "workers" }
+    ]
+  }
+}
+
+// Second chunk
+{
+  "cloudflare": {
+    "nodes": [
+      {
+        "id": "workers",
+        "type": "workers",
+        "name": "Workers"
+      }
+    ]
+  }
+}
+
+// Third chunk
+{
+  "cloudflare": {
+    "nodes": [
+      {
+        "id": "workers",
+        "type": "workers",
+        "name": "Workers",
+        "subtitle": "Serverless Functions",
+        "position": { "x": 100, "y": 200 }
+      }
+    ]
+  }
+}
+```
+
+### 4. Auto-Layout：实时 Dagre 定位
+
+一个关键洞察是：**不要让 AI 处理布局**。LLMs 很不擅长空间定位，但很擅长生成逻辑关系。所以我们：
+
+1. 生成带有 `position: { x: 0, y: 0 }` 的 nodes（会被忽略）
+2. 在每次 streaming update 时重新运行 Dagre layout
+3. 随着图表增长自动 fit viewport
+
+```typescript
+// src/utils/autoLayout.ts
+import dagre from '@dagrejs/dagre';
+import type { Node, Edge } from '@xyflow/react';
+
+const nodeWidth = 172;
+const nodeHeight = 50;
+
+export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
+  if (nodes.length === 0) return { nodes: [], edges };
+
+  // Create fresh graph for each layout (no shared state)
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+  dagreGraph.setGraph({
+    rankdir: direction,
+    nodesep: 150,  // Space between nodes on same rank
+    ranksep: 200,  // Space between ranks (layers)
+    marginx: 80,   // Graph margin
+    marginy: 80
+  });
+
+  nodes.forEach((node) => {
+    dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  const newNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    return {
+      ...node,
+      position: {
+        x: nodeWithPosition.x - nodeWidth / 2,
+        y: nodeWithPosition.y - nodeHeight / 2,
+      },
+    };
+  });
+
+  return { nodes: newNodes, edges };
+};
+```
+
+魔法发生在 streaming component 中：layout 会**在每次 node 增加时**重新计算。
+
+```typescript
+// src/components/streaming/StreamingReactFlow.tsx
+useEffect(() => {
+  if (reactFlowNodes.length > 0) {
+    // Re-layout on every streaming update
+    const { nodes: layoutedNodesResult, edges: layoutedEdgesResult } = getLayoutedElements(
+      reactFlowNodes,
+      reactFlowEdges,
+      'LR'  // Left-to-right layout
+    );
+
+    setLayoutedNodes(layoutedNodesResult);
+    setLayoutedEdges(layoutedEdgesResult);
+
+    // Auto-fit viewport to new layout
+    setTimeout(() => {
+      if (reactFlowInstanceRef.current) {
+        reactFlowInstanceRef.current.fitView({ padding: 0.2 });
+      }
+    }, 50);
+  }
+}, [reactFlowNodes.length, reactFlowEdges.length]); // Re-run on every count change
+```
+
+这种做法带来了**响应式、实时的布局**：每当一个 node 流入，Dagre 都会重新计算整个 layout，viewport 也会顺滑调整。**AI 生成逻辑架构，Dagre 处理视觉完美度**。
+
+### 5. Frontend：优雅处理部分对象
+
+```typescript
+// src/hooks/useStreamingArchitectureV2.ts
+export function useStreamingArchitectureV2() {
+  const [object, setObject] = useState<Partial<ArchitectureResponse> | null>(null);
+
+  // Filter out incomplete objects before rendering
+  const allCloudflareNodes = object?.cloudflare?.nodes || [];
+  const cloudflareNodes = allCloudflareNodes.filter(node => {
+    const isComplete = node &&
+      typeof node === 'object' &&
+      node.id &&
+      node.type &&
+      node.name &&
+      node.position &&
+      typeof node.position === 'object' &&
+      typeof node.position.x === 'number' &&
+      typeof node.position.y === 'number';
+
+    if (!isComplete && node?.id) {
+      console.log(`⏳ Incomplete node ${node.id}:`, node);
+    }
+
+    return isComplete;
+  });
+
+  // Stream processing
+  const generateArchitecture = useCallback(async (userInput: UserInput) => {
+    const response = await fetch('/api/generate-architecture-v2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: userInput }),
+    });
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6);
+          if (dataStr === '[DONE]') break;
+
+          try {
+            const partialObject = JSON.parse(dataStr);
+            setObject(partialObject); // React re-renders with new data
+          } catch (parseError) {
+            console.warn('Failed to parse chunk:', dataStr);
+          }
+        }
+      }
+    }
+  }, []);
+
+  return {
+    cloudflareNodes, // Only complete nodes
+    // ... other filtered data
+    generateArchitecture,
+  };
+}
+```
+
+## 关键学习：我们的发现
+
+### 1. **部分对象会递增到达**
+AI 模型不会先完成一个 node 再开始另一个。它可能先发送只有 ID 的 Node A，然后发送部分数据的 Node B，之后才补完 Node A。你的 frontend 必须优雅处理这种情况。
+
+### 2. **Validation 至关重要**
+渲染前一定要验证 partial objects。缺少必填字段会让 React Flow 崩溃。跳过不完整对象比让 UI 崩溃更好。
+
+### 3. **把 AI 逻辑和视觉布局分开**
+不要让 LLMs 计算位置，它们不擅长空间推理。让 AI 生成逻辑架构，再用 Dagre.js 做 automatic layout。这样你会得到干净、间距合理的图表。
+
+### 4. **Server-Sent Events > WebSockets**
+对于单向流式传输，SSE 比 WebSockets 更简单。无需连接管理，有自动重连，浏览器支持也更好。
+
+### 5. **Cloudflare Workers 很适合 Streaming**
+Workers 对 streaming 的处理出乎意料地好。`ReadableStream` API 和 Vercel AI SDK 的 `partialObjectStream` 配合得非常完美。
+
+### 6. **Progressive Rendering 带来更好的 UX**
+用户喜欢实时看到图表构建起来。即使总耗时相同，它也比 loading spinner 感觉更具交互性。
+
+## 结果：实时架构可视化
+
+我们构建的是一个能够：
+- 实时流式输出复杂结构化数据
+- 优雅处理 partial objects
+- 提供即时视觉反馈
+- 通过 Cloudflare 的 edge network 实现全球扩展
+- 在整个 pipeline 中保持 类型 safety
+
+用户点击 "Generate Architecture"，然后立刻看到 nodes 和 connections 随着 AI 思考逐步出现。这就像实时观看一位架构师绘制蓝图。
+
+## 自己试试看
+
+核心模式很简单：
+1. 使用 Vercel AI SDK 的 `streamObject()` 和 `partialObjectStream`
+2. 通过 Server-Sent Events streaming
+3. 在 frontend 过滤不完整对象
+4. 对象完成时渐进式渲染
+
+这种方法适用于任何结构化数据：数据base schemas、API responses、configuration files，或复杂可视化。
+
+## 这对 Edge 上的超个性化 UI 意味着什么
+
+这种 streaming 架构 pattern 解锁了更大的东西：**能够实时适应的 hyperpersonalized 接口**。
+
+想象一下，这些界面不只是加载更快，而是会在加载时*演化*，根据每个用户的上下文定制：
+
+- **Dashboard widgets** 根据你当前的 project state 出现
+- **Navigation menus** 根据你的使用模式重新组织
+- **Form fields** 根据你之前的输入显现
+- **Product recommendations** 随着你浏览而更新
+- **Code completion** 在你输入时流式给出建议
+
+Cloudflare Workers 的 edge compute 与 Vercel AI SDK 的 structured streaming 结合，创造了一种新范式：**会自行构建的 上下文ual 接口**。
+
+与其把同一套 UI 发给每个人，再用 客户端-side JavaScript 做个性化，我们可以：
+1. 在 edge **分析用户上下文**（location、device、behavior）
+2. 用 AI 模型**生成个性化 UI 结构**
+3. 在创建时**流式输出 接口 components**
+4. 为即时感知性能进行**渐进式渲染**
+
+这尤其适用于：
+- **SaaS dashboards** 根据用户角色自行配置
+- **E-commerce 接口** 根据购买行为自适应
+- **Developer 工具** 按上下文浮现相关功能
+- **Content 平台** 根据 engagement 模式 重组
+
+Edge 给我们速度。AI 给我们智能。Streaming 给我们流动性。
+
+我们不只是在构建更快的网站，而是在构建能思考、适应并实时显现的界面，以思考的速度为每个用户独特生成。
+
+Web 开发 的未来不只是更快地 shipping code。它是为每个用户 shipping *不同 code*，从 edge 生成并流式传输，创造真正个性化、像魔法一样的体验。
+
+---
+
+*想看完整实现？代码在 GitHub：[erniesg/vibetoprod](https://github.com/erniesg/vibetoprod)。*

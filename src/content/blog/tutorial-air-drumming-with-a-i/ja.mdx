@@ -1,0 +1,110 @@
+---
+title: "チュートリアル：A.I. でエアドラム"
+description: "AI と神経音声合成、DJ、Taylor Swift、そして光る新しいおもちゃ（Erae II）が結びついたらどう見えるかについての考え"
+date: 2024-03-19
+authors: ["erniesg"]
+draft: false
+lang: "ja"
+translationKey: "tutorial-air-drumming-with-a-i"
+---
+
+この数か月、A.I. の探究を記録するために動画を投稿してきた。だから初めて、どうやって作ったのかと人が興味を持って聞いてくれたのは本当にうれしい！😊
+
+私は握りこぶしで“エアドラム”するスクリプトを作った。小さな時間制限付きの実験として、マレードラムで訓練した RAVE モデルから生成した音を鳴らすものだ。できるから作ってみた、という類のくだらなくて馬鹿げた小さなものだったので、これまでの A.I. についての投稿全部を合わせたよりも多くの人が気に入ってくれて、とても満足している。もしかすると私は Instagram の使い方を間違えていたのかもしれない、lol。
+
+<iframe alt="Air drum with a closed fist" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+握りこぶしでエアドラム
+
+# はじめに
+
+ともあれ、これはすべての AI アプリのゴッドファーザーである Python で書いた。Python に関しては、依存関係の管理はその言語の人間へのやさしさと反比例する。このチュートリアルを追うには、Python をインストールし、`pip install` のやり方を知り、コマンドラインから Python スクリプトを実行できる必要がある。コード自体は 115 行だけで、いつものように ChatGPT と“ペアプログラミング”して書いた、lol。
+
+私のシステム構成とパッケージバージョンは次の通り：
+
+-   Apple M2 Max
+    
+-   `Python 3.10.6`
+    
+-   `mediapipe 0.10.9`
+    
+-   `pygame 2.5.2`
+    
+
+下の動画はチュートリアルというより、デモを作るにあたっての思考過程と論理分解を説明するものだ。いずれにせよ、こうしたものの方が他の技術的作業に転用するうえでずっと価値があり重要だ。必要な材料が分かっていて、A.I. にやりたいことを段階的に明確に指示できるなら、あとはコードが生成されるのを座って待てばいい。もちろん、それを実行してデバッグする方法は知っておく必要がある。
+
+<iframe alt="Tutorial: Air Drum With A.I." src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+チュートリアル：A.I. でエアドラム
+
+# 114行のコード
+
+注： [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer) と再生したい .mp3 ファイルをスクリプトと同じディレクトリに置くか、ファイルパスを更新する必要がある。私が使った音声ファイルは、基本的にはマレーの太鼓で訓練した [RAVE モデル](https://github.com/acids-ircam/RAVE) から生成した音声だ。無料の Google Colab notebooks を使って自分のモデルを訓練する方法のチュートリアルも作る予定なので、楽しみにしていてほしい！
+
+```python
+import mediapipe as mp
+import cv2
+import pygame
+import time
+
+mp_drawing = mp.solutions.drawing_utils
+mp_hands = mp.solutions.hands
+
+# For webcam input:
+hands = mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+last_sound_time = 0  # Tracks when the sound was last played
+sound_cooldown = 2  # Cooldown in seconds
+
+pygame.mixer.init()
+sound = pygame.mixer.Sound('sample_out.mp3')
+
+BaseOptions = mp.tasks.BaseOptions
+GestureRecognizer = mp.tasks.vision.GestureRecognizer
+GestureRecognizerOptions = mp.tasks.vision.GestureRecognizerOptions
+GestureRecognizerResult = mp.tasks.vision.GestureRecognizerResult
+VisionRunningMode = mp.tasks.vision.RunningMode
+
+# Function to draw hand landmarks on the frame
+def draw_hand_landmarks(frame, landmarks):
+    # Assuming landmarks is a list of landmarks with x, y, z coordinates normalized to the image size
+    for landmark in landmarks:
+        x = int(landmark.x * frame.shape[1])
+        y = int(landmark.y * frame.shape[0])
+        cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+
+# Create a gesture recognizer instance with the live stream mode:
+def print_result(result: GestureRecognizerResult, output_image: mp.Image, timestamp_ms: int):
+    print('gesture recognition result: {}'.format(result))
+    handle_gesture(result)
+```
+
+`numpy` は使われていなかったので削除した。また `q` を押してループを抜けるのは動かないようだ。私はたいていコマンドラインからスクリプトを直接終了している。
+
+これは私の [GitHub リポジトリ](https://github.com/erniesg/berlayar/blob/openai_migration_backup/demos/sound/showcase.py) にもある。できるだけ定期的にコードを投稿して共有しようとしているので、私が何に取り組んでいるかを知りたい人はそちらでフォローしてほしい！
+
+# 着想
+
+これは Antoine（RAVE の作者）の仕事に触発されて取り組んだもので、空中で音楽を作るというアイデアを探ってみたかっただけだ。;) だってエアドラムをやらない理由がない！！！見た目がすごくかっこいいし、Instagram の 800 件以上のいいねも同意している！
+
+# どう作ったか
+
+その考えが浮かんでから、私は基本的に [`hand_osc` リポジトリ](https://github.com/caillonantoine/hand_osc) を読み、あまり時間をかけずに可能性を試せる最小限の実装に集中した。そうして、ある晩に資料を読み進め、ChatGPT と話し、デバッグし、より明確な指示を与え続けた結果、これができた。
+
+最大のハードルは、GPT-4 の `mediapipe` コードがかなり古かったことだ。だからドキュメントをちゃんと読み、A.I. に例を与え、進めながらデバッグする必要があった。上で説明したよりも明らかにずっとつらい作業だった。でも私がよく言うように、A.I. で作るのは苦しいほど楽しい。
+
+# 次に
+
+何が可能かに気づき、Disney+ で Taylor Swift のコンサートを配信で観た直後、私はこう感じた。**A.I. と Embodme Erae II で彼女の音楽に合わせて DJ ができたら** すごくかっこいいだろう。Don’t Blame Me から Look What You Made Me Do へのつなぎは本当に良かった。バターのように滑らかで、DJing を Wikipedia で調べたら、ビートを合わせて複数のトラックを混ぜる話が出てきて、私はこう思った。私は音楽について何も知らないけれど、この「音楽」なら A.I. でできる。これは A.I. にぴったりの仕事に聞こえる。
+
+`time` を x 軸に、`bpm` を y 軸に置けば、彼女のコンサートにおけるエネルギーの時間変化を描けるようなものだ。A.I. に次の曲を選ばせてクロスフェードさせられたら、かっこよくないだろうか！？
+
+実際、観客席からのすべての音声入力を MIDI に変換し、その上でニューラル音声合成をリアルタイムに行い、演奏に取り込むこともできる！もちろん Spotify にはそのための [ライブラリ](https://basicpitch.spotify.com/) がすでにある。
+
+DJ したくなくて、ただ演奏したいだけでも方法はある。#ideas
+
+時間ができたらこうしたアイデアを試すのはとても楽しそうだが、次はモデル結合と LLM のファインチューニングについて更新することになりそうだ！
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q).*

@@ -2,6 +2,7 @@
 import Link from '@/components/Link.astro'
 import AvatarComponent from '@/components/ui/avatar'
 import type { Link as SocialLink } from '@/consts'
+import { getStaticTranslation } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import type { CollectionEntry } from 'astro:content'
 import SocialIcons from './SocialIcons.astro'
@@ -49,7 +50,7 @@ const socialLinks: SocialLink[] = [
       <AvatarComponent
         client:load
         src={avatar}
-        alt={`Avatar of ${name}`}
+        alt={name}
         fallback={name[0]}
         className={cn(
           'size-32 rounded-md',
@@ -68,7 +69,14 @@ const socialLinks: SocialLink[] = [
             )
           }
         </div>
-        <p class="text-sm text-muted-foreground">{bio}</p>
+        <p
+          class="text-sm text-muted-foreground"
+          data-i18n-key={author.id === 'erniesg' ? 'author.erniesg.bio' : undefined}
+        >
+          {author.id === 'erniesg'
+            ? getStaticTranslation('author.erniesg.bio', 'en')
+            : bio}
+        </p>
       </div>
       <SocialIcons links={socialLinks} />
     </div>

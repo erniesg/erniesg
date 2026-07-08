@@ -4,10 +4,21 @@ import Container from '@/components/Container.astro'
 import Link from '@/components/Link.astro'
 import { badgeVariants } from '@/components/ui/badge'
 import Layout from '@/layouts/Layout.astro'
+import {
+  getTagLabel,
+  getStaticTranslation,
+  isCanonicalDefaultPostId,
+  isLegacyChinesePostId,
+} from '@/lib/i18n'
 import { Icon } from 'astro-icon/components'
 import { getCollection } from 'astro:content'
 
-const blog = (await getCollection('blog')).filter((post) => !post.data.draft)
+const blog = (await getCollection('blog')).filter(
+  (post) =>
+    !post.data.draft &&
+    isCanonicalDefaultPostId(post.id) &&
+    !isLegacyChinesePostId(post.id),
+)
 
 const tagCounts = blog.reduce((acc, post) => {
   post.data.tags?.forEach((tag) => {
@@ -24,7 +35,15 @@ const tags = [...tagCounts.keys()].sort((a, b) => {
 
 <Layout title="Tags" description="A list of all tags used in blog posts">
   <Container class="flex flex-col gap-y-6">
-    <Breadcrumbs items={[{ label: 'Tags', icon: 'lucide:tags' }]} />
+    <Breadcrumbs
+      items={[
+        {
+          label: getStaticTranslation('tags.title', 'en'),
+          icon: 'lucide:tags',
+          i18nKey: 'tags.title',
+        },
+      ]}
+    />
 
     <div class="flex flex-col gap-4">
       <div class="flex flex-wrap gap-2">
@@ -35,7 +54,7 @@ const tags = [...tagCounts.keys()].sort((a, b) => {
               class={badgeVariants({ variant: 'secondary' })}
             >
               <Icon name="lucide:hash" class="size-3 -translate-x-0.5" />
-              {tag}
+              <span data-i18n-tag={tag}>{getTagLabel(tag, 'en')}</span>
               <span class="ml-1.5 text-muted-foreground">
                 ({tagCounts.get(tag)})
               </span>

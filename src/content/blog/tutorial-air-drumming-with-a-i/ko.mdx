@@ -1,0 +1,110 @@
+---
+title: "튜토리얼: A.I.로 에어 드럼 치기"
+description: "인공지능과 신경 오디오 합성, 디제잉, Taylor Swift, 그리고 반짝이는 새 장난감(Erae II)의 결합이 어떤 모습일 수 있을지에 대한 몇 가지 생각"
+date: 2024-03-19
+authors: ["erniesg"]
+draft: false
+lang: "ko"
+translationKey: "tutorial-air-drumming-with-a-i"
+---
+
+지난 몇 달 동안 내 A.I. 탐험을 기록하기 위해 영상을 올려왔는데, 처음으로 사람들이 어떻게 했는지 궁금해하며 물어봐줘서 정말 좋았다! 😊
+
+나는 주먹을 쥐고 “에어 드럼”을 치는 스크립트를 만들었다. 작은 시간 제한 실험으로, 말레이 드럼으로 훈련한 RAVE 모델이 생성한 소리를 재생하는 방식이었다. 그냥 할 수 있으니까 만들어보는 그런 우스꽝스럽고 바보 같은 작은 것들 중 하나였는데, 그래서 이전 A.I. 게시물을 전부 합친 것보다 사람들이 더 좋아해줘서 매우 기쁘다. 어쩌면 내가 Instagram을 잘못 쓰고 있었는지도, lol.
+
+<iframe alt="Air drum with a closed fist" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+주먹을 쥐고 에어 드럼 치기
+
+# 시작하기
+
+어쨌든 이것은 모든 인공지능 앱의 대부인 Python으로 코딩했다. Python에서는 의존성 관리가 언어의 인간 친화성과 반비례한다. 이 튜토리얼을 따라가려면 Python을 설치하고, `pip install`을 할 줄 알고, 명령줄에서 Python 스크립트를 실행할 수 있어야 한다. 코드 자체는 115줄뿐이고, 늘 그렇듯 ChatGPT와 “페어 프로그래밍”하며 작성했다, lol.
+
+내 시스템 구성과 패키지 버전은 다음과 같다:
+
+-   Apple M2 Max
+    
+-   `Python 3.10.6`
+    
+-   `mediapipe 0.10.9`
+    
+-   `pygame 2.5.2`
+    
+
+아래 영상은 튜토리얼이라기보다 데모를 만들 때 들어간 사고 과정과 논리 분해를 설명하는 것에 가깝다. 어차피 이런 것들이 다른 기술적 작업으로 옮겨갈 때 훨씬 더 가치 있고 중요하다. 필요한 재료가 무엇인지 알고, A.I.에게 원하는 일을 단계별로 명확히 지시할 수 있다면, 코드가 생성되는 동안 뒤로 기대어 있으면 된다. 물론 그것을 실행하고 디버그하는 방법은 알아야 한다.
+
+<iframe alt="Tutorial: Air Drum With A.I." src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+
+튜토리얼: A.I.로 에어 드럼 치기
+
+# 114줄의 코드
+
+참고: [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer)와 재생하려는 .mp3 파일을 스크립트와 같은 디렉터리에 두거나 파일 경로를 업데이트해야 한다. 내가 사용한 사운드 파일은 기본적으로 말레이 드럼으로 훈련한 [RAVE 모델](https://github.com/acids-ircam/RAVE)에서 생성한 오디오였다. 무료 Google Colab notebooks로 직접 모델을 훈련하는 방법에 대한 튜토리얼도 만들 계획이니 기대해 달라!
+
+```python
+import mediapipe as mp
+import cv2
+import pygame
+import time
+
+mp_drawing = mp.solutions.drawing_utils
+mp_hands = mp.solutions.hands
+
+# For webcam input:
+hands = mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+last_sound_time = 0  # Tracks when the sound was last played
+sound_cooldown = 2  # Cooldown in seconds
+
+pygame.mixer.init()
+sound = pygame.mixer.Sound('sample_out.mp3')
+
+BaseOptions = mp.tasks.BaseOptions
+GestureRecognizer = mp.tasks.vision.GestureRecognizer
+GestureRecognizerOptions = mp.tasks.vision.GestureRecognizerOptions
+GestureRecognizerResult = mp.tasks.vision.GestureRecognizerResult
+VisionRunningMode = mp.tasks.vision.RunningMode
+
+# Function to draw hand landmarks on the frame
+def draw_hand_landmarks(frame, landmarks):
+    # Assuming landmarks is a list of landmarks with x, y, z coordinates normalized to the image size
+    for landmark in landmarks:
+        x = int(landmark.x * frame.shape[1])
+        y = int(landmark.y * frame.shape[0])
+        cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+
+# Create a gesture recognizer instance with the live stream mode:
+def print_result(result: GestureRecognizerResult, output_image: mp.Image, timestamp_ms: int):
+    print('gesture recognition result: {}'.format(result))
+    handle_gesture(result)
+```
+
+`numpy`는 사용되지 않아서 제거했다. 또한 `q`를 눌러 반복문을 종료하는 것은 작동하지 않는 것 같다. 나는 보통 명령줄에서 스크립트를 직접 종료한다.
+
+이 코드는 내 [GitHub 저장소](https://github.com/erniesg/berlayar/blob/openai_migration_backup/demos/sound/showcase.py)에도 있다. 가능한 한 정기적으로 코드를 올리고 공유하려고 하니, 내가 무엇을 하고 있는지 업데이트를 받고 싶다면 거기서 팔로우해 달라!
+
+# 영감
+
+Antoine(RAVE의 창작자)의 작업에서 영감을 받아 이것을 해보게 되었고, 그냥 공중에서 음악을 만드는 아이디어를 탐구하고 싶었다. ;) 왜냐하면 에어 드럼을 안 할 이유가 없으니까!!! 너무 멋져 보이고 Instagram의 800개 넘는 좋아요도 동의한다!
+
+# 어떻게 만들었나
+
+그 생각이 든 뒤, 나는 기본적으로 [`hand_osc` 저장소](https://github.com/caillonantoine/hand_osc)를 살펴보고, 너무 많은 시간을 쓰지 않고도 가능성을 시험할 수 있는 최소한의 구현에 집중했다. 그래서 어느 저녁 내내 자료를 훑고, ChatGPT와 이야기하고, 디버깅하고, 더 명확한 지시를 제공한 끝에 이것이 나왔다.
+
+가장 큰 장애물은 GPT-4의 `mediapipe` 코드가 너무 오래되었다는 점이었다. 그래서 문서를 제대로 읽고, A.I.에게 예시를 주고, 진행하면서 디버그해야 했다. 위에서 설명한 것보다 훨씬 더 고통스러운 과정이었던 것은 분명하다. 하지만 내가 즐겨 말하듯, A.I.로 만드는 일은 고통스러울 만큼 재미있다.
+
+# 다음은
+
+무엇이 가능한지 깨닫고 Disney+에서 Taylor Swift의 콘서트를 스트리밍한 직후, 나는 이런 생각이 들었다. **A.I.와 Embodme Erae II로 그녀의 음악에 맞춰 DJ를 하면** 정말 멋지겠다. Don’t Blame Me에서 Look What You Made Me Do로 넘어가는 전환이 정말 좋았다. 버터처럼 부드러웠고, DJing을 위키백과에서 찾아봤을 때 박자를 맞춰 트랙들을 섞는다고 나오자 나는 이렇게 생각했다. 나는 음악에 대해 아무것도 모르지만 이 “음악”은 A.I.로 할 수 있겠다. 이것은 A.I.에게 아주 훌륭한 일처럼 들린다.
+
+`time`을 x축에, `bpm`을 y축에 놓으면 콘서트의 에너지가 시간에 따라 어떻게 변화하는지 그릴 수 있는 것 같다. A.I.가 다음 곡을 골라 교차 페이드해주면 멋지지 않을까!?
+
+사실 관객석의 모든 소리 입력을 MIDI로 변환하고, 그 위에 신경 오디오 합성을 실시간으로 적용해 공연에 포함시킬 수도 있다! 물론 Spotify는 이미 그렇게 할 수 있는 [라이브러리](https://basicpitch.spotify.com/)를 가지고 있다.
+
+DJ를 하고 싶지 않고 그냥 연주하고 싶어도 방법은 있다. #ideas
+
+시간이 나면 이런 아이디어를 시험해보는 것이 정말 재미있을 것 같지만, 다음에는 모델 병합과 LLM 미세 조정에 대해 업데이트할 것 같다!
+
+---
+
+*Originally published on PubPub at [erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q).*

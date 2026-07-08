@@ -2,18 +2,64 @@
 import '../styles/global.css'
 import '../styles/katex.css'
 
-import { SITE } from '@/consts'
+import { SITE, SOCIAL_LINKS } from '@/consts'
+import { DEFAULT_LOCALE, type SupportedLocale } from '@/lib/i18n'
 import { ClientRouter } from 'astro:transitions'
 
 interface Props {
   title: string
   description: string
   image?: string
+  lang?: SupportedLocale
+  canonicalPath?: string
+  alternates?: Partial<Record<SupportedLocale, string>>
 }
 
-const canonicalURL = new URL(Astro.url.pathname, Astro.site)
-
-const { title, description, image = '/static/twitter-card.png' } = Astro.props
+const {
+  title,
+  description,
+  image = '/static/twitter-card.png',
+  lang = DEFAULT_LOCALE,
+  canonicalPath,
+  alternates,
+} = Astro.props
+const canonicalURL = new URL(canonicalPath ?? Astro.url.pathname, Astro.site)
+const imageURL = new URL(image, Astro.url)
+const ogLocales: Record<SupportedLocale, string> = {
+  en: 'en_US',
+  zh: 'zh_CN',
+  ko: 'ko_KR',
+  ja: 'ja_JP',
+}
+const sameAs = SOCIAL_LINKS.map((link) => link.href).filter((href) =>
+  href.startsWith('https://'),
+)
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Person',
+      '@id': `${SITE.SITEURL}/#person`,
+      name: SITE.AUTHOR,
+      alternateName: ['Ernie', 'erniesg'],
+      url: SITE.SITEURL,
+      email: SITE.EMAIL,
+      jobTitle: 'Senior AI Engineer',
+      description: SITE.DESCRIPTION,
+      knowsAbout: SITE.KEYWORDS,
+      sameAs,
+    },
+    {
+      '@type': 'WebSite',
+      '@id': `${SITE.SITEURL}/#website`,
+      url: SITE.SITEURL,
+      name: SITE.TITLE,
+      description: SITE.DESCRIPTION,
+      inLanguage: ['en', 'zh-Hans', 'ko', 'ja'],
+      publisher: { '@id': `${SITE.SITEURL}/#person` },
+    },
+  ],
+}
 ---
 
 <meta charset="utf-8" />
@@ -22,10 +68,32 @@ const { title, description, image = '/static/twitter-card.png' } = Astro.props
 
 <link rel="canonical" href={canonicalURL} />
 <link rel="sitemap" href="/sitemap-index.xml" />
+{
+  alternates &&
+    Object.entries(alternates).map(([locale, path]) => (
+      <link
+        rel="alternate"
+        hreflang={locale}
+        href={new URL(path, Astro.site)}
+      />
+    ))
+}
+{
+  alternates?.en && (
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href={new URL(alternates.en, Astro.site)}
+    />
+  )
+}
 
 <title>{title}</title>
 <meta name="title" content={title} />
 <meta name="description" content={description} />
+<meta name="author" content={SITE.AUTHOR} />
+<meta name="keywords" content={SITE.KEYWORDS.join(', ')} />
+<meta name="robots" content="index,follow" />
 
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -40,13 +108,26 @@ const { title, description, image = '/static/twitter-card.png' } = Astro.props
 <meta property="og:site_name" content={SITE.TITLE} />
 <meta property="og:title" content={title} />
 <meta property="og:description" content={description} />
-<meta property="og:image" content={new URL(image, Astro.url)} />
+<meta property="og:image" content={imageURL} />
+<meta property="og:locale" content={ogLocales[lang]} />
+{
+  Object.entries(ogLocales)
+    .filter(([locale]) => locale !== lang)
+    .map(([, ogLocale]) => <meta property="og:locale:alternate" content={ogLocale} />)
+}
 
 <meta property="twitter:card" content="summary_large_image" />
 <meta property="twitter:url" content={Astro.url} />
 <meta property="twitter:title" content={title} />
 <meta property="twitter:description" content={description} />
-<meta property="twitter:image" content={new URL(image, Astro.url)} />
+<meta property="twitter:image" content={imageURL} />
+<meta property="twitter:creator" content={SITE.SOCIAL_HANDLE} />
+
+<script
+  is:inline
+  type="application/ld+json"
+  set:html={JSON.stringify(structuredData)}
+/>
 
 <ClientRouter />
 

@@ -1,6 +1,9 @@
 export type Site = {
   TITLE: string
   DESCRIPTION: string
+  AUTHOR: string
+  KEYWORDS: string[]
+  SOCIAL_HANDLE: string
   EMAIL: string
   NUM_POSTS_ON_HOMEPAGE: number
   POSTS_PER_PAGE: number
@@ -15,7 +18,20 @@ export type Link = {
 export const SITE: Site = {
   TITLE: 'Ernie.SG',
   DESCRIPTION:
-    'Ernie is a full-stack A.I. Engineer and Editorial AI Lead based in Singapore. I write about multimodal AI, open source, generative agents and more in plain language.',
+    'Senior AI engineer in Singapore building multilingual AI products, agent infrastructure, eval loops, and tools that turn messy workflows into production systems.',
+  AUTHOR: 'Chen Enjiao (Ernie)',
+  KEYWORDS: [
+    'AI engineer',
+    'forward deployed engineer',
+    'field deployment engineering',
+    'agent infrastructure',
+    'AI evals',
+    'multilingual AI',
+    'newsroom AI',
+    'developer tools',
+    'Singapore',
+  ],
+  SOCIAL_HANDLE: '@erniesg',
   EMAIL: 'hello@ernie.sg',
   NUM_POSTS_ON_HOMEPAGE: 5,
   POSTS_PER_PAGE: 10,

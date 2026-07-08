@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "terms": {
+    "A.I.": {
+      "preserve": true,
+      "note": "Keep Ernie's dotted spelling when it appears in source prose."
+    },
+    "MDX": {
+      "preserve": true,
+      "note": "Technical format name."
+    },
+    "Codex": {
+      "preserve": true,
+      "note": "Product/tool name."
+    },
+    "RAGgaeton": {
+      "preserve": true,
+      "note": "Project name and pun."
+    }
+  }
+}

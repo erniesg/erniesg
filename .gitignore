@@ -28,6 +28,10 @@ scripts/
 # Claude Code local agent state
 .claude/
 
+# translation automation cache
+.translation/cache/
+.translation/reports/*.tmp.json
+
 # macOS-specific files
 .DS_Store
 

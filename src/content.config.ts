@@ -23,6 +23,8 @@ const blog = defineCollection({
       authors: z.array(z.string()).optional(),
       lang: z.enum(['en', 'zh', 'ko', 'ja']).optional(),
       translationKey: z.string().optional(),
+      translationStatus: z.enum(['machine', 'edited', 'final']).optional(),
+      translationSource: z.enum(['codex', 'human', 'imported-legacy']).optional(),
       draft: z.boolean().optional(),
     }),
 })

@@ -1,0 +1,69 @@
+{
+  "supportedLocales": ["en", "zh", "ko", "ja"],
+  "defaultLocale": "en",
+  "providers": {
+    "default": { "provider": "openai", "api": "responses", "model": "gpt-5" },
+    "translate": {
+      "en": { "provider": "openai", "api": "responses", "model": "gpt-5" },
+      "zh": { "provider": "openai", "api": "responses", "model": "gpt-5" },
+      "ko": { "provider": "openai", "api": "responses", "model": "gpt-5" },
+      "ja": { "provider": "openai", "api": "responses", "model": "gpt-5" }
+    },
+    "review": {
+      "pass1": {
+        "en": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" },
+        "zh": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" },
+        "ko": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" },
+        "ja": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" }
+      },
+      "pass2": {
+        "en": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" },
+        "zh": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" },
+        "ko": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" },
+        "ja": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" }
+      }
+    },
+    "research": {
+      "en": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] },
+      "zh": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] },
+      "ko": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] },
+      "ja": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] }
+    }
+  },
+  "providerCapabilities": {
+    "openai": {
+      "requiresEnv": ["OPENAI_API_KEY"],
+      "supportsStructuredJson": true,
+      "supportsWebResearch": true,
+      "supportsSourceAnnotations": true
+    }
+  },
+  "reviewCache": {
+    "enabled": true,
+    "reuseWhenHashesMatch": true,
+    "forceFlag": "--refresh-review"
+  },
+  "protectedLegacyDirs": [
+    "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content-zh",
+    "src/content/blog/sight-before-sound-seeing-and-searching-with-machines-zh",
+    "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence-zh",
+    "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human-zh"
+  ],
+  "protectedHumanTranslations": [
+    "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/zh.mdx",
+    "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/zh.mdx",
+    "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/zh.mdx",
+    "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/zh.mdx"
+  ],
+  "requiredPublishLocales": ["en", "zh", "ko", "ja"],
+  "failPublishOnMissingRequiredLocales": true,
+  "promptVersion": "2026-07-09",
+  "minReviewScore": 0.88,
+  "requiredReviewerPasses": 2,
+  "reviewPolicy": {
+    "mustUseFreshContext": true,
+    "forbidTranslatorSelfReview": true,
+    "preferDifferentModelOrProviderWhenAvailable": true,
+    "allowSameBaseModelOnlyWithDistinctReviewerProfiles": true
+  }
+}

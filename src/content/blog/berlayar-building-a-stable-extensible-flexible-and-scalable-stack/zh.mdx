@@ -1,12 +1,15 @@
 ---
-title: "Berlayar：稳定、可扩展的人工智能技术栈"
-description: "分享我对人工智能与大语言模型驱动应用通用架构的粗略草图，覆盖感兴趣的使用场景与开发路线"
-date: 2023-09-07
-authors: ["erniesg"]
-image: "./1ac10d28-6395-44d6-97ed-33cfe28c0609_23-71693538430433.png"
+title: Berlayar：稳定、可扩展的人工智能技术栈
+description: 分享我对人工智能与大语言模型驱动应用通用架构的粗略草图，覆盖感兴趣的使用场景与开发路线
+date: 2023-09-07T00:00:00.000Z
+authors:
+  - erniesg
+image: ./1ac10d28-6395-44d6-97ed-33cfe28c0609_23-71693538430433.png
 draft: false
-lang: "zh"
-translationKey: "berlayar-building-a-stable-extensible-flexible-and-scalable-stack"
+lang: zh
+translationKey: berlayar-building-a-stable-extensible-flexible-and-scalable-stack
+translationStatus: machine
+translationSource: codex
 ---
 
 在 [第一部分](https://erniesg.pubpub.org/pub/zc0zx741) 中，我谈到过自己迄今构建的一些简单原型，以及它们如何把我带到这里：我需要一个稳定、可扩展、灵活且可伸缩的技术栈来构建基于大语言模型的产品，因为有太多有趣的东西值得做。我们讨论过如何用注册表和基类，在拟议的 A.I. 驱动软件套件中灵活替换组件，让开发者更容易协作。但终端用户体验呢？对于我追求的灵活性和模块化，把注册表模式与接口驱动设计结合起来可能是理想方法。这篇文章会介绍我拟议的 A.I./LLM 工程技术栈，它有潜力泛化到所有我感兴趣的部署场景，无论是自动重构遗留代码库、基于邮件和文档的知识库、社交媒体内容生成与发布，还是让受众以新方式消费数据。
@@ -346,7 +349,7 @@ Feedback Collector
     
 -   src - 接口和实现的大部分源代码
     
--   tests - 单元测试、集成测试以及测试用夹具
+-   测试 - 单元测试、集成测试以及测试用夹具
     
 
 我仍然缺少 CI/CD、监控和评估组件，项目结构也还在整理。不过我希望能和其他开发者分工协作，因为我还需要为 [National Arts Council Arts x Tech Lab](https://www.nac.gov.sg/singapore-arts-scene/technology-and-innovation/arts-x-tech-lab) 交付 “[The Sound of Stories](https://www.youtube.com/watch?v=0cBbG0SkSCo)”（实时、多语言讲述生成故事）。如果一切顺利，这些开发工作应该高度协同，并给我构建 Berlayar A.I. 这家公司所需的基础模块。;)

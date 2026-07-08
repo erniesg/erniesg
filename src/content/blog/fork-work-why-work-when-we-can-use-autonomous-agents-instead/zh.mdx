@@ -1,12 +1,15 @@
 ---
-title: "Fork Work：有自主智能体还工作什么？"
-description: "人类在沟通和会议上浪费太多时间；A.I. 能即时回应和写代码，所以我们为什么还要工作那么多？"
-date: 2023-08-11
-authors: ["erniesg"]
-image: "./00281-807328077-11691761226672.png"
+title: Fork Work：有自主智能体还工作什么？
+description: 人类在沟通和会议上浪费太多时间；A.I. 能即时回应和写代码，所以我们为什么还要工作那么多？
+date: 2023-08-11T00:00:00.000Z
+authors:
+  - erniesg
+image: ./00281-807328077-11691761226672.png
 draft: false
-lang: "zh"
-translationKey: "fork-work-why-work-when-we-can-use-autonomous-agents-instead"
+lang: zh
+translationKey: fork-work-why-work-when-we-can-use-autonomous-agents-instead
+translationStatus: machine
+translationSource: codex
 ---
 
 与其对着键盘崩溃，或者[对着继承来的 codebase 掉几滴眼泪](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)，不如把这些信息交给 A.I.，然后和它聊天。当你开始利用 大语言模型 (LLMs) 在这些信息上的知识和推理能力，下一步自然就是 synthesis：生成可以跑在现有 codebase 之上的新代码，让世界上任何人都能从 提示-to-feature。为了解决这些挑战，下面这个 demo 是我周末用一两天做出来的成果。做起来很有趣，因为过程中学到很多新东西，也更深刻理解了一些概念。
@@ -110,7 +113,7 @@ Traceback (most recent call last):
 
 Solution：结果发现，我必须使用特定的 `streamlit (1.25.0)` 和 `pydanic version (1.10.12)`；各种 packages 之间的 compatibility issue 反复出现，所以我想我需要多学一点相关工具和 最佳实践。也许具体版本应该永远定义在 `poetry` 里！？
 
-2.  **弄清楚如何 ingest 和 chunk 用 .json 文件定义的 Azure Data Factory 资源**
+2.  **弄清楚如何 导入 和 分块 用 .json 文件定义的 Azure Data Factory 资源**
     
 
 结果发现，处理 文档、.PDFs、GitHub 代码仓库 等等有很多教程，但很少有人提到 .json。所以在让 ChatGPT 生成无果之后，我仔细看了 .json 和 `langchain` JSON loader，一步步引导 ChatGPT 按照我认为应该做的方式处理，最后终于成功了。至少根据我在 Google 和 YouTube 第一页的搜索结果，还没有人针对 Azure Resource Manager (ARM) template 做过这件事，所以我只能创新一下。
@@ -119,7 +122,7 @@ Solution：我的推理是，对于这个初始 原型，我希望能够保留 A
 
 # 前路
 
-这就是我如何最终把 75 个 items chunk 到我的 `Deep Lake` 数据set 里。现在我已经在思考 ingest 更多 数据源s 的需求（让我们查询所有 SQL schemas、stored procedures 和 数据 itself！）、围绕 memory 更新 meta数据、对 multi-modal 数据 lake cum vector store 执行 CRUD 操作、优化 检索 strategies 和 token 上下文s。事实上，为什么不直接让 LLM 通过 工具 执行并采取行动？更进一步，为什么不让 LLM 写自己的 tests、调试 并 validate 自己？所有这些对于把一个 autonomous 智能体 投入生产都很关键，它将让任何规模的团队或组织保守估计也能实现 1000x productivity。
+这就是我最后把 75 个条目分块写入 `Deep Lake` 数据集的过程。现在我已经在想，下一步要接入更多数据源（让我们直接查询所有 SQL schema、stored procedure，甚至原始数据本身！）、围绕 memory 更新元数据、在 multi-modal data lake cum vector store 上执行 CRUD 操作、优化检索策略和 token context。说到底，为什么不让 LLM 借助工具直接执行并采取行动？更进一步，为什么不让 LLM 自己写测试、调试、验证自己？这些都是把 autonomous agent 推向生产环境的关键；保守地说，它会让任何规模的团队或组织实现 1000x productivity。
 
 Fun times! 🤩🤩🤩
 

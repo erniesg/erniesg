@@ -1,12 +1,21 @@
 ---
-title: "リアルタイム生成アーキテクチャ図"
-description: "AIモデルが生成する複雑な構造化データを、ノードごと、エッジごとにリアルタイムで流すアーキテクチャ図生成器。"
-date: 2024-12-19
-tags: ["ai", "streaming", "cloudflare", "vercel", "architecture", "real-time"]
-authors: ["erniesg"]
+title: リアルタイム生成アーキテクチャ図
+description: AIモデルが生成する複雑な構造化データを、ノードごと、エッジごとにリアルタイムで流すアーキテクチャ図生成器。
+date: 2024-12-19T00:00:00.000Z
+tags:
+  - ai
+  - streaming
+  - cloudflare
+  - vercel
+  - architecture
+  - real-time
+authors:
+  - erniesg
 draft: true
 lang: ja
 translationKey: streaming-generated-diagrams
+translationStatus: machine
+translationSource: codex
 ---
 
 # 作り方：Cloudflare Workers x Vercel AI SDK でシステムアーキテクチャをリアルタイムストリーミングする
@@ -376,7 +385,7 @@ Workers は streaming を驚くほどうまく扱う。`ReadableStream` API は 
 3. frontend で不完全なオブジェクトをフィルタする
 4. オブジェクトが完成するにつれて段階的にレンダリングする
 
-この方法は、データbase schemas、API responses、configuration files、複雑な visualizations など、どんな構造化データにも使える。
+この方法は、データベース schemas、API responses、configuration files、複雑な visualizations など、どんな構造化データにも使える。
 
 ## Edge 上のハイパーパーソナライズ UI にとっての意味
 

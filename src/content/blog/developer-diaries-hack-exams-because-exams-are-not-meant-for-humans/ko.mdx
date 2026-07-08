@@ -1,11 +1,14 @@
 ---
-title: "개발자 일기: 시험은 인간을 위해 만들어진 것이 아니므로 해킹하자…"
-description: "시험지는 모든 데이터 과학자의 꿈같은 데이터셋이기도 하니까"
-date: 2024-03-15
-authors: ["erniesg"]
+title: '개발자 일기: 시험은 인간을 위해 만들어진 것이 아니므로 해킹하자…'
+description: 시험지는 모든 데이터 과학자의 꿈같은 데이터셋이기도 하니까
+date: 2024-03-15T00:00:00.000Z
+authors:
+  - erniesg
 draft: false
-lang: "ko"
-translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-humans"
+lang: ko
+translationKey: developer-diaries-hack-exams-because-exams-are-not-meant-for-humans
+translationStatus: machine
+translationSource: codex
 ---
 
 # 어떤 소프트웨어는 하수구 냄새가 난다
@@ -25,15 +28,15 @@ translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-hu
 -   loop 에서 현재 반복 중인 item 을 가져오고 싶다고? pixie dust 나 찾아보는 게 낫다
     
 
-도대체 무엇을 위해, 누구에게 이득이 되는지도 모를 이것을 다른 사람들에게 쓰라고 설득하는 consultants 를 위한 특별한 지옥 자리가 있다. 어쨌든 불평은 이쯤 하자. 그래서 최근 나는 시험지를 데이터set 으로 가지고 노는 데 관심이 생겼다.
+도대체 무엇을 위해, 누구에게 이득이 되는지도 모를 이것을 다른 사람들에게 쓰라고 설득하는 consultants 를 위한 특별한 지옥 자리가 있다. 어쨌든 불평은 이쯤 하자. 그래서 최근 나는 시험지를 데이터셋 으로 가지고 노는 데 관심이 생겼다.
 
 # Exams as Data
 
-생각해보자. 표준화 시험보다 더 **structured** 하고, 더 **consistent** 하며, 더 **cleaner** 한 데이터set 이 있을까!?!?!? 항상 같은 수의 문제, 같은 question 유형s, 정의된 syllabi 등이 있다. 그야말로 모든 데이터 scientist 의 wet dream 같다... PDF 를 처리하기 전까지는. 나는 연습용 시험을 생성하고, LLM 이 그것을 이기게 하고, 어쩌면 모두를 위한 AI tutor 로 이어지는 아이디어도 매우 흥미롭다고 본다. 내게 핵심은 단순하다. 시험은 인간을 위해 만들어진 것이 아니다. 시험은 intelligence 를 재는 형편없는 척도이지만, 행정과 문서 작업에는 매우 편리하다. AGI 로 가는 길에서 세상에 정말 부족한 것은 general intelligence 가 실제로 무엇인지 측정하는 좋은 척도인 듯하다. 그리고 LLMs 와 exams 사이의 이 양방향 긴장이, 우리가 standardized examinations 를 더 나은 것으로 바꾸는 미래로 이어질 수 있다면, 그것만으로도 이미 인류에 큰 기여가 될 것이다.
+생각해보자. 표준화 시험보다 더 **structured** 하고, 더 **consistent** 하며, 더 **cleaner** 한 데이터셋 이 있을까!?!?!? 항상 같은 수의 문제, 같은 question 유형s, 정의된 syllabi 등이 있다. 그야말로 모든 데이터 scientist 의 wet dream 같다... PDF 를 처리하기 전까지는. 나는 연습용 시험을 생성하고, LLM 이 그것을 이기게 하고, 어쩌면 모두를 위한 AI tutor 로 이어지는 아이디어도 매우 흥미롭다고 본다. 내게 핵심은 단순하다. 시험은 인간을 위해 만들어진 것이 아니다. 시험은 intelligence 를 재는 형편없는 척도이지만, 행정과 문서 작업에는 매우 편리하다. AGI 로 가는 길에서 세상에 정말 부족한 것은 general intelligence 가 실제로 무엇인지 측정하는 좋은 척도인 듯하다. 그리고 LLMs 와 exams 사이의 이 양방향 긴장이, 우리가 standardized examinations 를 더 나은 것으로 바꾸는 미래로 이어질 수 있다면, 그것만으로도 이미 인류에 큰 기여가 될 것이다.
 
 # Finetuning GPT 3.5 to Generate IB Exams for Demonstration Purposes ONLY
 
-consultants 를 위한 특별한 지옥 자리 옆에는 PDFs 와 excels 를 데이터sets 라며 넘겨주는 사람들이 있다. 알고 보니 Document AI 는 텍스트 파싱을 꽤 잘했지만, 나는 돈을 쓰고 싶지 않았다. 돌이켜보면 그냥 돈을 내고 API 를 쓰는 편이 덜 낭비였을 것이다. 그래서 키보드 위에서 손을 쥐어뜯는 시간을 많이 보낸 끝에, 겨우 44 examples 만 넘겨 GPT 3.5 를 finetune 했다. 흥미로웠던 점은:
+consultants 를 위한 특별한 지옥 자리 옆에는 PDFs 와 excels 를 데이터셋 라며 넘겨주는 사람들이 있다. 알고 보니 Document AI 는 텍스트 파싱을 꽤 잘했지만, 나는 돈을 쓰고 싶지 않았다. 돌이켜보면 그냥 돈을 내고 API 를 쓰는 편이 덜 낭비였을 것이다. 그래서 키보드 위에서 손을 쥐어뜯는 시간을 많이 보낸 끝에, 겨우 44 examples 만 넘겨 GPT 3.5 를 finetune 했다. 흥미로웠던 점은:
 
 -   내 단어들 속 일부 무작위 spacing 을 충실히 재현했다. 그러니까 입력으로 들어간 distribution 을 정말로 parroting 하고 있는 것이다
     

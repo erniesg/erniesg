@@ -1,12 +1,21 @@
 ---
-title: "实时流式生成架构图"
-description: "构建实时架构图生成器，在 AI 模型生成时逐个节点、逐条边流式输出复杂结构化数据。"
-date: 2024-12-19
-tags: ["ai", "streaming", "cloudflare", "vercel", "architecture", "real-time"]
-authors: ["erniesg"]
+title: 实时流式生成架构图
+description: 构建实时架构图生成器，在 AI 模型生成时逐个节点、逐条边流式输出复杂结构化数据。
+date: 2024-12-19T00:00:00.000Z
+tags:
+  - ai
+  - streaming
+  - cloudflare
+  - vercel
+  - architecture
+  - real-time
+authors:
+  - erniesg
 draft: true
 lang: zh
 translationKey: streaming-generated-diagrams
+translationStatus: machine
+translationSource: codex
 ---
 
 # 我如何构建它：用 Cloudflare Workers x Vercel AI SDK 实时流式生成系统架构
@@ -376,7 +385,7 @@ Workers 对 streaming 的处理出乎意料地好。`ReadableStream` API 和 Ver
 3. 在 frontend 过滤不完整对象
 4. 对象完成时渐进式渲染
 
-这种方法适用于任何结构化数据：数据base schemas、API responses、configuration files，或复杂可视化。
+这种方法适用于任何结构化数据：数据base 模式、API responses、configuration files，或复杂可视化。
 
 ## 这对 Edge 上的超个性化 UI 意味着什么
 

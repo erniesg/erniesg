@@ -1,12 +1,15 @@
 ---
-title: "Fork Work：自律エージェントがあるのになぜ働く？"
-description: "人間はコミュニケーションや会議に時間を浪費しすぎている。A.I. が即答しコードも書けるなら、なぜそんなに働くのか？"
-date: 2023-08-11
-authors: ["erniesg"]
-image: "./00281-807328077-11691761226672.png"
+title: Fork Work：自律エージェントがあるのになぜ働く？
+description: 人間はコミュニケーションや会議に時間を浪費しすぎている。A.I. が即答しコードも書けるなら、なぜそんなに働くのか？
+date: 2023-08-11T00:00:00.000Z
+authors:
+  - erniesg
+image: ./00281-807328077-11691761226672.png
 draft: false
-lang: "ja"
-translationKey: "fork-work-why-work-when-we-can-use-autonomous-agents-instead"
+lang: ja
+translationKey: fork-work-why-work-when-we-can-use-autonomous-agents-instead
+translationStatus: machine
+translationSource: codex
 ---
 
 苛立ってキーボードを叩いたり、[引き継いだ codebase を前に少し涙を流したり](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)するより、その情報を A.I. に渡してチャットするほうがずっと理にかなっている。大規模言語モデル (LLMs) の知識と推論能力をそうした情報に対して使い始めると、自然な次のステップは synthesis になる。既存の codebase の上で動く新しいコードを生成し、世界中の誰もが プロンプト-to-feature に進めるようにすることだ。この課題に取り組むため、下の demo は週末の 1、2 日で作った成果である。新しい学びが多く、いくつもの概念をより深く理解できたので、作るのはかなり楽しかった。
@@ -110,7 +113,7 @@ Traceback (most recent call last):
 
 Solution：結局、特定の `streamlit (1.25.0)` と `pydanic version (1.10.12)` を使う必要があった。こうした package 間の compatibility issue はかなり頻繁に起きるので、管理するための ツール と ベストプラクティス をもっと学ぶ必要がありそうだ。もしかすると、使う具体的な version は常に `poetry` の中で定義すべきなのかもしれない！？
 
-2.  **.json files で定義された Azure Data Factory リソース を ingest and chunk する方法を理解する**
+2.  **.json files で定義された Azure Data Factory リソース を 取り込み、分割する方法を理解する**
     
 
 文書、.PDFs、GitHub コードリポジトリ などを処理するチュートリアルはたくさんあるのに、.json への言及はほとんどなかった。ChatGPT に生成させても失敗したので、.json と `langchain` JSON loader をじっくり見て、私が正しいと思う手順を ChatGPT に段階的に案内したところ、ようやく動いた。少なくとも Google と YouTube の検索 1 ページ目を見る限り、Azure Resource Manager (ARM) template に対してこれをやった人はいなかったので、創意工夫が必要だった。
@@ -119,7 +122,7 @@ Solution：この初期 プロトタイプ では、Azure Data Factory の `para
 
 # これから
 
-こうして 75 個の items を `Deep Lake` データset に chunk することになり、すでにもっと多くの データソースs を ingest する必要性を考えている。すべての SQL schemas、stored procedures、そして データ itself を query できるようにしよう！memory に関連する metaデータ の更新、multi-modal データ lake cum vector store 上での CRUD 操作、検索 strategies と token 文脈s の最適化も必要だ。実際、ツール を使って LLM 内で直接 execute and take an action してはいけない理由があるだろうか？さらに、LLM に自分の tests を書かせ、デバッグ and validate させればどうだろう？これらはすべて、どんな規模の team や organisation でも控えめに言って 1000x productivity を実現する autonomous エージェント を 本番環境 に投入するうえで不可欠になる。
+こうして 75 個の項目を `Deep Lake` のデータセットに分割して入れることになった。今はもう、さらに多くのデータソースを取り込み、すべての SQL スキーマや stored procedure、データそのものまで問い合わせられるようにすること、memory まわりのメタデータを更新すること、multi-modal data lake cum vector store 上で CRUD 操作を行うこと、検索方針と token context を最適化することまで考えている。そもそも、ツールを使って LLM の中で直接実行し、行動まで起こさせればいいのではないか。さらに言えば、LLM に自分でテストを書かせ、デバッグし、検証させればいい。これらはすべて、どんな規模のチームや組織でも控えめに言って生産性を 1000 倍にする autonomous agent を本番投入するうえで不可欠になる。
 
 Fun times! 🤩🤩🤩
 

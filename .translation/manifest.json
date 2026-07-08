@@ -1,5 +1,1756 @@
 {
   "version": 1,
   "promptVersion": "2026-07-09",
-  "families": {}
+  "families": {
+    "a-i-art-and-anti-discrimination": {
+      "sourcePath": "src/content/blog/a-i-art-and-anti-discrimination/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/a-i-art-and-anti-discrimination/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-art-and-anti-discrimination/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "c9bdd6c194b01e7af71aac0baf40ea09e53c21fb879e473344a526b5f1f994bd",
+          "targetSha256": "7f4d2f6e57c2bcd3dcc10fa964b3c5a15ca7fb511307a7eeb3e608546f9f1acc",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.507Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/a-i-art-and-anti-discrimination/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-art-and-anti-discrimination/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "c9bdd6c194b01e7af71aac0baf40ea09e53c21fb879e473344a526b5f1f994bd",
+          "targetSha256": "727874cdbed7a7ebda3eaa861ffb8a0439077c8ace3953c3433b516417ba5f76",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.509Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/a-i-art-and-anti-discrimination/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-art-and-anti-discrimination/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "c9bdd6c194b01e7af71aac0baf40ea09e53c21fb879e473344a526b5f1f994bd",
+          "targetSha256": "d79b17e5fed71ae8df1b2931de2379353b33e45c1ca6e75db3309088bf5cab91",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.510Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "a-i-for-humans-be-like-its-just-x": {
+      "sourcePath": "src/content/blog/a-i-for-humans-be-like-its-just-x/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/a-i-for-humans-be-like-its-just-x/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-for-humans-be-like-its-just-x/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "ee34dfa513822644e0134ae71690b112e1fef8420943f755cee1e1764f399b56",
+          "targetSha256": "bbd9458af41031eb7f7afe136dc970d58a80375926072ccd058f6b5ca67e6fd4",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.511Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/a-i-for-humans-be-like-its-just-x/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-for-humans-be-like-its-just-x/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "ee34dfa513822644e0134ae71690b112e1fef8420943f755cee1e1764f399b56",
+          "targetSha256": "fc928484eab987d4895e7590325cffe0a9fa8d9754dc5dce842d876033075f11",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.512Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/a-i-for-humans-be-like-its-just-x/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-for-humans-be-like-its-just-x/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "ee34dfa513822644e0134ae71690b112e1fef8420943f755cee1e1764f399b56",
+          "targetSha256": "73caef707acf87cf7d3823a0bd214980d7c09288966fa4c9a2b6a658d6f135d4",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.513Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "a-i-for-humans-building-a-i-native-products-and-treating-data": {
+      "sourcePath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "3b128b1294b2b2acafab15c209171d4e5586635029e00ea0d7c89e1d3a8ec631",
+          "targetSha256": "fa8abc098347080622123b2c15d108606aa69294a68de829e1804865473ac469",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.514Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "3b128b1294b2b2acafab15c209171d4e5586635029e00ea0d7c89e1d3a8ec631",
+          "targetSha256": "8259620bd65718fd6c296483ce89af35871d1e92db822b267e79dde101acda1b",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.515Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "3b128b1294b2b2acafab15c209171d4e5586635029e00ea0d7c89e1d3a8ec631",
+          "targetSha256": "10e545d51effa38ce2e1b6c8d5d2c946fb6a358725138385c3a08278f2ea4159",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.515Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "a-i-in-non-english-regimes-and-the-things-people-say-in-china": {
+      "sourcePath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "05b32e0b04b4d77d1036d060bff520c3ece34a3af9f5f0ae40225245f8790ce9",
+          "targetSha256": "7a49ff8e86bbc46fa1adbd042a9d6a3aa9f98c4013f0bf218b1f297f5575b74c",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.516Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "05b32e0b04b4d77d1036d060bff520c3ece34a3af9f5f0ae40225245f8790ce9",
+          "targetSha256": "a8838649d442008e9f77feafa2252da7355908f522d79a7e6c15af426e0b0520",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.517Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "05b32e0b04b4d77d1036d060bff520c3ece34a3af9f5f0ae40225245f8790ce9",
+          "targetSha256": "58f66d33584efd0f8416df8992ef0bb19797858ed4eacdf4fce32dc5e9c20bc2",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.517Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2": {
+      "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "90aa8650c40e79e576937c0d974b958c9cdd6207a029ed2fa7ea8665c8765b3f",
+          "targetSha256": "0ff12451623ccf72f9ca9de4f91349a2dbbb18f60ee7e1d1af32294d6ef0b86f",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.518Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "90aa8650c40e79e576937c0d974b958c9cdd6207a029ed2fa7ea8665c8765b3f",
+          "targetSha256": "fe032176f520d0f8b2d8182ccb2ed0433dea1cd2f30778b18c560719a97a5b33",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.519Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "90aa8650c40e79e576937c0d974b958c9cdd6207a029ed2fa7ea8665c8765b3f",
+          "targetSha256": "28a66642f7aa698e7f44c491af77dedb76b762fa5d654fcb8e75e40614612277",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.520Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "berlayar-building-a-stable-extensible-flexible-and-scalable-stack": {
+      "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "fe0c04ceb05167c6798085d37b839b976cdb4aa1e1e2f19b9818837fa38e7d18",
+          "targetSha256": "09ee5567a9fa25393fdf4ed70a9b87d47b195ce95d60583188264eb808fc303a",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.521Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.030Z"
+        },
+        "ko": {
+          "path": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "fe0c04ceb05167c6798085d37b839b976cdb4aa1e1e2f19b9818837fa38e7d18",
+          "targetSha256": "b478d4e5571461ce1f494bf202c98b333c6946eac3ad88dba9431ffad32af102",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.522Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.031Z"
+        },
+        "zh": {
+          "path": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "fe0c04ceb05167c6798085d37b839b976cdb4aa1e1e2f19b9818837fa38e7d18",
+          "targetSha256": "9bf2c95b7a6f9626d35dcf9c06de650e14ef742f2117a2f226e8c6cd17a80698",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.523Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.032Z"
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "day-0-building-in-public-to-1m-arr": {
+      "sourcePath": "src/content/blog/day-0-building-in-public-to-1m-arr/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/day-0-building-in-public-to-1m-arr/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/day-0-building-in-public-to-1m-arr/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "572a51c0ff91bfe65db01926842e0357990f1ab1230fafd463f64cb87e04f3c7",
+          "targetSha256": "c3fa45f73ded711f9401daad19bdfef4708225a3644a81d0958d9cec2d42799e",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.523Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/day-0-building-in-public-to-1m-arr/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/day-0-building-in-public-to-1m-arr/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "572a51c0ff91bfe65db01926842e0357990f1ab1230fafd463f64cb87e04f3c7",
+          "targetSha256": "749fa99e3babb3d57860f1971790c01984a4c58bbcb8fff5530c4862ba4a72e7",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.524Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/day-0-building-in-public-to-1m-arr/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/day-0-building-in-public-to-1m-arr/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "572a51c0ff91bfe65db01926842e0357990f1ab1230fafd463f64cb87e04f3c7",
+          "targetSha256": "417b774ba3ba505864a9862351cbd6a30167be706de4b0eb924c682539b2df22",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.525Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "demo-the-sound-of-stories": {
+      "sourcePath": "src/content/blog/demo-the-sound-of-stories/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/demo-the-sound-of-stories/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/demo-the-sound-of-stories/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "32bbeb05172edb7e2d43dea09d7507ad5697e0f6344a530ae3e22770d30421d9",
+          "targetSha256": "01f19f8d866b3f0013f79c19772738190ac8ec28dabc8b7de64dccc5a4f587da",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.525Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/demo-the-sound-of-stories/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/demo-the-sound-of-stories/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "32bbeb05172edb7e2d43dea09d7507ad5697e0f6344a530ae3e22770d30421d9",
+          "targetSha256": "16c32790657aac443694f5a75b18bf61987b429a10aca785a5b1670ff524eb4b",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.526Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/demo-the-sound-of-stories/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/demo-the-sound-of-stories/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "32bbeb05172edb7e2d43dea09d7507ad5697e0f6344a530ae3e22770d30421d9",
+          "targetSha256": "2fd56f0a40cd105d1aa00f70f467ca10d3b862ba668db61a61c5d44ee9c8f6a5",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.526Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "developer-diaries-a-i-development-be-like-scarcer-than-early-internet": {
+      "sourcePath": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "d815a86612fc0ca0bb97d2c0b2fc7bc05e5bc936941675ef1e564a32125d6e88",
+          "targetSha256": "b333de63c962f1d2629fc0020ca1598bcdffd8005c420916e5d51753d9bef945",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.527Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "d815a86612fc0ca0bb97d2c0b2fc7bc05e5bc936941675ef1e564a32125d6e88",
+          "targetSha256": "89d0436d8abc12d162a852e10bb7c13141da1c7da8a7a76b86776e24e9de917d",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.527Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "d815a86612fc0ca0bb97d2c0b2fc7bc05e5bc936941675ef1e564a32125d6e88",
+          "targetSha256": "bdd478a83ce57ca007bd1f4f5a1d5c58171a47e557ea7776a121e25d25172ae4",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.528Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "developer-diaries-deep-learning-in-data-poor-regimes-i": {
+      "sourcePath": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "18b7ce0d8541ff2c16ac7d2cc824ddd623dcc96fd8d5f30b12021d00f72e0192",
+          "targetSha256": "741b7f5691dd51b9469708cb4b3049d92880c19464cf9cede48e926c91a4d199",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.529Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "18b7ce0d8541ff2c16ac7d2cc824ddd623dcc96fd8d5f30b12021d00f72e0192",
+          "targetSha256": "eba06738979bb48f9608627c37d99cd98d3c15a31f42eba9ba96a182cc888054",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.530Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "18b7ce0d8541ff2c16ac7d2cc824ddd623dcc96fd8d5f30b12021d00f72e0192",
+          "targetSha256": "67b208f9474529d90ef6257868e012a7abb34476138252cacb291711aac2a700",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.530Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "developer-diaries-digitalise-any-instrument-and-start-playing": {
+      "sourcePath": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "b747681111a56309cef45ee477c6f1fdd3d01f55d484361f4f589b24d837605f",
+          "targetSha256": "0a61efea17df5550abf5f58e11f5fb4707a020d79b85f2ad4535c6a2ab1b4968",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.531Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "b747681111a56309cef45ee477c6f1fdd3d01f55d484361f4f589b24d837605f",
+          "targetSha256": "28887a4381e4c33284f273a32d72ebb62e0890417967fc1f20772c093ed8f235",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.532Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "b747681111a56309cef45ee477c6f1fdd3d01f55d484361f4f589b24d837605f",
+          "targetSha256": "a2f07edb54c0edb66fed27db8472f0a73ab176e23a15d74c95300b983ece4f51",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.533Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "developer-diaries-hack-exams-because-exams-are-not-meant-for-humans": {
+      "sourcePath": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "8b7adbaf3e4ce9065687fce7ae16084566364fc991f5b32490da7d03a017fcbe",
+          "targetSha256": "0437112d40dbcfdfde94dc7208b25b4346c495ae4182034db6eca5ec6223f5a8",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.535Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.037Z"
+        },
+        "ko": {
+          "path": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "8b7adbaf3e4ce9065687fce7ae16084566364fc991f5b32490da7d03a017fcbe",
+          "targetSha256": "817fc4a4aa7c560bb3f632262b23fe872e1bbbd2aba007d1a4edf227be9957fd",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.535Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.038Z"
+        },
+        "zh": {
+          "path": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "8b7adbaf3e4ce9065687fce7ae16084566364fc991f5b32490da7d03a017fcbe",
+          "targetSha256": "9291a9143e65dcba9d56307a0b60158635dc2fd082e4577248e8a4bb3caee4b9",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.536Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.038Z"
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "developer-diaries-the-sound-of-stories": {
+      "sourcePath": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/developer-diaries-the-sound-of-stories/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "074625a01cb7b9b862ad0f48b468e4f36a30ecf335c9c918f57371b046551a3e",
+          "targetSha256": "cd7c5813313f01998d7de30a3882a74036c01c17e4ce4c5e5c20d47f84e59a11",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.537Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/developer-diaries-the-sound-of-stories/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "074625a01cb7b9b862ad0f48b468e4f36a30ecf335c9c918f57371b046551a3e",
+          "targetSha256": "9371fcdf8188b0476532baec18197e1992cb134a580b64db7b5a3ce3fe8914ff",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.538Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/developer-diaries-the-sound-of-stories/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "074625a01cb7b9b862ad0f48b468e4f36a30ecf335c9c918f57371b046551a3e",
+          "targetSha256": "f3672f5fa09a36569042abf4200b5adaa7027cd177be3557d4c3d9ad92f8f3bc",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.538Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "developer-diaries-were-all-bayesian-inference-machines-now": {
+      "sourcePath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "3b280325e7c4666cac43f9307ae5ddca4450887917d83c67848541cdf255c751",
+          "targetSha256": "8da890ed645cc5ce7580671d4e5ef6311ed3f8a7135b2f52d3b8400df7c2b24f",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.539Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "3b280325e7c4666cac43f9307ae5ddca4450887917d83c67848541cdf255c751",
+          "targetSha256": "02643bf08d2f96d409740532675466f7ebfc2b6de9a1eadaa6fca5586e44d793",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.540Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "3b280325e7c4666cac43f9307ae5ddca4450887917d83c67848541cdf255c751",
+          "targetSha256": "995e13f8693744415a8d2dae6711b776f0f2cc67f843e833bd10b03b9e88a785",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.540Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "fork-work-why-work-when-we-can-use-autonomous-agents-instead": {
+      "sourcePath": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "0e1623196e98cf13b29b1719edc34617c4ee9993ebae52257ce5ec6d67c6b04a",
+          "targetSha256": "345f1e02a8d2a924431d4aac1e2e01572228f1688effddbd6f7eb6650ca03dfd",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.541Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair",
+            "native-review-required-after-manual-codex-repair"
+          ],
+          "repairedAt": "2026-07-08T19:13:10.921Z"
+        },
+        "ko": {
+          "path": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "0e1623196e98cf13b29b1719edc34617c4ee9993ebae52257ce5ec6d67c6b04a",
+          "targetSha256": "93164de26fc9857c1f2fde6051857aee4d32097eb8948abb1e5208f23db18542",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.541Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair",
+            "native-review-required-after-manual-codex-repair"
+          ],
+          "repairedAt": "2026-07-08T19:13:10.921Z"
+        },
+        "zh": {
+          "path": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "0e1623196e98cf13b29b1719edc34617c4ee9993ebae52257ce5ec6d67c6b04a",
+          "targetSha256": "81f649299df3726b18268d2de8fba29c6cfb71ae415e76c5c9f44835414ae03b",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.542Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair",
+            "native-review-required-after-manual-codex-repair"
+          ],
+          "repairedAt": "2026-07-08T19:13:10.920Z"
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "loss-price-love": {
+      "sourcePath": "src/content/blog/loss-price-love/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/loss-price-love/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/loss-price-love/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "3d0d87cb65068d02893a85ad5207f596b3baa84a5d5e8a36353ed53ef438f53b",
+          "targetSha256": "e6820df8d94aa8ad66303b36f14eb5f9c9ea6ad7127e5fc41e7dc37827af9ce2",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.543Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/loss-price-love/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/loss-price-love/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "3d0d87cb65068d02893a85ad5207f596b3baa84a5d5e8a36353ed53ef438f53b",
+          "targetSha256": "559cfd6f6b054396f1ae02577ae2f94b857aa73f7844706a9143e95b758c3646",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.543Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/loss-price-love/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/loss-price-love/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "3d0d87cb65068d02893a85ad5207f596b3baa84a5d5e8a36353ed53ef438f53b",
+          "targetSha256": "f8dc36ad5db08206cdb1b082d349c60fb79050c0d9b1e63f39b2961ab8e8c3ec",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.543Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "mcp-for-dummies": {
+      "sourcePath": "src/content/blog/mcp-for-dummies/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/mcp-for-dummies/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/mcp-for-dummies/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "065aaa265fdf4244f7e7ce3915b0125dbc393182d7ae3e3e540699d0e98bdd96",
+          "targetSha256": "b95a972b99fb1ae2ec11cf28603a5e67283accb0e3a312c15028bfffa108187b",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.544Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/mcp-for-dummies/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/mcp-for-dummies/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "065aaa265fdf4244f7e7ce3915b0125dbc393182d7ae3e3e540699d0e98bdd96",
+          "targetSha256": "2c6f18b5a56d3339754a6af57bd79557ba180e1faf7f55fad2dfe3a230b8c0f3",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.545Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/mcp-for-dummies/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/mcp-for-dummies/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "065aaa265fdf4244f7e7ce3915b0125dbc393182d7ae3e3e540699d0e98bdd96",
+          "targetSha256": "653dcd4e0096821d669d32c88eda49e5a70771e8264e929771325697b9f2c286",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.545Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "microdramas-sinking-market": {
+      "sourcePath": "src/content/blog/microdramas-sinking-market/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/microdramas-sinking-market/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/microdramas-sinking-market/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "3340e706a66b2f1867d34af11589a62ed0f84aefbff568a11cc138d70d8fec25",
+          "targetSha256": "230657c9795d301d8b4ba0c9544c33c1f190c83f88e03326d9ec9514531a45a2",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.546Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/microdramas-sinking-market/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/microdramas-sinking-market/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "3340e706a66b2f1867d34af11589a62ed0f84aefbff568a11cc138d70d8fec25",
+          "targetSha256": "fd3d6ef521f6dbfd634da50b21e6583f1c67a4e4881ce1974a5b4a35daf4e368",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.547Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/microdramas-sinking-market/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/microdramas-sinking-market/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "3340e706a66b2f1867d34af11589a62ed0f84aefbff568a11cc138d70d8fec25",
+          "targetSha256": "0cae42581da2ca57b4b6cdde0959a3e563f6ba3a3107cc32886f11e5ff00e1dc",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.548Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "mlops-for-museums": {
+      "sourcePath": "src/content/blog/mlops-for-museums/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/mlops-for-museums/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/mlops-for-museums/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "8e4c21a9913bd09e15572819f1d31fbbfe4b5be6283b524265012b863eff6e8e",
+          "targetSha256": "7245ee5f7c40a92a970fe6e716aa927b31695e1ab3893a7e953f5281410b8bd9",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.548Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/mlops-for-museums/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/mlops-for-museums/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "8e4c21a9913bd09e15572819f1d31fbbfe4b5be6283b524265012b863eff6e8e",
+          "targetSha256": "b0f59f346074d1d07fbb49e55967d292d4211f3035c7df570b80a902e2809313",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.549Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/mlops-for-museums/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/mlops-for-museums/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "8e4c21a9913bd09e15572819f1d31fbbfe4b5be6283b524265012b863eff6e8e",
+          "targetSha256": "122f8ee2e50bb0d54abc6444167551d21e6ed7bec5ac5371cf78a238a8a6f0e2",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.549Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums": {
+      "sourcePath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "2cc16d1fb02c23538945b5e2aff49e1c54afc0db275fcf508e912d8623043f25",
+          "targetSha256": "a9a0e2fe521aea9f038641dfddeac68612fcb9a8552e552ef1e4dddf1491900f",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.550Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "2cc16d1fb02c23538945b5e2aff49e1c54afc0db275fcf508e912d8623043f25",
+          "targetSha256": "43b78e01a6e7adc83ed45188ac5a9067c86f266367490e5c14662199a3e7b627",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.550Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.047Z"
+        },
+        "zh": {
+          "path": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "2cc16d1fb02c23538945b5e2aff49e1c54afc0db275fcf508e912d8623043f25",
+          "targetSha256": "953440c129b836e1f556284eb16cce514e50c17154d9ab69ab1abf02d5f18163",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.551Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.047Z"
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "moving-to-cloudflare-with-astro": {
+      "sourcePath": "src/content/blog/moving-to-cloudflare-with-astro/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/moving-to-cloudflare-with-astro/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/moving-to-cloudflare-with-astro/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "ebe70c8220bd25c3c25ac8408b0d17362125082d9edeaad53a034709cc4997e3",
+          "targetSha256": "77b4a858a1bce1a4114dd3cbadd44c853827536434e58b3930af35b333eaa323",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.551Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/moving-to-cloudflare-with-astro/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/moving-to-cloudflare-with-astro/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "ebe70c8220bd25c3c25ac8408b0d17362125082d9edeaad53a034709cc4997e3",
+          "targetSha256": "e64dc8f4a03beb4fcf9c60bfbb44a08fefa8f5349375b3669100f2be40eda044",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.552Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/moving-to-cloudflare-with-astro/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/moving-to-cloudflare-with-astro/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "ebe70c8220bd25c3c25ac8408b0d17362125082d9edeaad53a034709cc4997e3",
+          "targetSha256": "3282f41574396dc8caaf04cb29310fe357eb020a4802f23a2e2de93f363eb726",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.553Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "raggaeton-scaling-a-i-augmented-writing-for-any-content": {
+      "sourcePath": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "6d68e50cc9fe77e96410e780229ebf2f9b658a54f69c42990f739270c114876c",
+          "targetSha256": "5433d79f06674a42abda030cb6d15d5c31642680e30949d45f19915867ec9070",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.554Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.049Z"
+        },
+        "ko": {
+          "path": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "6d68e50cc9fe77e96410e780229ebf2f9b658a54f69c42990f739270c114876c",
+          "targetSha256": "150e83972cc09c16c11e89da27bad8e4876888bddfa54510959e7f149c28edec",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.555Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.050Z"
+        },
+        "zh": {
+          "path": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/zh.mdx",
+          "status": "final",
+          "source": "imported-legacy",
+          "sourcePath": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content-zh/index.mdx",
+          "sourceLocale": "zh",
+          "targetLocale": "zh",
+          "canonicalSourcePath": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/index.mdx",
+          "canonicalSourceSha256": "6d68e50cc9fe77e96410e780229ebf2f9b658a54f69c42990f739270c114876c",
+          "sourceSha256": "ae5c01c4c637f9529b0d239d59b19462a8c23aa1a6da14c3dd9d9fddcb6c4f41",
+          "targetSha256": "d1bcdb5d99adbbdc9183886f5da20d4ab611c53e533df7ed535935c1b5e71da9",
+          "provider": "human",
+          "model": null,
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:07.776Z",
+          "qualityStatus": "human-final",
+          "reviewScore": 1,
+          "researchNotes": [
+            "protected legacy Chinese import"
+          ],
+          "unresolvedResearch": []
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "sight-before-sound-seeing-and-searching-with-machines": {
+      "sourcePath": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "a5518da6a321bd110b213c1f3491e3177152afa32f0cb45f39fb73d0187493ce",
+          "targetSha256": "7777610f61efd9d2f490af4807de0ab14ed7de10f7c9595de4f3a0e6aab16fdf",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.556Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "a5518da6a321bd110b213c1f3491e3177152afa32f0cb45f39fb73d0187493ce",
+          "targetSha256": "530baad06a6ff9cb46626590b5cb7b744aa140666106674ca2a1820dd171274a",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.556Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/zh.mdx",
+          "status": "final",
+          "source": "imported-legacy",
+          "sourcePath": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines-zh/index.mdx",
+          "sourceLocale": "zh",
+          "targetLocale": "zh",
+          "canonicalSourcePath": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/index.mdx",
+          "canonicalSourceSha256": "a5518da6a321bd110b213c1f3491e3177152afa32f0cb45f39fb73d0187493ce",
+          "sourceSha256": "841554552d58329b0efb270f1f87c6e337ec634c3e4d2a0d620096d2444d5581",
+          "targetSha256": "f8d68665ff005fc703e9f48f6702a1e2c140b0dffd221ad19c24219c05ea67f0",
+          "provider": "human",
+          "model": null,
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:07.778Z",
+          "qualityStatus": "human-final",
+          "reviewScore": 1,
+          "researchNotes": [
+            "protected legacy Chinese import"
+          ],
+          "unresolvedResearch": []
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "sound-before-symbols-on-human-creativity-and-intelligence": {
+      "sourcePath": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "1fc4481430e2f29a3a89980d7aff3e048ecd648e29d1e0fcd95ed181f4be2860",
+          "targetSha256": "fba0ef5b539f5b859c361610b2e1fc62e4d7a60fe9fd42a7651b23b69ed6e785",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.557Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.052Z"
+        },
+        "ko": {
+          "path": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "1fc4481430e2f29a3a89980d7aff3e048ecd648e29d1e0fcd95ed181f4be2860",
+          "targetSha256": "cc813ee581d287187f74957f376e76cfdc192eaa6bfdcad18ecbd4c1b7f2f2b7",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.557Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.053Z"
+        },
+        "zh": {
+          "path": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/zh.mdx",
+          "status": "final",
+          "source": "imported-legacy",
+          "sourcePath": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence-zh/index.mdx",
+          "sourceLocale": "zh",
+          "targetLocale": "zh",
+          "canonicalSourcePath": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/index.mdx",
+          "canonicalSourceSha256": "1fc4481430e2f29a3a89980d7aff3e048ecd648e29d1e0fcd95ed181f4be2860",
+          "sourceSha256": "11ddb47a6eb7e9918620b02d715ca449d08773231d59b43c294239d204192733",
+          "targetSha256": "b918ca98598a93dd667635b642fffeefe5617350e8ba30932eddaee1aa02941f",
+          "provider": "human",
+          "model": null,
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:07.779Z",
+          "qualityStatus": "human-final",
+          "reviewScore": 1,
+          "researchNotes": [
+            "protected legacy Chinese import"
+          ],
+          "unresolvedResearch": []
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "streaming-generated-diagrams": {
+      "sourcePath": "src/content/blog/streaming-generated-diagrams/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/streaming-generated-diagrams/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/streaming-generated-diagrams/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "aebf98494e9696f57d9950b5616c2bd2eb54c2ab63234de80cb82922ab229bf8",
+          "targetSha256": "f8d2c97a9520f40609a404cecd4efc318cad4dc799412b02ffaedae6a987862e",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.558Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.054Z"
+        },
+        "ko": {
+          "path": "src/content/blog/streaming-generated-diagrams/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/streaming-generated-diagrams/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "aebf98494e9696f57d9950b5616c2bd2eb54c2ab63234de80cb82922ab229bf8",
+          "targetSha256": "48fe9168ab12eab895f3eeb695b62dd78b618e931b14c72f24ce7df05b9975f0",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.559Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/streaming-generated-diagrams/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/streaming-generated-diagrams/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "aebf98494e9696f57d9950b5616c2bd2eb54c2ab63234de80cb82922ab229bf8",
+          "targetSha256": "16fd721f812fdad8d5111086626c492bff67b295c922334c19127d38d3741ada",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.559Z",
+          "qualityStatus": "mechanical-passed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review",
+            "native-review-required-after-deterministic-repair"
+          ],
+          "repairedAt": "2026-07-08T19:11:56.055Z"
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human": {
+      "sourcePath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "88b28f60433e260a8b1e259fc6b684e555a6e8ff3881f6ca230052b26c99c488",
+          "targetSha256": "af313fb6222e139d4452558a8274b9c566ecb54246c1fca3f7c9bc45b8e44e3e",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.560Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "88b28f60433e260a8b1e259fc6b684e555a6e8ff3881f6ca230052b26c99c488",
+          "targetSha256": "a8e8abafde084f978bbd37163be47cea039b181a817f9e36351ea6525fe4f70b",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.561Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/zh.mdx",
+          "status": "final",
+          "source": "imported-legacy",
+          "sourcePath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human-zh/index.mdx",
+          "sourceLocale": "zh",
+          "targetLocale": "zh",
+          "canonicalSourcePath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/index.mdx",
+          "canonicalSourceSha256": "88b28f60433e260a8b1e259fc6b684e555a6e8ff3881f6ca230052b26c99c488",
+          "sourceSha256": "649bc3ffd5cc213bf3fc99ca6c373ecd75206ad61ea728ed2ccef12c026f186b",
+          "targetSha256": "9b3d850f27bd01f4026016ef3422834c561a274e3359fd1ccae3eec08ddab882",
+          "provider": "human",
+          "model": null,
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:07.781Z",
+          "qualityStatus": "human-final",
+          "reviewScore": 1,
+          "researchNotes": [
+            "protected legacy Chinese import"
+          ],
+          "unresolvedResearch": []
+        }
+      },
+      "sourceLocale": "en"
+    },
+    "tutorial-air-drumming-with-a-i": {
+      "sourcePath": "src/content/blog/tutorial-air-drumming-with-a-i/index.mdx",
+      "targets": {
+        "ja": {
+          "path": "src/content/blog/tutorial-air-drumming-with-a-i/ja.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/tutorial-air-drumming-with-a-i/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ja",
+          "sourceSha256": "288905d159f11476550369a0e35d33aa8ca71bf476393e89ba53e641d01e3fc1",
+          "targetSha256": "b422bbfd58c912dfe22730a99d6765a52d7c7e53e4121c423c86e47dcea6fb28",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.562Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "ko": {
+          "path": "src/content/blog/tutorial-air-drumming-with-a-i/ko.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/tutorial-air-drumming-with-a-i/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "ko",
+          "sourceSha256": "288905d159f11476550369a0e35d33aa8ca71bf476393e89ba53e641d01e3fc1",
+          "targetSha256": "aa6fe3430db69c7badc0b17a0694411293b40d1f7fe8e7f23a81301257eb953c",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.563Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        },
+        "zh": {
+          "path": "src/content/blog/tutorial-air-drumming-with-a-i/zh.mdx",
+          "status": "machine",
+          "sourcePath": "src/content/blog/tutorial-air-drumming-with-a-i/index.mdx",
+          "sourceLocale": "en",
+          "targetLocale": "zh",
+          "sourceSha256": "288905d159f11476550369a0e35d33aa8ca71bf476393e89ba53e641d01e3fc1",
+          "targetSha256": "9c2afae5c2490a63eb2babe809b64dd31382f67d9efbee275686053fdbae762a",
+          "provider": "codex",
+          "model": "preexisting-machine-translation",
+          "promptVersion": "2026-07-09",
+          "classifiedAt": "2026-07-08T19:11:03.563Z",
+          "qualityStatus": "unreviewed",
+          "reviewScore": null,
+          "researchNotes": [],
+          "unresolvedResearch": [
+            "classified-existing-machine-translation-needs-review"
+          ]
+        }
+      },
+      "sourceLocale": "en"
+    }
+  }
 }

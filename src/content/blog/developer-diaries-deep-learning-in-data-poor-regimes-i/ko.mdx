@@ -1,11 +1,14 @@
 ---
-title: "개발자 일기: 데이터가 부족한 환경의 딥러닝 I"
-description: "전략들, 그리고 지능이 왜 지수적 힘인지"
-date: 2024-04-08
-authors: ["erniesg"]
+title: '개발자 일기: 데이터가 부족한 환경의 딥러닝 I'
+description: '전략들, 그리고 지능이 왜 지수적 힘인지'
+date: 2024-04-08T00:00:00.000Z
+authors:
+  - erniesg
 draft: false
-lang: "ko"
-translationKey: "developer-diaries-deep-learning-in-data-poor-regimes-i"
+lang: ko
+translationKey: developer-diaries-deep-learning-in-data-poor-regimes-i
+translationStatus: machine
+translationSource: codex
 ---
 
 나를 꽤 많이 혼란스럽게 만든 것 중 하나는, 내 3070에서 말레이 북소리를 재현하려고 실시간 오디오 변분 오토인코더(RAVE)를 훈련할 때 왜 더 많은 데이터가 더 나은 “결과”로 이어지지 않았는가였다. 그러다 깨달았다. 이것은 그냥 기초 통계 아닌가 - 작은 표본 크기와 높은 분산은 약간의 이상치 데이터 포인트 하나가 모델 성능에 불균형한 영향을 미치게 된다는 뜻이다. 이런 데이터 빈곤 환경은 세계 대부분의 사용 사례에서 기본 상태다. 좋은 소식은 늘 그렇듯, 큰 강력한 모델을 가져와 우리의 제한된 데이터셋에 미세 조정하는 것만으로도 많은 것을 끌어낼 수 있다는 점이다. [이전에 여기서 보여주었듯이](https://www.youtube.com/watch?v=nwwEVWCHMxU).

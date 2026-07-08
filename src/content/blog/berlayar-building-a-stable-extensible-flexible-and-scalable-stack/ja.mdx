@@ -1,12 +1,15 @@
 ---
-title: "Berlayar：安定し拡張できる AI 技術スタック"
-description: "AI と大規模言語モデル駆動アプリの汎用アーキテクチャ草案と、関心ある利用場面、開発方針を共有する"
-date: 2023-09-07
-authors: ["erniesg"]
-image: "./1ac10d28-6395-44d6-97ed-33cfe28c0609_23-71693538430433.png"
+title: Berlayar：安定し拡張できる AI 技術スタック
+description: AI と大規模言語モデル駆動アプリの汎用アーキテクチャ草案と、関心ある利用場面、開発方針を共有する
+date: 2023-09-07T00:00:00.000Z
+authors:
+  - erniesg
+image: ./1ac10d28-6395-44d6-97ed-33cfe28c0609_23-71693538430433.png
 draft: false
-lang: "ja"
-translationKey: "berlayar-building-a-stable-extensible-flexible-and-scalable-stack"
+lang: ja
+translationKey: berlayar-building-a-stable-extensible-flexible-and-scalable-stack
+translationStatus: machine
+translationSource: codex
 ---
 
 [第 1 部](https://erniesg.pubpub.org/pub/zc0zx741) では、これまでに作った簡単なプロトタイプと、それらがどのように私を、大規模言語モデルベースの製品のための安定し、拡張でき、柔軟でスケールする技術スタックが必要な場所へ導いたかを話した。作るべき面白いものが多すぎるからだ。レジストリと基底クラスによって、提案する A.I. 駆動ソフトウェア群の構成要素を柔軟に差し替え、開発者が協力しやすくする方法を議論した。では最終ユーザー体験はどうか。私が目指す柔軟性とモジュール性には、レジストリパターンとインターフェース駆動設計を組み合わせるのが理想的な方法かもしれない。この投稿では、私が提案する A.I./LLM エンジニアリングスタックを説明する。これはレガシーコードベースのリファクタリング自動化、メールと文書上の知識ベース、ソーシャルメディアコンテンツの生成と公開、オーディエンスがデータを消費する新しい方法など、関心あるすべてのデプロイに一般化できる可能性がある。
@@ -346,7 +349,7 @@ Feedback Collector
     
 -   src - インターフェースと実装の大部分のソースコード
     
--   tests - 単体テストと統合テスト、そしてテスト用 fixture
+-   テスト - 単体テストと統合テスト、そしてテスト用 fixture
     
 
 まだ CI/CD、監視、評価の構成要素が不足しており、プロジェクト構造も整理中だ。ただし他の開発者と分担できればと思っている。というのも、[National Arts Council Arts x Tech Lab](https://www.nac.gov.sg/singapore-arts-scene/technology-and-innovation/arts-x-tech-lab) のために “[The Sound of Stories](https://www.youtube.com/watch?v=0cBbG0SkSCo)”（リアルタイムで、生成された物語を多言語で語る仕組み）も届ける必要があるからだ。うまくいけば、これらの開発努力は高い相乗効果を生み、Berlayar A.I. という会社のための基礎ブロックを与えてくれるはずだ。;)

@@ -1,11 +1,14 @@
 ---
-title: "开发者日记：我们现在都是贝叶斯推理机器"
-description: "关于 A.I. 可解释性、受控幻觉，以及自我与世界的建构"
-date: 2024-02-13
-authors: ["erniesg"]
+title: 开发者日记：我们现在都是贝叶斯推理机器
+description: 关于 A.I. 可解释性、受控幻觉，以及自我与世界的建构
+date: 2024-02-13T00:00:00.000Z
+authors:
+  - erniesg
 draft: false
-lang: "zh"
-translationKey: "developer-diaries-were-all-bayesian-inference-machines-now"
+lang: zh
+translationKey: developer-diaries-were-all-bayesian-inference-machines-now
+translationStatus: machine
+translationSource: codex
 ---
 
 “The Sound of Stories” 这个项目里，有一件事让我特别兴奋：让用户生成自己独一无二的鼓声，然后把这些声音全部丢进一个 embedding space，再让他们在现场和另一个人一起，通过 ERAE Touch 这样的互动设备去定位自己的声音 - 滑动、旋钮等等，把动作映射到 latent spaces 和数值上 - 找到那个声音在 embedding space 里的“坐标”。然后当他们找到之后，也许现场会有一个巨大的显示屏，把生成那个声音的故事投射出来。我觉得从 A.I. explainability 的角度看，这会很有意思，有点受到 [this](https://begus.substack.com/p/one-surprising-method-for-ai-interpretability) 和 [this](https://www.youtube.com/watch?v=o09BSf9zP-0) 的启发。当然有趣的转折在于 latent spaces 未必能被直接解释 - 但我仍然觉得，这会是一种有趣而有意义的方式，把这些不同的技术在现场编织在一起。

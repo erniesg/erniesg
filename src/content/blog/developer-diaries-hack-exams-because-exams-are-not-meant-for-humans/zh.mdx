@@ -1,11 +1,14 @@
 ---
-title: "开发者日记：破解考试，因为考试本来就不是为人类设计的…"
-description: "也因为试卷就是每个数据科学家的梦幻数据集"
-date: 2024-03-15
-authors: ["erniesg"]
+title: 开发者日记：破解考试，因为考试本来就不是为人类设计的…
+description: 也因为试卷就是每个数据科学家的梦幻数据集
+date: 2024-03-15T00:00:00.000Z
+authors:
+  - erniesg
 draft: false
-lang: "zh"
-translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-humans"
+lang: zh
+translationKey: developer-diaries-hack-exams-because-exams-are-not-meant-for-humans
+translationStatus: machine
+translationSource: codex
 ---
 
 # 有些软件闻起来像下水道
@@ -25,15 +28,15 @@ translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-hu
 -   在 loop 里拿到你当前正在迭代的 item？不如去抓 pixie dust
     
 
-有些 consultants 把别人说服去用这东西，还不知道到底让谁、为了什么受益，他们在地狱里应该有一个特别的位置。总之，抱怨够了。这就是为什么我最近开始对把试卷当作 数据set 来玩感兴趣。
+有些 consultants 把别人说服去用这东西，还不知道到底让谁、为了什么受益，他们在地狱里应该有一个特别的位置。总之，抱怨够了。这就是为什么我最近开始对把试卷当作 数据集 来玩感兴趣。
 
 # Exams as Data
 
-想一想 - 还有比标准化考试更 **structured**、更 **consistent**、更 **cleaner** 的 数据set 吗!?!?!? 它们总是有相同数量的问题、题型、定义清楚的 syllabi 等等。这简直像每个 数据 scientist 的 wet dream... 直到你开始处理 PDFs。我也觉得生成练习考试、让 LLM 打败它，然后也许为所有人做一个 AI tutor 这个想法非常有趣，因为对我来说，重点很简单：考试不是为人类设计的。它是衡量 intelligence 的非常糟糕的方式，尽管对行政和文书工作来说极其方便。通往 AGI 的道路上，世界真正缺少的似乎是一个能衡量 general intelligence 到底是什么的好指标；如果 LLMs 和 exams 之间这种双向张力，能带来一个我们用更好的东西取代 standardized examinations 的未来 - 那已经是对人类很大的服务了。
+想一想 - 还有比标准化考试更 **structured**、更 **consistent**、更 **cleaner** 的 数据集 吗!?!?!? 它们总是有相同数量的问题、题型、定义清楚的 syllabi 等等。这简直像每个 数据 scientist 的 wet dream... 直到你开始处理 PDFs。我也觉得生成练习考试、让 LLM 打败它，然后也许为所有人做一个 AI tutor 这个想法非常有趣，因为对我来说，重点很简单：考试不是为人类设计的。它是衡量 intelligence 的非常糟糕的方式，尽管对行政和文书工作来说极其方便。通往 AGI 的道路上，世界真正缺少的似乎是一个能衡量 general intelligence 到底是什么的好指标；如果 LLMs 和 exams 之间这种双向张力，能带来一个我们用更好的东西取代 standardized examinations 的未来 - 那已经是对人类很大的服务了。
 
 # Finetuning GPT 3.5 to Generate IB Exams for Demonstration Purposes ONLY
 
-在那些 consultants 的地狱特别位置旁边，应该坐着把 PDFs 和 excels 当 数据sets 给你的人。结果 Document AI 对解析文本做得相当不错，但我不想付钱（回头看，也许不直接付钱用 API 反而更浪费）所以在键盘上各种痛苦挣扎之后，我只传了 44 个 examples 去 finetune GPT 3.5。很有意思的是：
+在那些 consultants 的地狱特别位置旁边，应该坐着把 PDFs 和 excels 当 数据集 给你的人。结果 Document AI 对解析文本做得相当不错，但我不想付钱（回头看，也许不直接付钱用 API 反而更浪费）所以在键盘上各种痛苦挣扎之后，我只传了 44 个 examples 去 finetune GPT 3.5。很有意思的是：
 
 -   它忠实复现了我文字里一些随机的 spacing - 所以它真的在 parroting 输入给它的 distribution
     

@@ -1,11 +1,14 @@
 ---
-title: "开发者日记：数据贫乏环境中的深度学习 I"
-description: "一些策略，以及为什么智能是指数级力量"
-date: 2024-04-08
-authors: ["erniesg"]
+title: 开发者日记：数据贫乏环境中的深度学习 I
+description: 一些策略，以及为什么智能是指数级力量
+date: 2024-04-08T00:00:00.000Z
+authors:
+  - erniesg
 draft: false
-lang: "zh"
-translationKey: "developer-diaries-deep-learning-in-data-poor-regimes-i"
+lang: zh
+translationKey: developer-diaries-deep-learning-in-data-poor-regimes-i
+translationStatus: machine
+translationSource: codex
 ---
 
 有一件事让我非常困惑：当我在自己的 3070 上训练实时音频变分自编码器（RAVE）来重现马来鼓声时，为什么更多数据并没有带来更好的“结果”。后来我意识到，这不就是基础统计学吗 - 小样本量、高方差，意味着任何一个稍微离群的数据点最终都会对模型性能产生不成比例的影响。这样的数据贫乏环境是世界上多数使用场景的默认状态。好消息一如既往：我们可以拿一个大型强模型，在有限数据集上微调，从而引导出很多能力，[就像之前这里展示过的](https://www.youtube.com/watch?v=nwwEVWCHMxU)。

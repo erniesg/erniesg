@@ -1,11 +1,17 @@
 ---
-title: "RAGgaeton：用人工智能增强写作以规模化生成任何内容"
-description: "通过使用人工智能支持的研究、检索和自然语言生成（甚至可以帮助你头韵！)，从粗糙的草稿到经润色的文章，看看输出结果如何比较"
-date: 2024-06-23
-authors: ["erniesg"]
-tags: ["zh"]
-image: "./IMG_20240603_121737_00_238-21719066032683.jpg"
+title: RAGgaeton：用人工智能增强写作以规模化生成任何内容
+description: 通过使用人工智能支持的研究、检索和自然语言生成（甚至可以帮助你头韵！)，从粗糙的草稿到经润色的文章，看看输出结果如何比较
+date: 2024-06-23T00:00:00.000Z
+authors:
+  - erniesg
+tags:
+  - zh
+image: ./IMG_20240603_121737_00_238-21719066032683.jpg
 draft: false
+lang: zh
+translationKey: raggaeton-scaling-a-i-augmented-writing-for-any-content
+translationStatus: final
+translationSource: imported-legacy
 ---
 
 我把一些笔记丢给了原生以及RAGgaeton驱动的Claude 3.5和GPT - 4o，这样你就比较他们针对我于2024年6月3日徒步攀登浮盖山的经历的写作能力。
@@ -42,7 +48,7 @@ RAGgaeton是我构建的一个包，可以从你的数据中自动生成任何�
 
 Try Things #:2 Claude 3.5 vs. GPT-4o for Automated Travel Writing with RAGgaeton
 
--   [B站视频](https://www.bilibili.com/视频/BV1yRgXeGE6s/)
+-   [B站视频](https://www.bilibili.com/video/BV1yRgXeGE6s/)
     
 -   在[RAGgaeton Git存储库](https://erniesg.pubpub.org/pub/1bt4uylj#nrwp1quoutk)中查看我的实现
     
@@ -63,7 +69,7 @@ Try Things #:2 Claude 3.5 vs. GPT-4o for Automated Travel Writing with RAGgaeton
 > 
 > Straddling the border of Zhejiang and Fujian provinces, Fu Gai Mountain rises like a sleeping giant from the surrounding landscape. \[TextFX: CHAIN\] Its imposing silhouette - peak, ridge, slope, valley, forest, trail, hiker, adventure - beckons to those seeking communion with nature's grandeur. \[TextFX: UNEXPECT\] Once a formidable barrier to southward expansion during the Tang dynasty, this geological marvel now serves as a bridge between epochs, inviting modern-day explorers to scale its heights and unravel its secrets. The mountain's strategic location offers not just a physical challenge, but a journey through the annals of Chinese history and natural evolution.
 > 
-> 这座山的“四绝”营造出一种仿佛从奇幻小说中走出的异世界氛围。\[TextFX: ACRONYM\] CAPE - Clouds, Abysses, Peaks, and Enigmatic springs - 概括了浮盖山的独特特征。\[TextFX: FUSE\] 在山顶，巨石惊险地相互叠压，形成著名的“浮盖”或“纱帽”景观，这是一种既令人困惑又令人惊叹的地质幻象。怪云在嶙峋山峰间流动，形态不断变换。神秘洞穴仿佛低语着山的过去，而奇特泉水无论季节如何都保持恒温。\[TextFX: EXPLODE\] 这些元素共同构成了一片真正“out of this whirl”的景观，一个令人目眩的自然奇观，挑战我们对现实的感知。
+> The mountain's 'Four Wonders' create an otherworldly atmosphere that seems plucked from the pages of a fantasy novel. \[TextFX: ACRONYM\] CAPE - Clouds, Abysses, Peaks, and Enigmatic springs - encapsulates Fu Gai Mountain's unique characteristics. \[TextFX: FUSE\] At the summit, massive boulders balance precariously, forming the famous 'floating cap' or 'gauze hat' - a geological illusion that both confounds and delights. Strange clouds dance around jagged peaks, their ethereal shapes constantly shifting. Mysterious caves whisper tales of the mountain's past, while peculiar springs maintain a constant temperature regardless of the season. \[TextFX: EXPLODE\] Together, these elements combine to create a landscape that's truly 'out of this whirl' - a dizzyingly beautiful natural spectacle that challenges our perception of reality.
 
 我更喜欢Sonnet的写作，我喜欢它按照指示应用了TextFX，尽管最后的文章看起来有些不完整。我怀疑这可能与我们指定的600字`desired_length` 有关，所以也许优化提示或根据不同的长度进一步调整操作链会更好。这是它[生成的内容块和主题句的完整草稿](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/80fd9327-6f17-48e9-a56e-019c5daa4c5b?observation=9194ce51-c4c2-4279-a3f9-7ac9c8516a30)仅供参考。
 
@@ -181,7 +187,7 @@ RAGgaeton不只是进行写作；它还可以做研究。它会生成一系列�
     
 5.  Pydantic用于数据验证
     
-6.  FastAPI用于开发利于原子操作的API端点，如`generate-research-questions`、`do-research`、`generate-headlines`、`generate-draft`、`generate-topic-sentences`、`generate-full-content`和`edit-content`
+6.  FastAPI用于开发利于原子操作的API端点，如`generate-research-questions`, `do-research`, `generate-headlines`, `generate-draft`, `generate-topic-sentences`, `generate-full-content`, and `edit-content`
     
 
 这种结合使RAGgaeton能够在保持一致性和连贯性的同时提供高质量的、与上下文相关的内容。
@@ -328,10 +334,10 @@ Sonnet 3.5在语言方面做得更好，但它产生关于安吉的幻觉。浮�
     > 
     > China as a 360 Adventure: Come caving with me
     > 
-    > -   [B站视频](https://www.bilibili.com/视频/BV1ms421g7oW/)
+    > -   [B站视频](https://www.bilibili.com/video/BV1ms421g7oW/)
     >     
     > 
-    > … Geological marvels and unorthodox pathways intertwine to create an adventure that transcends the typical trekking experience. Nicknamed '浮盖山' for its summit's hat-like stone formation, Fu Gai Mountain stands as a testament to nature's artistry. Its trails meander through a tapestry of strange rocks, mysterious caves, and hidden springs, each turn revealing a new facet of the mountain's character. Like a game of 'I Spy' on steroids, hikers find themselves constantly scanning their surroundings, never knowing if the next step will lead them over, under, or through the mountain's enigmatic terrain. \[TextFX: UNEXPECT\]
+    > … Geological marvels and unorthodox pathways intertwine to create an adventure that transcends the typical trekking experience. Nicknamed 'Floating Cap Mountain' for its summit's hat-like stone formation, Fu Gai Mountain stands as a testament to nature's artistry. Its trails meander through a tapestry of strange rocks, mysterious caves, and hidden springs, each turn revealing a new facet of the mountain's character. Like a game of 'I Spy' on steroids, hikers find themselves constantly scanning their surroundings, never knowing if the next step will lead them over, under, or through the mountain's enigmatic terrain. \[TextFX: UNEXPECT\]
     > 
     > Exploring this formidable peak pushes adventurers to their limits, both physically and mentally, while unveiling the raw splendor of China's diverse landscape. As hikers navigate its challenging terrain, they are not merely walking a path but solving a three-dimensional puzzle that Mother Nature herself has crafted. This journey of discovery demands agility, creativity, and perseverance, rewarding those who rise to the challenge with breathtaking vistas and a profound sense of accomplishment. Fu Gai Mountain stands as a natural playground where adventurers can test their mettle, transforming from mere hikers into intrepid explorers, each conquering their own personal Everest. \[TextFX: FUSE\]
     

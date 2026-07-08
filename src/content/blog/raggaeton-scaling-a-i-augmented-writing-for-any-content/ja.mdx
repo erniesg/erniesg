@@ -1,12 +1,15 @@
 ---
-title: "RAGgaeton: A.I.拡張ライティングを全コンテンツへ"
-description: "A.I.による調査、検索、自然言語生成で粗い下書きを磨いた記事へ変え、出力を比較する"
-date: 2024-06-22
-authors: ["erniesg"]
-image: "./IMG_20240603_121737_00_238-21719066032683.jpg"
+title: 'RAGgaeton: A.I.拡張ライティングを全コンテンツへ'
+description: A.I.による調査、検索、自然言語生成で粗い下書きを磨いた記事へ変え、出力を比較する
+date: 2024-06-22T00:00:00.000Z
+authors:
+  - erniesg
+image: ./IMG_20240603_121737_00_238-21719066032683.jpg
 draft: false
-lang: "ja"
-translationKey: "raggaeton-scaling-a-i-augmented-writing-for-any-content"
+lang: ja
+translationKey: raggaeton-scaling-a-i-augmented-writing-for-any-content
+translationStatus: machine
+translationSource: codex
 ---
 
 2024年6月3日に覆蓋山（浮蓋山）を歩いた記録をもとに、通常版と RAGgaeton を使った版の Claude 3.5 と GPT-4o に同じメモを渡し、文章作成能力を比較してみた。
@@ -160,7 +163,7 @@ P.S. コンテンツ blocks を書き出す代わりに アルゴリズムで並
 
 ### A.I.-Powered Re検索 and Retrieval
 
-RAGgaeton はただ書くだけではない。調査 もする。異なる プラットフォーム での further 調査 のために キーワード を生成し、検索 を実行し、その 情報 を データbase に 保存 する。文書レベルの埋め込み ではなく トークンベースの後期相互作用機構 を活用することで、RAGgaeton は コンテンツ に最も 関連する な 情報 を見つけ、正確性 と 深さ を確保できる。現在の実装は `you.com` と `Obsidian vaults` をサポートしており、今後さらに 情報源 を追加する予定だ。
+RAGgaeton はただ書くだけではない。調査 もする。異なる プラットフォーム での further 調査 のために キーワード を生成し、検索 を実行し、その 情報 を データベース に 保存 する。文書レベルの埋め込み ではなく トークンベースの後期相互作用機構 を活用することで、RAGgaeton は コンテンツ に最も 関連する な 情報 を見つけ、正確性 と 深さ を確保できる。現在の実装は `you.com` と `Obsidian vaults` をサポートしており、今後さらに 情報源 を追加する予定だ。
 
 ### Creative Enhancement のための TextFX
 
@@ -172,7 +175,7 @@ RAGgaeton はただ書くだけではない。調査 もする。異なる プ�
 
 1.  自然言語生成 のための Claude 3.5 Sonnet と GPT-4o
     
-2.  データbase 管理 のための Supabase
+2.  データベース 管理 のための Supabase
     
 3.  トレースと監視のための Langfuse
     
@@ -191,7 +194,7 @@ RAGgaeton の力を本当に理解するために、異なるモデルの出力�
 
 ### Input: 書き手の下書きメモ
 
-RAGgaeton の データbase に ingest する 情報 の例は次の通り。
+RAGgaeton の データベース に 取り込む 情報 の例は次の通り。
 
 ```html
 An A.I. Engineer Goes Gradient Descent on Floating Cap Mountain

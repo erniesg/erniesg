@@ -1,22 +1,25 @@
 ---
-title: "開発者日記：試験は人間のためのものではないからハックする…"
-description: "試験問題はすべてのデータサイエンティストにとって夢のようなデータセットでもあるから"
-date: 2024-03-15
-authors: ["erniesg"]
+title: 開発者日記：試験は人間のためのものではないからハックする…
+description: 試験問題はすべてのデータサイエンティストにとって夢のようなデータセットでもあるから
+date: 2024-03-15T00:00:00.000Z
+authors:
+  - erniesg
 draft: false
-lang: "ja"
-translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-humans"
+lang: ja
+translationKey: developer-diaries-hack-exams-because-exams-are-not-meant-for-humans
+translationStatus: machine
+translationSource: codex
 ---
 
 # 下水道のような匂いがするソフトウェアもある
 
 多くの組織はビジネス成果を出すために水力発電ダムのようなものを欲しがるが、たいていは漏れたパイプだらけのデータ下水道に閉じ込められている。ある dedicated SQL pool を使わなければならない日にはいつも、前世で何をしたらこんな dedicated SQL サービス と付き合う羽目になるのかと思う。それは：
 
--   データbase の名前変更を許さない
+-   データベース の名前変更を許さない
     
 -   そこで Python scripts を実行すると 20mb 制限がある
     
--   データbases をまたいで、あるいは同じ データbase 内で tables をコピーしたいだって？あなたの tables には異なる column index stores があり、コピー時に定義が必要だと知らないのか？
+-   データベースs をまたいで、あるいは同じ データベース 内で tables をコピーしたいだって？あなたの tables には異なる column index stores があり、コピー時に定義が必要だと知らないのか？
     
 -   Get Metaデータ に filter を適用したい？そんなものは存在しない
     
@@ -25,15 +28,15 @@ translationKey: "developer-diaries-hack-exams-because-exams-are-not-meant-for-hu
 -   loop で現在 iterating している item を取得したい？pixie dust を探す方がまだましだ
     
 
-これを他人に使わせるよう説得する consultants には、地獄に特別な場所があるはずだ。それが一体誰に、何のために役立つのかは God-knows-what-or-why だが。ともあれ、愚痴はこのくらいにしよう。だから最近、試験問題を データset として扱ってみることに興味を持った。
+これを他人に使わせるよう説得する consultants には、地獄に特別な場所があるはずだ。それが一体誰に、何のために役立つのかは God-knows-what-or-why だが。ともあれ、愚痴はこのくらいにしよう。だから最近、試験問題を データセット として扱ってみることに興味を持った。
 
 # Exams as Data
 
-考えてみてほしい。標準化された試験より **structured** で、**consistent** で、**cleaner** な データset があるだろうか!?!?!? 問題数、question 種類s、定義された syllabi などがいつも同じだ。まるで データ scientist にとっての wet dream だ... PDFs を処理し始めるまでは。練習用の試験を生成し、LLM にそれを解かせ、さらに全員のための AI tutor にするというアイデアも、私には非常に面白い。なぜなら私にとって要点は単純で、試験は人間のために作られていないからだ。administration と 論文work には極めて便利だが、intelligence を測る指標としてはあまりに貧弱だ。AGI への道で世界が本当に欠いているのは、general intelligence とは実際何なのかを測る良い尺度のように思える。そして LLMs と exams の間にあるこの双方向の緊張が、standardized examinations をより良いものに置き換える未来につながるなら、それだけですでに人類への大きな貢献になるだろう。
+考えてみてほしい。標準化された試験より **structured** で、**consistent** で、**cleaner** な データセット があるだろうか!?!?!? 問題数、question 種類s、定義された syllabi などがいつも同じだ。まるで データ scientist にとっての wet dream だ... PDFs を処理し始めるまでは。練習用の試験を生成し、LLM にそれを解かせ、さらに全員のための AI tutor にするというアイデアも、私には非常に面白い。なぜなら私にとって要点は単純で、試験は人間のために作られていないからだ。administration と 論文work には極めて便利だが、intelligence を測る指標としてはあまりに貧弱だ。AGI への道で世界が本当に欠いているのは、general intelligence とは実際何なのかを測る良い尺度のように思える。そして LLMs と exams の間にあるこの双方向の緊張が、standardized examinations をより良いものに置き換える未来につながるなら、それだけですでに人類への大きな貢献になるだろう。
 
 # Finetuning GPT 3.5 to Generate IB Exams for Demonstration Purposes ONLY
 
-consultants のための特別な地獄の隣には、PDFs や excels を データsets として渡してくる人たちがいる。結果として Document AI はテキストの解析をかなりうまくやってくれることが分かったが、私は何も払いたくなかった。今振り返れば、素直に払って API を使わなかった方がむしろ無駄だったかもしれない。キーボードの上で散々手を締め上げた末に、たった 44 examples を渡して GPT 3.5 を finetune した。面白かったのは：
+consultants のための特別な地獄の隣には、PDFs や excels を データセット として渡してくる人たちがいる。結果として Document AI はテキストの解析をかなりうまくやってくれることが分かったが、私は何も払いたくなかった。今振り返れば、素直に払って API を使わなかった方がむしろ無駄だったかもしれない。キーボードの上で散々手を締め上げた末に、たった 44 examples を渡して GPT 3.5 を finetune した。面白かったのは：
 
 -   私の単語に含まれていたランダムな spacing の一部を忠実に再現した。つまり、与えられた distribution を本当に parroting している
     

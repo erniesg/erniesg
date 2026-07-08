@@ -1,11 +1,14 @@
 ---
-title: "開発者日記：データが乏しい領域の深層学習 I"
-description: "戦略、そして知能がなぜ指数的な力なのか"
-date: 2024-04-08
-authors: ["erniesg"]
+title: 開発者日記：データが乏しい領域の深層学習 I
+description: 戦略、そして知能がなぜ指数的な力なのか
+date: 2024-04-08T00:00:00.000Z
+authors:
+  - erniesg
 draft: false
-lang: "ja"
-translationKey: "developer-diaries-deep-learning-in-data-poor-regimes-i"
+lang: ja
+translationKey: developer-diaries-deep-learning-in-data-poor-regimes-i
+translationStatus: machine
+translationSource: codex
 ---
 
 私をかなり悩ませたことの一つは、3070 でマレーの太鼓音を再現するためにリアルタイム音声変分オートエンコーダ（RAVE）を訓練していたとき、なぜデータが増えてもより良い“結果”にならなかったのか、ということだった。やがて気づいた。これはただの基礎統計ではないか - 標本サイズが小さく分散が高ければ、少し外れ値なデータ点が一つあるだけで、モデル性能に不釣り合いな影響を与える。こうしたデータが乏しい環境は、世界のほとんどの利用場面におけるデフォルトの状態だ。いつものように良い知らせは、大きく強力なモデルを取り、私たちの限られたデータセットで微調整するだけで、多くのことを引き出せるということだ。[以前ここで示したように](https://www.youtube.com/watch?v=nwwEVWCHMxU)。

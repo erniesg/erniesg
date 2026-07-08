@@ -24,7 +24,8 @@ async function mark(files, status) {
       target.targetSha256 = sha256(file.raw)
       target.qualityStatus = status === 'final' ? 'human-final' : 'human-edited'
       target.reviewScore = status === 'final' ? 1 : target.reviewScore
-      target.unresolvedResearch = status === 'final' ? [] : target.unresolvedResearch
+      target.unresolvedResearch =
+        status === 'final' ? [] : target.unresolvedResearch
       target.humanUpdatedAt = nowIso()
     }
   }
@@ -33,7 +34,8 @@ async function mark(files, status) {
 
 async function main() {
   const args = parseArgs()
-  if (args._.length === 0) throw new Error('Usage: npm run translate:mark-edited -- <file...>')
+  if (args._.length === 0)
+    throw new Error('Usage: npm run translate:mark-edited -- <file...>')
   await mark(args._, 'edited')
   console.log(`Marked ${args._.length} translation(s) edited.`)
 }

@@ -36,12 +36,12 @@ describe('translation audit', () => {
         locale: 'ja',
       },
     )
-    expect(ko.errors.some((error) => error.includes('direct translation'))).toBe(
-      true,
-    )
-    expect(ja.errors.some((error) => error.includes('direct translation'))).toBe(
-      true,
-    )
+    expect(
+      ko.errors.some((error) => error.includes('direct translation')),
+    ).toBe(true)
+    expect(
+      ja.errors.some((error) => error.includes('direct translation')),
+    ).toBe(true)
   })
 
   it('allows the same technical words inside code fences', () => {

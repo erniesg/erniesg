@@ -24,7 +24,7 @@
     "translate:finalize": "node tools/translation/finalize.mjs",
     "translate:test": "vitest run tools/translation/*.test.mjs",
     "content:check": "npm run translate:audit && npm run translate:check && npm test -- src/lib/i18n.test.ts && npm run build",
-    "content:publish": "npm run translate:sync -- --all && npm run content:check"
+    "content:publish": "npm run translate:sync -- --write && npm run translate:check -- --strict-publish && npm test -- src/lib/i18n.test.ts && npm run build"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",

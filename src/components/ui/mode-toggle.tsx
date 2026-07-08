@@ -6,38 +6,50 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { getStaticText, useSiteLocale } from '@/lib/use-site-locale'
+import {
+  THEME_STORAGE_KEY,
+  isSiteTheme,
+  type SiteTheme,
+} from '@/lib/site-preferences'
 import { Laptop, Moon, Sun } from 'lucide-react'
 import * as React from 'react'
 
 export function ModeToggle() {
   const locale = useSiteLocale()
   const t = (key: string) => getStaticText(locale, key)
-  const [theme, setThemeState] = React.useState<
-    'theme-light' | 'dark' | 'system'
-  >('theme-light')
+  const [theme, setThemeState] = React.useState<SiteTheme>('system')
 
   React.useEffect(() => {
-    const isDarkMode = document.documentElement.classList.contains('dark')
-    setThemeState(isDarkMode ? 'dark' : 'theme-light')
+    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY)
+    setThemeState(isSiteTheme(storedTheme) ? storedTheme : 'system')
   }, [])
 
   React.useEffect(() => {
-    const isDark =
-      theme === 'dark' ||
-      (theme === 'system' &&
-        window.matchMedia('(prefers-color-scheme: dark)').matches)
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
-    document.documentElement.classList.add('disable-transitions')
+    const applyTheme = () => {
+      const isDark =
+        theme === 'dark' || (theme === 'system' && mediaQuery.matches)
 
-    document.documentElement.classList[isDark ? 'add' : 'remove']('dark')
+      document.documentElement.classList.add('disable-transitions')
 
-    window
-      .getComputedStyle(document.documentElement)
-      .getPropertyValue('opacity')
+      document.documentElement.classList[isDark ? 'add' : 'remove']('dark')
 
-    requestAnimationFrame(() => {
-      document.documentElement.classList.remove('disable-transitions')
-    })
+      window
+        .getComputedStyle(document.documentElement)
+        .getPropertyValue('opacity')
+
+      requestAnimationFrame(() => {
+        document.documentElement.classList.remove('disable-transitions')
+      })
+    }
+
+    localStorage.setItem(THEME_STORAGE_KEY, theme)
+    applyTheme()
+
+    if (theme !== 'system') return
+    mediaQuery.addEventListener('change', applyTheme)
+    return () => mediaQuery.removeEventListener('change', applyTheme)
   }, [theme])
 
   return (

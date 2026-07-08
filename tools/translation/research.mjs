@@ -85,7 +85,10 @@ export async function buildResearchReport({
 async function main() {
   const args = parseArgs()
   const [sourcePath] = args._
-  if (!sourcePath) throw new Error('Usage: npm run translate:research -- <source.mdx> --target zh')
+  if (!sourcePath)
+    throw new Error(
+      'Usage: npm run translate:research -- <source.mdx> --target zh',
+    )
   const report = await buildResearchReport({
     sourcePath,
     sourceLocale: args.source ?? 'en',

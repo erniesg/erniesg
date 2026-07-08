@@ -93,11 +93,23 @@ const translatedPosts = allPosts.filter(
 const availableLocales = SUPPORTED_LOCALES.filter((locale) =>
   translatedPosts.some((entry) => getLocaleFromPostId(entry.id) === locale),
 )
+function getLocalizedEntryPath(locale: SupportedLocale) {
+  const entry = translatedPosts.find(
+    (item) => getLocaleFromPostId(item.id) === locale,
+  )
+  return entry ? getPostLocalePath(entry.id, locale) : null
+}
 const alternates = Object.fromEntries(
-  availableLocales.map((locale) => [locale, getPostLocalePath(post.id, locale)]),
+  availableLocales.flatMap((locale) => {
+    const path = getLocalizedEntryPath(locale)
+    return path ? [[locale, path]] : []
+  }),
 ) as Partial<Record<SupportedLocale, string>>
 const localizedPaths = Object.fromEntries(
-  availableLocales.map((locale) => [locale, getPostLocalePath(post.id, locale)]),
+  availableLocales.flatMap((locale) => {
+    const path = getLocalizedEntryPath(locale)
+    return path ? [[locale, path]] : []
+  }),
 ) as Partial<Record<SupportedLocale, string>>
 ---
 
@@ -242,7 +254,8 @@ const localizedPaths = Object.fromEntries(
     currentLocale === DEFAULT_LOCALE && availableLocales.length > 1 && (
       <script is:inline define:vars={{ localizedPaths }}>
         document.addEventListener('astro:page-load', () => {
-          const savedLocale = localStorage.getItem('blogLang')
+          const savedLocale =
+            localStorage.getItem('siteLang') ?? localStorage.getItem('blogLang')
           const languages = navigator.languages ?? [navigator.language]
           const supportedLocales = ['zh', 'ko', 'ja', 'en']
           const detectedLocale = languages
@@ -257,7 +270,7 @@ const localizedPaths = Object.fromEntries(
             preferredLocale !== 'en' &&
             localizedPaths[preferredLocale]
           ) {
-            if (!savedLocale) localStorage.setItem('blogLang', preferredLocale)
+            if (!savedLocale) localStorage.setItem('siteLang', preferredLocale)
             window.location.assign(localizedPaths[preferredLocale])
           }
         })

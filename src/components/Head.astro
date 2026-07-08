@@ -87,6 +87,16 @@ const structuredData = {
     />
   )
 }
+{
+  alternates && (
+    <script
+      is:inline
+      id="site-locale-paths"
+      type="application/json"
+      set:html={JSON.stringify(alternates)}
+    />
+  )
+}
 
 <title>{title}</title>
 <meta name="title" content={title} />
@@ -113,7 +123,9 @@ const structuredData = {
 {
   Object.entries(ogLocales)
     .filter(([locale]) => locale !== lang)
-    .map(([, ogLocale]) => <meta property="og:locale:alternate" content={ogLocale} />)
+    .map(([, ogLocale]) => (
+      <meta property="og:locale:alternate" content={ogLocale} />
+    ))
 }
 
 <meta property="twitter:card" content="summary_large_image" />
@@ -132,37 +144,34 @@ const structuredData = {
 <ClientRouter />
 
 <script is:inline>
-  function setDarkMode(document) {
-    const getThemePreference = () => {
-      if (
-        typeof localStorage !== 'undefined' &&
-        localStorage.getItem('theme')
-      ) {
-        return localStorage.getItem('theme')
-      }
-      return window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'theme-light'
-    }
-    const isDark = getThemePreference() === 'dark'
-    document.documentElement.classList[isDark ? 'add' : 'remove']('dark')
+  const SITE_THEME_VALUES = new Set(['theme-light', 'dark', 'system'])
 
-    if (typeof localStorage !== 'undefined') {
-      const observer = new MutationObserver(() => {
-        const isDark = document.documentElement.classList.contains('dark')
-        localStorage.setItem('theme', isDark ? 'dark' : 'theme-light')
-      })
-      observer.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['class'],
-      })
-    }
+  function getThemePreference() {
+    if (typeof localStorage === 'undefined') return 'system'
+    const storedTheme = localStorage.getItem('theme')
+    return SITE_THEME_VALUES.has(storedTheme) ? storedTheme : 'system'
+  }
+
+  function prefersDarkTheme() {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  }
+
+  function setDarkMode(targetDocument) {
+    const theme = getThemePreference()
+    const isDark =
+      theme === 'dark' || (theme === 'system' && prefersDarkTheme())
+    targetDocument.documentElement.classList[isDark ? 'add' : 'remove']('dark')
   }
 
   setDarkMode(document)
 
   document.addEventListener('astro:before-swap', (ev) => {
-    // Pass the incoming document to set the theme on it
     setDarkMode(ev.newDocument)
   })
+
+  window
+    .matchMedia('(prefers-color-scheme: dark)')
+    .addEventListener('change', () => {
+      if (getThemePreference() === 'system') setDarkMode(document)
+    })
 </script>

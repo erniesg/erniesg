@@ -27,14 +27,16 @@ describe('MDX translation segmenter', () => {
     ].join('\n')
 
     const segments = extractSegments(mdx)
-    expect(segments.some((segment) => segment.kind === 'frontmatter-title')).toBe(
-      true,
-    )
+    expect(
+      segments.some((segment) => segment.kind === 'frontmatter-title'),
+    ).toBe(true)
     expect(
       segments.some((segment) => segment.kind === 'frontmatter-description'),
     ).toBe(true)
     expect(
-      segments.some((segment) => segment.sourceText === 'Translate this heading'),
+      segments.some(
+        (segment) => segment.sourceText === 'Translate this heading',
+      ),
     ).toBe(true)
     expect(
       segments.some(
@@ -45,7 +47,9 @@ describe('MDX translation segmenter', () => {
       segments.some((segment) => segment.sourceText === 'Translate image alt'),
     ).toBe(true)
     expect(
-      segments.some((segment) => segment.sourceText === 'Translate this link text'),
+      segments.some(
+        (segment) => segment.sourceText === 'Translate this link text',
+      ),
     ).toBe(true)
   })
 
@@ -78,7 +82,9 @@ describe('MDX translation segmenter', () => {
       segments.some((segment) => segment.sourceText.includes('const preload')),
     ).toBe(false)
     expect(
-      segments.some((segment) => segment.sourceText.includes('https://example.com')),
+      segments.some((segment) =>
+        segment.sourceText.includes('https://example.com'),
+      ),
     ).toBe(false)
   })
 

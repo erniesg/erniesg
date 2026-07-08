@@ -21,7 +21,11 @@ import {
 import { extractSegments, applySegmentTranslations } from './segments.mjs'
 import { lockedRegionHash } from './locked-regions.mjs'
 import { buildResearchReport } from './research.mjs'
-import { buildTranslationPrompt, loadStyleContext, translationJsonSchema } from './prompts.mjs'
+import {
+  buildTranslationPrompt,
+  loadStyleContext,
+  translationJsonSchema,
+} from './prompts.mjs'
 import { createStructuredTranslation, providerConfigFor } from './providers.mjs'
 import { auditMdxText } from './audit.mjs'
 
@@ -34,7 +38,8 @@ export async function generateTranslation({
   const manifest = await loadManifest()
   const normalizedSourcePath = toPosixPath(sourcePath)
   const source = await readMdxFile(normalizedSourcePath)
-  const sourceLocale = source.frontmatter.lang ?? localeFromPath(normalizedSourcePath)
+  const sourceLocale =
+    source.frontmatter.lang ?? localeFromPath(normalizedSourcePath)
   const targetPath = targetPathForLocale(normalizedSourcePath, targetLocale)
   const familyKey = familyKeyFromPath(normalizedSourcePath)
   const segments = extractSegments(source.raw)
@@ -67,9 +72,14 @@ export async function generateTranslation({
     translationStatus: 'machine',
     translationSource: 'codex',
   })
-  const audit = auditMdxText(targetRaw, { path: targetPath, locale: targetLocale })
+  const audit = auditMdxText(targetRaw, {
+    path: targetPath,
+    locale: targetLocale,
+  })
   if (audit.errors.length > 0) {
-    throw new Error(`Generated translation failed audit:\n${audit.errors.join('\n')}`)
+    throw new Error(
+      `Generated translation failed audit:\n${audit.errors.join('\n')}`,
+    )
   }
 
   try {
@@ -114,14 +124,21 @@ export async function generateTranslation({
     await saveManifest(manifest)
   }
 
-  return { targetPath, targetLocale, wrote: write, unresolvedResearch: result.unresolvedResearch ?? [] }
+  return {
+    targetPath,
+    targetLocale,
+    wrote: write,
+    unresolvedResearch: result.unresolvedResearch ?? [],
+  }
 }
 
 async function main() {
   const args = parseArgs()
   const [sourcePath] = args._
   if (!sourcePath || !args.target) {
-    throw new Error('Usage: npm run translate:generate -- <source.mdx> --target zh --write')
+    throw new Error(
+      'Usage: npm run translate:generate -- <source.mdx> --target zh --write',
+    )
   }
   const result = await generateTranslation({
     sourcePath,
@@ -129,7 +146,8 @@ async function main() {
     write: Boolean(args.write),
   })
   console.log(`${result.wrote ? 'Wrote' : 'Generated'} ${result.targetPath}`)
-  if (!result.wrote) console.log('Dry run only. Re-run with --write to save the translation.')
+  if (!result.wrote)
+    console.log('Dry run only. Re-run with --write to save the translation.')
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

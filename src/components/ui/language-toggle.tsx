@@ -16,23 +16,34 @@ import {
   getStaticText,
   normalizeLocalePreference,
 } from '@/lib/use-site-locale'
+import {
+  LEGACY_BLOG_LOCALE_STORAGE_KEY,
+  SITE_LOCALE_CHANGE_EVENT,
+  SITE_LOCALE_STORAGE_KEY,
+} from '@/lib/site-preferences'
 import { Check, Languages } from 'lucide-react'
 import * as React from 'react'
 
-const supportedLocales = new Set<string>(SUPPORTED_LOCALES)
+function getLocalizedPagePath(locale: SupportedLocale) {
+  const mapElement = document.getElementById('site-locale-paths')
+  if (!mapElement?.textContent) return null
 
-function getCurrentBlogPostPath(locale: SupportedLocale) {
-  const parts = window.location.pathname.split('/').filter(Boolean)
-  if (parts[0] !== 'blog' || !parts[1]) return null
-  if (/^\d+$/.test(parts[1])) return null
+  try {
+    const paths = JSON.parse(mapElement.textContent) as Partial<
+      Record<SupportedLocale, string>
+    >
+    return paths[locale] ?? null
+  } catch {
+    return null
+  }
+}
 
-  const lastPart = parts.at(-1)
-  const hasLocaleSuffix = lastPart ? supportedLocales.has(lastPart) : false
-  const canonicalParts = hasLocaleSuffix ? parts.slice(0, -1) : parts
-
-  if (canonicalParts.length !== 2) return null
-
-  return `/${[...canonicalParts, ...(locale === 'en' ? [] : [locale])].join('/')}`
+function dispatchLocaleChange(locale: SupportedLocale) {
+  window.dispatchEvent(
+    new CustomEvent(SITE_LOCALE_CHANGE_EVENT, {
+      detail: { locale },
+    }),
+  )
 }
 
 export function LanguageToggle() {
@@ -40,30 +51,24 @@ export function LanguageToggle() {
   const t = (key: string) => getStaticText(locale, key)
 
   React.useEffect(() => {
-    const savedLocale = normalizeLocalePreference(localStorage.getItem('blogLang'))
-    const nextLocale = localStorage.getItem('blogLang')
-      ? savedLocale
+    const storedLocale =
+      localStorage.getItem(SITE_LOCALE_STORAGE_KEY) ??
+      localStorage.getItem(LEGACY_BLOG_LOCALE_STORAGE_KEY)
+    const nextLocale = storedLocale
+      ? normalizeLocalePreference(storedLocale)
       : detectPreferredLocale()
 
-    localStorage.setItem('blogLang', nextLocale)
+    localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
     setLocale(nextLocale)
-    window.dispatchEvent(
-      new CustomEvent('blog-language-change', {
-        detail: { locale: nextLocale },
-      }),
-    )
+    dispatchLocaleChange(nextLocale)
   }, [])
 
   function chooseLocale(nextLocale: SupportedLocale) {
-    localStorage.setItem('blogLang', nextLocale)
+    localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
     setLocale(nextLocale)
-    window.dispatchEvent(
-      new CustomEvent('blog-language-change', {
-        detail: { locale: nextLocale },
-      }),
-    )
+    dispatchLocaleChange(nextLocale)
 
-    const nextPath = getCurrentBlogPostPath(nextLocale)
+    const nextPath = getLocalizedPagePath(nextLocale)
     if (nextPath && nextPath !== window.location.pathname) {
       window.location.assign(nextPath)
     }

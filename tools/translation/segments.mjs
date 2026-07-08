@@ -45,7 +45,10 @@ function pushMarkdownLineSegments(segments, line, lineStart) {
   const trimmed = line.trim()
   if (!trimmed) return
   if (/^(?:import|export)\s/.test(trimmed)) return
-  if (/^<\/?[A-Z][\w.:-]*/.test(trimmed) || /^<\/?[a-z][\w.:-]*/.test(trimmed)) {
+  if (
+    /^<\/?[A-Z][\w.:-]*/.test(trimmed) ||
+    /^<\/?[a-z][\w.:-]*/.test(trimmed)
+  ) {
     pushHtmlAttributeSegments(segments, line, lineStart)
     return
   }
@@ -66,17 +69,37 @@ function pushMarkdownLineSegments(segments, line, lineStart) {
   pushImageAltSegments(segments, line, lineStart)
   pushLinkTextSegments(segments, line, lineStart)
 
-  if (/^[-*+]\s+\[[ x]\]/.test(trimmed) || /^[-*+]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
-    const prefix = line.match(/^(\s*(?:[-*+]|\d+\.)\s+(?:\[[ x]\]\s*)?)/)?.[1] ?? ''
+  if (
+    /^[-*+]\s+\[[ x]\]/.test(trimmed) ||
+    /^[-*+]\s+/.test(trimmed) ||
+    /^\d+\.\s+/.test(trimmed)
+  ) {
+    const prefix =
+      line.match(/^(\s*(?:[-*+]|\d+\.)\s+(?:\[[ x]\]\s*)?)/)?.[1] ?? ''
     const text = line.slice(prefix.length)
     if (!/[`<>\][]/.test(text)) {
-      addSegment(segments, 'markdown-list-item', text, lineStart + prefix.length, lineStart + line.length)
+      addSegment(
+        segments,
+        'markdown-list-item',
+        text,
+        lineStart + prefix.length,
+        lineStart + line.length,
+      )
     }
     return
   }
 
-  if (!/[`<>\][]/.test(line) && /[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(line)) {
-    addSegment(segments, 'markdown-paragraph', line.trim(), lineStart + line.indexOf(line.trim()), lineStart + line.indexOf(line.trim()) + line.trim().length)
+  if (
+    !/[`<>\][]/.test(line) &&
+    /[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(line)
+  ) {
+    addSegment(
+      segments,
+      'markdown-paragraph',
+      line.trim(),
+      lineStart + line.indexOf(line.trim()),
+      lineStart + line.indexOf(line.trim()) + line.trim().length,
+    )
   }
 }
 
@@ -84,7 +107,13 @@ function pushImageAltSegments(segments, line, lineStart) {
   const regex = /!\[([^\]]+)\]\(([^)]+)\)/g
   for (const match of line.matchAll(regex)) {
     const altStart = lineStart + match.index + 2
-    addSegment(segments, 'markdown-image-alt', match[1], altStart, altStart + match[1].length)
+    addSegment(
+      segments,
+      'markdown-image-alt',
+      match[1],
+      altStart,
+      altStart + match[1].length,
+    )
   }
 }
 
@@ -94,7 +123,13 @@ function pushLinkTextSegments(segments, line, lineStart) {
     const linkText = match[1]
     if (/^https?:\/\//.test(linkText)) continue
     const textStart = lineStart + match.index + 1
-    addSegment(segments, 'markdown-link-text', linkText, textStart, textStart + linkText.length)
+    addSegment(
+      segments,
+      'markdown-link-text',
+      linkText,
+      textStart,
+      textStart + linkText.length,
+    )
   }
 }
 
@@ -103,7 +138,13 @@ function pushHtmlAttributeSegments(segments, line, lineStart) {
   for (const match of line.matchAll(regex)) {
     if (!TRANSLATABLE_ATTRS.has(match[1])) continue
     const valueStart = lineStart + match.index + match[0].indexOf(match[2])
-    addSegment(segments, `html-${match[1]}`, match[2], valueStart, valueStart + match[2].length)
+    addSegment(
+      segments,
+      `html-${match[1]}`,
+      match[2],
+      valueStart,
+      valueStart + match[2].length,
+    )
   }
 }
 
@@ -169,7 +210,9 @@ export function applySegmentTranslations(raw, translationsById) {
   for (const segment of segments) {
     if (!Object.hasOwn(translationsById, segment.id)) continue
     if (segment.unsafeRange) {
-      throw new Error(`Segment ${segment.id} does not have a safe source range.`)
+      throw new Error(
+        `Segment ${segment.id} does not have a safe source range.`,
+      )
     }
     replacements.push({
       start: segment.start,

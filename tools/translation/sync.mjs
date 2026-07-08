@@ -8,7 +8,6 @@ import {
   isProtectedPath,
   loadConfig,
   loadManifest,
-  localeFromPath,
   parseArgs,
   readMdxFile,
   sha256,
@@ -33,7 +32,12 @@ export async function syncTranslations({ write = false, all = false } = {}) {
   for (const sourcePath of await sourcePosts(config)) {
     const source = await readMdxFile(sourcePath)
     const sourceLocale = source.frontmatter.lang ?? DEFAULT_LOCALE
-    for (const targetLocale of config.requiredPublishLocales ?? ['en', 'zh', 'ko', 'ja']) {
+    for (const targetLocale of config.requiredPublishLocales ?? [
+      'en',
+      'zh',
+      'ko',
+      'ja',
+    ]) {
       if (targetLocale === sourceLocale) continue
       const targetPath = targetPathForLocale(sourcePath, targetLocale)
       const target = getManifestTarget(manifest, targetPath)
@@ -41,7 +45,12 @@ export async function syncTranslations({ write = false, all = false } = {}) {
         .access(targetPath)
         .then(() => true)
         .catch(() => false)
-      const stale = Boolean(target && target.sourceSha256 !== sha256(source.raw))
+      if (target && target.status !== 'machine') continue
+      const stale = Boolean(
+        target &&
+          target.status === 'machine' &&
+          target.sourceSha256 !== sha256(source.raw),
+      )
       if (!exists || stale || all) {
         results.push(
           await generateTranslation({
@@ -64,13 +73,20 @@ async function main() {
     all: Boolean(args.all),
   })
   if (results.length === 0) {
-    console.log('All required translations are present and source hashes match manifest.')
+    console.log(
+      'All required translations are present and source hashes match manifest.',
+    )
     return
   }
   for (const result of results) {
-    console.log(`${result.wrote ? 'wrote' : 'would-write'}: ${result.targetPath}`)
+    console.log(
+      `${result.wrote ? 'wrote' : 'would-write'}: ${result.targetPath}`,
+    )
   }
-  if (!args.write) console.log('Dry run only. Re-run with --write to save generated translations.')
+  if (!args.write)
+    console.log(
+      'Dry run only. Re-run with --write to save generated translations.',
+    )
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

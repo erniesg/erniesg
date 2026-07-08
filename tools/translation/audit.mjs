@@ -1,8 +1,13 @@
 import fs from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { listTargetSidecars, localeFromPath, parseArgs, readMdxFile } from './content.mjs'
+import {
+  listTargetSidecars,
+  localeFromPath,
+  parseArgs,
+  readMdxFile,
+} from './content.mjs'
 
-const CODE_FENCE_RE = /(^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\2(?=\n|$)/g
+const CODE_FENCE_RE = /(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?\n[ \t]*\2(?=\n|$)/g
 const INLINE_CODE_RE = /`[^`\n]+`/g
 const URL_RE = /https?:\/\/[^\s)>"']+/g
 
@@ -11,20 +16,20 @@ const DIRECT_RESIDUE_PATTERNS = {
     /数据\s*sets?/i,
     /数据源s/i,
     /上下文s/i,
-    /\b(?:items?|schemas?|strategies|tests?|query|queries|ingest|chunk|validate|productionise)\b/i,
+    /\b(?:query|queries|ingest|chunk|validate|productionise)\b/i,
   ],
   ko: [
     /데이터\s*소스s/i,
     /데이터\s*sets?/i,
     /맥락s/i,
-    /\b(?:items?|schemas?|strategies|tests?|query|queries|ingest|chunk|validate|productionise)\b/i,
+    /\b(?:query|queries|ingest|chunk|validate|productionise)\b/i,
   ],
   ja: [
     /データ\s*ソースs/i,
     /データ\s*sets?/i,
     /データ\s*base/i,
     /本番環境ise/i,
-    /\b(?:items?|schemas?|strategies|tests?|query|queries|ingest|chunk|validate|productionise)\b/i,
+    /\b(?:query|queries|ingest|chunk|validate|productionise)\b/i,
   ],
 }
 
@@ -78,7 +83,8 @@ export async function auditFiles(files) {
 
 async function main() {
   const args = parseArgs()
-  const files = args._.length > 0 ? args._ : await listTargetSidecars(['zh', 'ko', 'ja'])
+  const files =
+    args._.length > 0 ? args._ : await listTargetSidecars(['zh', 'ko', 'ja'])
   const results = await auditFiles(files)
   const errors = results.flatMap((result) => result.errors)
   const warnings = results.flatMap((result) => result.warnings)

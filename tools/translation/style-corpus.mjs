@@ -5,7 +5,9 @@ import { loadConfig, parseArgs } from './content.mjs'
 
 const OUTPUT_PATH = '.translation/style-corpus/zh-human.md'
 
-export async function buildChineseStyleCorpus({ outputPath = OUTPUT_PATH } = {}) {
+export async function buildChineseStyleCorpus({
+  outputPath = OUTPUT_PATH,
+} = {}) {
   const config = await loadConfig()
   const sections = [
     '# Ernie Human Chinese Style Corpus',
@@ -39,7 +41,9 @@ export async function buildChineseStyleCorpus({ outputPath = OUTPUT_PATH } = {})
     sections.push('', prose, '')
   }
 
-  await fs.mkdir(outputPath.split('/').slice(0, -1).join('/'), { recursive: true })
+  await fs.mkdir(outputPath.split('/').slice(0, -1).join('/'), {
+    recursive: true,
+  })
   await fs.writeFile(outputPath, `${sections.join('\n').trim()}\n`)
   return outputPath
 }

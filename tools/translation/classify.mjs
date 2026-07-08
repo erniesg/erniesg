@@ -63,14 +63,20 @@ async function classifyFile(filePath, { config, manifest, apply }) {
     qualityStatus: 'unreviewed',
     reviewScore: null,
     researchNotes: [],
-    unresolvedResearch: ['classified-existing-machine-translation-needs-review'],
+    unresolvedResearch: [
+      'classified-existing-machine-translation-needs-review',
+    ],
   }
 
   if (apply) {
     await fs.writeFile(normalized, updatedRaw)
   }
 
-  return { filePath: normalized, locale, action: apply ? 'classified' : 'would-classify' }
+  return {
+    filePath: normalized,
+    locale,
+    action: apply ? 'classified' : 'would-classify',
+  }
 }
 
 export async function classifyExistingTranslations({ apply = false } = {}) {
@@ -96,7 +102,10 @@ async function main() {
   for (const [action, count] of Object.entries(counts)) {
     console.log(`${action}: ${count}`)
   }
-  if (!apply) console.log('Dry run only. Re-run with --apply to write metadata and manifest records.')
+  if (!apply)
+    console.log(
+      'Dry run only. Re-run with --apply to write metadata and manifest records.',
+    )
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

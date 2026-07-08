@@ -11,11 +11,15 @@ import {
 describe('blog i18n helpers', () => {
   it('maps canonical and localized post ids without changing the English URL', () => {
     expect(getCanonicalPostId('example-post')).toBe('example-post')
+    expect(getCanonicalPostId('example-post/en')).toBe('example-post')
     expect(getCanonicalPostId('example-post/zh')).toBe('example-post')
     expect(getCanonicalPostId('example-post/ko')).toBe('example-post')
     expect(getCanonicalPostId('example-post/ja')).toBe('example-post')
 
     expect(getLocalizedPostId('example-post', DEFAULT_LOCALE)).toBe(
+      'example-post',
+    )
+    expect(getLocalizedPostId('example-post/en', DEFAULT_LOCALE)).toBe(
       'example-post',
     )
     expect(getLocalizedPostId('example-post', 'zh')).toBe('example-post/zh')

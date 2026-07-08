@@ -8,7 +8,9 @@ export function providerConfigFor(config, purpose, locale) {
     return config.providers?.research?.[locale] ?? config.providers?.default
   }
   if (purpose === 'review') {
-    return config.providers?.review?.pass1?.[locale] ?? config.providers?.default
+    return (
+      config.providers?.review?.pass1?.[locale] ?? config.providers?.default
+    )
   }
   return config.providers?.default
 }
@@ -25,7 +27,9 @@ export function assertProviderReady(config, providerConfig) {
     }
   }
   if (!capabilities?.supportsStructuredJson) {
-    throw new Error(`${providerName} is not configured for structured JSON translation output.`)
+    throw new Error(
+      `${providerName} is not configured for structured JSON translation output.`,
+    )
   }
 }
 
@@ -36,7 +40,8 @@ function responseText(response) {
   const chunks = []
   for (const item of response.output ?? []) {
     for (const content of item.content ?? []) {
-      if (content.type === 'output_text' && content.text) chunks.push(content.text)
+      if (content.type === 'output_text' && content.text)
+        chunks.push(content.text)
     }
   }
   return chunks.join('\n')
@@ -55,7 +60,9 @@ export async function createStructuredTranslation({
     baseURL: process.env.OPENAI_BASE_URL || undefined,
   })
   const model =
-    process.env.OPENAI_TRANSLATION_MODEL || providerConfig.model || config.providers?.default?.model
+    process.env.OPENAI_TRANSLATION_MODEL ||
+    providerConfig.model ||
+    config.providers?.default?.model
   const response = await client.responses.create({
     model,
     input: [
@@ -79,6 +86,51 @@ export async function createStructuredTranslation({
       format: {
         type: 'json_schema',
         name: 'mdx_translation_segments',
+        schema,
+        strict: true,
+      },
+    },
+  })
+  return JSON.parse(responseText(response))
+}
+
+export async function createStructuredReview({
+  config,
+  providerConfig,
+  systemPrompt,
+  sourceText,
+  targetText,
+  schema,
+}) {
+  assertProviderReady(config, providerConfig)
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || undefined,
+  })
+  const model =
+    process.env.OPENAI_REVIEW_MODEL ||
+    providerConfig.model ||
+    config.providers?.default?.model
+  const response = await client.responses.create({
+    model,
+    input: [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: JSON.stringify(
+          {
+            sourceText,
+            targetText,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'translation_native_review',
         schema,
         strict: true,
       },

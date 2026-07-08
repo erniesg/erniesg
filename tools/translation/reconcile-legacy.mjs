@@ -66,7 +66,11 @@ export async function reconcileLegacyChinese({ apply = false } = {}) {
     if (apply) {
       await fs.writeFile(targetPath, targetRaw)
     }
-    results.push({ legacyPath, targetPath, action: apply ? 'reconciled' : 'would-reconcile' })
+    results.push({
+      legacyPath,
+      targetPath,
+      action: apply ? 'reconciled' : 'would-reconcile',
+    })
   }
 
   if (apply) await saveManifest(manifest)
@@ -77,9 +81,14 @@ async function main() {
   const args = parseArgs()
   const results = await reconcileLegacyChinese({ apply: Boolean(args.apply) })
   for (const result of results) {
-    console.log(`${result.action}: ${result.legacyPath} -> ${result.targetPath}`)
+    console.log(
+      `${result.action}: ${result.legacyPath} -> ${result.targetPath}`,
+    )
   }
-  if (!args.apply) console.log('Dry run only. Re-run with --apply to copy and protect legacy Chinese sidecars.')
+  if (!args.apply)
+    console.log(
+      'Dry run only. Re-run with --apply to copy and protect legacy Chinese sidecars.',
+    )
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

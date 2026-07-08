@@ -128,7 +128,10 @@ export function targetPathForLocale(sourcePath, locale) {
 
 export function ensureFamily(manifest, familyKey) {
   manifest.families ??= {}
-  manifest.families[familyKey] ??= { sourcePath: `${BLOG_ROOT}/${familyKey}/index.mdx`, targets: {} }
+  manifest.families[familyKey] ??= {
+    sourcePath: `${BLOG_ROOT}/${familyKey}/index.mdx`,
+    targets: {},
+  }
   manifest.families[familyKey].targets ??= {}
   return manifest.families[familyKey]
 }

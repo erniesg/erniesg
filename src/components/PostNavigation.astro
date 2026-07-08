@@ -1,7 +1,12 @@
 ---
 import Link from '@/components/Link.astro'
 import { buttonVariants } from '@/components/ui/button'
-import { DEFAULT_LOCALE, getPostLocalePath, type SupportedLocale } from '@/lib/i18n'
+import {
+  DEFAULT_LOCALE,
+  getLocaleFromPostId,
+  getPostLocalePath,
+  type SupportedLocale,
+} from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { Icon } from 'astro-icon/components'
 import type { CollectionEntry } from 'astro:content'
@@ -40,18 +45,24 @@ const POST_NAV_LABELS: Record<SupportedLocale, Labels> = {
   },
 }
 
-const { prevPost, nextPost, locale = DEFAULT_LOCALE } = Astro.props as {
+const {
+  prevPost,
+  nextPost,
+  locale = DEFAULT_LOCALE,
+} = Astro.props as {
   prevPost: CollectionEntry<'blog'> | null
   nextPost: CollectionEntry<'blog'> | null
   locale?: SupportedLocale
 }
 
 const labels = POST_NAV_LABELS[locale]
+const nextPostLocale = nextPost ? getLocaleFromPostId(nextPost.id) : locale
+const prevPostLocale = prevPost ? getLocaleFromPostId(prevPost.id) : locale
 ---
 
 <div class="col-start-2 flex flex-col gap-4 sm:flex-row">
   <Link
-    href={nextPost ? getPostLocalePath(nextPost.id, locale) : '#'}
+    href={nextPost ? getPostLocalePath(nextPost.id, nextPostLocale) : '#'}
     class={cn(
       buttonVariants({ variant: 'outline' }),
       'rounded-xl group flex items-center justify-start w-full sm:w-1/2 h-fit',
@@ -75,7 +86,7 @@ const labels = POST_NAV_LABELS[locale]
     </div>
   </Link>
   <Link
-    href={prevPost ? getPostLocalePath(prevPost.id, locale) : '#'}
+    href={prevPost ? getPostLocalePath(prevPost.id, prevPostLocale) : '#'}
     class={cn(
       buttonVariants({ variant: 'outline' }),
       'rounded-xl group flex items-center justify-end w-full sm:w-1/2 h-fit',

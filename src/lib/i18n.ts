@@ -265,7 +265,8 @@ export const STATIC_TRANSLATIONS: Record<
     'about.featuredProjects': '注目プロジェクト',
     'author.erniesg.bio':
       'Chen Enjiao は SPH Media Limited のシニア AI エンジニアです（2026年4月より）。以前は Tech in Asia で Editorial AI and Automation Lead を務めました。多言語性、マルチモーダル AI、実際に影響を生むソリューション構築に関心があります。技術知識の民主化を目指して Code for Asia（2016-2023）を創設し、現在は MITx DEDP を履修しながら AI、文化、経済の交差点を探求しています。',
-    'project.neural-art-search.name': 'ニューラルアート検索 (Neural Art Search)',
+    'project.neural-art-search.name':
+      'ニューラルアート検索 (Neural Art Search)',
     'project.neural-art-search.description':
       'National Gallery Singapore のコレクション作品のためのニューラル検索システムです。高度な意味検索によって、作品を直感的に発見できます。',
     'project.storylabs.name': 'ストーリーラボ (StoryLabs)',
@@ -300,9 +301,7 @@ export function getLocaleFromPostId(id: string): SupportedLocale {
 export function getCanonicalPostId(id: string): string {
   const parts = id.split('/')
   const suffix = parts.at(-1)
-  return suffix && isSupportedLocale(suffix) && suffix !== DEFAULT_LOCALE
-    ? parts.slice(0, -1).join('/')
-    : id
+  return suffix && isSupportedLocale(suffix) ? parts.slice(0, -1).join('/') : id
 }
 
 export function getLocalizedPostId(
@@ -313,10 +312,7 @@ export function getLocalizedPostId(
   return locale === DEFAULT_LOCALE ? canonicalId : `${canonicalId}/${locale}`
 }
 
-export function getPostLocalePath(
-  id: string,
-  locale: SupportedLocale,
-): string {
+export function getPostLocalePath(id: string, locale: SupportedLocale): string {
   return `/blog/${getLocalizedPostId(id, locale)}`
 }
 

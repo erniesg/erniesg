@@ -13,7 +13,8 @@ import {
 } from './content.mjs'
 import { auditMdxText } from './audit.mjs'
 
-const IGNORED_RE = /(^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\2(?=\n|$)|`[^`\n]+`|https?:\/\/[^\s)>"']+/g
+const IGNORED_RE =
+  /(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?\n[ \t]*\2(?=\n|$)|`[^`\n]+`|https?:\/\/[^\s)>"']+/g
 
 const REPAIRS = {
   zh: [
@@ -85,7 +86,9 @@ function replaceOutsideIgnored(text, regex, replacement) {
   return text.replace(regex, (match, ...args) => {
     const offset = args.at(-2)
     if (overlapsIgnored(offset, offset + match.length, ranges)) return match
-    return typeof replacement === 'function' ? replacement(match, ...args) : replacement
+    return typeof replacement === 'function'
+      ? replacement(match, ...args)
+      : replacement
   })
 }
 
@@ -111,7 +114,13 @@ export async function repairMachineTranslations({ apply = false } = {}) {
     }
 
     const manifestTarget = getManifestTarget(manifest, filePath)
-    if (!canWriteExistingTarget({ frontmatter: file.frontmatter, manifestTarget, currentText: file.raw })) {
+    if (
+      !canWriteExistingTarget({
+        frontmatter: file.frontmatter,
+        manifestTarget,
+        currentText: file.raw,
+      })
+    ) {
       results.push({ filePath, action: 'skipped-hash-drift' })
       continue
     }
@@ -124,7 +133,11 @@ export async function repairMachineTranslations({ apply = false } = {}) {
 
     const audit = auditMdxText(repaired, { path: filePath, locale })
     if (audit.errors.length > 0) {
-      results.push({ filePath, action: 'needs-manual-repair', errors: audit.errors })
+      results.push({
+        filePath,
+        action: 'needs-manual-repair',
+        errors: audit.errors,
+      })
       continue
     }
 
@@ -132,7 +145,10 @@ export async function repairMachineTranslations({ apply = false } = {}) {
     manifestTarget.repairedAt = nowIso()
     manifestTarget.qualityStatus = 'mechanical-passed'
     manifestTarget.unresolvedResearch = [
-      ...new Set([...(manifestTarget.unresolvedResearch ?? []), 'native-review-required-after-deterministic-repair']),
+      ...new Set([
+        ...(manifestTarget.unresolvedResearch ?? []),
+        'native-review-required-after-deterministic-repair',
+      ]),
     ]
 
     if (apply) {
@@ -147,16 +163,22 @@ export async function repairMachineTranslations({ apply = false } = {}) {
 
 async function main() {
   const args = parseArgs()
-  const results = await repairMachineTranslations({ apply: Boolean(args.apply) })
+  const results = await repairMachineTranslations({
+    apply: Boolean(args.apply),
+  })
   const counts = results.reduce((acc, result) => {
     acc[result.action] = (acc[result.action] ?? 0) + 1
     return acc
   }, {})
-  for (const [action, count] of Object.entries(counts)) console.log(`${action}: ${count}`)
+  for (const [action, count] of Object.entries(counts))
+    console.log(`${action}: ${count}`)
   for (const result of results.filter((item) => item.errors?.length)) {
     console.error(`${result.filePath}:\n${result.errors.join('\n')}`)
   }
-  if (!args.apply) console.log('Dry run only. Re-run with --apply to repair machine-owned translations.')
+  if (!args.apply)
+    console.log(
+      'Dry run only. Re-run with --apply to repair machine-owned translations.',
+    )
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

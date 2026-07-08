@@ -2,8 +2,6 @@
 import AvatarComponent from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { parseAuthors } from '@/lib/server-utils'
-import { formatDate, readingTime } from '@/lib/utils'
 import {
   SUPPORTED_LOCALES,
   getCanonicalPostId,
@@ -12,6 +10,8 @@ import {
   getTagLabel,
   isLegacyChinesePostId,
 } from '@/lib/i18n'
+import { parseAuthors } from '@/lib/server-utils'
+import { formatDate, readingTime } from '@/lib/utils'
 import { Image } from 'astro:assets'
 import { type CollectionEntry, getCollection } from 'astro:content'
 import Link from './Link.astro'
@@ -43,28 +43,34 @@ type CardLocalization = {
   imageAlt: string
 }
 
-const localizedEntries: [string, CardLocalization][] = SUPPORTED_LOCALES.flatMap((postLocale) => {
-  const localizedEntry = allPosts.find(
-    (post) =>
-      getCanonicalPostId(post.id) === canonicalId &&
-      getLocaleFromPostId(post.id) === postLocale,
-  )
+const localizedEntries: [string, CardLocalization][] =
+  SUPPORTED_LOCALES.flatMap((postLocale) => {
+    const localizedEntry = allPosts.find(
+      (post) =>
+        getCanonicalPostId(post.id) === canonicalId &&
+        getLocaleFromPostId(post.id) === postLocale,
+    )
 
-  if (!localizedEntry) return []
+    if (!localizedEntry) return []
 
-  return [[
-    postLocale,
-    {
-      url: getPostLocalePath(entry.id, postLocale),
-      title: localizedEntry.data.title,
-      description: localizedEntry.data.description,
-      date: formatDate(localizedEntry.data.date, postLocale),
-      readTime: readingTime(localizedEntry.body!, postLocale),
-      tags: localizedEntry.data.tags?.map((tag) => getTagLabel(tag, postLocale)) ?? [],
-      imageAlt: localizedEntry.data.title,
-    },
-  ]]
-})
+    return [
+      [
+        postLocale,
+        {
+          url: getPostLocalePath(localizedEntry.id, postLocale),
+          title: localizedEntry.data.title,
+          description: localizedEntry.data.description,
+          date: formatDate(localizedEntry.data.date, postLocale),
+          readTime: readingTime(localizedEntry.body!, postLocale),
+          tags:
+            localizedEntry.data.tags?.map((tag) =>
+              getTagLabel(tag, postLocale),
+            ) ?? [],
+          imageAlt: localizedEntry.data.title,
+        },
+      ],
+    ]
+  })
 
 const cardLocalizations = JSON.stringify(Object.fromEntries(localizedEntries))
 ---

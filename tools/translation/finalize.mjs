@@ -33,7 +33,8 @@ async function finalize(files) {
 
 async function main() {
   const args = parseArgs()
-  if (args._.length === 0) throw new Error('Usage: npm run translate:finalize -- <file...>')
+  if (args._.length === 0)
+    throw new Error('Usage: npm run translate:finalize -- <file...>')
   await finalize(args._)
   console.log(`Finalized ${args._.length} translation(s).`)
 }

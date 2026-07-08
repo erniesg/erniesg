@@ -10,7 +10,10 @@ export async function loadStyleContext(targetLocale) {
   let corpus = ''
   if (targetLocale === 'zh') {
     try {
-      corpus = await fs.readFile('.translation/style-corpus/zh-human.md', 'utf8')
+      corpus = await fs.readFile(
+        '.translation/style-corpus/zh-human.md',
+        'utf8',
+      )
     } catch {
       corpus = ''
     }
@@ -85,6 +88,73 @@ export function translationJsonSchema(segmentIds) {
         type: 'array',
         items: { type: 'string' },
       },
+    },
+  }
+}
+
+export function buildReviewPrompt({
+  sourceLocale,
+  targetLocale,
+  sourcePath,
+  targetPath,
+  styleContext,
+  reviewerProfile,
+}) {
+  return [
+    `You are a ${reviewerProfile} for ${targetLocale} translations.`,
+    'Review as a native bilingual editor, not as the original translator.',
+    'Reject direct translation, awkward calques, hybrid suffixes, mistranslated technical terms, broken MDX, and tone drift.',
+    'Accept deliberate preservation of product names, code terms, quoted English, and glossary-preserved terms.',
+    '',
+    `Source locale: ${sourceLocale}`,
+    `Target locale: ${targetLocale}`,
+    `Source path: ${sourcePath}`,
+    `Target path: ${targetPath}`,
+    '',
+    'Style guide:',
+    styleContext.style,
+    '',
+    targetLocale === 'zh' && styleContext.corpus
+      ? `Human Chinese reference corpus:\n${styleContext.corpus.slice(0, 12000)}`
+      : '',
+    '',
+    'Rubric:',
+    styleContext.rubric,
+    '',
+    'Glossary:',
+    JSON.stringify(styleContext.glossary, null, 2),
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+export function reviewJsonSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['passed', 'score', 'issues', 'unresolvedResearch', 'notes'],
+    properties: {
+      passed: { type: 'boolean' },
+      score: { type: 'number', minimum: 0, maximum: 1 },
+      issues: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['severity', 'location', 'problem', 'suggestion'],
+          properties: {
+            severity: { type: 'string', enum: ['minor', 'major', 'blocking'] },
+            location: { type: 'string' },
+            problem: { type: 'string' },
+            suggestion: { type: 'string' },
+          },
+        },
+      },
+      unresolvedResearch: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      notes: { type: 'string' },
     },
   }
 }

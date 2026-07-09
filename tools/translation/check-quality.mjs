@@ -18,7 +18,7 @@ import {
   loadStyleContext,
   reviewJsonSchema,
 } from './prompts.mjs'
-import { createStructuredReview } from './providers.mjs'
+import { createStructuredReview, providerConfigFor } from './providers.mjs'
 
 function reportPathFor(filePath) {
   return `.translation/reports/${filePath
@@ -39,7 +39,11 @@ async function refreshNativeReview({
   const passes = [
     config.providers?.review?.pass1?.[file.frontmatter.lang],
     config.providers?.review?.pass2?.[file.frontmatter.lang],
-  ].filter(Boolean)
+  ]
+    .filter(Boolean)
+    .map((passConfig) =>
+      providerConfigFor(config, 'review', file.frontmatter.lang, passConfig),
+    )
   const reviews = []
 
   for (const passConfig of passes) {
@@ -84,8 +88,12 @@ async function refreshNativeReview({
     promptVersion: config.promptVersion,
     styleGuideSha256: target.styleGuideSha256 ?? null,
     rubricSha256: target.rubricSha256 ?? null,
-    reviewProvider: 'openai',
-    reviewerModel: process.env.OPENAI_REVIEW_MODEL ?? passes[0]?.model ?? null,
+    reviewProvider: passes[0]?.provider ?? null,
+    reviewerModel:
+      process.env.OPENAI_REVIEW_MODEL ??
+      process.env.CODEX_TRANSLATION_MODEL ??
+      passes[0]?.model ??
+      null,
     reviewProfile: passes.map((pass) => pass.profile),
     passed,
     score: minScore,
@@ -96,7 +104,7 @@ async function refreshNativeReview({
 
   target.qualityStatus = passed ? 'passed' : 'review-failed'
   target.reviewScore = minScore
-  target.reviewProvider = 'openai'
+  target.reviewProvider = report.reviewProvider
   target.reviewerModel = report.reviewerModel
   target.qualityReportPath = reportPath
   target.unresolvedResearch = unresolvedResearch
@@ -108,10 +116,20 @@ async function refreshNativeReview({
 export async function checkTranslationQuality({
   strictPublish = false,
   refreshReview = false,
+  refreshAllReviews = false,
+  slug = null,
+  locale = null,
 } = {}) {
   const config = await loadConfig()
   const manifest = await loadManifest()
-  const files = await listTargetSidecars(['zh', 'ko', 'ja'])
+  const files = (await listTargetSidecars(['zh', 'ko', 'ja'])).filter(
+    (filePath) => {
+      if (locale && !filePath.endsWith(`/${locale}.mdx`)) return false
+      if (slug && !filePath.startsWith(`src/content/blog/${slug}/`))
+        return false
+      return true
+    },
+  )
   const errors = []
   const warnings = []
 
@@ -147,7 +165,14 @@ export async function checkTranslationQuality({
         errors.push(`${filePath}: manifest targetSha256 mismatch`)
       }
 
-      if (target && refreshReview && errors.length === 0) {
+      const needsReview = Boolean(
+        target &&
+          (refreshAllReviews ||
+            target.qualityStatus !== 'passed' ||
+            (target.unresolvedResearch ?? []).length > 0),
+      )
+
+      if (target && refreshReview && needsReview && errors.length === 0) {
         try {
           await refreshNativeReview({
             config,
@@ -207,6 +232,9 @@ async function main() {
   const result = await checkTranslationQuality({
     strictPublish: Boolean(args.strict_publish),
     refreshReview: Boolean(args.refresh_review),
+    refreshAllReviews: Boolean(args.refresh_all_reviews),
+    slug: args.slug ?? null,
+    locale: args.locale ?? null,
   })
   for (const warning of result.warnings) console.warn(`warning: ${warning}`)
   for (const error of result.errors) console.error(`error: ${error}`)

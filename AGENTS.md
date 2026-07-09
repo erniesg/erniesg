@@ -24,7 +24,8 @@
 After creating `src/content/blog/<slug>/index.mdx`, run:
 
 ```bash
-npm run translate:sync -- --slug <slug>
+npm run translate:codex-sync -- --slug <slug> --write
+npm run translate:codex-review -- --slug <slug> --strict-publish
 npm run content:check
 ```
 
@@ -35,6 +36,8 @@ npm run content:publish
 ```
 
 `content:publish` is the only publish command that may auto-generate translations. Plain `npm run build` remains a check/build command and must never generate, repair, or overwrite translation files.
+
+`content:publish`, `translate:codex-sync`, and `translate:codex-review` use local `codex exec` with `CODEX_TRANSLATION_REASONING_EFFORT=high`. Do not replace them with a direct translation API path unless Ernie explicitly asks.
 
 If Ernie edits a machine translation but has not finalized it:
 

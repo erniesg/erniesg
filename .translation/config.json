@@ -36,6 +36,12 @@
       "supportsStructuredJson": true,
       "supportsWebResearch": true,
       "supportsSourceAnnotations": true
+    },
+    "codex-cli": {
+      "requiresEnv": [],
+      "supportsStructuredJson": true,
+      "supportsWebResearch": true,
+      "supportsSourceAnnotations": true
     }
   },
   "reviewCache": {

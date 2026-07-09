@@ -1,18 +1,50 @@
 import OpenAI from 'openai'
+import {
+  createCodexStructuredReview,
+  createCodexStructuredTranslation,
+} from './codex-cli.mjs'
 
-export function providerConfigFor(config, purpose, locale) {
+function codexProviderConfig(baseConfig = {}) {
+  const codexModel =
+    process.env.CODEX_TRANSLATION_MODEL ?? process.env.CODEX_MODEL
+  return {
+    ...baseConfig,
+    provider: 'codex-cli',
+    model: codexModel,
+    reasoningEffort: process.env.CODEX_TRANSLATION_REASONING_EFFORT ?? 'high',
+    search: process.env.CODEX_TRANSLATION_SEARCH !== '0',
+  }
+}
+
+function applyProviderOverride(baseConfig = {}, purpose) {
+  const providerOverride =
+    process.env[`TRANSLATION_${purpose.toUpperCase()}_PROVIDER`] ??
+    process.env.TRANSLATION_PROVIDER
+  if (providerOverride === 'codex-cli') return codexProviderConfig(baseConfig)
+  return baseConfig
+}
+
+export function providerConfigFor(config, purpose, locale, baseConfig = null) {
+  if (baseConfig) return applyProviderOverride(baseConfig, purpose)
   if (purpose === 'translate') {
-    return config.providers?.translate?.[locale] ?? config.providers?.default
-  }
-  if (purpose === 'research') {
-    return config.providers?.research?.[locale] ?? config.providers?.default
-  }
-  if (purpose === 'review') {
-    return (
-      config.providers?.review?.pass1?.[locale] ?? config.providers?.default
+    return applyProviderOverride(
+      config.providers?.translate?.[locale] ?? config.providers?.default,
+      purpose,
     )
   }
-  return config.providers?.default
+  if (purpose === 'research') {
+    return applyProviderOverride(
+      config.providers?.research?.[locale] ?? config.providers?.default,
+      purpose,
+    )
+  }
+  if (purpose === 'review') {
+    return applyProviderOverride(
+      config.providers?.review?.pass1?.[locale] ?? config.providers?.default,
+      purpose,
+    )
+  }
+  return applyProviderOverride(config.providers?.default, purpose)
 }
 
 export function assertProviderReady(config, providerConfig) {
@@ -54,6 +86,14 @@ export async function createStructuredTranslation({
   segments,
   schema,
 }) {
+  if (providerConfig?.provider === 'codex-cli') {
+    return createCodexStructuredTranslation({
+      providerConfig,
+      systemPrompt,
+      segments,
+      schema,
+    })
+  }
   assertProviderReady(config, providerConfig)
   const client = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -102,6 +142,15 @@ export async function createStructuredReview({
   targetText,
   schema,
 }) {
+  if (providerConfig?.provider === 'codex-cli') {
+    return createCodexStructuredReview({
+      providerConfig,
+      systemPrompt,
+      sourceText,
+      targetText,
+      schema,
+    })
+  }
   assertProviderReady(config, providerConfig)
   const client = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,

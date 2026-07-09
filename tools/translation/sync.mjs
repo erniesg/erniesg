@@ -16,20 +16,31 @@ import {
 } from './content.mjs'
 import { generateTranslation } from './generate.mjs'
 
-async function sourcePosts(config) {
+async function sourcePosts(config, slug = null) {
   const files = await fg(`${BLOG_ROOT}/*/index.mdx`, { onlyFiles: true })
   return files
     .map(toPosixPath)
     .filter((filePath) => !isProtectedPath(filePath, config))
+    .filter((filePath) =>
+      slug ? filePath === `${BLOG_ROOT}/${slug}/index.mdx` : true,
+    )
     .sort()
 }
 
-export async function syncTranslations({ write = false, all = false } = {}) {
+export async function syncTranslations({
+  write = false,
+  all = false,
+  slug = null,
+} = {}) {
   const config = await loadConfig()
   const manifest = await loadManifest()
   const results = []
+  const sources = await sourcePosts(config, slug)
+  if (slug && sources.length === 0) {
+    throw new Error(`No source post found for slug: ${slug}`)
+  }
 
-  for (const sourcePath of await sourcePosts(config)) {
+  for (const sourcePath of sources) {
     const source = await readMdxFile(sourcePath)
     const sourceLocale = source.frontmatter.lang ?? DEFAULT_LOCALE
     for (const targetLocale of config.requiredPublishLocales ?? [
@@ -71,6 +82,7 @@ async function main() {
   const results = await syncTranslations({
     write: Boolean(args.write),
     all: Boolean(args.all),
+    slug: args.slug ?? null,
   })
   if (results.length === 0) {
     console.log(

@@ -1,6 +1,6 @@
 ---
-title: 모델 컨텍스트 프로토콜(MCP) 입문자 가이드
-description: MCP가 단순한 API가 아니라 인공지능 기반 애플리케이션 구축의 미래인 이유와 시작 방법을 쉬운 설명과 실제 예시로 이해하기
+title: Model Context Protocol (MCP) 입문
+description: MCP가 단순한 API가 아니라 AI 앱의 미래인 이유와 시작 방법을 쉬운 예시로 정리한다
 date: 2025-04-09T00:00:00.000Z
 tags:
   - MCP
@@ -17,25 +17,25 @@ translationStatus: machine
 translationSource: codex
 ---
 
-# 모델 컨텍스트 프로토콜(MCP) 입문자 가이드, 혹은 왜 그냥 API가 아닌가?
+# Model Context Protocol (MCP) 입문, 혹은 왜 그냥 API가 아닌가?
 
-나처럼 이런 생각을 해본 적이 있다면: MCP는 그냥 API 같은 것 아닌가? 이 글은 MCP가 게으른 개발자에게 왜 유용한지 설명한다. Lorong AI가 주최한 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9) 에서 Gang Rui가 공유한 내용에서 영감을 받아, 핵심 요점과 최종 사용자가 MCP를 사용하는 방법을 정리했다.
+나처럼 이런 생각을 해본 적이 있다면: MCP는 그냥 API 같은 것 아닌가? 이 글은 MCP가 게으른 개발자에게 왜 유용한지 설명한다. Lorong AI가 주최한 🎙️ [Chop Chop Talk Shop (Chomp Edition): Model Context Protocol](https://lu.ma/osacsvb9)에서 Gang Rui가 공유한 내용에서 영감을 받아, 핵심 요점과 최종 사용자가 MCP를 써보는 방법을 정리했다.
 
 ## TLDR
 
-MCP는 비즈니스 로직(호스트)과 도구 실행(서버)을 분리하고 클라이언트를 표준화된 다리로 두어, “무엇을 할지”와 “어떻게 할지”를 나눈다. 호스트는 사용자 상호작용과 인공지능 추론을 관리하고, 서버는 기능을 재사용 가능한 인터페이스로 노출한다. 표준화를 통해 MCP는 에이전트형 인공지능이 여러 시스템의 기능을 동적으로 발견하고, 오케스트레이션하고, 조합할 수 있게 한다.
+MCP는 비즈니스 로직(호스트)과 도구 실행(서버)을 분리하고 클라이언트를 표준화된 다리로 두어, “무엇을 할지”와 “어떻게 할지”를 나눈다. 호스트는 사용자 상호작용과 AI 추론을 관리하고, 서버는 기능을 재사용 가능한 인터페이스로 노출한다. 표준화를 통해 MCP는 에이전트형 AI가 여러 시스템의 기능을 동적으로 찾아내고, 엮고, 조합할 수 있게 한다.
 
 ## 문제: 개발 노력의 조합 폭발
 
-병원의 의사들을 위한 인공지능 애플리케이션에서 이메일을 보내고 싶다고 해보자. MCP 전에는 이메일 API를 호출하는 통합 로직을 작성하고, 응답을 처리하고, 모델과 연결한 뒤 비즈니스 로직을 덧붙여야 했다. 이제 같은 이메일 API를 사용해 환자 전화에서 예약 알림을 보내고, 전자상거래 할인 알림 같은 다른 애플리케이션에도 적용한다고 상상해보자. MCP가 없다면 여러 클라이언트와 사용 사례마다 같은 통합 로직을 반복 구현해야 한다. 이메일 API에 깨지는 변경이 생긴다고? 곳곳을 리팩터링하는 일을 즐기길 바란다. 😤
+병원의 의사들을 위한 AI 애플리케이션에서 이메일을 보내고 싶다고 해보자. MCP 전에는 이메일 API를 호출하는 통합 로직을 작성하고, 응답을 처리하고, 모델과 연결한 뒤 비즈니스 로직을 덧붙여야 했다. 이제 같은 이메일 API를 사용해 환자 전화 예약 알림을 보내고, 전자상거래 할인 알림 같은 다른 애플리케이션에도 적용한다고 상상해보자. MCP가 없다면 여러 클라이언트와 사용 사례마다 같은 통합 로직을 반복 구현해야 한다. 이메일 API에 깨지는 변경이 생긴다고? 곳곳을 리팩터링하는 일을 즐기길 바란다. 😤
 
 MCP ✨ 는 통합 복잡성이라는 이차 문제에 대한 선형 해법이다. 사용자 인터페이스에서 React 컴포넌트가 한 일과 비슷하다. 모듈식이고, 선언적이며, 조합 가능하다.
 
 ## MCP란 무엇인가?
 
-USB-C가 여러 케이블과 포트의 필요를 없앤 것처럼, MCP는 인공지능 애플리케이션이 외부 도구와 데이터 소스와 대화하는 보편적인 방식을 제공한다. [핵심 구성 요소](https://modelcontextprotocol.io/docs/concepts/architecture)는 다음과 같다:
+USB-C가 여러 케이블과 포트의 필요를 없앤 것처럼, MCP는 AI 애플리케이션이 외부 도구와 데이터 소스와 대화하는 보편적인 방식을 제공한다. [핵심 구성 요소](https://modelcontextprotocol.io/docs/concepts/architecture)는 다음과 같다:
 
-- 💻 **MCP 호스트**: 요청을 시작하고 사용자 상호작용을 처리하는 인공지능 애플리케이션. 예를 들면 [Claude Desktop](https://claude.ai/download). 호스트 하나는 클라이언트를 통해 여러 MCP 서버에 연결할 수 있다.
+- 💻 **MCP 호스트**: 요청을 시작하고 사용자 상호작용을 처리하는 AI 애플리케이션. 예를 들면 [Claude Desktop](https://claude.ai/download). 호스트 하나는 클라이언트를 통해 여러 MCP 서버에 연결할 수 있다.
 - 🔌 **MCP 클라이언트**: 호스트 안에 내장되어 서버와의 상호작용을 담당한다. 각 클라이언트는 하나의 MCP 서버에 연결된다.
 - ⚙️ **MCP 서버**: 클라이언트가 사용할 도구, 프롬프트, 리소스를 노출한다.
 
@@ -43,7 +43,7 @@ USB-C가 여러 케이블과 포트의 필요를 없앤 것처럼, MCP는 인공
 
 ## 작동 방식
 
-사용자가 인공지능 애플리케이션을 시작한다 → 요청을 보낸다(예: “누구에게 예약을 알려줘”) → MCP 클라이언트가 적절한 도구(`send_email` 같은 것)와 충분한 맥락이 있는지 확인한다 → MCP 서버를 통해 도구를 호출한다. 이 서버는 로컬에서 실행되는 작은 프로세스(`stdio` 사용)이거나 원격 프로세스([HTTP Streamable](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) 또는 사용자 정의 방식)일 수 있다 → 서버가 요청을 처리하고 결과를 반환한다 → 인공지능이 그 결과를 응답에 포함한다 → 사용자가 최종 답변을 본다.
+사용자가 AI 애플리케이션을 시작한다 → 요청을 보낸다(예: “누구에게 예약을 알려줘”) → MCP 클라이언트가 적절한 도구(`send_email` 같은 것)와 충분한 맥락이 있는지 확인한다 → MCP 서버를 통해 도구를 호출한다. 이 서버는 로컬에서 실행되는 작은 프로세스(`stdio` 사용)이거나 원격 프로세스([HTTP Streamable](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) 또는 사용자 정의 방식)일 수 있다 → 서버가 요청을 처리하고 결과를 반환한다 → AI가 그 결과를 응답에 포함한다 → 사용자가 최종 답변을 본다.
 
 내부 동작에 대한 자세한 내용은 [아키텍처 명세](https://modelcontextprotocol.io/specification/2025-03-26/architecture/index)를 참고하면 된다.
 
@@ -55,7 +55,7 @@ MCP는 **관심사의 분리**를 강제하고, **재사용성**을 높이며, *
 
 현실에서는 사용자 요구가 빠르게 커지고, 지원해야 할 플랫폼도 함께 늘어난다.
 
-**이메일**, **SMS**, **앱 내 포털 메시지**로 예약 알림을 보내는 인공지능 기반 의료 애플리케이션을 만든다고 해보자.
+**이메일**, **SMS**, **앱 내 포털 메시지**로 예약 알림을 보내는 AI 기반 의료 애플리케이션을 만든다고 해보자.
 
 MCP로는 이렇게 구조화할 수 있다:
 
@@ -70,13 +70,13 @@ MCP로는 이렇게 구조화할 수 있다:
 API는 MCP와 비교할 때 두 가지 핵심 방식에서 제한적이다:
 
 1. 기능 vs. **아키텍처** - API는 하나의 애플리케이션 안에서 기능을 노출한다. MCP는 애플리케이션을 가로질러 작동하는 아키텍처를 제공한다. 한 번 만들고 어디서나 쓴다.
-2. 고정형 vs. **적응형** - API는 하드코딩된 트리거를 사용한다. MCP는 인공지능이 맥락에 따라 어떤 도구를 사용할지 결정하게 하여 유연하고 지능적인 작업 흐름을 가능하게 한다.
+2. 고정형 vs. **적응형** - API는 하드코딩된 트리거를 사용한다. MCP는 AI가 맥락에 따라 어떤 도구를 사용할지 결정하게 하여 유연하고 지능적인 작업 흐름을 가능하게 한다.
 
-MCP는 API를 에이전트가 바로 사용할 수 있는 기능으로 바꾼다. 에이전트가 필요에 따라 API 위에서 자율적으로 추론하고 조합할 수 있게 한다. 이것은 서비스를 호출하는 것과, 규모 있는 환경에서 지능적이고 유연한 작업 흐름을 오케스트레이션하는 것의 차이다. 웹 개발자가 정적 HTML에서 재사용 가능한 컴포넌트로 이동했듯이, MCP는 인공지능 엔지니어가 취약하고 고정된 통합에서 사용자의 필요에 실시간으로 반응하는 동적이고 맥락을 이해하는 에이전트형 소프트웨어로 이동하도록 돕는다. 🚀
+MCP는 API를 에이전트가 바로 사용할 수 있는 기능으로 바꾼다. 에이전트가 필요에 따라 API 위에서 자율적으로 추론하고 조합할 수 있게 한다. 이것은 서비스를 호출하는 것과, 규모 있는 환경에서 지능적이고 유연한 작업 흐름을 오케스트레이션하는 것의 차이다. 웹 개발자가 정적 HTML에서 재사용 가능한 컴포넌트로 이동했듯이, MCP는 AI 엔지니어가 취약하고 고정된 통합에서 사용자의 필요에 실시간으로 반응하는 동적이고 맥락을 이해하는 에이전트형 소프트웨어로 이동하도록 돕는다. 🚀
 
 ## Anthropic을 넘어서
 
-Anthropic이 소개한 MCP는 주요 대형 언어 모델 기업과 커뮤니티 기여의 지원을 받으며 빠르게 성장하고 있다.
+Anthropic이 소개한 MCP는 주요 LLM 기업과 커뮤니티 기여의 지원을 받으며 빠르게 성장하고 있다.
 
 * **OpenAI**는 [Agents SDK](https://openai.github.io/openai-agents-python/mcp/)에서 MCP를 공식 지원하며, OpenAI API와 ChatGPT 데스크톱 앱도 [곧 지원될 예정](https://x.com/OpenAIDevs/status/1904957755829481737)이다
 * **Microsoft**는 MCP용 [공식 C# SDK](https://github.com/modelcontextprotocol/csharp-sdk)를 개발했고, 이 프로토콜을 Copilot Studio, VS Code의 GitHub Copilot 에이전트 모드, Semantic Kernel에 통합했다
@@ -84,11 +84,11 @@ Anthropic이 소개한 MCP는 주요 대형 언어 모델 기업과 커뮤니티
 * 다양한 공식 언어 SDK가 있다: [Python](https://github.com/modelcontextprotocol/python-sdk) (Anthropic), [TypeScript](https://github.com/modelcontextprotocol/typescript-sdk) (Anthropic), [Java](https://github.com/modelcontextprotocol/java-sdk) (Spring AI), [C#](https://github.com/modelcontextprotocol/csharp-sdk) (Microsoft), [Kotlin](https://github.com/modelcontextprotocol/kotlin-sdk) (JetBrains), [Swift](https://github.com/modelcontextprotocol/swift-sdk) (Loopwork AI), [Rust](https://github.com/modelcontextprotocol/rust-sdk) (Anthropic)
 * OAuth 2.1을 사용하는 [권한 부여 명세](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization)이 3월 26일에 공개되었다
 
-생태계는 아직 초기 단계이고, 물을 가장 빨리 시험하는 방법은 호스트를 도구에 직접 연결해보는 것이다.
+생태계는 아직 초기 단계이고, 가장 빨리 감을 잡는 방법은 호스트를 도구에 직접 연결해보는 것이다.
 
 ## 한계와 가능성
 
-일반적인 대형 언어 모델 관련 주의점은 그대로 적용된다. 몇몇 서버를 설치해 시험해봤을 때도 Obsidian 쪽은 실패했다. MCP는 여전히 실험적이고 대부분 로컬에서 동작하지만, 나는 그것을 떠오르는 미래를 위한 청사진으로 본다. 진정으로 모듈식이고, 재귀적이며, 스스로 확장되는 인공지능 원생 애플리케이션을 만들기 위한 빠진 조각이다.
+일반적인 LLM 관련 주의점은 그대로 적용된다. 몇몇 서버를 설치해 시험해봤을 때도 Obsidian 쪽은 실패했다. MCP는 여전히 실험적이고 대부분 로컬에서 동작하지만, 나는 그것을 떠오르는 미래를 위한 청사진으로 본다. 진정으로 모듈식이고, 재귀적이며, 스스로 확장되는 AI 네이티브 애플리케이션을 만들기 위한 빠진 조각이다.
 
 ## 시작하기
 
@@ -104,4 +104,4 @@ Anthropic이 소개한 MCP는 주요 대형 언어 모델 기업과 커뮤니티
 
 MCP가 있다면 나는 내 블로그 작성 작업 흐름(현재 여러 기기에서 Claude, Obsidian, ChatGPT로 나뉘어 있음)을 하나의 일관된 경험으로 통합할 수 있다. 계속 맥락을 전환하지 않아도 된다.
 
-다음에 또 다른 API 통합을 작성하고 싶어질 때 기억하자. MCP는 한 번 작성해 어디서나 쓰게 해주며, 중요한 일, 즉 훌륭한 인공지능 애플리케이션을 만드는 데 집중하게 해준다. 그렇다면 다음에는 무엇을 만들 것인가?
+다음에 또 다른 API 통합을 작성하고 싶어질 때 기억하자. MCP는 한 번 작성해 어디서나 쓰게 해주며, 중요한 일, 즉 훌륭한 AI 애플리케이션을 만드는 데 집중하게 해준다. 그렇다면 다음에는 무엇을 만들 것인가?

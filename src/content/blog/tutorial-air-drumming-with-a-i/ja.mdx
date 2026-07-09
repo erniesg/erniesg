@@ -1,6 +1,6 @@
 ---
 title: チュートリアル：A.I. でエアドラム
-description: AI と神経音声合成、DJ、Taylor Swift、そして光る新しいおもちゃ（Erae II）が結びついたらどう見えるかについての考え
+description: A.I.、神経音声合成、DJ、Taylor Swift、光る新しいおもちゃ（Erae II）が結びついたらどう見えるか
 date: 2024-03-19T00:00:00.000Z
 authors:
   - erniesg
@@ -15,13 +15,13 @@ translationSource: codex
 
 私は握りこぶしで“エアドラム”するスクリプトを作った。小さな時間制限付きの実験として、マレードラムで訓練した RAVE モデルから生成した音を鳴らすものだ。できるから作ってみた、という類のくだらなくて馬鹿げた小さなものだったので、これまでの A.I. についての投稿全部を合わせたよりも多くの人が気に入ってくれて、とても満足している。もしかすると私は Instagram の使い方を間違えていたのかもしれない、lol。
 
-<iframe alt="Air drum with a closed fist" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="握りこぶしでエアドラム" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
 握りこぶしでエアドラム
 
 # はじめに
 
-ともあれ、これはすべての AI アプリのゴッドファーザーである Python で書いた。Python に関しては、依存関係の管理はその言語の人間へのやさしさと反比例する。このチュートリアルを追うには、Python をインストールし、`pip install` のやり方を知り、コマンドラインから Python スクリプトを実行できる必要がある。コード自体は 115 行だけで、いつものように ChatGPT と“ペアプログラミング”して書いた、lol。
+ともあれ、これはすべての A.I. アプリのゴッドファーザーである Python で書いた。Python に関しては、依存関係の管理はその言語の人間へのやさしさと反比例する。このチュートリアルを追うには、Python をインストールし、`pip install` のやり方を知り、コマンドラインから Python スクリプトを実行できる必要がある。コード自体は 115 行だけで、いつものように ChatGPT と“ペアプログラミング”して書いた、lol。
 
 私のシステム構成とパッケージバージョンは次の通り：
 
@@ -36,13 +36,13 @@ translationSource: codex
 
 下の動画はチュートリアルというより、デモを作るにあたっての思考過程と論理分解を説明するものだ。いずれにせよ、こうしたものの方が他の技術的作業に転用するうえでずっと価値があり重要だ。必要な材料が分かっていて、A.I. にやりたいことを段階的に明確に指示できるなら、あとはコードが生成されるのを座って待てばいい。もちろん、それを実行してデバッグする方法は知っておく必要がある。
 
-<iframe alt="Tutorial: Air Drum With A.I." src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="チュートリアル：A.I. でエアドラム" src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
 チュートリアル：A.I. でエアドラム
 
 # 114行のコード
 
-注： [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer) と再生したい .mp3 ファイルをスクリプトと同じディレクトリに置くか、ファイルパスを更新する必要がある。私が使った音声ファイルは、基本的にはマレーの太鼓で訓練した [RAVE モデル](https://github.com/acids-ircam/RAVE) から生成した音声だ。無料の Google Colab notebooks を使って自分のモデルを訓練する方法のチュートリアルも作る予定なので、楽しみにしていてほしい！
+注： [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer) と再生したい .mp3 ファイルをスクリプトと同じディレクトリに置くか、ファイルパスを更新する必要がある。私が使った音声ファイルは、基本的にはマレーの太鼓で訓練した [RAVE モデル](https://github.com/acids-ircam/RAVE) から生成した音声だ。無料の Google Colab ノートブックを使って自分のモデルを訓練する方法のチュートリアルも作る予定なので、楽しみにしていてほしい！
 
 ```python
 import mediapipe as mp
@@ -88,7 +88,7 @@ def print_result(result: GestureRecognizerResult, output_image: mp.Image, timest
 
 # 着想
 
-これは Antoine（RAVE の作者）の仕事に触発されて取り組んだもので、空中で音楽を作るというアイデアを探ってみたかっただけだ。;) だってエアドラムをやらない理由がない！！！見た目がすごくかっこいいし、Instagram の 800 件以上のいいねも同意している！
+これは Antoine（RAVE の作者）の仕事に触発されて取り組んだもので、空中で音楽を作るというアイデアを探ってみたかっただけだ。;) だってエアドラムをやらない理由がない！！！見た目がすごくかっこいいし、Instagram の 800 件以上のいいねもそれを証明している！
 
 # どう作ったか
 
@@ -110,4 +110,4 @@ DJ したくなくて、ただ演奏したいだけでも方法はある。#idea
 
 ---
 
-*Originally published on PubPub at [erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q).*
+*PubPub の [erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q) で初出。*

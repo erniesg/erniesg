@@ -12,11 +12,11 @@ translationStatus: machine
 translationSource: codex
 ---
 
-좌절해서 키보드를 두드리거나 [물려받은 codebase 앞에서 눈물을 조금 흘리는](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/) 대신, 그 정보를 A.I.에 넘기고 대화하는 편이 훨씬 말이 된다. 대형 언어 모델 (LLMs)의 지식과 추론 능력을 그런 정보 위에서 활용하기 시작하는 순간, 자연스러운 다음 단계는 synthesis다. 기존 codebase 위에서 실행될 수 있는 새 코드를 생성해, 전 세계 누구나 프롬프트-to-feature로 갈 수 있게 하는 것이다. 이런 과제를 다루기 위해 아래 demo를 만들었고, 주말 하루 이틀 정도 작업한 결과물이다. 만드는 과정에서 새로 배운 것도 많고 여러 개념을 더 깊이 이해하게 되어 꽤 재미있었다.
+좌절해서 키보드를 두드리거나 [물려받은 코드베이스 앞에서 눈물을 조금 흘리는](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/) 대신, 그 정보를 A.I.에 넘기고 대화하는 편이 훨씬 말이 된다. LLM의 지식과 추론 능력을 그런 정보 위에서 활용하기 시작하는 순간, 자연스러운 다음 단계는 종합이다. 기존 코드베이스 위에서 실행될 수 있는 새 코드를 생성해, 전 세계 누구나 프롬프트에서 기능까지 갈 수 있게 하는 것이다. 이런 과제를 다루기 위해 아래 데모를 만들었고, 주말 하루 이틀 정도 작업한 결과물이다. 만드는 과정에서 새로 배운 것도 많고 여러 개념을 더 깊이 이해하게 되어 꽤 재미있었다.
 
 <iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
-Arthur - Search and Retrieve Anything
+Arthur - 무엇이든 검색하고 가져오기
 
 # 왜 일하지 Leh?
 
@@ -32,7 +32,7 @@ Arthur - Search and Retrieve Anything
 
 에이전트를 만들면서 가장 많이 막혔던 어려운 지점은 다음과 같았다:
 
-1.  **올바른 package versions 사용하기**
+1.  **올바른 패키지 버전 사용하기**
     
 
 시작하기 위해 [기존 프로젝트(chat-with-code)](https://github.com/priya-dwivedi/chat-with-code)에서 배우기로 했지만, 아래와 같은 오류를 계속 만났다:
@@ -111,21 +111,21 @@ Traceback (most recent call last):
   File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/pydantic/main.py", line 352, in __new__
 ```
 
-Solution: 알고 보니 특정한 `streamlit (1.25.0)`과 `pydanic version (1.10.12)`를 써야 했다. 여러 packages 사이의 compatibility issue가 꽤 자주 반복되니, 이를 관리하는 도구와 모범 사례를 더 배워야 할 것 같다. 어쩌면 사용한 구체 버전은 항상 `poetry` 안에 정의되어야 하는 것 아닐까!?
+해결: 알고 보니 특정한 `streamlit (1.25.0)`과 `pydanic version (1.10.12)`를 써야 했다. 여러 패키지 사이의 호환성 문제가 꽤 자주 반복되니, 이를 관리하는 도구와 모범 사례를 더 배워야 할 것 같다. 어쩌면 사용한 구체 버전은 항상 `poetry` 안에 정의되어야 하는 것 아닐까!?
 
-2.  **.json 파일로 정의된 Azure Data Factory 리소스를 수집하다하고 분할하다하는 방법 알아내기**
+2.  **`.json` 파일로 정의된 Azure Data Factory 리소스를 수집하고 분할하는 방법 알아내기**
     
 
-문서, .PDFs, GitHub 코드 저장소 등을 처리하는 튜토리얼은 많지만 .json 언급은 거의 없었다. ChatGPT에게 생성해달라고 해도 소용이 없어서, 결국 .json과 `langchain` JSON loader를 자세히 들여다보고 내가 생각하는 방식대로 단계별로 ChatGPT를 안내했더니 마침내 작동했다. 적어도 Google과 YouTube 검색 첫 페이지 기준으로 Azure Resource Manager (ARM) template에 대해 이 작업을 한 사람은 없었으니, 조금은 새로움을 만들어야 했다.
+문서, `.pdf`, GitHub 코드 저장소 등을 처리하는 튜토리얼은 많지만 `.json` 이야기는 거의 없었다. ChatGPT에게 생성해달라고 해도 소용이 없어서, 결국 `.json`과 `langchain` JSON loader를 자세히 들여다보고 내가 생각하는 방식대로 단계별로 ChatGPT를 안내했더니 마침내 작동했다. 적어도 Google과 YouTube 검색 첫 페이지 기준으로는 Azure Resource Manager(ARM) 템플릿에 대해 이 작업을 한 사람이 없었으니, 조금은 새로움을 만들어야 했다.
 
-Solution: 이 초기 프로토타입에서는 Azure Data Factory의 `parameters`, `variables`, `resources`와 `resources` 안의 individual objects를 보존하고 싶었다. 그것들이 내 pipelines, activities 등이 될 것이기 때문이다. 여기에 few shot instructions와 맥락를 결합하자 ChatGPT가 필요한 결과를 만들어냈다.
+해결: 이 초기 프로토타입에서는 Azure Data Factory의 `parameters`, `variables`, `resources`와 `resources` 안의 개별 객체를 보존하고 싶었다. 그것들이 내 파이프라인과 액티비티 등이 될 것이기 때문이다. 여기에 few-shot 지시와 맥락을 결합하자 ChatGPT가 필요한 결과를 만들어냈다.
 
 # 앞으로의 방향
 
-그렇게 해서 75개 항목을 `Deep Lake` 데이터셋으로 나누어 넣게 됐다. 이제는 더 많은 데이터 소스를 연결해야겠다고 생각하고 있다. 모든 SQL 스키마, stored procedure, 데이터 그 자체까지 질의할 수 있게 하고, memory와 관련된 메타데이터를 업데이트하고, multi-modal data lake cum vector store 위에서 CRUD 작업을 수행하고, 검색 전략과 token context를 최적화하는 일까지 말이다. 사실 도구를 써서 LLM 안에서 바로 실행하고 행동하게 하면 안 될 이유가 있을까? 더 나아가 LLM이 스스로 테스트를 쓰고, 디버그하고, 검증하게 만들면 어떨까? 이런 것들은 어느 규모의 팀이나 조직이든 보수적으로 말해 생산성을 1000배 끌어올릴 autonomous agent를 프로덕션에 올리는 데 반드시 필요하다.
+그렇게 해서 75개 항목을 `Deep Lake` 데이터셋으로 나누어 넣게 됐다. 이제는 더 많은 데이터 소스를 연결해야겠다고 생각하고 있다. 모든 SQL 스키마, 저장 프로시저, 데이터 그 자체까지 질의할 수 있게 하고, 메모리와 관련된 메타데이터를 업데이트하고, 멀티모달 데이터 레이크 겸 벡터 저장소 위에서 CRUD 작업을 수행하고, 검색 전략과 토큰 컨텍스트를 최적화하는 일까지 말이다. 사실 도구를 써서 LLM 안에서 바로 실행하고 행동하게 하면 안 될 이유가 있을까? 더 나아가 LLM이 스스로 테스트를 쓰고, 디버그하고, 검증하게 만들면 어떨까? 이런 것들은 어느 규모의 팀이나 조직이든 보수적으로 말해 생산성을 1000배 끌어올릴 자율 에이전트를 프로덕션에 올리는 데 반드시 필요하다.
 
-Fun times! 🤩🤩🤩
+즐겁네! 🤩🤩🤩
 
 ---
 
-*Originally published on PubPub at [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z).*
+*원래 PubPub의 [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z)에 게시됨.*

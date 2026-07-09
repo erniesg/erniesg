@@ -1,6 +1,6 @@
 ---
-title: 'RAGgaeton: A.I. 증강 글쓰기를 모든 콘텐츠로 확장'
-description: 'A.I. 연구, 검색, 자연어 생성으로 거친 초안을 다듬은 글로 바꾸고 결과를 비교하기'
+title: 'RAGgaeton: A.I. 증강 글쓰기 확장하기'
+description: 'A.I. 기반 조사, 검색, 자연어 생성으로 거친 메모를 다듬은 글로 바꾸고 모델별 결과를 비교하기'
 date: 2024-06-22T00:00:00.000Z
 authors:
   - erniesg
@@ -12,44 +12,44 @@ translationStatus: machine
 translationSource: codex
 ---
 
-2024년 6월 3일 푸가이산(부개산)을 하이킹한 기록을 바탕으로, 기본 Claude 3.5/GPT-4o와 RAGgaeton을 적용한 Claude 3.5/GPT-4o에 같은 메모를 던져 글쓰기 능력을 비교해보았다.
+2024년 6월 3일, 푸가이산(Floating Cap Mountain)을 오르며 남긴 메모를 기본 Claude 3.5/GPT-4o와 RAGgaeton을 붙인 Claude 3.5/GPT-4o에 각각 던져 봤다. 같은 재료를 두고 글쓰기 능력이 어떻게 달라지는지 비교해 보려는 실험이었다.
 
 ![](./IMG_20240603_121737_00_238-21719066032683.jpg)
 
-RAGgaeton 패키지는 인간-컴퓨터 협업에 대한 실험으로 만들었다. 인간의 창의성과 A.I. (인공지능)의 강점을 활용해 독창적인 콘텐츠 제작을 확장하려는 시도다. 이 글에서는 RAGgaeton의 영감, 주요 기능과 장점, 실제 데모, 기술적 도전 과제와 배운 점, 그리고 A.I.로 강화된 콘텐츠 제작의 미래 가능성을 다룬다.
+RAGgaeton 패키지는 인간-컴퓨터 협업에 대한 실험으로 만들었다. 인간의 창의성과 A.I. (artificial intelligence)의 강점을 함께 써서, 독창적인 콘텐츠 제작을 더 크게 확장할 수 있는지 보려는 시도다. 이 글에서는 RAGgaeton을 떠올리게 된 배경, 핵심 기능과 장점, 실제 데모, 기술적으로 부딪힌 문제와 배운 점, 그리고 A.I.가 증강하는 콘텐츠 제작의 앞으로의 가능성을 다룬다.
 
-## RAGgaeton 뒤의 불꽃
+## RAGgaeton에 불을 붙인 생각
 
-직시하자. 세상은 A.I.를 훈련시킬 데이터가 점점 바닥나고 있다. 그래서 이런 생각이 들었다. A.I.를 사용해 인간의 독창적인 콘텐츠 생성을 강화할 수 있다면 어떨까? 훈련 데이터가 더 희소해지는 동안, 콘텐츠는 양적으로도 질적으로도 여전히 부족하다. 이 영역에서 A.I.가 충분히 좋은 일을 할 여지가 있다.
+솔직히 말하자. 세상은 A.I.를 훈련시킬 데이터가 점점 바닥나고 있다. 그래서 이런 생각이 들었다. A.I.로 인간의 독창적인 콘텐츠 생성을 증강할 수 있다면 어떨까? 훈련 데이터가 귀해지는 동안에도 콘텐츠는 양적으로도, 질적으로도 부족하다. 이 영역에서 A.I.가 좋은 일을 할 여지는 분명히 많다.
 
-나에게 *독창적인* 글쓰기에는 시스템 1 사고와 시스템 2 사고 사이에 늘 큰 간극이 있었다. 머릿속에는 초안 개요가 있고, 내가 만들고 싶은 논지에 대한 대략적인 감각도 있다. 하지만 정보를 모으고 정리한 뒤 앉아서 완전한 문장과 단락으로 옮기는 일은? 끝내 되지 않는다. 마음대로 쓸 수 있는 조사 조수 부대가 있다면 얼마나 좋을까...
+나에게 *독창적인* 글쓰기에는 늘 시스템 1 사고와 시스템 2 사고 사이의 넓은 틈이 있었다. 머릿속에는 초안의 윤곽이 있고, 내가 밀고 싶은 논지도 대충 있다. 그런데 정보를 모으고, 정리하고, 앉아서 온전한 문장과 문단으로 타이핑하는 일? 이상하게 끝까지 가지 않는다. 손안에 연구 보조원 군단이 있으면 얼마나 좋을까...
 
-여기에 **검색 증강 생성** (RAG)로 강화된 **대형 언어 모델** (LLMs)가 구하러 온다!
+여기서 **Retrieval Augmented Generation** (RAG)을 붙인 **Large Language Models** (LLMs)가 등장한다!
 
-RAGgaeton은 LLMs와 RAG의 힘을 이용해 이 간극을 메우고, 우리가 선택한 신뢰할 수 있는 근거에 기반한 독창적 콘텐츠를 대규모로 생산할 수 있게 한다.
+RAGgaeton은 LLMs와 RAG의 힘으로 이 간극을 메운다. 우리가 고른 신뢰할 만한 근거에 발을 붙인 채, 독창적인 콘텐츠를 큰 규모로 만들 수 있게 해준다.
 
-## 데모: 실제로 작동하는 RAGgaeton
+## 데모: 작동하는 RAGgaeton
 
-RAGgaeton은 데이터로부터 어떤 유형의 콘텐츠든 자동 생성하기 위해 내가 만든 패키지다. 나와, 아마 여러분 중 많은 사람이 글쓰기에서 마주하는 여러 문제를 해결하도록 설계했다.
+RAGgaeton은 내가 가진 데이터에서 어떤 유형의 콘텐츠든 자동으로 만들기 위해 만든 패키지다. 글을 쓰면서 나도, 아마 많은 사람들도 마주치는 몇 가지 문제를 풀도록 설계했다.
 
-1\. 대형 언어 모델의 글쓰기가 너무 진부하게 들린다
+1\. LLM 글쓰기는 너무 진부하게 들린다
 
-2\. 다양한 출처에서 정보를 모으고 검색해야 한다
+2\. 여러 출처에서 정보를 모으고 다시 찾아와야 한다
 
-3\. 일관된 흐름과 일관성을 유지해야 한다
+3\. 흐름과 일관성을 유지해야 한다
 
-4\. 편집하고 반복 개선할 수 있는 확장 가능하고 반복 가능한 창의적 출력물이 필요하다
+4\. 편집하고 반복 개선할 수 있는, 확장 가능하고 재현 가능한 창작 결과물이 필요하다
 
-RAGgaeton이 할 수 있는 일을 빠르게 보여주는 데모는 다음과 같다.
+RAGgaeton이 무엇을 할 수 있는지 빠르게 보여주는 데모는 이렇다.
 
 <iframe alt="Try Things #:2 Claude 3.5 vs. GPT-4o for Automated Travel Writing with RAGgaeton" src="https://www.youtube.com/embed/DjiAUkD7tfM?feature=oembed" aria-describedby="nq0tj29bz5n-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
 Try Things #:2 Claude 3.5 vs. GPT-4o for Automated Travel Writing with RAGgaeton
 
--   내 구현은 [RAGgaeton Git repository](https://github.com/erniesg/raggaeton)에서 확인할 수 있다
+-   구현은 [RAGgaeton Git repository](https://github.com/erniesg/raggaeton)에서 볼 수 있다
     
 
-내가 가장 좋아하는 생성된 제목은 `“From Sea to Sky: Unraveling the Mysteries of Fu Gai Mountain's 'Floating Cap'“`이고, `edit-content` 이후의 최종 출력은 아래와 같다.
+내가 가장 좋아하는 생성 제목은 `“From Sea to Sky: Unraveling the Mysteries of Fu Gai Mountain's 'Floating Cap'“`이고, `edit-content`를 거친 최종 출력은 아래 전문과 같다.
 
 > **Introduction**
 > 
@@ -65,37 +65,37 @@ Try Things #:2 Claude 3.5 vs. GPT-4o for Automated Travel Writing with RAGgaeton
 > 
 > Straddling the border of Zhejiang and Fujian provinces, Fu Gai Mountain rises like a sleeping giant from the surrounding landscape. \[TextFX: CHAIN\] Its imposing silhouette - peak, ridge, slope, valley, forest, trail, hiker, adventure - beckons to those seeking communion with nature's grandeur. \[TextFX: UNEXPECT\] Once a formidable barrier to southward expansion during the Tang dynasty, this geological marvel now serves as a bridge between epochs, inviting modern-day explorers to scale its heights and unravel its secrets. The mountain's strategic location offers not just a physical challenge, but a journey through the annals of Chinese history and natural evolution.
 > 
-> 이 산의 “네 가지 기이함”은 판타지 소설에서 튀어나온 듯한 초현실적 분위기를 만든다. \[TextFX: ACRONYM\] CAPE - Clouds, Abysses, Peaks, and Enigmatic springs - 는 푸가이산의 독특한 특징을 압축한다. \[TextFX: FUSE\] 정상에는 거대한 바위들이 아슬아슬하게 균형을 이루며 유명한 “부개” 또는 “사모” 풍경을 만든다. 이는 사람을 당혹스럽게 하면서도 즐겁게 하는 지질학적 착시다. 기묘한 구름은 들쭉날쭉한 봉우리 사이를 춤추듯 흐르고, 그 덧없는 형태는 끊임없이 바뀐다. 신비로운 동굴은 산의 과거를 속삭이는 듯하고, 독특한 샘은 계절과 관계없이 일정한 온도를 유지한다. \[TextFX: EXPLODE\] 이 모든 요소가 합쳐져 정말로 “out of this whirl”한 풍경, 현실에 대한 우리의 감각을 흔드는 어지러울 만큼 아름다운 자연의 장관을 만든다.
+> The mountain's 'Four Wonders' create an otherworldly atmosphere that seems plucked from the pages of a fantasy novel. \[TextFX: ACRONYM\] CAPE - Clouds, Abysses, Peaks, and Enigmatic springs - encapsulates Fu Gai Mountain's unique characteristics. \[TextFX: FUSE\] At the summit, massive boulders balance precariously, forming the famous 'floating cap' or 'gauze hat' - a geological illusion that both confounds and delights. Strange clouds dance around jagged peaks, their ethereal shapes constantly shifting. Mysterious caves whisper tales of the mountain's past, while peculiar springs maintain a constant temperature regardless of the season. \[TextFX: EXPLODE\] Together, these elements combine to create a landscape that's truly 'out of this whirl' - a dizzyingly beautiful natural spectacle that challenges our perception of reality.
 
-나는 Sonnet의 글쓰기를 더 선호한다. 지시한 대로 [TextFX](https://developers.googleblog.com/en/how-its-made-textfx-is-a-suite-of-ai-tools-made-in-collaboration-with-lupe-fiasco/)를 적용한 점도 마음에 들지만, 최종 글은 다소 미완성해 보인다. 이것은 우리가 지정한 600단어 `desired_length`와 관련이 있을지도 모른다. 그래서 길이에 따라 프롬프트 설계를 개선하거나 작업 체인을 더 최적화해야 할 듯하다. 참고로 이것이 생성한 [콘텐츠 블록과 주제문이 포함된 전체 초안](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/80fd9327-6f17-48e9-a56e-019c5daa4c5b?observation=9194ce51-c4c2-4279-a3f9-7ac9c8516a30)이다.
+나는 Sonnet의 글을 더 좋아한다. 지시한 대로 [TextFX](https://developers.googleblog.com/en/how-its-made-textfx-is-a-suite-of-ai-tools-made-in-collaboration-with-lupe-fiasco/)를 적용한 것도 마음에 든다. 다만 최종 글은 조금 미완성처럼 보인다. 우리가 `desired_length`를 600단어로 지정한 것과 관련이 있을지도 모른다. 길이에 따라 프롬프트를 더 잘 설계하거나 작업 체인을 더 최적화해야 할 듯하다. 참고로 이것이 생성한 [콘텐츠 블록과 주제문이 들어 있는 전체 초안](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/80fd9327-6f17-48e9-a56e-019c5daa4c5b?observation=9194ce51-c4c2-4279-a3f9-7ac9c8516a30)은 여기 있다.
 
-Claude 3.5 Sonnet과 GPT-4o 각각의 기본 출력와 기사 변형를 비교하고 싶다면 아래로 내려가면 된다.
+Claude 3.5 Sonnet과 GPT-4o의 기본 출력과 글 변형을 각각 비교하고 싶다면 아래로 내려가면 된다.
 
 ## RAGgaeton이 하는 일
 
-글 쓸 시간이 부족한가? 문제없다! RAGgaeton은 콘텐츠 생성을 엔드투엔드로 automate할 수 있다.
+글 쓸 시간이 없다고? 문제없다. RAGgaeton은 콘텐츠 생성을 끝에서 끝까지 자동화할 수 있다.
 
-1\. 조사 질문를 만들어준다(물론 주제 씨앗는 여전히 필요하다)
+1\. 조사 질문을 만들어준다(물론 주제 씨앗은 여전히 직접 넣어야 한다)
 
-2\. 조사를 수행한다
+2\. 조사를 한다
 
-3\. 제목를 생성한다
+3\. 제목을 만든다
 
-4\. 전체 글을 초안 작성한다
+4\. 전체 글을 초안으로 쓴다
 
-5\. TextFX를 적용한다(두운으로 다시 쓰기, 아이디어를 펼치기 등)
+5\. TextFX를 적용한다(두운으로 다시 쓰기, 아이디어 펼치기 등)
 
-초기 아이디어를 심어 주고, RAGgaeton이 작업하게 둔 다음 생성된 초안을 편집하고 고치면 된다. 앞으로의 반복 작업에서는 편집하기 쉬운 인터페이스를 구현하고, 한 번 작성해 어디서나 발행할 수 있게 만들 계획이다.
+처음 아이디어를 넣고, RAGgaeton이 일을 하게 둔 뒤, 생성된 초안을 편집하고 고치면 된다. 다음 버전에서는 편집하기 쉬운 인터페이스를 구현하고, 한 번 쓰면 어디에나 발행할 수 있는 흐름을 만들 계획이다.
 
-## 주요 기능과 장점
+## 핵심 기능과 장점
 
-나는 이것을 다양한 콘텐츠 유형과 콘텐츠 관련 작업을 연결하는 방식에 맞춰 확장 가능하게 만들었다. 동시에 최첨단 ColBERT 검색기 모델을 활용한다(연구자들의 말이지, 내 말은 아니다). 이는 생성을 위해 가장 관련 있는 조각을 가져오도록 보장한다.
+나는 이것을 여러 콘텐츠 유형에 맞게 확장할 수 있고, 콘텐츠 작업을 다양한 방식으로 연결할 수 있도록 만들었다. 동시에 최첨단 ColBERT retriever 모델을 활용했다(연구자들의 표현이지, 내 말은 아니다). 이렇게 하면 생성에 가장 관련 있는 조각을 가져올 수 있다.
 
 ### 확장 가능한 콘텐츠 생성
 
-사용자는 재사용 가능한 콘텐츠 블록을 한 번 정의한 뒤, 원하는 기사 유형을 만들기 위해 조합할 수 있다. 작동 방식은 다음과 같다.
+사용자는 재사용 가능한 콘텐츠 블록을 한 번 정의한 뒤, 원하는 글 유형에 맞게 섞고 맞출 수 있다. 대략 이렇게 작동한다.
 
-1.  먼저 `content_blocks.json`에서 재사용 가능한 콘텐츠 block을 정의한다
+1.  먼저 `content_blocks.json`에서 재사용 가능한 콘텐츠 블록을 정의한다
     
 
 ```json
@@ -114,7 +114,7 @@ Claude 3.5 Sonnet과 GPT-4o 각각의 기본 출력와 기사 변형를 비교�
   }
 ```
 
-2.  다음으로 이런 프롬프트를 복사하고 편집하여, 콘텐츠 blocks를 `article_{article_type).yaml` 안의 가능한 구조로 조합한다
+2.  그다음 이런 프롬프트를 복사하고 수정해서, 콘텐츠 블록들을 `article_{article_type).yaml` 안의 가능한 구조로 조합한다
     
 
 ```yaml
@@ -159,42 +159,42 @@ generate_draft_travel:
 3.  관련 매개변수와 `article_type` 값을 넣어 `generate_draft` 엔드포인트를 호출하면 생성이 시작된다!
     
 
-P.S. 콘텐츠 blocks를 직접 써내려가기보다 알고리즘으로 배열하여 structures를 만들 수 있다. 아마 향후 작업가 될 영역이다.
+P.S. 콘텐츠 블록을 구조로 일일이 써두기보다 알고리즘으로 순열 조합할 수도 있다. 아마도 앞으로 해볼 작업이다.
 
-### A.I.-Powered Re검색 and Retrieval
+### A.I. 기반 조사와 검색
 
-RAGgaeton은 그냥 쓰기만 하지 않는다. 조사도 한다. 여러 플랫폼에서 further 조사를 위한 키워드를 생성하고, 검색를 수행한 뒤, 정보을 데이터base에 저장한다. 문서 수준 임베딩가 아니라 토큰 기반 후기 상호작용 메커니즘를 활용함으로써, RAGgaeton은 콘텐츠에 가장 관련 있는한 정보을 찾아 정확성와 깊이를 보장할 수 있다. 현재 구현은 `you.com`과 `Obsidian vaults`를 지원하며, 더 많은 출처가 추가될 예정이다.
+RAGgaeton은 쓰기만 하지 않는다. 조사도 한다. 여러 플랫폼에서 추가 조사를 위한 키워드를 만들고, 검색을 수행한 뒤, 정보를 데이터베이스에 저장한다. 문서 단위 임베딩 대신 토큰 기반 late interaction 방식을 활용하기 때문에, 콘텐츠에 가장 관련 있는 정보를 찾아 정확성과 깊이를 높일 수 있다. 현재 구현은 `you.com`과 `Obsidian vaults`를 지원하고, 앞으로 더 많은 출처를 붙일 예정이다.
 
-### Creative Enhancement를 위한 TextFX
+### 창의적 보강을 위한 TextFX
 
-평범한 문장를 TextFX로 몰입감 있는 콘텐츠로 바꾼다. 두운을 더하고, 복잡한 생각를 펼치기하고, 한 단어를 비슷하게 들리는 구절로 explode하는 등 모든 작업을 간단한 `edit-content` 명령로 수행한다.
+TextFX로 평범한 문장을 더 살아 있는 콘텐츠로 바꿀 수 있다. 두운을 더하고, 복잡한 생각을 펼치고, 단어 하나를 비슷하게 들리는 구절로 폭발시키는 식의 작업을 간단한 `edit-content` 명령으로 수행한다.
 
 ## 기술 스택
 
-기술적으로 궁금한 사람들을 위해, RAGgaeton은 다음으로 구축했다.
+기술적으로 궁금한 사람들을 위해 적어두면, RAGgaeton은 다음으로 만들었다.
 
 1.  자연어 생성을 위한 Claude 3.5 Sonnet과 GPT-4o
     
-2.  데이터base 관리를 위한 Supabase
+2.  데이터베이스 관리를 위한 Supabase
     
 3.  추적과 모니터링을 위한 Langfuse
     
-4.  효율적인 정보 검색을 위한 Llama Index(그리고 이후 문서와 데이터를 대상으로 한 상태를 유지하는 채팅!)
+4.  효율적인 정보 검색을 위한 Llama Index(그리고 나중에는 문서와 데이터를 대상으로 상태를 유지하는 채팅!)
     
 5.  데이터 검증을 위한 Pydantic
     
 6.  `generate-research-questions`, `do-research`, `generate-headlines`, `generate-draft`, `generate-topic-sentences`, `generate-full-content`, `edit-content`를 노출하는 원자적 API 엔드포인트를 위한 FastAPI
     
 
-이 조합 덕분에 RAGgaeton은 일관성과 흐름을 유지하면서 고품질의 맥락에 맞는 콘텐츠를 제공할 수 있다.
+이 조합 덕분에 RAGgaeton은 일관성과 흐름을 유지하면서, 맥락에 맞는 고품질 콘텐츠를 내놓을 수 있다.
 
-## RAGgaeton in Action 리뷰: 입력과 출력
+## 실제 RAGgaeton 검토: 입력과 출력
 
-RAGgaeton의 힘을 제대로 보려면, 실제로 서로 다른 모델의 출력을 비교해야 한다. 시작점으로 [you.com](you.com)과 푸가이산에 관한 초안 개요를 사용할 것이다. 여행 작가가 여행 후 적어둘 법한 거친 메모 같은 것이다.
+RAGgaeton의 힘을 제대로 보려면 모델별 출력을 실제로 비교해 봐야 한다. 시작점으로 [you.com](you.com)과 푸가이산에 관한 초안 개요를 쓰겠다. 여행 작가가 여행 뒤에 적어둘 법한 거친 메모다.
 
-### Input: Writer의 Draft Notes
+### 입력: 작가의 초안 메모
 
-RAGgaeton 데이터base에 수집할 수 있는 정보의 예시는 다음과 같다.
+RAGgaeton 데이터베이스에 넣을 수 있는 정보의 예시는 이렇다.
 
 ```html
 An A.I. Engineer Goes Gradient Descent on Floating Cap Mountain
@@ -234,22 +234,22 @@ Sierra
 沿着浮盖山的主脊往回望，但见每隔几 米就有突岩兀立。大序次第，掩映于翠绿的阔 叶林之上。望云者石、观音石、拳头石，一字 排开，虽形态各异，但海拔相近。约九百余 米，组成了一段长长约270米、面积约1.2万平 方米的齿状山脊。这里的地质条件复杂且大尺度稳定， 在很长的时间内风化主导的漫长地质过程，形成植被茂 密的准平原地表。后来，地壳再度活跃，整体抬升， 并渐渐被流水侵蚀，残留形成山脊。
 ```
 
-나는 내가 찍은 사진들에서 A.I.로 text를 extract해 초안 작성 outline의 정보을 얻었다. 아래와 같은 방식이다.
+초안 개요에 넣은 정보는 내가 찍은 사진에서 A.I.로 텍스트를 추출해 얻었다. 예를 들면 아래와 같다.
 
 ![](./Screenshot-2024-06-19-at-11.20.05-PM-31719062007036.png)
 
-### Task
+### 작업
 
-기본 LLM 클라이언트에는 다음 프롬프트를 바탕으로 Fu Gai Mountain 하이킹에 대한 여행 글을 생성하라고 요청했다.
+기본 LLM 클라이언트에는 다음 프롬프트를 바탕으로 푸가이산 하이킹 여행 글을 쓰게 했다.
 
 ```text
 write me a 600 word travel article about hiking to fu gai mountain in zhejiang
 Scratchpad: I saw an ant try to move a flower on the hike, it was doing so with all its might. When not doing gradient descent, an A.I. engineer had lots of fun climbing a physical mountain. I took a challenging route and ended up climbing over rocks and caves.
 ```
 
-RAGgaeton 모델만 위의 초안 작성 입력 메모에 접근할 수 있었다. 따라서 아래 출력은 두 가지 차원의 변형 결과다. 제한된 맥락 vs. 풍부한 맥락(작성자의 초안 메모 포함), zero-shot LLM 생성 vs. multi-step LLM 생성.
+초안 입력 메모에 접근할 수 있었던 것은 RAGgaeton 모델뿐이었다. 그러니 아래 출력들은 두 축의 변형 결과다. 제한된 맥락과 풍부한 맥락(작가의 초안 메모 포함), 그리고 zero-shot LLM 생성과 multi-step LLM 생성.
 
-### Vanilla GPT-4o Output
+### 기본 GPT-4o 출력
 
 ```text
 Hiking to Fu Gai Mountain: A Journey through Nature's Majesty
@@ -285,7 +285,7 @@ Final Thoughts
 Hiking to Fu Gai Mountain is more than just a physical journey; it's an exploration of nature's resilience and beauty. Whether you're an experienced hiker or a nature enthusiast, the trail offers a unique blend of challenge and reward that leaves a lasting impression. For anyone seeking an unforgettable adventure in Zhejiang, Fu Gai Mountain is a destination that promises both challenge and awe.
 ```
 
-GPT-4o text는 극도로 boring하게 읽힌다. 너무 general해서 Fu Gai Mountain을 다른 어떤 mountain으로 바꿔도 된다.
+GPT-4o의 글은 극도로 지루하게 읽힌다. 너무 일반적이라 Fu Gai Mountain을 다른 아무 산으로 바꿔도 그대로 굴러간다.
 
 ### Vanilla Claude 3.5 Sonnet Output
 
@@ -306,9 +306,9 @@ The descent, while less physically demanding, offered its own rewards. The chang
 For those seeking to test their mettle against nature's obstacles while immersing themselves in the raw beauty of Zhejiang's landscapes, Fu Gai Mountain offers an unforgettable experience. It stands as a reminder that sometimes, the greatest achievements come not from conquering virtual challenges, but from scaling the very real peaks that surround us.
 ```
 
-Sonnet 3.5는 language에서는 더 낫지만 Anji를 hallucinated했다. Fu Gai Mountain은 Jiangshan에 있다.
+Sonnet 3.5는 문장은 더 낫지만 Anji를 환각했다. Fu Gai Mountain은 Jiangshan에 있다.
 
-전반적으로 richer 맥락를 가진 RAGgaeton 출력가 주어진 초안 작성 메모에 trip을 grounding하는 데 더 잘한다.
+전반적으로, 더 풍부한 맥락을 넣은 RAGgaeton 출력이 주어진 초안 메모에 여행을 단단히 붙이는 데 더 잘한다.
 
 ### RAGgaeton GPT4-o Outputs
 
@@ -323,14 +323,14 @@ Sonnet 3.5는 language에서는 더 낫지만 Anji를 hallucinated했다. Fu Gai
 
 -   [The Unexpected Thrills of Hiking Fu Gai Mountain: When the Path Less Traveled Leads to Adventure](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/48178662-c578-4abe-87d4-c443c802367d?observation=8c5fedc2-c63e-497a-b131-ba3bd69f1e98)
     
-    -   climb을 묘사한 방식이 꽤 마음에 든다. 실제로 이런 느낌이었기 때문이다 :)
+    -   이 출력이 등반을 묘사한 방식이 꽤 마음에 든다. 실제로 이런 느낌이었기 때문이다 :)
         
     
     > <iframe alt="China as a 360 Adventure: Come caving with me" src="https://www.youtube.com/embed/xUaq1HGO3lI?feature=oembed" aria-describedby="nlr1qcbeg2k-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
     > 
     > China as a 360 Adventure: Come caving with me
     > 
-    > … Geological marvels and unorthodox pathways intertwine to create an adventure that transcends the typical trekking experience. Nicknamed '부개산' for its summit's hat-like stone formation, Fu Gai Mountain stands as a testament to nature's artistry. Its trails meander through a tapestry of strange rocks, mysterious caves, and hidden springs, each turn revealing a new facet of the mountain's character. Like a game of 'I Spy' on steroids, hikers find themselves constantly scanning their surroundings, never knowing if the next step will lead them over, under, or through the mountain's enigmatic terrain. \[TextFX: UNEXPECT\]
+    > … Geological marvels and unorthodox pathways intertwine to create an adventure that transcends the typical trekking experience. Nicknamed 'Floating Cap Mountain' for its summit's hat-like stone formation, Fu Gai Mountain stands as a testament to nature's artistry. Its trails meander through a tapestry of strange rocks, mysterious caves, and hidden springs, each turn revealing a new facet of the mountain's character. Like a game of 'I Spy' on steroids, hikers find themselves constantly scanning their surroundings, never knowing if the next step will lead them over, under, or through the mountain's enigmatic terrain. \[TextFX: UNEXPECT\]
     > 
     > Exploring this formidable peak pushes adventurers to their limits, both physically and mentally, while unveiling the raw splendor of China's diverse landscape. As hikers navigate its challenging terrain, they are not merely walking a path but solving a three-dimensional puzzle that Mother Nature herself has crafted. This journey of discovery demands agility, creativity, and perseverance, rewarding those who rise to the challenge with breathtaking vistas and a profound sense of accomplishment. Fu Gai Mountain stands as a natural playground where adventurers can test their mettle, transforming from mere hikers into intrepid explorers, each conquering their own personal Everest. \[TextFX: FUSE\]
     
@@ -339,76 +339,76 @@ Sonnet 3.5는 language에서는 더 낫지만 Anji를 hallucinated했다. Fu Gai
 -   [Conquering Fu Gai Mountain: A Hiker's Adventure in Zhejiang's 'Floating Cap' Paradise](https://cloud.langfuse.com/project/clxm2w3vt000r12wji2eyymvd/traces/9169ac2d-6f9c-4d6d-adab-8ec84e422b99?observation=b18b2f3c-ebf0-4245-8bf6-ff5ce374eb99)
     
 
-보듯이 기본 출력는 매우 bland하고 general하지만, RAGgaeton-generated 콘텐츠는 richer details, 몰입감 있는 descriptions, cultural 맥락, 그리고 input 메모와 aligned된 structured format을 제공한다. RAGgaeton이 rough 초안 작성s를 comprehensive하고 몰입감 있는한 콘텐츠로 바꿀 수 있음을 보여준다.
+보면 알 수 있듯, 기본 출력은 매우 밋밋하고 일반적이다. 반면 RAGgaeton이 생성한 콘텐츠는 더 풍부한 세부 사항, 몰입감 있는 묘사, 문화적 맥락, 그리고 입력 메모와 맞는 구조를 제공한다. 거친 초안이 포괄적이고 읽히는 콘텐츠로 바뀔 수 있음을 보여준다.
 
-### Verdict
+### 판정
 
-Sonnet 3.5만 in-맥락 learning을 통해 내가 제공한 TextFX를 적용했다. 다만 desired length에 맞춰 더 fine-tune해야 한다. 전체적으로 검토한 samples 중 text-wise로는 그 output이 가장 value가 높다고 느꼈다.
+내가 in-context learning으로 건넨 TextFX를 적용한 것은 Sonnet 3.5뿐이었다. 다만 원하는 길이에 맞게 더 다듬을 필요는 있다. 전체적으로는 검토한 샘플 중 글 자체의 가치는 이 출력이 가장 높다고 느꼈다.
 
-## My Design Philosophy
+## 내 설계 철학
 
-RAGgaeton을 만들며 내가 염두에 두려는 핵심 원칙은 세 가지다.
+RAGgaeton을 만들면서 마음에 두려는 핵심 원칙은 세 가지다.
 
-1\. \*\***Portable 데이터\*\***: Your 콘텐츠 should be yours, 접근 가능 and usable across 다른 플랫폼 and 도구.
+1\. \*\***이동 가능한 데이터\*\***: 콘텐츠는 내 것이어야 한다. 여러 플랫폼과 도구에서 접근 가능하고 쓸 수 있어야 한다.
 
-2\. \*\***Tunable to your unique needs**\*\*: 사용자 should be able to enjoy granular control over 모델 behaviour, 편집ing of 출력, operationalising the 작업 흐름, 근거를 둔ness, etc.
+2\. \*\***각자의 필요에 맞게 조정 가능할 것**\*\*: 사용자는 모델 동작, 출력 편집, 워크플로 운영, 근거성 등을 세밀하게 제어할 수 있어야 한다.
 
-3\. \*\***First-class support for Asian languages**\*\*: This is a personal passion of mine, given the current underrepresentation of languages like 중국어 on the web.
+3\. \*\***아시아 언어를 일급으로 지원할 것**\*\*: 웹에서 중국어 같은 언어가 아직 충분히 대표되지 못하고 있다는 점 때문에, 나에게는 개인적으로도 중요한 문제다.
 
-## Learnings and Challenges
+## 배운 점과 어려웠던 점
 
-RAGgaeton을 만드는 과정은 insights와 도전 과제로 가득한 여정이었다. 주요 배운 점는 다음과 같다.
+RAGgaeton을 만드는 과정은 통찰과 난관으로 가득했다. 주요 배움은 다음과 같다.
 
-### Abstraction vs Specificity
+### 추상화와 특수성
 
-이 trade-off의 균형을 맞추는 일은 constant challenge다. 나는 언제까지 무엇을 achieve하고 싶은지에서 거꾸로 출발한 뒤, end goal을 individual elements로 de조합하고, 어떤 parts를 더 재사용 가능한하게 만들어야 하는지 살펴보는 방식이 유용했다.
+이 절충의 균형을 잡는 일은 늘 어렵다. 나는 언제까지 무엇을 달성하고 싶은지에서 거꾸로 출발한 뒤, 최종 목표를 개별 요소로 쪼개고, 어떤 부분을 더 재사용 가능하게 만들지 살펴보는 방식이 유용했다.
 
-그 결과 `llm_handler.py`, `llm_processing.py`, `prompts.py`를 분리하게 되었다. `llm_handler.py`는 `prompts.py`가 formatted한 프롬프트로 call을 만들고, `llm_processing.py`는 response를 parse하여 엔드포인트s와 잘 작동하도록 보장한다. 이렇게 하면 모든 operation이 atomic해지고, 어떻게 chain할지 자유롭게 정할 수 있다.
+그 과정에서 `llm_handler.py`, `llm_processing.py`, `prompts.py`를 분리했다. `llm_handler.py`는 `prompts.py`가 형식화한 프롬프트로 호출을 만들고, `llm_processing.py`는 응답을 파싱해 엔드포인트와 잘 맞물리도록 한다. 이렇게 하면 모든 작업이 원자적으로 나뉘고, 어떤 순서로 연결할지는 자유롭게 정할 수 있다.
 
-### 확률적 모델이 결정론적으로 동작하도록 제한하기
+### 확률적 모델을 결정론적으로 행동하게 제한하기
 
-내가 마주한 과제 중 하나는 언어 모델에서 예측 가능한 동작을 얻는 일이었다. 이를 해결하기 위해 Pydantic으로 요청과 모델 출력에 대한 엄격한 스키마를 정의했다. 이런 제약이 없을 때 어떤 일이 생길 수 있는지 예시는 다음과 같다.
+내가 마주한 어려움 중 하나는 언어 모델에서 예측 가능한 동작을 얻는 일이었다. 이를 해결하려고 Pydantic으로 요청과 모델 출력에 엄격한 스키마를 정의했다. 그런 제약이 없으면 이런 일이 생길 수 있다.
 
 ![](./Screenshot-2024-06-20-at-6.13.05-PM-21719064449341.png)
 
-한 경우에는 `attraction`과 `description`이 `details` 키 안에 중첩되어 있고, 다른 경우에는 `attraction_#` 안에 `name`과 `description`이 다시 중첩되어 있다는 점을 보라. 이 모델들은 정말 “창의적”이다. 따라서 전통적 프로그래밍 패러다임과 예측 가능하고 하위 호환되게 만들기 위한 작업이 필요하다.
+한쪽에서는 `attraction`과 `description`이 `details` 키 안에 들어가 있고, 다른 쪽에서는 `attraction_#` 아래에 `name`과 `description`이 다시 중첩되어 있다. 이 모델들은 정말 “창의적”이다. 그래서 전통적인 프로그래밍 패러다임과 예측 가능하게, 그리고 하위 호환되게 맞추려면 별도의 작업이 필요하다.
 
 ### RAG의 미래
 
-나는 프롬프트 엔지니어링, RAG, 미세 조정을 A.I. 엔지니어의 도구상자 안에 있는 서로 다른 도구로 생각한다. 맥락 창이나 다른 요인이 어떻게 변하든, RAG는 계속 남을 것이다. 직관적으로 맥락의 신호대잡음비가 성능에 중요하다는 것은 말이 된다. 모델들이 세계적 인간 전문가처럼 불필요한 정보를 걸러내고 당면 과제에 집중할 수 있는 지점에는 아직 도달하지 않았다.
+나는 프롬프트 엔지니어링, RAG, 미세조정을 A.I. Engineer의 도구상자 안에 있는 서로 다른 도구로 본다. 맥락 창이나 다른 요인이 어떻게 바뀌든, RAG는 계속 남을 것이다. 직관적으로도 맥락 안의 신호대잡음비는 성능에 중요하다. 모델이 세계적인 인간 전문가처럼 불필요한 정보를 걸러내고 당면 과제에 집중할 수 있는 지점에는 아직 오지 않았다.
 
 ## RAGgaeton의 다음 단계
 
-나는 계속 RAGgaeton을 개선하고 있다. 기대하는 다음 단계는 다음과 같다.
+나는 계속 RAGgaeton을 개선하고 있다. 기대하고 있는 다음 단계는 이렇다.
 
-1\. \*\***평가와 인용**\*\*: 실패했을 때만 알려주는 자동 평가와, 어떤 콘텐츠 조각이 더 불안정한 근거 위에 있는지 강조하는 인용 시스템을 구현하고 싶다.
+1\. \*\***평가와 인용**\*\*: 실패했을 때만 알려주는 자동 평가와, 어떤 콘텐츠 조각이 더 불안한 근거 위에 있는지 보여주는 인용 시스템을 구현하고 싶다.
 
-2\. \*\***리팩터링과 조합 가능성**\*\*: Pydantic 스키마가 아직 조금 지저분해서 정리하고 반복을 피하고 싶다.
+2\. \*\***리팩터링과 조합 가능성**\*\*: Pydantic 스키마가 아직 조금 지저분해서 정리하고 반복을 줄이고 싶다.
 
-3\. \*\***중국어 생성**\*\*: 특히 기대하는 enhancement다. A.I.가 이런 문장을 더 많이 쓸 수 있다면 멋지지 않을까.
+3\. \*\***중국어 생성**\*\*: 내가 특히 기대하는 개선이다. A.I.가 이런 문장을 더 많이 쓸 수 있다면 멋지지 않을까.
 
 > “花香摇晃了一整个盛夏，空气漂浮蒸发着无数个恍惚的脸颊。择一张长椅坐下，看天边披上晚霞。”
 > 
 > —陈恩娇
 
-대충 번역하면 다음과 같다.
+대충 옮기면 이렇다.
 
-> “The fragrance of flowers swayed through an entire summer, as fleeting faces evaporated into the air. Choose a bench to sit on, and watch as the evening glow comes on, mummed in memories of the day.”
+> “꽃향기가 한여름 내내 흔들렸고, 아득한 얼굴들은 공기 속에 떠올라 증발했다. 긴 의자 하나를 골라 앉아, 하루의 기억을 머금은 채 저녁노을이 번져 오는 것을 바라본다.”
 > 
 > —Ernie
 
 ## Generative A.I.로 미래를 (다시) 쓰자
 
-나는 인간-A.I. 협업이 콘텐츠의 양과 질을 모두 확장할 수 있는 힘을 믿기 때문에 RAGgaeton을 만들었다. 언어와 정보 비대칭 같은 지식 장벽을 더 많이 허물수록, 더 많은 사람이 이득을 얻을 수 있다.
+나는 인간-A.I. 협업이 콘텐츠의 양과 질을 모두 확장할 수 있다고 믿기 때문에 RAGgaeton을 만들었다. 언어와 정보 비대칭 같은 지식의 장벽을 더 많이 허물수록 더 많은 사람이 혜택을 얻을 수 있다.
 
-중국어 화자가 세계 인구의 17%를 차지하는데도 웹의 중국어 콘텐츠는 1.3%에 불과하다. 이것이 RAGgaeton 같은 도구가 해결하는 데 도움을 주기를 바라는 격차다. 언어가 세계 지식에 손끝으로 접근하는 데 장벽이 되어서는 안 된다.
+중국어 화자가 세계 인구의 17%를 차지하는데도, 웹에서 중국어 콘텐츠는 1.3%에 불과하다. RAGgaeton 같은 도구가 도와 해결했으면 하는 격차가 바로 이런 것이다. 손끝에서 세계의 지식에 접근하는 데 언어가 장벽이 되어서는 안 된다.
 
-작가, 콘텐츠 창작자, 또는 A.I.와 콘텐츠 창작의 교차점에 열정이 있는 사람이라면, RAGgaeton의 개발 방향을 함께 만들어가고 싶다.
+작가, 콘텐츠 창작자, 또는 A.I.와 콘텐츠 제작의 교차점에 관심 있는 사람이라면 RAGgaeton의 발전 방향을 함께 만들어 보고 싶다.
 
-이 여정의 일부가 되고 싶다면 연락해달라. 함께 우리는 콘텐츠가 만들어지는 방식을 혁신하고, 더 효율적이고 확장 가능하며 모두에게 접근 가능하게 만들 수 있다.
+이 여정의 일부가 되고 싶다면 연락해 달라. 함께라면 콘텐츠가 만들어지는 방식을 더 효율적이고, 확장 가능하고, 모두에게 접근 가능한 방식으로 바꿀 수 있다.
 
 미래를 함께 쓰자!
 
 ---
 
-*Originally published on PubPub at [erniesg.pubpub.org/pub/z40gi88t](https://erniesg.pubpub.org/pub/z40gi88t).*
+*원래 PubPub의 [erniesg.pubpub.org/pub/z40gi88t](https://erniesg.pubpub.org/pub/z40gi88t)에 게시됨.*

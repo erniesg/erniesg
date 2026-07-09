@@ -1,7 +1,7 @@
 ---
 title: '튜토리얼: A.I.로 에어 드럼 치기'
 description: >-
-  인공지능과 신경 오디오 합성, 디제잉, Taylor Swift, 그리고 반짝이는 새 장난감(Erae II)의 결합이 어떤 모습일 수 있을지에
+  A.I.와 신경 오디오 합성, 디제잉, Taylor Swift, 그리고 반짝이는 새 장난감(Erae II)의 결합이 어떤 모습일 수 있을지에
   대한 몇 가지 생각
 date: 2024-03-19T00:00:00.000Z
 authors:
@@ -17,13 +17,13 @@ translationSource: codex
 
 나는 주먹을 쥐고 “에어 드럼”을 치는 스크립트를 만들었다. 작은 시간 제한 실험으로, 말레이 드럼으로 훈련한 RAVE 모델이 생성한 소리를 재생하는 방식이었다. 그냥 할 수 있으니까 만들어보는 그런 우스꽝스럽고 바보 같은 작은 것들 중 하나였는데, 그래서 이전 A.I. 게시물을 전부 합친 것보다 사람들이 더 좋아해줘서 매우 기쁘다. 어쩌면 내가 Instagram을 잘못 쓰고 있었는지도, lol.
 
-<iframe alt="Air drum with a closed fist" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="주먹을 쥐고 에어 드럼 치기" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
 주먹을 쥐고 에어 드럼 치기
 
 # 시작하기
 
-어쨌든 이것은 모든 인공지능 앱의 대부인 Python으로 코딩했다. Python에서는 의존성 관리가 언어의 인간 친화성과 반비례한다. 이 튜토리얼을 따라가려면 Python을 설치하고, `pip install`을 할 줄 알고, 명령줄에서 Python 스크립트를 실행할 수 있어야 한다. 코드 자체는 115줄뿐이고, 늘 그렇듯 ChatGPT와 “페어 프로그래밍”하며 작성했다, lol.
+어쨌든 이것은 모든 A.I. 앱의 대부인 Python으로 코딩했다. Python에서는 의존성 관리가 언어의 인간 친화성과 반비례한다. 이 튜토리얼을 따라가려면 Python을 설치하고, `pip install`을 할 줄 알고, 명령줄에서 Python 스크립트를 실행할 수 있어야 한다. 코드 자체는 115줄뿐이고, 늘 그렇듯 ChatGPT와 “페어 프로그래밍”하며 작성했다, lol.
 
 내 시스템 구성과 패키지 버전은 다음과 같다:
 
@@ -38,13 +38,13 @@ translationSource: codex
 
 아래 영상은 튜토리얼이라기보다 데모를 만들 때 들어간 사고 과정과 논리 분해를 설명하는 것에 가깝다. 어차피 이런 것들이 다른 기술적 작업으로 옮겨갈 때 훨씬 더 가치 있고 중요하다. 필요한 재료가 무엇인지 알고, A.I.에게 원하는 일을 단계별로 명확히 지시할 수 있다면, 코드가 생성되는 동안 뒤로 기대어 있으면 된다. 물론 그것을 실행하고 디버그하는 방법은 알아야 한다.
 
-<iframe alt="Tutorial: Air Drum With A.I." src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="튜토리얼: A.I.로 에어 드럼 치기" src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
 튜토리얼: A.I.로 에어 드럼 치기
 
 # 114줄의 코드
 
-참고: [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer)와 재생하려는 .mp3 파일을 스크립트와 같은 디렉터리에 두거나 파일 경로를 업데이트해야 한다. 내가 사용한 사운드 파일은 기본적으로 말레이 드럼으로 훈련한 [RAVE 모델](https://github.com/acids-ircam/RAVE)에서 생성한 오디오였다. 무료 Google Colab notebooks로 직접 모델을 훈련하는 방법에 대한 튜토리얼도 만들 계획이니 기대해 달라!
+참고: [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer)와 재생하려는 .mp3 파일을 스크립트와 같은 디렉터리에 두거나 파일 경로를 업데이트해야 한다. 내가 사용한 사운드 파일은 기본적으로 말레이 드럼으로 훈련한 [RAVE 모델](https://github.com/acids-ircam/RAVE)에서 생성한 오디오였다. 무료 Google CoLab notebook으로 직접 모델을 훈련하는 방법에 대한 튜토리얼도 만들 계획이니 기대해 달라!
 
 ```python
 import mediapipe as mp
@@ -112,4 +112,4 @@ DJ를 하고 싶지 않고 그냥 연주하고 싶어도 방법은 있다. #idea
 
 ---
 
-*Originally published on PubPub at [erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q).*
+*원래 PubPub에 [erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q)로 게시되었습니다.*

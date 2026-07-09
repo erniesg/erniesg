@@ -12,27 +12,27 @@ translationStatus: machine
 translationSource: codex
 ---
 
-苛立ってキーボードを叩いたり、[引き継いだ codebase を前に少し涙を流したり](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)するより、その情報を A.I. に渡してチャットするほうがずっと理にかなっている。大規模言語モデル (LLMs) の知識と推論能力をそうした情報に対して使い始めると、自然な次のステップは synthesis になる。既存の codebase の上で動く新しいコードを生成し、世界中の誰もが プロンプト-to-feature に進めるようにすることだ。この課題に取り組むため、下の demo は週末の 1、2 日で作った成果である。新しい学びが多く、いくつもの概念をより深く理解できたので、作るのはかなり楽しかった。
+苛立ってキーボードを叩いたり、[引き継いだコードベースを前に少し涙を流したり](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)するより、その情報を A.I. に渡して会話するほうがずっと理にかなっている。大規模言語モデル (LLMs) の知識と推論能力をそうした情報に対して使い始めると、自然な次の段階は統合になる。既存のコードベースの上で動く新しいコードを生成し、世界中の誰もがプロンプトから機能へ進めるようにすることだ。この課題に取り組むため、下のデモは週末の 1、2 日で作った成果である。新しい学びが多く、いくつもの概念をより深く理解できたので、作るのはかなり楽しかった。
 
 <iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
 Arthur - Search and Retrieve Anything
 
-# なぜ働く Leh？
+# なぜ働くの、leh？
 
 ![](./00281-807328077-11691761226672.png)
 
-私がやろうとしたのは、自分のデータ工場に関する情報を `Deep Lake` ベクトルストアに渡し、カスタム知識ストアの上で ChatGPT の推論能力を活用して、既存設定で何が起きているのか理解することだった。人間が残したレガシーコードベースを読み解こうとするより、ずっと楽しかった。コミュニケーションや会議が大きな時間の無駄だったことは十分すぎるほどあったし、返事の遅さ、質問への人間側の遅延には言葉もない……だから、こうして始める。一つ目のレンガを置けば、あらゆる情報を調査し、検索し、推論し、ソーシャルメディアコンテンツでもコードでも新しい価値ある出力を統合して生成する自律エージェントの工場を作れる。私にとって、これこそ A.I. の労働市場への影響が社会全体で真剣に議論されるべき理由だ。
+私がやろうとしたのは、自分のデータファクトリに関する情報を `Deep Lake` ベクトルストアに渡し、カスタム知識ストアの上で ChatGPT の推論能力を使って、既存の構成で何が起きているのか理解することだった。人間が残したレガシーコードベースを読み解こうとするより、ずっと楽しかった。コミュニケーションや会議が大きな時間の無駄だったことは十分すぎるほどあったし、返事の遅さ、質問に対する人間側のラグにはもう言葉がない……だから、こうして始める。一つ目のレンガを置けば、あらゆる情報を調査し、探し出し、推論し、ソーシャルメディアの投稿でもコードでも、新しい価値ある出力を統合して生成する自律エージェントの工場を作れる。私にとって、これこそ A.I. の労働市場への影響が社会全体で真剣に議論されるべき理由だ。
 
-断片的な A.I. 知能でさえ超人的知能になり、[生産性を 1000 倍](https://www.youtube.com/watch?v=ji5rdhzT53o)にできるとき、つまり、そもそも十分な仕事が残らないかもしれないとき、私たちは何をすればいいのか？一歩引いて考えると、そもそもなぜ人間にそんなに働いてほしいのだろう？本当に必要なのは、仕事、収入、意味の間にある矢印を再構成し、描き直すことかもしれない。私は喜んで週 4 時間労働に投票し、残りの時間を遊びと学びに使う。まあ、そう思うだけだ。
+断片的な A.I. 知能でさえ超人的知能になり、[生産性を 1000 倍](https://www.youtube.com/watch?v=ji5rdhzT53o)にできるとき、つまり、そもそも十分な仕事が残らないかもしれないとき、私たちは何をすればいいのか？一歩引いて考えると、そもそもなぜ人間にそんなに働いてほしいのだろう？本当に必要なのは、仕事、収入、意味の間にある矢印を再構成し、描き直すことかもしれない。私は喜んで週4時間労働に投票し、残りの時間を遊びと学びに使う。まあ、そう思うだけだ。
 
 # 直面した課題
 
 ![](./00283-1392154050-21691764412914.png)
 
-エージェント を作るなかで、最も詰まった難所は次の通りだった：
+エージェントを作るなかで、最も詰まった難所は次の通りだった：
 
-1.  **正しい package versions を使う**
+1.  **正しいパッケージバージョンを使う**
     
 
 始めるにあたり、[既存プロジェクト (chat-with-code)](https://github.com/priya-dwivedi/chat-with-code) から学ぶことにしたが、以下のようなエラーに何度も遭遇した：
@@ -111,21 +111,21 @@ Traceback (most recent call last):
   File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/pydantic/main.py", line 352, in __new__
 ```
 
-Solution：結局、特定の `streamlit (1.25.0)` と `pydanic version (1.10.12)` を使う必要があった。こうした package 間の compatibility issue はかなり頻繁に起きるので、管理するための ツール と ベストプラクティス をもっと学ぶ必要がありそうだ。もしかすると、使う具体的な version は常に `poetry` の中で定義すべきなのかもしれない！？
+解決策：結局、特定の `streamlit (1.25.0)` と `pydanic version (1.10.12)` を使う必要があった。こうしたパッケージ間の互換性問題はかなり頻繁に起きるので、管理のためのツールとベストプラクティスをもっと学ぶ必要がありそうだ。もしかすると、使う具体的なバージョンは常に `poetry` の中で定義すべきなのかもしれない！？
 
-2.  **.json files で定義された Azure Data Factory リソース を 取り込み、分割する方法を理解する**
+2.  **`.json` ファイルで定義された Azure Data Factory リソースを読み込み、分割する方法を理解する**
     
 
-文書、.PDFs、GitHub コードリポジトリ などを処理するチュートリアルはたくさんあるのに、.json への言及はほとんどなかった。ChatGPT に生成させても失敗したので、.json と `langchain` JSON loader をじっくり見て、私が正しいと思う手順を ChatGPT に段階的に案内したところ、ようやく動いた。少なくとも Google と YouTube の検索 1 ページ目を見る限り、Azure Resource Manager (ARM) template に対してこれをやった人はいなかったので、創意工夫が必要だった。
+文書、PDF、GitHub のコードリポジトリなどを処理するチュートリアルはたくさんあるのに、`.json` への言及はほとんどなかった。ChatGPT に生成させても失敗したので、`.json` と `langchain` JSON ローダーをじっくり見て、私が正しいと思う手順を ChatGPT に段階的に案内したところ、ようやく動いた。少なくとも Google と YouTube の検索 1 ページ目を見る限り、Azure Resource Manager (ARM) テンプレートに対してこれをやった人はいなかったので、創意工夫が必要だった。
 
-Solution：この初期 プロトタイプ では、Azure Data Factory の `parameters`、`variables`、`resources` と、`resources` 内の individual objects を保持したかった。そこに pipelines や activities などが入るからだ。これに few shot instructions と 文脈 を組み合わせることで、ChatGPT は必要なものを出してくれた。
+解決策：この初期プロトタイプでは、Azure Data Factory の `parameters`、`variables`、`resources` と、`resources` 内の個別オブジェクトを保持したかった。そこに pipelines や activities などが入るからだ。これに few-shot の指示と文脈を組み合わせることで、ChatGPT は必要なものを出してくれた。
 
 # これから
 
-こうして 75 個の項目を `Deep Lake` のデータセットに分割して入れることになった。今はもう、さらに多くのデータソースを取り込み、すべての SQL スキーマや stored procedure、データそのものまで問い合わせられるようにすること、memory まわりのメタデータを更新すること、multi-modal data lake cum vector store 上で CRUD 操作を行うこと、検索方針と token context を最適化することまで考えている。そもそも、ツールを使って LLM の中で直接実行し、行動まで起こさせればいいのではないか。さらに言えば、LLM に自分でテストを書かせ、デバッグし、検証させればいい。これらはすべて、どんな規模のチームや組織でも控えめに言って生産性を 1000 倍にする autonomous agent を本番投入するうえで不可欠になる。
+こうして 75 個の項目を `Deep Lake` のデータセットに分割して入れることになった。今はもう、さらに多くのデータソースを読み込み、すべての SQL スキーマや保存済みプロシージャ、データそのものまで問い合わせられるようにすること、メモリまわりのメタデータを更新すること、マルチモーダルなデータレイク兼ベクトルストア上で CRUD 操作を行うこと、検索方針とトークン文脈を最適化することまで考えている。そもそも、ツールを使って LLM の中で直接実行し、行動まで起こさせればいいのではないか。さらに言えば、LLM に自分でテストを書かせ、デバッグし、検証させればいい。これらはすべて、どんな規模のチームや組織でも控えめに言って生産性を 1000 倍にする自律エージェントを本番投入するうえで不可欠になる。
 
-Fun times! 🤩🤩🤩
+楽しい時代だ！🤩🤩🤩
 
 ---
 
-*Originally published on PubPub at [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z).*
+*PubPub の [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z) で初出。*

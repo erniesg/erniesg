@@ -1,6 +1,6 @@
 ---
-title: リアルタイム生成アーキテクチャ図
-description: AIモデルが生成する複雑な構造化データを、ノードごと、エッジごとにリアルタイムで流すアーキテクチャ図生成器。
+title: 生成アーキテクチャ図をリアルタイム配信する
+description: AI モデルが複雑な構造化データを生成するそばから、ノード単位・エッジ単位で図に反映する仕組み。
 date: 2024-12-19T00:00:00.000Z
 tags:
   - ai
@@ -18,39 +18,39 @@ translationStatus: machine
 translationSource: codex
 ---
 
-# 作り方：Cloudflare Workers x Vercel AI SDK でシステムアーキテクチャをリアルタイムストリーミングする
+# 作り方：Cloudflare Workers x Vercel AI SDK で生成システム構成図をリアルタイム配信する
 
-*AI モデルが複雑な構造化データを生成するたびに、ノードごと、エッジごとにリアルタイムで流すアーキテクチャ図生成器を作る。*
+*AI モデルが複雑な構造化データを生成するそばから、ノード単位・エッジ単位でリアルタイムに図へ反映する生成器を作る。*
 
 ## 問題：テキストストリーミングの先へ
 
-ほとんどの AI streaming 実装はテキスト生成に集中している。ChatGPT のタイプライター効果を思い浮かべればよい。だが、複雑な構造化データをリアルタイムで stream する必要がある場合はどうだろう。AI モデルがネットワーク図を生成するにつれて、ノードごと、エッジごとに可視化したい場合は？
+ほとんどの AI ストリーミング実装はテキスト生成に集中している。ChatGPT のタイプライター効果を思い浮かべればよい。だが、複雑な構造化データをリアルタイムで配信する必要がある場合はどうだろう。AI モデルがネットワーク図を生成するにつれて、ノード単位・エッジ単位で可視化したい場合は？
 
 それこそが、**vibetoprod** を作る中で取り組んだことだった。vibetoprod は、インタラクティブなクラウドアーキテクチャ比較を生成するツールだ。完全なレスポンスを 10 秒以上待つのではなく、AI が考えるにつれて図がリアルタイムに現れていく様子をユーザーに見せたかった。
 
-## 私たちのスタック：Edge-First Streaming
+## 私たちのスタック：エッジ優先のストリーミング
 
-現代的で edge に最適化したスタックはこうだ。
+現代的でエッジに最適化したスタックはこうだ。
 
-**Backend:**
-- **Cloudflare Workers** - グローバル低遅延のための edge compute
-- **Hono** - 軽量 web framework（Workers 向けの Express のようなもの）
-- **Vercel AI SDK** - 構造化 streaming の秘密のソース
+**バックエンド:**
+- **Cloudflare Workers** - グローバル低遅延のためのエッジコンピューティング
+- **Hono** - 軽量ウェブフレームワーク（Workers 向けの Express のようなもの）
+- **Vercel AI SDK** - 構造化ストリーミングの肝
 - **OpenAI GPT-4** - 私たちのアーキテクチャ脳
-- **Zod** - Runtime schema 検証
+- **Zod** - 実行時スキーマ検証
 
-**Frontend:**
-- **React + TypeScript** - 型安全な UI components
+**フロントエンド:**
+- **React + TypeScript** - 型安全な UI コンポーネント
 - **React Flow** - インタラクティブな図の可視化
-- **Server-Sent Events** - リアルタイムのブラウザ streaming
+- **Server-Sent Events** - ブラウザへのリアルタイム配信
 
 ## 魔法：`partialObjectStream`
 
-突破口は Vercel AI SDK の `partialObjectStream` から来た。多くの開発者は `streamText()` を知っているが、`streamObject()` を知る人は少ない。ましてや、その partial streaming 機能を知る人はさらに少ない。
+突破口は Vercel AI SDK の `partialObjectStream` から来た。多くの開発者は `streamText()` を知っているが、`streamObject()` を知る人は少ない。ましてや、その部分ストリーミング機能を知る人はさらに少ない。
 
 仕組みはこうだ。
 
-### 1. Schema を定義する
+### 1. スキーマを定義する
 
 ```typescript
 // src/schemas/architecture.ts
@@ -83,7 +83,7 @@ export const architectureResponseSchema = z.object({
 });
 ```
 
-### 2. Backend：部分オブジェクトを stream する
+### 2. バックエンド：部分オブジェクトを配信する
 
 ```typescript
 // functions/services/modernOpenAIService.ts
@@ -149,9 +149,9 @@ app.post('/api/generate-architecture-v2', async (c) => {
 });
 ```
 
-## Frontend の課題：部分オブジェクトは messy
+## フロントエンドの課題：部分オブジェクトは扱いづらい
 
-ここが面白いところだ。AI は完全なオブジェクトを送らない。時間をかけて組み上がっていく **partial objects** を送ってくる。
+ここが面白いところだ。AI は完全なオブジェクトを送らない。時間をかけて組み上がっていく **部分オブジェクト** を送ってくる。
 
 ```json
 // First chunk
@@ -192,13 +192,13 @@ app.post('/api/generate-architecture-v2', async (c) => {
 }
 ```
 
-### 4. Auto-Layout：リアルタイム Dagre 配置
+### 4. 自動レイアウト：リアルタイム Dagre 配置
 
 重要な洞察の一つは、**AI にレイアウトを任せない**ことだ。LLMs は空間配置が苦手だが、論理的な関係を生成するのは得意だ。そこで私たちは次のようにした。
 
-1. `position: { x: 0, y: 0 }` を持つ nodes を生成する（無視される）
-2. streaming update のたびに Dagre layout を再実行する
-3. 図が成長するにつれて viewport を自動で fit する
+1. `position: { x: 0, y: 0 }` を持つノードを生成する（無視される）
+2. ストリーミング更新のたびに Dagre レイアウトを再実行する
+3. 図が成長するにつれてビューポートを自動で合わせる
 
 ```typescript
 // src/utils/autoLayout.ts
@@ -247,7 +247,7 @@ export const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'L
 };
 ```
 
-魔法は streaming component で起きる。layout は**ノードが追加されるたびに**再計算される。
+魔法はストリーミング用コンポーネントで起きる。レイアウトは**ノードが追加されるたびに**再計算される。
 
 ```typescript
 // src/components/streaming/StreamingReactFlow.tsx
@@ -273,9 +273,9 @@ useEffect(() => {
 }, [reactFlowNodes.length, reactFlowEdges.length]); // Re-run on every count change
 ```
 
-この方法により、**レスポンシブでリアルタイムなレイアウト**が得られる。各 node が stream されるたびに Dagre が全体の layout を再計算し、viewport が滑らかに調整される。**AI が論理アーキテクチャを生成し、Dagre が視覚的な完成度を担う**。
+この方法により、**レスポンシブでリアルタイムなレイアウト**が得られる。各ノードが届くたびに Dagre が全体のレイアウトを再計算し、ビューポートが滑らかに調整される。**AI が論理アーキテクチャを生成し、Dagre が視覚的な完成度を担う**。
 
-### 5. Frontend：部分オブジェクトを穏当に扱う
+### 5. フロントエンド：部分オブジェクトを穏当に扱う
 
 ```typescript
 // src/hooks/useStreamingArchitectureV2.ts
@@ -349,75 +349,75 @@ export function useStreamingArchitectureV2() {
 ## 主な学び：わかったこと
 
 ### 1. **部分オブジェクトは段階的に到着する**
-AI モデルは一つの node を完成させてから次に進むわけではない。ID だけの Node A を送り、次に部分的なデータを持つ Node B を送り、その後で Node A を完成させることもある。frontend はこれを穏当に処理しなければならない。
+AI モデルは一つのノードを完成させてから次に進むわけではない。ID だけの Node A を送り、次に部分的なデータを持つ Node B を送り、その後で Node A を完成させることもある。フロントエンドはこれを穏当に処理しなければならない。
 
-### 2. **Validation は重要**
-レンダリング前に必ず partial objects を検証する。必須フィールドが欠けていると React Flow はクラッシュする。不完全なオブジェクトをスキップする方が、UI をクラッシュさせるよりよい。
+### 2. **検証は重要**
+レンダリング前に必ず部分オブジェクトを検証する。必須フィールドが欠けていると React Flow はクラッシュする。不完全なオブジェクトをスキップする方が、UI をクラッシュさせるよりよい。
 
 ### 3. **AI ロジックと視覚レイアウトを分ける**
-LLMs に位置計算を頼んではいけない。空間推論が苦手だからだ。AI には論理アーキテクチャを生成させ、Dagre.js で automatic layout を行う。これにより、きれいで適切に間隔の空いた図が得られる。
+LLMs に位置計算を頼んではいけない。空間推論が苦手だからだ。AI には論理アーキテクチャを生成させ、Dagre.js で自動レイアウトを行う。これにより、きれいで適切に間隔の空いた図が得られる。
 
 ### 4. **Server-Sent Events > WebSockets**
 一方向のストリーミングには、SSE の方が WebSockets より単純だ。接続管理が不要で、自動再接続があり、ブラウザサポートもよい。
 
-### 5. **Cloudflare Workers は Streaming に向いている**
-Workers は streaming を驚くほどうまく扱う。`ReadableStream` API は Vercel AI SDK の `partialObjectStream` と完璧に組み合わさる。
+### 5. **Cloudflare Workers はストリーミングに向いている**
+Workers はストリーミングを驚くほどうまく扱う。`ReadableStream` API は Vercel AI SDK の `partialObjectStream` と完璧に組み合わさる。
 
-### 6. **Progressive Rendering はより良い UX を作る**
-ユーザーは図がリアルタイムに組み上がっていく様子を見るのが好きだ。総時間が同じでも、loading spinner よりインタラクティブに感じられる。
+### 6. **段階的レンダリングはより良い UX を作る**
+ユーザーは図がリアルタイムに組み上がっていく様子を見るのが好きだ。総時間が同じでも、ローディングスピナーよりインタラクティブに感じられる。
 
 ## 結果：リアルタイムアーキテクチャ可視化
 
 私たちが作ったのは、次のようなシステムだ。
-- 複雑な構造化データをリアルタイムで stream する
-- partial objects を穏当に扱う
+- 複雑な構造化データをリアルタイムで配信する
+- 部分オブジェクトを穏当に扱う
 - 即時の視覚フィードバックを提供する
-- Cloudflare の edge network でグローバルにスケールする
-- pipeline 全体で 種類 safety を保つ
+- Cloudflare のエッジネットワークでグローバルにスケールする
+- パイプライン全体で型安全性を保つ
 
-ユーザーが "Generate Architecture" をクリックすると、AI が考えるにつれて nodes と connections がすぐに現れ始める。建築家がリアルタイムで設計図をスケッチしているのを見るようなものだ。
+ユーザーが "Generate Architecture" をクリックすると、AI が考えるにつれてノードと接続がすぐに現れ始める。建築家がリアルタイムで設計図を描いていくのを見ているようなものだ。
 
 ## 自分で試す
 
 中核となるパターンは単純だ。
 1. Vercel AI SDK の `streamObject()` と `partialObjectStream` を使う
-2. Server-Sent Events で stream する
-3. frontend で不完全なオブジェクトをフィルタする
+2. Server-Sent Events で配信する
+3. フロントエンドで不完全なオブジェクトをフィルタする
 4. オブジェクトが完成するにつれて段階的にレンダリングする
 
-この方法は、データベース schemas、API responses、configuration files、複雑な visualizations など、どんな構造化データにも使える。
+この方法は、データベーススキーマ、API レスポンス、設定ファイル、複雑な可視化など、どんな構造化データにも使える。
 
-## Edge 上のハイパーパーソナライズ UI にとっての意味
+## エッジ上の超個別化 UI にとっての意味
 
-この streaming アーキテクチャ pattern は、より大きなものを解き放つ。**リアルタイムに適応する hyperpersonalized インターフェース** だ。
+このストリーミングアーキテクチャのパターンは、より大きなものを解き放つ。**リアルタイムに適応する、高度にパーソナライズされたインターフェース** だ。
 
 単に速く読み込まれるだけではなく、読み込みながら各ユーザーの文脈に合わせて*進化*するインターフェースを想像してほしい。
 
-- **Dashboard widgets** が現在の project state に基づいて現れる
-- **Navigation menus** が利用パターンに基づいて再編成される
-- **Form fields** が過去の入力に基づいて具体化する
-- **Product recommendations** が閲覧中に更新される
-- **Code completion** が入力に合わせて提案を stream する
+- **ダッシュボードウィジェット** が現在のプロジェクト状態に基づいて現れる
+- **ナビゲーションメニュー** が利用パターンに基づいて再編成される
+- **フォームフィールド** が過去の入力に基づいて具体化する
+- **商品レコメンド** が閲覧中に更新される
+- **コード補完** が入力に合わせて提案を配信する
 
-Cloudflare Workers の edge compute と Vercel AI SDK の structured streaming の組み合わせは、新しいパラダイムを作る。**自分で構築される 文脈ual インターフェース** だ。
+Cloudflare Workers のエッジコンピューティングと Vercel AI SDK の構造化ストリーミングの組み合わせは、新しいパラダイムを作る。**自分で組み上がる文脈対応インターフェース** だ。
 
-同じ UI を全員に送り、クライアント-side JavaScript でパーソナライズする代わりに、私たちは次のことができる。
-1. edge で **ユーザー文脈を分析** する（location、device、behavior）
+同じ UI を全員に送り、クライアント側 JavaScript でパーソナライズする代わりに、私たちは次のことができる。
+1. エッジで **ユーザー文脈を分析** する（場所、デバイス、行動）
 2. AI モデルで**パーソナライズされた UI 構造を生成**する
-3. 作成されるたびに **インターフェース components を stream** する
+3. 作成されるたびに **インターフェースコンポーネントを配信** する
 4. 即時に感じられる性能のために **段階的にレンダリング** する
 
 これは特に次のようなものに強力だ。
-- **SaaS dashboards** がユーザーロールごとに自分で構成される
-- **E-commerce インターフェース** が購買行動に適応する
-- **Developer ツール** が文脈に合う機能を浮かび上がらせる
-- **Content プラットフォーム** が engagement パターン に基づいて再構成される
+- **SaaS ダッシュボード** がユーザーロールごとに自分で構成される
+- **EC インターフェース** が購買行動に適応する
+- **開発者ツール** が文脈に合う機能を浮かび上がらせる
+- **コンテンツプラットフォーム** がエンゲージメントパターンに基づいて再構成される
 
-Edge は速度を与える。AI は知性を与える。Streaming は流動性を与える。
+エッジは速度を与える。AI は知性を与える。ストリーミングは流動性を与える。
 
 私たちは単に速いウェブサイトを作っているのではない。各ユーザーに固有で、思考の速度で、リアルタイムに考え、適応し、形を取るインターフェースを作っている。
 
-Web 開発 の未来は、ただコードを速く shipping することではない。各ユーザーに *異なる code* を shipping することだ。edge で生成され stream され、本当にパーソナライズされた、魔法のように感じられる体験を作ることだ。
+Web 開発の未来は、ただコードを速く届けることではない。各ユーザーに *異なるコード* を届けることだ。エッジで生成され、配信され、本当にパーソナライズされた、魔法のように感じられる体験を作ることだ。
 
 ---
 

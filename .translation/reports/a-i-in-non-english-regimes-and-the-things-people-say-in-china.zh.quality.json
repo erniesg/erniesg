@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/index.mdx",
+  "targetPath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/zh.mdx",
+  "sourceSha256": "05b32e0b04b4d77d1036d060bff520c3ece34a3af9f5f0ae40225245f8790ce9",
+  "targetSha256": "8479de7370fb35df8ed158e55a32a049194ffcfe467b45ee95881cc37ab92df4",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "段落：杭州会议后的总结句",
+          "problem": "“最让我着迷着走出来的”不太自然，像机器拼接出来的表达。",
+          "suggestion": "可改为“最后最让我着迷的，反而是宇宙测绘和极限运动。”"
+        },
+        {
+          "severity": "minor",
+          "location": "技术术语多处，如“LLMs”“EV”",
+          "problem": "复数或缩写保留基本可接受，但在中文正文里反复使用“LLMs”略显英文残留。",
+          "suggestion": "若后续人工润色，可统一为“LLM”或首次说明“大语言模型（LLM）”，但不属于发布阻断问题。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "整体译文自然、有中文 essay 节奏，保留了作者的直白、调侃和代码切换，没有明显逐句硬译。MDX 和 frontmatter 结构未见破损；translationStatus: machine 为元数据，不计为问题。"
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "frontmatter title",
+          "problem": "“人们在……会说些什么” preserves the ellipsis but the Chinese syntax is awkward because “在” has no object before “会说”。",
+          "suggestion": "Consider a more natural trailing form such as “非英语语境中的 A.I.，以及人们在……说出的那些话”。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph before “那些并无冒犯之意却离谱得可爱的发言”",
+          "problem": "“最让我着迷着走出来的” is ungrammatical and reads like a mechanical draft artifact.",
+          "suggestion": "Use “离场时最让我着迷的，反而是宇宙测绘和极限运动” or similar."
+        },
+        {
+          "severity": "minor",
+          "location": "section “创新在开放社会里繁盛”",
+          "problem": "“交叉授粉” is understandable but slightly English-shaped in this essay register.",
+          "suggestion": "“相互激发” or “跨领域碰撞” would sound more natural."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation is publishable: it preserves the author’s blunt, playful technical-personal voice, translates reader-facing quotations and captions, preserves product/code terms appropriately, and is not a sentence-by-sentence direct translation. The remaining issues are localized polish problems, not major meaning drift or syntax breakage."
+    }
+  ]
+}

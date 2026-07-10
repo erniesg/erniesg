@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/index.mdx",
+  "targetPath": "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content/ko.mdx",
+  "sourceSha256": "6d68e50cc9fe77e96410e780229ebf2f9b658a54f69c42990f739270c114876c",
+  "targetSha256": "cf8b60bca7b11faabb796ccc9159e808e942d1c617245e8ecaa8ae1278a13d1c",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "quoted generated article block",
+          "problem": "Some translated generated-output prose is a little literal in places, e.g. '지질학적 태피스트리', '말없는 파수꾼', '지구의 장대한 서사'. Because this is model output being quoted and analyzed, the slightly inflated tone is acceptable and does not create reader-facing meaning drift.",
+          "suggestion": "If polishing later, make those quoted passages read less like translated promotional travel copy while preserving that they are generated output."
+        },
+        {
+          "severity": "minor",
+          "location": "A.I. 기반 조사와 검색",
+          "problem": "'토큰 단위의 후반 상호작용(late interaction)' is understandable but slightly stiff as Korean technical prose.",
+          "suggestion": "Consider '토큰 단위 late interaction 방식' or '토큰 단위의 후기 상호작용(late interaction)' depending on the site’s preferred terminology."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as a native technical essay rather than a line-by-line transfer: sentence order is often recast, connective tissue is natural, and Ernie’s blunt, casual voice is preserved. Code blocks, product names, paths, and generated-output artifacts are appropriately preserved; human-facing captions, iframe alt text, blockquotes, and surrounding commentary are translated. MDX/frontmatter syntax appears intact."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "After the vanilla LLM prompt, before “기본 GPT-4o 출력”",
+          "problem": "The sentence “아래 기본 모델의 출력은 비교 자료이므로 영어 원문 그대로 싣는다.” is added by the translation and has no source counterpart.",
+          "suggestion": "Remove it unless the localization policy explicitly allows translator notes. The untranslated code-block outputs are acceptable as analyzed model-output artifacts without this added explanation."
+        },
+        {
+          "severity": "minor",
+          "location": "Section “RAGgaeton을 떠올린 계기”",
+          "problem": "“*original* writing” is rendered as “*원본* 글쓰기,” which sounds like source/original-file writing rather than original/creative writing.",
+          "suggestion": "Use “*독창적인* 글쓰기” or “*나만의* 글쓰기” to better preserve the intended meaning."
+        },
+        {
+          "severity": "minor",
+          "location": "Section “A.I. 기반 조사와 검색”",
+          "problem": "“`you.com`와 `Obsidian vaults`” has an unnatural Korean particle after an English/code token.",
+          "suggestion": "Use “`you.com`과 `Obsidian vaults`” or rephrase as “현재는 `you.com`, `Obsidian vaults`를 지원한다.”"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads like a native technical essay rather than a direct sentence-by-sentence calque: it restructures phrasing naturally, preserves Ernie’s informal bluntness, and keeps product/code terms intact. MDX structure and reader-facing captions/alt text are preserved, while code/model-output artifacts are reasonably left in the original language."
+    }
+  ]
+}

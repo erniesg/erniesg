@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/index.mdx",
+  "targetPath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/ko.mdx",
+  "sourceSha256": "88b28f60433e260a8b1e259fc6b684e555a6e8ff3881f6ca230052b26c99c488",
+  "targetSha256": "29675614f95469406becbff77fcf3bc48b374bb13eda810fa4d6b7a8134e6953",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "frontmatter description",
+          "problem": "“I forked it to create Bertrand”의 개발자식 뉘앙스가 “Bertrand를 만들기 시작한 이야기”로 다소 일반화되었습니다. 독자 이해에는 큰 문제가 없지만 원문의 장난스러운 기술 어감을 조금 덜 살립니다.",
+          "suggestion": "게시 전 손본다면 “ChatGPT를 포크해…”처럼 의도적으로 기술 어감을 살릴 수 있습니다."
+        },
+        {
+          "severity": "minor",
+          "location": "section “Looping Immaterial Potentialities”",
+          "problem": "“There are so many things I look forward to…”의 “reprising potentiality”가 “다시 잠재성을 꺼내 말하자면”으로 잘 처리되었지만 약간 설명적으로 들립니다.",
+          "suggestion": "원문의 자기비꼼과 리듬을 더 살리려면 “잠재성 타령을 다시 하자면”처럼 더 구어적인 선택도 가능합니다."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "전반적으로 한국어 기술 에세이 문체로 재구성되어 있으며, 영어 어순을 따라가는 직역체가 아니라 문단 리듬과 감정선을 한국어 독자에게 자연스럽게 맞춘 번역입니다. 인용문, alt 텍스트, 캡션성 문구도 번역되어 있고 MDX 구조도 유지됩니다."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "frontmatter description",
+          "problem": "“forked it to create Bertrand” is softened to “Bertrand를 만들기 시작한 이야기,” losing the fork/remix nuance and a bit of the source’s technical wink.",
+          "suggestion": "Consider wording closer to “ChatGPT를 포크해… Bertrand를 만든 이야기” if preserving that developer register matters."
+        },
+        {
+          "severity": "minor",
+          "location": "section: A.I. as Freedom and Reality-Bending Technology",
+          "problem": "“reality-bending technology” is rendered once as “현실을 휘게 하는 기술” and later as “현실을 비트는 기술.” Both are understandable, but the latter can sound slightly colloquial/physical rather than philosophical.",
+          "suggestion": "Use one natural phrase consistently, such as “현실을 휘게 하는 기술.”"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as native essay prose rather than a direct sentence-by-sentence transfer: clauses are recast, rhythm is adjusted for Korean, quotations and accessibility text are translated, and code/product terms are preserved appropriately. No major reader-facing meaning drift or MDX breakage found."
+    }
+  ]
+}

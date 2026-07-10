@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/streaming-generated-diagrams/index.mdx",
+  "targetPath": "src/content/blog/streaming-generated-diagrams/zh.mdx",
+  "sourceSha256": "aebf98494e9696f57d9950b5616c2bd2eb54c2ab63234de80cb82922ab229bf8",
+  "targetSha256": "743338856cf5829ddf47dc947421cf1a5f705f41f27b814e3796b90e7a345ff3",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Code block comments throughout",
+          "problem": "Several explanatory comments inside code blocks remain in English, such as `// This is where the magic happens` and `// First chunk`. Because they are embedded in code examples, this does not break syntax or reader comprehension, but translating comments would make the article feel more fully localized.",
+          "suggestion": "Optionally translate non-semantic code comments while preserving identifiers, string literals, API names, and executable code."
+        },
+        {
+          "severity": "minor",
+          "location": "Title/heading terminology",
+          "problem": "`流式生成架构图` and `边缘端` are understandable, but slightly product/engineering-localized rather than idiomatic essay Chinese in a few places.",
+          "suggestion": "Consider variants like `实时生成并流式呈现架构图` or `边缘侧` where rhythm matters, though the current wording is publishable."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation is natural Mandarin technical prose rather than a sentence-by-sentence calque: it adapts phrases like “materialize in real-time,” “secret sauce,” and “visual perfection” into idiomatic Chinese while preserving Ernie’s blunt, practical voice and code/product terminology. MDX/frontmatter and code fences appear intact; translationStatus remains machine as required."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "code fences throughout target, especially JSON chunk labels and TypeScript comments",
+          "problem": "Several explanatory comments inside code blocks remain in English, such as `// First chunk`, `// Stream partial objects as Server-Sent Events`, and `// This is where the magic happens`. Because these comments are reader-facing teaching aids in a blog post, translating them would make the Chinese article more complete.",
+          "suggestion": "Translate explanatory comments while preserving identifiers, strings, API names, and code behavior."
+        },
+        {
+          "severity": "minor",
+          "location": "section title `## 这对边缘端的高度个性化 UI 意味着什么`",
+          "problem": "`边缘端` is understandable but a little stiff in this title; the surrounding prose is otherwise natural.",
+          "suggestion": "Consider `边缘上的高度个性化 UI` or `边缘计算里的高度个性化 UI` for smoother Chinese."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation preserves technical product names and code terms, keeps Ernie's informal technical voice, and does not read like a sentence-by-sentence calque. The Chinese prose is generally idiomatic, with good editorial choices such as `等一个完整响应啪地掉下来`, `接得住这种混乱`, and `让画面别长歪`."
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/index.mdx",
+  "targetPath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/ja.mdx",
+  "sourceSha256": "2cc16d1fb02c23538945b5e2aff49e1c54afc0db275fcf508e912d8623043f25",
+  "targetSha256": "e20859209a56f570d385df950d1f34008cf4b4e3fcb73f070944e761ded432e4",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 1",
+          "problem": "「ナッツを割るのに大槌はいらない」は意味は通るが、日本語の慣用表現としてはやや直訳調で、冒頭の切れ味が少し弱い。",
+          "suggestion": "「鶏を割くに焉んぞ牛刀を用いん」や「小さな仕事に大げさな道具はいらない」など、前後の調子に合わせて自然化できる。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 5",
+          "problem": "“polder against the rising tide” が「防波堤」と処理されており、比喩の地形的なニュアンスは少し薄まっている。意味の大筋は保たれている。",
+          "suggestion": "必要なら「虚偽とハルシネーションの潮位に抗する干拓地／堤」のように比喩を少し残す。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "日本語として段落の流れが自然で、英語の語順をなぞった直訳ではありません。技術用語と製品名は過度に訳されず、本文の皮肉、くだけた調子、思索的な長文のリズムも概ね保たれています。MDX構文にも読者向けの破綻は見当たりません。"
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph about search / falsehoods",
+          "problem": "“polder against the rising tide” is rendered as 「防波堤」, which is readable but flattens the more specific reclaimed-land / holding-back-water metaphor in the source.",
+          "suggestion": "If polishing, consider a phrasing like 「干拓地の堤のような備え」 only if it remains natural in context."
+        },
+        {
+          "severity": "minor",
+          "location": "description frontmatter",
+          "problem": "「世界中のウェブ」 is understandable but slightly translation-shaped compared with more natural Japanese web prose.",
+          "suggestion": "「ウェブ全体で」 would read more idiomatically."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Japanese reads as native technical essay prose rather than a sentence-by-sentence calque: long English clauses are recast into natural Japanese paragraphs, humor and bluntness are mostly preserved, and human-facing captions/attributions are translated while product names and technical terms are preserved appropriately."
+    }
+  ]
+}

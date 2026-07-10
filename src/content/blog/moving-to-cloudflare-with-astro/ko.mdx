@@ -1,6 +1,6 @@
 ---
-title: Astro로 Cloudflare Pages 옮기기
-description: Astro로 내 웹사이트를 Cloudflare Pages에 옮긴 이유와 이 현대적인 웹 스택의 장점
+title: Astro로 Cloudflare Pages에 사이트 옮기기
+description: 내가 Astro로 웹사이트를 Cloudflare Pages에 옮긴 이유와, 이 요즘식 웹 구성이 뭐가 좋은지
 date: 2025-02-10T00:00:00.000Z
 tags:
   - cloudflare
@@ -16,65 +16,65 @@ translationStatus: machine
 translationSource: codex
 ---
 
-# Astro로 Cloudflare Pages 옮기기
+# Astro로 Cloudflare Pages에 사이트 옮기기
 
-Markdown으로 글을 쓰고, 버전 관리와 자동 배포를 누리고, 빠른 SEO와 간단한 설정까지 얻고, 개인 사이트에 SSL과 무제한 대역폭이 붙은 자체 도메인을 쓰고 싶은가? 그것도 전부 무료로? 그렇다면 계속 읽어보자!
+Markdown으로 글을 쓰고, 버전 관리와 자동 배포를 누리며, 검색엔진에도 유리한 빠른 사이트와 간단한 설정을 얻고, 개인 사이트에 내 도메인과 SSL, 무제한 대역폭까지 전부 무료로 쓰고 싶다면? 계속 읽어보자.
 
 ## 왜 Astro인가?
 
-Astro는 몇 가지 꽤 설득력 있는 이유로 내가 고르는 프레임워크가 되었다.
+내가 Astro를 주력 프레임워크로 고른 데에는 꽤 설득력 있는 이유들이 있다.
 
-### 번개처럼 빠른 SEO
-- 기본값이 JavaScript 0이라 페이지가 아주 빠르게 열린다
-- 별도 튜닝 없이 [99/100 Lighthouse 점수](https://pagespeed.web.dev/analysis/https-ernie-sg/n5kl6txhdm?form_factor=mobile)가 나온다
-- meta 태그와 구조화된 데이터를 자동으로 처리한다
+### SEO에 유리한 빠른 속도
+- 기본적으로 JavaScript를 싣지 않아 페이지가 번개처럼 빠르게 열린다
+- [Lighthouse 점수 99/100](https://pagespeed.web.dev/analysis/https-ernie-sg/n5kl6txhdm?form_factor=mobile)이 기본으로 나온다
+- 메타 태그와 구조화된 데이터를 자동으로 처리한다
 
 ### 콘텐츠 중심
-- Markdown/MDX를 일급으로 지원해서 콘텐츠를 원하는 방식으로 쉽게 다시 렌더링할 수 있다
-- 수식 작성을 위한 네이티브 LaTeX 지원
+- Markdown/MDX를 일급으로 지원해서 원하는 방식으로 콘텐츠를 쉽게 다시 렌더링할 수 있다
+- 수식 작성을 위한 LaTeX 기본 지원
 - 100개가 넘는 언어에 대한 풍부한 구문 강조
 
 ### 유연한 개발자 경험
 - 프레임워크에 묶이지 않는다. 필요한 곳에 React, Vue, Svelte, HTMX를 쓰면 된다
-- 정적 출력이라 어디에나 호스팅할 수 있고, 특정 벤더에 갇히지 않는다
+- 정적 출력물이므로 어디에나 호스팅할 수 있고, 특정 벤더에 갇히지 않는다
 
 ## Cloudflare Pages의 장점
 
 ### 무제한 대역폭
-내가 옮긴 주된 이유 중 하나는 무제한 대역폭을 제공하는 Cloudflare Pages의 [넉넉한 무료 티어](https://pages.cloudflare.com/)였다. 혹시 내가 유명해져도 갑자기 청구서가 날아오지 않는다는 뜻이다!
+갈아탄 큰 이유 중 하나는 무제한 대역폭을 제공하는 Cloudflare Pages의 [넉넉한 무료 티어](https://pages.cloudflare.com/)였다. 혹시 내가 유명해지더라도 깜짝 청구서를 받을 일은 없다는 뜻이다!
 
 ### 자동화된 CI/CD
-개발 흐름도 매끄럽다.
+개발 워크플로도 매끄럽다. 이런 것들이 따라온다.
 - Git에서 자동 배포
-- pull request용 미리보기 배포
-- 쉬운 롤백
+- pull request마다 미리보기 배포
+- 간단한 롤백
 
-### 사용자 지정 도메인과 그 밖의 것들
-- 엣지 캐싱이 붙은 글로벌 CDN
-- 자동 자산 최적화
-- 쉽게 설정할 수 있는 사용자 지정 도메인(물론 이 비용은 직접 내야 한다)
-- 내장 SSL 인증서
-- 내장 분석
+### 커스텀 도메인, 그리고 그 밖의 것들
+- 엣지 캐싱을 갖춘 글로벌 CDN
+- 정적 자산 자동 최적화
+- 설정이 쉬운 커스텀 도메인(물론 도메인 값은 직접 내야 한다)
+- 기본 제공 SSL 인증서
+- 기본 제공 분석 기능
 - 훌륭한 문서
 
-## 마이그레이션 과정
+## 이전 과정
 
-내가 한 일은 이렇다.
+그러기 위해 내가 한 일은 이렇다.
 
-1. [astro-erudite](https://github.com/jktrn/astro-erudite) 템플릿을 클론했다
+1. [astro-erudite](https://github.com/jktrn/astro-erudite) 템플릿을 복제했다
 
-2. 내 입맛에 맞게 고친 뒤 GitHub에 푸시했다
+2. 입맛에 맞게 고친 뒤 GitHub에 푸시했다
 
 3. Cloudflare Pages를 설정하고 배포했다.
-   - [Cloudflare dashboard](https://dash.cloudflare.com/) > Compute (Workers)로 이동
-   - GitHub 저장소 연결
-   - 배포할 main 브랜치 선택
-   - 프레임워크로 Astro 선택
+   - [Cloudflare dashboard](https://dash.cloudflare.com/) > Compute (Workers)로 이동했다
+   - GitHub 저장소를 연결했다
+   - 배포할 main 브랜치를 선택했다
+   - 프레임워크로 Astro를 선택했다
 
-4. 사용자 지정 도메인을 연결하고, 그 뒤는 Cloudflare가 알아서 처리하게 뒀다
+4. 커스텀 도메인을 연결하고, 그다음부터는 Cloudflare가 알아서 하게 두었다
 
-전체 과정은 말 그대로 쉬운 축에 속했다. 나는 무료 버전 관리를 얻었고, `main`에 푸시할 때마다 사이트가 자동으로 다시 배포된다.
+전체 과정은 더 쉬울 수 없을 만큼 쉬웠다. 버전 관리는 무료이고, `main`에 푸시하면 사이트가 자동으로 다시 배포된다.
 
-## 결론
+## 마무리
 
-Astro의 성능 우선 접근과 Cloudflare의 탄탄한 인프라를 합치면, 인터넷에 빠르게 자기 공간을 마련하고 싶은 개발자에게 훌륭한 기반이 된다. 제일 좋은 점? 이 모든 것이 무료라서 개인 프로젝트와 블로그에 딱 좋다.
+성능을 먼저 생각하는 Astro의 접근 방식과 Cloudflare의 탄탄한 인프라를 합치면, 인터넷에 빠르게 자기 자리를 마련하려는 개발자에게 아주 좋은 기반이 된다. 제일 좋은 점? 전부 무료다. 개인 프로젝트와 블로그에 이상적인 선택인 이유다.

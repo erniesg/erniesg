@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/streaming-generated-diagrams/index.mdx",
+  "targetPath": "src/content/blog/streaming-generated-diagrams/ko.mdx",
+  "sourceSha256": "aebf98494e9696f57d9950b5616c2bd2eb54c2ab63234de80cb82922ab229bf8",
+  "targetSha256": "2217f0a128c369a1345832982a365c4e213e9ea06bbfb2c9934290a0c51f170e",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "src/content/blog/streaming-generated-diagrams/ko.mdx: frontend pattern list / Cloudflare Workers paragraph",
+          "problem": "조사 선택이 약간 어색합니다. `partialObjectStream`은 보통 끝소리 있는 말처럼 읽혀 `와`보다 `과`가 자연스럽습니다.",
+          "suggestion": "`partialObjectStream`와 함께 → `partialObjectStream`과 함께, `partialObjectStream`와 완벽하게 → `partialObjectStream`과 완벽하게"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "전반적으로 한국어 기술 에세이 문체로 자연스럽고, 영어 문장 구조를 그대로 끌고 온 직역투가 아니라 문장 호흡과 어순을 한국어 독자에 맞게 재구성했습니다. 제품명, API명, 코드 식별자는 잘 보존했고 의미 drift나 MDX 파손은 보이지 않습니다."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Code block comments throughout target MDX",
+          "problem": "Several explanatory comments inside illustrative code blocks remain in English, such as `// First chunk`, `// Stream partial objects as Server-Sent Events`, and `// Re-run on every count change`. Since these are code-adjacent and may represent copied source, this is not a publish-blocking issue, but they are visible reader-facing explanations.",
+          "suggestion": "If the editorial policy allows translating comments in example snippets, localize explanatory comments while preserving executable identifiers and string literals."
+        },
+        {
+          "severity": "minor",
+          "location": "H1",
+          "problem": "`# 만드는 법:` is understandable but slightly flattens the source's personal series-like tone in `How I Built This`.",
+          "suggestion": "Consider `# 이렇게 만들었다:` or `# 내가 만든 방식:` if the site wants to preserve the first-person voice more strongly."
+        },
+        {
+          "severity": "minor",
+          "location": "Section `What This Means for Hyperpersonalized UI on the Edge`",
+          "problem": "`엣지 컴퓨트` appears after earlier `엣지 컴퓨팅`, creating minor term inconsistency.",
+          "suggestion": "Use one Korean rendering consistently, likely `엣지 컴퓨팅`."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads like native technical essay prose rather than sentence-by-sentence English transfer: clauses are reordered naturally, idioms such as `붙잡고 씨름한 문제`, `터진다`, and `형태를 갖춰 가는` preserve the author's blunt, practical voice, and product/code terms are appropriately preserved. MDX/frontmatter structure is intact, and the listed issues are polish-level only."
+    }
+  ]
+}

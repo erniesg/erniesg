@@ -1,0 +1,47 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/ja.mdx",
+  "sourceSha256": "3b280325e7c4666cac43f9307ae5ddca4450887917d83c67848541cdf255c751",
+  "targetSha256": "e42ed520e412170ae6d2da4d7a2896dcf1edbcd82214a2881cbd2fedcf8382cd",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 1",
+          "problem": "「潜在空間の軸や値」は source の “latent spaces and values” に対して「軸」を少し補っており、厳密にはやや解釈が入っています。読者理解を損なうほどではありません。",
+          "suggestion": "必要なら「潜在空間や値に対応させて」程度にするとより忠実です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "MDX/frontmatter structure is intact, human-facing text including the attribution is translated, and product/code-like terms such as A.I., ERAE Touch, PubPub, and URLs are preserved appropriately. The prose reads as a native Japanese technical essay with idiomatic restructuring such as「この仕組みの話はこのくらいにして」and「成功はそれ自体が説明になる」rather than sentence-by-sentence English syntax, while retaining the author’s exploratory tone and blunt argument."
+    },
+    {
+      "passed": true,
+      "score": 0.96,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 3",
+          "problem": "“priors” is rendered as “事前分布.” This is technically defensible, but in this cognitive-science context “事前信念” or “事前確率” may sound a little more natural depending on intended nuance.",
+          "suggestion": "Consider “文化、環境、信念などに形づくられた事前信念／事前確率” if polishing manually."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Japanese reads as native technical-essay prose rather than a sentence-by-sentence calque: long English clauses are reorganized into natural Japanese rhythms, the author’s speculative tone and blunt questions are preserved, links/frontmatter/MDX remain intact, and product or technical names are appropriately preserved."
+    }
+  ]
+}

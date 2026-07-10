@@ -1,0 +1,71 @@
+{
+  "sourcePath": "src/content/blog/day-0-building-in-public-to-1m-arr/index.mdx",
+  "targetPath": "src/content/blog/day-0-building-in-public-to-1m-arr/zh.mdx",
+  "sourceSha256": "572a51c0ff91bfe65db01926842e0357990f1ab1230fafd463f64cb87e04f3c7",
+  "targetSha256": "29f984d0eebd7e13f4c8737fe41cb6d0b760cf32662eb87c4fffa4f27f0279b5",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title and recurring body phrase: \"公开构建\"",
+          "problem": "“公开构建” is understandable in startup/AI context, but it is still a little English-shaped as a repeated rendering of “build in public.”",
+          "suggestion": "Consider varying with more natural phrasing such as “边做边公开记录” in prose while keeping “公开构建” where it functions as a term."
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph beginning \"从宏观层面看\"",
+          "problem": "“照看我的最大利益” is a stiff calque of “look after my best interests.”",
+          "suggestion": "Use a more idiomatic phrase such as “照顾我的切身利益” or “把我的利益放在心上.”"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph ending \"非常便携的能动性\"",
+          "problem": "“便携的能动性” is semantically accurate but sounds overly literal and abstract in Chinese.",
+          "suggestion": "Consider “很容易带走的自主权” or “一种很容易转移的行动能力.”"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes: it keeps the technical terms and product names intact, translates captions and reader-facing text, preserves the blunt, personal, slightly playful voice, and often adapts idiomatically rather than following English sentence structure word for word. The remaining issues are polish-level calques, not publish-blocking."
+    },
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "目标段落 / parenting frame",
+          "problem": "“行使这个选项”“成为父母”略带英文 option/exercise 的直译痕迹。",
+          "suggestion": "可改为“这样如果有一天我选择为人父母，也能保留这个可能性”。"
+        },
+        {
+          "severity": "minor",
+          "location": "家庭压力测试段落",
+          "problem": "“cosplay 粗粝个人主义”能传达意思，但“rugged individualism”的中文落点稍硬。",
+          "suggestion": "可改为“这不是我在家庭里扮演硬汉式个人主义”。"
+        },
+        {
+          "severity": "minor",
+          "location": "Rucksack 段落",
+          "problem": "“从 issue 推到 PR”稍像内部口语，作为读者-facing 文案不如原意清楚。",
+          "suggestion": "可改为“把 issue 一路推进到 PR”。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "译文整体自然，有 Ernie 技术化自嘲和个人 essay 的语气；大量 AI/code 术语保留得当，没有明显半翻译残留、MDX 破损、未译人类可见文本或重大意义漂移。它不是僵硬逐句直译，许多句子做了中文语序和语气重组，例如“生活该怎样捣乱就怎样捣乱”“把这条路摊开，让人能复盘”等。"
+    }
+  ]
+}

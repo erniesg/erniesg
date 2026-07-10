@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-hack-exams-because-exams-are-not-meant-for-humans/ja.mdx",
+  "sourceSha256": "8b7adbaf3e4ce9065687fce7ae16084566364fc991f5b32490da7d03a017fcbe",
+  "targetSha256": "a7512a1385d19fdac764d9b29024a50c262abb68865458c6d6f5aa91af6adbca",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Fine-tuning section, paragraph before bullet list",
+          "problem": "「キーボードの上でさんざん手を絞め上げた」は原文の奇妙な言い回しを拾っているものの、日本語としては少し不自然で、読者に意図が伝わりにくいです。",
+          "suggestion": "「キーボードの前で散々もがいた末に」など、苦労したニュアンスを自然な日本語に寄せるとよいです。"
+        },
+        {
+          "severity": "minor",
+          "location": "Fine-tuning section, second bullet",
+          "problem": "「PDFs」は原文由来の英語複数形が残っており、日本語本文ではやや機械翻訳っぽく見えます。",
+          "suggestion": "通常の本文では「PDF は」または「PDF というものは」にすると自然です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の語順と論理展開が自然で、原文の毒舌、誇張、軽い脱線も保たれています。逐語訳ではなく、日本語の技術エッセイとして読めるように文を組み替えています。MDX と frontmatter に読者-facing な破損は見当たりません。"
+    },
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "本文 / Finetuning セクション: 「キーボードの上でさんざん手を絞め上げた末に」",
+          "problem": "英語の比喩をやや直訳しており、日本語としては不自然です。原文の雑な苦労感は出ていますが、『手を絞め上げる』は読者に引っかかります。",
+          "suggestion": "「キーボードの前で散々もがいた末に」や「キーボードを前にさんざん苦しんだ末に」などが自然です。"
+        },
+        {
+          "severity": "minor",
+          "location": "箇条書き: 「PDFs にはまともに相手をしなければならない悪魔的な力がある」",
+          "problem": "“a demonic force to reckon with” の訳が少し説明的で硬く、冗談の勢いが弱まっています。",
+          "suggestion": "「PDF は相手にすると悪魔そのものだと分かった」程度にすると自然で、原文の乱暴な笑いも残ります。"
+        },
+        {
+          "severity": "minor",
+          "location": "終盤: 「64gb VRAM」",
+          "problem": "原文に合わせているため意味は通りますが、日本語技術文としては単位表記がやや粗く見えます。これは原文由来の表記なので必須修正ではありません。",
+          "suggestion": "編集方針が許すなら「64GB の VRAM」。原文表記保持を優先するなら現状で可です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の語順と段落の流れが自然で、英語を文ごとになぞった直訳にはなっていません。著者の愚痴っぽさ、皮肉、技術的な固有名詞の保持、iframe の alt とキャプション翻訳もおおむね適切です。"
+    }
+  ]
+}

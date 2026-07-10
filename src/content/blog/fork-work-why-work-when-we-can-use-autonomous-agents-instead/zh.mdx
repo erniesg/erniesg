@@ -1,6 +1,6 @@
 ---
-title: Fork Work：有自主智能体，还工作什么？
-description: 人类在沟通和会议上浪费太多时间；A.I. 能即时回应和写代码，为什么还要工作这么多？
+title: Fork Work：既然可以用自主智能体，为什么还要工作……
+description: 我们人类把太多时间浪费在沟通和开会上；A.I. 明明可以马上给回应、给代码，那我们到底为什么还要工作这么多？
 date: 2023-08-11T00:00:00.000Z
 authors:
   - erniesg
@@ -12,30 +12,30 @@ translationStatus: machine
 translationSource: codex
 ---
 
-与其对着键盘崩溃，或者[对着继承来的代码库掉几滴眼泪](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)，不如把这些信息交给 A.I.，然后和它聊天。当你开始把大型语言模型（LLMs）的知识和推理能力用在这些信息上，下一步自然就是综合生成：写出可以跑在现有代码库之上的新代码，让世界上任何人都能从提示词一路走到功能。为了解决这些挑战，下面这个演示是我周末用一两天做出来的成果。做起来很有趣，因为过程中学到很多新东西，也更深刻理解了一些概念。
+与其气到猛敲键盘，或者[对着继承来的代码库掉几滴眼泪](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)，更合理的做法其实是把这些信息交给 A.I.，然后直接跟它聊。一旦把大型语言模型（LLMs）的知识和推理能力接到这些资料上，下一步自然就是综合生成：在既有代码库之上产出能运行的新代码，让世界上任何人都可以从一句提示词变成一个可用功能。为了解决这些问题，下面这个演示是我周末花了一两天做出来的；做的过程很好玩，因为踩到很多新东西，也顺便真正理解了一些以前只是听过的概念。
 
-<iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="Arthur - 搜索并检索任何东西" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
-Arthur - Search and Retrieve Anything
+Arthur - 搜索并检索任何东西
 
 # 为什么还要工作 leh？
 
 ![](./00281-807328077-11691761226672.png)
 
-我当时想做的是，把关于我的数据工厂的信息传进 `Deep Lake` 向量存储，然后利用 ChatGPT 对我的自定义知识库进行推理，理解现有设置里到底发生了什么。我发现这比试图理解人类留下来的遗留代码库好玩多了（sorry not sorry），因为有太多时候，沟通和会议完全是在浪费时间，而等待回复的延迟，那种人类回复问题的 lag，我真的无话可说……所以就是这样。一旦把第一块砖放下，我们就能搭建一座自主智能体工厂，让它们研究、检索、推理各种信息，并综合生成新的有价值输出，无论是社交媒体内容还是代码。对我来说，这就是为什么 A.I. 对劳动力市场的影响值得全社会认真讨论。
+我想做的事情，是把我的数据工厂信息塞进 `Deep Lake` 向量存储，再借助 ChatGPT 对我的自定义知识库进行推理，搞清楚现有配置里到底发生了什么。比起努力理解人类留下来的遗留代码库（嘴上说抱歉，其实一点也不），这件事快乐太多了；毕竟很多时候，沟通和会议根本就是大型时间焚化炉，而等人回答问题的延迟，天啊，我真的无话可说……好，开搞。一旦把这第一块砖铺下去，我们就可以建出一整座自主智能体工厂，让它们围绕各种信息做研究、检索和推理，再把这些东西综合起来，产出新的价值，不管是社交媒体内容还是代码。对我来说，这正是为什么 A.I. 对劳动力市场的影响会，也应该，成为一场严肃的全社会对话。
 
-当即便是零散的 A.I. 智能都已经是超人类智能，当我们可以实现 [1000 倍生产力](https://www.youtube.com/watch?v=ji5rdhzT53o)，也就是说，也许根本没有足够的工作可以分配时，我们该怎么办？退一步看，我们为什么本来就希望人类工作这么多？也许我们真正需要做的是重新配置、重新画出工作、收入和意义之间的箭头。我会很乐意投票支持每周工作 4 小时，然后把剩下时间拿来玩和学习，just sayin’。
+当哪怕是零散拼起来的 A.I. 智能都已经是超人类智能，当我们可以把[生产力放大 1000 倍](https://www.youtube.com/watch?v=ji5rdhzT53o)，也就是说，也许根本没有足够的工作可以分给所有人时，我们该怎么办？退一步说，我们为什么本来就这么想让人类拼命工作？也许我们真正需要做的，是重新配置、重新画出工作、收入和意义之间的箭头。我会很开心投票支持每周工作 4 小时，然后把剩下的时间拿去玩和学习，随口一说。
 
 # 遇到的挑战
 
 ![](./00283-1392154050-21691764412914.png)
 
-在构建这个 agent 的过程中，最让我卡住的难点是：
+在动手搭这个智能体的过程中，最让我卡住的几个硬骨头是：
 
-1.  **使用正确的包版本**
+1.  **用对 package 版本**
     
 
-为了开始，我决定先从[一个现有项目 (chat-with-code)](https://github.com/priya-dwivedi/chat-with-code) 学起，但我一直遇到下面这样的错误：
+为了先跑起来，我决定从[一个现有项目（chat-with-code）](https://github.com/priya-dwivedi/chat-with-code)学起，但一直遇到下面这种错误：
 
 ```text
 RuntimeError: no validator found for <class 're.Pattern'>, see `arbitrary_types_allowed` in Config
@@ -70,7 +70,7 @@ File "pydantic/fields.py", line 804, in pydantic.fields.ModelField.populate_vali
 File "pydantic/validators.py", line 723, in find_validators
 ```
 
-或者像这样：
+或者这种：
 
 ```text
 ➜  chat-with-code git:(main) ✗ poetry run streamlit run chatbot.py                                         [🐍 lewagon]
@@ -111,21 +111,21 @@ Traceback (most recent call last):
   File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/pydantic/main.py", line 352, in __new__
 ```
 
-解决办法：结果发现，我必须使用特定的 `streamlit (1.25.0)` 和 `pydanic version (1.10.12)`；各种包之间的兼容性问题反复出现，所以我想我需要多学一点相关工具和最佳实践。也许具体版本本来就应该永远定义在 `poetry` 里！？
+解决办法：后来发现我必须使用特定的 `streamlit (1.25.0)` 和 `pydanic version (1.10.12)`；这类 package 之间的兼容性问题反复出现，所以我大概需要再学一下管理这些问题的工具和最佳实践。也许具体版本就应该永远写在 `poetry` 里！？
 
-2.  **弄清楚如何载入并切分用 .json 文件定义的 Azure Data Factory 资源**
+2.  **弄清楚如何导入 .json 文件里定义的 Azure Data Factory 资源，并切成可检索的 分块**
     
 
-结果发现，处理文档、PDF、GitHub 代码仓库等等有很多教程，但很少有人提到 .json。所以在让 ChatGPT 生成无果之后，我仔细看了 .json 和 `langchain` JSON loader，一步步引导 ChatGPT 按照我认为应该做的方式处理，最后终于成功了。至少根据我在 Google 和 YouTube 第一页的搜索结果，还没有人针对 Azure Resource Manager (ARM) template 做过这件事，所以我只能创新一下。
+结果发现，网上处理文档、.PDF、GitHub 代码仓库之类的教程一大堆，提到 .json 的却少得可怜。我先让 ChatGPT 生成，没用；于是只好认真盯着 .json 和 `langchain` JSON loader 看，再一步一步告诉 ChatGPT 我觉得它应该怎么做，最后才终于跑通。至少以我在 Google 和 YouTube 搜索第一页看到的结果来说，还没人拿 Azure Resource Manager（ARM）模板这么干过，所以我只好稍微创新一下。
 
-解决办法：我的推理是，对于这个初始原型，我希望能够保留 Azure Data Factory 的 `parameters`、`variables` 和 `resources`，以及 `resources` 里的各个对象，因为那些会是我的流水线、活动等等。结合少样本指令和上下文，ChatGPT 最后给了我需要的东西。
+解决办法：我的推理是，对这个初版原型来说，我想保留 Azure Data Factory 的 `parameters`、`variables` 和 `resources`，也想保留 `resources` 里的各个对象，因为那些会是我的 pipeline、activity 等等。再配上 few-shot 指令和给 ChatGPT 的上下文，最后就拿到了我需要的东西。
 
 # 前路
 
-这就是我最后把 75 个条目切进 `Deep Lake` 数据集的过程。现在我已经在想，下一步要接入更多数据源（让我们直接查询所有 SQL 模式、存储过程，甚至原始数据本身！）、围绕记忆更新元数据、在多模态数据湖兼向量存储上执行 CRUD 操作、优化检索策略和 token 上下文。说到底，为什么不让 LLM 借助工具直接执行并采取行动？更进一步，为什么不让 LLM 自己写测试、调试并验证自己？这些都是把自主智能体推向生产环境的关键；保守地说，它会让任何规模的团队或组织实现 1000 倍生产力。
+所以最后我就这样把 75 个条目切进了我的 `Deep Lake` 数据集；现在已经开始想接下来得导入更多数据源（让我们把所有 SQL schema、stored procedures 和数据本身都查起来！）、围绕记忆更新元数据、在这个多模态数据湖兼向量存储上做 CRUD 操作、优化检索策略和 token 上下文。事实上，为什么不直接通过工具让 LLM 执行并采取行动？更进一步，为什么不让 LLM 自己写测试、自己 debug、自己做验证？保守地说，如果要把一个能让任意规模团队或组织生产力放大 1000 倍的自主智能体真正推上生产环境，这些都是绕不开的事。
 
-Fun times! 🤩🤩🤩
+好玩的时候来了！🤩🤩🤩
 
 ---
 
-*最初发表于 PubPub：[erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z)。*
+*最初发布于 PubPub：[erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z)。*

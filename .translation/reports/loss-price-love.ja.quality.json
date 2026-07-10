@@ -1,0 +1,63 @@
+{
+  "sourcePath": "src/content/blog/loss-price-love/index.mdx",
+  "targetPath": "src/content/blog/loss-price-love/ja.mdx",
+  "sourceSha256": "3d0d87cb65068d02893a85ad5207f596b3baa84a5d5e8a36353ed53ef438f53b",
+  "targetSha256": "8c4d5d18ed3df5530e737d2c9eb9c39be99bb44b57ebbc2a87a0b8da6369bd26",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 6",
+          "problem": "「母を失ったことについて悲しい」は意味は通るが、日本語の感情表現としてやや説明的で硬い。",
+          "suggestion": "「母を失って、かつてないほど悲しい」などのほうが自然。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 6",
+          "problem": "「*私*、そのあとにまた私、と言い続ける」は原文の “pronounce I, after _I_” の自己言及的な響きを少し処理しきれておらず、読者に意図が伝わりにくい可能性がある。",
+          "suggestion": "英字の I を残すなら、その異物感を意図的に見せる表現へ寄せるとよい。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として、日本語の散文として自然に再構成されており、英語の語順をなぞる直訳ではない。母への喪失感、数学的比喩、反復する内省の調子も保たれている。引用、画像 alt、blockquote も翻訳済みで、MDX 構文の破綻は見当たらない。",
+      "rawPassed": true,
+      "rawScore": 0.94
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "body paragraph after first paragraph",
+          "problem": "「後悔の再帰は鳴り響き、赦免の夢想のなかで反響しつづける」は英語の抽象名詞連鎖をやや直訳しており、日本語として少し硬いです。特に「reprieve」は文脈上「赦免」より「一時の安堵／猶予」に近く読めます。",
+          "suggestion": "詩的な響きを保つなら、「後悔は何度もめぐり、束の間の安堵の夢のなかで鳴り続ける」など、意味と音の自然さを優先するとよいです。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph beginning 「宇宙のなかでは」",
+          "problem": "source の `_I_` は強調された英語の I を反復して自己意識を示していますが、訳文は「*私*」と「この*I*」が混在し、意図的なコードスイッチにも見える一方で少し読者の引っかかりになります。",
+          "suggestion": "英語の I を残す意図があるなら、前半も「I」として揃えるか、日本語化するなら後半も「この『私』」に寄せると安定します。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の散文として自然に再構成されており、英語の語順をなぞる直訳ではありません。比喩、私的な語り口、技術的比喩、引用・alt テキストも読者向けに適切に訳されています。",
+      "rawPassed": true,
+      "rawScore": 0.93
+    }
+  ]
+}

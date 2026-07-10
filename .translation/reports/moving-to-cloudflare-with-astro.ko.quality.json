@@ -1,0 +1,40 @@
+{
+  "sourcePath": "src/content/blog/moving-to-cloudflare-with-astro/index.mdx",
+  "targetPath": "src/content/blog/moving-to-cloudflare-with-astro/ko.mdx",
+  "sourceSha256": "ebe70c8220bd25c3c25ac8408b0d17362125082d9edeaad53a034709cc4997e3",
+  "targetSha256": "2812b784ecc8d8c662a4207a2357fdddf955ab7d7cc704b10a6ed0289a0e08ee",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "자동화된 CI/CD bullet list",
+          "problem": "`Git에서 자동 배포`는 의미는 통하지만 한국어 기술 문서에서는 약간 기계적으로 들립니다.",
+          "suggestion": "`Git 기반 자동 배포`나 `Git에 푸시하면 자동 배포`가 더 자연스럽습니다."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "전반적으로 문장 단위 직역이 아니라 한국어 기술 블로그의 호흡에 맞게 재구성되어 있습니다. 농담과 개인적인 어조도 유지됐고, 제품명·경로·코드 용어는 적절히 보존됐으며 MDX/frontmatter 구조도 깨지지 않았습니다."
+    },
+    {
+      "passed": true,
+      "score": 0.96,
+      "issues": [],
+      "unresolvedResearch": [],
+      "notes": "Korean prose reads naturally as a technical essay rather than a sentence-by-sentence calque: sentence rhythm is adjusted, idioms like “깜짝 청구서” and “자기 자리를 마련하려는” fit Korean, and technical terms/product names are preserved appropriately. MDX structure and reader-facing content look intact."
+    }
+  ]
+}

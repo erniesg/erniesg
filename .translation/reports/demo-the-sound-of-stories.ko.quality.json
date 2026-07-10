@@ -1,0 +1,46 @@
+{
+  "sourcePath": "src/content/blog/demo-the-sound-of-stories/index.mdx",
+  "targetPath": "src/content/blog/demo-the-sound-of-stories/ko.mdx",
+  "sourceSha256": "32bbeb05172edb7e2d43dea09d7507ad5697e0f6344a530ae3e22770d30421d9",
+  "targetSha256": "99ba2b2a48fc6bb70a9a7c3361d20145e0c0db7c446c030d5093993b16b3c70b",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [],
+      "unresolvedResearch": [],
+      "notes": "Korean prose reads like a native technical essay rather than a sentence-by-sentence rendering: it restructures long English clauses into natural Korean pacing, keeps Ernie’s blunt aside style, and preserves product/code terms appropriately. Human-facing alt text, caption, attribution, and headings are translated, while proper names and technical terms remain intact."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "body design-constraints list",
+          "problem": "“The Boy and the Drum” is rendered as “북을 든 소년,” which slightly shifts the named story/title toward “the boy holding a drum.”",
+          "suggestion": "Use “소년과 북” if treating it as a title, unless there is a known Korean title in this project context."
+        },
+        {
+          "severity": "minor",
+          "location": "description frontmatter",
+          "problem": "“사용한 것” is understandable but a little flat for “Built with” in a technical post description.",
+          "suggestion": "Consider “사용 기술:” or “구성 기술:” for a more natural Korean technical register."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as idiomatic technical essay prose rather than sentence-by-sentence English calque: clauses are often restructured, the author’s blunt asides are preserved, human-facing caption and iframe alt text are translated, and product/code terms remain intact."
+    }
+  ]
+}

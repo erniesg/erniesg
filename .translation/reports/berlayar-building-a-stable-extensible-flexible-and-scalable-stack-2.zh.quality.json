@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/index.mdx",
+  "targetPath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack-2/zh.mdx",
+  "sourceSha256": "90aa8650c40e79e576937c0d974b958c9cdd6207a029ed2fa7ea8665c8765b3f",
+  "targetSha256": "305fff447915cce777455a11111a6fbe35b9d045b44776934bcadbf5f2fb936d",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title frontmatter",
+          "problem": "标题“构建一个稳定、可扩展、灵活，而且……”略显半句式，中文里“而且……”比原文 truncation 更像临时断句。",
+          "suggestion": "可考虑改成“Berlayar：构建稳定、可扩展、灵活且……”以保留截断感但更顺口。"
+        },
+        {
+          "severity": "minor",
+          "location": "Bertrand - 从提示词到发布 / 动机段",
+          "problem": "“让 1000 个人每年每月付我 100 美元”读起来有些别扭，像是在同时说 yearly 和 monthly。",
+          "suggestion": "可改为“让 1000 个人每月付我 100 美元，并且持续一年”或更口语的“每月向 1000 个人收 100 美元”。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "整体中文自然，有 Ernie 原文里技术兴奋、吐槽和口语化判断的节奏；不是逐句硬译，像“怪脾气”“那就很美”“折腾”“有点烂”等处理都能把英文语气转成中文读者能接受的表达。MDX 结构、代码块、iframe 属性和需翻译的 alt/caption 均未见破损。"
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title",
+          "problem": "“构建一个稳定、可扩展、灵活，而且……”略显断裂，读者会感到像标题被机械截断；不过源文标题本身也以省略号收尾，未构成意义错误。",
+          "suggestion": "可考虑更顺一点，如“Berlayar：构建稳定、可扩展、灵活而且……”"
+        },
+        {
+          "severity": "minor",
+          "location": "Arthur section, paragraph beginning “结果与我学到的东西”",
+          "problem": "“按对象层级切分 .json”和“分块数量”技术上正确，但中文略偏翻译腔，和参考语料的 essay cadence 相比稍硬。",
+          "suggestion": "可改成“按对象来切 .json”或“取回的 chunk 数量”，视是否要保留技术口吻。"
+        },
+        {
+          "severity": "minor",
+          "location": "Benefits list",
+          "problem": "“Scalability”译为“规模扩展能力”，而“Extensibility”译为“可扩展性”，整体能区分含义，但“规模扩展能力”稍笨重。",
+          "suggestion": "可用“可伸缩性”对应 Scalability，以减少和 Extensibility 的术语重叠。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "译文整体自然，保留了 Ernie 技术随笔里口语、吐槽和 code-switching 的节奏；多数句子不是逐句贴英文结构硬搬，而是做了中文语序和语气上的重写。MDX/frontmatter、iframe 属性、代码块和 glossary-preserved 术语处理正常；translationStatus: machine 未作为问题计入。"
+    }
+  ]
+}

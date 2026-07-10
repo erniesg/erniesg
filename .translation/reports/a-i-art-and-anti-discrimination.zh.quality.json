@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/a-i-art-and-anti-discrimination/index.mdx",
+  "targetPath": "src/content/blog/a-i-art-and-anti-discrimination/zh.mdx",
+  "sourceSha256": "c9bdd6c194b01e7af71aac0baf40ea09e53c21fb879e473344a526b5f1f994bd",
+  "targetSha256": "7bd1d231941cb410f801517a26b4a8c42f36c7c635c7bafefb40b18b8bd8944a",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.95,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.95,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Target paragraph under “把每件该死的事都自动化掉？”",
+          "problem": "“展厅” slightly flattens the capitalized “the Gallery”; if the source refers to a specific institution or workplace, “美术馆” or the institution’s Chinese name may be more precise.",
+          "suggestion": "Consider revising to “美术馆” or the established Chinese name if known."
+        },
+        {
+          "severity": "minor",
+          "location": "Target paragraph mentioning APSN",
+          "problem": "“特殊需求人士协会” is understandable, but may not match the most idiomatic or official rendering of “Association for Persons with Special Needs” in Singapore Chinese usage.",
+          "suggestion": "Consider “特殊需要人士协会（APSN）” if aligning with local terminology is desired."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation reads as natural Chinese essay prose rather than sentence-by-sentence calque: it keeps Ernie’s bluntness and Singlish-inflected humor (“不就贴个贴纸吗”, “废话”), preserves code/product terms appropriately, translates the human-facing Keynes quotation and publication note, and keeps the MDX structure intact. Minor terminology precision issues do not affect publishability."
+    },
+    {
+      "passed": true,
+      "score": 0.95,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "target paragraph after first image",
+          "problem": "“展厅” slightly weakens the source’s capitalized “the Gallery,” which likely refers to a specific institutional workplace rather than a generic exhibition hall.",
+          "suggestion": "Consider “美术馆” or, if context confirms it, the specific institution name. This is not a publish blocker."
+        },
+        {
+          "severity": "minor",
+          "location": "first body paragraph",
+          "problem": "“局部山头” is understandable and playful, but slightly colloquial for the gradient descent metaphor; it may momentarily read like an idiom rather than the optimization image.",
+          "suggestion": "“局部山峰” would be a cleaner technical-metaphorical rendering, though the current phrasing is acceptable."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes. It reads as natural Mandarin essay prose rather than sentence-by-sentence English-shaped Chinese, preserves Ernie’s blunt and playful register, keeps A.I./ML/DL/product-style terms intact, translates reader-facing quotation and attribution, and the MDX/frontmatter structure is not broken."
+    }
+  ]
+}

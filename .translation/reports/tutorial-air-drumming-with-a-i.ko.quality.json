@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/tutorial-air-drumming-with-a-i/index.mdx",
+  "targetPath": "src/content/blog/tutorial-air-drumming-with-a-i/ko.mdx",
+  "sourceSha256": "288905d159f11476550369a0e35d33aa8ca71bf476393e89ba53e641d01e3fc1",
+  "targetSha256": "e5d2cd7cf194c52d167c99acb35dfa318cfc06466f3bf001a01d53a1b62aac39",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "src/content/blog/tutorial-air-drumming-with-a-i/ko.mdx:76",
+          "problem": "“Instagram 좋아요 800개” drops the source’s “800+ likes” nuance.",
+          "suggestion": "Use “Instagram 좋아요 800개 이상” if preserving the exact quantity matters."
+        },
+        {
+          "severity": "minor",
+          "location": "src/content/blog/tutorial-air-drumming-with-a-i/ko.mdx:80",
+          "problem": "“논리를 나눴는지” is understandable but slightly stiff as Korean technical prose.",
+          "suggestion": "A more natural phrasing would be “문제를 어떻게 나눴는지” or “로직을 어떻게 쪼갰는지.”"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as native technical essay prose rather than sentence-by-sentence translation: it reshapes long English clauses into natural Korean rhythm, preserves Ernie’s casual bluntness and humor, and keeps code/product terms intact. MDX and reader-facing captions/alt text are translated correctly."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 2",
+          "problem": "“all my previous posts about A.I.”가 “A.I. 글”로 옮겨져 원문의 Instagram 게시물/영상 맥락이 약간 좁아졌습니다.",
+          "suggestion": "“지금까지 올린 A.I. 게시물” 정도가 더 정확합니다."
+        },
+        {
+          "severity": "minor",
+          "location": "How I Built it section",
+          "problem": "“해가면서 디버깅해야 했다”는 한국어 문장 흐름이 조금 어색합니다.",
+          "suggestion": "“진행하면서 디버깅해야 했다” 또는 “하나씩 디버깅해야 했다”가 더 자연스럽습니다."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "전반적으로 한국어 기술 에세이 문체로 재구성되어 있고, 영어 어순을 그대로 끌고 온 직접 번역투가 아닙니다. A.I., RAVE, Python, MDX 관련 코드와 링크도 적절히 보존되어 있으며 iframe의 alt와 캡션 같은 독자-facing 텍스트가 번역되어 있습니다."
+    }
+  ]
+}

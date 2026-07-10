@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/index.mdx",
+  "targetPath": "src/content/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/ja.mdx",
+  "sourceSha256": "88b28f60433e260a8b1e259fc6b684e555a6e8ff3881f6ca230052b26c99c488",
+  "targetSha256": "5ddf06c5452fb138897178c9c231a8e00966992a98fb2c8c70b7c4fe9cef0e6f",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.95,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "frontmatter title",
+          "problem": "The title omits the nuance of the source path/title continuation, “about the human,” if that broader title is intended beyond the ellipsis in the frontmatter.",
+          "suggestion": "Consider “記号と現実の織り目: A.I. が人間について教えてくれたこと…” if the full reader-facing title should be restored."
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph beginning “可能なことと、未来が実際にどうなるか。”",
+          "problem": "“in relation to the first point” is rendered as “最初の話に戻ると,” which is readable but slightly vague about which earlier point it refers to.",
+          "suggestion": "If polishing, make the referent more explicit, e.g. “最初に触れた自動化の話に戻れば”."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Japanese reads as native essay prose rather than a direct sentence-by-sentence calque: clauses are restructured naturally, emotional cadence is preserved, technical terms such as embeddings, vector stores, LLM, and A.I. are handled appropriately, and human-facing alt text, captions, quotations, and attribution are translated. MDX syntax appears intact, and the frontmatter serialization changes are semantically equivalent."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "frontmatter description",
+          "problem": "“I forked it” のニュアンスが「作り始めた」に弱まり、原文のハッカーっぽい動作が少し丸まっています。読者向けの意味は大きく崩れていません。",
+          "suggestion": "必要なら「フォークして Bertrand を作った話」のように寄せると原文の勢いに近づきます。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph beginning “Between what is possible…”",
+          "problem": "“automated social media agency” が「自動ソーシャルメディア代理店の仕事」と訳されており、少し説明的で硬いですが、意味は通ります。",
+          "suggestion": "「自動化されたソーシャルメディア代理店」のようにするとやや自然です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の技術エッセイとして自然に読め、英語の語順をなぞる直訳調ではありません。引用、alt、キャプション、帰属文も翻訳されており、A.I. や Bertrand などの保持すべき語も適切に残されています。軽微な表現差はありますが、公開を止めるほどの意味 drift や MDX 破損は見当たりません。"
+    }
+  ]
+}

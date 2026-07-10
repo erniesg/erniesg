@@ -1,0 +1,47 @@
+{
+  "sourcePath": "src/content/blog/demo-the-sound-of-stories/index.mdx",
+  "targetPath": "src/content/blog/demo-the-sound-of-stories/ja.mdx",
+  "sourceSha256": "32bbeb05172edb7e2d43dea09d7507ad5697e0f6344a530ae3e22770d30421d9",
+  "targetSha256": "58339487d5654af63e99aea1326ad3fd22e33b9645ab6469765fd1587747af77",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Design constraints bullet: “The Boy and the Drum”",
+          "problem": "The story title is rendered as 「太鼓を持った少年」, which reads more like “the boy holding/with a drum” than the title-like “The Boy and the Drum.”",
+          "suggestion": "Prefer 「少年と太鼓」 or 「男の子と太鼓」 if this is meant as a story title."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Japanese reads naturally as a technical essay rather than a sentence-by-sentence calque: clauses are reorganized, the author’s casual bluntness is preserved, and technical/product names are handled appropriately. Human-facing captions and attribution are translated, MDX structure is intact, and the frontmatter serialization/status metadata is not a quality issue."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Paragraph about switching models",
+          "problem": "「文字どおり Claude 3 Opus を使った」は、source の 'literally after hearing a recommendation' の係り方が少しずれて読めます。Claude を文字どおり使った、という不自然な強調に見える可能性があります。",
+          "suggestion": "「3月19日に Hugh の推薦を聞いて少し試した直後に、Claude 3 Opus をそのまま採用した」などにすると自然です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の技術エッセイとして自然に読め、英語の語順をなぞった直訳調ではありません。くだけた自己ツッコミや断定の強さも保たれており、MDX とアクセシビリティ文言も破綻していません。"
+    }
+  ]
+}

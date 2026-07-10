@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/index.mdx",
+  "targetPath": "src/content/blog/move-aside-gpt-4-for-i-own-this-google-search-result-mlops-for-museums/zh.mdx",
+  "sourceSha256": "2cc16d1fb02c23538945b5e2aff49e1c54afc0db275fcf508e912d8623043f25",
+  "targetSha256": "d61a4e278965b605613401502c388497a5454c6a2126db41fe46b899e8f94857",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.96,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "body, paragraph about search limits",
+          "problem": "“polder against the rising tide” is rendered as “像围海造田那样替我们挡一挡…潮水”. A polder is reclaimed lowland protected by dikes; the Chinese is readable, but “围海造田” slightly shifts the image toward land reclamation rather than the defensive embankment metaphor.",
+          "suggestion": "A tighter option would be “像圩田/堤坝一样，挡一挡虚假信息和幻觉不断涨起的潮水”, if the house style allows the less common term."
+        },
+        {
+          "severity": "minor",
+          "location": "body, final long paragraph",
+          "problem": "“specificity” is translated as “特异性”. It is technically acceptable, but in this essay context “针对性” or “专用性” would read more naturally than the biomedical-sounding “特异性”.",
+          "suggestion": "Consider “通用性和针对性/专用性之间的取舍”."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes. It is not a direct sentence-by-sentence calque: the Chinese uses natural essay cadence and editorial adaptation, especially in phrases like “结果来了就先收着”, “再添一把柴”, and “把头转开”, while preserving Ernie’s blunt, playful technical voice and the intended code-switching. MDX structure and reader-facing captions/attributions are intact; product names and technical terms are appropriately preserved."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph about OpenAI/Jina search",
+          "problem": "“转而架在 OpenAI 的 Contrastive Language-Image Pre-Training……之上”略有英文 build on top of 的结构痕迹。",
+          "suggestion": "可改为“转而基于 OpenAI 的 Contrastive Language-Image Pre-Training……来做”或“改用……来搭”。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph about Infinity Gauntlet",
+          "problem": "“让工作的意义……随风蒸发”略收窄了原文的意思；原文是 work 本身及其附带意义一起 evaporates。",
+          "suggestion": "可改为“让工作本身，以及它附带的意义……一起随风蒸发”。"
+        },
+        {
+          "severity": "minor",
+          "location": "final paragraph",
+          "problem": "“通用性和特异性”里的“特异性”偏生硬，容易让人想到统计/医学术语；此处原文 specificity 更像“针对具体问题的专用性”。",
+          "suggestion": "可改为“通用性和针对性”或“通用性和专用性”。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "整体中文自然，有 Ernie 原文的技术、调侃和个人判断语气；不是逐句硬译，长句经过了符合中文阅读节奏的重组。MDX 和读者可见文本基本完整，图片、链接、产品名和代码邻近术语保留得当。"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "sourcePath": "src/content/blog/streaming-generated-diagrams/index.mdx",
+  "targetPath": "src/content/blog/streaming-generated-diagrams/ja.mdx",
+  "sourceSha256": "aebf98494e9696f57d9950b5616c2bd2eb54c2ab63234de80cb82922ab229bf8",
+  "targetSha256": "1b6923210ca00a8d278465af7be490e3098cacf9bb7f8c4437a9f3c587becfc4",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Code-block comments throughout target MDX",
+          "problem": "Some explanatory comments inside illustrative code blocks remain in English, such as \"First chunk\" and \"This is where the magic happens.\" They do not break MDX or meaning, and preserving code blocks is defensible, but these comments are partly reader-facing.",
+          "suggestion": "If the localization policy allows editing comments in illustrative snippets, translate only comments while preserving code identifiers and string literals."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Japanese reads like a native technical essay rather than a direct sentence-by-sentence calque: phrasing such as 「素直に来てくれない」「秘伝のタレ」「横から見ている感じ」 preserves the authorial tone naturally. Technical terms and product names are preserved, frontmatter serialization is semantically equivalent, and MDX structure appears intact."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "frontmatter title / description",
+          "problem": "「生成されるアーキテクチャ図」「生成器」は少し機械翻訳寄りで、記事本文の自然さに比べると硬い。",
+          "suggestion": "公開前の磨きなら「生成中のアーキテクチャ図をリアルタイムに配信する」「リアルタイムのアーキテクチャ図ジェネレーター」などがより自然。"
+        },
+        {
+          "severity": "minor",
+          "location": "section: エッジ上のハイパーパーソナライズ UI",
+          "problem": "「ハイパーパーソナライズ」「極度にパーソナライズされた」は意味は通るが、やや直訳感が残る。",
+          "suggestion": "文脈によって「高度に個別化された UI」「超個別化されたインターフェース」なども検討できる。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の技術エッセイとして自然に読め、英語の語順をなぞった直訳ではありません。口調も原文の実装メモらしい率直さを保っており、MDX 構造やコードブロックも壊れていません。"
+    }
+  ]
+}

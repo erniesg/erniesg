@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/index.mdx",
+  "targetPath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/ja.mdx",
+  "sourceSha256": "fe0c04ceb05167c6798085d37b839b976cdb4aa1e1e2f19b9818837fa38e7d18",
+  "targetSha256": "de7ff70d99eb330734847c66ae36dd90d0bdb819aafbf319f8d0c98fbde916d1",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "section “やり取りと消費の手段を拡張する”",
+          "problem": "“消費” is a literal rendering of “consumption” and is understandable in context, but repeated phrases like “消費方法” read slightly stiff in Japanese technical prose.",
+          "suggestion": "Consider “利用形態”, “出力先”, or “コンテンツの受け取り方” depending on the sentence."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation reads as natural Japanese technical essay prose rather than sentence-by-sentence English order: long English sentences are recast with Japanese pacing, the author’s first-person tone and blunt practical framing are preserved, and technical terms/code identifiers are generally protected correctly. No major reader-facing meaning drift or MDX breakage found.",
+      "rawPassed": true,
+      "rawScore": 0.93,
+      "ignoredIssues": [
+        {
+          "severity": "minor",
+          "location": "code sample under Concrete Implementations",
+          "problem": "Three explanatory Python comments remain in English: “Simply print the content”, “Use Text-to-Speech to vocalise the content”, and “Convert content into animated video”. They are inside code, so this is not a syntax or product-term issue, but they function as reader-facing explanation in the article.",
+          "suggestion": "Translate the comments while preserving the code structure, e.g. “# content をそのまま表示する” or a similarly natural Japanese phrasing."
+        }
+      ]
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "target prose: section 「やり取りと消費の手段を拡張する」 and related occurrences",
+          "problem": "「消費」「消費方法」は source の consumption をかなり直に引いており、日本語の技術エッセイとしてはやや硬い。文脈上は「利用方法」「受け取り方」「出力先」などのほうが自然な箇所がある。",
+          "suggestion": "読者向けの自然さを上げるなら、見出しは「利用・受け取り方を拡張する」などに寄せる。"
+        },
+        {
+          "severity": "minor",
+          "location": "target prose: registry/DataSource discussion",
+          "problem": "「処理器」は意味は通るが、ファイル種別やデータソースの実装を指す技術文脈ではやや不自然で、硬い機械翻訳調に見える箇所がある。",
+          "suggestion": "必要に応じて「プロセッサ」または「処理クラス」に統一する。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の語順と段落の流れが自然に再構成されており、英語の構文を逐語的に追った直接翻訳ではない。Ernie の一人称の軽さや最後の冗談めいたトーンも保たれている。MDX/frontmatter/code fence は読者-facing な破損が見当たらず、translationStatus: machine は意図されたメタデータとして問題視していない。",
+      "rawPassed": true,
+      "rawScore": 0.93
+    }
+  ]
+}

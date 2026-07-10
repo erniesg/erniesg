@@ -1,0 +1,53 @@
+{
+  "sourcePath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/index.mdx",
+  "targetPath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/ko.mdx",
+  "sourceSha256": "3b128b1294b2b2acafab15c209171d4e5586635029e00ea0d7c89e1d3a8ec631",
+  "targetSha256": "bfc54ea38dc4a5d609df2f23566307f6bd3169dba3c7b4f4844f3f5e238462c9",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "bullet list, “Truncation/treatment of extended text chunks”",
+          "problem": "“긴 텍스트 조각의 절단과 처리” is understandable but slightly stiff; “절단” feels like a mechanical calque in this technical context.",
+          "suggestion": "Consider a more natural phrasing such as “긴 텍스트 조각을 잘라 다루기” or “긴 텍스트 청크 처리 방식” if revising."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as a native technical essay rather than a sentence-by-sentence transfer: it reshapes long English clauses into natural Korean rhythm, preserves the author’s blunt casual tone, and translates reader-facing captions, alt text, links, and attribution appropriately while keeping product names and technical terms intact."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Paragraph 5",
+          "problem": "\"stateless design\" is translated as \"상태 없는 설계\". It is understandable, but the more idiomatic Korean technical term is \"무상태 설계\".",
+          "suggestion": "Use \"Firestore와 FastAPI를 바탕으로 한 무상태 설계\" if polishing manually."
+        },
+        {
+          "severity": "minor",
+          "location": "Paragraph 3",
+          "problem": "\"not the most reliable cookie in the world\" becomes \"세상에서 제일 믿음직한 물건은 아니다,\" which preserves meaning but softens the oddball idiom and some of the author's comic texture.",
+          "suggestion": "A slightly more voiced rendering such as \"세상에서 제일 믿음직한 녀석은 아니다\" would better preserve the casual humor."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as native technical essay prose rather than sentence-by-sentence English transfer: clauses are reordered naturally, the casual first-person voice is preserved, human-facing text and accessibility text are translated, and product/code terms are kept appropriately. No major reader-facing meaning drift, broken MDX, or glossary violation found."
+    }
+  ]
+}

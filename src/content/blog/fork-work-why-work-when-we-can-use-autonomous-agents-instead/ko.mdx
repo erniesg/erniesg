@@ -1,6 +1,8 @@
 ---
-title: 'Fork Work: 자율 에이전트가 있는데 왜 일하지?'
-description: 인간은 소통과 회의에 너무 많은 시간을 낭비한다. A.I.가 즉시 답하고 코딩한다면 왜 이렇게 많이 일해야 할까?
+title: 'Fork Work: 자율 에이전트가 있는데 왜 우리가 일하지…'
+description: >-
+  우리 인간은 소통하고 회의하느라 시간을 너무 많이 흘려보낸다. A.I.는 즉시 답도 주고 코드도 내놓는데, 대체 왜 이렇게까지 일을 많이
+  하는 걸까?
 date: 2023-08-11T00:00:00.000Z
 authors:
   - erniesg
@@ -12,30 +14,30 @@ translationStatus: machine
 translationSource: codex
 ---
 
-좌절해서 키보드를 두드리거나 [물려받은 코드베이스 앞에서 눈물을 조금 흘리는](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/) 대신, 그 정보를 A.I.에 넘기고 대화하는 편이 훨씬 말이 된다. LLM의 지식과 추론 능력을 그런 정보 위에서 활용하기 시작하는 순간, 자연스러운 다음 단계는 종합이다. 기존 코드베이스 위에서 실행될 수 있는 새 코드를 생성해, 전 세계 누구나 프롬프트에서 기능까지 갈 수 있게 하는 것이다. 이런 과제를 다루기 위해 아래 데모를 만들었고, 주말 하루 이틀 정도 작업한 결과물이다. 만드는 과정에서 새로 배운 것도 많고 여러 개념을 더 깊이 이해하게 되어 꽤 재미있었다.
+짜증 나서 키보드를 두드려 패거나 [물려받은 코드베이스 앞에서 눈물 몇 방울 흘리는](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/) 대신, 그 정보를 A.I.에 넘기고 대화하는 편이 훨씬 이치에 맞다. 그런 정보 위에서 대규모 언어 모델(LLM)의 지식과 추론 능력을 활용하기 시작하는 순간, 자연스러운 다음 단계는 종합이다. 기존 코드베이스 위에서 돌아갈 새 코드를 만들어, 세상 누구나 프롬프트에서 기능까지 바로 갈 수 있게 하는 것. 이런 문제를 다뤄 보려고 아래 데모를 만들었다. 주말 하루이틀 정도 들인 결과물인데, 만드는 동안 새로 배운 것도 많고 이해가 깊어진 개념도 많아서 꽤 즐거웠다.
 
-<iframe alt="Arthur - Search and Retrieve Anything" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="Arthur - 무엇이든 검색하고 찾아오기" src="https://www.youtube.com/embed/42HSVAGfxIo?feature=oembed" aria-describedby="niki95798w2-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
-Arthur - 무엇이든 검색하고 가져오기
+Arthur - 무엇이든 검색하고 찾아오기
 
-# 왜 일하지 Leh?
+# 왜 일해, Leh?
 
 ![](./00281-807328077-11691761226672.png)
 
-내가 하려던 일은 내 데이터 공장에 관한 정보를 `Deep Lake` 벡터 저장소에 넣고, 맞춤형 지식 저장소 위에서 ChatGPT의 추론 능력을 활용해 기존 설정에서 무슨 일이 벌어지는지 이해하는 것이었다. 인간이 남긴 레거시 코드베이스를 이해하려 애쓰는 것보다 훨씬 즐거웠다. 소통과 회의가 엄청난 시간 낭비였던 순간이 충분히 많았고, 답변을 기다리는 지연, 질문에 대한 인간의 느린 반응은 정말 할 말이 없다… 그래서 이렇게 시작했다. 첫 벽돌을 놓고 나면, 자율 에이전트의 공장을 만들 수 있다. 그 에이전트는 온갖 정보를 조사하고, 검색하고, 추론하며, 소셜 미디어 콘텐츠든 코드든 새로운 가치 있는 출력을 종합하고 생성할 수 있다. 내게 이것이 바로 A.I.의 노동시장 함의가 사회 전체의 진지한 대화를 필요로 하는 이유다.
+내가 해 보려던 일은 내 데이터 팩토리에 관한 정보를 `Deep Lake` 벡터 스토어에 넣고, 그 위에 ChatGPT의 추론 능력을 얹어 기존 설정에서 무슨 일이 벌어지고 있는지 이해하는 것이었다. 인간이 남긴 레거시 코드베이스를 붙잡고 의미를 해독하는 것보다 훨씬 즐거웠다. 미안하지만 안 미안하다. 소통과 회의가 엄청난 시간 낭비였던 경우가 이미 충분히 많았고, 답을 기다리는 지연 시간, 아니 사람이 내 질문에 답하는 그 랙에 대해서는 할 말이 없다… 자, 그러니 시작해 보자. 이 첫 벽돌만 깔아 두면, 온갖 정보를 조사하고 찾아오고 추론하면서 소셜 미디어 콘텐츠든 코드든 가치 있는 새 결과물을 종합하고 생성하는 자율 에이전트 공장을 지을 수 있다. 나에게는 이것이 바로 A.I.가 노동시장에 미칠 영향을 사회 전체가 진지하게 논의해야 하고, 또 논의할 수밖에 없는 이유다.
 
-부분적인 A.I. 지능조차 초인적 지능이 되고, 우리가 [생산성을 1000배](https://www.youtube.com/watch?v=ji5rdhzT53o) 높일 수 있다면, 즉 어쩌면 나눌 일이 충분하지 않을 수도 있다면 우리는 무엇을 해야 할까? 한 걸음 물러서서 보면, 애초에 왜 인간이 그렇게 많이 일하기를 원하는 걸까? 아마 정말 필요한 일은 일, 소득, 의미 사이의 화살표를 다시 구성하고 다시 그리는 것일지도 모른다. 나는 기꺼이 주 4시간 근무에 투표하고 나머지 시간은 놀고 배우는 데 쓰겠다, 그냥 하는 말이다.
+부분적인 A.I. 지능조차 초인적 지능이 되고, 우리가 [생산성을 1000배로 끌어올릴 수 있다면](https://www.youtube.com/watch?v=ji5rdhzT53o), 그러니까 어쩌면 모두에게 나눠 줄 만큼 일이 충분하지 않다면 우리는 무엇을 해야 할까? 한 걸음 물러서서 보면, 애초에 왜 인간이 이렇게 많이 일하길 바라는 걸까? 어쩌면 우리가 정말 해야 할 일은 일, 소득, 의미 사이의 화살표를 다시 배치하고 다시 그리는 것일지도 모른다. 나는 주 4시간 근무제에 기쁘게 한 표 던지고, 남은 시간은 놀고 배우며 보내겠다. 그냥 그렇다고.
 
-# 마주친 과제들
+# 마주친 난관들
 
 ![](./00283-1392154050-21691764412914.png)
 
-에이전트를 만들면서 가장 많이 막혔던 어려운 지점은 다음과 같았다:
+에이전트를 만들면서 나를 가장 자주 붙잡아 세운 어려운 문제들은 이랬다.
 
-1.  **올바른 패키지 버전 사용하기**
+1.  **올바른 패키지 버전 맞추기**
     
 
-시작하기 위해 [기존 프로젝트(chat-with-code)](https://github.com/priya-dwivedi/chat-with-code)에서 배우기로 했지만, 아래와 같은 오류를 계속 만났다:
+일단 시작하기 위해 [기존 프로젝트(chat-with-code)](https://github.com/priya-dwivedi/chat-with-code)에서 배워 보기로 했는데, 아래 같은 오류를 계속 만났다.
 
 ```text
 RuntimeError: no validator found for <class 're.Pattern'>, see `arbitrary_types_allowed` in Config
@@ -70,7 +72,7 @@ File "pydantic/fields.py", line 804, in pydantic.fields.ModelField.populate_vali
 File "pydantic/validators.py", line 723, in find_validators
 ```
 
-또는 이런 식이었다:
+아니면 이런 식이었다.
 
 ```text
 ➜  chat-with-code git:(main) ✗ poetry run streamlit run chatbot.py                                         [🐍 lewagon]
@@ -111,21 +113,21 @@ Traceback (most recent call last):
   File "/home/erniesg/.pyenv/versions/3.10.6/envs/lewagon/lib/python3.10/site-packages/pydantic/main.py", line 352, in __new__
 ```
 
-해결: 알고 보니 특정한 `streamlit (1.25.0)`과 `pydanic version (1.10.12)`를 써야 했다. 여러 패키지 사이의 호환성 문제가 꽤 자주 반복되니, 이를 관리하는 도구와 모범 사례를 더 배워야 할 것 같다. 어쩌면 사용한 구체 버전은 항상 `poetry` 안에 정의되어야 하는 것 아닐까!?
+해결책: 알고 보니 특정 `streamlit (1.25.0)`와 `pydanic version (1.10.12)`를 써야 했다. 여러 패키지 사이의 이런 호환성 문제는 꽤 자주 반복되는 듯하니, 이를 관리하는 도구와 모범 사례를 더 배워야 할 것 같다. 어쩌면 사용한 구체적인 버전은 항상 `poetry` 안에 정의해야 하는 것 아닐까!?
 
-2.  **`.json` 파일로 정의된 Azure Data Factory 리소스를 수집하고 분할하는 방법 알아내기**
+2.  **.json 파일에 정의된 Azure Data Factory 리소스를 읽어 들여 청크로 나누는 방법 파악하기**
     
 
-문서, `.pdf`, GitHub 코드 저장소 등을 처리하는 튜토리얼은 많지만 `.json` 이야기는 거의 없었다. ChatGPT에게 생성해달라고 해도 소용이 없어서, 결국 `.json`과 `langchain` JSON loader를 자세히 들여다보고 내가 생각하는 방식대로 단계별로 ChatGPT를 안내했더니 마침내 작동했다. 적어도 Google과 YouTube 검색 첫 페이지 기준으로는 Azure Resource Manager(ARM) 템플릿에 대해 이 작업을 한 사람이 없었으니, 조금은 새로움을 만들어야 했다.
+알고 보니 문서, .PDF, GitHub 코드 저장소 등을 처리하는 튜토리얼은 잔뜩 있는데 .json 이야기는 거의 없었다. 그래서 ChatGPT에게 생성해 달라고 해 봐도 별 소득이 없었고, 결국 .json과 `langchain` JSON 로더를 아주 진지하게 들여다본 뒤, 내가 보기에 해야 할 일을 ChatGPT에게 단계별로 안내했다. 그제야 마침내 돌아갔다. 적어도 내가 Google과 YouTube에서 검색한 첫 페이지 기준으로는 Azure Resource Manager(ARM) 템플릿 위에서 이걸 해 본 사람이 없었다. 그래서 창의력을 발휘해야 했다.
 
-해결: 이 초기 프로토타입에서는 Azure Data Factory의 `parameters`, `variables`, `resources`와 `resources` 안의 개별 객체를 보존하고 싶었다. 그것들이 내 파이프라인과 액티비티 등이 될 것이기 때문이다. 여기에 few-shot 지시와 맥락을 결합하자 ChatGPT가 필요한 결과를 만들어냈다.
+해결책: 이 초기 프로토타입에서는 Azure Data Factory의 `parameters`, `variables`, `resources`를 보존하고, `resources` 안의 개별 객체들도 보존하고 싶었다. 그것들이 곧 내 파이프라인과 액티비티 등이기 때문이다. 여기에 few-shot 지시와 ChatGPT에 줄 맥락을 더하니 필요한 결과가 나왔다.
 
 # 앞으로의 방향
 
-그렇게 해서 75개 항목을 `Deep Lake` 데이터셋으로 나누어 넣게 됐다. 이제는 더 많은 데이터 소스를 연결해야겠다고 생각하고 있다. 모든 SQL 스키마, 저장 프로시저, 데이터 그 자체까지 질의할 수 있게 하고, 메모리와 관련된 메타데이터를 업데이트하고, 멀티모달 데이터 레이크 겸 벡터 저장소 위에서 CRUD 작업을 수행하고, 검색 전략과 토큰 컨텍스트를 최적화하는 일까지 말이다. 사실 도구를 써서 LLM 안에서 바로 실행하고 행동하게 하면 안 될 이유가 있을까? 더 나아가 LLM이 스스로 테스트를 쓰고, 디버그하고, 검증하게 만들면 어떨까? 이런 것들은 어느 규모의 팀이나 조직이든 보수적으로 말해 생산성을 1000배 끌어올릴 자율 에이전트를 프로덕션에 올리는 데 반드시 필요하다.
+그렇게 해서 결국 75개 항목을 청크로 나눠 내 `Deep Lake` 데이터셋에 넣게 됐고, 벌써 더 많은 데이터 소스를 수집해야겠다는 생각을 하고 있다. 모든 SQL 스키마, 저장 프로시저, 데이터 자체까지 질의하게 하자! 메모리와 관련된 메타데이터를 갱신하고, 멀티모달 데이터 레이크 겸 벡터 스토어 위에서 CRUD 작업을 수행하고, 검색 전략과 토큰 컨텍스트도 최적화해야 한다. 사실 도구를 써서 LLM 안에서 바로 실행하고 행동까지 하게 만들면 안 될 이유가 있나? 더 좋게는, LLM이 자기 테스트를 직접 쓰고, 스스로 디버깅하고 검증하게 만들면 왜 안 되나? 보수적으로 말해도 어떤 규모의 팀이나 조직이든 생산성을 1000배로 끌어올릴 자율 에이전트를 프로덕션에 올리려면, 이 모든 것이 필수일 것이다.
 
-즐겁네! 🤩🤩🤩
+재밌는 시절이다! 🤩🤩🤩
 
 ---
 
-*원래 PubPub의 [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z)에 게시됨.*
+*원래 PubPub의 [erniesg.pubpub.org/pub/i8a0vp8z](https://erniesg.pubpub.org/pub/i8a0vp8z)에 게시했다.*

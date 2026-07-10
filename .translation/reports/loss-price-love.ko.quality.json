@@ -1,0 +1,53 @@
+{
+  "sourcePath": "src/content/blog/loss-price-love/index.mdx",
+  "targetPath": "src/content/blog/loss-price-love/ko.mdx",
+  "sourceSha256": "3d0d87cb65068d02893a85ad5207f596b3baa84a5d5e8a36353ed53ef438f53b",
+  "targetSha256": "2287b412de5b54ed429fc05c1a1223e057b8937fc8163987e76db3c66eff0682",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 4",
+          "problem": "“내가 태어나기도 전에” is slightly less exact than the source’s “before my conception.” It does not damage the passage, but it softens the biological specificity of the line.",
+          "suggestion": "Consider “내가 잉태되기도 전에” or a more natural equivalent if the exact timing matters."
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 1",
+          "problem": "“엄마에게는 그래도 마땅했다” is understandable, but a little stiff for the intimate register of “She should have that.”",
+          "suggestion": "A softer phrasing such as “엄마에게는 그런 삶이 있어야 했다” would sound more natural."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as native literary essay prose rather than a sentence-by-sentence calque: it reshapes rhythm, connective tissue, and emotional emphasis while preserving the source’s grief, technical metaphors, and MDX structure. Human-facing alt text and blockquote are translated, and protected terms/frontmatter metadata are handled appropriately."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "line 16",
+          "problem": "“유예의 몽상 속에서 후회의 재귀가 쩌렁쩌렁 되울린다” preserves the source’s abstract structure and alliteration more than natural Korean rhythm, so it reads slightly coined.",
+          "suggestion": "Consider a less calqued sentence that keeps the recursive/ringing effect, such as “놓였다고 믿는 몽상 속에서 후회는 되돌아와 울린다.”"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes: the Korean reads as a native reflective essay overall, with sentence rhythm adjusted for Korean rather than mechanically tracking English order. Human-facing alt text and the blockquote are translated, MDX/frontmatter are intact, technical terms and names are handled appropriately, and the personal bluntness and grief-register are preserved."
+    }
+  ]
+}

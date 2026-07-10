@@ -1,0 +1,53 @@
+{
+  "sourcePath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/index.mdx",
+  "targetPath": "src/content/blog/a-i-for-humans-building-a-i-native-products-and-treating-data/zh.mdx",
+  "sourceSha256": "3b128b1294b2b2acafab15c209171d4e5586635029e00ea0d7c89e1d3a8ec631",
+  "targetSha256": "93ebfd21dd197e274ae8f28d7ef3d4f666f3762d530946d676c7883593d2c9d6",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "target paragraph linking A.I. cold call agents",
+          "problem": "“冷呼叫智能体”略显机械，像从 English technical phrase 直译过来。中文读者更自然的说法可能是“冷拨电话智能体”或“电话推销 A.I. 智能体”。",
+          "suggestion": "Consider revising to a more idiomatic Chinese technical phrase if polishing manually."
+        },
+        {
+          "severity": "minor",
+          "location": "feature bullet “Up-to-date code libraries with access to the internet”",
+          "problem": "“联网获取最新代码库” can be read as repositories rather than libraries/packages. Meaning is still understandable, but technical precision could be tighter.",
+          "suggestion": "Consider “联网获取最新代码库/依赖库信息” or “联网获取最新库文档” depending on intended meaning."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation preserves Ernie’s informal, blunt, playful technical-personal voice and reads as natural Mandarin rather than sentence-by-sentence English-shaped Chinese. Human-facing caption, iframe alt text, link text, and publication note are translated; product names, A.I. spelling, code-adjacent terms, and MDX structure are preserved. Frontmatter serialization changes and translationStatus are not treated as quality issues."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "feature bullet: “Up-to-date code libraries with access to the internet”",
+          "problem": "“联网获取最新代码库”略容易和上一条“代码库索引”混在一起；这里的 libraries 更像库/框架资料或依赖文档，不一定是 repository/codebase。",
+          "suggestion": "可改为“联网访问最新的库和框架资料”或“联网获取最新的代码库/依赖资料”。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "整体是自然的中文技术随笔语气，保留了作者口语化、吐槽式节奏和 A.I./Cursor/ReAct 等术语，没有明显按英文句序硬译；MDX、链接、iframe 属性和 frontmatter 语义均未见破坏。"
+    }
+  ]
+}

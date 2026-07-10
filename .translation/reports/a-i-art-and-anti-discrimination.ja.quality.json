@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/a-i-art-and-anti-discrimination/index.mdx",
+  "targetPath": "src/content/blog/a-i-art-and-anti-discrimination/ja.mdx",
+  "sourceSha256": "c9bdd6c194b01e7af71aac0baf40ea09e53c21fb879e473344a526b5f1f994bd",
+  "targetSha256": "2aea87601235a9b2ac1e79d8ce20d27804065bad0028559ec34a8a12bda7a7d8",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "本文「技術はすばらしい」付近",
+          "problem": "“Technology is great when your aspiration is to be lazy effectively.” の軽い皮肉は概ね出ていますが、「すばらしい」は少し標準的で、原文のくだけた断言よりやや丸いです。",
+          "suggestion": "必要なら「技術は最高だ」程度に寄せると、筆者の調子が少し戻ります。"
+        },
+        {
+          "severity": "minor",
+          "location": "ステッカー施工の逸話",
+          "problem": "“far safer from automation” を「自動化から安全圏にある」とした箇所は意味は通るものの、少し英語の比喩を引きずった表現です。",
+          "suggestion": "「自動化されにくい」「自動化の波を受けにくい」などのほうが自然です。"
+        },
+        {
+          "severity": "minor",
+          "location": "ケインズ引用後の段落",
+          "problem": "「反差別」は意味として問題ありませんが、日本語の読者向けにはやや硬い見出し語です。",
+          "suggestion": "本文のタイトルとの対応を優先するなら維持可。より自然にするなら文脈に応じて「差別への抵抗」「差別反対」も候補です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "MDX構造、リンク、画像参照、frontmatter は reader-facing な破損なし。translationStatus: machine は所有メタデータとして問題視していません。日本語は文ごとの直訳ではなく、Singlish のくだけた調子（「ステッカー貼るだけでしょ」「目力」「当たり前ですね」）や論旨の流れを日本語の技術エッセイ調に組み直しており、公開水準を満たします。"
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title / APSN paragraph",
+          "problem": "「反差別」 and 「特別なニーズを持つ人々のための協会」 are understandable but slightly stiff; APSN is a proper organization name and the Japanese wording reads a little calqued.",
+          "suggestion": "Consider keeping the organization name as `Association for Persons with Special Needs（APSN）` with a short Japanese gloss, and consider `差別反対` or `差別撤廃` only if that better matches the intended register."
+        },
+        {
+          "severity": "minor",
+          "location": "The Art of Dreaming section",
+          "problem": "「アートを武器庫として」 preserves the source metaphor but is somewhat unnatural in Japanese; it may read like a literal carryover.",
+          "suggestion": "A more idiomatic phrasing such as `アートを武器にして` would preserve the force with less translation residue."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation preserves the essay’s argument, blunt humor, Singlish-inflected aside, and technical terms without leaving broken MDX or untranslated reader-facing quotations. It does not read like a direct sentence-by-sentence translation overall because many clauses are restructured into natural Japanese essay rhythm while retaining the source’s personal tone."
+    }
+  ]
+}

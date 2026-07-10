@@ -1,0 +1,73 @@
+{
+  "sourcePath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/index.mdx",
+  "targetPath": "src/content/blog/berlayar-building-a-stable-extensible-flexible-and-scalable-stack/zh.mdx",
+  "sourceSha256": "fe0c04ceb05167c6798085d37b839b976cdb4aa1e1e2f19b9818837fa38e7d18",
+  "targetSha256": "b4dff07a8458a8d7142a907e82974927bff2ee3dfbfa2a2e02d1d431a552a548",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Project folder list, `tests` bullet",
+          "problem": "“测试用夹具” is understandable but reads stiff and slightly calqued for software prose.",
+          "suggestion": "Use a more natural technical rendering such as “测试 fixtures” or “测试夹具”, depending on house preference."
+        },
+        {
+          "severity": "minor",
+          "location": "Neural search flow table, step 3 notes",
+          "problem": "“向配置管理器检查” is awkward Chinese for “Checks with Configuration Manager”.",
+          "suggestion": "Use “向配置管理器确认” or “检查配置管理器”。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation generally reads as natural technical Mandarin in Ernie’s essay voice rather than sentence-by-sentence English-shaped Chinese. It preserves code terms and product names appropriately, keeps the blunt/working-notes tone, and has no broken MDX or major meaning drift.",
+      "rawPassed": true,
+      "rawScore": 0.92,
+      "ignoredIssues": [
+        {
+          "severity": "minor",
+          "location": "Code block under “具体实现”",
+          "problem": "The explanatory Python comments remain in English: “Simply print the content”, “Use Text-to-Speech…”, and “Convert content…”. They are reader-facing comments inside the article example, not identifiers.",
+          "suggestion": "Translate the comments while preserving the code structure, e.g. “# 直接打印内容”, “# 使用 Text-to-Speech 朗读内容”, “# 将内容转换成动画视频”。"
+        }
+      ]
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "targetText paragraph after project folder list",
+          "problem": "“分而治之” is understandable but a little stiff and idiomatic in a way that slightly jars against the surrounding essay voice.",
+          "suggestion": "Consider a more natural phrasing such as “把事情拆开来和其他开发者一起推进”."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation reads as adapted Mandarin technical prose rather than sentence-by-sentence English-shaped Chinese. It preserves code/product terms such as A.I., LLM, Git, CLIP, API, CI/CD, and CRUD appropriately, keeps Ernie’s casual technical-personal tone, and does not introduce reader-facing meaning drift. Frontmatter serialization differences and translationStatus are not quality issues.",
+      "rawPassed": true,
+      "rawScore": 0.94,
+      "ignoredIssues": [
+        {
+          "severity": "minor",
+          "location": "targetText code block under “具体实现”",
+          "problem": "The three Python comments remain in English: “Simply print the content”, “Use Text-to-Speech to vocalise the content”, and “Convert content into animated video”. They are explanatory reader-facing comments rather than identifiers or product names.",
+          "suggestion": "Translate the comments while preserving the code structure, e.g. “# 直接打印内容”, “# 使用 Text-to-Speech 朗读内容”, “# 将内容转换成动画视频”."
+        }
+      ]
+    }
+  ]
+}

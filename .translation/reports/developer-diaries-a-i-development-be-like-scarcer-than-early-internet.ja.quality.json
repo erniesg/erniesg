@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-a-i-development-be-like-scarcer-than-early-internet/ja.mdx",
+  "sourceSha256": "d815a86612fc0ca0bb97d2c0b2fc7bc05e5bc936941675ef1e564a32125d6e88",
+  "targetSha256": "495a8dd289fa76b6a6f73d622e6ae74efe63bfd1c4e037e2be9565e8a0f15698",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title",
+          "problem": "「初期のインターネットより希少」は意味は通るが、本文の「手に入らないA100 VM」という具体的な愚痴に対して少し抽象的で直訳感が残る。",
+          "suggestion": "「初期インターネットより手に入らない」など、希少性より入手困難さを前面に出すと自然。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph after first image",
+          "problem": "「強制関数」は forcing function の直訳寄りで、一般読者にはやや硬い。文脈上は筆者が自分を動かす外部制約として使っている。",
+          "suggestion": "「自分の時間を生産的に使わせるための外部からの縛り」などにすると読みやすい。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "Reader-facing MDX structure, iframe accessibility text, caption, attribution, and headings are translated correctly. Product names and code-adjacent terms are preserved appropriately. The prose generally reads as natural Japanese technical essay prose rather than sentence-by-sentence English order, with the author's blunt, informal tone and humor retained. Minor calque polish remains, but there are no major reader-facing issues or syntax problems."
+    },
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph after demo, sentence containing「強制関数」",
+          "problem": "「forcing functions」を「強制関数」としていて、日本語では数学・工学寄りに読める不自然な直訳感があります。文意は通りますが、通常のエッセイ prose なら「強制力」や「自分を動かす仕組み」の方が自然です。",
+          "suggestion": "「プロジェクトやコミッションは、自分の時間を生産的に使わせる強制力だと捉えがちだ」など。"
+        },
+        {
+          "severity": "minor",
+          "location": "section「今回は本当に違う」, sentence containing「高いレベルからまとめるなら」",
+          "problem": "「high-level summary」の直訳調が少し残っています。読者-facing の流れは壊していませんが、日本語技術エッセイとしては硬く不自然です。",
+          "suggestion": "「今の時点で大づかみに言えば」などにすると自然です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として、英語の語順を機械的になぞる訳ではなく、日本語の段落運びと口語的な勢いに組み直されています。Ernie のくだけた調子、冗談、技術用語の保持も概ね適切で、MDX 構造やアクセシビリティ文言にも破綻はありません。"
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/mlops-for-museums/index.mdx",
+  "targetPath": "src/content/blog/mlops-for-museums/ko.mdx",
+  "sourceSha256": "7a3cefb8d2079613921d20fa7a5f22d76309c51896957e61f043be46c34efe6b",
+  "targetSha256": "a0e9b527c8353eaeb2098b7e1e81e3f9307b2b1a8d56993d83fb14deca4800d9",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Target paragraph under “기회 - 왜 박물관에 MLOps인가”",
+          "problem": "“Slope of Enlightenment” is left in English. It is a named Gartner Hype Cycle phase, so preserving it is defensible, but Korean readers may benefit from a Korean gloss such as “계몽의 경사면” on first mention.",
+          "suggestion": "Use “계몽의 경사면(Slope of Enlightenment)” if the publication prefers translated Gartner phase names."
+        },
+        {
+          "severity": "minor",
+          "location": "Bullet list under “아키텍처 원칙, 도구, 모범 사례”",
+          "problem": "“Federated access” is rendered as “페더레이션 기반 접근 제어,” which adds a slight access-control nuance not explicit in the source. It is not materially misleading in this context, but tighter wording would be cleaner.",
+          "suggestion": "Consider “페더레이션 기반 접근” or “연합형 접근” depending on house terminology."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads like a native technical essay rather than a sentence-by-sentence calque: clauses are restructured naturally, technical terms are preserved where appropriate, quotations/captions/accessibility text are translated, and the author’s blunt, pragmatic tone largely remains intact. MDX structure appears valid."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "src/content/blog/mlops-for-museums/ko.mdx:architectural principles bullet list",
+          "problem": "“Federated access” is rendered as “페더레이션 기반 접근 제어,” which adds the narrower idea of access control. The source only says access.",
+          "suggestion": "Use “페더레이션 기반 접근” or “연합형 접근” if the intent is general access rather than policy enforcement."
+        },
+        {
+          "severity": "minor",
+          "location": "src/content/blog/mlops-for-museums/ko.mdx:Figure 3 caption",
+          "problem": "“optimized technologist delivery” is paraphrased as “기술 실행 방식의 최적화,” which is readable but slightly smooths over Gartner’s odd phrasing around technologists as the delivery actors.",
+          "suggestion": "If closer terminology is desired, use “기술 전문가의 전달 방식 최적화” or keep a slightly more literal phrasing with context."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as native technical essay prose rather than a sentence-by-sentence calque: long English clauses are split and re-ordered naturally, while blunt phrases such as the gold-chest vendor analogy retain their force. Human-facing captions, quotations, accessibility text, and attributions are translated, and product/code terms are preserved appropriately. No major reader-facing issue or MDX breakage found."
+    }
+  ]
+}

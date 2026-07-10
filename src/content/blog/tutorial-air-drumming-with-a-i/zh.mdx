@@ -1,6 +1,6 @@
 ---
-title: 教程：用 A.I. 空气打鼓
-description: 以及一些关于 A.I.、神经音频合成、打碟、Taylor Swift 和闪亮新玩具（Erae II）能怎样结合的想法
+title: 教程：用 A.I. 隔空打鼓
+description: 以及一些关于 A.I.、神经音频合成、打碟、Taylor Swift 和亮晶晶的新玩具 Erae II 凑在一起会是什么画面的想法
 date: 2024-03-19T00:00:00.000Z
 authors:
   - erniesg
@@ -11,19 +11,19 @@ translationStatus: machine
 translationSource: codex
 ---
 
-过去几个月里，我一直在发布关于自己探索 A.I. 的视频，把它当作记录学习的方式，所以第一次有人好奇地问我是怎么做出来的，真的很开心！😊
+这几个月我一直在发自己折腾 A.I. 的视频，算是给学习过程做个记录；所以第一次有人好奇到来问我是怎么做出来的，感觉还真不错！😊
 
-我写了一个脚本，用握拳来“空气打鼓”，播放的是我用马来鼓训练过的 RAVE 模型生成的声音。这只是一个限时小实验，有点像那种“只是因为可以所以就做出来”的傻玩意，所以我很高兴大家喜欢它，甚至超过我之前所有关于 A.I. 的帖子加起来。也许我一直都用错 Instagram 了，lol。
+我写了个脚本，用握拳来“隔空打鼓”，播放的是我用马来鼓训练过的一个 RAVE 模型生成的声音。这个本来只是一个限时小实验，属于那种“能做所以就做了”的傻乎乎小东西；结果它收到的喜欢比我之前所有 A.I. 帖子加起来还多，我可太欣慰了。也许我一直都用错 Instagram 了，笑死。
 
-<iframe alt="握拳空气打鼓" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="握拳隔空打鼓" src="https://www.youtube.com/embed/J94q8T-4kxM?feature=oembed" aria-describedby="nvcyc7m9oek-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
-握拳空气打鼓
+握拳隔空打鼓
 
 # 开始
 
-总之，这是用所有 A.I. 应用的教父 Python 写的。说到 Python，依赖管理和这门语言的人类友好程度成反比。你需要安装 Python，知道如何 `pip install`，并能从命令行运行 Python 脚本，才能跟上这个教程。代码本身只有 115 行，是我像往常一样和 ChatGPT “结对编程”写出来的，lol。
+总之，这东西是用所有 A.I. 应用的教父级语言 Python 写的。说到 Python，依赖管理的人类友好程度，基本和这门语言本身的人类友好程度成反比。要跟着这篇教程做，你需要安装 Python，知道怎么做 `pip install`，也知道怎么从命令行运行 Python 脚本。代码本身只有 115 行，照旧是我和 ChatGPT “结对编程”写出来的，笑死。
 
-这是我的系统配置和软件包版本：
+这是我的系统配置和包版本：
 
 -   Apple M2 Max
     
@@ -34,15 +34,15 @@ translationSource: codex
 -   `pygame 2.5.2`
     
 
-下面的视频与其说是教程，不如说是在解释 demo 背后的思考过程和逻辑拆解。反正这些东西对迁移到其他技术任务更有价值也更重要。如果你知道自己需要准备哪些材料，并能清楚地一步一步指示 A.I. 如何做你想做的事，你就可以坐下来等代码生成。当然，你还是需要知道如何运行和调试。
+下面这个视频与其说是教程，不如说是在解释我做这个演示时的思考过程和逻辑拆解；反正这些东西迁移到其他技术任务时，价值和重要性都高得多。只要你清楚这个演示需要哪些组件，也能一步一步把要求讲给 A.I. 听，接下来就可以坐等代码生成。当然，你还是得知道怎么运行和调试。
 
-<iframe alt="教程：用 A.I. 空气打鼓" src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
+<iframe alt="教程：用 A.I. 隔空打鼓" src="https://www.youtube.com/embed/mQPkA5hxxko?feature=oembed" aria-describedby="nxc9ev8ownr-figure-caption" allowfullscreen="true" style="width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; "></iframe>
 
-教程：用 A.I. 空气打鼓
+教程：用 A.I. 隔空打鼓
 
 # 114 行代码
 
-注意：你需要把 [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer) 和想播放的 .mp3 文件放在与脚本相同的目录里，或者更新文件路径。我使用的声音文件，基本上是由一个我用马来鼓训练过的 [RAVE 模型](https://github.com/acids-ircam/RAVE) 生成的音频。我也计划写一篇教程，介绍如何用免费的 Google Colab 笔记本训练你自己的模型，所以敬请期待！
+注意：你需要把 [gesture\_recognizer.task](https://developers.google.com/mediapipe/solutions/vision/gesture_recognizer) 和你想播放的 .mp3 文件放在脚本同一个目录下，或者自己更新路径。我用的声音文件基本上是由[一个 RAVE 模型](https://github.com/acids-ircam/RAVE)生成的音频；那个模型是我用马来鼓训练的。我也打算再做一篇教程，讲怎么用免费的 Google Colab 笔记本自己训练，所以可以先等等看！
 
 ```python
 import mediapipe as mp
@@ -82,32 +82,32 @@ def print_result(result: GestureRecognizerResult, output_image: mp.Image, timest
     handle_gesture(result)
 ```
 
-我移除了 `numpy`，因为它没有被用到；另外按 `q` 退出循环似乎也不工作。我通常会直接从命令行终止脚本。
+我删掉了 `numpy`，因为它没有被用到；另外按 `q` 退出循环似乎也没反应。我通常都是直接从命令行把脚本停掉。
 
-这段代码也可以在我的 [GitHub 仓库](https://github.com/erniesg/berlayar/blob/openai_migration_backup/demos/sound/showcase.py) 找到。我会尽量定期发布和分享自己的代码，如果你想持续了解我在做什么，可以在那里关注我！
+这份代码也放在我的 [GitHub 仓库](https://github.com/erniesg/berlayar/blob/openai_migration_backup/demos/sound/showcase.py) 里；我会尽量定期在那里发布和分享代码。如果你想知道我最近在折腾什么，也可以在那里关注我！
 
 # 灵感
 
-我做这个是受 Antoine（RAVE 的创作者）的工作启发，只是想探索在空中做音乐的想法。;) 因为为什么不来一场空气打鼓！！！它看起来太酷了，而且 Instagram 上的 800 多个赞也同意！
+这件事的灵感来自 Antoine（RAVE 的创作者）的作品；我只是想探索一下在空气里做音乐这个想法。;) 因为，隔空打鼓有什么不可以！！！它看起来实在太酷了，而且 Instagram 上 800 多个赞也算替它背书了！
 
-# 我是如何构建的
+# 我是怎么做出来的
 
-有了这个想法之后，我基本上通读了 [`hand_osc` 仓库](https://github.com/caillonantoine/hand_osc)，然后专注于实现一个最小版本，让我不用花太多时间就能试试看什么是可能的。于是，在一个晚上里不断翻看资料、和 ChatGPT 聊天、调试、给出更清楚的指令之后，我做出了这个。
+有了这个念头之后，我基本上就去翻了一遍 [`hand_osc` 仓库](https://github.com/caillonantoine/hand_osc)，把重点放在做出一个最小版本：少花点时间，先试出这件事到底能不能跑起来。所以经过一个晚上不断滚动页面、和 ChatGPT 聊天、调试、再把指令说得更清楚之后，我最后做出了这个。
 
-最大的障碍来自 GPT-4 里的 `mediapipe` 代码太过时了，所以我必须认真读文档，给 A.I. 示例，并一边做一边调试。显然这比上面描述的痛苦多了。但就像我喜欢说的，用 A.I. 构建东西是一种折磨般的乐趣。
+最大的阻碍来自 GPT-4 里的 `mediapipe` 代码太旧了，所以我只好认真读文档，给 A.I. 示例，然后边做边调试。很明显，实际过程比上面写得痛苦多了。但就像我常说的，用 A.I. 搭东西就是这么折磨又好玩。
 
 # 接下来
 
-在意识到什么是可能的、并在 Disney+ 上看完 Taylor Swift 的演唱会直播之后，我立刻觉得：如果能 **用 A.I. 和 Embodme Erae II 为她的音乐打碟**，那会很酷。我真的很喜欢 Don’t Blame Me 到 Look What You Made Me Do 的过渡，它顺滑得像黄油。当我在维基百科上查打碟，看到它说 DJ 是通过对齐节拍把不同曲目融合在一起时，我就想：我对音乐一窍不通，但这种“音乐”我可以用 A.I. 做。这听起来像是一个非常适合 A.I. 的工作。
+一意识到这件事能做到，并在 Disney+ 上看 Taylor Swift 演唱会直播之后，我脑子里立刻就只剩一句：**用 A.I. 和 Embodme Erae II 给她的歌打碟**一定会很酷。我真的很喜欢 Don’t Blame Me 转到 Look What You Made Me Do 的那段，顺得像抹了黄油一样；然后我去 Wikipedia 查了查打碟，看到它开始讲什么通过对齐节拍把曲目混在一起，我就：我对音乐一无所知，但这种“音乐”我可以用 A.I. 做。听起来就是一份非常适合交给 A.I. 的工作。
 
-如果把 `time` 放在 x 轴、`bpm` 放在 y 轴，就好像可以画出她演唱会中能量随时间的演化。让 A.I. 为你选择下一首歌并交叉淡入，难道不酷吗！？
+如果把 `time` 放在 x 轴、`bpm` 放在 y 轴，就好像可以把她演唱会里能量随时间演化的曲线画出来；然后让 A.I. 帮你挑下一首歌，再平滑地混进去，岂不是很酷！？
 
-事实上，我们可以把观众席的所有声音输入转成 MIDI，并在其上实时进行神经音频合成，把它纳入一场演出！当然，Spotify [已经有一个库](https://basicpitch.spotify.com/)可以让你这么做。
+事实上，我们还可以把观众那边输入的所有声音转成 midi，再在上面实时做神经音频合成，把它并入演出！当然，Spotify [已经有现成的库](https://basicpitch.spotify.com/)可以处理这件事。
 
-如果你不想当 DJ，只想演奏，也有办法。#ideas
+如果你不想 DJ，只想玩，也有办法。#ideas
 
-等我有时间试这些想法应该会非常有趣，但我预计接下来会更新模型合并和 LLM 微调！
+等我有空真的去试这些想法，应该会很好玩；不过我预计下一篇会先更新模型合并和 LLM 微调！
 
 ---
 
-*最初发表于 PubPub：[erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q)。*
+*最初发布于 PubPub：[erniesg.pubpub.org/pub/r2map92q](https://erniesg.pubpub.org/pub/r2map92q)。*

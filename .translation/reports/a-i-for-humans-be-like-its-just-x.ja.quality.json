@@ -1,0 +1,71 @@
+{
+  "sourcePath": "src/content/blog/a-i-for-humans-be-like-its-just-x/index.mdx",
+  "targetPath": "src/content/blog/a-i-for-humans-be-like-its-just-x/ja.mdx",
+  "sourceSha256": "ee34dfa513822644e0134ae71690b112e1fef8420943f755cee1e1764f399b56",
+  "targetSha256": "ce4bbb17ecd7501ff2ec5b30123409dfb89d14586c7b6340e3885d3d38fd0246",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title",
+          "problem": "「人間向け A.I. あるある」は playful ではあるものの、source の meme 構文 “for humans be like” の距離感とは少しずれ、やや日本語の見出しとして落ち着きすぎています。",
+          "suggestion": "「人間にとっての A.I. って: 要するに X -> ŷ」など、くだけた言い回しを保つ余地があります。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 2",
+          "problem": "「事前分布」「前へ作っていく」は source の technical flavor を拾っていますが、通常の日本語エッセイとしてはやや直訳感があります。",
+          "suggestion": "「前提を毎週のように見直す」「先へ向けて作り進める」などのほうが自然です。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 6",
+          "problem": "「データを収集する」は source の “scraping” の具体性が少し薄くなっています。",
+          "suggestion": "文脈上は「スクレイピングする」または「ウェブから収集する」がより正確です。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として、英語の語順をなぞるだけの直訳ではなく、日本語の技術エッセイとして段落の呼吸や語尾が調整されています。MDX 構造、iframe 属性、リンク、frontmatter の reader-facing 内容にも重大な破損はありません。"
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title",
+          "problem": "「A.I. for humans be like」のミーム調を「人間向け A.I. あるある」と処理しており、意味は通るが、原文のくだけた英語ミーム感は少し丸くなっている。",
+          "suggestion": "公開前の手直しなら「人間向け A.I. ってつまり: X -> ŷ でしょ」なども検討余地あり。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 1",
+          "problem": "“More intelligence is always better.” が「知性は多いほど、たいてい良い」となっており、“always” の断定が少し弱まっている。",
+          "suggestion": "原文の勢いを残すなら「知性は多ければ多いほど、いつだって良い。」寄り。"
+        },
+        {
+          "severity": "minor",
+          "location": "multiple paragraphs",
+          "problem": "“Mandarin” が一貫して「中国語」と訳されている。日本語読者には自然だが、普通話・華語としての限定性はやや薄れる。",
+          "suggestion": "精度を上げるなら初出だけ「中国語（Mandarin／普通話）」などにする。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の技術エッセイとして自然に読め、英語の語順をなぞった直訳調ではありません。比喩、軽い毒、口語的な崩し方も日本語側で再構成されており、MDX と iframe の人間向け alt/caption も翻訳されています。重大な意味 drift や構文破損は見当たりません。"
+    }
+  ]
+}

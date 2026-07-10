@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/ko.mdx",
+  "sourceSha256": "3b280325e7c4666cac43f9307ae5ddca4450887917d83c67848541cdf255c751",
+  "targetSha256": "419c10a07fa2d40a3f826024391e20fe4452b1d21f27817a6f7441c150557ce1",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 3",
+          "problem": "Bayesian term “priors” is rendered as “사전 가정,” which is understandable but slightly less idiomatic/technical than “사전 신념” or “사전 확률” in this context.",
+          "suggestion": "If polishing manually, consider “문화, 환경, 믿음 등으로 형성된 사전 신념” to better match Bayesian usage."
+        },
+        {
+          "severity": "minor",
+          "location": "final attribution",
+          "problem": "“처음에는 PubPub의 …에 실었다” is natural enough, but “처음에는” can imply it was later moved or changed, while the source simply says it was originally published there.",
+          "suggestion": "A slightly cleaner rendering would be “원래 PubPub의 …에 실었다.”"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads like a native technical essay rather than a sentence-by-sentence calque: it restructures long English clauses into Korean rhythms, preserves the author’s speculative voice, and avoids hybrid suffix residue while keeping product names, links, and technical terms intact."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 3",
+          "problem": "\"행동 레퍼토리에서 알맞은 수를 얼마나 잘 꺼내 쓰는지\" is natural Korean, but it slightly reframes \"relevant actions\" as strategic moves rather than actions. The meaning is still recoverable.",
+          "suggestion": "Consider \"행동 레퍼토리에서 적절한 행동을 얼마나 잘 골라 활용하는지\" for tighter technical precision."
+        },
+        {
+          "severity": "minor",
+          "location": "final attribution",
+          "problem": "\"처음에는 PubPub의 ...에 실었다\" is understandable but a little casual and less idiomatic for an original-publication note.",
+          "suggestion": "\"원래 PubPub의 ...에 게시했다\" or \"처음 PubPub의 ...에 실렸다\" would read smoother."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean passes: it consistently recasts the source into native technical essay prose instead of following English sentence order, while preserving Ernie's speculative voice, blunt rhetorical questions, links, product names, and A.I. spelling. MDX structure is intact, and the remaining issues are minor polish only."
+    }
+  ]
+}

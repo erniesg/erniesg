@@ -1,0 +1,53 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-the-sound-of-stories/ko.mdx",
+  "sourceSha256": "074625a01cb7b9b862ad0f48b468e4f36a30ecf335c9c918f57371b046551a3e",
+  "targetSha256": "793b9ed582503c87ad0203c3072be0ed2d0f4f1630f30413ad4d886213a06a18",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph after agent discussion",
+          "problem": "“아주 멍청한 이야기의 ‘게으른 완성본’” can momentarily read as if the story itself is dumb, rather than the implementation being deliberately dumb/simple.",
+          "suggestion": "Prefer wording like “아주 단순하고 멍청한 방식의 이야기 ‘게으른 완성본’” or “이야기의 아주 멍청한 ‘게으른 완성본’” if revising."
+        },
+        {
+          "severity": "minor",
+          "location": "Prompt “engineering” bullet",
+          "problem": "“잠재적 전문 경로” is understandable but slightly calqued and stiff in Korean.",
+          "suggestion": "A more natural phrasing would be “앞으로 하나의 전문 직무가 될 수도 있겠다” or similar."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as a native technical essay rather than a sentence-by-sentence direct translation: clauses are regrouped naturally, the author’s informal bluntness and humor are preserved, and technical/product terms are handled appropriately. MDX structure appears intact, and the frontmatter serialization differences are semantically equivalent."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Caption / iframe alt",
+          "problem": "“작업 중 데모” is understandable, but slightly stiff as Korean reader-facing caption copy for “WIP Demo.”",
+          "suggestion": "“The Sound of Stories WIP 데모” or “The Sound of Stories 작업본 데모” would read a little more natural."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as adapted native technical essay prose rather than sentence-by-sentence direct translation: clauses are reordered naturally, tone markers like “허허” and “어쩌고저쩌고” preserve the author’s casual bluntness, and technical terms are mostly handled without hybrid suffix residue. MDX structure, frontmatter meaning, links, code fences, iframe attributes, and glossary-preserved terms are intact."
+    }
+  ]
+}

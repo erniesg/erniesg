@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/index.mdx",
+  "targetPath": "src/content/blog/a-i-in-non-english-regimes-and-the-things-people-say-in-china/ko.mdx",
+  "sourceSha256": "05b32e0b04b4d77d1036d060bff520c3ece34a3af9f5f0ae40225245f8790ce9",
+  "targetSha256": "cf9cacd01c10567f48aa39126b109419b9f0f472b7bf915ea169dc8822fb3608",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph beginning “나는 이런 순간이 좋다.”",
+          "problem": "“하루 동안 기사 딸린 차를 빌려 돌아다니는 사람이 모두인 것은 아니었다” is understandable but slightly unnatural Korean phrasing.",
+          "suggestion": "“모두가 나처럼 하루 동안 기사 딸린 차를 빌려 돌아다니는 것은 아니었다”처럼 다듬으면 더 자연스럽습니다."
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph beginning “미래는 이미 와 있다.”",
+          "problem": "The very long parenthetical source sentence is split sensibly, but “이제는 RAG… 차이도 알게 되었을 테고” may overstate the source’s ambiguous “while now knowing” phrasing.",
+          "suggestion": "If polishing, use a more neutral phrasing such as “RAG, fine-tuning, model selection, evals 등의 근본적 차이를 알아가면서도” to avoid adding certainty."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean reads as native technical essay prose overall: sentence rhythm is reorganized for Korean, blunt personal voice is preserved, quotes and attribution are translated, and product/code terms such as A.I., LLM, RAG, ChatGPT, DeepSeek, and MDX-sensitive markup are preserved appropriately. It does not read like a direct sentence-by-sentence calque, despite a few minor polishable turns."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Paragraph 1",
+          "problem": "“그 사람의 사적인 공간으로 훅 ‘들어가도’ 그냥 일이 되어버리는 점” is understandable but slightly stiff; “it just happens” lands more naturally as an unforced social dynamic.",
+          "suggestion": "Consider phrasing like “그 사람의 사적 공간에 훅 들어가도 자연스럽게 대화가 이어지는 점” if polishing."
+        },
+        {
+          "severity": "minor",
+          "location": "Section “전기차와 초대형 프로젝트에서는 중국이 압도한다”",
+          "problem": "“상상하기 어려운 전선” is a bit of an English-calque rendering of “frontier” and can read like a battlefront in Korean.",
+          "suggestion": "“상상하기 어려운 최전선” or “상상하기 어려운 경지” would read more naturally."
+        },
+        {
+          "severity": "minor",
+          "location": "Section “혁신은 열린 사회에서 번성한다”",
+          "problem": "“수십억 달러짜리 스타트업 아이디어” overstates “billion dollar start-up idea” slightly as multiple billions.",
+          "suggestion": "Use “10억 달러짜리” or “막대한 가치가 있다는 스타트업 아이디어” for tighter meaning."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The Korean is publishable: it consistently recasts long English sentences into native Korean essay rhythm, preserves Ernie’s bluntness and conversational irony, translates reader-facing quotes and attribution, and avoids hybrid machine residue such as English verbs with Korean endings. The remaining concerns are polish-level wording choices, not direct-translation failures."
+    }
+  ]
+}

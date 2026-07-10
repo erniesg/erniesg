@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/microdramas-sinking-market/index.mdx",
+  "targetPath": "src/content/blog/microdramas-sinking-market/zh.mdx",
+  "sourceSha256": "b54378e22befda82c0e2d3af8c96ee465f1a414e345c1812e36abeaa309b367f",
+  "targetSha256": "b4e058047fbe49f66037e8b9b372878c233f49b1ae67d026f71319a694f5541d",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "code block under “如何用 AI 吃下微短剧这块 TAM”",
+          "problem": "The pseudocode comments remain in English. Because this is an illustrative code artifact, it is not a publish-blocker, but the comments are still reader-facing explanatory text in an otherwise Chinese article.",
+          "suggestion": "Consider translating only the `#` comments while preserving identifiers and string literals."
+        },
+        {
+          "severity": "minor",
+          "location": "section title “如何用 AI 吃下微短剧这块 TAM”",
+          "problem": "“吃下这块 TAM” is punchy but slightly startup-jargon-heavy in Chinese, and may feel less transparent than the surrounding prose.",
+          "suggestion": "A more natural option would be “如何用 AI 撬开微短剧的 TAM” or “如何用 AI 吃下微短剧市场”."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation reads like natural Mandarin editorial prose rather than sentence-by-sentence English transfer. It preserves Ernie’s blunt, playful, technical-personal voice, translates quotations and attributions, keeps product/code terms intact, and the MDX structure appears sound. Minor polish notes do not affect publishability."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "微短剧和 AI 段落 / “这套打法还能在哪里展开”",
+          "problem": "“where else might such a playbook unravel” 里的 “unravel” 更接近“铺开/复现/打开局面”，译成“展开”可以理解，但句子略抽象，少了一点原文在推演 playbook 可复制性的商业语气。",
+          "suggestion": "可改为“这套打法还能在哪些地方复现”或“这套剧本还能在哪些行业跑通”。"
+        },
+        {
+          "severity": "minor",
+          "location": "观众为什么会迷上微短剧 / “捞金二婚妻”",
+          "problem": "“gold-digging second wife” 译成“捞金二婚妻”略生硬，像直译拼接，不如中文常用表达自然。",
+          "suggestion": "可改为“拜金二婚妻”或“图钱的二婚妻”。"
+        },
+        {
+          "severity": "minor",
+          "location": "全球现象 / “高浓度狗血肥皂剧”",
+          "problem": "“soap on steroids” 的夸张感处理得基本成立，但“高浓度狗血肥皂剧”稍偏解释性，少了原文那种 blunt/playful 的压缩感。",
+          "suggestion": "可考虑“打了鸡血的肥皂剧”或保留当前译法；不是发布阻断问题。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "译文整体自然，标题和描述符合指定 house-style，正文没有明显英文句法硬搬、半翻译技术残留或术语误译。引文、引用归属和人名机构基本已面向中文读者处理，代码块保持原样合理；frontmatter 的 date/image 序列化差异与 translationStatus 均不构成质量问题。"
+    }
+  ]
+}

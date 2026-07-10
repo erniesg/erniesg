@@ -1,0 +1,53 @@
+{
+  "sourcePath": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/index.mdx",
+  "targetPath": "src/content/blog/sight-before-sound-seeing-and-searching-with-machines/ja.mdx",
+  "sourceSha256": "a5518da6a321bd110b213c1f3491e3177152afa32f0cb45f39fb73d0187493ce",
+  "targetSha256": "ae1dca413fcff1a077d2486ddfa169eb94e8519c568a48153ba9b3ba8f4eb37c",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "section “I, A.I. 爱”, first paragraph",
+          "problem": "“経済学と計算、とりわけ A.I.” uses “計算” for “computation,” which is understandable but a little narrower and less natural than the otherwise consistent “コンピュテーション.”",
+          "suggestion": "Use “経済学とコンピュテーション、とりわけ A.I.” for consistency and technical register."
+        },
+        {
+          "severity": "minor",
+          "location": "section “How to Spend 10000 Hours of Your Life”, second paragraph",
+          "problem": "“相当量の配管作業” is a fairly literal rendering of “plenty of plumbing.” It preserves the metaphor but may read slightly stiff in Japanese prose.",
+          "suggestion": "Consider a more native phrasing such as “地道な仕組みづくり” if polishing manually."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes: it preserves the argument, blunt personal tone, humor, and technical structure while reshaping many sentences into natural Japanese rather than following English word order. Human-facing captions, alt text, quotations, and attribution are translated, and glossary-preserved terms such as A.I., MDX context, and product/event names are handled appropriately."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "第2セクション「幸福へのリターンを測る」第1段落",
+          "problem": "“give ourselves a pat on our collective backs” を「みんなで自分たちの背中を叩き」としており、英語イディオムの直訳感が少し残る。",
+          "suggestion": "「みんなで自画自賛して」などのほうが自然。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "全体として日本語の技術エッセイとして自然に読め、英語の語順をなぞる直接翻訳にはなっていない。著者の軽い皮肉、くだけた一人称、A.I. 表記、MDX構造、引用・alt・キャプションの翻訳も保たれている。"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/day-0-building-in-public-to-1m-arr/index.mdx",
+  "targetPath": "src/content/blog/day-0-building-in-public-to-1m-arr/ko.mdx",
+  "sourceSha256": "572a51c0ff91bfe65db01926842e0357990f1ab1230fafd463f64cb87e04f3c7",
+  "targetSha256": "055a4aaeb5e823815c073fa5e69ed2fbd2911092a3a38c4f7dca4536739a6918",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.94,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title and recurring phrase “공개적으로 만들어 가기”",
+          "problem": "“build in public”을 의미 전달 중심으로 풀었지만, 한국어 독자에게는 약간 설명투이고 반복될 때 다소 뻣뻣합니다.",
+          "suggestion": "문맥에 따라 “공개적으로 빌드하기”, “과정을 공개하며 만들기”, “만드는 과정을 공개하기”처럼 더 자연스럽게 다듬을 수 있습니다."
+        },
+        {
+          "severity": "minor",
+          "location": "내 출발점: “신탁기금”",
+          "problem": "“trust fund”를 “신탁기금”으로 옮긴 부분은 사전식 느낌이 강하고, 한국어 에세이 문맥에서는 약간 어색합니다.",
+          "suggestion": "“신탁자산”, “부잣집 자금”, 또는 원어감을 살려 “trust fund”로 두는 편이 자연스러울 수 있습니다."
+        },
+        {
+          "severity": "minor",
+          "location": "0일 차: “AI에 단단히 물들고”",
+          "problem": "“AI-pilled”의 농담 섞인 자기묘사를 잘 살리려는 번역이지만, “단단히 물들고”는 원문의 인터넷 밈 뉘앙스보다 조금 일반적입니다.",
+          "suggestion": "현 번역도 허용 가능하나, 더 구어적 톤을 원하면 “AI에 절여지고” 같은 선택지도 가능합니다."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "MDX 구조와 이미지 대체 텍스트 번역은 정상입니다. 제품명, 코드/기술 용어, 고유명사 보존도 대체로 적절합니다. 문장은 영어 어순을 기계적으로 따라가기보다 한국어 에세이 리듬으로 재구성되어 있어 직접 번역으로 보이지 않으며, Ernie의 자기비판적이고 건조한 유머도 유지됩니다."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "title / repeated phrase “공개적으로 만들어 가기”",
+          "problem": "“build in public”을 직역한 느낌이 약간 남습니다. 본문 전체에서는 의미가 통하지만, 제목과 핵심 문장에서 반복되며 한국어 제목으로는 조금 설명적으로 들립니다.",
+          "suggestion": "문서의 어조를 유지하려면 “공개 빌드”처럼 용어화하거나 “공개적으로 만들고 기록하기”처럼 한 번만 더 자연스럽게 풀 수 있습니다."
+        },
+        {
+          "severity": "minor",
+          "location": "“Rucksack은 인프라 계층이다.”",
+          "problem": "“infrastructure layer”의 기술적 의미는 맞지만, 한국어 독자에게는 다소 딱딱한 직역 느낌이 있습니다.",
+          "suggestion": "“Rucksack은 그 아래를 받치는 실행 인프라다.”처럼 글의 에세이 리듬에 맞춰 풀어도 좋습니다."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "전반적으로 한국어 기술 에세이의 호흡으로 잘 옮겨졌고, 문장 구조를 원문 순서에 기계적으로 묶어 두지 않았습니다. 농담, 자기비판, AI 비유, 창업/제품 용어의 경계도 자연스럽게 살아 있어 직접 번역으로 보이지 않습니다. MDX 구조와 이미지 alt 텍스트 번역도 정상입니다."
+    }
+  ]
+}

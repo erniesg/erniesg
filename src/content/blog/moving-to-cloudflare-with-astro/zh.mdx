@@ -1,6 +1,6 @@
 ---
-title: 用 Astro 迁移到 Cloudflare Pages
-description: 我为什么用 Astro 把网站迁到 Cloudflare Pages，以及这个现代 web stack 的好处
+title: 用 Astro 把网站迁到 Cloudflare Pages
+description: 为什么我用 Astro 把个人网站迁到 Cloudflare Pages，以及这套现代 Web 技术栈好在哪里
 date: 2025-02-10T00:00:00.000Z
 tags:
   - cloudflare
@@ -16,65 +16,65 @@ translationStatus: machine
 translationSource: codex
 ---
 
-# 用 Astro 迁移到 Cloudflare Pages
+# 用 Astro 把网站迁到 Cloudflare Pages
 
-你想用 Markdown 写作，享受版本控制和自动部署，拥有闪电般快速的 SEO 和设置体验，还能给个人网站使用带 SSL 和无限带宽的自定义域名，而且这一切都免费吗？那就继续读下去吧！
+想不想用 Markdown 写东西，享受版本控制和自动部署，顺手拿到飞快的页面、友好的 SEO 和省事的搭建流程，再给个人网站接上自己的域名、SSL 和无限带宽——而且统统免费？那就继续往下看！
 
-## 为什么选择 Astro？
+## 为什么是 Astro？
 
-Astro 已经成为我首选的框架，原因有几个：
+Astro 成了我首选框架，原因有几个，而且都挺有说服力：
 
-### 闪电般快速的 SEO
-- 默认零 JavaScript，页面加载飞快
-- 开箱即用的 [99/100 Lighthouse 分数](https://pagespeed.web.dev/analysis/https-ernie-sg/n5kl6txhdm?form_factor=mobile)
-- 自动化的 meta 标签和结构化数据
+### 页面飞快，SEO 友好
+- 默认零 JavaScript，所以页面加载快得离谱
+- 开箱就是 [99/100 的 Lighthouse 分数](https://pagespeed.web.dev/analysis/https-ernie-sg/n5kl6txhdm?form_factor=mobile)
+- 自动生成 meta 标签和结构化数据
 
-### 以内容为中心
-- 一流的 Markdown/MDX 支持，让你可以按需轻松重新渲染内容
-- 原生 LaTeX 数学支持
-- 为 100 多种语言提供丰富的语法高亮
+### 内容驱动
+- Markdown/MDX 是一等公民，所以你想怎么重新渲染内容都很容易
+- 原生支持用于数学排版的 LaTeX
+- 支持 100 多种语言的丰富语法高亮
 
-### 灵活的开发者体验
-- 与框架无关：在需要的地方使用 React、Vue、Svelte 或 HTMX
-- 静态输出意味着可以托管在任何地方，没有厂商锁定
+### 灵活的开发体验
+- 不挑框架：需要哪里再用 React、Vue、Svelte 或 HTMX
+- 静态输出意味着到哪里都能托管，不受单一供应商掣肘
 
-## Cloudflare Pages 的优势
+## Cloudflare Pages 的好处
 
 ### 无限带宽
-我切换过去的主要原因之一，是 Cloudflare Pages [慷慨的免费套餐](https://pages.cloudflare.com/)提供无限带宽。这意味着就算我突然出名，也不会有意外账单！
+我迁过去的主要原因之一，是 Cloudflare Pages 的[免费档给得很大方](https://pages.cloudflare.com/)：带宽不限。也就是说，万一哪天我突然红了，也不会莫名收到一张巨额账单！
 
 ### 自动化 CI/CD
-开发工作流非常顺畅，包括：
+开发流程也很顺：
 - 从 Git 自动部署
 - 为 pull request 提供预览部署
-- 轻松回滚
+- 回滚很省事
 
-### 自定义域名及更多功能
+### 自定义域名，还有更多
 - 带边缘缓存的全球 CDN
-- 自动资源优化
-- 易于设置的自定义域名（当然，这个需要你自己付费）
+- 自动优化静态资源
+- 自定义域名设置很简单（当然这个钱你得自己付）
 - 内置 SSL 证书
 - 内置分析
-- 出色的文档
+- 文档写得不错
 
 ## 迁移过程
 
-为此，我是这样做的：
+为此，我做了这些：
 
 1. 克隆 [astro-erudite](https://github.com/jktrn/astro-erudite) 模板
 
-2. 自定义后推送到 GitHub
+2. 自定义后推到 GitHub
 
 3. 设置 Cloudflare Pages 并部署：
-   - 前往 [Cloudflare dashboard](https://dash.cloudflare.com/) > Compute (Workers)
-   - 连接 GitHub 仓库
+   - 进入 [Cloudflare 控制台](https://dash.cloudflare.com/) > Compute (Workers)
+   - 连接 GitHub 存储库
    - 选择 main 分支用于部署
    - 选择 Astro 作为框架
 
-4. 连接自定义域名，然后让 Cloudflare 处理后面的事
+4. 连接自定义域名，然后从这里开始把剩下的都交给 Cloudflare
 
-整个过程再简单不过。我获得了免费的版本控制，而且每当我推送到 `main` 时，网站都会自动重新部署。
+整个过程已经不能更简单了。我有免费的版本控制，而且每次推送到 `main`，网站都会自动重新部署。
 
-## 结论
+## 结语
 
-Astro 以性能优先的做法，加上 Cloudflare 稳健的基础设施，为想在互联网上快速拥有一个家的开发者提供了很好的基础。最棒的地方？这一切都可以免费使用，所以很适合个人项目和博客。
+Astro 这套性能优先的路线，加上 Cloudflare 扎实的基础设施，给想快速在互联网上安个家的开发者一个很稳的起点。最好的部分？这一切都免费，所以非常适合个人项目和博客。

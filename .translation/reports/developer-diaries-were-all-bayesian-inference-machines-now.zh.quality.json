@@ -1,0 +1,47 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-were-all-bayesian-inference-machines-now/zh.mdx",
+  "sourceSha256": "3b280325e7c4666cac43f9307ae5ddca4450887917d83c67848541cdf255c751",
+  "targetSha256": "8e3091eac5d81a4371132fadc30d1f757f65cece0fb8aeec6a149445529d852c",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.96,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.96,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 3",
+          "problem": "“从一套可用动作中调取相关动作”准确传达了 source 的意思，但“动作”重复稍显机械，读感略硬。",
+          "suggestion": "可考虑改成“能不能从既有行动库里调取合适的动作”，但这属于润色，不影响发布。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "译文整体自然，保留了 Ernie 技术随笔里口语化、半思辨、略带玩笑的节奏；“全丢进”“好玩的反转”“摆错重点的伪问题”等处理不是逐句直译，而是按中文读者的表达习惯做了编辑性转写。MDX 和链接结构正常，术语与产品名保留得当。"
+    },
+    {
+      "passed": true,
+      "score": 0.96,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph 1",
+          "problem": "“滑动、旋钮”把 turning knobs 名词化得略生硬；“这篇”也同时用于视频链接，读者会稍微卡一下。",
+          "suggestion": "可改为“滑动、转动旋钮”等；第二个链接可用“这个视频”。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "译文整体是自然的中文技术随笔，不是逐句直译：长句有重新分段和顺序调整，保留了 Ernie 的思辨、口语化转折和 A.I. code-switching。MDX 与 frontmatter 结构可用，translationStatus 保持 machine 且不作为问题。"
+    }
+  ]
+}

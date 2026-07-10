@@ -1,0 +1,65 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/zh.mdx",
+  "sourceSha256": "b747681111a56309cef45ee477c6f1fdd3d01f55d484361f4f589b24d837605f",
+  "targetSha256": "c8af0b59e81a757dfb1979e514e38023ff6ab67bfb7a0d0ab98d9abc860aa4c9",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "## 什么是音色？",
+          "problem": "“音色彩”是对 “tone color” 的生硬直译，中文音乐/音频语境里不自然。",
+          "suggestion": "改为“音质”或直接写“音色”。"
+        },
+        {
+          "severity": "minor",
+          "location": "GPU/Colab paragraphs",
+          "problem": "同一产品名出现“CoLab”和“Colab”两种写法，虽不影响理解，但读者会感觉不够统一。",
+          "suggestion": "按源文或官方写法统一为“Colab”。"
+        },
+        {
+          "severity": "minor",
+          "location": "OMO sentence",
+          "problem": "“we iz can” 的故意口语/网感语法被抹平为普通的“我们可以”，略微削弱原文玩笑感。",
+          "suggestion": "可改成“我们是不是已经可以……”之类，保留一点兴奋和不正经的语气。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "整体中文自然，有 Ernie 技术个人随笔的口语、兴奋和 code-switching；段落不是逐句硬搬英文结构，关键引文、caption、alt 文本和 ChatGPT 解释均已翻译。以上问题属于发布前润色，不构成 major reader-facing failure。"
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/zh.mdx:41",
+          "problem": "“we iz can” 的故意蹩脚、玩梗式英文语气被译成了较普通的“我们可以”，少了一点原文的粗糙兴奋感。",
+          "suggestion": "可考虑改成更口语、带一点故意不规范的表达，例如“我们是不是居然真能……”之类，保留兴奋和玩笑感。"
+        },
+        {
+          "severity": "minor",
+          "location": "src/content/blog/developer-diaries-digitalise-any-instrument-and-start-playing/zh.mdx:57",
+          "problem": "“tone color” 译为“音色彩”略生硬，不太符合中文音频/音乐语境。",
+          "suggestion": "可改为“音色”或“音色的色彩感”，避免像直译术语。"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "整体中文自然，保留了 Ernie 的技术个人声线、口语节奏和代码切换；不是逐句硬贴英文结构的直译。MDX 和人类可见的 iframe alt、标题、说明、引用、caption 均已处理，未发现影响发布的意义漂移或语法问题。"
+    }
+  ]
+}

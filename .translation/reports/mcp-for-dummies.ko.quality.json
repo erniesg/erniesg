@@ -1,0 +1,71 @@
+{
+  "sourcePath": "src/content/blog/mcp-for-dummies/index.mdx",
+  "targetPath": "src/content/blog/mcp-for-dummies/ko.mdx",
+  "sourceSha256": "065aaa265fdf4244f7e7ce3915b0125dbc393182d7ae3e3e540699d0e98bdd96",
+  "targetSha256": "cf4d0e9f6ae2634447cdc7de9ec7e291779a4f064323b236dc1fca423e42ea9e",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "Problem section, paragraph 1",
+          "problem": "“appointment reminders over patient phone-calls” is rendered as “환자와의 전화 통화 맥락에서 예약 알림 이메일,” which adds “email” and makes the scenario a bit more tangled than the source.",
+          "suggestion": "Use a cleaner phrasing such as “환자에게 전화로 예약 알림을 보내는 경우” while preserving the source’s awkward API example if needed."
+        },
+        {
+          "severity": "minor",
+          "location": "Problem section, paragraph 1",
+          "problem": "“serving doctors for a hospital” becomes “병원 의사용,” which is understandable but clipped and slightly unnatural in Korean prose.",
+          "suggestion": "Prefer “병원 의사들이 쓰는 AI 애플리케이션” or “병원 의사를 위한 AI 애플리케이션.”"
+        },
+        {
+          "severity": "minor",
+          "location": "Getting Started, item 2",
+          "problem": "“의존성 처리하기” is accurate but reads like a heading translated from English rather than a natural Korean setup step.",
+          "suggestion": "“필요한 것 설치하기” or “필수 항목 준비하기” would sound more native."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes: it reads as a coherent Korean technical essay with natural sentence rhythm, preserves product names and code terms, and does not show direct sentence-by-sentence English syntax. Minor polish issues remain, but there is no major reader-facing meaning drift, broken MDX, or terminology failure."
+    },
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "src/content/blog/mcp-for-dummies/ko.mdx, 문제 section",
+          "problem": "“깨지는 변경” is a literal rendering of “breaking change” and sounds awkward in Korean technical prose.",
+          "suggestion": "Use “호환성을 깨는 변경” or “하위 호환성이 깨지는 변경”."
+        },
+        {
+          "severity": "minor",
+          "location": "src/content/blog/mcp-for-dummies/ko.mdx, 문제 section",
+          "problem": "“병원 의사용 AI 애플리케이션” is understandable but compressed and slightly unnatural.",
+          "suggestion": "Consider “병원 의사들이 쓰는 AI 애플리케이션” for smoother reader-facing prose."
+        },
+        {
+          "severity": "minor",
+          "location": "src/content/blog/mcp-for-dummies/ko.mdx, 시작하기 section",
+          "problem": "“의존성 처리하기” is a bit mechanical for an end-user setup step.",
+          "suggestion": "“필요한 것 설치하기” or “필수 도구 설치하기” would read more naturally while preserving meaning."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation preserves the article’s blunt, casual technical voice while restructuring many sentences into natural Korean rather than following English word order. Product names, links, code terms, and MDX syntax are preserved, and the remaining issues are polish-level rather than publish-blocking."
+    }
+  ]
+}

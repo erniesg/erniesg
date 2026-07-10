@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/index.mdx",
+  "targetPath": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/ja.mdx",
+  "sourceSha256": "0e1623196e98cf13b29b1719edc34617c4ee9993ebae52257ce5ec6d67c6b04a",
+  "targetSha256": "e283f002ead942b0dd071767e2c364d4c5922f1404d36d66e749b6faac5d0705",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.93,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.93,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "# 働く必要ある、Leh？",
+          "problem": "The heading preserves the Singlish “Leh,” which is defensible, but “働く必要ある” is a little explanatory compared with the punchier source title “Why Work Leh?”",
+          "suggestion": "Consider a sharper Japanese line such as “なんで働くん、Leh？” if the editorial voice allows colloquial Japanese."
+        },
+        {
+          "severity": "minor",
+          "location": "# これから先, paragraph 1",
+          "problem": "“75個の項目を自分の `Deep Lake` データセットにチャンク分割する” is understandable but slightly awkward because the items are being split/loaded, not literally split into the dataset.",
+          "suggestion": "A more natural phrasing would be “75件に分割して自分の `Deep Lake` データセットに入れる” or similar."
+        },
+        {
+          "severity": "minor",
+          "location": "# これから先, paragraph 1",
+          "problem": "“トークン文脈” reads a bit like a calque and is less natural than standard Japanese technical phrasing.",
+          "suggestion": "Use “トークン単位のコンテキスト” or, if intended, “コンテキスト長” depending on the technical meaning."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes: it reads as native Japanese technical essay prose rather than sentence-by-sentence English, preserves the author’s blunt playful tone, translates reader-facing captions and attribution, and keeps code/product terms appropriately unchanged. No broken MDX or major meaning drift found."
+    },
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "heading “# 働く必要ある、Leh？”",
+          "problem": "The comma before “Leh” feels slightly unnatural in Japanese, though the Singlish code-switch is intentionally preserved and understandable.",
+          "suggestion": "Consider “働く必要ある Leh？” or “なんで働くんだっけ、Leh？” if polishing manually."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation reads as native Japanese technical essay prose rather than a direct sentence-by-sentence calque: clauses are reordered naturally, humor such as “悪いけど、悪いとは思っていない” and “言ってみただけ” is localized, and technical terms/code artifacts are preserved appropriately. MDX and frontmatter appear syntactically intact; translated alt text, caption, and attribution are reader-facing and handled."
+    }
+  ]
+}

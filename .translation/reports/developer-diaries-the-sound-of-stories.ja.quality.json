@@ -1,0 +1,59 @@
+{
+  "sourcePath": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
+  "targetPath": "src/content/blog/developer-diaries-the-sound-of-stories/ja.mdx",
+  "sourceSha256": "074625a01cb7b9b862ad0f48b468e4f36a30ecf335c9c918f57371b046551a3e",
+  "targetSha256": "8d97fa4c66f2599101cd7d99e2dc829d02c22a63929be1ef5b8eb8045c45c991",
+  "reviewPromptVersion": "2026-07-10.3",
+  "reviewStyleGuideSha256": "dddaaf241de8d91cc436355a371178bf6acbe380a1cdd9b61a2f3eecdcfe2354",
+  "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
+  "reviewProvider": "codex-cli",
+  "reviewerModel": "gpt-5.5",
+  "reviewProfile": [
+    "native-editor-reviewer",
+    "adversarial-direct-translation-reviewer"
+  ],
+  "passed": true,
+  "score": 0.92,
+  "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "paragraph beginning `A.I. における多様性の必要性`",
+          "problem": "`標準中国語` is understandable for Mandarin, but in this Singaporean/contextual voice-output discussion `中国語（マンダリン）` or `華語` might preserve the original nuance more naturally for Japanese readers.",
+          "suggestion": "Consider replacing `標準中国語` with `中国語（マンダリン）` if the house style allows parenthetical clarification."
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph beginning `もうひとつ大いに役立ったのは`",
+          "problem": "`かなり頭の悪い「ものぐさ完成版」` is vivid and mostly works, but `very dumb` here is self-deprecating about the implementation rather than insulting the story itself; a slightly more technical phrase would reduce ambiguity.",
+          "suggestion": "Consider `かなり単純で力技の「ものぐさ完成版」` or similar."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes. It reads as native Japanese technical essay prose rather than a direct sentence-by-sentence rendering: long English clauses are restructured into natural Japanese rhythm, the author’s blunt humor and uncertainty are preserved, MDX/frontmatter is intact, and reader-facing alt text, caption, attribution, and prose are translated while code/artifact blocks remain appropriately preserved."
+    },
+    {
+      "passed": true,
+      "score": 0.92,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "text code block after LLM chains paragraph",
+          "problem": "The explanatory comment in the `text` block remains in English. It is adjacent to code and likely acceptable as a source artifact, but it is reader-facing enough that a Japanese comment would read more consistently.",
+          "suggestion": "Consider translating the comment while preserving the code line, e.g. `# ここで物語を続け、ここまでのメモリと次のセグメントを文脈として使う`."
+        },
+        {
+          "severity": "minor",
+          "location": "repeated rendering of “lazy completion”",
+          "problem": "「ものぐさ完成版」 is understandable and preserves the quoted, self-deprecating tone, but it is slightly conspicuous in Japanese and may feel coined rather than idiomatic.",
+          "suggestion": "If polishing manually, consider a phrasing like「手抜き気味に最後まで通した版」where the sentence allows it."
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation passes: the prose is reorganized into natural Japanese essay rhythm, keeps the author's blunt humor and uncertainty, preserves product/code terms, and does not read like a sentence-by-sentence direct translation. MDX structure appears intact."
+    }
+  ]
+}

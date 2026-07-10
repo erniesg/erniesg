@@ -28,7 +28,7 @@ const locale = getLocaleFromPostId(entry.id)
 const canonicalId = getCanonicalPostId(entry.id)
 const formattedDate = formatDate(entry.data.date, locale)
 const readTime = readingTime(entry.body!, locale)
-const authors = await parseAuthors(entry.data.authors ?? [])
+const authors = await parseAuthors(entry.data.authors ?? [], locale)
 const allPosts = await getCollection(
   'blog',
   (post) => !post.data.draft && !isLegacyChinesePostId(post.id),
@@ -121,7 +121,9 @@ const cardLocalizations = JSON.stringify(Object.fromEntries(localizedEntries))
                     fallback={author.name[0]}
                     className="size-5 rounded-full"
                   />
-                  <span>{author.name}</span>
+                  <span data-i18n-key={`author.${author.id}.name`}>
+                    {author.name}
+                  </span>
                 </div>
               ))}
               <Separator orientation="vertical" className="h-4" />

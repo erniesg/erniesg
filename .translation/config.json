@@ -11,23 +11,83 @@
     },
     "review": {
       "pass1": {
-        "en": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" },
-        "zh": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" },
-        "ko": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" },
-        "ja": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "native-editor-reviewer" }
+        "en": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "native-editor-reviewer"
+        },
+        "zh": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "native-editor-reviewer"
+        },
+        "ko": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "native-editor-reviewer"
+        },
+        "ja": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "native-editor-reviewer"
+        }
       },
       "pass2": {
-        "en": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" },
-        "zh": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" },
-        "ko": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" },
-        "ja": { "provider": "openai", "api": "responses", "model": "gpt-5", "profile": "adversarial-direct-translation-reviewer" }
+        "en": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "adversarial-direct-translation-reviewer"
+        },
+        "zh": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "adversarial-direct-translation-reviewer"
+        },
+        "ko": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "adversarial-direct-translation-reviewer"
+        },
+        "ja": {
+          "provider": "openai",
+          "api": "responses",
+          "model": "gpt-5",
+          "profile": "adversarial-direct-translation-reviewer"
+        }
       }
     },
     "research": {
-      "en": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] },
-      "zh": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] },
-      "ko": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] },
-      "ja": { "provider": "openai", "api": "responses", "model": "gpt-5", "tools": ["web_search"] }
+      "en": {
+        "provider": "openai",
+        "api": "responses",
+        "model": "gpt-5",
+        "tools": ["web_search"]
+      },
+      "zh": {
+        "provider": "openai",
+        "api": "responses",
+        "model": "gpt-5",
+        "tools": ["web_search"]
+      },
+      "ko": {
+        "provider": "openai",
+        "api": "responses",
+        "model": "gpt-5",
+        "tools": ["web_search"]
+      },
+      "ja": {
+        "provider": "openai",
+        "api": "responses",
+        "model": "gpt-5",
+        "tools": ["web_search"]
+      }
     }
   },
   "providerCapabilities": {
@@ -47,7 +107,7 @@
   "reviewCache": {
     "enabled": true,
     "reuseWhenHashesMatch": true,
-    "forceFlag": "--refresh-review"
+    "forceFlag": "--refresh-all-reviews"
   },
   "protectedLegacyDirs": [
     "src/content/blog/raggaeton-scaling-a-i-augmented-writing-for-any-content-zh",
@@ -63,7 +123,14 @@
   ],
   "requiredPublishLocales": ["en", "zh", "ko", "ja"],
   "failPublishOnMissingRequiredLocales": true,
-  "promptVersion": "2026-07-09",
+  "promptVersion": "2026-07-10.5",
+  "reviewPromptVersion": "2026-07-10.3",
+  "humanApprovedTranslations": {
+    "src/content/blog/microdramas-sinking-market/zh.mdx": {
+      "Microdramas: The Sinking Market That Will Lift All Boats": "微短剧：让水涨船高的下沉市场",
+      "How China's microdrama phenomenon is capturing billions in value by targeting overlooked demographics and creating new AI-driven content opportunities": "中国微短剧如何服务被忽视的人群，并为 AI 内容生产打开数十亿美元机会"
+    }
+  },
   "minReviewScore": 0.88,
   "requiredReviewerPasses": 2,
   "reviewPolicy": {

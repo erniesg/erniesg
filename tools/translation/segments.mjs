@@ -3,6 +3,8 @@ import { assertLockedRegionsPreserved as assertLocked } from './locked-regions.m
 
 const TRANSLATABLE_FRONTMATTER_KEYS = new Set(['title', 'description'])
 const TRANSLATABLE_ATTRS = new Set(['title', 'alt', 'aria-label'])
+const INLINE_PROTECTED_RE = /`[^`\n]+`|!?\[[^\]]+\]\([^)]+\)|<[^>\n]+>/g
+const CONTEXTUAL_PROTECTED_RE = /`[^`\n]+`|(?<=\]\()[^)]+(?=\))/g
 
 function nextId(index) {
   return `s${String(index + 1).padStart(4, '0')}`
@@ -26,13 +28,28 @@ function frontmatterRange(raw, key) {
   const end = raw.indexOf('\n---', 4)
   if (end === -1) return null
   const header = raw.slice(4, end)
-  const regex = new RegExp(`(^|\\n)(${key}:\\s*)(["']?)([^"'\\n]*)(\\3)`, 'm')
+  const regex = new RegExp(`(^|\\n)(${key}:\\s*)([^\\n]*)`, 'm')
   const match = header.match(regex)
   if (!match) return null
   const lineStart = 4 + match.index + (match[1] ? match[1].length : 0)
-  const valueStart = lineStart + match[2].length + match[3].length
-  const valueEnd = valueStart + match[4].length
-  return { start: valueStart, end: valueEnd, value: match[4] }
+  const scalarStart = lineStart + match[2].length
+  let scalarEnd = scalarStart + match[3].trimEnd().length
+  if (/^[>|][+-]?(?:\s+#.*)?$/.test(match[3].trim())) {
+    const firstLineEnd = raw.indexOf('\n', scalarStart)
+    scalarEnd = firstLineEnd === -1 ? end : firstLineEnd
+    let cursor = scalarEnd + 1
+    while (cursor < end) {
+      const nextLineEnd = raw.indexOf('\n', cursor)
+      const lineEnd = nextLineEnd === -1 ? end : Math.min(nextLineEnd, end)
+      const line = raw.slice(cursor, lineEnd)
+      if (line && !/^[ \t]/.test(line)) break
+      scalarEnd = lineEnd
+      cursor = lineEnd + 1
+    }
+  }
+  const value = matter(raw).data?.[key]
+  if (typeof value !== 'string') return null
+  return { start: scalarStart, end: scalarEnd, value }
 }
 
 function bodyStartOffset(raw) {
@@ -45,29 +62,26 @@ function pushMarkdownLineSegments(segments, line, lineStart) {
   const trimmed = line.trim()
   if (!trimmed) return
   if (/^(?:import|export)\s/.test(trimmed)) return
+
   if (
     /^<\/?[A-Z][\w.:-]*/.test(trimmed) ||
     /^<\/?[a-z][\w.:-]*/.test(trimmed)
   ) {
     pushHtmlAttributeSegments(segments, line, lineStart)
+    pushInlineTextSegments(segments, line, lineStart, {
+      kind: 'html-text',
+    })
     return
   }
 
   const heading = line.match(/^(\s{0,3}#{1,6}\s+)(.+)$/)
   if (heading) {
-    const start = lineStart + heading[1].length
-    addSegment(
-      segments,
-      'markdown-heading',
-      heading[2].trimEnd(),
-      start,
-      start + heading[2].trimEnd().length,
-    )
+    pushContextualMarkdownSegment(segments, line, lineStart, {
+      kind: 'markdown-heading',
+      prefixLength: heading[1].length,
+    })
     return
   }
-
-  pushImageAltSegments(segments, line, lineStart)
-  pushLinkTextSegments(segments, line, lineStart)
 
   if (
     /^[-*+]\s+\[[ x]\]/.test(trimmed) ||
@@ -76,61 +90,86 @@ function pushMarkdownLineSegments(segments, line, lineStart) {
   ) {
     const prefix =
       line.match(/^(\s*(?:[-*+]|\d+\.)\s+(?:\[[ x]\]\s*)?)/)?.[1] ?? ''
-    const text = line.slice(prefix.length)
-    if (!/[`<>\][]/.test(text)) {
-      addSegment(
-        segments,
-        'markdown-list-item',
-        text,
-        lineStart + prefix.length,
-        lineStart + line.length,
-      )
-    }
+    pushContextualMarkdownSegment(segments, line, lineStart, {
+      kind: 'markdown-list-item',
+      prefixLength: prefix.length,
+    })
     return
   }
 
-  if (
-    !/[`<>\][]/.test(line) &&
-    /[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(line)
-  ) {
-    addSegment(
-      segments,
-      'markdown-paragraph',
-      line.trim(),
-      lineStart + line.indexOf(line.trim()),
-      lineStart + line.indexOf(line.trim()) + line.trim().length,
-    )
+  const blockquotePrefix = line.match(/^(\s{0,3}(?:>\s*)+)/)?.[1] ?? ''
+  if (/[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(line)) {
+    pushContextualMarkdownSegment(segments, line, lineStart, {
+      kind: blockquotePrefix ? 'markdown-blockquote' : 'markdown-paragraph',
+      prefixLength: blockquotePrefix.length,
+    })
   }
 }
 
-function pushImageAltSegments(segments, line, lineStart) {
-  const regex = /!\[([^\]]+)\]\(([^)]+)\)/g
-  for (const match of line.matchAll(regex)) {
-    const altStart = lineStart + match.index + 2
-    addSegment(
-      segments,
-      'markdown-image-alt',
-      match[1],
-      altStart,
-      altStart + match[1].length,
-    )
+function pushContextualMarkdownSegment(
+  segments,
+  line,
+  lineStart,
+  { kind, prefixLength = 0 },
+) {
+  if (/<[^>\n]+>/.test(line.slice(prefixLength))) {
+    pushHtmlAttributeSegments(segments, line, lineStart)
+    pushInlineTextSegments(segments, line, lineStart, { kind, prefixLength })
+    return
+  }
+
+  let start = prefixLength
+  let end = line.length
+  while (start < end && /\s/.test(line[start])) start += 1
+  while (end > start && /\s/.test(line[end - 1])) end -= 1
+  if (start === end) return
+
+  const protectedTokens = []
+  const sourceText = line
+    .slice(start, end)
+    .replace(CONTEXTUAL_PROTECTED_RE, (value) => {
+      const token = `⟪LOCKED_${String(protectedTokens.length + 1).padStart(4, '0')}⟫`
+      protectedTokens.push({ token, value })
+      return token
+    })
+  addSegment(segments, kind, sourceText, lineStart + start, lineStart + end, {
+    protectedTokens,
+  })
+}
+
+function pushInlineTextSegments(
+  segments,
+  line,
+  lineStart,
+  { kind, prefixLength = 0 },
+) {
+  const ranges = [...line.matchAll(INLINE_PROTECTED_RE)]
+    .map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length,
+    }))
+    .filter((range) => range.end > prefixLength)
+  let cursor = prefixLength
+
+  for (const range of ranges) {
+    if (range.start > cursor) {
+      pushTextRange(segments, kind, line, lineStart, cursor, range.start)
+    }
+    cursor = Math.max(cursor, range.end)
+  }
+  if (cursor < line.length) {
+    pushTextRange(segments, kind, line, lineStart, cursor, line.length)
   }
 }
 
-function pushLinkTextSegments(segments, line, lineStart) {
-  const regex = /(?<!!)\[([^\]]+)\]\(([^)]+)\)/g
-  for (const match of line.matchAll(regex)) {
-    const linkText = match[1]
-    if (/^https?:\/\//.test(linkText)) continue
-    const textStart = lineStart + match.index + 1
-    addSegment(
-      segments,
-      'markdown-link-text',
-      linkText,
-      textStart,
-      textStart + linkText.length,
-    )
+function pushTextRange(segments, kind, line, lineStart, start, end) {
+  while (start < end && /\s/.test(line[start])) start += 1
+  while (end > start && /\s/.test(line[end - 1])) end -= 1
+  const sourceText = line.slice(start, end)
+  if (!/[A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(sourceText)) {
+    return
   }
+  addSegment(segments, kind, sourceText, lineStart + start, lineStart + end)
 }
 
 function pushHtmlAttributeSegments(segments, line, lineStart) {
@@ -161,7 +200,7 @@ export function extractSegments(raw) {
           range.value,
           range.start,
           range.end,
-          { frontmatterKey: key },
+          { frontmatterKey: key, yamlScalar: true },
         )
       }
     }
@@ -214,10 +253,21 @@ export function applySegmentTranslations(raw, translationsById) {
         `Segment ${segment.id} does not have a safe source range.`,
       )
     }
+    let translatedText = String(translationsById[segment.id])
+    for (const { token, value } of segment.protectedTokens ?? []) {
+      const occurrences = translatedText.split(token).length - 1
+      if (occurrences !== 1) {
+        throw new Error(
+          `Segment ${segment.id} must preserve placeholder ${token} exactly once.`,
+        )
+      }
+      translatedText = translatedText.replace(token, value)
+    }
+    if (segment.yamlScalar) translatedText = JSON.stringify(translatedText)
     replacements.push({
       start: segment.start,
       end: segment.end,
-      text: translationsById[segment.id],
+      text: translatedText,
       id: segment.id,
     })
   }

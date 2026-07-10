@@ -41,7 +41,7 @@ export async function loadConfig() {
 export async function loadManifest() {
   return readJson(MANIFEST_PATH, {
     version: 1,
-    promptVersion: '2026-07-09',
+    promptVersion: '2026-07-10.5',
     families: {},
   })
 }

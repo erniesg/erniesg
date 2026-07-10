@@ -5,7 +5,8 @@ Reject a translation when it:
 - reads like sentence-by-sentence translation from the source
 - preserves English word order in Chinese, Korean, or Japanese
 - leaves ordinary prose as half-translated technical residue, such as `数据set`, `数据源s`, `データset`, `データソースs`, `데이터 소스s`, or English verbs like `ingest`, `chunk`, `query`, `validate` used as untranslated verbs
-- over-translates code, product names, URLs, paths, identifiers, fixed HTML values, math, or quoted source text
+- leaves human-facing quotations, blockquotes, captions, attributions, or accessibility text untranslated without a clear editorial reason
+- over-translates code, product names, URLs, paths, identifiers, fixed HTML values, math, or original-language artifacts deliberately shown for analysis
 - removes Ernie's bluntness, humor, uncertainty, or code-switching
 - adds claims not present in the source
 - weakens titles or descriptions into generic SEO text

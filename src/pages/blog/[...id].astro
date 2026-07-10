@@ -86,7 +86,7 @@ const nextPost = getLocalizedSibling(getNextPost(canonicalPostId), currentLocale
 const prevPost = getLocalizedSibling(getPrevPost(canonicalPostId), currentLocale)
 const { Content, headings } = await render(post)
 
-const authors = await parseAuthors(post.data.authors ?? [])
+const authors = await parseAuthors(post.data.authors ?? [], currentLocale)
 const translatedPosts = allPosts.filter(
   (entry) => getCanonicalPostId(entry.id) === canonicalPostId,
 )
@@ -175,10 +175,14 @@ const localizedPaths = Object.fromEntries(
                           underline
                           class="text-foreground"
                         >
-                          <span>{author.name}</span>
+                          <span data-i18n-key={`author.${author.id}.name`}>
+                            {author.name}
+                          </span>
                         </Link>
                       ) : (
-                        <span>{author.name}</span>
+                        <span data-i18n-key={`author.${author.id}.name`}>
+                          {author.name}
+                        </span>
                       )}
                     </div>
                   ))}

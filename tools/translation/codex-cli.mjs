@@ -5,6 +5,10 @@ import path from 'node:path'
 
 const DEFAULT_REASONING_EFFORT = 'high'
 
+export function isCodexUsageLimitError(error) {
+  return /hit your usage limit/i.test(String(error?.message ?? error ?? ''))
+}
+
 async function pathExists(filePath) {
   try {
     await fs.access(filePath)
@@ -33,7 +37,7 @@ export function buildCodexExecArgs({
     DEFAULT_REASONING_EFFORT,
   sandbox = 'read-only',
   search = process.env.CODEX_TRANSLATION_SEARCH !== '0',
-  model = process.env.CODEX_TRANSLATION_MODEL || process.env.CODEX_MODEL,
+  model = process.env.CODEX_TRANSLATION_MODEL,
   serviceTier = process.env.CODEX_TRANSLATION_SERVICE_TIER,
 } = {}) {
   if (!schemaPath) throw new Error('schemaPath is required for codex exec.')
@@ -43,6 +47,7 @@ export function buildCodexExecArgs({
   if (search) args.push('--search')
   args.push(
     'exec',
+    '--skip-git-repo-check',
     '--cd',
     cwd,
     '--sandbox',
@@ -114,10 +119,23 @@ async function runProcess({ bin, args, stdin, cwd }) {
   })
   child.stdin.end(stdin)
 
+  const timeoutMs = Number.parseInt(
+    process.env.CODEX_TRANSLATION_TIMEOUT_MS ?? '600000',
+    10,
+  )
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    child.kill('SIGTERM')
+  }, timeoutMs)
   const code = await new Promise((resolve, reject) => {
     child.on('error', reject)
     child.on('close', resolve)
   })
+  clearTimeout(timeout)
+  if (timedOut) {
+    throw new Error(`codex exec timed out after ${timeoutMs}ms.`)
+  }
   if (code !== 0) {
     throw new Error(
       [
@@ -137,15 +155,15 @@ export async function runCodexStructuredJson({
   userPayload,
   schema,
   providerConfig = {},
-  cwd = process.cwd(),
 }) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-translate-'))
   const schemaPath = path.join(tempDir, 'schema.json')
   const outputPath = path.join(tempDir, 'output.json')
   try {
     await fs.writeFile(schemaPath, `${JSON.stringify(schema, null, 2)}\n`)
+    const workerCwd = process.env.CODEX_TRANSLATION_WORKDIR ?? tempDir
     const args = buildCodexExecArgs({
-      cwd,
+      cwd: workerCwd,
       schemaPath,
       outputPath,
       reasoningEffort:
@@ -153,11 +171,9 @@ export async function runCodexStructuredJson({
         process.env.CODEX_TRANSLATION_REASONING_EFFORT ??
         DEFAULT_REASONING_EFFORT,
       sandbox: providerConfig.sandbox ?? 'read-only',
-      search: providerConfig.search ?? process.env.CODEX_TRANSLATION_SEARCH !== '0',
-      model:
-        process.env.CODEX_TRANSLATION_MODEL ??
-        process.env.CODEX_MODEL ??
-        providerConfig.model,
+      search:
+        providerConfig.search ?? process.env.CODEX_TRANSLATION_SEARCH !== '0',
+      model: process.env.CODEX_TRANSLATION_MODEL ?? providerConfig.model,
       serviceTier:
         process.env.CODEX_TRANSLATION_SERVICE_TIER ??
         providerConfig.serviceTier,
@@ -166,7 +182,7 @@ export async function runCodexStructuredJson({
       bin: await resolveCodexBin(),
       args,
       stdin: composePrompt({ systemPrompt, userPayload }),
-      cwd,
+      cwd: workerCwd,
     })
     const output = await fs.readFile(outputPath, 'utf8')
     return parseCodexJsonOutput(output)

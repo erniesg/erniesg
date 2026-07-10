@@ -16,6 +16,15 @@
     "RAGgaeton": {
       "preserve": true,
       "note": "Project name and pun."
+    },
+    "Sinking Market / 下沉市场": {
+      "preserve": false,
+      "translations": {
+        "zh": "下沉市场",
+        "ko": "하침시장(下沉市场); explain on first mention as the consumer market in China's tier-3-and-below cities and rural areas",
+        "ja": "下沈市場; explain on first mention as the market in China's tier-3-and-below cities and rural areas"
+      },
+      "note": "Do not transliterate the English phrase as 싱킹 마켓 or carry simplified Chinese 下沉市場 into Japanese. Preserve the rising-tide wordplay editorially when it remains natural."
     }
   }
 }

@@ -5,8 +5,7 @@ import {
 } from './codex-cli.mjs'
 
 function codexProviderConfig(baseConfig = {}) {
-  const codexModel =
-    process.env.CODEX_TRANSLATION_MODEL ?? process.env.CODEX_MODEL
+  const codexModel = process.env.CODEX_TRANSLATION_MODEL
   return {
     ...baseConfig,
     provider: 'codex-cli',
@@ -22,6 +21,12 @@ function applyProviderOverride(baseConfig = {}, purpose) {
     process.env.TRANSLATION_PROVIDER
   if (providerOverride === 'codex-cli') return codexProviderConfig(baseConfig)
   return baseConfig
+}
+
+export function translationSourceForProvider(providerConfig = {}) {
+  return providerConfig.provider === 'codex-cli'
+    ? 'codex'
+    : providerConfig.provider
 }
 
 export function providerConfigFor(config, purpose, locale, baseConfig = null) {

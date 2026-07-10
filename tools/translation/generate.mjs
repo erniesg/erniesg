@@ -26,16 +26,41 @@ import {
   loadStyleContext,
   translationJsonSchema,
 } from './prompts.mjs'
-import { createStructuredTranslation, providerConfigFor } from './providers.mjs'
+import {
+  createStructuredTranslation,
+  providerConfigFor,
+  translationSourceForProvider,
+} from './providers.mjs'
 import { auditMdxText } from './audit.mjs'
+import { repairText } from './repair.mjs'
+
+export function applyHumanApprovedTranslations({
+  config,
+  targetPath,
+  segments,
+  translations,
+}) {
+  const approved = config.humanApprovedTranslations?.[targetPath] ?? {}
+  return Object.fromEntries(
+    segments.map((segment) => [
+      segment.id,
+      Object.hasOwn(approved, segment.sourceText)
+        ? approved[segment.sourceText]
+        : translations[segment.id],
+    ]),
+  )
+}
 
 export async function generateTranslation({
   sourcePath,
   targetLocale,
   write = false,
+  manifest: providedManifest = null,
+  saveManifestAfterWrite = true,
+  revisionContext = null,
 }) {
   const config = await loadConfig()
-  const manifest = await loadManifest()
+  const manifest = providedManifest ?? (await loadManifest())
   const normalizedSourcePath = toPosixPath(sourcePath)
   const source = await readMdxFile(normalizedSourcePath)
   const sourceLocale =
@@ -56,6 +81,7 @@ export async function generateTranslation({
     sourcePath: normalizedSourcePath,
     styleContext,
     researchReport,
+    revisionContext,
   })
   const result = await createStructuredTranslation({
     config,
@@ -65,13 +91,20 @@ export async function generateTranslation({
     schema: translationJsonSchema(segments.map((segment) => segment.id)),
   })
 
-  let targetRaw = applySegmentTranslations(source.raw, result.translations)
+  const translations = applyHumanApprovedTranslations({
+    config,
+    targetPath,
+    segments,
+    translations: result.translations,
+  })
+  let targetRaw = applySegmentTranslations(source.raw, translations)
   targetRaw = setFrontmatterFields(targetRaw, {
     lang: targetLocale,
     translationKey: familyKey,
     translationStatus: 'machine',
-    translationSource: 'codex',
+    translationSource: translationSourceForProvider(providerConfig),
   })
+  targetRaw = repairText(targetRaw, targetLocale)
   const audit = auditMdxText(targetRaw, {
     path: targetPath,
     locale: targetLocale,
@@ -112,16 +145,17 @@ export async function generateTranslation({
     styleGuideSha256: styleContext.styleGuideSha256,
     rubricSha256: styleContext.rubricSha256,
     generatedAt: nowIso(),
+    ...(revisionContext ? { revisedAt: nowIso() } : {}),
     qualityStatus: 'mechanical-passed',
     reviewScore: null,
-    researchNotes: researchReport.candidates,
+    researchNotes: [],
     unresolvedResearch: result.unresolvedResearch ?? [],
   }
 
   if (write) {
     await fs.mkdir(path.dirname(targetPath), { recursive: true })
     await fs.writeFile(targetPath, targetRaw)
-    await saveManifest(manifest)
+    if (saveManifestAfterWrite) await saveManifest(manifest)
   }
 
   return {

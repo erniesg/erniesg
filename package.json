@@ -19,14 +19,16 @@
     "translate:check": "node tools/translation/check-quality.mjs",
     "translate:generate": "node tools/translation/generate.mjs",
     "translate:sync": "node tools/translation/sync.mjs",
-    "translate:codex-sync": "TRANSLATION_PROVIDER=codex-cli CODEX_TRANSLATION_REASONING_EFFORT=high node tools/translation/sync.mjs",
-    "translate:codex-review": "TRANSLATION_PROVIDER=codex-cli CODEX_TRANSLATION_REASONING_EFFORT=high node tools/translation/check-quality.mjs --refresh-review",
+    "translate:codex-sync": "TRANSLATION_PROVIDER=codex-cli CODEX_TRANSLATION_MODEL=gpt-5.5 CODEX_TRANSLATION_REASONING_EFFORT=high node tools/translation/sync.mjs",
+    "translate:codex-review": "TRANSLATION_PROVIDER=codex-cli CODEX_TRANSLATION_MODEL=gpt-5.5 CODEX_TRANSLATION_REASONING_EFFORT=high CODEX_TRANSLATION_REVIEW_CONCURRENCY=2 node tools/translation/check-quality.mjs --refresh-review",
+    "translate:codex-revise": "TRANSLATION_PROVIDER=codex-cli CODEX_TRANSLATION_MODEL=gpt-5.5 CODEX_TRANSLATION_REASONING_EFFORT=high CODEX_TRANSLATION_REVISION_CONCURRENCY=2 node tools/translation/revise.mjs",
     "translate:repair": "node tools/translation/repair.mjs",
     "translate:mark-edited": "node tools/translation/mark-edited.mjs",
     "translate:finalize": "node tools/translation/finalize.mjs",
     "translate:test": "vitest run tools/translation/*.test.mjs",
-    "content:check": "npm run translate:audit && npm run translate:check && npm test -- src/lib/i18n.test.ts && npm run build",
-    "content:publish": "npm run translate:codex-sync -- --write && npm run translate:codex-review -- --strict-publish && npm test -- src/lib/i18n.test.ts && npm run build"
+    "i18n:check": "vitest run src/lib/i18n.test.ts",
+    "content:check": "npm run translate:audit && npm run translate:check && npm run i18n:check && npm run build",
+    "content:publish": "npm run translate:codex-sync -- --write && npm run translate:codex-review && npm run translate:codex-revise -- --write && npm run translate:codex-review && npm run translate:codex-revise -- --write && npm run translate:codex-review -- --strict-publish && npm run i18n:check && npm run build"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",

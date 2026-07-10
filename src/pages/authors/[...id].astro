@@ -37,7 +37,12 @@ const authorPosts = allPosts
     <Breadcrumbs
       items={[
         { href: '/authors', label: getStaticTranslation('authors.title', 'en'), icon: 'lucide:users', i18nKey: 'authors.title' },
-        { label: author.data.name, icon: 'lucide:user' },
+        {
+          label: author.data.name,
+          icon: 'lucide:user',
+          i18nKey:
+            author.id === 'erniesg' ? 'author.erniesg.name' : undefined,
+        },
       ]}
     />
 
@@ -48,7 +53,13 @@ const authorPosts = allPosts
       <h2 class="text-2xl font-semibold">
         <span data-i18n-key="authors.postsBy"
           >{getStaticTranslation('authors.postsBy', 'en')}</span
-        > {author.data.name}
+        > <span
+          data-i18n-key={author.id === 'erniesg'
+            ? 'author.erniesg.name'
+            : undefined}
+        >
+          {author.data.name}
+        </span>
       </h2>
       {
         authorPosts.length > 0 ? (

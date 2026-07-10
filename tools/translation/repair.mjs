@@ -15,6 +15,8 @@ import { auditMdxText } from './audit.mjs'
 
 const IGNORED_RE =
   /(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?\n[ \t]*\2(?=\n|$)|`[^`\n]+`|https?:\/\/[^\s)>"']+/g
+const CURRENCY_IGNORED_RE =
+  /^---\r?\n[\s\S]*?\r?\n---(?=\r?\n|$)|(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?\n[ \t]*\2(?=\n|$)|`[^`\n]+`|https?:\/\/[^\s)>"']+/g
 
 const REPAIRS = {
   zh: [
@@ -77,6 +79,13 @@ function ignoredRanges(text) {
   }))
 }
 
+function currencyIgnoredRanges(text) {
+  return [...text.matchAll(CURRENCY_IGNORED_RE)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }))
+}
+
 function overlapsIgnored(start, end, ranges) {
   return ranges.some((range) => start < range.end && end > range.start)
 }
@@ -92,8 +101,13 @@ function replaceOutsideIgnored(text, regex, replacement) {
   })
 }
 
-function repairText(raw, locale) {
-  let output = raw
+export function repairText(raw, locale) {
+  const currencyRanges = currencyIgnoredRanges(raw)
+  let output = raw.replace(/(?<!\\)\$(?=\d)/g, (match, offset) =>
+    overlapsIgnored(offset, offset + match.length, currencyRanges)
+      ? match
+      : '\\$',
+  )
   for (const [regex, replacement] of REPAIRS[locale] ?? []) {
     output = replaceOutsideIgnored(output, regex, replacement)
   }

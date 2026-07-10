@@ -19,6 +19,7 @@ import {
   reviewJsonSchema,
 } from './prompts.mjs'
 import { createStructuredReview, providerConfigFor } from './providers.mjs'
+import { isCodexUsageLimitError } from './codex-cli.mjs'
 
 function reportPathFor(filePath) {
   return `.translation/reports/${filePath
@@ -27,15 +28,125 @@ function reportPathFor(filePath) {
     .replace(/\.mdx$/, '')}.quality.json`
 }
 
+export function reviewMetadataIssues({
+  config,
+  target,
+  currentTargetSha256,
+  currentPromptVersion,
+  currentStyleGuideSha256,
+  currentRubricSha256,
+}) {
+  const issues = []
+  if (target?.qualityStatus !== 'passed') {
+    issues.push('machine translation has not passed native review')
+  }
+  if (target?.reviewedTargetSha256 !== currentTargetSha256) {
+    issues.push('native review does not match current target hash')
+  }
+  if (target?.reviewPromptVersion !== currentPromptVersion) {
+    issues.push('native review used an outdated review prompt')
+  }
+  if (target?.reviewStyleGuideSha256 !== currentStyleGuideSha256) {
+    issues.push('native review used an outdated style guide')
+  }
+  if (target?.reviewRubricSha256 !== currentRubricSha256) {
+    issues.push('native review used an outdated rubric')
+  }
+
+  const reviewPassCount =
+    target?.reviewPassCount ?? target?.reviewProfile?.length ?? 0
+  if (reviewPassCount < (config.requiredReviewerPasses ?? 1)) {
+    issues.push('native review does not have enough reviewer passes')
+  }
+
+  const hasNumericScore = typeof target?.reviewScore === 'number'
+  const isHashBoundLegacyReview =
+    target?.reviewProvider === 'codex-parallel-agents' &&
+    target?.reviewedTargetSha256 === currentTargetSha256
+  if (hasNumericScore && target.reviewScore < (config.minReviewScore ?? 0)) {
+    issues.push('native review score is below the publish threshold')
+  } else if (!hasNumericScore && !isHashBoundLegacyReview) {
+    issues.push('native review score is missing')
+  }
+
+  return issues
+}
+
+function isProtectedReviewIssue(issue) {
+  const location = issue?.location ?? ''
+  const problem = issue?.problem ?? ''
+  const suggestion = issue?.suggestion ?? ''
+  const text = `${location}\n${problem}\n${suggestion}`
+
+  if (/translationStatus:\s*machine|translationStatus\b/i.test(text)) {
+    return true
+  }
+  if (
+    /frontmatter|YAML/i.test(text) &&
+    /date|image|serialization|format|quote/i.test(text) &&
+    /equivalent|normaliz|churn|metadata/i.test(text)
+  ) {
+    return true
+  }
+  if (
+    /code (?:block|fence|comment)|comments? .* code/i.test(text) &&
+    /English|untranslated|translat|remain/i.test(text)
+  ) {
+    return true
+  }
+  if (
+    /(?:model|generated|RAGgaeton|Claude).*(?:output|excerpt|sample)|(?:output|excerpt|sample).*(?:model|generated|RAGgaeton|Claude)/i.test(
+      text,
+    ) &&
+    /English|original language|untranslated|remain|left/i.test(text)
+  ) {
+    return true
+  }
+  return false
+}
+
+export function normalizeReviewResult(review, { minReviewScore }) {
+  const ignoredIssues = (review.issues ?? []).filter(isProtectedReviewIssue)
+  const issues = (review.issues ?? []).filter(
+    (issue) => !isProtectedReviewIssue(issue),
+  )
+  const hasPublishIssue = issues.some(
+    (issue) => issue.severity === 'major' || issue.severity === 'blocking',
+  )
+  const hasIgnoredPublishIssue = ignoredIssues.some(
+    (issue) => issue.severity === 'major' || issue.severity === 'blocking',
+  )
+  const unresolvedResearch = review.unresolvedResearch ?? []
+  const score =
+    !hasPublishIssue && hasIgnoredPublishIssue
+      ? Math.max(review.score, 0.9)
+      : review.score
+  const passed =
+    !hasPublishIssue &&
+    unresolvedResearch.length === 0 &&
+    score >= minReviewScore
+
+  return {
+    ...review,
+    rawPassed: review.passed,
+    rawScore: review.score,
+    passed,
+    score,
+    issues,
+    ...(ignoredIssues.length > 0 ? { ignoredIssues } : {}),
+  }
+}
+
 async function refreshNativeReview({
   config,
   manifest,
   filePath,
   file,
   target,
+  styleContext,
 }) {
+  const reviewPromptVersion = config.reviewPromptVersion ?? config.promptVersion
   const source = await readMdxFile(target.sourcePath)
-  const styleContext = await loadStyleContext(file.frontmatter.lang)
   const passes = [
     config.providers?.review?.pass1?.[file.frontmatter.lang],
     config.providers?.review?.pass2?.[file.frontmatter.lang],
@@ -44,30 +155,34 @@ async function refreshNativeReview({
     .map((passConfig) =>
       providerConfigFor(config, 'review', file.frontmatter.lang, passConfig),
     )
-  const reviews = []
-
-  for (const passConfig of passes) {
-    const prompt = buildReviewPrompt({
-      sourceLocale: target.sourceLocale,
-      targetLocale: file.frontmatter.lang,
-      sourcePath: target.sourcePath,
-      targetPath: filePath,
-      styleContext,
-      reviewerProfile: passConfig.profile ?? 'native-editor-reviewer',
-    })
-    reviews.push(
-      await createStructuredReview({
+  const rawReviews = await Promise.all(
+    passes.map(async (passConfig) => {
+      const prompt = buildReviewPrompt({
+        sourceLocale: target.sourceLocale,
+        targetLocale: file.frontmatter.lang,
+        sourcePath: target.sourcePath,
+        targetPath: filePath,
+        styleContext,
+        reviewerProfile: passConfig.profile ?? 'native-editor-reviewer',
+      })
+      return createStructuredReview({
         config,
         providerConfig: passConfig,
         systemPrompt: prompt,
         sourceText: source.raw,
         targetText: file.raw,
         schema: reviewJsonSchema(),
-      }),
-    )
-  }
+      })
+    }),
+  )
+  const reviews = rawReviews.map((review) =>
+    normalizeReviewResult(review, {
+      minReviewScore: config.minReviewScore,
+    }),
+  )
 
   const minScore = Math.min(...reviews.map((review) => review.score))
+  const targetSha256 = sha256(file.raw)
   const unresolvedResearch = reviews.flatMap(
     (review) => review.unresolvedResearch ?? [],
   )
@@ -84,10 +199,10 @@ async function refreshNativeReview({
     sourcePath: target.sourcePath,
     targetPath: filePath,
     sourceSha256: target.sourceSha256,
-    targetSha256: sha256(file.raw),
-    promptVersion: config.promptVersion,
-    styleGuideSha256: target.styleGuideSha256 ?? null,
-    rubricSha256: target.rubricSha256 ?? null,
+    targetSha256,
+    reviewPromptVersion,
+    reviewStyleGuideSha256: styleContext.styleGuideSha256,
+    reviewRubricSha256: styleContext.rubricSha256,
     reviewProvider: passes[0]?.provider ?? null,
     reviewerModel:
       process.env.OPENAI_REVIEW_MODEL ??
@@ -104,8 +219,14 @@ async function refreshNativeReview({
 
   target.qualityStatus = passed ? 'passed' : 'review-failed'
   target.reviewScore = minScore
+  target.reviewedTargetSha256 = targetSha256
+  target.reviewPassCount = reviews.length
+  target.reviewPromptVersion = reviewPromptVersion
+  target.reviewStyleGuideSha256 = styleContext.styleGuideSha256
+  target.reviewRubricSha256 = styleContext.rubricSha256
   target.reviewProvider = report.reviewProvider
   target.reviewerModel = report.reviewerModel
+  target.reviewProfile = passes.map((pass) => pass.profile)
   target.qualityReportPath = reportPath
   target.unresolvedResearch = unresolvedResearch
   if (passed) target.reviewedAt = new Date().toISOString()
@@ -121,6 +242,7 @@ export async function checkTranslationQuality({
   locale = null,
 } = {}) {
   const config = await loadConfig()
+  const reviewPromptVersion = config.reviewPromptVersion ?? config.promptVersion
   const manifest = await loadManifest()
   const files = (await listTargetSidecars(['zh', 'ko', 'ja'])).filter(
     (filePath) => {
@@ -130,17 +252,26 @@ export async function checkTranslationQuality({
       return true
     },
   )
-  const errors = []
-  const warnings = []
+  const styleContexts = new Map()
+  let providerStopReason = null
 
-  for (const filePath of files) {
+  async function styleContextFor(locale) {
+    if (!styleContexts.has(locale)) {
+      styleContexts.set(locale, loadStyleContext(locale))
+    }
+    return await styleContexts.get(locale)
+  }
+
+  async function checkFile(filePath) {
+    const errors = []
+    const warnings = []
     const file = await readMdxFile(filePath)
     const target = getManifestTarget(manifest, filePath)
     const status = file.frontmatter.translationStatus
     const source = file.frontmatter.translationSource
     if (!hasOwnership(file.frontmatter)) {
       errors.push(`${filePath}: missing translationStatus/translationSource`)
-      continue
+      return { errors, warnings }
     }
 
     const audit = auditMdxText(file.raw, {
@@ -151,6 +282,12 @@ export async function checkTranslationQuality({
     warnings.push(...audit.warnings)
 
     if (status === 'machine') {
+      const styleContext = await styleContextFor(file.frontmatter.lang)
+      const reviewContext = {
+        currentPromptVersion: reviewPromptVersion,
+        currentStyleGuideSha256: styleContext.styleGuideSha256,
+        currentRubricSha256: styleContext.rubricSha256,
+      }
       if (!target) {
         errors.push(`${filePath}: machine translation missing manifest target`)
       } else if (
@@ -168,32 +305,49 @@ export async function checkTranslationQuality({
       const needsReview = Boolean(
         target &&
           (refreshAllReviews ||
-            target.qualityStatus !== 'passed' ||
+            reviewMetadataIssues({
+              config,
+              target,
+              currentTargetSha256: sha256(file.raw),
+              ...reviewContext,
+            }).length > 0 ||
             (target.unresolvedResearch ?? []).length > 0),
       )
 
       if (target && refreshReview && needsReview && errors.length === 0) {
-        try {
-          await refreshNativeReview({
-            config,
-            manifest,
-            filePath,
-            file,
-            target,
-          })
-        } catch (error) {
+        if (providerStopReason) {
           errors.push(
-            `${filePath}: native review failed to run: ${error.message}`,
+            `${filePath}: native review deferred after provider usage limit`,
           )
-        }
+        } else
+          try {
+            console.log(`Reviewing ${filePath}`)
+            await refreshNativeReview({
+              config,
+              manifest,
+              filePath,
+              file,
+              target,
+              styleContext,
+            })
+          } catch (error) {
+            if (isCodexUsageLimitError(error))
+              providerStopReason = error.message
+            errors.push(
+              `${filePath}: native review failed to run: ${error.message}`,
+            )
+          }
       }
 
       if (strictPublish) {
-        if (target?.qualityStatus !== 'passed') {
-          errors.push(
-            `${filePath}: machine translation has not passed native review`,
-          )
-        }
+        errors.push(
+          ...reviewMetadataIssues({
+            config,
+            target,
+            currentTargetSha256: sha256(file.raw),
+            ...reviewContext,
+          }).map((issue) => `${filePath}: ${issue}`),
+        )
         if ((target?.unresolvedResearch ?? []).length > 0) {
           errors.push(`${filePath}: unresolved translation research remains`)
         }
@@ -221,9 +375,36 @@ export async function checkTranslationQuality({
         )
       }
     }
+    return { errors, warnings }
   }
 
-  if (refreshReview) await saveManifest(manifest)
+  const requestedConcurrency = Number.parseInt(
+    process.env.CODEX_TRANSLATION_REVIEW_CONCURRENCY ?? '',
+    10,
+  )
+  const concurrency = refreshReview
+    ? Number.isFinite(requestedConcurrency) && requestedConcurrency > 0
+      ? requestedConcurrency
+      : 2
+    : 8
+  const results = new Array(files.length)
+  let nextIndex = 0
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, files.length) }, async () => {
+      while (nextIndex < files.length) {
+        const index = nextIndex
+        nextIndex += 1
+        results[index] = await checkFile(files[index])
+      }
+    }),
+  )
+  const errors = results.flatMap((result) => result.errors)
+  const warnings = results.flatMap((result) => result.warnings)
+
+  if (refreshReview) {
+    manifest.promptVersion = config.promptVersion
+    await saveManifest(manifest)
+  }
   return { errors, warnings, checked: files.length }
 }
 

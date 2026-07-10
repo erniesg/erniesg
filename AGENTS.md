@@ -5,6 +5,8 @@
 - Translate like a native bilingual editor, not like a direct translation engine.
 - Preserve Ernie's voice: reflective, technical, blunt, personal, and occasionally playful.
 - Translate only human-facing prose and explicitly allowed human-facing attributes.
+- Treat frontmatter tag values and author IDs as stable routing metadata: never translate them in sidecars. Localize their reader-facing display names through `TAG_LABELS` and `author.<id>.name` entries in `src/lib/i18n.ts`.
+- Translate human-facing quotations, blockquotes, captions, attributions, and accessibility text unless the original language is deliberately shown as an artifact for analysis.
 - Never translate code, inline code, code fences, MDX imports/exports, JSX component names, HTML tag names, attribute names, URLs, file paths, `src`, `href`, `id`, `class`, `style`, `data-*`, `aria-describedby`, or fixed HTML vocabulary such as `preload="metadata"`.
 - Never edit protected legacy Chinese folders ending in `-zh`.
 - Never overwrite `translationStatus: edited` or `translationStatus: final`.
@@ -15,7 +17,8 @@
 - Research technical terms, names, publications, idioms, cultural references, and place names when uncertain.
 - Before generating or repairing Chinese, inspect the protected legacy Chinese posts or the derived style corpus for voice, cadence, and terminology.
 - For Korean and Japanese, do not use Chinese-shaped phrasing or English sentence order with localized nouns; require native technical-essay phrasing.
-- Reject direct translation smell. Examples that must be repaired in machine translations include `数据set`, `数据源s`, `meta数据`, `データset`, `データソースs`, and English verbs like `ingest`, `chunk`, `query`, or `validate` used as ordinary zh/ko/ja prose outside code or quotes.
+- Reject direct translation smell. Examples that must be repaired in machine translations include `数据set`, `数据源s`, `meta数据`, `データset`, `データソースs`, ordinary English nouns such as `dataset`, `prompt`, `registry`, or `expert`, and English verbs like `ingest`, `chunk`, `query`, or `validate` used as ordinary zh/ko/ja prose outside code or deliberately preserved artifacts.
+- Escape literal currency dollar signs in MDX prose as `\$` so they are not parsed as inline math.
 - If research is needed and no research-capable tool/provider is configured, stop with a report instead of guessing.
 - If unsure whether a translation is human-written, stop and ask.
 
@@ -25,6 +28,8 @@ After creating `src/content/blog/<slug>/index.mdx`, run:
 
 ```bash
 npm run translate:codex-sync -- --slug <slug> --write
+npm run translate:codex-review -- --slug <slug>
+npm run translate:codex-revise -- --slug <slug> --write
 npm run translate:codex-review -- --slug <slug> --strict-publish
 npm run content:check
 ```
@@ -37,7 +42,7 @@ npm run content:publish
 
 `content:publish` is the only publish command that may auto-generate translations. Plain `npm run build` remains a check/build command and must never generate, repair, or overwrite translation files.
 
-`content:publish`, `translate:codex-sync`, and `translate:codex-review` use local `codex exec` with `CODEX_TRANSLATION_REASONING_EFFORT=high`. Do not replace them with a direct translation API path unless Ernie explicitly asks.
+`content:publish`, `translate:codex-sync`, `translate:codex-review`, and `translate:codex-revise` use local `codex exec` with `CODEX_TRANSLATION_REASONING_EFFORT=high`. Do not replace them with a direct translation API path unless Ernie explicitly asks.
 
 If Ernie edits a machine translation but has not finalized it:
 

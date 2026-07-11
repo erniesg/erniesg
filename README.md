@@ -1,6 +1,6 @@
 # Ernie.SG
 
-Personal site and blog for [ernie.sg](https://ernie.sg), built with Astro, Tailwind, MDX, React islands, and Cloudflare Pages.
+Personal site and blog for [ernie.sg](https://ernie.sg), built with Astro, Tailwind, MDX, React islands, and Cloudflare Workers static assets.
 
 The site is based on `astro-erudite`, but this repo is now the production source for Ernie.SG rather than a generic template checkout.
 
@@ -17,16 +17,16 @@ The site is based on `astro-erudite`, but this repo is now the production source
 
 ## Stack
 
-| Area | Tooling |
-| --- | --- |
-| Framework | Astro |
-| Styling | Tailwind |
-| UI islands | React |
-| Content | MDX content collections |
-| Icons | `astro-icon`, Lucide |
-| Code/math rendering | Shiki, KaTeX |
-| Hosting | Cloudflare Pages |
-| Production domain | `ernie.sg` |
+| Area                | Tooling                          |
+| ------------------- | -------------------------------- |
+| Framework           | Astro                            |
+| Styling             | Tailwind                         |
+| UI islands          | React                            |
+| Content             | MDX content collections          |
+| Icons               | `astro-icon`, Lucide             |
+| Code/math rendering | Shiki, KaTeX                     |
+| Hosting             | Cloudflare Workers static assets |
+| Production domain   | `ernie.sg`                       |
 
 ## Local Development
 
@@ -93,29 +93,53 @@ The language picker supports:
 
 ## Deployment
 
-Production is deployed on Cloudflare Pages project `erniesg`.
+Production is deployed as Cloudflare Worker `erniesg-workers`, serving the Astro `./dist` output as static assets on the `ernie.sg/*` route.
 
-The production domains are:
+Deployment configuration is version controlled in:
 
-- `https://ernie.sg`
-- `https://erniesg.pages.dev`
-
-Normal release flow:
-
-```bash
-npm test -- src/lib/i18n.test.ts
-npm run build
-git status --short
-git add <changed files>
-git commit -m "<message>"
-git push origin main
+```text
+wrangler.jsonc
+wrangler.production.jsonc
+tools/deployment/verify-cloudflare.mjs
 ```
 
-Cloudflare Pages is connected to `main` and deploys production from Git.
+Deploy and validate an isolated `workers.dev` preview before production:
+
+```bash
+npm run worker:deploy:preview
+npm run worker:verify -- \
+  --base https://erniesg-workers-preview.erniesg.workers.dev \
+  --compare https://erniesg.pages.dev \
+  --expect workers
+```
+
+After the repository gates and rollback dry run pass, deploy production:
+
+```bash
+npm run worker:rollback:dry-run
+npm run worker:deploy:production
+npm run worker:verify -- \
+  --base https://ernie.sg \
+  --compare https://erniesg.pages.dev \
+  --expect workers
+```
+
+The previous Cloudflare Pages project `erniesg` is intentionally preserved as a temporary rollback target at `https://erniesg.pages.dev`. Its Git integration and apex `CNAME` remain in place; the Worker route takes precedence for production traffic. Roll back by removing only the production Worker and route:
+
+```bash
+npm run worker:rollback
+npm run worker:verify -- \
+  --base https://ernie.sg \
+  --compare https://erniesg.pages.dev \
+  --expect pages
+```
+
+Do not delete or disable the Pages project during the rollback window. The complete baseline, cutover, validation, and rollback procedure is in [`docs/deployment/cloudflare-workers-migration.md`](docs/deployment/cloudflare-workers-migration.md).
 
 To inspect Cloudflare deployment status from this machine:
 
 ```bash
+npx wrangler deployments status --config wrangler.production.jsonc
 npm_config_cache=/tmp/codex-npm-cache npx wrangler pages project list
 npm_config_cache=/tmp/codex-npm-cache npx wrangler pages deployment list --project-name erniesg
 ```

@@ -1,0 +1,28 @@
+---
+import Layout from '@/layouts/Layout.astro'
+import { papers } from '@/research/papers'
+---
+
+<Layout title="Research" description="Open research notes, working papers, and experiments by Ernie.">
+  <section class="research-index">
+    <header class="research-hero">
+      <p>Research / in public</p>
+      <h1>Ideas should stay<br />alive while they’re read.</h1>
+      <p class="research-deck">Working papers, evidence, experiments, and revisions—published before they become fossils.</p>
+    </header>
+    <div class="research-rule"></div>
+    <ol class="research-list">
+      {papers.map((paper, index) => (
+        <li>
+          <span>{String(index + 1).padStart(2, '0')}</span>
+          <a href={`/research/${paper.id}`}>
+            <small>{paper.status} · updated {paper.updated}</small>
+            <h2>{paper.title}</h2>
+            <p>{paper.abstract}</p>
+          </a>
+          <span aria-hidden="true">↗</span>
+        </li>
+      ))}
+    </ol>
+  </section>
+</Layout>

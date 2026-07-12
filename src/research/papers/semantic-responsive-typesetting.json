@@ -1,0 +1,78 @@
+{
+  "id": "semantic-responsive-typesetting",
+  "version": "0.1.0",
+  "status": "working",
+  "title": "Semantic Responsive Typesetting",
+  "subtitle": "The page is a rendition, not the document.",
+  "authors": ["Chen Enjiao (Ernie)"],
+  "updated": "2026-07-13",
+  "abstract": "We investigate whether one semantic scholarly document can produce coherent renditions for print, e-ink, and continuous reading while preserving identity, relationships, reading position, and annotations.",
+  "nodes": [
+    {
+      "id": "sec-proposition",
+      "type": "heading",
+      "level": 1,
+      "text": "1. Proposition",
+      "source": "PRD §1"
+    },
+    {
+      "id": "p-proposition-1",
+      "type": "paragraph",
+      "text": "Documents are usually flattened into pages too early. Once meaning becomes coordinates, every new screen or sheet becomes a repair job. Semantic Responsive Typesetting reverses that relationship: the document stays persistent; pages, columns, and line breaks are computed for a target.",
+      "source": "PRD §2"
+    },
+    {
+      "id": "q-core",
+      "type": "quote",
+      "text": "One semantic document. Multiple computed renditions. Persistent identity, relationships, reading position, and annotations.",
+      "source": "PRD core proposition"
+    },
+    {
+      "id": "sec-model",
+      "type": "heading",
+      "level": 1,
+      "text": "2. Composition model",
+      "source": "PRD §11"
+    },
+    {
+      "id": "p-model-1",
+      "type": "paragraph",
+      "text": "A canonical graph is combined with a target profile, a deterministic composition policy, and optional target-specific overrides. The renderer selects component variants, measures flow, records violations, and emits both the rendition and an inspectable manifest.",
+      "source": "PRD §3, §11"
+    },
+    {
+      "id": "fig-pipeline",
+      "type": "figure",
+      "title": "Canonical composition pipeline",
+      "caption": "Stable semantic content flows through target constraints; geometry is output, never source truth.",
+      "source": "PRD §3",
+      "relationships": { "caption": "cap-pipeline" }
+    },
+    {
+      "id": "sec-gap",
+      "type": "heading",
+      "level": 1,
+      "text": "3. Apparent research gap",
+      "source": "Literature review §1"
+    },
+    {
+      "id": "p-gap-1",
+      "type": "paragraph",
+      "text": "Adaptive layout, PDF reflow, scholarly reconstruction, and robust annotation anchoring each have substantial prior art. The credible contribution is their integration into a fidelity-constrained, finite-height system and its evaluation across materially different reading surfaces.",
+      "source": "Literature review §1"
+    },
+    {
+      "id": "sec-method",
+      "type": "heading",
+      "level": 1,
+      "text": "4. First experiment",
+      "source": "PRD §14"
+    },
+    {
+      "id": "p-method-1",
+      "type": "paragraph",
+      "text": "The first experiment holds content constant and varies representation geometry: A4 print, a large 4:3 e-ink display, a small tall e-ink display, and continuous mobile. We test structural preservation, layout quality, anchor continuity, and composition time.",
+      "source": "PRD §7, §14"
+    }
+  ]
+}

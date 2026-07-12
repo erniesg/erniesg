@@ -1,4 +1,5 @@
 import { papers } from '@/research/papers'
+import { canonicalContentHash } from '@/research/schema'
 
 export function getStaticPaths() {
   return papers.map((paper) => ({ params: { id: paper.id }, props: { paper } }))
@@ -8,6 +9,7 @@ export function GET({ props }: { props: { paper: (typeof papers)[number] } }) {
   const manifest = {
     document: props.paper.id,
     version: props.paper.version,
+    contentHash: canonicalContentHash(props.paper),
     generatedAt: props.paper.updated,
     profiles: [
       { id: 'mobile', mode: 'continuous', viewportCssPx: { width: 390 } },

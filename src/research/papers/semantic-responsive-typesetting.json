@@ -44,9 +44,14 @@
       "id": "fig-pipeline",
       "type": "figure",
       "title": "Canonical composition pipeline",
-      "caption": "Stable semantic content flows through target constraints; geometry is output, never source truth.",
       "source": "PRD §3",
       "relationships": { "caption": "cap-pipeline" }
+    },
+    {
+      "id": "cap-pipeline",
+      "type": "caption",
+      "text": "Stable semantic content flows through target constraints; geometry is output, never source truth.",
+      "source": "PRD §3"
     },
     {
       "id": "sec-gap",

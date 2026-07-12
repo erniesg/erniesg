@@ -10,20 +10,28 @@ const profiles = {
 
 type Profile = keyof typeof profiles
 
-function PaperNode({ node }: { node: ResearchNode }) {
+type CaptionNode = Extract<ResearchNode, { type: 'caption' }>
+
+function PaperNode({ node, captions }: { node: ResearchNode; captions: Map<string, CaptionNode> }) {
   if (node.type === 'heading') {
     return <h2 data-node-id={node.id}>{node.text}</h2>
   }
   if (node.type === 'quote') {
     return <blockquote data-node-id={node.id}>{node.text}</blockquote>
   }
+  if (node.type === 'caption') {
+    return null
+  }
   if (node.type === 'figure') {
+    const caption = captions.get(node.relationships.caption)
     return (
       <figure data-node-id={node.id}>
         <div className="srt-pipeline" aria-label="Semantic composition pipeline">
           <span>semantic graph</span><i>+</i><span>target policy</span><i>→</i><span>rendition</span>
         </div>
-        <figcaption id={node.relationships.caption}><b>{node.title}.</b> {node.caption}</figcaption>
+        <figcaption id={node.relationships.caption} data-node-id={node.relationships.caption}>
+          <b>{node.title}.</b> {caption?.text}
+        </figcaption>
       </figure>
     )
   }
@@ -60,6 +68,11 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
   }, [profile])
 
   const selectedNode = paper.nodes.find((node) => node.id === selected) ?? paper.nodes[0]
+  const captions = new Map(
+    paper.nodes
+      .filter((node): node is CaptionNode => node.type === 'caption')
+      .map((node) => [node.id, node]),
+  )
 
   return (
     <section className="srt-studio" aria-label="Composition studio">
@@ -93,7 +106,7 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
               <p className="srt-authors">{paper.authors.join(', ')} · updated {paper.updated}</p>
               <p className="srt-abstract"><b>Abstract.</b> {paper.abstract}</p>
             </header>
-            {paper.nodes.map((node) => <PaperNode key={node.id} node={node} />)}
+            {paper.nodes.map((node) => <PaperNode key={node.id} node={node} captions={captions} />)}
           </article>
         </div>
         <aside className="srt-inspector">

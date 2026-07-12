@@ -4,7 +4,7 @@
   "sourceSha256": "3b128b1294b2b2acafab15c209171d4e5586635029e00ea0d7c89e1d3a8ec631",
   "targetSha256": "93ebfd21dd197e274ae8f28d7ef3d4f666f3762d530946d676c7883593d2c9d6",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -13,41 +13,57 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.94,
+  "score": 0.93,
   "reviews": [
     {
       "passed": true,
-      "score": 0.94,
+      "score": 0.93,
       "issues": [
         {
           "severity": "minor",
-          "location": "target paragraph linking A.I. cold call agents",
-          "problem": "“冷呼叫智能体”略显机械，像从 English technical phrase 直译过来。中文读者更自然的说法可能是“冷拨电话智能体”或“电话推销 A.I. 智能体”。",
-          "suggestion": "Consider revising to a more idiomatic Chinese technical phrase if polishing manually."
+          "location": "body paragraph starting “旧习难改，所以我预期今天许多巨头…”",
+          "problem": "“A.I. 冷呼叫智能体” reads like a literal technical calque in Chinese. The intended meaning is cold-call AI agents, closer to “A.I. 陌生外呼智能体” or “A.I. 电话销售智能体”.",
+          "suggestion": "Consider changing the link text to “A.I. 陌生外呼智能体” for a more natural Chinese technical/business register."
         },
         {
           "severity": "minor",
-          "location": "feature bullet “Up-to-date code libraries with access to the internet”",
-          "problem": "“联网获取最新代码库” can be read as repositories rather than libraries/packages. Meaning is still understandable, but technical precision could be tighter.",
-          "suggestion": "Consider “联网获取最新代码库/依赖库信息” or “联网获取最新库文档” depending on intended meaning."
+          "location": "bullet list item “联网获取最新代码库”",
+          "problem": "“code libraries” is translated as “代码库”, which can be read as repositories rather than libraries/packages/docs. The meaning is understandable but slightly imprecise.",
+          "suggestion": "Use “联网获取最新代码库/库文档” or “联网获取最新开发库信息” if editing later."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation preserves Ernie’s informal, blunt, playful technical-personal voice and reads as natural Mandarin rather than sentence-by-sentence English-shaped Chinese. Human-facing caption, iframe alt text, link text, and publication note are translated; product names, A.I. spelling, code-adjacent terms, and MDX structure are preserved. Frontmatter serialization changes and translationStatus are not treated as quality issues."
+      "notes": "The translation reads as fluent Mandarin technical essay prose rather than sentence-by-sentence English transfer. It preserves Ernie’s blunt, playful voice, keeps product/code terms appropriately, translates reader-facing alt text and captions, and the MDX/frontmatter are not broken.",
+      "rawPassed": true,
+      "rawScore": 0.93
     },
     {
       "passed": true,
-      "score": 0.94,
+      "score": 0.93,
       "issues": [
         {
           "severity": "minor",
-          "location": "feature bullet: “Up-to-date code libraries with access to the internet”",
-          "problem": "“联网获取最新代码库”略容易和上一条“代码库索引”混在一起；这里的 libraries 更像库/框架资料或依赖文档，不一定是 repository/codebase。",
-          "suggestion": "可改为“联网访问最新的库和框架资料”或“联网获取最新的代码库/依赖资料”。"
+          "location": "title",
+          "problem": "“打造 A.I. 原生产品和……”保留了英文标题的截断感，但中文里“和……”显得比英文更像机器漏译，标题力度偏弱。若源标题确实只有截断省略号，可接受。",
+          "suggestion": "可考虑更自然地保留悬念，如“给人用的 A.I.：打造 A.I. 原生产品，以及……”"
+        },
+        {
+          "severity": "minor",
+          "location": "bullet: Up-to-date code libraries with access to the internet",
+          "problem": "“联网获取最新代码库”容易被读成 repositories/codebase，而 source 的 code libraries 更接近依赖库/程序库。",
+          "suggestion": "改成“联网获取最新程序库信息”或“可联网查询最新库文档”。"
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph starting “旧习难改”",
+          "problem": "“A.I. 冷呼叫智能体”是偏直译的技术营销腔，中文读者更自然理解为陌生电话/外呼。",
+          "suggestion": "改成“A.I. 陌生外呼智能体”或“A.I. 电话外呼智能体”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "整体是自然的中文技术随笔语气，保留了作者口语化、吐槽式节奏和 A.I./Cursor/ReAct 等术语，没有明显按英文句序硬译；MDX、链接、iframe 属性和 frontmatter 语义均未见破坏。"
+      "notes": "整体不是逐句硬译：多处把英文口语、玩笑和长句改写成自然中文节奏，如“不怎么靠谱”“扯头发和砸键盘”“野到不行”，同时保留了 Ernie 的技术口吻和 A.I. code-switching。MDX 与人类可见文本基本完整，只有少量术语和标题可再润色。",
+      "rawPassed": true,
+      "rawScore": 0.93
     }
   ]
 }

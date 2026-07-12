@@ -4,7 +4,7 @@
   "sourceSha256": "18b7ce0d8541ff2c16ac7d2cc824ddd623dcc96fd8d5f30b12021d00f72e0192",
   "targetSha256": "fd1b9cace8c3ec48194c0b809521ef87d7b4eae7bd9a9275a2b7d804afc2f298",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -21,19 +21,21 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "Target paragraph under “LLM 编码了世界知识” / Spotify iframe caption",
-          "problem": "“工作场景才是 A.I. 爆发式采用的用例”略显英语式，尤其“用例”在面向读者的标题里偏硬。",
-          "suggestion": "可改为“工作场景才是 A.I. 最先爆发的应用场景”。"
+          "location": "标题/frontmatter title",
+          "problem": "“低数据环境下的深度学习 I”准确，但“data-poor regimes”的技术语气略被弱化；“低数据状态/数据稀缺场景”会更贴近正文里关于 sample sparsity 的论述。",
+          "suggestion": "可考虑改为“开发者日记：数据稀缺场景下的深度学习 I”，但当前不影响发布。"
         },
         {
           "severity": "minor",
-          "location": "Target paragraph under “智能作为指数级力量”",
-          "problem": "“欠参数化”技术含义基本准确，但中文读者可能更熟悉“参数不足”或“参数量仍然不够”。",
-          "suggestion": "可保留术语，也可改成“参数量相对于任务仍然不够”以降低阅读阻力。"
+          "location": "段落：When I fired GPT-4 for Claude 3 Opus",
+          "problem": "“因为我懒得把故事推进拆成那种语言学工程”略显生硬，虽然保留了原文玩笑式的口吻，但“linguistics that way”的胡闹动词感还可以更自然。",
+          "suggestion": "可改为“因为我懒得按那套语言学方式去工程化故事推进”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "译文整体自然，有 Ernie 原文的技术随笔口吻和一点粗粝幽默，不是逐句硬译；代码词、产品名、A.I. 拼写、MDX 结构和 reader-facing alt/caption 处理都基本合格。"
+      "notes": "译文整体自然，有 Ernie 技术随笔里常见的口语、吐槽和代码切换节奏；它没有机械照搬英文句序，许多长句都重新拆分或顺成了中文表达。MDX、iframe、caption、blockquote-like attribution 与 frontmatter 均未发现读者可见的破损问题。",
+      "rawPassed": true,
+      "rawScore": 0.94
     },
     {
       "passed": true,
@@ -41,25 +43,21 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "title",
-          "problem": "“低数据环境”准确但略偏直译；全文正文也使用这一术语，整体可接受。若按更自然的中文技术表达，“数据稀缺环境/数据贫乏场景”会更顺。",
-          "suggestion": "可考虑改为“数据稀缺环境下的深度学习 I”，但不是发布阻断项。"
+          "location": "paragraph before “Strategies for Effective Training...”",
+          "problem": "“说话人分离” is understandable but slightly imprecise for “speaker diarisation”; it can read like audio source separation rather than identifying who spoke when.",
+          "suggestion": "Consider “说话人分段/标注” or “说话人日志化” depending on house terminology."
         },
         {
           "severity": "minor",
-          "location": "“更小的学习率调度，或者更多训练轮数”",
-          "problem": "source 的 “Small learning schedules” 本身不够标准，译文解释为“更小的学习率调度”可以理解，但技术中文里略别扭。",
-          "suggestion": "可润色为“更保守的学习率计划，或者更多训练轮数”。"
-        },
-        {
-          "severity": "minor",
-          "location": "“Kahneman-Tversky Optimization”",
-          "problem": "同一句里 “Direct Preference Optimisation” 翻译并保留英文括注，但 “Kahneman-Tversky Optimization” 只保留英文，术语处理略不一致。",
-          "suggestion": "可译作“卡尼曼-特沃斯基优化（Kahneman-Tversky Optimization）”，如果这是作者玩笑式自造术语，也可以保留现状。"
+          "location": "section “Intelligence as Exponential Power”",
+          "problem": "“Kahneman-Tversky Optimization” changes the source’s British spelling “Optimisation” inside a coined English technical phrase.",
+          "suggestion": "Preserve as “Kahneman-Tversky Optimisation” unless the site standardizes all such English terms to US spelling."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "译文总体自然，保留了作者技术个人随笔的口吻、玩笑和代码切换，没有明显句句硬贴英文结构的问题。MDX 与 iframe 属性完整，读者可见的标题、说明、caption、alt 与发表说明均已翻译；frontmatter 的日期序列化和 translationStatus 不构成问题。"
+      "notes": "The translation passes: it is natural Mandarin with Ernie’s informal technical-personal voice intact, preserves deliberate code-switching and product/model names, translates captions/alt text, and does not read like a sentence-by-sentence calque. MDX/frontmatter appear structurally sound; the ISO date serialization and translationStatus metadata are not quality issues.",
+      "rawPassed": true,
+      "rawScore": 0.94
     }
   ]
 }

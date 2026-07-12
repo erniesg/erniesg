@@ -65,20 +65,25 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
 
 <script
   is:inline
-  define:vars={{
-    staticTranslations,
-    localeHtmlLang,
-    tagLabels,
-    supportedLocales,
-    siteLocaleStorageKey,
-    legacyBlogLocaleStorageKey,
-    siteLocaleChangeEvent,
-  }}
+  data-static-translations={staticTranslations}
+  data-locale-html-lang={localeHtmlLang}
+  data-tag-labels={tagLabels}
+  data-supported-locales={supportedLocales}
+  data-site-locale-storage-key={siteLocaleStorageKey}
+  data-legacy-blog-locale-storage-key={legacyBlogLocaleStorageKey}
+  data-site-locale-change-event={siteLocaleChangeEvent}
 >
-  const staticTranslationsData = JSON.parse(staticTranslations)
-  const localeHtmlLangData = JSON.parse(localeHtmlLang)
-  const tagLabelsData = JSON.parse(tagLabels)
-  const supportedLocaleData = JSON.parse(supportedLocales)
+  const scriptData = document.currentScript?.dataset ?? {}
+  const staticTranslationsData = JSON.parse(
+    scriptData.staticTranslations ?? '{}',
+  )
+  const localeHtmlLangData = JSON.parse(scriptData.localeHtmlLang ?? '{}')
+  const tagLabelsData = JSON.parse(scriptData.tagLabels ?? '{}')
+  const supportedLocaleData = JSON.parse(scriptData.supportedLocales ?? '[]')
+  const siteLocaleStorageKey = scriptData.siteLocaleStorageKey ?? ''
+  const legacyBlogLocaleStorageKey =
+    scriptData.legacyBlogLocaleStorageKey ?? ''
+  const siteLocaleChangeEvent = scriptData.siteLocaleChangeEvent ?? ''
   const supportedLocaleSet = new Set(supportedLocaleData)
 
   function getBlogRouteLocale() {

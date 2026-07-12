@@ -4,7 +4,7 @@
   "sourceSha256": "c9bdd6c194b01e7af71aac0baf40ea09e53c21fb879e473344a526b5f1f994bd",
   "targetSha256": "7bd1d231941cb410f801517a26b4a8c42f36c7c635c7bafefb40b18b8bd8944a",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -13,7 +13,7 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.95,
+  "score": 0.94,
   "reviews": [
     {
       "passed": true,
@@ -21,39 +21,43 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "Target paragraph under “把每件该死的事都自动化掉？”",
-          "problem": "“展厅” slightly flattens the capitalized “the Gallery”; if the source refers to a specific institution or workplace, “美术馆” or the institution’s Chinese name may be more precise.",
-          "suggestion": "Consider revising to “美术馆” or the established Chinese name if known."
+          "location": "target frontmatter/title and body terminology",
+          "problem": "“Gallery”译为“展厅”略窄，原文大写的 Gallery 很可能指作者所在的美术馆/机构语境；“来到展厅”会弱化机构场景。",
+          "suggestion": "可考虑译为“美术馆”或按上下文保留“Gallery”。"
         },
         {
           "severity": "minor",
-          "location": "Target paragraph mentioning APSN",
-          "problem": "“特殊需求人士协会” is understandable, but may not match the most idiomatic or official rendering of “Association for Persons with Special Needs” in Singapore Chinese usage.",
-          "suggestion": "Consider “特殊需要人士协会（APSN）” if aligning with local terminology is desired."
+          "location": "# 衡量人的幸福",
+          "problem": "“唯独没有优化那些让人生值得活的东西”可读，但引文中的 worthwhile 更自然的中文是“让人生值得过/值得一过的东西”，当前措辞稍硬。",
+          "suggestion": "可改为“唯独没有优化那些让人生值得一过的东西”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation reads as natural Chinese essay prose rather than sentence-by-sentence calque: it keeps Ernie’s bluntness and Singlish-inflected humor (“不就贴个贴纸吗”, “废话”), preserves code/product terms appropriately, translates the human-facing Keynes quotation and publication note, and keeps the MDX structure intact. Minor terminology precision issues do not affect publishability."
+      "notes": "译文整体是自然的中文技术随笔口吻，保留了作者的玩笑、Singlish 式吐槽和代码/经济学术语，不是按英文句序逐句硬搬；人类可读的引文、出处、图片说明位置和 MDX 链接也都处理完整。translationStatus: machine 未作为问题处理。",
+      "rawPassed": true,
+      "rawScore": 0.95
     },
     {
       "passed": true,
-      "score": 0.95,
+      "score": 0.94,
       "issues": [
         {
           "severity": "minor",
-          "location": "target paragraph after first image",
-          "problem": "“展厅” slightly weakens the source’s capitalized “the Gallery,” which likely refers to a specific institutional workplace rather than a generic exhibition hall.",
-          "suggestion": "Consider “美术馆” or, if context confirms it, the specific institution name. This is not a publish blocker."
+          "location": "# 做梦的艺术，凯恩斯引文",
+          "problem": "“自被创造以来”略显欧化，中文读者会感觉比原文更生硬。",
+          "suggestion": "可改为“自人类诞生以来”或“自被创造出来以来”。"
         },
         {
           "severity": "minor",
-          "location": "first body paragraph",
-          "problem": "“局部山头” is understandable and playful, but slightly colloquial for the gradient descent metaphor; it may momentarily read like an idiom rather than the optimization image.",
-          "suggestion": "“局部山峰” would be a cleaner technical-metaphorical rendering, though the current phrasing is acceptable."
+          "location": "# 做梦的艺术，末句前一段",
+          "problem": "“追问这些物质进步究竟是为谁、又从何处而来”基本可读，但“for whom and for whence”在这里更像追问进步服务谁、从何处/以何代价而来；现译的“从何处而来”稍微抽象。",
+          "suggestion": "可考虑“追问这些物质进步究竟为了谁、又从何而来”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation passes. It reads as natural Mandarin essay prose rather than sentence-by-sentence English-shaped Chinese, preserves Ernie’s blunt and playful register, keeps A.I./ML/DL/product-style terms intact, translates reader-facing quotation and attribution, and the MDX/frontmatter structure is not broken."
+      "notes": "译文整体是自然的中文技术随笔口吻，保留了作者的吐槽、代码切换和新加坡语境，没有按英文句序硬搬；术语、链接、图片和 MDX 结构也保持正常。仅有少量可选润色点，不影响发布。",
+      "rawPassed": true,
+      "rawScore": 0.94
     }
   ]
 }

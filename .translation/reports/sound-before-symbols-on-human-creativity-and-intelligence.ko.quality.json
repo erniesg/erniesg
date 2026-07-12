@@ -2,7 +2,7 @@
   "sourcePath": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/index.mdx",
   "targetPath": "src/content/blog/sound-before-symbols-on-human-creativity-and-intelligence/ko.mdx",
   "sourceSha256": "1fc4481430e2f29a3a89980d7aff3e048ecd648e29d1e0fcd95ed181f4be2860",
-  "targetSha256": "a4277286e972e6e7a161d41d90309dbf865fc61ca67de07d29c1cd1f606adf1a",
+  "targetSha256": "335a6d872164ec3a309675e097ffb9304ccfe7634a7473ae0284a5c0f321d61c",
   "reviewPromptVersion": "2026-07-10.3",
   "reviewStyleGuideSha256": "fcffcccba7aebaedd11a4d23bb0ee853267615cf1f770f005183ee5cb4c9062a",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
@@ -13,33 +13,35 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.92,
+  "score": 0.93,
   "reviews": [
     {
       "passed": true,
-      "score": 0.92,
+      "score": 0.93,
       "issues": [
         {
           "severity": "minor",
-          "location": "Stable Diffusion paragraph",
-          "problem": "“모델이 아니면 우스꽝스러운 체형을 계속 내놓아서” is grammatically awkward and reads like a mistransfer of “otherwise.”",
-          "suggestion": "Use a natural phrasing such as “그렇게 하지 않으면 모델이 우스꽝스러운 체형을 계속 내놓아서…”"
+          "location": "본문 첫 섹션, Ezra Klein 인용 직전 문단",
+          "problem": "“내가 계속 머릿속으로 우물거리던”은 원문의 장난스러운 표현을 살리려는 의도는 보이지만 한국어 독자에게는 다소 어색하게 읽힙니다.",
+          "suggestion": "“내가 계속 곱씹어 오던” 정도가 자연스럽습니다."
         },
         {
           "severity": "minor",
-          "location": "Vision Transformer / Stable Diffusion paragraph",
-          "problem": "“스타일이 제멋대로 널뛰는 노래와 이미지” slightly shifts the meaning from creating outputs in widely varying styles to styles behaving erratically.",
-          "suggestion": "Prefer “아주 다양한 스타일의 노래와 이미지” or similar."
+          "location": "본문, “What does it mean…” 문단",
+          "problem": "“이 생각에 몸을 기울이며”는 lean in의 직역 느낌이 약간 남습니다.",
+          "suggestion": "“이 생각을 더 밀고 나가며” 또는 “이 생각을 받아들이며”가 더 자연스럽습니다."
         },
         {
           "severity": "minor",
-          "location": "Perceptron paragraph",
-          "problem": "“ResNet-512 같은 모델이 512개 층을 … PC 위에서 꾸역꾸역 굴리고 있었다” has a subject-object mismatch; the model does not “run 512 layers” in Korean idiom.",
-          "suggestion": "Use “ResNet-512 같은 512층짜리 모델도 … PC에서 꾸역꾸역 돌아갔다” for native flow."
+          "location": "마지막 문단",
+          "problem": "“여러 번의 겨울에 관한 이야기”는 A.I. winter의 은유를 살리지만 약간 번역투입니다.",
+          "suggestion": "“몇 차례의 겨울을 지나온 이야기”처럼 한국어 문장 흐름에 맞추면 더 매끄럽습니다."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The Korean reads mostly like a native technical essay rather than a direct sentence-by-sentence translation: it reshapes long English clauses into Korean rhythm, keeps Ernie’s blunt voice, translates reader-facing quotations/captions/alt text, and preserves product/code terms appropriately. The noted issues are polish-level awkwardness, not publish-blocking."
+      "notes": "전반적으로 한국어 기술 에세이 문체로 재구성되어 있고, 긴 영어 문장을 한국어 호흡에 맞게 나누어 읽히게 했습니다. 인용문, 캡션, alt 텍스트도 번역되어 있으며, A.I., Stable Diffusion, Vision Transformer, MDX성 기술명과 링크/경로는 적절히 보존되었습니다. 일부 표현에 직역 잔여감이 있지만 의미 drift나 게시를 막을 수준의 문제는 아닙니다.",
+      "rawPassed": true,
+      "rawScore": 0.93
     },
     {
       "passed": true,
@@ -47,25 +49,27 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "heading: All That Is Data Melts into Air",
-          "problem": "“데이터인 모든 것은 공기 속으로 녹아든다” preserves the English allusive structure quite closely and reads slightly calque-like in Korean.",
-          "suggestion": "Consider a more natural allusive rendering such as “데이터인 모든 것은 허공으로 사라진다” if preserving the Marx/Berman echo still matters."
+          "location": "Section heading `# 데이터인 모든 것은 공기 속으로 녹아든다`",
+          "problem": "The heading preserves the English structure of the source wordplay a little too closely, so it sounds slightly stiff in Korean.",
+          "suggestion": "Consider a more Korean literary phrasing while preserving the Marx/Berman allusion, e.g. `데이터인 것은 모두 허공으로 녹아든다`."
         },
         {
           "severity": "minor",
-          "location": "paragraph before Ezra Klein blockquote",
-          "problem": "“머릿속으로 우물거리던” is understandable but not a natural collocation for “munch my mind on”; it may distract readers.",
-          "suggestion": "“계속 곱씹어 오던” or “머릿속에서 계속 굴리던” would preserve the voice more naturally."
+          "location": "Paragraph before Ezra Klein blockquote",
+          "problem": "`머릿속으로 우물거리던` is understandable but unnatural for the intended sense of wrestling with or chewing over a question.",
+          "suggestion": "Use `계속 곱씹어 온` or `머릿속에서 계속 씨름해 온`."
         },
         {
           "severity": "minor",
-          "location": "Why A.I. is Different section",
-          "problem": "“육신을 입고 태어나는 순간” is a bit opaque for “Nativity according to the flesh moment” and may under-signal the theological joke/allusion.",
-          "suggestion": "Use a slightly more explicit Korean phrase if desired, e.g. “육신을 입고 탄생했다는 식의 순간”."
+          "location": "Final paragraph before `# Dataset Biases and Prompting Effectively`",
+          "problem": "`신비의 상실과 경이감은 한 동전의 양면` slightly blurs the source idea that loss of mystery and wonder coexist in the same revaluation, not simply as two fixed opposites.",
+          "suggestion": "A smoother option: `신비가 사라지는 느낌과 경이감은 한 동전의 양면처럼 느껴진다`."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation passes: the prose is not a sentence-by-sentence direct rendering, and it generally reads like a Korean technical essay while preserving Ernie’s bluntness, anxiety, humor, and code-switching. MDX structure is intact, reader-facing captions/alt text/quotes are translated, and protected product/code terms are handled appropriately."
+      "notes": "The Korean reads like a native technical essay rather than a sentence-by-sentence transfer: clauses are reorganized naturally, human-facing captions/alt text/blockquotes are translated, MDX is intact, and product names/code-like terms are preserved appropriately. Remaining issues are polish-level, not publish-blocking.",
+      "rawPassed": true,
+      "rawScore": 0.93
     }
   ]
 }

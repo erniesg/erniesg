@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   normalizeReviewResult,
+  reviewAdvisoryCount,
   reviewMetadataIssues,
 } from './check-quality.mjs'
 import { buildReviewPrompt, buildTranslationPrompt } from './prompts.mjs'
@@ -200,5 +201,18 @@ describe('review result normalization', () => {
     expect(normalized.passed).toBe(false)
     expect(normalized.issues).toHaveLength(1)
     expect(normalized.ignoredIssues).toBeUndefined()
+  })
+})
+
+describe('review advisory reporting', () => {
+  it('counts stored reviewer issues without treating them as blockers', () => {
+    expect(
+      reviewAdvisoryCount({
+        reviews: [
+          { issues: [{ severity: 'minor' }, { severity: 'minor' }] },
+          { issues: [{ severity: 'minor' }] },
+        ],
+      }),
+    ).toBe(3)
   })
 })

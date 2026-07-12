@@ -44,6 +44,38 @@ describe('translation audit', () => {
     ).toBe(true)
   })
 
+  it('fails untranslated ordinary English nouns and phrases outside code', () => {
+    const zh = auditMdxText('这里先做 Prompt “engineering”。', {
+      path: 'src/content/blog/x/zh.mdx',
+      locale: 'zh',
+    })
+    const ko = auditMdxText(
+      'spare time에는 negative prompt를 계속 다듬었다.',
+      {
+        path: 'src/content/blog/x/ko.mdx',
+        locale: 'ko',
+      },
+    )
+
+    expect(
+      zh.errors.some((error) => error.includes('direct translation')),
+    ).toBe(true)
+    expect(
+      ko.errors.some((error) => error.includes('direct translation')),
+    ).toBe(true)
+  })
+
+  it('rejects bare web domains used as Markdown destinations', () => {
+    const result = auditMdxText('参考 [you.com](you.com)。', {
+      path: 'src/content/blog/x/zh.mdx',
+      locale: 'zh',
+    })
+
+    expect(
+      result.errors.some((error) => error.includes('bare web domain')),
+    ).toBe(true)
+  })
+
   it('allows the same technical words inside code fences', () => {
     const mdx = '```py\nfor chunk in chunks:\n    ingest(chunk)\n```'
     const result = auditMdxText(mdx, {

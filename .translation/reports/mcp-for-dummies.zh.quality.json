@@ -4,7 +4,7 @@
   "sourceSha256": "065aaa265fdf4244f7e7ce3915b0125dbc393182d7ae3e3e540699d0e98bdd96",
   "targetSha256": "4647223920df974e9abda0715e5d7e5116ca3d4e921cbc1ca8c07421af6b0fc2",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -21,25 +21,27 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "“appointment reminders over patient phone-calls” paragraph",
-          "problem": "“病人电话预约提醒”略显歧义，容易读成“电话预约”的提醒，而不是通过患者电话场景做预约提醒。",
-          "suggestion": "可改为“通过患者电话做预约提醒”或“患者预约电话提醒”，取决于原意。"
+          "location": "intro paragraph",
+          "problem": "“终端用户”偏产品文档腔，和原文面向普通使用者的轻松语气略有距离。",
+          "suggestion": "可改为“普通用户”或“作为用户怎么用 MCP”。"
         },
         {
           "severity": "minor",
-          "location": "Intro paragraph",
-          "problem": "“终端用户”偏产品/硬件语境，作为 end users 略硬。",
-          "suggestion": "可改为“最终用户”或“普通用户”。"
+          "location": "The Problem section",
+          "problem": "“病人电话预约提醒”有轻微歧义，容易读成“电话预约”的提醒，而不是通过电话/面向病人的预约提醒。",
+          "suggestion": "可改为“给病人打电话提醒预约”或“通过电话给病人做预约提醒”。"
         },
         {
           "severity": "minor",
-          "location": "“How It Works” section",
-          "problem": "“想更细看内部机制”口语可以接受，但“看这里的架构规范”稍微不顺。",
-          "suggestion": "可改为“想更细看内部机制，可以参考这里的架构规范”。"
+          "location": "The Magic example bullets",
+          "problem": "列表里用英文短横线连接中文句子，视觉上略显 MD 英文残留。",
+          "suggestion": "可用中文破折号或分号统一为“每个渠道一个：邮件、短信、应用内消息”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "整体译文自然、读者可读，保留了作者的技术口语、吐槽和 code-switching，没有明显逐句直译腔。MDX/frontmatter 结构未见破损；translationStatus: machine 是预期元数据。"
+      "notes": "译文整体自然，保留了 Ernie 原文里轻快、直白、带一点吐槽的技术个人口吻；句子不是逐句贴英文结构，像“祝你享受满地重构的快乐”“最快试水的方法”等处理有中文写作的节奏。MDX 结构、链接、代码词和产品名保留得当，未发现影响发布的 reader-facing 问题。",
+      "rawPassed": true,
+      "rawScore": 0.94
     },
     {
       "passed": true,
@@ -47,19 +49,27 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "“病人电话预约提醒”",
-          "problem": "“appointment reminders over patient phone-calls”被译成“病人电话预约提醒”，略像“电话预约”的提醒，而不是“通过电话提醒病人预约”。",
-          "suggestion": "可改为“通过电话给病人发送预约提醒”或“电话通知病人预约事项”。"
+          "location": "src/content/blog/mcp-for-dummies/zh.mdx: Problem section",
+          "problem": "“病人电话预约提醒”容易被读成“电话预约”的提醒，而 source 是 appointment reminders delivered over patient phone-calls / patient phone calls as a channel.",
+          "suggestion": "可改为“通过电话给病人发送预约提醒”或“病人预约电话提醒”，避免误读。"
         },
         {
           "severity": "minor",
-          "location": "“测试 waters / 试水”对应段落",
-          "problem": "“最快试水的方法，就是自己把一个 Host 接到工具上”基本通顺，但“把 Host 接到工具上”稍有机械感。",
-          "suggestion": "可改为“最快的试水方式，就是亲手把一个 Host 连上几个工具”。"
+          "location": "src/content/blog/mcp-for-dummies/zh.mdx: “MCP ✨ 是用线性方式解决集成复杂度这个二次问题”",
+          "problem": "这句略有英文论文腔，“二次问题”在中文里稍硬，但含义没有漂移。",
+          "suggestion": "可润色为“MCP ✨ 是用线性的办法，解决集成复杂度呈平方级增长的问题。”"
+        },
+        {
+          "severity": "minor",
+          "location": "src/content/blog/mcp-for-dummies/zh.mdx: “让智能体可以在需要时自主推理，并对多个 API 进行组合”",
+          "problem": "“对多个 API 进行组合”稍有 calque 感，但不影响理解。",
+          "suggestion": "可改为“按需要自己推理、把 API 串起来组合使用”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "译文整体自然，保留了 Ernie 偏口语、直接、带一点玩笑的技术写作语气；多处把英文结构重排成中文表达，如“祝你享受满地重构的快乐”“写一次，到处用”，不是逐句硬译。MDX 和链接结构未见破损，术语保留也合理。"
+      "notes": "整体可发布。译文保留了产品名、代码项和技术术语，MDX/frontmatter 结构正常；中文不是逐句硬译，能把原文的轻松、吐槽式技术解释转成自然中文，例如“祝你享受满地重构的快乐”“最快试水的方法”等处理贴近 house style。",
+      "rawPassed": true,
+      "rawScore": 0.93
     }
   ]
 }

@@ -4,7 +4,7 @@
   "sourceSha256": "d815a86612fc0ca0bb97d2c0b2fc7bc05e5bc936941675ef1e564a32125d6e88",
   "targetSha256": "bfc64a704bd59e2cee865c0ae18617afa0d08982b31e6c8c8fe60030d10a44e5",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -13,47 +13,63 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.93,
+  "score": 0.92,
   "reviews": [
     {
       "passed": true,
-      "score": 0.93,
+      "score": 0.92,
       "issues": [
         {
           "severity": "minor",
-          "location": "Paragraph under “THIS TIME IT’S DIFFERENT”",
-          "problem": "“伟大的拉平器” and “哲学回音板” are understandable but slightly English-shaped calques in otherwise natural prose.",
-          "suggestion": "Consider “强大的均衡器/平权工具” and “哲学上的陪练/回声板” if polishing manually."
+          "location": "title",
+          "problem": "“比拨号上网前还稀缺”能接住正文里的梗，但“scarcer than…”在英文标题里故意悬着，中文标题把对象补得比较满，悬念感稍弱。",
+          "suggestion": "可考虑保留更口语的断裂感，例如“比早期上网还……”一类，但现译不影响发布。"
         },
         {
           "severity": "minor",
-          "location": "First paragraph after image",
-          "problem": "“发到了所有设备上” for “ship ... to all devices” is a little literal and product-release toned awkwardly in Chinese.",
-          "suggestion": "Consider “让 ‘The Sound of Stories’ 能在各种设备上跑起来” to better match the casual technical voice."
+          "location": "paragraph under `## 这次真的不一样`",
+          "problem": "“伟大的拉平器”是英文 “great leveler” 的直译痕迹，中文读者会觉得略硬。",
+          "suggestion": "可改为“强大的均衡器”或“把机会拉平的东西”。"
+        },
+        {
+          "severity": "minor",
+          "location": "same paragraph",
+          "problem": "“哲学回音板”“意外有疗效的逻辑师”略有英文搭配影子，但意思清楚，也保留了作者原文的跳跃感。",
+          "suggestion": "若润色，可改成更自然的“哲学陪练”“有时意外像个会安慰人的逻辑师”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "Passes native-editor review. The translation keeps Ernie’s blunt, technical-personal cadence, preserves intentional code-switching and product/code terms, translates reader-facing accessibility text and captions, and does not read like a sentence-by-sentence calque overall. Minor polish issues do not block publication."
+      "notes": "译文整体自然，有作者技术随笔的口语节奏和吐槽感，不是逐句硬翻。产品名、技术名、链接、iframe 与 frontmatter 基本保留得当；`translationStatus: machine` 未作为问题处理。",
+      "rawPassed": true,
+      "rawScore": 0.92
     },
     {
       "passed": true,
-      "score": 0.94,
+      "score": 0.92,
       "issues": [
         {
           "severity": "minor",
-          "location": "paragraph after image",
-          "problem": "“离峰” and “够用的上网时间” are understandable but slightly region-marked / smoothed versus the source’s casual “off-peak” and “as much internet as my pocket money could pay for.”",
-          "suggestion": "Could be tightened to “非高峰时段” and “零花钱能买多少就上多少网,” but this is polish, not a publish blocker."
+          "location": "target body, paragraph after image",
+          "problem": "“发到了所有设备上” is slightly literal for “ship … to all devices”; it may sound like installing onto devices rather than making the demo accessible across devices.",
+          "suggestion": "Use a more idiomatic phrasing such as “让所有设备都能访问 The Sound of Stories” if editing."
         },
         {
           "severity": "minor",
-          "location": "section “这次真的不一样”",
-          "problem": "“高层总结” reads like a direct calque of “high-level summary” in Mandarin technical prose.",
-          "suggestion": "Use “先粗略总结一下” or “先给一个大意” for a more natural essay cadence."
+          "location": "target section “这次真的不一样”",
+          "problem": "“先给一个高层总结” is an English-shaped calque of “high-level summary”; in Chinese, “高层” can read like senior management.",
+          "suggestion": "Prefer “先概括一下” or “先说一个大方向的总结”."
+        },
+        {
+          "severity": "minor",
+          "location": "target section “这次真的不一样”",
+          "problem": "“伟大的拉平器” is understandable but awkwardly mirrors “great leveler”.",
+          "suggestion": "A more natural rendering would be “强大的平权工具” or “让差距被抹平的工具”, depending on desired tone."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation preserves Ernie’s casual technical-personal voice, code-switching, humor, and blunt pacing without collapsing into sentence-by-sentence English-shaped Chinese. Human-facing alt text, caption, attribution, and prose are translated; product names and technical terms are preserved appropriately. No broken MDX or major meaning drift found."
+      "notes": "The translation preserves Ernie’s blunt, bilingual technical-personal voice and adapts most long English sentences into natural Mandarin cadence rather than following the source word order sentence-by-sentence. MDX structure and reader-facing alt/caption text are intact.",
+      "rawPassed": true,
+      "rawScore": 0.92
     }
   ]
 }

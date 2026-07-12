@@ -4,7 +4,7 @@
   "sourceSha256": "0e1623196e98cf13b29b1719edc34617c4ee9993ebae52257ce5ec6d67c6b04a",
   "targetSha256": "cad6cbd2b138dff2dc90da71f044d2be3a557f4dd500cdc2416e5aae5eb1653a",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -13,7 +13,7 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.94,
+  "score": 0.93,
   "reviews": [
     {
       "passed": true,
@@ -21,39 +21,43 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "section 2 heading",
-          "problem": "“并切成可检索的 分块” has an unnecessary space before “分块”, which creates a small polish blemish in an otherwise natural heading.",
-          "suggestion": "Use “并切成可检索的分块” or “并拆成可检索的分块”."
+          "location": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/zh.mdx: Challenges Encountered item 2 heading",
+          "problem": "“切成可检索的 分块”中间多了一个空格，读起来有轻微排版毛刺。",
+          "suggestion": "改为“切成可检索的分块”。"
         },
         {
           "severity": "minor",
-          "location": "The Way Forward paragraph",
-          "problem": "“自己 debug” uses an English verb in Chinese prose. It is understandable in technical writing, but the style guide prefers repairing accidental half-translations.",
-          "suggestion": "Use “自己调试” while preserving technical terms like LLM, CRUD, token where appropriate."
+          "location": "src/content/blog/fork-work-why-work-when-we-can-use-autonomous-agents-instead/zh.mdx: package compatibility solution paragraph",
+          "problem": "“pydanic version”沿用了源文拼写错误；如果不是有意保留源文 typo，读者可能会以为是术语。",
+          "suggestion": "可考虑改为“`pydantic` 版本（1.10.12）”，但若目标是忠实保留原文 typo，也可接受。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation is publishable: it reads like adapted Mandarin with Ernie’s playful bluntness intact, not a sentence-by-sentence calque. Human-facing iframe alt text, caption, headings, and attribution are translated; code blocks and product/code terms are appropriately preserved. Frontmatter metadata differences are semantically acceptable, and translationStatus remains machine."
+      "notes": "译文整体是自然的中文技术随笔，不是逐句硬搬：例如“嘴上说抱歉，其实一点也不”“大型时间焚化炉”“好，开搞”等处理保留了原文的 blunt/playful 语气，同时技术名词、代码块和产品名基本保留得当。MDX 和 frontmatter 未见 reader-facing 阻断问题。",
+      "rawPassed": true,
+      "rawScore": 0.94
     },
     {
       "passed": true,
-      "score": 0.94,
+      "score": 0.93,
       "issues": [
         {
           "severity": "minor",
-          "location": "section heading item 1 / solution paragraph",
-          "problem": "`package 版本` and `package 之间的兼容性问题` are understandable but slightly hybrid; house style usually prefers smoother Chinese for ordinary prose unless the English term is intentionally code-adjacent.",
-          "suggestion": "Consider `软件包版本` and `软件包之间的兼容性问题`."
+          "location": "section heading list item 2",
+          "problem": "“导入 .json 文件里定义的 Azure Data Factory 资源，并切成可检索的 分块” has an awkward extra space before “分块” and reads slightly mechanically.",
+          "suggestion": "Use “导入 .json 文件里定义的 Azure Data Factory 资源，并切成可检索的分块” or “并切成可检索的 chunk”。"
         },
         {
           "severity": "minor",
-          "location": "section heading item 2",
-          "problem": "`切成可检索的 分块` has an awkward extra space and slightly stiff phrasing.",
-          "suggestion": "Consider `并切成可检索的分块` or `并切分成可检索的块`."
+          "location": "Challenges Encountered item 1",
+          "problem": "“用对 package 版本” is understandable but a little hybrid; the surrounding house style usually tolerates code-switching, but “包版本” would be smoother Chinese.",
+          "suggestion": "Consider “用对包版本” if not intentionally preserving the English technical term."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation preserves Ernie’s blunt, playful voice while adapting idioms naturally, especially in passages like human response lag, the 4-hour work week, and the autonomous-agent factory. It is not a direct sentence-by-sentence calque; most technical terms are either preserved appropriately or translated into readable Chinese, and MDX/code blocks remain intact."
+      "notes": "The translation passes: it is idiomatic Mandarin with Ernie’s blunt, playful technical-personal voice preserved, not a sentence-by-sentence calque. Code blocks, product names, paths, and technical identifiers are preserved appropriately; human-facing alt text, captions, headings, and publication note are translated.",
+      "rawPassed": true,
+      "rawScore": 0.93
     }
   ]
 }

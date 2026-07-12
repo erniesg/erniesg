@@ -4,7 +4,7 @@
   "sourceSha256": "32bbeb05172edb7e2d43dea09d7507ad5697e0f6344a530ae3e22770d30421d9",
   "targetSha256": "861747aa90a649176daeb05072173fed81a68556d09468ad06606093911612aa",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -13,7 +13,7 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.93,
+  "score": 0.91,
   "reviews": [
     {
       "passed": true,
@@ -21,51 +21,49 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "paragraph under “为什么这个项目重要？”",
-          "problem": "“这里面的学习可以用来重新想象角色扮演游戏”略显英式直译，“学习”在这里不太自然。",
-          "suggestion": "可改为“这里面的经验/启发可以用来重新想象角色扮演游戏”。"
+          "location": "paragraph after public demo date",
+          "problem": "“我们必须从未来往回带路”略带英文 calque，读者需要反推 lead from the future 的意思。",
+          "suggestion": "可改为“我们得用未来的速度来判断现在，因为模型只会越来越聪明、越来越便宜、越来越快。”"
         },
         {
           "severity": "minor",
-          "location": "paragraph under “为什么这个项目重要？”",
-          "problem": "“预训练数据里摄入过的那么多文化知识”保留了 ingest 的英文思路，中文稍硬。",
-          "suggestion": "可改为“预训练数据所覆盖的文化知识”。"
-        },
-        {
-          "severity": "minor",
-          "location": "final technical paragraph",
-          "problem": "“可堆叠”能理解，但技术散文里略像直译 stackable。",
-          "suggestion": "可改为“多么容易组合/层层叠加”，看作者语气取舍。"
+          "location": "Why does this project matter? paragraph",
+          "problem": "“预训练数据里摄入过的那么多文化知识”里的“摄入过”偏机器直译，中文读感生硬。",
+          "suggestion": "可改为“它们在预训练数据中已经吸收了相当丰富的文化知识。”"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "整体可发布。译文没有逐句硬搬英文结构，能保留 Ernie 原文里技术、吐槽和自嘲混在一起的语气；产品名、技术名和代码相邻词也基本处理得当，MDX 未见破损。"
+      "notes": "整体可发布。译文保留了 Ernie 的技术个人口吻、吐槽感和适度 code-switching，没有逐句硬译；产品名、代码/技术术语和 MDX 结构也处理得当。",
+      "rawPassed": true,
+      "rawScore": 0.93
     },
     {
       "passed": true,
-      "score": 0.93,
+      "score": 0.91,
       "issues": [
         {
           "severity": "minor",
-          "location": "目标段落：Why does this project matter?",
-          "problem": "“这里面的学习可以用来重新想象角色扮演游戏”略带英文 learning(s) 的直译痕迹。",
-          "suggestion": "可改为“这里的经验可以用来重新想象角色扮演游戏”。"
+          "location": "paragraph under “为什么这个项目重要？”",
+          "problem": "“所谓 A.I. 不能理解你独特的语境或词汇，是一个 **神话**” is an English-shaped calque. In this context “myth” means a false belief, not 神话 as a legend.",
+          "suggestion": "Use “迷思” or “误解”: “所谓 A.I. 不能理解你独特语境或词汇，是一个 **迷思**。”"
         },
         {
           "severity": "minor",
-          "location": "目标段落：Why does this project matter?",
-          "problem": "“预训练数据里摄入过的那么多文化知识”中的“摄入过”有轻微机器翻译感，虽然技术含义正确。",
-          "suggestion": "可改为“预训练数据吸收过的文化知识”。"
+          "location": "opening paragraph",
+          "problem": "“会随用户调整的互动叙事体验” is understandable but slightly stiff and omits the adaptive feel of “adapting to the user.”",
+          "suggestion": "Consider “会根据用户反应调整的互动叙事体验” for smoother Mandarin."
         },
         {
           "severity": "minor",
-          "location": "目标段落：What’s Next?",
-          "problem": "“判断该用什么 schema，也就是该套什么数据结构”解释得稍口语化且不够准确；schema 不只是“数据结构”。",
-          "suggestion": "可改为“判断该用什么 schema，也就是该按什么结构来整理”。"
+          "location": "paragraph after iframe",
+          "problem": "“幸好，你真正需要的只是更多智能” preserves the joke but reads a little literal in Chinese.",
+          "suggestion": "A more natural version could be “幸好，说到底只是还需要更多智能。”"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "译文整体保留了 Ernie 原文的技术口吻、吐槽感和中英 code-switching，没有按英文句序硬搬；产品名、技术词、MDX 结构和 frontmatter 均无读者可见的阻断问题。"
+      "notes": "The translation is broadly publishable: it preserves Ernie’s blunt, technical-personal voice, keeps product/code terms intact, translates captions/accessibility text, and does not read like a sentence-by-sentence direct translation overall. The issues are polish-level calques, not major reader-facing failures.",
+      "rawPassed": true,
+      "rawScore": 0.91
     }
   ]
 }

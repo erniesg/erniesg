@@ -137,6 +137,13 @@ export function normalizeReviewResult(review, { minReviewScore }) {
   }
 }
 
+export function reviewAdvisoryCount(report = {}) {
+  return (report.reviews ?? []).reduce(
+    (count, review) => count + (review.issues ?? []).length,
+    0,
+  )
+}
+
 async function refreshNativeReview({
   config,
   manifest,
@@ -265,13 +272,14 @@ export async function checkTranslationQuality({
   async function checkFile(filePath) {
     const errors = []
     const warnings = []
+    let advisoryCount = 0
     const file = await readMdxFile(filePath)
     const target = getManifestTarget(manifest, filePath)
     const status = file.frontmatter.translationStatus
     const source = file.frontmatter.translationSource
     if (!hasOwnership(file.frontmatter)) {
       errors.push(`${filePath}: missing translationStatus/translationSource`)
-      return { errors, warnings }
+      return { errors, warnings, advisoryCount }
     }
 
     const audit = auditMdxText(file.raw, {
@@ -356,6 +364,19 @@ export async function checkTranslationQuality({
           `${filePath}: machine translation is mechanically checked but still needs native review`,
         )
       }
+
+      if (target?.qualityReportPath) {
+        try {
+          const report = JSON.parse(
+            await fs.readFile(target.qualityReportPath, 'utf8'),
+          )
+          advisoryCount = reviewAdvisoryCount(report)
+        } catch (error) {
+          warnings.push(
+            `${filePath}: could not read quality report advisories (${error.message})`,
+          )
+        }
+      }
     }
 
     if (
@@ -375,7 +396,7 @@ export async function checkTranslationQuality({
         )
       }
     }
-    return { errors, warnings }
+    return { errors, warnings, advisoryCount }
   }
 
   const requestedConcurrency = Number.parseInt(
@@ -400,6 +421,15 @@ export async function checkTranslationQuality({
   )
   const errors = results.flatMap((result) => result.errors)
   const warnings = results.flatMap((result) => result.warnings)
+  const advisoryCount = results.reduce(
+    (count, result) => count + (result.advisoryCount ?? 0),
+    0,
+  )
+  if (advisoryCount > 0) {
+    warnings.push(
+      `${advisoryCount} reviewer advisory notes remain in current machine-translation quality reports`,
+    )
+  }
 
   if (refreshReview) {
     manifest.promptVersion = config.promptVersion

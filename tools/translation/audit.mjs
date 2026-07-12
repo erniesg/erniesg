@@ -11,6 +11,9 @@ import {
 const CODE_FENCE_RE = /(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?\n[ \t]*\2(?=\n|$)/g
 const INLINE_CODE_RE = /`[^`\n]+`/g
 const URL_RE = /https?:\/\/[^\s)>"']+/g
+const PROTECTED_TECHNICAL_PHRASE_RE = /\bMixture of Experts\b/gi
+const BARE_WEB_DOMAIN_RE =
+  /!?\[[^\]]*\]\(((?:[a-z0-9-]+\.)+(?:ai|app|cn|co|com|dev|io|jp|kr|net|org|sg)(?:[/?#][^)]*)?)\)/gi
 const LOCALE_SCRIPT_RE = {
   zh: /[\u3400-\u9fff]/,
   ko: /[\uac00-\ud7af]/,
@@ -23,12 +26,14 @@ const DIRECT_RESIDUE_PATTERNS = {
     /数据源s/i,
     /上下文s/i,
     /\b(?:query|queries|ingest|chunk|validate|productionise)\b/i,
+    /\b(?:datasets?|prompts?|registr(?:y|ies)|experts?)\b(?!-to-publish)/i,
   ],
   ko: [
     /데이터\s*소스s/i,
     /데이터\s*sets?/i,
     /맥락s/i,
     /\b(?:query|queries|ingest|chunk|validate|productionise)\b/i,
+    /\b(?:datasets?|prompts?|registr(?:y|ies)|experts?|spare time|negative prompts?)\b(?!-to-publish)/i,
   ],
   ja: [
     /データ\s*ソースs/i,
@@ -36,6 +41,7 @@ const DIRECT_RESIDUE_PATTERNS = {
     /データ\s*base/i,
     /本番環境ise/i,
     /\b(?:query|queries|ingest|chunk|validate|productionise)\b/i,
+    /\b(?:datasets?|prompts?|registr(?:y|ies)|experts?)\b(?!-to-publish)/i,
   ],
 }
 
@@ -47,6 +53,7 @@ function stripIgnoredText(text) {
     .replace(CODE_FENCE_RE, '\n')
     .replace(INLINE_CODE_RE, '')
     .replace(URL_RE, '')
+    .replace(PROTECTED_TECHNICAL_PHRASE_RE, '')
 }
 
 function lineForOffset(text, offset) {
@@ -123,6 +130,12 @@ export function auditMdxText(text, { path = '<memory>', locale = 'en' } = {}) {
         `${path}:${lineForOffset(visible, match.index ?? 0)} direct translation residue (${match[0]})`,
       )
     }
+  }
+
+  for (const match of visible.matchAll(BARE_WEB_DOMAIN_RE)) {
+    errors.push(
+      `${path}:${lineForOffset(visible, match.index ?? 0)} bare web domain in Markdown destination (${match[1]}); add an explicit URL scheme`,
+    )
   }
 
   const unescapedCurrency = visible.match(/(?<!\\)\$(?=\d)/)

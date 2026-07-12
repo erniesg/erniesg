@@ -2,9 +2,9 @@
   "sourcePath": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
   "targetPath": "src/content/blog/developer-diaries-the-sound-of-stories/zh.mdx",
   "sourceSha256": "074625a01cb7b9b862ad0f48b468e4f36a30ecf335c9c918f57371b046551a3e",
-  "targetSha256": "e7dc9efa35bf1cdfc67c9c4a03df041d7ce6b428c98c48221bf90d1f5d9a3b2b",
+  "targetSha256": "bf795737311c092d263c17a95b0306ec9c923ce07773473fd5faba0012283be2",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -13,27 +13,29 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.94,
+  "score": 0.92,
   "reviews": [
     {
       "passed": true,
-      "score": 0.94,
+      "score": 0.92,
       "issues": [
         {
           "severity": "minor",
-          "location": "依赖管理 bullet",
-          "problem": "“实例化一个针对特定目录的开发环境”略带英文技术句式痕迹，中文读者会更自然地说“建立/初始化一个目录专属的开发环境”。",
-          "suggestion": "可改为“建立一个目录专属的开发环境”或“初始化一个目录专属的开发环境”。"
+          "location": "paragraph after `if` code block",
+          "problem": "“拍拍自己的背” is a literal calque of “Pats self on back” and sounds unnatural in Mandarin.",
+          "suggestion": "Use a natural idiom such as “给自己拍拍肩” or “给自己点个赞”."
         },
         {
           "severity": "minor",
-          "location": "A.I. 多样性的必要性 bullet",
-          "problem": "“输入训练数据”稍显别扭，像把 input data training 直译成中文。",
-          "suggestion": "可改为“训练输入数据”或按语境写成“用于训练的数据”。"
+          "location": "Dependency management bullet",
+          "problem": "“实例化一个针对特定目录的开发环境” is technically understandable but stiff and English-shaped.",
+          "suggestion": "A more natural phrasing would be “搭出一个目录专属的开发环境” or “为某个目录创建一套独立开发环境”."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "整体可发布。译文保留了作者技术随笔里自嘲、口语、代码切换和轻微跳跃的节奏，很多句子做了中文化重组，例如“烦我的问题”“帮助约等于零”“先搁一边”，不是逐句贴英文结构的直译。代码、产品名和故意保留的技术术语处理得当，MDX/frontmatter 未见破坏性问题。"
+      "notes": "The translation preserves Ernie’s informal technical-personal voice, keeps product/code terms intact, translates accessibility text and captions, and does not read like a sentence-by-sentence direct translation overall. Remaining issues are minor polish, not publish-blocking.",
+      "rawPassed": true,
+      "rawScore": 0.92
     },
     {
       "passed": true,
@@ -41,19 +43,21 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "text code block after `if next_segment_id...`",
-          "problem": "The explanatory pseudo-code comment remains in English. It is inside a code-style block, so this is not a publication blocker, but it is reader-facing explanation rather than executable code.",
-          "suggestion": "Consider translating the comment while preserving the surrounding pseudo-code."
+          "location": "Dependency management bullet",
+          "problem": "“实例化一个针对特定目录的开发环境”有一点英文 technical prose 的直译感，尤其是“实例化”在这里偏硬。",
+          "suggestion": "可改为“搭起一个只针对当前目录的开发环境”或“初始化一个目录级开发环境”。"
         },
         {
           "severity": "minor",
-          "location": "section `Prompt “engineering”`",
-          "problem": "`提示词` is acceptable, but the phrase `从一开始、在动手做别的事情之前` is a little more polished than Ernie's blunt source cadence.",
-          "suggestion": "A slightly terser phrasing would better match the house style, e.g. `一上来、在做别的之前`."
+          "location": "Agent paragraph",
+          "problem": "同一段里先用“智能体”，后面又用“分层代理”，术语略不统一。",
+          "suggestion": "统一为“智能体”，如“搭一队分层智能体”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation reads like natural Mandarin technical-personal prose rather than a direct sentence-by-sentence calque. It preserves product names, code terms, Ernie's informal tone, and the playful self-commentary, while translating captions, alt text, attribution, and reader-facing prose. MDX/frontmatter structure appears intact."
+      "notes": "整体译文自然，保留了 Ernie 的技术个人口吻、吐槽节奏和代码切换；不是逐句硬译。标题、描述、caption、alt、PubPub attribution 都已处理，MDX/frontmatter 无明显破损。",
+      "rawPassed": true,
+      "rawScore": 0.94
     }
   ]
 }

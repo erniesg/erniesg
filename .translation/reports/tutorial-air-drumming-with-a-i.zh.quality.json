@@ -4,7 +4,7 @@
   "sourceSha256": "288905d159f11476550369a0e35d33aa8ca71bf476393e89ba53e641d01e3fc1",
   "targetSha256": "91f5daca8c61d2506aed3823db709922697eac918252fc4344465bacfe0493ea",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -21,19 +21,21 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "description",
-          "problem": "“凑在一起会是什么画面” is natural, but slightly undersells the source’s speculative “could look like” around A.I., neural audio synthesis, DJ-ing, Taylor Swift, and Erae II as a possible workflow/setup rather than just an image.",
-          "suggestion": "Consider “会变成什么样” or “可能会怎么玩” if tightening later."
+          "location": "What’s Next paragraph 1",
+          "problem": "“streaming Taylor Swift’s concert on Disney+” was rendered as “在 Disney+ 上看 Taylor Swift 演唱会直播”. “直播” adds a live-broadcast meaning that is not in the source; this likely refers to streaming the concert film/show on Disney+.",
+          "suggestion": "Use “在 Disney+ 上看 Taylor Swift 演唱会” or “在 Disney+ 上串流看 Taylor Swift 演唱会”."
         },
         {
           "severity": "minor",
-          "location": "# 我是怎么做出来的",
-          "problem": "“不断滚动页面” is a literal rendering of “scrolling” and reads a bit mechanical in Chinese for browsing a repo/docs.",
-          "suggestion": "“翻资料” or “刷文档” would sound more native."
+          "location": "How I Built it paragraph 1",
+          "problem": "“an evening of scrolling” as “一个晚上不断滚动页面” is understandable but slightly mechanical in Chinese.",
+          "suggestion": "Consider “刷网页/翻资料” for a more natural Mandarin cadence."
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation reads like natural Mandarin technical-personal prose rather than sentence-by-sentence English transfer. It preserves Ernie’s casual bluntness, jokes, code-switching, product names, code blocks, links, captions, and accessibility text, and the MDX structure appears intact."
+      "notes": "The translation reads as natural reader-facing Mandarin with Ernie’s casual, blunt, playful tone preserved, including intentional A.I. code-switching and technical terms. It is not a direct sentence-by-sentence calque; most clauses are adapted into idiomatic Chinese while preserving MDX, code, links, accessibility text, captions, and product names appropriately.",
+      "rawPassed": true,
+      "rawScore": 0.94
     },
     {
       "passed": true,
@@ -41,19 +43,21 @@
       "issues": [
         {
           "severity": "minor",
-          "location": "description",
-          "problem": "“亮晶晶的新玩具” slightly softens the throwaway, playful feel of “shiny new toys” into a cute phrasing, but it does not distort meaning.",
-          "suggestion": "Could use “闪亮的新玩具 Erae II” for a tighter house-style cadence."
+          "location": "Target paragraph under `# 我是怎么做出来的`",
+          "problem": "“经过一个晚上不断滚动页面” is understandable but slightly literal for “an evening of scrolling”; it sounds like scrolling pages in a mechanical UI sense rather than browsing/翻资料.",
+          "suggestion": "可改为“刷了一晚上资料”或“翻了一晚上资料、和 ChatGPT 聊天、调试……”更自然。"
         },
         {
           "severity": "minor",
-          "location": "# 我是怎么做出来的",
-          "problem": "“不断滚动页面” is a mild calque for “scrolling”; in Chinese it reads a bit literal.",
-          "suggestion": "Consider “翻了一晚上资料/页面” or “刷了一晚上仓库和文档” if polishing later."
+          "location": "Target paragraph under `# 接下来`",
+          "problem": "“顺得像抹了黄油一样” preserves the butter metaphor, but in Chinese it is a little more visually odd than idiomatic. This is polish-level only because the playful tone is intact.",
+          "suggestion": "可考虑“顺滑得像黄油”或“顺得跟黄油一样”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "The translation is publishable: the prose is idiomatic Mandarin with Ernie’s casual, blunt, self-deprecating tone intact, and it avoids sentence-shaped English calques. Captions, iframe alt text, attributions, and human-facing prose are translated, while code, product names, paths, and technical identifiers are preserved appropriately."
+      "notes": "The translation reads like natural Mandarin technical-personal prose rather than direct English-order translation: it adapts jokes, cadence, and transitions idiomatically while preserving product names, code terms, links, MDX structure, accessibility text, captions, and Ernie’s casual A.I. voice.",
+      "rawPassed": true,
+      "rawScore": 0.94
     }
   ]
 }

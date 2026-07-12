@@ -4,7 +4,7 @@
   "sourceSha256": "ee34dfa513822644e0134ae71690b112e1fef8420943f755cee1e1764f399b56",
   "targetSha256": "58fca57e9ece120ba95a3414bf61a795893e58db63af91468d318ee8a6adf68e",
   "reviewPromptVersion": "2026-07-10.3",
-  "reviewStyleGuideSha256": "4b6ec10638037ca978da9f48b1b755e30b80c46391d8a520792a9a964961a9c4",
+  "reviewStyleGuideSha256": "2cf5d68764bf7a5cb31ebecbf911864ce021f142e0e3e1f0ac4d89789948a9ce",
   "reviewRubricSha256": "148e1668b40430b529d9710145110aaa9228c99b9b748c5a21c7e0219a175ab8",
   "reviewProvider": "codex-cli",
   "reviewerModel": "gpt-5.5",
@@ -13,59 +13,63 @@
     "adversarial-direct-translation-reviewer"
   ],
   "passed": true,
-  "score": 0.92,
+  "score": 0.93,
   "reviews": [
+    {
+      "passed": true,
+      "score": 0.94,
+      "issues": [
+        {
+          "severity": "minor",
+          "location": "frontmatter title",
+          "problem": "“不就 X -> ŷ” slightly undershoots the source’s “it’s just X -> ŷ” and reads a bit clipped in Chinese.",
+          "suggestion": "Consider “不就是 X -> ŷ” if polishing manually."
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 3",
+          "problem": "“消费者连一滴都分不到” preserves the meaning but the source’s Singaporean “CHOPE” joke is only partly carried by “CHOPE 掉了”; readers outside that context may miss the seat-reserving nuance.",
+          "suggestion": "If desired, add a tiny natural cue such as “早就把实例全都 CHOPE 掉/占好了” while preserving the code-switch."
+        },
+        {
+          "severity": "minor",
+          "location": "paragraph 5",
+          "problem": "“如果禁用这条路走不通” is a slightly interpretive bridge for “If that is out of the question”; it is accurate enough but less blunt than the source.",
+          "suggestion": "A closer punch would be “如果禁令根本不可能，那就更迫切了…”"
+        }
+      ],
+      "unresolvedResearch": [],
+      "notes": "The translation reads like natural Mandarin technical-personal essay prose rather than sentence-by-sentence English-shaped Chinese. It preserves Ernie’s blunt/playful code-switching, keeps product/code terms intact, translates captions and iframe accessibility text, and the MDX/frontmatter appear syntactically sound. No major reader-facing issue found.",
+      "rawPassed": true,
+      "rawScore": 0.94
+    },
     {
       "passed": true,
       "score": 0.93,
       "issues": [
         {
           "severity": "minor",
-          "location": "frontmatter title",
-          "problem": "“不就 X -> ŷ”略显断裂，口语劲头在，但中文标题少了“就是”的落点。",
-          "suggestion": "可改为“人类看 A.I. 大概就是：不就是 X -> ŷ”。"
-        },
-        {
-          "severity": "minor",
-          "location": "paragraph 3",
-          "problem": "“CHOPE 掉了”保留了原文的新加坡式玩笑，但中文里带一点 hybrid verb/suffix 的生硬感。因原文有意用 CHOPED，这里不构成拒稿问题。",
-          "suggestion": "可考虑“早就把实例全都 chope 走了/占好了”，保留 code-switching 又更顺。"
-        },
-        {
-          "severity": "minor",
-          "location": "paragraph beginning “我对这件事感兴趣...”",
-          "problem": "“烤出一个会中文...”直译 bake a model，语气有趣但略偏英文隐喻。",
-          "suggestion": "可改为“调出一个会中文...”或“炼出一个会中文...”，看想保留多少玩笑感。"
-        }
-      ],
-      "unresolvedResearch": [],
-      "notes": "整体可发布。译文没有逐句硬搬英文结构，能保留作者 blunt、玩笑和技术化自述的语气；术语、产品名、MDX/iframe 与可访问性文本处理也基本正确。"
-    },
-    {
-      "passed": true,
-      "score": 0.92,
-      "issues": [
-        {
-          "severity": "minor",
           "location": "title",
-          "problem": "标题里的“不就 X -> ŷ”略显断裂，读者可能需要补出“不就是”。不过它保留了原文 meme 式口吻，不构成发布阻碍。",
-          "suggestion": "可考虑改为“人类看 A.I. 大概就是：不就是 X -> ŷ”。"
+          "problem": "“不就 X -> ŷ”略显截断，少了源文“it's just”的口语完整感。",
+          "suggestion": "可考虑“人类看 A.I. 大概就是：不就是 X -> ŷ 嘛”，但现译仍可读。"
         },
         {
           "severity": "minor",
-          "location": "paragraph 2",
-          "problem": "“继续往前搭建”有一点英文 build forwards 的影子。",
-          "suggestion": "可改成“继续往前做”或“面向未来去做”。"
+          "location": "paragraph 1",
+          "problem": "“更快向别人扔石头”保留了英文隐喻，中文稍有翻译腔。",
+          "suggestion": "可改成“更急着朝别人扔石头”或“更急着指责别人”，视是否保留源文的 blunt/playful 语气而定。"
         },
         {
           "severity": "minor",
-          "location": "paragraph 3",
-          "problem": "“CHOPE 掉了”是混合表达，但这里对应原文刻意大写的 Singlish/口语梗，保留 code-switching 可以接受。",
-          "suggestion": "若要降低理解门槛，可改成“早就把实例全都 chope 走了”。"
+          "location": "paragraph 4",
+          "problem": "“入口”对应 access 稍偏产品化，原文更接近“可获得性/使用权”。",
+          "suggestion": "可改为“工具和访问权限”或“工具和使用机会”。"
         }
       ],
       "unresolvedResearch": [],
-      "notes": "译文整体是自然的中文技术随笔语气，不是逐句硬搬；保留了原文的随口、 blunt 和玩笑感，MDX 与人类可见文本翻译也完整。"
+      "notes": "译文整体保留了 Ernie 的口语、技术 code-switching 和带刺的语气，没有按英文句序硬搬；CHOPE、MoE、LLM、A.I. 等术语处理合理，MDX/frontmatter 未见会影响发布的语法问题。",
+      "rawPassed": true,
+      "rawScore": 0.93
     }
   ]
 }

@@ -136,7 +136,15 @@ function stableJson(value: unknown): string {
 }
 
 export function canonicalContentHash(paper: ResearchPaper | unknown) {
-  const canonicalJson = stableJson(stripRenditionFields(paper))
+  return canonicalValueHash(paper)
+}
+
+export function canonicalNodeContentHash(node: ResearchNode | unknown) {
+  return canonicalValueHash(node)
+}
+
+function canonicalValueHash(value: unknown) {
+  const canonicalJson = stableJson(stripRenditionFields(value))
   return createHash('sha256').update(canonicalJson).digest('hex')
 }
 

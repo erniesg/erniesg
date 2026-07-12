@@ -71,7 +71,7 @@
     {
       "id": "p-method-1",
       "type": "paragraph",
-      "text": "The first experiment holds content constant and varies representation geometry: A4 print, a large 4:3 e-ink display, a small tall e-ink display, and continuous mobile. We test structural preservation, layout quality, anchor continuity, and composition time.",
+      "text": "The first experiment holds content constant and varies representation geometry: A4 print, reMarkable Paper Pro, reMarkable Paper Pro Move, and continuous mobile. We test structural preservation, layout quality, anchor continuity, and composition time.",
       "source": "PRD §7, §14"
     }
   ]

@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { ResearchNode, ResearchPaper } from '@/research/schema'
 
 const profiles = {
-  mobile: { label: 'Mobile', note: 'Continuous · 390px', width: 390 },
-  einkSmall: { label: 'E-ink S', note: 'Tall · 420 × 560', width: 420 },
-  einkLarge: { label: 'E-ink L', note: '4:3 · 720 × 540', width: 720 },
-  print: { label: 'A4', note: 'Paged · 794 × 1123', width: 794 },
+  mobile: { label: 'Mobile', note: 'Continuous · 390 CSS px', width: 390, height: undefined },
+  paperProMove: { label: 'Pro Move', note: '7.3″ · 954 × 1696 · 264 PPI', width: 318, height: 565 },
+  paperPro: { label: 'Paper Pro', note: '11.8″ · 1620 × 2160 · 229 PPI', width: 540, height: 720 },
+  print: { label: 'A4', note: '210 × 297 mm · paged', width: 794, height: 1123 },
 } as const
 
 type Profile = keyof typeof profiles
@@ -31,7 +31,7 @@ function PaperNode({ node }: { node: ResearchNode }) {
 }
 
 export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
-  const [profile, setProfile] = useState<Profile>('einkLarge')
+  const [profile, setProfile] = useState<Profile>('paperPro')
   const [selected, setSelected] = useState(paper.nodes[0].id)
   const viewport = useRef<HTMLDivElement>(null)
 
@@ -79,7 +79,13 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
 
       <div className="srt-stage">
         <div ref={viewport} className={`srt-viewport profile-${profile}`}>
-          <article className="srt-paper" style={{ maxWidth: profiles[profile].width }}>
+          <article
+            className="srt-paper"
+            style={{
+              maxWidth: profiles[profile].width,
+              minHeight: profiles[profile].height,
+            }}
+          >
             <header>
               <small>{paper.status} paper · v{paper.version}</small>
               <h1>{paper.title}</h1>

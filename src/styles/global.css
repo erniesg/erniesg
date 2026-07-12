@@ -237,8 +237,9 @@
   .profile-print .srt-paper { column-count: 2; column-gap: 3rem; }
   .profile-print .srt-paper > header { column-span: all; }
   .profile-print .srt-paper h2, .profile-print .srt-paper figure { break-inside: avoid; }
-  .profile-einkSmall .srt-paper { @apply px-8 py-10; }
-  .profile-einkSmall .srt-paper h1 { @apply text-3xl; }
+  .profile-paperProMove .srt-paper { @apply px-7 py-9; }
+  .profile-paperProMove .srt-paper h1 { @apply text-3xl; }
+  .profile-paperProMove .srt-paper > p, .profile-paperProMove .srt-paper blockquote { @apply text-sm; }
   .profile-mobile { @apply px-0 sm:px-10; }
   .profile-mobile .srt-paper { @apply shadow-none; }
   .srt-inspector { @apply border-t border-black/20 p-6 font-sans lg:border-l lg:border-t-0; }

@@ -9,6 +9,12 @@
     "test": "vitest run",
     "build": "astro check && astro build",
     "preview": "astro preview",
+    "worker:build": "npm run build",
+    "worker:deploy:preview": "npm run worker:build && wrangler deploy --config wrangler.jsonc --message \"Deploy ernie.sg Workers preview\"",
+    "worker:deploy:production": "npm run worker:build && wrangler deploy --config wrangler.production.jsonc --message \"Deploy ernie.sg Workers production\"",
+    "worker:rollback:dry-run": "wrangler delete erniesg-workers --config wrangler.production.jsonc --dry-run",
+    "worker:rollback": "wrangler delete erniesg-workers --config wrangler.production.jsonc --force",
+    "worker:verify": "node tools/deployment/verify-cloudflare.mjs",
     "astro": "astro",
     "prettier": "prettier --write .",
     "translate:audit": "node tools/translation/audit.mjs",
@@ -85,6 +91,7 @@
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0",
     "vitest": "^2.1.9",
+    "wrangler": "4.110.0",
     "yaml": "^2.9.0"
   },
   "prettier": {

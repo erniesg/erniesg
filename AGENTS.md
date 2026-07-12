@@ -55,3 +55,20 @@ If Ernie approves a translation:
 ```bash
 npm run translate:finalize -- --slug <slug> --locale zh
 ```
+
+## Semantic Responsive Typesetting
+
+- Treat `docs/research/semantic-responsive-typesetting/PRD/semantic_responsive_typesetting_PRD_handoff.md` as the product source of truth and read the companion literature review before making research or novelty claims.
+- Build the narrow structured-input POC first; do not begin with arbitrary PDF reconstruction, generative layout, freehand ink, collaboration, a production CMS, or design-tool round-trip.
+- Canonical semantic content must not contain target coordinates. Stable node identity, relationships, provenance, reading anchors, and annotations survive target changes; geometry is a rendition and cache.
+- Layout rules must be deterministic and inspectable. Record violations and fallbacks instead of hiding failures with golden-fixture coordinates.
+- Production deploys, visual-baseline acceptance, fixture licensing choices, schema-breaking decisions, and publication novelty claims require human approval.
+- Generated screenshots, traces, manifests, exports, and benchmarks belong in `.agent/evidence/` or CI artifacts unless explicitly approved as golden fixtures.
+- Work only from the dependency-ready GitHub issue selected by Rucksack. Do not broaden an issue into later PRD milestones.
+
+Before claiming an autonomous issue is complete, run:
+
+```bash
+scripts/agent-evidence
+git diff --check
+```

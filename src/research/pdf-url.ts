@@ -4,8 +4,49 @@ type FetchPdf = (
   input: string,
   init: RequestInit,
 ) => Promise<
-  Pick<Response, 'blob' | 'headers' | 'ok' | 'status' | 'statusText' | 'url'>
+  Pick<
+    Response,
+    'blob' | 'body' | 'headers' | 'ok' | 'status' | 'statusText' | 'url'
+  >
 >
+
+function oversizedPdfError(maxBytes: number) {
+  return new PdfImportError(
+    'OVERSIZED_PDF',
+    `This converter accepts linked PDFs up to ${maxBytes / 1024 / 1024} MB.`,
+  )
+}
+
+async function readBoundedBlob(
+  response: Awaited<ReturnType<FetchPdf>>,
+  maxBytes: number,
+  contentType: string,
+) {
+  if (!response.body) {
+    const blob = await response.blob()
+    if (blob.size > maxBytes) throw oversizedPdfError(maxBytes)
+    return blob
+  }
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let receivedBytes = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      receivedBytes += value.byteLength
+      if (receivedBytes > maxBytes) {
+        await reader.cancel()
+        throw oversizedPdfError(maxBytes)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return new Blob(chunks, { type: contentType || 'application/pdf' })
+}
 
 function linkedFileName(url: URL) {
   const rawSegment = url.pathname.split('/').pop() || ''
@@ -27,6 +68,7 @@ function linkedFileName(url: URL) {
 export async function downloadLinkedPdf(
   rawUrl: string,
   fetchPdf: FetchPdf = fetch,
+  maxBytes = MAX_LOCAL_PDF_BYTES,
 ) {
   let requestedUrl: URL
   try {
@@ -55,7 +97,7 @@ export async function downloadLinkedPdf(
   } catch {
     throw new PdfImportError(
       'PDF_DOWNLOAD_FAILED',
-      'The publisher did not allow this browser to download the PDF. Download it yourself and drop it here; a safe server-side link adapter is tracked separately.',
+      'The publisher did not allow this browser to download the PDF. Download it yourself and drop it here; broader publisher support requires a separate safe server-side adapter.',
     )
   }
 
@@ -74,11 +116,8 @@ export async function downloadLinkedPdf(
     )
   }
   const declaredBytes = Number(response.headers.get('content-length') || 0)
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_LOCAL_PDF_BYTES) {
-    throw new PdfImportError(
-      'OVERSIZED_PDF',
-      `This converter accepts linked PDFs up to ${MAX_LOCAL_PDF_BYTES / 1024 / 1024} MB.`,
-    )
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    throw oversizedPdfError(maxBytes)
   }
   const contentType = response.headers.get('content-type')?.toLowerCase() || ''
   const looksLikePdf =
@@ -92,11 +131,14 @@ export async function downloadLinkedPdf(
     )
   }
 
-  const blob = await response.blob()
-  if (blob.size > MAX_LOCAL_PDF_BYTES) {
+  let blob: Blob
+  try {
+    blob = await readBoundedBlob(response, maxBytes, contentType)
+  } catch (error) {
+    if (error instanceof PdfImportError) throw error
     throw new PdfImportError(
-      'OVERSIZED_PDF',
-      `This converter accepts linked PDFs up to ${MAX_LOCAL_PDF_BYTES / 1024 / 1024} MB.`,
+      'PDF_DOWNLOAD_FAILED',
+      'The linked PDF download ended unexpectedly. Download it yourself and drop it here.',
     )
   }
   return new File([blob], linkedFileName(finalUrl), {

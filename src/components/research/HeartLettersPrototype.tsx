@@ -45,8 +45,9 @@ const PHASES: Array<{ id: Phase; number: string; label: string; note: string }> 
   },
 ]
 
-function mappedTempo(heartRate: number) {
-  return Math.round(65 + ((heartRate - 60) / 60) * 30)
+export function mappedTempo(heartRate: number) {
+  const boundedHeartRate = Math.min(120, Math.max(60, heartRate))
+  return Math.round(65 + ((boundedHeartRate - 60) / 60) * 30)
 }
 
 function readHeartRate(value: DataView) {

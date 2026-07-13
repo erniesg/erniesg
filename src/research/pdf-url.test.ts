@@ -10,6 +10,7 @@ function pdfResponse(
   const blob = new Blob([bytes], { type: headers['content-type'] })
   return {
     blob: async () => blob,
+    body: null,
     headers: new Headers(headers),
     ok: true,
     status: 200,
@@ -65,6 +66,28 @@ describe('linked PDF download', () => {
     ).rejects.toMatchObject({
       code: 'OVERSIZED_PDF',
     } satisfies Partial<PdfImportError>)
+  })
+
+  it('cancels a streamed response before it exceeds the conversion limit', async () => {
+    const blob = vi.fn(async () => new Blob(['not reached']))
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]))
+        controller.enqueue(new Uint8Array([4, 5, 6]))
+        controller.close()
+      },
+    })
+
+    await expect(
+      downloadLinkedPdf(
+        'https://papers.example/paper.pdf',
+        async () => ({ ...pdfResponse(), blob, body }),
+        5,
+      ),
+    ).rejects.toMatchObject({
+      code: 'OVERSIZED_PDF',
+    } satisfies Partial<PdfImportError>)
+    expect(blob).not.toHaveBeenCalled()
   })
 
   it('turns a browser fetch failure into an actionable fallback', async () => {

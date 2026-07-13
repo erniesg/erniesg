@@ -1,43 +1,122 @@
 ---
 import Layout from '@/layouts/Layout.astro'
 import { papers } from '@/research/papers'
+
+const featured = papers.find((paper) => paper.id === 'if-letters-home-could-sing')!
+const notes = papers.filter((paper) => paper.id !== featured.id)
 ---
 
 <Layout
   title="Research"
-  description="Open research notes, working papers, and experiments by Ernie."
+  description="Published fellowship research, working papers, and experiments by Ernie."
+  image="/research/if-letters-home-could-sing/media/image3.jpg"
 >
-  <section class="research-index">
-    <header class="research-hero">
-      <p>Research / in public</p>
-      <h1>Ideas should stay<br />alive while they’re read.</h1>
-      <p class="research-deck">
-        Working papers, evidence, experiments, and revisions—published before
-        they become fossils.
+  <section class="publication-index">
+    <header class="publication-index__masthead">
+      <p>Research · papers & experiments</p>
+      <h1>Work that stays<br /><em>alive</em> in public.</h1>
+      <p>
+        Published papers, open methods, prototypes, and the evidence around them.
+        Built to be read on paper, screens, and e-ink—not trapped in any one of them.
       </p>
-      <a class="research-studio-link" href="/research/studio">
-        <span>Publication studio</span>
-        <strong>Drop a PDF → export EPUB</strong>
-        <i aria-hidden="true">↗</i>
-      </a>
     </header>
-    <div class="research-rule"></div>
-    <ol class="research-list">
-      {
-        papers.map((paper, index) => (
-          <li>
-            <span>{String(index + 1).padStart(2, '0')}</span>
-            <a href={`/research/${paper.id}`}>
-              <small>
-                {paper.status} · updated {paper.updated}
-              </small>
-              <h2>{paper.title}</h2>
-              <p>{paper.abstract}</p>
-            </a>
-            <span aria-hidden="true">↗</span>
-          </li>
-        ))
-      }
-    </ol>
+
+    <article class="publication-index__feature">
+      <a href={`/research/${featured.id}`} aria-label={`Read ${featured.title}`}>
+        <div class="publication-index__feature-copy">
+          <p>Fellowship paper · National Museum of Singapore · 2024</p>
+          <h2>If letters home<br />could <em>sing.</em></h2>
+          <p>{featured.abstract}</p>
+          <span>Read the paper <i aria-hidden="true">↗</i></span>
+        </div>
+        <figure>
+          <img
+            src="/research/if-letters-home-could-sing/media/image3.jpg"
+            alt="Historical remittance letter from He Aifang to He Qinge"
+          />
+          <figcaption>NMS Accession No. 2000-06963-004 · 2 March 1960</figcaption>
+        </figure>
+      </a>
+    </article>
+
+    <section class="publication-index__notes" aria-labelledby="notes-title">
+      <header>
+        <p>Open notebook</p>
+        <h2 id="notes-title">Methods under construction.</h2>
+      </header>
+      <ol>
+        {
+          notes.map((paper, index) => (
+            <li>
+              <span>{String(index + 2).padStart(2, '0')}</span>
+              <a href={`/research/${paper.id}`}>
+                <small>{paper.status} · updated {paper.updated}</small>
+                <h3>{paper.title}</h3>
+                <p>{paper.abstract}</p>
+              </a>
+              <i aria-hidden="true">↗</i>
+            </li>
+          ))
+        }
+      </ol>
+    </section>
+
+    <a class="publication-index__studio" href="/research/studio">
+      <span>Publication utility · private in your browser</span>
+      <strong>Have a born-digital PDF? Recover a clean, reflowable EPUB.</strong>
+      <i aria-hidden="true">↗</i>
+    </a>
   </section>
 </Layout>
+
+<style>
+  .publication-index {
+    --paper: #f1eadc;
+    --ink: #261e18;
+    --muted: #75685a;
+    --red: #a43a2b;
+    --rule: rgba(38, 30, 24, .22);
+    background: var(--paper);
+    color: var(--ink);
+    margin-top: -1.5rem;
+    min-height: 100vh;
+    padding: clamp(3.5rem, 8vw, 8rem) clamp(1.15rem, 3vw, 3.5rem) 8rem;
+  }
+  :global(.dark) .publication-index { --paper: #d9d0bf; --ink: #211a16; --muted: #6b5e51; }
+  .publication-index__masthead { display: grid; gap: 2rem 5rem; grid-template-columns: .72fr 1.28fr; margin: 0 auto; max-width: 91rem; }
+  .publication-index__masthead > p:first-child { color: var(--red); font-family: var(--font-mono, monospace); font-size: .66rem; letter-spacing: .13em; text-transform: uppercase; }
+  .publication-index__masthead h1 { font-family: Georgia, 'Songti SC', serif; font-size: clamp(4rem, 9vw, 9.5rem); font-weight: 400; grid-column: 1 / -1; letter-spacing: -.075em; line-height: .82; margin: 2rem 0 0; }
+  .publication-index__masthead h1 em { color: var(--red); font-weight: 400; }
+  .publication-index__masthead > p:last-child { color: var(--muted); font-family: Georgia, serif; font-size: clamp(1.05rem, 1.6vw, 1.35rem); grid-column: 2; line-height: 1.5; margin: 1rem 0 0; max-width: 37rem; }
+  .publication-index__feature { border-block: 1px solid var(--rule); margin: clamp(5rem, 10vw, 10rem) auto 0; max-width: 91rem; padding-block: clamp(1.2rem, 3vw, 2.5rem); }
+  .publication-index__feature > a { display: grid; gap: clamp(2rem, 6vw, 7rem); grid-template-columns: 1.05fr .95fr; }
+  .publication-index__feature-copy { align-self: center; }
+  .publication-index__feature-copy > p:first-child { color: var(--red); font-family: var(--font-mono, monospace); font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; }
+  .publication-index__feature h2 { font-family: Georgia, serif; font-size: clamp(3.4rem, 6.8vw, 7.5rem); font-weight: 400; letter-spacing: -.07em; line-height: .82; margin: 2rem 0; }
+  .publication-index__feature h2 em { color: var(--red); font-weight: 400; }
+  .publication-index__feature-copy > p:nth-of-type(2) { color: var(--muted); line-height: 1.65; max-width: 39rem; }
+  .publication-index__feature-copy > span { border-bottom: 1px solid var(--ink); display: inline-flex; font-family: var(--font-mono, monospace); font-size: .66rem; gap: 3rem; letter-spacing: .08em; margin-top: 2.5rem; padding-bottom: .5rem; text-transform: uppercase; }
+  .publication-index__feature-copy i { font-style: normal; }
+  .publication-index__feature figure { align-self: center; margin: 0; transform: rotate(1.5deg); }
+  .publication-index__feature figure img { background: #cbbda9; box-shadow: 0 2rem 5rem rgba(45,30,20,.18); display: block; padding: clamp(.6rem, 1.2vw, 1rem); width: 100%; }
+  .publication-index__feature figcaption { color: var(--muted); font-family: var(--font-mono, monospace); font-size: .57rem; letter-spacing: .06em; margin-top: .75rem; text-transform: uppercase; }
+  .publication-index__notes { display: grid; gap: clamp(3rem, 8vw, 8rem); grid-template-columns: .6fr 1.4fr; margin: clamp(7rem, 14vw, 14rem) auto 0; max-width: 78rem; }
+  .publication-index__notes > header p { color: var(--red); font-family: var(--font-mono, monospace); font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
+  .publication-index__notes > header h2 { font-family: Georgia, serif; font-size: clamp(2.5rem, 4vw, 4.2rem); font-weight: 400; letter-spacing: -.045em; line-height: 1; margin-top: 1.5rem; }
+  .publication-index__notes ol { list-style: none; margin: 0; padding: 0; }
+  .publication-index__notes li { border-top: 1px solid var(--rule); display: grid; gap: 1rem; grid-template-columns: 2rem 1fr auto; padding: 1.5rem 0 2rem; }
+  .publication-index__notes li > span, .publication-index__notes small { color: var(--muted); font-family: var(--font-mono, monospace); font-size: .59rem; letter-spacing: .08em; text-transform: uppercase; }
+  .publication-index__notes h3 { font-family: Georgia, serif; font-size: clamp(1.7rem, 3vw, 2.7rem); font-weight: 400; letter-spacing: -.03em; line-height: 1.05; margin: 1rem 0; }
+  .publication-index__notes li p { color: var(--muted); line-height: 1.55; }
+  .publication-index__notes li > i { font-style: normal; }
+  .publication-index__studio { border-block: 1px solid var(--rule); display: grid; gap: 1rem; grid-template-columns: 1fr auto; margin: clamp(7rem, 12vw, 12rem) auto 0; max-width: 78rem; padding: 1.5rem 0; }
+  .publication-index__studio span { color: var(--muted); font-family: var(--font-mono, monospace); font-size: .58rem; letter-spacing: .1em; text-transform: uppercase; }
+  .publication-index__studio strong { font-family: Georgia, serif; font-size: clamp(1.25rem, 2.2vw, 2rem); font-weight: 400; grid-column: 1; }
+  .publication-index__studio i { align-self: center; font-size: 1.5rem; font-style: normal; grid-column: 2; grid-row: 1 / span 2; }
+  @media (max-width: 760px) {
+    .publication-index__masthead, .publication-index__feature > a, .publication-index__notes { grid-template-columns: 1fr; }
+    .publication-index__masthead > p:last-child { grid-column: 1; }
+    .publication-index__feature figure { margin: 0 auto; max-width: 82%; }
+  }
+  @media (prefers-reduced-motion: reduce) { .publication-index__feature figure { transform: none; } }
+</style>

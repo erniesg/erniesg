@@ -1,0 +1,529 @@
+---
+import HeartLettersPrototype from '@/components/research/HeartLettersPrototype'
+import { Content as PaperContent } from '@/research/publications/if-letters-home-could-sing.md'
+import type { ResearchPaper } from '@/research/schema'
+
+type Props = { paper: ResearchPaper }
+
+const { paper } = Astro.props
+
+const sections = [
+  ['01', 'Introduction', 'introduction-the-politics-of-transnational-chinese-correspondence'],
+  ['02', 'New museology', 'new-museology-and-embodied-experience-applied'],
+  ['03', 'Methodology', 'methodology-from-content-to-experience---letters-heartbeats-and-sound'],
+  ['04', 'Implications', 'implications'],
+  ['05', 'Conclusion', 'conclusion-and-future-research'],
+  ['—', 'Acknowledgments', 'acknowledgments'],
+  ['—', 'References', 'references'],
+]
+---
+
+<div class="letters-publication">
+  <a class="letters-back" href="/research">← Research</a>
+
+  <header class="letters-hero">
+    <div class="letters-hero__copy">
+      <p class="letters-kicker">National Museum of Singapore · Research Fellowship 2024</p>
+      <h1>If letters home<br />could <em>sing.</em></h1>
+      <p class="letters-subtitle">{paper.subtitle}</p>
+      <div class="letters-byline">
+        <span>Chen Enjiao (Ernie)</span>
+        <span>Research Fellow</span>
+        <span>Published 13 July 2026</span>
+      </div>
+    </div>
+
+    <figure class="letters-hero__artifact">
+      <div>
+        <img
+          src="/research/if-letters-home-could-sing/media/image3.jpg"
+          alt="Remittance letter from He Aifang to He Qinge, dated 2 March 1960"
+        />
+      </div>
+      <figcaption>
+        He Aifang to He Qinge, 2 March 1960<br />
+        NMS Accession No. 2000-06963-004
+      </figcaption>
+    </figure>
+
+    <p class="letters-hero__pullquote">
+      Ordinary lives crossed borders in ink. The installation asks what happens
+      when a visitor meets those voices through the rhythm already inside them.
+    </p>
+  </header>
+
+  <section class="letters-publication-note" aria-label="Publication acknowledgement">
+    <p>
+      This research was supported by the <strong>National Heritage Board</strong>
+      through the National Museum of Singapore’s 2024 Research Fellowship programme.
+    </p>
+    <p>
+      The opinions, findings, and recommendations expressed in this publication
+      are those of the Research Fellow and do not necessarily reflect the views
+      of the National Heritage Board.
+    </p>
+  </section>
+
+  <nav class="letters-actions" aria-label="Publication downloads and links">
+    <a href="/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf" download>
+      <span>PDF</span>
+      <strong>Print edition</strong>
+      <i aria-hidden="true">↓</i>
+    </a>
+    <a href="/research/if-letters-home-could-sing/if-letters-home-could-sing.epub" download>
+      <span>EPUB</span>
+      <strong>E-ink edition</strong>
+      <i aria-hidden="true">↓</i>
+    </a>
+    <a href="#prototype">
+      <span>Prototype</span>
+      <strong>Hear the pulse</strong>
+      <i aria-hidden="true">↘</i>
+    </a>
+    <a href={`/research/${paper.id}/source.json`}>
+      <span>Source</span>
+      <strong>Semantic record</strong>
+      <i aria-hidden="true">↗</i>
+    </a>
+  </nav>
+
+  <section class="letters-abstract" aria-labelledby="abstract-title">
+    <div>
+      <span>Abstract</span>
+      <span>7 min overview · 18 min paper</span>
+    </div>
+    <p id="abstract-title">
+      This research explores the intersection of cultural heritage, interactive
+      design, and embodied experience to transform static historical Chinese
+      diaspora correspondence into dynamic, living encounters. Focusing on
+      <em>qiao pi</em> (侨批), or “letters home,” it centres Hainanese women’s
+      voices and brings their “history from below” to life through heart
+      rate-synchronised sound experiences.
+    </p>
+    <p class="letters-keywords">
+      <span>qiao pi</span><span>embodied heritage</span><span>biometric interaction</span>
+      <span>Chinese diaspora</span><span>counter-narratives</span>
+    </p>
+  </section>
+
+  <div class="letters-reading-layout">
+    <aside class="letters-toc">
+      <p>Contents</p>
+      <ol>
+        {sections.map(([number, title, anchor]) => (
+          <li>
+            <a href={`#${anchor}`}>
+              <span>{number}</span>
+              {title}
+            </a>
+          </li>
+        ))}
+      </ol>
+      <p class="letters-toc__note">Designed to reflow cleanly on phones and e-ink readers.</p>
+    </aside>
+
+    <article class="letters-paper">
+      <PaperContent />
+    </article>
+  </div>
+
+  <div id="prototype">
+    <HeartLettersPrototype client:load />
+  </div>
+</div>
+
+<style is:global>
+  .letters-publication {
+    --letters-paper: #f1eadc;
+    --letters-ink: #261e18;
+    --letters-muted: #75685a;
+    --letters-red: #a43a2b;
+    --letters-rule: rgba(38, 30, 24, 0.22);
+    background: var(--letters-paper);
+    color: var(--letters-ink);
+    margin-top: -1.5rem;
+    min-height: 100vh;
+    overflow: clip;
+    padding: 1.25rem clamp(1.15rem, 3vw, 3.5rem) 7rem;
+  }
+
+  .dark .letters-publication {
+    --letters-paper: #d9d0bf;
+    --letters-ink: #211a16;
+    --letters-muted: #6b5e51;
+    --letters-rule: rgba(33, 26, 22, 0.24);
+  }
+
+  .letters-back {
+    color: var(--letters-muted);
+    display: inline-block;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    padding: 1rem 0;
+    text-transform: uppercase;
+  }
+
+  .letters-back:hover { color: var(--letters-red); }
+
+  .letters-hero {
+    display: grid;
+    gap: clamp(2rem, 5vw, 5rem);
+    grid-template-columns: minmax(0, 1.25fr) minmax(17rem, 0.75fr);
+    margin: 3rem auto 0;
+    max-width: 91rem;
+    min-height: min(76vh, 53rem);
+    position: relative;
+  }
+
+  .letters-hero__copy { align-self: center; position: relative; z-index: 1; }
+
+  .letters-kicker,
+  .letters-hero__artifact figcaption,
+  .letters-byline,
+  .letters-actions span,
+  .letters-abstract > div,
+  .letters-toc,
+  .letters-keywords,
+  .letters-publication-note {
+    font-family: var(--font-mono, ui-monospace, monospace);
+  }
+
+  .letters-kicker {
+    color: var(--letters-red);
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .letters-hero h1 {
+    font-family: Georgia, 'Songti SC', 'Noto Serif CJK SC', serif;
+    font-size: clamp(4.25rem, 10.7vw, 10.8rem);
+    font-weight: 400;
+    letter-spacing: -0.075em;
+    line-height: 0.77;
+    margin: clamp(2rem, 5vw, 4.75rem) 0 0;
+    max-width: 8.5ch;
+  }
+
+  .letters-hero h1 em {
+    color: var(--letters-red);
+    font-weight: 400;
+  }
+
+  .letters-subtitle {
+    font-family: Georgia, 'Songti SC', 'Noto Serif CJK SC', serif;
+    font-size: clamp(1.25rem, 2vw, 2rem);
+    line-height: 1.25;
+    margin-top: 2.5rem;
+    max-width: 27ch;
+  }
+
+  .letters-byline {
+    border-top: 1px solid var(--letters-rule);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 0.65rem;
+    gap: 0.7rem 1.4rem;
+    letter-spacing: 0.08em;
+    margin-top: 2.75rem;
+    max-width: 46rem;
+    padding-top: 1rem;
+    text-transform: uppercase;
+  }
+
+  .letters-byline span:not(:last-child)::after {
+    color: var(--letters-red);
+    content: '◆';
+    font-size: 0.42rem;
+    margin-left: 1.4rem;
+    vertical-align: 0.15em;
+  }
+
+  .letters-hero__artifact { align-self: center; margin: 0; transform: rotate(1.7deg); }
+  .letters-hero__artifact > div {
+    background: #c8bca9;
+    box-shadow: 0 2.2rem 5rem rgba(48, 32, 19, 0.18);
+    padding: clamp(0.7rem, 1.3vw, 1.2rem);
+  }
+  .letters-hero__artifact img { display: block; filter: sepia(0.12) contrast(0.97); width: 100%; }
+  .letters-hero__artifact figcaption {
+    color: var(--letters-muted);
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+    line-height: 1.6;
+    margin-top: 0.8rem;
+    text-transform: uppercase;
+  }
+
+  .letters-hero__pullquote {
+    color: var(--letters-muted);
+    font-family: Georgia, 'Songti SC', 'Noto Serif CJK SC', serif;
+    font-size: clamp(1rem, 1.4vw, 1.35rem);
+    font-style: italic;
+    grid-column: 2;
+    line-height: 1.45;
+    margin: -2rem 0 0 auto;
+    max-width: 32ch;
+  }
+
+  .letters-publication-note {
+    border-block: 1px solid var(--letters-rule);
+    display: grid;
+    font-size: 0.67rem;
+    gap: 1.5rem 4rem;
+    grid-template-columns: 1fr 1fr;
+    letter-spacing: 0.025em;
+    line-height: 1.65;
+    margin: 5rem auto 0;
+    max-width: 91rem;
+    padding: 1.5rem 0;
+  }
+  .letters-publication-note p { margin: 0; }
+
+  .letters-actions {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin: 0 auto;
+    max-width: 91rem;
+  }
+  .letters-actions a {
+    border-bottom: 1px solid var(--letters-rule);
+    border-right: 1px solid var(--letters-rule);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    min-height: 7.5rem;
+    padding: 1.1rem 1.25rem 1.25rem;
+    transition: background-color 180ms ease, color 180ms ease;
+  }
+  .letters-actions a:first-child { border-left: 1px solid var(--letters-rule); }
+  .letters-actions a:hover { background: var(--letters-ink); color: var(--letters-paper); }
+  .letters-actions span {
+    font-size: 0.58rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+  }
+  .letters-actions strong { align-self: end; font-family: Georgia, serif; font-size: 1.12rem; font-weight: 400; }
+  .letters-actions i { font-size: 1.25rem; font-style: normal; grid-column: 2; grid-row: 1 / span 2; }
+
+  .letters-abstract {
+    display: grid;
+    gap: 3rem;
+    grid-template-columns: minmax(10rem, 0.26fr) minmax(0, 0.74fr);
+    margin: clamp(5rem, 10vw, 11rem) auto;
+    max-width: 76rem;
+  }
+  .letters-abstract > div {
+    color: var(--letters-muted);
+    display: flex;
+    flex-direction: column;
+    font-size: 0.62rem;
+    gap: 0.8rem;
+    letter-spacing: 0.1em;
+    padding-top: 0.7rem;
+    text-transform: uppercase;
+  }
+  .letters-abstract > p:not(.letters-keywords) {
+    font-family: Georgia, 'Songti SC', 'Noto Serif CJK SC', serif;
+    font-size: clamp(1.65rem, 3.1vw, 3rem);
+    letter-spacing: -0.025em;
+    line-height: 1.25;
+    margin: 0;
+  }
+  .letters-keywords { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; grid-column: 2; margin: -1.4rem 0 0; }
+  .letters-keywords span { color: var(--letters-muted); font-size: 0.62rem; letter-spacing: 0.06em; }
+  .letters-keywords span::before { color: var(--letters-red); content: '◆'; font-size: 0.4rem; margin-right: 0.5rem; }
+
+  .letters-reading-layout {
+    display: grid;
+    gap: clamp(2rem, 6vw, 7rem);
+    grid-template-columns: minmax(9rem, 14rem) minmax(0, 48rem);
+    justify-content: center;
+    margin: 0 auto;
+    max-width: 91rem;
+  }
+
+  .letters-toc {
+    align-self: start;
+    border-top: 2px solid var(--letters-ink);
+    font-size: 0.63rem;
+    position: sticky;
+    top: 6rem;
+  }
+  .letters-toc > p:first-child { letter-spacing: 0.12em; margin: 0; padding: 0.9rem 0 1.5rem; text-transform: uppercase; }
+  .letters-toc ol { list-style: none; margin: 0; padding: 0; }
+  .letters-toc li { border-top: 1px solid var(--letters-rule); }
+  .letters-toc a { display: grid; gap: 0.8rem; grid-template-columns: 1.5rem 1fr; line-height: 1.35; padding: 0.72rem 0; }
+  .letters-toc a:hover { color: var(--letters-red); }
+  .letters-toc a span { color: var(--letters-muted); }
+  .letters-toc__note { color: var(--letters-muted); line-height: 1.55; margin-top: 1.8rem; }
+
+  .letters-paper {
+    font-family: Georgia, 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
+    font-size: clamp(1.03rem, 1.25vw, 1.16rem);
+    line-height: 1.72;
+    min-width: 0;
+  }
+  .letters-paper h1 {
+    border-top: 1px solid var(--letters-ink);
+    font-family: Georgia, 'Songti SC', 'Noto Serif CJK SC', serif;
+    font-size: clamp(2.15rem, 4.7vw, 4.2rem);
+    font-weight: 400;
+    letter-spacing: -0.045em;
+    line-height: 1.02;
+    margin: 7rem 0 2rem;
+    padding-top: 1.4rem;
+  }
+  .letters-paper > :first-child { margin-top: 0; }
+  .letters-paper h2 {
+    color: var(--letters-red);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.79rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    line-height: 1.45;
+    margin: 4.5rem 0 1.2rem;
+    text-transform: uppercase;
+  }
+  .letters-paper h3 { font-size: 1.18rem; margin: 3rem 0 0.8rem; }
+  .letters-paper p { margin: 1.15rem 0; }
+  .letters-paper a { text-decoration-color: var(--letters-red); text-underline-offset: 0.18em; }
+  .letters-paper ol, .letters-paper ul { margin: 1.5rem 0; padding-left: 1.35rem; }
+  .letters-paper li { margin: 0.8rem 0; padding-left: 0.35rem; }
+  .letters-paper blockquote {
+    border-left: 0;
+    border-block: 1px solid var(--letters-rule);
+    font-size: 1rem;
+    font-style: normal;
+    margin: 3rem 0;
+    padding: 1.4rem 0;
+  }
+  .letters-paper figure { margin: 3.5rem 0; }
+  .letters-paper figure img { background: #d1c5b3; display: block; margin: 0 auto; padding: 0.6rem; width: 100%; }
+  .letters-paper .archive-letter--portrait img { max-height: 50rem; object-fit: contain; }
+  .letters-paper figcaption { color: var(--letters-muted); font-family: var(--font-mono, monospace); font-size: 0.62rem; line-height: 1.55; margin-top: 0.75rem; }
+  .letters-paper .system-diagram { margin-inline: clamp(-4rem, -8vw, -8rem); }
+  .letters-paper .system-diagram img { background: #eee7da; }
+  .letters-paper hr { border: 0; border-top: 1px solid var(--letters-rule); margin: 4rem 0; }
+  .letters-paper [role='doc-endnotes'] { border-top: 1px solid var(--letters-rule); font-size: 0.82rem; margin-top: 4rem; padding-top: 2rem; }
+
+  .heart-prototype {
+    border-top: 1px solid var(--letters-ink);
+    margin: clamp(7rem, 14vw, 15rem) auto 0;
+    max-width: 91rem;
+    padding-top: 1.25rem;
+  }
+  .heart-prototype__intro { display: grid; gap: 3rem; grid-template-columns: 1fr minmax(18rem, 30rem); }
+  .heart-prototype__intro p { color: var(--letters-muted); line-height: 1.55; margin: 0; }
+  .heart-prototype__intro > div > p { color: var(--letters-red); font-family: var(--font-mono, monospace); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; }
+  .heart-prototype__intro h2 { font-family: Georgia, serif; font-size: clamp(3rem, 7vw, 7rem); font-weight: 400; letter-spacing: -0.06em; line-height: 0.9; margin: 1.6rem 0 0; }
+  .heart-prototype__stage { border-block: 1px solid var(--letters-rule); display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(19rem, 0.75fr); margin-top: 3.5rem; }
+  .heart-prototype__letter { background: #221d19; min-height: 44rem; overflow: hidden; position: relative; }
+  .heart-prototype__letter::after { background: linear-gradient(90deg, rgba(23,17,13,.88), transparent 48%, rgba(23,17,13,.52)); content: ''; inset: 0; position: absolute; }
+  .heart-prototype__letter img { height: 100%; inset: 0; object-fit: cover; opacity: var(--letter-reveal); position: absolute; transition: opacity 700ms ease; width: 100%; }
+  .heart-prototype__letter > span { color: #f2eadc; font-family: Georgia, serif; font-size: clamp(6rem, 15vw, 14rem); left: 6%; letter-spacing: -0.09em; line-height: 1; position: absolute; top: 6%; z-index: 2; }
+  .heart-prototype__letter > small { color: #f2eadc; font-family: var(--font-mono, monospace); font-size: 0.6rem; left: 7%; letter-spacing: 0.12em; position: absolute; text-transform: uppercase; top: calc(6% + clamp(6rem, 15vw, 14rem)); z-index: 2; }
+  .heart-prototype__pulse { align-items: center; bottom: 8%; display: flex; gap: 0.8rem; left: 7%; position: absolute; z-index: 2; }
+  .heart-prototype__pulse i { animation: letters-heartbeat var(--heartbeat-duration) ease-in-out infinite; background: var(--letters-red); border-radius: 50%; height: 0.7rem; width: 0.7rem; }
+  .heart-prototype__pulse i:nth-child(2) { animation-delay: 80ms; }
+  .heart-prototype__pulse i:nth-child(3) { animation-delay: 160ms; }
+  @keyframes letters-heartbeat { 0%, 100% { opacity: .2; transform: scale(.7); } 28% { opacity: 1; transform: scale(1.35); } }
+  .heart-prototype__controls { align-self: stretch; display: flex; flex-direction: column; padding: clamp(1.5rem, 4vw, 4rem); }
+  .heart-prototype__reading { display: grid; font-family: var(--font-mono, monospace); grid-template-columns: 1fr auto; }
+  .heart-prototype__reading span { border-top: 1px solid var(--letters-rule); color: var(--letters-muted); font-size: 0.62rem; letter-spacing: 0.1em; padding: 0.9rem 0; text-transform: uppercase; }
+  .heart-prototype__reading strong { border-top: 1px solid var(--letters-rule); font-family: Georgia, serif; font-size: 1.35rem; font-weight: 400; padding: 0.55rem 0; }
+  .heart-prototype__range { display: grid; font-family: var(--font-mono, monospace); grid-template-columns: 1fr auto; margin-top: 2.5rem; }
+  .heart-prototype__range > span { color: var(--letters-muted); font-size: 0.58rem; letter-spacing: .08em; text-transform: uppercase; }
+  .heart-prototype__range > span:nth-of-type(2) { grid-column: 2; grid-row: 2; }
+  .heart-prototype__range > span:nth-of-type(3) { grid-column: 2; grid-row: 3; }
+  .heart-prototype__range input { accent-color: var(--letters-red); grid-column: 1 / -1; margin: 1rem 0 .4rem; width: 100%; }
+  .heart-prototype__phases { border-block: 1px solid var(--letters-rule); display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 3rem; }
+  .heart-prototype__phases button { border-right: 1px solid var(--letters-rule); font-family: var(--font-mono, monospace); font-size: .6rem; padding: 1rem .4rem; text-align: left; text-transform: uppercase; }
+  .heart-prototype__phases button:last-child { border: 0; }
+  .heart-prototype__phases button span { color: var(--letters-muted); display: block; font-family: Georgia, serif; font-size: 1.5rem; margin-bottom: .3rem; }
+  .heart-prototype__phases button.is-active { color: var(--letters-red); }
+  .heart-prototype__phase-note { color: var(--letters-muted); font-family: Georgia, serif; font-style: italic; line-height: 1.45; margin: 1.2rem 0 0; min-height: 3rem; }
+  .heart-prototype__actions { display: grid; gap: .75rem; margin-top: auto; padding-top: 3rem; }
+  .heart-prototype__actions button { min-height: 3.25rem; padding: .75rem 1rem; }
+  .heart-prototype__listen { background: var(--letters-ink); color: var(--letters-paper); display: flex; gap: .8rem; justify-content: center; }
+  .heart-prototype__connect { border: 1px solid var(--letters-rule); }
+  .heart-prototype__connect:disabled { cursor: not-allowed; opacity: .45; }
+  .heart-prototype__connection { color: var(--letters-muted); font-family: var(--font-mono, monospace); font-size: .58rem; margin-top: .75rem; text-align: center; text-transform: uppercase; }
+  .heart-prototype footer { color: var(--letters-muted); font-family: var(--font-mono, monospace); font-size: .58rem; line-height: 1.6; max-width: 70ch; padding-top: 1rem; }
+
+  @media (max-width: 860px) {
+    .letters-hero { grid-template-columns: 1fr; min-height: auto; }
+    .letters-hero__copy { padding-top: 2rem; }
+    .letters-hero__artifact { margin-left: 12%; max-width: 75%; }
+    .letters-hero__pullquote { grid-column: 1; margin: 1rem 0 0 auto; }
+    .letters-publication-note { grid-template-columns: 1fr; }
+    .letters-actions { grid-template-columns: 1fr 1fr; }
+    .letters-actions a:nth-child(3) { border-left: 1px solid var(--letters-rule); }
+    .letters-abstract { grid-template-columns: 1fr; }
+    .letters-keywords { grid-column: 1; }
+    .letters-reading-layout { grid-template-columns: 1fr; }
+    .letters-toc { display: none; }
+    .letters-paper .system-diagram { margin-inline: 0; }
+    .heart-prototype__intro, .heart-prototype__stage { grid-template-columns: 1fr; }
+    .heart-prototype__letter { min-height: 32rem; }
+  }
+
+  @media (max-width: 520px) {
+    .letters-publication { padding-inline: 1rem; }
+    .letters-hero { margin-top: 1rem; }
+    .letters-hero h1 { font-size: clamp(4rem, 22vw, 6.8rem); }
+    .letters-hero__artifact { margin-left: 5%; max-width: 90%; }
+    .letters-byline { display: grid; }
+    .letters-byline span::after { display: none; }
+    .letters-actions { grid-template-columns: 1fr; }
+    .letters-actions a, .letters-actions a:nth-child(3) { border-left: 1px solid var(--letters-rule); }
+    .letters-abstract { gap: 1.5rem; margin-block: 5rem; }
+    .letters-paper { font-size: 1rem; line-height: 1.67; }
+    .letters-paper h1 { font-size: 2.25rem; margin-top: 5rem; }
+    .heart-prototype__letter { min-height: 25rem; }
+    .heart-prototype__phases { grid-template-columns: 1fr; }
+    .heart-prototype__phases button { border-bottom: 1px solid var(--letters-rule); border-right: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .heart-prototype__pulse i { animation: none; opacity: .75; }
+    .letters-hero__artifact { transform: none; }
+  }
+
+  @media (monochrome), (forced-colors: active) {
+    .letters-publication { --letters-paper: #fff; --letters-ink: #000; --letters-muted: #333; --letters-red: #000; }
+    .letters-hero__artifact img, .heart-prototype__letter img { filter: grayscale(1) contrast(1.1); }
+  }
+
+  @media print {
+    @page { margin: 18mm 17mm 20mm; size: A4; }
+    body > div > header, body > div > footer { display: none !important; }
+    .letters-publication { background: #fff; color: #000; margin: 0; padding: 0; }
+    .letters-back, .letters-actions, .letters-toc, #prototype { display: none !important; }
+    .letters-hero {
+      display: grid;
+      gap: 8mm 12mm;
+      grid-template-columns: 1fr 58mm;
+      grid-template-rows: 1fr auto;
+      height: 245mm;
+      min-height: 0;
+      page-break-after: always;
+    }
+    .letters-hero__copy { align-self: center; grid-row: 1 / span 2; padding-top: 0; }
+    .letters-hero h1 { font-size: 56pt; }
+    .letters-hero__artifact { align-self: center; margin: 0; max-width: none; transform: none; }
+    .letters-hero__pullquote { align-self: end; grid-column: 2; margin: 0; position: static; }
+    .letters-publication-note { font-size: 7.5pt; margin-top: 0; }
+    .letters-abstract { display: block; margin: 14mm 0 22mm; }
+    .letters-abstract > div { margin-bottom: 8mm; }
+    .letters-abstract > p:not(.letters-keywords) { font-size: 19pt; }
+    .letters-keywords { margin-top: 8mm; }
+    .letters-reading-layout { display: block; }
+    .letters-paper { font-size: 10.5pt; line-height: 1.55; }
+    .letters-paper h1 { break-after: avoid; font-size: 26pt; margin-top: 18mm; }
+    .letters-paper h2, .letters-paper h3 { break-after: avoid; }
+    .letters-paper figure { break-inside: avoid; }
+    .letters-paper .system-diagram { margin-inline: 0; }
+    .letters-paper a { color: #000; text-decoration: none; }
+  }
+</style>

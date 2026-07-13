@@ -8,7 +8,7 @@ OnBootSec=5m
 OnUnitActiveSec=30m
 Persistent=true
 RandomizedDelaySec=5m
-Unit=rucksack-autopilot-erniesg-erniesg-drain.service
+Unit=rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service
 
 [Install]
 WantedBy=timers.target

@@ -1,0 +1,134 @@
+import { describe, expect, it } from 'vitest'
+import type { PdfPageAnalysis, PdfSourceRun } from './import-types'
+import { reconstructPageAnalyses } from './pdf-layout'
+
+function run(
+  page: number,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  fontSize = 10,
+): PdfSourceRun {
+  return {
+    page,
+    text,
+    x,
+    y,
+    width,
+    height: 0.018,
+    rotation: 0,
+    method: 'pdf-text',
+    fontName: fontSize > 12 ? 'Heading' : 'Body',
+    fontSize,
+    confidence: 1,
+  }
+}
+
+function page(
+  number: number,
+  runs: PdfSourceRun[],
+  kind: PdfPageAnalysis['kind'] = 'born-digital',
+): PdfPageAnalysis {
+  return {
+    page: number,
+    kind,
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: runs.reduce((total, item) => total + item.text.length, 0),
+    imageCount: kind === 'born-digital' ? 0 : 1,
+    runs,
+  }
+}
+
+describe('PDF semantic reconstruction', () => {
+  it('removes repeated margins and retains normalized source-box provenance', () => {
+    const pages = [
+      page(1, [
+        run(1, 'Journal 2026', 0.1, 0.02, 0.2, 8),
+        run(1, 'A Semantic Paper', 0.1, 0.15, 0.7, 22),
+        run(1, 'This is the first reconstructed paragraph.', 0.1, 0.24, 0.72),
+      ]),
+      page(2, [
+        run(2, 'Journal 2026', 0.1, 0.02, 0.2, 8),
+        run(2, 'Methods', 0.1, 0.16, 0.25, 17),
+        run(2, 'The second page remains in reading order.', 0.1, 0.24, 0.7),
+      ]),
+    ]
+    const result = reconstructPageAnalyses({
+      pages,
+      sourceHash: 'a'.repeat(64),
+      fileName: 'paper.pdf',
+      byteLength: 2048,
+      metadata: { author: 'Ada Example', modified: '2026-07-13' },
+    })
+
+    expect(result.paper.title).toBe('A Semantic Paper')
+    expect(result.paper.authors).toEqual(['Ada Example'])
+    expect(
+      result.paper.nodes.map((node) => 'text' in node && node.text),
+    ).not.toContain('Journal 2026')
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'REPEATED_MARGIN_TEXT' }),
+      ]),
+    )
+    const first = result.paper.nodes[0]
+    expect(result.provenance[first.id]).toMatchObject({
+      confidence: 0.9,
+      pages: [1],
+    })
+    expect(result.provenance[first.id].boxes[0]).toMatchObject({
+      page: 1,
+      method: 'pdf-text',
+      x: 0.1,
+      y: 0.15,
+    })
+  })
+
+  it('orders detected columns left before right without storing target geometry', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Left one.', 0.08, 0.2, 0.32),
+          run(1, 'Left two.', 0.08, 0.24, 0.32),
+          run(1, 'Left three.', 0.08, 0.28, 0.32),
+          run(1, 'Right one.', 0.55, 0.2, 0.32),
+          run(1, 'Right two.', 0.55, 0.24, 0.32),
+          run(1, 'Right three.', 0.55, 0.28, 0.32),
+        ]),
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'columns.pdf',
+      byteLength: 4096,
+    })
+    const text = result.paper.nodes
+      .map((node) => ('text' in node ? node.text : ''))
+      .join(' ')
+    expect(text.indexOf('Left one')).toBeLessThan(text.indexOf('Right one'))
+    expect(result.paper).not.toHaveProperty('geometry')
+    expect(result.paper).not.toHaveProperty('pages')
+  })
+
+  it('emits stable OCR gates instead of silently exporting partial text', () => {
+    const pages = [page(1, [], 'ocr-required')]
+    const input = {
+      pages,
+      sourceHash: 'c'.repeat(64),
+      fileName: 'scan.pdf',
+      byteLength: 8192,
+    }
+    const first = reconstructPageAnalyses(input)
+    const second = reconstructPageAnalyses(input)
+
+    expect(first).toEqual(second)
+    expect(first.paper.nodes).toEqual([])
+    expect(first.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'OCR_REQUIRED', severity: 'error' }),
+        expect.objectContaining({ code: 'NO_RECONSTRUCTABLE_TEXT' }),
+      ]),
+    )
+  })
+})

@@ -46,11 +46,22 @@ function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
 }
 
+function normalizeTrackedRunText(value: string) {
+  const tokens = value.trim().split(/\s+/)
+  if (
+    tokens.length >= 2 &&
+    tokens.every((token) => /^[\p{Lu}\d]$/u.test(token))
+  ) {
+    return tokens.join('')
+  }
+  return value.trim()
+}
+
 function mergeRunText(runs: PdfSourceRun[]) {
   let text = ''
   let previous: PdfSourceRun | undefined
   for (const run of runs) {
-    const word = run.text.trim()
+    const word = normalizeTrackedRunText(run.text)
     if (!word) continue
     const gap = previous
       ? run.x - (previous.x + previous.width)
@@ -59,7 +70,16 @@ function mergeRunText(runs: PdfSourceRun[]) {
       text.length > 0 &&
       !/^[,.;:!?%)}\]]/.test(word) &&
       !/[({[]$/.test(text) &&
-      gap > Math.max(0.0015, run.height * 0.08)
+      gap >
+        Math.max(
+          0.0015,
+          run.height *
+            (/^[\p{Lu}\d]$/u.test(word) &&
+            previous &&
+            /^[\p{Lu}\d]$/u.test(normalizeTrackedRunText(previous.text))
+              ? 0.24
+              : 0.08),
+        )
     text += `${needsSpace ? ' ' : ''}${word}`
     previous = run
   }
@@ -196,10 +216,19 @@ function linesToBlocks(lines: TextLine[]) {
     const gap = previousLine
       ? line.y - (previousLine.y + previousLine.height)
       : 1
+    const continuesHeading = Boolean(
+      isHeading &&
+        previous?.type === 'heading' &&
+        previousLine?.page === line.page &&
+        previousLine.column === line.column &&
+        Math.abs(previousLine.fontSize - line.fontSize) <=
+          Math.max(1, previousLine.fontSize * 0.12) &&
+        gap <= Math.max(0.04, line.height * 2.4),
+    )
     const newParagraph =
       !previous ||
-      isHeading ||
-      previous.type === 'heading' ||
+      (isHeading && !continuesHeading) ||
+      (previous.type === 'heading' && !continuesHeading) ||
       previousLine?.page !== line.page ||
       previousLine?.column !== line.column ||
       gap > Math.max(0.016, line.height * 1.35)

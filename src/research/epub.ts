@@ -125,7 +125,6 @@ function publicationXhtml(paper: ResearchPaper) {
 <body>
   <main epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
     <header class="publication-header">
-      <p class="status">${text(paper.status)} · ${text(paper.updated)}</p>
       <h1 id="publication-title">${text(paper.title)}</h1>
       <p class="subtitle">${text(paper.subtitle)}</p>
       <p class="authors">${paper.authors.map(text).join(', ')}</p>
@@ -173,7 +172,7 @@ html { font-size: 100%; }
 body { margin: 0; color: #111; background: #fff; font-family: Georgia, "Times New Roman", serif; line-height: 1.62; }
 main { max-width: 42rem; margin: 0 auto; padding: 5%; }
 .publication-header { border-bottom: 0.08rem solid currentColor; margin-bottom: 2.5rem; padding-bottom: 2rem; }
-.status, .authors { font-family: sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; }
+.authors { font-family: sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; }
 h1 { font-size: 2.2rem; line-height: 1.05; margin: 0.5rem 0 0.75rem; }
 h2 { font-size: 1.45rem; margin: 2.4rem 0 0.6rem; break-after: avoid; }
 h3 { font-size: 1.15rem; margin: 2rem 0 0.5rem; break-after: avoid; }

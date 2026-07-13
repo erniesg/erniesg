@@ -1,34 +1,34 @@
 # 1. Introduction: The Politics of Transnational Chinese Correspondence
 
-This research explores the intersection of cultural heritage, interactive design, and embodied experience to transform static historical Chinese diaspora correspondence into dynamic, living encounters. Focusing on *qiao pi* (侨批) or “letters home” held in the National Museum of Singapore’s collection, we address a fundamental challenge in cultural heritage presentation: how to make historical correspondence emotionally resonant with contemporary audiences while challenging dominant interpretive frameworks.
+This research explores the intersection of cultural heritage, interactive design, and embodied experience to transform static historical Chinese diaspora correspondence into dynamic, living encounters. Focusing on _qiao pi_ (侨批) or “letters home” held in the National Museum of Singapore’s collection, we address a fundamental challenge in cultural heritage presentation: how to make historical correspondence emotionally resonant with contemporary audiences while challenging dominant interpretive frameworks.
 
-Chinese *qiao pi*—remittance letters sent by overseas Chinese to their families from the 19th to mid-20th centuries—were recognised by UNESCO as Memory of the World in 2013, acknowledging their significance as crucial lifelines connecting diaspora communities with their families in China (UNESCO, 2013). Despite this recognition, a comprehensive review of existing research reveals significant gaps, particularly regarding marginalised voices and innovative presentation methods.
+Chinese _qiao pi_—remittance letters sent by overseas Chinese to their families from the 19th to mid-20th centuries—were recognised by UNESCO as Memory of the World in 2013, acknowledging their significance as crucial lifelines connecting diaspora communities with their families in China (UNESCO, 2013). Despite this recognition, a comprehensive review of existing research reveals significant gaps, particularly regarding marginalised voices and innovative presentation methods.
 
 ## 1.1 Dominant Narratives: Nationalism and Historical Contextualisation
 
-A significant body of scholarship positions *qiao pi* within nationalist frameworks that emphasise patriotic loyalty to the Chinese motherland. This instrumentalisation is evident in both academic literature and museum presentations, creating what Wang (2019) describes as patriotic educational tools through the display of *qiao pi* archives.[^1]
+A significant body of scholarship positions _qiao pi_ within nationalist frameworks that emphasise patriotic loyalty to the Chinese motherland. This instrumentalisation is evident in both academic literature and museum presentations, creating what Wang (2019) describes as patriotic educational tools through the display of _qiao pi_ archives.[^1]
 
-This state-sanctioned narrative prioritises content demonstrating how “overseas Chinese elevated their love for family, clan, and hometown to love for their motherland” (Bai, 2018, p. 131).[^2] Scholars like Ye (2022) explicitly position *qiao pi* as materials for promoting “traditional Chinese virtues such as patriotism” and conducting “patriotic education.”[^3] Similarly, Lin and Huang (2020) document how *qiao pi* are used in education to cultivate “patriotic sentiments” through historical stories related to “loving the party and country.”[^4]
+This state-sanctioned narrative prioritises content demonstrating how “overseas Chinese elevated their love for family, clan, and hometown to love for their motherland” (Bai, 2018, p. 131).[^2] Scholars like Ye (2022) explicitly position _qiao pi_ as materials for promoting “traditional Chinese virtues such as patriotism” and conducting “patriotic education.”[^3] Similarly, Lin and Huang (2020) document how _qiao pi_ are used in education to cultivate “patriotic sentiments” through historical stories related to “loving the party and country.”[^4]
 
-Historical contextualisation studies frequently reinforce these nationalist frameworks. Zheng (2019) frames *qiao pi* as evidence of how overseas Chinese “threw themselves into revolutionary activities and anti-Japanese resistance movements.”[^5] Chen and Cen (2021) analyse patriotic sentiments in family correspondence during the war against Japan, showing how resistance to Japanese aggression strengthened cultural identification with China. This historical contextualisation extends to earlier periods as well, with Bai (2018) documenting overseas Chinese involvement in the 1911 Revolution.
+Historical contextualisation studies frequently reinforce these nationalist frameworks. Zheng (2019) frames _qiao pi_ as evidence of how overseas Chinese “threw themselves into revolutionary activities and anti-Japanese resistance movements.”[^5] Chen and Cen (2021) analyse patriotic sentiments in family correspondence during the war against Japan, showing how resistance to Japanese aggression strengthened cultural identification with China. This historical contextualisation extends to earlier periods as well, with Bai (2018) documenting overseas Chinese involvement in the 1911 Revolution.
 
 While patriotic sentiments may indeed appear in some correspondences, particularly during periods of national crisis, this dominant interpretive framework risks creating a monolithic narrative that filters overseas Chinese experiences primarily through the lens of state interests. The focus on nationalist themes overshadows the transnational nature of these communications, where identities were negotiated across borders rather than simply affirming singular national allegiances.
 
 ## 1.2 Institutional and Economic Networks
 
-Scholarship examining the institutional infrastructure of *qiao pi* focuses primarily on remittance houses (*qiao pi ju*) and their transnational banking networks. Dai (2003) pioneered research on these networked enterprises, analysing how they operated within embedded social structures, while his subsequent work examined the transition between traditional and modern business systems as *qiao pi ju* developed relationships with formal banking institutions (Dai, 2004). Building on this foundation, Jiao (2010) explored the construction and operation of transnational commercial networks, particularly in Fujian.
+Scholarship examining the institutional infrastructure of _qiao pi_ focuses primarily on remittance houses (_qiao pi ju_) and their transnational banking networks. Dai (2003) pioneered research on these networked enterprises, analysing how they operated within embedded social structures, while his subsequent work examined the transition between traditional and modern business systems as _qiao pi ju_ developed relationships with formal banking institutions (Dai, 2004). Building on this foundation, Jiao (2010) explored the construction and operation of transnational commercial networks, particularly in Fujian.
 
-Western scholarship has similarly recognised these sophisticated financial mechanisms. Harris (2013) analysed “the organisational structure and business practices of Qiaopiju” (p. 130), demonstrating how these firms adapted to emerging regulatory regimes across borders. Benton and Liu (2018) dedicate entire chapters in their book *Dear China* to examining “The Structure of Qiaopi Trade and Transnational Networks” and “The Qiaopi Trade as a Distinctive Form of Chinese Capitalism.” Their work represents the first book-length study in English of the origins, structure, and operations of the *qiao pi* trade.
+Western scholarship has similarly recognised these sophisticated financial mechanisms. Harris (2013) analysed “the organisational structure and business practices of Qiaopiju” (p. 130), demonstrating how these firms adapted to emerging regulatory regimes across borders. Benton and Liu (2018) dedicate entire chapters in their book _Dear China_ to examining “The Structure of Qiaopi Trade and Transnational Networks” and “The Qiaopi Trade as a Distinctive Form of Chinese Capitalism.” Their work represents the first book-length study in English of the origins, structure, and operations of the _qiao pi_ trade.
 
 ## 1.3 Cultural and Social Dimensions
 
 ### 1.3.1 Traditional Values and Cultural Analysis
 
-A significant strand of research examines how *qiao pi* embodied traditional Chinese values, particularly concepts of trust and familial responsibility that sustained remittance networks without formal legal protections. Niu (2013) demonstrates how traditional Confucian moral principles of “benevolence, righteousness, propriety, wisdom, and trustworthiness”[^6] permeate these archives, extending their significance beyond mere economic transactions. Li et al. (2023) further this analysis by examining how “trust culture”[^7] in Guangdong *qiao pi* functioned across personal, industry, and national levels. These studies consistently highlight how Confucian values of filial piety motivated the maintenance of transnational connections (Deng, 2009).
+A significant strand of research examines how _qiao pi_ embodied traditional Chinese values, particularly concepts of trust and familial responsibility that sustained remittance networks without formal legal protections. Niu (2013) demonstrates how traditional Confucian moral principles of “benevolence, righteousness, propriety, wisdom, and trustworthiness”[^6] permeate these archives, extending their significance beyond mere economic transactions. Li et al. (2023) further this analysis by examining how “trust culture”[^7] in Guangdong _qiao pi_ functioned across personal, industry, and national levels. These studies consistently highlight how Confucian values of filial piety motivated the maintenance of transnational connections (Deng, 2009).
 
 ### 1.3.2 Gender Imbalances and Male-Centric Perspectives
 
-Research on *qiao pi* largely reflects historical gender imbalances in overseas Chinese communities. Tian and Xiao (2015) examines letters between male family members, while Zhou (2020) quantifies this gender disparity, documenting that Singapore’s 1931 Hainanese community had a gender ratio of 1000:151 (male:female). This predominant focus on male perspectives has marginalised women’s voices and experiences in both the historical record and subsequent scholarly analysis.
+Research on _qiao pi_ largely reflects historical gender imbalances in overseas Chinese communities. Tian and Xiao (2015) examines letters between male family members, while Zhou (2020) quantifies this gender disparity, documenting that Singapore’s 1931 Hainanese community had a gender ratio of 1000:151 (male:female). This predominant focus on male perspectives has marginalised women’s voices and experiences in both the historical record and subsequent scholarly analysis.
 
 ## 1.4 The Critical Gap: Marginalised Hainanese Women’s Voices
 
@@ -58,7 +58,7 @@ Beyond the political dimensions of interpretation, Chinese diaspora corresponden
 
 Traditional approaches to presenting historical correspondence—through translated displays, video recreations, or touchscreen interactives—frequently fail to create meaningful engagement with these materials. As Smith (2006) argues, heritage interpretations often impose fixed narratives that privilege curatorial authority over visitor meaning-making. Digital interfaces, while providing information access, often create what Parry (2010) describes as “informational rather than affective engagement” (p. 123)—privileging factual knowledge over emotional connection.
 
-This recognition has led to our exploration of biometric approaches to visitor engagement—specifically, heart rate synchronisation as a means of creating embodied connections with historical materials. By translating the emotional content of letters into sound experiences that respond to visitors’ heart rates, we address both the political challenge of challenging nationalist narratives and the practical challenge of making these materials accessible to diverse visitors. This represents a first-of-its-kind presentation of *qiao pi* in biometric installations.
+This recognition has led to our exploration of biometric approaches to visitor engagement—specifically, heart rate synchronisation as a means of creating embodied connections with historical materials. By translating the emotional content of letters into sound experiences that respond to visitors’ heart rates, we address both the political challenge of challenging nationalist narratives and the practical challenge of making these materials accessible to diverse visitors. This represents a first-of-its-kind presentation of _qiao pi_ in biometric installations.
 
 # 2. New Museology and Embodied Experience Applied
 
@@ -78,7 +78,7 @@ Having reviewed the corpus of relevant existing studies and areas in which this 
 
 ## 3.1 Letter Selection
 
-The selection of *qiao pi* for analysis followed a multi-stage filtering process. Beginning with 2,265 items from the National Museum of Singapore’s collection containing the keyword “letter,” we excluded non-paper materials to reach 887 items. Further manual review identified 385 Chinese letters, from which we focused particularly on correspondence involving Hainanese women.
+The selection of _qiao pi_ for analysis followed a multi-stage filtering process. Beginning with 2,265 items from the National Museum of Singapore’s collection containing the keyword “letter,” we excluded non-paper materials to reach 887 items. Further manual review identified 385 Chinese letters, from which we focused particularly on correspondence involving Hainanese women.
 
 Our focus on Hainanese women’s letters was both incidental and deliberate. Incidental because these were among the few letters in the collection that featured a female sender or recipient, and deliberate in addressing significant gaps in existing research which has predominantly examined male-authored correspondence. It’s worth noting that some letters may have been written by professional letter writers rather than the stated senders themselves, as literacy rates were low, particularly among women. However, even professionally written letters would typically capture the sender’s intended messages and concerns, filtered though they might be through the scribe’s writing conventions.
 
@@ -129,7 +129,76 @@ By using heart rate as the physiological bridge between visitor and historical m
 Our interactive prototype translates the emotional content of Hainanese women’s letters into sound experiences synchronised with visitors’ heart rates. The system architecture comprises primary components as detailed below:
 
 <figure class="system-diagram">
-  <img src="/research/if-letters-home-could-sing/media/image1.png" alt="System architecture connecting a Bluetooth heart-rate monitor, emotional analysis, musical pattern generation, visual elements, and sound output" />
+  <div class="letters-system-diagram">
+    <svg viewBox="0 0 360 820" role="img" aria-labelledby="letters-diagram-title letters-diagram-description">
+      <title id="letters-diagram-title">Heart-synchronised letter installation architecture</title>
+      <desc id="letters-diagram-description">A visitor's heart-rate monitor and letter selection feed an audio engine. The engine analyses heart rate and emotion, maps tempo, selects base patterns, generates a three-part musical sequence, and sends it to both the sound and visual systems.</desc>
+      <defs>
+        <marker id="letters-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+        </marker>
+      </defs>
+      <rect class="diagram-group" x="12" y="12" width="336" height="150" rx="8"></rect>
+      <text x="28" y="38" font-size="13" font-weight="600">Visitor input</text>
+      <rect class="diagram-node" x="28" y="58" width="136" height="38" rx="4"></rect>
+      <text x="96" y="82" font-size="12" text-anchor="middle">Heart-rate monitor</text>
+      <rect class="diagram-node" x="196" y="58" width="136" height="38" rx="4"></rect>
+      <text x="264" y="82" font-size="12" text-anchor="middle">BLE connection</text>
+      <path class="diagram-line" d="M164 77 H196" marker-end="url(#letters-arrow)"></path>
+      <rect class="diagram-node" x="28" y="110" width="136" height="38" rx="4"></rect>
+      <text x="96" y="134" font-size="12" text-anchor="middle">Letter selection</text>
+      <path class="diagram-line" d="M264 96 V188 H238" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M96 148 V188 H122" marker-end="url(#letters-arrow)"></path>
+      <rect class="diagram-group" x="12" y="178" width="336" height="430" rx="8"></rect>
+      <text x="28" y="204" font-size="13" font-weight="600">Audio engine</text>
+      <rect class="diagram-node" x="188" y="220" width="144" height="40" rx="4"></rect>
+      <text x="260" y="245" font-size="12" text-anchor="middle">Heart-rate processor</text>
+      <rect class="diagram-node" x="28" y="220" width="136" height="40" rx="4"></rect>
+      <text x="96" y="245" font-size="12" text-anchor="middle">Emotion analysis</text>
+      <rect class="diagram-node" x="188" y="292" width="144" height="40" rx="4"></rect>
+      <text x="260" y="317" font-size="12" text-anchor="middle">Tempo mapping</text>
+      <rect class="diagram-node" x="28" y="292" width="136" height="40" rx="4"></rect>
+      <text x="96" y="317" font-size="12" text-anchor="middle">Base-pattern selection</text>
+      <path class="diagram-line" d="M260 260 V292" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M96 260 V292" marker-end="url(#letters-arrow)"></path>
+      <rect class="diagram-node" x="86" y="364" width="188" height="42" rx="4"></rect>
+      <text x="180" y="390" font-size="12" text-anchor="middle">Pattern generation</text>
+      <path class="diagram-line" d="M260 332 V348 H196 V364" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M96 332 V348 H164 V364" marker-end="url(#letters-arrow)"></path>
+      <rect class="diagram-node" x="86" y="438" width="188" height="42" rx="4"></rect>
+      <text x="180" y="464" font-size="12" text-anchor="middle">Section manager</text>
+      <path class="diagram-line" d="M180 406 V438" marker-end="url(#letters-arrow)"></path>
+      <rect class="diagram-node" x="28" y="516" width="88" height="50" rx="4"></rect>
+      <text x="72" y="537" font-size="11" text-anchor="middle">Entrance</text>
+      <text x="72" y="552" font-size="10" text-anchor="middle">patterns</text>
+      <rect class="diagram-node" x="136" y="516" width="88" height="50" rx="4"></rect>
+      <text x="180" y="537" font-size="11" text-anchor="middle">Emotional</text>
+      <text x="180" y="552" font-size="10" text-anchor="middle">patterns</text>
+      <rect class="diagram-node" x="244" y="516" width="88" height="50" rx="4"></rect>
+      <text x="288" y="537" font-size="11" text-anchor="middle">Closing</text>
+      <text x="288" y="552" font-size="10" text-anchor="middle">patterns</text>
+      <path class="diagram-line" d="M180 480 V498 H72 V516" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M180 480 V516" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M180 480 V498 H288 V516" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M72 566 V636 H96" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M180 566 V620 H180 V636" marker-end="url(#letters-arrow)"></path>
+      <path class="diagram-line" d="M288 566 V636 H264" marker-end="url(#letters-arrow)"></path>
+      <rect class="diagram-group" x="12" y="626" width="158" height="132" rx="8"></rect>
+      <text x="28" y="652" font-size="13" font-weight="600">Sound system</text>
+      <rect class="diagram-node" x="28" y="670" width="126" height="34" rx="4"></rect>
+      <text x="91" y="692" font-size="11" text-anchor="middle">Sample selection</text>
+      <rect class="diagram-node" x="28" y="714" width="126" height="30" rx="4"></rect>
+      <text x="91" y="734" font-size="11" text-anchor="middle">Audio output</text>
+      <path class="diagram-line" d="M91 704 V714" marker-end="url(#letters-arrow)"></path>
+      <rect class="diagram-group" x="190" y="626" width="158" height="132" rx="8"></rect>
+      <text x="206" y="652" font-size="13" font-weight="600">Visual system</text>
+      <rect class="diagram-node" x="206" y="670" width="126" height="34" rx="4"></rect>
+      <text x="269" y="692" font-size="11" text-anchor="middle">Letter reveal</text>
+      <rect class="diagram-node" x="206" y="714" width="126" height="30" rx="4"></rect>
+      <text x="269" y="734" font-size="11" text-anchor="middle">Pulse visualisation</text>
+      <path class="diagram-line" d="M269 704 V714" marker-end="url(#letters-arrow)"></path>
+    </svg>
+  </div>
   <figcaption>Figure 1. System diagram. Created by the author.</figcaption>
 </figure>
 
@@ -179,7 +248,7 @@ As museums globally seek ways to remain relevant in an increasingly digital worl
 
 # Acknowledgments
 
-This research was supported by the National Heritage Board through the National Museum of Singapore’s 2024 Research Fellowship programme. I extend my sincere gratitude to the curatorial team at the National Museum of Singapore for their invaluable guidance and for providing access to their rich collection of *qiao pi* materials.
+This research was supported by the National Heritage Board through the National Museum of Singapore’s 2024 Research Fellowship programme. I extend my sincere gratitude to the curatorial team at the National Museum of Singapore for their invaluable guidance and for providing access to their rich collection of _qiao pi_ materials.
 
 > **Disclaimer.** The opinions, findings, and recommendations expressed in this publication are those of the Research Fellow and do not necessarily reflect the views of the National Heritage Board.
 
@@ -187,97 +256,97 @@ On a personal note, this research is deeply inspired by and dedicated to the inc
 
 # References
 
-Ahmed, S. (2014). *The cultural politics of emotion* (2nd ed.). Edinburgh University Press.
+Ahmed, S. (2014). _The cultural politics of emotion_ (2nd ed.). Edinburgh University Press.
 
-Ang, I. (2001). *On not speaking Chinese: Living between Asia and the West*. Routledge.
+Ang, I. (2001). _On not speaking Chinese: Living between Asia and the West_. Routledge.
 
-Bai, J. \[白婧\]. (2018). 黄清海《菲华黄开物侨批：世界记忆财富（1907–1922）》\[Huang Qinghai “Philippine Chinese Huang Kaiwu qiao pi: World memory heritage (1907-1922)”\]. *华人研究国际学报*, *10*(1), 131-137. https://doi.org/10.1142/S179372481800010X
+Bai, J. \[白婧\]. (2018). 黄清海《菲华黄开物侨批：世界记忆财富（1907–1922）》\[Huang Qinghai “Philippine Chinese Huang Kaiwu qiao pi: World memory heritage (1907-1922)”\]. _华人研究国际学报_, _10_(1), 131-137. https://doi.org/10.1142/S179372481800010X
 
-Benton, G., & Liu, H. (2018). *Dear China: Emigrant letters and remittances, 1820-1980*. University of California Press.
+Benton, G., & Liu, H. (2018). _Dear China: Emigrant letters and remittances, 1820-1980_. University of California Press.
 
-Bhabha, H. K. (1994). *The location of culture*. Routledge.
+Bhabha, H. K. (1994). _The location of culture_. Routledge.
 
-Bitgood, S. (2013). *Attention and value: Keys to understanding museum visitors*. Left Coast Press.
+Bitgood, S. (2013). _Attention and value: Keys to understanding museum visitors_. Left Coast Press.
 
-Chakrabarty, D. (2000). *Provincializing Europe: Postcolonial thought and historical difference*. Princeton University Press.
+Chakrabarty, D. (2000). _Provincializing Europe: Postcolonial thought and historical difference_. Princeton University Press.
 
-Chen, J., & Cen, J. \[陈嘉添 & 岑俊伟\]. (2021). 民国时期岭南华侨的家国情怀：基于对抗战前后伍氏家族侨批的解读 \[Patriotism of overseas Chinese from Lingnan during the Republican period: Based on the interpretation of the Wu family’s overseas Chinese remittances before and after the War of Resistance\]. *暨南学报*, *1*, 91-95.
+Chen, J., & Cen, J. \[陈嘉添 & 岑俊伟\]. (2021). 民国时期岭南华侨的家国情怀：基于对抗战前后伍氏家族侨批的解读 \[Patriotism of overseas Chinese from Lingnan during the Republican period: Based on the interpretation of the Wu family’s overseas Chinese remittances before and after the War of Resistance\]. _暨南学报_, _1_, 91-95.
 
 Conceicao, J. (2023). Hainanese community. Singapore Infopedia. National Library Board Singapore. https://www.nlb.gov.sg/main/article-detail?cmsuuid=b6af752e-68d5-4199-a899-2391a239a5e5
 
-Crouch, D. (2003). Spacing, performing, and becoming: Tangles in the mundane. *Environment and Planning A*, *35*(11), 1945-1960.
+Crouch, D. (2003). Spacing, performing, and becoming: Tangles in the mundane. _Environment and Planning A_, _35_(11), 1945-1960.
 
-Dai, Y. \[戴一峰\]. (2003). 网络化企业与嵌入性：近代侨批局的制度建构 (1850–1940) \[Networked enterprises and embeddedness: The institutional construction of modern qiao pi ju (1850-1940)\]. *中国社会经济史研究*, *1*, 70-78.
+Dai, Y. \[戴一峰\]. (2003). 网络化企业与嵌入性：近代侨批局的制度建构 (1850–1940) \[Networked enterprises and embeddedness: The institutional construction of modern qiao pi ju (1850-1940)\]. _中国社会经济史研究_, _1_, 70-78.
 
-Dai, Y. \[戴一峰\]. (2004). 传统与现代:近代中国企业制度变迁的再思考——以侨批局与银行关系为中心 \[Tradition and modernity: Rethinking the transformation of modern Chinese enterprise institutions—focusing on the relationship between qiao pi ju and banks\]. *中国社会经济史研究*, *(1)*, 65-73.
+Dai, Y. \[戴一峰\]. (2004). 传统与现代:近代中国企业制度变迁的再思考——以侨批局与银行关系为中心 \[Tradition and modernity: Rethinking the transformation of modern Chinese enterprise institutions—focusing on the relationship between qiao pi ju and banks\]. _中国社会经济史研究_, _(1)_, 65-73.
 
-Deng, D. \[邓达宏\]. (2009). 从抗战华侨捐资解读闽南华侨爱国义举 \[Interpreting the patriotic deeds of Minnan overseas Chinese from their donations during the Anti-Japanese War\]. *福建党史月刊*, *(14)*, 31-33.
+Deng, D. \[邓达宏\]. (2009). 从抗战华侨捐资解读闽南华侨爱国义举 \[Interpreting the patriotic deeds of Minnan overseas Chinese from their donations during the Anti-Japanese War\]. _福建党史月刊_, _(14)_, 31-33.
 
-Frost, M. R. (2003). Transcultural diaspora: The Straits Chinese in Singapore, 1819-1918. *Asia Research Institute Working Paper Series, No. 10*.
+Frost, M. R. (2003). Transcultural diaspora: The Straits Chinese in Singapore, 1819-1918. _Asia Research Institute Working Paper Series, No. 10_.
 
-Gurian, E. H. (2006). *Civilizing the museum: The collected writings of Elaine Heumann Gurian*. Routledge.
+Gurian, E. H. (2006). _Civilizing the museum: The collected writings of Elaine Heumann Gurian_. Routledge.
 
-Harris, L. J. (2013). Overseas Chinese remittance firms, the limits of state sovereignty, and transnational capitalism in East and Southeast Asia, 1850s-1930s. *The Journal of Asian Studies*, *74*(1), 129-151.
+Harris, L. J. (2013). Overseas Chinese remittance firms, the limits of state sovereignty, and transnational capitalism in East and Southeast Asia, 1850s-1930s. _The Journal of Asian Studies_, _74_(1), 129-151.
 
-Hooper-Greenhill, E. (2000). *Museums and the interpretation of visual culture*. Routledge.
+Hooper-Greenhill, E. (2000). _Museums and the interpretation of visual culture_. Routledge.
 
-Hornecker, E., & Stifter, M. (2006). Learning from interactive museum installations about interaction design for public settings. In *Proceedings of the 18th Australia conference on Computer-Human Interaction* (pp. 135-142).
+Hornecker, E., & Stifter, M. (2006). Learning from interactive museum installations about interaction design for public settings. In _Proceedings of the 18th Australia conference on Computer-Human Interaction_ (pp. 135-142).
 
-Hsu, M. Y. (2000). *Dreaming of gold, dreaming of home: Transnationalism and migration between the United States and South China, 1882-1943*. Stanford University Press.
+Hsu, M. Y. (2000). _Dreaming of gold, dreaming of home: Transnationalism and migration between the United States and South China, 1882-1943_. Stanford University Press.
 
-Jiao, J. \[焦建华\]. (2010). 近代跨国商业网络的构建与运作——以福建侨批网络为中心 \[Construction and operation of modern transnational commercial networks—focusing on Fujian qiao pi networks\]. *学术月刊*, *11*, 136-143.
+Jiao, J. \[焦建华\]. (2010). 近代跨国商业网络的构建与运作——以福建侨批网络为中心 \[Construction and operation of modern transnational commercial networks—focusing on Fujian qiao pi networks\]. _学术月刊_, _11_, 136-143.
 
-Kirshenblatt-Gimblett, B. (1998). *Destination culture: Tourism, museums, and heritage*. University of California Press.
+Kirshenblatt-Gimblett, B. (1998). _Destination culture: Tourism, museums, and heritage_. University of California Press.
 
-Kövecses, Z. (2000). *Metaphor and emotion: Language, culture, and body in human feeling*. Cambridge University Press.
+Kövecses, Z. (2000). _Metaphor and emotion: Language, culture, and body in human feeling_. Cambridge University Press.
 
-Lakoff, G., & Johnson, M. (1999). *Philosophy in the flesh: The embodied mind and its challenge to Western thought*. Basic Books.
+Lakoff, G., & Johnson, M. (1999). _Philosophy in the flesh: The embodied mind and its challenge to Western thought_. Basic Books.
 
-Li, H., Wang, D., Lin, K., & Bian, Y. \[李海涛, 王丹霞, 林可楠, & 边越\]. (2023). 广东省侨批档案的诚信文化传承研究 \[Research on the inheritance of trust culture in Guangdong qiao pi archives\]. *文献与数据学报*, *(3)*, 45-54.
+Li, H., Wang, D., Lin, K., & Bian, Y. \[李海涛, 王丹霞, 林可楠, & 边越\]. (2023). 广东省侨批档案的诚信文化传承研究 \[Research on the inheritance of trust culture in Guangdong qiao pi archives\]. _文献与数据学报_, _(3)_, 45-54.
 
 Lin, R., & Huang, Y. \[林瑞容 & 黄雨荷\]. (2020). 以潮汕侨批文化推进本土中小学课程思政的实践探索——以《侨批文化乐园》原创课程集为例 \[Practical exploration of promoting local primary and secondary school curriculum politics with Chaoshan qiao pi culture\]. 华南师范大学.
 
-Nacke, L. E., Kalyn, M., Lough, C., & Mandryk, R. L. (2011). Biofeedback game design: Using direct and indirect physiological control to enhance game interaction. *Proceedings of the SIGCHI Conference on Human Factors in Computing Systems*, 103-112.
+Nacke, L. E., Kalyn, M., Lough, C., & Mandryk, R. L. (2011). Biofeedback game design: Using direct and indirect physiological control to enhance game interaction. _Proceedings of the SIGCHI Conference on Human Factors in Computing Systems_, 103-112.
 
-Nield, R. (2015). *China’s foreign places: The foreign presence in China in the treaty port era, 1840-1943*. Hong Kong University Press.
+Nield, R. (2015). _China’s foreign places: The foreign presence in China in the treaty port era, 1840-1943_. Hong Kong University Press.
 
-Niu, W. \[牛文娟\]. (2013). 侨批档案中的”仁义礼智信” \[The “benevolence, righteousness, propriety, wisdom, and trustworthiness” in qiao pi archives\]. *云南档案*, *6*, 15-16.
+Niu, W. \[牛文娟\]. (2013). 侨批档案中的”仁义礼智信” \[The “benevolence, righteousness, propriety, wisdom, and trustworthiness” in qiao pi archives\]. _云南档案_, _6_, 15-16.
 
-Parry, R. (2010). *Museums in a digital age*. Routledge.
+Parry, R. (2010). _Museums in a digital age_. Routledge.
 
-Picard, R. W. (1997). *Affective computing*. MIT Press.
+Picard, R. W. (1997). _Affective computing_. MIT Press.
 
-Scott, J. C. (1990). *Domination and the arts of resistance: Hidden transcripts*. Yale University Press.
+Scott, J. C. (1990). _Domination and the arts of resistance: Hidden transcripts_. Yale University Press.
 
-Serrell, B. (2015). *Exhibit labels: An interpretive approach* (2nd ed.). Rowman & Littlefield.
+Serrell, B. (2015). _Exhibit labels: An interpretive approach_ (2nd ed.). Rowman & Littlefield.
 
-Shen, H. \[沈辉\]. (2021). 华人离散群体的战争记忆——以东南亚华侨关于太平洋战争的侨批为中心 \[War memories of Chinese diaspora groups: Focusing on Southeast Asian overseas Chinese remittances about the Pacific War\]. *南洋问题研究*, *6*, 107-119.
+Shen, H. \[沈辉\]. (2021). 华人离散群体的战争记忆——以东南亚华侨关于太平洋战争的侨批为中心 \[War memories of Chinese diaspora groups: Focusing on Southeast Asian overseas Chinese remittances about the Pacific War\]. _南洋问题研究_, _6_, 107-119.
 
-Simon, N. (2010). *The participatory museum*. Museum 2.0.
+Simon, N. (2010). _The participatory museum_. Museum 2.0.
 
 Smith, L. (2006). Uses of heritage. Routledge.\`
 
-Tian, L., & Xiao, W. \[田立勤 & 肖文评\]. (2015). 从侨批看民国初期梅州侨乡与印度尼西亚地区近代教育的发展 \[Observing the modern education development in Meizhou and Indonesia from Qiaopi\]. *地方文化研究*, *1*, 69-79.
+Tian, L., & Xiao, W. \[田立勤 & 肖文评\]. (2015). 从侨批看民国初期梅州侨乡与印度尼西亚地区近代教育的发展 \[Observing the modern education development in Meizhou and Indonesia from Qiaopi\]. _地方文化研究_, _1_, 69-79.
 
-Tian, M., Srinivasamurthy, A., Sandler, M., & Serra, X. (2014). A study of instrument-wise onset detection in Beijing Opera percussion ensembles. *Proceedings of the IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP 2014)*, Florence, Italy.
+Tian, M., Srinivasamurthy, A., Sandler, M., & Serra, X. (2014). A study of instrument-wise onset detection in Beijing Opera percussion ensembles. _Proceedings of the IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP 2014)_, Florence, Italy.
 
-Tröndle, M., & Tschacher, W. (2012). The physiology of phenomenology: The effects of artworks. *Empirical Studies of the Arts*, *30*(1), 75-113.
+Tröndle, M., & Tschacher, W. (2012). The physiology of phenomenology: The effects of artworks. _Empirical Studies of the Arts_, _30_(1), 75-113.
 
-UNESCO. (2013). *Qiaopi and Yinxin Correspondence and Remittance Documents from Overseas Chinese*. Memory of the World Register. https://www.unesco.org/en/memory-world/qiaopi-and-yinxin-correspondence-and-remittance-documents-overseas-chinese
+UNESCO. (2013). _Qiaopi and Yinxin Correspondence and Remittance Documents from Overseas Chinese_. Memory of the World Register. https://www.unesco.org/en/memory-world/qiaopi-and-yinxin-correspondence-and-remittance-documents-overseas-chinese
 
-Wang, C. \[王春泉\]. (2019). 爱国主义视域下侨批档案的高校育人价值与实现路径 \[The educational value and implementation path of qiao pi archives in universities from the perspective of patriotism\]. *档案学研究*, *3*, 76-82.
+Wang, C. \[王春泉\]. (2019). 爱国主义视域下侨批档案的高校育人价值与实现路径 \[The educational value and implementation path of qiao pi archives in universities from the perspective of patriotism\]. _档案学研究_, _3_, 76-82.
 
-Winter, T. (2015). Heritage diplomacy. *International Journal of Heritage Studies*, *21*(10), 997-1015.
+Winter, T. (2015). Heritage diplomacy. _International Journal of Heritage Studies_, _21_(10), 997-1015.
 
-Witcomb, A. (2013). Understanding the role of affect in producing a critical pedagogy for history museums. *Museum Management and Curatorship*, *28*(3), 255-271.
+Witcomb, A. (2013). Understanding the role of affect in producing a critical pedagogy for history museums. _Museum Management and Curatorship_, _28_(3), 255-271.
 
-Witcomb, A. (2015). Cultural pedagogies in the museum: Walking, listening and feeling. In M. Watkins, G. Noble & C. Driscoll (Eds.), *Cultural pedagogies and human conduct* (pp. 158-170). Routledge.
+Witcomb, A. (2015). Cultural pedagogies in the museum: Walking, listening and feeling. In M. Watkins, G. Noble & C. Driscoll (Eds.), _Cultural pedagogies and human conduct_ (pp. 158-170). Routledge.
 
-Ye, Z. \[叶忠惠\]. (2022). 利用侨批开展中华传统文化教育的思考——以闽南侨批为例 \[Thoughts on using qiao pi to conduct traditional Chinese cultural education—taking Southern Fujian qiao pi as an example\]. *档案与建设*, *8*, 21-25.
+Ye, Z. \[叶忠惠\]. (2022). 利用侨批开展中华传统文化教育的思考——以闽南侨批为例 \[Thoughts on using qiao pi to conduct traditional Chinese cultural education—taking Southern Fujian qiao pi as an example\]. _档案与建设_, _8_, 21-25.
 
-Yeoh, B. S. A., & Kong, L. (2012). Singapore’s Chinatown: Nation building and heritage tourism in a multiracial city. *Localities*, *2*, 117-159.
+Yeoh, B. S. A., & Kong, L. (2012). Singapore’s Chinatown: Nation building and heritage tourism in a multiracial city. _Localities_, _2_, 117-159.
 
-Zheng, J. \[郑金勤\]. (2017). 侨批信笺爱国情怀 \[Patriotic sentiments in qiao pi letters\]. *东方收藏*, *(06)*, 14-15.
+Zheng, J. \[郑金勤\]. (2017). 侨批信笺爱国情怀 \[Patriotic sentiments in qiao pi letters\]. _东方收藏_, _(06)_, 14-15.
 
 Zheng, M. \[郑美云\]. (2019). 侨批档案在中学历史教学中的开发和运用 \[Development and application of qiao pi archives in secondary school history teaching\] \[Master’s thesis, Fujian Normal University\]. https://link.cnki.net/doi/10.27019/d.cnki.gfjsu.2019.001647
 

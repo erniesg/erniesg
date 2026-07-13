@@ -1,3 +1,5 @@
+import { RESEARCH_ENABLED } from '@/research/release'
+
 export type Site = {
   TITLE: string
   DESCRIPTION: string
@@ -40,7 +42,7 @@ export const SITE: Site = {
 
 export const NAV_LINKS: Link[] = [
   { href: '/blog', label: 'blog' },
-  { href: '/research', label: 'research' },
+  ...(RESEARCH_ENABLED ? [{ href: '/research', label: 'research' }] : []),
   { href: '/about', label: 'about' },
   { href: '/tags', label: 'tags' },
 ]

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { strFromU8 } from 'fflate'
+import { readFile } from 'node:fs/promises'
 import { buildEpub, inspectEpub } from './epub'
 import { reconstructPdf } from './pdf'
 
@@ -76,5 +77,26 @@ describe('PDF.js browser ingestion', () => {
       sourcePdfSha256: result.source.sha256,
       rendition: 'reflowable-epub',
     })
+  })
+
+  it('reconstructs the fellowship paper without tracked-letter or title-line fragmentation', async () => {
+    const bytes = await readFile(
+      new URL(
+        '../../public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
+        import.meta.url,
+      ),
+    )
+    const result = await reconstructPdf(
+      new File([bytes], 'if-letters-home-could-sing.pdf', {
+        type: 'application/pdf',
+      }),
+    )
+    const text = result.paper.nodes
+      .map((node) => ('text' in node ? node.text : ''))
+      .join('\n')
+
+    expect(text).toContain('NATIONAL MUSEUM OF SINGAPORE')
+    expect(text).not.toContain('N A T I O N A L')
+    expect(text).toContain('If letters home could sing.')
   })
 })

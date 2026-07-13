@@ -17,6 +17,7 @@ type GeometryReport = {
   duplicateNodes: string[]
   clippedContent: string[]
   overlaps: string[]
+  visualOrderRegressions: string[]
   horizontalOverflow: Array<{ element: string; amount: number }>
 }
 
@@ -117,6 +118,18 @@ async function inspectGeometry(
         }
       }
 
+      const visualOrderRegressions = measured
+        .slice(1)
+        .flatMap((current, index) => {
+          const previous = measured[index]
+          const previousRect = previous.rects[0]
+          const currentRect = current.rects[0]
+          if (!previousRect || !currentRect) return []
+          return currentRect.top < previousRect.top - options.geometryEpsilon
+            ? [`${previous.label}::${current.label}`]
+            : []
+        })
+
       const documentElement = document.documentElement
       const overflowCandidates = [
         {
@@ -149,6 +162,7 @@ async function inspectGeometry(
           .map(([id]) => id),
         clippedContent,
         overlaps,
+        visualOrderRegressions,
         horizontalOverflow: overflowCandidates.filter(
           ({ amount }) => amount > options.overflowEpsilon,
         ),
@@ -198,6 +212,12 @@ test('captures every target and rejects invalid geometry', async ({
     expect.soft(report.clippedContent, `${target}: clipped content`).toEqual([])
     expect.soft(report.overlaps, `${target}: overlapping content`).toEqual([])
     expect
+      .soft(
+        report.visualOrderRegressions,
+        `${target}: DOM reading order must not move backwards on screen`,
+      )
+      .toEqual([])
+    expect
       .soft(report.horizontalOverflow, `${target}: horizontal overflow`)
       .toEqual([])
 
@@ -219,4 +239,20 @@ test('captures every target and rejects invalid geometry', async ({
     path: reportPath,
     contentType: 'application/json',
   })
+})
+
+test('print keeps the semantic paper in one reading flow', async ({ page }) => {
+  await page.goto(`/research/${PAPER_ID}`)
+  await expect(
+    page.locator('astro-island[component-url$="ResearchStudio.tsx"]'),
+  ).toHaveAttribute('client-render-time', /.+/)
+  await page.emulateMedia({ media: 'print' })
+
+  const paper = page.locator('.srt-paper')
+  await expect(paper).toBeVisible()
+  await expect
+    .poll(() =>
+      paper.evaluate((element) => getComputedStyle(element).columnCount),
+    )
+    .toBe('1')
 })

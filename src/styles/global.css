@@ -414,7 +414,7 @@
     @apply min-h-12 min-w-0 rounded-md border bg-transparent px-3 text-sm outline-none focus:border-foreground sm:rounded-r-none;
   }
   .publication-url__field button {
-    @apply min-h-12 rounded-md border border-foreground bg-foreground px-4 text-sm font-medium text-background sm:rounded-l-none sm:border-l-0;
+    @apply min-h-12 rounded-md border border-foreground bg-foreground px-4 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-40 sm:rounded-l-none sm:border-l-0;
   }
   .publication-url > small {
     @apply mt-3 max-w-md leading-relaxed;
@@ -556,14 +556,9 @@
   }
   .srt-paper {
     box-shadow: none;
-    column-count: 2;
-    column-gap: 12mm;
+    column-count: 1;
     max-width: none !important;
     padding: 14mm 16mm;
-  }
-  .srt-paper > header,
-  .srt-paper figure {
-    column-span: all;
   }
 }
 

@@ -43,6 +43,64 @@ function page(
 }
 
 describe('PDF semantic reconstruction', () => {
+  it('joins tracked characters while preserving larger word gaps', () => {
+    const letters = [
+      ['N', 0.1],
+      ['A', 0.1144],
+      ['T', 0.1288],
+      ['I', 0.1432],
+      ['O', 0.1576],
+      ['N', 0.172],
+      ['A', 0.1864],
+      ['L', 0.2008],
+      ['M', 0.2228],
+      ['U', 0.2372],
+      ['S', 0.2516],
+      ['E', 0.266],
+      ['U', 0.2804],
+      ['M', 0.2948],
+    ] as const
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(
+          1,
+          letters.map(([letter, x]) => run(1, letter, x, 0.1, 0.012, 14)),
+        ),
+      ],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'tracked.pdf',
+      byteLength: 1024,
+    })
+
+    expect(result.paper.nodes[0]).toMatchObject({
+      text: 'NATIONAL MUSEUM',
+    })
+  })
+
+  it('reconstructs adjacent display lines as one heading', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'If letters', 0.1, 0.1, 0.35, 22),
+          run(1, 'home', 0.1, 0.13, 0.2, 22),
+          run(1, 'could sing.', 0.1, 0.16, 0.35, 22),
+          run(1, 'A paragraph follows the display title.', 0.1, 0.24, 0.7),
+          run(1, 'It continues with ordinary body copy.', 0.1, 0.28, 0.7),
+          run(1, 'That copy establishes the body size.', 0.1, 0.32, 0.7),
+          run(1, 'The final line keeps the median realistic.', 0.1, 0.36, 0.7),
+        ]),
+      ],
+      sourceHash: 'e'.repeat(64),
+      fileName: 'title.pdf',
+      byteLength: 1024,
+    })
+
+    expect(result.paper.nodes[0]).toMatchObject({
+      type: 'heading',
+      text: 'If letters home could sing.',
+    })
+  })
+
   it('removes repeated margins and retains normalized source-box provenance', () => {
     const pages = [
       page(1, [

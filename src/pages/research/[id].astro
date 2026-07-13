@@ -25,10 +25,9 @@ const isFellowshipPaper = paper.id === 'if-letters-home-could-sing'
       <IfLettersPublication paper={paper} />
     ) : (
       <>
-        <section class="research-paper-hero">
+        <section class="research-paper-hero research-shell">
           <a href="/research">← Research</a>
           <div>
-            <p>Research paper · {paper.status}</p>
             <h1>{paper.title}</h1>
             <p>{paper.subtitle}</p>
           </div>

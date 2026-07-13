@@ -7,7 +7,6 @@ import type {
 import { PdfImportError } from '@/research/import-types'
 import { downloadLinkedPdf } from '@/research/pdf-url'
 import EpubDownloadLink from './EpubDownloadLink'
-import ResearchStudio from './ResearchStudio'
 
 type StudioState =
   | { status: 'idle' }
@@ -81,6 +80,7 @@ export default function PublicationImporter({
 
   const processUrl = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!paperUrl.trim()) return
     setState({
       status: 'processing',
       fileName: paperUrl,
@@ -121,10 +121,7 @@ export default function PublicationImporter({
       {showIntro && (
         <div className="publication-importer-intro">
           <h2 id="studio-heading">Make an EPUB from a PDF</h2>
-          <p>
-            Upload a paper or paste a direct PDF link. The conversion runs in
-            your browser.
-          </p>
+          <p>Upload a paper or paste a direct PDF link.</p>
         </div>
       )}
 
@@ -154,7 +151,7 @@ export default function PublicationImporter({
             </label>
           </div>
 
-          <form className="publication-url" onSubmit={processUrl}>
+          <form className="publication-url" noValidate onSubmit={processUrl}>
             <label htmlFor="publication-url">
               <strong>Or paste a PDF link</strong>
               <span>Use a direct download link.</span>
@@ -164,12 +161,13 @@ export default function PublicationImporter({
                 id="publication-url"
                 type="url"
                 inputMode="url"
-                required
                 value={paperUrl}
                 placeholder="https://…/paper.pdf"
                 onChange={(event) => setPaperUrl(event.target.value)}
               />
-              <button type="submit">Create EPUB</button>
+              <button type="submit" disabled={!paperUrl.trim()}>
+                Create EPUB
+              </button>
             </div>
             <small>
               If the link is blocked, download the PDF and upload it instead.
@@ -223,12 +221,6 @@ export default function PublicationImporter({
               ) : state.status === 'ready' ? (
                 <span aria-live="polite">Validating EPUB…</span>
               ) : null}
-              <button
-                onClick={() => window.print()}
-                disabled={state.status !== 'ready'}
-              >
-                Print / PDF
-              </button>
               <button className="secondary" onClick={reset}>
                 New paper
               </button>
@@ -302,16 +294,6 @@ export default function PublicationImporter({
               </ul>
             )}
           </details>
-
-          {state.result.paper.nodes.length > 0 && (
-            <div
-              className={
-                state.status === 'ready' ? '' : 'publication-preview-blocked'
-              }
-            >
-              <ResearchStudio paper={state.result.paper} />
-            </div>
-          )}
         </>
       )}
     </section>

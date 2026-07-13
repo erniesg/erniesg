@@ -39,6 +39,8 @@ describe('EPUB 3 export', () => {
     expect(content.indexOf(paper.nodes[0].id)).toBeLessThan(
       content.indexOf(paper.nodes.at(-1)!.id),
     )
+    expect(content).not.toContain('class="status"')
+    expect(content).not.toContain(`${paper.status} · ${paper.updated}`)
   })
 
   it('escapes publication metadata rather than emitting invalid XHTML', async () => {

@@ -140,7 +140,7 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
       headingSizeCssPx: 20,
       quoteSizeCssPx: 20,
     },
-    columns: { count: 2, gapCssPx: 48 },
+    columns: { count: 1, gapCssPx: 0 },
     interactionMode: 'print-static',
     finiteHeight: true,
     preview: { widthCssPx: 794, heightCssPx: 1123 },

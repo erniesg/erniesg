@@ -56,4 +56,13 @@ describe('SRT target profiles', () => {
 
     expect(targetProfileSchema.safeParse(invalid).success).toBe(false)
   })
+
+  it('keeps every preview in one semantic flow until pagination is implemented', () => {
+    for (const id of TARGET_PROFILE_IDS) {
+      expect(
+        TARGET_PROFILES[id].columns.count,
+        `${id} must not use browser column flow as fake pagination`,
+      ).toBe(1)
+    }
+  })
 })

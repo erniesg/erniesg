@@ -5,23 +5,16 @@ import Layout from '@/layouts/Layout.astro'
 import { papers } from '@/research/papers'
 ---
 
-<Layout
-  title="Research"
-  description="Papers, prototypes, and a small tool for turning research PDFs into EPUBs."
->
-  <Container class="flex flex-col gap-y-12 pb-24">
-    <header class="flex flex-col gap-y-3 border-b pb-6">
+<Layout title="Research" description="Research papers.">
+  <Container class="research-shell flex flex-col gap-y-12 pb-24">
+    <header class="border-b pb-6">
       <h1 class="text-3xl font-bold">Research</h1>
-      <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-        Papers, prototypes, and small tools for reading research across screens
-        and e-ink.
-      </p>
     </header>
 
     <PublicationImporter client:load />
 
-    <section class="flex flex-col gap-y-4" aria-labelledby="published-work">
-      <h2 id="published-work" class="text-2xl font-semibold">Published work</h2>
+    <section class="flex flex-col gap-y-4" aria-labelledby="papers">
+      <h2 id="papers" class="text-2xl font-semibold">Papers</h2>
       <ul class="border-t">
         {
           papers.map((paper) => (
@@ -30,9 +23,6 @@ import { papers } from '@/research/papers'
                 class="group flex flex-col gap-y-2"
                 href={`/research/${paper.id}`}
               >
-                <small class="text-xs text-muted-foreground">
-                  {paper.status} · Updated {paper.updated}
-                </small>
                 <h3 class="text-xl font-semibold group-hover:underline group-hover:underline-offset-4">
                   {paper.title}
                 </h3>

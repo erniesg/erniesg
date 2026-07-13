@@ -115,12 +115,8 @@ jobs:
             exit 0
           fi
           body="$(MANIFEST="$manifest" node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync(process.env.MANIFEST,"utf8")); const lines=["<!-- agent-evidence -->","### Agent evidence","",`- Result: \`${m.result}\``,`- Commit: \`${m.commit}\``,`- Dirty: \`${m.dirty === true ? "true" : "false"}\``,`- Lanes: \`${(m.lanes_run || []).join(", ") || "(none)"}\``,`- Required failures: \`${(m.required_failures || []).join(", ") || "(none)"}\``]; console.log(lines.join("\n"));')"
-          body="$body"$'
-'"- Artifact: \`agent-evidence-${{ github.run_id }}\`"$'
-'"- Download: \`gh run download ${{ github.run_id }} --name agent-evidence-${{ github.run_id }}\`"
-          body="$body"$'
-'"- Manifest artifact: \`agent-evidence-manifest-${{ github.run_id }}\`"$'
-'"- Manifest download: \`gh run download ${{ github.run_id }} --name agent-evidence-manifest-${{ github.run_id }}\`"
+          body="$body"$'\n'"- Artifact: \`agent-evidence-${{ github.run_id }}\`"$'\n'"- Download: \`gh run download ${{ github.run_id }} --name agent-evidence-${{ github.run_id }}\`"
+          body="$body"$'\n'"- Manifest artifact: \`agent-evidence-manifest-${{ github.run_id }}\`"$'\n'"- Manifest download: \`gh run download ${{ github.run_id }} --name agent-evidence-manifest-${{ github.run_id }}\`"
           existing="$(gh api "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | contains("<!-- agent-evidence -->")) | .id' | tail -1)"
           if [ -n "$existing" ]; then
             gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$existing" -f body="$body" >/dev/null

@@ -111,4 +111,11 @@ export default defineConfig({
   devToolbar: {
     enabled: false,
   },
+  vite: {
+    server: {
+      watch: {
+        ignored: ['**/.agent/evidence/**'],
+      },
+    },
+  },
 })

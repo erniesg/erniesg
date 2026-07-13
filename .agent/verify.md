@@ -18,6 +18,7 @@ Validation lanes discovered:
 
 - `build`: `npm run content:check` (required)
 - `test`: `npm run test` (required)
+- `e2e`: `npm run test:e2e` (required when selected with `--e2e` or `--all`)
 
 Deploy contract:
 

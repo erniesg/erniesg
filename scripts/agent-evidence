@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 node - "$@" <<'NODE'
-const { mkdirSync, writeFileSync, existsSync, readFileSync, statSync } = require("node:fs");
+const { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } = require("node:fs");
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
@@ -15,6 +15,12 @@ const allLanes = [
     "id": "test",
     "command": "npm run test",
     "required": true
+  },
+  {
+    "id": "e2e",
+    "command": "npm run test:e2e",
+    "required": true,
+    "optional": true
   }
 ];
 const invocation = {
@@ -26,8 +32,13 @@ const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(".", "");
 const outDir = join(".agent", "evidence", stamp);
 mkdirSync(join(outDir, "logs"), { recursive: true });
 
-function sh(command) {
-  return spawnSync(command, { shell: true, encoding: "utf8", timeout: 900000 });
+function sh(command, env = {}) {
+  return spawnSync(command, {
+    shell: true,
+    encoding: "utf8",
+    timeout: 900000,
+    env: { ...process.env, ...env },
+  });
 }
 
 function textHash(value) {
@@ -77,7 +88,7 @@ function parseSelection(argv) {
   }
   if (includeAll) return { lanes: allLanes };
 
-  const selected = allLanes.filter((lane) => lane.required);
+  const selected = allLanes.filter((lane) => lane.required && !lane.optional);
   if (includeE2e) {
     for (const lane of allLanes) {
       if (lane.id === "e2e" && !selected.some((selectedLane) => selectedLane.id === lane.id)) {
@@ -150,6 +161,27 @@ function largeUntrackedEvidence() {
   return { artifacts, caveats };
 }
 
+function generatedEvidenceArtifacts(root) {
+  const artifacts = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+      } else if (entry.isFile()) {
+        let kind = "evidence-file";
+        if (path.endsWith(".png")) kind = "screenshot";
+        else if (path.endsWith("geometry-report.json")) kind = "geometry-report";
+        else if (path.endsWith("trace.zip")) kind = "browser-trace";
+        else if (path.endsWith(".log")) kind = "test-log";
+        artifacts.push({ kind, path });
+      }
+    }
+  };
+  visit(root);
+  return artifacts;
+}
+
 function writeManifest(data, exitCode) {
   writeFileSync(join(outDir, "manifest.json"), `${JSON.stringify(data, null, 2)}\n`);
   console.log(`[agent-evidence] ${data.result}: ${join(outDir, "manifest.json")}`);
@@ -197,7 +229,7 @@ const lanes = selection.lanes;
 
 for (const lane of lanes) {
   const laneStart = Date.now();
-  const proc = sh(lane.command);
+  const proc = sh(lane.command, { AGENT_EVIDENCE_DIR: outDir });
   const output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
   const logPath = join(outDir, "logs", `${lane.id}.log`);
   writeFileSync(logPath, output);
@@ -233,7 +265,11 @@ const manifest = {
     node: process.version,
   },
   lanes: results,
-  artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
+  artifacts: [
+    { kind: "manifest", path: join(outDir, "manifest.json") },
+    ...generatedEvidenceArtifacts(outDir),
+    ...largeFiles.artifacts,
+  ],
   caveats: largeFiles.caveats,
   result: requiredFailures.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,

@@ -170,6 +170,7 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
         <div ref={viewport} className="srt-viewport">
           <article
             className="srt-paper"
+            data-target-profile={profile.id}
             data-columns={profile.columns.count}
             data-finite-height={profile.finiteHeight}
             data-flow-mode={policy.flowMode}

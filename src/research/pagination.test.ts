@@ -108,6 +108,95 @@ describe('SRT finite-height pagination', () => {
     ).toBe(true)
   })
 
+  it('places a short paragraph without applying split minima', () => {
+    const fixture = researchPaperSchema.parse({
+      ...paperWithLongParagraph(),
+      id: 'pagination-short-paragraph-test',
+      nodes: [
+        {
+          id: 'p-short',
+          type: 'paragraph',
+          text: 'One short line.',
+          source: 'test fixture',
+        },
+      ],
+    })
+    const layout = paginateResearchPaper(fixture, 'paperProMove')
+
+    expect(layout.nodes[0].fragments).toHaveLength(1)
+    expect(layout.nodes[0].fragments[0].textRange).toEqual({
+      start: 0,
+      end: 'One short line.'.length,
+    })
+    expect(layout.violations).toEqual([])
+  })
+
+  it('records an error and terminates when a region cannot fit minimum fragment lines', () => {
+    const fixture = researchPaperSchema.parse({
+      ...paperWithLongParagraph(),
+      id: 'pagination-minimum-lines-test',
+      nodes: [
+        {
+          id: 'p-minimum-lines',
+          type: 'paragraph',
+          text: Array.from({ length: 20 }, (_, index) => `word-${index}`).join(
+            ' ',
+          ),
+          source: 'test fixture',
+        },
+      ],
+    })
+    const layout = paginateResearchPaper(fixture, 'paperProMove', {
+      heightCssPx: 80,
+    })
+
+    expect(layout.finalPageCount).toBeGreaterThan(0)
+    expect(layout.nodes[0].fragments.length).toBeGreaterThan(0)
+    expect(layout.violations).toContainEqual(
+      expect.objectContaining({
+        code: 'minimum-fragment-lines',
+        severity: 'error',
+      }),
+    )
+  })
+
+  it('reserves the first-page header for a leading full-span figure', () => {
+    const fixture = researchPaperSchema.parse({
+      ...paperWithLongParagraph(),
+      id: 'pagination-leading-figure-test',
+      nodes: [
+        {
+          id: 'fig-leading',
+          type: 'figure',
+          title: 'Leading figure',
+          source: 'test fixture',
+          relationships: { caption: 'cap-leading' },
+        },
+        {
+          id: 'cap-leading',
+          type: 'caption',
+          text: 'A caption that remains with the leading figure.',
+          source: 'test fixture',
+        },
+      ],
+    })
+    const constraints = getPaginationConstraints(fixture, 'print')
+    const verticalMargins =
+      (constraints.heightCssPx ?? 0) - (constraints.contentHeightCssPx ?? 0)
+    const layout = paginateResearchPaper(fixture, 'print', {
+      heightCssPx:
+        verticalMargins + constraints.firstPageHeaderHeightCssPx + 160,
+    })
+    const figure = layout.nodes.find(
+      (node) => node.canonicalId === 'fig-leading',
+    )
+
+    expect(figure?.fragments[0].page).toBe(1)
+    expect(figure?.fragments[0].estimatedHeightCssPx).toBeLessThanOrEqual(
+      layout.pages[0].regions[0].capacityCssPx,
+    )
+  })
+
   it('keeps headings with following content and captions with atomic figures', () => {
     const layout = paginateResearchPaper(paper, 'paperProMove')
     const heading = layout.nodes.find(

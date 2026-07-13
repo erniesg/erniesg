@@ -346,4 +346,22 @@ describe('SRT layout manifest contract', () => {
       'targetGeometry',
     )
   })
+
+  it('rejects zero-based rendition page numbers', () => {
+    const manifest = cloneManifest()
+    manifest.renditions[3].entries[0].representation = {
+      kind: 'whole',
+      placement: {
+        kind: 'geometry',
+        units: 'mm',
+        x: 20,
+        y: 25,
+        width: 170,
+        height: 12,
+        page: 0,
+      },
+    }
+
+    expect(() => layoutManifestSchema.parse(manifest)).toThrow()
+  })
 })

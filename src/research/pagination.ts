@@ -504,9 +504,11 @@ export function paginateResearchPaper(
   const minimumItemHeight = (item: LayoutItem | undefined) => {
     if (!item) return 0
     if (item.kind === 'paragraph') {
+      const minimumLines =
+        NODE_PAGINATION_POLICIES.paragraph.minimumStartLines ?? 2
       return (
         (item.lineHeightCssPx ?? 0) *
-          (NODE_PAGINATION_POLICIES.paragraph.minimumStartLines ?? 2) +
+          Math.min(item.lines?.length ?? minimumLines, minimumLines) +
         BLOCK_MARGIN_CSS_PX
       )
     }
@@ -521,7 +523,10 @@ export function paginateResearchPaper(
         ensurePage(pageNumber)
       }
 
-      const capacity = constraints.contentHeightCssPx
+      // Page one may already reserve space for the document header even when
+      // the spanning object is the first canonical node. Use the page's real
+      // region capacity so the plan matches the rendered flex region.
+      const capacity = ensurePage(pageNumber).regions[0].capacityCssPx
       const requiredScale = Math.min(1, capacity / item.estimatedHeightCssPx)
       const fallback =
         requiredScale < 1
@@ -585,9 +590,13 @@ export function paginateResearchPaper(
         const region = currentRegion()
         const remainingHeight = region.capacityCssPx - region.usedCssPx
         const remainingLines = lines.length - lineIndex
+        const maximumFittingLines = Math.floor(
+          (remainingHeight - BLOCK_MARGIN_CSS_PX) / lineHeight,
+        )
         let fittingLines = Math.floor(
           (remainingHeight - BLOCK_MARGIN_CSS_PX) / lineHeight,
         )
+        const fragmentViolations: PaginationViolation[] = []
 
         if (remainingLines <= fittingLines) fittingLines = remainingLines
         if (
@@ -596,9 +605,30 @@ export function paginateResearchPaper(
         ) {
           fittingLines = remainingLines - minimumEnd
         }
-        if (fittingLines < minimumStart) {
-          advanceRegion()
-          continue
+        const wouldFragment = fittingLines < remainingLines
+        if (
+          fittingLines < 1 ||
+          (wouldFragment && fittingLines < minimumStart)
+        ) {
+          if (region.usedCssPx > 0) {
+            advanceRegion()
+            continue
+          }
+
+          // An empty region that cannot satisfy the minimum split policy will
+          // never improve by advancing to another identical page. Emit an
+          // explicit violation and make bounded progress instead of looping.
+          fittingLines = Math.min(
+            remainingLines,
+            Math.max(1, maximumFittingLines),
+          )
+          const violation = {
+            code: 'minimum-fragment-lines' as const,
+            severity: 'error' as const,
+            message: `Paragraph ${item.canonicalIds[0]} cannot satisfy the ${minimumStart}/${minimumEnd} minimum fragment-line policy in a ${Math.round(region.capacityCssPx)} CSS px region.`,
+          }
+          fragmentViolations.push(violation)
+          violations.push(violation)
         }
 
         const fragmentLines = lines.slice(lineIndex, lineIndex + fittingLines)
@@ -623,7 +653,7 @@ export function paginateResearchPaper(
               ? `Paragraph split at an estimated line boundary with at least ${minimumStart}/${minimumEnd} lines at the fragment edges.`
               : 'The paragraph fits in the current finite-height region.',
           },
-          violations: [],
+          violations: fragmentViolations,
         })
         lineIndex += fittingLines
         if (lineIndex < lines.length) advanceRegion()

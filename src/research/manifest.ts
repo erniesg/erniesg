@@ -64,7 +64,7 @@ const placementSchema = z.discriminatedUnion('kind', [
       y: z.number().finite(),
       width: z.number().finite().positive(),
       height: z.number().finite().positive(),
-      page: z.number().int().nonnegative().optional(),
+      page: z.number().int().positive().optional(),
     })
     .strict(),
 ])

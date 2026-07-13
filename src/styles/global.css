@@ -195,6 +195,18 @@
   .research-hero > p:first-child, .research-paper-hero > div > p, .srt-kicker { @apply font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground; }
   .research-hero h1 { @apply mt-7 max-w-5xl text-5xl font-semibold leading-[0.94] tracking-[-0.055em] sm:text-7xl lg:text-8xl; }
   .research-deck { @apply ml-auto mt-10 max-w-md text-lg leading-relaxed text-muted-foreground; }
+  .research-studio-link {
+    @apply mt-12 grid max-w-xl grid-cols-[1fr_auto] items-end gap-x-6 border-y border-foreground/25 py-5;
+  }
+  .research-studio-link span {
+    @apply font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground;
+  }
+  .research-studio-link strong {
+    @apply col-start-1 mt-2 text-xl font-medium;
+  }
+  .research-studio-link i {
+    @apply row-span-2 row-start-1 self-center text-2xl not-italic;
+  }
   .research-rule { @apply my-12 h-px bg-foreground/20; }
   .research-list { @apply list-none p-0; }
   .research-list li { @apply grid grid-cols-[2rem_1fr_auto] gap-4 border-b border-foreground/15 py-8; }
@@ -247,10 +259,204 @@
   .srt-inspector dl div { @apply grid grid-cols-[5.25rem_1fr] gap-2 py-2; }
   .srt-inspector dt { @apply text-black/50; }
   .srt-inspector a { @apply text-xs underline underline-offset-4; }
+  .publication-studio-hero {
+    @apply items-start;
+  }
+  .publication-studio-hero aside {
+    @apply border-l border-foreground/30 pl-4 font-mono text-[10px] uppercase tracking-wider;
+  }
+  .publication-studio-hero aside span,
+  .publication-studio-hero aside small {
+    @apply block;
+  }
+  .publication-studio-hero aside small {
+    @apply mt-2 max-w-40 normal-case leading-relaxed tracking-normal text-muted-foreground;
+  }
+  .publication-importer {
+    @apply mx-auto max-w-[100rem] border-t border-foreground/20 pb-24;
+  }
+  .publication-importer-intro {
+    @apply grid gap-8 px-5 py-12 sm:px-8 lg:grid-cols-[1fr_30rem] lg:items-end lg:py-20;
+  }
+  .publication-importer-intro h2 {
+    @apply mt-4 max-w-4xl text-4xl font-semibold leading-[.95] tracking-[-.045em] sm:text-6xl;
+  }
+  .publication-importer-intro > p {
+    @apply max-w-xl text-lg leading-relaxed text-muted-foreground;
+  }
+  .publication-dropzone {
+    @apply mx-5 min-h-[24rem] border border-dashed border-foreground/45 bg-foreground/[.025] p-6 transition-colors sm:mx-8;
+  }
+  .publication-dropzone.is-dragging {
+    @apply border-solid bg-foreground/[.08];
+  }
+  .publication-dropzone input {
+    @apply sr-only;
+  }
+  .publication-dropzone label {
+    @apply flex min-h-[21rem] cursor-pointer flex-col items-center justify-center text-center outline-none;
+  }
+  .publication-dropzone label > span {
+    @apply mb-10 border border-foreground/30 px-4 py-3 font-mono text-[11px] uppercase tracking-[.16em];
+  }
+  .publication-dropzone label > strong {
+    @apply text-2xl font-medium sm:text-4xl;
+  }
+  .publication-dropzone label > small {
+    @apply mt-4 font-mono text-[10px] uppercase tracking-wider text-muted-foreground;
+  }
+  .publication-dropzone:focus-within {
+    @apply outline outline-2 outline-offset-4 outline-foreground;
+  }
+  .publication-progress {
+    @apply mx-5 grid min-h-56 content-center gap-8 border-y border-foreground/30 px-6 sm:mx-8 sm:px-12;
+  }
+  .publication-progress div {
+    @apply flex flex-col gap-2;
+  }
+  .publication-progress span {
+    @apply font-mono text-[10px] uppercase tracking-wider text-muted-foreground;
+  }
+  .publication-progress strong {
+    @apply text-2xl font-medium;
+  }
+  .publication-progress progress {
+    @apply h-2 w-full accent-foreground;
+  }
+  .publication-failure,
+  .publication-ocr-gate {
+    @apply mx-5 border border-foreground/40 p-8 sm:mx-8 sm:p-12;
+  }
+  .publication-failure span,
+  .publication-ocr-gate span {
+    @apply font-mono text-[10px] uppercase tracking-[.18em];
+  }
+  .publication-failure h3,
+  .publication-ocr-gate h3 {
+    @apply mt-5 max-w-3xl text-3xl font-semibold tracking-tight sm:text-5xl;
+  }
+  .publication-failure p,
+  .publication-ocr-gate p {
+    @apply mt-5 max-w-2xl leading-relaxed text-muted-foreground;
+  }
+  .publication-failure button {
+    @apply mt-8 border border-foreground px-5 py-3 font-mono text-[10px] uppercase tracking-wider;
+  }
+  .publication-ocr-gate {
+    @apply my-8 bg-foreground text-background;
+  }
+  .publication-ocr-gate p {
+    @apply text-background/75;
+  }
+  .publication-result-bar {
+    @apply sticky top-0 z-20 flex flex-col gap-6 border-y border-foreground/25 bg-background/95 px-5 py-5 backdrop-blur sm:px-8 lg:flex-row lg:items-center lg:justify-between;
+  }
+  .publication-result-bar > div:first-child {
+    @apply flex flex-col gap-1;
+  }
+  .publication-result-bar > div:first-child strong {
+    @apply max-w-xl truncate text-lg;
+  }
+  .publication-result-bar > div:first-child small {
+    @apply font-mono text-[10px] uppercase tracking-wider text-muted-foreground;
+  }
+  .publication-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .publication-actions button,
+  .publication-actions a {
+    @apply inline-flex min-h-11 items-center border border-foreground bg-foreground px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-background disabled:cursor-wait disabled:opacity-40;
+  }
+  .publication-actions button.secondary {
+    @apply bg-transparent text-foreground;
+  }
+  .publication-actions > span {
+    @apply font-mono text-[10px] uppercase tracking-wider text-muted-foreground;
+  }
+  .publication-diagnostics {
+    @apply mx-5 my-8 border-y border-foreground/25 sm:mx-8;
+  }
+  .publication-diagnostics summary {
+    @apply cursor-pointer py-5 font-mono text-[10px] uppercase tracking-[.14em];
+  }
+  .publication-diagnostic-grid {
+    @apply grid gap-10 border-t border-foreground/20 py-8 lg:grid-cols-2;
+  }
+  .publication-diagnostic-grid h3 {
+    @apply mb-4 text-lg font-semibold;
+  }
+  .publication-diagnostic-grid ol {
+    @apply max-h-72 overflow-auto border-t border-foreground/15;
+  }
+  .publication-diagnostic-grid li {
+    @apply grid grid-cols-[1fr_auto] gap-x-4 border-b border-foreground/15 py-3 font-mono text-[10px];
+  }
+  .publication-diagnostic-grid li span {
+    @apply truncate;
+  }
+  .publication-diagnostic-grid li small {
+    @apply col-span-2 mt-1 text-muted-foreground;
+  }
+  .publication-diagnostic-list {
+    @apply border-t border-foreground/20 py-5 text-sm;
+  }
+  .publication-diagnostic-list li {
+    @apply py-2;
+  }
+  .publication-diagnostic-list strong {
+    @apply mr-2 font-mono text-[10px] tracking-wider;
+  }
+  .publication-preview-blocked {
+    @apply opacity-60;
+  }
 }
 
 @media print {
-  body > div > header, body > div > footer, .research-paper-hero, .srt-toolbar, .srt-inspector { display: none !important; }
-  .srt-studio, .srt-stage, .srt-viewport { border: 0; background: white; display: block; max-height: none; padding: 0; }
-  .srt-paper { box-shadow: none; max-width: none !important; padding: 12mm; }
+  @page {
+    size: A4;
+    margin: 0;
+  }
+  body > div > header,
+  body > div > footer,
+  .research-paper-hero,
+  .srt-toolbar,
+  .srt-inspector,
+  .publication-importer-intro,
+  .publication-result-bar,
+  .publication-diagnostics,
+  .publication-ocr-gate {
+    display: none !important;
+  }
+  .publication-importer {
+    border: 0;
+    padding: 0;
+  }
+  .srt-studio,
+  .srt-stage,
+  .srt-viewport {
+    border: 0;
+    background: white;
+    display: block;
+    max-height: none;
+    padding: 0;
+  }
+  .srt-paper {
+    box-shadow: none;
+    column-count: 2;
+    column-gap: 12mm;
+    max-width: none !important;
+    padding: 14mm 16mm;
+  }
+  .srt-paper > header,
+  .srt-paper figure {
+    column-span: all;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .publication-dropzone,
+  .srt-viewport,
+  .srt-paper {
+    transition: none;
+  }
 }

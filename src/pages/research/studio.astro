@@ -1,0 +1,23 @@
+---
+import PublicationImporter from '@/components/research/PublicationImporter'
+import Layout from '@/layouts/Layout.astro'
+---
+
+<Layout
+  title="PDF to EPUB publication studio"
+  description="Privately reconstruct a born-digital PDF into a responsive research publication and reflowable EPUB."
+>
+  <section class="research-paper-hero publication-studio-hero">
+    <a href="/research">← All research</a>
+    <div>
+      <p>Research studio · local first</p>
+      <h1>Reverse the page.<br />Recover the paper.</h1>
+      <p>Fixed PDF evidence in; semantic, reflowable publication out.</p>
+    </div>
+    <aside>
+      <span>Private by default</span>
+      <small>Document bytes remain in browser memory.</small>
+    </aside>
+  </section>
+  <PublicationImporter client:load />
+</Layout>

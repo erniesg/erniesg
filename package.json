@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "test": "vitest run",
+    "test": "vitest run --exclude 'tests/e2e/**'",
+    "test:e2e": "playwright test",
     "build": "astro check && astro build",
     "preview": "astro preview",
     "worker:build": "npm run build",
@@ -78,6 +79,7 @@
     "typescript": "^5.7.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@tailwindcss/typography": "^0.5.15",
     "fast-glob": "^3.3.3",
     "gray-matter": "^4.0.3",

@@ -1,7 +1,7 @@
 import type { ResearchNode } from './schema'
 import { getTargetProfile, type TargetProfileId } from './targets'
 
-export const COMPOSITION_POLICY_VERSION = '1.0.0' as const
+export const COMPOSITION_POLICY_VERSION = '1.1.0' as const
 
 export const COMPOSITION_DECISION_CODES = [
   'flow-mode',
@@ -91,6 +91,7 @@ export type NodeComposition = {
   fallback?: {
     fromVariant: string
     diagnosticCode: 'variant-unavailable'
+    reason: string
   }
 }
 
@@ -124,9 +125,9 @@ export function getCompositionPolicy(target: TargetProfileId) {
     },
     {
       code: 'fragmentation',
-      outcome: profile.finiteHeight ? 'deferred' : 'not-applicable',
+      outcome: profile.finiteHeight ? 'finite-browser-pages' : 'not-applicable',
       reason: profile.finiteHeight
-        ? 'This profile declares finite height, but page fragmentation belongs to the next dependency-ready issue.'
+        ? 'A deterministic semantic policy assigns pages and keep rules while browser flow renders measured text fragments.'
         : 'Continuous flow does not require finite-height fragmentation.',
     },
   ]
@@ -162,6 +163,7 @@ export function resolveNodeComposition(
     fallback: {
       fromVariant: policy.attemptedFigureVariant,
       diagnosticCode: 'variant-unavailable',
+      reason: `${policy.attemptedFigureVariant} is unavailable for ${target}; the declared compact in-flow variant is used.`,
     },
   }
 }

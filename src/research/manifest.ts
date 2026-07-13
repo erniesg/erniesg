@@ -166,20 +166,59 @@ const nodePaginationPolicySchema = z
   })
   .strict()
 
+const currentRegionStabilitySchema = z
+  .object({
+    metric: z.literal('anchored-region-prefix'),
+    status: z.enum(['not-compared', 'stable', 'unstable']),
+    anchorCanonicalId: canonicalId,
+    page: z.number().int().positive(),
+    region: z.number().int().nonnegative(),
+    signature: z.string().min(1),
+    referenceSignature: z.string().min(1).nullable(),
+    stable: z.boolean().nullable(),
+    comparedFragmentCount: z.number().int().nonnegative(),
+    stableFragmentCount: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((measurement, context) => {
+    if (measurement.status === 'not-compared') {
+      if (
+        measurement.stable !== null ||
+        measurement.referenceSignature !== null ||
+        measurement.comparedFragmentCount !== 0 ||
+        measurement.stableFragmentCount !== 0
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'A current-region baseline cannot claim comparison results',
+        })
+      }
+      return
+    }
+
+    const stable = measurement.status === 'stable'
+    if (
+      measurement.stable !== stable ||
+      measurement.referenceSignature === null ||
+      measurement.comparedFragmentCount === 0 ||
+      (stable
+        ? measurement.stableFragmentCount !== measurement.comparedFragmentCount
+        : measurement.stableFragmentCount >= measurement.comparedFragmentCount)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Current-region comparison fields contradict its status',
+      })
+    }
+  })
+
 const paginationSummarySchema = z
   .object({
     policyVersion: z.literal(PAGINATION_POLICY_VERSION),
     mode: z.enum(['continuous', 'finite']),
     finalPageCount: z.number().int().positive().nullable(),
     pageCountStatus: z.enum(['final', 'not-applicable']),
-    currentRegionStability: z
-      .object({
-        metric: z.literal('deterministic-fragment-prefix'),
-        stable: z.boolean(),
-        comparedFragmentCount: z.number().int().nonnegative(),
-        stableFragmentCount: z.number().int().nonnegative(),
-      })
-      .strict(),
+    currentRegionStability: currentRegionStabilitySchema,
     violations: z.array(paginationViolationSchema),
   })
   .strict()

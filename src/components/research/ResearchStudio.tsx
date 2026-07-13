@@ -4,8 +4,10 @@ import {
   resolveNodeComposition,
 } from '@/research/composition'
 import {
+  measureCurrentRegionStability,
   paginateResearchPaper,
   type PaginationFragment,
+  type PaginationResult,
 } from '@/research/pagination'
 import type { ResearchNode, ResearchPaper } from '@/research/schema'
 import {
@@ -137,16 +139,28 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
   const [profileId, setProfileId] = useState<TargetProfileId>('paperPro')
   const [selected, setSelected] = useState(paper.nodes[0].id)
   const viewport = useRef<HTMLDivElement>(null)
-  const pagination = useMemo(
+  const previousPagination = useRef<PaginationResult | null>(null)
+  const stabilityAnchor = useRef(paper.nodes[0].id)
+  const basePagination = useMemo(
     () => paginateResearchPaper(paper, profileId),
     [paper, profileId],
   )
+  const pagination = useMemo(() => {
+    const previous = previousPagination.current
+    if (!previous) return basePagination
+    return {
+      ...basePagination,
+      currentRegionStability: measureCurrentRegionStability(
+        previous,
+        basePagination,
+        stabilityAnchor.current,
+      ),
+    }
+  }, [basePagination])
 
   const switchProfile = (next: TargetProfileId) => {
-    const visible = viewport.current?.querySelector(
-      '[data-node-id]',
-    ) as HTMLElement | null
-    const anchor = visible?.dataset.nodeId ?? selected
+    const anchor = selected
+    stabilityAnchor.current = anchor
     setProfileId(next)
     requestAnimationFrame(() => {
       viewport.current
@@ -154,6 +168,10 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
         ?.scrollIntoView({ block: 'start' })
     })
   }
+
+  useEffect(() => {
+    previousPagination.current = basePagination
+  }, [basePagination])
 
   useEffect(() => {
     const root = viewport.current
@@ -270,7 +288,10 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
             data-page-count={pagination.finalPageCount ?? 'continuous'}
             data-page-count-status={pagination.pageCountStatus}
             data-current-region-stable={
-              pagination.currentRegionStability.stable
+              pagination.currentRegionStability.stable ?? 'not-compared'
+            }
+            data-current-region-stability={
+              pagination.currentRegionStability.status
             }
             style={paperStyle}
           >
@@ -356,8 +377,9 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
             <div>
               <dt>Current region</dt>
               <dd>
-                {pagination.currentRegionStability.stableFragmentCount} /{' '}
-                {pagination.currentRegionStability.comparedFragmentCount} stable
+                {pagination.currentRegionStability.status === 'not-compared'
+                  ? 'baseline captured'
+                  : `${pagination.currentRegionStability.stableFragmentCount} / ${pagination.currentRegionStability.comparedFragmentCount} stable · ${pagination.currentRegionStability.status}`}
               </dd>
             </div>
             <div>

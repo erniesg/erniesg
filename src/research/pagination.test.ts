@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
 import {
   getPaginationConstraints,
+  measureCurrentRegionStability,
   NODE_PAGINATION_POLICIES,
   paginateResearchPaper,
 } from './pagination'
@@ -34,6 +35,21 @@ function paperWithLongParagraph(): ResearchPaper {
         source: 'test fixture',
       },
     ],
+  })
+}
+
+function replaceParagraph(
+  fixture: ResearchPaper,
+  canonicalId: string,
+  text: string,
+) {
+  return researchPaperSchema.parse({
+    ...fixture,
+    nodes: fixture.nodes.map((node) =>
+      node.id === canonicalId && node.type === 'paragraph'
+        ? { ...node, text }
+        : node,
+    ),
   })
 }
 
@@ -108,27 +124,31 @@ describe('SRT finite-height pagination', () => {
     ).toBe(true)
   })
 
-  it('places a short paragraph without applying split minima', () => {
+  it('places a whole one-line paragraph without applying split minimums', () => {
+    const text = 'A complete short paragraph.'
     const fixture = researchPaperSchema.parse({
       ...paperWithLongParagraph(),
-      id: 'pagination-short-paragraph-test',
+      id: 'pagination-single-line-test',
       nodes: [
         {
-          id: 'p-short',
+          id: 'p-single-line',
           type: 'paragraph',
-          text: 'One short line.',
+          text,
           source: 'test fixture',
         },
       ],
     })
     const layout = paginateResearchPaper(fixture, 'paperProMove')
+    const paragraph = layout.nodes[0]
 
-    expect(layout.nodes[0].fragments).toHaveLength(1)
-    expect(layout.nodes[0].fragments[0].textRange).toEqual({
-      start: 0,
-      end: 'One short line.'.length,
+    expect(paragraph.fragments).toHaveLength(1)
+    expect(paragraph.fragments[0]).toMatchObject({
+      canonicalId: 'p-single-line',
+      textRange: { start: 0, end: text.length },
+      decision: { outcome: 'placed' },
     })
     expect(layout.violations).toEqual([])
+    expect(layout.finalPageCount).toBeLessThanOrEqual(2)
   })
 
   it('records an error and terminates when a region cannot fit minimum fragment lines', () => {
@@ -253,21 +273,53 @@ describe('SRT finite-height pagination', () => {
     expect(layout.violations).toEqual(quote.violations)
   })
 
-  it('reports current-region stability separately from final page count', () => {
-    const layout = paginateResearchPaper(paper, 'print')
+  it('measures anchored region stability separately from final page count', () => {
+    const baseline = paginateResearchPaper(paper, 'paperProMove')
+    const afterAnchor = paginateResearchPaper(
+      replaceParagraph(
+        paper,
+        'p-method-1',
+        Array.from({ length: 160 }, () => 'later material').join(' '),
+      ),
+      'paperProMove',
+    )
+    const beforeAnchor = paginateResearchPaper(
+      replaceParagraph(
+        paper,
+        'p-proposition-1',
+        Array.from({ length: 160 }, () => 'earlier material').join(' '),
+      ),
+      'paperProMove',
+    )
+    const stableAfterEdit = measureCurrentRegionStability(
+      baseline,
+      afterAnchor,
+      'p-model-1',
+    )
+    const unstableBeforeEdit = measureCurrentRegionStability(
+      baseline,
+      beforeAnchor,
+      'p-model-1',
+    )
 
-    expect(layout.pageCountStatus).toBe('final')
-    expect(layout.finalPageCount).toBeGreaterThan(1)
-    expect(layout.currentRegionStability).toMatchObject({
-      metric: 'deterministic-fragment-prefix',
+    expect(baseline.currentRegionStability).toMatchObject({
+      metric: 'anchored-region-prefix',
+      status: 'not-compared',
+      stable: null,
+      referenceSignature: null,
+    })
+    expect(stableAfterEdit).toMatchObject({
+      status: 'stable',
       stable: true,
     })
-    expect(layout.currentRegionStability.comparedFragmentCount).toBeGreaterThan(
-      0,
+    expect(afterAnchor.finalPageCount).toBeGreaterThan(baseline.finalPageCount!)
+    expect(unstableBeforeEdit).toMatchObject({
+      status: 'unstable',
+      stable: false,
+    })
+    expect(unstableBeforeEdit.stableFragmentCount).toBeLessThan(
+      unstableBeforeEdit.comparedFragmentCount,
     )
-    expect(layout.currentRegionStability.stableFragmentCount).toBe(
-      layout.currentRegionStability.comparedFragmentCount,
-    )
-    expect(layout.currentRegionStability).not.toHaveProperty('pageCount')
+    expect(stableAfterEdit).not.toHaveProperty('pageCount')
   })
 })

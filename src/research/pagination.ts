@@ -115,12 +115,20 @@ export type PaginationResult = {
   finalPageCount: number | null
   pageCountStatus: 'final' | 'not-applicable'
   currentRegionStability: {
-    metric: 'deterministic-fragment-prefix'
-    stable: boolean
+    metric: 'anchored-region-prefix'
+    status: 'not-compared' | 'stable' | 'unstable'
+    anchorCanonicalId: string
+    page: number
+    region: number
+    signature: string
+    referenceSignature: string | null
+    stable: boolean | null
     comparedFragmentCount: number
     stableFragmentCount: number
   }
 }
+
+type PaginationLayoutResult = Omit<PaginationResult, 'currentRegionStability'>
 
 type TextLine = { start: number; end: number }
 
@@ -369,7 +377,7 @@ function createContinuousResult(
   paper: ResearchPaper,
   target: TargetProfileId,
   constraints: PaginationConstraints,
-): PaginationResult {
+): PaginationLayoutResult {
   const fragments = paper.nodes.map<PaginationFragment>((node, order) => ({
     id: `${node.id}#fragment-1`,
     canonicalId: node.id,
@@ -418,12 +426,133 @@ function createContinuousResult(
     violations: [],
     finalPageCount: null,
     pageCountStatus: 'not-applicable',
-    currentRegionStability: {
-      metric: 'deterministic-fragment-prefix',
-      stable: true,
-      comparedFragmentCount: fragments.length,
-      stableFragmentCount: fragments.length,
-    },
+  }
+}
+
+type RegionPrefixSnapshot = {
+  anchorCanonicalId: string
+  page: number
+  region: number
+  signature: string
+  fragmentSignatures: string[]
+}
+
+function fragmentStabilitySignature(fragment: PaginationFragment) {
+  return JSON.stringify({
+    id: fragment.id,
+    page: fragment.page,
+    region: fragment.region,
+    span: fragment.span,
+    estimatedHeightCssPx: fragment.estimatedHeightCssPx,
+    textRange: fragment.textRange ?? null,
+    outcome: fragment.decision.outcome,
+  })
+}
+
+function regionPrefixSnapshot(
+  result: Pick<PaginationResult, 'pages'>,
+  anchorCanonicalId: string,
+): RegionPrefixSnapshot {
+  const regions = result.pages.flatMap((page) =>
+    page.spanningFragments.length > 0
+      ? [
+          {
+            page: page.number,
+            region: 0,
+            fragments: page.spanningFragments,
+          },
+        ]
+      : page.regions.map((region) => ({
+          page: page.number,
+          region: region.index,
+          fragments: region.fragments,
+        })),
+  )
+  const anchorRegionIndex = regions.findIndex((region) =>
+    region.fragments.some(
+      (fragment) => fragment.canonicalId === anchorCanonicalId,
+    ),
+  )
+  if (anchorRegionIndex < 0) {
+    throw new Error(
+      `Pagination omitted current-region anchor ${anchorCanonicalId}`,
+    )
+  }
+
+  const anchorRegion = regions[anchorRegionIndex]
+  const fragments = regions
+    .slice(0, anchorRegionIndex + 1)
+    .flatMap((region) => region.fragments)
+  const fragmentSignatures = fragments.map(fragmentStabilitySignature)
+  const signature = JSON.stringify({
+    anchorCanonicalId,
+    page: anchorRegion.page,
+    region: anchorRegion.region,
+    fragmentSignatures,
+  })
+
+  return {
+    anchorCanonicalId,
+    page: anchorRegion.page,
+    region: anchorRegion.region,
+    signature,
+    fragmentSignatures,
+  }
+}
+
+function baselineCurrentRegionStability(
+  result: Pick<PaginationResult, 'pages'>,
+  anchorCanonicalId: string,
+): PaginationResult['currentRegionStability'] {
+  const snapshot = regionPrefixSnapshot(result, anchorCanonicalId)
+  return {
+    metric: 'anchored-region-prefix',
+    status: 'not-compared',
+    anchorCanonicalId,
+    page: snapshot.page,
+    region: snapshot.region,
+    signature: snapshot.signature,
+    referenceSignature: null,
+    stable: null,
+    comparedFragmentCount: 0,
+    stableFragmentCount: 0,
+  }
+}
+
+export function measureCurrentRegionStability(
+  reference: PaginationResult,
+  current: PaginationResult,
+  anchorCanonicalId: string,
+): PaginationResult['currentRegionStability'] {
+  const previous = regionPrefixSnapshot(reference, anchorCanonicalId)
+  const next = regionPrefixSnapshot(current, anchorCanonicalId)
+  const comparedFragmentCount = Math.max(
+    previous.fragmentSignatures.length,
+    next.fragmentSignatures.length,
+  )
+  let stableFragmentCount = 0
+
+  while (
+    stableFragmentCount < previous.fragmentSignatures.length &&
+    stableFragmentCount < next.fragmentSignatures.length &&
+    previous.fragmentSignatures[stableFragmentCount] ===
+      next.fragmentSignatures[stableFragmentCount]
+  ) {
+    stableFragmentCount += 1
+  }
+
+  const stable = previous.signature === next.signature
+  return {
+    metric: 'anchored-region-prefix',
+    status: stable ? 'stable' : 'unstable',
+    anchorCanonicalId,
+    page: next.page,
+    region: next.region,
+    signature: next.signature,
+    referenceSignature: previous.signature,
+    stable,
+    comparedFragmentCount,
+    stableFragmentCount,
   }
 }
 
@@ -439,7 +568,14 @@ export function paginateResearchPaper(
     constraints.heightCssPx === null ||
     constraints.contentHeightCssPx === null
   ) {
-    return createContinuousResult(paper, target, constraints)
+    const result = createContinuousResult(paper, target, constraints)
+    return {
+      ...result,
+      currentRegionStability: baselineCurrentRegionStability(
+        result,
+        paper.nodes[0].id,
+      ),
+    }
   }
 
   const items = createLayoutItems(paper, target, constraints)
@@ -598,7 +734,8 @@ export function paginateResearchPaper(
         )
         const fragmentViolations: PaginationViolation[] = []
 
-        if (remainingLines <= fittingLines) fittingLines = remainingLines
+        const wholeParagraphFits = remainingLines <= fittingLines
+        if (wholeParagraphFits) fittingLines = remainingLines
         if (
           remainingLines > fittingLines &&
           remainingLines - fittingLines < minimumEnd
@@ -758,15 +895,7 @@ export function paginateResearchPaper(
       ...(fragments[0]?.fallback ? { fallback: fragments[0].fallback } : {}),
     }
   })
-  const currentRegionFragments = pages
-    .flatMap((page) => [
-      ...page.regions.map((region) => region.fragments),
-      page.spanningFragments,
-    ])
-    .find((fragments) => fragments.length > 0)
-  const currentRegionFragmentCount = currentRegionFragments?.length ?? 0
-
-  return {
+  const result: PaginationLayoutResult = {
     target,
     policyVersion: PAGINATION_POLICY_VERSION,
     mode: 'finite',
@@ -776,11 +905,12 @@ export function paginateResearchPaper(
     violations,
     finalPageCount: pages.length,
     pageCountStatus: 'final',
-    currentRegionStability: {
-      metric: 'deterministic-fragment-prefix',
-      stable: true,
-      comparedFragmentCount: currentRegionFragmentCount,
-      stableFragmentCount: currentRegionFragmentCount,
-    },
+  }
+  return {
+    ...result,
+    currentRegionStability: baselineCurrentRegionStability(
+      result,
+      paper.nodes[0].id,
+    ),
   }
 }

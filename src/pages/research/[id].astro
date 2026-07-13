@@ -1,4 +1,5 @@
 ---
+import IfLettersPublication from '@/components/research/IfLettersPublication.astro'
 import ResearchPaperActions from '@/components/research/ResearchPaperActions'
 import ResearchStudio from '@/components/research/ResearchStudio'
 import Layout from '@/layouts/Layout.astro'
@@ -9,17 +10,30 @@ export function getStaticPaths() {
 }
 
 const { paper } = Astro.props
+const isFellowshipPaper = paper.id === 'if-letters-home-could-sing'
 ---
 
-<Layout title={paper.title} description={paper.abstract}>
-  <section class="research-paper-hero">
-    <a href="/research">← All research</a>
-    <div>
-      <p>Research note 001 · {paper.status}</p>
-      <h1>{paper.title}</h1>
-      <p>{paper.subtitle}</p>
-    </div>
-    <ResearchPaperActions paper={paper} client:load />
-  </section>
-  <ResearchStudio paper={paper} client:load />
+<Layout
+  title={paper.title}
+  description={paper.abstract}
+  image={isFellowshipPaper ? '/research/if-letters-home-could-sing/media/image3.jpg' : undefined}
+>
+  {
+    isFellowshipPaper ? (
+      <IfLettersPublication paper={paper} />
+    ) : (
+      <>
+        <section class="research-paper-hero">
+          <a href="/research">← All research</a>
+          <div>
+            <p>Research note 002 · {paper.status}</p>
+            <h1>{paper.title}</h1>
+            <p>{paper.subtitle}</p>
+          </div>
+          <ResearchPaperActions paper={paper} client:load />
+        </section>
+        <ResearchStudio paper={paper} client:load />
+      </>
+    )
+  }
 </Layout>

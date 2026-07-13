@@ -1,10 +1,11 @@
-import { useRef, useState, type DragEvent } from 'react'
+import { useRef, useState, type DragEvent, type FormEvent } from 'react'
 import { buildEpub, type EpubExport } from '@/research/epub'
 import type {
   PdfImportProgress,
   PdfReconstruction,
 } from '@/research/import-types'
 import { PdfImportError } from '@/research/import-types'
+import { downloadLinkedPdf } from '@/research/pdf-url'
 import EpubDownloadLink from './EpubDownloadLink'
 import ResearchStudio from './ResearchStudio'
 
@@ -33,7 +34,19 @@ function formatBytes(value: number) {
 export default function PublicationImporter() {
   const [state, setState] = useState<StudioState>({ status: 'idle' })
   const [dragging, setDragging] = useState(false)
+  const [paperUrl, setPaperUrl] = useState('')
   const input = useRef<HTMLInputElement>(null)
+
+  const showError = (error: unknown) => {
+    setState({
+      status: 'error',
+      code: error instanceof PdfImportError ? error.code : 'UNEXPECTED_ERROR',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'The local conversion failed unexpectedly.',
+    })
+  }
 
   const processFile = async (file?: File) => {
     if (!file) return
@@ -58,14 +71,21 @@ export default function PublicationImporter() {
       const epub = await buildEpub(result.paper, result)
       setState({ status: 'ready', result, epub })
     } catch (error) {
-      setState({
-        status: 'error',
-        code: error instanceof PdfImportError ? error.code : 'UNEXPECTED_ERROR',
-        message:
-          error instanceof Error
-            ? error.message
-            : 'The local conversion failed unexpectedly.',
-      })
+      showError(error)
+    }
+  }
+
+  const processUrl = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setState({
+      status: 'processing',
+      fileName: paperUrl,
+      progress: { ...initialProgress, message: 'Downloading the linked PDF…' },
+    })
+    try {
+      await processFile(await downloadLinkedPdf(paperUrl))
+    } catch (error) {
+      showError(error)
     }
   }
 
@@ -77,6 +97,7 @@ export default function PublicationImporter() {
 
   const reset = () => {
     if (input.current) input.current.value = ''
+    setPaperUrl('')
     setState({ status: 'idle' })
   }
 
@@ -97,35 +118,65 @@ export default function PublicationImporter() {
           </h2>
         </div>
         <p>
-          The PDF stays in this browser. Embedded text and source boxes become a
-          semantic reading flow; a real EPUB is packaged only after
-          reconstruction succeeds.
+          Drop a file or paste a direct paper link. Its bytes are processed in
+          this browser; embedded text and source boxes become a semantic reading
+          flow, and an EPUB is packaged only after reconstruction succeeds.
         </p>
       </div>
 
       {state.status === 'idle' && (
-        <div
-          className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
-          onDragEnter={(event) => {
-            event.preventDefault()
-            setDragging(true)
-          }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          <input
-            ref={input}
-            id="publication-pdf"
-            type="file"
-            accept="application/pdf,.pdf"
-            onChange={(event) => void processFile(event.target.files?.[0])}
-          />
-          <label htmlFor="publication-pdf">
-            <span aria-hidden="true">PDF → EPUB</span>
-            <strong>Choose a PDF or drop it here</strong>
-            <small>Born-digital PDF · up to 50 MB · no upload</small>
-          </label>
+        <div className="publication-intake">
+          <div
+            className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
+            onDragEnter={(event) => {
+              event.preventDefault()
+              setDragging(true)
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+          >
+            <input
+              ref={input}
+              id="publication-pdf"
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={(event) => void processFile(event.target.files?.[0])}
+            />
+            <label htmlFor="publication-pdf">
+              <span aria-hidden="true">PDF → EPUB</span>
+              <strong>Choose a PDF or drop it here</strong>
+              <small>
+                Born-digital PDF · up to 50 MB · stays in this browser
+              </small>
+            </label>
+          </div>
+
+          <form className="publication-url" onSubmit={processUrl}>
+            <div>
+              <span>Or use a link</span>
+              <strong>Paste a direct PDF URL</strong>
+            </div>
+            <label htmlFor="publication-url">
+              HTTPS link to a downloadable paper
+            </label>
+            <div className="publication-url__field">
+              <input
+                id="publication-url"
+                type="url"
+                inputMode="url"
+                required
+                value={paperUrl}
+                placeholder="https://…/paper.pdf"
+                onChange={(event) => setPaperUrl(event.target.value)}
+              />
+              <button type="submit">Make EPUB</button>
+            </div>
+            <small>
+              The publisher must permit direct browser downloads. If it blocks
+              the request, download the PDF and drop it above.
+            </small>
+          </form>
         </div>
       )}
 

@@ -1,0 +1,59 @@
+{
+  "id": "if-letters-home-could-sing",
+  "version": "1.0.0",
+  "status": "published",
+  "title": "If Letters Home Could Sing",
+  "subtitle": "A biometric installation giving voice to Hainanese women",
+  "authors": ["Chen Enjiao (Ernie)"],
+  "updated": "2026-07-13",
+  "abstract": "This research transforms historical qiao pi correspondence into an embodied encounter: heart rate-synchronised sound experiences that centre Hainanese women’s everyday voices and challenge monolithic narratives of the Chinese diaspora.",
+  "nodes": [
+    {
+      "id": "sec-introduction",
+      "type": "heading",
+      "level": 1,
+      "text": "1. Introduction: The Politics of Transnational Chinese Correspondence",
+      "source": "Fellowship paper §1"
+    },
+    {
+      "id": "sec-museology",
+      "type": "heading",
+      "level": 1,
+      "text": "2. New Museology and Embodied Experience Applied",
+      "source": "Fellowship paper §2"
+    },
+    {
+      "id": "sec-methodology",
+      "type": "heading",
+      "level": 1,
+      "text": "3. Methodology: Letters, Heartbeats, and Sound",
+      "source": "Fellowship paper §3"
+    },
+    {
+      "id": "sec-implications",
+      "type": "heading",
+      "level": 1,
+      "text": "4. Implications",
+      "source": "Fellowship paper §4"
+    },
+    {
+      "id": "sec-conclusion",
+      "type": "heading",
+      "level": 1,
+      "text": "5. Conclusion and Future Research",
+      "source": "Fellowship paper §5"
+    },
+    {
+      "id": "q-heartbeat",
+      "type": "quote",
+      "text": "Museums become spaces not just for preserving the past, but for creating living connections between cultural heritage and contemporary experience—one heartbeat at a time.",
+      "source": "Fellowship paper conclusion"
+    },
+    {
+      "id": "p-disclaimer",
+      "type": "paragraph",
+      "text": "The opinions, findings, and recommendations expressed in this publication are those of the Research Fellow and do not necessarily reflect the views of the National Heritage Board.",
+      "source": "NHB publication clearance"
+    }
+  ]
+}

@@ -1,43 +1,154 @@
 ---
+import PublicationImporter from '@/components/research/PublicationImporter'
 import Layout from '@/layouts/Layout.astro'
 import { papers } from '@/research/papers'
 ---
 
 <Layout
-  title="Research"
-  description="Open research notes, working papers, and experiments by Ernie."
+  title="Research publishing"
+  description="Turn a born-digital research PDF or direct paper link into a reflowable EPUB, then inspect the reconstruction evidence."
 >
-  <section class="research-index">
-    <header class="research-hero">
-      <p>Research / in public</p>
-      <h1>Ideas should stay<br />alive while they’re read.</h1>
-      <p class="research-deck">
-        Working papers, evidence, experiments, and revisions—published before
-        they become fossils.
+  <main class="research-home">
+    <header class="research-home__masthead">
+      <div>
+        <span>Research · publishing instrument</span>
+        <strong>PDF or link → semantic reconstruction → EPUB</strong>
+      </div>
+      <p>
+        The useful thing is the conversion. Papers, prototypes, and the SRT
+        notebook below show what the pipeline can preserve and where it still
+        fails.
       </p>
-      <a class="research-studio-link" href="/research/studio">
-        <span>Publication studio</span>
-        <strong>Drop a PDF → export EPUB</strong>
-        <i aria-hidden="true">↗</i>
-      </a>
     </header>
-    <div class="research-rule"></div>
-    <ol class="research-list">
-      {
-        papers.map((paper, index) => (
-          <li>
-            <span>{String(index + 1).padStart(2, '0')}</span>
-            <a href={`/research/${paper.id}`}>
-              <small>
-                {paper.status} · updated {paper.updated}
-              </small>
-              <h2>{paper.title}</h2>
-              <p>{paper.abstract}</p>
-            </a>
-            <span aria-hidden="true">↗</span>
-          </li>
-        ))
-      }
-    </ol>
-  </section>
+
+    <PublicationImporter client:load />
+
+    <section class="research-home__work" aria-labelledby="research-work-title">
+      <header>
+        <span>Published work & open methods</span>
+        <h1 id="research-work-title">Read the output. Inspect the method.</h1>
+      </header>
+      <ol>
+        {
+          papers.map((paper, index) => (
+            <li>
+              <span>{String(index + 1).padStart(2, '0')}</span>
+              <a href={`/research/${paper.id}`}>
+                <small>
+                  {paper.status} · updated {paper.updated}
+                </small>
+                <h2>{paper.title}</h2>
+                <p>{paper.abstract}</p>
+              </a>
+              <i aria-hidden="true">↗</i>
+            </li>
+          ))
+        }
+      </ol>
+    </section>
+  </main>
 </Layout>
+
+<style>
+  .research-home {
+    --instrument-accent: light-dark(oklch(0.43 0.105 32), oklch(0.72 0.08 32));
+    padding: 2rem 0 7rem;
+  }
+  .research-home :global(.publication-importer) {
+    padding-bottom: 0;
+  }
+  .research-home__masthead {
+    align-items: end;
+    border-bottom: 1px solid color-mix(in oklch, currentColor 20%, transparent);
+    display: grid;
+    gap: 1.5rem 4rem;
+    grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 34rem);
+    margin: 0 auto;
+    max-width: 100rem;
+    padding: 1rem clamp(1.25rem, 3vw, 2rem) 2rem;
+  }
+  .research-home__masthead div {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .research-home__masthead span,
+  .research-home__work > header span,
+  .research-home__work small,
+  .research-home__work li > span {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .research-home__masthead span,
+  .research-home__work > header span {
+    color: var(--instrument-accent);
+  }
+  .research-home__masthead strong {
+    font-size: clamp(1.05rem, 2vw, 1.35rem);
+    font-weight: 560;
+  }
+  .research-home__masthead p {
+    color: color-mix(in oklch, currentColor 64%, transparent);
+    line-height: 1.6;
+    margin: 0;
+  }
+  .research-home__work {
+    display: grid;
+    gap: clamp(3rem, 7vw, 7rem);
+    grid-template-columns: minmax(15rem, 0.65fr) minmax(0, 1.35fr);
+    margin: clamp(4rem, 8vw, 7rem) auto 0;
+    max-width: 82rem;
+    padding: 0 clamp(1.25rem, 3vw, 2rem);
+  }
+  .research-home__work > header {
+    align-self: start;
+    display: grid;
+    gap: 1.25rem;
+  }
+  .research-home__work h1 {
+    font-size: clamp(2rem, 4vw, 3.8rem);
+    font-weight: 560;
+    letter-spacing: -0.045em;
+    line-height: 0.98;
+    margin: 0;
+  }
+  .research-home__work ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .research-home__work li {
+    border-top: 1px solid color-mix(in oklch, currentColor 18%, transparent);
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    padding: 1.5rem 0 2rem;
+  }
+  .research-home__work li > span,
+  .research-home__work small {
+    color: color-mix(in oklch, currentColor 58%, transparent);
+  }
+  .research-home__work h2 {
+    font-size: clamp(1.55rem, 3vw, 2.6rem);
+    font-weight: 560;
+    letter-spacing: -0.035em;
+    line-height: 1.05;
+    margin: 0.8rem 0;
+  }
+  .research-home__work p {
+    color: color-mix(in oklch, currentColor 64%, transparent);
+    line-height: 1.55;
+    margin: 0;
+    max-width: 64ch;
+  }
+  .research-home__work i {
+    font-style: normal;
+  }
+  @media (max-width: 760px) {
+    .research-home__masthead,
+    .research-home__work {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

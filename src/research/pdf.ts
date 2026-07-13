@@ -4,10 +4,8 @@ import type {
   PdfPageAnalysis,
   PdfSourceRun,
 } from './import-types'
-import { PdfImportError } from './import-types'
+import { MAX_LOCAL_PDF_BYTES, PdfImportError } from './import-types'
 import { reconstructPageAnalyses, type PdfDocumentMetadata } from './pdf-layout'
-
-export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
 
 function isPdf(bytes: Uint8Array) {
   const prefix = new TextDecoder('latin1').decode(bytes.subarray(0, 1024))

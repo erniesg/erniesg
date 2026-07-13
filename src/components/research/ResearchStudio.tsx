@@ -147,10 +147,10 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
   const margins = `${profile.margins.top} ${profile.margins.right} ${profile.margins.bottom} ${profile.margins.left} ${profile.margins.unit}`
 
   return (
-    <section className="srt-studio" aria-label="Composition studio">
+    <section className="srt-studio" aria-label="Paper preview">
       <header className="srt-toolbar">
         <div>
-          <span className="srt-kicker">Live composition</span>
+          <span className="srt-kicker">Preview</span>
           <strong>{profile.note}</strong>
         </div>
         <div className="srt-profiles" aria-label="Target profile">
@@ -201,7 +201,7 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
           </article>
         </div>
         <aside className="srt-inspector">
-          <span className="srt-kicker">Current semantic anchor</span>
+          <span className="srt-kicker">Selected section</span>
           <code>{selectedNode.id}</code>
           <dl>
             <div>
@@ -263,9 +263,7 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
               </div>
             )}
           </dl>
-          <a href={`/research/${paper.id}/manifest.json`}>
-            Open layout manifest →
-          </a>
+          <a href={`/research/${paper.id}/manifest.json`}>View layout data →</a>
         </aside>
       </div>
     </section>

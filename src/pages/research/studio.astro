@@ -1,23 +1,27 @@
 ---
+import Container from '@/components/Container.astro'
 import PublicationImporter from '@/components/research/PublicationImporter'
 import Layout from '@/layouts/Layout.astro'
 ---
 
 <Layout
-  title="PDF to EPUB publication studio"
-  description="Privately reconstruct a born-digital PDF into a responsive research publication and reflowable EPUB."
+  title="PDF to EPUB"
+  description="Turn a born-digital research PDF into a reflowable EPUB in your browser."
 >
-  <section class="research-paper-hero publication-studio-hero">
-    <a href="/research">← All research</a>
-    <div>
-      <p>Research studio · local first</p>
-      <h1>Reverse the page.<br />Recover the paper.</h1>
-      <p>Fixed PDF evidence in; semantic, reflowable publication out.</p>
-    </div>
-    <aside>
-      <span>Private by default</span>
-      <small>Document bytes remain in browser memory.</small>
-    </aside>
-  </section>
-  <PublicationImporter client:load />
+  <Container class="flex flex-col gap-y-8 pb-24">
+    <a
+      class="text-sm text-muted-foreground hover:text-foreground"
+      href="/research"
+    >
+      ← Research
+    </a>
+    <header class="flex flex-col gap-y-3 border-b pb-6">
+      <h1 class="text-3xl font-bold">PDF to EPUB</h1>
+      <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        Upload a paper or paste a direct PDF link. The conversion runs in your
+        browser, and your file stays on this device.
+      </p>
+    </header>
+    <PublicationImporter showIntro={false} client:load />
+  </Container>
 </Layout>

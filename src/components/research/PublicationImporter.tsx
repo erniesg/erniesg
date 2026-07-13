@@ -31,7 +31,11 @@ function formatBytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
-export default function PublicationImporter() {
+export default function PublicationImporter({
+  showIntro = true,
+}: {
+  showIntro?: boolean
+}) {
   const [state, setState] = useState<StudioState>({ status: 'idle' })
   const [dragging, setDragging] = useState(false)
   const [paperUrl, setPaperUrl] = useState('')
@@ -109,20 +113,20 @@ export default function PublicationImporter() {
       : 0
 
   return (
-    <section className="publication-importer" aria-labelledby="studio-heading">
-      <div className="publication-importer-intro">
-        <div>
-          <p className="srt-kicker">Local publication studio</p>
-          <h2 id="studio-heading">
-            Drop a paper. Get a reflowable publication.
-          </h2>
+    <section
+      className="publication-importer"
+      aria-label={showIntro ? undefined : 'PDF to EPUB converter'}
+      aria-labelledby={showIntro ? 'studio-heading' : undefined}
+    >
+      {showIntro && (
+        <div className="publication-importer-intro">
+          <h2 id="studio-heading">Make an EPUB from a PDF</h2>
+          <p>
+            Upload a paper or paste a direct PDF link. The conversion runs in
+            your browser.
+          </p>
         </div>
-        <p>
-          Drop a file or paste a direct paper link. Its bytes are processed in
-          this browser; embedded text and source boxes become a semantic reading
-          flow, and an EPUB is packaged only after reconstruction succeeds.
-        </p>
-      </div>
+      )}
 
       {state.status === 'idle' && (
         <div className="publication-intake">
@@ -144,21 +148,16 @@ export default function PublicationImporter() {
               onChange={(event) => void processFile(event.target.files?.[0])}
             />
             <label htmlFor="publication-pdf">
-              <span aria-hidden="true">PDF → EPUB</span>
-              <strong>Choose a PDF or drop it here</strong>
-              <small>
-                Born-digital PDF · up to 50 MB · stays in this browser
-              </small>
+              <strong>Choose a PDF</strong>
+              <span>or drop it here</span>
+              <small>Up to 50 MB. Your file stays on this device.</small>
             </label>
           </div>
 
           <form className="publication-url" onSubmit={processUrl}>
-            <div>
-              <span>Or use a link</span>
-              <strong>Paste a direct PDF URL</strong>
-            </div>
             <label htmlFor="publication-url">
-              HTTPS link to a downloadable paper
+              <strong>Or paste a PDF link</strong>
+              <span>Use a direct download link.</span>
             </label>
             <div className="publication-url__field">
               <input
@@ -170,11 +169,10 @@ export default function PublicationImporter() {
                 placeholder="https://…/paper.pdf"
                 onChange={(event) => setPaperUrl(event.target.value)}
               />
-              <button type="submit">Make EPUB</button>
+              <button type="submit">Create EPUB</button>
             </div>
             <small>
-              The publisher must permit direct browser downloads. If it blocks
-              the request, download the PDF and drop it above.
+              If the link is blocked, download the PDF and upload it instead.
             </small>
           </form>
         </div>
@@ -199,9 +197,9 @@ export default function PublicationImporter() {
       {state.status === 'error' && (
         <div className="publication-failure" role="alert">
           <span>{state.code.replaceAll('_', ' ')}</span>
-          <h3>That paper could not be reconstructed.</h3>
+          <h3>I couldn't turn that PDF into an EPUB.</h3>
           <p>{state.message}</p>
-          <button onClick={reset}>Try another PDF</button>
+          <button onClick={reset}>Choose another PDF</button>
         </div>
       )}
 
@@ -210,14 +208,13 @@ export default function PublicationImporter() {
           <div className="publication-result-bar">
             <div>
               <span className="srt-kicker">
-                {state.status === 'ready'
-                  ? 'Reconstruction ready'
-                  : 'Review required'}
+                {state.status === 'ready' ? 'EPUB ready' : 'Needs OCR'}
               </span>
               <strong>{state.result.source.fileName}</strong>
               <small>
                 {state.result.source.pageCount} pages ·{' '}
-                {formatBytes(state.result.source.byteLength)} · local only
+                {formatBytes(state.result.source.byteLength)} · processed
+                locally
               </small>
             </div>
             <div className="publication-actions">
@@ -240,12 +237,11 @@ export default function PublicationImporter() {
 
           {state.status === 'needs-ocr' && (
             <div className="publication-ocr-gate" role="alert">
-              <span>OCR required</span>
-              <h3>Some pages are images, not trustworthy embedded text.</h3>
+              <span>Scanned pages found</span>
+              <h3>This PDF needs OCR before it can become an EPUB.</h3>
               <p>
-                This build preserves the page diagnosis and refuses a partial
-                EPUB. Local OCR is the next adapter; the document has not left
-                your browser.
+                OCR support is still in progress, so this version won't make a
+                partial EPUB. Your file has not left this device.
               </p>
             </div>
           )}
@@ -255,8 +251,8 @@ export default function PublicationImporter() {
             open={state.status === 'needs-ocr'}
           >
             <summary>
-              Reconstruction evidence · {state.result.diagnostics.length}{' '}
-              diagnostics
+              Conversion details · {state.result.diagnostics.length}{' '}
+              {state.result.diagnostics.length === 1 ? 'note' : 'notes'}
             </summary>
             <div className="publication-diagnostic-grid">
               <div>
@@ -274,7 +270,7 @@ export default function PublicationImporter() {
                 </ol>
               </div>
               <div>
-                <h3>Source-box provenance</h3>
+                <h3>Recovered text</h3>
                 <ol>
                   {state.result.paper.nodes.slice(0, 12).map((node) => {
                     const evidence = state.result.provenance[node.id]

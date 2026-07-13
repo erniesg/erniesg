@@ -5,14 +5,21 @@ import {
   type ResearchNode,
   type ResearchPaper,
 } from './schema'
+import {
+  COMPOSITION_DECISION_CODES,
+  COMPOSITION_POLICY_VERSION,
+  getCompositionPolicy,
+  resolveNodeComposition,
+} from './composition'
+import {
+  getTargetProfile,
+  TARGET_PROFILE_IDS,
+  type TargetProfileId,
+} from './targets'
+import { targetProfileIdSchema, targetProfileSchema } from './target-schema'
 
-export const LAYOUT_MANIFEST_VERSION = '1.0.0' as const
-export const LAYOUT_TARGETS = [
-  'mobile',
-  'paperProMove',
-  'paperPro',
-  'print',
-] as const
+export const LAYOUT_MANIFEST_VERSION = '1.1.0' as const
+export const LAYOUT_TARGETS = TARGET_PROFILE_IDS
 
 const canonicalId = z.string().min(1)
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/)
@@ -80,9 +87,26 @@ const relationshipValueSchema = z.union([
   z.array(canonicalId).min(1),
 ])
 
+const compositionDecisionSchema = z
+  .object({
+    code: z.enum(COMPOSITION_DECISION_CODES),
+    outcome: z.string().min(1),
+    reason: z.string().min(1),
+  })
+  .strict()
+
+const compositionPolicySchema = z
+  .object({
+    id: canonicalId,
+    version: z.literal(COMPOSITION_POLICY_VERSION),
+    flowMode: z.enum(['browser-flow', 'finite-sheet-preview']),
+    decisions: z.array(compositionDecisionSchema).min(1),
+  })
+  .strict()
+
 const manifestEntrySchema = z
   .object({
-    target: canonicalId,
+    target: targetProfileIdSchema,
     canonicalId,
     nodeType: z.enum(['heading', 'paragraph', 'quote', 'caption', 'figure']),
     contentHash: sha256,
@@ -107,8 +131,10 @@ const manifestEntrySchema = z
 
 const renditionSchema = z
   .object({
-    target: canonicalId,
+    target: targetProfileIdSchema,
     contentHash: sha256,
+    profile: targetProfileSchema,
+    policy: compositionPolicySchema,
     entries: z.array(manifestEntrySchema).min(1),
   })
   .strict()
@@ -138,6 +164,36 @@ export const layoutManifestSchema = z
         })
       }
       targets.add(rendition.target)
+
+      if (rendition.profile.id !== rendition.target) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['renditions', renditionIndex, 'profile', 'id'],
+          message: `Profile ${rendition.profile.id} does not match rendition target ${rendition.target}`,
+        })
+      }
+
+      const decisionCodes = new Set<string>()
+      for (const [
+        decisionIndex,
+        decision,
+      ] of rendition.policy.decisions.entries()) {
+        if (decisionCodes.has(decision.code)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [
+              'renditions',
+              renditionIndex,
+              'policy',
+              'decisions',
+              decisionIndex,
+              'code',
+            ],
+            message: `Duplicate composition decision: ${decision.code}`,
+          })
+        }
+        decisionCodes.add(decision.code)
+      }
 
       const nodeIds = new Set<string>()
       for (const [entryIndex, entry] of rendition.entries.entries()) {
@@ -222,12 +278,15 @@ export type ManifestInvariantIssue = {
     | 'MISSING_TARGET'
     | 'UNEXPECTED_TARGET'
     | 'RENDITION_HASH_MISMATCH'
+    | 'TARGET_PROFILE_MISMATCH'
+    | 'COMPOSITION_POLICY_MISMATCH'
     | 'MISSING_NODE'
     | 'UNEXPECTED_NODE'
     | 'NODE_TYPE_MISMATCH'
     | 'NODE_HASH_MISMATCH'
     | 'PROVENANCE_MISMATCH'
     | 'RELATIONSHIP_MISMATCH'
+    | 'NODE_COMPOSITION_MISMATCH'
   target?: string
   canonicalId?: string
   message: string
@@ -244,10 +303,6 @@ function relationshipsFor(
   node: ResearchNode,
 ): Record<string, string | string[]> {
   return node.type === 'figure' ? { ...node.relationships } : {}
-}
-
-function chosenVariantFor(node: ResearchNode) {
-  return node.type === 'figure' ? 'inline' : 'flow'
 }
 
 function comparableJson(value: unknown): string {
@@ -289,8 +344,8 @@ export function validateLayoutManifest(
     })
   }
 
-  const expectedTargetSet = new Set(expectedTargets)
-  const actualTargetSet = new Set(
+  const expectedTargetSet = new Set<string>(expectedTargets)
+  const actualTargetSet = new Set<string>(
     manifest.renditions.map((rendition) => rendition.target),
   )
   for (const target of expectedTargetSet) {
@@ -318,6 +373,29 @@ export function validateLayoutManifest(
         target: rendition.target,
         message: `Rendition content hash does not match canonical source`,
       })
+    }
+
+    const parsedTarget = targetProfileIdSchema.safeParse(rendition.target)
+    if (parsedTarget.success) {
+      const expectedProfile = getTargetProfile(parsedTarget.data)
+      const expectedPolicy = getCompositionPolicy(parsedTarget.data)
+
+      if (
+        comparableJson(rendition.profile) !== comparableJson(expectedProfile)
+      ) {
+        issues.push({
+          code: 'TARGET_PROFILE_MISMATCH',
+          target: rendition.target,
+          message: `Target profile changed for ${rendition.target}`,
+        })
+      }
+      if (comparableJson(rendition.policy) !== comparableJson(expectedPolicy)) {
+        issues.push({
+          code: 'COMPOSITION_POLICY_MISMATCH',
+          target: rendition.target,
+          message: `Composition policy changed for ${rendition.target}`,
+        })
+      }
     }
 
     const renderedNodes = new Map(
@@ -369,6 +447,24 @@ export function validateLayoutManifest(
           message: `Relationships changed for ${node.id}`,
         })
       }
+      if (parsedTarget.success) {
+        const expectedComposition = resolveNodeComposition(
+          parsedTarget.data,
+          node,
+        )
+        if (
+          entry.chosenVariant !== expectedComposition.chosenVariant ||
+          comparableJson(entry.fallback) !==
+            comparableJson(expectedComposition.fallback)
+        ) {
+          issues.push({
+            code: 'NODE_COMPOSITION_MISMATCH',
+            target: rendition.target,
+            canonicalId: node.id,
+            message: `Composition decision changed for ${node.id}`,
+          })
+        }
+      }
     }
 
     for (const entry of rendition.entries) {
@@ -389,7 +485,7 @@ export function validateLayoutManifest(
 
 export function buildLayoutManifest(
   paper: ResearchPaper,
-  targets: readonly string[] = LAYOUT_TARGETS,
+  targets: readonly TargetProfileId[] = LAYOUT_TARGETS,
 ): LayoutManifest {
   const contentHash = canonicalContentHash(paper)
   const manifest = {
@@ -402,20 +498,27 @@ export function buildLayoutManifest(
     renditions: targets.map((target) => ({
       target,
       contentHash,
-      entries: paper.nodes.map((node, order) => ({
-        target,
-        canonicalId: node.id,
-        nodeType: node.type,
-        contentHash: canonicalNodeContentHash(node),
-        provenance: { source: node.source },
-        relationships: relationshipsFor(node),
-        chosenVariant: chosenVariantFor(node),
-        representation: {
-          kind: 'whole' as const,
-          placement: { kind: 'flow' as const, order },
-        },
-        diagnostics: [],
-      })),
+      profile: getTargetProfile(target),
+      policy: getCompositionPolicy(target),
+      entries: paper.nodes.map((node, order) => {
+        const composition = resolveNodeComposition(target, node)
+
+        return {
+          target,
+          canonicalId: node.id,
+          nodeType: node.type,
+          contentHash: canonicalNodeContentHash(node),
+          provenance: { source: node.source },
+          relationships: relationshipsFor(node),
+          chosenVariant: composition.chosenVariant,
+          representation: {
+            kind: 'whole' as const,
+            placement: { kind: 'flow' as const, order },
+          },
+          diagnostics: composition.diagnostics,
+          ...(composition.fallback ? { fallback: composition.fallback } : {}),
+        }
+      }),
     })),
   }
 

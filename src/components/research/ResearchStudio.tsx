@@ -1,23 +1,45 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  getCompositionPolicy,
+  resolveNodeComposition,
+} from '@/research/composition'
 import type { ResearchNode, ResearchPaper } from '@/research/schema'
-
-const profiles = {
-  mobile: { label: 'Mobile', note: 'Continuous · 390 CSS px', width: 390, height: undefined },
-  paperProMove: { label: 'Pro Move', note: '7.3″ · 954 × 1696 · 264 PPI', width: 318, height: 565 },
-  paperPro: { label: 'Paper Pro', note: '11.8″ · 1620 × 2160 · 229 PPI', width: 540, height: 720 },
-  print: { label: 'A4', note: '210 × 297 mm · paged', width: 794, height: 1123 },
-} as const
-
-type Profile = keyof typeof profiles
+import {
+  getPreviewMetrics,
+  getTargetProfile,
+  TARGET_PROFILE_IDS,
+  type TargetProfileId,
+} from '@/research/targets'
 
 type CaptionNode = Extract<ResearchNode, { type: 'caption' }>
 
-function PaperNode({ node, captions }: { node: ResearchNode; captions: Map<string, CaptionNode> }) {
+function PaperNode({
+  node,
+  captions,
+  target,
+}: {
+  node: ResearchNode
+  captions: Map<string, CaptionNode>
+  target: TargetProfileId
+}) {
+  const composition = resolveNodeComposition(target, node)
+
   if (node.type === 'heading') {
-    return <h2 data-node-id={node.id}>{node.text}</h2>
+    return (
+      <h2 data-node-id={node.id} data-variant={composition.chosenVariant}>
+        {node.text}
+      </h2>
+    )
   }
   if (node.type === 'quote') {
-    return <blockquote data-node-id={node.id}>{node.text}</blockquote>
+    return (
+      <blockquote
+        data-node-id={node.id}
+        data-variant={composition.chosenVariant}
+      >
+        {node.text}
+      </blockquote>
+    )
   }
   if (node.type === 'caption') {
     return null
@@ -25,30 +47,53 @@ function PaperNode({ node, captions }: { node: ResearchNode; captions: Map<strin
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
     return (
-      <figure data-node-id={node.id}>
-        <div className="srt-pipeline" aria-label="Semantic composition pipeline">
-          <span>semantic graph</span><i>+</i><span>target policy</span><i>→</i><span>rendition</span>
+      <figure data-node-id={node.id} data-variant={composition.chosenVariant}>
+        <div
+          className="srt-pipeline"
+          aria-label="Semantic composition pipeline"
+        >
+          <span>semantic graph</span>
+          <i>+</i>
+          <span>target policy</span>
+          <i>→</i>
+          <span>rendition</span>
         </div>
-        <figcaption id={node.relationships.caption} data-node-id={node.relationships.caption}>
+        <figcaption
+          id={node.relationships.caption}
+          data-node-id={node.relationships.caption}
+          data-variant={
+            caption
+              ? resolveNodeComposition(target, caption).chosenVariant
+              : 'figure-caption'
+          }
+        >
           <b>{node.title}.</b> {caption?.text}
         </figcaption>
       </figure>
     )
   }
-  return <p data-node-id={node.id}>{node.text}</p>
+  return (
+    <p data-node-id={node.id} data-variant={composition.chosenVariant}>
+      {node.text}
+    </p>
+  )
 }
 
 export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
-  const [profile, setProfile] = useState<Profile>('paperPro')
+  const [profileId, setProfileId] = useState<TargetProfileId>('paperPro')
   const [selected, setSelected] = useState(paper.nodes[0].id)
   const viewport = useRef<HTMLDivElement>(null)
 
-  const switchProfile = (next: Profile) => {
-    const visible = viewport.current?.querySelector('[data-node-id]') as HTMLElement | null
+  const switchProfile = (next: TargetProfileId) => {
+    const visible = viewport.current?.querySelector(
+      '[data-node-id]',
+    ) as HTMLElement | null
     const anchor = visible?.dataset.nodeId ?? selected
-    setProfile(next)
+    setProfileId(next)
     requestAnimationFrame(() => {
-      viewport.current?.querySelector(`[data-node-id="${anchor}"]`)?.scrollIntoView({ block: 'start' })
+      viewport.current
+        ?.querySelector(`[data-node-id="${anchor}"]`)
+        ?.scrollIntoView({ block: 'start' })
     })
   }
 
@@ -63,62 +108,163 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
       },
       { root, rootMargin: '0px 0px -75% 0px' },
     )
-    root.querySelectorAll('[data-node-id]').forEach((node) => observer.observe(node))
+    root
+      .querySelectorAll('[data-node-id]')
+      .forEach((node) => observer.observe(node))
     return () => observer.disconnect()
-  }, [profile])
+  }, [profileId])
 
-  const selectedNode = paper.nodes.find((node) => node.id === selected) ?? paper.nodes[0]
+  const selectedNode =
+    paper.nodes.find((node) => node.id === selected) ?? paper.nodes[0]
+  const profile = getTargetProfile(profileId)
+  const policy = getCompositionPolicy(profileId)
+  const selectedComposition = resolveNodeComposition(profileId, selectedNode)
+  const preview = getPreviewMetrics(profile)
   const captions = new Map(
     paper.nodes
       .filter((node): node is CaptionNode => node.type === 'caption')
       .map((node) => [node.id, node]),
   )
+  const paperStyle = {
+    width: '100%',
+    maxWidth: preview.widthCssPx,
+    minHeight: preview.minHeightCssPx,
+    '--srt-margin-top': `${preview.marginTopCssPx}px`,
+    '--srt-margin-right': `${preview.marginRightCssPx}px`,
+    '--srt-margin-bottom': `${preview.marginBottomCssPx}px`,
+    '--srt-margin-left': `${preview.marginLeftCssPx}px`,
+    '--srt-font-family': profile.typography.fontFamily,
+    '--srt-body-size': `${profile.typography.bodySizeCssPx}px`,
+    '--srt-line-height': profile.typography.lineHeight,
+    '--srt-title-size': `${profile.typography.titleSizeCssPx}px`,
+    '--srt-heading-size': `${profile.typography.headingSizeCssPx}px`,
+    '--srt-quote-size': `${profile.typography.quoteSizeCssPx}px`,
+    '--srt-column-count': profile.columns.count,
+    '--srt-column-gap': `${profile.columns.gapCssPx}px`,
+  } as CSSProperties
+
+  const dimensions = `${profile.dimensions.width} × ${profile.dimensions.height ?? 'continuous'} ${profile.dimensions.unit}`
+  const margins = `${profile.margins.top} ${profile.margins.right} ${profile.margins.bottom} ${profile.margins.left} ${profile.margins.unit}`
 
   return (
     <section className="srt-studio" aria-label="Composition studio">
       <header className="srt-toolbar">
         <div>
           <span className="srt-kicker">Live composition</span>
-          <strong>{profiles[profile].note}</strong>
+          <strong>{profile.note}</strong>
         </div>
         <div className="srt-profiles" aria-label="Target profile">
-          {(Object.keys(profiles) as Profile[]).map((key) => (
-            <button key={key} className={profile === key ? 'active' : ''} onClick={() => switchProfile(key)}>
-              {profiles[key].label}
+          {TARGET_PROFILE_IDS.map((key) => (
+            <button
+              key={key}
+              className={profileId === key ? 'active' : ''}
+              onClick={() => switchProfile(key)}
+            >
+              {getTargetProfile(key).label}
             </button>
           ))}
         </div>
       </header>
 
       <div className="srt-stage">
-        <div ref={viewport} className={`srt-viewport profile-${profile}`}>
+        <div ref={viewport} className="srt-viewport">
           <article
             className="srt-paper"
-            style={{
-              maxWidth: profiles[profile].width,
-              minHeight: profiles[profile].height,
-            }}
+            data-columns={profile.columns.count}
+            data-finite-height={profile.finiteHeight}
+            data-flow-mode={policy.flowMode}
+            data-interaction={profile.interactionMode}
+            style={paperStyle}
           >
             <header>
-              <small>{paper.status} paper · v{paper.version}</small>
+              <small>
+                {paper.status} paper · v{paper.version}
+              </small>
               <h1>{paper.title}</h1>
               <p className="srt-subtitle">{paper.subtitle}</p>
-              <p className="srt-authors">{paper.authors.join(', ')} · updated {paper.updated}</p>
-              <p className="srt-abstract"><b>Abstract.</b> {paper.abstract}</p>
+              <p className="srt-authors">
+                {paper.authors.join(', ')} · updated {paper.updated}
+              </p>
+              <p className="srt-abstract">
+                <b>Abstract.</b> {paper.abstract}
+              </p>
             </header>
-            {paper.nodes.map((node) => <PaperNode key={node.id} node={node} captions={captions} />)}
+            {paper.nodes.map((node) => (
+              <PaperNode
+                key={node.id}
+                node={node}
+                captions={captions}
+                target={profileId}
+              />
+            ))}
           </article>
         </div>
         <aside className="srt-inspector">
           <span className="srt-kicker">Current semantic anchor</span>
           <code>{selectedNode.id}</code>
           <dl>
-            <div><dt>Type</dt><dd>{selectedNode.type}</dd></div>
-            <div><dt>Source</dt><dd>{selectedNode.source}</dd></div>
-            <div><dt>Profile</dt><dd>{profiles[profile].label}</dd></div>
-            <div><dt>Policy</dt><dd>{profile === 'print' ? 'paged / 2-column' : 'reflow / 1-column'}</dd></div>
+            <div>
+              <dt>Type</dt>
+              <dd>{selectedNode.type}</dd>
+            </div>
+            <div>
+              <dt>Source</dt>
+              <dd>{selectedNode.source}</dd>
+            </div>
+            <div>
+              <dt>Profile</dt>
+              <dd>{profile.label}</dd>
+            </div>
+            <div>
+              <dt>Dimensions</dt>
+              <dd>{dimensions}</dd>
+            </div>
+            <div>
+              <dt>Margins</dt>
+              <dd>{margins}</dd>
+            </div>
+            <div>
+              <dt>Typography</dt>
+              <dd>
+                {profile.typography.bodySizeCssPx}px /{' '}
+                {profile.typography.lineHeight}
+              </dd>
+            </div>
+            <div>
+              <dt>Columns</dt>
+              <dd>{profile.columns.count}</dd>
+            </div>
+            <div>
+              <dt>Interaction</dt>
+              <dd>{profile.interactionMode}</dd>
+            </div>
+            <div>
+              <dt>Finite height</dt>
+              <dd>{profile.finiteHeight ? 'yes' : 'no'}</dd>
+            </div>
+            <div>
+              <dt>Policy</dt>
+              <dd>
+                {policy.id} · {policy.version}
+              </dd>
+            </div>
+            <div>
+              <dt>Variant</dt>
+              <dd>{selectedComposition.chosenVariant}</dd>
+            </div>
+            {selectedComposition.fallback && (
+              <div>
+                <dt>Fallback</dt>
+                <dd>
+                  {selectedComposition.fallback.fromVariant} →{' '}
+                  {selectedComposition.chosenVariant}
+                </dd>
+              </div>
+            )}
           </dl>
-          <a href={`/research/${paper.id}/manifest.json`}>Open layout manifest →</a>
+          <a href={`/research/${paper.id}/manifest.json`}>
+            Open layout manifest →
+          </a>
         </aside>
       </div>
     </section>

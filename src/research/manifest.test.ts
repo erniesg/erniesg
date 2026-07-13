@@ -14,6 +14,8 @@ import {
   canonicalNodeContentHash,
   researchPaperSchema,
 } from './schema'
+import { getCompositionPolicy, resolveNodeComposition } from './composition'
+import { getTargetProfile } from './targets'
 
 const paper = researchPaperSchema.parse(rawPaper)
 
@@ -40,22 +42,116 @@ describe('SRT layout manifest contract', () => {
     )
 
     for (const rendition of manifest.renditions) {
+      expect(rendition.profile).toEqual(getTargetProfile(rendition.target))
+      expect(rendition.policy).toEqual(getCompositionPolicy(rendition.target))
       expect(rendition.entries).toHaveLength(paper.nodes.length)
       expect(rendition.entries.map((entry) => entry.canonicalId)).toEqual(
         paper.nodes.map((node) => node.id),
       )
       for (const [order, entry] of rendition.entries.entries()) {
         const node = paper.nodes[order]
+        const composition = resolveNodeComposition(rendition.target, node)
         expect(entry).toMatchObject({
           target: rendition.target,
           nodeType: node.type,
           contentHash: canonicalNodeContentHash(node),
           provenance: { source: node.source },
+          chosenVariant: composition.chosenVariant,
           representation: { kind: 'whole', placement: { kind: 'flow', order } },
-          diagnostics: [],
+          diagnostics: composition.diagnostics,
         })
+        expect(entry.fallback).toEqual(composition.fallback)
       }
     }
+  })
+
+  it('composes four materially distinct renditions without changing canonical identity', () => {
+    const manifest = buildLayoutManifest(paper)
+    const renditionSignatures = manifest.renditions.map((rendition) =>
+      JSON.stringify({
+        profile: rendition.profile,
+        policy: rendition.policy,
+        variants: rendition.entries.map((entry) => entry.chosenVariant),
+      }),
+    )
+
+    expect(new Set(renditionSignatures)).toHaveLength(LAYOUT_TARGETS.length)
+    expect(
+      new Set(
+        manifest.renditions.flatMap((rendition) =>
+          rendition.entries
+            .filter((entry) => entry.nodeType === 'figure')
+            .map((entry) => entry.chosenVariant),
+        ),
+      ),
+    ).toEqual(new Set(['edge-to-edge', 'compact-stack', 'inline', 'full-span']))
+
+    for (const rendition of manifest.renditions) {
+      expect(rendition.contentHash).toBe(manifest.document.contentHash)
+      expect(rendition.entries.map((entry) => entry.canonicalId)).toEqual(
+        paper.nodes.map((node) => node.id),
+      )
+      expect(rendition.entries.map((entry) => entry.contentHash)).toEqual(
+        paper.nodes.map((node) => canonicalNodeContentHash(node)),
+      )
+    }
+  })
+
+  it('records deterministic policy decisions and an explained compact-screen fallback', () => {
+    const manifest = buildLayoutManifest(paper)
+    const move = manifest.renditions.find(
+      (rendition) => rendition.target === 'paperProMove',
+    )
+    if (!move) throw new Error('Manifest lost the Paper Pro Move rendition')
+
+    expect(move.policy.decisions.map((decision) => decision.code)).toEqual([
+      'flow-mode',
+      'column-count',
+      'figure-placement',
+      'fragmentation',
+    ])
+    expect(
+      move.policy.decisions.find(
+        (decision) => decision.code === 'fragmentation',
+      ),
+    ).toMatchObject({ outcome: 'deferred' })
+
+    const figure = move.entries.find(
+      (entry) => entry.canonicalId === 'fig-pipeline',
+    )
+    expect(figure).toMatchObject({
+      chosenVariant: 'compact-stack',
+      fallback: {
+        fromVariant: 'dedicated-view',
+        diagnosticCode: 'variant-unavailable',
+      },
+      diagnostics: [
+        {
+          code: 'variant-unavailable',
+          severity: 'info',
+        },
+      ],
+    })
+  })
+
+  it('rejects profile, policy, and node-composition drift', () => {
+    const profileDrift = cloneManifest()
+    profileDrift.renditions[0].profile.margins.left += 1
+    expect(() => validateLayoutManifest(profileDrift, paper)).toThrow(
+      /TARGET_PROFILE_MISMATCH/,
+    )
+
+    const policyDrift = cloneManifest()
+    policyDrift.renditions[1].policy.decisions[0].outcome = 'browser-flow'
+    expect(() => validateLayoutManifest(policyDrift, paper)).toThrow(
+      /COMPOSITION_POLICY_MISMATCH/,
+    )
+
+    const variantDrift = cloneManifest()
+    variantDrift.renditions[2].entries[5].chosenVariant = 'compact-stack'
+    expect(() => validateLayoutManifest(variantDrift, paper)).toThrow(
+      /NODE_COMPOSITION_MISMATCH/,
+    )
   })
 
   it('accepts explicitly recorded fragments instead of a whole-node placement', () => {

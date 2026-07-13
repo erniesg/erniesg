@@ -10,7 +10,7 @@ A rendition must be mechanically comparable with the canonical graph before targ
 
 ## Decision
 
-Layout manifests use the strict, versioned `1.0.0` schema in `src/research/manifest.ts`.
+Layout manifests use the strict, versioned schema in `src/research/manifest.ts`. The original structural contract was `1.0.0`; ADR 003 extends it to `1.1.0` with target-profile and deterministic-policy evidence.
 
 - Each rendition and each entry names its target and carries the canonical document hash.
 - Every canonical node has exactly one manifest entry. A node is represented either by one flow/geometry placement or by two or more ordered, uniquely identified fragments.

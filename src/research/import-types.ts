@@ -1,5 +1,7 @@
 import type { ResearchPaper } from './schema'
 
+export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
+
 export type PdfPageKind = 'born-digital' | 'mixed' | 'ocr-required'
 
 export type NormalizedSourceBox = {
@@ -77,7 +79,9 @@ export class PdfImportError extends Error {
       | 'OVERSIZED_PDF'
       | 'OCR_REQUIRED'
       | 'EMPTY_PDF'
-      | 'PDF_PARSE_FAILED',
+      | 'PDF_PARSE_FAILED'
+      | 'INVALID_PDF_URL'
+      | 'PDF_DOWNLOAD_FAILED',
     message: string,
   ) {
     super(message)

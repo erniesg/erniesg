@@ -35,7 +35,7 @@ export default function ResearchPaperActions({
     <nav aria-label="Paper downloads">
       <button onClick={() => window.print()}>Print / PDF</button>
       <EpubDownloadLink epub={epub} pendingLabel="Preparing EPUB…" />
-      <a href={`/research/${paper.id}/source.json`}>Source JSON</a>
+      <a href={`/research/${paper.id}/source.json`}>Source data</a>
       {error && <small role="alert">{error}</small>}
     </nav>
   )

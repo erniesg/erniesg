@@ -16,7 +16,9 @@ const isFellowshipPaper = paper.id === 'if-letters-home-could-sing'
 <Layout
   title={paper.title}
   description={paper.abstract}
-  image={isFellowshipPaper ? '/research/if-letters-home-could-sing/media/image3.jpg' : undefined}
+  image={isFellowshipPaper
+    ? '/research/if-letters-home-could-sing/media/image3.jpg'
+    : undefined}
 >
   {
     isFellowshipPaper ? (
@@ -24,9 +26,9 @@ const isFellowshipPaper = paper.id === 'if-letters-home-could-sing'
     ) : (
       <>
         <section class="research-paper-hero">
-          <a href="/research">← All research</a>
+          <a href="/research">← Research</a>
           <div>
-            <p>Research note 002 · {paper.status}</p>
+            <p>Research paper · {paper.status}</p>
             <h1>{paper.title}</h1>
             <p>{paper.subtitle}</p>
           </div>

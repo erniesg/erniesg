@@ -156,6 +156,20 @@ describe('PDF.js browser ingestion', () => {
     ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
   })
 
+  it('cancels when the operator aborts at reconstruction', async () => {
+    const controller = new AbortController()
+
+    await expect(
+      reconstructPdf(
+        await fixtureFile('born-digital.pdf'),
+        (progress) => {
+          if (progress.phase === 'reconstructing') controller.abort()
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+  })
+
   it('retains the published fellowship PDF as non-private local audit evidence', async () => {
     const bytes = await readFile(
       new URL(

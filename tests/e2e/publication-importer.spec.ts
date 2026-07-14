@@ -41,6 +41,9 @@ test('blocks a text-only EPUB when scientific objects are unresolved', async ({
   await expect(page.getByRole('button', { name: 'Print / PDF' })).toBeDisabled()
   await expect(page.getByText('INCOMPLETE_ASSET_COVERAGE')).toBeVisible()
   await expect(page.getByText('UNRESOLVED_SEMANTIC_OBJECTS')).toBeVisible()
+
+  await page.emulateMedia({ media: 'print' })
+  await expect(page.locator('.publication-preview-blocked')).toBeHidden()
 })
 
 test('keeps the newest result when an active import is superseded', async ({

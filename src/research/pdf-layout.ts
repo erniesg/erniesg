@@ -69,7 +69,14 @@ function orderPageLines(lines: PdfTextLine[]) {
   )
   const right = candidates.filter((line) => line.x >= 0.43)
   const hasColumns = left.length >= 3 && right.length >= 3
-  const hasShortColumnCandidates = left.length >= 2 && right.length >= 2
+  const leftTop = Math.min(...left.map((line) => line.y))
+  const leftBottom = Math.max(...left.map((line) => line.y + line.height))
+  const rightTop = Math.min(...right.map((line) => line.y))
+  const rightBottom = Math.max(...right.map((line) => line.y + line.height))
+  const hasShortColumnCandidates =
+    left.length >= 2 &&
+    right.length >= 2 &&
+    Math.min(leftBottom, rightBottom) > Math.max(leftTop, rightTop)
 
   if (!hasColumns) {
     return {

@@ -246,7 +246,9 @@ export async function reconstructPdf(
       total: document.numPages,
       message: 'Rebuilding semantic reading order…',
     })
+    throwIfAborted(options.signal)
     const rawMetadata = await document.getMetadata().catch(() => undefined)
+    throwIfAborted(options.signal)
     const info = (rawMetadata?.info ?? {}) as unknown as Record<string, unknown>
     const metadata: PdfDocumentMetadata = {
       title: metadataValue(info, 'Title'),

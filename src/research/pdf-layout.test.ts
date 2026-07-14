@@ -166,6 +166,47 @@ describe('PDF semantic reconstruction', () => {
     )
   })
 
+  it('does not treat vertically separate metadata and body as columns', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Metadata A', 0.7, 0.1, 0.2),
+          run(1, 'Metadata B', 0.7, 0.14, 0.2),
+          run(1, 'Body line one.', 0.1, 0.3, 0.2),
+          run(1, 'Body line two.', 0.1, 0.34, 0.2),
+        ]),
+      ],
+      sourceHash: 'f'.repeat(64),
+      fileName: 'metadata-and-body.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'AMBIGUOUS_READING_ORDER' }),
+      ]),
+    )
+    expect(result.readiness.ready).toBe(true)
+  })
+
+  it('counts supplementary Unicode text by code point', () => {
+    const math = '𝑥'.repeat(30)
+    const result = reconstructPageAnalyses({
+      pages: [page(1, [run(1, math, 0.1, 0.2, 0.5)])],
+      sourceHash: '0'.repeat(64),
+      fileName: 'unicode-math.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.completeness).toMatchObject({
+      sourceTextCharacters: 30,
+      outputTextCharacters: 30,
+      matchedTextCharacters: 30,
+      textCoverage: 1,
+    })
+    expect(result.readiness.ready).toBe(true)
+  })
+
   it('emits stable OCR gates instead of silently exporting partial text', () => {
     const pages = [page(1, [], 'ocr-required')]
     const input = {

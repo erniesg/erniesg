@@ -33,6 +33,10 @@ function normalizedText(value: string) {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
 }
 
+function characterCount(value: string) {
+  return [...value].length
+}
+
 function nodeText(node: ResearchNode) {
   if ('text' in node) return node.text
   return node.type === 'figure' ? node.title : ''
@@ -159,10 +163,10 @@ export function assessPdfCompleteness({
   )
   const readingOrderDiagnostics = readingOrderDiagnosticCount(diagnostics)
   const completeness: PdfCompletenessMetrics = {
-    sourceTextCharacters: sourceText.length,
-    outputTextCharacters: outputText.length,
+    sourceTextCharacters: characterCount(sourceText),
+    outputTextCharacters: characterCount(outputText),
     matchedTextCharacters,
-    textCoverage: coverage(matchedTextCharacters, sourceText.length),
+    textCoverage: coverage(matchedTextCharacters, characterCount(sourceText)),
     sourceAssetCount,
     exportedAssetCount,
     assetCoverage: coverage(exportedAssetCount, sourceAssetCount),

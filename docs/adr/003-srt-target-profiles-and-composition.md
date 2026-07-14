@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for the four-target browser-flow proof of concept.
+Accepted for the four-target browser-flow proof of concept. Its deferred-pagination boundary is superseded by ADR 006.
 
 ## Context
 
@@ -29,7 +29,7 @@ Layout manifest version `1.1.0` embeds the resolved profile, named policy, decis
 
 Target switching, the visual rendition, and machine-readable evidence now share one data source. Profile or policy drift fails structural validation, and the four compositions can be compared without writing target geometry into canonical content.
 
-Finite height is a declared target capability, not a claim that pagination exists. The manifest explicitly records fragmentation as deferred for finite targets. Page breaking, fragment lineage, and finite-height overflow handling remain the responsibility of the next dependency-ready pagination issue.
+At this milestone, finite height was a declared target capability rather than a claim that pagination existed. ADR 006 subsequently adds page breaking, fragment lineage, and finite-height overflow handling while retaining these profiles.
 
 ## Non-goals
 

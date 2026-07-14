@@ -43,7 +43,7 @@ The dedicated agent-evidence workflow installs the pinned Chromium build, runs t
 
 Every target now produces reviewable visual evidence and fails mechanically on missing content, clipping, overlap, or horizontal overflow. The geometry report remains inspectable instead of reducing failure to an opaque image difference.
 
-The harness does not claim pixel equality and does not approve a visual baseline. Finite target height is still a profile capability and minimum preview size; pagination and fragmentation remain the next dependency-ready issue.
+The harness does not claim pixel equality and does not approve a visual baseline. ADR 006 subsequently extends these geometry diagnostics to explicit pages and fragments.
 
 ## Non-goals
 

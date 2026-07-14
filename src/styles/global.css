@@ -254,42 +254,83 @@
     @apply max-h-[780px] overflow-auto bg-muted/20 p-4 transition-all duration-500 sm:p-10;
   }
   .srt-paper {
-    @apply mx-auto min-h-full shadow-sm transition-all duration-500;
-    background: var(--srt-paper-surface);
+    @apply mx-auto flex min-h-full flex-col gap-6 transition-all duration-500;
     color: var(--srt-paper-ink);
+    font-family: var(--srt-font-family);
+  }
+  .srt-page {
+    @apply relative flex w-full shrink-0 flex-col shadow-sm;
+    box-sizing: border-box;
+    min-height: var(--srt-page-height);
     padding: var(--srt-margin-top) var(--srt-margin-right)
       var(--srt-margin-bottom) var(--srt-margin-left);
-    font-family: var(--srt-font-family);
-    column-count: var(--srt-column-count);
-    column-gap: var(--srt-column-gap);
+    background: var(--srt-paper-surface);
   }
-  .srt-paper header {
-    @apply mb-12 border-b border-black/20 pb-8;
+  .srt-paper[data-finite-height='true'] .srt-page {
+    height: var(--srt-page-height);
   }
-  .srt-paper header small {
+  .srt-document-header {
+    @apply border-b border-black/20;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    padding-bottom: 24px;
+  }
+  .srt-paper[data-finite-height='true'] .srt-document-header {
+    height: var(--srt-header-height);
+  }
+  .srt-document-header small {
+    display: block;
+    line-height: 12px;
+  }
+  .srt-document-header small {
     @apply font-sans text-[10px] uppercase tracking-[.16em] text-black/60;
   }
   .srt-paper h1 {
-    @apply mt-4 font-normal leading-[.95] tracking-[-.04em];
+    @apply font-normal leading-[.95] tracking-[-.04em];
+    margin-top: 16px;
     font-size: var(--srt-title-size);
   }
   .srt-paper .srt-subtitle {
-    @apply mt-3 text-lg italic text-black/60;
+    @apply text-lg italic text-black/60;
+    margin-top: 12px;
+    line-height: 1.4;
   }
   .srt-paper .srt-authors {
-    @apply mt-6 font-sans text-xs text-black/60;
+    @apply font-sans text-xs text-black/60;
+    margin-top: 24px;
+    line-height: 14px;
   }
   .srt-paper .srt-abstract {
-    @apply mt-7 text-sm leading-relaxed;
+    @apply text-sm;
+    margin-top: 28px;
+    line-height: 1.65;
+  }
+  .srt-page-regions {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: repeat(var(--srt-column-count), minmax(0, 1fr));
+    column-gap: var(--srt-column-gap);
+    min-height: 0;
+  }
+  .srt-page-regions[data-spanning='true'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .srt-page-region {
+    min-height: 0;
+    min-width: 0;
+  }
+  .srt-paper [data-pagination-scale] {
+    zoom: var(--srt-pagination-scale);
   }
   .srt-paper h2 {
-    @apply mb-3 mt-9 font-normal;
+    @apply font-normal;
+    line-height: 1.2;
+    margin: 36px 0 12px;
     font-size: var(--srt-heading-size);
-    break-after: avoid;
   }
-  .srt-paper > p,
+  .srt-page-region > p,
   .srt-paper blockquote {
-    @apply my-4;
+    margin: 16px 0;
     font-size: var(--srt-body-size);
     line-height: var(--srt-line-height);
   }
@@ -299,7 +340,6 @@
   }
   .srt-paper figure {
     @apply my-8 border-y border-black/30 py-7;
-    break-inside: avoid;
   }
   .srt-pipeline {
     @apply flex flex-wrap items-center justify-center gap-3 font-sans text-[10px] uppercase tracking-widest;
@@ -313,17 +353,11 @@
   .srt-paper figcaption {
     @apply mt-5 text-xs leading-relaxed;
   }
-  .srt-paper[data-columns='2'] > header {
-    column-span: all;
-  }
-  .srt-paper[data-columns='2'] h2 {
-    break-inside: avoid;
-  }
-  .srt-paper[data-finite-height='false'] {
+  .srt-paper[data-finite-height='false'] .srt-page {
     @apply shadow-none;
   }
-  .srt-paper figure[data-variant='full-span'] {
-    column-span: all;
+  .srt-paper[data-finite-height='false'] .srt-page-regions {
+    display: block;
   }
   .srt-paper figure[data-variant='compact-stack'] .srt-pipeline {
     @apply flex-col;
@@ -336,6 +370,9 @@
     margin-right: calc(-1 * var(--srt-margin-right));
     padding-left: var(--srt-margin-left);
     padding-right: var(--srt-margin-right);
+  }
+  .srt-page-number {
+    @apply absolute bottom-3 right-4 font-mono text-[9px] text-black/45;
   }
   .srt-inspector {
     @apply border-t p-6 font-sans lg:border-l lg:border-t-0;
@@ -555,15 +592,12 @@
     padding: 0;
   }
   .srt-paper {
-    box-shadow: none;
-    column-count: 2;
-    column-gap: 12mm;
     max-width: none !important;
-    padding: 14mm 16mm;
+    gap: 0;
   }
-  .srt-paper > header,
-  .srt-paper figure {
-    column-span: all;
+  .srt-page {
+    box-shadow: none;
+    break-after: page;
   }
 }
 

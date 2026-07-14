@@ -15,6 +15,7 @@ import {
   researchPaperSchema,
 } from './schema'
 import { getCompositionPolicy, resolveNodeComposition } from './composition'
+import { paginateResearchPaper } from './pagination'
 import { getTargetProfile } from './targets'
 
 const paper = researchPaperSchema.parse(rawPaper)
@@ -44,6 +45,13 @@ describe('SRT layout manifest contract', () => {
     for (const rendition of manifest.renditions) {
       expect(rendition.profile).toEqual(getTargetProfile(rendition.target))
       expect(rendition.policy).toEqual(getCompositionPolicy(rendition.target))
+      expect(rendition.pagination).toMatchObject({
+        policyVersion: '1.0.0',
+        mode: rendition.profile.finiteHeight ? 'finite' : 'continuous',
+        pageCountStatus: rendition.profile.finiteHeight
+          ? 'final'
+          : 'not-applicable',
+      })
       expect(rendition.entries).toHaveLength(paper.nodes.length)
       expect(rendition.entries.map((entry) => entry.canonicalId)).toEqual(
         paper.nodes.map((node) => node.id),
@@ -51,16 +59,21 @@ describe('SRT layout manifest contract', () => {
       for (const [order, entry] of rendition.entries.entries()) {
         const node = paper.nodes[order]
         const composition = resolveNodeComposition(rendition.target, node)
+        const pagination = paginateResearchPaper(paper, rendition.target)
+        const paginatedNode = pagination.nodes[order]
         expect(entry).toMatchObject({
           target: rendition.target,
           nodeType: node.type,
           contentHash: canonicalNodeContentHash(node),
           provenance: { source: node.source },
           chosenVariant: composition.chosenVariant,
-          representation: { kind: 'whole', placement: { kind: 'flow', order } },
+          paginationPolicy: paginatedNode.policy,
+          placementDecision: paginatedNode.decision,
+          violations: paginatedNode.violations,
           diagnostics: composition.diagnostics,
         })
         expect(entry.fallback).toEqual(composition.fallback)
+        expect(entry.paginationFallback).toEqual(paginatedNode.fallback)
       }
     }
   })
@@ -114,7 +127,7 @@ describe('SRT layout manifest contract', () => {
       move.policy.decisions.find(
         (decision) => decision.code === 'fragmentation',
       ),
-    ).toMatchObject({ outcome: 'deferred' })
+    ).toMatchObject({ outcome: 'finite-browser-pages' })
 
     const figure = move.entries.find(
       (entry) => entry.canonicalId === 'fig-pipeline',
@@ -124,6 +137,7 @@ describe('SRT layout manifest contract', () => {
       fallback: {
         fromVariant: 'dedicated-view',
         diagnosticCode: 'variant-unavailable',
+        reason: expect.any(String),
       },
       diagnostics: [
         {
@@ -162,12 +176,36 @@ describe('SRT layout manifest contract', () => {
         {
           id: 'p-proposition-1:0',
           index: 0,
-          placement: { kind: 'flow', order: 1 },
+          lineage: {
+            canonicalId: 'p-proposition-1',
+            previousFragmentId: null,
+            nextFragmentId: 'p-proposition-1:1',
+          },
+          textRange: { start: 0, end: 120 },
+          placement: {
+            kind: 'flow',
+            order: 1,
+            page: 1,
+            region: 0,
+            span: 'column',
+          },
         },
         {
           id: 'p-proposition-1:1',
           index: 1,
-          placement: { kind: 'flow', order: 2 },
+          lineage: {
+            canonicalId: 'p-proposition-1',
+            previousFragmentId: 'p-proposition-1:0',
+            nextFragmentId: null,
+          },
+          textRange: { start: 120, end: 260 },
+          placement: {
+            kind: 'flow',
+            order: 2,
+            page: 2,
+            region: 0,
+            span: 'column',
+          },
         },
       ],
     }
@@ -205,12 +243,34 @@ describe('SRT layout manifest contract', () => {
         {
           id: 'sec-proposition:part',
           index: 0,
-          placement: { kind: 'flow', order: 0 },
+          lineage: {
+            canonicalId: 'sec-proposition',
+            previousFragmentId: null,
+            nextFragmentId: 'sec-proposition:part',
+          },
+          placement: {
+            kind: 'flow',
+            order: 0,
+            page: 1,
+            region: 0,
+            span: 'column',
+          },
         },
         {
           id: 'sec-proposition:part',
           index: 2,
-          placement: { kind: 'flow', order: 1 },
+          lineage: {
+            canonicalId: 'sec-proposition',
+            previousFragmentId: 'sec-proposition:part',
+            nextFragmentId: null,
+          },
+          placement: {
+            kind: 'flow',
+            order: 1,
+            page: 1,
+            region: 0,
+            span: 'column',
+          },
         },
       ],
     }
@@ -256,6 +316,7 @@ describe('SRT layout manifest contract', () => {
     manifest.renditions[3].entries[5].fallback = {
       fromVariant: 'full-width',
       diagnosticCode: 'variant-unavailable',
+      reason: 'The requested full-width variant is unavailable.',
     }
 
     expect(() => layoutManifestSchema.parse(manifest)).toThrow(
@@ -275,7 +336,7 @@ describe('SRT layout manifest contract', () => {
         y: 25,
         width: 170,
         height: 12,
-        page: 0,
+        page: 1,
       },
     }
 
@@ -284,5 +345,23 @@ describe('SRT layout manifest contract', () => {
     expect(researchPaperSchema.parse(rawPaper)).not.toHaveProperty(
       'targetGeometry',
     )
+  })
+
+  it('rejects zero-based rendition page numbers', () => {
+    const manifest = cloneManifest()
+    manifest.renditions[3].entries[0].representation = {
+      kind: 'whole',
+      placement: {
+        kind: 'geometry',
+        units: 'mm',
+        x: 20,
+        y: 25,
+        width: 170,
+        height: 12,
+        page: 0,
+      },
+    }
+
+    expect(() => layoutManifestSchema.parse(manifest)).toThrow()
   })
 })

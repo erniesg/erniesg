@@ -17,8 +17,15 @@ import {
   type TargetProfileId,
 } from './targets'
 import { targetProfileIdSchema, targetProfileSchema } from './target-schema'
+import {
+  PAGINATION_POLICY_VERSION,
+  PAGINATION_VIOLATION_CODES,
+  paginateResearchPaper,
+  type PaginatedNode,
+  type PaginationResult,
+} from './pagination'
 
-export const LAYOUT_MANIFEST_VERSION = '1.1.0' as const
+export const LAYOUT_MANIFEST_VERSION = '1.2.0' as const
 export const LAYOUT_TARGETS = TARGET_PROFILE_IDS
 
 const canonicalId = z.string().min(1)
@@ -44,6 +51,9 @@ const placementSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('flow'),
       order: z.number().int().nonnegative(),
+      page: z.number().int().positive().optional(),
+      region: z.number().int().nonnegative().optional(),
+      span: z.enum(['column', 'page']).optional(),
     })
     .strict(),
   z
@@ -54,7 +64,7 @@ const placementSchema = z.discriminatedUnion('kind', [
       y: z.number().finite(),
       width: z.number().finite().positive(),
       height: z.number().finite().positive(),
-      page: z.number().int().nonnegative().optional(),
+      page: z.number().int().positive().optional(),
     })
     .strict(),
 ])
@@ -63,6 +73,20 @@ const fragmentSchema = z
   .object({
     id: canonicalId,
     index: z.number().int().nonnegative(),
+    lineage: z
+      .object({
+        canonicalId,
+        previousFragmentId: canonicalId.nullable(),
+        nextFragmentId: canonicalId.nullable(),
+      })
+      .strict(),
+    textRange: z
+      .object({
+        start: z.number().int().nonnegative(),
+        end: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
     placement: placementSchema,
   })
   .strict()
@@ -104,6 +128,101 @@ const compositionPolicySchema = z
   })
   .strict()
 
+const paginationViolationSchema = z
+  .object({
+    code: z.enum(PAGINATION_VIOLATION_CODES),
+    severity: z.enum(['warning', 'error']),
+    message: z.string().min(1),
+  })
+  .strict()
+
+const paginationFallbackSchema = z
+  .object({
+    code: z.literal('scale-atomic-object'),
+    reason: z.string().min(1),
+    scale: z.number().positive().max(1),
+  })
+  .strict()
+
+const placementDecisionSchema = z
+  .object({
+    outcome: z.enum([
+      'placed',
+      'fragmented',
+      'kept-with-next',
+      'kept-with-related',
+      'atomic-fallback',
+    ]),
+    reason: z.string().min(1),
+  })
+  .strict()
+
+const nodePaginationPolicySchema = z
+  .object({
+    fragmentation: z.enum(['line', 'atomic']),
+    keep: z.enum(['none', 'with-next', 'with-previous', 'with-related']),
+    minimumStartLines: z.number().int().positive().optional(),
+    minimumEndLines: z.number().int().positive().optional(),
+  })
+  .strict()
+
+const currentRegionStabilitySchema = z
+  .object({
+    metric: z.literal('anchored-region-prefix'),
+    status: z.enum(['not-compared', 'stable', 'unstable']),
+    anchorCanonicalId: canonicalId,
+    page: z.number().int().positive(),
+    region: z.number().int().nonnegative(),
+    signature: z.string().min(1),
+    referenceSignature: z.string().min(1).nullable(),
+    stable: z.boolean().nullable(),
+    comparedFragmentCount: z.number().int().nonnegative(),
+    stableFragmentCount: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((measurement, context) => {
+    if (measurement.status === 'not-compared') {
+      if (
+        measurement.stable !== null ||
+        measurement.referenceSignature !== null ||
+        measurement.comparedFragmentCount !== 0 ||
+        measurement.stableFragmentCount !== 0
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'A current-region baseline cannot claim comparison results',
+        })
+      }
+      return
+    }
+
+    const stable = measurement.status === 'stable'
+    if (
+      measurement.stable !== stable ||
+      measurement.referenceSignature === null ||
+      measurement.comparedFragmentCount === 0 ||
+      (stable
+        ? measurement.stableFragmentCount !== measurement.comparedFragmentCount
+        : measurement.stableFragmentCount >= measurement.comparedFragmentCount)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Current-region comparison fields contradict its status',
+      })
+    }
+  })
+
+const paginationSummarySchema = z
+  .object({
+    policyVersion: z.literal(PAGINATION_POLICY_VERSION),
+    mode: z.enum(['continuous', 'finite']),
+    finalPageCount: z.number().int().positive().nullable(),
+    pageCountStatus: z.enum(['final', 'not-applicable']),
+    currentRegionStability: currentRegionStabilitySchema,
+    violations: z.array(paginationViolationSchema),
+  })
+  .strict()
+
 const manifestEntrySchema = z
   .object({
     target: targetProfileIdSchema,
@@ -117,12 +236,17 @@ const manifestEntrySchema = z
       .strict(),
     relationships: z.record(relationshipValueSchema),
     chosenVariant: z.string().min(1),
+    paginationPolicy: nodePaginationPolicySchema,
     representation: representationSchema,
+    placementDecision: placementDecisionSchema,
+    violations: z.array(paginationViolationSchema),
+    paginationFallback: paginationFallbackSchema.optional(),
     diagnostics: z.array(diagnosticSchema),
     fallback: z
       .object({
         fromVariant: z.string().min(1),
         diagnosticCode: layoutDiagnosticCodeSchema,
+        reason: z.string().min(1),
       })
       .strict()
       .optional(),
@@ -135,6 +259,7 @@ const renditionSchema = z
     contentHash: sha256,
     profile: targetProfileSchema,
     policy: compositionPolicySchema,
+    pagination: paginationSummarySchema,
     entries: z.array(manifestEntrySchema).min(1),
   })
   .strict()
@@ -170,6 +295,39 @@ export const layoutManifestSchema = z
           code: z.ZodIssueCode.custom,
           path: ['renditions', renditionIndex, 'profile', 'id'],
           message: `Profile ${rendition.profile.id} does not match rendition target ${rendition.target}`,
+        })
+      }
+
+      if (
+        (rendition.profile.finiteHeight &&
+          (rendition.pagination.mode !== 'finite' ||
+            rendition.pagination.pageCountStatus !== 'final' ||
+            rendition.pagination.finalPageCount === null)) ||
+        (!rendition.profile.finiteHeight &&
+          (rendition.pagination.mode !== 'continuous' ||
+            rendition.pagination.pageCountStatus !== 'not-applicable' ||
+            rendition.pagination.finalPageCount !== null))
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['renditions', renditionIndex, 'pagination'],
+          message: `Pagination summary contradicts finite-height profile ${rendition.target}`,
+        })
+      }
+
+      if (
+        rendition.pagination.currentRegionStability.stableFragmentCount >
+        rendition.pagination.currentRegionStability.comparedFragmentCount
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [
+            'renditions',
+            renditionIndex,
+            'pagination',
+            'currentRegionStability',
+          ],
+          message: `Stable fragment count cannot exceed compared fragment count`,
         })
       }
 
@@ -231,10 +389,8 @@ export const layoutManifestSchema = z
 
         if (entry.representation.kind === 'fragments') {
           const fragmentIds = new Set<string>()
-          for (const [
-            fragmentIndex,
-            fragment,
-          ] of entry.representation.fragments.entries()) {
+          const fragments = entry.representation.fragments
+          for (const [fragmentIndex, fragment] of fragments.entries()) {
             if (fragmentIds.has(fragment.id)) {
               context.addIssue({
                 code: z.ZodIssueCode.custom,
@@ -262,7 +418,67 @@ export const layoutManifestSchema = z
                 message: `Fragment indices must be contiguous from zero`,
               })
             }
+            if (fragment.lineage.canonicalId !== entry.canonicalId) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [
+                  ...path,
+                  'representation',
+                  'fragments',
+                  fragmentIndex,
+                  'lineage',
+                  'canonicalId',
+                ],
+                message: `Fragment lineage must name canonical node ${entry.canonicalId}`,
+              })
+            }
+            if (
+              fragment.lineage.previousFragmentId !==
+                (fragments[fragmentIndex - 1]?.id ?? null) ||
+              fragment.lineage.nextFragmentId !==
+                (fragments[fragmentIndex + 1]?.id ?? null)
+            ) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [
+                  ...path,
+                  'representation',
+                  'fragments',
+                  fragmentIndex,
+                  'lineage',
+                ],
+                message: `Fragment lineage must follow contiguous fragment order`,
+              })
+            }
           }
+        }
+
+        const placements =
+          entry.representation.kind === 'whole'
+            ? [entry.representation.placement]
+            : entry.representation.fragments.map(
+                (fragment) => fragment.placement,
+              )
+        if (
+          rendition.profile.finiteHeight &&
+          placements.some((placement) => {
+            if (
+              placement.page === undefined ||
+              placement.page > (rendition.pagination.finalPageCount ?? 0)
+            ) {
+              return true
+            }
+            return (
+              placement.kind === 'flow' &&
+              (placement.region === undefined || placement.span === undefined)
+            )
+          })
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [...path, 'representation'],
+            message: `Finite-height placements require a valid page, region, and span`,
+          })
         }
       }
     }
@@ -280,6 +496,7 @@ export type ManifestInvariantIssue = {
     | 'RENDITION_HASH_MISMATCH'
     | 'TARGET_PROFILE_MISMATCH'
     | 'COMPOSITION_POLICY_MISMATCH'
+    | 'PAGINATION_POLICY_MISMATCH'
     | 'MISSING_NODE'
     | 'UNEXPECTED_NODE'
     | 'NODE_TYPE_MISMATCH'
@@ -287,6 +504,7 @@ export type ManifestInvariantIssue = {
     | 'PROVENANCE_MISMATCH'
     | 'RELATIONSHIP_MISMATCH'
     | 'NODE_COMPOSITION_MISMATCH'
+    | 'NODE_PAGINATION_MISMATCH'
   target?: string
   canonicalId?: string
   message: string
@@ -314,6 +532,68 @@ function comparableJson(value: unknown): string {
     return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${comparableJson(nested)}`).join(',')}}`
   }
   return JSON.stringify(value)
+}
+
+function paginationSummary(result: PaginationResult) {
+  return {
+    policyVersion: result.policyVersion,
+    mode: result.mode,
+    finalPageCount: result.finalPageCount,
+    pageCountStatus: result.pageCountStatus,
+    currentRegionStability: result.currentRegionStability,
+    violations: result.violations,
+  }
+}
+
+function representationForNode(
+  node: PaginatedNode,
+  orderByFragmentId: Map<string, number>,
+) {
+  const placementFor = (fragment: PaginatedNode['fragments'][number]) => ({
+    kind: 'flow' as const,
+    order: orderByFragmentId.get(fragment.id) ?? 0,
+    ...(fragment.page > 0
+      ? {
+          page: fragment.page,
+          region: fragment.region,
+          span: fragment.span,
+        }
+      : {}),
+  })
+
+  if (node.fragments.length === 1) {
+    return {
+      kind: 'whole' as const,
+      placement: placementFor(node.fragments[0]),
+    }
+  }
+
+  return {
+    kind: 'fragments' as const,
+    fragments: node.fragments.map((fragment, index, fragments) => ({
+      id: fragment.id,
+      index,
+      lineage: {
+        canonicalId: node.canonicalId,
+        previousFragmentId: fragments[index - 1]?.id ?? null,
+        nextFragmentId: fragments[index + 1]?.id ?? null,
+      },
+      ...(fragment.textRange ? { textRange: fragment.textRange } : {}),
+      placement: placementFor(fragment),
+    })),
+  }
+}
+
+function fragmentOrder(result: PaginationResult) {
+  return new Map(
+    result.pages
+      .flatMap((page) =>
+        page.spanningFragments.length > 0
+          ? page.spanningFragments
+          : page.regions.flatMap((region) => region.fragments),
+      )
+      .map((fragment, order) => [fragment.id, order]),
+  )
 }
 
 export function validateLayoutManifest(
@@ -379,6 +659,7 @@ export function validateLayoutManifest(
     if (parsedTarget.success) {
       const expectedProfile = getTargetProfile(parsedTarget.data)
       const expectedPolicy = getCompositionPolicy(parsedTarget.data)
+      const expectedPagination = paginateResearchPaper(paper, parsedTarget.data)
 
       if (
         comparableJson(rendition.profile) !== comparableJson(expectedProfile)
@@ -394,6 +675,16 @@ export function validateLayoutManifest(
           code: 'COMPOSITION_POLICY_MISMATCH',
           target: rendition.target,
           message: `Composition policy changed for ${rendition.target}`,
+        })
+      }
+      if (
+        comparableJson(rendition.pagination) !==
+        comparableJson(paginationSummary(expectedPagination))
+      ) {
+        issues.push({
+          code: 'PAGINATION_POLICY_MISMATCH',
+          target: rendition.target,
+          message: `Pagination summary changed for ${rendition.target}`,
         })
       }
     }
@@ -464,6 +755,32 @@ export function validateLayoutManifest(
             message: `Composition decision changed for ${node.id}`,
           })
         }
+
+        const expectedPagination = paginateResearchPaper(
+          paper,
+          parsedTarget.data,
+        )
+        const expectedNode = expectedPagination.nodes.find(
+          (candidate) => candidate.canonicalId === node.id,
+        )
+        if (
+          !expectedNode ||
+          comparableJson(entry.paginationPolicy) !==
+            comparableJson(expectedNode.policy) ||
+          comparableJson(entry.placementDecision) !==
+            comparableJson(expectedNode.decision) ||
+          comparableJson(entry.violations) !==
+            comparableJson(expectedNode.violations) ||
+          comparableJson(entry.paginationFallback) !==
+            comparableJson(expectedNode.fallback)
+        ) {
+          issues.push({
+            code: 'NODE_PAGINATION_MISMATCH',
+            target: rendition.target,
+            canonicalId: node.id,
+            message: `Pagination decision changed for ${node.id}`,
+          })
+        }
       }
     }
 
@@ -495,31 +812,49 @@ export function buildLayoutManifest(
       version: paper.version,
       contentHash,
     },
-    renditions: targets.map((target) => ({
-      target,
-      contentHash,
-      profile: getTargetProfile(target),
-      policy: getCompositionPolicy(target),
-      entries: paper.nodes.map((node, order) => {
-        const composition = resolveNodeComposition(target, node)
+    renditions: targets.map((target) => {
+      const pagination = paginateResearchPaper(paper, target)
+      const orderByFragmentId = fragmentOrder(pagination)
 
-        return {
-          target,
-          canonicalId: node.id,
-          nodeType: node.type,
-          contentHash: canonicalNodeContentHash(node),
-          provenance: { source: node.source },
-          relationships: relationshipsFor(node),
-          chosenVariant: composition.chosenVariant,
-          representation: {
-            kind: 'whole' as const,
-            placement: { kind: 'flow' as const, order },
-          },
-          diagnostics: composition.diagnostics,
-          ...(composition.fallback ? { fallback: composition.fallback } : {}),
-        }
-      }),
-    })),
+      return {
+        target,
+        contentHash,
+        profile: getTargetProfile(target),
+        policy: getCompositionPolicy(target),
+        pagination: paginationSummary(pagination),
+        entries: paper.nodes.map((node) => {
+          const composition = resolveNodeComposition(target, node)
+          const paginatedNode = pagination.nodes.find(
+            (candidate) => candidate.canonicalId === node.id,
+          )
+          if (!paginatedNode) {
+            throw new Error(`Pagination omitted canonical node ${node.id}`)
+          }
+
+          return {
+            target,
+            canonicalId: node.id,
+            nodeType: node.type,
+            contentHash: canonicalNodeContentHash(node),
+            provenance: { source: node.source },
+            relationships: relationshipsFor(node),
+            chosenVariant: composition.chosenVariant,
+            paginationPolicy: paginatedNode.policy,
+            representation: representationForNode(
+              paginatedNode,
+              orderByFragmentId,
+            ),
+            placementDecision: paginatedNode.decision,
+            violations: paginatedNode.violations,
+            ...(paginatedNode.fallback
+              ? { paginationFallback: paginatedNode.fallback }
+              : {}),
+            diagnostics: composition.diagnostics,
+            ...(composition.fallback ? { fallback: composition.fallback } : {}),
+          }
+        }),
+      }
+    }),
   }
 
   return validateLayoutManifest(manifest, paper, targets)

@@ -2,6 +2,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { basename, extname, resolve } from 'node:path'
 import { createServer } from 'vite'
+import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
 const args = process.argv.slice(2)
 const reportOnly = args.includes('--report-only')
@@ -113,14 +114,7 @@ async function main() {
           pageCount: result.source.pageCount,
           completeness: result.completeness,
           readiness: result.readiness,
-          diagnostics: result.diagnostics.map(
-            ({ code, severity, page, message }) => ({
-              code,
-              severity,
-              ...(page === undefined ? {} : { page }),
-              message,
-            }),
-          ),
+          diagnostics: result.diagnostics.map(safeAuditDiagnostic),
         })
       } catch (error) {
         documents.push({

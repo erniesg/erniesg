@@ -273,7 +273,7 @@ export function reconstructPageAnalyses({
         code: 'LOW_CONFIDENCE_BLOCK',
         severity: 'warning',
         page: pages[0],
-        message: `${id} needs reading-order review.`,
+        message: `A reconstructed block on page ${pages[0]} needs reading-order review.`,
       })
     }
     return block.type === 'heading'

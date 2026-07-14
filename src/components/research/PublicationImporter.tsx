@@ -75,6 +75,8 @@ export default function PublicationImporter({
 
   const processFile = async (file?: File, controller = nextImport()) => {
     if (!file) return
+    const isCurrent = () =>
+      activeImport.current === controller && !controller.signal.aborted
     setState({
       status: 'processing',
       fileName: file.name,
@@ -85,18 +87,23 @@ export default function PublicationImporter({
       const result = await reconstructPdf(
         file,
         (progress) => {
-          setState({ status: 'processing', fileName: file.name, progress })
+          if (isCurrent()) {
+            setState({ status: 'processing', fileName: file.name, progress })
+          }
         },
         { signal: controller.signal },
       )
+      if (!isCurrent()) return
       if (!result.readiness.ready) {
         setState({ status: 'review-required', result })
         return
       }
       setState({ status: 'ready', result })
       const epub = await buildEpub(result.paper, result)
+      if (!isCurrent()) return
       setState({ status: 'ready', result, epub })
     } catch (error) {
+      if (activeImport.current !== controller) return
       if (
         error instanceof PdfImportError &&
         error.code === 'IMPORT_CANCELLED'
@@ -121,6 +128,7 @@ export default function PublicationImporter({
         controller,
       )
     } catch (error) {
+      if (activeImport.current !== controller) return
       if (
         error instanceof PdfImportError &&
         error.code === 'IMPORT_CANCELLED'

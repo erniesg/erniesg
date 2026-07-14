@@ -3,8 +3,36 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
 describe('local PDF corpus audit', () => {
+  it('redacts document text from successful diagnostic messages', () => {
+    const privateMarker = 'private reconstructed paragraph'
+
+    expect(
+      safeAuditDiagnostic({
+        code: 'LOW_CONFIDENCE_BLOCK',
+        severity: 'warning',
+        page: 3,
+        message: `p-001-${privateMarker} needs reading-order review.`,
+      }),
+    ).toEqual({
+      code: 'LOW_CONFIDENCE_BLOCK',
+      severity: 'warning',
+      page: 3,
+      message: 'A reconstructed block requires reading-order review.',
+    })
+    expect(
+      JSON.stringify(
+        safeAuditDiagnostic({
+          code: 'FUTURE_DIAGNOSTIC',
+          severity: 'warning',
+          message: privateMarker,
+        }),
+      ),
+    ).not.toContain(privateMarker)
+  })
+
   it('reports only stable document identifiers and quality results', () => {
     const result = spawnSync(
       process.execPath,

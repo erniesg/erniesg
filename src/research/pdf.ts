@@ -141,6 +141,7 @@ export async function reconstructPdf(
     ])
   } catch (error) {
     options.signal?.removeEventListener('abort', cancelLoading)
+    await loadingTask.destroy().catch(() => undefined)
     if (error instanceof PdfImportError) throw error
     const message = error instanceof Error ? error.message : String(error)
     if (/password/i.test(message)) {

@@ -95,13 +95,17 @@ function relationshipCounts(paper: ResearchPaper, signals: PdfSemanticSignals) {
       .filter((node) => node.type === 'caption')
       .map((node) => node.id),
   )
-  const resolved = paper.nodes.filter(
-    (node) =>
-      node.type === 'figure' && captions.has(node.relationships.caption),
-  ).length
+  const resolvedCaptions = new Set(
+    paper.nodes
+      .filter(
+        (node): node is Extract<ResearchNode, { type: 'figure' }> =>
+          node.type === 'figure' && captions.has(node.relationships.caption),
+      )
+      .map((node) => node.relationships.caption),
+  ).size
   return {
     expected: signals.captions + signals.footnoteReferences,
-    resolved,
+    resolved: Math.min(resolvedCaptions, signals.captions),
   }
 }
 

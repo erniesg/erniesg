@@ -6,6 +6,25 @@ import { createServer } from 'vite'
 const args = process.argv.slice(2)
 const reportOnly = args.includes('--report-only')
 const inputs = args.filter((argument) => argument !== '--report-only')
+const standardFontDataUrl = new URL(
+  '../node_modules/pdfjs-dist/standard_fonts/',
+  import.meta.url,
+).href
+
+const SAFE_FAILURE_MESSAGES = Object.freeze({
+  INVALID_PDF: 'The file is not a valid PDF.',
+  ENCRYPTED_PDF: 'The PDF is password-protected and was not opened.',
+  OVERSIZED_PDF: 'The PDF exceeds the bounded local resource limit.',
+  OCR_REQUIRED: 'The PDF requires local OCR before it can be audited.',
+  EMPTY_PDF: 'The PDF contains no pages.',
+  PDF_PARSE_FAILED:
+    'The PDF parser could not open the document; local path and document details were suppressed.',
+  IMPORT_CANCELLED: 'The local PDF audit was cancelled.',
+  INCOMPLETE_RECONSTRUCTION:
+    'The PDF reconstruction did not pass the completeness gate.',
+  AUDIT_FAILED:
+    'The PDF could not be audited; local path and document details were suppressed.',
+})
 
 async function pdfPaths(paths) {
   const found = []
@@ -30,15 +49,14 @@ async function pdfPaths(paths) {
 }
 
 function safeError(error) {
-  const code =
+  const candidate =
     error && typeof error === 'object' && 'code' in error
       ? String(error.code)
       : 'AUDIT_FAILED'
-  const message =
-    error instanceof Error && code !== 'AUDIT_FAILED'
-      ? error.message
-      : 'The PDF could not be audited; local path details were suppressed.'
-  return { code, message }
+  const code = Object.hasOwn(SAFE_FAILURE_MESSAGES, candidate)
+    ? candidate
+    : 'AUDIT_FAILED'
+  return { code, message: SAFE_FAILURE_MESSAGES[code] }
 }
 
 async function main() {
@@ -85,6 +103,8 @@ async function main() {
             type: 'application/pdf',
             lastModified: 0,
           }),
+          undefined,
+          { standardFontDataUrl },
         )
         documents.push({
           basename: stableBasename,

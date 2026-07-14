@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { resolve } from 'node:path'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('local PDF corpus audit', () => {
@@ -31,5 +33,38 @@ describe('local PDF corpus audit', () => {
     expect(result.stdout).not.toContain(
       'Synthetic semantic completeness fixture',
     )
+  })
+
+  it('redacts parser failures and supplies PDF.js standard-font assets', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-corpus-private-'))
+    const path = join(directory, 'private-corrupt.pdf')
+    const privateMarker = 'private parser payload must never enter the report'
+    try {
+      await writeFile(path, `%PDF-1.7\n${privateMarker}\n`)
+      const result = spawnSync(
+        process.execPath,
+        ['tools/pdf-corpus-audit.mjs', '--report-only', path],
+        { encoding: 'utf8', timeout: 120_000 },
+      )
+
+      expect(result.status, result.stderr).toBe(0)
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        summary: { documents: 1, ready: 0, reviewRequired: 0, failed: 1 },
+        documents: [
+          {
+            basename: 'private-corrupt.pdf',
+            sha256: null,
+            code: 'PDF_PARSE_FAILED',
+            message:
+              'The PDF parser could not open the document; local path and document details were suppressed.',
+          },
+        ],
+      })
+      expect(result.stdout).not.toContain(directory)
+      expect(result.stdout).not.toContain(privateMarker)
+      expect(result.stderr).not.toContain('standardFontDataUrl')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

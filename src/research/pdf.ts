@@ -8,6 +8,7 @@ import { reconstructPageAnalyses, type PdfDocumentMetadata } from './pdf-layout'
 
 type PdfImportOptions = {
   signal?: AbortSignal
+  standardFontDataUrl?: string
 }
 
 function cancelledError() {
@@ -102,6 +103,9 @@ export async function reconstructPdf(
     data: bytes.slice(),
     isEvalSupported: false,
     useSystemFonts: true,
+    ...(options.standardFontDataUrl
+      ? { standardFontDataUrl: options.standardFontDataUrl }
+      : {}),
   })
 
   let passwordReject: ((error: PdfImportError) => void) | undefined

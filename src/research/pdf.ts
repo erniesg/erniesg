@@ -99,6 +99,7 @@ export async function reconstructPdf(
     )
     pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
   }
+  throwIfAborted(options.signal)
   const loadingTask = pdfjs.getDocument({
     data: bytes.slice(),
     isEvalSupported: false,

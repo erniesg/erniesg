@@ -111,6 +111,61 @@ describe('PDF semantic reconstruction', () => {
     expect(result.paper).not.toHaveProperty('pages')
   })
 
+  it('fails closed when a short two-column page cannot be ordered safely', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Left one.', 0.08, 0.2, 0.32),
+          run(1, 'Right one.', 0.55, 0.2, 0.32),
+          run(1, 'Left two.', 0.08, 0.24, 0.32),
+          run(1, 'Right two.', 0.55, 0.24, 0.32),
+        ]),
+      ],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'short-columns.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'AMBIGUOUS_READING_ORDER',
+          severity: 'error',
+        }),
+      ]),
+    )
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+  })
+
+  it('uses visual line grouping to detect split, out-of-order captions', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, '1. A split caption', 0.2, 0.398, 0.32, 8),
+          run(1, 'Figure', 0.1, 0.4, 0.08, 8),
+        ]),
+      ],
+      sourceHash: 'e'.repeat(64),
+      fileName: 'split-caption.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.semanticSignals.captions).toBe(1)
+    expect(result.completeness.unresolvedObjects.captions).toBe(1)
+    expect(result.readiness.ready).toBe(false)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'INCOMPLETE_RELATIONSHIP_COVERAGE',
+          severity: 'error',
+        }),
+      ]),
+    )
+  })
+
   it('emits stable OCR gates instead of silently exporting partial text', () => {
     const pages = [page(1, [], 'ocr-required')]
     const input = {

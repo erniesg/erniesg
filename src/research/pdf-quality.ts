@@ -6,6 +6,7 @@ import type {
   PdfSemanticSignals,
   ReconstructionDiagnostic,
 } from './import-types'
+import { groupRunsIntoLines } from './pdf-lines'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 export const DEFAULT_PDF_COMPLETENESS_POLICY: PdfCompletenessPolicy = {
@@ -53,14 +54,7 @@ function matchedCharacters(source: string, output: string) {
 }
 
 function pageLines(page: PdfPageAnalysis) {
-  const lines = new Map<number, string[]>()
-  for (const run of page.runs) {
-    const key = Math.round((run.y + run.height / 2) * 1_000)
-    const line = lines.get(key) ?? []
-    line.push(run.text)
-    lines.set(key, line)
-  }
-  return [...lines.values()].map((parts) => parts.join(' ').trim())
+  return groupRunsIntoLines(page).map((line) => line.text)
 }
 
 export function detectPdfSemanticSignals(

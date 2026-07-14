@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8 } from 'fflate'
 import { readFile } from 'node:fs/promises'
 import { buildEpub, inspectEpub } from './epub'
@@ -7,6 +7,10 @@ import {
   fixtureFile,
   oversizedPdfFixture,
 } from '../../tests/fixtures/pdf-fixtures'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('PDF.js browser ingestion', () => {
   it('opens an actual born-digital PDF and reconstructs text with boxes', async () => {
@@ -132,6 +136,24 @@ describe('PDF.js browser ingestion', () => {
       ),
     ).rejects.toMatchObject({ code: 'OVERSIZED_PDF' })
     expect(read).toBe(false)
+  })
+
+  it('cancels before PDF.js opens when abort fires during hashing', async () => {
+    const controller = new AbortController()
+    const digest = crypto.subtle.digest.bind(crypto.subtle)
+    vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (...args) => {
+      const result = await digest(...args)
+      controller.abort()
+      return result
+    })
+    const file = new File(['%PDF-1.4\ninvalid'], 'cancel-during-hash.pdf', {
+      type: 'application/pdf',
+      lastModified: 0,
+    })
+
+    await expect(
+      reconstructPdf(file, undefined, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
   })
 
   it('retains the published fellowship PDF as non-private local audit evidence', async () => {

@@ -24,7 +24,7 @@ export default defineConfig({
     viewport: { width: 1440, height: 1200 },
   },
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1',
+    command: 'ASTRO_DEV_BACKGROUND=0 npm run dev -- --host 127.0.0.1',
     url: 'http://127.0.0.1:1234/research',
     reuseExistingServer: false,
     timeout: 120_000,

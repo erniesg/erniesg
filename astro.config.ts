@@ -1,8 +1,7 @@
-import { rehypeHeadingIds } from '@astrojs/markdown-remark'
+import { rehypeHeadingIds, unified } from '@astrojs/markdown-remark'
 import mdx from '@astrojs/mdx'
 import react from '@astrojs/react'
 import sitemap from '@astrojs/sitemap'
-import tailwind from '@astrojs/tailwind'
 import { transformerCopyButton } from '@rehype-pretty/transformers'
 import {
   transformerMetaHighlight,
@@ -19,9 +18,12 @@ import sectionize from '@hbsnow/rehype-sectionize'
 
 import icon from 'astro-icon'
 
+const includeResearch = process.env.PUBLIC_RESEARCH_RELEASE === 'staging'
+
 // https://astro.build/config
 export default defineConfig({
   site: 'https://ernie.sg',
+  compressHTML: true,
   redirects: {
     // PubPub legacy slugs → new readable slugs (migrated 2026-05)
     '/blog/161hmmds': '/blog/a-i-for-humans-building-a-i-native-products-and-treating-data',
@@ -63,46 +65,48 @@ export default defineConfig({
       '/blog/symbols-and-the-fabric-of-reality-what-a-i-taught-me-about-the-human/zh',
   },
   integrations: [
-    tailwind({
-      applyBaseStyles: false,
+    sitemap({
+      filter: (page) =>
+        includeResearch || !new URL(page).pathname.startsWith('/research'),
     }),
-    sitemap(),
     mdx(),
     react(),
     icon(),
   ],
   markdown: {
     syntaxHighlight: false,
-    rehypePlugins: [
-      [
-        rehypeExternalLinks,
-        {
-          target: '_blank',
-          rel: ['nofollow', 'noreferrer', 'noopener'],
-        },
-      ],
-      rehypeHeadingIds,
-      rehypeKatex,
-      sectionize,
-      [
-        rehypePrettyCode,
-        {
-          theme: {
-            light: 'github-light-high-contrast',
-            dark: 'github-dark-high-contrast',
+    processor: unified({
+      rehypePlugins: [
+        [
+          rehypeExternalLinks,
+          {
+            target: '_blank',
+            rel: ['nofollow', 'noreferrer', 'noopener'],
           },
-          transformers: [
-            transformerNotationDiff(),
-            transformerMetaHighlight(),
-            transformerCopyButton({
-              visibility: 'hover',
-              feedbackDuration: 1000,
-            }),
-          ],
-        },
+        ],
+        rehypeHeadingIds,
+        rehypeKatex,
+        sectionize,
+        [
+          rehypePrettyCode,
+          {
+            theme: {
+              light: 'github-light-high-contrast',
+              dark: 'github-dark-high-contrast',
+            },
+            transformers: [
+              transformerNotationDiff(),
+              transformerMetaHighlight(),
+              transformerCopyButton({
+                visibility: 'hover',
+                feedbackDuration: 1000,
+              }),
+            ],
+          },
+        ],
       ],
-    ],
-    remarkPlugins: [remarkToc, remarkMath, remarkEmoji],
+      remarkPlugins: [remarkToc, remarkMath, remarkEmoji],
+    }),
   },
   server: {
     port: 1234,

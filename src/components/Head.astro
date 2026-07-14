@@ -13,6 +13,7 @@ interface Props {
   lang?: SupportedLocale
   canonicalPath?: string
   alternates?: Partial<Record<SupportedLocale, string>>
+  noindex?: boolean
 }
 
 const {
@@ -22,6 +23,7 @@ const {
   lang = DEFAULT_LOCALE,
   canonicalPath,
   alternates,
+  noindex = false,
 } = Astro.props
 const canonicalURL = new URL(canonicalPath ?? Astro.url.pathname, Astro.site)
 const imageURL = new URL(image, Astro.url)
@@ -103,7 +105,7 @@ const structuredData = {
 <meta name="description" content={description} />
 <meta name="author" content={SITE.AUTHOR} />
 <meta name="keywords" content={SITE.KEYWORDS.join(', ')} />
-<meta name="robots" content="index,follow" />
+<meta name="robots" content={noindex ? 'noindex,follow' : 'index,follow'} />
 
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />

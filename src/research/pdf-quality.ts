@@ -58,7 +58,43 @@ function matchedCharacters(source: string, output: string) {
 }
 
 function pageLines(page: PdfPageAnalysis) {
-  return groupRunsIntoLines(page).map((line) => line.text)
+  return groupRunsIntoLines(page)
+}
+
+function upperQuartile(values: number[]) {
+  if (values.length === 0) return 0
+  const ordered = [...values].sort((left, right) => left - right)
+  return ordered[Math.ceil(ordered.length * 0.75) - 1]
+}
+
+function runGap(
+  left: PdfPageAnalysis['runs'][number],
+  right: PdfPageAnalysis['runs'][number],
+) {
+  return Math.max(
+    left.x - (right.x + right.width),
+    right.x - (left.x + left.width),
+    0,
+  )
+}
+
+function renderedFootnoteMarkers(page: PdfPageAnalysis, bodyFontSize: number) {
+  if (!bodyFontSize) return 0
+  return page.runs.filter((run) => {
+    if (!/^(?:\d{1,3}|[*†‡§])$/.test(run.text.trim())) return false
+    if (run.fontSize > bodyFontSize * 0.82 || run.y > 0.88) return false
+    const center = run.y + run.height / 2
+    return page.runs.some((candidate) => {
+      if (candidate === run || !candidate.text.trim()) return false
+      const candidateCenter = candidate.y + candidate.height / 2
+      return (
+        candidate.fontSize > run.fontSize &&
+        Math.abs(center - candidateCenter) <=
+          Math.max(0.022, Math.max(run.height, candidate.height) * 1.2) &&
+        runGap(run, candidate) <= 0.03
+      )
+    })
+  }).length
 }
 
 export function detectPdfSemanticSignals(
@@ -71,19 +107,34 @@ export function detectPdfSemanticSignals(
     footnoteReferences: 0,
     footnotes: 0,
   }
-  for (const line of pages.flatMap(pageLines)) {
-    if (/^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(line)) {
-      signals.captions += 1
-    }
-    if (/^table\s*\d+\b/i.test(line)) signals.tables += 1
-    if (/(?:^|\b)(?:equation|eq\.?)\s*\(?\d+\)?/i.test(line)) {
-      signals.equations += 1
-    }
-    if (/\b(?:footnote|note)\s+(?:reference|marker)\s*\d+\b/i.test(line)) {
-      signals.footnoteReferences += 1
-    }
-    if (/^(?:footnote|note)\s*\d+\s*[:.-]/i.test(line)) {
-      signals.footnotes += 1
+  for (const page of pages) {
+    const bodyFontSize = upperQuartile(
+      page.runs.map((run) => run.fontSize).filter((size) => size > 0),
+    )
+    signals.footnoteReferences += renderedFootnoteMarkers(page, bodyFontSize)
+    for (const line of pageLines(page)) {
+      if (/^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(line.text)) {
+        signals.captions += 1
+      }
+      if (/^table\s+(?:\d+|[ivxlcdm]+)\b/i.test(line.text)) {
+        signals.tables += 1
+      }
+      if (/(?:^|\b)(?:equation|eq\.?)\s*\(?\d+\)?/i.test(line.text)) {
+        signals.equations += 1
+      }
+      if (
+        /\b(?:footnote|note)\s+(?:reference|marker)\s*\d+\b/i.test(line.text)
+      ) {
+        signals.footnoteReferences += 1
+      }
+      const explicitFootnote = /^(?:footnote|note)\s*\d+\s*[:.-]/i.test(
+        line.text,
+      )
+      const renderedFootnote =
+        line.y >= 0.7 &&
+        line.fontSize <= bodyFontSize * 0.9 &&
+        /^(?:\d{1,3}|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
+      if (explicitFootnote || renderedFootnote) signals.footnotes += 1
     }
   }
   return signals

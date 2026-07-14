@@ -1,4 +1,3 @@
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type {
   PdfImportProgress,
   PdfPageAnalysis,
@@ -6,6 +5,21 @@ import type {
 } from './import-types'
 import { MAX_LOCAL_PDF_BYTES, PdfImportError } from './import-types'
 import { reconstructPageAnalyses, type PdfDocumentMetadata } from './pdf-layout'
+
+type PdfImportOptions = {
+  signal?: AbortSignal
+}
+
+function cancelledError() {
+  return new PdfImportError(
+    'IMPORT_CANCELLED',
+    'The local PDF reconstruction was cancelled and its working data was released.',
+  )
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw cancelledError()
+}
 
 function isPdf(bytes: Uint8Array) {
   const prefix = new TextDecoder('latin1').decode(bytes.subarray(0, 1024))
@@ -51,11 +65,13 @@ function normalizedPdfDate(value?: string) {
 export async function reconstructPdf(
   file: File,
   onProgress?: (progress: PdfImportProgress) => void,
+  options: PdfImportOptions = {},
 ) {
+  throwIfAborted(options.signal)
   if (file.size > MAX_LOCAL_PDF_BYTES) {
     throw new PdfImportError(
       'OVERSIZED_PDF',
-      `This local converter accepts PDFs up to ${MAX_LOCAL_PDF_BYTES / 1024 / 1024} MB.`,
+      `PDF resource limit exceeded: received ${file.size} bytes; the bounded local limit is ${MAX_LOCAL_PDF_BYTES} bytes. No document bytes were read.`,
     )
   }
 
@@ -66,6 +82,7 @@ export async function reconstructPdf(
     message: 'Reading the PDF locally…',
   })
   const bytes = new Uint8Array(await file.arrayBuffer())
+  throwIfAborted(options.signal)
   if (!isPdf(bytes)) {
     throw new PdfImportError('INVALID_PDF', 'The selected file is not a PDF.')
   }
@@ -76,6 +93,9 @@ export async function reconstructPdf(
       ? await import('pdfjs-dist/legacy/build/pdf.mjs')
       : await import('pdfjs-dist')
   if (typeof window !== 'undefined') {
+    const { default: pdfWorkerUrl } = await import(
+      'pdfjs-dist/build/pdf.worker.min.mjs?url'
+    )
     pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
   }
   const loadingTask = pdfjs.getDocument({
@@ -97,11 +117,25 @@ export async function reconstructPdf(
     )
     void loadingTask.destroy()
   }
+  let cancelReject: ((error: PdfImportError) => void) | undefined
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    cancelReject = reject
+  })
+  const cancelLoading = () => {
+    cancelReject?.(cancelledError())
+    void loadingTask.destroy()
+  }
+  options.signal?.addEventListener('abort', cancelLoading, { once: true })
 
   let document: Awaited<typeof loadingTask.promise>
   try {
-    document = await Promise.race([loadingTask.promise, passwordRequired])
+    document = await Promise.race([
+      loadingTask.promise,
+      passwordRequired,
+      cancelled,
+    ])
   } catch (error) {
+    options.signal?.removeEventListener('abort', cancelLoading)
     if (error instanceof PdfImportError) throw error
     const message = error instanceof Error ? error.message : String(error)
     if (/password/i.test(message)) {
@@ -131,6 +165,7 @@ export async function reconstructPdf(
 
   try {
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      throwIfAborted(options.signal)
       onProgress?.({
         phase: 'extracting',
         completed: pageNumber - 1,
@@ -138,61 +173,65 @@ export async function reconstructPdf(
         message: `Reading page ${pageNumber} of ${document.numPages}…`,
       })
       const page = await document.getPage(pageNumber)
-      const viewport = page.getViewport({ scale: 1 })
-      const [textContent, operatorList] = await Promise.all([
-        page.getTextContent(),
-        page.getOperatorList(),
-      ])
-      const runs: PdfSourceRun[] = []
+      try {
+        const viewport = page.getViewport({ scale: 1 })
+        const [textContent, operatorList] = await Promise.all([
+          page.getTextContent(),
+          page.getOperatorList(),
+        ])
+        throwIfAborted(options.signal)
+        const runs: PdfSourceRun[] = []
 
-      for (const item of textContent.items) {
-        if (!('str' in item) || !item.str.trim()) continue
-        const transform = pdfjs.Util.transform(
-          viewport.transform,
-          item.transform,
+        for (const item of textContent.items) {
+          if (!('str' in item) || !item.str.trim()) continue
+          const transform = pdfjs.Util.transform(
+            viewport.transform,
+            item.transform,
+          )
+          const fontHeight =
+            Math.hypot(transform[2], transform[3]) || Math.abs(item.height) || 1
+          const x = finite(transform[4])
+          const y = finite(transform[5] - fontHeight)
+          const width = Math.max(Math.abs(item.width * viewport.scale), 0.5)
+          runs.push({
+            page: pageNumber,
+            text: item.str,
+            x: clamp(x / viewport.width),
+            y: clamp(y / viewport.height),
+            width: clamp(width / viewport.width),
+            height: clamp(fontHeight / viewport.height),
+            rotation: viewport.rotation,
+            method: 'pdf-text',
+            fontName: item.fontName,
+            fontSize: fontHeight,
+            confidence: 1,
+          })
+        }
+
+        const textCharacters = runs.reduce(
+          (total, run) => total + run.text.replace(/\s/g, '').length,
+          0,
         )
-        const fontHeight =
-          Math.hypot(transform[2], transform[3]) || Math.abs(item.height) || 1
-        const x = finite(transform[4])
-        const y = finite(transform[5] - fontHeight)
-        const width = Math.max(Math.abs(item.width * viewport.scale), 0.5)
-        runs.push({
+        const imageCount = countImages(operatorList.fnArray, imageOps)
+        const kind =
+          textCharacters < 24
+            ? 'ocr-required'
+            : imageCount > 0 && textCharacters < 240
+              ? 'mixed'
+              : 'born-digital'
+        pages.push({
           page: pageNumber,
-          text: item.str,
-          x: clamp(x / viewport.width),
-          y: clamp(y / viewport.height),
-          width: clamp(width / viewport.width),
-          height: clamp(fontHeight / viewport.height),
+          kind,
+          width: viewport.width,
+          height: viewport.height,
           rotation: viewport.rotation,
-          method: 'pdf-text',
-          fontName: item.fontName,
-          fontSize: fontHeight,
-          confidence: 1,
+          textCharacters,
+          imageCount,
+          runs,
         })
+      } finally {
+        page.cleanup()
       }
-
-      const textCharacters = runs.reduce(
-        (total, run) => total + run.text.replace(/\s/g, '').length,
-        0,
-      )
-      const imageCount = countImages(operatorList.fnArray, imageOps)
-      const kind =
-        textCharacters < 24
-          ? 'ocr-required'
-          : imageCount > 0 && textCharacters < 240
-            ? 'mixed'
-            : 'born-digital'
-      pages.push({
-        page: pageNumber,
-        kind,
-        width: viewport.width,
-        height: viewport.height,
-        rotation: viewport.rotation,
-        textCharacters,
-        imageCount,
-        runs,
-      })
-      page.cleanup()
     }
 
     onProgress?.({
@@ -218,7 +257,11 @@ export async function reconstructPdf(
       byteLength: file.size,
       metadata,
     })
+  } catch (error) {
+    if (options.signal?.aborted) throw cancelledError()
+    throw error
   } finally {
-    await document.destroy()
+    options.signal?.removeEventListener('abort', cancelLoading)
+    await document.destroy().catch(() => undefined)
   }
 }

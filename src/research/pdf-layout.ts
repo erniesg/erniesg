@@ -6,6 +6,7 @@ import type {
   PdfSourceRun,
   ReconstructionDiagnostic,
 } from './import-types'
+import { assessPdfCompleteness } from './pdf-quality'
 
 type TextLine = {
   page: number
@@ -76,7 +77,15 @@ function groupRunsIntoLines(page: PdfPageAnalysis): TextLine[] {
     const center = run.y + run.height / 2
     const matching = lines.find((line) => {
       const lineCenter = line.y + line.height / 2
-      return Math.abs(center - lineCenter) <= Math.max(0.004, run.height * 0.45)
+      const horizontalGap = Math.max(
+        line.x - (run.x + run.width),
+        run.x - (line.x + line.width),
+        0,
+      )
+      return (
+        Math.abs(center - lineCenter) <= Math.max(0.004, run.height * 0.45) &&
+        horizontalGap <= Math.max(0.025, run.height * 2)
+      )
     })
     if (matching) {
       matching.runs.push(run)
@@ -143,7 +152,10 @@ function orderPageLines(lines: TextLine[]) {
   const hasColumns = left.length >= 3 && right.length >= 3
 
   if (!hasColumns) {
-    return candidates.sort((a, b) => a.y - b.y || a.x - b.x)
+    return {
+      lines: candidates.sort((a, b) => a.y - b.y || a.x - b.x),
+      ambiguous: [] as TextLine[],
+    }
   }
 
   const bodyTop = Math.min(
@@ -156,19 +168,25 @@ function orderPageLines(lines: TextLine[]) {
   )
   const top: TextLine[] = []
   const bottom: TextLine[] = []
+  const ambiguous: TextLine[] = []
   for (const line of candidates) {
     if (left.includes(line)) line.column = 'left'
     else if (right.includes(line)) line.column = 'right'
     else if (line.y < bodyTop) top.push(line)
     else if (line.y > bodyBottom) bottom.push(line)
+    else ambiguous.push(line)
   }
 
-  return [
-    ...top.sort((a, b) => a.y - b.y),
-    ...left.sort((a, b) => a.y - b.y),
-    ...right.sort((a, b) => a.y - b.y),
-    ...bottom.sort((a, b) => a.y - b.y),
-  ]
+  return {
+    lines: [
+      ...top.sort((a, b) => a.y - b.y),
+      ...left.sort((a, b) => a.y - b.y),
+      ...right.sort((a, b) => a.y - b.y),
+      ...ambiguous.sort((a, b) => a.y - b.y || a.x - b.x),
+      ...bottom.sort((a, b) => a.y - b.y),
+    ],
+    ambiguous,
+  }
 }
 
 function joinLineText(current: string, next: string) {
@@ -284,7 +302,16 @@ export function reconstructPageAnalyses({
     const filtered = pageLines.filter(
       (line) => !repeated.has(normalizeMarginText(line.text)),
     )
-    return orderPageLines(filtered)
+    const ordered = orderPageLines(filtered)
+    if (ordered.ambiguous.length > 0) {
+      diagnostics.push({
+        code: 'AMBIGUOUS_READING_ORDER',
+        severity: 'error',
+        page: ordered.ambiguous[0].page,
+        message: `Page ${ordered.ambiguous[0].page} contains ${ordered.ambiguous.length} spanning block${ordered.ambiguous.length === 1 ? '' : 's'} whose position within column flow requires review.`,
+      })
+    }
+    return ordered.lines
   })
   if (repeated.size > 0) {
     diagnostics.push({
@@ -371,6 +398,12 @@ export function reconstructPageAnalyses({
     nodes,
   }
 
+  const assessment = assessPdfCompleteness({
+    pages,
+    paper,
+    diagnostics,
+  })
+
   return {
     source: {
       fileName,
@@ -382,6 +415,9 @@ export function reconstructPageAnalyses({
     paper,
     pages,
     provenance,
-    diagnostics,
+    diagnostics: assessment.diagnostics,
+    semanticSignals: assessment.semanticSignals,
+    completeness: assessment.completeness,
+    readiness: assessment.readiness,
   }
 }

@@ -130,5 +130,10 @@ describe('PDF semantic reconstruction', () => {
         expect.objectContaining({ code: 'NO_RECONSTRUCTABLE_TEXT' }),
       ]),
     )
+    expect(first.completeness.ocrRequiredPages).toEqual([1])
+    expect(first.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
   })
 })

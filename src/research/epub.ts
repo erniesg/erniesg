@@ -6,7 +6,7 @@ import {
   type Zippable,
   type ZipOptions,
 } from 'fflate'
-import type { PdfReconstruction } from './import-types'
+import { PdfImportError, type PdfReconstruction } from './import-types'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 const EPUB_MIMETYPE = 'application/epub+zip'
@@ -273,6 +273,12 @@ export async function buildEpub(
   paper: ResearchPaper,
   reconstruction?: PdfReconstruction,
 ): Promise<EpubExport> {
+  if (reconstruction && !reconstruction.readiness.ready) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      `EPUB export is blocked until these completeness diagnostics are cleared: ${reconstruction.readiness.blockingDiagnosticCodes.join(', ')}.`,
+    )
+  }
   const canonicalHash = await sha256(JSON.stringify(paper))
   const identifier = `urn:srt:${stableId(paper.id)}:${canonicalHash.slice(0, 24)}`
   const modified = `${paper.updated}T00:00:00Z`
@@ -283,6 +289,8 @@ export async function buildEpub(
     sourcePdfSha256: reconstruction?.source.sha256,
     canonicalNodeIds: paper.nodes.map((node) => node.id),
     sourceProvenanceIncluded: Boolean(reconstruction),
+    sourceCompleteness: reconstruction?.completeness,
+    sourceReadiness: reconstruction?.readiness,
     rendition: 'reflowable-epub',
   }
   const archive: Zippable = {

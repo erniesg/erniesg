@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0.0",
+  "license": "CC0-1.0",
+  "fixtures": [
+    {
+      "file": "born-digital.pdf",
+      "features": ["born-digital-text"]
+    },
+    {
+      "file": "structured-scientific.pdf",
+      "features": [
+        "two-columns",
+        "spanning-block",
+        "figure-caption-pair",
+        "table",
+        "equation-fallback",
+        "footnote-reference",
+        "footnote-note"
+      ]
+    },
+    {
+      "file": "scanned-page.pdf",
+      "features": ["scanned-page"]
+    },
+    {
+      "file": "mixed-page.pdf",
+      "features": ["mixed-page"]
+    },
+    {
+      "file": "two-page-scan.pdf",
+      "features": ["two-page-scan"]
+    },
+    {
+      "file": "virtual:oversized-input.pdf",
+      "features": ["resource-limit"],
+      "byteLength": 52428801
+    }
+  ]
+}

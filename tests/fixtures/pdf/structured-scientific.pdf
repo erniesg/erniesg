@@ -1,0 +1,108 @@
+%PDF-1.4
+% synthetic fixture owned by erniesg
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 9 >>
+stream
+30C090F0>
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 1081 >>
+stream
+BT
+/F1 20 Tf
+54 750 Td
+(Synthetic semantic completeness fixture) Tj
+ET
+BT
+/F1 11 Tf
+54 690 Td
+(Left column line one introduces the experiment.) Tj
+ET
+BT
+/F1 11 Tf
+54 670 Td
+(Left column line two preserves source order.) Tj
+ET
+BT
+/F1 11 Tf
+54 650 Td
+(Left column line three points to Figure 1.) Tj
+ET
+BT
+/F1 11 Tf
+54 630 Td
+(Left column line four has footnote reference 1.) Tj
+ET
+BT
+/F1 11 Tf
+330 690 Td
+(Right column line one follows the left column.) Tj
+ET
+BT
+/F1 11 Tf
+330 670 Td
+(Right column line two describes the visual result.) Tj
+ET
+BT
+/F1 11 Tf
+330 650 Td
+(Right column line three introduces the fallback.) Tj
+ET
+BT
+/F1 11 Tf
+330 630 Td
+(Right column line four closes the main reading flow.) Tj
+ET
+BT
+/F1 11 Tf
+180 430 Td
+(Figure 1. A synthetic image and its semantic caption.) Tj
+ET
+BT
+/F1 11 Tf
+54 370 Td
+(Table 1. Synthetic values require a table fallback.) Tj
+ET
+BT
+/F1 11 Tf
+54 340 Td
+(Equation 1 \(x + y = z\) requires an atomic fallback.) Tj
+ET
+BT
+/F1 8 Tf
+54 70 Td
+(Footnote 1: This note must stay linked to its reference.) Tj
+ET
+q
+170 0 0 110 220 460 cm
+/Im1 Do
+Q
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000046 00000 n 
+0000000095 00000 n 
+0000000152 00000 n 
+0000000222 00000 n 
+0000000398 00000 n 
+0000000550 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1683
+%%EOF

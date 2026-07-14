@@ -38,9 +38,14 @@ export const SITE: Site = {
   SITEURL: 'https://ernie.sg',
 }
 
+const researchLinks: Link[] =
+  import.meta.env.DEV || import.meta.env.PUBLIC_RESEARCH_RELEASE === 'staging'
+    ? [{ href: '/research', label: 'research' }]
+    : []
+
 export const NAV_LINKS: Link[] = [
   { href: '/blog', label: 'blog' },
-  { href: '/research', label: 'research' },
+  ...researchLinks,
   { href: '/about', label: 'about' },
   { href: '/tags', label: 'tags' },
 ]

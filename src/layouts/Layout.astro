@@ -12,6 +12,7 @@ type Props = {
   lang?: SupportedLocale
   canonicalPath?: string
   alternates?: Partial<Record<SupportedLocale, string>>
+  noindex?: boolean
 }
 
 const {
@@ -21,6 +22,7 @@ const {
   lang = DEFAULT_LOCALE,
   canonicalPath,
   alternates,
+  noindex = false,
 } = Astro.props
 ---
 
@@ -34,6 +36,7 @@ const {
       lang={lang}
       canonicalPath={canonicalPath}
       alternates={alternates}
+      noindex={noindex}
     />
   </head>
   <body>

@@ -49,27 +49,35 @@ test('blocks a text-only EPUB when scientific objects are unresolved', async ({
 test('keeps the newest result when an active import is superseded', async ({
   page,
 }) => {
-  await page.goto('/research/studio')
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     const subtle = globalThis.crypto.subtle
     const digest = subtle.digest.bind(subtle)
-    let calls = 0
+    let delayed = false
     Object.defineProperty(subtle, 'digest', {
       configurable: true,
       value: async (...args: Parameters<SubtleCrypto['digest']>) => {
-        calls += 1
-        const call = calls
-        if (call === 2) {
+        const input = args[1]
+        const bytes =
+          input instanceof ArrayBuffer
+            ? new Uint8Array(input)
+            : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        // buildEpub hashes JSON.stringify(paper) before assembling the archive.
+        const isEpubCanonicalPayload =
+          !delayed &&
+          new TextDecoder().decode(bytes.subarray(0, 11)) === '{"id":"pdf-'
+        if (isEpubCanonicalPayload) {
+          delayed = true
           await new Promise((resolve) => setTimeout(resolve, 750))
         }
         const result = await digest(...args)
-        if (call === 2) {
-          document.documentElement.dataset.delayedDigestComplete = 'true'
+        if (isEpubCanonicalPayload) {
+          document.documentElement.dataset.delayedEpubDigestComplete = 'true'
         }
         return result
       },
     })
   })
+  await page.goto('/research/studio', { waitUntil: 'networkidle' })
 
   await page
     .locator('#publication-pdf')
@@ -82,7 +90,7 @@ test('keeps the newest result when an active import is superseded', async ({
 
   await expect(page.getByText('Review required', { exact: true })).toBeVisible()
   await page.waitForFunction(
-    () => document.documentElement.dataset.delayedDigestComplete === 'true',
+    () => document.documentElement.dataset.delayedEpubDigestComplete === 'true',
   )
   await expect(page.locator('.publication-result-bar strong')).toHaveText(
     'structured-scientific.pdf',

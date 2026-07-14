@@ -136,6 +136,29 @@ describe('linked PDF download', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('rejects a bodyless response when cancellation occurs during blob reading', async () => {
+    const controller = new AbortController()
+    let resolveBlob: ((blob: Blob) => void) | undefined
+    const blob = vi.fn(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolveBlob = resolve
+        }),
+    )
+    const download = downloadLinkedPdf(
+      'https://papers.example/paper.pdf',
+      async () => ({ ...pdfResponse(), blob }),
+      MAX_LOCAL_PDF_BYTES,
+      controller.signal,
+    )
+
+    await vi.waitFor(() => expect(blob).toHaveBeenCalledOnce())
+    controller.abort()
+    resolveBlob?.(new Blob(['%PDF-1.4\n%%EOF']))
+
+    await expect(download).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+  })
+
   it('turns a browser fetch failure into an actionable fallback', async () => {
     await expect(
       downloadLinkedPdf('https://papers.example/paper.pdf', async () => {

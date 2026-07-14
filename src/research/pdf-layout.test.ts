@@ -111,6 +111,30 @@ describe('PDF semantic reconstruction', () => {
     expect(result.paper).not.toHaveProperty('pages')
   })
 
+  it('preserves narrow-gutter columns instead of interleaving their rows', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Left one.', 0.08, 0.2, 0.43),
+          run(1, 'Right one.', 0.53, 0.2, 0.39),
+          run(1, 'Left two.', 0.08, 0.24, 0.43),
+          run(1, 'Right two.', 0.53, 0.24, 0.39),
+          run(1, 'Left three.', 0.08, 0.28, 0.43),
+          run(1, 'Right three.', 0.53, 0.28, 0.39),
+        ]),
+      ],
+      sourceHash: '1'.repeat(64),
+      fileName: 'narrow-gutter-columns.pdf',
+      byteLength: 2048,
+    })
+
+    const text = result.paper.nodes
+      .map((node) => ('text' in node ? node.text : ''))
+      .join(' ')
+    expect(text.indexOf('Left three')).toBeLessThan(text.indexOf('Right one'))
+    expect(result.readiness.ready).toBe(true)
+  })
+
   it('fails closed when a short two-column page cannot be ordered safely', () => {
     const result = reconstructPageAnalyses({
       pages: [

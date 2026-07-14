@@ -93,4 +93,62 @@ describe('PDF semantic signal detection', () => {
       relationshipCoverage: 1,
     })
   })
+
+  it('does not count figure placeholders as exported source-image payloads', () => {
+    const runs = [run('Figure 1. Source image', 0.1, 0.2)]
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: runs[0].text.length,
+      imageCount: 1,
+      runs,
+    }
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'caption-1',
+          type: 'caption',
+          text: 'Figure 1. Source image',
+          source: 'test',
+        },
+        {
+          id: 'figure-1',
+          type: 'figure',
+          title: 'Placeholder only',
+          relationships: { caption: 'caption-1' },
+          source: 'test',
+        },
+      ],
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [page],
+      paper,
+      diagnostics: [],
+    })
+
+    expect(result.completeness).toMatchObject({
+      sourceAssetCount: 1,
+      exportedAssetCount: 0,
+      assetCoverage: 0,
+    })
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'INCOMPLETE_ASSET_COVERAGE',
+    )
+  })
 })

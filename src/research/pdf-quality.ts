@@ -145,9 +145,10 @@ export function assessPdfCompleteness({
     (total, page) => total + page.imageCount,
     0,
   )
-  const exportedAssetCount = paper.nodes.filter(
-    (node) => node.type === 'figure',
-  ).length
+  // Figure nodes currently render placeholders only. Until the canonical model
+  // carries an exported source-image payload and identity, none of those nodes
+  // may satisfy source asset coverage.
+  const exportedAssetCount = 0
   const relationships = relationshipCounts(paper, semanticSignals)
   const unresolvedObjects = {
     assets: Math.max(sourceAssetCount - exportedAssetCount, 0),

@@ -36,6 +36,7 @@ async function readBoundedBlob(
 ) {
   if (!response.body) {
     const blob = await response.blob()
+    if (signal?.aborted) throw cancelledError()
     if (blob.size > maxBytes) throw oversizedPdfError(maxBytes)
     return blob
   }

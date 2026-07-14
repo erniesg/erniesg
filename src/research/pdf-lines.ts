@@ -32,6 +32,23 @@ function mergeRunText(runs: PdfSourceRun[]) {
   return text.replace(/\s+/g, ' ').trim()
 }
 
+function crossesProbableColumnGutter(
+  line: PdfTextLine,
+  run: PdfSourceRun,
+  horizontalGap: number,
+) {
+  if (
+    horizontalGap < Math.max(0.012, Math.min(line.height, run.height) * 0.65)
+  ) {
+    return false
+  }
+  const lineRight = line.x + line.width
+  const runRight = run.x + run.width
+  const gapCenter = (lineRight + run.x) / 2
+  const combinedWidth = Math.max(lineRight, runRight) - Math.min(line.x, run.x)
+  return gapCenter >= 0.35 && gapCenter <= 0.65 && combinedWidth >= 0.55
+}
+
 export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
   const lines: PdfTextLine[] = []
   const runs = page.runs
@@ -49,7 +66,8 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
       )
       return (
         Math.abs(center - lineCenter) <= Math.max(0.004, run.height * 0.45) &&
-        horizontalGap <= Math.max(0.025, run.height * 2)
+        horizontalGap <= Math.max(0.025, run.height * 2) &&
+        !crossesProbableColumnGutter(line, run, horizontalGap)
       )
     })
     if (matching) {

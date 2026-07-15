@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ResearchNode } from './schema'
+import type { ResearchNode, ResearchPaper } from './schema'
 import type { TargetProfileId } from './targets'
 
 const textPositionSelectorSchema = z
@@ -121,6 +121,57 @@ export const FREEHAND_ATTACHMENT_POLICY = {
   reason:
     'Freehand strokes do not have a safely inferred text attachment under reflow.',
 } as const
+
+const DEMO_ANCHOR_QUOTE =
+  'Once meaning becomes coordinates, every new screen or sheet becomes a repair job.'
+
+export function createDemoAnnotations(paper: ResearchPaper) {
+  const preferredNode = paper.nodes.find(
+    (candidate) =>
+      candidate.id === 'p-proposition-1' &&
+      candidate.type === 'paragraph' &&
+      candidate.text.includes(DEMO_ANCHOR_QUOTE),
+  )
+  const fallbackNode = paper.nodes.find(
+    (candidate) =>
+      candidate.type !== 'figure' && candidate.text.trim().length > 0,
+  )
+  const node = preferredNode ?? fallbackNode
+  if (!node || node.type === 'figure') return []
+
+  const target = preferredNode
+    ? createSemanticTextAnchor(node.id, node.text, DEMO_ANCHOR_QUOTE)
+    : (() => {
+        const start = node.text.search(/\S/u)
+        const exact = Array.from(node.text.slice(start))
+          .slice(0, 160)
+          .join('')
+          .trimEnd()
+        return createSemanticTextAnchorFromRange(
+          node.id,
+          node.text,
+          start,
+          start + exact.length,
+        )
+      })()
+
+  return [
+    textAnnotationSchema.parse({
+      id: 'highlight-reading-position',
+      kind: 'highlight',
+      target,
+      appearance: { color: 'amber' },
+      geometryCache: [],
+    }),
+    textAnnotationSchema.parse({
+      id: 'note-reading-position',
+      kind: 'note',
+      target,
+      body: 'Geometry may change; this note remains attached to the semantic sentence.',
+      geometryCache: [],
+    }),
+  ]
+}
 
 function textForNode(node: ResearchNode) {
   return node.type === 'figure' ? null : node.text
@@ -300,6 +351,7 @@ export function createLayoutVersion(input: {
   fontScale: number
   compositionPolicyVersion: string
   paginationPolicyVersion: string
+  overrideDigest?: string
 }) {
   return [
     `document=${encodeURIComponent(input.documentId)}@${encodeURIComponent(input.documentVersion)}`,
@@ -309,5 +361,6 @@ export function createLayoutVersion(input: {
     `font=${input.fontScale}`,
     `composition=${input.compositionPolicyVersion}`,
     `pagination=${input.paginationPolicyVersion}`,
+    ...(input.overrideDigest ? [`override=${input.overrideDigest}`] : []),
   ].join(';')
 }

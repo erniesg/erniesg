@@ -33,7 +33,7 @@ const isFellowshipPaper = paper.id === 'if-letters-home-could-sing'
             <h1>{paper.title}</h1>
             <p>{paper.subtitle}</p>
           </div>
-          <ResearchPaperActions paper={paper} client:load />
+          <ResearchPaperActions paper={paper} />
         </section>
         <ResearchStudio paper={paper} client:load />
       </>

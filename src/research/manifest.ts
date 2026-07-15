@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { createLayoutVersion } from './annotations'
 import {
   canonicalContentHash,
   canonicalNodeContentHash,
@@ -24,8 +25,16 @@ import {
   type PaginatedNode,
   type PaginationResult,
 } from './pagination'
+import {
+  overridesForTarget,
+  resolveTargetOverrides,
+  targetOverrideDigest,
+  targetOverrideSchema,
+  validateTargetOverrides,
+  type TargetOverride,
+} from './overrides'
 
-export const LAYOUT_MANIFEST_VERSION = '1.2.0' as const
+export const LAYOUT_MANIFEST_VERSION = '1.3.0' as const
 export const LAYOUT_TARGETS = TARGET_PROFILE_IDS
 
 const canonicalId = z.string().min(1)
@@ -257,6 +266,13 @@ const renditionSchema = z
   .object({
     target: targetProfileIdSchema,
     contentHash: sha256,
+    layoutVersion: z.string().min(1),
+    overrideSet: z
+      .object({
+        digest: sha256,
+        applied: z.array(targetOverrideSchema),
+      })
+      .strict(),
     profile: targetProfileSchema,
     policy: compositionPolicySchema,
     pagination: paginationSummarySchema,
@@ -497,6 +513,8 @@ export type ManifestInvariantIssue = {
     | 'TARGET_PROFILE_MISMATCH'
     | 'COMPOSITION_POLICY_MISMATCH'
     | 'PAGINATION_POLICY_MISMATCH'
+    | 'LAYOUT_VERSION_MISMATCH'
+    | 'OVERRIDE_SET_MISMATCH'
     | 'MISSING_NODE'
     | 'UNEXPECTED_NODE'
     | 'NODE_TYPE_MISMATCH'
@@ -600,8 +618,10 @@ export function validateLayoutManifest(
   input: unknown,
   paper: ResearchPaper,
   expectedTargets: readonly string[] = LAYOUT_TARGETS,
+  overrideInput: readonly TargetOverride[] = [],
 ): LayoutManifest {
   const manifest = layoutManifestSchema.parse(input)
+  const overrides = validateTargetOverrides(overrideInput, paper)
   const issues: ManifestInvariantIssue[] = []
   const documentHash = canonicalContentHash(paper)
 
@@ -660,6 +680,40 @@ export function validateLayoutManifest(
       const expectedProfile = getTargetProfile(parsedTarget.data)
       const expectedPolicy = getCompositionPolicy(parsedTarget.data)
       const expectedPagination = paginateResearchPaper(paper, parsedTarget.data)
+      const expectedOverrides = overridesForTarget(overrides, parsedTarget.data)
+      const expectedOverrideSet = {
+        digest: targetOverrideDigest(overrides, parsedTarget.data),
+        applied: expectedOverrides,
+      }
+      const expectedLayoutVersion = createLayoutVersion({
+        documentId: paper.id,
+        documentVersion: paper.version,
+        target: parsedTarget.data,
+        widthCssPx: expectedPagination.constraints.widthCssPx,
+        heightCssPx: expectedPagination.constraints.heightCssPx,
+        fontScale: 1,
+        compositionPolicyVersion: COMPOSITION_POLICY_VERSION,
+        paginationPolicyVersion: PAGINATION_POLICY_VERSION,
+        overrideDigest: expectedOverrideSet.digest,
+      })
+
+      if (
+        comparableJson(rendition.overrideSet) !==
+        comparableJson(expectedOverrideSet)
+      ) {
+        issues.push({
+          code: 'OVERRIDE_SET_MISMATCH',
+          target: rendition.target,
+          message: `Override set changed for ${rendition.target}`,
+        })
+      }
+      if (rendition.layoutVersion !== expectedLayoutVersion) {
+        issues.push({
+          code: 'LAYOUT_VERSION_MISMATCH',
+          target: rendition.target,
+          message: `Layout version changed for ${rendition.target}`,
+        })
+      }
 
       if (
         comparableJson(rendition.profile) !== comparableJson(expectedProfile)
@@ -743,8 +797,14 @@ export function validateLayoutManifest(
           parsedTarget.data,
           node,
         )
+        const overriddenComposition = resolveTargetOverrides(
+          parsedTarget.data,
+          node,
+          expectedComposition.chosenVariant,
+          overrides,
+        )
         if (
-          entry.chosenVariant !== expectedComposition.chosenVariant ||
+          entry.chosenVariant !== overriddenComposition.chosenVariant ||
           comparableJson(entry.fallback) !==
             comparableJson(expectedComposition.fallback)
         ) {
@@ -803,7 +863,9 @@ export function validateLayoutManifest(
 export function buildLayoutManifest(
   paper: ResearchPaper,
   targets: readonly TargetProfileId[] = LAYOUT_TARGETS,
+  overrideInput: readonly TargetOverride[] = [],
 ): LayoutManifest {
+  const overrides = validateTargetOverrides(overrideInput, paper)
   const contentHash = canonicalContentHash(paper)
   const manifest = {
     schemaVersion: LAYOUT_MANIFEST_VERSION,
@@ -815,15 +877,38 @@ export function buildLayoutManifest(
     renditions: targets.map((target) => {
       const pagination = paginateResearchPaper(paper, target)
       const orderByFragmentId = fragmentOrder(pagination)
+      const appliedOverrides = overridesForTarget(overrides, target)
+      const overrideDigest = targetOverrideDigest(overrides, target)
 
       return {
         target,
         contentHash,
+        layoutVersion: createLayoutVersion({
+          documentId: paper.id,
+          documentVersion: paper.version,
+          target,
+          widthCssPx: pagination.constraints.widthCssPx,
+          heightCssPx: pagination.constraints.heightCssPx,
+          fontScale: 1,
+          compositionPolicyVersion: COMPOSITION_POLICY_VERSION,
+          paginationPolicyVersion: PAGINATION_POLICY_VERSION,
+          overrideDigest,
+        }),
+        overrideSet: {
+          digest: overrideDigest,
+          applied: appliedOverrides,
+        },
         profile: getTargetProfile(target),
         policy: getCompositionPolicy(target),
         pagination: paginationSummary(pagination),
         entries: paper.nodes.map((node) => {
           const composition = resolveNodeComposition(target, node)
+          const overriddenComposition = resolveTargetOverrides(
+            target,
+            node,
+            composition.chosenVariant,
+            overrides,
+          )
           const paginatedNode = pagination.nodes.find(
             (candidate) => candidate.canonicalId === node.id,
           )
@@ -838,7 +923,7 @@ export function buildLayoutManifest(
             contentHash: canonicalNodeContentHash(node),
             provenance: { source: node.source },
             relationships: relationshipsFor(node),
-            chosenVariant: composition.chosenVariant,
+            chosenVariant: overriddenComposition.chosenVariant,
             paginationPolicy: paginatedNode.policy,
             representation: representationForNode(
               paginatedNode,
@@ -857,7 +942,7 @@ export function buildLayoutManifest(
     }),
   }
 
-  return validateLayoutManifest(manifest, paper, targets)
+  return validateLayoutManifest(manifest, paper, targets, overrides)
 }
 
 export function serializeLayoutManifest(manifest: LayoutManifest) {

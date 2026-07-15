@@ -80,6 +80,27 @@ describe('SRT finite-height pagination', () => {
     expect(shortLayout.finalPageCount).toBeTypeOf('number')
   })
 
+  it('recomposes line estimates when typography changes', () => {
+    const fixture = paperWithLongParagraph()
+    const baseline = paginateResearchPaper(fixture, 'paperProMove')
+    const enlarged = paginateResearchPaper(fixture, 'paperProMove', {
+      fontScale: 1.25,
+    })
+    const baselineParagraph = baseline.nodes.find(
+      (node) => node.canonicalId === 'p-test',
+    )
+    const enlargedParagraph = enlarged.nodes.find(
+      (node) => node.canonicalId === 'p-test',
+    )
+
+    expect(enlargedParagraph?.fragments.length).toBeGreaterThan(
+      baselineParagraph?.fragments.length ?? 0,
+    )
+    expect(enlarged.finalPageCount).toBeGreaterThanOrEqual(
+      baseline.finalPageCount ?? 0,
+    )
+  })
+
   it('declares split and keep behavior for every supported node type', () => {
     expect(NODE_PAGINATION_POLICIES).toEqual({
       heading: { fragmentation: 'atomic', keep: 'with-next' },

@@ -49,6 +49,12 @@ export type PaginationConstraints = {
   firstPageHeaderHeightCssPx: number
 }
 
+export type PaginationOverrides = Partial<
+  Pick<PaginationConstraints, 'widthCssPx' | 'heightCssPx'>
+> & {
+  fontScale?: number
+}
+
 export type PaginationViolation = {
   code: PaginationViolationCode
   severity: 'warning' | 'error'
@@ -196,16 +202,27 @@ function estimateHeaderHeight(
   paper: ResearchPaper,
   contentWidthCssPx: number,
   target: TargetProfileId,
+  fontScale: number,
 ) {
   const typography = getTargetProfile(target).typography
   const title = textHeight(
     paper.title,
     contentWidthCssPx,
-    typography.titleSizeCssPx,
+    typography.titleSizeCssPx * fontScale,
     0.95,
   )
-  const subtitle = textHeight(paper.subtitle, contentWidthCssPx, 18, 1.4)
-  const abstract = textHeight(paper.abstract, contentWidthCssPx, 14, 1.65)
+  const subtitle = textHeight(
+    paper.subtitle,
+    contentWidthCssPx,
+    18 * fontScale,
+    1.4,
+  )
+  const abstract = textHeight(
+    paper.abstract,
+    contentWidthCssPx,
+    14 * fontScale,
+    1.65,
+  )
 
   // These constants mirror the explicit document-header gaps in global.css.
   return Math.ceil(
@@ -216,10 +233,12 @@ function estimateHeaderHeight(
 export function getPaginationConstraints(
   paper: ResearchPaper,
   target: TargetProfileId,
-  overrides: Partial<
-    Pick<PaginationConstraints, 'widthCssPx' | 'heightCssPx'>
-  > = {},
+  overrides: PaginationOverrides = {},
 ): PaginationConstraints {
+  const fontScale = overrides.fontScale ?? 1
+  if (!Number.isFinite(fontScale) || fontScale <= 0) {
+    throw new RangeError('Pagination font scale must be a positive number')
+  }
   const profile = getTargetProfile(target)
   const preview = getPreviewMetrics(profile)
   const widthCssPx = overrides.widthCssPx ?? preview.widthCssPx
@@ -252,6 +271,7 @@ export function getPaginationConstraints(
       paper,
       contentWidthCssPx,
       target,
+      fontScale,
     ),
   }
 }
@@ -261,13 +281,19 @@ function estimateAtomicHeight(
   paper: ResearchPaper,
   target: TargetProfileId,
   widthCssPx: number,
+  fontScale: number,
 ) {
   const profile = getTargetProfile(target)
   const typography = profile.typography
 
   if (node.type === 'heading') {
     return (
-      textHeight(node.text, widthCssPx, typography.headingSizeCssPx, 1.2) + 48
+      textHeight(
+        node.text,
+        widthCssPx,
+        typography.headingSizeCssPx * fontScale,
+        1.2,
+      ) + 48
     )
   }
   if (node.type === 'quote') {
@@ -275,7 +301,7 @@ function estimateAtomicHeight(
       textHeight(
         node.text,
         widthCssPx,
-        typography.quoteSizeCssPx,
+        typography.quoteSizeCssPx * fontScale,
         typography.lineHeight,
       ) + 72
     )
@@ -289,7 +315,12 @@ function estimateAtomicHeight(
     return (
       140 +
       pipelineHeight +
-      textHeight(`${node.title}. ${captionText}`, widthCssPx, 12, 1.6)
+      textHeight(
+        `${node.title}. ${captionText}`,
+        widthCssPx,
+        12 * fontScale,
+        1.6,
+      )
     )
   }
   if (node.type === 'caption') return 0
@@ -300,6 +331,7 @@ function createLayoutItems(
   paper: ResearchPaper,
   target: TargetProfileId,
   constraints: PaginationConstraints,
+  fontScale: number,
 ) {
   const captionIds = new Set(
     paper.nodes
@@ -314,12 +346,13 @@ function createLayoutItems(
     if (node.type === 'paragraph') {
       const lineHeightCssPx =
         getTargetProfile(target).typography.bodySizeCssPx *
-        getTargetProfile(target).typography.lineHeight
+        getTargetProfile(target).typography.lineHeight *
+        fontScale
       const lines = estimateLineRanges(
         node.text,
         charactersPerLine(
           constraints.columnWidthCssPx,
-          getTargetProfile(target).typography.bodySizeCssPx,
+          getTargetProfile(target).typography.bodySizeCssPx * fontScale,
         ),
       )
       items.push({
@@ -348,6 +381,7 @@ function createLayoutItems(
           node.type === 'figure' && target === 'print'
             ? constraints.contentWidthCssPx
             : constraints.columnWidthCssPx,
+          fontScale,
         ),
         keepWithNext: false,
         span: target === 'print' ? 'page' : 'column',
@@ -364,6 +398,7 @@ function createLayoutItems(
         paper,
         target,
         constraints.columnWidthCssPx,
+        fontScale,
       ),
       keepWithNext: node.type === 'heading',
       span: 'column',
@@ -559,9 +594,7 @@ export function measureCurrentRegionStability(
 export function paginateResearchPaper(
   paper: ResearchPaper,
   target: TargetProfileId,
-  overrides: Partial<
-    Pick<PaginationConstraints, 'widthCssPx' | 'heightCssPx'>
-  > = {},
+  overrides: PaginationOverrides = {},
 ): PaginationResult {
   const constraints = getPaginationConstraints(paper, target, overrides)
   if (
@@ -578,7 +611,12 @@ export function paginateResearchPaper(
     }
   }
 
-  const items = createLayoutItems(paper, target, constraints)
+  const items = createLayoutItems(
+    paper,
+    target,
+    constraints,
+    overrides.fontScale ?? 1,
+  )
   const pages: PaginationPage[] = []
   const fragmentsByNode = new Map<string, PaginationFragment[]>()
   const violations: PaginationViolation[] = []

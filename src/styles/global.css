@@ -230,7 +230,7 @@
     color: var(--srt-accent);
   }
   .srt-toolbar {
-    @apply flex flex-col gap-5 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8;
+    @apply flex flex-col gap-5 border-b px-5 py-4 sm:px-8;
   }
   .srt-toolbar > div:first-child {
     @apply flex items-center gap-4;
@@ -246,6 +246,15 @@
   }
   .srt-profiles button.active {
     @apply bg-foreground text-background;
+  }
+  .srt-reflow-controls {
+    @apply flex gap-2;
+  }
+  .srt-reflow-controls button {
+    @apply border px-3 py-2 font-mono text-[10px] uppercase tracking-wider;
+  }
+  .srt-reflow-controls button[aria-pressed='true'] {
+    @apply bg-muted;
   }
   .srt-stage {
     @apply grid min-h-[720px] lg:grid-cols-[1fr_260px];
@@ -293,6 +302,7 @@
   .srt-paper .srt-subtitle {
     @apply text-lg italic text-black/60;
     margin-top: 12px;
+    font-size: var(--srt-subtitle-size);
     line-height: 1.4;
   }
   .srt-paper .srt-authors {
@@ -301,8 +311,8 @@
     line-height: 14px;
   }
   .srt-paper .srt-abstract {
-    @apply text-sm;
     margin-top: 28px;
+    font-size: var(--srt-abstract-size);
     line-height: 1.65;
   }
   .srt-page-regions {
@@ -338,6 +348,22 @@
     @apply border-y border-black/30 py-5 italic;
     font-size: var(--srt-quote-size);
   }
+  .srt-paper mark.srt-annotation-highlight {
+    background: oklch(0.86 0.13 85 / 0.68);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  .srt-note-target {
+    position: relative;
+    text-decoration: underline;
+    text-decoration-color: oklch(0.5 0.12 48);
+    text-decoration-style: dotted;
+    text-underline-offset: 0.18em;
+  }
+  .srt-note-target::after {
+    content: attr(data-note-label);
+    @apply ml-0.5 align-super font-sans text-[8px] font-bold not-italic;
+  }
   .srt-paper figure {
     @apply my-8 border-y border-black/30 py-7;
   }
@@ -351,7 +377,8 @@
     @apply not-italic text-black/50;
   }
   .srt-paper figcaption {
-    @apply mt-5 text-xs leading-relaxed;
+    @apply mt-5 leading-relaxed;
+    font-size: var(--srt-caption-size);
   }
   .srt-paper[data-finite-height='false'] .srt-page {
     @apply shadow-none;
@@ -391,6 +418,32 @@
   }
   .srt-inspector a {
     @apply text-xs underline underline-offset-4;
+  }
+  .srt-annotations {
+    @apply mb-8;
+  }
+  .srt-annotations ol {
+    @apply mt-3 space-y-3;
+  }
+  .srt-annotations li {
+    @apply border p-3 text-xs;
+  }
+  .srt-annotations strong,
+  .srt-annotations q,
+  .srt-annotations small {
+    @apply block;
+  }
+  .srt-annotations strong {
+    @apply font-mono text-[10px] uppercase tracking-wider;
+  }
+  .srt-annotations q {
+    @apply mt-2 line-clamp-3 leading-relaxed;
+  }
+  .srt-annotations small {
+    @apply mt-2 break-all font-mono text-[9px] text-muted-foreground;
+  }
+  .srt-annotations p {
+    @apply mt-2 leading-relaxed;
   }
   .publication-importer {
     @apply w-full pb-4;

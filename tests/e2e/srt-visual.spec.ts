@@ -6,6 +6,8 @@ import {
 } from '../../src/research/targets'
 
 const PAPER_ID = 'semantic-responsive-typesetting'
+const ANCHOR_QUOTE =
+  'Once meaning becomes coordinates, every new screen or sheet becomes a repair job.'
 const GEOMETRY_EPSILON_CSS_PX = 0.5
 const OVERFLOW_EPSILON_CSS_PX = 1
 
@@ -348,5 +350,108 @@ test('captures every paginated target and rejects invalid geometry', async ({
   await testInfo.attach('geometry-report', {
     path: reportPath,
     contentType: 'application/json',
+  })
+})
+
+test('keeps the semantic sentence and annotations through target, width, and font reflow', async ({
+  page,
+}, testInfo) => {
+  await page.goto(`/research/${PAPER_ID}`)
+  await expect(
+    page.locator('astro-island[component-url$="ResearchStudio.tsx"]'),
+  ).toHaveAttribute('client-render-time', /.+/)
+  await page.locator('html').evaluate((element) => {
+    element.classList.add('disable-transitions')
+  })
+  await page.evaluate(() => document.fonts.ready)
+
+  const rendition = page.locator('.srt-paper')
+  const viewport = page.locator('.srt-viewport')
+  const highlight = page.locator(
+    '[data-annotation-id="highlight-reading-position"]',
+  )
+  const note = page.locator('[data-annotation-id="note-reading-position"]')
+  const highlightSummary = page.locator(
+    '[data-annotation-summary="highlight-reading-position"]',
+  )
+  const noteSummary = page.locator(
+    '[data-annotation-summary="note-reading-position"]',
+  )
+
+  const expectAnchorVisibleAndCached = async () => {
+    await expect
+      .poll(async () => (await highlight.allTextContents()).join(''))
+      .toBe(ANCHOR_QUOTE)
+    await expect
+      .poll(async () => (await note.allTextContents()).join(''))
+      .toBe(ANCHOR_QUOTE)
+    await expect(highlight.first()).toHaveAttribute(
+      'data-anchor-node-id',
+      'p-proposition-1',
+    )
+    await expect(highlightSummary).toHaveAttribute(
+      'data-resolution-status',
+      'resolved',
+    )
+    await expect(noteSummary).toHaveAttribute(
+      'data-resolution-status',
+      'resolved',
+    )
+    await expect
+      .poll(async () =>
+        Number(await highlightSummary.getAttribute('data-geometry-rect-count')),
+      )
+      .toBeGreaterThan(0)
+    await expect
+      .poll(async () =>
+        Number(await noteSummary.getAttribute('data-geometry-rect-count')),
+      )
+      .toBeGreaterThan(0)
+
+    const anchorBox = await highlight.first().boundingBox()
+    const viewportBox = await viewport.boundingBox()
+    expect(anchorBox).not.toBeNull()
+    expect(viewportBox).not.toBeNull()
+    expect(anchorBox!.y + anchorBox!.height).toBeGreaterThanOrEqual(
+      viewportBox!.y,
+    )
+    expect(anchorBox!.y).toBeLessThanOrEqual(
+      viewportBox!.y + viewportBox!.height,
+    )
+
+    const layoutVersion = await rendition.getAttribute('data-layout-version')
+    expect(layoutVersion).toBeTruthy()
+    await expect(highlightSummary).toHaveAttribute(
+      'data-geometry-layout-version',
+      layoutVersion!,
+    )
+    await expect(noteSummary).toHaveAttribute(
+      'data-geometry-layout-version',
+      layoutVersion!,
+    )
+    return layoutVersion!
+  }
+
+  const layoutVersions = new Set<string>()
+  for (const target of TARGET_PROFILE_IDS) {
+    const profile = getTargetProfile(target)
+    await page.getByRole('button', { name: profile.label, exact: true }).click()
+    await expect(rendition).toHaveAttribute('data-target-profile', target)
+    layoutVersions.add(await expectAnchorVisibleAndCached())
+  }
+
+  await page.getByRole('button', { name: 'Narrow width' }).click()
+  await expect(rendition).toHaveAttribute('data-width-scale', '0.86')
+  layoutVersions.add(await expectAnchorVisibleAndCached())
+
+  await page.getByRole('button', { name: 'Larger text' }).click()
+  await expect(rendition).toHaveAttribute('data-font-scale', '1.12')
+  layoutVersions.add(await expectAnchorVisibleAndCached())
+
+  expect(layoutVersions.size).toBe(TARGET_PROFILE_IDS.length + 2)
+  await page.screenshot({
+    animations: 'disabled',
+    fullPage: true,
+    path: testInfo.outputPath('annotation-reflow.png'),
   })
 })

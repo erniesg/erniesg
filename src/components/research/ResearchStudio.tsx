@@ -11,6 +11,7 @@ import {
   cacheAnnotationGeometry,
   createLayoutVersion,
   createSemanticTextAnchor,
+  createSemanticTextAnchorFromRange,
   resolveTextAnchor,
   textAnnotationSchema,
   type TextAnchorResolution,
@@ -46,13 +47,35 @@ const ANCHOR_QUOTE =
   'Once meaning becomes coordinates, every new screen or sheet becomes a repair job.'
 
 function createDemoAnnotations(paper: ResearchPaper) {
-  const node = paper.nodes.find(
-    (candidate) => candidate.id === 'p-proposition-1',
+  const preferredNode = paper.nodes.find(
+    (candidate) =>
+      candidate.id === 'p-proposition-1' &&
+      candidate.type === 'paragraph' &&
+      candidate.text.includes(ANCHOR_QUOTE),
   )
-  if (!node || node.type !== 'paragraph') {
-    throw new Error('The annotation demo requires paragraph p-proposition-1')
+  const fallbackNode = paper.nodes.find(
+    (candidate) =>
+      candidate.type !== 'figure' && candidate.text.trim().length > 0,
+  )
+  const node = preferredNode ?? fallbackNode
+  if (!node || node.type === 'figure') {
+    return []
   }
-  const target = createSemanticTextAnchor(node.id, node.text, ANCHOR_QUOTE)
+  const target = preferredNode
+    ? createSemanticTextAnchor(node.id, node.text, ANCHOR_QUOTE)
+    : (() => {
+        const start = node.text.search(/\S/u)
+        const exact = Array.from(node.text.slice(start))
+          .slice(0, 160)
+          .join('')
+          .trimEnd()
+        return createSemanticTextAnchorFromRange(
+          node.id,
+          node.text,
+          start,
+          start + exact.length,
+        )
+      })()
 
   return [
     textAnnotationSchema.parse({
@@ -272,8 +295,9 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
   )
   const viewport = useRef<HTMLDivElement>(null)
   const previousPagination = useRef<PaginationResult | null>(null)
-  const readingAnchor = annotations[0].target
-  const stabilityAnchor = useRef(readingAnchor.nodeId)
+  const readingAnchor = annotations[0]?.target
+  const stabilityNodeId = readingAnchor?.nodeId ?? paper.nodes[0].id
+  const stabilityAnchor = useRef(stabilityNodeId)
   const basePagination = useMemo(() => {
     const preview = getPreviewMetrics(getTargetProfile(profileId))
     return paginateResearchPaper(paper, profileId, {
@@ -295,17 +319,17 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
   }, [basePagination])
 
   const switchProfile = (next: TargetProfileId) => {
-    stabilityAnchor.current = readingAnchor.nodeId
+    stabilityAnchor.current = stabilityNodeId
     setProfileId(next)
   }
 
   const toggleWidth = () => {
-    stabilityAnchor.current = readingAnchor.nodeId
+    stabilityAnchor.current = stabilityNodeId
     setWidthScale((current) => (current === 1 ? 0.86 : 1))
   }
 
   const toggleFont = () => {
-    stabilityAnchor.current = readingAnchor.nodeId
+    stabilityAnchor.current = stabilityNodeId
     setFontScale((current) => (current === 1 ? 1.12 : 1))
   }
 
@@ -340,7 +364,9 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
     (item): item is ResolvedTextAnnotation =>
       item.resolution.status === 'resolved',
   )
-  const readingResolution = resolveTextAnchor(readingAnchor, paper.nodes)
+  const readingResolution = readingAnchor
+    ? resolveTextAnchor(readingAnchor, paper.nodes)
+    : null
   const nodes = new Map(paper.nodes.map((node) => [node.id, node]))
   const captions = new Map(
     paper.nodes
@@ -513,8 +539,10 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
             data-layout-version={layoutVersion}
             data-width-scale={widthScale}
             data-font-scale={fontScale}
-            data-reading-anchor-node={readingAnchor.nodeId}
-            data-reading-anchor-status={readingResolution.status}
+            data-reading-anchor-node={readingAnchor?.nodeId ?? 'unavailable'}
+            data-reading-anchor-status={
+              readingResolution?.status ?? 'unavailable'
+            }
             style={paperStyle}
           >
             {pagination.pages.map((page) => {
@@ -606,9 +634,14 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
             </div>
             <div>
               <dt>Reading anchor</dt>
-              <dd data-reading-anchor-resolution={readingResolution.status}>
-                {readingAnchor.nodeId} · {readingAnchor.position.start}–
-                {readingAnchor.position.end} · {readingResolution.status}
+              <dd
+                data-reading-anchor-resolution={
+                  readingResolution?.status ?? 'unavailable'
+                }
+              >
+                {readingAnchor && readingResolution
+                  ? `${readingAnchor.nodeId} · ${readingAnchor.position.start}–${readingAnchor.position.end} · ${readingResolution.status}`
+                  : 'No semantic text anchor available'}
               </dd>
             </div>
             <div>
@@ -658,6 +691,9 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
           <section className="srt-annotations" aria-label="Annotations">
             <span className="srt-kicker">Annotations</span>
             <ol>
+              {annotationResolutions.length === 0 && (
+                <li>No text annotations available for this paper.</li>
+              )}
               {annotationResolutions.map(({ annotation, resolution }) => {
                 const cache = annotation.geometryCache.find(
                   (entry) => entry.layoutVersion === layoutVersion,

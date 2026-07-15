@@ -414,7 +414,10 @@ export default function PublicationImporter({
                 state.status === 'ready' ? '' : 'publication-preview-blocked'
               }
             >
-              <ResearchStudio paper={state.result.paper} />
+              <ResearchStudio
+                key={`${state.result.paper.id}:${state.result.paper.version}`}
+                paper={state.result.paper}
+              />
             </div>
           )}
         </>

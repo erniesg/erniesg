@@ -15,11 +15,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SCAN_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SCAN_SHA }}
+          persist-credentials: false
+
+      - name: Scan immutable commit for credentials
+        run: |
+          set -eu
+          echo "secret scan: checking immutable commit for common private-key and token markers"
+          token_marker='github''_pat_[A-Za-z0-9_]{20,}|gh''[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|sk_(live|test)_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{20,}|(xox[bcaprs]|xapp|xwfp|xoxe([.]xox[bp])?)-[A-Za-z0-9-]{20,}|(AKIA|ASIA)[0-9A-Z]{16}|https://hooks[.]slack[.]com/services/[A-Z0-9]{8,}/[A-Z0-9]{8,}/[A-Za-z0-9]{20,}|https://((canary|ptb)[.])?discord(app)?[.]com/api(/v[0-9]+)?/webhooks/[0-9]{10,}/[A-Za-z0-9._-]{20,}'
+          private_key_marker='-----BEGIN ((RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE[ ]KEY|PGP PRIVATE KEY BLOCK)-----'
+          if ! git cat-file -e "$SCAN_SHA^{commit}" 2>/dev/null; then
+            echo "secret scan failed: immutable commit is unavailable" >&2
+            exit 1
+          fi
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ "$checked_out_sha" != "$SCAN_SHA" ]; then
+            echo "secret scan failed: checkout does not match immutable commit" >&2
+            exit 1
+          fi
+          set +e
+          git grep -q -E "($token_marker|$private_key_marker)" "$SCAN_SHA" -- .
+          scan_status=$?
+          set -e
+          case "$scan_status" in
+            0)
+              echo "secret scan failed: a high-confidence credential marker was detected" >&2
+              exit 1
+              ;;
+            1) ;;
+            *)
+              echo "secret scan failed: scanner error" >&2
+              exit 1
+              ;;
+          esac
+
   checks:
+    needs: secret-scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - uses: actions/setup-python@v5
@@ -29,14 +74,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Secret scan
-        run: |
-          set -eu
-          echo "secret scan: checking common private-key and token markers"
-          token_marker='github''_pat_[A-Za-z0-9_]{20,}|gh''p_[A-Za-z0-9_]{20,}'
-          private_key_marker='-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE[ ]KEY-----'
-          ! git grep -n -E "($token_marker|$private_key_marker)" -- . ':!.git' ':!.agent/harness-backups' ':!.agent/harness-runs'
 
       - name: Set up Python project dependencies
         run: |
@@ -92,9 +129,16 @@ jobs:
           else
             echo "scripts/agent-evidence not present; run rucksack init to add it"
           fi
-          manifest="$(find .agent/evidence -name manifest.json -type f -print 2>/dev/null | sort | tail -n 1 || true)"
-          echo "agent_evidence_status=$status" >> "$GITHUB_OUTPUT"
-          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          manifest="$RUNNER_TEMP/rucksack-ci-manifest.json"
+          rm -f -- "$manifest"
+          while IFS= read -r -d '' candidate; do
+            if ! cp -- "$candidate" "$manifest"; then
+              status=1
+              rm -f -- "$manifest"
+              break
+            fi
+          done < <(find .agent/evidence -name manifest.json -type f -print0 2>/dev/null | sort -z)
+          printf 'agent_evidence_status=%s\n' "$status" >> "$GITHUB_OUTPUT"
           if [ "$status" -ne 0 ]; then
             echo "::warning::scripts/agent-evidence exited with status $status"
           fi
@@ -103,7 +147,7 @@ jobs:
         if: always()
         run: |
           set -eu
-          manifest="${{ steps.agent_evidence.outputs.manifest }}"
+          manifest="$RUNNER_TEMP/rucksack-ci-manifest.json"
           status="${{ steps.agent_evidence.outputs.agent_evidence_status }}"
           echo "### Rucksack agent evidence" >> "$GITHUB_STEP_SUMMARY"
           echo "- Status: \`${status:-not-run}\`" >> "$GITHUB_STEP_SUMMARY"
@@ -111,7 +155,7 @@ jobs:
           echo "- Download: \`gh run download ${{ github.run_id }} --name rucksack-ci-evidence-${{ github.run_id }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Manifest artifact: \`rucksack-ci-manifest-${{ github.run_id }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Manifest download: \`gh run download ${{ github.run_id }} --name rucksack-ci-manifest-${{ github.run_id }}\`" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$manifest" ]; then
+          if [ -f "$manifest" ]; then
             echo "- Manifest: \`$manifest\`" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- Manifest: not found" >> "$GITHUB_STEP_SUMMARY"
@@ -128,11 +172,11 @@ jobs:
           retention-days: 14
 
       - name: Upload agent evidence manifest
-        if: always() && steps.agent_evidence.outputs.manifest != ''
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rucksack-ci-manifest-${{ github.run_id }}
-          path: ${{ steps.agent_evidence.outputs.manifest }}
+          path: ${{ runner.temp }}/rucksack-ci-manifest.json
           if-no-files-found: ignore
           retention-days: 14
 

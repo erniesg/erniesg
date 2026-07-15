@@ -8,14 +8,39 @@ Generate or update specs with:
 rucksack github issues plan erniesg/erniesg --repo-root . --issue-dir docs/issues --execute
 ```
 
-After reviewing the generated specs, seed or update GitHub issues:
+After reviewing the generated specs, seed or update held ledger issues without
+making them runnable:
 
 ```bash
-rucksack github issues seed erniesg/erniesg --issue-dir docs/issues --label rucksack-ledger --label rucksack-queued --execute
+rucksack github issues seed erniesg/erniesg --issue-dir docs/issues --label rucksack-ledger --execute
+```
+
+Seeding preserves GitHub issue state and never reopens a closed marker-matched
+issue. Reopen only a reviewed unfinished issue explicitly before seeding:
+
+```bash
+gh issue reopen ISSUE_NUMBER --repo erniesg/erniesg
+```
+
+The GitHub queue workflow is skipped by default. Only after the candidate and
+publisher credential boundary is reviewed and live-proven may an authorized maintainer
+activate GitHub queue orchestration explicitly:
+
+```bash
+gh workflow enable rucksack-autopilot.yml --repo erniesg/erniesg
+gh variable set RUCKSACK_AUTOPILOT_ENABLED --repo erniesg/erniesg --body true
+rucksack autopilot reconcile erniesg/erniesg --issue-dir docs/issues --queue-after-activation --execute
 gh workflow run rucksack-autopilot.yml --repo erniesg/erniesg -f action=queue
 ```
 
-The GitHub issues are the live queue. Use `/rucksack run #123`, `/rucksack queue`,
+The reconcile command verifies that the variable is exactly `true`, the
+workflow is active, and its default-branch content exactly matches the safe
+generated contract before it adds any queue label.
+
+That variable activates GitHub issue/label orchestration only. It does not
+enable VM drains, hosted agent builds, deploys, or automatic merge.
+
+After activation, GitHub issues are the live queue. Use `/rucksack run #123`, `/rucksack queue`,
 or labels such as `rucksack-queued` and `rucksack-run` to dispatch work. When
 Rucksack asks for a decision, reply `/rucksack accept`, `/rucksack approve`, or
 `/rucksack resolve` on the issue to clear decision/blocker labels and queue it.
@@ -36,11 +61,23 @@ away from the repo default:
 claude
 ```
 
-`provider` routes one issue to `codex-action`, `vm-codex`, or `claude` while
-unmarked issues use the repo default. Specs may also include top-level
-`depends-on: 001,002` metadata immediately under `# Title` to keep an issue
-queued until each dependency is closed or labeled `rucksack-awaiting-review`;
-dependency cycles are rejected when specs are seeded.
+`provider` accepts `codex-action`, `vm-codex`, or `claude` while unmarked issues
+use the repo default. `vm-codex` and `claude` route to supervised trusted-VM
+invocation; `codex-action` is held fail-closed until hosted build and
+publication have separate token boundaries. Specs may also include top-level
+`depends-on: 001,002` metadata immediately under `# Title`, or a `## Depends on`
+section with comma-separated or bullet-listed spec ids:
+
+```markdown
+## Depends on
+
+- 001
+- 002
+```
+
+Both dependency forms keep an issue queued until each dependency is closed or
+labeled `rucksack-awaiting-review`; dependency cycles are rejected when specs
+are seeded.
 
 For local-first overnight checks before a remote queue exists, select the next
 ready checked-in spec without requiring GitHub:
@@ -81,8 +118,9 @@ the repository without a separate database.
 | `rucksack-waiting-checks` | Fresh PR checks are still pending or missing. |
 | `rucksack-waiting-rereview` | PR is waiting for reviewer re-review. |
 | `rucksack-merge-ready` | PR is eligible for merge-policy handling. |
-| `rucksack-merge-blocked` | Merge policy blocks automatic merge. |
+| `rucksack-merge-blocked` | Guarded merge policy does not authorize this PR head. |
 
-The installed `.github/workflows/rucksack-ledger.yml` workflow can refresh this
-directory from repo context through the Codex app-server planner, seed/update
-GitHub issues, and open a review PR for changed specs.
+The installed `.github/workflows/rucksack-ledger.yml` workflow intentionally
+refuses hosted generative planning without checking out the repository or
+receiving GitHub/OpenAI credentials. Run the local plan command on the trusted
+VM, review the generated specs, and seed only the approved files.

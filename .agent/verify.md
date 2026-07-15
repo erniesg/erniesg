@@ -16,9 +16,9 @@ scripts/agent-evidence --only=lint,type-check
 
 Validation lanes discovered:
 
-- `build`: `npm run content:check` (required)
+- `build`: `npm run build` (required)
 - `test`: `npm run test` (required)
-- `e2e`: `npm run test:e2e` (required when selected with `--e2e` or `--all`)
+- `e2e`: `npm run test:e2e` (optional)
 
 Deploy contract:
 

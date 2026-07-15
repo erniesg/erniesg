@@ -6,13 +6,17 @@ commands:
     timeout_seconds: 600
     required: true
   build:
-    command: "npm run content:check"
+    command: "npm run build"
     timeout_seconds: 900
     required: true
   test:
     command: "npm run test"
     timeout_seconds: 900
     required: true
+  e2e:
+    command: "npm run test:e2e"
+    timeout_seconds: 900
+    required: false
   dev:
     command: "npm run dev"
     timeout_seconds: 0

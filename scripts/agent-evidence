@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 node - "$@" <<'NODE'
-const { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } = require("node:fs");
+const { mkdirSync, writeFileSync, existsSync, readFileSync, statSync } = require("node:fs");
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
@@ -8,7 +8,7 @@ const { createHash } = require("node:crypto");
 const allLanes = [
   {
     "id": "build",
-    "command": "npm run content:check",
+    "command": "npm run build",
     "required": true
   },
   {
@@ -19,8 +19,7 @@ const allLanes = [
   {
     "id": "e2e",
     "command": "npm run test:e2e",
-    "required": true,
-    "optional": true
+    "required": false
   }
 ];
 const invocation = {
@@ -32,13 +31,23 @@ const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(".", "");
 const outDir = join(".agent", "evidence", stamp);
 mkdirSync(join(outDir, "logs"), { recursive: true });
 
-function sh(command, env = {}) {
-  return spawnSync(command, {
-    shell: true,
-    encoding: "utf8",
-    timeout: 900000,
-    env: { ...process.env, ...env },
-  });
+function sh(command) {
+  return spawnSync(command, { shell: true, encoding: "utf8", timeout: 900000 });
+}
+
+function safeRepository(value) {
+  const candidate = String(value || "").trim().replace(/\.git$/, "");
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(candidate) ? candidate : "";
+}
+
+function repositoryFromRemote(value) {
+  const match = String(value || "").trim().match(/github\.com[/:]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\.git)?$/);
+  return match ? safeRepository(match[1]) : "";
+}
+
+function safeBranch(value) {
+  const candidate = String(value || "").trim();
+  return candidate && candidate.length <= 255 && !/[\u0000-\u001f\u007f]/.test(candidate) ? candidate : "";
 }
 
 function textHash(value) {
@@ -88,7 +97,7 @@ function parseSelection(argv) {
   }
   if (includeAll) return { lanes: allLanes };
 
-  const selected = allLanes.filter((lane) => lane.required && !lane.optional);
+  const selected = allLanes.filter((lane) => lane.required);
   if (includeE2e) {
     for (const lane of allLanes) {
       if (lane.id === "e2e" && !selected.some((selectedLane) => selectedLane.id === lane.id)) {
@@ -161,27 +170,6 @@ function largeUntrackedEvidence() {
   return { artifacts, caveats };
 }
 
-function generatedEvidenceArtifacts(root) {
-  const artifacts = [];
-  const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        visit(path);
-      } else if (entry.isFile()) {
-        let kind = "evidence-file";
-        if (path.endsWith(".png")) kind = "screenshot";
-        else if (path.endsWith("geometry-report.json")) kind = "geometry-report";
-        else if (path.endsWith("trace.zip")) kind = "browser-trace";
-        else if (path.endsWith(".log")) kind = "test-log";
-        artifacts.push({ kind, path });
-      }
-    }
-  };
-  visit(root);
-  return artifacts;
-}
-
 function writeManifest(data, exitCode) {
   writeFileSync(join(outDir, "manifest.json"), `${JSON.stringify(data, null, 2)}\n`);
   console.log(`[agent-evidence] ${data.result}: ${join(outDir, "manifest.json")}`);
@@ -189,7 +177,12 @@ function writeManifest(data, exitCode) {
 }
 
 const gitCommit = process.env.GITHUB_HEAD_SHA || sh("git rev-parse --verify HEAD").stdout.trim() || "unknown";
-const gitBranch = sh("git branch --show-current").stdout.trim();
+const evidenceRepo = safeRepository(process.env.GITHUB_REPOSITORY)
+  || repositoryFromRemote(sh("git config --get remote.origin.url").stdout)
+  || "erniesg";
+const gitBranch = safeBranch(process.env.GITHUB_HEAD_REF)
+  || safeBranch(process.env.GITHUB_REF_NAME)
+  || safeBranch(sh("git branch --show-current").stdout);
 const dirty = sh("git status --short").stdout.trim().length > 0;
 const startedAt = new Date();
 const results = [];
@@ -201,7 +194,7 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
   writeManifest({
     schema_version: "1",
     run_id: `agent-evidence-${stamp}`,
-    repo: "erniesg",
+    repo: evidenceRepo,
     branch: gitBranch,
     commit: gitCommit,
     dirty,
@@ -229,7 +222,7 @@ const lanes = selection.lanes;
 
 for (const lane of lanes) {
   const laneStart = Date.now();
-  const proc = sh(lane.command, { AGENT_EVIDENCE_DIR: outDir });
+  const proc = sh(lane.command);
   const output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
   const logPath = join(outDir, "logs", `${lane.id}.log`);
   writeFileSync(logPath, output);
@@ -249,7 +242,7 @@ const endedAt = new Date();
 const manifest = {
   schema_version: "1",
   run_id: `agent-evidence-${stamp}`,
-  repo: "erniesg",
+  repo: evidenceRepo,
   branch: gitBranch,
   commit: gitCommit,
   dirty,
@@ -265,11 +258,7 @@ const manifest = {
     node: process.version,
   },
   lanes: results,
-  artifacts: [
-    { kind: "manifest", path: join(outDir, "manifest.json") },
-    ...generatedEvidenceArtifacts(outDir),
-    ...largeFiles.artifacts,
-  ],
+  artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
   caveats: largeFiles.caveats,
   result: requiredFailures.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,

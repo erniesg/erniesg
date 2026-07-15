@@ -113,6 +113,7 @@ describe('SRT finite-height pagination', () => {
       quote: { fragmentation: 'atomic', keep: 'none' },
       figure: { fragmentation: 'atomic', keep: 'with-related' },
       caption: { fragmentation: 'atomic', keep: 'with-previous' },
+      footnote: { fragmentation: 'atomic', keep: 'with-previous' },
     })
   })
 

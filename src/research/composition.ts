@@ -40,6 +40,7 @@ const COMPOSITION_POLICIES: Record<TargetProfileId, CompositionPolicy> = {
       quote: 'pull-quote',
       figure: 'edge-to-edge',
       caption: 'figure-caption',
+      footnote: 'linked-note',
     },
   },
   paperProMove: {
@@ -53,6 +54,7 @@ const COMPOSITION_POLICIES: Record<TargetProfileId, CompositionPolicy> = {
       quote: 'inline-quote',
       figure: 'compact-stack',
       caption: 'figure-caption-compact',
+      footnote: 'linked-note-compact',
     },
   },
   paperPro: {
@@ -65,6 +67,7 @@ const COMPOSITION_POLICIES: Record<TargetProfileId, CompositionPolicy> = {
       quote: 'pull-quote',
       figure: 'inline',
       caption: 'figure-caption',
+      footnote: 'linked-note',
     },
   },
   print: {
@@ -77,6 +80,7 @@ const COMPOSITION_POLICIES: Record<TargetProfileId, CompositionPolicy> = {
       quote: 'column-quote',
       figure: 'full-span',
       caption: 'figure-caption',
+      footnote: 'linked-note-compact',
     },
   },
 }

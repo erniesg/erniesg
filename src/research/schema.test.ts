@@ -33,7 +33,9 @@ describe('SRT canonical graph schema', () => {
       'sec-method',
       'p-method-1',
     ])
-    expect(canonicalContentHash(paper)).toBe('eb39feffbb23855457fdb5bba9021898aec721a3c308b8aae756c32df2f1d16e')
+    expect(canonicalContentHash(paper)).toBe(
+      'eb39feffbb23855457fdb5bba9021898aec721a3c308b8aae756c32df2f1d16e',
+    )
   })
 
   it('requires every relationship target to exist', () => {
@@ -56,7 +58,9 @@ describe('SRT canonical graph schema', () => {
 
   it('rejects dangling relationships', () => {
     const paper = clonePaper()
-    const figure = paper.nodes.find((node): node is RawFigureNode => node.type === 'figure')
+    const figure = paper.nodes.find(
+      (node): node is RawFigureNode => node.type === 'figure',
+    )
     if (!figure) throw new Error('Fixture lost its figure node')
 
     figure.relationships.caption = 'missing-caption'
@@ -64,9 +68,61 @@ describe('SRT canonical graph schema', () => {
     expect(researchPaperSchema.safeParse(paper).success).toBe(false)
   })
 
+  it('validates note targets, stable reference ids, and backlinks', () => {
+    const paper = researchPaperSchema.parse(rawPaper)
+    const withNote = {
+      ...paper,
+      nodes: [
+        {
+          id: 'p-note-source',
+          type: 'paragraph' as const,
+          text: 'A claim1',
+          noteReferences: [
+            {
+              id: 'noteref-1',
+              label: '1',
+              target: 'fn-1',
+              start: 7,
+              end: 8,
+              confidence: 0.95,
+            },
+          ],
+          source: 'test',
+        },
+        {
+          id: 'fn-1',
+          type: 'footnote' as const,
+          kind: 'footnote' as const,
+          label: '1',
+          text: 'A linked note.',
+          relationships: { backlinks: ['noteref-1'] },
+          source: 'test',
+        },
+      ],
+    }
+
+    expect(researchPaperSchema.safeParse(withNote).success).toBe(true)
+    expect(
+      researchPaperSchema.safeParse({
+        ...withNote,
+        nodes: [
+          {
+            ...withNote.nodes[0],
+            noteReferences: [
+              { ...withNote.nodes[0].noteReferences![0], target: 'missing' },
+            ],
+          },
+          withNote.nodes[1],
+        ],
+      }).success,
+    ).toBe(false)
+  })
+
   it('rejects invalid heading levels', () => {
     const paper = clonePaper()
-    const heading = paper.nodes.find((node): node is RawHeadingNode => node.type === 'heading')
+    const heading = paper.nodes.find(
+      (node): node is RawHeadingNode => node.type === 'heading',
+    )
     if (!heading) throw new Error('Fixture lost its heading node')
 
     heading.level = 0
@@ -77,8 +133,18 @@ describe('SRT canonical graph schema', () => {
   it('rejects target coordinates in canonical content', () => {
     const paper = clonePaper()
 
-    expect(researchPaperSchema.safeParse({ ...paper, targetGeometry: { width: 390 } }).success).toBe(false)
-    expect(researchPaperSchema.safeParse({ ...paper, nodes: [{ ...paper.nodes[0], x: 10, y: 20 }, ...paper.nodes.slice(1)] }).success).toBe(false)
+    expect(
+      researchPaperSchema.safeParse({
+        ...paper,
+        targetGeometry: { width: 390 },
+      }).success,
+    ).toBe(false)
+    expect(
+      researchPaperSchema.safeParse({
+        ...paper,
+        nodes: [{ ...paper.nodes[0], x: 10, y: 20 }, ...paper.nodes.slice(1)],
+      }).success,
+    ).toBe(false)
   })
 
   it('computes a deterministic hash that ignores rendition geometry', () => {

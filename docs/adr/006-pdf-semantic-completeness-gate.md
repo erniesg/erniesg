@@ -37,6 +37,13 @@ references, and notes contribute unresolved objects until represented in the
 canonical graph. Image-bearing or caption-bearing input with no reconstructed
 objects therefore fails closed.
 
+Reading-order evidence uses the versioned `deterministic-geometry-v1` region
+graph. Regions retain normalized source boxes and confidence; every accepted or
+candidate edge retains its geometry evidence and score. The audit reports cycle
+rate, unresolved edges, and optional ground-truth order accuracy separately from
+any future resolver. Candidate edges or cycles participate in the existing
+blocking reading-order threshold.
+
 The 98% text threshold is an initial conservative allowance for normalization
 and intentionally removed repeated margins. It may falsely hold documents with
 large boilerplate headers, while a looser threshold risks hiding lost scholarly
@@ -44,9 +51,12 @@ text. Asset and relationship thresholds remain 100% because the current export
 cannot label a knowingly missing scientific object as complete. Threshold
 changes require a new evidence-backed ADR.
 
-Complex tables, equations, and footnotes remain review-required rather than
-being guessed into prose. A passing gate means only that the configured checks
-passed; it is not a claim of perfect reconstruction.
+Complex tables and equations remain review-required rather than being guessed
+into prose. Footnotes and endnotes clear the gate only when deterministic label,
+page or section scope, column geometry, and ordering evidence produce a unique
+canonical note target. Ambiguous candidates remain diagnostics. A passing gate
+means only that the configured checks passed; it is not a claim of perfect
+reconstruction.
 
 ## Local corpus audit and privacy
 

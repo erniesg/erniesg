@@ -227,7 +227,14 @@ const manifestEntrySchema = z
   .object({
     target: targetProfileIdSchema,
     canonicalId,
-    nodeType: z.enum(['heading', 'paragraph', 'quote', 'caption', 'figure']),
+    nodeType: z.enum([
+      'heading',
+      'paragraph',
+      'quote',
+      'caption',
+      'figure',
+      'footnote',
+    ]),
     contentHash: sha256,
     provenance: z
       .object({
@@ -520,7 +527,18 @@ export class ManifestInvariantError extends Error {
 function relationshipsFor(
   node: ResearchNode,
 ): Record<string, string | string[]> {
-  return node.type === 'figure' ? { ...node.relationships } : {}
+  if (node.type === 'figure') return { ...node.relationships }
+  if (node.type === 'footnote') {
+    return node.relationships.backlinks.length > 0
+      ? { backlinks: [...node.relationships.backlinks] }
+      : {}
+  }
+  if ('noteReferences' in node && node.noteReferences?.length) {
+    return {
+      noteTargets: node.noteReferences.map((reference) => reference.target),
+    }
+  }
+  return {}
 }
 
 function comparableJson(value: unknown): string {

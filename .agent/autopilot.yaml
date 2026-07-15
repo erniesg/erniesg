@@ -2,7 +2,7 @@
 schema_version: 1
 repo: erniesg/erniesg
 target: vm
-profile: default
+profile: erniesg-ai-vm
 provider: vm-codex
 issue_dir: 'docs/issues'
 human_ping: ''

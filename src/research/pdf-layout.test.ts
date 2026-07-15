@@ -111,6 +111,126 @@ describe('PDF semantic reconstruction', () => {
     expect(result.paper).not.toHaveProperty('pages')
   })
 
+  it('preserves narrow-gutter columns instead of interleaving their rows', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Left one.', 0.08, 0.2, 0.43),
+          run(1, 'Right one.', 0.53, 0.2, 0.39),
+          run(1, 'Left two.', 0.08, 0.24, 0.43),
+          run(1, 'Right two.', 0.53, 0.24, 0.39),
+          run(1, 'Left three.', 0.08, 0.28, 0.43),
+          run(1, 'Right three.', 0.53, 0.28, 0.39),
+        ]),
+      ],
+      sourceHash: '1'.repeat(64),
+      fileName: 'narrow-gutter-columns.pdf',
+      byteLength: 2048,
+    })
+
+    const text = result.paper.nodes
+      .map((node) => ('text' in node ? node.text : ''))
+      .join(' ')
+    expect(text.indexOf('Left three')).toBeLessThan(text.indexOf('Right one'))
+    expect(result.readiness.ready).toBe(true)
+  })
+
+  it('fails closed when a short two-column page cannot be ordered safely', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Left one.', 0.08, 0.2, 0.32),
+          run(1, 'Right one.', 0.55, 0.2, 0.32),
+          run(1, 'Left two.', 0.08, 0.24, 0.32),
+          run(1, 'Right two.', 0.55, 0.24, 0.32),
+        ]),
+      ],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'short-columns.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'AMBIGUOUS_READING_ORDER',
+          severity: 'error',
+        }),
+      ]),
+    )
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+  })
+
+  it('uses visual line grouping to detect split, out-of-order captions', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, '1. A split caption', 0.2, 0.398, 0.32, 8),
+          run(1, 'Figure', 0.1, 0.4, 0.08, 8),
+        ]),
+      ],
+      sourceHash: 'e'.repeat(64),
+      fileName: 'split-caption.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.semanticSignals.captions).toBe(1)
+    expect(result.completeness.unresolvedObjects.captions).toBe(1)
+    expect(result.readiness.ready).toBe(false)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'INCOMPLETE_RELATIONSHIP_COVERAGE',
+          severity: 'error',
+        }),
+      ]),
+    )
+  })
+
+  it('does not treat vertically separate metadata and body as columns', () => {
+    const result = reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Metadata A', 0.7, 0.1, 0.2),
+          run(1, 'Metadata B', 0.7, 0.14, 0.2),
+          run(1, 'Body line one.', 0.1, 0.3, 0.2),
+          run(1, 'Body line two.', 0.1, 0.34, 0.2),
+        ]),
+      ],
+      sourceHash: 'f'.repeat(64),
+      fileName: 'metadata-and-body.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'AMBIGUOUS_READING_ORDER' }),
+      ]),
+    )
+    expect(result.readiness.ready).toBe(true)
+  })
+
+  it('counts supplementary Unicode text by code point', () => {
+    const math = '𝑥'.repeat(30)
+    const result = reconstructPageAnalyses({
+      pages: [page(1, [run(1, math, 0.1, 0.2, 0.5)])],
+      sourceHash: '0'.repeat(64),
+      fileName: 'unicode-math.pdf',
+      byteLength: 2048,
+    })
+
+    expect(result.completeness).toMatchObject({
+      sourceTextCharacters: 30,
+      outputTextCharacters: 30,
+      matchedTextCharacters: 30,
+      textCoverage: 1,
+    })
+    expect(result.readiness.ready).toBe(true)
+  })
+
   it('emits stable OCR gates instead of silently exporting partial text', () => {
     const pages = [page(1, [], 'ocr-required')]
     const input = {
@@ -130,5 +250,10 @@ describe('PDF semantic reconstruction', () => {
         expect.objectContaining({ code: 'NO_RECONSTRUCTABLE_TEXT' }),
       ]),
     )
+    expect(first.completeness.ocrRequiredPages).toEqual([1])
+    expect(first.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
   })
 })

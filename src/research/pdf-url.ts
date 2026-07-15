@@ -13,17 +13,30 @@ type FetchPdf = (
 function oversizedPdfError(maxBytes: number) {
   return new PdfImportError(
     'OVERSIZED_PDF',
-    `This converter accepts linked PDFs up to ${maxBytes / 1024 / 1024} MB.`,
+    `PDF resource limit exceeded: the bounded linked-download limit is ${maxBytes} bytes. The response body was cancelled.`,
   )
+}
+
+function cancelledError() {
+  return new PdfImportError(
+    'IMPORT_CANCELLED',
+    'The linked PDF download was cancelled and its response body was released.',
+  )
+}
+
+async function cancelBody(response: Awaited<ReturnType<FetchPdf>>) {
+  await response.body?.cancel().catch(() => undefined)
 }
 
 async function readBoundedBlob(
   response: Awaited<ReturnType<FetchPdf>>,
   maxBytes: number,
   contentType: string,
+  signal?: AbortSignal,
 ) {
   if (!response.body) {
     const blob = await response.blob()
+    if (signal?.aborted) throw cancelledError()
     if (blob.size > maxBytes) throw oversizedPdfError(maxBytes)
     return blob
   }
@@ -31,18 +44,27 @@ async function readBoundedBlob(
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let receivedBytes = 0
+  let completed = false
+  const cancel = () => void reader.cancel()
+  signal?.addEventListener('abort', cancel, { once: true })
   try {
     while (true) {
+      if (signal?.aborted) throw cancelledError()
       const { done, value } = await reader.read()
-      if (done) break
+      if (signal?.aborted) throw cancelledError()
+      if (done) {
+        completed = true
+        break
+      }
       receivedBytes += value.byteLength
       if (receivedBytes > maxBytes) {
-        await reader.cancel()
         throw oversizedPdfError(maxBytes)
       }
       chunks.push(value)
     }
   } finally {
+    signal?.removeEventListener('abort', cancel)
+    if (!completed) await reader.cancel().catch(() => undefined)
     reader.releaseLock()
   }
   return new Blob(chunks, { type: contentType || 'application/pdf' })
@@ -69,7 +91,9 @@ export async function downloadLinkedPdf(
   rawUrl: string,
   fetchPdf: FetchPdf = fetch,
   maxBytes = MAX_LOCAL_PDF_BYTES,
+  signal?: AbortSignal,
 ) {
+  if (signal?.aborted) throw cancelledError()
   let requestedUrl: URL
   try {
     requestedUrl = new URL(rawUrl.trim())
@@ -93,8 +117,10 @@ export async function downloadLinkedPdf(
       headers: { Accept: 'application/pdf,application/octet-stream;q=0.8' },
       redirect: 'follow',
       referrerPolicy: 'no-referrer',
+      signal,
     })
   } catch {
+    if (signal?.aborted) throw cancelledError()
     throw new PdfImportError(
       'PDF_DOWNLOAD_FAILED',
       'The publisher did not allow this browser to download the PDF. Download it yourself and drop it here; broader publisher support requires a separate safe server-side adapter.',
@@ -102,6 +128,7 @@ export async function downloadLinkedPdf(
   }
 
   if (!response.ok) {
+    await cancelBody(response)
     throw new PdfImportError(
       'PDF_DOWNLOAD_FAILED',
       `The linked paper returned ${response.status}${response.statusText ? ` ${response.statusText}` : ''}.`,
@@ -110,6 +137,7 @@ export async function downloadLinkedPdf(
 
   const finalUrl = new URL(response.url || requestedUrl.href)
   if (finalUrl.protocol !== 'https:') {
+    await cancelBody(response)
     throw new PdfImportError(
       'INVALID_PDF_URL',
       'The paper link redirected to a non-HTTPS address.',
@@ -117,6 +145,7 @@ export async function downloadLinkedPdf(
   }
   const declaredBytes = Number(response.headers.get('content-length') || 0)
   if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    await cancelBody(response)
     throw oversizedPdfError(maxBytes)
   }
   const contentType = response.headers.get('content-type')?.toLowerCase() || ''
@@ -125,6 +154,7 @@ export async function downloadLinkedPdf(
     contentType.includes('application/octet-stream') ||
     finalUrl.pathname.toLowerCase().endsWith('.pdf')
   if (!looksLikePdf) {
+    await cancelBody(response)
     throw new PdfImportError(
       'INVALID_PDF_URL',
       'That link resolved to a web page, not a downloadable PDF.',
@@ -133,9 +163,10 @@ export async function downloadLinkedPdf(
 
   let blob: Blob
   try {
-    blob = await readBoundedBlob(response, maxBytes, contentType)
+    blob = await readBoundedBlob(response, maxBytes, contentType, signal)
   } catch (error) {
     if (error instanceof PdfImportError) throw error
+    if (signal?.aborted) throw cancelledError()
     throw new PdfImportError(
       'PDF_DOWNLOAD_FAILED',
       'The linked PDF download ended unexpectedly. Download it yourself and drop it here.',

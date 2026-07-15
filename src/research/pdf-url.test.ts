@@ -70,12 +70,14 @@ describe('linked PDF download', () => {
 
   it('cancels a streamed response before it exceeds the conversion limit', async () => {
     const blob = vi.fn(async () => new Blob(['not reached']))
+    const cancel = vi.fn()
+    let pulls = 0
     const body = new ReadableStream<Uint8Array>({
-      start(controller) {
+      pull(controller) {
+        pulls += 1
         controller.enqueue(new Uint8Array([1, 2, 3]))
-        controller.enqueue(new Uint8Array([4, 5, 6]))
-        controller.close()
       },
+      cancel,
     })
 
     await expect(
@@ -87,7 +89,74 @@ describe('linked PDF download', () => {
     ).rejects.toMatchObject({
       code: 'OVERSIZED_PDF',
     } satisfies Partial<PdfImportError>)
+    expect(pulls).toBeGreaterThanOrEqual(2)
+    expect(cancel).toHaveBeenCalledOnce()
     expect(blob).not.toHaveBeenCalled()
+  })
+
+  it('cancels an unread response when declared length exceeds the limit', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({ cancel })
+
+    await expect(
+      downloadLinkedPdf(
+        'https://papers.example/paper.pdf',
+        async () => ({
+          ...pdfResponse('%PDF-1.4', {
+            'content-type': 'application/pdf',
+            'content-length': '6',
+          }),
+          body,
+        }),
+        5,
+      ),
+    ).rejects.toMatchObject({ code: 'OVERSIZED_PDF' })
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('releases a streaming response after operator cancellation', async () => {
+    const cancel = vi.fn()
+    const controller = new AbortController()
+    const body = new ReadableStream<Uint8Array>({
+      pull(stream) {
+        stream.enqueue(new Uint8Array([1, 2, 3]))
+        controller.abort()
+      },
+      cancel,
+    })
+
+    await expect(
+      downloadLinkedPdf(
+        'https://papers.example/paper.pdf',
+        async () => ({ ...pdfResponse(), body }),
+        5,
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a bodyless response when cancellation occurs during blob reading', async () => {
+    const controller = new AbortController()
+    let resolveBlob: ((blob: Blob) => void) | undefined
+    const blob = vi.fn(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolveBlob = resolve
+        }),
+    )
+    const download = downloadLinkedPdf(
+      'https://papers.example/paper.pdf',
+      async () => ({ ...pdfResponse(), blob }),
+      MAX_LOCAL_PDF_BYTES,
+      controller.signal,
+    )
+
+    await vi.waitFor(() => expect(blob).toHaveBeenCalledOnce())
+    controller.abort()
+    resolveBlob?.(new Blob(['%PDF-1.4\n%%EOF']))
+
+    await expect(download).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
   })
 
   it('turns a browser fetch failure into an actionable fallback', async () => {

@@ -1,52 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8 } from 'fflate'
+import { readFile } from 'node:fs/promises'
 import { buildEpub, inspectEpub } from './epub'
 import { reconstructPdf } from './pdf'
+import {
+  fixtureFile,
+  oversizedPdfFixture,
+} from '../../tests/fixtures/pdf-fixtures'
 
-function makeBornDigitalPdf() {
-  const content = [
-    'BT',
-    '/F1 24 Tf',
-    '72 720 Td',
-    '(A Reconstructed Research Paper) Tj',
-    '/F1 12 Tf',
-    '0 -48 Td',
-    '(This paragraph contains enough embedded text to prove local PDF extraction.) Tj',
-    '0 -22 Td',
-    '(Bounding boxes remain source evidence while the publication becomes reflowable.) Tj',
-    'ET',
-  ].join('\n')
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>',
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-  ]
-  let pdf = '%PDF-1.4\n'
-  const offsets = [0]
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length)
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
-  })
-  const xref = pdf.length
-  pdf += `xref\n0 ${objects.length + 1}\n`
-  pdf += '0000000000 65535 f \n'
-  pdf += offsets
-    .slice(1)
-    .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
-    .join('')
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
-  return new TextEncoder().encode(pdf)
-}
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('PDF.js browser ingestion', () => {
   it('opens an actual born-digital PDF and reconstructs text with boxes', async () => {
-    const bytes = makeBornDigitalPdf()
-    const file = new File([bytes], 'fixture.pdf', {
-      type: 'application/pdf',
-      lastModified: Date.UTC(2026, 6, 13),
-    })
+    const file = await fixtureFile('born-digital.pdf')
     const result = await reconstructPdf(file)
 
     expect(result.source.pageCount).toBe(1)
@@ -65,6 +33,13 @@ describe('PDF.js browser ingestion', () => {
       page: 1,
       method: 'pdf-text',
     })
+    expect(result.completeness).toMatchObject({
+      textCoverage: 1,
+      assetCoverage: 1,
+      relationshipCoverage: 1,
+      unresolvedObjectCount: 0,
+    })
+    expect(result.readiness).toMatchObject({ ready: true, status: 'ready' })
 
     const epub = await buildEpub(result.paper, result)
     const { files } = inspectEpub(epub.bytes)
@@ -74,7 +49,146 @@ describe('PDF.js browser ingestion', () => {
     )
     expect(JSON.parse(strFromU8(files['EPUB/export.json']))).toMatchObject({
       sourcePdfSha256: result.source.sha256,
+      sourceReadiness: { ready: true },
       rendition: 'reflowable-epub',
     })
+  })
+
+  it('fails closed when scientific objects and relationships are unresolved', async () => {
+    const result = await reconstructPdf(
+      await fixtureFile('structured-scientific.pdf'),
+    )
+
+    expect(result.pages[0].imageCount).toBeGreaterThan(0)
+    expect(result.semanticSignals).toEqual({
+      captions: 1,
+      tables: 1,
+      equations: 1,
+      footnoteReferences: 1,
+      footnotes: 1,
+    })
+    expect(result.completeness).toMatchObject({
+      textCoverage: 1,
+      sourceAssetCount: 1,
+      exportedAssetCount: 0,
+      assetCoverage: 0,
+      expectedRelationshipCount: 2,
+      resolvedRelationshipCount: 0,
+      relationshipCoverage: 0,
+      readingOrderDiagnostics: 1,
+    })
+    expect(result.completeness.unresolvedObjectCount).toBeGreaterThan(0)
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'AMBIGUOUS_READING_ORDER',
+          severity: 'error',
+        }),
+        expect.objectContaining({
+          code: 'INCOMPLETE_ASSET_COVERAGE',
+          severity: 'error',
+        }),
+        expect.objectContaining({
+          code: 'INCOMPLETE_RELATIONSHIP_COVERAGE',
+          severity: 'error',
+        }),
+        expect.objectContaining({
+          code: 'UNRESOLVED_SEMANTIC_OBJECTS',
+          severity: 'error',
+        }),
+      ]),
+    )
+    await expect(buildEpub(result.paper, result)).rejects.toMatchObject({
+      code: 'INCOMPLETE_RECONSTRUCTION',
+    })
+  })
+
+  it('classifies scanned, mixed, and two-page scanned fixtures', async () => {
+    const [scanned, mixed, twoPage] = await Promise.all([
+      reconstructPdf(await fixtureFile('scanned-page.pdf')),
+      reconstructPdf(await fixtureFile('mixed-page.pdf')),
+      reconstructPdf(await fixtureFile('two-page-scan.pdf')),
+    ])
+
+    expect(scanned.pages.map((page) => page.kind)).toEqual(['ocr-required'])
+    expect(mixed.pages.map((page) => page.kind)).toEqual(['mixed'])
+    expect(twoPage.pages.map((page) => page.kind)).toEqual([
+      'ocr-required',
+      'ocr-required',
+    ])
+    expect(twoPage.completeness.ocrRequiredPages).toEqual([1, 2])
+    expect(
+      [scanned, mixed, twoPage].every((result) => !result.readiness.ready),
+    ).toBe(true)
+  })
+
+  it('rejects the virtual oversized fixture before reading document bytes', async () => {
+    let read = false
+    await expect(
+      reconstructPdf(
+        oversizedPdfFixture(() => {
+          read = true
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'OVERSIZED_PDF' })
+    expect(read).toBe(false)
+  })
+
+  it('cancels before PDF.js opens when abort fires during hashing', async () => {
+    const controller = new AbortController()
+    const digest = crypto.subtle.digest.bind(crypto.subtle)
+    vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (...args) => {
+      const result = await digest(...args)
+      controller.abort()
+      return result
+    })
+    const file = new File(['%PDF-1.4\ninvalid'], 'cancel-during-hash.pdf', {
+      type: 'application/pdf',
+      lastModified: 0,
+    })
+
+    await expect(
+      reconstructPdf(file, undefined, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+  })
+
+  it('cancels when the operator aborts at reconstruction', async () => {
+    const controller = new AbortController()
+
+    await expect(
+      reconstructPdf(
+        await fixtureFile('born-digital.pdf'),
+        (progress) => {
+          if (progress.phase === 'reconstructing') controller.abort()
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+  })
+
+  it('retains the published fellowship PDF as non-private local audit evidence', async () => {
+    const bytes = await readFile(
+      new URL(
+        '../../public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
+        import.meta.url,
+      ),
+    )
+    const result = await reconstructPdf(
+      new File([bytes], 'if-letters-home-could-sing.pdf', {
+        type: 'application/pdf',
+        lastModified: 0,
+      }),
+    )
+
+    expect(result.source.sha256).toBe(
+      'ddf25768bcc2ec8866037c553102071ee8fbb73db168f975852f69482c1eb042',
+    )
+    expect(result.source.pageCount).toBeGreaterThan(1)
+    expect(result.completeness.sourceTextCharacters).toBeGreaterThan(0)
+    expect(['ready', 'review-required']).toContain(result.readiness.status)
   })
 })

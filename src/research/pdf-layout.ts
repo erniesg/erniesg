@@ -3,26 +3,15 @@ import type {
   NodeSourceEvidence,
   PdfPageAnalysis,
   PdfReconstruction,
-  PdfSourceRun,
   ReconstructionDiagnostic,
 } from './import-types'
-
-type TextLine = {
-  page: number
-  text: string
-  x: number
-  y: number
-  width: number
-  height: number
-  fontSize: number
-  runs: PdfSourceRun[]
-  column: 'left' | 'right' | 'span'
-}
+import { groupRunsIntoLines, type PdfTextLine } from './pdf-lines'
+import { assessPdfCompleteness } from './pdf-quality'
 
 type TextBlock = {
   type: 'heading' | 'paragraph'
   text: string
-  lines: TextLine[]
+  lines: PdfTextLine[]
   confidence: number
 }
 
@@ -46,67 +35,6 @@ function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
 }
 
-function mergeRunText(runs: PdfSourceRun[]) {
-  let text = ''
-  let previous: PdfSourceRun | undefined
-  for (const run of runs) {
-    const word = run.text.trim()
-    if (!word) continue
-    const gap = previous
-      ? run.x - (previous.x + previous.width)
-      : Number.POSITIVE_INFINITY
-    const needsSpace =
-      text.length > 0 &&
-      !/^[,.;:!?%)}\]]/.test(word) &&
-      !/[({[]$/.test(text) &&
-      gap > Math.max(0.0015, run.height * 0.08)
-    text += `${needsSpace ? ' ' : ''}${word}`
-    previous = run
-  }
-  return text.replace(/\s+/g, ' ').trim()
-}
-
-function groupRunsIntoLines(page: PdfPageAnalysis): TextLine[] {
-  const lines: TextLine[] = []
-  const runs = page.runs
-    .filter((run) => run.text.trim())
-    .sort((left, right) => left.y - right.y || left.x - right.x)
-
-  for (const run of runs) {
-    const center = run.y + run.height / 2
-    const matching = lines.find((line) => {
-      const lineCenter = line.y + line.height / 2
-      return Math.abs(center - lineCenter) <= Math.max(0.004, run.height * 0.45)
-    })
-    if (matching) {
-      matching.runs.push(run)
-      matching.x = Math.min(matching.x, run.x)
-      matching.y = Math.min(matching.y, run.y)
-      matching.width = Math.max(matching.width, run.x + run.width - matching.x)
-      matching.height = Math.max(matching.height, run.height)
-      matching.fontSize = Math.max(matching.fontSize, run.fontSize)
-      continue
-    }
-    lines.push({
-      page: page.page,
-      text: '',
-      x: run.x,
-      y: run.y,
-      width: run.width,
-      height: run.height,
-      fontSize: run.fontSize,
-      runs: [run],
-      column: 'span',
-    })
-  }
-
-  for (const line of lines) {
-    line.runs.sort((left, right) => left.x - right.x)
-    line.text = mergeRunText(line.runs)
-  }
-  return lines.filter((line) => line.text)
-}
-
 function normalizeMarginText(text: string) {
   return text
     .toLocaleLowerCase()
@@ -115,7 +43,7 @@ function normalizeMarginText(text: string) {
     .trim()
 }
 
-function repeatedMarginKeys(linesByPage: TextLine[][]) {
+function repeatedMarginKeys(linesByPage: PdfTextLine[][]) {
   const occurrences = new Map<string, Set<number>>()
   for (const lines of linesByPage) {
     for (const line of lines) {
@@ -134,16 +62,27 @@ function repeatedMarginKeys(linesByPage: TextLine[][]) {
   )
 }
 
-function orderPageLines(lines: TextLine[]) {
+function orderPageLines(lines: PdfTextLine[]) {
   const candidates = lines.filter((line) => line.text)
   const left = candidates.filter(
     (line) => line.x < 0.43 && line.x + line.width < 0.62,
   )
   const right = candidates.filter((line) => line.x >= 0.43)
   const hasColumns = left.length >= 3 && right.length >= 3
+  const leftTop = Math.min(...left.map((line) => line.y))
+  const leftBottom = Math.max(...left.map((line) => line.y + line.height))
+  const rightTop = Math.min(...right.map((line) => line.y))
+  const rightBottom = Math.max(...right.map((line) => line.y + line.height))
+  const hasShortColumnCandidates =
+    left.length >= 2 &&
+    right.length >= 2 &&
+    Math.min(leftBottom, rightBottom) > Math.max(leftTop, rightTop)
 
   if (!hasColumns) {
-    return candidates.sort((a, b) => a.y - b.y || a.x - b.x)
+    return {
+      lines: candidates.sort((a, b) => a.y - b.y || a.x - b.x),
+      ambiguous: hasShortColumnCandidates ? [...left, ...right] : [],
+    }
   }
 
   const bodyTop = Math.min(
@@ -154,21 +93,27 @@ function orderPageLines(lines: TextLine[]) {
     ...left.map((line) => line.y + line.height),
     ...right.map((line) => line.y + line.height),
   )
-  const top: TextLine[] = []
-  const bottom: TextLine[] = []
+  const top: PdfTextLine[] = []
+  const bottom: PdfTextLine[] = []
+  const ambiguous: PdfTextLine[] = []
   for (const line of candidates) {
     if (left.includes(line)) line.column = 'left'
     else if (right.includes(line)) line.column = 'right'
     else if (line.y < bodyTop) top.push(line)
     else if (line.y > bodyBottom) bottom.push(line)
+    else ambiguous.push(line)
   }
 
-  return [
-    ...top.sort((a, b) => a.y - b.y),
-    ...left.sort((a, b) => a.y - b.y),
-    ...right.sort((a, b) => a.y - b.y),
-    ...bottom.sort((a, b) => a.y - b.y),
-  ]
+  return {
+    lines: [
+      ...top.sort((a, b) => a.y - b.y),
+      ...left.sort((a, b) => a.y - b.y),
+      ...right.sort((a, b) => a.y - b.y),
+      ...ambiguous.sort((a, b) => a.y - b.y || a.x - b.x),
+      ...bottom.sort((a, b) => a.y - b.y),
+    ],
+    ambiguous,
+  }
 }
 
 function joinLineText(current: string, next: string) {
@@ -178,7 +123,7 @@ function joinLineText(current: string, next: string) {
   return `${current} ${next}`
 }
 
-function linesToBlocks(lines: TextLine[]) {
+function linesToBlocks(lines: PdfTextLine[]) {
   const bodySize =
     median(lines.map((line) => line.fontSize).filter(Boolean)) || 12
   const blocks: TextBlock[] = []
@@ -284,7 +229,16 @@ export function reconstructPageAnalyses({
     const filtered = pageLines.filter(
       (line) => !repeated.has(normalizeMarginText(line.text)),
     )
-    return orderPageLines(filtered)
+    const ordered = orderPageLines(filtered)
+    if (ordered.ambiguous.length > 0) {
+      diagnostics.push({
+        code: 'AMBIGUOUS_READING_ORDER',
+        severity: 'error',
+        page: ordered.ambiguous[0].page,
+        message: `Page ${ordered.ambiguous[0].page} contains ${ordered.ambiguous.length} spanning block${ordered.ambiguous.length === 1 ? '' : 's'} whose position within column flow requires review.`,
+      })
+    }
+    return ordered.lines
   })
   if (repeated.size > 0) {
     diagnostics.push({
@@ -326,7 +280,7 @@ export function reconstructPageAnalyses({
         code: 'LOW_CONFIDENCE_BLOCK',
         severity: 'warning',
         page: pages[0],
-        message: `${id} needs reading-order review.`,
+        message: `A reconstructed block on page ${pages[0]} needs reading-order review.`,
       })
     }
     return block.type === 'heading'
@@ -371,6 +325,12 @@ export function reconstructPageAnalyses({
     nodes,
   }
 
+  const assessment = assessPdfCompleteness({
+    pages,
+    paper,
+    diagnostics,
+  })
+
   return {
     source: {
       fileName,
@@ -382,6 +342,9 @@ export function reconstructPageAnalyses({
     paper,
     pages,
     provenance,
-    diagnostics,
+    diagnostics: assessment.diagnostics,
+    semanticSignals: assessment.semanticSignals,
+    completeness: assessment.completeness,
+    readiness: assessment.readiness,
   }
 }

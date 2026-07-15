@@ -1,4 +1,10 @@
-import { useRef, useState, type DragEvent, type FormEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+} from 'react'
 import { buildEpub, type EpubExport } from '@/research/epub'
 import type {
   PdfImportProgress,
@@ -13,7 +19,7 @@ type StudioState =
   | { status: 'idle' }
   | { status: 'processing'; fileName: string; progress: PdfImportProgress }
   | {
-      status: 'ready' | 'needs-ocr'
+      status: 'ready' | 'review-required'
       result: PdfReconstruction
       epub?: EpubExport
     }
@@ -40,6 +46,14 @@ export default function PublicationImporter({
   const [dragging, setDragging] = useState(false)
   const [paperUrl, setPaperUrl] = useState('')
   const input = useRef<HTMLInputElement>(null)
+  const activeImport = useRef<AbortController>()
+
+  useEffect(
+    () => () => {
+      activeImport.current?.abort()
+    },
+    [],
+  )
 
   const showError = (error: unknown) => {
     setState({
@@ -52,8 +66,17 @@ export default function PublicationImporter({
     })
   }
 
-  const processFile = async (file?: File) => {
+  const nextImport = () => {
+    activeImport.current?.abort()
+    const controller = new AbortController()
+    activeImport.current = controller
+    return controller
+  }
+
+  const processFile = async (file?: File, controller = nextImport()) => {
     if (!file) return
+    const isCurrent = () =>
+      activeImport.current === controller && !controller.signal.aborted
     setState({
       status: 'processing',
       fileName: file.name,
@@ -61,34 +84,57 @@ export default function PublicationImporter({
     })
     try {
       const { reconstructPdf } = await import('@/research/pdf')
-      const result = await reconstructPdf(file, (progress) => {
-        setState({ status: 'processing', fileName: file.name, progress })
-      })
-      const needsOcr = result.diagnostics.some(
-        (diagnostic) => diagnostic.code === 'OCR_REQUIRED',
+      const result = await reconstructPdf(
+        file,
+        (progress) => {
+          if (isCurrent()) {
+            setState({ status: 'processing', fileName: file.name, progress })
+          }
+        },
+        { signal: controller.signal },
       )
-      if (needsOcr || result.paper.nodes.length === 0) {
-        setState({ status: 'needs-ocr', result })
+      if (!isCurrent()) return
+      if (!result.readiness.ready) {
+        setState({ status: 'review-required', result })
         return
       }
       setState({ status: 'ready', result })
       const epub = await buildEpub(result.paper, result)
+      if (!isCurrent()) return
       setState({ status: 'ready', result, epub })
     } catch (error) {
+      if (activeImport.current !== controller) return
+      if (
+        error instanceof PdfImportError &&
+        error.code === 'IMPORT_CANCELLED'
+      ) {
+        return
+      }
       showError(error)
     }
   }
 
   const processUrl = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    const controller = nextImport()
     setState({
       status: 'processing',
       fileName: paperUrl,
       progress: { ...initialProgress, message: 'Downloading the linked PDF…' },
     })
     try {
-      await processFile(await downloadLinkedPdf(paperUrl))
+      await processFile(
+        await downloadLinkedPdf(paperUrl, fetch, undefined, controller.signal),
+        controller,
+      )
     } catch (error) {
+      if (activeImport.current !== controller) return
+      if (
+        error instanceof PdfImportError &&
+        error.code === 'IMPORT_CANCELLED'
+      ) {
+        return
+      }
       showError(error)
     }
   }
@@ -100,6 +146,8 @@ export default function PublicationImporter({
   }
 
   const reset = () => {
+    activeImport.current?.abort()
+    activeImport.current = undefined
     if (input.current) input.current.value = ''
     setPaperUrl('')
     setState({ status: 'idle' })
@@ -203,12 +251,12 @@ export default function PublicationImporter({
         </div>
       )}
 
-      {(state.status === 'ready' || state.status === 'needs-ocr') && (
+      {(state.status === 'ready' || state.status === 'review-required') && (
         <>
           <div className="publication-result-bar">
             <div>
               <span className="srt-kicker">
-                {state.status === 'ready' ? 'EPUB ready' : 'Needs OCR'}
+                {state.status === 'ready' ? 'EPUB ready' : 'Review required'}
               </span>
               <strong>{state.result.source.fileName}</strong>
               <small>
@@ -235,20 +283,21 @@ export default function PublicationImporter({
             </div>
           </div>
 
-          {state.status === 'needs-ocr' && (
+          {state.status === 'review-required' && (
             <div className="publication-ocr-gate" role="alert">
-              <span>Scanned pages found</span>
-              <h3>This PDF needs OCR before it can become an EPUB.</h3>
+              <span>Completeness gate</span>
+              <h3>This reconstruction is incomplete.</h3>
               <p>
-                OCR support is still in progress, so this version won't make a
-                partial EPUB. Your file has not left this device.
+                This version won't make a partial EPUB while source text,
+                images, relationships, reading order, or OCR requirements are
+                unresolved. Your file has not left this device.
               </p>
             </div>
           )}
 
           <details
             className="publication-diagnostics"
-            open={state.status === 'needs-ocr'}
+            open={state.status === 'review-required'}
           >
             <summary>
               Conversion details · {state.result.diagnostics.length}{' '}
@@ -267,6 +316,62 @@ export default function PublicationImporter({
                       </small>
                     </li>
                   ))}
+                </ol>
+              </div>
+              <div>
+                <h3>Completeness</h3>
+                <ol>
+                  <li>
+                    <span>Text coverage</span>
+                    <strong>
+                      {Math.round(state.result.completeness.textCoverage * 100)}
+                      %
+                    </strong>
+                    <small>
+                      {state.result.completeness.matchedTextCharacters} of{' '}
+                      {state.result.completeness.sourceTextCharacters}{' '}
+                      normalized source characters
+                    </small>
+                  </li>
+                  <li>
+                    <span>Asset coverage</span>
+                    <strong>
+                      {Math.round(
+                        state.result.completeness.assetCoverage * 100,
+                      )}
+                      %
+                    </strong>
+                    <small>
+                      {state.result.completeness.exportedAssetCount} of{' '}
+                      {state.result.completeness.sourceAssetCount} source image
+                      objects
+                    </small>
+                  </li>
+                  <li>
+                    <span>Relationship coverage</span>
+                    <strong>
+                      {Math.round(
+                        state.result.completeness.relationshipCoverage * 100,
+                      )}
+                      %
+                    </strong>
+                    <small>
+                      {state.result.completeness.resolvedRelationshipCount} of{' '}
+                      {state.result.completeness.expectedRelationshipCount}{' '}
+                      detected relationships
+                    </small>
+                  </li>
+                  <li>
+                    <span>Unresolved objects</span>
+                    <strong>
+                      {state.result.completeness.unresolvedObjectCount}
+                    </strong>
+                    <small>
+                      OCR pages{' '}
+                      {state.result.completeness.ocrRequiredPages.join(', ') ||
+                        'none'}
+                    </small>
+                  </li>
                 </ol>
               </div>
               <div>

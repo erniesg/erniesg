@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.0.0.json",
+  "title": "Local PDF corpus audit report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reportSchema",
+    "privacy",
+    "policy",
+    "summary",
+    "documents"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "reportSchema": {
+      "const": "docs/schemas/pdf-corpus-audit.schema.json"
+    },
+    "privacy": { "const": "basenames-hashes-metrics-diagnostics-only" },
+    "policy": { "$ref": "#/$defs/policy" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documents", "ready", "reviewRequired", "failed"],
+      "properties": {
+        "documents": { "type": "integer", "minimum": 0 },
+        "ready": { "type": "integer", "minimum": 0 },
+        "reviewRequired": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/auditedDocument" },
+          { "$ref": "#/$defs/failedDocument" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimumTextCoverage",
+        "minimumAssetCoverage",
+        "minimumRelationshipCoverage",
+        "maximumUnresolvedObjects",
+        "maximumOcrRequiredPages",
+        "maximumReadingOrderDiagnostics"
+      ],
+      "properties": {
+        "minimumTextCoverage": { "$ref": "#/$defs/ratio" },
+        "minimumAssetCoverage": { "$ref": "#/$defs/ratio" },
+        "minimumRelationshipCoverage": { "$ref": "#/$defs/ratio" },
+        "maximumUnresolvedObjects": { "type": "integer", "minimum": 0 },
+        "maximumOcrRequiredPages": { "type": "integer", "minimum": 0 },
+        "maximumReadingOrderDiagnostics": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceTextCharacters",
+        "outputTextCharacters",
+        "matchedTextCharacters",
+        "textCoverage",
+        "sourceAssetCount",
+        "exportedAssetCount",
+        "assetCoverage",
+        "expectedRelationshipCount",
+        "resolvedRelationshipCount",
+        "relationshipCoverage",
+        "unresolvedObjectCount",
+        "unresolvedObjects",
+        "ocrRequiredPages",
+        "readingOrderDiagnostics"
+      ],
+      "properties": {
+        "sourceTextCharacters": { "type": "integer", "minimum": 0 },
+        "outputTextCharacters": { "type": "integer", "minimum": 0 },
+        "matchedTextCharacters": { "type": "integer", "minimum": 0 },
+        "textCoverage": { "$ref": "#/$defs/ratio" },
+        "sourceAssetCount": { "type": "integer", "minimum": 0 },
+        "exportedAssetCount": { "type": "integer", "minimum": 0 },
+        "assetCoverage": { "$ref": "#/$defs/ratio" },
+        "expectedRelationshipCount": { "type": "integer", "minimum": 0 },
+        "resolvedRelationshipCount": { "type": "integer", "minimum": 0 },
+        "relationshipCoverage": { "$ref": "#/$defs/ratio" },
+        "unresolvedObjectCount": { "type": "integer", "minimum": 0 },
+        "unresolvedObjects": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "assets",
+            "captions",
+            "tables",
+            "equations",
+            "footnoteReferences",
+            "footnotes"
+          ],
+          "properties": {
+            "assets": { "type": "integer", "minimum": 0 },
+            "captions": { "type": "integer", "minimum": 0 },
+            "tables": { "type": "integer", "minimum": 0 },
+            "equations": { "type": "integer", "minimum": 0 },
+            "footnoteReferences": { "type": "integer", "minimum": 0 },
+            "footnotes": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "ocrRequiredPages": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "readingOrderDiagnostics": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "ready", "policy", "blockingDiagnosticCodes"],
+      "properties": {
+        "status": { "enum": ["ready", "review-required"] },
+        "ready": { "type": "boolean" },
+        "policy": { "$ref": "#/$defs/policy" },
+        "blockingDiagnosticCodes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["info", "warning", "error"] },
+        "page": { "type": "integer", "minimum": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "auditedDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "basename",
+        "sha256",
+        "byteLength",
+        "pageCount",
+        "completeness",
+        "readiness",
+        "diagnostics"
+      ],
+      "properties": {
+        "basename": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "pageCount": { "type": "integer", "minimum": 1 },
+        "completeness": { "$ref": "#/$defs/completeness" },
+        "readiness": { "$ref": "#/$defs/readiness" },
+        "diagnostics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagnostic" }
+        }
+      }
+    },
+    "failedDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basename", "sha256", "code", "message"],
+      "properties": {
+        "basename": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "null" },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

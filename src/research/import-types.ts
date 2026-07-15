@@ -38,10 +38,56 @@ export type ReconstructionDiagnostic = {
     | 'MIXED_PAGE'
     | 'REPEATED_MARGIN_TEXT'
     | 'LOW_CONFIDENCE_BLOCK'
+    | 'AMBIGUOUS_READING_ORDER'
     | 'NO_RECONSTRUCTABLE_TEXT'
+    | 'INCOMPLETE_TEXT_COVERAGE'
+    | 'INCOMPLETE_ASSET_COVERAGE'
+    | 'INCOMPLETE_RELATIONSHIP_COVERAGE'
+    | 'UNRESOLVED_SEMANTIC_OBJECTS'
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
+}
+
+export type PdfSemanticSignals = {
+  captions: number
+  tables: number
+  equations: number
+  footnoteReferences: number
+  footnotes: number
+}
+
+export type PdfCompletenessMetrics = {
+  sourceTextCharacters: number
+  outputTextCharacters: number
+  matchedTextCharacters: number
+  textCoverage: number
+  sourceAssetCount: number
+  exportedAssetCount: number
+  assetCoverage: number
+  expectedRelationshipCount: number
+  resolvedRelationshipCount: number
+  relationshipCoverage: number
+  unresolvedObjectCount: number
+  unresolvedObjects: PdfSemanticSignals & { assets: number }
+  ocrRequiredPages: number[]
+  readingOrderDiagnostics: number
+}
+
+export type PdfCompletenessPolicy = {
+  minimumTextCoverage: number
+  minimumAssetCoverage: number
+  minimumRelationshipCoverage: number
+  maximumUnresolvedObjects: number
+  maximumOcrRequiredPages: number
+  maximumReadingOrderDiagnostics: number
+}
+
+export type PdfReadiness = {
+  status: 'ready' | 'review-required'
+  ready: boolean
+  policy: PdfCompletenessPolicy
+  blockingDiagnosticCodes: ReconstructionDiagnostic['code'][]
 }
 
 export type NodeSourceEvidence = {
@@ -62,6 +108,9 @@ export type PdfReconstruction = {
   pages: PdfPageAnalysis[]
   provenance: Record<string, NodeSourceEvidence>
   diagnostics: ReconstructionDiagnostic[]
+  semanticSignals: PdfSemanticSignals
+  completeness: PdfCompletenessMetrics
+  readiness: PdfReadiness
 }
 
 export type PdfImportProgress = {
@@ -72,19 +121,21 @@ export type PdfImportProgress = {
 }
 
 export class PdfImportError extends Error {
-  constructor(
-    public readonly code:
-      | 'INVALID_PDF'
-      | 'ENCRYPTED_PDF'
-      | 'OVERSIZED_PDF'
-      | 'OCR_REQUIRED'
-      | 'EMPTY_PDF'
-      | 'PDF_PARSE_FAILED'
-      | 'INVALID_PDF_URL'
-      | 'PDF_DOWNLOAD_FAILED',
-    message: string,
-  ) {
+  public readonly code:
+    | 'INVALID_PDF'
+    | 'ENCRYPTED_PDF'
+    | 'OVERSIZED_PDF'
+    | 'OCR_REQUIRED'
+    | 'EMPTY_PDF'
+    | 'PDF_PARSE_FAILED'
+    | 'INVALID_PDF_URL'
+    | 'PDF_DOWNLOAD_FAILED'
+    | 'IMPORT_CANCELLED'
+    | 'INCOMPLETE_RECONSTRUCTION'
+
+  constructor(code: PdfImportError['code'], message: string) {
     super(message)
+    this.code = code
     this.name = 'PdfImportError'
   }
 }

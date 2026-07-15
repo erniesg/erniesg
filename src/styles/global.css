@@ -578,6 +578,9 @@
   .publication-ocr-gate {
     display: none !important;
   }
+  .publication-preview-blocked {
+    display: none !important;
+  }
   .publication-importer {
     border: 0;
     padding: 0;

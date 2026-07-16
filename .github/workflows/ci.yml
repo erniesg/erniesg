@@ -31,7 +31,7 @@ jobs:
         run: |
           set -eu
           echo "secret scan: checking immutable commit for common private-key and token markers"
-          token_marker='github''_pat_[A-Za-z0-9_]{20,}|gh''[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|sk_(live|test)_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{20,}|(xox[bcaprs]|xapp|xwfp|xoxe([.]xox[bp])?)-[A-Za-z0-9-]{20,}|(AKIA|ASIA)[0-9A-Z]{16}|https://hooks[.]slack[.]com/services/[A-Z0-9]{8,}/[A-Z0-9]{8,}/[A-Za-z0-9]{20,}|https://((canary|ptb)[.])?discord(app)?[.]com/api(/v[0-9]+)?/webhooks/[0-9]{10,}/[A-Za-z0-9._-]{20,}'
+          token_marker='(^|[^A-Za-z0-9_-]|\\[nrt])(github''_pat_[A-Za-z0-9_]{20,}|gh''[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|sk_(live|test)_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{20,}|(xox[bcaprs]|xapp|xwfp|xoxe([.]xox[bp])?)-[A-Za-z0-9-]{20,}|(AKIA|ASIA)[0-9A-Z]{16}|https://hooks[.]slack[.]com/services/[A-Z0-9]{8,}/[A-Z0-9]{8,}/[A-Za-z0-9]{20,}|https://((canary|ptb)[.])?discord(app)?[.]com/api(/v[0-9]+)?/webhooks/[0-9]{10,}/[A-Za-z0-9._-]{20,})'
           private_key_marker='-----BEGIN ((RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE[ ]KEY|PGP PRIVATE KEY BLOCK)-----'
           if ! git cat-file -e "$SCAN_SHA^{commit}" 2>/dev/null; then
             echo "secret scan failed: immutable commit is unavailable" >&2

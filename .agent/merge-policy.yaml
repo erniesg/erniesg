@@ -28,12 +28,16 @@ human_opt_in:
 required:
   checks:
     - checks
+    - evidence
+    - secret-scan
   # approved = GitHub approval only; reviewed = approved or trusted independent review evidence;
   # none = no review gate. Defaults stay conservative.
   review_state: none
   linked_issue: true
-  evidence_manifest: true
-  clean_evidence: true
+  # Evidence is enforced via the required `evidence` CI check; no PR on this repo
+  # receives the comment-based evidence manifest, so the comment gate stays off.
+  evidence_manifest: false
+  clean_evidence: false
   secret_scan: true
 forbidden:
   labels:

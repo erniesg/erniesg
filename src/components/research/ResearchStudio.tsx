@@ -9,11 +9,9 @@ import {
 } from 'react'
 import {
   cacheAnnotationGeometry,
+  createDemoAnnotations,
   createLayoutVersion,
-  createSemanticTextAnchor,
-  createSemanticTextAnchorFromRange,
   resolveTextAnchor,
-  textAnnotationSchema,
   type TextAnchorResolution,
   type TextAnnotation,
 } from '@/research/annotations'
@@ -41,58 +39,6 @@ type CaptionNode = Extract<ResearchNode, { type: 'caption' }>
 type ResolvedTextAnnotation = {
   annotation: TextAnnotation
   resolution: Extract<TextAnchorResolution, { status: 'resolved' }>
-}
-
-const ANCHOR_QUOTE =
-  'Once meaning becomes coordinates, every new screen or sheet becomes a repair job.'
-
-function createDemoAnnotations(paper: ResearchPaper) {
-  const preferredNode = paper.nodes.find(
-    (candidate) =>
-      candidate.id === 'p-proposition-1' &&
-      candidate.type === 'paragraph' &&
-      candidate.text.includes(ANCHOR_QUOTE),
-  )
-  const fallbackNode = paper.nodes.find(
-    (candidate) =>
-      candidate.type !== 'figure' && candidate.text.trim().length > 0,
-  )
-  const node = preferredNode ?? fallbackNode
-  if (!node || node.type === 'figure') {
-    return []
-  }
-  const target = preferredNode
-    ? createSemanticTextAnchor(node.id, node.text, ANCHOR_QUOTE)
-    : (() => {
-        const start = node.text.search(/\S/u)
-        const exact = Array.from(node.text.slice(start))
-          .slice(0, 160)
-          .join('')
-          .trimEnd()
-        return createSemanticTextAnchorFromRange(
-          node.id,
-          node.text,
-          start,
-          start + exact.length,
-        )
-      })()
-
-  return [
-    textAnnotationSchema.parse({
-      id: 'highlight-reading-position',
-      kind: 'highlight',
-      target,
-      appearance: { color: 'amber' },
-      geometryCache: [],
-    }),
-    textAnnotationSchema.parse({
-      id: 'note-reading-position',
-      kind: 'note',
-      target,
-      body: 'Geometry may change; this note remains attached to the semantic sentence.',
-      geometryCache: [],
-    }),
-  ]
 }
 
 function AnnotatedText({

@@ -1,42 +1,20 @@
-import { useEffect, useState } from 'react'
-import { buildEpub, type EpubExport } from '@/research/epub'
 import type { ResearchPaper } from '@/research/schema'
-import EpubDownloadLink from './EpubDownloadLink'
 
 export default function ResearchPaperActions({
   paper,
 }: {
   paper: ResearchPaper
 }) {
-  const [epub, setEpub] = useState<EpubExport>()
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let active = true
-    setError('')
-    setEpub(undefined)
-    void buildEpub(paper)
-      .then((value) => {
-        if (active) setEpub(value)
-      })
-      .catch((caught) => {
-        if (active) {
-          setError(
-            caught instanceof Error ? caught.message : 'EPUB export failed',
-          )
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [paper])
+  const exports = `/research/${paper.id}/exports`
 
   return (
     <nav aria-label="Paper downloads">
-      <button onClick={() => window.print()}>Print / PDF</button>
-      <EpubDownloadLink epub={epub} pendingLabel="Preparing EPUB…" />
-      <a href={`/research/${paper.id}/source.json`}>Source data</a>
-      {error && <small role="alert">{error}</small>}
+      <a href={`${exports}/print.pdf`}>Paginated PDF</a>
+      <a href={`${exports}/reflowable.html`}>Reflowable HTML</a>
+      <a href={`${exports}/publication.epub`}>EPUB</a>
+      <a href={`${exports}/source.json`}>Source graph</a>
+      <a href={`${exports}/layout-manifest.json`}>Layout manifest</a>
+      <a href={`${exports}/export-manifest.json`}>Export manifest</a>
     </nav>
   )
 }

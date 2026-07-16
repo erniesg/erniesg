@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
 import {
   cacheAnnotationGeometry,
+  createDemoAnnotations,
   createLayoutVersion,
   createSemanticTextAnchor,
   FREEHAND_ATTACHMENT_POLICY,
@@ -55,6 +56,23 @@ function paragraphFixture(text: string): ResearchPaper {
 }
 
 describe('SRT semantic reading anchors and annotations', () => {
+  it('creates deterministic demo annotation targets for export and studio use', () => {
+    const first = createDemoAnnotations(paper)
+    const second = createDemoAnnotations(paper)
+
+    expect(first).toEqual(second)
+    expect(first.map((annotation) => annotation.kind)).toEqual([
+      'highlight',
+      'note',
+    ])
+    for (const annotation of first) {
+      expect(resolveTextAnchor(annotation.target, paper.nodes)).toMatchObject({
+        status: 'resolved',
+        nodeId: 'p-proposition-1',
+      })
+    }
+  })
+
   it('stores a reading anchor as semantic text selectors without page geometry', () => {
     expect(anchor).toEqual({
       nodeId: 'p-proposition-1',

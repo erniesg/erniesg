@@ -100,13 +100,13 @@ function renderNode(
   const id = attribute(stableId(node.id))
   if (node.type === 'heading') {
     const level = Math.min(3, Math.max(2, node.level + 1))
-    return `<h${level} id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</h${level}>`
+    return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</h${level}>`
   }
   if (node.type === 'paragraph') {
-    return `<p id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</p>`
+    return `<p id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</p>`
   }
   if (node.type === 'quote') {
-    return `<blockquote id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences)}</p></blockquote>`
+    return `<blockquote id="${id}" data-canonical-id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences)}</p></blockquote>`
   }
   if (node.type === 'footnote') {
     const backlinks = node.relationships.backlinks
@@ -115,16 +115,20 @@ function renderNode(
           `<a href="#${attribute(stableId(backlink))}" class="note-backlink" aria-label="Back to reference ${index + 1}">↩</a>`,
       )
       .join(' ')
-    return `<aside id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label">${text(node.label)}</span> ${text(node.text)}${backlinks ? ` ${backlinks}` : ''}</aside>`
+    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label">${text(node.label)}</span> ${text(node.text)}${backlinks ? ` ${backlinks}` : ''}</aside>`
   }
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
-    return `<figure id="${id}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${attribute(stableId(caption.id))}">${text(caption.text)}</figcaption>` : ''}</figure>`
+    const captionId = attribute(stableId(node.relationships.caption))
+    return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${text(caption.text)}</figcaption>` : ''}</figure>`
   }
   return ''
 }
 
-function publicationXhtml(paper: ResearchPaper) {
+export function renderPublicationXhtml(
+  paper: ResearchPaper,
+  options: { embedStyles?: boolean } = {},
+) {
   const captions = new Map(
     paper.nodes
       .filter(
@@ -147,7 +151,7 @@ function publicationXhtml(paper: ResearchPaper) {
     )
     .map((node) =>
       node.type === 'caption'
-        ? `<aside id="${attribute(stableId(node.id))}" class="orphan-caption">${text(node.text)}</aside>`
+        ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${text(node.text)}</aside>`
         : renderNode(node, captions),
     )
     .join('\n')
@@ -158,7 +162,7 @@ function publicationXhtml(paper: ResearchPaper) {
 <head>
   <meta charset="UTF-8" />
   <title>${text(paper.title)}</title>
-  <link rel="stylesheet" type="text/css" href="styles.css" />
+  ${options.embedStyles ? `<style type="text/css">${EPUB_CSS}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}
 </head>
 <body>
   <main epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -339,7 +343,7 @@ export async function buildEpub(
     'META-INF/container.xml': entry(containerXml()),
     'EPUB/package.opf': entry(packageOpf(paper, identifier, modified)),
     'EPUB/nav.xhtml': entry(navXhtml(paper)),
-    'EPUB/content.xhtml': entry(publicationXhtml(paper)),
+    'EPUB/content.xhtml': entry(renderPublicationXhtml(paper)),
     'EPUB/styles.css': entry(EPUB_CSS),
     'EPUB/export.json': entry(`${JSON.stringify(exportManifest, null, 2)}\n`),
   }

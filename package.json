@@ -16,6 +16,7 @@
     "build:astro": "astro check && astro build",
     "build:production": "PUBLIC_RESEARCH_RELEASE=production npm run build:astro && PUBLIC_RESEARCH_RELEASE=production node tools/deployment/apply-release-gate.mjs",
     "build:staging": "PUBLIC_RESEARCH_RELEASE=staging npm run build:astro",
+    "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "preview": "astro preview",
     "pdf:corpus-audit": "node tools/pdf-corpus-audit.mjs",
     "worker:build": "npm run build:production",

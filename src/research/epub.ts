@@ -52,6 +52,35 @@ function slug(value: string) {
   )
 }
 
+function renderTextWithNoteReferences(
+  value: string,
+  references?: Array<{
+    id: string
+    target: string
+    start: number
+    end: number
+  }>,
+) {
+  if (!references?.length) return text(value)
+  let cursor = 0
+  let rendered = ''
+  for (const reference of [...references].sort(
+    (left, right) => left.start - right.start,
+  )) {
+    if (
+      reference.start < cursor ||
+      reference.end > value.length ||
+      reference.start >= reference.end
+    ) {
+      continue
+    }
+    rendered += text(value.slice(cursor, reference.start))
+    rendered += `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${text(value.slice(reference.start, reference.end))}</a>`
+    cursor = reference.end
+  }
+  return `${rendered}${text(value.slice(cursor))}`
+}
+
 async function sha256(value: Uint8Array | string) {
   const bytes = typeof value === 'string' ? strToU8(value) : value
   const buffer = bytes.buffer.slice(
@@ -71,13 +100,22 @@ function renderNode(
   const id = attribute(stableId(node.id))
   if (node.type === 'heading') {
     const level = Math.min(3, Math.max(2, node.level + 1))
-    return `<h${level} id="${id}" data-canonical-id="${id}">${text(node.text)}</h${level}>`
+    return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</h${level}>`
   }
   if (node.type === 'paragraph') {
-    return `<p id="${id}" data-canonical-id="${id}">${text(node.text)}</p>`
+    return `<p id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</p>`
   }
   if (node.type === 'quote') {
-    return `<blockquote id="${id}" data-canonical-id="${id}"><p>${text(node.text)}</p></blockquote>`
+    return `<blockquote id="${id}" data-canonical-id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences)}</p></blockquote>`
+  }
+  if (node.type === 'footnote') {
+    const backlinks = node.relationships.backlinks
+      .map(
+        (backlink, index) =>
+          `<a href="#${attribute(stableId(backlink))}" class="note-backlink" aria-label="Back to reference ${index + 1}">↩</a>`,
+      )
+      .join(' ')
+    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label">${text(node.label)}</span> ${text(node.text)}${backlinks ? ` ${backlinks}` : ''}</aside>`
   }
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
@@ -189,6 +227,9 @@ blockquote { border-inline-start: 0.16rem solid currentColor; margin: 1.5rem 0; 
 figure { break-inside: avoid; margin: 2rem 0; }
 .figure-placeholder { border: 0.08rem solid currentColor; padding: 2rem 1rem; text-align: center; }
 figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
+.publication-note { border-top: 0.06rem solid currentColor; font-size: 0.84rem; margin-top: 1rem; padding-top: 0.5rem; }
+.note-label { font-weight: bold; }
+.note-backlink { margin-inline-start: 0.35rem; }
 img, svg { display: block; height: auto; max-width: 100%; }
 a { color: inherit; text-decoration: underline; }
 @media (max-width: 30rem) {

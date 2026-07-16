@@ -36,6 +36,7 @@ export const NODE_PAGINATION_POLICIES: Record<
   quote: { fragmentation: 'atomic', keep: 'none' },
   figure: { fragmentation: 'atomic', keep: 'with-related' },
   caption: { fragmentation: 'atomic', keep: 'with-previous' },
+  footnote: { fragmentation: 'atomic', keep: 'with-previous' },
 }
 
 export type PaginationConstraints = {
@@ -324,6 +325,16 @@ function estimateAtomicHeight(
     )
   }
   if (node.type === 'caption') return 0
+  if (node.type === 'footnote') {
+    return (
+      textHeight(
+        `${node.label}. ${node.text}`,
+        widthCssPx,
+        12 * fontScale,
+        typography.lineHeight,
+      ) + 28
+    )
+  }
   return 0
 }
 

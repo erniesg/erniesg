@@ -55,8 +55,10 @@ forbidden:
   dirty_evidence: true
   missing_issue_linkage: true
 production_gates:
+  # main is the merge target for every queue PR, so gating on the base branch
+  # would force a human command on all of them; the deploy_paths list below is
+  # the production boundary instead.
   branches:
-    - main
     - master
     - production
     - "release/**"

@@ -3,7 +3,7 @@ version: 1
 ci_cd:
   provider: github-actions
   target: vm
-  profile: default
+  profile: erniesg-ai-vm
   hosted_execution: held
   publisher_boundary_required: true
   enabled_variable: RUCKSACK_DEPLOY_ENABLED

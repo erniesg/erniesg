@@ -230,10 +230,19 @@ export function assessPdfCompleteness({
   )
   const outputText = normalizedText(paper.nodes.map(nodeText).join(' '))
   const matchedTextCharacters = matchedCharacters(sourceText, outputText)
-  const sourceAssetCount = pages.reduce(
-    (total, page) => total + page.imageCount,
-    0,
-  )
+  const sourceAssetCount = pages.reduce((total, page) => {
+    const objects = page.objects ?? []
+    const semanticObjectCount = objects.filter(
+      (object) => object.role !== 'scan-source',
+    ).length
+    const provenScanSourceCount = objects.filter(
+      (object) => object.role === 'scan-source',
+    ).length
+    return (
+      total +
+      Math.max(semanticObjectCount, page.imageCount - provenScanSourceCount)
+    )
+  }, 0)
   // Figure nodes currently render placeholders only. Until the canonical model
   // carries an exported source-image payload and identity, none of those nodes
   // may satisfy source asset coverage.

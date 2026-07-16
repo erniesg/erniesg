@@ -322,39 +322,41 @@ function makeObjectRegions(
   layouts: Map<number, ColumnLayout>,
 ) {
   return pages.flatMap((page) =>
-    (page.objects ?? []).map<PdfPageRegion>((object, index) => {
-      const layout = layouts.get(page.page) ?? {
-        split: null,
-        accepted: false,
-        ambiguous: false,
-      }
-      const column = columnFor(
-        {
+    (page.objects ?? [])
+      .filter((object) => object.role !== 'scan-source')
+      .map<PdfPageRegion>((object, index) => {
+        const layout = layouts.get(page.page) ?? {
+          split: null,
+          accepted: false,
+          ambiguous: false,
+        }
+        const column = columnFor(
+          {
+            page: page.page,
+            text: '',
+            x: object.box.x,
+            y: object.box.y,
+            width: object.box.width,
+            height: object.box.height,
+            fontSize: 0,
+            runs: [],
+            column: 'single',
+          },
+          layout,
+        )
+        return {
+          id: `page-${String(page.page).padStart(3, '0')}-object-region-${String(index + 1).padStart(3, '0')}`,
           page: page.page,
+          kind: 'figure',
+          column,
           text: '',
-          x: object.box.x,
-          y: object.box.y,
-          width: object.box.width,
-          height: object.box.height,
-          fontSize: 0,
-          runs: [],
-          column: 'single',
-        },
-        layout,
-      )
-      return {
-        id: `page-${String(page.page).padStart(3, '0')}-object-region-${String(index + 1).padStart(3, '0')}`,
-        page: page.page,
-        kind: 'figure',
-        column,
-        text: '',
-        confidence: object.confidence,
-        box: { ...object.box },
-        lines: [],
-        nativeObjectIds: [object.id],
-        includedInReadingOrder: true,
-      }
-    }),
+          confidence: object.confidence,
+          box: { ...object.box },
+          lines: [],
+          nativeObjectIds: [object.id],
+          includedInReadingOrder: true,
+        }
+      }),
   )
 }
 
@@ -665,7 +667,12 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         }
       })
 
-    const layout = detectColumns(preliminary)
+    const spreadBoundary =
+      page.spread?.status === 'split' ? page.spread.boundary : null
+    const layout: ColumnLayout =
+      spreadBoundary !== null
+        ? { split: spreadBoundary, accepted: true, ambiguous: false }
+        : detectColumns(preliminary)
     layouts.set(page.page, layout)
     const commonX = median(
       preliminary.filter((line) => line.kind === 'body').map((line) => line.x),

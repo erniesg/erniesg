@@ -8,6 +8,14 @@ downloaded, private, or subscription content.
 signals. The current narrow reconstruction adapter must report those unsupported
 objects as unresolved instead of exporting a text-only success.
 
+The scanned fixtures contain deterministic grayscale raster text drawn by the
+generator's repository-owned bitmap font. `two-page-scan.pdf` is intentionally
+one wide physical PDF page with two logical page regions and a central gutter;
+`rotated-scan.pdf` preserves a 90-degree source rotation; and
+`multilingual-scan.pdf` carries repository-drawn bitmap glyphs for 本地研究 so
+language-pack and Unicode behavior can be tested without copying a third-party
+document or font.
+
 The oversized fixture is virtual: tests use the byte length recorded in
 `manifest.json` and assert rejection before `arrayBuffer()` is called. This keeps
 a 50 MB inert file out of Git while exercising the exact resource boundary.

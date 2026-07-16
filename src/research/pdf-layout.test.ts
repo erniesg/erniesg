@@ -87,6 +87,35 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
+  it('retains embedded links alongside reconstructed node provenance', () => {
+    const linked = page(1, [
+      run(1, 'Linked embedded text remains source evidence.', 0.1, 0.2, 0.7),
+    ])
+    linked.links = [
+      {
+        url: 'https://example.test/evidence',
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2,
+          width: 0.3,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-link',
+        },
+      },
+    ]
+
+    const result = reconstructPageAnalyses({
+      pages: [linked],
+      sourceHash: 'e'.repeat(64),
+      fileName: 'linked.pdf',
+      byteLength: 2048,
+    })
+
+    expect(Object.values(result.provenance)[0].links).toEqual(linked.links)
+  })
+
   it('orders detected columns left before right without storing target geometry', () => {
     const result = reconstructPageAnalyses({
       pages: [
@@ -255,5 +284,126 @@ describe('PDF semantic reconstruction', () => {
       ready: false,
       status: 'review-required',
     })
+  })
+
+  it('clears the OCR gate for accepted scan text without counting the scan surface as a figure', () => {
+    const ocrRun: PdfSourceRun = {
+      ...run(
+        1,
+        'Recovered locally from a scanned source page with enough text.',
+        0.1,
+        0.2,
+        0.72,
+      ),
+      method: 'ocr',
+      confidence: 0.96,
+    }
+    const scanned: PdfPageAnalysis = {
+      ...page(1, [ocrRun], 'ocr-complete'),
+      objects: [
+        {
+          id: 'image-p001-001',
+          page: 1,
+          kind: 'image',
+          role: 'scan-source',
+          confidence: 0.98,
+          box: {
+            page: 1,
+            x: 0.05,
+            y: 0.05,
+            width: 0.9,
+            height: 0.9,
+            rotation: 0,
+            method: 'pdf-object',
+          },
+        },
+      ],
+      ocr: {
+        engine: 'tesseract.js',
+        engineVersion: '6.0.1',
+        model: 'tessdata_best_int',
+        modelVersion: '4.0.0',
+        languages: ['eng'],
+        languageMode: 'automatic-fallback',
+        sourceSha256: 'a'.repeat(64),
+        rasterSha256: 'b'.repeat(64),
+        confidence: 0.96,
+        words: [],
+        lines: [],
+      },
+    }
+
+    const result = reconstructPageAnalyses({
+      pages: [scanned],
+      sourceHash: 'a'.repeat(64),
+      fileName: 'scan.pdf',
+      byteLength: 8192,
+    })
+
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'OCR_REQUIRED' }),
+      ]),
+    )
+    expect(result.completeness).toMatchObject({
+      sourceAssetCount: 0,
+      ocrRequiredPages: [],
+    })
+    expect(result.regions.some((region) => region.kind === 'figure')).toBe(
+      false,
+    )
+    expect(result.readiness.ready).toBe(true)
+  })
+
+  it('blocks low-confidence OCR and uncertain spread boundaries for review', () => {
+    const ocrRun: PdfSourceRun = {
+      ...run(1, 'Uncertain recovered scan text.', 0.1, 0.2, 0.35),
+      method: 'ocr',
+      confidence: 0.61,
+    }
+    const scanned: PdfPageAnalysis = {
+      ...page(1, [ocrRun], 'ocr-complete'),
+      width: 1224,
+      ocr: {
+        engine: 'tesseract.js',
+        engineVersion: '6.0.1',
+        model: 'tessdata_best_int',
+        modelVersion: '4.0.0',
+        languages: ['eng'],
+        languageMode: 'explicit',
+        sourceSha256: 'a'.repeat(64),
+        rasterSha256: 'b'.repeat(64),
+        confidence: 0.61,
+        words: [],
+        lines: [],
+      },
+      spread: {
+        status: 'uncertain',
+        boundary: 0.5,
+        confidence: 0.55,
+        logicalRegions: [],
+      },
+    }
+
+    const result = reconstructPageAnalyses({
+      pages: [scanned],
+      sourceHash: 'a'.repeat(64),
+      fileName: 'spread.pdf',
+      byteLength: 8192,
+    })
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'error',
+        }),
+        expect.objectContaining({
+          code: 'UNCERTAIN_SPREAD_BOUNDARY',
+          severity: 'error',
+        }),
+      ]),
+    )
+    expect(result.readiness.ready).toBe(false)
   })
 })

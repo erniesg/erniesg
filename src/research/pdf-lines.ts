@@ -9,7 +9,7 @@ export type PdfTextLine = {
   height: number
   fontSize: number
   runs: PdfSourceRun[]
-  column: 'left' | 'right' | 'span'
+  column: 'single' | 'left' | 'right' | 'span'
 }
 
 function mergeRunText(runs: PdfSourceRun[]) {
@@ -89,7 +89,7 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
       height: run.height,
       fontSize: run.fontSize,
       runs: [run],
-      column: 'span',
+      column: 'single',
     })
   }
 

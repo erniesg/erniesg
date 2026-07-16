@@ -1,5 +1,6 @@
 import type {
   PdfImportProgress,
+  PdfNativeObject,
   PdfPageAnalysis,
   PdfSourceRun,
 } from './import-types'
@@ -48,6 +49,115 @@ function clamp(value: number) {
 
 function countImages(fnArray: number[], imageOps: Set<number>) {
   return fnArray.filter((operator) => imageOps.has(operator)).length
+}
+
+type Matrix = [number, number, number, number, number, number]
+
+function matrix(value: unknown): Matrix | null {
+  if (
+    !Array.isArray(value) ||
+    value.length < 6 ||
+    !value.slice(0, 6).every((item) => typeof item === 'number')
+  ) {
+    return null
+  }
+  return value.slice(0, 6) as Matrix
+}
+
+function multiply(left: Matrix, right: Matrix): Matrix {
+  return [
+    left[0] * right[0] + left[2] * right[1],
+    left[1] * right[0] + left[3] * right[1],
+    left[0] * right[2] + left[2] * right[3],
+    left[1] * right[2] + left[3] * right[3],
+    left[0] * right[4] + left[2] * right[5] + left[4],
+    left[1] * right[4] + left[3] * right[5] + left[5],
+  ]
+}
+
+function point(transform: Matrix, x: number, y: number) {
+  return {
+    x: transform[0] * x + transform[2] * y + transform[4],
+    y: transform[1] * x + transform[3] * y + transform[5],
+  }
+}
+
+function extractImageObjects({
+  page,
+  rotation,
+  viewportWidth,
+  viewportHeight,
+  viewportTransform,
+  fnArray,
+  argsArray,
+  imageOps,
+  saveOp,
+  restoreOp,
+  transformOp,
+}: {
+  page: number
+  rotation: number
+  viewportWidth: number
+  viewportHeight: number
+  viewportTransform: Matrix
+  fnArray: number[]
+  argsArray: unknown[]
+  imageOps: Set<number>
+  saveOp: number
+  restoreOp: number
+  transformOp: number
+}) {
+  let current: Matrix = [1, 0, 0, 1, 0, 0]
+  const stack: Matrix[] = []
+  const objects: PdfNativeObject[] = []
+  for (const [index, operator] of fnArray.entries()) {
+    if (operator === saveOp) {
+      stack.push([...current])
+      continue
+    }
+    if (operator === restoreOp) {
+      current = stack.pop() ?? [1, 0, 0, 1, 0, 0]
+      continue
+    }
+    if (operator === transformOp) {
+      const next = matrix(argsArray[index])
+      if (next) current = multiply(current, next)
+      continue
+    }
+    if (!imageOps.has(operator)) continue
+    const device = multiply(viewportTransform, current)
+    const corners = [
+      point(device, 0, 0),
+      point(device, 1, 0),
+      point(device, 0, 1),
+      point(device, 1, 1),
+    ]
+    const left = Math.min(...corners.map((corner) => corner.x))
+    const right = Math.max(...corners.map((corner) => corner.x))
+    const top = Math.min(...corners.map((corner) => corner.y))
+    const bottom = Math.max(...corners.map((corner) => corner.y))
+    const x = clamp(left / viewportWidth)
+    const y = clamp(top / viewportHeight)
+    const width = clamp(right / viewportWidth) - x
+    const height = clamp(bottom / viewportHeight) - y
+    if (width <= 0 || height <= 0) continue
+    objects.push({
+      id: `image-p${String(page).padStart(3, '0')}-${String(objects.length + 1).padStart(3, '0')}`,
+      page,
+      kind: 'image',
+      box: {
+        page,
+        x,
+        y,
+        width,
+        height,
+        rotation,
+        method: 'pdf-object',
+      },
+      confidence: 0.98,
+    })
+  }
+  return objects
 }
 
 function metadataValue(info: Record<string, unknown>, key: string) {
@@ -219,6 +329,19 @@ export async function reconstructPdf(
           0,
         )
         const imageCount = countImages(operatorList.fnArray, imageOps)
+        const objects = extractImageObjects({
+          page: pageNumber,
+          rotation: viewport.rotation,
+          viewportWidth: viewport.width,
+          viewportHeight: viewport.height,
+          viewportTransform: viewport.transform as Matrix,
+          fnArray: operatorList.fnArray,
+          argsArray: operatorList.argsArray,
+          imageOps,
+          saveOp: pdfjs.OPS.save,
+          restoreOp: pdfjs.OPS.restore,
+          transformOp: pdfjs.OPS.transform,
+        })
         const kind =
           textCharacters < 24
             ? 'ocr-required'
@@ -233,6 +356,7 @@ export async function reconstructPdf(
           rotation: viewport.rotation,
           textCharacters,
           imageCount,
+          objects,
           runs,
         })
       } finally {

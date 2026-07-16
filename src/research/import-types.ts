@@ -11,7 +11,7 @@ export type NormalizedSourceBox = {
   width: number
   height: number
   rotation: number
-  method: 'pdf-text' | 'ocr'
+  method: 'pdf-text' | 'pdf-object' | 'ocr'
 }
 
 export type PdfSourceRun = NormalizedSourceBox & {
@@ -19,6 +19,116 @@ export type PdfSourceRun = NormalizedSourceBox & {
   fontName: string
   fontSize: number
   confidence: number
+}
+
+export type PdfNativeObject = {
+  id: string
+  page: number
+  kind: 'image'
+  box: NormalizedSourceBox
+  confidence: number
+}
+
+export type PdfRegionKind =
+  | 'body'
+  | 'spanning'
+  | 'header'
+  | 'footer'
+  | 'page-number'
+  | 'side'
+  | 'chart-label'
+  | 'figure'
+  | 'caption'
+  | 'footnote'
+  | 'endnote'
+
+export type PdfRegionColumn = 'single' | 'left' | 'right' | 'span'
+
+export type PdfRegionLine = {
+  id: string
+  text: string
+  fontSize: number
+  box: NormalizedSourceBox
+  runs: PdfSourceRun[]
+}
+
+export type PdfPageRegion = {
+  id: string
+  page: number
+  kind: PdfRegionKind
+  column: PdfRegionColumn
+  text: string
+  confidence: number
+  box: NormalizedSourceBox
+  lines: PdfRegionLine[]
+  nativeObjectIds: string[]
+  includedInReadingOrder: boolean
+}
+
+export type PdfReadingOrderEvidence = {
+  code:
+    | 'page-sequence'
+    | 'vertical-flow'
+    | 'column-flow'
+    | 'spanning-boundary'
+    | 'note-after-body'
+    | 'ambiguous-column-flow'
+  detail: string
+}
+
+export type PdfReadingOrderEdge = {
+  id: string
+  from: string
+  to: string
+  status: 'accepted' | 'candidate'
+  confidence: number
+  evidence: PdfReadingOrderEvidence[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
+export type PdfReadingOrderEvaluation = {
+  schemaVersion: '1.0.0'
+  algorithm: 'deterministic-geometry-v1'
+  mode: 'deterministic-only'
+  regionCount: number
+  acceptedEdgeCount: number
+  unresolvedEdgeCount: number
+  cycleRate: number
+  orderAccuracy: number | null
+  provider: null
+  modelVersion: null
+  latencyMs: 0
+  costUsd: 0
+  reviewRequired: boolean
+}
+
+export type PdfReadingOrderGraph = {
+  schemaVersion: '1.0.0'
+  regionIds: string[]
+  order: string[]
+  edges: PdfReadingOrderEdge[]
+  acyclic: boolean
+  evaluation: PdfReadingOrderEvaluation
+}
+
+export type PdfNoteMatchCandidate = {
+  targetNoteId: string
+  targetRegionId: string
+  score: number
+  evidence: string[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
+export type PdfNoteRelationship = {
+  id: string
+  label: string
+  referenceRegionId: string
+  targetNoteId: string | null
+  status: 'matched' | 'ambiguous' | 'unresolved'
+  confidence: number
+  evidence: string[]
+  candidates: PdfNoteMatchCandidate[]
+  sourceBoxes: NormalizedSourceBox[]
 }
 
 export type PdfPageAnalysis = {
@@ -29,6 +139,7 @@ export type PdfPageAnalysis = {
   rotation: number
   textCharacters: number
   imageCount: number
+  objects?: PdfNativeObject[]
   runs: PdfSourceRun[]
 }
 
@@ -39,6 +150,10 @@ export type ReconstructionDiagnostic = {
     | 'REPEATED_MARGIN_TEXT'
     | 'LOW_CONFIDENCE_BLOCK'
     | 'AMBIGUOUS_READING_ORDER'
+    | 'READING_ORDER_CYCLE'
+    | 'AMBIGUOUS_NOTE_MATCH'
+    | 'UNRESOLVED_NOTE_REFERENCE'
+    | 'UNREFERENCED_NOTE'
     | 'NO_RECONSTRUCTABLE_TEXT'
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
@@ -72,6 +187,7 @@ export type PdfCompletenessMetrics = {
   unresolvedObjects: PdfSemanticSignals & { assets: number }
   ocrRequiredPages: number[]
   readingOrderDiagnostics: number
+  readingOrderEvaluation: PdfReadingOrderEvaluation
 }
 
 export type PdfCompletenessPolicy = {
@@ -106,6 +222,9 @@ export type PdfReconstruction = {
   }
   paper: ResearchPaper
   pages: PdfPageAnalysis[]
+  regions: PdfPageRegion[]
+  readingOrder: PdfReadingOrderGraph
+  noteRelationships: PdfNoteRelationship[]
   provenance: Record<string, NodeSourceEvidence>
   diagnostics: ReconstructionDiagnostic[]
   semanticSignals: PdfSemanticSignals

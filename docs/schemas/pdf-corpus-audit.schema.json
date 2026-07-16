@@ -82,7 +82,8 @@
         "unresolvedObjectCount",
         "unresolvedObjects",
         "ocrRequiredPages",
-        "readingOrderDiagnostics"
+        "readingOrderDiagnostics",
+        "readingOrderEvaluation"
       ],
       "properties": {
         "sourceTextCharacters": { "type": "integer", "minimum": 0 },
@@ -120,7 +121,46 @@
           "type": "array",
           "items": { "type": "integer", "minimum": 1 }
         },
-        "readingOrderDiagnostics": { "type": "integer", "minimum": 0 }
+        "readingOrderDiagnostics": { "type": "integer", "minimum": 0 },
+        "readingOrderEvaluation": {
+          "$ref": "#/$defs/readingOrderEvaluation"
+        }
+      }
+    },
+    "readingOrderEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "algorithm",
+        "mode",
+        "regionCount",
+        "acceptedEdgeCount",
+        "unresolvedEdgeCount",
+        "cycleRate",
+        "orderAccuracy",
+        "provider",
+        "modelVersion",
+        "latencyMs",
+        "costUsd",
+        "reviewRequired"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "algorithm": { "const": "deterministic-geometry-v1" },
+        "mode": { "const": "deterministic-only" },
+        "regionCount": { "type": "integer", "minimum": 0 },
+        "acceptedEdgeCount": { "type": "integer", "minimum": 0 },
+        "unresolvedEdgeCount": { "type": "integer", "minimum": 0 },
+        "cycleRate": { "$ref": "#/$defs/ratio" },
+        "orderAccuracy": {
+          "oneOf": [{ "$ref": "#/$defs/ratio" }, { "type": "null" }]
+        },
+        "provider": { "type": "null" },
+        "modelVersion": { "type": "null" },
+        "latencyMs": { "const": 0 },
+        "costUsd": { "const": 0 },
+        "reviewRequired": { "type": "boolean" }
       }
     },
     "readiness": {

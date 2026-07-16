@@ -221,6 +221,19 @@ function PaperNode({
   }
   if (node.type === 'caption') return null
 
+  if (node.type === 'footnote') {
+    return (
+      <aside
+        {...data}
+        id={node.id}
+        role="doc-footnote"
+        data-variant={composition.chosenVariant}
+      >
+        <sup>{node.label}</sup> {node.text}
+      </aside>
+    )
+  }
+
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
     const captionData = captionFragment

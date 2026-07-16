@@ -60,6 +60,43 @@ describe('PDF.js browser ingestion', () => {
     )
 
     expect(result.pages[0].imageCount).toBeGreaterThan(0)
+    expect(result.pages[0].objects).toEqual([
+      expect.objectContaining({
+        id: 'image-p001-001',
+        kind: 'image',
+        box: expect.objectContaining({
+          method: 'pdf-object',
+          x: expect.closeTo(220 / 612, 4),
+          y: expect.closeTo(222 / 792, 4),
+          width: expect.closeTo(170 / 612, 4),
+          height: expect.closeTo(110 / 792, 4),
+        }),
+      }),
+    ])
+    expect(result.regions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'caption' }),
+        expect.objectContaining({ kind: 'figure' }),
+        expect.objectContaining({ kind: 'footnote' }),
+      ]),
+    )
+    expect(result.readingOrder.evaluation).toMatchObject({
+      mode: 'deterministic-only',
+      cycleRate: 0,
+      unresolvedEdgeCount: 0,
+    })
+    expect(result.noteRelationships).toEqual([
+      expect.objectContaining({ status: 'matched', targetNoteId: 'fn-p001-1' }),
+    ])
+    expect(result.paper.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'fn-p001-1',
+          type: 'footnote',
+          label: '1',
+        }),
+      ]),
+    )
     expect(result.semanticSignals).toEqual({
       captions: 1,
       tables: 1,
@@ -73,9 +110,9 @@ describe('PDF.js browser ingestion', () => {
       exportedAssetCount: 0,
       assetCoverage: 0,
       expectedRelationshipCount: 2,
-      resolvedRelationshipCount: 0,
-      relationshipCoverage: 0,
-      readingOrderDiagnostics: 1,
+      resolvedRelationshipCount: 1,
+      relationshipCoverage: 0.5,
+      readingOrderDiagnostics: 0,
     })
     expect(result.completeness.unresolvedObjectCount).toBeGreaterThan(0)
     expect(result.readiness).toMatchObject({
@@ -84,10 +121,6 @@ describe('PDF.js browser ingestion', () => {
     })
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
-        }),
         expect.objectContaining({
           code: 'INCOMPLETE_ASSET_COVERAGE',
           severity: 'error',

@@ -2,6 +2,7 @@ import type {
   PdfCompletenessMetrics,
   PdfCompletenessPolicy,
   PdfPageAnalysis,
+  PdfReadingOrderGraph,
   PdfReadiness,
   PdfSemanticSignals,
   ReconstructionDiagnostic,
@@ -22,6 +23,7 @@ type QualityInput = {
   pages: PdfPageAnalysis[]
   paper: ResearchPaper
   diagnostics: ReconstructionDiagnostic[]
+  readingOrder?: PdfReadingOrderGraph
   policy?: PdfCompletenessPolicy
 }
 
@@ -38,6 +40,9 @@ function characterCount(value: string) {
 }
 
 function nodeText(node: ResearchNode) {
+  if (node.type === 'footnote') {
+    return `${node.kind === 'footnote' ? 'Footnote' : 'Endnote'} ${node.label} ${node.text}`
+  }
   if ('text' in node) return node.text
   return node.type === 'figure' ? node.title : ''
 }
@@ -81,7 +86,9 @@ function runGap(
 function renderedFootnoteMarkers(page: PdfPageAnalysis, bodyFontSize: number) {
   if (!bodyFontSize) return 0
   return page.runs.filter((run) => {
-    if (!/^(?:\d{1,3}|[*†‡§])$/.test(run.text.trim())) return false
+    if (!/^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])$/.test(run.text.trim())) {
+      return false
+    }
     if (run.fontSize > bodyFontSize * 0.82 || run.y > 0.88) return false
     const center = run.y + run.height / 2
     return page.runs.some((candidate) => {
@@ -107,12 +114,14 @@ export function detectPdfSemanticSignals(
     footnoteReferences: 0,
     footnotes: 0,
   }
+  let inEndnotes = false
   for (const page of pages) {
     const bodyFontSize = upperQuartile(
       page.runs.map((run) => run.fontSize).filter((size) => size > 0),
     )
     signals.footnoteReferences += renderedFootnoteMarkers(page, bodyFontSize)
     for (const line of pageLines(page)) {
+      if (/^(?:endnotes?|notes?)$/i.test(line.text.trim())) inEndnotes = true
       if (/^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(line.text)) {
         signals.captions += 1
       }
@@ -122,19 +131,25 @@ export function detectPdfSemanticSignals(
       if (/(?:^|\b)(?:equation|eq\.?)\s*\(?\d+\)?/i.test(line.text)) {
         signals.equations += 1
       }
-      if (
-        /\b(?:footnote|note)\s+(?:reference|marker)\s*\d+\b/i.test(line.text)
-      ) {
-        signals.footnoteReferences += 1
-      }
+      signals.footnoteReferences +=
+        line.text.match(
+          /\b(?:footnote|note)\s+(?:reference|marker)\s*(?:\d{1,3}|[*†‡§])(?=\s|[.,;:)\]]|$)/gi,
+        )?.length ?? 0
+      signals.footnoteReferences +=
+        line.text.match(/\[(?:\d{1,3}|[*†‡§])\]/g)?.length ?? 0
       const explicitFootnote = /^(?:footnote|note)\s*\d+\s*[:.-]/i.test(
         line.text,
       )
       const renderedFootnote =
         line.y >= 0.7 &&
         line.fontSize <= bodyFontSize * 0.9 &&
-        /^(?:\d{1,3}|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
-      if (explicitFootnote || renderedFootnote) signals.footnotes += 1
+        /^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
+      const renderedEndnote =
+        inEndnotes &&
+        /^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
+      if (explicitFootnote || renderedFootnote || renderedEndnote) {
+        signals.footnotes += 1
+      }
     }
   }
   return signals
@@ -158,9 +173,31 @@ function relationshipCounts(paper: ResearchPaper, signals: PdfSemanticSignals) {
       )
       .map((node) => node.relationships.caption),
   ).size
+  const noteIds = new Set(
+    paper.nodes
+      .filter((node) => node.type === 'footnote')
+      .map((node) => node.id),
+  )
+  const noteReferences = paper.nodes.flatMap((node) =>
+    'noteReferences' in node && node.noteReferences ? node.noteReferences : [],
+  )
+  const resolvedNoteReferences = noteReferences.filter((reference) =>
+    noteIds.has(reference.target),
+  )
+  const resolvedNotes = new Set(
+    resolvedNoteReferences.map((reference) => reference.target),
+  )
   return {
     expected: signals.captions + signals.footnoteReferences,
-    resolved: Math.min(resolvedCaptions, signals.captions),
+    resolved:
+      Math.min(resolvedCaptions, signals.captions) +
+      Math.min(resolvedNoteReferences.length, signals.footnoteReferences),
+    resolvedCaptions: Math.min(resolvedCaptions, signals.captions),
+    resolvedNoteReferences: Math.min(
+      resolvedNoteReferences.length,
+      signals.footnoteReferences,
+    ),
+    resolvedNotes: Math.min(resolvedNotes.size, signals.footnotes),
   }
 }
 
@@ -176,6 +213,7 @@ export function assessPdfCompleteness({
   pages,
   paper,
   diagnostics,
+  readingOrder,
   policy = DEFAULT_PDF_COMPLETENESS_POLICY,
 }: QualityInput): {
   semanticSignals: PdfSemanticSignals
@@ -203,17 +241,43 @@ export function assessPdfCompleteness({
   const relationships = relationshipCounts(paper, semanticSignals)
   const unresolvedObjects = {
     assets: Math.max(sourceAssetCount - exportedAssetCount, 0),
-    captions: Math.max(semanticSignals.captions - relationships.resolved, 0),
+    captions: Math.max(
+      semanticSignals.captions - relationships.resolvedCaptions,
+      0,
+    ),
     tables: semanticSignals.tables,
     equations: semanticSignals.equations,
-    footnoteReferences: semanticSignals.footnoteReferences,
-    footnotes: semanticSignals.footnotes,
+    footnoteReferences: Math.max(
+      semanticSignals.footnoteReferences - relationships.resolvedNoteReferences,
+      0,
+    ),
+    footnotes: Math.max(
+      semanticSignals.footnotes - relationships.resolvedNotes,
+      0,
+    ),
   }
   const unresolvedObjectCount = Object.values(unresolvedObjects).reduce(
     (total, count) => total + count,
     0,
   )
   const readingOrderDiagnostics = readingOrderDiagnosticCount(diagnostics)
+  const readingOrderEvaluation =
+    readingOrder?.evaluation ??
+    ({
+      schemaVersion: '1.0.0',
+      algorithm: 'deterministic-geometry-v1',
+      mode: 'deterministic-only',
+      regionCount: 0,
+      acceptedEdgeCount: 0,
+      unresolvedEdgeCount: 0,
+      cycleRate: 0,
+      orderAccuracy: null,
+      provider: null,
+      modelVersion: null,
+      latencyMs: 0,
+      costUsd: 0,
+      reviewRequired: false,
+    } as const)
   const completeness: PdfCompletenessMetrics = {
     sourceTextCharacters: characterCount(sourceText),
     outputTextCharacters: characterCount(outputText),
@@ -234,6 +298,7 @@ export function assessPdfCompleteness({
       .filter((page) => page.kind === 'ocr-required')
       .map((page) => page.page),
     readingOrderDiagnostics,
+    readingOrderEvaluation,
   }
   const qualityDiagnostics: ReconstructionDiagnostic[] = []
   if (completeness.textCoverage < policy.minimumTextCoverage) {
@@ -268,7 +333,8 @@ export function assessPdfCompleteness({
   const allDiagnostics = [...diagnostics, ...qualityDiagnostics]
   const policyFailed =
     completeness.ocrRequiredPages.length > policy.maximumOcrRequiredPages ||
-    readingOrderDiagnostics > policy.maximumReadingOrderDiagnostics
+    readingOrderDiagnostics > policy.maximumReadingOrderDiagnostics ||
+    readingOrderEvaluation.reviewRequired
   const blockingDiagnosticCodes = [
     ...new Set([
       ...allDiagnostics

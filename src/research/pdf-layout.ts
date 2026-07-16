@@ -414,12 +414,44 @@ export function reconstructPageAnalyses({
       message: `Removed ${regionResult.repeatedMarginCount} repeated header or footer pattern${regionResult.repeatedMarginCount === 1 ? '' : 's'} from reading order.`,
     })
   }
+  for (const resolution of regionResult.readingOrder.resolutions.filter(
+    (candidate) => candidate.status === 'resolved',
+  )) {
+    const { regionIds, ...readingOrderResolution } = resolution
+    for (const regionId of regionIds) {
+      diagnostics.push({
+        code: 'RESOLVED_READING_ORDER',
+        severity: 'info',
+        page: resolution.page,
+        message: `Resolved ${regionId} as ${resolution.ambiguityClass} at confidence ${resolution.confidence.toFixed(2)} against threshold ${resolution.threshold.toFixed(2)} using ${resolution.evidence.map((item) => item.code).join(', ')}.`,
+        readingOrderResolution: {
+          ...readingOrderResolution,
+          regionId,
+        },
+      })
+    }
+  }
   for (const page of regionResult.ambiguousPages) {
+    const resolution = regionResult.readingOrder.resolutions.find(
+      (candidate) =>
+        candidate.page === page && candidate.status === 'ambiguous',
+    )
+    const { regionIds: _regionIds, ...readingOrderResolution } = resolution ?? {
+      policyVersion: '1.0.0' as const,
+      page,
+      ambiguityClass: 'sparse-column-gutter' as const,
+      status: 'ambiguous' as const,
+      confidence: 0.5,
+      threshold: 0.85,
+      evidence: [],
+      regionIds: [],
+    }
     diagnostics.push({
       code: 'AMBIGUOUS_READING_ORDER',
       severity: 'error',
       page,
-      message: `Page ${page} retains both column-order candidates because repeated geometry is insufficient.`,
+      message: `Page ${page} retains both column-order candidates at confidence ${readingOrderResolution.confidence.toFixed(2)}, below threshold ${readingOrderResolution.threshold.toFixed(2)}.`,
+      readingOrderResolution,
     })
   }
   if (!regionResult.readingOrder.acyclic) {

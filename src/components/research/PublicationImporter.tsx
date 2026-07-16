@@ -344,7 +344,7 @@ export default function PublicationImporter({
                     <small>
                       {state.result.completeness.exportedAssetCount} of{' '}
                       {state.result.completeness.sourceAssetCount} source image
-                      objects
+                      visual objects
                     </small>
                   </li>
                   <li>

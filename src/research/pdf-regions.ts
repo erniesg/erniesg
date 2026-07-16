@@ -643,10 +643,19 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
           kind = 'footer'
           confidence = 0.78
         } else if (
-          /^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(normalized)
+          /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)\b|figure\s*[:.-])/i.test(
+            normalized,
+          )
         ) {
           kind = 'caption'
           confidence = 0.94
+        } else if (
+          line.fontSize >= fontSize * 0.95 &&
+          line.text.length <= 120 &&
+          /(?:=|[+−×÷∫∑√≤≥≈])/u.test(line.text)
+        ) {
+          kind = 'equation'
+          confidence = 0.9
         } else if (
           line.fontSize <= fontSize * 0.82 &&
           normalized.length <= 32 &&

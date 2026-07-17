@@ -2,9 +2,12 @@ import type {
   NormalizedSourceBox,
   PdfPageAnalysis,
   PdfPageRegion,
+  PdfReadingOrderAmbiguityClass,
   PdfReadingOrderEdge,
   PdfReadingOrderEvaluation,
+  PdfReadingOrderEvidence,
   PdfReadingOrderGraph,
+  PdfReadingOrderResolution,
   PdfRegionColumn,
   PdfRegionKind,
   PdfRegionLine,
@@ -22,9 +25,12 @@ type ColumnLayout = {
   split: number | null
   accepted: boolean
   ambiguous: boolean
+  resolution: Omit<PdfReadingOrderResolution, 'page' | 'regionIds'> | null
 }
 
 const NOTE_LABEL = String.raw`(?:\d{1,3}|[*†‡§])`
+export const READING_ORDER_RESOLUTION_POLICY_VERSION = '1.0.0' as const
+export const READING_ORDER_RESOLUTION_THRESHOLD = 0.85
 
 function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
@@ -115,7 +121,91 @@ function bodyFontSize(lines: PdfTextLine[]) {
   return quantile(sizes, 0.75) || median(sizes) || 12
 }
 
+function spread(values: number[]) {
+  return values.length < 2 ? 0 : Math.max(...values) - Math.min(...values)
+}
+
+function distinctLines(values: ClassifiedLine[]): ClassifiedLine[] {
+  return [...new Set(values)]
+}
+
+function alignedBandCount(
+  members: Array<{ left: ClassifiedLine; right: ClassifiedLine }>,
+) {
+  const centers = members
+    .map(
+      ({ left, right }) =>
+        (left.y + left.height / 2 + right.y + right.height / 2) / 2,
+    )
+    .sort((left, right) => left - right)
+  const bands: number[] = []
+  for (const center of centers) {
+    if (bands.every((candidate) => Math.abs(candidate - center) > 0.012)) {
+      bands.push(center)
+    }
+  }
+  return bands.length
+}
+
+function maximumVerticalGap(lines: ClassifiedLine[]) {
+  const ordered = distinctLines(lines).sort(
+    (left, right) => left.y - right.y || left.x - right.x,
+  )
+  if (ordered.length < 2) return Number.POSITIVE_INFINITY
+  return Math.max(
+    ...ordered.slice(1).map((line, index) => {
+      const previous = ordered[index]
+      return line.y - (previous.y + previous.height)
+    }),
+  )
+}
+
+function dominantIndent(lines: ClassifiedLine[]) {
+  const clusters = lines.map((seed) => {
+    const members = lines.filter((line) => Math.abs(line.x - seed.x) <= 0.04)
+    return {
+      members,
+      x: median(members.map((line) => line.x)),
+    }
+  })
+  return clusters.sort(
+    (left, right) =>
+      right.members.length - left.members.length || left.x - right.x,
+  )[0]
+}
+
+function preclassifyMarginNotes(
+  lines: ClassifiedLine[],
+  pageBodyFontSize: number,
+) {
+  const body = lines.filter((line) => line.kind === 'body')
+  const dominant = dominantIndent(body)
+  if (!dominant || dominant.members.length < 2) return
+  for (const line of body) {
+    if (dominant.members.includes(line)) continue
+    const alignedWithBody = dominant.members.some((candidate) => {
+      const lineCenter = line.y + line.height / 2
+      const candidateCenter = candidate.y + candidate.height / 2
+      return (
+        Math.abs(lineCenter - candidateCenter) <=
+        Math.max(0.012, line.height, candidate.height)
+      )
+    })
+    if (
+      alignedWithBody &&
+      line.fontSize <= pageBodyFontSize * 0.85 &&
+      line.width <= 0.25 &&
+      line.text.length <= 120 &&
+      Math.abs(line.x - dominant.x) >= 0.18
+    ) {
+      line.kind = 'side'
+      line.confidence = 0.9
+    }
+  }
+}
+
 function detectColumns(lines: ClassifiedLine[]): ColumnLayout {
+  const sideLines = lines.filter((line) => line.kind === 'side')
   const candidates = lines.filter(
     (line) => line.kind === 'body' && line.text.length > 1 && line.width < 0.72,
   )
@@ -148,7 +238,43 @@ function detectColumns(lines: ClassifiedLine[]): ColumnLayout {
     }
   }
   if (gaps.length === 0) {
-    return { split: null, accepted: false, ambiguous: false }
+    const bodyIndent = spread(candidates.map((line) => line.x))
+    if (sideLines.length > 0 && candidates.length >= 2 && bodyIndent <= 0.04) {
+      const bodyMedian = median(candidates.map((line) => line.fontSize))
+      const sideMedian = median(sideLines.map((line) => line.fontSize))
+      return {
+        split: null,
+        accepted: false,
+        ambiguous: false,
+        resolution: {
+          policyVersion: READING_ORDER_RESOLUTION_POLICY_VERSION,
+          ambiguityClass: 'single-column-with-margin-notes',
+          status: 'resolved',
+          confidence: 0.94,
+          threshold: READING_ORDER_RESOLUTION_THRESHOLD,
+          evidence: [
+            {
+              code: 'font-metrics',
+              detail: `Margin median font ${rounded(sideMedian)} is subordinate to body median font ${rounded(bodyMedian)}.`,
+            },
+            {
+              code: 'indentation-continuity',
+              detail: `The retained body flow has normalized indentation spread ${rounded(bodyIndent)}.`,
+            },
+            {
+              code: 'margin-note-exclusion',
+              detail: `${sideLines.length} aligned narrow side region${sideLines.length === 1 ? '' : 's'} remain outside canonical reading order.`,
+            },
+          ],
+        },
+      }
+    }
+    return {
+      split: null,
+      accepted: false,
+      ambiguous: false,
+      resolution: null,
+    }
   }
 
   const clusters = gaps.map((seed) => {
@@ -184,20 +310,187 @@ function detectColumns(lines: ClassifiedLine[]): ColumnLayout {
     rightLines.length > 0 &&
     Math.min(leftRange[1], rightRange[1]) >
       Math.max(leftRange[0], rightRange[0])
-  const accepted =
+  const pairedLeft = distinctLines(
+    strongest.members.map((member) => member.left),
+  )
+  const pairedRight = distinctLines(
+    strongest.members.map((member) => member.right),
+  )
+  const alignedBands = alignedBandCount(strongest.members)
+  if (
     overlapsVertically &&
-    strongest.members.length >= 3 &&
-    leftLines.length >= 3 &&
-    rightLines.length >= 3
+    alignedBands < 2 &&
+    pairedLeft.length >= 2 &&
+    pairedRight.length >= 2
+  ) {
+    return {
+      split: null,
+      accepted: false,
+      ambiguous: false,
+      resolution: {
+        policyVersion: READING_ORDER_RESOLUTION_POLICY_VERSION,
+        ambiguityClass: 'fragmented-inline-cluster',
+        status: 'resolved',
+        confidence: 0.92,
+        threshold: READING_ORDER_RESOLUTION_THRESHOLD,
+        evidence: [
+          {
+            code: 'block-adjacency',
+            detail:
+              'Separated fragments occupy one horizontal band and do not establish adjacent vertical column blocks.',
+          },
+        ],
+      },
+    }
+  }
+
+  const splitDeviation = Math.max(
+    ...strongest.members.map((member) =>
+      Math.abs(member.split - strongest.split),
+    ),
+  )
+  const minimumGutter = Math.min(
+    ...strongest.members.map(
+      (member) => member.right.x - (member.left.x + member.left.width),
+    ),
+  )
+  const gutterStable =
+    alignedBands >= 2 &&
+    strongest.split >= 0.25 &&
+    strongest.split <= 0.75 &&
+    splitDeviation <= 0.025 &&
+    minimumGutter >= 0.01
+  const leftIndentSpread = spread(pairedLeft.map((line) => line.x))
+  const rightIndentSpread = spread(pairedRight.map((line) => line.x))
+  const leftWidthSpread = spread(pairedLeft.map((line) => line.width))
+  const rightWidthSpread = spread(pairedRight.map((line) => line.width))
+  const indentationContinuous =
+    leftIndentSpread <= 0.035 &&
+    rightIndentSpread <= 0.035 &&
+    leftWidthSpread <= 0.08 &&
+    rightWidthSpread <= 0.08
+  const leftFont = median(pairedLeft.map((line) => line.fontSize))
+  const rightFont = median(pairedRight.map((line) => line.fontSize))
+  const fontRatio =
+    Math.max(leftFont, rightFont) / Math.max(1, Math.min(leftFont, rightFont))
+  const fontCompatible = fontRatio <= 1.15
+  const leftGap = maximumVerticalGap(pairedLeft)
+  const rightGap = maximumVerticalGap(pairedRight)
+  const blocksAdjacent =
+    alignedBands >= 2 && leftGap <= 0.12 && rightGap <= 0.12
+
+  const crossesSplit = (line: ClassifiedLine) =>
+    line.x < strongest.split - 0.04 &&
+    line.x + line.width > strongest.split + 0.04
+  const captions = lines.filter(
+    (line) => line.kind === 'caption' && crossesSplit(line),
+  )
+  const spanning = lines.filter(
+    (line) => line.kind === 'body' && crossesSplit(line),
+  )
+  const footnotes = lines.filter(
+    (line) => line.kind === 'footnote' || line.kind === 'endnote',
+  )
+  const ambiguityClass: PdfReadingOrderAmbiguityClass = lines.some((line) =>
+    /^(?:references|bibliography)$/i.test(line.text.trim()),
+  )
+    ? 'dense-reference-section'
+    : footnotes.length > 0
+      ? 'footnote-band'
+      : captions.length > 0
+        ? 'two-column-with-spanning-float'
+        : spanning.length > 0
+          ? 'mixed-single-two-column'
+          : 'sparse-column-gutter'
+  const evidence: PdfReadingOrderEvidence[] = []
+  let confidence = 0.45
+  if (gutterStable) {
+    confidence += 0.2
+    evidence.push({
+      code: 'column-gutter',
+      detail: `${alignedBands} aligned bands repeat a normalized gutter at ${rounded(strongest.split)} with maximum deviation ${rounded(splitDeviation)}.`,
+    })
+  }
+  if (fontCompatible) {
+    confidence += 0.1
+    evidence.push({
+      code: 'font-metrics',
+      detail: `Left and right median font sizes are ${rounded(leftFont)} and ${rounded(rightFont)} (ratio ${rounded(fontRatio)}).`,
+    })
+  }
+  if (indentationContinuous) {
+    confidence += 0.1
+    evidence.push({
+      code: 'indentation-continuity',
+      detail: `Column indentation spreads are ${rounded(leftIndentSpread)} left and ${rounded(rightIndentSpread)} right; width spreads are ${rounded(leftWidthSpread)} and ${rounded(rightWidthSpread)}.`,
+    })
+  }
+  if (blocksAdjacent) {
+    confidence += 0.1
+    evidence.push({
+      code: 'block-adjacency',
+      detail: `Maximum normalized within-column gaps are ${rounded(leftGap)} left and ${rounded(rightGap)} right.`,
+    })
+  }
+  if (captions.length > 0) {
+    confidence += 0.03
+    evidence.push({
+      code: 'caption-proximity',
+      detail: `${captions.length} caption region${captions.length === 1 ? '' : 's'} cross the stable gutter as a page-spanning boundary.`,
+    })
+  }
+  if (spanning.length > 0) {
+    confidence += 0.02
+    evidence.push({
+      code: 'spanning-boundary',
+      detail: `${spanning.length} body region${spanning.length === 1 ? '' : 's'} cross the stable gutter and delimit column bands.`,
+    })
+  }
+  if (footnotes.length > 0) {
+    confidence += 0.02
+    evidence.push({
+      code: 'footnote-band',
+      detail: `${footnotes.length} smaller-font note region${footnotes.length === 1 ? '' : 's'} form a separated lower band after body flow.`,
+    })
+  }
+  confidence = rounded(Math.min(confidence, 0.99))
+  const coreEvidenceCount = [
+    fontCompatible,
+    indentationContinuous,
+    blocksAdjacent,
+  ].filter(Boolean).length
+  const repeatedGeometry =
+    overlapsVertically &&
+    alignedBands >= 3 &&
+    pairedLeft.length >= 3 &&
+    pairedRight.length >= 3
+  const resolvedSparseGeometry =
+    overlapsVertically &&
+    gutterStable &&
+    coreEvidenceCount >= 2 &&
+    confidence >= READING_ORDER_RESOLUTION_THRESHOLD
+  const accepted = repeatedGeometry || resolvedSparseGeometry
   const ambiguous =
     !accepted &&
     overlapsVertically &&
-    leftLines.length >= 2 &&
-    rightLines.length >= 2
+    alignedBands >= 2 &&
+    pairedLeft.length >= 2 &&
+    pairedRight.length >= 2
   return {
     split: accepted || ambiguous ? rounded(strongest.split) : null,
     accepted,
     ambiguous,
+    resolution:
+      resolvedSparseGeometry || ambiguous
+        ? {
+            policyVersion: READING_ORDER_RESOLUTION_POLICY_VERSION,
+            ambiguityClass,
+            status: resolvedSparseGeometry ? 'resolved' : 'ambiguous',
+            confidence,
+            threshold: READING_ORDER_RESOLUTION_THRESHOLD,
+            evidence,
+          }
+        : null,
   }
 }
 
@@ -327,6 +620,7 @@ function makeObjectRegions(
         split: null,
         accepted: false,
         ambiguous: false,
+        resolution: null,
       }
       const column = columnFor(
         {
@@ -487,26 +781,31 @@ function buildReadingOrder(
     const from = orderedRegions[index]
     const to = orderedRegions[index + 1]
     const layout = layouts.get(from.page)
-    const ambiguousBoundary =
-      from.page === to.page &&
-      Boolean(layout?.ambiguous) &&
-      from.column === 'left' &&
-      to.column === 'right'
+    const crossColumnBoundary =
+      from.page === to.page && from.column === 'left' && to.column === 'right'
+    const ambiguousBoundary = crossColumnBoundary && Boolean(layout?.ambiguous)
+    const resolvedBoundary =
+      crossColumnBoundary && layout?.resolution?.status === 'resolved'
     edges.push({
       id: `reading-edge-${String(edges.length + 1).padStart(4, '0')}`,
       from: from.id,
       to: to.id,
       status: ambiguousBoundary ? 'candidate' : 'accepted',
-      confidence: ambiguousBoundary ? 0.5 : 0.96,
+      confidence:
+        ambiguousBoundary || resolvedBoundary
+          ? (layout?.resolution?.confidence ?? 0.5)
+          : 0.96,
       evidence: ambiguousBoundary
         ? [
+            ...(layout?.resolution?.evidence ?? []),
             {
               code: 'ambiguous-column-flow',
-              detail:
-                'Both column orders remain candidates because the page has too little repeated geometry.',
+              detail: `Both column orders remain candidates because confidence ${layout?.resolution?.confidence ?? 0.5} is below threshold ${READING_ORDER_RESOLUTION_THRESHOLD}.`,
             },
           ]
-        : [edgeEvidence(from, to)],
+        : resolvedBoundary
+          ? layout.resolution!.evidence
+          : [edgeEvidence(from, to)],
       sourceBoxes: [from.box, to.box],
     })
     if (ambiguousBoundary) {
@@ -524,12 +823,12 @@ function buildReadingOrder(
           from: reverseFrom.id,
           to: reverseTo.id,
           status: 'candidate',
-          confidence: 0.5,
+          confidence: layout?.resolution?.confidence ?? 0.5,
           evidence: [
+            ...(layout?.resolution?.evidence ?? []),
             {
               code: 'ambiguous-column-flow',
-              detail:
-                'The reverse column order is retained for bounded review.',
+              detail: `The reverse column order is retained for bounded review below threshold ${READING_ORDER_RESOLUTION_THRESHOLD}.`,
             },
           ],
           sourceBoxes: [reverseFrom.box, reverseTo.box],
@@ -538,6 +837,24 @@ function buildReadingOrder(
     }
   }
   const regionIds = regions.map((region) => region.id)
+  const resolutions = [...layouts.entries()]
+    .filter(
+      (
+        entry,
+      ): entry is [
+        number,
+        ColumnLayout & { resolution: NonNullable<ColumnLayout['resolution']> },
+      ] => entry[1].resolution !== null,
+    )
+    .map<PdfReadingOrderResolution>(([page, layout]) => ({
+      page,
+      ...layout.resolution,
+      regionIds: regions
+        .filter(
+          (region) => region.page === page && region.includedInReadingOrder,
+        )
+        .map((region) => region.id),
+    }))
   const acyclic = !hasAcceptedCycle(regionIds, edges)
   const unresolvedEdgeCount = edges.filter(
     (edge) => edge.status === 'candidate',
@@ -562,6 +879,7 @@ function buildReadingOrder(
     regionIds,
     order: orderedRegions.map((region) => region.id),
     edges,
+    resolutions,
     acyclic,
     evaluation,
   } satisfies PdfReadingOrderGraph
@@ -665,6 +983,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         }
       })
 
+    preclassifyMarginNotes(preliminary, fontSize)
     const layout = detectColumns(preliminary)
     layouts.set(page.page, layout)
     const commonX = median(
@@ -695,6 +1014,22 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         line.confidence = Math.min(line.confidence, 0.58)
       }
       classified.push(line)
+    }
+  }
+
+  const hasSingleColumnPage =
+    layouts.size > 1 &&
+    [...layouts.values()].some(
+      (layout) => layout.split === null && !layout.ambiguous,
+    )
+  if (hasSingleColumnPage) {
+    for (const layout of layouts.values()) {
+      if (
+        layout.resolution?.status === 'resolved' &&
+        layout.resolution.ambiguityClass === 'sparse-column-gutter'
+      ) {
+        layout.resolution.ambiguityClass = 'mixed-single-two-column'
+      }
     }
   }
 

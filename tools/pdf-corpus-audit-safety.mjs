@@ -4,6 +4,8 @@ const SAFE_DIAGNOSTIC_MESSAGES = Object.freeze({
   REPEATED_MARGIN_TEXT:
     'Repeated header or footer patterns were removed from reading order.',
   LOW_CONFIDENCE_BLOCK: 'A reconstructed block requires reading-order review.',
+  RESOLVED_READING_ORDER:
+    'A reading-order region was resolved from deterministic geometry.',
   AMBIGUOUS_READING_ORDER:
     'The document contains an ambiguous reading-order region.',
   NO_RECONSTRUCTABLE_TEXT: 'No reconstructable embedded text was found.',

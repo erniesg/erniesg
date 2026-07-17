@@ -124,10 +124,37 @@ export type PdfReadingOrderEvidence = {
     | 'page-sequence'
     | 'vertical-flow'
     | 'column-flow'
+    | 'column-gutter'
+    | 'font-metrics'
+    | 'indentation-continuity'
+    | 'caption-proximity'
+    | 'block-adjacency'
+    | 'margin-note-exclusion'
+    | 'footnote-band'
     | 'spanning-boundary'
     | 'note-after-body'
     | 'ambiguous-column-flow'
   detail: string
+}
+
+export type PdfReadingOrderAmbiguityClass =
+  | 'two-column-with-spanning-float'
+  | 'single-column-with-margin-notes'
+  | 'mixed-single-two-column'
+  | 'dense-reference-section'
+  | 'footnote-band'
+  | 'sparse-column-gutter'
+  | 'fragmented-inline-cluster'
+
+export type PdfReadingOrderResolution = {
+  policyVersion: '1.0.0'
+  page: number
+  ambiguityClass: PdfReadingOrderAmbiguityClass
+  status: 'resolved' | 'ambiguous'
+  confidence: number
+  threshold: number
+  evidence: PdfReadingOrderEvidence[]
+  regionIds: string[]
 }
 
 export type PdfReadingOrderEdge = {
@@ -161,6 +188,7 @@ export type PdfReadingOrderGraph = {
   regionIds: string[]
   order: string[]
   edges: PdfReadingOrderEdge[]
+  resolutions: PdfReadingOrderResolution[]
   acyclic: boolean
   evaluation: PdfReadingOrderEvaluation
 }
@@ -211,6 +239,7 @@ export type ReconstructionDiagnostic = {
     | 'MIXED_PAGE'
     | 'REPEATED_MARGIN_TEXT'
     | 'LOW_CONFIDENCE_BLOCK'
+    | 'RESOLVED_READING_ORDER'
     | 'AMBIGUOUS_READING_ORDER'
     | 'READING_ORDER_CYCLE'
     | 'AMBIGUOUS_NOTE_MATCH'
@@ -224,6 +253,9 @@ export type ReconstructionDiagnostic = {
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
+  readingOrderResolution?: Omit<PdfReadingOrderResolution, 'regionIds'> & {
+    regionId?: string
+  }
 }
 
 export type PdfSemanticSignals = {

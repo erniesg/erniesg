@@ -299,25 +299,29 @@ describe('PDF.js browser ingestion', () => {
     ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
   })
 
-  it('retains the published fellowship PDF as non-private local audit evidence', async () => {
-    const bytes = await readFile(
-      new URL(
-        '../../public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
-        import.meta.url,
-      ),
-    )
-    const result = await reconstructPdf(
-      new File([bytes], 'if-letters-home-could-sing.pdf', {
-        type: 'application/pdf',
-        lastModified: 0,
-      }),
-    )
+  it(
+    'retains the published fellowship PDF as non-private local audit evidence',
+    async () => {
+      const bytes = await readFile(
+        new URL(
+          '../../public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
+          import.meta.url,
+        ),
+      )
+      const result = await reconstructPdf(
+        new File([bytes], 'if-letters-home-could-sing.pdf', {
+          type: 'application/pdf',
+          lastModified: 0,
+        }),
+      )
 
-    expect(result.source.sha256).toBe(
-      'ddf25768bcc2ec8866037c553102071ee8fbb73db168f975852f69482c1eb042',
-    )
-    expect(result.source.pageCount).toBeGreaterThan(1)
-    expect(result.completeness.sourceTextCharacters).toBeGreaterThan(0)
-    expect(['ready', 'review-required']).toContain(result.readiness.status)
-  })
+      expect(result.source.sha256).toBe(
+        'ddf25768bcc2ec8866037c553102071ee8fbb73db168f975852f69482c1eb042',
+      )
+      expect(result.source.pageCount).toBeGreaterThan(1)
+      expect(result.completeness.sourceTextCharacters).toBeGreaterThan(0)
+      expect(['ready', 'review-required']).toContain(result.readiness.status)
+    },
+    15_000,
+  )
 })

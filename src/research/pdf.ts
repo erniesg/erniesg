@@ -268,6 +268,26 @@ function extractNativeObjects({
   return objects
 }
 
+const MAX_DECODED_IMAGE_PIXELS = 16_777_216
+
+function bitmapPixelData(
+  bitmap: CanvasImageSource,
+  width: number,
+  height: number,
+) {
+  const canvas =
+    typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(width, height)
+      : typeof document !== 'undefined'
+        ? Object.assign(document.createElement('canvas'), { width, height })
+        : null
+  const context = canvas?.getContext('2d', { willReadFrequently: true })
+  if (!context) return null
+  context.drawImage(bitmap, 0, 0, width, height)
+  const data = context.getImageData(0, 0, width, height).data
+  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+}
+
 function pixelData(value: unknown) {
   if (!value || typeof value !== 'object') return null
   const image = value as {
@@ -275,20 +295,29 @@ function pixelData(value: unknown) {
     height?: unknown
     kind?: unknown
     data?: unknown
+    bitmap?: unknown
   }
-  if (
-    !Number.isInteger(image.width) ||
-    !Number.isInteger(image.height) ||
-    !ArrayBuffer.isView(image.data)
-  ) {
+  if (!Number.isInteger(image.width) || !Number.isInteger(image.height)) {
     return null
   }
   const width = image.width as number
   const height = image.height as number
-  const data = image.data as ArrayBufferView
-  const pixels = new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-  const colorSpace =
-    image.kind === 1
+  if (width < 1 || height < 1 || width * height > MAX_DECODED_IMAGE_PIXELS) {
+    return null
+  }
+  const pixels = ArrayBuffer.isView(image.data)
+    ? new Uint8Array(
+        image.data.buffer,
+        image.data.byteOffset,
+        image.data.byteLength,
+      )
+    : image.bitmap && typeof image.bitmap === 'object'
+      ? bitmapPixelData(image.bitmap as CanvasImageSource, width, height)
+      : null
+  if (!pixels) return null
+  const colorSpace = !ArrayBuffer.isView(image.data)
+    ? ('rgba' as const)
+    : image.kind === 1
       ? ('grayscale-1bpp' as const)
       : image.kind === 2 || pixels.length === width * height * 3
         ? ('rgb' as const)
@@ -299,7 +328,11 @@ function pixelData(value: unknown) {
 }
 
 async function resolveNativeObjects(
-  page: { objs: { get(id: string): unknown } },
+  page: {
+    objs: {
+      get(id: string, callback?: (value: unknown) => void): unknown
+    }
+  },
   drafts: NativeObjectDraft[],
 ) {
   const assets = new Map<
@@ -338,8 +371,21 @@ async function resolveNativeObjects(
     }
     let decoded: unknown = draft.source
     try {
-      if (typeof draft.source === 'string')
-        decoded = page.objs.get(draft.source)
+      if (typeof draft.source === 'string') {
+        decoded = await new Promise<unknown>((resolve) => {
+          let settled = false
+          let timeout: ReturnType<typeof setTimeout> | undefined
+          const finish = (value: unknown) => {
+            if (settled) return
+            settled = true
+            if (timeout !== undefined) clearTimeout(timeout)
+            resolve(value)
+          }
+          timeout = setTimeout(() => finish(null), 500)
+          const immediate = page.objs.get(draft.source as string, finish)
+          if (immediate !== null && immediate !== undefined) finish(immediate)
+        })
+      }
     } catch {
       decoded = null
     }

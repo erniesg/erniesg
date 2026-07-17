@@ -141,8 +141,8 @@ describe('PDF semantic reconstruction', () => {
         page(1, [
           run(1, 'Left one.', 0.08, 0.2, 0.32),
           run(1, 'Right one.', 0.55, 0.2, 0.32),
-          run(1, 'Left two.', 0.08, 0.24, 0.32),
-          run(1, 'Right two.', 0.55, 0.24, 0.32),
+          run(1, 'Indented left two.', 0.18, 0.7, 0.22),
+          run(1, 'Right two.', 0.55, 0.7, 0.32),
         ]),
       ],
       sourceHash: 'd'.repeat(64),

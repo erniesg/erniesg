@@ -331,6 +331,7 @@ async function resolveNativeObjects(
   page: {
     objs: {
       get(id: string, callback?: (value: unknown) => void): unknown
+      has?(id: string): boolean
     }
   },
   drafts: NativeObjectDraft[],
@@ -358,6 +359,36 @@ async function resolveNativeObjects(
       current.sourceBoxes.push({ ...visualAsset.sourceBoxes[index] })
     }
   }
+  const resolvedSources = new Map<string, Promise<unknown>>()
+  for (const draft of drafts) {
+    if (typeof draft.source !== 'string' || resolvedSources.has(draft.source)) {
+      continue
+    }
+    const source = draft.source
+    resolvedSources.set(
+      source,
+      new Promise<unknown>((resolve) => {
+        let settled = false
+        let timeout: ReturnType<typeof setTimeout> | undefined
+        const finish = (value: unknown) => {
+          if (settled) return
+          settled = true
+          if (timeout !== undefined) clearTimeout(timeout)
+          resolve(value)
+        }
+        timeout = setTimeout(() => finish(null), 500)
+        try {
+          if (page.objs.has?.(source)) finish(page.objs.get(source))
+          else {
+            const immediate = page.objs.get(source, finish)
+            if (immediate !== null && immediate !== undefined) finish(immediate)
+          }
+        } catch {
+          finish(null)
+        }
+      }),
+    )
+  }
   for (const draft of drafts) {
     if (draft.vector) {
       const visualAsset = await createVectorSvgAsset({
@@ -372,19 +403,7 @@ async function resolveNativeObjects(
     let decoded: unknown = draft.source
     try {
       if (typeof draft.source === 'string') {
-        decoded = await new Promise<unknown>((resolve) => {
-          let settled = false
-          let timeout: ReturnType<typeof setTimeout> | undefined
-          const finish = (value: unknown) => {
-            if (settled) return
-            settled = true
-            if (timeout !== undefined) clearTimeout(timeout)
-            resolve(value)
-          }
-          timeout = setTimeout(() => finish(null), 500)
-          const immediate = page.objs.get(draft.source as string, finish)
-          if (immediate !== null && immediate !== undefined) finish(immediate)
-        })
+        decoded = await resolvedSources.get(draft.source)
       }
     } catch {
       decoded = null

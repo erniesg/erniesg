@@ -311,6 +311,18 @@ const fixtures = {
       ],
     },
   ],
+  'sparse-embedded-text.pdf': [
+    {
+      lines: [
+        {
+          text: 'Section divider',
+          x: 72,
+          y: 680,
+          size: 20,
+        },
+      ],
+    },
+  ],
   'structured-scientific.pdf': [
     {
       lines: [

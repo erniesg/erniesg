@@ -357,6 +357,15 @@ export function mergeOcrPage(
     })
   }
 
+  const confirmsEmbeddedOnlyPage =
+    page.kind === 'ocr-required' &&
+    page.imageCount === 0 &&
+    (page.objects?.length ?? 0) === 0 &&
+    embeddedRuns.length > 0 &&
+    words.length > 0 &&
+    words.every((word) => word.mergeStatus === 'duplicate') &&
+    confidence >= 0.75
+
   const lines: PdfOcrLineEvidence[] = recognition.lines.map((line) => ({
     id: line.id,
     text: line.text,
@@ -386,7 +395,8 @@ export function mergeOcrPage(
   const merged: PdfPageAnalysis = {
     ...page,
     kind:
-      page.kind === 'ocr-required' && acceptedRuns.length > 0
+      page.kind === 'ocr-required' &&
+      (acceptedRuns.length > 0 || confirmsEmbeddedOnlyPage)
         ? 'ocr-complete'
         : page.kind,
     textCharacters,

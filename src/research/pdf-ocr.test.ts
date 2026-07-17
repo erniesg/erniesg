@@ -190,6 +190,53 @@ describe('OCR evidence merging', () => {
     expect(result.diagnostics).toEqual([])
   })
 
+  it('completes an embedded-only sparse page when OCR confirms only duplicates', () => {
+    const sparse = page([run('Section divider', 0.1, 0.1, 0.3, 0.05)])
+    sparse.kind = 'ocr-required'
+
+    const result = mergeOcrPage(
+      sparse,
+      recognition([
+        {
+          text: 'Section divider',
+          confidence: 0.99,
+          bbox: { x0: 100, y0: 100, x1: 400, y1: 150 },
+          lineId: 'line-1',
+        },
+      ]),
+      { sourceSha256: 'a'.repeat(64) },
+    )
+
+    expect(result.page.kind).toBe('ocr-complete')
+    expect(result.page.runs.map((item) => item.text)).toEqual([
+      'Section divider',
+    ])
+    expect(result.page.ocr?.words).toEqual([
+      expect.objectContaining({ mergeStatus: 'duplicate' }),
+    ])
+    expect(result.diagnostics).toEqual([])
+
+    const lowConfidence = mergeOcrPage(
+      sparse,
+      recognition([
+        {
+          text: 'Section divider',
+          confidence: 0.61,
+          bbox: { x0: 100, y0: 100, x1: 400, y1: 150 },
+          lineId: 'line-1',
+        },
+      ]),
+      { sourceSha256: 'a'.repeat(64) },
+    )
+    expect(lowConfidence.page.kind).toBe('ocr-required')
+    expect(lowConfidence.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'LOW_CONFIDENCE_OCR',
+        severity: 'error',
+      }),
+    ])
+  })
+
   it('deduplicates matching text, retains embedded links, and diagnoses conflicts', () => {
     const embedded = page([run('Hello', 0.1, 0.1, 0.2, 0.05)], [scanObject()])
     embedded.kind = 'mixed'
@@ -248,6 +295,7 @@ describe('OCR evidence merging', () => {
       'world',
     ])
     expect(result.page.links).toEqual(embedded.links)
+    expect(result.page.kind).toBe('mixed')
     expect(result.page.objects?.[0]).toMatchObject({ role: 'semantic' })
     expect(result.page.ocr).toMatchObject({
       sourceSha256: 'a'.repeat(64),

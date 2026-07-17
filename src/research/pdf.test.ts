@@ -322,6 +322,86 @@ describe('PDF.js browser ingestion', () => {
     })
   })
 
+  it('completes a sparse embedded-text page after duplicate-only OCR', async () => {
+    const file = await fixtureFile('sparse-embedded-text.pdf')
+    const baseline = await reconstructPdf(file)
+    const embedded = baseline.pages[0].runs[0]
+
+    expect(baseline.pages[0]).toMatchObject({
+      kind: 'ocr-required',
+      imageCount: 0,
+    })
+    expect(baseline.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'OCR_REQUIRED', severity: 'error' }),
+      ]),
+    )
+    expect(baseline.readiness.ready).toBe(false)
+
+    const session: PdfOcrSession = {
+      async recognize(request) {
+        return {
+          engine: 'test-local-ocr',
+          engineVersion: '1.0.0',
+          model: 'synthetic-eng',
+          modelVersion: '1.0.0',
+          languages: ['eng'],
+          languageMode: 'explicit',
+          raster: {
+            width: request.raster.width,
+            height: request.raster.height,
+            sha256: request.raster.sha256,
+          },
+          words: [
+            {
+              text: embedded.text,
+              confidence: 0.99,
+              bbox: {
+                x0: embedded.x * request.raster.width,
+                y0: embedded.y * request.raster.height,
+                x1: (embedded.x + embedded.width) * request.raster.width,
+                y1: (embedded.y + embedded.height) * request.raster.height,
+              },
+              lineId: 'line-duplicate',
+            },
+          ],
+          lines: [],
+        }
+      },
+      async terminate() {},
+    }
+
+    const result = await reconstructPdf(file, undefined, {
+      ocr: {
+        languages: ['eng'],
+        languageMode: 'explicit',
+        async createSession() {
+          return session
+        },
+        async rasterize() {
+          return {
+            bytes: new Uint8Array([137, 80, 78, 71]),
+            mediaType: 'image/png',
+            width: 1000,
+            height: 1000,
+            sha256: '9'.repeat(64),
+          }
+        },
+      },
+    })
+
+    expect(result.pages[0]).toMatchObject({ kind: 'ocr-complete' })
+    expect(result.pages[0].ocr?.words).toEqual([
+      expect.objectContaining({ mergeStatus: 'duplicate' }),
+    ])
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'OCR_REQUIRED' }),
+      ]),
+    )
+    expect(result.completeness.ocrRequiredPages).toEqual([])
+  })
+
   it('retains rotated OCR boxes and physical-page provenance', async () => {
     const session: PdfOcrSession = {
       async recognize(request) {

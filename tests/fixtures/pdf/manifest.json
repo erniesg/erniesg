@@ -7,6 +7,10 @@
       "features": ["born-digital-text"]
     },
     {
+      "file": "sparse-embedded-text.pdf",
+      "features": ["sparse-embedded-text", "duplicate-only-ocr"]
+    },
+    {
       "file": "structured-scientific.pdf",
       "features": [
         "two-columns",

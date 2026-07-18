@@ -1,13 +1,18 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import {
   getTargetProfile,
   TARGET_PROFILE_IDS,
 } from '../../src/research/targets'
+import { installStaticRoutes, jsonFixture } from './static-build'
 
 const PAPER_ID = 'semantic-responsive-typesetting'
 const ANCHOR_QUOTE =
   'Once meaning becomes coordinates, every new screen or sheet becomes a repair job.'
+const ANNOTATION_IDS = [
+  'highlight-reading-position',
+  'note-reading-position',
+] as const
 const GEOMETRY_EPSILON_CSS_PX = 0.5
 const OVERFLOW_EPSILON_CSS_PX = 1
 
@@ -30,7 +35,89 @@ type GeometryReport = {
   overlaps: string[]
   orphanedCaptions: string[]
   horizontalOverflow: Array<{ element: string; amount: number }>
+  missingAnnotations: string[]
+  unstableAnchors: string[]
 }
+
+type GeometryEvidence = {
+  schemaVersion: '1.0.0'
+  runtime: {
+    browserName: 'chromium'
+    browserVersion: string
+    viewport: { width: number; height: number }
+    deviceScaleFactor: number
+  }
+  tolerances: {
+    geometryCssPx: number
+    overflowCssPx: number
+  }
+  targets: GeometryReport[]
+}
+
+async function expectStudioHydrated(page: Page) {
+  const annotation = page.locator(
+    '[data-annotation-summary="highlight-reading-position"]',
+  )
+  await expect
+    .poll(async () =>
+      Number(await annotation.getAttribute('data-geometry-rect-count')),
+    )
+    .toBeGreaterThan(0)
+}
+
+async function inspectAnnotations(page: Page, anchorStart: number) {
+  return page.evaluate(
+    ({ annotationIds, anchorNodeId, anchorQuote, anchorStart }) => {
+      const normalize = (value: string) => value.replace(/\s+/g, ' ').trim()
+      const rendition = document.querySelector<HTMLElement>('.srt-paper')
+      const layoutVersion = rendition?.dataset.layoutVersion ?? ''
+      const missingAnnotations: string[] = []
+      const unstableAnchors: string[] = []
+
+      for (const id of annotationIds) {
+        const summary = document.querySelector<HTMLElement>(
+          `[data-annotation-summary="${id}"]`,
+        )
+        const marks = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            `[data-annotation-id="${id}"]`,
+          ),
+        )
+        const renderedText = normalize(
+          marks.map((element) => element.textContent ?? '').join(' '),
+        )
+        if (
+          !summary ||
+          summary.dataset.resolutionStatus !== 'resolved' ||
+          Number(summary.dataset.geometryRectCount ?? 0) < 1 ||
+          marks.length === 0
+        ) {
+          missingAnnotations.push(id)
+          continue
+        }
+        if (
+          renderedText !== anchorQuote ||
+          summary.dataset.anchorNodeId !== anchorNodeId ||
+          Number(summary.dataset.anchorStart) !== anchorStart ||
+          Number(summary.dataset.anchorEnd) !==
+            anchorStart + anchorQuote.length ||
+          summary.dataset.geometryLayoutVersion !== layoutVersion
+        ) {
+          unstableAnchors.push(id)
+        }
+      }
+      return { missingAnnotations, unstableAnchors }
+    },
+    {
+      annotationIds: ANNOTATION_IDS,
+      anchorNodeId: 'p-proposition-1',
+      anchorQuote: ANCHOR_QUOTE,
+      anchorStart,
+    },
+  )
+}
+
+test.beforeEach(async ({ page }) => installStaticRoutes(page))
 
 async function inspectGeometry(
   paper: Locator,
@@ -233,6 +320,8 @@ async function inspectGeometry(
         horizontalOverflow: overflowCandidates.filter(
           ({ amount }) => amount > options.overflowEpsilon,
         ),
+        missingAnnotations: [],
+        unstableAnchors: [],
       }
     },
     {
@@ -244,17 +333,15 @@ async function inspectGeometry(
 }
 
 test('captures every paginated target and rejects invalid geometry', async ({
+  browser,
   page,
   request,
 }, testInfo) => {
-  const sourceResponse = await request.get(`/research/${PAPER_ID}/source.json`)
-  expect(sourceResponse.ok()).toBe(true)
-  const source = (await sourceResponse.json()) as { nodes: SourceNode[] }
-  const manifestResponse = await request.get(
-    `/research/${PAPER_ID}/manifest.json`,
+  const source = await jsonFixture<{ nodes: SourceNode[] }>(
+    request,
+    `/research/${PAPER_ID}/source.json`,
   )
-  expect(manifestResponse.ok()).toBe(true)
-  const manifest = (await manifestResponse.json()) as {
+  const manifest = await jsonFixture<{
     renditions: Array<{
       target: string
       pagination: {
@@ -264,14 +351,15 @@ test('captures every paginated target and rejects invalid geometry', async ({
       }
       entries: Array<{ violations: unknown[] }>
     }>
-  }
+  }>(request, `/research/${PAPER_ID}/manifest.json`)
   const reports: GeometryReport[] = []
+  const anchorNode = source.nodes.find((node) => node.id === 'p-proposition-1')
+  const anchorStart = anchorNode?.text?.indexOf(ANCHOR_QUOTE) ?? -1
+  expect(anchorStart).toBeGreaterThanOrEqual(0)
 
   for (const target of TARGET_PROFILE_IDS) {
     await page.goto(`/research/${PAPER_ID}`)
-    await expect(
-      page.locator('astro-island[component-url$="ResearchStudio.tsx"]'),
-    ).toHaveAttribute('client-render-time', /.+/)
+    await expectStudioHydrated(page)
     await page.locator('html').evaluate((element) => {
       element.classList.add('disable-transitions')
     })
@@ -284,6 +372,7 @@ test('captures every paginated target and rejects invalid geometry', async ({
     await expect(paper).toBeVisible()
 
     const report = await inspectGeometry(paper, source.nodes)
+    Object.assign(report, await inspectAnnotations(page, anchorStart))
     const renditionManifest = manifest.renditions.find(
       (rendition) => rendition.target === target,
     )
@@ -304,6 +393,12 @@ test('captures every paginated target and rejects invalid geometry', async ({
       .toEqual([])
     expect
       .soft(report.horizontalOverflow, `${target}: horizontal overflow`)
+      .toEqual([])
+    expect
+      .soft(report.missingAnnotations, `${target}: missing annotations`)
+      .toEqual([])
+    expect
+      .soft(report.unstableAnchors, `${target}: unstable anchors`)
       .toEqual([])
     expect
       .soft(report.paper.width, `${target}: rendition width`)
@@ -345,8 +440,26 @@ test('captures every paginated target and rejects invalid geometry', async ({
     })
   }
 
+  const evidence: GeometryEvidence = {
+    schemaVersion: '1.0.0',
+    runtime: {
+      browserName: 'chromium',
+      browserVersion: browser.version(),
+      viewport: { width: 1440, height: 1200 },
+      deviceScaleFactor: 1,
+    },
+    tolerances: {
+      geometryCssPx: GEOMETRY_EPSILON_CSS_PX,
+      overflowCssPx: OVERFLOW_EPSILON_CSS_PX,
+    },
+    targets: reports,
+  }
+  const serializedEvidence = `${JSON.stringify(evidence, null, 2)}\n`
   const reportPath = testInfo.outputPath('geometry-report.json')
-  await writeFile(reportPath, `${JSON.stringify(reports, null, 2)}\n`)
+  await writeFile(reportPath, serializedEvidence)
+  if (process.env.SRT_GEOMETRY_REPORT) {
+    await writeFile(process.env.SRT_GEOMETRY_REPORT, serializedEvidence)
+  }
   await testInfo.attach('geometry-report', {
     path: reportPath,
     contentType: 'application/json',
@@ -357,9 +470,7 @@ test('keeps the semantic sentence and annotations through target, width, and fon
   page,
 }, testInfo) => {
   await page.goto(`/research/${PAPER_ID}`)
-  await expect(
-    page.locator('astro-island[component-url$="ResearchStudio.tsx"]'),
-  ).toHaveAttribute('client-render-time', /.+/)
+  await expectStudioHydrated(page)
   await page.locator('html').evaluate((element) => {
     element.classList.add('disable-transitions')
   })

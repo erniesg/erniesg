@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { unzipSync, strFromU8 } from 'fflate'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { installStaticRoutes } from './static-build'
 
 const fixture = (name: string) =>
   path.resolve(
@@ -12,6 +13,7 @@ const fixture = (name: string) =>
   )
 
 test.describe.configure({ timeout: 120_000 })
+test.beforeEach(async ({ page }) => installStaticRoutes(page))
 
 async function waitForImporter(page: Page) {
   await expect(

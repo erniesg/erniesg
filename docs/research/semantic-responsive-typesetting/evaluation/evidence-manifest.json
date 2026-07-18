@@ -1,0 +1,141 @@
+{
+  "schemaVersion": "1.0.0",
+  "issue": 9,
+  "generatedAt": "2026-07-18T15:42:38.584Z",
+  "scope": "SRT POC engineering evaluation package",
+  "artifacts": [
+    {
+      "path": "docs/research/semantic-responsive-typesetting/evaluation/README.md",
+      "byteLength": 3021,
+      "sha256": "e8c42a75f56edc757c2adc8e31663fd1f73083e8cd39f66c7eee16bcfbb29ec2"
+    },
+    {
+      "path": "docs/research/semantic-responsive-typesetting/evaluation/benchmark-report.md",
+      "byteLength": 3321,
+      "sha256": "83cc825d867104d28eb342971ee433e7a27d44464eaf2d0b463fd5650b83903b"
+    },
+    {
+      "path": "docs/research/semantic-responsive-typesetting/evaluation/results.json",
+      "byteLength": 7476,
+      "sha256": "05aabc6738ac5dc7f9a14a857f9932ce091a3020bd79759940a39c4e3132b9d7"
+    },
+    {
+      "path": "docs/research/semantic-responsive-typesetting/evaluation/geometry-results.json",
+      "byteLength": 4297,
+      "sha256": "5b1095acf61aef81404d451d6d3a49d6294e26426941e882818abb35cfda9868"
+    },
+    {
+      "path": "docs/research/semantic-responsive-typesetting/evaluation/limitations.md",
+      "byteLength": 5770,
+      "sha256": "407d1dfe18d90d349810afcd945d88d7cfb0364b9270a802bcb66d0163b9a953"
+    },
+    {
+      "path": "docs/research/semantic-responsive-typesetting/evaluation/adr-index.md",
+      "byteLength": 1707,
+      "sha256": "284e156816dd5b195090fa658d7a7d415e1b11cec0b4339a5855242d156d1a2a"
+    },
+    {
+      "path": "src/research/evaluation.ts",
+      "byteLength": 11518,
+      "sha256": "7f6018298f8af36e27056b5beeb59384f770439e043612bd7aaa6520aac2ac47"
+    },
+    {
+      "path": "src/research/evaluation.test.ts",
+      "byteLength": 4861,
+      "sha256": "83f43684dfcbfbc9dc7c8ccb1473227f58ae3e143c9392f54787174bd8dfe8b6"
+    },
+    {
+      "path": "src/research/papers/semantic-responsive-typesetting.json",
+      "byteLength": 3284,
+      "sha256": "f5b4204d194d13518091c267da3d9cd066418a8c46d2901843d1d18536bf7836"
+    },
+    {
+      "path": "src/research/annotations.ts",
+      "byteLength": 9355,
+      "sha256": "8510dc17dc129dc0384c0e4aba516d68d6555c873b14d0d97a06b359b6516d81"
+    },
+    {
+      "path": "src/research/canonical-hash.ts",
+      "byteLength": 1560,
+      "sha256": "042813f35339a9c59621ed7e0fdd06f36960ad4908bf35dbd620a8fd2ff49d12"
+    },
+    {
+      "path": "src/research/composition.ts",
+      "byteLength": 4884,
+      "sha256": "86d0d8e34d78c0079ce82c9d22ec6889f537a705cd86e6b7926795f887aef69a"
+    },
+    {
+      "path": "src/research/export-pdf.ts",
+      "byteLength": 7432,
+      "sha256": "060a0c74ddfb73f5340384ab1bee2368770017c41fd2eab553288c8de97beac7"
+    },
+    {
+      "path": "src/research/manifest.ts",
+      "byteLength": 29919,
+      "sha256": "bc84ef16bbe17e217f57396e119eb18a81c520cec114001393fa346881e3cc00"
+    },
+    {
+      "path": "src/research/pagination.ts",
+      "byteLength": 28084,
+      "sha256": "9b82dccd97639aec8011d248685ef53a2c96f085ad2c75d3f00b5c0799fa594f"
+    },
+    {
+      "path": "src/research/targets.ts",
+      "byteLength": 5162,
+      "sha256": "a781fd13ea7e3e9e5d0b2549f12acfc584f4f1ae575e93ecdff1646f3f1a52aa"
+    },
+    {
+      "path": "src/components/research/ResearchStudio.tsx",
+      "byteLength": 23986,
+      "sha256": "c93adea6850832a65cebe4324a79841ec3d7777c552c5ba8c15dc47040f42b9d"
+    },
+    {
+      "path": "src/styles/global.css",
+      "byteLength": 19035,
+      "sha256": "521a70e3ff1cd7fe44795e4c107ec429b45e0e727346899b4017a3452a96f5ce"
+    },
+    {
+      "path": "tools/srt/demo-evaluation.mjs",
+      "byteLength": 13625,
+      "sha256": "5a117dcf1d41c481ad55286e491deb917bc0ff793a2b8bde0df28eb4be92572f"
+    },
+    {
+      "path": "tests/e2e/srt-visual.spec.ts",
+      "byteLength": 19277,
+      "sha256": "53074b3da7e7f532091f073b050be4067997ea7d200123c13fbe31658248a872"
+    },
+    {
+      "path": "tests/e2e/static-build.ts",
+      "byteLength": 2771,
+      "sha256": "d9783973789bc4a4970d927e6809c59d40dd89b508a99db9810869e95c708abc"
+    },
+    {
+      "path": "tests/e2e/publication-importer.spec.ts",
+      "byteLength": 13259,
+      "sha256": "d9cfb01d0193478cd53741c15578d7848825b4ba6da232c5ff6b6617fdceac51"
+    },
+    {
+      "path": "playwright.config.ts",
+      "byteLength": 1210,
+      "sha256": "c7e7e98f7722e68f5eb11811ddda3d562ace7be6fed0279648e6edd49709ca65"
+    },
+    {
+      "path": "package.json",
+      "byteLength": 6122,
+      "sha256": "ebe7173985429d86bc0518bd46615089b75d641d5d0faf61b3ac8ed80e1ee7d7"
+    },
+    {
+      "path": "package-lock.json",
+      "byteLength": 505262,
+      "sha256": "88a0efc0de2619d4cffc36c5ea424c996b645301a32fcf0cd7db58c8ba329d91"
+    }
+  ],
+  "validationCommands": [
+    "npm test",
+    "npm run build",
+    "npm run srt:evaluate",
+    "scripts/agent-evidence --all",
+    "git diff --check"
+  ],
+  "caveat": "Command outcomes are recorded in .agent/evidence by scripts/agent-evidence; this manifest inventories the reproducible evaluation package and does not replace repository validation evidence."
+}

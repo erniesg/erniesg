@@ -19,6 +19,7 @@
     "build:staging": "PUBLIC_RESEARCH_RELEASE=staging npm run build:astro",
     "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "preview": "astro preview",
+    "srt:evaluate": "node tools/srt/demo-evaluation.mjs",
     "pdf:corpus-audit": "node tools/pdf-corpus-audit.mjs",
     "pdf:export": "node tools/pdf-export.mjs",
     "srt:overlay-evidence": "node tools/pdf-diagnostic-evidence.mjs",

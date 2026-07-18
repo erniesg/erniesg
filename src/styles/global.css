@@ -460,6 +460,18 @@
   .publication-intake {
     @apply mt-6 grid overflow-hidden rounded-lg border;
   }
+  .publication-ocr-options {
+    @apply mt-6 grid max-w-xl gap-2 rounded-lg border p-4 sm:grid-cols-[auto_minmax(0,1fr)];
+  }
+  .publication-ocr-options label {
+    @apply self-center text-sm font-medium;
+  }
+  .publication-ocr-options select {
+    @apply min-h-10 rounded-md border bg-background px-3 text-sm;
+  }
+  .publication-ocr-options small {
+    @apply text-xs leading-relaxed text-muted-foreground sm:col-span-2;
+  }
   .publication-dropzone {
     @apply min-h-48 border-b border-dashed bg-transparent p-4 transition-colors;
   }

@@ -19,6 +19,8 @@ describe('SRT target profiles', () => {
       expect(profile.columns.count).toBeGreaterThan(0)
       expect(profile.interactionMode).toBeTruthy()
       expect(profile.finiteHeight).toBe(profile.dimensions.height !== null)
+      expect(profile.version).toBe('1.0.0')
+      expect(profile.epub.fileName).toMatch(/^publication-[a-z]+\.epub$/)
     }
   })
 
@@ -47,6 +49,18 @@ describe('SRT target profiles', () => {
     expect(getPreviewMetrics(TARGET_PROFILES.paperPro)).toMatchObject({
       widthCssPx: 540,
       minHeightCssPx: 720,
+    })
+    expect(TARGET_PROFILES.paperPro).toMatchObject({
+      pixelsPerInch: 229,
+      epub: {
+        fileName: 'publication-paperpro.epub',
+        pageProgressionDirection: 'ltr',
+        renditionFlow: 'paginated',
+      },
+    })
+    expect(TARGET_PROFILES.paperProMove).toMatchObject({
+      pixelsPerInch: 264,
+      epub: { fileName: 'publication-papermove.epub' },
     })
   })
 

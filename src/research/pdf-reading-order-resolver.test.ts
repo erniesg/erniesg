@@ -16,7 +16,7 @@ function reconstruct(
   })
 }
 
-function nodeText(result: ReturnType<typeof reconstruct>) {
+function nodeText(result: Awaited<ReturnType<typeof reconstruct>>) {
   return result.paper.nodes
     .filter((node) => 'text' in node)
     .map((node) => ('text' in node ? node.text : ''))
@@ -24,8 +24,8 @@ function nodeText(result: ReturnType<typeof reconstruct>) {
 
 describe('evidence-scored scholarly reading-order resolution', () => {
   for (const fixture of scholarlyReadingOrderFixtures) {
-    it(`resolves ${fixture.name} and records every decision`, () => {
-      const result = reconstruct(fixture.pages)
+    it(`resolves ${fixture.name} and records every decision`, async () => {
+      const result = await reconstruct(fixture.pages)
 
       expect(nodeText(result)).toEqual(fixture.expectedNodeText)
       expect(result.diagnostics).not.toEqual(
@@ -76,8 +76,8 @@ describe('evidence-scored scholarly reading-order resolution', () => {
     })
   }
 
-  it('retains both candidates and blocks export below the confidence threshold', () => {
-    const result = reconstruct([belowThresholdReadingOrderFixture])
+  it('retains both candidates and blocks export below the confidence threshold', async () => {
+    const result = await reconstruct([belowThresholdReadingOrderFixture])
 
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([

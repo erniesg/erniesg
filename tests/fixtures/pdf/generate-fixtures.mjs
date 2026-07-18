@@ -41,11 +41,12 @@ function createPdf(pageDefinitions) {
 
   pageDefinitions.forEach((page, index) => {
     const commands = page.lines.map(textCommand)
-    if (page.image) {
+    for (const image of page.images ?? (page.image ? [page.image] : [])) {
       commands.push(
-        `q\n${page.image.width} 0 0 ${page.image.height} ${page.image.x} ${page.image.y} cm\n/Im1 Do\nQ`,
+        `q\n${image.width} 0 0 ${image.height} ${image.x} ${image.y} cm\n/Im1 Do\nQ`,
       )
     }
+    commands.push(...(page.commands ?? []))
     const content = commands.join('\n')
     set(
       pageIds[index],
@@ -133,20 +134,30 @@ const fixtures = {
           y: 630,
         },
         {
-          text: 'Figure 1. A synthetic image and its semantic caption.',
+          text: 'Figure 1. Two synthetic panels share one source caption.',
           x: 180,
           y: 430,
         },
         {
-          text: 'Table 1. Synthetic values require a table fallback.',
-          x: 54,
-          y: 370,
+          text: 'Figure 2. A source vector diagram remains scalable.',
+          x: 170,
+          y: 300,
         },
         {
-          text: 'Equation 1 (x + y = z) requires an atomic fallback.',
+          text: 'Table 1. Synthetic values have validated columns.',
           x: 54,
-          y: 340,
+          y: 250,
         },
+        { text: 'Group', x: 72, y: 225 },
+        { text: 'Score', x: 115, y: 225 },
+        { text: 'Control', x: 72, y: 205 },
+        { text: '10', x: 115, y: 205 },
+        {
+          text: 'Equation 1. A display equation uses a source fallback.',
+          x: 54,
+          y: 160,
+        },
+        { text: 'x + y = z', x: 250, y: 135, size: 14 },
         {
           text: 'Footnote 1: This note must stay linked to its reference.',
           x: 54,
@@ -154,7 +165,11 @@ const fixtures = {
           size: 8,
         },
       ],
-      image: { x: 220, y: 460, width: 170, height: 110 },
+      images: [
+        { x: 220, y: 460, width: 170, height: 110 },
+        { x: 400, y: 460, width: 80, height: 110 },
+      ],
+      commands: ['q\n120 0 0 70 240 330 cm\n0 0 m\n1 0 l\n0.5 1 l\nh\nB\nQ'],
     },
   ],
   'scanned-page.pdf': [

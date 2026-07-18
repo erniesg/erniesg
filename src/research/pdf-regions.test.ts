@@ -47,7 +47,7 @@ function page(
   }
 }
 
-function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
+async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
   return reconstructPageAnalyses({
     pages,
     sourceHash: hash.repeat(64),
@@ -57,8 +57,8 @@ function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
-  it('segments one-column flow without inventing a column boundary', () => {
-    const result = reconstruct([
+  it('segments one-column flow without inventing a column boundary', async () => {
+    const result = await reconstruct([
       page(1, [
         run(1, 'One column title', 0.1, 0.12, 0.72, 18),
         run(1, 'First body line.', 0.1, 0.24, 0.72),
@@ -80,8 +80,8 @@ describe('deterministic scholarly page regions', () => {
     })
   })
 
-  it('keeps repeated margins, page numbers, chart labels, and notes out of body prose', () => {
-    const result = reconstruct([
+  it('keeps repeated margins, page numbers, chart labels, and notes out of body prose', async () => {
+    const result = await reconstruct([
       page(1, [
         run(1, 'Journal running header', 0.1, 0.02, 0.4, 8),
         run(1, 'Page one body.', 0.1, 0.24, 0.72),
@@ -119,8 +119,8 @@ describe('deterministic scholarly page regions', () => {
     expect(body).not.toContain('Sidebar context')
   })
 
-  it('orders both column bands around a spanning block and links notes under each column', () => {
-    const result = reconstruct([
+  it('orders both column bands around a spanning block and links notes under each column', async () => {
+    const result = await reconstruct([
       page(
         1,
         [
@@ -158,6 +158,7 @@ describe('deterministic scholarly page regions', () => {
               method: 'pdf-object',
             },
             confidence: 0.98,
+            assetId: null,
           },
         ],
       ),
@@ -231,7 +232,7 @@ describe('deterministic scholarly page regions', () => {
   })
 
   it('matches a page-wide symbolic footnote and emits EPUB note semantics and backlinks', async () => {
-    const result = reconstruct(
+    const result = await reconstruct(
       [
         page(1, [
           run(1, 'Left one.', 0.08, 0.2, 0.32),
@@ -270,8 +271,8 @@ describe('deterministic scholarly page regions', () => {
     expect(content).toContain('class="note-backlink"')
   })
 
-  it('retains unresolved and equally plausible note candidates as explicit diagnostics', () => {
-    const unresolved = reconstruct([
+  it('retains unresolved and equally plausible note candidates as explicit diagnostics', async () => {
+    const unresolved = await reconstruct([
       page(1, [run(1, 'A claim with an unavailable note[3].', 0.1, 0.2, 0.72)]),
     ])
     expect(unresolved.noteRelationships).toEqual([
@@ -288,7 +289,7 @@ describe('deterministic scholarly page regions', () => {
       ]),
     )
 
-    const ambiguous = reconstruct([
+    const ambiguous = await reconstruct([
       page(1, [
         run(1, 'Left one.', 0.08, 0.2, 0.32),
         run(1, 'Left two.', 0.08, 0.24, 0.32),
@@ -318,8 +319,8 @@ describe('deterministic scholarly page regions', () => {
     )
   })
 
-  it('resolves multi-page endnotes and exposes machine-readable order accuracy', () => {
-    const result = reconstruct(
+  it('resolves multi-page endnotes and exposes machine-readable order accuracy', async () => {
+    const result = await reconstruct(
       [
         page(1, [
           run(1, 'The first claim has note reference 1.', 0.1, 0.2, 0.72),

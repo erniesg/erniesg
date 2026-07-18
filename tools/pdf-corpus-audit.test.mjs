@@ -50,7 +50,7 @@ describe('local PDF corpus audit', () => {
     expect(report).toMatchObject({
       schemaVersion: '1.0.0',
       privacy: 'basenames-hashes-metrics-diagnostics-only',
-      summary: { documents: 2, ready: 1, reviewRequired: 1, failed: 0 },
+      summary: { documents: 2, ready: 2, reviewRequired: 0, failed: 0 },
     })
     expect(report.documents.map((document) => document.basename)).toEqual([
       'born-digital.pdf',

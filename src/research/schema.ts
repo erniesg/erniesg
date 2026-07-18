@@ -57,9 +57,11 @@ const figureNode = canonicalNodeBase
   .extend({
     type: z.literal('figure'),
     title: z.string().min(1),
+    objectType: z.enum(['figure', 'table', 'equation']).optional(),
     relationships: z
       .object({
         caption: canonicalId,
+        assets: z.array(canonicalId).min(1).optional(),
       })
       .strict(),
   })

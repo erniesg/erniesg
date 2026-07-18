@@ -43,7 +43,7 @@ function page(
 }
 
 describe('PDF semantic reconstruction', () => {
-  it('removes repeated margins and retains normalized source-box provenance', () => {
+  it('removes repeated margins and retains normalized source-box provenance', async () => {
     const pages = [
       page(1, [
         run(1, 'Journal 2026', 0.1, 0.02, 0.2, 8),
@@ -56,7 +56,7 @@ describe('PDF semantic reconstruction', () => {
         run(2, 'The second page remains in reading order.', 0.1, 0.24, 0.7),
       ]),
     ]
-    const result = reconstructPageAnalyses({
+    const result = await reconstructPageAnalyses({
       pages,
       sourceHash: 'a'.repeat(64),
       fileName: 'paper.pdf',
@@ -87,8 +87,8 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
-  it('orders detected columns left before right without storing target geometry', () => {
-    const result = reconstructPageAnalyses({
+  it('orders detected columns left before right without storing target geometry', async () => {
+    const result = await reconstructPageAnalyses({
       pages: [
         page(1, [
           run(1, 'Left one.', 0.08, 0.2, 0.32),
@@ -111,8 +111,8 @@ describe('PDF semantic reconstruction', () => {
     expect(result.paper).not.toHaveProperty('pages')
   })
 
-  it('preserves narrow-gutter columns instead of interleaving their rows', () => {
-    const result = reconstructPageAnalyses({
+  it('preserves narrow-gutter columns instead of interleaving their rows', async () => {
+    const result = await reconstructPageAnalyses({
       pages: [
         page(1, [
           run(1, 'Left one.', 0.08, 0.2, 0.43),
@@ -135,8 +135,8 @@ describe('PDF semantic reconstruction', () => {
     expect(result.readiness.ready).toBe(true)
   })
 
-  it('fails closed when a short two-column page cannot be ordered safely', () => {
-    const result = reconstructPageAnalyses({
+  it('fails closed when a short two-column page cannot be ordered safely', async () => {
+    const result = await reconstructPageAnalyses({
       pages: [
         page(1, [
           run(1, 'Left one.', 0.08, 0.2, 0.32),
@@ -164,8 +164,8 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
-  it('uses visual line grouping to detect split, out-of-order captions', () => {
-    const result = reconstructPageAnalyses({
+  it('uses visual line grouping to detect split, out-of-order captions', async () => {
+    const result = await reconstructPageAnalyses({
       pages: [
         page(1, [
           run(1, '1. A split caption', 0.2, 0.398, 0.32, 8),
@@ -190,8 +190,8 @@ describe('PDF semantic reconstruction', () => {
     )
   })
 
-  it('does not treat vertically separate metadata and body as columns', () => {
-    const result = reconstructPageAnalyses({
+  it('does not treat vertically separate metadata and body as columns', async () => {
+    const result = await reconstructPageAnalyses({
       pages: [
         page(1, [
           run(1, 'Metadata A', 0.7, 0.1, 0.2),
@@ -213,9 +213,9 @@ describe('PDF semantic reconstruction', () => {
     expect(result.readiness.ready).toBe(true)
   })
 
-  it('counts supplementary Unicode text by code point', () => {
+  it('counts supplementary Unicode text by code point', async () => {
     const math = '𝑥'.repeat(30)
-    const result = reconstructPageAnalyses({
+    const result = await reconstructPageAnalyses({
       pages: [page(1, [run(1, math, 0.1, 0.2, 0.5)])],
       sourceHash: '0'.repeat(64),
       fileName: 'unicode-math.pdf',
@@ -231,7 +231,7 @@ describe('PDF semantic reconstruction', () => {
     expect(result.readiness.ready).toBe(true)
   })
 
-  it('emits stable OCR gates instead of silently exporting partial text', () => {
+  it('emits stable OCR gates instead of silently exporting partial text', async () => {
     const pages = [page(1, [], 'ocr-required')]
     const input = {
       pages,
@@ -239,8 +239,8 @@ describe('PDF semantic reconstruction', () => {
       fileName: 'scan.pdf',
       byteLength: 8192,
     }
-    const first = reconstructPageAnalyses(input)
-    const second = reconstructPageAnalyses(input)
+    const first = await reconstructPageAnalyses(input)
+    const second = await reconstructPageAnalyses(input)
 
     expect(first).toEqual(second)
     expect(first.paper.nodes).toEqual([])

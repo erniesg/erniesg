@@ -343,7 +343,7 @@ export default function PublicationImporter({
                     </strong>
                     <small>
                       {state.result.completeness.exportedAssetCount} of{' '}
-                      {state.result.completeness.sourceAssetCount} source image
+                      {state.result.completeness.sourceAssetCount} source visual
                       objects
                     </small>
                   </li>

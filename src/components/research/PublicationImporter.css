@@ -1,0 +1,99 @@
+.publication-diagnostic-list li {
+  @apply border-b border-foreground/10 py-0;
+}
+.publication-diagnostic-list button {
+  @apply grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 py-3 text-left hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground;
+}
+.publication-diagnostic-list button[aria-pressed='true'] {
+  @apply bg-muted/60;
+}
+.publication-diagnostic-list button strong {
+  @apply mr-0 pt-1;
+}
+.publication-diagnostic-list span {
+  @apply leading-relaxed;
+}
+.publication-diagnostic-list small {
+  @apply pt-1 font-mono text-[9px] text-muted-foreground;
+}
+.pdf-diagnostic-inspector {
+  @apply border-t border-foreground/20 py-7;
+}
+.pdf-diagnostic-inspector__heading {
+  @apply mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between;
+}
+.pdf-diagnostic-inspector__heading > div:first-child {
+  @apply max-w-2xl;
+}
+.pdf-diagnostic-inspector__heading span {
+  @apply font-mono text-[10px] uppercase tracking-wider text-muted-foreground;
+}
+.pdf-diagnostic-inspector__heading h3 {
+  @apply mt-1 text-lg font-semibold;
+}
+.pdf-diagnostic-inspector__heading p {
+  @apply mt-2 text-sm leading-relaxed text-muted-foreground;
+}
+.pdf-diagnostic-page-tabs {
+  @apply flex max-w-full gap-1 overflow-auto;
+}
+.pdf-diagnostic-page-tabs button {
+  @apply min-h-9 shrink-0 rounded border px-3 font-mono text-[10px];
+}
+.pdf-diagnostic-page-tabs button[aria-pressed='true'] {
+  @apply border-foreground bg-foreground text-background;
+}
+.pdf-diagnostic-inspector__layout {
+  @apply grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(15rem,1fr)];
+}
+.pdf-diagnostic-page {
+  @apply relative w-full overflow-hidden border bg-white shadow-sm;
+}
+.pdf-diagnostic-page canvas,
+.pdf-diagnostic-overlay,
+.pdf-diagnostic-overlay .pdf-diagnostic-overlay__svg {
+  @apply absolute inset-0 h-full w-full;
+}
+.pdf-diagnostic-page canvas {
+  @apply object-contain;
+}
+.pdf-diagnostic-overlay {
+  @apply pointer-events-none;
+}
+.pdf-diagnostic-raster-status {
+  @apply absolute inset-0 grid place-items-center bg-white text-xs text-slate-600;
+}
+.pdf-diagnostic-legend {
+  @apply grid grid-cols-2 gap-x-4 gap-y-2 border-b pb-4 font-mono text-[9px] uppercase tracking-wide text-muted-foreground;
+}
+.pdf-diagnostic-legend li {
+  @apply flex items-center gap-2;
+}
+.pdf-diagnostic-legend i {
+  @apply block size-2 rounded-full;
+}
+.pdf-diagnostic-selection {
+  @apply pt-4 text-sm;
+}
+.pdf-diagnostic-selection > p {
+  @apply leading-relaxed;
+}
+.pdf-diagnostic-selection > div {
+  @apply mt-5;
+}
+.pdf-diagnostic-selection h4 {
+  @apply font-semibold;
+}
+.pdf-diagnostic-selection ol {
+  @apply mt-2 border-t;
+}
+.pdf-diagnostic-selection li {
+  @apply grid gap-1 border-b py-2;
+}
+.pdf-diagnostic-selection li strong,
+.pdf-diagnostic-selection li span {
+  @apply break-all font-mono text-[9px];
+}
+.pdf-diagnostic-selection li span {
+  @apply text-muted-foreground;
+}

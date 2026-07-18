@@ -19,6 +19,14 @@
       ]
     },
     {
+      "file": "diagnostic-overlays.pdf",
+      "features": [
+        "ambiguous-reading-order",
+        "ambiguous-note-relationship",
+        "diagnostic-overlay-evidence"
+      ]
+    },
+    {
       "file": "scanned-page.pdf",
       "features": ["scanned-page"]
     },

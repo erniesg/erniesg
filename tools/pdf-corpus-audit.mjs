@@ -1,12 +1,58 @@
 #!/usr/bin/env node
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { basename, extname, resolve } from 'node:path'
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  parse,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
-const args = process.argv.slice(2)
-const reportOnly = args.includes('--report-only')
-const inputs = args.filter((argument) => argument !== '--report-only')
+function parseArguments(args) {
+  let reportOnly = false
+  let overlayOutput = null
+  const inputs = []
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    if (argument === '--report-only') {
+      reportOnly = true
+    } else if (argument === '--overlay-output') {
+      overlayOutput = args[index + 1] ?? null
+      index += 1
+    } else if (argument.startsWith('--overlay-output=')) {
+      overlayOutput = argument.slice('--overlay-output='.length)
+    } else if (argument.startsWith('--')) {
+      throw new Error('unknown option')
+    } else {
+      inputs.push(argument)
+    }
+  }
+  if (overlayOutput === '') throw new Error('missing overlay output')
+  return { reportOnly, overlayOutput, inputs }
+}
+
+let cli
+try {
+  cli = parseArguments(process.argv.slice(2))
+} catch {
+  process.stderr.write(
+    'Usage: npm run pdf:corpus-audit -- [--report-only] [--overlay-output <local-directory>] <pdf-or-directory> [...]\n',
+  )
+  process.exit(2)
+}
+const { reportOnly, overlayOutput, inputs } = cli
 const standardFontDataUrl = new URL(
   '../node_modules/pdfjs-dist/standard_fonts/',
   import.meta.url,
@@ -60,10 +106,45 @@ function safeError(error) {
   return { code, message: SAFE_FAILURE_MESSAGES[code] }
 }
 
+async function privateOverlayDirectory(requested) {
+  const repository = await realpath('.')
+  const target = resolve(requested)
+  if (target === parse(target).root) throw new Error('unsafe output')
+  let existing = target
+  let resolvedExisting
+  while (true) {
+    try {
+      resolvedExisting = await realpath(existing)
+      break
+    } catch {
+      const parent = dirname(existing)
+      if (parent === existing) throw new Error('unsafe output')
+      existing = parent
+    }
+  }
+  const resolvedTarget = resolve(resolvedExisting, relative(existing, target))
+  const repositoryRelative = relative(repository, resolvedTarget)
+  const insideRepository =
+    repositoryRelative === '' ||
+    (!repositoryRelative.startsWith(`..${sep}`) &&
+      repositoryRelative !== '..' &&
+      !isAbsolute(repositoryRelative))
+  if (insideRepository) throw new Error('unsafe output')
+  await mkdir(resolvedTarget, { recursive: true, mode: 0o700 })
+  return resolvedTarget
+}
+
+function overlayArtifactName(fileName, hash) {
+  const safeName = basename(fileName, extname(fileName))
+    .replaceAll(/[^a-z0-9-]+/gi, '-')
+    .replaceAll(/^-|-$/g, '')
+  return `${safeName || 'document'}-${hash.slice(0, 16)}.diagnostics.html`
+}
+
 async function main() {
   if (inputs.length === 0) {
     process.stderr.write(
-      'Usage: npm run pdf:corpus-audit -- [--report-only] <pdf-or-directory> [...]\n',
+      'Usage: npm run pdf:corpus-audit -- [--report-only] [--overlay-output <local-directory>] <pdf-or-directory> [...]\n',
     )
     process.exitCode = 2
     return
@@ -75,14 +156,28 @@ async function main() {
     server: { middlewareMode: true },
   })
   try {
+    let localOverlayOutput = null
+    if (overlayOutput) {
+      try {
+        localOverlayOutput = await privateOverlayDirectory(overlayOutput)
+      } catch {
+        process.stderr.write(
+          'Overlay output must name a local directory outside the repository.\n',
+        )
+        process.exitCode = 2
+        return
+      }
+    }
     const [
       { reconstructPdf },
       { DEFAULT_PDF_COMPLETENESS_POLICY },
       { MAX_LOCAL_PDF_BYTES },
+      { renderDiagnosticEvidenceHtml },
     ] = await Promise.all([
       vite.ssrLoadModule('/src/research/pdf.ts'),
       vite.ssrLoadModule('/src/research/pdf-quality.ts'),
       vite.ssrLoadModule('/src/research/import-types.ts'),
+      vite.ssrLoadModule('/src/research/diagnostic-overlays.ts'),
     ])
     const documents = []
     for (const path of await pdfPaths(inputs)) {
@@ -107,6 +202,16 @@ async function main() {
           undefined,
           { standardFontDataUrl },
         )
+        if (localOverlayOutput) {
+          await writeFile(
+            resolve(
+              localOverlayOutput,
+              overlayArtifactName(stableBasename, result.source.sha256),
+            ),
+            renderDiagnosticEvidenceHtml(result),
+            { mode: 0o600 },
+          )
+        }
         documents.push({
           basename: stableBasename,
           sha256: result.source.sha256,

@@ -157,6 +157,33 @@ const fixtures = {
       image: { x: 220, y: 460, width: 170, height: 110 },
     },
   ],
+  'diagnostic-overlays.pdf': [
+    {
+      lines: [
+        { text: 'Left candidate order begins here.', x: 54, y: 690 },
+        { text: 'Right candidate order begins here.', x: 330, y: 690 },
+        { text: 'Indented left order continues here.', x: 100, y: 300 },
+        { text: 'Right candidate order continues here.', x: 330, y: 300 },
+        {
+          text: 'This deliberately wide source region carries note reference 1 and crosses the uncertain column boundary for visual review.',
+          x: 72,
+          y: 200,
+        },
+        {
+          text: 'Footnote 1: Left candidate note body.',
+          x: 54,
+          y: 70,
+          size: 8,
+        },
+        {
+          text: 'Footnote 1: Right candidate note body.',
+          x: 330,
+          y: 70,
+          size: 8,
+        },
+      ],
+    },
+  ],
   'scanned-page.pdf': [
     {
       lines: [],

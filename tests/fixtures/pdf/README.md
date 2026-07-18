@@ -8,6 +8,10 @@ downloaded, private, or subscription content.
 signals. The current narrow reconstruction adapter must report those unsupported
 objects as unresolved instead of exporting a text-only success.
 
+`diagnostic-overlays.pdf` deliberately retains two plausible column orders and
+two equally scored note bodies. It is the repository-owned visual evidence
+fixture for reading-order and note-relationship overlays.
+
 The oversized fixture is virtual: tests use the byte length recorded in
 `manifest.json` and assert rejection before `arrayBuffer()` is called. This keeps
 a 50 MB inert file out of Git while exercising the exact resource boundary.

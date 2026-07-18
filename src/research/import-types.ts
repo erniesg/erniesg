@@ -191,6 +191,8 @@ export type ReconstructionDiagnostic = {
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
+  sourceBoxes?: NormalizedSourceBox[]
+  relationshipId?: string
   readingOrderResolution?: Omit<PdfReadingOrderResolution, 'regionIds'> & {
     regionId?: string
   }

@@ -311,6 +311,11 @@ function matchNotes(
         severity: 'error',
         page: reference.region.page,
         message: `Note reference ${reference.id} retains ${candidates.length} similarly scored targets for review.`,
+        relationshipId: reference.id,
+        sourceBoxes: [
+          reference.region.box,
+          ...candidates.map((candidate) => candidate.sourceBoxes[1]),
+        ],
       })
     } else if (!matched) {
       diagnostics.push({
@@ -318,6 +323,11 @@ function matchNotes(
         severity: 'error',
         page: reference.region.page,
         message: `Note reference ${reference.id} has no deterministic target above the confidence threshold.`,
+        relationshipId: reference.id,
+        sourceBoxes: [
+          reference.region.box,
+          ...candidates.map((candidate) => candidate.sourceBoxes[1]),
+        ],
       })
     }
     return {
@@ -345,6 +355,7 @@ function matchNotes(
       severity: 'error',
       page: note.region.page,
       message: `Note ${note.nodeId} remains explicit because no unique reference resolved to it.`,
+      sourceBoxes: [note.region.box],
     })
   }
   return relationships
@@ -389,6 +400,17 @@ export function reconstructPageAnalyses({
         severity: 'error',
         page: page.page,
         message: `Page ${page.page} has insufficient embedded text and requires local OCR.`,
+        sourceBoxes: [
+          {
+            page: page.page,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rotation: page.rotation,
+            method: 'pdf-object',
+          },
+        ],
       })
     } else if (page.kind === 'mixed') {
       diagnostics.push({
@@ -396,6 +418,10 @@ export function reconstructPageAnalyses({
         severity: 'warning',
         page: page.page,
         message: `Page ${page.page} mixes sparse text with image content; review the reconstruction.`,
+        sourceBoxes: [
+          ...page.runs,
+          ...(page.objects ?? []).map((object) => object.box),
+        ],
       })
     }
   }
@@ -452,6 +478,11 @@ export function reconstructPageAnalyses({
       page,
       message: `Page ${page} retains both column-order candidates at confidence ${readingOrderResolution.confidence.toFixed(2)}, below threshold ${readingOrderResolution.threshold.toFixed(2)}.`,
       readingOrderResolution,
+      sourceBoxes: regionResult.regions
+        .filter(
+          (region) => region.page === page && region.includedInReadingOrder,
+        )
+        .map((region) => region.box),
     })
   }
   if (!regionResult.readingOrder.acyclic) {
@@ -500,6 +531,7 @@ export function reconstructPageAnalyses({
         severity: 'warning',
         page: block.region.page,
         message: `A reconstructed ${block.region.kind} region on page ${block.region.page} needs review.`,
+        sourceBoxes: [block.region.box],
       })
     }
     const source = `pdf:${sourceHash.slice(0, 16)}#page=${block.region.page}`

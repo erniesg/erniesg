@@ -1,11 +1,18 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent,
   type FormEvent,
 } from 'react'
 import { buildEpub, type EpubExport } from '@/research/epub'
+import {
+  buildDiagnosticOverlayDocument,
+  DIAGNOSTIC_OVERLAY_PALETTE,
+  renderDiagnosticOverlaySvg,
+} from '@/research/diagnostic-overlays'
+import type { DiagnosticOverlayItem } from '@/research/diagnostic-overlays'
 import type {
   PdfImportProgress,
   PdfReconstruction,
@@ -14,6 +21,7 @@ import { PdfImportError } from '@/research/import-types'
 import { downloadLinkedPdf } from '@/research/pdf-url'
 import EpubDownloadLink from './EpubDownloadLink'
 import ResearchStudio from './ResearchStudio'
+import './PublicationImporter.css'
 
 type StudioState =
   | { status: 'idle' }
@@ -21,6 +29,7 @@ type StudioState =
   | {
       status: 'ready' | 'review-required'
       result: PdfReconstruction
+      sourceFile: File
       epub?: EpubExport
     }
   | { status: 'error'; code: string; message: string }
@@ -35,6 +44,228 @@ const initialProgress: PdfImportProgress = {
 function formatBytes(value: number) {
   if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KB`
   return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function PdfPageRaster({ file, page }: { file: File; page: number }) {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  useEffect(() => {
+    let active = true
+    let loadingTask:
+      | ReturnType<(typeof import('pdfjs-dist'))['getDocument']>
+      | undefined
+    let renderTask:
+      | { cancel: () => void; promise: Promise<unknown> }
+      | undefined
+    setStatus('loading')
+    void (async () => {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        if (!active) return
+        const pdfjs = await import('pdfjs-dist')
+        const { default: pdfWorkerUrl } = await import(
+          'pdfjs-dist/build/pdf.worker.min.mjs?url'
+        )
+        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+        loadingTask = pdfjs.getDocument({
+          data: bytes,
+          isEvalSupported: false,
+          useSystemFonts: true,
+        })
+        const document = await loadingTask.promise
+        if (!active) return
+        const sourcePage = await document.getPage(page)
+        if (!active || !canvas.current) return
+        const viewport = sourcePage.getViewport({ scale: 1.8 })
+        canvas.current.width = Math.ceil(viewport.width)
+        canvas.current.height = Math.ceil(viewport.height)
+        renderTask = sourcePage.render({
+          canvas: canvas.current,
+          viewport,
+        })
+        await renderTask.promise
+        if (active) setStatus('ready')
+      } catch (error) {
+        if (
+          active &&
+          (!(error instanceof Error) ||
+            error.name !== 'RenderingCancelledException')
+        ) {
+          setStatus('error')
+        }
+      }
+    })()
+    return () => {
+      active = false
+      renderTask?.cancel()
+      void loadingTask?.destroy()
+    }
+  }, [file, page])
+
+  return (
+    <>
+      <canvas ref={canvas} aria-label={`Rendered PDF page ${page}`} />
+      {status !== 'ready' && (
+        <span className="pdf-diagnostic-raster-status" aria-live="polite">
+          {status === 'error'
+            ? 'The source page raster could not be drawn.'
+            : 'Drawing the source page…'}
+        </span>
+      )}
+    </>
+  )
+}
+
+function DiagnosticDetails({ item }: { item: DiagnosticOverlayItem }) {
+  return (
+    <div className="pdf-diagnostic-selection" aria-live="polite">
+      <p>{item.diagnostic.message}</p>
+      {item.noteRelationship && (
+        <div>
+          <h4>
+            Reference {item.noteRelationship.label} · candidate note bodies
+          </h4>
+          {item.noteRelationship.candidates.length > 0 ? (
+            <ol>
+              {item.noteRelationship.candidates.map((candidate) => (
+                <li key={candidate.targetRegionId}>
+                  <strong>
+                    {candidate.targetRegionId} · {candidate.score.toFixed(2)}
+                  </strong>
+                  <span>{candidate.evidence.join(' · ')}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>No candidate note body matched this marker.</p>
+          )}
+        </div>
+      )}
+      {item.readingOrderCandidates && (
+        <div>
+          <h4>Competing reading orders</h4>
+          <ol>
+            {item.readingOrderCandidates.map((candidate) => (
+              <li key={candidate.id}>
+                <strong>{candidate.label}</strong>
+                <span>{candidate.regionIds.join(' → ')}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PdfDiagnosticReview({
+  result,
+  sourceFile,
+  showVisual,
+}: {
+  result: PdfReconstruction
+  sourceFile: File
+  showVisual: boolean
+}) {
+  const model = useMemo(() => buildDiagnosticOverlayDocument(result), [result])
+  const first =
+    model.diagnostics.find((item) => item.diagnostic.severity === 'error') ??
+    model.diagnostics[0]
+  const [selectedId, setSelectedId] = useState(first?.id)
+  const [pageNumber, setPageNumber] = useState(first?.pages[0] ?? 1)
+  const selected =
+    model.diagnostics.find((item) => item.id === selectedId) ?? first
+  const page =
+    model.pages.find((candidate) => candidate.page === pageNumber) ??
+    model.pages[0]
+
+  const selectDiagnostic = (item: DiagnosticOverlayItem) => {
+    setSelectedId(item.id)
+    setPageNumber(item.pages[0] ?? 1)
+  }
+
+  return (
+    <>
+      {showVisual && selected && page && (
+        <section
+          className="pdf-diagnostic-inspector"
+          aria-labelledby="pdf-diagnostic-inspector-heading"
+        >
+          <div className="pdf-diagnostic-inspector__heading">
+            <div>
+              <span>Local visual review</span>
+              <h3 id="pdf-diagnostic-inspector-heading">
+                Diagnostic page inspector
+              </h3>
+              <p>
+                Select a diagnostic below to isolate its source geometry. The
+                PDF raster and overlays stay on this device.
+              </p>
+            </div>
+            <div className="pdf-diagnostic-page-tabs" aria-label="PDF pages">
+              {model.pages.map((candidate) => (
+                <button
+                  key={candidate.page}
+                  type="button"
+                  aria-pressed={candidate.page === page.page}
+                  onClick={() => setPageNumber(candidate.page)}
+                >
+                  p. {candidate.page}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="pdf-diagnostic-inspector__layout">
+            <div
+              className="pdf-diagnostic-page"
+              style={{ aspectRatio: `${page.width} / ${page.height}` }}
+            >
+              <PdfPageRaster file={sourceFile} page={page.page} />
+              <div
+                className="pdf-diagnostic-overlay"
+                aria-hidden="true"
+                dangerouslySetInnerHTML={{
+                  __html: renderDiagnosticOverlaySvg(page, selected.id),
+                }}
+              />
+            </div>
+            <div>
+              <ul className="pdf-diagnostic-legend" aria-label="Overlay colors">
+                {Object.entries(DIAGNOSTIC_OVERLAY_PALETTE).map(
+                  ([category, palette]) => (
+                    <li key={category}>
+                      <i style={{ backgroundColor: palette.color }} />
+                      {palette.label}
+                    </li>
+                  ),
+                )}
+              </ul>
+              <DiagnosticDetails item={selected} />
+            </div>
+          </div>
+        </section>
+      )}
+
+      <ul className="publication-diagnostic-list">
+        {model.diagnostics.map((item) => (
+          <li key={item.id}>
+            <button
+              type="button"
+              aria-pressed={showVisual && item.id === selected?.id}
+              onClick={() => selectDiagnostic(item)}
+            >
+              <strong>{item.diagnostic.code}</strong>
+              <span>{item.diagnostic.message}</span>
+              {item.pages.length > 0 && (
+                <small>page {item.pages.join(', ')}</small>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
+  )
 }
 
 export default function PublicationImporter({
@@ -95,13 +326,13 @@ export default function PublicationImporter({
       )
       if (!isCurrent()) return
       if (!result.readiness.ready) {
-        setState({ status: 'review-required', result })
+        setState({ status: 'review-required', result, sourceFile: file })
         return
       }
-      setState({ status: 'ready', result })
+      setState({ status: 'ready', result, sourceFile: file })
       const epub = await buildEpub(result.paper, result)
       if (!isCurrent()) return
-      setState({ status: 'ready', result, epub })
+      setState({ status: 'ready', result, sourceFile: file, epub })
     } catch (error) {
       if (activeImport.current !== controller) return
       if (
@@ -396,15 +627,12 @@ export default function PublicationImporter({
               </div>
             </div>
             {state.result.diagnostics.length > 0 && (
-              <ul className="publication-diagnostic-list">
-                {state.result.diagnostics.map((diagnostic, index) => (
-                  <li
-                    key={`${diagnostic.code}-${diagnostic.page ?? 0}-${index}`}
-                  >
-                    <strong>{diagnostic.code}</strong> {diagnostic.message}
-                  </li>
-                ))}
-              </ul>
+              <PdfDiagnosticReview
+                key={state.result.source.sha256}
+                result={state.result}
+                sourceFile={state.sourceFile}
+                showVisual={state.status === 'review-required'}
+              />
             )}
           </details>
 

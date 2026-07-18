@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
+    "pretest": "npm run srt:overlay-evidence",
     "test": "vitest run --exclude 'tests/e2e/**'",
     "test:e2e": "playwright test",
     "build": "npm run build:production",
@@ -19,6 +20,7 @@
     "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "preview": "astro preview",
     "pdf:corpus-audit": "node tools/pdf-corpus-audit.mjs",
+    "srt:overlay-evidence": "node tools/pdf-diagnostic-evidence.mjs",
     "worker:build": "npm run build:production",
     "worker:deploy:preview": "npm run build:staging && wrangler deploy --config wrangler.jsonc --message \"Deploy ernie.sg Workers preview\"",
     "worker:deploy:production": "npm run build:production && wrangler deploy --config wrangler.production.jsonc --message \"Deploy ernie.sg Workers production\"",

@@ -46,6 +46,43 @@ test('blocks a text-only EPUB when scientific objects are unresolved', async ({
   await expect(page.locator('.publication-preview-blocked')).toBeHidden()
 })
 
+test('visually links note candidates and both ambiguous reading orders', async ({
+  page,
+}) => {
+  await uploadFixture(page, 'diagnostic-overlays.pdf')
+
+  await expect(
+    page.getByRole('heading', { name: 'Diagnostic page inspector' }),
+  ).toBeVisible()
+  await expect
+    .poll(() =>
+      page
+        .locator('.pdf-diagnostic-page canvas')
+        .evaluate((canvas) => (canvas as HTMLCanvasElement).width),
+    )
+    .toBeGreaterThan(0)
+
+  await page.getByRole('button', { name: /AMBIGUOUS_NOTE_MATCH/ }).click()
+  await expect(
+    page.getByRole('heading', { name: /candidate note bodies/i }),
+  ).toBeVisible()
+  await expect(page.locator('.pdf-diagnostic-selection li')).toHaveCount(2)
+  await expect(
+    page.locator('.pdf-diagnostic-selection li').first(),
+  ).toContainText('label-exact')
+  await expect(page.locator('.pdf-diagnostic-overlay__svg line')).toHaveCount(2)
+
+  await page.getByRole('button', { name: /AMBIGUOUS_READING_ORDER/ }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Competing reading orders' }),
+  ).toBeVisible()
+  await expect(page.getByText(/Candidate A · left column/)).toBeVisible()
+  await expect(page.getByText(/Candidate B · right column/)).toBeVisible()
+  await expect(
+    page.locator('.pdf-diagnostic-overlay__svg polyline'),
+  ).toHaveCount(2)
+})
+
 test('keeps the newest result when an active import is superseded', async ({
   page,
 }) => {

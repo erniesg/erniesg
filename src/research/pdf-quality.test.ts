@@ -27,6 +27,54 @@ function run(
 }
 
 describe('PDF semantic signal detection', () => {
+  it('counts unmatched image operators when bbox extraction yields no objects', () => {
+    const runs = [
+      run('Recovered text remains incomplete without its image.', 0.1, 0.2),
+    ]
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: runs[0].text.length,
+      imageCount: 1,
+      objects: [],
+      runs,
+    }
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'p-1',
+          type: 'paragraph',
+          text: runs[0].text,
+          source: 'test',
+        },
+      ],
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [page],
+      paper,
+      diagnostics: [],
+    })
+
+    expect(result.completeness).toMatchObject({
+      sourceAssetCount: 1,
+      exportedAssetCount: 0,
+      assetCoverage: 0,
+    })
+    expect(result.readiness.ready).toBe(false)
+  })
+
   it('joins visually aligned runs in source order before matching signals', () => {
     const runs = [
       run('1. Split caption text', 0.165, 0.2015),

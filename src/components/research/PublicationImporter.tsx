@@ -6,35 +6,41 @@ import {
   type DragEvent,
   type FormEvent,
 } from 'react'
-import { buildEpub, type EpubExport } from '@/research/epub'
+import { buildEpub, type EpubExport } from '../../research/epub'
 import {
   buildDiagnosticOverlayDocument,
   DIAGNOSTIC_OVERLAY_PALETTE,
   renderDiagnosticOverlaySvg,
-} from '@/research/diagnostic-overlays'
-import type { DiagnosticOverlayItem } from '@/research/diagnostic-overlays'
+  type DiagnosticOverlayItem,
+} from '../../research/diagnostic-overlays'
 import type {
-  PdfImportProgress,
+  DocumentImportProgress,
+  DocumentReconstruction,
   PdfReconstruction,
-} from '@/research/import-types'
-import { PdfImportError } from '@/research/import-types'
-import { downloadLinkedPdf } from '@/research/pdf-url'
+} from '../../research/import-types'
+import { DocxImportError, PdfImportError } from '../../research/import-types'
+import { downloadLinkedPdf } from '../../research/pdf-url'
+import { getTargetProfile } from '../../research/targets'
 import EpubDownloadLink from './EpubDownloadLink'
 import ResearchStudio from './ResearchStudio'
 import './PublicationImporter.css'
 
 type StudioState =
   | { status: 'idle' }
-  | { status: 'processing'; fileName: string; progress: PdfImportProgress }
+  | {
+      status: 'processing'
+      fileName: string
+      progress: DocumentImportProgress
+    }
   | {
       status: 'ready' | 'review-required'
-      result: PdfReconstruction
+      result: DocumentReconstruction
       sourceFile: File
-      epub?: EpubExport
+      epubs?: EpubExport[]
     }
   | { status: 'error'; code: string; message: string }
 
-const initialProgress: PdfImportProgress = {
+const initialProgress: DocumentImportProgress = {
   phase: 'opening',
   completed: 0,
   total: 1,
@@ -268,6 +274,29 @@ function PdfDiagnosticReview({
   )
 }
 
+function importErrorCode(error: unknown) {
+  return error instanceof PdfImportError || error instanceof DocxImportError
+    ? error.code
+    : 'UNEXPECTED_ERROR'
+}
+
+function importWasCancelled(error: unknown) {
+  return (
+    (error instanceof PdfImportError || error instanceof DocxImportError) &&
+    error.code === 'IMPORT_CANCELLED'
+  )
+}
+
+function importerVersion(source: DocumentReconstruction['source']) {
+  return source.format === 'docx' ? source.importerVersion : ''
+}
+
+function isPdfReconstruction(
+  result: DocumentReconstruction,
+): result is PdfReconstruction {
+  return result.source.format !== 'docx'
+}
+
 export default function PublicationImporter({
   showIntro = true,
 }: {
@@ -276,6 +305,7 @@ export default function PublicationImporter({
   const [state, setState] = useState<StudioState>({ status: 'idle' })
   const [dragging, setDragging] = useState(false)
   const [paperUrl, setPaperUrl] = useState('')
+  const [ocrLanguage, setOcrLanguage] = useState<'auto' | 'eng'>('auto')
   const input = useRef<HTMLInputElement>(null)
   const activeImport = useRef<AbortController>()
 
@@ -289,7 +319,7 @@ export default function PublicationImporter({
   const showError = (error: unknown) => {
     setState({
       status: 'error',
-      code: error instanceof PdfImportError ? error.code : 'UNEXPECTED_ERROR',
+      code: importErrorCode(error),
       message:
         error instanceof Error
           ? error.message
@@ -314,33 +344,51 @@ export default function PublicationImporter({
       progress: initialProgress,
     })
     try {
-      const { reconstructPdf } = await import('@/research/pdf')
-      const result = await reconstructPdf(
-        file,
-        (progress) => {
-          if (isCurrent()) {
-            setState({ status: 'processing', fileName: file.name, progress })
-          }
-        },
-        { signal: controller.signal },
-      )
+      const onProgress = (progress: DocumentImportProgress) => {
+        if (isCurrent()) {
+          setState({ status: 'processing', fileName: file.name, progress })
+        }
+      }
+      const isDocx =
+        file.name.toLowerCase().endsWith('.docx') ||
+        file.type ===
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const result: DocumentReconstruction = isDocx
+        ? await (
+            await import('../../research/docx-import')
+          ).reconstructDocx(file, onProgress, { signal: controller.signal })
+        : await (
+            await import('../../research/pdf')
+          ).reconstructPdf(file, onProgress, {
+            signal: controller.signal,
+            ocr: {
+              languages: ['eng'],
+              languageMode:
+                ocrLanguage === 'auto' ? 'automatic-fallback' : 'explicit',
+              async createSession(options) {
+                const { createBrowserOcrSession } = await import(
+                  '../../research/pdf-ocr-browser'
+                )
+                return createBrowserOcrSession(options)
+              },
+            },
+          })
       if (!isCurrent()) return
       if (!result.readiness.ready) {
         setState({ status: 'review-required', result, sourceFile: file })
         return
       }
       setState({ status: 'ready', result, sourceFile: file })
-      const epub = await buildEpub(result.paper, result)
+      const epubs = await Promise.all([
+        buildEpub(result.paper, result),
+        buildEpub(result.paper, result, getTargetProfile('paperPro')),
+        buildEpub(result.paper, result, getTargetProfile('paperProMove')),
+      ])
       if (!isCurrent()) return
-      setState({ status: 'ready', result, sourceFile: file, epub })
+      setState({ status: 'ready', result, sourceFile: file, epubs })
     } catch (error) {
       if (activeImport.current !== controller) return
-      if (
-        error instanceof PdfImportError &&
-        error.code === 'IMPORT_CANCELLED'
-      ) {
-        return
-      }
+      if (importWasCancelled(error)) return
       showError(error)
     }
   }
@@ -360,12 +408,7 @@ export default function PublicationImporter({
       )
     } catch (error) {
       if (activeImport.current !== controller) return
-      if (
-        error instanceof PdfImportError &&
-        error.code === 'IMPORT_CANCELLED'
-      ) {
-        return
-      }
+      if (importWasCancelled(error)) return
       showError(error)
     }
   }
@@ -394,67 +437,86 @@ export default function PublicationImporter({
   return (
     <section
       className="publication-importer"
-      aria-label={showIntro ? undefined : 'PDF to EPUB converter'}
+      aria-label={showIntro ? undefined : 'PDF or DOCX to EPUB converter'}
       aria-labelledby={showIntro ? 'studio-heading' : undefined}
     >
       {showIntro && (
         <div className="publication-importer-intro">
-          <h2 id="studio-heading">Make an EPUB from a PDF</h2>
+          <h2 id="studio-heading">Make an EPUB from a PDF or DOCX</h2>
           <p>
-            Upload a paper or paste a direct PDF link. The conversion runs in
-            your browser.
+            Upload a paper or paste a direct PDF link. PDF reconstruction and
+            structured DOCX import run in your browser.
           </p>
         </div>
       )}
 
       {state.status === 'idle' && (
-        <div className="publication-intake">
-          <div
-            className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
-            onDragEnter={(event) => {
-              event.preventDefault()
-              setDragging(true)
-            }}
-            onDragOver={(event) => event.preventDefault()}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-          >
-            <input
-              ref={input}
-              id="publication-pdf"
-              type="file"
-              accept="application/pdf,.pdf"
-              onChange={(event) => void processFile(event.target.files?.[0])}
-            />
-            <label htmlFor="publication-pdf">
-              <strong>Choose a PDF</strong>
-              <span>or drop it here</span>
-              <small>Up to 50 MB. Your file stays on this device.</small>
-            </label>
-          </div>
-
-          <form className="publication-url" onSubmit={processUrl}>
-            <label htmlFor="publication-url">
-              <strong>Or paste a PDF link</strong>
-              <span>Use a direct download link.</span>
-            </label>
-            <div className="publication-url__field">
-              <input
-                id="publication-url"
-                type="url"
-                inputMode="url"
-                required
-                value={paperUrl}
-                placeholder="https://…/paper.pdf"
-                onChange={(event) => setPaperUrl(event.target.value)}
-              />
-              <button type="submit">Create EPUB</button>
-            </div>
+        <>
+          <div className="publication-ocr-options">
+            <label htmlFor="publication-ocr-language">OCR language</label>
+            <select
+              id="publication-ocr-language"
+              value={ocrLanguage}
+              onChange={(event) =>
+                setOcrLanguage(event.target.value === 'eng' ? 'eng' : 'auto')
+              }
+            >
+              <option value="auto">Auto (English fallback)</option>
+              <option value="eng">English</option>
+            </select>
             <small>
-              If the link is blocked, download the PDF and upload it instead.
+              OCR runs offline. Auto uses the bundled English fallback; other
+              languages require an integrity-pinned local language pack.
             </small>
-          </form>
-        </div>
+          </div>
+          <div className="publication-intake">
+            <div
+              className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setDragging(true)
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+            >
+              <input
+                ref={input}
+                id="publication-pdf"
+                type="file"
+                accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.docx"
+                onChange={(event) => void processFile(event.target.files?.[0])}
+              />
+              <label htmlFor="publication-pdf">
+                <strong>Choose a PDF or DOCX</strong>
+                <span>or drop it here</span>
+                <small>Up to 50 MB. Your file stays on this device.</small>
+              </label>
+            </div>
+
+            <form className="publication-url" onSubmit={processUrl}>
+              <label htmlFor="publication-url">
+                <strong>Or paste a PDF link</strong>
+                <span>Use a direct download link.</span>
+              </label>
+              <div className="publication-url__field">
+                <input
+                  id="publication-url"
+                  type="url"
+                  inputMode="url"
+                  required
+                  value={paperUrl}
+                  placeholder="https://…/paper.pdf"
+                  onChange={(event) => setPaperUrl(event.target.value)}
+                />
+                <button type="submit">Create EPUB</button>
+              </div>
+              <small>
+                If the link is blocked, download the PDF and upload it instead.
+              </small>
+            </form>
+          </div>
+        </>
       )}
 
       {state.status === 'processing' && (
@@ -476,9 +538,9 @@ export default function PublicationImporter({
       {state.status === 'error' && (
         <div className="publication-failure" role="alert">
           <span>{state.code.replaceAll('_', ' ')}</span>
-          <h3>I couldn't turn that PDF into an EPUB.</h3>
+          <h3>I couldn't turn that paper into an EPUB.</h3>
           <p>{state.message}</p>
-          <button onClick={reset}>Choose another PDF</button>
+          <button onClick={reset}>Choose another paper</button>
         </div>
       )}
 
@@ -491,14 +553,24 @@ export default function PublicationImporter({
               </span>
               <strong>{state.result.source.fileName}</strong>
               <small>
-                {state.result.source.pageCount} pages ·{' '}
-                {formatBytes(state.result.source.byteLength)} · processed
+                {state.result.source.format === 'docx'
+                  ? `${state.result.source.packageParts.length} package parts`
+                  : `${state.result.source.pageCount} pages`}{' '}
+                · {formatBytes(state.result.source.byteLength)} · processed
                 locally
               </small>
             </div>
             <div className="publication-actions">
-              {state.status === 'ready' && state.epub ? (
-                <EpubDownloadLink epub={state.epub} />
+              {state.status === 'ready' && state.epubs ? (
+                state.epubs.map((epub) => (
+                  <EpubDownloadLink key={epub.identifier} epub={epub}>
+                    {epub.profile?.id === 'paperPro'
+                      ? 'Download Paper Pro EPUB'
+                      : epub.profile?.id === 'paperProMove'
+                        ? 'Download Paper Pro Move EPUB'
+                        : 'Download EPUB'}
+                  </EpubDownloadLink>
+                ))
               ) : state.status === 'ready' ? (
                 <span aria-live="polite">Validating EPUB…</span>
               ) : null}
@@ -536,17 +608,35 @@ export default function PublicationImporter({
             </summary>
             <div className="publication-diagnostic-grid">
               <div>
-                <h3>Pages</h3>
+                <h3>
+                  {state.result.source.format === 'docx' ? 'Package' : 'Pages'}
+                </h3>
                 <ol>
-                  {state.result.pages.map((page) => (
-                    <li key={page.page}>
-                      <span>p. {page.page}</span>
-                      <strong>{page.kind}</strong>
-                      <small>
-                        {page.textCharacters} chars · {page.imageCount} images
-                      </small>
-                    </li>
-                  ))}
+                  {state.result.source.format === 'docx'
+                    ? state.result.source.packageParts
+                        .slice(0, 12)
+                        .map((part) => (
+                          <li key={part}>
+                            <span>{part}</span>
+                            <strong>OOXML</strong>
+                            <small>
+                              importer {importerVersion(state.result.source)}
+                            </small>
+                          </li>
+                        ))
+                    : state.result.pages.map((page) => (
+                        <li key={page.page}>
+                          <span>p. {page.page}</span>
+                          <strong>{page.kind}</strong>
+                          <small>
+                            {page.textCharacters} chars · {page.imageCount}{' '}
+                            images
+                            {page.ocr
+                              ? ` · ${page.ocr.engine} ${page.ocr.engineVersion} · ${page.ocr.model} ${page.ocr.modelVersion} · ${page.ocr.languages.join('+')} · ${Math.round(page.ocr.confidence * 100)}% OCR`
+                              : ''}
+                          </small>
+                        </li>
+                      ))}
                 </ol>
               </div>
               <div>
@@ -574,7 +664,7 @@ export default function PublicationImporter({
                     </strong>
                     <small>
                       {state.result.completeness.exportedAssetCount} of{' '}
-                      {state.result.completeness.sourceAssetCount} source image
+                      {state.result.completeness.sourceAssetCount} source visual
                       objects
                     </small>
                   </li>
@@ -627,12 +717,24 @@ export default function PublicationImporter({
               </div>
             </div>
             {state.result.diagnostics.length > 0 && (
-              <PdfDiagnosticReview
-                key={state.result.source.sha256}
-                result={state.result}
-                sourceFile={state.sourceFile}
-                showVisual={state.status === 'review-required'}
-              />
+              isPdfReconstruction(state.result) ? (
+                <PdfDiagnosticReview
+                  key={state.result.source.sha256}
+                  result={state.result}
+                  sourceFile={state.sourceFile}
+                  showVisual={state.status === 'review-required'}
+                />
+              ) : (
+                <ul className="publication-diagnostic-list">
+                  {state.result.diagnostics.map((diagnostic, index) => (
+                    <li
+                      key={`${diagnostic.code}-${diagnostic.page ?? 0}-${index}`}
+                    >
+                      <strong>{diagnostic.code}</strong> {diagnostic.message}
+                    </li>
+                  ))}
+                </ul>
+              )
             )}
           </details>
 

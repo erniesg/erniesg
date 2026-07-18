@@ -49,8 +49,8 @@ function reconstruct(runs: PdfSourceRun[]) {
 }
 
 describe('PDF diagnostic overlays', () => {
-  it('links a note marker to every candidate with scores and evidence', () => {
-    const result = reconstruct([
+  it('links a note marker to every candidate with scores and evidence', async () => {
+    const result = await reconstruct([
       run('Left one.', 0.08, 0.2, 0.32),
       run('Left two.', 0.08, 0.24, 0.32),
       run('Left three.', 0.08, 0.28, 0.32),
@@ -83,8 +83,8 @@ describe('PDF diagnostic overlays', () => {
     expect(svg.match(/<line /g)).toHaveLength(2)
   })
 
-  it('draws both numbered region sequences and emits byte-stable HTML', () => {
-    const result = reconstruct([
+  it('draws both numbered region sequences and emits byte-stable HTML', async () => {
+    const result = await reconstruct([
       run('Left one.', 0.08, 0.2, 0.32),
       run('Right one.', 0.55, 0.2, 0.32),
       run('Indented left two.', 0.18, 0.7, 0.22),

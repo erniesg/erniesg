@@ -57,6 +57,67 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('orders every left logical page region before the right side of an accepted scan spread', async () => {
+    const spread = page(1, [
+      run(1, 'Left opening.', 0.08, 0.12, 0.3),
+      run(1, 'Right opening.', 0.62, 0.14, 0.3),
+      run(1, 'Right continuation.', 0.62, 0.22, 0.3),
+      run(1, 'Left conclusion.', 0.08, 0.72, 0.3),
+    ])
+    spread.kind = 'ocr-complete'
+    spread.runs = spread.runs.map((item) => ({ ...item, method: 'ocr' }))
+    spread.spread = {
+      status: 'split',
+      boundary: 0.5,
+      confidence: 0.9,
+      logicalRegions: [
+        {
+          id: 'physical-p001-left',
+          physicalPage: 1,
+          side: 'left',
+          box: {
+            page: 1,
+            x: 0,
+            y: 0,
+            width: 0.5,
+            height: 1,
+            rotation: 0,
+            method: 'ocr',
+          },
+        },
+        {
+          id: 'physical-p001-right',
+          physicalPage: 1,
+          side: 'right',
+          box: {
+            page: 1,
+            x: 0.5,
+            y: 0,
+            width: 0.5,
+            height: 1,
+            rotation: 0,
+            method: 'ocr',
+          },
+        },
+      ],
+    }
+
+    const result = await reconstruct([spread])
+    const text = result.paper.nodes
+      .map((node) => ('text' in node ? node.text : ''))
+      .join(' ')
+
+    expect(text.indexOf('Left conclusion')).toBeLessThan(
+      text.indexOf('Right opening'),
+    )
+    expect(
+      result.regions
+        .filter((region) => region.text)
+        .map((region) => region.column),
+    ).toEqual(expect.arrayContaining(['left', 'right']))
+    expect(result.readingOrder.evaluation.reviewRequired).toBe(false)
+  })
+
   it('segments one-column flow without inventing a column boundary', async () => {
     const result = await reconstruct([
       page(1, [
@@ -148,6 +209,7 @@ describe('deterministic scholarly page regions', () => {
             id: 'image-p001-001',
             page: 1,
             kind: 'image',
+            assetId: null,
             box: {
               page: 1,
               x: 0.2,
@@ -158,7 +220,6 @@ describe('deterministic scholarly page regions', () => {
               method: 'pdf-object',
             },
             confidence: 0.98,
-            assetId: null,
           },
         ],
       ),

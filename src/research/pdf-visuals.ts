@@ -270,7 +270,19 @@ export async function reconstructPdfVisuals({
 }) {
   const diagnostics: ReconstructionDiagnostic[] = []
   const assetStore = new Map<string, PdfVisualAsset>()
+  const scanSourceObjectIds = new Set(
+    pages
+      .flatMap((page) => page.objects ?? [])
+      .filter((object) => object.role === 'scan-source')
+      .map((object) => object.id),
+  )
   for (const visualAsset of pages.flatMap((page) => page.assets ?? [])) {
+    if (
+      visualAsset.sourceObjectIds.length > 0 &&
+      visualAsset.sourceObjectIds.every((id) => scanSourceObjectIds.has(id))
+    ) {
+      continue
+    }
     mergeAsset(assetStore, visualAsset)
   }
   const objectAssetIds = new Map(
@@ -390,6 +402,7 @@ export async function reconstructPdfVisuals({
     relationships.flatMap((relationship) => relationship.sourceObjectIds),
   )
   for (const object of pages.flatMap((page) => page.objects ?? [])) {
+    if (object.role === 'scan-source') continue
     if (referenced.has(object.id)) continue
     diagnostics.push({
       code: 'UNREFERENCED_VISUAL_ASSET',

@@ -1,6 +1,7 @@
 import type { ResearchNode, ResearchPaper } from './schema'
 import type {
   NodeSourceEvidence,
+  PdfEmbeddedLink,
   PdfNoteRelationship,
   PdfPageAnalysis,
   PdfPageRegion,
@@ -354,7 +355,22 @@ function matchNotes(
   return relationships
 }
 
-function sourceEvidence(block: RegionBlock): NodeSourceEvidence {
+function boxesOverlap(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) {
+  return (
+    Math.min(left.x + left.width, right.x + right.width) >
+      Math.max(left.x, right.x) &&
+    Math.min(left.y + left.height, right.y + right.height) >
+      Math.max(left.y, right.y)
+  )
+}
+
+function sourceEvidence(
+  block: RegionBlock,
+  links: PdfEmbeddedLink[],
+): NodeSourceEvidence {
   return {
     confidence: rounded(block.confidence),
     pages: [block.region.page],
@@ -368,6 +384,11 @@ function sourceEvidence(block: RegionBlock): NodeSourceEvidence {
         fontSize: rounded(run.fontSize),
         confidence: rounded(run.confidence),
       })),
+    ),
+    links: links.filter(
+      (link) =>
+        link.box.page === block.region.page &&
+        boxesOverlap(link.box, block.region.box),
     ),
   }
 }
@@ -400,6 +421,30 @@ export async function reconstructPageAnalyses({
         severity: 'warning',
         page: page.page,
         message: `Page ${page.page} mixes sparse text with image content; review the reconstruction.`,
+      })
+    }
+    if (page.ocr && page.ocr.confidence < 0.75) {
+      diagnostics.push({
+        code: 'LOW_CONFIDENCE_OCR',
+        severity: 'error',
+        page: page.page,
+        message: `Page ${page.page} OCR confidence ${page.ocr.confidence.toFixed(3)} is below the review threshold 0.750.`,
+      })
+    }
+    if (page.ocr?.words.some((word) => word.mergeStatus === 'conflict')) {
+      diagnostics.push({
+        code: 'MIXED_OCR_CONFLICT',
+        severity: 'error',
+        page: page.page,
+        message: `Page ${page.page} retains conflicting embedded and OCR text at overlapping source boxes for review.`,
+      })
+    }
+    if (page.spread?.status === 'uncertain') {
+      diagnostics.push({
+        code: 'UNCERTAIN_SPREAD_BOUNDARY',
+        severity: 'error',
+        page: page.page,
+        message: `Page ${page.page} is likely a two-page scan, but its logical split boundary remains uncertain.`,
       })
     }
   }
@@ -503,10 +548,11 @@ export async function reconstructPageAnalyses({
   }
 
   const provenance: Record<string, NodeSourceEvidence> = {}
+  const embeddedLinks = pages.flatMap((page) => page.links ?? [])
   const nodes: ResearchNode[] = blocks.map((block, index) => {
     const id = block.nodeId ?? nodeId(index, block.type, block.text)
     block.nodeId = id
-    provenance[id] = sourceEvidence(block)
+    provenance[id] = sourceEvidence(block, embeddedLinks)
     if (block.confidence < 0.75) {
       diagnostics.push({
         code: 'LOW_CONFIDENCE_BLOCK',
@@ -609,6 +655,7 @@ export async function reconstructPageAnalyses({
       confidence: relationship.confidence,
       pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],
       boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
+      links: [],
     }
     const captionIndex = nodes.findIndex(
       (candidate) => candidate.id === relationship.captionNodeId,

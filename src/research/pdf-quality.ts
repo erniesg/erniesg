@@ -261,13 +261,23 @@ export function assessPdfCompleteness({
   )
   const outputText = normalizedText(paper.nodes.map(nodeText).join(' '))
   const matchedTextCharacters = matchedCharacters(sourceText, outputText)
-  const nativeObjects = pages.flatMap((page) => page.objects ?? [])
+  const nativeObjects = pages
+    .flatMap((page) => page.objects ?? [])
+    .filter((object) => object.role !== 'scan-source')
   const sourceAssetCount =
-    pages.reduce(
-      (total, page) =>
-        total + Math.max(page.imageCount, page.objects?.length ?? 0),
-      0,
-    ) +
+    pages.reduce((total, page) => {
+      const objects = page.objects ?? []
+      const semanticObjectCount = objects.filter(
+        (object) => object.role !== 'scan-source',
+      ).length
+      const provenScanSourceCount = objects.filter(
+        (object) => object.role === 'scan-source',
+      ).length
+      return (
+        total +
+        Math.max(semanticObjectCount, page.imageCount - provenScanSourceCount)
+      )
+    }, 0) +
     semanticSignals.tables +
     semanticSignals.equations
   const exportedNativeObjects = nativeObjects.filter(

@@ -5,11 +5,65 @@ import path from 'node:path'
 
 const fixture = (name: string) => path.resolve('tests', 'fixtures', 'pdf', name)
 
-test.describe.configure({ timeout: 60_000 })
+test.describe.configure({ timeout: 120_000 })
+
+async function waitForImporter(page: Page) {
+  await expect(
+    page.locator('astro-island[component-url$="PublicationImporter.tsx"]'),
+  ).toHaveAttribute('client-render-time', /.+/)
+}
+
+test('offers an explicit offline OCR language choice', async ({ page }) => {
+  await page.goto('/research/studio')
+
+  await expect(page.getByLabel('OCR language')).toHaveValue('auto')
+  await expect(
+    page.getByText(
+      /OCR runs offline\. Auto uses the bundled English fallback/i,
+    ),
+  ).toBeVisible()
+  await expect(page.getByText(/local language pack/i)).toBeVisible()
+})
+
+test('recognizes a scanned fixture without any cross-origin request', async ({
+  page,
+}) => {
+  const externalRequests: string[] = []
+  await page.goto('/research/studio')
+  await waitForImporter(page)
+  const applicationOrigin = new URL(page.url()).origin
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.protocol.startsWith('http') && url.origin !== applicationOrigin) {
+      externalRequests.push(url.href)
+      await route.abort('blockedbyclient')
+      return
+    }
+    await route.continue()
+  })
+
+  await page
+    .locator('#publication-pdf')
+    .setInputFiles(fixture('scanned-page.pdf'))
+
+  await expect(page.locator('.publication-result-bar')).toBeVisible({
+    timeout: 90_000,
+  })
+  const details = page.locator('.publication-diagnostics')
+  if (
+    !(await details.evaluate((element) => (element as HTMLDetailsElement).open))
+  ) {
+    await details.locator('summary').click()
+  }
+  await expect(page.getByText(/tesseract\.js 6\.0\.1/i)).toBeVisible()
+  await expect(page.getByText('OCR_REQUIRED')).toHaveCount(0)
+  expect(externalRequests).toEqual([])
+})
 
 async function uploadFixture(page: Page, name: string) {
   await expect(async () => {
     await page.goto('/research/studio')
+    await waitForImporter(page)
     await page.locator('#publication-pdf').setInputFiles(fixture(name))
     await expect(page.locator('.publication-result-bar')).toBeVisible({
       timeout: 5_000,
@@ -183,6 +237,7 @@ test('keeps the newest result when an active import is superseded', async ({
     })
   })
   await page.goto('/research/studio', { waitUntil: 'networkidle' })
+  await waitForImporter(page)
 
   await page
     .locator('#publication-pdf')

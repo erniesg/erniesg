@@ -2,7 +2,11 @@ import type { ResearchPaper } from './schema'
 
 export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
 
-export type PdfPageKind = 'born-digital' | 'mixed' | 'ocr-required'
+export type PdfPageKind =
+  | 'born-digital'
+  | 'mixed'
+  | 'ocr-required'
+  | 'ocr-complete'
 
 export type NormalizedSourceBox = {
   page: number
@@ -11,7 +15,7 @@ export type NormalizedSourceBox = {
   width: number
   height: number
   rotation: number
-  method: 'pdf-text' | 'pdf-object' | 'ocr'
+  method: 'pdf-text' | 'pdf-object' | 'pdf-link' | 'ocr'
 }
 
 export type PdfSourceRun = NormalizedSourceBox & {
@@ -47,6 +51,56 @@ export type PdfNativeObject = {
   box: NormalizedSourceBox
   confidence: number
   assetId: string | null
+  role?: 'semantic' | 'scan-source'
+  rolePolicy?: 'ocr-scan-surface-v1'
+}
+
+export type PdfEmbeddedLink = {
+  url: string
+  box: NormalizedSourceBox
+}
+
+export type PdfOcrWordEvidence = {
+  text: string
+  confidence: number
+  lineId: string
+  box: NormalizedSourceBox
+  mergeStatus: 'accepted' | 'duplicate' | 'conflict'
+}
+
+export type PdfOcrLineEvidence = {
+  id: string
+  text: string
+  confidence: number
+  box: NormalizedSourceBox
+}
+
+export type PdfOcrPageEvidence = {
+  engine: string
+  engineVersion: string
+  model: string
+  modelVersion: string
+  languages: string[]
+  languageMode: 'explicit' | 'automatic-fallback'
+  sourceSha256: string
+  rasterSha256: string
+  confidence: number
+  words: PdfOcrWordEvidence[]
+  lines: PdfOcrLineEvidence[]
+}
+
+export type PdfLogicalPageRegion = {
+  id: string
+  physicalPage: number
+  side: 'left' | 'right'
+  box: NormalizedSourceBox
+}
+
+export type PdfPhysicalSpread = {
+  status: 'single' | 'split' | 'uncertain'
+  boundary: number | null
+  confidence: number
+  logicalRegions: PdfLogicalPageRegion[]
 }
 
 export type PdfRegionKind =
@@ -218,13 +272,21 @@ export type PdfPageAnalysis = {
   textCharacters: number
   imageCount: number
   objects?: PdfNativeObject[]
+  links?: PdfEmbeddedLink[]
   assets?: PdfVisualAsset[]
   runs: PdfSourceRun[]
+  ocr?: PdfOcrPageEvidence
+  spread?: PdfPhysicalSpread
 }
 
 export type ReconstructionDiagnostic = {
   code:
     | 'OCR_REQUIRED'
+    | 'OCR_LANGUAGE_UNAVAILABLE'
+    | 'OCR_NETWORK_FORBIDDEN'
+    | 'LOW_CONFIDENCE_OCR'
+    | 'MIXED_OCR_CONFLICT'
+    | 'UNCERTAIN_SPREAD_BOUNDARY'
     | 'MIXED_PAGE'
     | 'REPEATED_MARGIN_TEXT'
     | 'LOW_CONFIDENCE_BLOCK'
@@ -296,6 +358,7 @@ export type NodeSourceEvidence = {
   confidence: number
   pages: number[]
   boxes: NormalizedSourceBox[]
+  links: PdfEmbeddedLink[]
 }
 
 export type PdfReconstruction = {
@@ -321,7 +384,7 @@ export type PdfReconstruction = {
 }
 
 export type PdfImportProgress = {
-  phase: 'opening' | 'extracting' | 'reconstructing'
+  phase: 'opening' | 'extracting' | 'ocr' | 'reconstructing'
   completed: number
   total: number
   message: string
@@ -333,6 +396,8 @@ export class PdfImportError extends Error {
     | 'ENCRYPTED_PDF'
     | 'OVERSIZED_PDF'
     | 'OCR_REQUIRED'
+    | 'OCR_LANGUAGE_UNAVAILABLE'
+    | 'OCR_NETWORK_FORBIDDEN'
     | 'EMPTY_PDF'
     | 'PDF_PARSE_FAILED'
     | 'INVALID_PDF_URL'

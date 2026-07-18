@@ -1,4 +1,5 @@
 import type {
+  PdfEmbeddedLink,
   PdfImportProgress,
   PdfNativeObject,
   PdfPageAnalysis,
@@ -6,12 +7,23 @@ import type {
 } from './import-types'
 import { MAX_LOCAL_PDF_BYTES, PdfImportError } from './import-types'
 import { reconstructPageAnalyses, type PdfDocumentMetadata } from './pdf-layout'
+import {
+  classifyPdfPage,
+  detectPhysicalSpread,
+  mergeOcrPage,
+  type PdfOcrOptions,
+  type PdfOcrRaster,
+  type PdfOcrSession,
+} from './pdf-ocr'
 import { createPngAsset, createVectorSvgAsset } from './visual-assets'
 
 type PdfImportOptions = {
   signal?: AbortSignal
   standardFontDataUrl?: string
+  ocr?: PdfOcrOptions
 }
+
+export const MAX_OCR_RASTER_PIXELS = 3_200_000
 
 function cancelledError() {
   return new PdfImportError(
@@ -46,6 +58,146 @@ function finite(value: number, fallback = 0) {
 
 function clamp(value: number) {
   return Math.max(0, Math.min(1, finite(value)))
+}
+
+function extractEmbeddedLinks(
+  page: number,
+  rotation: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  annotations: unknown[],
+  convertToViewportRectangle: (rect: number[]) => number[],
+): PdfEmbeddedLink[] {
+  const links: PdfEmbeddedLink[] = []
+  for (const annotation of annotations) {
+    if (!annotation || typeof annotation !== 'object') continue
+    const value = annotation as { url?: unknown; rect?: unknown }
+    if (
+      typeof value.url !== 'string' ||
+      !Array.isArray(value.rect) ||
+      value.rect.length < 4 ||
+      !value.rect.slice(0, 4).every((item) => typeof item === 'number')
+    ) {
+      continue
+    }
+    const rectangle = convertToViewportRectangle(value.rect as number[])
+    const left = Math.min(rectangle[0], rectangle[2])
+    const right = Math.max(rectangle[0], rectangle[2])
+    const top = Math.min(rectangle[1], rectangle[3])
+    const bottom = Math.max(rectangle[1], rectangle[3])
+    links.push({
+      url: value.url,
+      box: {
+        page,
+        x: clamp(left / viewportWidth),
+        y: clamp(top / viewportHeight),
+        width: clamp(right / viewportWidth) - clamp(left / viewportWidth),
+        height: clamp(bottom / viewportHeight) - clamp(top / viewportHeight),
+        rotation,
+        method: 'pdf-link',
+      },
+    })
+  }
+  return links
+}
+
+type RasterizablePage = {
+  getViewport(options: { scale: number }): {
+    width: number
+    height: number
+  }
+  render(options: {
+    canvas: HTMLCanvasElement
+    canvasContext: CanvasRenderingContext2D
+    viewport: { width: number; height: number }
+  }): { promise: Promise<unknown>; cancel?: () => void }
+}
+
+async function renderPageRaster(
+  page: RasterizablePage,
+  signal?: AbortSignal,
+): Promise<PdfOcrRaster> {
+  throwIfAborted(signal)
+  if (typeof document === 'undefined') {
+    throw new PdfImportError(
+      'OCR_REQUIRED',
+      'Local OCR needs a browser rasterizer; no document bytes were uploaded.',
+    )
+  }
+  const base = page.getViewport({ scale: 1 })
+  const scale = Math.min(
+    3,
+    Math.sqrt(
+      MAX_OCR_RASTER_PIXELS /
+        Math.max(1, Math.ceil(base.width) * Math.ceil(base.height)),
+    ),
+  )
+  const viewport = page.getViewport({ scale })
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.floor(viewport.width))
+  canvas.height = Math.max(1, Math.floor(viewport.height))
+  const context = canvas.getContext('2d', { alpha: false })
+  if (!context) {
+    throw new PdfImportError(
+      'OCR_REQUIRED',
+      'The browser could not create a bounded local OCR raster.',
+    )
+  }
+  const renderTask = page.render({
+    canvas,
+    canvasContext: context,
+    viewport,
+  })
+  const cancelRender = () => renderTask.cancel?.()
+  signal?.addEventListener('abort', cancelRender, { once: true })
+  try {
+    await renderTask.promise
+    throwIfAborted(signal)
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (value) =>
+          value
+            ? resolve(value)
+            : reject(new Error('The browser returned an empty OCR raster.')),
+        'image/png',
+      )
+    })
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    throwIfAborted(signal)
+    return {
+      bytes,
+      mediaType: 'image/png',
+      width: canvas.width,
+      height: canvas.height,
+      sha256: await sha256(bytes),
+    }
+  } finally {
+    signal?.removeEventListener('abort', cancelRender)
+    canvas.width = 0
+    canvas.height = 0
+  }
+}
+
+async function raceWithAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+  onAbort: () => void,
+) {
+  if (!signal) return operation
+  if (signal.aborted) {
+    onAbort()
+    throw cancelledError()
+  }
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      onAbort()
+      reject(cancelledError())
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    operation.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', abort)
+    })
+  })
 }
 
 function countImages(fnArray: number[], imageOps: Set<number>) {
@@ -335,7 +487,9 @@ async function resolveNativeObjects(
     }
   },
   drafts: NativeObjectDraft[],
+  signal?: AbortSignal,
 ) {
+  throwIfAborted(signal)
   const assets = new Map<
     string,
     Awaited<ReturnType<typeof createPngAsset | typeof createVectorSvgAsset>>
@@ -374,8 +528,15 @@ async function resolveNativeObjects(
           if (settled) return
           settled = true
           if (timeout !== undefined) clearTimeout(timeout)
+          signal?.removeEventListener('abort', abort)
           resolve(value)
         }
+        const abort = () => finish(null)
+        if (signal?.aborted) {
+          finish(null)
+          return
+        }
+        signal?.addEventListener('abort', abort, { once: true })
         timeout = setTimeout(() => finish(null), 500)
         try {
           if (page.objs.has?.(source)) finish(page.objs.get(source))
@@ -390,6 +551,7 @@ async function resolveNativeObjects(
     )
   }
   for (const draft of drafts) {
+    throwIfAborted(signal)
     if (draft.vector) {
       const visualAsset = await createVectorSvgAsset({
         sourceObjectId: draft.object.id,
@@ -418,6 +580,7 @@ async function resolveNativeObjects(
     draft.object.assetId = visualAsset.id
     store(visualAsset)
   }
+  throwIfAborted(signal)
   return {
     objects: drafts.map((draft) => draft.object),
     assets: [...assets.values()],
@@ -542,6 +705,15 @@ export async function reconstructPdf(
     pdfjs.OPS.paintImageMaskXObjectRepeat,
   ])
   const pages: PdfPageAnalysis[] = []
+  let ocrSession: PdfOcrSession | undefined
+  let ocrTermination: Promise<void> | undefined
+  let activeOcrPage = 0
+  const terminateOcrSession = () => {
+    if (!ocrSession) return Promise.resolve()
+    if (ocrTermination) return ocrTermination
+    ocrTermination = ocrSession.terminate().catch(() => undefined)
+    return ocrTermination
+  }
 
   try {
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -555,9 +727,10 @@ export async function reconstructPdf(
       const page = await document.getPage(pageNumber)
       try {
         const viewport = page.getViewport({ scale: 1 })
-        const [textContent, operatorList] = await Promise.all([
+        const [textContent, operatorList, annotations] = await Promise.all([
           page.getTextContent(),
           page.getOperatorList(),
+          page.getAnnotations({ intent: 'display' }),
         ])
         throwIfAborted(options.signal)
         const runs: PdfSourceRun[] = []
@@ -607,28 +780,130 @@ export async function reconstructPdf(
           transformOp: pdfjs.OPS.transform,
           constructPathOp: pdfjs.OPS.constructPath,
         })
-        const { objects, assets } = await resolveNativeObjects(
-          page,
-          objectDrafts,
+        const objects = objectDrafts.map((draft) => draft.object)
+        const links = extractEmbeddedLinks(
+          pageNumber,
+          viewport.rotation,
+          viewport.width,
+          viewport.height,
+          annotations,
+          (rect) => viewport.convertToViewportRectangle(rect),
         )
-        const kind =
-          textCharacters < 24
-            ? 'ocr-required'
-            : imageCount > 0 && textCharacters < 240
-              ? 'mixed'
-              : 'born-digital'
-        pages.push({
+        const analysis: PdfPageAnalysis = {
           page: pageNumber,
-          kind,
+          kind: 'born-digital',
           width: viewport.width,
           height: viewport.height,
           rotation: viewport.rotation,
           textCharacters,
           imageCount,
           objects,
-          assets,
+          links,
           runs,
-        })
+        }
+        const attachNativeAssets = async (target: PdfPageAnalysis) => {
+          const resolved = await resolveNativeObjects(
+            page,
+            objectDrafts,
+            options.signal,
+          )
+          const resolvedObjects = new Map(
+            resolved.objects.map((object) => [object.id, object]),
+          )
+          target.objects = (target.objects ?? []).map((object) => ({
+            ...object,
+            assetId: resolvedObjects.get(object.id)?.assetId ?? object.assetId,
+          }))
+          target.assets = resolved.assets
+        }
+        const classification = classifyPdfPage(analysis)
+        analysis.kind =
+          classification.contentClass === 'born-digital'
+            ? 'born-digital'
+            : classification.contentClass === 'mixed'
+              ? 'mixed'
+              : 'ocr-required'
+
+        if (options.ocr && classification.needsOcr) {
+          activeOcrPage = pageNumber
+          if (!ocrSession) {
+            const sessionPromise = options.ocr.createSession({
+              languages: [...options.ocr.languages],
+              languageMode: options.ocr.languageMode,
+              signal: options.signal,
+              onProgress: (progress, message) => {
+                onProgress?.({
+                  phase: 'ocr',
+                  completed: activeOcrPage - 1 + clamp(progress),
+                  total: document.numPages,
+                  message,
+                })
+              },
+            })
+            ocrSession = await raceWithAbort(
+              sessionPromise,
+              options.signal,
+              () => {
+                void sessionPromise
+                  .then((lateSession) => lateSession.terminate())
+                  .catch(() => undefined)
+              },
+            )
+          }
+          onProgress?.({
+            phase: 'ocr',
+            completed: pageNumber - 1,
+            total: document.numPages,
+            message: `Recognizing page ${pageNumber} of ${document.numPages} locally…`,
+          })
+          throwIfAborted(options.signal)
+          const rasterPage = {
+            page: pageNumber,
+            width: viewport.width,
+            height: viewport.height,
+            rotation: viewport.rotation,
+            signal: options.signal,
+            render: () =>
+              renderPageRaster(page as RasterizablePage, options.signal),
+          }
+          const rasterPromise = options.ocr.rasterize
+            ? options.ocr.rasterize(rasterPage)
+            : rasterPage.render()
+          const raster = await raceWithAbort(
+            rasterPromise,
+            options.signal,
+            () => undefined,
+          )
+          if (raster.width * raster.height > MAX_OCR_RASTER_PIXELS) {
+            throw new PdfImportError(
+              'OCR_REQUIRED',
+              `OCR raster resource limit exceeded: ${raster.width} × ${raster.height} pixels is above the bounded ${MAX_OCR_RASTER_PIXELS}-pixel limit.`,
+            )
+          }
+          throwIfAborted(options.signal)
+          const recognition = await raceWithAbort(
+            ocrSession.recognize({
+              page: pageNumber,
+              rotation: viewport.rotation,
+              sourceSha256: sourceHash,
+              raster,
+              signal: options.signal,
+            }),
+            options.signal,
+            terminateOcrSession,
+          )
+          throwIfAborted(options.signal)
+          const merged = mergeOcrPage(analysis, recognition, {
+            sourceSha256: sourceHash,
+          }).page
+          merged.spread = detectPhysicalSpread(merged)
+          await attachNativeAssets(merged)
+          pages.push(merged)
+        } else {
+          analysis.spread = detectPhysicalSpread(analysis)
+          await attachNativeAssets(analysis)
+          pages.push(analysis)
+        }
       } finally {
         page.cleanup()
       }
@@ -664,6 +939,7 @@ export async function reconstructPdf(
     throw error
   } finally {
     options.signal?.removeEventListener('abort', cancelLoading)
+    await terminateOcrSession()
     await document.destroy().catch(() => undefined)
   }
 }

@@ -19,6 +19,7 @@
     "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "preview": "astro preview",
     "pdf:corpus-audit": "node tools/pdf-corpus-audit.mjs",
+    "pdf:export": "node tools/pdf-export.mjs",
     "worker:build": "npm run build:production",
     "worker:deploy:preview": "npm run build:staging && wrangler deploy --config wrangler.jsonc --message \"Deploy ernie.sg Workers preview\"",
     "worker:deploy:production": "npm run build:production && wrangler deploy --config wrangler.production.jsonc --message \"Deploy ernie.sg Workers production\"",

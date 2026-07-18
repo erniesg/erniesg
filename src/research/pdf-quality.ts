@@ -2,6 +2,7 @@ import type {
   PdfCompletenessMetrics,
   PdfCompletenessPolicy,
   PdfPageAnalysis,
+  PdfPageRegion,
   PdfReadingOrderGraph,
   PdfReadiness,
   PdfSemanticSignals,
@@ -9,6 +10,8 @@ import type {
   ReconstructionDiagnostic,
 } from './import-types'
 import { groupRunsIntoLines } from './pdf-lines'
+import { classifyPdfNoteMarkers } from './pdf-note-classifier'
+import { reconstructPageRegions } from './pdf-regions'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 export const DEFAULT_PDF_COMPLETENESS_POLICY: PdfCompletenessPolicy = {
@@ -25,6 +28,7 @@ type QualityInput = {
   paper: ResearchPaper
   diagnostics: ReconstructionDiagnostic[]
   readingOrder?: PdfReadingOrderGraph
+  regions?: PdfPageRegion[]
   visualRelationships?: PdfVisualRelationship[]
   policy?: PdfCompletenessPolicy
 }
@@ -68,62 +72,23 @@ function pageLines(page: PdfPageAnalysis) {
   return groupRunsIntoLines(page)
 }
 
-function upperQuartile(values: number[]) {
-  if (values.length === 0) return 0
-  const ordered = [...values].sort((left, right) => left - right)
-  return ordered[Math.ceil(ordered.length * 0.75) - 1]
-}
-
-function runGap(
-  left: PdfPageAnalysis['runs'][number],
-  right: PdfPageAnalysis['runs'][number],
-) {
-  return Math.max(
-    left.x - (right.x + right.width),
-    right.x - (left.x + left.width),
-    0,
-  )
-}
-
-function renderedFootnoteMarkers(page: PdfPageAnalysis, bodyFontSize: number) {
-  if (!bodyFontSize) return 0
-  return page.runs.filter((run) => {
-    if (!/^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])$/.test(run.text.trim())) {
-      return false
-    }
-    if (run.fontSize > bodyFontSize * 0.82 || run.y > 0.88) return false
-    const center = run.y + run.height / 2
-    return page.runs.some((candidate) => {
-      if (candidate === run || !candidate.text.trim()) return false
-      const candidateCenter = candidate.y + candidate.height / 2
-      return (
-        candidate.fontSize > run.fontSize &&
-        Math.abs(center - candidateCenter) <=
-          Math.max(0.022, Math.max(run.height, candidate.height) * 1.2) &&
-        runGap(run, candidate) <= 0.03
-      )
-    })
-  }).length
-}
-
 export function detectPdfSemanticSignals(
   pages: PdfPageAnalysis[],
+  suppliedRegions?: PdfPageRegion[],
 ): PdfSemanticSignals {
+  const regions = suppliedRegions ?? reconstructPageRegions(pages).regions
+  const markerResult = classifyPdfNoteMarkers(regions)
   const signals: PdfSemanticSignals = {
     captions: 0,
     tables: 0,
     equations: 0,
-    footnoteReferences: 0,
-    footnotes: 0,
+    footnoteReferences: markerResult.classifications.filter(
+      (classification) => classification.disposition === 'note-reference',
+    ).length,
+    footnotes: markerResult.noteBodyRegionIds.length,
   }
-  let inEndnotes = false
   for (const page of pages) {
-    const bodyFontSize = upperQuartile(
-      page.runs.map((run) => run.fontSize).filter((size) => size > 0),
-    )
-    signals.footnoteReferences += renderedFootnoteMarkers(page, bodyFontSize)
     for (const line of pageLines(page)) {
-      if (/^(?:endnotes?|notes?)$/i.test(line.text.trim())) inEndnotes = true
       if (/^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(line.text)) {
         signals.captions += 1
       }
@@ -132,25 +97,6 @@ export function detectPdfSemanticSignals(
       }
       if (/(?:^|\b)(?:equation|eq\.?)\s*\(?\d+\)?/i.test(line.text)) {
         signals.equations += 1
-      }
-      signals.footnoteReferences +=
-        line.text.match(
-          /\b(?:footnote|note)\s+(?:reference|marker)\s*(?:\d{1,3}|[*†‡§])(?=\s|[.,;:)\]]|$)/gi,
-        )?.length ?? 0
-      signals.footnoteReferences +=
-        line.text.match(/\[(?:\d{1,3}|[*†‡§])\]/g)?.length ?? 0
-      const explicitFootnote = /^(?:footnote|note)\s*\d+\s*[:.-]/i.test(
-        line.text,
-      )
-      const renderedFootnote =
-        line.y >= 0.7 &&
-        line.fontSize <= bodyFontSize * 0.9 &&
-        /^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
-      const renderedEndnote =
-        inEndnotes &&
-        /^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
-      if (explicitFootnote || renderedFootnote || renderedEndnote) {
-        signals.footnotes += 1
       }
     }
   }
@@ -244,6 +190,7 @@ export function assessPdfCompleteness({
   paper,
   diagnostics,
   readingOrder,
+  regions,
   visualRelationships,
   policy = DEFAULT_PDF_COMPLETENESS_POLICY,
 }: QualityInput): {
@@ -252,7 +199,7 @@ export function assessPdfCompleteness({
   diagnostics: ReconstructionDiagnostic[]
   readiness: PdfReadiness
 } {
-  const semanticSignals = detectPdfSemanticSignals(pages)
+  const semanticSignals = detectPdfSemanticSignals(pages, regions)
   const sourceText = normalizedText(
     pages
       .flatMap((page) => page.runs)

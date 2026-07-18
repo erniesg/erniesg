@@ -222,6 +222,32 @@ export type PdfNoteMatchCandidate = {
   sourceBoxes: NormalizedSourceBox[]
 }
 
+export type PdfNoteMarkerTaxonomy =
+  | 'footnote-reference'
+  | 'endnote-reference'
+  | 'bracketed-bibliography-citation'
+  | 'superscript-citation-cluster'
+  | 'author-affiliation-superscript'
+  | 'equation-reference'
+  | 'section-reference'
+  | 'bibliography-entry'
+  | 'unresolved-note-marker'
+
+export type PdfNoteMarkerClassification = {
+  id: string
+  label: string
+  referenceRegionId: string
+  start: number
+  end: number
+  taxonomy: PdfNoteMarkerTaxonomy
+  disposition: 'note-reference' | 'citation' | 'plain-text'
+  confidence: number
+  threshold: number
+  accepted: boolean
+  evidence: string[]
+  sourceBox: NormalizedSourceBox
+}
+
 export type PdfNoteRelationship = {
   id: string
   label: string
@@ -229,6 +255,7 @@ export type PdfNoteRelationship = {
   targetNoteId: string | null
   status: 'matched' | 'ambiguous' | 'unresolved'
   confidence: number
+  threshold: number
   evidence: string[]
   candidates: PdfNoteMatchCandidate[]
   sourceBoxes: NormalizedSourceBox[]
@@ -293,6 +320,7 @@ export type ReconstructionDiagnostic = {
     | 'RESOLVED_READING_ORDER'
     | 'AMBIGUOUS_READING_ORDER'
     | 'READING_ORDER_CYCLE'
+    | 'CLASSIFIED_NOTE_MARKER'
     | 'AMBIGUOUS_NOTE_MATCH'
     | 'UNRESOLVED_NOTE_REFERENCE'
     | 'UNREFERENCED_NOTE'
@@ -307,6 +335,7 @@ export type ReconstructionDiagnostic = {
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
+  noteMarkerClassification?: PdfNoteMarkerClassification
   readingOrderResolution?: Omit<PdfReadingOrderResolution, 'regionIds'> & {
     regionId?: string
   }

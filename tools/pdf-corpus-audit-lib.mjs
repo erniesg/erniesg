@@ -1,5 +1,6 @@
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { basename, extname, resolve } from 'node:path'
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, extname, join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
@@ -56,8 +57,10 @@ function safeError(error) {
 }
 
 export async function createPdfPipeline() {
+  const cacheDir = await mkdtemp(join(tmpdir(), 'srt-pdf-vite-'))
   const vite = await createServer({
     appType: 'custom',
+    cacheDir,
     logLevel: 'silent',
     server: { middlewareMode: true },
   })
@@ -90,7 +93,11 @@ export async function createPdfPipeline() {
       return exportModules
     },
     async close() {
-      await vite.close()
+      try {
+        await vite.close()
+      } finally {
+        await rm(cacheDir, { recursive: true, force: true })
+      }
     },
   }
 }

@@ -2,6 +2,7 @@ import type { ResearchNode, ResearchPaper } from './schema'
 import type {
   NodeSourceEvidence,
   PdfEmbeddedLink,
+  PdfNoteMarkerClassification,
   PdfNoteRelationship,
   PdfPageAnalysis,
   PdfPageRegion,
@@ -9,6 +10,7 @@ import type {
   ReconstructionDiagnostic,
 } from './import-types'
 import { assessPdfCompleteness } from './pdf-quality'
+import { classifyPdfNoteMarkers } from './pdf-note-classifier'
 import { reconstructPdfVisuals } from './pdf-visuals'
 import {
   normalizedNoteLabel,
@@ -39,7 +41,10 @@ type NoteReferenceDraft = {
   region: PdfPageRegion
   start: number
   end: number
+  classification: PdfNoteMarkerClassification
 }
+
+export const PDF_NOTE_RELATIONSHIP_THRESHOLD = 0.7
 
 function median(values: number[]) {
   if (values.length === 0) return 0
@@ -106,6 +111,7 @@ function blocksFromRegions(
   orderedRegions: PdfPageRegion[],
   regions: PdfPageRegion[],
   excludedRegionIds = new Set<string>(),
+  bibliographyRegionIds: ReadonlySet<string> = new Set<string>(),
 ) {
   const readingRegions = orderedRegions.filter(
     (region) =>
@@ -129,7 +135,10 @@ function blocksFromRegions(
         confidence: region.confidence,
       }
     }
-    if (region.kind === 'footnote' || region.kind === 'endnote') {
+    if (
+      (region.kind === 'footnote' || region.kind === 'endnote') &&
+      !bibliographyRegionIds.has(region.id)
+    ) {
       const label = noteLabelFromText(region.text) ?? '?'
       return {
         type: 'footnote',
@@ -159,60 +168,6 @@ function blocksFromRegions(
   })
 }
 
-function referenceOffsets(region: PdfPageRegion) {
-  const found: Array<{ label: string; start: number; end: number }> = []
-  const add = (label: string, start: number, end: number) => {
-    const normalized = normalizedNoteLabel(label)
-    if (start < 0 || end <= start) return
-    if (
-      found.some(
-        (candidate) =>
-          candidate.label === normalized &&
-          Math.abs(candidate.start - start) <= 1,
-      )
-    ) {
-      return
-    }
-    found.push({ label: normalized, start, end })
-  }
-
-  const explicit =
-    /\b(?:footnote|note)\s+(?:reference\s+)?(\d{1,3}|[*†‡§])(?=\s|[.,;:)\]]|$)/giu
-  for (const match of region.text.matchAll(explicit)) {
-    const label = match[1]
-    const offset = (match.index ?? 0) + match[0].lastIndexOf(label)
-    add(label, offset, offset + label.length)
-  }
-  const inline = /\[(\d{1,3}|[*†‡§])\]|([⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])/gu
-  for (const match of region.text.matchAll(inline)) {
-    const raw = match[1] ?? match[2]
-    const offset = (match.index ?? 0) + match[0].indexOf(raw)
-    add(raw, offset, offset + raw.length)
-  }
-
-  let lineOffset = 0
-  for (const line of region.lines) {
-    const largestRun = Math.max(...line.runs.map((run) => run.fontSize), 0)
-    for (const run of line.runs) {
-      const raw = run.text.trim()
-      const label = normalizedNoteLabel(raw)
-      if (
-        !/^(?:\d{1,3}|[*†‡§])$/.test(label) ||
-        run.fontSize > largestRun * 0.82
-      ) {
-        continue
-      }
-      const withinLine = Math.max(
-        line.text.lastIndexOf(raw),
-        line.text.lastIndexOf(label),
-      )
-      add(label, lineOffset + withinLine, lineOffset + withinLine + raw.length)
-    }
-    lineOffset += line.text.length + 1
-  }
-  return found.sort((left, right) => left.start - right.start)
-}
-
 function noteNodeIds(blocks: RegionBlock[]) {
   const occurrences = new Map<string, number>()
   for (const block of blocks.filter(
@@ -225,27 +180,25 @@ function noteNodeIds(blocks: RegionBlock[]) {
   }
 }
 
-function detectReferences(blocks: RegionBlock[]) {
-  const counters = new Map<string, number>()
-  const references: NoteReferenceDraft[] = []
-  for (const block of blocks.filter(
-    (candidate) =>
-      candidate.type === 'paragraph' || candidate.type === 'heading',
-  )) {
-    for (const offset of referenceOffsets(block.region)) {
-      const key = `${block.region.page}:${offset.label}`
-      const count = (counters.get(key) ?? 0) + 1
-      counters.set(key, count)
-      references.push({
-        id: `noteref-p${String(block.region.page).padStart(3, '0')}-${slug(offset.label, 16)}-${String(count).padStart(3, '0')}`,
-        label: offset.label,
-        region: block.region,
-        start: offset.start,
-        end: offset.end,
-      })
-    }
-  }
-  return references
+function detectReferences(
+  classifications: PdfNoteMarkerClassification[],
+  regionMap: ReadonlyMap<string, PdfPageRegion>,
+) {
+  return classifications.flatMap<NoteReferenceDraft>((classification) => {
+    if (classification.disposition !== 'note-reference') return []
+    const region = regionMap.get(classification.referenceRegionId)
+    if (!region) return []
+    return [
+      {
+        id: classification.id,
+        label: classification.label,
+        region,
+        start: classification.start,
+        end: classification.end,
+        classification,
+      },
+    ]
+  })
 }
 
 function scoreNoteCandidate(reference: NoteReferenceDraft, note: RegionBlock) {
@@ -309,7 +262,10 @@ function matchNotes(
       Boolean(best) &&
       Boolean(candidates[1]) &&
       best.score - candidates[1].score < 0.04
-    const matched = Boolean(best) && best.score >= 0.7 && !ambiguous
+    const matched =
+      Boolean(best) &&
+      best.score >= PDF_NOTE_RELATIONSHIP_THRESHOLD &&
+      !ambiguous
     if (ambiguous) {
       diagnostics.push({
         code: 'AMBIGUOUS_NOTE_MATCH',
@@ -322,7 +278,7 @@ function matchNotes(
         code: 'UNRESOLVED_NOTE_REFERENCE',
         severity: 'error',
         page: reference.region.page,
-        message: `Note reference ${reference.id} has no deterministic target above the confidence threshold.`,
+        message: `Note reference ${reference.id} has no deterministic target at or above the ${PDF_NOTE_RELATIONSHIP_THRESHOLD.toFixed(2)} confidence threshold.`,
       })
     }
     return {
@@ -332,6 +288,7 @@ function matchNotes(
       targetNoteId: matched ? best.targetNoteId : null,
       status: ambiguous ? 'ambiguous' : matched ? 'matched' : 'unresolved',
       confidence: best?.score ?? 0,
+      threshold: PDF_NOTE_RELATIONSHIP_THRESHOLD,
       evidence: best?.evidence ?? ['no-label-match'],
       candidates,
       sourceBoxes: matched ? best.sourceBoxes : [reference.region.box],
@@ -453,6 +410,8 @@ export async function reconstructPageAnalyses({
   const regionMap = new Map(
     regionResult.regions.map((region) => [region.id, region]),
   )
+  const markerResult = classifyPdfNoteMarkers(regionResult.regions)
+  const bibliographyRegionIds = new Set(markerResult.bibliographyRegionIds)
   const orderedRegions = regionResult.readingOrder.order
     .map((id) => regionMap.get(id))
     .filter((region): region is PdfPageRegion => Boolean(region))
@@ -511,6 +470,16 @@ export async function reconstructPageAnalyses({
     })
   }
 
+  for (const classification of markerResult.classifications) {
+    diagnostics.push({
+      code: 'CLASSIFIED_NOTE_MARKER',
+      severity: 'info',
+      page: classification.sourceBox.page,
+      message: `Classified ${classification.id} as ${classification.taxonomy} at confidence ${classification.confidence.toFixed(2)} against threshold ${classification.threshold.toFixed(2)} using ${classification.evidence.join(', ')}.`,
+      noteMarkerClassification: classification,
+    })
+  }
+
   const visualResult = await reconstructPdfVisuals({
     pages,
     regions: regionResult.regions,
@@ -520,9 +489,10 @@ export async function reconstructPageAnalyses({
     orderedRegions,
     regionResult.regions,
     visualResult.consumedRegionIds,
+    bibliographyRegionIds,
   )
   noteNodeIds(blocks)
-  const references = detectReferences(blocks)
+  const references = detectReferences(markerResult.classifications, regionMap)
   const noteRelationships = matchNotes(blocks, references, diagnostics)
   const matchedReferences = new Map(
     noteRelationships
@@ -694,6 +664,7 @@ export async function reconstructPageAnalyses({
     paper,
     diagnostics,
     readingOrder: regionResult.readingOrder,
+    regions: regionResult.regions,
     visualRelationships: visualResult.relationships,
   })
 

@@ -5,14 +5,14 @@ import {
   type DragEvent,
   type FormEvent,
 } from 'react'
-import { buildEpub, type EpubExport } from '@/research/epub'
+import { buildEpub, type EpubExport } from '../../research/epub'
 import type {
   PdfImportProgress,
   PdfReconstruction,
-} from '@/research/import-types'
-import { PdfImportError } from '@/research/import-types'
-import { downloadLinkedPdf } from '@/research/pdf-url'
-import { getTargetProfile } from '@/research/targets'
+} from '../../research/import-types'
+import { PdfImportError } from '../../research/import-types'
+import { downloadLinkedPdf } from '../../research/pdf-url'
+import { getTargetProfile } from '../../research/targets'
 import EpubDownloadLink from './EpubDownloadLink'
 import ResearchStudio from './ResearchStudio'
 
@@ -46,6 +46,7 @@ export default function PublicationImporter({
   const [state, setState] = useState<StudioState>({ status: 'idle' })
   const [dragging, setDragging] = useState(false)
   const [paperUrl, setPaperUrl] = useState('')
+  const [ocrLanguage, setOcrLanguage] = useState<'auto' | 'eng'>('auto')
   const input = useRef<HTMLInputElement>(null)
   const activeImport = useRef<AbortController>()
 
@@ -84,7 +85,7 @@ export default function PublicationImporter({
       progress: initialProgress,
     })
     try {
-      const { reconstructPdf } = await import('@/research/pdf')
+      const { reconstructPdf } = await import('../../research/pdf')
       const result = await reconstructPdf(
         file,
         (progress) => {
@@ -92,7 +93,20 @@ export default function PublicationImporter({
             setState({ status: 'processing', fileName: file.name, progress })
           }
         },
-        { signal: controller.signal },
+        {
+          signal: controller.signal,
+          ocr: {
+            languages: ['eng'],
+            languageMode:
+              ocrLanguage === 'auto' ? 'automatic-fallback' : 'explicit',
+            async createSession(options) {
+              const { createBrowserOcrSession } = await import(
+                '../../research/pdf-ocr-browser'
+              )
+              return createBrowserOcrSession(options)
+            },
+          },
+        },
       )
       if (!isCurrent()) return
       if (!result.readiness.ready) {
@@ -182,53 +196,72 @@ export default function PublicationImporter({
       )}
 
       {state.status === 'idle' && (
-        <div className="publication-intake">
-          <div
-            className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
-            onDragEnter={(event) => {
-              event.preventDefault()
-              setDragging(true)
-            }}
-            onDragOver={(event) => event.preventDefault()}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-          >
-            <input
-              ref={input}
-              id="publication-pdf"
-              type="file"
-              accept="application/pdf,.pdf"
-              onChange={(event) => void processFile(event.target.files?.[0])}
-            />
-            <label htmlFor="publication-pdf">
-              <strong>Choose a PDF</strong>
-              <span>or drop it here</span>
-              <small>Up to 50 MB. Your file stays on this device.</small>
-            </label>
-          </div>
-
-          <form className="publication-url" onSubmit={processUrl}>
-            <label htmlFor="publication-url">
-              <strong>Or paste a PDF link</strong>
-              <span>Use a direct download link.</span>
-            </label>
-            <div className="publication-url__field">
-              <input
-                id="publication-url"
-                type="url"
-                inputMode="url"
-                required
-                value={paperUrl}
-                placeholder="https://…/paper.pdf"
-                onChange={(event) => setPaperUrl(event.target.value)}
-              />
-              <button type="submit">Create EPUB</button>
-            </div>
+        <>
+          <div className="publication-ocr-options">
+            <label htmlFor="publication-ocr-language">OCR language</label>
+            <select
+              id="publication-ocr-language"
+              value={ocrLanguage}
+              onChange={(event) =>
+                setOcrLanguage(event.target.value === 'eng' ? 'eng' : 'auto')
+              }
+            >
+              <option value="auto">Auto (English fallback)</option>
+              <option value="eng">English</option>
+            </select>
             <small>
-              If the link is blocked, download the PDF and upload it instead.
+              OCR runs offline. Auto uses the bundled English fallback; other
+              languages require an integrity-pinned local language pack.
             </small>
-          </form>
-        </div>
+          </div>
+          <div className="publication-intake">
+            <div
+              className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setDragging(true)
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+            >
+              <input
+                ref={input}
+                id="publication-pdf"
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(event) => void processFile(event.target.files?.[0])}
+              />
+              <label htmlFor="publication-pdf">
+                <strong>Choose a PDF</strong>
+                <span>or drop it here</span>
+                <small>Up to 50 MB. Your file stays on this device.</small>
+              </label>
+            </div>
+
+            <form className="publication-url" onSubmit={processUrl}>
+              <label htmlFor="publication-url">
+                <strong>Or paste a PDF link</strong>
+                <span>Use a direct download link.</span>
+              </label>
+              <div className="publication-url__field">
+                <input
+                  id="publication-url"
+                  type="url"
+                  inputMode="url"
+                  required
+                  value={paperUrl}
+                  placeholder="https://…/paper.pdf"
+                  onChange={(event) => setPaperUrl(event.target.value)}
+                />
+                <button type="submit">Create EPUB</button>
+              </div>
+              <small>
+                If the link is blocked, download the PDF and upload it instead.
+              </small>
+            </form>
+          </div>
+        </>
       )}
 
       {state.status === 'processing' && (
@@ -326,6 +359,9 @@ export default function PublicationImporter({
                       <strong>{page.kind}</strong>
                       <small>
                         {page.textCharacters} chars · {page.imageCount} images
+                        {page.ocr
+                          ? ` · ${page.ocr.engine} ${page.ocr.engineVersion} · ${page.ocr.model} ${page.ocr.modelVersion} · ${page.ocr.languages.join('+')} · ${Math.round(page.ocr.confidence * 100)}% OCR`
+                          : ''}
                       </small>
                     </li>
                   ))}

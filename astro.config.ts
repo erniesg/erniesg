@@ -8,6 +8,7 @@ import {
   transformerNotationDiff,
 } from '@shikijs/transformers'
 import { defineConfig } from 'astro/config'
+import { readFile } from 'node:fs/promises'
 import rehypeKatex from 'rehype-katex'
 import rehypeExternalLinks from 'rehype-external-links'
 import rehypePrettyCode from 'rehype-pretty-code'
@@ -17,8 +18,56 @@ import remarkToc from 'remark-toc'
 import sectionize from '@hbsnow/rehype-sectionize'
 
 import icon from 'astro-icon'
+import type { Plugin } from 'vite'
+import { LOCAL_OCR_ASSET_FILES } from './tools/local-ocr-assets'
 
 const includeResearch = process.env.PUBLIC_RESEARCH_RELEASE === 'staging'
+
+function localOcrBuildAssetsPlugin(): Plugin {
+  return {
+    name: 'local-ocr-build-assets',
+    apply: 'build',
+    async buildStart() {
+      for (const [name, path] of LOCAL_OCR_ASSET_FILES) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `assets/ocr/${name}`,
+          source: await readFile(path),
+        })
+      }
+    },
+  }
+}
+
+function localOcrDevAssetsPlugin(): Plugin {
+  return {
+    name: 'local-ocr-dev-assets',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use(async (request, response, next) => {
+        const pathname = new URL(request.url ?? '/', 'http://localhost')
+          .pathname
+        const prefix = '/assets/ocr/'
+        if (!pathname.startsWith(prefix)) return next()
+        const source = LOCAL_OCR_ASSET_FILES.get(pathname.slice(prefix.length))
+        if (!source) return next()
+        response.setHeader(
+          'Content-Type',
+          pathname.endsWith('.gz')
+            ? 'application/gzip'
+            : pathname.endsWith('.js')
+              ? 'application/javascript; charset=utf-8'
+              : 'text/plain; charset=utf-8',
+        )
+        response.setHeader(
+          'Cache-Control',
+          'public, max-age=31536000, immutable',
+        )
+        response.end(await readFile(source))
+      })
+    },
+  }
+}
 
 // https://astro.build/config
 export default defineConfig({
@@ -116,9 +165,10 @@ export default defineConfig({
     enabled: false,
   },
   vite: {
+    plugins: [localOcrBuildAssetsPlugin(), localOcrDevAssetsPlugin()],
     server: {
       watch: {
-        ignored: ['**/.agent/evidence/**'],
+        ignored: ['**/.agent/evidence/**', '**/.agent/vm-runs/**'],
       },
     },
   },

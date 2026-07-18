@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { createHash } from 'node:crypto'
 
 const canonicalId = z.string().min(1)
 
@@ -21,12 +20,32 @@ const noteReference = z
   })
   .strict()
 
+const inlineRun = z
+  .object({
+    start: z.number().int().nonnegative(),
+    end: z.number().int().positive(),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    href: z.string().min(1).optional(),
+    relationshipId: canonicalId.optional(),
+  })
+  .strict()
+
+const listContext = z
+  .object({
+    level: z.number().int().min(1).max(9),
+    ordered: z.boolean(),
+    numberingId: canonicalId,
+  })
+  .strict()
+
 const headingNode = canonicalNodeBase
   .extend({
     type: z.literal('heading'),
     level: z.number().int().min(1).max(3),
     text: z.string().min(1),
     noteReferences: z.array(noteReference).optional(),
+    inlineRuns: z.array(inlineRun).optional(),
   })
   .strict()
 
@@ -35,6 +54,8 @@ const paragraphNode = canonicalNodeBase
     type: z.literal('paragraph'),
     text: z.string().min(1),
     noteReferences: z.array(noteReference).optional(),
+    inlineRuns: z.array(inlineRun).optional(),
+    list: listContext.optional(),
   })
   .strict()
 
@@ -43,6 +64,7 @@ const quoteNode = canonicalNodeBase
     type: z.literal('quote'),
     text: z.string().min(1),
     noteReferences: z.array(noteReference).optional(),
+    inlineRuns: z.array(inlineRun).optional(),
   })
   .strict()
 
@@ -58,6 +80,31 @@ const figureNode = canonicalNodeBase
     type: z.literal('figure'),
     title: z.string().min(1),
     objectType: z.enum(['figure', 'table', 'equation']).optional(),
+    table: z
+      .object({
+        rows: z
+          .array(
+            z
+              .object({
+                cells: z
+                  .array(
+                    z
+                      .object({
+                        text: z.string(),
+                        header: z.boolean(),
+                        columnSpan: z.number().int().positive(),
+                        rowSpan: z.number().int().positive(),
+                      })
+                      .strict(),
+                  )
+                  .min(1),
+              })
+              .strict(),
+          )
+          .min(1),
+      })
+      .strict()
+      .optional(),
     relationships: z
       .object({
         caption: canonicalId,
@@ -173,6 +220,28 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
           }
         }
       }
+      if ('inlineRuns' in node && node.inlineRuns) {
+        for (const [runIndex, run] of node.inlineRuns.entries()) {
+          if (run.end > node.text.length || run.start >= run.end) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['nodes', index, 'inlineRuns', runIndex],
+              message: `Invalid inline run text range: ${run.start}-${run.end}`,
+            })
+          }
+        }
+      }
+      if (
+        node.type === 'figure' &&
+        ((node.objectType === 'table' && !node.table) ||
+          (node.objectType !== 'table' && node.table))
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['nodes', index, 'table'],
+          message: 'Structured table data must accompany only table figures',
+        })
+      }
     }
     for (const [index, node] of paper.nodes.entries()) {
       if (node.type !== 'footnote') continue
@@ -212,64 +281,6 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
     }
   },
 )
-
-const omittedRenditionKeys = new Set([
-  'bbox',
-  'bounds',
-  'computedGeometry',
-  'geometry',
-  'layoutCache',
-  'page',
-  'pages',
-  'position',
-  'rect',
-  'rendition',
-  'renditions',
-  'targetGeometry',
-  'targets',
-  'x',
-  'y',
-])
-
-function stripRenditionFields(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(stripRenditionFields)
-  }
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => !omittedRenditionKeys.has(key))
-        .map(([key, nested]) => [key, stripRenditionFields(nested)]),
-    )
-  }
-  return value
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(',')}]`
-  }
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value).sort(([left], [right]) =>
-      left.localeCompare(right),
-    )
-    return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-export function canonicalContentHash(paper: ResearchPaper | unknown) {
-  return canonicalValueHash(paper)
-}
-
-export function canonicalNodeContentHash(node: ResearchNode | unknown) {
-  return canonicalValueHash(node)
-}
-
-function canonicalValueHash(value: unknown) {
-  const canonicalJson = stableJson(stripRenditionFields(value))
-  return createHash('sha256').update(canonicalJson).digest('hex')
-}
 
 export type ResearchPaper = z.infer<typeof researchPaperSchema>
 export type ResearchNode = ResearchPaper['nodes'][number]

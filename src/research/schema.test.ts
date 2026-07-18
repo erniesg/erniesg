@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
-import { canonicalContentHash, researchPaperSchema } from './schema'
+import { canonicalContentHash } from './canonical-hash'
+import { researchPaperSchema } from './schema'
 
 type RawFigureNode = (typeof rawPaper.nodes)[number] & {
   type: 'figure'

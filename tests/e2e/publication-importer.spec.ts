@@ -3,7 +3,13 @@ import { unzipSync, strFromU8 } from 'fflate'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-const fixture = (name: string) => path.resolve('tests', 'fixtures', 'pdf', name)
+const fixture = (name: string) =>
+  path.resolve(
+    'tests',
+    'fixtures',
+    name.endsWith('.docx') ? 'docx' : 'pdf',
+    name,
+  )
 
 test.describe.configure({ timeout: 120_000 })
 
@@ -177,6 +183,19 @@ test('emits EPUB ready only after the completeness gate passes', async ({
   }
   await page.locator('.publication-diagnostics summary').click()
   await expect(page.getByText('Text coverage')).toBeVisible()
+})
+
+test('imports a born-structured DOCX and downloads its EPUB', async ({
+  page,
+}) => {
+  await uploadFixture(page, 'structured-manuscript.docx')
+
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  await page.locator('.publication-diagnostics summary').click()
+  await expect(page.getByText('100%').first()).toBeVisible()
+  const files = await downloadedEpub(page, 'Download EPUB')
+  expect(files['EPUB/content.xhtml']).toBeTruthy()
+  expect(files['EPUB/export.json']).toBeTruthy()
 })
 
 test('packages scientific visual objects as real EPUB assets', async ({

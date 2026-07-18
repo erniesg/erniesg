@@ -1,6 +1,8 @@
 import type { ResearchPaper } from './schema'
 
 export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
+export const MAX_LOCAL_DOCX_BYTES = 50 * 1024 * 1024
+export const DOCX_IMPORTER_VERSION = '1.0.0'
 
 export type PdfPageKind =
   | 'born-digital'
@@ -28,7 +30,12 @@ export type PdfSourceRun = NormalizedSourceBox & {
 export type PdfVisualAsset = {
   id: string
   href: string
-  mediaType: 'image/png' | 'image/svg+xml' | 'application/xhtml+xml'
+  mediaType:
+    | 'image/png'
+    | 'image/jpeg'
+    | 'image/gif'
+    | 'image/svg+xml'
+    | 'application/xhtml+xml'
   kind: 'raster' | 'vector' | 'table' | 'equation'
   rendition:
     | 'source-preserved'
@@ -190,8 +197,8 @@ export type PdfReadingOrderEdge = {
 
 export type PdfReadingOrderEvaluation = {
   schemaVersion: '1.0.0'
-  algorithm: 'deterministic-geometry-v1'
-  mode: 'deterministic-only'
+  algorithm: 'deterministic-geometry-v1' | 'explicit-ooxml-v1'
+  mode: 'deterministic-only' | 'explicit-structure'
   regionCount: number
   acceptedEdgeCount: number
   unresolvedEdgeCount: number
@@ -290,6 +297,9 @@ export type PdfVisualRelationship = {
   captionNodeId: string | null
 }
 
+export type PublicationAsset = PdfVisualAsset
+export type PublicationVisualRelationship = PdfVisualRelationship
+
 export type PdfPageAnalysis = {
   page: number
   kind: PdfPageKind
@@ -324,6 +334,13 @@ export type ReconstructionDiagnostic = {
     | 'AMBIGUOUS_NOTE_MATCH'
     | 'UNRESOLVED_NOTE_REFERENCE'
     | 'UNREFERENCED_NOTE'
+    | 'MALFORMED_DOCX'
+    | 'MISSING_DOCX_PART'
+    | 'MISSING_IMAGE_PART'
+    | 'MISSING_IMAGE_CAPTION'
+    | 'DANGLING_NOTE_REFERENCE'
+    | 'UNRESOLVED_HYPERLINK'
+    | 'UNSUPPORTED_DOCX_FEATURE'
     | 'AMBIGUOUS_VISUAL_MATCH'
     | 'UNRESOLVED_VISUAL_OBJECT'
     | 'UNREFERENCED_VISUAL_ASSET'
@@ -388,6 +405,8 @@ export type NodeSourceEvidence = {
   pages: number[]
   boxes: NormalizedSourceBox[]
   links: PdfEmbeddedLink[]
+  part?: string
+  relationshipIds?: string[]
 }
 
 export type PdfReconstruction = {
@@ -397,6 +416,7 @@ export type PdfReconstruction = {
     sha256: string
     pageCount: number
     localOnly: true
+    format?: undefined
   }
   paper: ResearchPaper
   pages: PdfPageAnalysis[]
@@ -412,12 +432,41 @@ export type PdfReconstruction = {
   readiness: PdfReadiness
 }
 
+export type DocxReconstruction = {
+  source: {
+    fileName: string
+    byteLength: number
+    sha256: string
+    pageCount: 0
+    localOnly: true
+    format: 'docx'
+    packageParts: string[]
+    importerVersion: typeof DOCX_IMPORTER_VERSION
+  }
+  paper: ResearchPaper
+  pages: []
+  regions: []
+  readingOrder: PdfReadingOrderGraph
+  noteRelationships: PdfNoteRelationship[]
+  visualRelationships: PublicationVisualRelationship[]
+  assets: PublicationAsset[]
+  provenance: Record<string, NodeSourceEvidence>
+  diagnostics: ReconstructionDiagnostic[]
+  semanticSignals: PdfSemanticSignals
+  completeness: PdfCompletenessMetrics
+  readiness: PdfReadiness
+}
+
+export type DocumentReconstruction = PdfReconstruction | DocxReconstruction
+
 export type PdfImportProgress = {
   phase: 'opening' | 'extracting' | 'ocr' | 'reconstructing'
   completed: number
   total: number
   message: string
 }
+
+export type DocumentImportProgress = PdfImportProgress
 
 export class PdfImportError extends Error {
   public readonly code:
@@ -438,5 +487,20 @@ export class PdfImportError extends Error {
     super(message)
     this.code = code
     this.name = 'PdfImportError'
+  }
+}
+
+export class DocxImportError extends Error {
+  public readonly code:
+    | 'INVALID_DOCX'
+    | 'OVERSIZED_DOCX'
+    | 'DOCX_PARSE_FAILED'
+    | 'IMPORT_CANCELLED'
+    | 'INCOMPLETE_RECONSTRUCTION'
+
+  constructor(code: DocxImportError['code'], message: string) {
+    super(message)
+    this.code = code
+    this.name = 'DocxImportError'
   }
 }

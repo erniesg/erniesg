@@ -28,8 +28,8 @@ import {
   validateTargetOverrides,
   type TargetOverride,
 } from './overrides'
+import { canonicalContentHash } from './canonical-hash'
 import {
-  canonicalContentHash,
   researchPaperSchema,
   type ResearchPaper,
 } from './schema'

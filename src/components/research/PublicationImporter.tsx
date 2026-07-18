@@ -7,10 +7,10 @@ import {
 } from 'react'
 import { buildEpub, type EpubExport } from '../../research/epub'
 import type {
-  PdfImportProgress,
-  PdfReconstruction,
+  DocumentImportProgress,
+  DocumentReconstruction,
 } from '../../research/import-types'
-import { PdfImportError } from '../../research/import-types'
+import { DocxImportError, PdfImportError } from '../../research/import-types'
 import { downloadLinkedPdf } from '../../research/pdf-url'
 import { getTargetProfile } from '../../research/targets'
 import EpubDownloadLink from './EpubDownloadLink'
@@ -18,15 +18,19 @@ import ResearchStudio from './ResearchStudio'
 
 type StudioState =
   | { status: 'idle' }
-  | { status: 'processing'; fileName: string; progress: PdfImportProgress }
+  | {
+      status: 'processing'
+      fileName: string
+      progress: DocumentImportProgress
+    }
   | {
       status: 'ready' | 'review-required'
-      result: PdfReconstruction
+      result: DocumentReconstruction
       epubs?: EpubExport[]
     }
   | { status: 'error'; code: string; message: string }
 
-const initialProgress: PdfImportProgress = {
+const initialProgress: DocumentImportProgress = {
   phase: 'opening',
   completed: 0,
   total: 1,
@@ -36,6 +40,23 @@ const initialProgress: PdfImportProgress = {
 function formatBytes(value: number) {
   if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KB`
   return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function importErrorCode(error: unknown) {
+  return error instanceof PdfImportError || error instanceof DocxImportError
+    ? error.code
+    : 'UNEXPECTED_ERROR'
+}
+
+function importWasCancelled(error: unknown) {
+  return (
+    (error instanceof PdfImportError || error instanceof DocxImportError) &&
+    error.code === 'IMPORT_CANCELLED'
+  )
+}
+
+function importerVersion(source: DocumentReconstruction['source']) {
+  return source.format === 'docx' ? source.importerVersion : ''
 }
 
 export default function PublicationImporter({
@@ -60,7 +81,7 @@ export default function PublicationImporter({
   const showError = (error: unknown) => {
     setState({
       status: 'error',
-      code: error instanceof PdfImportError ? error.code : 'UNEXPECTED_ERROR',
+      code: importErrorCode(error),
       message:
         error instanceof Error
           ? error.message
@@ -85,29 +106,35 @@ export default function PublicationImporter({
       progress: initialProgress,
     })
     try {
-      const { reconstructPdf } = await import('../../research/pdf')
-      const result = await reconstructPdf(
-        file,
-        (progress) => {
-          if (isCurrent()) {
-            setState({ status: 'processing', fileName: file.name, progress })
-          }
-        },
-        {
-          signal: controller.signal,
-          ocr: {
-            languages: ['eng'],
-            languageMode:
-              ocrLanguage === 'auto' ? 'automatic-fallback' : 'explicit',
-            async createSession(options) {
-              const { createBrowserOcrSession } = await import(
-                '../../research/pdf-ocr-browser'
-              )
-              return createBrowserOcrSession(options)
+      const onProgress = (progress: DocumentImportProgress) => {
+        if (isCurrent()) {
+          setState({ status: 'processing', fileName: file.name, progress })
+        }
+      }
+      const isDocx =
+        file.name.toLowerCase().endsWith('.docx') ||
+        file.type ===
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const result: DocumentReconstruction = isDocx
+        ? await (
+            await import('../../research/docx-import')
+          ).reconstructDocx(file, onProgress, { signal: controller.signal })
+        : await (
+            await import('../../research/pdf')
+          ).reconstructPdf(file, onProgress, {
+            signal: controller.signal,
+            ocr: {
+              languages: ['eng'],
+              languageMode:
+                ocrLanguage === 'auto' ? 'automatic-fallback' : 'explicit',
+              async createSession(options) {
+                const { createBrowserOcrSession } = await import(
+                  '../../research/pdf-ocr-browser'
+                )
+                return createBrowserOcrSession(options)
+              },
             },
-          },
-        },
-      )
+          })
       if (!isCurrent()) return
       if (!result.readiness.ready) {
         setState({ status: 'review-required', result })
@@ -123,12 +150,7 @@ export default function PublicationImporter({
       setState({ status: 'ready', result, epubs })
     } catch (error) {
       if (activeImport.current !== controller) return
-      if (
-        error instanceof PdfImportError &&
-        error.code === 'IMPORT_CANCELLED'
-      ) {
-        return
-      }
+      if (importWasCancelled(error)) return
       showError(error)
     }
   }
@@ -148,12 +170,7 @@ export default function PublicationImporter({
       )
     } catch (error) {
       if (activeImport.current !== controller) return
-      if (
-        error instanceof PdfImportError &&
-        error.code === 'IMPORT_CANCELLED'
-      ) {
-        return
-      }
+      if (importWasCancelled(error)) return
       showError(error)
     }
   }
@@ -182,15 +199,15 @@ export default function PublicationImporter({
   return (
     <section
       className="publication-importer"
-      aria-label={showIntro ? undefined : 'PDF to EPUB converter'}
+      aria-label={showIntro ? undefined : 'PDF or DOCX to EPUB converter'}
       aria-labelledby={showIntro ? 'studio-heading' : undefined}
     >
       {showIntro && (
         <div className="publication-importer-intro">
-          <h2 id="studio-heading">Make an EPUB from a PDF</h2>
+          <h2 id="studio-heading">Make an EPUB from a PDF or DOCX</h2>
           <p>
-            Upload a paper or paste a direct PDF link. The conversion runs in
-            your browser.
+            Upload a paper or paste a direct PDF link. PDF reconstruction and
+            structured DOCX import run in your browser.
           </p>
         </div>
       )}
@@ -229,11 +246,11 @@ export default function PublicationImporter({
                 ref={input}
                 id="publication-pdf"
                 type="file"
-                accept="application/pdf,.pdf"
+                accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.docx"
                 onChange={(event) => void processFile(event.target.files?.[0])}
               />
               <label htmlFor="publication-pdf">
-                <strong>Choose a PDF</strong>
+                <strong>Choose a PDF or DOCX</strong>
                 <span>or drop it here</span>
                 <small>Up to 50 MB. Your file stays on this device.</small>
               </label>
@@ -283,9 +300,9 @@ export default function PublicationImporter({
       {state.status === 'error' && (
         <div className="publication-failure" role="alert">
           <span>{state.code.replaceAll('_', ' ')}</span>
-          <h3>I couldn't turn that PDF into an EPUB.</h3>
+          <h3>I couldn't turn that paper into an EPUB.</h3>
           <p>{state.message}</p>
-          <button onClick={reset}>Choose another PDF</button>
+          <button onClick={reset}>Choose another paper</button>
         </div>
       )}
 
@@ -298,8 +315,10 @@ export default function PublicationImporter({
               </span>
               <strong>{state.result.source.fileName}</strong>
               <small>
-                {state.result.source.pageCount} pages ·{' '}
-                {formatBytes(state.result.source.byteLength)} · processed
+                {state.result.source.format === 'docx'
+                  ? `${state.result.source.packageParts.length} package parts`
+                  : `${state.result.source.pageCount} pages`}{' '}
+                · {formatBytes(state.result.source.byteLength)} · processed
                 locally
               </small>
             </div>
@@ -351,20 +370,35 @@ export default function PublicationImporter({
             </summary>
             <div className="publication-diagnostic-grid">
               <div>
-                <h3>Pages</h3>
+                <h3>
+                  {state.result.source.format === 'docx' ? 'Package' : 'Pages'}
+                </h3>
                 <ol>
-                  {state.result.pages.map((page) => (
-                    <li key={page.page}>
-                      <span>p. {page.page}</span>
-                      <strong>{page.kind}</strong>
-                      <small>
-                        {page.textCharacters} chars · {page.imageCount} images
-                        {page.ocr
-                          ? ` · ${page.ocr.engine} ${page.ocr.engineVersion} · ${page.ocr.model} ${page.ocr.modelVersion} · ${page.ocr.languages.join('+')} · ${Math.round(page.ocr.confidence * 100)}% OCR`
-                          : ''}
-                      </small>
-                    </li>
-                  ))}
+                  {state.result.source.format === 'docx'
+                    ? state.result.source.packageParts
+                        .slice(0, 12)
+                        .map((part) => (
+                          <li key={part}>
+                            <span>{part}</span>
+                            <strong>OOXML</strong>
+                            <small>
+                              importer {importerVersion(state.result.source)}
+                            </small>
+                          </li>
+                        ))
+                    : state.result.pages.map((page) => (
+                        <li key={page.page}>
+                          <span>p. {page.page}</span>
+                          <strong>{page.kind}</strong>
+                          <small>
+                            {page.textCharacters} chars · {page.imageCount}{' '}
+                            images
+                            {page.ocr
+                              ? ` · ${page.ocr.engine} ${page.ocr.engineVersion} · ${page.ocr.model} ${page.ocr.modelVersion} · ${page.ocr.languages.join('+')} · ${Math.round(page.ocr.confidence * 100)}% OCR`
+                              : ''}
+                          </small>
+                        </li>
+                      ))}
                 </ol>
               </div>
               <div>

@@ -6,7 +6,13 @@ import {
   type Zippable,
   type ZipOptions,
 } from 'fflate'
-import { PdfImportError, type PdfReconstruction } from './import-types'
+import {
+  DocxImportError,
+  PdfImportError,
+  type DocumentReconstruction,
+  type PublicationAsset,
+  type PublicationVisualRelationship,
+} from './import-types'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 const EPUB_MIMETYPE = 'application/epub+zip'
@@ -60,25 +66,62 @@ function renderTextWithNoteReferences(
     start: number
     end: number
   }>,
+  inlineRuns?: Array<{
+    start: number
+    end: number
+    bold?: boolean
+    italic?: boolean
+    href?: string
+  }>,
 ) {
-  if (!references?.length) return text(value)
-  let cursor = 0
+  if (!references?.length && !inlineRuns?.length) return text(value)
+  const validReferences = (references ?? []).filter(
+    (reference) =>
+      reference.start >= 0 &&
+      reference.start < reference.end &&
+      reference.end <= value.length,
+  )
+  const validRuns = (inlineRuns ?? []).filter(
+    (run) => run.start >= 0 && run.start < run.end && run.end <= value.length,
+  )
+  const boundaries = [
+    0,
+    value.length,
+    ...validReferences.flatMap((reference) => [reference.start, reference.end]),
+    ...validRuns.flatMap((run) => [run.start, run.end]),
+  ]
+  const points = [...new Set(boundaries)].sort((left, right) => left - right)
   let rendered = ''
-  for (const reference of [...references].sort(
-    (left, right) => left.start - right.start,
-  )) {
-    if (
-      reference.start < cursor ||
-      reference.end > value.length ||
-      reference.start >= reference.end
-    ) {
-      continue
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index]
+    const end = points[index + 1]
+    if (start === end) continue
+    const run = validRuns.find(
+      (candidate) => candidate.start <= start && candidate.end >= end,
+    )
+    const reference = validReferences.find(
+      (candidate) => candidate.start <= start && candidate.end >= end,
+    )
+    let segment = text(value.slice(start, end))
+    if (run?.italic) segment = `<em>${segment}</em>`
+    if (run?.bold) segment = `<strong>${segment}</strong>`
+    if (reference) {
+      segment = `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${segment}</a>`
+    } else if (run?.href && safeHref(run.href)) {
+      segment = `<a href="${attribute(run.href)}">${segment}</a>`
     }
-    rendered += text(value.slice(cursor, reference.start))
-    rendered += `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${text(value.slice(reference.start, reference.end))}</a>`
-    cursor = reference.end
+    rendered += segment
   }
-  return `${rendered}${text(value.slice(cursor))}`
+  return rendered
+}
+
+function safeHref(value: string) {
+  if (value.startsWith('#')) return true
+  try {
+    return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
 }
 
 async function sha256(value: Uint8Array | string) {
@@ -96,17 +139,22 @@ async function sha256(value: Uint8Array | string) {
 function renderNode(
   node: ResearchNode,
   captions: Map<string, Extract<ResearchNode, { type: 'caption' }>>,
+  visualRelationships: Map<string, PublicationVisualRelationship>,
+  assets: Map<string, PublicationAsset>,
 ) {
   const id = attribute(stableId(node.id))
   if (node.type === 'heading') {
     const level = Math.min(3, Math.max(2, node.level + 1))
-    return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</h${level}>`
+    return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</h${level}>`
   }
   if (node.type === 'paragraph') {
-    return `<p id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences)}</p>`
+    const listAttributes = node.list
+      ? ` class="publication-list-item" role="listitem" data-list-level="${node.list.level}" data-list-ordered="${node.list.ordered}" data-numbering-id="${attribute(node.list.numberingId)}"`
+      : ''
+    return `<p id="${id}" data-canonical-id="${id}"${listAttributes}>${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</p>`
   }
   if (node.type === 'quote') {
-    return `<blockquote id="${id}" data-canonical-id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences)}</p></blockquote>`
+    return `<blockquote id="${id}" data-canonical-id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</p></blockquote>`
   }
   if (node.type === 'footnote') {
     const backlinks = node.relationships.backlinks
@@ -120,6 +168,22 @@ function renderNode(
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
     const captionId = attribute(stableId(node.relationships.caption))
+    const visual = visualRelationships.get(node.id)
+    if (visual) {
+      const renderedAssets = visual.assetIds
+        .map((assetId) => assets.get(assetId))
+        .filter((asset): asset is PublicationAsset => Boolean(asset))
+        .map((asset) => {
+          const href = attribute(asset.href)
+          const alt = attribute(visual.altText)
+          if (asset.mediaType === 'application/xhtml+xml') {
+            return `<object data="${href}" type="application/xhtml+xml" aria-label="${alt}" data-alt-source="${visual.altTextSource}"><p>${text(visual.altText)}</p></object>`
+          }
+          return `<img src="${href}" alt="${alt}" data-alt-source="${visual.altTextSource}" data-asset-id="${attribute(asset.id)}" />`
+        })
+        .join('')
+      return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visual.kind}" role="group">${renderedAssets}${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${text(caption.text)}</figcaption>` : ''}</figure>`
+    }
     return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${text(caption.text)}</figcaption>` : ''}</figure>`
   }
   return ''
@@ -127,7 +191,10 @@ function renderNode(
 
 export function renderPublicationXhtml(
   paper: ResearchPaper,
-  options: { embedStyles?: boolean } = {},
+  options: {
+    embedStyles?: boolean
+    reconstruction?: DocumentReconstruction
+  } = {},
 ) {
   const captions = new Map(
     paper.nodes
@@ -145,6 +212,17 @@ export function renderPublicationXhtml(
       )
       .map((node) => node.relationships.caption),
   )
+  const visualRelationships = new Map(
+    (options.reconstruction?.visualRelationships ?? [])
+      .filter(
+        (relationship) =>
+          relationship.status === 'matched' && relationship.canonicalNodeId,
+      )
+      .map((relationship) => [relationship.canonicalNodeId!, relationship]),
+  )
+  const assets = new Map(
+    (options.reconstruction?.assets ?? []).map((asset) => [asset.id, asset]),
+  )
   const body = paper.nodes
     .filter(
       (node) => node.type !== 'caption' || !associatedCaptions.has(node.id),
@@ -152,7 +230,7 @@ export function renderPublicationXhtml(
     .map((node) =>
       node.type === 'caption'
         ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${text(node.text)}</aside>`
-        : renderNode(node, captions),
+        : renderNode(node, captions, visualRelationships, assets),
     )
     .join('\n')
 
@@ -230,7 +308,9 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .publication-note { border-top: 0.06rem solid currentColor; font-size: 0.84rem; margin-top: 1rem; padding-top: 0.5rem; }
 .note-label { font-weight: bold; }
 .note-backlink { margin-inline-start: 0.35rem; }
+.publication-list-item { margin-inline-start: 1.5rem; }
 img, svg { display: block; height: auto; max-width: 100%; }
+object { border: 0; display: block; min-height: 8rem; width: 100%; }
 a { color: inherit; text-decoration: underline; }
 @media (max-width: 30rem) {
   main { padding: 7%; }
@@ -252,7 +332,14 @@ function packageOpf(
   paper: ResearchPaper,
   identifier: string,
   modified: string,
+  assets: PublicationAsset[] = [],
 ) {
+  const assetItems = assets
+    .map(
+      (asset) =>
+        `<item id="${attribute(stableId(asset.id))}" href="${attribute(asset.href)}" media-type="${attribute(asset.mediaType)}" />`,
+    )
+    .join('\n    ')
   return `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="publication-id" xml:lang="en">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -268,6 +355,7 @@ function packageOpf(
     <item id="content" href="content.xhtml" media-type="application/xhtml+xml" />
     <item id="styles" href="styles.css" media-type="text/css" />
     <item id="export-manifest" href="export.json" media-type="application/json" />
+    ${assetItems}
   </manifest>
   <spine>
     <itemref idref="content" />
@@ -278,6 +366,10 @@ function packageOpf(
 
 function entry(value: string, level: 0 | 6 = 6): [Uint8Array, ZipOptions] {
   return [strToU8(value), { level, mtime: ZIP_MTIME }]
+}
+
+function binaryEntry(value: Uint8Array): [Uint8Array, ZipOptions] {
+  return [value, { level: 6, mtime: ZIP_MTIME }]
 }
 
 export function inspectEpub(bytes: Uint8Array) {
@@ -316,13 +408,31 @@ export function inspectEpub(bytes: Uint8Array) {
 
 export async function buildEpub(
   paper: ResearchPaper,
-  reconstruction?: PdfReconstruction,
+  reconstruction?: DocumentReconstruction,
 ): Promise<EpubExport> {
   if (reconstruction && !reconstruction.readiness.ready) {
-    throw new PdfImportError(
-      'INCOMPLETE_RECONSTRUCTION',
-      `EPUB export is blocked until these completeness diagnostics are cleared: ${reconstruction.readiness.blockingDiagnosticCodes.join(', ')}.`,
+    const message = `EPUB export is blocked until these completeness diagnostics are cleared: ${reconstruction.readiness.blockingDiagnosticCodes.join(', ')}.`
+    throw 'format' in reconstruction.source
+      ? new DocxImportError('INCOMPLETE_RECONSTRUCTION', message)
+      : new PdfImportError('INCOMPLETE_RECONSTRUCTION', message)
+  }
+  const visualAssets = reconstruction?.assets ?? []
+  const visualRelationships = reconstruction?.visualRelationships ?? []
+  if (visualRelationships.length > 0) {
+    const assetIds = new Set(visualAssets.map((asset) => asset.id))
+    const invalid = visualRelationships.find(
+      (relationship) =>
+        relationship.status !== 'matched' ||
+        !relationship.canonicalNodeId ||
+        relationship.assetIds.length === 0 ||
+        relationship.assetIds.some((assetId) => !assetIds.has(assetId)),
     )
+    if (invalid) {
+      const message = `EPUB export is blocked by visual relationship ${invalid.id}.`
+      throw reconstruction && 'format' in reconstruction.source
+        ? new DocxImportError('INCOMPLETE_RECONSTRUCTION', message)
+        : new PdfImportError('INCOMPLETE_RECONSTRUCTION', message)
+    }
   }
   const canonicalHash = await sha256(JSON.stringify(paper))
   const identifier = `urn:srt:${stableId(paper.id)}:${canonicalHash.slice(0, 24)}`
@@ -331,24 +441,80 @@ export async function buildEpub(
     schemaVersion: '1.0.0',
     identifier,
     canonicalContentSha256: canonicalHash,
-    sourcePdfSha256: reconstruction?.source.sha256,
+    sourcePdfSha256:
+      reconstruction && !('format' in reconstruction.source)
+        ? reconstruction.source.sha256
+        : undefined,
+    sourceDocxSha256:
+      reconstruction && 'format' in reconstruction.source
+        ? reconstruction.source.sha256
+        : undefined,
+    sourceFormat:
+      reconstruction && 'format' in reconstruction.source
+        ? reconstruction.source.format
+        : reconstruction
+          ? 'pdf'
+          : undefined,
+    sourcePackageParts:
+      reconstruction && 'format' in reconstruction.source
+        ? reconstruction.source.packageParts
+        : undefined,
+    sourceImporterVersion:
+      reconstruction && 'format' in reconstruction.source
+        ? reconstruction.source.importerVersion
+        : undefined,
     canonicalNodeIds: paper.nodes.map((node) => node.id),
     sourceProvenanceIncluded: Boolean(reconstruction),
     sourceCompleteness: reconstruction?.completeness,
     sourceReadiness: reconstruction?.readiness,
+    assets: visualAssets.map(({ bytes: _bytes, ...metadata }) => metadata),
+    visualRelationships,
     rendition: 'reflowable-epub',
   }
   const archive: Zippable = {
     mimetype: entry(EPUB_MIMETYPE, 0),
     'META-INF/container.xml': entry(containerXml()),
-    'EPUB/package.opf': entry(packageOpf(paper, identifier, modified)),
+    'EPUB/package.opf': entry(
+      packageOpf(paper, identifier, modified, visualAssets),
+    ),
     'EPUB/nav.xhtml': entry(navXhtml(paper)),
-    'EPUB/content.xhtml': entry(renderPublicationXhtml(paper)),
+    'EPUB/content.xhtml': entry(
+      renderPublicationXhtml(paper, { reconstruction }),
+    ),
     'EPUB/styles.css': entry(EPUB_CSS),
     'EPUB/export.json': entry(`${JSON.stringify(exportManifest, null, 2)}\n`),
+    ...Object.fromEntries(
+      visualAssets.map((asset) => [
+        `EPUB/${asset.href}`,
+        binaryEntry(asset.bytes),
+      ]),
+    ),
   }
   const bytes = zipSync(archive)
-  const { entries } = inspectEpub(bytes)
+  const { files, entries } = inspectEpub(bytes)
+  if (visualAssets.length > 0) {
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    const opf = strFromU8(files['EPUB/package.opf'])
+    if (/figure-placeholder|placeholder only/i.test(content)) {
+      throw new Error('Imported EPUB contains placeholder visual markup')
+    }
+    for (const asset of visualAssets) {
+      if (!/^assets\/[A-Za-z0-9_.-]+$/.test(asset.href)) {
+        throw new Error(`EPUB asset has an unsafe href: ${asset.id}`)
+      }
+      if (!files[`EPUB/${asset.href}`]) {
+        throw new Error(`EPUB is missing selected asset ${asset.href}`)
+      }
+      if (!opf.includes(`href="${asset.href}"`)) {
+        throw new Error(`EPUB manifest omits selected asset ${asset.href}`)
+      }
+    }
+    for (const match of content.matchAll(/(?:src|data)="(assets\/[^"]+)"/g)) {
+      if (!files[`EPUB/${match[1]}`]) {
+        throw new Error(`EPUB content has dangling asset reference ${match[1]}`)
+      }
+    }
+  }
   return {
     bytes,
     fileName: `${slug(paper.title)}.epub`,

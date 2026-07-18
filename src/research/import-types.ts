@@ -1,6 +1,8 @@
 import type { ResearchPaper } from './schema'
 
 export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
+export const MAX_LOCAL_DOCX_BYTES = 50 * 1024 * 1024
+export const DOCX_IMPORTER_VERSION = '1.0.0'
 
 export type PdfPageKind = 'born-digital' | 'mixed' | 'ocr-required'
 
@@ -28,6 +30,49 @@ export type PdfNativeObject = {
   box: NormalizedSourceBox
   confidence: number
 }
+
+export type PublicationAsset = {
+  id: string
+  href: string
+  mediaType:
+    | 'image/png'
+    | 'image/jpeg'
+    | 'image/gif'
+    | 'image/svg+xml'
+    | 'application/xhtml+xml'
+  kind: 'raster' | 'vector' | 'table' | 'equation'
+  rendition: 'source-preserved' | 'bounded-svg-fallback' | 'semantic-table'
+  sha256: string
+  bytes: Uint8Array
+  width: number
+  height: number
+  resolutionDpi: number | null
+  sourceObjectIds: string[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
+export type PublicationVisualRelationship = {
+  id: string
+  kind: 'figure' | 'table' | 'equation'
+  label: string
+  captionRegionId: string
+  sourceRegionIds: string[]
+  sourceObjectIds: string[]
+  assetIds: string[]
+  status: 'matched' | 'ambiguous' | 'unresolved'
+  confidence: number
+  evidence: string[]
+  sourceBoxes: NormalizedSourceBox[]
+  sourceText: string
+  altText: string
+  altTextSource: 'caption' | 'source-text'
+  canonicalNodeId: string | null
+  captionNodeId: string | null
+}
+
+// Compatibility aliases for the visual-asset dependency's PDF-specific names.
+export type PdfVisualAsset = PublicationAsset
+export type PdfVisualRelationship = PublicationVisualRelationship
 
 export type PdfRegionKind =
   | 'body'
@@ -115,8 +160,8 @@ export type PdfReadingOrderEdge = {
 
 export type PdfReadingOrderEvaluation = {
   schemaVersion: '1.0.0'
-  algorithm: 'deterministic-geometry-v1'
-  mode: 'deterministic-only'
+  algorithm: 'deterministic-geometry-v1' | 'explicit-ooxml-v1'
+  mode: 'deterministic-only' | 'explicit-structure'
   regionCount: number
   acceptedEdgeCount: number
   unresolvedEdgeCount: number
@@ -183,6 +228,13 @@ export type ReconstructionDiagnostic = {
     | 'AMBIGUOUS_NOTE_MATCH'
     | 'UNRESOLVED_NOTE_REFERENCE'
     | 'UNREFERENCED_NOTE'
+    | 'MALFORMED_DOCX'
+    | 'MISSING_DOCX_PART'
+    | 'MISSING_IMAGE_PART'
+    | 'MISSING_IMAGE_CAPTION'
+    | 'DANGLING_NOTE_REFERENCE'
+    | 'UNRESOLVED_HYPERLINK'
+    | 'UNSUPPORTED_DOCX_FEATURE'
     | 'NO_RECONSTRUCTABLE_TEXT'
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
@@ -242,6 +294,8 @@ export type NodeSourceEvidence = {
   confidence: number
   pages: number[]
   boxes: PdfSourceRun[]
+  part?: string
+  relationshipIds?: string[]
 }
 
 export type PdfReconstruction = {
@@ -257,6 +311,8 @@ export type PdfReconstruction = {
   regions: PdfPageRegion[]
   readingOrder: PdfReadingOrderGraph
   noteRelationships: PdfNoteRelationship[]
+  visualRelationships?: PublicationVisualRelationship[]
+  assets?: PublicationAsset[]
   provenance: Record<string, NodeSourceEvidence>
   diagnostics: ReconstructionDiagnostic[]
   semanticSignals: PdfSemanticSignals
@@ -264,12 +320,41 @@ export type PdfReconstruction = {
   readiness: PdfReadiness
 }
 
+export type DocxReconstruction = {
+  source: {
+    fileName: string
+    byteLength: number
+    sha256: string
+    pageCount: 0
+    localOnly: true
+    format: 'docx'
+    packageParts: string[]
+    importerVersion: typeof DOCX_IMPORTER_VERSION
+  }
+  paper: ResearchPaper
+  pages: []
+  regions: []
+  readingOrder: PdfReadingOrderGraph
+  noteRelationships: PdfNoteRelationship[]
+  visualRelationships: PublicationVisualRelationship[]
+  assets: PublicationAsset[]
+  provenance: Record<string, NodeSourceEvidence>
+  diagnostics: ReconstructionDiagnostic[]
+  semanticSignals: PdfSemanticSignals
+  completeness: PdfCompletenessMetrics
+  readiness: PdfReadiness
+}
+
+export type DocumentReconstruction = PdfReconstruction | DocxReconstruction
+
 export type PdfImportProgress = {
   phase: 'opening' | 'extracting' | 'reconstructing'
   completed: number
   total: number
   message: string
 }
+
+export type DocumentImportProgress = PdfImportProgress
 
 export class PdfImportError extends Error {
   public readonly code:
@@ -288,5 +373,20 @@ export class PdfImportError extends Error {
     super(message)
     this.code = code
     this.name = 'PdfImportError'
+  }
+}
+
+export class DocxImportError extends Error {
+  public readonly code:
+    | 'INVALID_DOCX'
+    | 'OVERSIZED_DOCX'
+    | 'DOCX_PARSE_FAILED'
+    | 'IMPORT_CANCELLED'
+    | 'INCOMPLETE_RECONSTRUCTION'
+
+  constructor(code: DocxImportError['code'], message: string) {
+    super(message)
+    this.code = code
+    this.name = 'DocxImportError'
   }
 }

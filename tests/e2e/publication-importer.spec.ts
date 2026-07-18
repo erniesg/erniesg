@@ -1,7 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import path from 'node:path'
 
-const fixture = (name: string) => path.resolve('tests', 'fixtures', 'pdf', name)
+const fixture = (name: string) =>
+  path.resolve(
+    'tests',
+    'fixtures',
+    name.endsWith('.docx') ? 'docx' : 'pdf',
+    name,
+  )
 
 test.describe.configure({ timeout: 60_000 })
 
@@ -24,6 +30,20 @@ test('emits EPUB ready only after the completeness gate passes', async ({
   await expect(page.getByRole('link', { name: /download epub/i })).toBeVisible()
   await page.locator('.publication-diagnostics summary').click()
   await expect(page.getByText('Text coverage')).toBeVisible()
+})
+
+test('imports a born-structured DOCX and downloads its EPUB', async ({
+  page,
+}) => {
+  await uploadFixture(page, 'structured-manuscript.docx')
+
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  await page.locator('.publication-diagnostics summary').click()
+  await expect(page.getByText('100%').first()).toBeVisible()
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('link', { name: /download epub/i }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toMatch(/\.epub$/)
 })
 
 test('blocks a text-only EPUB when scientific objects are unresolved', async ({

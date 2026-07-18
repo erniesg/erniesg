@@ -14,7 +14,9 @@ import {
 } from './export-package'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
 import rawLettersPaper from './papers/if-letters-home-could-sing.json'
+import { inspectEpub } from './epub'
 import { researchPaperSchema } from './schema'
+import { getTargetProfile } from './targets'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -80,6 +82,14 @@ describe('SRT export package', () => {
 
     expect(first.files).toEqual(second.files)
     expect(first.files.map((file) => file.path)).toEqual(EXPORT_PACKAGE_PATHS)
+    for (const target of ['paperPro', 'paperProMove'] as const) {
+      const profile = getTargetProfile(target)
+      const device = getExportFile(first, profile.epub.fileName)
+      const inspection = inspectEpub(device.bytes, profile)
+      expect(inspection.manifest).toMatchObject({
+        profile: { id: target, version: profile.version },
+      })
+    }
     const pdf = decoder.decode(getExportFile(first, 'print.pdf').bytes)
     expect(pdf).toMatch(/^%PDF-1\.4/)
     expect(pdf).toContain(paper.subtitle)
@@ -102,6 +112,7 @@ describe('SRT export package', () => {
         'stable-identities',
         'complete-content',
         'relationships',
+        'device-epubs',
         'annotation-targets',
         'paginated-pdf',
         'checksums',
@@ -130,6 +141,12 @@ describe('SRT export package', () => {
     )
     expect(getExportFile(baseline, 'publication.epub').bytes).toEqual(
       getExportFile(overridden, 'publication.epub').bytes,
+    )
+    expect(getExportFile(baseline, 'publication-paperpro.epub').bytes).toEqual(
+      getExportFile(overridden, 'publication-paperpro.epub').bytes,
+    )
+    expect(getExportFile(baseline, 'publication-papermove.epub').bytes).toEqual(
+      getExportFile(overridden, 'publication-papermove.epub').bytes,
     )
     expect(getExportFile(baseline, 'source.json').bytes).toEqual(
       getExportFile(overridden, 'source.json').bytes,

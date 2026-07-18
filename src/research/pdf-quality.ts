@@ -6,6 +6,7 @@ import type {
   PdfReadingOrderGraph,
   PdfReadiness,
   PdfSemanticSignals,
+  PdfVisualRelationship,
   ReconstructionDiagnostic,
 } from './import-types'
 import { groupRunsIntoLines } from './pdf-lines'
@@ -28,6 +29,7 @@ type QualityInput = {
   diagnostics: ReconstructionDiagnostic[]
   readingOrder?: PdfReadingOrderGraph
   regions?: PdfPageRegion[]
+  visualRelationships?: PdfVisualRelationship[]
   policy?: PdfCompletenessPolicy
 }
 
@@ -105,20 +107,40 @@ function coverage(resolved: number, expected: number) {
   return expected === 0 ? 1 : rounded(Math.min(resolved / expected, 1))
 }
 
-function relationshipCounts(paper: ResearchPaper, signals: PdfSemanticSignals) {
+function relationshipCounts(
+  paper: ResearchPaper,
+  signals: PdfSemanticSignals,
+  visualRelationships?: PdfVisualRelationship[],
+) {
   const captions = new Set(
     paper.nodes
       .filter((node) => node.type === 'caption')
       .map((node) => node.id),
   )
-  const resolvedCaptions = new Set(
-    paper.nodes
-      .filter(
-        (node): node is Extract<ResearchNode, { type: 'figure' }> =>
-          node.type === 'figure' && captions.has(node.relationships.caption),
-      )
-      .map((node) => node.relationships.caption),
-  ).size
+  const resolvedCaptions = visualRelationships
+    ? visualRelationships.filter(
+        (relationship) =>
+          relationship.kind === 'figure' && relationship.status === 'matched',
+      ).length
+    : new Set(
+        paper.nodes
+          .filter(
+            (node): node is Extract<ResearchNode, { type: 'figure' }> =>
+              node.type === 'figure' &&
+              captions.has(node.relationships.caption),
+          )
+          .map((node) => node.relationships.caption),
+      ).size
+  const resolvedTables =
+    visualRelationships?.filter(
+      (relationship) =>
+        relationship.kind === 'table' && relationship.status === 'matched',
+    ).length ?? 0
+  const resolvedEquations =
+    visualRelationships?.filter(
+      (relationship) =>
+        relationship.kind === 'equation' && relationship.status === 'matched',
+    ).length ?? 0
   const noteIds = new Set(
     paper.nodes
       .filter((node) => node.type === 'footnote')
@@ -134,11 +156,19 @@ function relationshipCounts(paper: ResearchPaper, signals: PdfSemanticSignals) {
     resolvedNoteReferences.map((reference) => reference.target),
   )
   return {
-    expected: signals.captions + signals.footnoteReferences,
+    expected:
+      signals.captions +
+      signals.tables +
+      signals.equations +
+      signals.footnoteReferences,
     resolved:
       Math.min(resolvedCaptions, signals.captions) +
+      Math.min(resolvedTables, signals.tables) +
+      Math.min(resolvedEquations, signals.equations) +
       Math.min(resolvedNoteReferences.length, signals.footnoteReferences),
     resolvedCaptions: Math.min(resolvedCaptions, signals.captions),
+    resolvedTables: Math.min(resolvedTables, signals.tables),
+    resolvedEquations: Math.min(resolvedEquations, signals.equations),
     resolvedNoteReferences: Math.min(
       resolvedNoteReferences.length,
       signals.footnoteReferences,
@@ -161,6 +191,7 @@ export function assessPdfCompleteness({
   diagnostics,
   readingOrder,
   regions,
+  visualRelationships,
   policy = DEFAULT_PDF_COMPLETENESS_POLICY,
 }: QualityInput): {
   semanticSignals: PdfSemanticSignals
@@ -177,23 +208,61 @@ export function assessPdfCompleteness({
   )
   const outputText = normalizedText(paper.nodes.map(nodeText).join(' '))
   const matchedTextCharacters = matchedCharacters(sourceText, outputText)
-  const sourceAssetCount = pages.reduce(
-    (total, page) => total + page.imageCount,
-    0,
+  const nativeObjects = pages
+    .flatMap((page) => page.objects ?? [])
+    .filter((object) => object.role !== 'scan-source')
+  const sourceAssetCount =
+    pages.reduce((total, page) => {
+      const objects = page.objects ?? []
+      const semanticObjectCount = objects.filter(
+        (object) => object.role !== 'scan-source',
+      ).length
+      const provenScanSourceCount = objects.filter(
+        (object) => object.role === 'scan-source',
+      ).length
+      return (
+        total +
+        Math.max(semanticObjectCount, page.imageCount - provenScanSourceCount)
+      )
+    }, 0) +
+    semanticSignals.tables +
+    semanticSignals.equations
+  const exportedNativeObjects = nativeObjects.filter(
+    (object) => object.assetId !== null,
+  ).length
+  const exportedFallbackObjects =
+    visualRelationships
+      ?.filter(
+        (relationship) =>
+          relationship.status === 'matched' &&
+          (relationship.kind === 'table' || relationship.kind === 'equation'),
+      )
+      .reduce(
+        (total, relationship) =>
+          total +
+          Math.min(
+            relationship.sourceObjectIds.length,
+            relationship.assetIds.length,
+          ),
+        0,
+      ) ?? 0
+  const exportedAssetCount = exportedNativeObjects + exportedFallbackObjects
+  const relationships = relationshipCounts(
+    paper,
+    semanticSignals,
+    visualRelationships,
   )
-  // Figure nodes currently render placeholders only. Until the canonical model
-  // carries an exported source-image payload and identity, none of those nodes
-  // may satisfy source asset coverage.
-  const exportedAssetCount = 0
-  const relationships = relationshipCounts(paper, semanticSignals)
   const unresolvedObjects = {
     assets: Math.max(sourceAssetCount - exportedAssetCount, 0),
     captions: Math.max(
       semanticSignals.captions - relationships.resolvedCaptions,
       0,
     ),
-    tables: semanticSignals.tables,
-    equations: semanticSignals.equations,
+    tables: Math.max(semanticSignals.tables - relationships.resolvedTables, 0),
+    equations: Math.max(
+      semanticSignals.equations - relationships.resolvedEquations,
+      0,
+    ),
     footnoteReferences: Math.max(
       semanticSignals.footnoteReferences - relationships.resolvedNoteReferences,
       0,

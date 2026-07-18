@@ -27,7 +27,9 @@ function reconstruct(fixture: NoteMarkerFixture, hashCharacter: string) {
   })
 }
 
-function markerDiagnostics(result: ReturnType<typeof reconstruct>) {
+function markerDiagnostics(
+  result: Awaited<ReturnType<typeof reconstruct>>,
+) {
   return result.diagnostics.filter(
     (diagnostic) => diagnostic.code === 'CLASSIFIED_NOTE_MARKER',
   )
@@ -35,8 +37,8 @@ function markerDiagnostics(result: ReturnType<typeof reconstruct>) {
 
 describe('scholarly note-marker taxonomy', () => {
   for (const [index, fixture] of decisiveNoteMarkerFixtures.entries()) {
-    it(`classifies ${fixture.name} with recorded deciding evidence`, () => {
-      const result = reconstruct(fixture, String(index + 1))
+    it(`classifies ${fixture.name} with recorded deciding evidence`, async () => {
+      const result = await reconstruct(fixture, String(index + 1))
       const diagnostics = markerDiagnostics(result)
 
       expect(
@@ -63,11 +65,11 @@ describe('scholarly note-marker taxonomy', () => {
     })
   }
 
-  it('keeps citations and scholarly cross-references as prose without note relationships', () => {
+  it('keeps citations and scholarly cross-references as prose without note relationships', async () => {
     for (const [index, fixture] of decisiveNoteMarkerFixtures
       .slice(0, 4)
       .entries()) {
-      const result = reconstruct(fixture, String(index + 1))
+      const result = await reconstruct(fixture, String(index + 1))
       expect(result.noteRelationships).toEqual([])
       expect(result.semanticSignals).toMatchObject({
         footnoteReferences: 0,
@@ -76,9 +78,9 @@ describe('scholarly note-marker taxonomy', () => {
     }
   })
 
-  it('preserves bibliography entries in node order instead of emitting orphaned notes', () => {
+  it('preserves bibliography entries in node order instead of emitting orphaned notes', async () => {
     const fixture = decisiveNoteMarkerFixtures[1]
-    const result = reconstruct(fixture, '7')
+    const result = await reconstruct(fixture, '7')
 
     expect(result.paper.nodes.map((node) => node.type)).toEqual([
       'paragraph',
@@ -108,11 +110,11 @@ describe('scholarly note-marker taxonomy', () => {
     )
   })
 
-  it('accepts true note relationships only at the documented threshold and retains node order', () => {
+  it('accepts true note relationships only at the documented threshold and retains node order', async () => {
     for (const [fixtureIndex, fixture] of decisiveNoteMarkerFixtures
       .slice(4)
       .entries()) {
-      const result = reconstruct(fixture, String(fixtureIndex + 8))
+      const result = await reconstruct(fixture, String(fixtureIndex + 8))
       expect(result.noteRelationships).toEqual([
         expect.objectContaining({
           status: 'matched',
@@ -132,8 +134,8 @@ describe('scholarly note-marker taxonomy', () => {
     }
   })
 
-  it('keeps genuinely ambiguous matches blocked below the uniqueness margin', () => {
-    const result = reconstruct(ambiguousNoteMarkerFixture, 'a')
+  it('keeps genuinely ambiguous matches blocked below the uniqueness margin', async () => {
+    const result = await reconstruct(ambiguousNoteMarkerFixture, 'a')
 
     expect(markerDiagnostics(result)).toEqual([
       expect.objectContaining({
@@ -159,8 +161,8 @@ describe('scholarly note-marker taxonomy', () => {
     )
   })
 
-  it('still blocks genuinely orphaned note bodies', () => {
-    const result = reconstruct(orphanedNoteFixture, 'b')
+  it('still blocks genuinely orphaned note bodies', async () => {
+    const result = await reconstruct(orphanedNoteFixture, 'b')
 
     expect(markerDiagnostics(result)).toEqual([])
     expect(result.diagnostics).toEqual(

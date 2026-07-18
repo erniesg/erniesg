@@ -1,6 +1,7 @@
 import type { ResearchNode, ResearchPaper } from './schema'
 import type {
   NodeSourceEvidence,
+  PdfEmbeddedLink,
   PdfNoteMarkerClassification,
   PdfNoteRelationship,
   PdfPageAnalysis,
@@ -10,6 +11,7 @@ import type {
 } from './import-types'
 import { assessPdfCompleteness } from './pdf-quality'
 import { classifyPdfNoteMarkers } from './pdf-note-classifier'
+import { reconstructPdfVisuals } from './pdf-visuals'
 import {
   normalizedNoteLabel,
   noteLabelFromText,
@@ -108,12 +110,15 @@ function noteText(region: PdfPageRegion, label: string) {
 function blocksFromRegions(
   orderedRegions: PdfPageRegion[],
   regions: PdfPageRegion[],
-  bibliographyRegionIds: ReadonlySet<string>,
+  excludedRegionIds = new Set<string>(),
+  bibliographyRegionIds: ReadonlySet<string> = new Set<string>(),
 ) {
-  const readingRegions = orderedRegions.filter((region) =>
-    ['body', 'spanning', 'caption', 'footnote', 'endnote'].includes(
-      region.kind,
-    ),
+  const readingRegions = orderedRegions.filter(
+    (region) =>
+      !excludedRegionIds.has(region.id) &&
+      ['body', 'spanning', 'caption', 'footnote', 'endnote'].includes(
+        region.kind,
+      ),
   )
   const bodySize =
     median(
@@ -307,7 +312,22 @@ function matchNotes(
   return relationships
 }
 
-function sourceEvidence(block: RegionBlock): NodeSourceEvidence {
+function boxesOverlap(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) {
+  return (
+    Math.min(left.x + left.width, right.x + right.width) >
+      Math.max(left.x, right.x) &&
+    Math.min(left.y + left.height, right.y + right.height) >
+      Math.max(left.y, right.y)
+  )
+}
+
+function sourceEvidence(
+  block: RegionBlock,
+  links: PdfEmbeddedLink[],
+): NodeSourceEvidence {
   return {
     confidence: rounded(block.confidence),
     pages: [block.region.page],
@@ -322,10 +342,15 @@ function sourceEvidence(block: RegionBlock): NodeSourceEvidence {
         confidence: rounded(run.confidence),
       })),
     ),
+    links: links.filter(
+      (link) =>
+        link.box.page === block.region.page &&
+        boxesOverlap(link.box, block.region.box),
+    ),
   }
 }
 
-export function reconstructPageAnalyses({
+export async function reconstructPageAnalyses({
   pages,
   sourceHash,
   fileName,
@@ -337,7 +362,7 @@ export function reconstructPageAnalyses({
   fileName: string
   byteLength: number
   metadata?: PdfDocumentMetadata
-}): PdfReconstruction {
+}): Promise<PdfReconstruction> {
   const diagnostics: ReconstructionDiagnostic[] = []
   for (const page of pages) {
     if (page.kind === 'ocr-required') {
@@ -353,6 +378,30 @@ export function reconstructPageAnalyses({
         severity: 'warning',
         page: page.page,
         message: `Page ${page.page} mixes sparse text with image content; review the reconstruction.`,
+      })
+    }
+    if (page.ocr && page.ocr.confidence < 0.75) {
+      diagnostics.push({
+        code: 'LOW_CONFIDENCE_OCR',
+        severity: 'error',
+        page: page.page,
+        message: `Page ${page.page} OCR confidence ${page.ocr.confidence.toFixed(3)} is below the review threshold 0.750.`,
+      })
+    }
+    if (page.ocr?.words.some((word) => word.mergeStatus === 'conflict')) {
+      diagnostics.push({
+        code: 'MIXED_OCR_CONFLICT',
+        severity: 'error',
+        page: page.page,
+        message: `Page ${page.page} retains conflicting embedded and OCR text at overlapping source boxes for review.`,
+      })
+    }
+    if (page.spread?.status === 'uncertain') {
+      diagnostics.push({
+        code: 'UNCERTAIN_SPREAD_BOUNDARY',
+        severity: 'error',
+        page: page.page,
+        message: `Page ${page.page} is likely a two-page scan, but its logical split boundary remains uncertain.`,
       })
     }
   }
@@ -431,9 +480,15 @@ export function reconstructPageAnalyses({
     })
   }
 
+  const visualResult = await reconstructPdfVisuals({
+    pages,
+    regions: regionResult.regions,
+  })
+  diagnostics.push(...visualResult.diagnostics)
   const blocks = blocksFromRegions(
     orderedRegions,
     regionResult.regions,
+    visualResult.consumedRegionIds,
     bibliographyRegionIds,
   )
   noteNodeIds(blocks)
@@ -463,10 +518,11 @@ export function reconstructPageAnalyses({
   }
 
   const provenance: Record<string, NodeSourceEvidence> = {}
+  const embeddedLinks = pages.flatMap((page) => page.links ?? [])
   const nodes: ResearchNode[] = blocks.map((block, index) => {
     const id = block.nodeId ?? nodeId(index, block.type, block.text)
     block.nodeId = id
-    provenance[id] = sourceEvidence(block)
+    provenance[id] = sourceEvidence(block, embeddedLinks)
     if (block.confidence < 0.75) {
       diagnostics.push({
         code: 'LOW_CONFIDENCE_BLOCK',
@@ -536,6 +592,47 @@ export function reconstructPageAnalyses({
     }
   })
 
+  for (const relationship of visualResult.relationships) {
+    const captionBlock = blocks.find(
+      (block) => block.region.id === relationship.captionRegionId,
+    )
+    relationship.captionNodeId = captionBlock?.nodeId ?? null
+    if (
+      relationship.status !== 'matched' ||
+      !relationship.captionNodeId ||
+      relationship.assetIds.length === 0
+    ) {
+      continue
+    }
+    const page = relationship.sourceBoxes[0]?.page ?? 1
+    const id = `visual-${relationship.kind}-p${String(page).padStart(3, '0')}-${slug(relationship.label, 24)}`
+    relationship.canonicalNodeId = id
+    const source = `pdf:${sourceHash.slice(0, 16)}#page=${page}`
+    const node: ResearchNode = {
+      id,
+      type: 'figure',
+      objectType: relationship.kind,
+      title: relationship.sourceText
+        ? `${relationship.label}: ${relationship.sourceText}`
+        : relationship.label,
+      relationships: {
+        caption: relationship.captionNodeId,
+        assets: relationship.assetIds,
+      },
+      source,
+    }
+    provenance[id] = {
+      confidence: relationship.confidence,
+      pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],
+      boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
+      links: [],
+    }
+    const captionIndex = nodes.findIndex(
+      (candidate) => candidate.id === relationship.captionNodeId,
+    )
+    nodes.splice(captionIndex < 0 ? nodes.length : captionIndex, 0, node)
+  }
+
   const firstHeading = nodes.find(
     (node): node is Extract<ResearchNode, { type: 'heading' }> =>
       node.type === 'heading',
@@ -568,6 +665,7 @@ export function reconstructPageAnalyses({
     diagnostics,
     readingOrder: regionResult.readingOrder,
     regions: regionResult.regions,
+    visualRelationships: visualResult.relationships,
   })
 
   return {
@@ -583,6 +681,8 @@ export function reconstructPageAnalyses({
     regions: regionResult.regions,
     readingOrder: regionResult.readingOrder,
     noteRelationships,
+    visualRelationships: visualResult.relationships,
+    assets: visualResult.assets,
     provenance,
     diagnostics: assessment.diagnostics,
     semanticSignals: assessment.semanticSignals,

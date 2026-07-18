@@ -5,11 +5,19 @@ const fixture = (name: string) => path.resolve('tests', 'fixtures', 'pdf', name)
 
 test.describe.configure({ timeout: 120_000 })
 
+async function waitForImporter(page: Page) {
+  await expect(
+    page.locator('astro-island[component-url$="PublicationImporter.tsx"]'),
+  ).toHaveAttribute('client-render-time', /.+/)
+}
+
 test('offers an explicit offline OCR language choice', async ({ page }) => {
   await page.goto('/research/studio')
 
   await expect(page.getByLabel('OCR language')).toHaveValue('auto')
-  await expect(page.getByText(/English fallback/i)).toBeVisible()
+  await expect(
+    page.getByText(/OCR runs offline\. Auto uses the bundled English fallback/i),
+  ).toBeVisible()
   await expect(page.getByText(/local language pack/i)).toBeVisible()
 })
 
@@ -18,6 +26,7 @@ test('recognizes a scanned fixture without any cross-origin request', async ({
 }) => {
   const externalRequests: string[] = []
   await page.goto('/research/studio')
+  await waitForImporter(page)
   const applicationOrigin = new URL(page.url()).origin
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
@@ -50,6 +59,7 @@ test('recognizes a scanned fixture without any cross-origin request', async ({
 async function uploadFixture(page: Page, name: string) {
   await expect(async () => {
     await page.goto('/research/studio')
+    await waitForImporter(page)
     await page.locator('#publication-pdf').setInputFiles(fixture(name))
     await expect(page.locator('.publication-result-bar')).toBeVisible({
       timeout: 5_000,
@@ -120,6 +130,7 @@ test('keeps the newest result when an active import is superseded', async ({
     })
   })
   await page.goto('/research/studio', { waitUntil: 'networkidle' })
+  await waitForImporter(page)
 
   await page
     .locator('#publication-pdf')

@@ -65,7 +65,8 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
         0,
       )
       return (
-        Math.abs(center - lineCenter) <= Math.max(0.004, run.height * 0.45) &&
+        Math.abs(center - lineCenter) <=
+          Math.max(0.004, run.height * 0.65, line.height * 0.65) &&
         horizontalGap <= Math.max(0.025, run.height * 2) &&
         !crossesProbableColumnGutter(line, run, horizontalGap)
       )

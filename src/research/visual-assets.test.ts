@@ -6,6 +6,7 @@ import {
   createTableAsset,
   createTextSvgAsset,
   createVectorSvgAsset,
+  downscalePngAsset,
 } from './visual-assets'
 
 const sourceBox: NormalizedSourceBox = {
@@ -92,6 +93,30 @@ describe('PDF visual asset primitives', () => {
     expect(svg).toContain('viewBox="0 0 40 30"')
     expect(svg).toContain('d="M 0 0 L 40 0 L 20 30 Z"')
     expect(svg).not.toContain('<text')
+  })
+
+  it('downscales generated PNGs deterministically without upscaling', async () => {
+    const source = await createPngAsset({
+      sourceObjectId: 'image-p001-wide',
+      sourceBox,
+      width: 4,
+      height: 2,
+      colorSpace: 'rgba',
+      pixels: new Uint8Array(4 * 2 * 4).fill(127),
+    })
+
+    const first = await downscalePngAsset(source, 2, 264)
+    const second = await downscalePngAsset(source, 2, 264)
+
+    expect(first).toEqual(second)
+    expect(first).toMatchObject({
+      width: 2,
+      height: 1,
+      rendition: 'profile-downscaled',
+      resolutionDpi: 264,
+    })
+    expect(first.sha256).not.toBe(source.sha256)
+    await expect(downscalePngAsset(source, 8, 264)).resolves.toBe(source)
   })
 
   it('uses exact source text in an SVG equation fallback', async () => {

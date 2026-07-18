@@ -12,6 +12,7 @@ import type {
 } from '../../research/import-types'
 import { PdfImportError } from '../../research/import-types'
 import { downloadLinkedPdf } from '../../research/pdf-url'
+import { getTargetProfile } from '../../research/targets'
 import EpubDownloadLink from './EpubDownloadLink'
 import ResearchStudio from './ResearchStudio'
 
@@ -21,7 +22,7 @@ type StudioState =
   | {
       status: 'ready' | 'review-required'
       result: PdfReconstruction
-      epub?: EpubExport
+      epubs?: EpubExport[]
     }
   | { status: 'error'; code: string; message: string }
 
@@ -113,9 +114,13 @@ export default function PublicationImporter({
         return
       }
       setState({ status: 'ready', result })
-      const epub = await buildEpub(result.paper, result)
+      const epubs = await Promise.all([
+        buildEpub(result.paper, result),
+        buildEpub(result.paper, result, getTargetProfile('paperPro')),
+        buildEpub(result.paper, result, getTargetProfile('paperProMove')),
+      ])
       if (!isCurrent()) return
-      setState({ status: 'ready', result, epub })
+      setState({ status: 'ready', result, epubs })
     } catch (error) {
       if (activeImport.current !== controller) return
       if (
@@ -299,8 +304,16 @@ export default function PublicationImporter({
               </small>
             </div>
             <div className="publication-actions">
-              {state.status === 'ready' && state.epub ? (
-                <EpubDownloadLink epub={state.epub} />
+              {state.status === 'ready' && state.epubs ? (
+                state.epubs.map((epub) => (
+                  <EpubDownloadLink key={epub.identifier} epub={epub}>
+                    {epub.profile?.id === 'paperPro'
+                      ? 'Download Paper Pro EPUB'
+                      : epub.profile?.id === 'paperProMove'
+                        ? 'Download Paper Pro Move EPUB'
+                        : 'Download EPUB'}
+                  </EpubDownloadLink>
+                ))
               ) : state.status === 'ready' ? (
                 <span aria-live="polite">Validating EPUB…</span>
               ) : null}

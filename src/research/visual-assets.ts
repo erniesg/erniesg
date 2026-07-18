@@ -1,4 +1,4 @@
-import { strToU8, zlibSync } from 'fflate'
+import { strFromU8, strToU8, unzlibSync, zlibSync } from 'fflate'
 import type {
   NormalizedSourceBox,
   PdfRegionLine,
@@ -178,6 +178,112 @@ function encodePng(input: {
     pngChunk('IDAT', zlibSync(scanlines, { level: 9 })),
     pngChunk('IEND', new Uint8Array()),
   )
+}
+
+function readUint32(bytes: Uint8Array, offset: number) {
+  return (
+    ((bytes[offset] << 24) |
+      (bytes[offset + 1] << 16) |
+      (bytes[offset + 2] << 8) |
+      bytes[offset + 3]) >>>
+    0
+  )
+}
+
+function decodeGeneratedPng(bytes: Uint8Array) {
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10]
+  if (!signature.every((value, index) => bytes[index] === value)) {
+    throw new Error('Profile downscaling requires a PNG source asset')
+  }
+  let offset = 8
+  let width = 0
+  let height = 0
+  const compressed: Uint8Array[] = []
+  while (offset + 12 <= bytes.length) {
+    const length = readUint32(bytes, offset)
+    const type = strFromU8(bytes.subarray(offset + 4, offset + 8))
+    const data = bytes.subarray(offset + 8, offset + 8 + length)
+    if (type === 'IHDR') {
+      width = readUint32(data, 0)
+      height = readUint32(data, 4)
+      if (
+        data[8] !== 8 ||
+        data[9] !== 6 ||
+        data[10] !== 0 ||
+        data[11] !== 0 ||
+        data[12] !== 0
+      ) {
+        throw new Error('Profile downscaling supports deterministic RGBA PNGs')
+      }
+    } else if (type === 'IDAT') {
+      compressed.push(data)
+    } else if (type === 'IEND') {
+      break
+    }
+    offset += length + 12
+  }
+  if (!width || !height || compressed.length === 0) {
+    throw new Error('Profile downscaling received an incomplete PNG')
+  }
+  const scanlines = unzlibSync(concat(...compressed))
+  const rowLength = width * 4
+  if (scanlines.length !== (rowLength + 1) * height) {
+    throw new Error('Profile downscaling received unexpected PNG scanlines')
+  }
+  const pixels = new Uint8Array(rowLength * height)
+  for (let row = 0; row < height; row += 1) {
+    const source = row * (rowLength + 1)
+    if (scanlines[source] !== 0) {
+      throw new Error('Profile downscaling requires unfiltered PNG scanlines')
+    }
+    pixels.set(
+      scanlines.subarray(source + 1, source + 1 + rowLength),
+      row * rowLength,
+    )
+  }
+  return { width, height, pixels }
+}
+
+export async function downscalePngAsset(
+  source: PdfVisualAsset,
+  maximumWidth: number,
+  pixelsPerInch: number,
+) {
+  if (source.mediaType !== 'image/png' || source.width <= maximumWidth) {
+    return source
+  }
+  const decoded = decodeGeneratedPng(source.bytes)
+  if (decoded.width !== source.width || decoded.height !== source.height) {
+    throw new Error('PNG dimensions differ from visual-asset metadata')
+  }
+  const width = Math.max(1, Math.floor(maximumWidth))
+  const height = Math.max(1, Math.round((source.height * width) / source.width))
+  const pixels = new Uint8Array(width * height * 4)
+  for (let y = 0; y < height; y += 1) {
+    const sourceY = Math.min(
+      source.height - 1,
+      Math.floor((y * source.height) / height),
+    )
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = Math.min(
+        source.width - 1,
+        Math.floor((x * source.width) / width),
+      )
+      const from = (sourceY * source.width + sourceX) * 4
+      pixels.set(decoded.pixels.subarray(from, from + 4), (y * width + x) * 4)
+    }
+  }
+  return asset({
+    bytes: encodePng({ pixels, width, height, colorSpace: 'rgba' }),
+    mediaType: source.mediaType,
+    kind: source.kind,
+    rendition: 'profile-downscaled',
+    width,
+    height,
+    resolutionDpi: pixelsPerInch,
+    sourceObjectIds: source.sourceObjectIds,
+    sourceBoxes: source.sourceBoxes,
+  })
 }
 
 export async function createPngAsset(input: {

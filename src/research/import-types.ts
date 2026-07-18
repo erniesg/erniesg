@@ -30,7 +30,11 @@ export type PdfVisualAsset = {
   href: string
   mediaType: 'image/png' | 'image/svg+xml' | 'application/xhtml+xml'
   kind: 'raster' | 'vector' | 'table' | 'equation'
-  rendition: 'source-preserved' | 'bounded-svg-fallback' | 'semantic-table'
+  rendition:
+    | 'source-preserved'
+    | 'profile-downscaled'
+    | 'bounded-svg-fallback'
+    | 'semantic-table'
   sha256: string
   bytes: Uint8Array
   width: number

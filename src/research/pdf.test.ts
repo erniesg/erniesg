@@ -3,8 +3,10 @@ import { strFromU8 } from 'fflate'
 import { readFile } from 'node:fs/promises'
 import { buildEpub, inspectEpub } from './epub'
 import { PdfImportError } from './import-types'
+import { buildLayoutManifest, validateLayoutManifest } from './manifest'
 import { reconstructPdf } from './pdf'
 import type { PdfOcrOptions, PdfOcrRecognition, PdfOcrSession } from './pdf-ocr'
+import { getTargetProfile, TARGET_PROFILE_IDS } from './targets'
 import {
   fixtureFile,
   oversizedPdfFixture,
@@ -794,6 +796,28 @@ describe('PDF.js browser ingestion', () => {
     })
     expect(result.readiness).toMatchObject({ ready: true, status: 'ready' })
 
+    const layout = buildLayoutManifest(result.paper)
+    expect(layout.renditions.map(({ target }) => target)).toEqual(
+      TARGET_PROFILE_IDS,
+    )
+    expect(() => validateLayoutManifest(layout, result.paper)).not.toThrow()
+    for (const rendition of layout.renditions) {
+      expect(rendition.entries.map(({ canonicalId }) => canonicalId)).toEqual(
+        result.paper.nodes.map(({ id }) => id),
+      )
+      expect(
+        rendition.entries.every(
+          (entry) =>
+            entry.representation.kind === 'whole' ||
+            entry.representation.fragments.every(
+              (fragment) => fragment.lineage.canonicalId === entry.canonicalId,
+            ),
+        ),
+      ).toBe(true)
+      expect(rendition.policy.decisions.length).toBeGreaterThan(0)
+      expect(rendition.pagination.violations).toEqual(expect.any(Array))
+    }
+
     const epub = await buildEpub(result.paper, result)
     const { files } = inspectEpub(epub.bytes)
     expect(epub.fileName).toMatch(/\.epub$/)
@@ -987,6 +1011,40 @@ describe('PDF.js browser ingestion', () => {
     expect(exportManifest.visualRelationships).toEqual(
       result.visualRelationships,
     )
+
+    const moveProfile = getTargetProfile('paperProMove')
+    const deviceEpub = await buildEpub(result.paper, result, moveProfile)
+    const deviceInspection = inspectEpub(deviceEpub.bytes, moveProfile)
+    const deviceManifest = deviceInspection.manifest as {
+      assets: Array<{
+        width: number
+        sourceAssetId: string
+        policy: {
+          sourceWidth: number
+          packagedWidth: number
+          maximumWidth: number
+          targetPixelsPerInch: number
+          neverUpscaled: boolean
+        }
+      }>
+    }
+    expect(deviceEpub.fileName).toBe('publication-papermove.epub')
+    expect(deviceManifest.assets).not.toHaveLength(0)
+    for (const asset of deviceManifest.assets) {
+      expect(asset.policy).toMatchObject({
+        sourceWidth: expect.any(Number),
+        packagedWidth: asset.width,
+        maximumWidth:
+          moveProfile.dimensions.width -
+          moveProfile.margins.left -
+          moveProfile.margins.right,
+        targetPixelsPerInch: moveProfile.pixelsPerInch,
+        neverUpscaled: true,
+      })
+      expect(asset.policy.packagedWidth).toBeLessThanOrEqual(
+        asset.policy.sourceWidth,
+      )
+    }
   })
 
   it('classifies scanned, mixed, rotated, multilingual, and physical-spread fixtures', async () => {
@@ -1063,29 +1121,25 @@ describe('PDF.js browser ingestion', () => {
     ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
   })
 
-  it(
-    'retains the published fellowship PDF as non-private local audit evidence',
-    async () => {
-      const bytes = await readFile(
-        new URL(
-          '../../public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
-          import.meta.url,
-        ),
-      )
-      const result = await reconstructPdf(
-        new File([bytes], 'if-letters-home-could-sing.pdf', {
-          type: 'application/pdf',
-          lastModified: 0,
-        }),
-      )
+  it('retains the published fellowship PDF as non-private local audit evidence', async () => {
+    const bytes = await readFile(
+      new URL(
+        '../../public/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
+        import.meta.url,
+      ),
+    )
+    const result = await reconstructPdf(
+      new File([bytes], 'if-letters-home-could-sing.pdf', {
+        type: 'application/pdf',
+        lastModified: 0,
+      }),
+    )
 
-      expect(result.source.sha256).toBe(
-        'ddf25768bcc2ec8866037c553102071ee8fbb73db168f975852f69482c1eb042',
-      )
-      expect(result.source.pageCount).toBeGreaterThan(1)
-      expect(result.completeness.sourceTextCharacters).toBeGreaterThan(0)
-      expect(['ready', 'review-required']).toContain(result.readiness.status)
-    },
-    15_000,
-  )
+    expect(result.source.sha256).toBe(
+      'ddf25768bcc2ec8866037c553102071ee8fbb73db168f975852f69482c1eb042',
+    )
+    expect(result.source.pageCount).toBeGreaterThan(1)
+    expect(result.completeness.sourceTextCharacters).toBeGreaterThan(0)
+    expect(['ready', 'review-required']).toContain(result.readiness.status)
+  }, 15_000)
 })

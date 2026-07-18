@@ -18,7 +18,9 @@ test('offers an explicit offline OCR language choice', async ({ page }) => {
 
   await expect(page.getByLabel('OCR language')).toHaveValue('auto')
   await expect(
-    page.getByText(/OCR runs offline\. Auto uses the bundled English fallback/i),
+    page.getByText(
+      /OCR runs offline\. Auto uses the bundled English fallback/i,
+    ),
   ).toBeVisible()
   await expect(page.getByText(/local language pack/i)).toBeVisible()
 })
@@ -69,13 +71,110 @@ async function uploadFixture(page: Page, name: string) {
   }).toPass({ timeout: 45_000 })
 }
 
+async function downloadedEpub(page: Page, linkName: string) {
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('link', { name: linkName, exact: true }).click()
+  const download = await downloadPromise
+  const downloadPath = await download.path()
+  if (!downloadPath) throw new Error('Browser did not retain the EPUB download')
+  return unzipSync(new Uint8Array(await readFile(downloadPath)))
+}
+
 test('emits EPUB ready only after the completeness gate passes', async ({
   page,
 }) => {
   await uploadFixture(page, 'born-digital.pdf')
 
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: /download epub/i })).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: 'Download EPUB', exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: 'Download Paper Pro EPUB', exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('link', {
+      name: 'Download Paper Pro Move EPUB',
+      exact: true,
+    }),
+  ).toBeVisible()
+
+  for (const [linkName, profileId] of [
+    ['Download Paper Pro EPUB', 'paperPro'],
+    ['Download Paper Pro Move EPUB', 'paperProMove'],
+  ] as const) {
+    const files = await downloadedEpub(page, linkName)
+    const manifest = JSON.parse(strFromU8(files['EPUB/export.json']))
+    expect(manifest).toMatchObject({
+      profile: {
+        id: profileId,
+        exportPolicy: { id: 'profile-tuned-reflowable' },
+      },
+    })
+  }
+
+  for (const [buttonName, profileId] of [
+    ['Paper Pro', 'paperPro'],
+    ['Pro Move', 'paperProMove'],
+  ] as const) {
+    await page.getByRole('button', { name: buttonName, exact: true }).click()
+    const paper = page.locator('.srt-paper')
+    await expect(paper).toHaveAttribute('data-target-profile', profileId)
+    const diagnostics = await paper.evaluate((root) => {
+      const nodes = [
+        ...root.querySelectorAll<HTMLElement>('[data-canonical-id]'),
+      ]
+      const clipped = nodes
+        .filter((node) => {
+          const page = node.closest<HTMLElement>('.srt-page')
+          if (!page) return true
+          const box = node.getBoundingClientRect()
+          const pageBox = page.getBoundingClientRect()
+          return (
+            box.left < pageBox.left - 1 ||
+            box.right > pageBox.right + 1 ||
+            box.top < pageBox.top - 1 ||
+            box.bottom > pageBox.bottom + 1
+          )
+        })
+        .map((node) => node.dataset.canonicalId)
+      const overlaps: string[] = []
+      for (let index = 0; index < nodes.length; index += 1) {
+        for (let other = index + 1; other < nodes.length; other += 1) {
+          const left = nodes[index]
+          const right = nodes[other]
+          if (
+            left.contains(right) ||
+            right.contains(left) ||
+            left.closest('.srt-page-region') !==
+              right.closest('.srt-page-region')
+          ) {
+            continue
+          }
+          const a = left.getBoundingClientRect()
+          const b = right.getBoundingClientRect()
+          if (
+            Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
+            Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1
+          ) {
+            overlaps.push(
+              `${left.dataset.canonicalId}:${right.dataset.canonicalId}`,
+            )
+          }
+        }
+      }
+      return {
+        clipped,
+        overlaps,
+        horizontalOverflow: root.scrollWidth > root.clientWidth + 1,
+      }
+    })
+    expect(diagnostics).toEqual({
+      clipped: [],
+      overlaps: [],
+      horizontalOverflow: false,
+    })
+  }
   await page.locator('.publication-diagnostics summary').click()
   await expect(page.getByText('Text coverage')).toBeVisible()
 })
@@ -91,12 +190,7 @@ test('packages scientific visual objects as real EPUB assets', async ({
   await expect(page.getByText('5 of 5 source visual objects')).toBeVisible()
   await expect(page.getByText('UNRESOLVED_SEMANTIC_OBJECTS')).toHaveCount(0)
 
-  const downloadPromise = page.waitForEvent('download')
-  await page.getByRole('link', { name: /download epub/i }).click()
-  const download = await downloadPromise
-  const downloadPath = await download.path()
-  if (!downloadPath) throw new Error('Browser did not retain the EPUB download')
-  const files = unzipSync(new Uint8Array(await readFile(downloadPath)))
+  const files = await downloadedEpub(page, 'Download EPUB')
   const content = strFromU8(files['EPUB/content.xhtml'])
   const opf = strFromU8(files['EPUB/package.opf'])
   const manifest = JSON.parse(strFromU8(files['EPUB/export.json']))

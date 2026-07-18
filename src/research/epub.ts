@@ -12,10 +12,29 @@ import {
   type PdfVisualAsset,
   type PdfVisualRelationship,
 } from './import-types'
+import { getCompositionPolicy } from './composition'
 import type { ResearchNode, ResearchPaper } from './schema'
+import {
+  getTargetProfile,
+  type TargetProfile,
+  type TargetProfileId,
+} from './targets'
+import { targetProfileSchema } from './target-schema'
+import { downscalePngAsset } from './visual-assets'
 
 const EPUB_MIMETYPE = 'application/epub+zip'
 const ZIP_MTIME = new Date(1980, 0, 1, 0, 0, 0)
+export const EPUB_EXPORT_POLICY_VERSION = '1.0.0' as const
+
+export type EpubProfileMetadata = {
+  id: TargetProfileId
+  version: string
+  compositionPolicy: ReturnType<typeof getCompositionPolicy>
+  exportPolicy: {
+    id: 'profile-tuned-reflowable'
+    version: typeof EPUB_EXPORT_POLICY_VERSION
+  }
+}
 
 export type EpubExport = {
   bytes: Uint8Array
@@ -24,6 +43,7 @@ export type EpubExport = {
   sha256: string
   identifier: string
   entries: string[]
+  profile?: EpubProfileMetadata
 }
 
 function cleanXml(value: string) {
@@ -155,6 +175,8 @@ export function renderPublicationXhtml(
   options: {
     embedStyles?: boolean
     reconstruction?: PdfReconstruction
+    styles?: string
+    visualAssets?: Map<string, PdfVisualAsset>
   } = {},
 ) {
   const captions = new Map(
@@ -181,12 +203,14 @@ export function renderPublicationXhtml(
       )
       .map((relationship) => [relationship.canonicalNodeId!, relationship]),
   )
-  const assets = new Map(
-    (options.reconstruction?.assets ?? []).map((visualAsset) => [
-      visualAsset.id,
-      visualAsset,
-    ]),
-  )
+  const assets =
+    options.visualAssets ??
+    new Map(
+      (options.reconstruction?.assets ?? []).map((visualAsset) => [
+        visualAsset.id,
+        visualAsset,
+      ]),
+    )
   const body = paper.nodes
     .filter(
       (node) => node.type !== 'caption' || !associatedCaptions.has(node.id),
@@ -204,7 +228,7 @@ export function renderPublicationXhtml(
 <head>
   <meta charset="UTF-8" />
   <title>${text(paper.title)}</title>
-  ${options.embedStyles ? `<style type="text/css">${EPUB_CSS}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}
+  ${options.embedStyles ? `<style type="text/css">${options.styles ?? EPUB_CSS}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}
 </head>
 <body>
   <main epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -280,6 +304,95 @@ a { color: inherit; text-decoration: underline; }
 }
 `
 
+function percentage(value: number, whole: number) {
+  return `${Math.round((value / whole) * 100_000) / 1000}%`
+}
+
+export function profileEpubCss(profileInput: TargetProfile) {
+  const profile = targetProfileSchema.parse(profileInput)
+  const width = profile.dimensions.width
+  const height = profile.dimensions.height ?? width
+  const contentWidth = width - profile.margins.left - profile.margins.right
+  return `${EPUB_CSS}
+/* Profile values are derived from src/research/targets.ts (${profile.id}@${profile.version}). */
+html { font-size: ${profile.typography.bodySizeCssPx}px; direction: ${profile.epub.pageProgressionDirection}; }
+body { font-family: ${profile.typography.fontFamily}; line-height: ${profile.typography.lineHeight}; }
+main { max-width: ${Math.round((contentWidth / profile.typography.bodySizeCssPx) * 1000) / 1000}rem; padding: ${percentage(profile.margins.top, height)} ${percentage(profile.margins.right, width)} ${percentage(profile.margins.bottom, height)} ${percentage(profile.margins.left, width)}; }
+h1 { font-size: ${profile.typography.titleSizeCssPx}px; }
+h2, h3 { font-size: ${profile.typography.headingSizeCssPx}px; }
+blockquote { font-size: ${profile.typography.quoteSizeCssPx}px; }
+@page { margin: ${percentage(profile.margins.top, height)} ${percentage(profile.margins.right, width)} ${percentage(profile.margins.bottom, height)} ${percentage(profile.margins.left, width)}; }
+`
+}
+
+type PackagedAsset = {
+  source: PdfVisualAsset
+  asset: PdfVisualAsset
+  policy: {
+    id: 'fit-device-content-width-no-upscale'
+    version: typeof EPUB_EXPORT_POLICY_VERSION
+    action: 'preserved' | 'downscaled' | 'scalable-source'
+    sourceWidth: number
+    sourceHeight: number
+    packagedWidth: number
+    packagedHeight: number
+    maximumWidth: number | null
+    targetPixelsPerInch: number | null
+    sourcePixelsPerInch: number | null
+    resampling: 'none' | 'nearest-neighbor-rgba'
+    neverUpscaled: true
+  }
+}
+
+async function packageVisualAssets(
+  assets: readonly PdfVisualAsset[],
+  profile?: TargetProfile,
+) {
+  const maximumWidth =
+    profile?.dimensions.unit === 'device-px'
+      ? profile.dimensions.width - profile.margins.left - profile.margins.right
+      : null
+  return Promise.all(
+    assets.map(async (source): Promise<PackagedAsset> => {
+      const asset =
+        maximumWidth !== null &&
+        profile?.pixelsPerInch !== null &&
+        profile?.pixelsPerInch !== undefined
+          ? await downscalePngAsset(source, maximumWidth, profile.pixelsPerInch)
+          : source
+      return {
+        source,
+        asset,
+        policy: {
+          id: 'fit-device-content-width-no-upscale',
+          version: EPUB_EXPORT_POLICY_VERSION,
+          action:
+            source.mediaType === 'image/svg+xml'
+              ? 'scalable-source'
+              : source.mediaType !== 'image/png' ||
+                  asset.sha256 === source.sha256
+                ? 'preserved'
+                : 'downscaled',
+          sourceWidth: source.width,
+          sourceHeight: source.height,
+          packagedWidth: asset.width,
+          packagedHeight: asset.height,
+          maximumWidth,
+          targetPixelsPerInch: profile?.pixelsPerInch ?? null,
+          sourcePixelsPerInch: source.resolutionDpi,
+          resampling:
+            asset.sha256 === source.sha256 ? 'none' : 'nearest-neighbor-rgba',
+          neverUpscaled: true,
+        },
+      }
+    }),
+  )
+}
+
+function uniqueAssets(packaged: readonly PackagedAsset[]) {
+  return [...new Map(packaged.map(({ asset }) => [asset.id, asset])).values()]
+}
+
 function containerXml() {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -295,6 +408,7 @@ function packageOpf(
   identifier: string,
   modified: string,
   assets: PdfVisualAsset[] = [],
+  profile?: TargetProfile,
 ) {
   const assetItems = assets
     .map(
@@ -311,6 +425,13 @@ function packageOpf(
     ${paper.authors.map((author) => `<dc:creator>${text(author)}</dc:creator>`).join('\n    ')}
     <dc:date>${text(paper.updated)}</dc:date>
     <meta property="dcterms:modified">${text(modified)}</meta>
+    ${
+      profile
+        ? `<meta property="rendition:layout">reflowable</meta>
+    <meta property="rendition:flow">${profile.epub.renditionFlow}</meta>
+    <meta property="rendition:spread">none</meta>`
+        : ''
+    }
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
@@ -319,7 +440,7 @@ function packageOpf(
     <item id="export-manifest" href="export.json" media-type="application/json" />
     ${assetItems}
   </manifest>
-  <spine>
+  <spine${profile ? ` page-progression-direction="${profile.epub.pageProgressionDirection}"` : ''}>
     <itemref idref="content" />
   </spine>
 </package>
@@ -334,7 +455,10 @@ function binaryEntry(value: Uint8Array): [Uint8Array, ZipOptions] {
   return [value, { level: 6, mtime: ZIP_MTIME }]
 }
 
-export function inspectEpub(bytes: Uint8Array) {
+export function inspectEpub(
+  bytes: Uint8Array,
+  expectedProfile?: TargetProfile,
+) {
   if (
     bytes[0] !== 0x50 ||
     bytes[1] !== 0x4b ||
@@ -365,13 +489,97 @@ export function inspectEpub(bytes: Uint8Array) {
   if (strFromU8(files.mimetype) !== EPUB_MIMETYPE) {
     throw new Error('EPUB mimetype content is invalid')
   }
-  return { files, entries: Object.keys(files) }
+  const opf = strFromU8(files['EPUB/package.opf'])
+  const content = strFromU8(files['EPUB/content.xhtml'])
+  const manifest = JSON.parse(strFromU8(files['EPUB/export.json'])) as {
+    canonicalNodeIds?: string[]
+    profile?: { id?: string; version?: string }
+  }
+  const declaredHrefs = new Set(
+    [...opf.matchAll(/<item\b[^>]*\shref="([^"]+)"[^>]*>/g)].map(
+      (match) => match[1],
+    ),
+  )
+  for (const href of declaredHrefs) {
+    if (!files[`EPUB/${href}`]) {
+      throw new Error(`EPUB manifest has dangling reference ${href}`)
+    }
+  }
+  for (const match of content.matchAll(/(?:src|data)="([^"]+)"/g)) {
+    const href = match[1]
+    if (!declaredHrefs.has(href) || !files[`EPUB/${href}`]) {
+      throw new Error(`EPUB content has dangling asset reference ${href}`)
+    }
+  }
+  if (manifest.canonicalNodeIds) {
+    const canonicalIds = [
+      ...content.matchAll(/data-canonical-id="([^"]+)"/g),
+    ].map((match) => match[1])
+    const expectedIds = manifest.canonicalNodeIds.map(stableId)
+    if (
+      new Set(canonicalIds).size !== canonicalIds.length ||
+      JSON.stringify(canonicalIds) !== JSON.stringify(expectedIds)
+    ) {
+      throw new Error(
+        'EPUB canonical nodes must appear exactly once in source order',
+      )
+    }
+    for (const match of content.matchAll(/data-caption-id="([^"]+)"/g)) {
+      if (!canonicalIds.includes(match[1])) {
+        throw new Error(`EPUB figure has dangling caption ${match[1]}`)
+      }
+    }
+  }
+  if (
+    expectedProfile &&
+    (manifest.profile?.id !== expectedProfile.id ||
+      manifest.profile.version !== expectedProfile.version)
+  ) {
+    throw new Error(
+      `EPUB profile metadata does not match ${expectedProfile.id}`,
+    )
+  }
+  return {
+    files,
+    entries: Object.keys(files),
+    manifest,
+  }
 }
 
-export async function buildEpub(
+export function buildEpub(
+  paper: ResearchPaper,
+  profile: TargetProfile,
+): Promise<EpubExport>
+export function buildEpub(
   paper: ResearchPaper,
   reconstruction?: PdfReconstruction,
+  profile?: TargetProfile,
+): Promise<EpubExport>
+export async function buildEpub(
+  paper: ResearchPaper,
+  reconstructionOrProfile?: PdfReconstruction | TargetProfile,
+  profileInput?: TargetProfile,
 ): Promise<EpubExport> {
+  const secondIsProfile =
+    reconstructionOrProfile !== undefined &&
+    targetProfileSchema.safeParse(reconstructionOrProfile).success
+  const reconstruction = secondIsProfile
+    ? undefined
+    : (reconstructionOrProfile as PdfReconstruction | undefined)
+  const profileCandidate = secondIsProfile
+    ? reconstructionOrProfile
+    : profileInput
+  const profile = profileCandidate
+    ? targetProfileSchema.parse(profileCandidate)
+    : undefined
+  if (
+    profile &&
+    JSON.stringify(profile) !== JSON.stringify(getTargetProfile(profile.id))
+  ) {
+    throw new Error(
+      `EPUB target profile ${profile.id} must come from src/research/targets.ts`,
+    )
+  }
   if (reconstruction && !reconstruction.readiness.ready) {
     throw new PdfImportError(
       'INCOMPLETE_RECONSTRUCTION',
@@ -394,11 +602,38 @@ export async function buildEpub(
       )
     }
   }
+  const packaged = await packageVisualAssets(
+    reconstruction?.assets ?? [],
+    profile,
+  )
+  const visualAssets = uniqueAssets(packaged)
+  const packagedBySourceId = new Map(
+    packaged.map(({ source, asset }) => [source.id, asset]),
+  )
+  const packagedRelationships = reconstruction?.visualRelationships.map(
+    (relationship) => ({
+      ...relationship,
+      assetIds: relationship.assetIds.map(
+        (assetId) => packagedBySourceId.get(assetId)?.id ?? assetId,
+      ),
+    }),
+  )
   const canonicalHash = await sha256(JSON.stringify(paper))
-  const identifier = `urn:srt:${stableId(paper.id)}:${canonicalHash.slice(0, 24)}`
+  const identifier = `urn:srt:${stableId(paper.id)}:${canonicalHash.slice(0, 24)}${profile ? `:${profile.id}:${profile.version}:${EPUB_EXPORT_POLICY_VERSION}` : ''}`
   const modified = `${paper.updated}T00:00:00Z`
+  const profileMetadata: EpubProfileMetadata | undefined = profile
+    ? {
+        id: profile.id,
+        version: profile.version,
+        compositionPolicy: getCompositionPolicy(profile.id),
+        exportPolicy: {
+          id: 'profile-tuned-reflowable',
+          version: EPUB_EXPORT_POLICY_VERSION,
+        },
+      }
+    : undefined
   const exportManifest = {
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     identifier,
     canonicalContentSha256: canonicalHash,
     sourcePdfSha256: reconstruction?.source.sha256,
@@ -406,24 +641,37 @@ export async function buildEpub(
     sourceProvenanceIncluded: Boolean(reconstruction),
     sourceCompleteness: reconstruction?.completeness,
     sourceReadiness: reconstruction?.readiness,
-    assets: reconstruction?.assets.map(
-      ({ bytes: _bytes, ...metadata }) => metadata,
-    ),
-    visualRelationships: reconstruction?.visualRelationships,
-    rendition: 'reflowable-epub',
+    assets: packaged.map(({ source, asset, policy }) => {
+      const { bytes: _bytes, ...metadata } = asset
+      return { ...metadata, sourceAssetId: source.id, policy }
+    }),
+    visualRelationships: packagedRelationships,
+    profile: profile
+      ? {
+          ...profileMetadata,
+          typography: profile.typography,
+          margins: profile.margins,
+          pageProgression: profile.epub,
+          pixelsPerInch: profile.pixelsPerInch,
+        }
+      : undefined,
+    rendition: profile ? 'profile-tuned-reflowable-epub' : 'reflowable-epub',
   }
-  const visualAssets = reconstruction?.assets ?? []
+  const styles = profile ? profileEpubCss(profile) : EPUB_CSS
   const archive: Zippable = {
     mimetype: entry(EPUB_MIMETYPE, 0),
     'META-INF/container.xml': entry(containerXml()),
     'EPUB/package.opf': entry(
-      packageOpf(paper, identifier, modified, visualAssets),
+      packageOpf(paper, identifier, modified, visualAssets, profile),
     ),
     'EPUB/nav.xhtml': entry(navXhtml(paper)),
     'EPUB/content.xhtml': entry(
-      renderPublicationXhtml(paper, { reconstruction }),
+      renderPublicationXhtml(paper, {
+        reconstruction,
+        visualAssets: packagedBySourceId,
+      }),
     ),
-    'EPUB/styles.css': entry(EPUB_CSS),
+    'EPUB/styles.css': entry(styles),
     'EPUB/export.json': entry(`${JSON.stringify(exportManifest, null, 2)}\n`),
     ...Object.fromEntries(
       visualAssets.map((visualAsset) => [
@@ -433,7 +681,7 @@ export async function buildEpub(
     ),
   }
   const bytes = zipSync(archive)
-  const { files, entries } = inspectEpub(bytes)
+  const { files, entries } = inspectEpub(bytes, profile)
   if (reconstruction) {
     const content = strFromU8(files['EPUB/content.xhtml'])
     const opf = strFromU8(files['EPUB/package.opf'])
@@ -458,10 +706,11 @@ export async function buildEpub(
   }
   return {
     bytes,
-    fileName: `${slug(paper.title)}.epub`,
+    fileName: profile?.epub.fileName ?? `${slug(paper.title)}.epub`,
     mediaType: EPUB_MIMETYPE,
     sha256: await sha256(bytes),
     identifier,
     entries,
+    profile: profileMetadata,
   }
 }

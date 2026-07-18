@@ -5,11 +5,14 @@ export const TARGET_PROFILE_IDS = [
   'print',
 ] as const
 
+export const TARGET_PROFILE_VERSION = '1.0.0' as const
+
 export type TargetProfileId = (typeof TARGET_PROFILE_IDS)[number]
 export type TargetLengthUnit = 'css-px' | 'device-px' | 'mm'
 
 export type TargetProfile = {
   id: TargetProfileId
+  version: typeof TARGET_PROFILE_VERSION
   label: string
   note: string
   dimensions: {
@@ -38,6 +41,12 @@ export type TargetProfile = {
   }
   interactionMode: 'continuous-scroll' | 'page-turn' | 'print-static'
   finiteHeight: boolean
+  pixelsPerInch: number | null
+  epub: {
+    fileName: string
+    pageProgressionDirection: 'ltr' | 'rtl'
+    renditionFlow: 'paginated' | 'scrolled-continuous'
+  }
   preview: {
     widthCssPx: number
     heightCssPx: number | null
@@ -47,6 +56,7 @@ export type TargetProfile = {
 export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
   mobile: {
     id: 'mobile',
+    version: TARGET_PROFILE_VERSION,
     label: 'Mobile',
     note: 'Continuous · 390 CSS px',
     dimensions: { width: 390, height: null, unit: 'css-px' },
@@ -68,10 +78,17 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
     columns: { count: 1, gapCssPx: 0 },
     interactionMode: 'continuous-scroll',
     finiteHeight: false,
+    pixelsPerInch: null,
+    epub: {
+      fileName: 'publication-mobile.epub',
+      pageProgressionDirection: 'ltr',
+      renditionFlow: 'scrolled-continuous',
+    },
     preview: { widthCssPx: 390, heightCssPx: null },
   },
   paperProMove: {
     id: 'paperProMove',
+    version: TARGET_PROFILE_VERSION,
     label: 'Pro Move',
     note: '7.3″ · 954 × 1696 · 264 PPI',
     dimensions: { width: 954, height: 1696, unit: 'device-px' },
@@ -93,10 +110,17 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
     columns: { count: 1, gapCssPx: 0 },
     interactionMode: 'page-turn',
     finiteHeight: true,
+    pixelsPerInch: 264,
+    epub: {
+      fileName: 'publication-papermove.epub',
+      pageProgressionDirection: 'ltr',
+      renditionFlow: 'paginated',
+    },
     preview: { widthCssPx: 318, heightCssPx: 565 },
   },
   paperPro: {
     id: 'paperPro',
+    version: TARGET_PROFILE_VERSION,
     label: 'Paper Pro',
     note: '11.8″ · 1620 × 2160 · 229 PPI',
     dimensions: { width: 1620, height: 2160, unit: 'device-px' },
@@ -118,10 +142,17 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
     columns: { count: 1, gapCssPx: 0 },
     interactionMode: 'page-turn',
     finiteHeight: true,
+    pixelsPerInch: 229,
+    epub: {
+      fileName: 'publication-paperpro.epub',
+      pageProgressionDirection: 'ltr',
+      renditionFlow: 'paginated',
+    },
     preview: { widthCssPx: 540, heightCssPx: 720 },
   },
   print: {
     id: 'print',
+    version: TARGET_PROFILE_VERSION,
     label: 'A4',
     note: '210 × 297 mm · paged',
     dimensions: { width: 210, height: 297, unit: 'mm' },
@@ -143,6 +174,12 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
     columns: { count: 2, gapCssPx: 48 },
     interactionMode: 'print-static',
     finiteHeight: true,
+    pixelsPerInch: null,
+    epub: {
+      fileName: 'publication-print.epub',
+      pageProgressionDirection: 'ltr',
+      renditionFlow: 'paginated',
+    },
     preview: { widthCssPx: 794, heightCssPx: 1123 },
   },
 }

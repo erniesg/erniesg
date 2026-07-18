@@ -29,11 +29,10 @@ export async function GET({ props }: { props: ExportProps }) {
     getDefaultExportOverrides(props.paper.id),
   )
   const artifact = getExportFile(exportPackage, props.file)
-  const disposition = ['publication.epub', 'checksums.sha256'].includes(
-    artifact.path,
-  )
-    ? 'attachment'
-    : 'inline'
+  const disposition =
+    artifact.path.endsWith('.epub') || artifact.path === 'checksums.sha256'
+      ? 'attachment'
+      : 'inline'
   const body = artifact.bytes.slice().buffer as ArrayBuffer
 
   return new Response(body, {

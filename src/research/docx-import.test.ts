@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { strFromU8 } from 'fflate'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildEpub, inspectEpub } from './epub'
 import { reconstructDocx } from './docx-import'
@@ -183,6 +183,62 @@ describe('local born-structured DOCX import', () => {
     await expect(buildEpub(result.paper, result)).rejects.toMatchObject({
       code: 'INCOMPLETE_RECONSTRUCTION',
     })
+  })
+
+  it('measures text coverage and fails closed when an image paragraph carries unrepresented text', async () => {
+    const fixture = await fixtureFile('structured-manuscript.docx')
+    const files = unzipSync(new Uint8Array(await fixture.arrayBuffer()))
+    const document = strFromU8(files['word/document.xml'])
+    const droppedText = 'Text beside the image must not disappear.'
+    files['word/document.xml'] = strToU8(
+      document.replace('<w:drawing>', `<w:t>${droppedText}</w:t><w:drawing>`),
+    )
+    const result = await reconstructDocx(
+      new File([zipSync(files)], 'text-bearing-image.docx', {
+        type: fixture.type,
+        lastModified: fixture.lastModified,
+      }),
+    )
+
+    expect(result.completeness.outputTextCharacters).toBe(
+      result.completeness.sourceTextCharacters - droppedText.length,
+    )
+    expect(result.completeness.textCoverage).toBeLessThan(1)
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'INCOMPLETE_TEXT_COVERAGE' }),
+    )
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+  })
+
+  it('fails closed instead of packaging active SVG from an untrusted DOCX', async () => {
+    const fixture = await fixtureFile('structured-manuscript.docx')
+    const files = unzipSync(new Uint8Array(await fixture.arrayBuffer()))
+    files['[Content_Types].xml'] = strToU8(
+      strFromU8(files['[Content_Types].xml']).replace(
+        'Extension="png" ContentType="image/png"',
+        'Extension="png" ContentType="image/svg+xml"',
+      ),
+    )
+    files['word/media/figure.png'] = strToU8(
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+    )
+    const result = await reconstructDocx(
+      new File([zipSync(files)], 'active-svg.docx', {
+        type: fixture.type,
+        lastModified: fixture.lastModified,
+      }),
+    )
+
+    expect(result.assets).not.toContainEqual(
+      expect.objectContaining({ mediaType: 'image/svg+xml' }),
+    )
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'UNSUPPORTED_DOCX_FEATURE' }),
+    )
+    expect(result.readiness.ready).toBe(false)
   })
 
   it('rejects non-OOXML input before attempting XML reconstruction', async () => {

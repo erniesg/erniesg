@@ -697,9 +697,7 @@ function normalizedMediaType(
       : declared === 'image/x-png'
         ? 'image/png'
         : declared
-  return ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml'].includes(
-    normalized ?? '',
-  )
+  return ['image/png', 'image/jpeg', 'image/gif'].includes(normalized ?? '')
     ? (normalized as PublicationAsset['mediaType'])
     : null
 }
@@ -970,6 +968,7 @@ export async function reconstructDocx(
     const backlinks = new Map<string, string[]>()
     const usedCaptions = new Set<number>()
     const visualCaptions = new Map<number, ParsedParagraph>()
+    const coveredTextBlocks = new Set<number>()
     const assignCaption = (index: number, kind: 'figure' | 'table') => {
       for (const offset of [-1, 1]) {
         const candidate = blocks[index + offset]
@@ -998,6 +997,7 @@ export async function reconstructDocx(
         confidence: 1,
         pages: [],
         boxes: [],
+        links: [],
         part: documentPart,
         ...(relationshipIds.length
           ? { relationshipIds: [...new Set(relationshipIds)].sort() }
@@ -1108,6 +1108,7 @@ export async function reconstructDocx(
             block.imageReferences.map((reference) => reference.relationshipId),
           )
           addProvenance(captionId)
+          coveredTextBlocks.add(caption.index)
         }
         visualRelationships.push({
           id: `visual-docx-${String(blockIndex + 1).padStart(4, '0')}`,
@@ -1122,6 +1123,7 @@ export async function reconstructDocx(
           status: matched ? 'matched' : 'unresolved',
           confidence: matched ? 1 : 0,
           evidence: ['ooxml-image-relationship', 'adjacent-caption-paragraph'],
+          candidates: [],
           sourceBoxes: [],
           sourceText: caption?.text ?? '',
           altText:
@@ -1186,6 +1188,8 @@ export async function reconstructDocx(
           })
           addProvenance(tableId)
           addProvenance(captionId)
+          coveredTextBlocks.add(blockIndex)
+          coveredTextBlocks.add(caption.index)
         }
         visualRelationships.push({
           id: `visual-table-docx-${String(blockIndex + 1).padStart(4, '0')}`,
@@ -1198,6 +1202,7 @@ export async function reconstructDocx(
           status: caption ? 'matched' : 'unresolved',
           confidence: caption ? 1 : 0,
           evidence: ['ooxml-table-grid', 'adjacent-caption-paragraph'],
+          candidates: [],
           sourceBoxes: [],
           sourceText: caption?.text ?? '',
           altText: caption?.text ?? '',
@@ -1244,6 +1249,7 @@ export async function reconstructDocx(
           targetNoteId: matched ? target : null,
           status: matched ? 'matched' : 'unresolved',
           confidence: matched ? 1 : 0,
+          threshold: 1,
           evidence: [`ooxml-explicit-${reference.kind}-id`],
           candidates: [],
           sourceBoxes: [],
@@ -1294,6 +1300,7 @@ export async function reconstructDocx(
         })
       }
       addProvenance(nodeId, block.relationshipIds)
+      coveredTextBlocks.add(block.index)
     }
 
     const referencedFootnotes = new Set(
@@ -1336,6 +1343,7 @@ export async function reconstructDocx(
           confidence: 1,
           pages: [],
           boxes: [],
+          links: [],
           part: `word/${kind === 'footnote' ? 'footnotes' : 'endnotes'}.xml`,
         }
         if (!referenced.has(nodeId)) {
@@ -1380,26 +1388,36 @@ export async function reconstructDocx(
       nodes,
     }
     const paper = researchPaperSchema.parse(paperDraft)
-    const sourceTextCharacters =
-      blocks.reduce((total, block) => {
-        if (block.kind === 'paragraph') return total + block.text.length
-        return (
-          total +
-          block.table.rows.reduce(
-            (rowTotal, row) =>
-              rowTotal +
-              row.cells.reduce(
-                (cellTotal, cell) => cellTotal + cell.text.length,
-                0,
-              ),
+    const blockTextCharacters = (block: ParsedBlock) => {
+      if (block.kind === 'paragraph') return block.text.length
+      return block.table.rows.reduce(
+        (rowTotal, row) =>
+          rowTotal +
+          row.cells.reduce(
+            (cellTotal, cell) => cellTotal + cell.text.length,
             0,
-          )
-        )
-      }, 0) +
-      [...footnotes.values(), ...endnotes.values()].reduce(
-        (total, note) => total + note.length,
+          ),
         0,
       )
+    }
+    const noteTextCharacters = [
+      ...footnotes.values(),
+      ...endnotes.values(),
+    ].reduce((total, note) => total + note.length, 0)
+    const sourceTextCharacters =
+      blocks.reduce((total, block) => total + blockTextCharacters(block), 0) +
+      noteTextCharacters
+    const outputTextCharacters =
+      blocks.reduce(
+        (total, block) =>
+          total +
+          (coveredTextBlocks.has(block.index) ? blockTextCharacters(block) : 0),
+        0,
+      ) + noteTextCharacters
+    const matchedTextCharacters = Math.min(
+      sourceTextCharacters,
+      outputTextCharacters,
+    )
     const sourceAssetCount = blocks.reduce(
       (total, block) =>
         total + (block.kind === 'table' ? 1 : block.imageReferences.length),
@@ -1441,9 +1459,9 @@ export async function reconstructDocx(
     )
     const completeness = {
       sourceTextCharacters,
-      outputTextCharacters: sourceTextCharacters,
-      matchedTextCharacters: sourceTextCharacters,
-      textCoverage: 1,
+      outputTextCharacters,
+      matchedTextCharacters,
+      textCoverage: coverage(matchedTextCharacters, sourceTextCharacters),
       sourceAssetCount,
       exportedAssetCount: assets.length,
       assetCoverage: coverage(assets.length, sourceAssetCount),
@@ -1458,6 +1476,13 @@ export async function reconstructDocx(
       ocrRequiredPages: [],
       readingOrderDiagnostics: 0,
       readingOrderEvaluation: emptyReadingOrder([], false).evaluation,
+    }
+    if (completeness.textCoverage < 1) {
+      diagnostics.push({
+        code: 'INCOMPLETE_TEXT_COVERAGE',
+        severity: 'error',
+        message: `Preserved ${matchedTextCharacters} of ${sourceTextCharacters} explicit DOCX text characters.`,
+      })
     }
     if (completeness.assetCoverage < 1) {
       diagnostics.push({

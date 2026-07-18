@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const fixture = (name: string) => path.resolve('tests', 'fixtures', 'pdf', name)
@@ -96,4 +97,52 @@ test('keeps the newest result when an active import is superseded', async ({
     'structured-scientific.pdf',
   )
   await expect(page.getByText('EPUB ready', { exact: true })).toHaveCount(0)
+})
+
+test('adjudicates blockers and replays the sidecar to identical EPUB bytes', async ({
+  page,
+}) => {
+  await uploadFixture(page, 'adjudication-required.pdf')
+
+  await expect(page.getByText('AMBIGUOUS_NOTE_MATCH').first()).toBeVisible()
+  await expect(page.getByText('AMBIGUOUS_READING_ORDER')).toBeVisible()
+
+  await page
+    .getByRole('button', { name: /Use note fn-p002-1 for/ })
+    .first()
+    .click()
+  await page.getByRole('button', { name: /Use note fn-p002-1-2 for/ }).click()
+  await page.getByRole('button', { name: 'Accept reading order 1' }).click()
+
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Human adjudications:/)).toBeVisible()
+
+  const decisionDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('link', { name: 'Export decisions JSON' }).click()
+  const decisionDownload = await decisionDownloadPromise
+  const decisionBytes = await readFile((await decisionDownload.path())!)
+
+  const firstEpubDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('link', { name: /download epub/i }).click()
+  const firstEpub = await firstEpubDownloadPromise
+  const firstBytes = await readFile((await firstEpub.path())!)
+
+  await page.getByRole('button', { name: 'New paper' }).click()
+  await page.locator('#publication-decisions').setInputFiles({
+    name: 'saved-decisions.json',
+    mimeType: 'application/json',
+    buffer: decisionBytes,
+  })
+  await page
+    .locator('#publication-pdf')
+    .setInputFiles(fixture('adjudication-required.pdf'))
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible({
+    timeout: 15_000,
+  })
+
+  const replayedEpubDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('link', { name: /download epub/i }).click()
+  const replayedEpub = await replayedEpubDownloadPromise
+  const replayedBytes = await readFile((await replayedEpub.path())!)
+  expect(replayedBytes).toEqual(firstBytes)
 })

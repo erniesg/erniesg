@@ -157,6 +157,32 @@ const fixtures = {
       image: { x: 220, y: 460, width: 170, height: 110 },
     },
   ],
+  'adjudication-required.pdf': [
+    {
+      lines: [
+        { text: 'Left candidate one.', x: 54, y: 650 },
+        { text: 'Right candidate one.', x: 330, y: 650 },
+        { text: 'Left 2.', x: 110, y: 230 },
+        { text: 'Right candidate two.', x: 330, y: 230 },
+      ],
+    },
+    {
+      lines: [
+        {
+          text: 'The first claim deliberately has note reference 1.',
+          x: 72,
+          y: 650,
+        },
+        {
+          text: 'The second claim deliberately has note reference 1.',
+          x: 72,
+          y: 615,
+        },
+        { text: '1. First candidate note.', x: 72, y: 100, size: 7 },
+        { text: '1. Second candidate note.', x: 72, y: 70, size: 7 },
+      ],
+    },
+  ],
   'scanned-page.pdf': [
     {
       lines: [],

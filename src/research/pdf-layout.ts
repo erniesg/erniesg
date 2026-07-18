@@ -311,6 +311,13 @@ function matchNotes(
         severity: 'error',
         page: reference.region.page,
         message: `Note reference ${reference.id} retains ${candidates.length} similarly scored targets for review.`,
+        target: {
+          regionIds: [
+            reference.region.id,
+            ...candidates.map((candidate) => candidate.targetRegionId),
+          ],
+          markerId: reference.id,
+        },
       })
     } else if (!matched) {
       diagnostics.push({
@@ -318,12 +325,18 @@ function matchNotes(
         severity: 'error',
         page: reference.region.page,
         message: `Note reference ${reference.id} has no deterministic target above the confidence threshold.`,
+        target: {
+          regionIds: [reference.region.id],
+          markerId: reference.id,
+        },
       })
     }
     return {
       id: reference.id,
       label: reference.label,
       referenceRegionId: reference.region.id,
+      referenceStart: reference.start,
+      referenceEnd: reference.end,
       targetNoteId: matched ? best.targetNoteId : null,
       status: ambiguous ? 'ambiguous' : matched ? 'matched' : 'unresolved',
       confidence: best?.score ?? 0,
@@ -334,9 +347,13 @@ function matchNotes(
   })
 
   const referencedNotes = new Set(
-    relationships
-      .filter((relationship) => relationship.status === 'matched')
-      .map((relationship) => relationship.targetNoteId),
+    relationships.flatMap((relationship) =>
+      relationship.status === 'matched'
+        ? [relationship.targetNoteId]
+        : relationship.status === 'ambiguous'
+          ? relationship.candidates.map((candidate) => candidate.targetNoteId)
+          : [],
+    ),
   )
   for (const note of notes) {
     if (referencedNotes.has(note.nodeId!)) continue
@@ -345,6 +362,10 @@ function matchNotes(
       severity: 'error',
       page: note.region.page,
       message: `Note ${note.nodeId} remains explicit because no unique reference resolved to it.`,
+      target: {
+        regionIds: [note.region.id],
+        markerId: note.nodeId ?? null,
+      },
     })
   }
   return relationships
@@ -354,6 +375,7 @@ function sourceEvidence(block: RegionBlock): NodeSourceEvidence {
   return {
     confidence: rounded(block.confidence),
     pages: [block.region.page],
+    regionIds: [block.region.id],
     boxes: block.region.lines.flatMap((line) =>
       line.runs.map((run) => ({
         ...run,
@@ -401,6 +423,16 @@ export function reconstructPageAnalyses({
   }
 
   const regionResult = reconstructPageRegions(pages)
+  for (const diagnostic of diagnostics.filter(
+    (candidate) => candidate.code === 'MIXED_PAGE' && candidate.page,
+  )) {
+    diagnostic.target = {
+      regionIds: regionResult.regions
+        .filter((region) => region.page === diagnostic.page)
+        .map((region) => region.id),
+      markerId: null,
+    }
+  }
   const regionMap = new Map(
     regionResult.regions.map((region) => [region.id, region]),
   )
@@ -412,6 +444,14 @@ export function reconstructPageAnalyses({
       code: 'REPEATED_MARGIN_TEXT',
       severity: 'info',
       message: `Removed ${regionResult.repeatedMarginCount} repeated header or footer pattern${regionResult.repeatedMarginCount === 1 ? '' : 's'} from reading order.`,
+      target: {
+        regionIds: regionResult.regions
+          .filter(
+            (region) => region.kind === 'header' || region.kind === 'footer',
+          )
+          .map((region) => region.id),
+        markerId: null,
+      },
     })
   }
   for (const resolution of regionResult.readingOrder.resolutions.filter(
@@ -428,6 +468,7 @@ export function reconstructPageAnalyses({
           ...readingOrderResolution,
           regionId,
         },
+        target: { regionIds: [regionId], markerId: null },
       })
     }
   }
@@ -452,6 +493,10 @@ export function reconstructPageAnalyses({
       page,
       message: `Page ${page} retains both column-order candidates at confidence ${readingOrderResolution.confidence.toFixed(2)}, below threshold ${readingOrderResolution.threshold.toFixed(2)}.`,
       readingOrderResolution,
+      target: {
+        regionIds: resolution?.regionIds ?? [],
+        markerId: null,
+      },
     })
   }
   if (!regionResult.readingOrder.acyclic) {
@@ -494,12 +539,19 @@ export function reconstructPageAnalyses({
     const id = block.nodeId ?? nodeId(index, block.type, block.text)
     block.nodeId = id
     provenance[id] = sourceEvidence(block)
-    if (block.confidence < 0.75) {
+    if (
+      block.confidence < 0.75 &&
+      !regionResult.ambiguousPages.includes(block.region.page)
+    ) {
       diagnostics.push({
         code: 'LOW_CONFIDENCE_BLOCK',
         severity: 'warning',
         page: block.region.page,
         message: `A reconstructed ${block.region.kind} region on page ${block.region.page} needs review.`,
+        target: {
+          regionIds: [block.region.id],
+          markerId: null,
+        },
       })
     }
     const source = `pdf:${sourceHash.slice(0, 16)}#page=${block.region.page}`
@@ -610,6 +662,13 @@ export function reconstructPageAnalyses({
     readingOrder: regionResult.readingOrder,
     noteRelationships,
     provenance,
+    humanAdjudications: {
+      schemaVersion: '1.0.0',
+      documentSha256: sourceHash,
+      applied: [],
+      stale: [],
+      countsByDiagnosticCode: {},
+    },
     diagnostics: assessment.diagnostics,
     semanticSignals: assessment.semanticSignals,
     completeness: assessment.completeness,

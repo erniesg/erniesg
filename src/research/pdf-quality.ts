@@ -25,6 +25,7 @@ type QualityInput = {
   diagnostics: ReconstructionDiagnostic[]
   readingOrder?: PdfReadingOrderGraph
   policy?: PdfCompletenessPolicy
+  reclassifiedNoteReferenceCount?: number
 }
 
 function rounded(value: number) {
@@ -215,6 +216,7 @@ export function assessPdfCompleteness({
   diagnostics,
   readingOrder,
   policy = DEFAULT_PDF_COMPLETENESS_POLICY,
+  reclassifiedNoteReferenceCount = 0,
 }: QualityInput): {
   semanticSignals: PdfSemanticSignals
   completeness: PdfCompletenessMetrics
@@ -222,6 +224,10 @@ export function assessPdfCompleteness({
   readiness: PdfReadiness
 } {
   const semanticSignals = detectPdfSemanticSignals(pages)
+  semanticSignals.footnoteReferences = Math.max(
+    semanticSignals.footnoteReferences - reclassifiedNoteReferenceCount,
+    0,
+  )
   const sourceText = normalizedText(
     pages
       .flatMap((page) => page.runs)

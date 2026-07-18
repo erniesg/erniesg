@@ -6,10 +6,15 @@ import type {
 } from './import-types'
 import { MAX_LOCAL_PDF_BYTES, PdfImportError } from './import-types'
 import { reconstructPageAnalyses, type PdfDocumentMetadata } from './pdf-layout'
+import {
+  applyHumanDecisionFile,
+  type HumanDecisionFile,
+} from './decision-record'
 
 type PdfImportOptions = {
   signal?: AbortSignal
   standardFontDataUrl?: string
+  decisionFile?: HumanDecisionFile
 }
 
 function cancelledError() {
@@ -382,13 +387,16 @@ export async function reconstructPdf(
         normalizedPdfDate(metadataValue(info, 'ModDate')) ??
         new Date(file.lastModified || 0).toISOString(),
     }
-    return reconstructPageAnalyses({
+    const reconstruction = reconstructPageAnalyses({
       pages,
       sourceHash,
       fileName: file.name,
       byteLength: file.size,
       metadata,
     })
+    return options.decisionFile
+      ? applyHumanDecisionFile(reconstruction, options.decisionFile)
+      : reconstruction
   } catch (error) {
     if (options.signal?.aborted) throw cancelledError()
     throw error

@@ -336,6 +336,16 @@ export async function buildEpub(
     sourceProvenanceIncluded: Boolean(reconstruction),
     sourceCompleteness: reconstruction?.completeness,
     sourceReadiness: reconstruction?.readiness,
+    humanAdjudications: reconstruction
+      ? {
+          schemaVersion: reconstruction.humanAdjudications.schemaVersion,
+          appliedCount: reconstruction.humanAdjudications.applied.length,
+          staleCount: reconstruction.humanAdjudications.stale.length,
+          countsByDiagnosticCode:
+            reconstruction.humanAdjudications.countsByDiagnosticCode,
+          applied: reconstruction.humanAdjudications.applied,
+        }
+      : undefined,
     rendition: 'reflowable-epub',
   }
   const archive: Zippable = {

@@ -2,13 +2,25 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type DragEvent,
   type FormEvent,
 } from 'react'
+import {
+  applyHumanDecisionFile,
+  createHumanDecisionFile,
+  parseHumanDecisionFile,
+  readingOrderCandidates,
+  serializeHumanDecisionFile,
+  upsertHumanDecision,
+  type HumanDecisionFile,
+} from '@/research/decision-record'
 import { buildEpub, type EpubExport } from '@/research/epub'
 import type {
+  HumanAdjudicationRecord,
   PdfImportProgress,
   PdfReconstruction,
+  ReconstructionDiagnostic,
 } from '@/research/import-types'
 import { PdfImportError } from '@/research/import-types'
 import { downloadLinkedPdf } from '@/research/pdf-url'
@@ -20,7 +32,9 @@ type StudioState =
   | { status: 'processing'; fileName: string; progress: PdfImportProgress }
   | {
       status: 'ready' | 'review-required'
+      baseResult: PdfReconstruction
       result: PdfReconstruction
+      decisionFile: HumanDecisionFile
       epub?: EpubExport
     }
   | { status: 'error'; code: string; message: string }
@@ -37,6 +51,114 @@ function formatBytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
+function AdjudicationControls({
+  result,
+  diagnostic,
+  onDecision,
+}: {
+  result: PdfReconstruction
+  diagnostic: ReconstructionDiagnostic
+  onDecision: (decision: HumanAdjudicationRecord) => void
+}) {
+  if (!diagnostic.target) return null
+  const decide = (resolution: HumanAdjudicationRecord['resolution']) =>
+    onDecision({
+      diagnosticCode: diagnostic.code,
+      target: diagnostic.target!,
+      resolution,
+    })
+
+  if (
+    diagnostic.code === 'AMBIGUOUS_NOTE_MATCH' ||
+    diagnostic.code === 'UNRESOLVED_NOTE_REFERENCE'
+  ) {
+    const relationship = result.noteRelationships.find(
+      (candidate) => candidate.id === diagnostic.target?.markerId,
+    )
+    if (!relationship) return null
+    return (
+      <div className="publication-adjudication-options">
+        {relationship.candidates.map((candidate) => {
+          const region = result.regions.find(
+            (item) => item.id === candidate.targetRegionId,
+          )
+          return (
+            <button
+              key={candidate.targetNoteId}
+              type="button"
+              aria-label={`Use note ${candidate.targetNoteId} for ${relationship.id}`}
+              onClick={() =>
+                decide({
+                  type: 'accept-note-match',
+                  targetNoteId: candidate.targetNoteId,
+                  targetRegionId: candidate.targetRegionId,
+                })
+              }
+            >
+              Use note {candidate.targetNoteId}
+              <small>{region?.text || candidate.targetRegionId}</small>
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          onClick={() => decide({ type: 'reclassify-citation' })}
+        >
+          Treat marker as citation
+        </button>
+        <button
+          type="button"
+          onClick={() => decide({ type: 'reclassify-plain-text' })}
+        >
+          Treat marker as plain text
+        </button>
+      </div>
+    )
+  }
+
+  if (diagnostic.code === 'AMBIGUOUS_READING_ORDER') {
+    return (
+      <div className="publication-adjudication-options">
+        {readingOrderCandidates(result, diagnostic).map((candidate, index) => (
+          <button
+            key={candidate.join(':')}
+            type="button"
+            aria-label={`Accept reading order ${index + 1}`}
+            onClick={() =>
+              decide({
+                type: 'accept-reading-order',
+                regionIds: candidate,
+              })
+            }
+          >
+            Accept order {index + 1}
+            <small>
+              {candidate
+                .map(
+                  (regionId) =>
+                    result.regions.find((region) => region.id === regionId)
+                      ?.text || regionId,
+                )
+                .join(' → ')}
+            </small>
+          </button>
+        ))}
+      </div>
+    )
+  }
+
+  if (diagnostic.severity !== 'error') {
+    return (
+      <div className="publication-adjudication-options">
+        <button type="button" onClick={() => decide({ type: 'dismiss' })}>
+          Dismiss this diagnostic
+        </button>
+      </div>
+    )
+  }
+  return null
+}
+
 export default function PublicationImporter({
   showIntro = true,
 }: {
@@ -45,7 +167,11 @@ export default function PublicationImporter({
   const [state, setState] = useState<StudioState>({ status: 'idle' })
   const [dragging, setDragging] = useState(false)
   const [paperUrl, setPaperUrl] = useState('')
+  const [pendingDecisionFile, setPendingDecisionFile] =
+    useState<HumanDecisionFile>()
+  const [decisionError, setDecisionError] = useState<string>()
   const input = useRef<HTMLInputElement>(null)
+  const decisionInput = useRef<HTMLInputElement>(null)
   const activeImport = useRef<AbortController>()
 
   useEffect(
@@ -73,6 +199,30 @@ export default function PublicationImporter({
     return controller
   }
 
+  const finishReconstruction = async (
+    baseResult: PdfReconstruction,
+    decisionFile: HumanDecisionFile,
+    controller: AbortController,
+  ) => {
+    const isCurrent = () =>
+      activeImport.current === controller && !controller.signal.aborted
+    const result = applyHumanDecisionFile(baseResult, decisionFile)
+    if (!isCurrent()) return
+    if (!result.readiness.ready) {
+      setState({
+        status: 'review-required',
+        baseResult,
+        result,
+        decisionFile,
+      })
+      return
+    }
+    setState({ status: 'ready', baseResult, result, decisionFile })
+    const epub = await buildEpub(result.paper, result)
+    if (!isCurrent()) return
+    setState({ status: 'ready', baseResult, result, decisionFile, epub })
+  }
+
   const processFile = async (file?: File, controller = nextImport()) => {
     if (!file) return
     const isCurrent = () =>
@@ -84,7 +234,7 @@ export default function PublicationImporter({
     })
     try {
       const { reconstructPdf } = await import('@/research/pdf')
-      const result = await reconstructPdf(
+      const baseResult = await reconstructPdf(
         file,
         (progress) => {
           if (isCurrent()) {
@@ -94,14 +244,10 @@ export default function PublicationImporter({
         { signal: controller.signal },
       )
       if (!isCurrent()) return
-      if (!result.readiness.ready) {
-        setState({ status: 'review-required', result })
-        return
-      }
-      setState({ status: 'ready', result })
-      const epub = await buildEpub(result.paper, result)
-      if (!isCurrent()) return
-      setState({ status: 'ready', result, epub })
+      const decisionFile =
+        pendingDecisionFile ?? createHumanDecisionFile(baseResult.source.sha256)
+      setPendingDecisionFile(decisionFile)
+      await finishReconstruction(baseResult, decisionFile, controller)
     } catch (error) {
       if (activeImport.current !== controller) return
       if (
@@ -149,8 +295,44 @@ export default function PublicationImporter({
     activeImport.current?.abort()
     activeImport.current = undefined
     if (input.current) input.current.value = ''
+    if (decisionInput.current) decisionInput.current.value = ''
     setPaperUrl('')
+    setPendingDecisionFile(undefined)
+    setDecisionError(undefined)
     setState({ status: 'idle' })
+  }
+
+  const applyDecision = async (decision: HumanAdjudicationRecord) => {
+    if (state.status !== 'ready' && state.status !== 'review-required') return
+    const decisionFile = upsertHumanDecision(state.decisionFile, decision)
+    setPendingDecisionFile(decisionFile)
+    setDecisionError(undefined)
+    const controller = nextImport()
+    try {
+      await finishReconstruction(state.baseResult, decisionFile, controller)
+    } catch (error) {
+      if (activeImport.current === controller) showError(error)
+    }
+  }
+
+  const importDecisionFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0]
+    if (!selected) return
+    try {
+      const decisionFile = parseHumanDecisionFile(await selected.text())
+      setPendingDecisionFile(decisionFile)
+      setDecisionError(undefined)
+      if (state.status === 'ready' || state.status === 'review-required') {
+        const controller = nextImport()
+        await finishReconstruction(state.baseResult, decisionFile, controller)
+      }
+    } catch (error) {
+      setDecisionError(
+        error instanceof Error
+          ? `Decision file rejected: ${error.message}`
+          : 'Decision file rejected.',
+      )
+    }
   }
 
   const progressPercent =
@@ -175,6 +357,27 @@ export default function PublicationImporter({
           </p>
         </div>
       )}
+
+      <div className="publication-decision-file">
+        <label htmlFor="publication-decisions">
+          <strong>Adjudication decisions</strong>
+          <span>Import local decision JSON to replay saved review.</span>
+        </label>
+        <input
+          ref={decisionInput}
+          id="publication-decisions"
+          type="file"
+          accept="application/json,.json"
+          onChange={(event) => void importDecisionFile(event)}
+        />
+        {pendingDecisionFile && (
+          <small>
+            Loaded for {pendingDecisionFile.documentSha256.slice(0, 12)}… ·{' '}
+            {pendingDecisionFile.decisions.length} decisions
+          </small>
+        )}
+        {decisionError && <p role="alert">{decisionError}</p>}
+      </div>
 
       {state.status === 'idle' && (
         <div className="publication-intake">
@@ -264,8 +467,26 @@ export default function PublicationImporter({
                 {formatBytes(state.result.source.byteLength)} · processed
                 locally
               </small>
+              {state.result.humanAdjudications.applied.length > 0 && (
+                <small>
+                  Human adjudications:{' '}
+                  {Object.entries(
+                    state.result.humanAdjudications.countsByDiagnosticCode,
+                  )
+                    .map(([code, count]) => `${code} ${count}`)
+                    .join(', ')}
+                </small>
+              )}
             </div>
             <div className="publication-actions">
+              <a
+                href={`data:application/json;charset=utf-8,${encodeURIComponent(
+                  serializeHumanDecisionFile(state.decisionFile),
+                )}`}
+                download={`${state.result.source.sha256}.decisions.json`}
+              >
+                Export decisions JSON
+              </a>
               {state.status === 'ready' && state.epub ? (
                 <EpubDownloadLink epub={state.epub} />
               ) : state.status === 'ready' ? (
@@ -401,7 +622,14 @@ export default function PublicationImporter({
                   <li
                     key={`${diagnostic.code}-${diagnostic.page ?? 0}-${index}`}
                   >
-                    <strong>{diagnostic.code}</strong> {diagnostic.message}
+                    <div>
+                      <strong>{diagnostic.code}</strong> {diagnostic.message}
+                    </div>
+                    <AdjudicationControls
+                      result={state.result}
+                      diagnostic={diagnostic}
+                      onDecision={(decision) => void applyDecision(decision)}
+                    />
                   </li>
                 ))}
               </ul>

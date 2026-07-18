@@ -2,7 +2,7 @@
   "schemaVersion": "1.0.0",
   "runtime": {
     "browserName": "chromium",
-    "browserVersion": "149.0.7827.0",
+    "browserVersion": "149.0.7827.55",
     "viewport": {
       "width": 1440,
       "height": 1200
@@ -18,13 +18,13 @@
       "target": "mobile",
       "paper": {
         "width": 390,
-        "height": 1668.4375
+        "height": 1835.21875
       },
       "pages": [
         {
           "number": 1,
           "width": 390,
-          "height": 1668.4375
+          "height": 1835.21875
         }
       ],
       "renderedNodeIds": [
@@ -46,7 +46,9 @@
       "clippedContent": [],
       "overlaps": [],
       "orphanedCaptions": [],
-      "horizontalOverflow": []
+      "horizontalOverflow": [],
+      "missingAnnotations": [],
+      "unstableAnchors": []
     },
     {
       "target": "paperProMove",
@@ -105,7 +107,9 @@
       "clippedContent": [],
       "overlaps": [],
       "orphanedCaptions": [],
-      "horizontalOverflow": []
+      "horizontalOverflow": [],
+      "missingAnnotations": [],
+      "unstableAnchors": []
     },
     {
       "target": "paperPro",
@@ -154,7 +158,9 @@
       "clippedContent": [],
       "overlaps": [],
       "orphanedCaptions": [],
-      "horizontalOverflow": []
+      "horizontalOverflow": [],
+      "missingAnnotations": [],
+      "unstableAnchors": []
     },
     {
       "target": "print",
@@ -198,7 +204,9 @@
       "clippedContent": [],
       "overlaps": [],
       "orphanedCaptions": [],
-      "horizontalOverflow": []
+      "horizontalOverflow": [],
+      "missingAnnotations": [],
+      "unstableAnchors": []
     }
   ]
 }

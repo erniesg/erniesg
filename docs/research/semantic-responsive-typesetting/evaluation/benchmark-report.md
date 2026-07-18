@@ -1,6 +1,6 @@
 # SRT engineering benchmark report
 
-Generated 2026-07-18T11:57:49.777Z from the machine-readable [results](./results.json).
+Generated 2026-07-18T15:42:38.584Z from the machine-readable [results](./results.json).
 
 ## Result
 
@@ -8,12 +8,12 @@ One trusted structured fixture (11 nodes, 1 relationship, 2 annotations) was eva
 
 | Target | Structure | Relationships | Clipped | Overlaps | Annotations | Anchors | Fallbacks | Cold ms | Warm median / p95 ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| mobile | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 0 | 11.619 | 1.874 / 4.053 |
-| paperProMove | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 1 | 5.208 | 2.336 / 3.279 |
-| paperPro | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 0 | 1.814 | 1.735 / 2.902 |
-| print | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 0 | 2.504 | 2.079 / 3.093 |
+| mobile | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 0 | 4.318 | 0.554 / 1.138 |
+| paperProMove | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 1 | 2.137 | 0.650 / 1.034 |
+| paperPro | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 0 | 0.595 | 0.539 / 0.894 |
+| print | 100.0% (11/11) | 100.0% (1/1) | 0 | 0 | 100.0% (2/2) | 100.0% (2/2) | 0 | 0.861 | 0.605 / 0.905 |
 
-Browser geometry used Chromium 149.0.7827.0 at 1440 × 1200 CSS px and 1× device scale. Clipping used a 0.5 CSS px tolerance; horizontal overflow used 1 CSS px. Zero counts mean the inspected golden rendition had no detected failure, not that the renderer is universally safe.
+Browser geometry used Chromium 149.0.7827.55 at 1440 × 1200 CSS px and 1× device scale. Clipping used a 0.5 CSS px tolerance; horizontal overflow used 1 CSS px. Zero counts mean the inspected golden rendition had no detected failure, not that the renderer is universally safe.
 
 ## Representation comparison
 
@@ -27,11 +27,11 @@ The unavailable geometric baseline is deliberately left blank; this report does 
 
 ## Runtime and timing protocol
 
-- Host: linux 6.17.0-1011-oracle, arm64, Neoverse-N1, 4 logical CPUs, 23975 MiB memory.
-- Runtime: Node v22.22.3; V8 12.4.254.21-node.56.
+- Host: darwin 24.6.0, arm64, Apple M2 Max, 12 logical CPUs, 65536 MiB memory.
+- Runtime: Node v24.14.1; V8 13.6.233.17-node.44.
 - Cold: The first manifest composition for a target after evaluator module initialization; module loading and browser startup are excluded.
 - Warm: Median and p95 of repeated manifest compositions in the same process after one unmeasured warm-up composition.
-- Browser: Chromium DOM rectangles measured from the built Astro page after document fonts are ready, using the recorded CSS-pixel tolerances.
+- Browser: Chromium DOM rectangles plus rendered annotation and anchor state measured from the built Astro page after document fonts are ready, using the recorded CSS-pixel tolerances.
 
 The low-millisecond composition figures are microbenchmarks and should be read as reference-machine diagnostics, not user-visible end-to-end latency.
 

@@ -662,6 +662,13 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
                     key={annotation.id}
                     data-annotation-summary={annotation.id}
                     data-resolution-status={resolution.status}
+                    data-anchor-node-id={resolution.nodeId}
+                    data-anchor-start={
+                      resolution.status === 'resolved' ? resolution.start : ''
+                    }
+                    data-anchor-end={
+                      resolution.status === 'resolved' ? resolution.end : ''
+                    }
                     data-geometry-layout-version={cache?.layoutVersion ?? ''}
                     data-geometry-rect-count={cache?.rectangles.length ?? 0}
                   >

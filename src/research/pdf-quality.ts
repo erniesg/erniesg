@@ -2,12 +2,16 @@ import type {
   PdfCompletenessMetrics,
   PdfCompletenessPolicy,
   PdfPageAnalysis,
+  PdfPageRegion,
   PdfReadingOrderGraph,
   PdfReadiness,
   PdfSemanticSignals,
+  PdfVisualRelationship,
   ReconstructionDiagnostic,
 } from './import-types'
 import { groupRunsIntoLines } from './pdf-lines'
+import { classifyPdfNoteMarkers } from './pdf-note-classifier'
+import { reconstructPageRegions } from './pdf-regions'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 export const DEFAULT_PDF_COMPLETENESS_POLICY: PdfCompletenessPolicy = {
@@ -24,7 +28,10 @@ type QualityInput = {
   paper: ResearchPaper
   diagnostics: ReconstructionDiagnostic[]
   readingOrder?: PdfReadingOrderGraph
+  regions?: PdfPageRegion[]
+  visualRelationships?: PdfVisualRelationship[]
   policy?: PdfCompletenessPolicy
+  reclassifiedNoteReferenceCount?: number
 }
 
 function rounded(value: number) {
@@ -66,62 +73,23 @@ function pageLines(page: PdfPageAnalysis) {
   return groupRunsIntoLines(page)
 }
 
-function upperQuartile(values: number[]) {
-  if (values.length === 0) return 0
-  const ordered = [...values].sort((left, right) => left - right)
-  return ordered[Math.ceil(ordered.length * 0.75) - 1]
-}
-
-function runGap(
-  left: PdfPageAnalysis['runs'][number],
-  right: PdfPageAnalysis['runs'][number],
-) {
-  return Math.max(
-    left.x - (right.x + right.width),
-    right.x - (left.x + left.width),
-    0,
-  )
-}
-
-function renderedFootnoteMarkers(page: PdfPageAnalysis, bodyFontSize: number) {
-  if (!bodyFontSize) return 0
-  return page.runs.filter((run) => {
-    if (!/^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])$/.test(run.text.trim())) {
-      return false
-    }
-    if (run.fontSize > bodyFontSize * 0.82 || run.y > 0.88) return false
-    const center = run.y + run.height / 2
-    return page.runs.some((candidate) => {
-      if (candidate === run || !candidate.text.trim()) return false
-      const candidateCenter = candidate.y + candidate.height / 2
-      return (
-        candidate.fontSize > run.fontSize &&
-        Math.abs(center - candidateCenter) <=
-          Math.max(0.022, Math.max(run.height, candidate.height) * 1.2) &&
-        runGap(run, candidate) <= 0.03
-      )
-    })
-  }).length
-}
-
 export function detectPdfSemanticSignals(
   pages: PdfPageAnalysis[],
+  suppliedRegions?: PdfPageRegion[],
 ): PdfSemanticSignals {
+  const regions = suppliedRegions ?? reconstructPageRegions(pages).regions
+  const markerResult = classifyPdfNoteMarkers(regions)
   const signals: PdfSemanticSignals = {
     captions: 0,
     tables: 0,
     equations: 0,
-    footnoteReferences: 0,
-    footnotes: 0,
+    footnoteReferences: markerResult.classifications.filter(
+      (classification) => classification.disposition === 'note-reference',
+    ).length,
+    footnotes: markerResult.noteBodyRegionIds.length,
   }
-  let inEndnotes = false
   for (const page of pages) {
-    const bodyFontSize = upperQuartile(
-      page.runs.map((run) => run.fontSize).filter((size) => size > 0),
-    )
-    signals.footnoteReferences += renderedFootnoteMarkers(page, bodyFontSize)
     for (const line of pageLines(page)) {
-      if (/^(?:endnotes?|notes?)$/i.test(line.text.trim())) inEndnotes = true
       if (/^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(line.text)) {
         signals.captions += 1
       }
@@ -130,25 +98,6 @@ export function detectPdfSemanticSignals(
       }
       if (/(?:^|\b)(?:equation|eq\.?)\s*\(?\d+\)?/i.test(line.text)) {
         signals.equations += 1
-      }
-      signals.footnoteReferences +=
-        line.text.match(
-          /\b(?:footnote|note)\s+(?:reference|marker)\s*(?:\d{1,3}|[*†‡§])(?=\s|[.,;:)\]]|$)/gi,
-        )?.length ?? 0
-      signals.footnoteReferences +=
-        line.text.match(/\[(?:\d{1,3}|[*†‡§])\]/g)?.length ?? 0
-      const explicitFootnote = /^(?:footnote|note)\s*\d+\s*[:.-]/i.test(
-        line.text,
-      )
-      const renderedFootnote =
-        line.y >= 0.7 &&
-        line.fontSize <= bodyFontSize * 0.9 &&
-        /^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
-      const renderedEndnote =
-        inEndnotes &&
-        /^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:[.)\]]|\s)/.test(line.text)
-      if (explicitFootnote || renderedFootnote || renderedEndnote) {
-        signals.footnotes += 1
       }
     }
   }
@@ -159,20 +108,40 @@ function coverage(resolved: number, expected: number) {
   return expected === 0 ? 1 : rounded(Math.min(resolved / expected, 1))
 }
 
-function relationshipCounts(paper: ResearchPaper, signals: PdfSemanticSignals) {
+function relationshipCounts(
+  paper: ResearchPaper,
+  signals: PdfSemanticSignals,
+  visualRelationships?: PdfVisualRelationship[],
+) {
   const captions = new Set(
     paper.nodes
       .filter((node) => node.type === 'caption')
       .map((node) => node.id),
   )
-  const resolvedCaptions = new Set(
-    paper.nodes
-      .filter(
-        (node): node is Extract<ResearchNode, { type: 'figure' }> =>
-          node.type === 'figure' && captions.has(node.relationships.caption),
-      )
-      .map((node) => node.relationships.caption),
-  ).size
+  const resolvedCaptions = visualRelationships
+    ? visualRelationships.filter(
+        (relationship) =>
+          relationship.kind === 'figure' && relationship.status === 'matched',
+      ).length
+    : new Set(
+        paper.nodes
+          .filter(
+            (node): node is Extract<ResearchNode, { type: 'figure' }> =>
+              node.type === 'figure' &&
+              captions.has(node.relationships.caption),
+          )
+          .map((node) => node.relationships.caption),
+      ).size
+  const resolvedTables =
+    visualRelationships?.filter(
+      (relationship) =>
+        relationship.kind === 'table' && relationship.status === 'matched',
+    ).length ?? 0
+  const resolvedEquations =
+    visualRelationships?.filter(
+      (relationship) =>
+        relationship.kind === 'equation' && relationship.status === 'matched',
+    ).length ?? 0
   const noteIds = new Set(
     paper.nodes
       .filter((node) => node.type === 'footnote')
@@ -188,11 +157,19 @@ function relationshipCounts(paper: ResearchPaper, signals: PdfSemanticSignals) {
     resolvedNoteReferences.map((reference) => reference.target),
   )
   return {
-    expected: signals.captions + signals.footnoteReferences,
+    expected:
+      signals.captions +
+      signals.tables +
+      signals.equations +
+      signals.footnoteReferences,
     resolved:
       Math.min(resolvedCaptions, signals.captions) +
+      Math.min(resolvedTables, signals.tables) +
+      Math.min(resolvedEquations, signals.equations) +
       Math.min(resolvedNoteReferences.length, signals.footnoteReferences),
     resolvedCaptions: Math.min(resolvedCaptions, signals.captions),
+    resolvedTables: Math.min(resolvedTables, signals.tables),
+    resolvedEquations: Math.min(resolvedEquations, signals.equations),
     resolvedNoteReferences: Math.min(
       resolvedNoteReferences.length,
       signals.footnoteReferences,
@@ -214,14 +191,21 @@ export function assessPdfCompleteness({
   paper,
   diagnostics,
   readingOrder,
+  regions,
+  visualRelationships,
   policy = DEFAULT_PDF_COMPLETENESS_POLICY,
+  reclassifiedNoteReferenceCount = 0,
 }: QualityInput): {
   semanticSignals: PdfSemanticSignals
   completeness: PdfCompletenessMetrics
   diagnostics: ReconstructionDiagnostic[]
   readiness: PdfReadiness
 } {
-  const semanticSignals = detectPdfSemanticSignals(pages)
+  const semanticSignals = detectPdfSemanticSignals(pages, regions)
+  semanticSignals.footnoteReferences = Math.max(
+    semanticSignals.footnoteReferences - reclassifiedNoteReferenceCount,
+    0,
+  )
   const sourceText = normalizedText(
     pages
       .flatMap((page) => page.runs)
@@ -230,23 +214,61 @@ export function assessPdfCompleteness({
   )
   const outputText = normalizedText(paper.nodes.map(nodeText).join(' '))
   const matchedTextCharacters = matchedCharacters(sourceText, outputText)
-  const sourceAssetCount = pages.reduce(
-    (total, page) => total + page.imageCount,
-    0,
+  const nativeObjects = pages
+    .flatMap((page) => page.objects ?? [])
+    .filter((object) => object.role !== 'scan-source')
+  const sourceAssetCount =
+    pages.reduce((total, page) => {
+      const objects = page.objects ?? []
+      const semanticObjectCount = objects.filter(
+        (object) => object.role !== 'scan-source',
+      ).length
+      const provenScanSourceCount = objects.filter(
+        (object) => object.role === 'scan-source',
+      ).length
+      return (
+        total +
+        Math.max(semanticObjectCount, page.imageCount - provenScanSourceCount)
+      )
+    }, 0) +
+    semanticSignals.tables +
+    semanticSignals.equations
+  const exportedNativeObjects = nativeObjects.filter(
+    (object) => object.assetId !== null,
+  ).length
+  const exportedFallbackObjects =
+    visualRelationships
+      ?.filter(
+        (relationship) =>
+          relationship.status === 'matched' &&
+          (relationship.kind === 'table' || relationship.kind === 'equation'),
+      )
+      .reduce(
+        (total, relationship) =>
+          total +
+          Math.min(
+            relationship.sourceObjectIds.length,
+            relationship.assetIds.length,
+          ),
+        0,
+      ) ?? 0
+  const exportedAssetCount = exportedNativeObjects + exportedFallbackObjects
+  const relationships = relationshipCounts(
+    paper,
+    semanticSignals,
+    visualRelationships,
   )
-  // Figure nodes currently render placeholders only. Until the canonical model
-  // carries an exported source-image payload and identity, none of those nodes
-  // may satisfy source asset coverage.
-  const exportedAssetCount = 0
-  const relationships = relationshipCounts(paper, semanticSignals)
   const unresolvedObjects = {
     assets: Math.max(sourceAssetCount - exportedAssetCount, 0),
     captions: Math.max(
       semanticSignals.captions - relationships.resolvedCaptions,
       0,
     ),
-    tables: semanticSignals.tables,
-    equations: semanticSignals.equations,
+    tables: Math.max(semanticSignals.tables - relationships.resolvedTables, 0),
+    equations: Math.max(
+      semanticSignals.equations - relationships.resolvedEquations,
+      0,
+    ),
     footnoteReferences: Math.max(
       semanticSignals.footnoteReferences - relationships.resolvedNoteReferences,
       0,

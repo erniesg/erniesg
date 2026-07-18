@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -48,9 +48,16 @@ describe('local PDF corpus audit', () => {
     expect(result.status, result.stderr).toBe(0)
     const report = JSON.parse(result.stdout)
     expect(report).toMatchObject({
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.1.0',
       privacy: 'basenames-hashes-metrics-diagnostics-only',
-      summary: { documents: 2, ready: 1, reviewRequired: 1, failed: 0 },
+      summary: {
+        documents: 2,
+        ready: 2,
+        reviewRequired: 0,
+        failed: 0,
+        passRate: 1,
+        failureReasons: {},
+      },
     })
     expect(report.documents.map((document) => document.basename)).toEqual([
       'born-digital.pdf',
@@ -94,5 +101,61 @@ describe('local PDF corpus audit', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+  })
+
+  it('writes opt-in private overlays outside the repository without widening the report', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-corpus-overlays-'))
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          'tools/pdf-corpus-audit.mjs',
+          '--report-only',
+          '--overlay-output',
+          directory,
+          'tests/fixtures/pdf/diagnostic-overlays.pdf',
+        ],
+        { encoding: 'utf8', timeout: 120_000 },
+      )
+
+      expect(result.status, result.stderr).toBe(0)
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        privacy: 'basenames-hashes-metrics-diagnostics-only',
+        summary: { documents: 1, reviewRequired: 1 },
+      })
+      const artifacts = await readdir(directory)
+      expect(artifacts).toEqual([
+        expect.stringMatching(
+          /^diagnostic-overlays-[a-f0-9]{16}\.diagnostics\.html$/,
+        ),
+      ])
+      const html = await readFile(join(directory, artifacts[0]), 'utf8')
+      expect(html).toContain('pdf-diagnostic-overlay__svg')
+      expect(html).toContain('Candidate A · left column then right column')
+      expect(result.stdout).not.toContain(directory)
+      expect(result.stdout).not.toContain(
+        'This deliberately wide source region',
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses corpus overlay output anywhere inside the repository', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        'tools/pdf-corpus-audit.mjs',
+        '--report-only',
+        '--overlay-output',
+        '.agent/evidence/private-corpus',
+        'tests/fixtures/pdf/born-digital.pdf',
+      ],
+      { encoding: 'utf8', timeout: 120_000 },
+    )
+
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('outside the repository')
+    expect(result.stderr).not.toContain(resolve('.'))
   })
 })

@@ -13,22 +13,22 @@
     "scope": "Engineering POC evaluation of one trusted structured fixture across four target profiles.",
     "cold": "The first manifest composition for a target after evaluator module initialization; module loading and browser startup are excluded.",
     "warm": "Median and p95 of repeated manifest compositions in the same process after one unmeasured warm-up composition.",
-    "geometry": "Chromium DOM rectangles measured from the built Astro page after document fonts are ready, using the recorded CSS-pixel tolerances."
+    "geometry": "Chromium DOM rectangles plus rendered annotation and anchor state measured from the built Astro page after document fonts are ready, using the recorded CSS-pixel tolerances."
   },
   "runtime": {
-    "generatedAt": "2026-07-18T11:57:49.777Z",
-    "node": "v22.22.3",
-    "v8": "12.4.254.21-node.56",
-    "platform": "linux",
+    "generatedAt": "2026-07-18T15:42:38.584Z",
+    "node": "v24.14.1",
+    "v8": "13.6.233.17-node.44",
+    "platform": "darwin",
     "architecture": "arm64",
-    "osRelease": "6.17.0-1011-oracle",
-    "cpuModel": "Neoverse-N1",
-    "logicalCpuCount": 4,
-    "totalMemoryMiB": 23975
+    "osRelease": "24.6.0",
+    "cpuModel": "Apple M2 Max",
+    "logicalCpuCount": 12,
+    "totalMemoryMiB": 65536
   },
   "browserRuntime": {
     "browserName": "chromium",
-    "browserVersion": "149.0.7827.0",
+    "browserVersion": "149.0.7827.55",
     "viewport": {
       "width": 1440,
       "height": 1200
@@ -79,10 +79,10 @@
         "total": 0
       },
       "compositionTime": {
-        "coldMs": 11.619463,
+        "coldMs": 4.318333,
         "warmIterations": 50,
-        "warmMedianMs": 1.873597,
-        "warmP95Ms": 4.053194
+        "warmMedianMs": 0.554,
+        "warmP95Ms": 1.137959
       }
     },
     {
@@ -124,10 +124,10 @@
         "total": 1
       },
       "compositionTime": {
-        "coldMs": 5.208192,
+        "coldMs": 2.136958,
         "warmIterations": 50,
-        "warmMedianMs": 2.335636,
-        "warmP95Ms": 3.279155
+        "warmMedianMs": 0.64975,
+        "warmP95Ms": 1.033917
       }
     },
     {
@@ -169,10 +169,10 @@
         "total": 0
       },
       "compositionTime": {
-        "coldMs": 1.813998,
+        "coldMs": 0.595125,
         "warmIterations": 50,
-        "warmMedianMs": 1.735438,
-        "warmP95Ms": 2.902036
+        "warmMedianMs": 0.538875,
+        "warmP95Ms": 0.893958
       }
     },
     {
@@ -214,10 +214,10 @@
         "total": 0
       },
       "compositionTime": {
-        "coldMs": 2.503677,
+        "coldMs": 0.860709,
         "warmIterations": 50,
-        "warmMedianMs": 2.079356,
-        "warmP95Ms": 3.093156
+        "warmMedianMs": 0.605083,
+        "warmP95Ms": 0.904833
       }
     }
   ],

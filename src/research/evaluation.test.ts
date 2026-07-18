@@ -45,6 +45,8 @@ function geometry(): GeometryEvidence {
       overlaps: [],
       orphanedCaptions: [],
       horizontalOverflow: [],
+      missingAnnotations: [],
+      unstableAnchors: [],
     })),
   }
 }
@@ -105,12 +107,15 @@ describe('SRT engineering evaluation', () => {
     const evidence = geometry()
     evidence.targets[0].clippedContent.push('p-proposition-1#fragment-1')
     evidence.targets[0].overlaps.push('sec-proposition::p-proposition-1')
+    evidence.targets[0].missingAnnotations.push('highlight-reading-position')
+    evidence.targets[0].unstableAnchors.push('note-reading-position')
     evidence.targets[0].horizontalOverflow.push({
       element: 'page-1',
       amount: 4,
     })
 
-    expect(evaluate(evidence).targets[0].browserGeometry).toEqual({
+    const target = evaluate(evidence).targets[0]
+    expect(target.browserGeometry).toEqual({
       status: 'measured',
       clippedElements: 1,
       overlapPairs: 1,
@@ -119,6 +124,16 @@ describe('SRT engineering evaluation', () => {
       missingNodes: 0,
       textLosses: 0,
       invalidFragmentLineages: 0,
+    })
+    expect(target.annotationSurvival).toMatchObject({
+      preserved: 1,
+      expected: 2,
+      ratio: 0.5,
+    })
+    expect(target.anchorStability).toMatchObject({
+      stable: 0,
+      expected: 2,
+      ratio: 0,
     })
   })
 

@@ -199,12 +199,23 @@ async function writeEvaluationPackage(result, geometry) {
     'docs/research/semantic-responsive-typesetting/evaluation/adr-index.md',
     'src/research/evaluation.ts',
     'src/research/evaluation.test.ts',
+    'src/research/papers/semantic-responsive-typesetting.json',
+    'src/research/annotations.ts',
+    'src/research/canonical-hash.ts',
+    'src/research/composition.ts',
+    'src/research/export-pdf.ts',
+    'src/research/manifest.ts',
+    'src/research/pagination.ts',
+    'src/research/targets.ts',
+    'src/components/research/ResearchStudio.tsx',
+    'src/styles/global.css',
     'tools/srt/demo-evaluation.mjs',
     'tests/e2e/srt-visual.spec.ts',
     'tests/e2e/static-build.ts',
     'tests/e2e/publication-importer.spec.ts',
     'playwright.config.ts',
     'package.json',
+    'package-lock.json',
   ]
   const artifacts = []
   for (const path of artifactPaths) {

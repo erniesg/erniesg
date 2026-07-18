@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { TARGET_PROFILE_IDS } from './targets'
+import { TARGET_PROFILE_IDS, TARGET_PROFILE_VERSION } from './targets'
 
 export const targetProfileIdSchema = z.enum(TARGET_PROFILE_IDS)
 
@@ -8,6 +8,7 @@ const targetLengthUnitSchema = z.enum(['css-px', 'device-px', 'mm'])
 export const targetProfileSchema = z
   .object({
     id: targetProfileIdSchema,
+    version: z.literal(TARGET_PROFILE_VERSION),
     label: z.string().min(1),
     note: z.string().min(1),
     dimensions: z
@@ -44,6 +45,14 @@ export const targetProfileSchema = z
       .strict(),
     interactionMode: z.enum(['continuous-scroll', 'page-turn', 'print-static']),
     finiteHeight: z.boolean(),
+    pixelsPerInch: z.number().positive().nullable(),
+    epub: z
+      .object({
+        fileName: z.string().regex(/^publication-[a-z]+\.epub$/),
+        pageProgressionDirection: z.enum(['ltr', 'rtl']),
+        renditionFlow: z.enum(['paginated', 'scrolled-continuous']),
+      })
+      .strict(),
     preview: z
       .object({
         widthCssPx: z.number().positive(),
@@ -75,6 +84,26 @@ export const targetProfileSchema = z
         code: z.ZodIssueCode.custom,
         path: ['margins', 'unit'],
         message: 'Target margins and dimensions must use the same unit',
+      })
+    }
+    if (
+      (profile.dimensions.unit === 'device-px') !==
+      (profile.pixelsPerInch !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pixelsPerInch'],
+        message: 'Only device-pixel profiles declare pixels per inch',
+      })
+    }
+    if (
+      (profile.interactionMode === 'continuous-scroll') !==
+      (profile.epub.renditionFlow === 'scrolled-continuous')
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['epub', 'renditionFlow'],
+        message: 'EPUB flow must match the target interaction mode',
       })
     }
   })

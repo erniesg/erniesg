@@ -9,6 +9,10 @@ import { installStaticRoutes, jsonFixture } from './static-build'
 const PAPER_ID = 'semantic-responsive-typesetting'
 const ANCHOR_QUOTE =
   'Once meaning becomes coordinates, every new screen or sheet becomes a repair job.'
+const ANNOTATION_IDS = [
+  'highlight-reading-position',
+  'note-reading-position',
+] as const
 const GEOMETRY_EPSILON_CSS_PX = 0.5
 const OVERFLOW_EPSILON_CSS_PX = 1
 
@@ -31,6 +35,8 @@ type GeometryReport = {
   overlaps: string[]
   orphanedCaptions: string[]
   horizontalOverflow: Array<{ element: string; amount: number }>
+  missingAnnotations: string[]
+  unstableAnchors: string[]
 }
 
 type GeometryEvidence = {
@@ -57,6 +63,58 @@ async function expectStudioHydrated(page: Page) {
       Number(await annotation.getAttribute('data-geometry-rect-count')),
     )
     .toBeGreaterThan(0)
+}
+
+async function inspectAnnotations(page: Page, anchorStart: number) {
+  return page.evaluate(
+    ({ annotationIds, anchorNodeId, anchorQuote, anchorStart }) => {
+      const normalize = (value: string) => value.replace(/\s+/g, ' ').trim()
+      const rendition = document.querySelector<HTMLElement>('.srt-paper')
+      const layoutVersion = rendition?.dataset.layoutVersion ?? ''
+      const missingAnnotations: string[] = []
+      const unstableAnchors: string[] = []
+
+      for (const id of annotationIds) {
+        const summary = document.querySelector<HTMLElement>(
+          `[data-annotation-summary="${id}"]`,
+        )
+        const marks = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            `[data-annotation-id="${id}"]`,
+          ),
+        )
+        const renderedText = normalize(
+          marks.map((element) => element.textContent ?? '').join(' '),
+        )
+        if (
+          !summary ||
+          summary.dataset.resolutionStatus !== 'resolved' ||
+          Number(summary.dataset.geometryRectCount ?? 0) < 1 ||
+          marks.length === 0
+        ) {
+          missingAnnotations.push(id)
+          continue
+        }
+        if (
+          renderedText !== anchorQuote ||
+          summary.dataset.anchorNodeId !== anchorNodeId ||
+          Number(summary.dataset.anchorStart) !== anchorStart ||
+          Number(summary.dataset.anchorEnd) !==
+            anchorStart + anchorQuote.length ||
+          summary.dataset.geometryLayoutVersion !== layoutVersion
+        ) {
+          unstableAnchors.push(id)
+        }
+      }
+      return { missingAnnotations, unstableAnchors }
+    },
+    {
+      annotationIds: ANNOTATION_IDS,
+      anchorNodeId: 'p-proposition-1',
+      anchorQuote: ANCHOR_QUOTE,
+      anchorStart,
+    },
+  )
 }
 
 test.beforeEach(async ({ page }) => installStaticRoutes(page))
@@ -262,6 +320,8 @@ async function inspectGeometry(
         horizontalOverflow: overflowCandidates.filter(
           ({ amount }) => amount > options.overflowEpsilon,
         ),
+        missingAnnotations: [],
+        unstableAnchors: [],
       }
     },
     {
@@ -293,6 +353,9 @@ test('captures every paginated target and rejects invalid geometry', async ({
     }>
   }>(request, `/research/${PAPER_ID}/manifest.json`)
   const reports: GeometryReport[] = []
+  const anchorNode = source.nodes.find((node) => node.id === 'p-proposition-1')
+  const anchorStart = anchorNode?.text?.indexOf(ANCHOR_QUOTE) ?? -1
+  expect(anchorStart).toBeGreaterThanOrEqual(0)
 
   for (const target of TARGET_PROFILE_IDS) {
     await page.goto(`/research/${PAPER_ID}`)
@@ -309,6 +372,7 @@ test('captures every paginated target and rejects invalid geometry', async ({
     await expect(paper).toBeVisible()
 
     const report = await inspectGeometry(paper, source.nodes)
+    Object.assign(report, await inspectAnnotations(page, anchorStart))
     const renditionManifest = manifest.renditions.find(
       (rendition) => rendition.target === target,
     )
@@ -329,6 +393,12 @@ test('captures every paginated target and rejects invalid geometry', async ({
       .toEqual([])
     expect
       .soft(report.horizontalOverflow, `${target}: horizontal overflow`)
+      .toEqual([])
+    expect
+      .soft(report.missingAnnotations, `${target}: missing annotations`)
+      .toEqual([])
+    expect
+      .soft(report.unstableAnchors, `${target}: unstable anchors`)
       .toEqual([])
     expect
       .soft(report.paper.width, `${target}: rendition width`)

@@ -1,5 +1,6 @@
 import { resolveTextAnchor, type TextAnnotation } from './annotations'
-import { canonicalNodeContentHash, type ResearchPaper } from './schema'
+import { canonicalNodeContentHash } from './canonical-hash'
+import type { ResearchPaper } from './schema'
 import { TARGET_PROFILE_IDS, type TargetProfileId } from './targets'
 import { validateLayoutManifest, type LayoutManifest } from './manifest'
 
@@ -14,6 +15,8 @@ export type GeometryTargetReport = {
   overlaps: string[]
   orphanedCaptions: string[]
   horizontalOverflow: Array<{ element: string; amount: number }>
+  missingAnnotations: string[]
+  unstableAnchors: string[]
 }
 
 export type GeometryEvidence = {
@@ -136,11 +139,35 @@ function ratio(preserved: number, expected: number) {
   return expected === 0 ? 1 : preserved / expected
 }
 
+function checkedAnnotationFailures(
+  target: string,
+  kind: string,
+  ids: readonly string[],
+  expectedIds: ReadonlySet<string>,
+) {
+  if (
+    !Array.isArray(ids) ||
+    new Set(ids).size !== ids.length ||
+    ids.some((id) => !expectedIds.has(id))
+  ) {
+    throw new Error(
+      `Geometry evidence for ${target} contains invalid ${kind} annotation identifiers`,
+    )
+  }
+  return new Set(ids)
+}
+
 export function evaluateSrt(input: EvaluationInput) {
   const manifest = validateLayoutManifest(input.manifest, input.paper)
   const expectedEdges = relationshipEdgesForPaper(input.paper)
   const expectedEdgeKeys = new Set(expectedEdges.map(edgeKey))
   const expectedNodeIds = new Set(input.paper.nodes.map((node) => node.id))
+  const expectedAnnotationIds = new Set(
+    input.annotations.map((annotation) => annotation.id),
+  )
+  if (expectedAnnotationIds.size !== input.annotations.length) {
+    throw new Error('Evaluation annotations must have unique identifiers')
+  }
   const geometryByTarget = new Map(
     input.geometry.targets.map((report) => [report.target, report]),
   )
@@ -177,16 +204,37 @@ export function evaluateSrt(input: EvaluationInput) {
     const preservedEdges = [...expectedEdgeKeys].filter((edge) =>
       actualEdgeKeys.has(edge),
     ).length
+    const geometry = geometryByTarget.get(target)
+    if (!geometry) {
+      throw new Error(`Geometry evidence omitted ${target}`)
+    }
     const resolutions = input.annotations.map((annotation) =>
       resolveTextAnchor(annotation.target, input.paper.nodes),
     )
+    const missingAnnotations = checkedAnnotationFailures(
+      target,
+      'missing',
+      geometry.missingAnnotations,
+      expectedAnnotationIds,
+    )
+    const unstableAnchors = checkedAnnotationFailures(
+      target,
+      'unstable',
+      geometry.unstableAnchors,
+      expectedAnnotationIds,
+    )
     const survivingAnnotations = resolutions.filter(
-      (resolution) => resolution.status === 'resolved',
+      (resolution, index) =>
+        resolution.status === 'resolved' &&
+        entriesById.has(resolution.nodeId) &&
+        !missingAnnotations.has(input.annotations[index].id),
     ).length
     const stableAnchors = resolutions.filter((resolution, index) => {
       const annotation = input.annotations[index]
       return (
         resolution.status === 'resolved' &&
+        !missingAnnotations.has(annotation.id) &&
+        !unstableAnchors.has(annotation.id) &&
         resolution.nodeId === annotation.target.nodeId &&
         resolution.start === annotation.target.position.start &&
         resolution.end === annotation.target.position.end &&
@@ -194,11 +242,6 @@ export function evaluateSrt(input: EvaluationInput) {
         entriesById.has(resolution.nodeId)
       )
     }).length
-    const geometry = geometryByTarget.get(target)
-    if (!geometry) {
-      throw new Error(`Geometry evidence omitted ${target}`)
-    }
-
     return {
       target,
       structuralCoverage: {
@@ -263,7 +306,7 @@ export function evaluateSrt(input: EvaluationInput) {
       cold: 'The first manifest composition for a target after evaluator module initialization; module loading and browser startup are excluded.',
       warm: 'Median and p95 of repeated manifest compositions in the same process after one unmeasured warm-up composition.',
       geometry:
-        'Chromium DOM rectangles measured from the built Astro page after document fonts are ready, using the recorded CSS-pixel tolerances.',
+        'Chromium DOM rectangles plus rendered annotation and anchor state measured from the built Astro page after document fonts are ready, using the recorded CSS-pixel tolerances.',
     },
     runtime: input.runtime,
     browserRuntime: input.geometry.runtime,

@@ -15,7 +15,7 @@ scripts/agent-evidence --all
 git diff --check
 ```
 
-`npm run srt:evaluate` is the demo script. It builds the staging research pages, runs the existing deterministic Playwright visual test against that static output without a network server, captures browser geometry for all four targets, composes each target in a fresh evaluator module, repeats each warm timing 50 times, builds the same-source fixed PDF, and prints JSON. `--write` regenerates the checked-in report package. The normal `npm run test:e2e` development-server mode is unchanged.
+`npm run srt:evaluate` is the demo script. It builds the staging research pages, runs the existing deterministic Playwright visual test against that static output without a network server, captures browser geometry and annotation/anchor outcomes for all four targets, composes each target in the same evaluator process, repeats each warm timing 50 times, builds the same-source fixed PDF, and prints JSON. `--write` regenerates the checked-in report package. The normal `npm run test:e2e` development-server mode is unchanged.
 
 To reuse an existing geometry report without relaunching Chromium:
 

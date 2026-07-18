@@ -1,9 +1,10 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import {
   getTargetProfile,
   TARGET_PROFILE_IDS,
 } from '../../src/research/targets'
+import { installStaticRoutes, jsonFixture } from './static-build'
 
 const PAPER_ID = 'semantic-responsive-typesetting'
 const ANCHOR_QUOTE =
@@ -31,6 +32,34 @@ type GeometryReport = {
   orphanedCaptions: string[]
   horizontalOverflow: Array<{ element: string; amount: number }>
 }
+
+type GeometryEvidence = {
+  schemaVersion: '1.0.0'
+  runtime: {
+    browserName: 'chromium'
+    browserVersion: string
+    viewport: { width: number; height: number }
+    deviceScaleFactor: number
+  }
+  tolerances: {
+    geometryCssPx: number
+    overflowCssPx: number
+  }
+  targets: GeometryReport[]
+}
+
+async function expectStudioHydrated(page: Page) {
+  const annotation = page.locator(
+    '[data-annotation-summary="highlight-reading-position"]',
+  )
+  await expect
+    .poll(async () =>
+      Number(await annotation.getAttribute('data-geometry-rect-count')),
+    )
+    .toBeGreaterThan(0)
+}
+
+test.beforeEach(async ({ page }) => installStaticRoutes(page))
 
 async function inspectGeometry(
   paper: Locator,
@@ -244,17 +273,15 @@ async function inspectGeometry(
 }
 
 test('captures every paginated target and rejects invalid geometry', async ({
+  browser,
   page,
   request,
 }, testInfo) => {
-  const sourceResponse = await request.get(`/research/${PAPER_ID}/source.json`)
-  expect(sourceResponse.ok()).toBe(true)
-  const source = (await sourceResponse.json()) as { nodes: SourceNode[] }
-  const manifestResponse = await request.get(
-    `/research/${PAPER_ID}/manifest.json`,
+  const source = await jsonFixture<{ nodes: SourceNode[] }>(
+    request,
+    `/research/${PAPER_ID}/source.json`,
   )
-  expect(manifestResponse.ok()).toBe(true)
-  const manifest = (await manifestResponse.json()) as {
+  const manifest = await jsonFixture<{
     renditions: Array<{
       target: string
       pagination: {
@@ -264,14 +291,12 @@ test('captures every paginated target and rejects invalid geometry', async ({
       }
       entries: Array<{ violations: unknown[] }>
     }>
-  }
+  }>(request, `/research/${PAPER_ID}/manifest.json`)
   const reports: GeometryReport[] = []
 
   for (const target of TARGET_PROFILE_IDS) {
     await page.goto(`/research/${PAPER_ID}`)
-    await expect(
-      page.locator('astro-island[component-url$="ResearchStudio.tsx"]'),
-    ).toHaveAttribute('client-render-time', /.+/)
+    await expectStudioHydrated(page)
     await page.locator('html').evaluate((element) => {
       element.classList.add('disable-transitions')
     })
@@ -345,8 +370,26 @@ test('captures every paginated target and rejects invalid geometry', async ({
     })
   }
 
+  const evidence: GeometryEvidence = {
+    schemaVersion: '1.0.0',
+    runtime: {
+      browserName: 'chromium',
+      browserVersion: browser.version(),
+      viewport: { width: 1440, height: 1200 },
+      deviceScaleFactor: 1,
+    },
+    tolerances: {
+      geometryCssPx: GEOMETRY_EPSILON_CSS_PX,
+      overflowCssPx: OVERFLOW_EPSILON_CSS_PX,
+    },
+    targets: reports,
+  }
+  const serializedEvidence = `${JSON.stringify(evidence, null, 2)}\n`
   const reportPath = testInfo.outputPath('geometry-report.json')
-  await writeFile(reportPath, `${JSON.stringify(reports, null, 2)}\n`)
+  await writeFile(reportPath, serializedEvidence)
+  if (process.env.SRT_GEOMETRY_REPORT) {
+    await writeFile(process.env.SRT_GEOMETRY_REPORT, serializedEvidence)
+  }
   await testInfo.attach('geometry-report', {
     path: reportPath,
     contentType: 'application/json',
@@ -357,9 +400,7 @@ test('keeps the semantic sentence and annotations through target, width, and fon
   page,
 }, testInfo) => {
   await page.goto(`/research/${PAPER_ID}`)
-  await expect(
-    page.locator('astro-island[component-url$="ResearchStudio.tsx"]'),
-  ).toHaveAttribute('client-render-time', /.+/)
+  await expectStudioHydrated(page)
   await page.locator('html').evaluate((element) => {
     element.classList.add('disable-transitions')
   })

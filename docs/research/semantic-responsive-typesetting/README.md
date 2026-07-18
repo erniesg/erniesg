@@ -15,3 +15,7 @@ The literature review is a targeted scoping review completed on 12 July 2026, no
 ## Product/research distinction
 
 The scholarly-paper/e-ink workflow is the proof-of-concept domain. The broader product thesis is Semantic Responsive Typesetting: structured components retain semantic identity and relationships while target-specific geometry, flow, and pagination are computed as renditions.
+
+## Engineering evaluation
+
+The reproducible POC benchmark, machine-readable results, limitations log, ADR index, evidence inventory, and demo instructions are in [`evaluation/`](./evaluation/README.md).

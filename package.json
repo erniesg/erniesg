@@ -18,6 +18,7 @@
     "build:staging": "PUBLIC_RESEARCH_RELEASE=staging npm run build:astro",
     "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "preview": "astro preview",
+    "srt:evaluate": "node tools/srt/demo-evaluation.mjs",
     "pdf:corpus-audit": "node tools/pdf-corpus-audit.mjs",
     "worker:build": "npm run build:production",
     "worker:deploy:preview": "npm run build:staging && wrangler deploy --config wrangler.jsonc --message \"Deploy ernie.sg Workers preview\"",

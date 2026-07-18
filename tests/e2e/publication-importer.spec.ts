@@ -1,9 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
 import path from 'node:path'
+import { installStaticRoutes } from './static-build'
 
 const fixture = (name: string) => path.resolve('tests', 'fixtures', 'pdf', name)
 
 test.describe.configure({ timeout: 60_000 })
+test.beforeEach(async ({ page }) => installStaticRoutes(page))
 
 async function uploadFixture(page: Page, name: string) {
   await expect(async () => {

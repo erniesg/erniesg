@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test'
 import path from 'node:path'
 
 const evidenceRoot = process.env.AGENT_EVIDENCE_DIR ?? '.agent/evidence'
+const staticBuildDirectory = process.env.SRT_STATIC_BUILD_DIR
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -13,7 +14,10 @@ export default defineConfig({
   reporter: [['line']],
   updateSnapshots: 'none',
   use: {
-    baseURL: 'http://127.0.0.1:1234',
+    ...(staticBuildDirectory ? { channel: 'chromium' as const } : {}),
+    baseURL: staticBuildDirectory
+      ? 'https://srt-evaluation.test'
+      : 'http://127.0.0.1:1234',
     browserName: 'chromium',
     colorScheme: 'light',
     deviceScaleFactor: 1,
@@ -23,12 +27,14 @@ export default defineConfig({
     trace: 'retain-on-failure',
     viewport: { width: 1440, height: 1200 },
   },
-  webServer: {
-    command: 'ASTRO_DEV_BACKGROUND=0 npm run dev -- --host 127.0.0.1',
-    url: 'http://127.0.0.1:1234/research',
-    reuseExistingServer: false,
-    timeout: 120_000,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  },
+  webServer: staticBuildDirectory
+    ? undefined
+    : {
+        command: 'ASTRO_DEV_BACKGROUND=0 npm run dev -- --host 127.0.0.1',
+        url: 'http://127.0.0.1:1234/research',
+        reuseExistingServer: false,
+        timeout: 120_000,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
 })

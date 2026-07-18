@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.0.0.json",
+  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.1.0.json",
   "title": "Local PDF corpus audit report",
   "type": "object",
   "additionalProperties": false,
@@ -13,7 +13,7 @@
     "documents"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
+    "schemaVersion": { "const": "1.1.0" },
     "reportSchema": {
       "const": "docs/schemas/pdf-corpus-audit.schema.json"
     },
@@ -22,12 +22,24 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["documents", "ready", "reviewRequired", "failed"],
+      "required": [
+        "documents",
+        "ready",
+        "reviewRequired",
+        "failed",
+        "passRate",
+        "failureReasons"
+      ],
       "properties": {
         "documents": { "type": "integer", "minimum": 0 },
         "ready": { "type": "integer", "minimum": 0 },
         "reviewRequired": { "type": "integer", "minimum": 0 },
-        "failed": { "type": "integer", "minimum": 0 }
+        "failed": { "type": "integer", "minimum": 0 },
+        "passRate": { "$ref": "#/$defs/ratio" },
+        "failureReasons": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        }
       }
     },
     "documents": {
@@ -211,6 +223,50 @@
         "diagnostics": {
           "type": "array",
           "items": { "$ref": "#/$defs/diagnostic" }
+        },
+        "exports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/export" }
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "basename",
+        "byteLength",
+        "sha256",
+        "structuralValidation",
+        "epubCheck"
+      ],
+      "properties": {
+        "target": { "enum": ["mobile", "paperProMove", "paperPro", "print"] },
+        "basename": {
+          "type": "string",
+          "pattern": "^publication-[a-z]+\\.epub$"
+        },
+        "byteLength": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "structuralValidation": { "const": "passed" },
+        "epubCheck": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["passed", "skipped"] },
+            "reason": { "enum": ["java-unavailable", "epubcheck-unavailable"] }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "status": { "const": "skipped" } },
+                "required": ["status"]
+              },
+              "then": { "required": ["reason"] }
+            }
+          ]
         }
       }
     },

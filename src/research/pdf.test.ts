@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8 } from 'fflate'
 import { readFile } from 'node:fs/promises'
 import { buildEpub, inspectEpub } from './epub'
+import { buildLayoutManifest, validateLayoutManifest } from './manifest'
 import { reconstructPdf } from './pdf'
+import { getTargetProfile, TARGET_PROFILE_IDS } from './targets'
 import {
   fixtureFile,
   oversizedPdfFixture,
@@ -41,6 +43,28 @@ describe('PDF.js browser ingestion', () => {
     })
     expect(result.readiness).toMatchObject({ ready: true, status: 'ready' })
 
+    const layout = buildLayoutManifest(result.paper)
+    expect(layout.renditions.map(({ target }) => target)).toEqual(
+      TARGET_PROFILE_IDS,
+    )
+    expect(() => validateLayoutManifest(layout, result.paper)).not.toThrow()
+    for (const rendition of layout.renditions) {
+      expect(rendition.entries.map(({ canonicalId }) => canonicalId)).toEqual(
+        result.paper.nodes.map(({ id }) => id),
+      )
+      expect(
+        rendition.entries.every(
+          (entry) =>
+            entry.representation.kind === 'whole' ||
+            entry.representation.fragments.every(
+              (fragment) => fragment.lineage.canonicalId === entry.canonicalId,
+            ),
+        ),
+      ).toBe(true)
+      expect(rendition.policy.decisions.length).toBeGreaterThan(0)
+      expect(rendition.pagination.violations).toEqual(expect.any(Array))
+    }
+
     const epub = await buildEpub(result.paper, result)
     const { files } = inspectEpub(epub.bytes)
     expect(epub.fileName).toMatch(/\.epub$/)
@@ -54,25 +78,54 @@ describe('PDF.js browser ingestion', () => {
     })
   })
 
-  it('fails closed when scientific objects and relationships are unresolved', async () => {
+  it('reconstructs scientific objects with inspectable assets and relationships', async () => {
     const result = await reconstructPdf(
       await fixtureFile('structured-scientific.pdf'),
     )
 
     expect(result.pages[0].imageCount).toBeGreaterThan(0)
-    expect(result.pages[0].objects).toEqual([
-      expect.objectContaining({
-        id: 'image-p001-001',
-        kind: 'image',
-        box: expect.objectContaining({
-          method: 'pdf-object',
-          x: expect.closeTo(220 / 612, 4),
-          y: expect.closeTo(222 / 792, 4),
-          width: expect.closeTo(170 / 612, 4),
-          height: expect.closeTo(110 / 792, 4),
+    expect(result.pages[0].objects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'image-p001-001',
+          kind: 'image',
+          assetId: expect.stringMatching(/^asset-[a-f0-9]{24}$/),
+          box: expect.objectContaining({
+            method: 'pdf-object',
+            x: expect.closeTo(220 / 612, 4),
+            y: expect.closeTo(222 / 792, 4),
+            width: expect.closeTo(170 / 612, 4),
+            height: expect.closeTo(110 / 792, 4),
+          }),
         }),
-      }),
-    ])
+        expect.objectContaining({
+          id: 'image-p001-002',
+          kind: 'image',
+          assetId: expect.stringMatching(/^asset-[a-f0-9]{24}$/),
+        }),
+        expect.objectContaining({
+          id: 'vector-p001-001',
+          kind: 'vector',
+          assetId: expect.stringMatching(/^asset-[a-f0-9]{24}$/),
+        }),
+      ]),
+    )
+    expect(result.pages[0].assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'raster',
+          mediaType: 'image/png',
+          rendition: 'source-preserved',
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+        expect.objectContaining({
+          kind: 'vector',
+          mediaType: 'image/svg+xml',
+          rendition: 'source-preserved',
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      ]),
+    )
     expect(result.regions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'caption' }),
@@ -88,6 +141,48 @@ describe('PDF.js browser ingestion', () => {
     expect(result.noteRelationships).toEqual([
       expect.objectContaining({ status: 'matched', targetNoteId: 'fn-p001-1' }),
     ])
+    expect(result.visualRelationships).toEqual([
+      expect.objectContaining({
+        kind: 'figure',
+        label: 'Figure 1',
+        status: 'matched',
+        assetIds: expect.arrayContaining([
+          expect.stringMatching(/^asset-[a-f0-9]{24}$/),
+        ]),
+        sourceObjectIds: ['image-p001-001', 'image-p001-002'],
+        altTextSource: 'caption',
+      }),
+      expect.objectContaining({
+        kind: 'figure',
+        label: 'Figure 2',
+        status: 'matched',
+        sourceObjectIds: ['vector-p001-001'],
+      }),
+      expect.objectContaining({
+        kind: 'table',
+        label: 'Table 1',
+        status: 'matched',
+      }),
+      expect.objectContaining({
+        kind: 'equation',
+        label: 'Equation 1',
+        status: 'matched',
+      }),
+    ])
+    expect(result.assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'raster' }),
+        expect.objectContaining({ kind: 'vector' }),
+        expect.objectContaining({
+          kind: 'table',
+          rendition: 'semantic-table',
+        }),
+        expect.objectContaining({
+          kind: 'equation',
+          rendition: 'bounded-svg-fallback',
+        }),
+      ]),
+    )
     expect(result.paper.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -95,10 +190,20 @@ describe('PDF.js browser ingestion', () => {
           type: 'footnote',
           label: '1',
         }),
+        expect.objectContaining({
+          type: 'figure',
+          objectType: 'table',
+          relationships: expect.objectContaining({
+            caption: expect.stringMatching(/^caption-/),
+            assets: expect.arrayContaining([
+              expect.stringMatching(/^asset-[a-f0-9]{24}$/),
+            ]),
+          }),
+        }),
       ]),
     )
     expect(result.semanticSignals).toEqual({
-      captions: 1,
+      captions: 2,
       tables: 1,
       equations: 1,
       footnoteReferences: 1,
@@ -106,38 +211,87 @@ describe('PDF.js browser ingestion', () => {
     })
     expect(result.completeness).toMatchObject({
       textCoverage: 1,
-      sourceAssetCount: 1,
-      exportedAssetCount: 0,
-      assetCoverage: 0,
-      expectedRelationshipCount: 2,
-      resolvedRelationshipCount: 1,
-      relationshipCoverage: 0.5,
+      sourceAssetCount: 5,
+      exportedAssetCount: 5,
+      assetCoverage: 1,
+      expectedRelationshipCount: 5,
+      resolvedRelationshipCount: 5,
+      relationshipCoverage: 1,
       readingOrderDiagnostics: 0,
     })
-    expect(result.completeness.unresolvedObjectCount).toBeGreaterThan(0)
+    expect(result.completeness.unresolvedObjectCount).toBe(0)
     expect(result.readiness).toMatchObject({
-      ready: false,
-      status: 'review-required',
+      ready: true,
+      status: 'ready',
     })
-    expect(result.diagnostics).toEqual(
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ severity: 'error' })]),
+    )
+
+    const epub = await buildEpub(result.paper, result)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    const opf = strFromU8(files['EPUB/package.opf'])
+    const exportManifest = JSON.parse(strFromU8(files['EPUB/export.json']))
+    for (const visualAsset of result.assets) {
+      expect(files[`EPUB/${visualAsset.href}`]).toEqual(visualAsset.bytes)
+      expect(opf).toContain(`href="${visualAsset.href}"`)
+    }
+    const firstPanelAsset = result.assets.find(
+      (visualAsset) =>
+        visualAsset.id === result.visualRelationships[0].assetIds[0],
+    )!
+    expect(content.split(firstPanelAsset.href)).toHaveLength(3)
+    expect(content).toContain('<object')
+    expect(content).toContain('alt="Figure 1.')
+    expect(content).not.toMatch(/figure-placeholder|placeholder only/i)
+    expect(exportManifest.assets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'INCOMPLETE_ASSET_COVERAGE',
-          severity: 'error',
-        }),
-        expect.objectContaining({
-          code: 'INCOMPLETE_RELATIONSHIP_COVERAGE',
-          severity: 'error',
-        }),
-        expect.objectContaining({
-          code: 'UNRESOLVED_SEMANTIC_OBJECTS',
-          severity: 'error',
+          id: expect.stringMatching(/^asset-/),
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          sourceBoxes: expect.any(Array),
         }),
       ]),
     )
-    await expect(buildEpub(result.paper, result)).rejects.toMatchObject({
-      code: 'INCOMPLETE_RECONSTRUCTION',
-    })
+    expect(exportManifest.assets[0]).not.toHaveProperty('bytes')
+    expect(exportManifest.visualRelationships).toEqual(
+      result.visualRelationships,
+    )
+
+    const moveProfile = getTargetProfile('paperProMove')
+    const deviceEpub = await buildEpub(result.paper, result, moveProfile)
+    const deviceInspection = inspectEpub(deviceEpub.bytes, moveProfile)
+    const deviceManifest = deviceInspection.manifest as {
+      assets: Array<{
+        width: number
+        sourceAssetId: string
+        policy: {
+          sourceWidth: number
+          packagedWidth: number
+          maximumWidth: number
+          targetPixelsPerInch: number
+          neverUpscaled: boolean
+        }
+      }>
+    }
+    expect(deviceEpub.fileName).toBe('publication-papermove.epub')
+    expect(deviceManifest.assets).not.toHaveLength(0)
+    for (const asset of deviceManifest.assets) {
+      expect(asset.policy).toMatchObject({
+        sourceWidth: expect.any(Number),
+        packagedWidth: asset.width,
+        maximumWidth:
+          moveProfile.dimensions.width -
+          moveProfile.margins.left -
+          moveProfile.margins.right,
+        targetPixelsPerInch: moveProfile.pixelsPerInch,
+        neverUpscaled: true,
+      })
+      expect(asset.policy.packagedWidth).toBeLessThanOrEqual(
+        asset.policy.sourceWidth,
+      )
+    }
   })
 
   it('classifies scanned, mixed, and two-page scanned fixtures', async () => {
@@ -223,5 +377,5 @@ describe('PDF.js browser ingestion', () => {
     expect(result.source.pageCount).toBeGreaterThan(1)
     expect(result.completeness.sourceTextCharacters).toBeGreaterThan(0)
     expect(['ready', 'review-required']).toContain(result.readiness.status)
-  })
+  }, 15_000)
 })

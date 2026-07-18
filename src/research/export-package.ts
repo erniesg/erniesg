@@ -6,7 +6,12 @@ import {
   textAnnotationSchema,
   type TextAnnotation,
 } from './annotations'
-import { buildEpub, inspectEpub, renderPublicationXhtml } from './epub'
+import {
+  buildEpub,
+  inspectEpub,
+  renderPublicationXhtml,
+  type EpubExport,
+} from './epub'
 import {
   buildPaginatedPdf,
   inspectPaginatedPdf,
@@ -28,7 +33,12 @@ import {
   researchPaperSchema,
   type ResearchPaper,
 } from './schema'
-import { TARGET_PROFILE_IDS } from './targets'
+import {
+  getTargetProfile,
+  TARGET_PROFILE_IDS,
+  type TargetProfile,
+  type TargetProfileId,
+} from './targets'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -39,6 +49,8 @@ const PAYLOAD_PATHS = [
   'annotations.json',
   'reflowable.html',
   'publication.epub',
+  'publication-paperpro.epub',
+  'publication-papermove.epub',
   'print.pdf',
 ] as const
 
@@ -74,7 +86,7 @@ export class ExportVerificationError extends Error {
 
 const exportManifestSchema = z
   .object({
-    schemaVersion: z.literal('1.0.0'),
+    schemaVersion: z.literal('1.1.0'),
     document: z
       .object({
         id: z.string().min(1),
@@ -87,6 +99,30 @@ const exportManifestSchema = z
         targets: z.array(z.enum(TARGET_PROFILE_IDS)),
         overrideDigest: z.string().regex(/^[a-f0-9]{64}$/),
         overrides: z.array(z.unknown()),
+        deviceEpubs: z.array(
+          z
+            .object({
+              artifact: z.enum([
+                'publication-paperpro.epub',
+                'publication-papermove.epub',
+              ]),
+              profileId: z.enum(['paperPro', 'paperProMove']),
+              profileVersion: z.string().min(1),
+              compositionPolicy: z
+                .object({
+                  id: z.string().min(1),
+                  version: z.string().min(1),
+                })
+                .passthrough(),
+              exportPolicy: z
+                .object({
+                  id: z.literal('profile-tuned-reflowable'),
+                  version: z.string().min(1),
+                })
+                .strict(),
+            })
+            .strict(),
+        ),
       })
       .strict(),
     determinism: z
@@ -137,6 +173,26 @@ function fail(code: string, message: string): never {
 
 function sameValue(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+const DEVICE_EPUB_TARGETS = [
+  'paperPro',
+  'paperProMove',
+] as const satisfies readonly TargetProfileId[]
+
+function deviceEpubMetadata(epub: EpubExport) {
+  if (!epub.profile) {
+    throw new Error(`${epub.fileName} is missing target-profile metadata`)
+  }
+  return {
+    artifact: epub.fileName as
+      | 'publication-paperpro.epub'
+      | 'publication-papermove.epub',
+    profileId: epub.profile.id as 'paperPro' | 'paperProMove',
+    profileVersion: epub.profile.version,
+    compositionPolicy: epub.profile.compositionPolicy,
+    exportPolicy: epub.profile.exportPolicy,
+  }
 }
 
 function canonicalIdsFromXhtml(value: string) {
@@ -273,7 +329,12 @@ export async function buildExportPackage(
   const overrides = validateTargetOverrides(overrideInput, paper)
   const layout = buildLayoutManifest(paper, TARGET_PROFILE_IDS, overrides)
   const xhtml = renderPublicationXhtml(paper, { embedStyles: true })
-  const epub = await buildEpub(paper)
+  const [epub, ...deviceEpubs] = await Promise.all([
+    buildEpub(paper),
+    ...DEVICE_EPUB_TARGETS.map((target) =>
+      buildEpub(paper, getTargetProfile(target)),
+    ),
+  ])
   const pdf = buildPaginatedPdf(paper, layout)
   const payloads: ExportFile[] = [
     file('source.json', 'application/json', jsonBytes(paper)),
@@ -285,10 +346,17 @@ export async function buildExportPackage(
     file('annotations.json', 'application/json', jsonBytes(annotations)),
     file('reflowable.html', 'text/html; charset=utf-8', encoder.encode(xhtml)),
     file('publication.epub', epub.mediaType, epub.bytes),
+    ...deviceEpubs.map((deviceEpub) =>
+      file(
+        deviceEpub.fileName as ExportPackagePath,
+        deviceEpub.mediaType,
+        deviceEpub.bytes,
+      ),
+    ),
     file('print.pdf', pdf.mediaType, pdf.bytes),
   ]
   const exportManifest = exportManifestSchema.parse({
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     document: {
       id: paper.id,
       version: paper.version,
@@ -298,6 +366,7 @@ export async function buildExportPackage(
       targets: TARGET_PROFILE_IDS,
       overrideDigest: targetOverrideDigest(overrides),
       overrides,
+      deviceEpubs: deviceEpubs.map(deviceEpubMetadata),
     },
     determinism: {
       guarantee:
@@ -314,6 +383,7 @@ export async function buildExportPackage(
         'stable-identities',
         'complete-content',
         'relationships',
+        'device-epubs',
         'annotation-targets',
         'paginated-pdf',
         'checksums',
@@ -465,26 +535,76 @@ export async function verifyExportPackage(
   verifyXhtmlContent(html, paper, 'HTML')
   verifyXhtmlRelationships(html, paper, 'HTML')
 
-  let epubContent: string
-  try {
-    const epub = inspectEpub(
-      getExportFile(exportPackage, 'publication.epub').bytes,
-    )
-    epubContent = strFromU8(epub.files['EPUB/content.xhtml'])
-  } catch (error) {
-    fail(
-      'EPUB_INVALID',
-      error instanceof Error ? error.message : 'EPUB is invalid',
-    )
+  const deviceConfigurations: Array<{
+    artifact: 'publication-paperpro.epub' | 'publication-papermove.epub'
+    profileId: 'paperPro' | 'paperProMove'
+    profileVersion: string
+    compositionPolicy: unknown
+    exportPolicy: unknown
+  }> = []
+  const epubArtifacts: Array<{
+    path:
+      | 'publication.epub'
+      | 'publication-paperpro.epub'
+      | 'publication-papermove.epub'
+    profile?: TargetProfile
+  }> = [
+    { path: 'publication.epub' },
+    ...DEVICE_EPUB_TARGETS.map((target) => ({
+      path: getTargetProfile(target).epub.fileName as
+        | 'publication-paperpro.epub'
+        | 'publication-papermove.epub',
+      profile: getTargetProfile(target),
+    })),
+  ]
+  for (const artifact of epubArtifacts) {
+    let epubContent: string
+    try {
+      const epub = inspectEpub(
+        getExportFile(exportPackage, artifact.path).bytes,
+        artifact.profile,
+      )
+      epubContent = strFromU8(epub.files['EPUB/content.xhtml'])
+      if (artifact.profile) {
+        const embedded = epub.manifest as {
+          profile?: {
+            id: 'paperPro' | 'paperProMove'
+            version: string
+            compositionPolicy: unknown
+            exportPolicy: unknown
+          }
+        }
+        if (!embedded.profile) {
+          fail(
+            'EPUB_PROFILE_MISSING',
+            `${artifact.path} has no embedded target profile`,
+          )
+        }
+        deviceConfigurations.push({
+          artifact: artifact.profile.epub.fileName as
+            | 'publication-paperpro.epub'
+            | 'publication-papermove.epub',
+          profileId: embedded.profile.id,
+          profileVersion: embedded.profile.version,
+          compositionPolicy: embedded.profile.compositionPolicy,
+          exportPolicy: embedded.profile.exportPolicy,
+        })
+      }
+    } catch (error) {
+      fail(
+        'EPUB_INVALID',
+        `${artifact.path}: ${error instanceof Error ? error.message : 'EPUB is invalid'}`,
+      )
+    }
+    if (!sameValue(canonicalIdsFromXhtml(epubContent), expectedNodeIds)) {
+      fail(
+        'EPUB_NODE_IDS_MISMATCH',
+        `${artifact.path} does not preserve every canonical node ID in order`,
+      )
+    }
+    verifyXhtmlContent(epubContent, paper, 'EPUB')
+    verifyXhtmlRelationships(epubContent, paper, 'EPUB')
   }
-  if (!sameValue(canonicalIdsFromXhtml(epubContent), expectedNodeIds)) {
-    fail(
-      'EPUB_NODE_IDS_MISMATCH',
-      'EPUB XHTML does not preserve every canonical node ID in order',
-    )
-  }
-  verifyXhtmlContent(epubContent, paper, 'EPUB')
-  verifyXhtmlRelationships(epubContent, paper, 'EPUB')
 
   const print = layout.renditions.find(
     (rendition) => rendition.target === 'print',
@@ -552,11 +672,12 @@ export async function verifyExportPackage(
   if (
     exportManifest.configuration.overrideDigest !==
       targetOverrideDigest(overrides) ||
-    !sameValue(exportManifest.configuration.overrides, overrides)
+    !sameValue(exportManifest.configuration.overrides, overrides) ||
+    !sameValue(exportManifest.configuration.deviceEpubs, deviceConfigurations)
   ) {
     fail(
-      'EXPORT_OVERRIDE_MISMATCH',
-      'Export manifest override configuration does not match the request',
+      'EXPORT_CONFIGURATION_MISMATCH',
+      'Export manifest profile or override configuration does not match the request',
     )
   }
 
@@ -611,6 +732,7 @@ export async function verifyExportPackage(
       'stable-identities',
       'complete-content',
       'relationships',
+      'device-epubs',
       'annotation-targets',
       'paginated-pdf',
       'checksums',

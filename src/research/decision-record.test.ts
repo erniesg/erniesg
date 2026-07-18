@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   applyHumanDecisionFile,
   createHumanDecisionFile,
+  MAX_HUMAN_DECISION_FILE_BYTES,
+  parseHumanDecisionFile,
   readingOrderCandidates,
   serializeHumanDecisionFile,
   upsertHumanDecision,
@@ -76,47 +78,50 @@ describe('human adjudication decision records', () => {
   it.each([
     ['reclassify-citation', 'citation'],
     ['reclassify-plain-text', 'plain-text'],
-  ] as const)('supports exact marker %s decisions', (resolution, status) => {
-    const claim = run(
-      'A bibliography marker is deliberately written as note reference 3.',
-      0.1,
-      0.2,
-      0.72,
-    )
-    const page: PdfPageAnalysis = {
-      page: 1,
-      kind: 'born-digital',
-      width: 612,
-      height: 792,
-      rotation: 0,
-      textCharacters: claim.text.length,
-      imageCount: 0,
-      runs: [claim],
-    }
-    const base = reconstructPageAnalyses({
-      pages: [page],
-      sourceHash: 'c'.repeat(64),
-      fileName: 'citation.pdf',
-      byteLength: 1024,
-    })
-    const diagnostic = base.diagnostics.find(
-      (item) => item.code === 'UNRESOLVED_NOTE_REFERENCE',
-    )!
-    targeted(diagnostic)
-    const file = upsertHumanDecision(
-      createHumanDecisionFile(base.source.sha256),
-      {
-        diagnosticCode: diagnostic.code,
-        target: diagnostic.target,
-        resolution: { type: resolution },
-      },
-    )
+  ] as const)(
+    'supports exact marker %s decisions',
+    async (resolution, status) => {
+      const claim = run(
+        'A bibliography marker is deliberately written as note reference 3.',
+        0.1,
+        0.2,
+        0.72,
+      )
+      const page: PdfPageAnalysis = {
+        page: 1,
+        kind: 'born-digital',
+        width: 612,
+        height: 792,
+        rotation: 0,
+        textCharacters: claim.text.length,
+        imageCount: 0,
+        runs: [claim],
+      }
+      const base = await reconstructPageAnalyses({
+        pages: [page],
+        sourceHash: 'c'.repeat(64),
+        fileName: 'citation.pdf',
+        byteLength: 1024,
+      })
+      const diagnostic = base.diagnostics.find(
+        (item) => item.code === 'UNRESOLVED_NOTE_REFERENCE',
+      )!
+      targeted(diagnostic)
+      const file = upsertHumanDecision(
+        createHumanDecisionFile(base.source.sha256),
+        {
+          diagnosticCode: diagnostic.code,
+          target: diagnostic.target,
+          resolution: { type: resolution },
+        },
+      )
 
-    const result = applyHumanDecisionFile(base, file)
-    expect(result.noteRelationships[0].status).toBe(status)
-    expect(result.readiness.ready).toBe(true)
-    expect(result.humanAdjudications.applied).toHaveLength(1)
-  })
+      const result = applyHumanDecisionFile(base, file)
+      expect(result.noteRelationships[0].status).toBe(status)
+      expect(result.readiness.ready).toBe(true)
+      expect(result.humanAdjudications.applied).toHaveLength(1)
+    },
+  )
 
   it('adjudicates note matches and reading order and replays headlessly', async () => {
     const source = await fixtureFile('adjudication-required.pdf')
@@ -179,8 +184,23 @@ describe('human adjudication decision records', () => {
     expect(replayedEpub.bytes).toEqual(directEpub.bytes)
   })
 
+  it('preserves visual completeness when a sidecar is applied', async () => {
+    const base = await reconstructPdf(
+      await fixtureFile('structured-scientific.pdf'),
+    )
+    const result = applyHumanDecisionFile(
+      base,
+      createHumanDecisionFile(base.source.sha256),
+    )
+
+    expect(result.completeness).toEqual(base.completeness)
+    expect(result.readiness).toEqual(base.readiness)
+    expect(result.visualRelationships).toEqual(base.visualRelationships)
+    expect(result.assets).toEqual(base.assets)
+  })
+
   it('replays an exact reading-order choice before the completeness gate', async () => {
-    const base = ambiguousReconstruction()
+    const base = await ambiguousReconstruction()
     const diagnostic = base.diagnostics.find(
       (item) => item.code === 'AMBIGUOUS_READING_ORDER',
     )!
@@ -227,8 +247,8 @@ describe('human adjudication decision records', () => {
     })
   })
 
-  it('contains identifiers and choices but no reconstructed document text', () => {
-    const base = ambiguousReconstruction()
+  it('contains identifiers and choices but no reconstructed document text', async () => {
+    const base = await ambiguousReconstruction()
     const diagnostic = base.diagnostics.find(
       (item) => item.code === 'AMBIGUOUS_READING_ORDER',
     )!
@@ -251,8 +271,8 @@ describe('human adjudication decision records', () => {
     expect(json).not.toContain('sourceBoxes')
   })
 
-  it('reports identifier drift and document mismatches as stale', () => {
-    const base = ambiguousReconstruction()
+  it('reports identifier drift and document mismatches as stale', async () => {
+    const base = await ambiguousReconstruction()
     const diagnostic = base.diagnostics.find(
       (item) => item.code === 'AMBIGUOUS_READING_ORDER',
     )!
@@ -289,5 +309,11 @@ describe('human adjudication decision records', () => {
     expect(mismatched.humanAdjudications.stale[0].reason).toBe(
       'document-sha256-mismatch',
     )
+  })
+
+  it('rejects oversized sidecars before parsing JSON', () => {
+    expect(() =>
+      parseHumanDecisionFile(' '.repeat(MAX_HUMAN_DECISION_FILE_BYTES + 1)),
+    ).toThrow(/exceeds/i)
   })
 })

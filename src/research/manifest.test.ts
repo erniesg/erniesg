@@ -12,8 +12,8 @@ import {
 import {
   canonicalContentHash,
   canonicalNodeContentHash,
-  researchPaperSchema,
-} from './schema'
+} from './canonical-hash'
+import { researchPaperSchema } from './schema'
 import { getCompositionPolicy, resolveNodeComposition } from './composition'
 import { paginateResearchPaper } from './pagination'
 import { getTargetProfile } from './targets'

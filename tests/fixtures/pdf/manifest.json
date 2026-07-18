@@ -7,6 +7,10 @@
       "features": ["born-digital-text"]
     },
     {
+      "file": "sparse-embedded-text.pdf",
+      "features": ["sparse-embedded-text", "duplicate-only-ocr"]
+    },
+    {
       "file": "structured-scientific.pdf",
       "features": [
         "two-columns",
@@ -19,8 +23,20 @@
       ]
     },
     {
+      "file": "diagnostic-overlays.pdf",
+      "features": [
+        "ambiguous-reading-order",
+        "ambiguous-note-relationship",
+        "diagnostic-overlay-evidence"
+      ]
+    },
+    {
       "file": "adjudication-required.pdf",
-      "features": ["ambiguous-note-match", "ambiguous-reading-order"]
+      "features": [
+        "ambiguous-note-match",
+        "ambiguous-reading-order",
+        "human-adjudication-replay"
+      ]
     },
     {
       "file": "scanned-page.pdf",
@@ -32,7 +48,15 @@
     },
     {
       "file": "two-page-scan.pdf",
-      "features": ["two-page-scan"]
+      "features": ["single-physical-page", "two-page-spread", "gutter"]
+    },
+    {
+      "file": "rotated-scan.pdf",
+      "features": ["scanned-page", "rotation-90"]
+    },
+    {
+      "file": "multilingual-scan.pdf",
+      "features": ["scanned-page", "multilingual-source"]
     },
     {
       "file": "virtual:oversized-input.pdf",

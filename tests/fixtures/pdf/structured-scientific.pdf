@@ -4,22 +4,16 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
 endobj
 4 0 obj
-<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 9 >>
-stream
-30C090F0>
-endstream
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 6 0 R /Im2 7 0 R >> >> /Contents 5 0 R >>
 endobj
 5 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 6 0 R >>
-endobj
-6 0 obj
-<< /Length 1081 >>
+<< /Length 1442 >>
 stream
 BT
 /F1 20 Tf
@@ -69,17 +63,47 @@ ET
 BT
 /F1 11 Tf
 180 430 Td
-(Figure 1. A synthetic image and its semantic caption.) Tj
+(Figure 1. Two synthetic panels share one source caption.) Tj
 ET
 BT
 /F1 11 Tf
-54 370 Td
-(Table 1. Synthetic values require a table fallback.) Tj
+170 300 Td
+(Figure 2. A source vector diagram remains scalable.) Tj
 ET
 BT
 /F1 11 Tf
-54 340 Td
-(Equation 1 \(x + y = z\) requires an atomic fallback.) Tj
+54 250 Td
+(Table 1. Synthetic values have validated columns.) Tj
+ET
+BT
+/F1 11 Tf
+72 225 Td
+(Group) Tj
+ET
+BT
+/F1 11 Tf
+115 225 Td
+(Score) Tj
+ET
+BT
+/F1 11 Tf
+72 205 Td
+(Control) Tj
+ET
+BT
+/F1 11 Tf
+115 205 Td
+(10) Tj
+ET
+BT
+/F1 11 Tf
+54 160 Td
+(Equation 1. A display equation uses a source fallback.) Tj
+ET
+BT
+/F1 14 Tf
+250 135 Td
+(x + y = z) Tj
 ET
 BT
 /F1 8 Tf
@@ -90,19 +114,44 @@ q
 170 0 0 110 220 460 cm
 /Im1 Do
 Q
+q
+80 0 0 110 400 460 cm
+/Im2 Do
+Q
+q
+120 0 0 70 240 330 cm
+0 0 m
+1 0 l
+0.5 1 l
+h
+B
+Q
+endstream
+endobj
+6 0 obj
+<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 9 >>
+stream
+30C090F0>
+endstream
+endobj
+7 0 obj
+<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 9 >>
+stream
+30C090F0>
 endstream
 endobj
 xref
-0 7
+0 8
 0000000000 65535 f 
 0000000046 00000 n 
 0000000095 00000 n 
 0000000152 00000 n 
 0000000222 00000 n 
-0000000398 00000 n 
-0000000550 00000 n 
+0000000386 00000 n 
+0000001880 00000 n 
+0000002056 00000 n 
 trailer
-<< /Size 7 /Root 1 0 R >>
+<< /Size 8 /Root 1 0 R >>
 startxref
-1683
+2232
 %%EOF

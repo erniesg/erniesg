@@ -7,6 +7,14 @@ import type {
 import { assessPdfCompleteness } from './pdf-quality'
 
 export const HUMAN_DECISION_SCHEMA_VERSION = '1.0.0' as const
+export const MAX_HUMAN_DECISION_FILE_BYTES = 1024 * 1024
+const MAX_HUMAN_DECISIONS = 1000
+const MAX_TARGET_REGION_IDS = 10_000
+const stableIdSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9_.:-]+$/)
 
 const diagnosticCodeSchema = z.enum([
   'OCR_REQUIRED',
@@ -29,8 +37,8 @@ const diagnosticCodeSchema = z.enum([
 
 const targetSchema = z
   .object({
-    regionIds: z.array(z.string().min(1)).min(1),
-    markerId: z.string().min(1).nullable(),
+    regionIds: z.array(stableIdSchema).min(1).max(MAX_TARGET_REGION_IDS),
+    markerId: stableIdSchema.nullable(),
   })
   .strict()
   .refine(
@@ -45,8 +53,8 @@ const resolutionSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('accept-note-match'),
-      targetNoteId: z.string().min(1),
-      targetRegionId: z.string().min(1),
+      targetNoteId: stableIdSchema,
+      targetRegionId: stableIdSchema,
     })
     .strict(),
   z.object({ type: z.literal('reclassify-citation') }).strict(),
@@ -54,7 +62,7 @@ const resolutionSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('accept-reading-order'),
-      regionIds: z.array(z.string().min(1)).min(1),
+      regionIds: z.array(stableIdSchema).min(1).max(MAX_TARGET_REGION_IDS),
     })
     .strict(),
   z.object({ type: z.literal('dismiss') }).strict(),
@@ -72,7 +80,7 @@ export const humanDecisionFileSchema = z
   .object({
     schemaVersion: z.literal(HUMAN_DECISION_SCHEMA_VERSION),
     documentSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    decisions: z.array(humanAdjudicationRecordSchema),
+    decisions: z.array(humanAdjudicationRecordSchema).max(MAX_HUMAN_DECISIONS),
   })
   .strict()
   .superRefine((file, context) => {
@@ -148,6 +156,14 @@ function sameTarget(
 }
 
 export function parseHumanDecisionFile(input: string | unknown) {
+  if (
+    typeof input === 'string' &&
+    new TextEncoder().encode(input).byteLength > MAX_HUMAN_DECISION_FILE_BYTES
+  ) {
+    throw new Error(
+      `Decision file exceeds the ${MAX_HUMAN_DECISION_FILE_BYTES}-byte local limit.`,
+    )
+  }
   return humanDecisionFileSchema.parse(
     typeof input === 'string' ? JSON.parse(input) : input,
   )
@@ -471,6 +487,8 @@ export function applyHumanDecisionFile(
     paper: result.paper,
     diagnostics: result.diagnostics,
     readingOrder: result.readingOrder,
+    regions: result.regions,
+    visualRelationships: result.visualRelationships,
     policy: result.readiness.policy,
     reclassifiedNoteReferenceCount: result.noteRelationships.filter(
       (relationship) =>

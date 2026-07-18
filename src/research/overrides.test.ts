@@ -9,7 +9,8 @@ import {
   DEFAULT_EXPORT_OVERRIDES,
   getDefaultExportOverrides,
 } from './overrides'
-import { canonicalContentHash, researchPaperSchema } from './schema'
+import { canonicalContentHash } from './canonical-hash'
+import { researchPaperSchema } from './schema'
 
 const paper = researchPaperSchema.parse(rawPaper)
 const printOverride = DEFAULT_EXPORT_OVERRIDES[0]

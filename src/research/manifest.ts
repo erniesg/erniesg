@@ -3,6 +3,8 @@ import { createLayoutVersion } from './annotations'
 import {
   canonicalContentHash,
   canonicalNodeContentHash,
+} from './canonical-hash'
+import {
   type ResearchNode,
   type ResearchPaper,
 } from './schema'

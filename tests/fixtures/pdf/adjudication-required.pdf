@@ -4,50 +4,44 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [5 0 R 6 0 R] /Count 2 >>
+<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
 endobj
 4 0 obj
-<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 9 >>
-stream
-30C090F0>
-endstream
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R >>  >> /Contents 6 0 R >>
 endobj
 5 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 7 0 R >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R >>  >> /Contents 7 0 R >>
 endobj
 6 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 8 0 R >>
-endobj
-7 0 obj
-<< /Length 196 >>
+<< /Length 312 >>
 stream
 BT
 /F1 11 Tf
 54 650 Td
-(Left candidate one.) Tj
+(Left candidate one has complete embedded text.) Tj
 ET
 BT
 /F1 11 Tf
 330 650 Td
-(Right candidate one.) Tj
+(Right candidate one has complete embedded text.) Tj
 ET
 BT
 /F1 11 Tf
 110 230 Td
-(Left 2.) Tj
+(Indented left candidate has complete text.) Tj
 ET
 BT
 /F1 11 Tf
 330 230 Td
-(Right candidate two.) Tj
+(Right candidate two has complete embedded text.) Tj
 ET
 endstream
 endobj
-8 0 obj
-<< /Length 274 >>
+7 0 obj
+<< /Length 340 >>
 stream
 BT
 /F1 11 Tf
@@ -62,28 +56,27 @@ ET
 BT
 /F1 7 Tf
 72 100 Td
-(1. First candidate note.) Tj
+(1. First candidate note contains complete local evidence.) Tj
 ET
 BT
 /F1 7 Tf
 72 70 Td
-(1. Second candidate note.) Tj
+(1. Second candidate note contains complete local evidence.) Tj
 ET
 endstream
 endobj
 xref
-0 9
+0 8
 0000000000 65535 f 
 0000000046 00000 n 
 0000000095 00000 n 
 0000000158 00000 n 
 0000000228 00000 n 
-0000000404 00000 n 
-0000000556 00000 n 
-0000000708 00000 n 
-0000000955 00000 n 
+0000000356 00000 n 
+0000000484 00000 n 
+0000000847 00000 n 
 trailer
-<< /Size 9 /Root 1 0 R >>
+<< /Size 8 /Root 1 0 R >>
 startxref
-1280
+1238
 %%EOF

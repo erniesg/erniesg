@@ -25,12 +25,28 @@ export type PdfSourceRun = NormalizedSourceBox & {
   confidence: number
 }
 
+export type PdfVisualAsset = {
+  id: string
+  href: string
+  mediaType: 'image/png' | 'image/svg+xml' | 'application/xhtml+xml'
+  kind: 'raster' | 'vector' | 'table' | 'equation'
+  rendition: 'source-preserved' | 'bounded-svg-fallback' | 'semantic-table'
+  sha256: string
+  bytes: Uint8Array
+  width: number
+  height: number
+  resolutionDpi: number | null
+  sourceObjectIds: string[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
 export type PdfNativeObject = {
   id: string
   page: number
-  kind: 'image'
+  kind: 'image' | 'vector'
   box: NormalizedSourceBox
   confidence: number
+  assetId: string | null
   role?: 'semantic' | 'scan-source'
   rolePolicy?: 'ocr-scan-surface-v1'
 }
@@ -92,6 +108,7 @@ export type PdfRegionKind =
   | 'side'
   | 'chart-label'
   | 'figure'
+  | 'equation'
   | 'caption'
   | 'footnote'
   | 'endnote'
@@ -213,6 +230,35 @@ export type PdfNoteRelationship = {
   sourceBoxes: NormalizedSourceBox[]
 }
 
+export type PdfVisualMatchCandidate = {
+  sourceRegionIds: string[]
+  sourceObjectIds: string[]
+  assetIds: string[]
+  score: number
+  evidence: string[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
+export type PdfVisualRelationship = {
+  id: string
+  kind: 'figure' | 'table' | 'equation'
+  label: string
+  captionRegionId: string
+  sourceRegionIds: string[]
+  sourceObjectIds: string[]
+  assetIds: string[]
+  status: 'matched' | 'ambiguous' | 'unresolved'
+  confidence: number
+  evidence: string[]
+  candidates: PdfVisualMatchCandidate[]
+  sourceBoxes: NormalizedSourceBox[]
+  sourceText: string
+  altText: string
+  altTextSource: 'caption' | 'source-text'
+  canonicalNodeId: string | null
+  captionNodeId: string | null
+}
+
 export type PdfPageAnalysis = {
   page: number
   kind: PdfPageKind
@@ -223,6 +269,7 @@ export type PdfPageAnalysis = {
   imageCount: number
   objects?: PdfNativeObject[]
   links?: PdfEmbeddedLink[]
+  assets?: PdfVisualAsset[]
   runs: PdfSourceRun[]
   ocr?: PdfOcrPageEvidence
   spread?: PdfPhysicalSpread
@@ -245,6 +292,9 @@ export type ReconstructionDiagnostic = {
     | 'AMBIGUOUS_NOTE_MATCH'
     | 'UNRESOLVED_NOTE_REFERENCE'
     | 'UNREFERENCED_NOTE'
+    | 'AMBIGUOUS_VISUAL_MATCH'
+    | 'UNRESOLVED_VISUAL_OBJECT'
+    | 'UNREFERENCED_VISUAL_ASSET'
     | 'NO_RECONSTRUCTABLE_TEXT'
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
@@ -303,7 +353,7 @@ export type PdfReadiness = {
 export type NodeSourceEvidence = {
   confidence: number
   pages: number[]
-  boxes: PdfSourceRun[]
+  boxes: NormalizedSourceBox[]
   links: PdfEmbeddedLink[]
 }
 
@@ -320,6 +370,8 @@ export type PdfReconstruction = {
   regions: PdfPageRegion[]
   readingOrder: PdfReadingOrderGraph
   noteRelationships: PdfNoteRelationship[]
+  visualRelationships: PdfVisualRelationship[]
+  assets: PdfVisualAsset[]
   provenance: Record<string, NodeSourceEvidence>
   diagnostics: ReconstructionDiagnostic[]
   semanticSignals: PdfSemanticSignals

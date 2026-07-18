@@ -9,6 +9,7 @@ import type {
   ReconstructionDiagnostic,
 } from './import-types'
 import { assessPdfCompleteness } from './pdf-quality'
+import { reconstructPdfVisuals } from './pdf-visuals'
 import {
   normalizedNoteLabel,
   noteLabelFromText,
@@ -104,11 +105,14 @@ function noteText(region: PdfPageRegion, label: string) {
 function blocksFromRegions(
   orderedRegions: PdfPageRegion[],
   regions: PdfPageRegion[],
+  excludedRegionIds = new Set<string>(),
 ) {
-  const readingRegions = orderedRegions.filter((region) =>
-    ['body', 'spanning', 'caption', 'footnote', 'endnote'].includes(
-      region.kind,
-    ),
+  const readingRegions = orderedRegions.filter(
+    (region) =>
+      !excludedRegionIds.has(region.id) &&
+      ['body', 'spanning', 'caption', 'footnote', 'endnote'].includes(
+        region.kind,
+      ),
   )
   const bodySize =
     median(
@@ -389,7 +393,7 @@ function sourceEvidence(
   }
 }
 
-export function reconstructPageAnalyses({
+export async function reconstructPageAnalyses({
   pages,
   sourceHash,
   fileName,
@@ -401,7 +405,7 @@ export function reconstructPageAnalyses({
   fileName: string
   byteLength: number
   metadata?: PdfDocumentMetadata
-}): PdfReconstruction {
+}): Promise<PdfReconstruction> {
   const diagnostics: ReconstructionDiagnostic[] = []
   for (const page of pages) {
     if (page.kind === 'ocr-required') {
@@ -507,7 +511,16 @@ export function reconstructPageAnalyses({
     })
   }
 
-  const blocks = blocksFromRegions(orderedRegions, regionResult.regions)
+  const visualResult = await reconstructPdfVisuals({
+    pages,
+    regions: regionResult.regions,
+  })
+  diagnostics.push(...visualResult.diagnostics)
+  const blocks = blocksFromRegions(
+    orderedRegions,
+    regionResult.regions,
+    visualResult.consumedRegionIds,
+  )
   noteNodeIds(blocks)
   const references = detectReferences(blocks)
   const noteRelationships = matchNotes(blocks, references, diagnostics)
@@ -609,6 +622,47 @@ export function reconstructPageAnalyses({
     }
   })
 
+  for (const relationship of visualResult.relationships) {
+    const captionBlock = blocks.find(
+      (block) => block.region.id === relationship.captionRegionId,
+    )
+    relationship.captionNodeId = captionBlock?.nodeId ?? null
+    if (
+      relationship.status !== 'matched' ||
+      !relationship.captionNodeId ||
+      relationship.assetIds.length === 0
+    ) {
+      continue
+    }
+    const page = relationship.sourceBoxes[0]?.page ?? 1
+    const id = `visual-${relationship.kind}-p${String(page).padStart(3, '0')}-${slug(relationship.label, 24)}`
+    relationship.canonicalNodeId = id
+    const source = `pdf:${sourceHash.slice(0, 16)}#page=${page}`
+    const node: ResearchNode = {
+      id,
+      type: 'figure',
+      objectType: relationship.kind,
+      title: relationship.sourceText
+        ? `${relationship.label}: ${relationship.sourceText}`
+        : relationship.label,
+      relationships: {
+        caption: relationship.captionNodeId,
+        assets: relationship.assetIds,
+      },
+      source,
+    }
+    provenance[id] = {
+      confidence: relationship.confidence,
+      pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],
+      boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
+      links: [],
+    }
+    const captionIndex = nodes.findIndex(
+      (candidate) => candidate.id === relationship.captionNodeId,
+    )
+    nodes.splice(captionIndex < 0 ? nodes.length : captionIndex, 0, node)
+  }
+
   const firstHeading = nodes.find(
     (node): node is Extract<ResearchNode, { type: 'heading' }> =>
       node.type === 'heading',
@@ -640,6 +694,7 @@ export function reconstructPageAnalyses({
     paper,
     diagnostics,
     readingOrder: regionResult.readingOrder,
+    visualRelationships: visualResult.relationships,
   })
 
   return {
@@ -655,6 +710,8 @@ export function reconstructPageAnalyses({
     regions: regionResult.regions,
     readingOrder: regionResult.readingOrder,
     noteRelationships,
+    visualRelationships: visualResult.relationships,
+    assets: visualResult.assets,
     provenance,
     diagnostics: assessment.diagnostics,
     semanticSignals: assessment.semanticSignals,

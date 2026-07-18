@@ -54,6 +54,7 @@ function scanObject(coverage = 0.85) {
     id: 'image-p001-001',
     page: 1,
     kind: 'image' as const,
+    assetId: null,
     box: {
       page: 1,
       x: 0.05,

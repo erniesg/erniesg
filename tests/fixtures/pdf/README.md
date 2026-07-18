@@ -21,6 +21,10 @@ one wide physical PDF page with two logical page regions and a central gutter;
 language-pack and Unicode behavior can be tested without copying a third-party
 document or font.
 
+`diagnostic-overlays.pdf` deliberately retains two plausible column orders and
+two equally scored note bodies. It is the repository-owned visual evidence
+fixture for reading-order and note-relationship overlays.
+
 The oversized fixture is virtual: tests use the byte length recorded in
 `manifest.json` and assert rejection before `arrayBuffer()` is called. This keeps
 a 50 MB inert file out of Git while exercising the exact resource boundary.

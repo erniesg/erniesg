@@ -352,6 +352,8 @@ export type ReconstructionDiagnostic = {
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
+  sourceBoxes?: NormalizedSourceBox[]
+  relationshipId?: string
   noteMarkerClassification?: PdfNoteMarkerClassification
   readingOrderResolution?: Omit<PdfReadingOrderResolution, 'regionIds'> & {
     regionId?: string

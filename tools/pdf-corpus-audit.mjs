@@ -1,4 +1,15 @@
 #!/usr/bin/env node
+import { mkdir, realpath, writeFile } from 'node:fs/promises'
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  parse,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 import {
   auditPdfInputs,
   createCorpusReport,
@@ -6,21 +17,118 @@ import {
   serializeCorpusReport,
 } from './pdf-corpus-audit-lib.mjs'
 
-const args = process.argv.slice(2)
-const reportOnly = args.includes('--report-only')
-const inputs = args.filter((argument) => argument !== '--report-only')
+function parseArguments(args) {
+  let reportOnly = false
+  let overlayOutput = null
+  const inputs = []
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    if (argument === '--report-only') {
+      reportOnly = true
+    } else if (argument === '--overlay-output') {
+      overlayOutput = args[index + 1] ?? null
+      index += 1
+    } else if (argument.startsWith('--overlay-output=')) {
+      overlayOutput = argument.slice('--overlay-output='.length)
+    } else if (argument.startsWith('--')) {
+      throw new Error('unknown option')
+    } else {
+      inputs.push(argument)
+    }
+  }
+  if (overlayOutput === '') throw new Error('missing overlay output')
+  return { reportOnly, overlayOutput, inputs }
+}
+
+let cli
+try {
+  cli = parseArguments(process.argv.slice(2))
+} catch {
+  process.stderr.write(
+    'Usage: npm run pdf:corpus-audit -- [--report-only] [--overlay-output <local-directory>] <pdf-or-directory> [...]\n',
+  )
+  process.exit(2)
+}
+const { reportOnly, overlayOutput, inputs } = cli
+
+async function privateOverlayDirectory(requested) {
+  const repository = await realpath('.')
+  const target = resolve(requested)
+  if (target === parse(target).root) throw new Error('unsafe output')
+  let existing = target
+  let resolvedExisting
+  while (true) {
+    try {
+      resolvedExisting = await realpath(existing)
+      break
+    } catch {
+      const parent = dirname(existing)
+      if (parent === existing) throw new Error('unsafe output')
+      existing = parent
+    }
+  }
+  const resolvedTarget = resolve(resolvedExisting, relative(existing, target))
+  const repositoryRelative = relative(repository, resolvedTarget)
+  const insideRepository =
+    repositoryRelative === '' ||
+    (!repositoryRelative.startsWith(`..${sep}`) &&
+      repositoryRelative !== '..' &&
+      !isAbsolute(repositoryRelative))
+  if (insideRepository) throw new Error('unsafe output')
+  await mkdir(resolvedTarget, { recursive: true, mode: 0o700 })
+  return resolvedTarget
+}
+
+function overlayArtifactName(fileName, hash) {
+  const safeName = basename(fileName, extname(fileName))
+    .replaceAll(/[^a-z0-9-]+/gi, '-')
+    .replaceAll(/^-|-$/g, '')
+  return `${safeName || 'document'}-${hash.slice(0, 16)}.diagnostics.html`
+}
+
 async function main() {
   if (inputs.length === 0) {
     process.stderr.write(
-      'Usage: npm run pdf:corpus-audit -- [--report-only] <pdf-or-directory> [...]\n',
+      'Usage: npm run pdf:corpus-audit -- [--report-only] [--overlay-output <local-directory>] <pdf-or-directory> [...]\n',
     )
     process.exitCode = 2
     return
   }
 
+  let localOverlayOutput = null
+  if (overlayOutput) {
+    try {
+      localOverlayOutput = await privateOverlayDirectory(overlayOutput)
+    } catch {
+      process.stderr.write(
+        'Overlay output must name a local directory outside the repository.\n',
+      )
+      process.exitCode = 2
+      return
+    }
+  }
+
   const pipeline = await createPdfPipeline()
   try {
     const records = await auditPdfInputs(inputs, pipeline)
+    if (localOverlayOutput) {
+      const { renderDiagnosticEvidenceHtml } =
+        await pipeline.loadDiagnosticModules()
+      for (const record of records) {
+        if (!record.reconstruction) continue
+        await writeFile(
+          resolve(
+            localOverlayOutput,
+            overlayArtifactName(
+              record.document.basename,
+              record.reconstruction.source.sha256,
+            ),
+          ),
+          renderDiagnosticEvidenceHtml(record.reconstruction),
+          { mode: 0o600 },
+        )
+      }
+    }
     const report = createCorpusReport(
       records.map((record) => record.document),
       pipeline.policy,

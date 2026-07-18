@@ -74,6 +74,7 @@ export async function createPdfPipeline() {
     vite.ssrLoadModule('/src/research/import-types.ts'),
   ])
   let exportModules
+  let diagnosticModules
 
   return {
     reconstructPdf: pdf.reconstructPdf,
@@ -91,6 +92,15 @@ export async function createPdfPipeline() {
         targetProfileIds: targets.TARGET_PROFILE_IDS,
       }))
       return exportModules
+    },
+    async loadDiagnosticModules() {
+      diagnosticModules ??= vite
+        .ssrLoadModule('/src/research/diagnostic-overlays.ts')
+        .then((overlays) => ({
+          renderDiagnosticEvidenceHtml:
+            overlays.renderDiagnosticEvidenceHtml,
+        }))
+      return diagnosticModules
     },
     async close() {
       try {

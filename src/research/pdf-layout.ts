@@ -277,6 +277,13 @@ function matchNotes(
           reference.region.box,
           ...candidates.map((candidate) => candidate.sourceBoxes[1]),
         ],
+        target: {
+          regionIds: [
+            reference.region.id,
+            ...candidates.map((candidate) => candidate.targetRegionId),
+          ],
+          markerId: reference.id,
+        },
       })
     } else if (!matched) {
       diagnostics.push({
@@ -289,12 +296,18 @@ function matchNotes(
           reference.region.box,
           ...candidates.map((candidate) => candidate.sourceBoxes[1]),
         ],
+        target: {
+          regionIds: [reference.region.id],
+          markerId: reference.id,
+        },
       })
     }
     return {
       id: reference.id,
       label: reference.label,
       referenceRegionId: reference.region.id,
+      referenceStart: reference.start,
+      referenceEnd: reference.end,
       targetNoteId: matched ? best.targetNoteId : null,
       status: ambiguous ? 'ambiguous' : matched ? 'matched' : 'unresolved',
       confidence: best?.score ?? 0,
@@ -306,9 +319,13 @@ function matchNotes(
   })
 
   const referencedNotes = new Set(
-    relationships
-      .filter((relationship) => relationship.status === 'matched')
-      .map((relationship) => relationship.targetNoteId),
+    relationships.flatMap((relationship) =>
+      relationship.status === 'matched'
+        ? [relationship.targetNoteId]
+        : relationship.status === 'ambiguous'
+          ? relationship.candidates.map((candidate) => candidate.targetNoteId)
+          : [],
+    ),
   )
   for (const note of notes) {
     if (referencedNotes.has(note.nodeId!)) continue
@@ -318,6 +335,10 @@ function matchNotes(
       page: note.region.page,
       message: `Note ${note.nodeId} remains explicit because no unique reference resolved to it.`,
       sourceBoxes: [note.region.box],
+      target: {
+        regionIds: [note.region.id],
+        markerId: note.nodeId ?? null,
+      },
     })
   }
   return relationships
@@ -342,6 +363,7 @@ function sourceEvidence(
   return {
     confidence: rounded(block.confidence),
     pages: [block.region.page],
+    regionIds: [block.region.id],
     boxes: block.region.lines.flatMap((line) =>
       line.runs.map((run) => ({
         ...run,
@@ -433,6 +455,16 @@ export async function reconstructPageAnalyses({
   }
 
   const regionResult = reconstructPageRegions(pages)
+  for (const diagnostic of diagnostics.filter(
+    (candidate) => candidate.code === 'MIXED_PAGE' && candidate.page,
+  )) {
+    diagnostic.target = {
+      regionIds: regionResult.regions
+        .filter((region) => region.page === diagnostic.page)
+        .map((region) => region.id),
+      markerId: null,
+    }
+  }
   const regionMap = new Map(
     regionResult.regions.map((region) => [region.id, region]),
   )
@@ -446,6 +478,14 @@ export async function reconstructPageAnalyses({
       code: 'REPEATED_MARGIN_TEXT',
       severity: 'info',
       message: `Removed ${regionResult.repeatedMarginCount} repeated header or footer pattern${regionResult.repeatedMarginCount === 1 ? '' : 's'} from reading order.`,
+      target: {
+        regionIds: regionResult.regions
+          .filter(
+            (region) => region.kind === 'header' || region.kind === 'footer',
+          )
+          .map((region) => region.id),
+        markerId: null,
+      },
     })
   }
   for (const resolution of regionResult.readingOrder.resolutions.filter(
@@ -462,6 +502,7 @@ export async function reconstructPageAnalyses({
           ...readingOrderResolution,
           regionId,
         },
+        target: { regionIds: [regionId], markerId: null },
       })
     }
   }
@@ -491,6 +532,10 @@ export async function reconstructPageAnalyses({
           (region) => region.page === page && region.includedInReadingOrder,
         )
         .map((region) => region.box),
+      target: {
+        regionIds: resolution?.regionIds ?? [],
+        markerId: null,
+      },
     })
   }
   if (!regionResult.readingOrder.acyclic) {
@@ -554,13 +599,20 @@ export async function reconstructPageAnalyses({
     const id = block.nodeId ?? nodeId(index, block.type, block.text)
     block.nodeId = id
     provenance[id] = sourceEvidence(block, embeddedLinks)
-    if (block.confidence < 0.75) {
+    if (
+      block.confidence < 0.75 &&
+      !regionResult.ambiguousPages.includes(block.region.page)
+    ) {
       diagnostics.push({
         code: 'LOW_CONFIDENCE_BLOCK',
         severity: 'warning',
         page: block.region.page,
         message: `A reconstructed ${block.region.kind} region on page ${block.region.page} needs review.`,
         sourceBoxes: [block.region.box],
+        target: {
+          regionIds: [block.region.id],
+          markerId: null,
+        },
       })
     }
     const source = `pdf:${sourceHash.slice(0, 16)}#page=${block.region.page}`
@@ -656,6 +708,7 @@ export async function reconstructPageAnalyses({
     provenance[id] = {
       confidence: relationship.confidence,
       pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],
+      regionIds: [...relationship.sourceRegionIds],
       boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
       links: [],
     }
@@ -716,6 +769,13 @@ export async function reconstructPageAnalyses({
     visualRelationships: visualResult.relationships,
     assets: visualResult.assets,
     provenance,
+    humanAdjudications: {
+      schemaVersion: '1.0.0',
+      documentSha256: sourceHash,
+      applied: [],
+      stale: [],
+      countsByDiagnosticCode: {},
+    },
     diagnostics: assessment.diagnostics,
     semanticSignals: assessment.semanticSignals,
     completeness: assessment.completeness,

@@ -16,11 +16,16 @@ import {
   type PdfOcrSession,
 } from './pdf-ocr'
 import { createPngAsset, createVectorSvgAsset } from './visual-assets'
+import {
+  applyHumanDecisionFile,
+  type HumanDecisionFile,
+} from './decision-record'
 
 type PdfImportOptions = {
   signal?: AbortSignal
   standardFontDataUrl?: string
   ocr?: PdfOcrOptions
+  decisionFile?: HumanDecisionFile
 }
 
 export const MAX_OCR_RASTER_PIXELS = 3_200_000
@@ -927,13 +932,16 @@ export async function reconstructPdf(
         normalizedPdfDate(metadataValue(info, 'ModDate')) ??
         new Date(file.lastModified || 0).toISOString(),
     }
-    return reconstructPageAnalyses({
+    const reconstruction = await reconstructPageAnalyses({
       pages,
       sourceHash,
       fileName: file.name,
       byteLength: file.size,
       metadata,
     })
+    return options.decisionFile
+      ? applyHumanDecisionFile(reconstruction, options.decisionFile)
+      : reconstruction
   } catch (error) {
     if (options.signal?.aborted) throw cancelledError()
     throw error

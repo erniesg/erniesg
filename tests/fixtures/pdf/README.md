@@ -25,6 +25,10 @@ document or font.
 two equally scored note bodies. It is the repository-owned visual evidence
 fixture for reading-order and note-relationship overlays.
 
+`adjudication-required.pdf` contains two deliberately tied note matches and a
+below-threshold two-column order. It exercises exact-scope human decisions and
+deterministic replay without using external document content.
+
 The oversized fixture is virtual: tests use the byte length recorded in
 `manifest.json` and assert rejection before `arrayBuffer()` is called. This keeps
 a 50 MB inert file out of Git while exercising the exact resource boundary.

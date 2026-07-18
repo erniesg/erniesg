@@ -31,6 +31,14 @@
       ]
     },
     {
+      "file": "adjudication-required.pdf",
+      "features": [
+        "ambiguous-note-match",
+        "ambiguous-reading-order",
+        "human-adjudication-replay"
+      ]
+    },
+    {
       "file": "scanned-page.pdf",
       "features": ["scanned-page"]
     },

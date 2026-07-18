@@ -589,6 +589,22 @@
   .publication-actions > span {
     @apply text-xs text-muted-foreground;
   }
+  .publication-decision-file {
+    @apply mb-6 flex flex-wrap items-center gap-3 border-y py-3 text-sm;
+  }
+  .publication-decision-file label {
+    @apply grid flex-1 gap-1;
+  }
+  .publication-decision-file label span,
+  .publication-decision-file small {
+    @apply text-xs text-muted-foreground;
+  }
+  .publication-decision-file input {
+    @apply max-w-64 text-xs;
+  }
+  .publication-decision-file p {
+    @apply w-full text-sm text-destructive;
+  }
   .publication-diagnostics {
     @apply my-6 border-y;
   }
@@ -621,6 +637,15 @@
   }
   .publication-diagnostic-list strong {
     @apply mr-2 font-mono text-[10px] tracking-wider;
+  }
+  .publication-adjudication-options {
+    @apply mt-3 flex flex-wrap gap-2;
+  }
+  .publication-adjudication-options button {
+    @apply grid max-w-xl gap-1 rounded-md border border-foreground/30 px-3 py-2 text-left text-xs font-medium;
+  }
+  .publication-adjudication-options button small {
+    @apply line-clamp-2 font-normal text-muted-foreground;
   }
   .publication-preview-blocked {
     @apply opacity-60;

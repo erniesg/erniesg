@@ -78,12 +78,16 @@ async function uploadFixture(page: Page, name: string) {
 }
 
 async function downloadedEpub(page: Page, linkName: string) {
+  return unzipSync(await downloadedBytes(page, linkName))
+}
+
+async function downloadedBytes(page: Page, linkName: string) {
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('link', { name: linkName, exact: true }).click()
   const download = await downloadPromise
   const downloadPath = await download.path()
   if (!downloadPath) throw new Error('Browser did not retain the EPUB download')
-  return unzipSync(new Uint8Array(await readFile(downloadPath)))
+  return new Uint8Array(await readFile(downloadPath))
 }
 
 test('emits EPUB ready only after the completeness gate passes', async ({
@@ -259,6 +263,59 @@ test('visually links note candidates and both ambiguous reading orders', async (
   await expect(
     page.locator('.pdf-diagnostic-overlay__svg polyline'),
   ).toHaveCount(2)
+})
+
+test('adjudicates ambiguous structure and replays the exact sidecar', async ({
+  page,
+}) => {
+  await uploadFixture(page, 'adjudication-required.pdf')
+
+  await expect(page.getByText('Review required', { exact: true })).toBeVisible()
+  for (let remaining = 2; remaining > 0; remaining -= 1) {
+    const noteDiagnostics = page.getByRole('button', {
+      name: /AMBIGUOUS_NOTE_MATCH/,
+    })
+    await expect(noteDiagnostics).toHaveCount(remaining)
+    await noteDiagnostics.first().click()
+    await page
+      .getByRole('button', { name: /^Use note / })
+      .nth(2 - remaining)
+      .click()
+    await expect(noteDiagnostics).toHaveCount(remaining - 1)
+  }
+
+  await page.getByRole('button', { name: /AMBIGUOUS_READING_ORDER/ }).click()
+  await page
+    .getByRole('button', { name: 'Accept reading order 1', exact: true })
+    .click()
+
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Human adjudications:/)).toContainText(
+    'AMBIGUOUS_NOTE_MATCH 2',
+  )
+  await expect(page.getByText(/Human adjudications:/)).toContainText(
+    'AMBIGUOUS_READING_ORDER 1',
+  )
+
+  const decisionBytes = await downloadedBytes(page, 'Export decisions JSON')
+  const directEpub = await downloadedBytes(page, 'Download EPUB')
+  const decisionFile = JSON.parse(new TextDecoder().decode(decisionBytes))
+  expect(decisionFile.decisions).toHaveLength(3)
+
+  await page.getByRole('button', { name: 'New paper' }).click()
+  await page.locator('#publication-decisions').setInputFiles({
+    name: 'review.decisions.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(decisionBytes),
+  })
+  await expect(page.getByText(/3 decisions/)).toBeVisible()
+  await page
+    .locator('#publication-pdf')
+    .setInputFiles(fixture('adjudication-required.pdf'))
+
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  const replayedEpub = await downloadedBytes(page, 'Download EPUB')
+  expect(replayedEpub).toEqual(directEpub)
 })
 
 test('keeps the newest result when an active import is superseded', async ({

@@ -996,6 +996,7 @@ export async function reconstructDocx(
       provenance[nodeId] = {
         confidence: 1,
         pages: [],
+        regionIds: [],
         boxes: [],
         links: [],
         part: documentPart,
@@ -1246,6 +1247,8 @@ export async function reconstructDocx(
           id: referenceId,
           label: reference.label,
           referenceRegionId: nodeId,
+          referenceStart: reference.start,
+          referenceEnd: reference.end,
           targetNoteId: matched ? target : null,
           status: matched ? 'matched' : 'unresolved',
           confidence: matched ? 1 : 0,
@@ -1342,6 +1345,7 @@ export async function reconstructDocx(
         provenance[nodeId] = {
           confidence: 1,
           pages: [],
+          regionIds: [],
           boxes: [],
           links: [],
           part: `word/${kind === 'footnote' ? 'footnotes' : 'endnotes'}.xml`,

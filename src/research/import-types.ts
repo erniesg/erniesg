@@ -259,8 +259,10 @@ export type PdfNoteRelationship = {
   id: string
   label: string
   referenceRegionId: string
+  referenceStart: number
+  referenceEnd: number
   targetNoteId: string | null
-  status: 'matched' | 'ambiguous' | 'unresolved'
+  status: 'matched' | 'ambiguous' | 'unresolved' | 'citation' | 'plain-text'
   confidence: number
   threshold: number
   evidence: string[]
@@ -349,11 +351,16 @@ export type ReconstructionDiagnostic = {
     | 'INCOMPLETE_ASSET_COVERAGE'
     | 'INCOMPLETE_RELATIONSHIP_COVERAGE'
     | 'UNRESOLVED_SEMANTIC_OBJECTS'
+    | 'STALE_HUMAN_DECISION'
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
   sourceBoxes?: NormalizedSourceBox[]
   relationshipId?: string
+  target?: {
+    regionIds: string[]
+    markerId: string | null
+  }
   noteMarkerClassification?: PdfNoteMarkerClassification
   readingOrderResolution?: Omit<PdfReadingOrderResolution, 'regionIds'> & {
     regionId?: string
@@ -405,10 +412,46 @@ export type PdfReadiness = {
 export type NodeSourceEvidence = {
   confidence: number
   pages: number[]
+  regionIds: string[]
   boxes: NormalizedSourceBox[]
   links: PdfEmbeddedLink[]
   part?: string
   relationshipIds?: string[]
+}
+
+export type HumanAdjudicationResolution =
+  | {
+      type: 'accept-note-match'
+      targetNoteId: string
+      targetRegionId: string
+    }
+  | { type: 'reclassify-citation' }
+  | { type: 'reclassify-plain-text' }
+  | { type: 'accept-reading-order'; regionIds: string[] }
+  | { type: 'dismiss' }
+
+export type HumanAdjudicationRecord = {
+  diagnosticCode: ReconstructionDiagnostic['code']
+  target: {
+    regionIds: string[]
+    markerId: string | null
+  }
+  resolution: HumanAdjudicationResolution
+}
+
+export type HumanAdjudicationProvenance = {
+  schemaVersion: '1.0.0'
+  documentSha256: string
+  applied: HumanAdjudicationRecord[]
+  stale: Array<
+    HumanAdjudicationRecord & {
+      reason:
+        | 'document-sha256-mismatch'
+        | 'diagnostic-target-missing'
+        | 'resolution-no-longer-legal'
+    }
+  >
+  countsByDiagnosticCode: Record<string, number>
 }
 
 export type PdfReconstruction = {
@@ -428,6 +471,7 @@ export type PdfReconstruction = {
   visualRelationships: PdfVisualRelationship[]
   assets: PdfVisualAsset[]
   provenance: Record<string, NodeSourceEvidence>
+  humanAdjudications: HumanAdjudicationProvenance
   diagnostics: ReconstructionDiagnostic[]
   semanticSignals: PdfSemanticSignals
   completeness: PdfCompletenessMetrics

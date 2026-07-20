@@ -231,15 +231,11 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
           }
         }
       }
-      if (
-        node.type === 'figure' &&
-        ((node.objectType === 'table' && !node.table) ||
-          (node.objectType !== 'table' && node.table))
-      ) {
+      if (node.type === 'figure' && node.objectType !== 'table' && node.table) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['nodes', index, 'table'],
-          message: 'Structured table data must accompany only table figures',
+          message: 'Structured table data may accompany only table figures',
         })
       }
     }

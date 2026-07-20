@@ -12,6 +12,7 @@ import type {
 import { assessPdfCompleteness } from './pdf-quality'
 import { classifyPdfNoteMarkers } from './pdf-note-classifier'
 import { reconstructPdfVisuals } from './pdf-visuals'
+import { semanticTableFromLines } from './visual-assets'
 import {
   normalizedNoteLabel,
   noteLabelFromText,
@@ -692,10 +693,19 @@ export async function reconstructPageAnalyses({
     const id = `visual-${relationship.kind}-p${String(page).padStart(3, '0')}-${slug(relationship.label, 24)}`
     relationship.canonicalNodeId = id
     const source = `pdf:${sourceHash.slice(0, 16)}#page=${page}`
+    const semanticTable =
+      relationship.kind === 'table'
+        ? semanticTableFromLines(
+            relationship.sourceRegionIds.flatMap(
+              (regionId) => regionMap.get(regionId)?.lines ?? [],
+            ),
+          )
+        : null
     const node: ResearchNode = {
       id,
       type: 'figure',
       objectType: relationship.kind,
+      ...(semanticTable ? { table: semanticTable } : {}),
       title: relationship.sourceText
         ? `${relationship.label}: ${relationship.sourceText}`
         : relationship.label,

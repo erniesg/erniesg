@@ -140,6 +140,8 @@ describe('local born-structured DOCX import', () => {
     expect(content).toContain('href="https://example.com/source"')
     expect(content).toContain('epub:type="noteref"')
     expect(content).toContain('epub:type="footnote"')
+    expect(content).toContain('<ol class="publication-list"')
+    expect(content).toContain('<ul class="publication-list"')
     expect(content).toContain('data-object-type="figure"')
     expect(content).toContain('data-object-type="table"')
     expect(entries).toEqual(

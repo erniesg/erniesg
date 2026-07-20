@@ -511,9 +511,7 @@ export default function PublicationImporter({
     }
     setState({ status: 'ready', ...completed })
     const epubs = await Promise.all([
-      buildEpub(result.paper, result),
-      buildEpub(result.paper, result, getTargetProfile('paperPro')),
-      buildEpub(result.paper, result, getTargetProfile('paperProMove')),
+      buildEpub(result.paper, result, getTargetProfile('mobile')),
     ])
     if (!isCurrent()) return
     setState({ status: 'ready', ...completed, epubs })
@@ -744,7 +742,12 @@ export default function PublicationImporter({
           </div>
           <div className="publication-intake">
             <div
-              className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
+              className={[
+                'publication-dropzone',
+                dragging ? 'is-dragging' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
               onDragEnter={(event) => {
                 event.preventDefault()
                 setDragging(true)
@@ -822,7 +825,11 @@ export default function PublicationImporter({
           <div className="publication-result-bar">
             <div>
               <span className="srt-kicker">
-                {state.status === 'ready' ? 'EPUB ready' : 'Review required'}
+                {state.status === 'ready'
+                  ? state.epubs
+                    ? 'EPUB ready'
+                    : 'Validating EPUB'
+                  : 'Review required'}
               </span>
               <strong>{state.result.source.fileName}</strong>
               <small>
@@ -858,22 +865,12 @@ export default function PublicationImporter({
               {state.status === 'ready' && state.epubs ? (
                 state.epubs.map((epub) => (
                   <EpubDownloadLink key={epub.identifier} epub={epub}>
-                    {epub.profile?.id === 'paperPro'
-                      ? 'Download Paper Pro EPUB'
-                      : epub.profile?.id === 'paperProMove'
-                        ? 'Download Paper Pro Move EPUB'
-                        : 'Download EPUB'}
+                    Download Mobile EPUB
                   </EpubDownloadLink>
                 ))
               ) : state.status === 'ready' ? (
-                <span aria-live="polite">Validating EPUB…</span>
+                <span aria-live="polite">Building the checked preview…</span>
               ) : null}
-              <button
-                onClick={() => window.print()}
-                disabled={state.status !== 'ready'}
-              >
-                Print / PDF
-              </button>
               <button className="secondary" onClick={reset}>
                 New paper
               </button>
@@ -1032,18 +1029,21 @@ export default function PublicationImporter({
               ))}
           </details>
 
-          {state.result.paper.nodes.length > 0 && (
-            <div
-              className={
-                state.status === 'ready' ? '' : 'publication-preview-blocked'
-              }
-            >
-              <ResearchStudio
-                key={`${state.result.paper.id}:${state.result.paper.version}`}
-                paper={state.result.paper}
-              />
-            </div>
-          )}
+          {state.status === 'ready' &&
+            state.epubs?.[0] &&
+            state.result.paper.nodes.length > 0 && (
+              <div
+                className={
+                  state.status === 'ready' ? '' : 'publication-preview-blocked'
+                }
+              >
+                <ResearchStudio
+                  key={state.result.source.sha256}
+                  reconstruction={state.result}
+                  previewEpub={state.epubs?.[0]}
+                />
+              </div>
+            )}
         </>
       )}
     </section>

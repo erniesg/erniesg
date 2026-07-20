@@ -244,7 +244,8 @@
   .srt-profiles button {
     @apply whitespace-nowrap border-r px-3 py-2 font-mono text-[10px] uppercase tracking-wider last:border-0;
   }
-  .srt-profiles button.active {
+  .srt-profiles button.active,
+  .srt-profiles button[aria-pressed='true'] {
     @apply bg-foreground text-background;
   }
   .srt-reflow-controls {
@@ -338,6 +339,18 @@
     margin: 36px 0 12px;
     font-size: var(--srt-heading-size);
   }
+  .srt-paper h3,
+  .srt-paper h4 {
+    @apply font-normal;
+    line-height: 1.25;
+    margin: 28px 0 10px;
+  }
+  .srt-paper h3 {
+    font-size: calc(var(--srt-heading-size) * 0.88);
+  }
+  .srt-paper h4 {
+    font-size: calc(var(--srt-heading-size) * 0.78);
+  }
   .srt-page-region > p,
   .srt-paper blockquote {
     margin: 16px 0;
@@ -366,6 +379,55 @@
   }
   .srt-paper figure {
     @apply my-8 border-y border-black/30 py-7;
+  }
+  .srt-paper figure > img {
+    @apply mx-auto block h-auto max-w-full;
+  }
+  .srt-semantic-table {
+    @apply max-w-full overflow-x-auto;
+  }
+  .srt-semantic-table table {
+    @apply w-full border-collapse text-left;
+    font-size: var(--srt-caption-size);
+  }
+  .srt-semantic-table th,
+  .srt-semantic-table td {
+    @apply border border-black/30 px-2 py-1.5 align-top;
+  }
+  .srt-semantic-table th {
+    @apply font-semibold;
+  }
+  .srt-visual-pending,
+  .srt-visual-unresolved {
+    @apply block border border-dashed border-black/30 px-4 py-8 text-center font-sans text-xs text-black/60;
+  }
+  .srt-page-region > ol,
+  .srt-page-region > ul,
+  .srt-page-region li > ol,
+  .srt-page-region li > ul {
+    @apply my-4 ps-6;
+    font-size: var(--srt-body-size);
+    line-height: var(--srt-line-height);
+  }
+  .srt-page-region ol {
+    @apply list-decimal;
+  }
+  .srt-page-region ul {
+    @apply list-disc;
+  }
+  .srt-page-region li {
+    @apply my-1 ps-1;
+  }
+  .srt-paper .publication-note {
+    @apply mt-4 border-t border-black/30 pt-3;
+    font-size: var(--srt-caption-size);
+    line-height: var(--srt-line-height);
+  }
+  .srt-paper .note-label {
+    @apply font-bold;
+  }
+  .srt-paper .note-backlink {
+    @apply ms-1 underline;
   }
   .srt-pipeline {
     @apply flex flex-wrap items-center justify-center gap-3 font-sans text-[10px] uppercase tracking-widest;
@@ -418,6 +480,9 @@
   }
   .srt-inspector a {
     @apply text-xs underline underline-offset-4;
+  }
+  .srt-preview-disclaimer {
+    @apply text-xs leading-relaxed text-muted-foreground;
   }
   .srt-annotations {
     @apply mb-8;

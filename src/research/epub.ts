@@ -69,7 +69,7 @@ function attribute(value: string) {
   return text(value).replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
 
-function stableId(value: string) {
+export function stablePublicationId(value: string) {
   const cleaned = value.replace(/[^A-Za-z0-9_.:-]/g, '-')
   return /^[A-Za-z_]/.test(cleaned) ? cleaned : `n-${cleaned}`
 }
@@ -83,6 +83,82 @@ function slug(value: string) {
       .replace(/^-|-$/g, '')
       .slice(0, 80) || 'research-publication'
   )
+}
+
+export type PublicationTextSegment = {
+  start: number
+  end: number
+  text: string
+  bold: boolean
+  italic: boolean
+  href?: string
+  reference?: {
+    id: string
+    target: string
+  }
+}
+
+export function publicationTextSegments(
+  value: string,
+  references?: Array<{
+    id: string
+    target: string
+    start: number
+    end: number
+  }>,
+  inlineRuns?: Array<{
+    start: number
+    end: number
+    bold?: boolean
+    italic?: boolean
+    href?: string
+  }>,
+) {
+  const validReferences = (references ?? []).filter(
+    (reference) =>
+      reference.start >= 0 &&
+      reference.start < reference.end &&
+      reference.end <= value.length,
+  )
+  const validRuns = (inlineRuns ?? []).filter(
+    (run) => run.start >= 0 && run.start < run.end && run.end <= value.length,
+  )
+  const boundaries = [
+    0,
+    value.length,
+    ...validReferences.flatMap((reference) => [reference.start, reference.end]),
+    ...validRuns.flatMap((run) => [run.start, run.end]),
+  ]
+  const points = [...new Set(boundaries)].sort((left, right) => left - right)
+  const segments: PublicationTextSegment[] = []
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index]
+    const end = points[index + 1]
+    if (start === end) continue
+    const run = validRuns.find(
+      (candidate) => candidate.start <= start && candidate.end >= end,
+    )
+    const reference = validReferences.find(
+      (candidate) => candidate.start <= start && candidate.end >= end,
+    )
+    segments.push({
+      start,
+      end,
+      text: value.slice(start, end),
+      bold: Boolean(run?.bold),
+      italic: Boolean(run?.italic),
+      ...(run?.href && safePublicationHref(run.href) ? { href: run.href } : {}),
+      ...(reference
+        ? {
+            reference: {
+              id: reference.id,
+              target: reference.target,
+            },
+          }
+        : {}),
+    })
+  }
+  return segments
 }
 
 function renderTextWithNoteReferences(
@@ -101,48 +177,22 @@ function renderTextWithNoteReferences(
     href?: string
   }>,
 ) {
-  if (!references?.length && !inlineRuns?.length) return text(value)
-  const validReferences = (references ?? []).filter(
-    (reference) =>
-      reference.start >= 0 &&
-      reference.start < reference.end &&
-      reference.end <= value.length,
-  )
-  const validRuns = (inlineRuns ?? []).filter(
-    (run) => run.start >= 0 && run.start < run.end && run.end <= value.length,
-  )
-  const boundaries = [
-    0,
-    value.length,
-    ...validReferences.flatMap((reference) => [reference.start, reference.end]),
-    ...validRuns.flatMap((run) => [run.start, run.end]),
-  ]
-  const points = [...new Set(boundaries)].sort((left, right) => left - right)
   let rendered = ''
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const start = points[index]
-    const end = points[index + 1]
-    if (start === end) continue
-    const run = validRuns.find(
-      (candidate) => candidate.start <= start && candidate.end >= end,
-    )
-    const reference = validReferences.find(
-      (candidate) => candidate.start <= start && candidate.end >= end,
-    )
-    let segment = text(value.slice(start, end))
-    if (run?.italic) segment = `<em>${segment}</em>`
-    if (run?.bold) segment = `<strong>${segment}</strong>`
-    if (reference) {
-      segment = `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${segment}</a>`
-    } else if (run?.href && safeHref(run.href)) {
-      segment = `<a href="${attribute(run.href)}">${segment}</a>`
+  for (const item of publicationTextSegments(value, references, inlineRuns)) {
+    let segment = text(item.text)
+    if (item.italic) segment = `<em>${segment}</em>`
+    if (item.bold) segment = `<strong>${segment}</strong>`
+    if (item.reference) {
+      segment = `<a id="${attribute(stablePublicationId(item.reference.id))}" href="#${attribute(stablePublicationId(item.reference.target))}" epub:type="noteref">${segment}</a>`
+    } else if (item.href) {
+      segment = `<a href="${attribute(item.href)}">${segment}</a>`
     }
     rendered += segment
   }
   return rendered
 }
 
-function safeHref(value: string) {
+export function safePublicationHref(value: string) {
   if (value.startsWith('#')) return true
   try {
     return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
@@ -169,16 +219,13 @@ function renderNode(
   visualRelationships: Map<string, PublicationVisualRelationship>,
   assets: Map<string, PublicationAsset>,
 ) {
-  const id = attribute(stableId(node.id))
+  const id = attribute(stablePublicationId(node.id))
   if (node.type === 'heading') {
     const level = Math.min(3, Math.max(2, node.level + 1))
     return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</h${level}>`
   }
   if (node.type === 'paragraph') {
-    const listAttributes = node.list
-      ? ` class="publication-list-item" role="listitem" data-list-level="${node.list.level}" data-list-ordered="${node.list.ordered}" data-numbering-id="${attribute(node.list.numberingId)}"`
-      : ''
-    return `<p id="${id}" data-canonical-id="${id}"${listAttributes}>${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</p>`
+    return `<p id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</p>`
   }
   if (node.type === 'quote') {
     return `<blockquote id="${id}" data-canonical-id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</p></blockquote>`
@@ -187,14 +234,14 @@ function renderNode(
     const backlinks = node.relationships.backlinks
       .map(
         (backlink, index) =>
-          `<a href="#${attribute(stableId(backlink))}" class="note-backlink" aria-label="Back to reference ${index + 1}">↩</a>`,
+          `<a href="#${attribute(stablePublicationId(backlink))}" class="note-backlink" aria-label="Back to reference ${index + 1}">↩</a>`,
       )
       .join(' ')
     return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label">${text(node.label)}</span> ${text(node.text)}${backlinks ? ` ${backlinks}` : ''}</aside>`
   }
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
-    const captionId = attribute(stableId(node.relationships.caption))
+    const captionId = attribute(stablePublicationId(node.relationships.caption))
     const visual = visualRelationships.get(node.id)
     if (visual) {
       const renderedAssets = visual.assetIds
@@ -216,6 +263,72 @@ function renderNode(
     return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${text(caption.text)}</figcaption>` : ''}</figure>`
   }
   return ''
+}
+
+type PublicationListParagraph = Extract<ResearchNode, { type: 'paragraph' }> & {
+  list: NonNullable<Extract<ResearchNode, { type: 'paragraph' }>['list']>
+}
+
+type PublicationListGroup = {
+  level: number
+  ordered: boolean
+  numberingId: string
+  items: Array<{
+    node: PublicationListParagraph
+    children: PublicationListGroup[]
+  }>
+}
+
+function isPublicationListParagraph(
+  node: ResearchNode,
+): node is PublicationListParagraph {
+  return node.type === 'paragraph' && node.list !== undefined
+}
+
+function buildPublicationList(
+  nodes: ResearchNode[],
+  start: number,
+): { group: PublicationListGroup; next: number } | null {
+  const first = nodes[start]
+  if (!first || !isPublicationListParagraph(first)) return null
+  const { level, ordered, numberingId } = first.list
+  const items: PublicationListGroup['items'] = []
+  let index = start
+  while (index < nodes.length) {
+    const node = nodes[index]
+    if (!isPublicationListParagraph(node) || node.list.level < level) break
+    if (
+      node.list.level === level &&
+      (node.list.ordered !== ordered || node.list.numberingId !== numberingId)
+    ) {
+      break
+    }
+    if (node.list.level > level) {
+      const child = buildPublicationList(nodes, index)
+      const previous = items.at(-1)
+      if (!previous || !child || child.next === index) break
+      previous.children.push(child.group)
+      index = child.next
+      continue
+    }
+    items.push({ node, children: [] })
+    index += 1
+  }
+  return {
+    group: { level, ordered, numberingId, items },
+    next: index,
+  }
+}
+
+function renderPublicationList(group: PublicationListGroup): string {
+  const tag = group.ordered ? 'ol' : 'ul'
+  const items: string = group.items
+    .map(({ node, children }) => {
+      const id = attribute(stablePublicationId(node.id))
+      return `<li id="${id}" data-canonical-id="${id}" data-list-level="${node.list.level}" data-numbering-id="${attribute(node.list.numberingId)}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}${children.map(renderPublicationList).join('')}</li>`
+    })
+    .join('')
+  return `<${tag} class="publication-list" data-list-level="${group.level}" data-numbering-id="${attribute(group.numberingId)}">${items}</${tag}>`
 }
 
 export function renderPublicationXhtml(
@@ -259,16 +372,30 @@ export function renderPublicationXhtml(
         visualAsset,
       ]),
     )
-  const body = paper.nodes
-    .filter(
-      (node) => node.type !== 'caption' || !associatedCaptions.has(node.id),
-    )
-    .map((node) =>
+  const bodyParts: string[] = []
+  let index = 0
+  while (index < paper.nodes.length) {
+    const node = paper.nodes[index]
+    if (isPublicationListParagraph(node)) {
+      const list = buildPublicationList(paper.nodes, index)
+      if (list) {
+        bodyParts.push(renderPublicationList(list.group))
+        index = list.next
+        continue
+      }
+    }
+    if (node.type === 'caption' && associatedCaptions.has(node.id)) {
+      index += 1
+      continue
+    }
+    bodyParts.push(
       node.type === 'caption'
-        ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${text(node.text)}</aside>`
+        ? `<aside id="${attribute(stablePublicationId(node.id))}" data-canonical-id="${attribute(stablePublicationId(node.id))}" class="orphan-caption">${text(node.text)}</aside>`
         : renderNode(node, captions, visualRelationships, assets),
     )
-    .join('\n')
+    index += 1
+  }
+  const body = bodyParts.join('\n')
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -306,7 +433,7 @@ function navXhtml(paper: ResearchPaper) {
     `<li><a href="content.xhtml#publication-title">${text(paper.title)}</a></li>`,
     ...headings.map(
       (node) =>
-        `<li><a href="content.xhtml#${attribute(stableId(node.id))}">${text(node.text)}</a></li>`,
+        `<li><a href="content.xhtml#${attribute(stablePublicationId(node.id))}">${text(node.text)}</a></li>`,
     ),
   ]
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -344,7 +471,8 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .publication-note { border-top: 0.06rem solid currentColor; font-size: 0.84rem; margin-top: 1rem; padding-top: 0.5rem; }
 .note-label { font-weight: bold; }
 .note-backlink { margin-inline-start: 0.35rem; }
-.publication-list-item { margin-inline-start: 1.5rem; }
+.publication-list { margin: 0.8rem 0; padding-inline-start: 1.5rem; }
+.publication-list .publication-list { margin: 0.35rem 0; }
 img, svg { display: block; height: auto; max-width: 100%; }
 object { border: 0; display: block; min-height: 8rem; width: 100%; }
 a { color: inherit; text-decoration: underline; }
@@ -463,7 +591,7 @@ function packageOpf(
   const assetItems = assets
     .map(
       (visualAsset) =>
-        `<item id="${attribute(stableId(visualAsset.id))}" href="${attribute(visualAsset.href)}" media-type="${attribute(visualAsset.mediaType)}" />`,
+        `<item id="${attribute(stablePublicationId(visualAsset.id))}" href="${attribute(visualAsset.href)}" media-type="${attribute(visualAsset.mediaType)}" />`,
     )
     .join('\n    ')
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -565,7 +693,7 @@ export function inspectEpub(
     const canonicalIds = [
       ...content.matchAll(/data-canonical-id="([^"]+)"/g),
     ].map((match) => match[1])
-    const expectedIds = manifest.canonicalNodeIds.map(stableId)
+    const expectedIds = manifest.canonicalNodeIds.map(stablePublicationId)
     if (
       new Set(canonicalIds).size !== canonicalIds.length ||
       JSON.stringify(canonicalIds) !== JSON.stringify(expectedIds)
@@ -675,7 +803,7 @@ export async function buildEpub(
     }),
   )
   const canonicalHash = await sha256(JSON.stringify(paper))
-  const identifier = `urn:srt:${stableId(paper.id)}:${canonicalHash.slice(0, 24)}${profile ? `:${profile.id}:${profile.version}:${EPUB_EXPORT_POLICY_VERSION}` : ''}`
+  const identifier = `urn:srt:${stablePublicationId(paper.id)}:${canonicalHash.slice(0, 24)}${profile ? `:${profile.id}:${profile.version}:${EPUB_EXPORT_POLICY_VERSION}` : ''}`
   const modified = `${paper.updated}T00:00:00Z`
   const profileMetadata: EpubProfileMetadata | undefined = profile
     ? {

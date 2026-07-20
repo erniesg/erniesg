@@ -1,4 +1,5 @@
 import {
+  createElement,
   Fragment,
   useEffect,
   useMemo,
@@ -14,26 +15,37 @@ import {
   resolveTextAnchor,
   type TextAnchorResolution,
   type TextAnnotation,
-} from '@/research/annotations'
+} from '../../research/annotations'
+import {
+  inspectEpub,
+  publicationTextSegments,
+  stablePublicationId,
+  type EpubExport,
+} from '../../research/epub'
+import type {
+  DocumentReconstruction,
+  PublicationAsset,
+  PublicationVisualRelationship,
+} from '../../research/import-types'
 import {
   COMPOSITION_POLICY_VERSION,
   getCompositionPolicy,
   resolveNodeComposition,
-} from '@/research/composition'
+} from '../../research/composition'
 import {
   measureCurrentRegionStability,
   PAGINATION_POLICY_VERSION,
   paginateResearchPaper,
   type PaginationFragment,
   type PaginationResult,
-} from '@/research/pagination'
-import type { ResearchNode, ResearchPaper } from '@/research/schema'
+} from '../../research/pagination'
+import type { ResearchNode, ResearchPaper } from '../../research/schema'
 import {
   getPreviewMetrics,
   getTargetProfile,
   TARGET_PROFILE_IDS,
   type TargetProfileId,
-} from '@/research/targets'
+} from '../../research/targets'
 
 type CaptionNode = Extract<ResearchNode, { type: 'caption' }>
 type ResolvedTextAnnotation = {
@@ -244,7 +256,649 @@ function DocumentHeader({ paper }: { paper: ResearchPaper }) {
   )
 }
 
-export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
+type InlineNode = Extract<
+  ResearchNode,
+  { type: 'heading' | 'paragraph' | 'quote' }
+>
+
+function SemanticText({ node }: { node: InlineNode }) {
+  return publicationTextSegments(
+    node.text,
+    node.noteReferences,
+    node.inlineRuns,
+  ).map((segment) => {
+    let content: ReactNode = segment.text
+    if (segment.italic) content = <em>{content}</em>
+    if (segment.bold) content = <strong>{content}</strong>
+    if (segment.reference) {
+      content = (
+        <a
+          id={stablePublicationId(segment.reference.id)}
+          href={`#${stablePublicationId(segment.reference.target)}`}
+          role="doc-noteref"
+        >
+          {content}
+        </a>
+      )
+    } else if (segment.href) {
+      content = <a href={segment.href}>{content}</a>
+    }
+    return (
+      <Fragment key={`${segment.start}-${segment.end}`}>{content}</Fragment>
+    )
+  })
+}
+
+type CheckedPreviewAsset = Pick<
+  PublicationAsset,
+  'id' | 'href' | 'mediaType' | 'bytes'
+> & {
+  sourceAssetId: string
+}
+
+function checkedPreviewAssets(
+  reconstruction: DocumentReconstruction,
+  previewEpub?: EpubExport,
+) {
+  if (!previewEpub) {
+    return new Map(
+      reconstruction.assets.map((asset) => [
+        asset.id,
+        { ...asset, sourceAssetId: asset.id } satisfies CheckedPreviewAsset,
+      ]),
+    )
+  }
+
+  const expectedProfile = getTargetProfile('mobile')
+  const { files, manifest } = inspectEpub(previewEpub.bytes, expectedProfile)
+  const receipt = manifest as typeof manifest & {
+    sourcePdfSha256?: string
+    sourceDocxSha256?: string
+    assets?: Array<{
+      id?: string
+      href?: string
+      mediaType?: string
+      sourceAssetId?: string
+    }>
+  }
+  const receiptSourceHash =
+    reconstruction.source.format === 'docx'
+      ? receipt.sourceDocxSha256
+      : receipt.sourcePdfSha256
+  if (receiptSourceHash !== reconstruction.source.sha256) {
+    throw new Error('Preview EPUB does not match the active reconstruction')
+  }
+
+  const sourceAssets = new Map(
+    reconstruction.assets.map((asset) => [asset.id, asset]),
+  )
+  const checked = new Map<string, CheckedPreviewAsset>()
+  for (const packaged of receipt.assets ?? []) {
+    if (!packaged.sourceAssetId || !packaged.href || !packaged.id) continue
+    const source = sourceAssets.get(packaged.sourceAssetId)
+    const bytes = files[`EPUB/${packaged.href}`]
+    if (!source || !bytes || packaged.mediaType !== source.mediaType) continue
+    checked.set(packaged.sourceAssetId, {
+      id: packaged.id,
+      href: packaged.href,
+      mediaType: source.mediaType,
+      bytes,
+      sourceAssetId: packaged.sourceAssetId,
+    })
+  }
+  return checked
+}
+
+function usePreviewAssetUrls(assets: Map<string, CheckedPreviewAsset>) {
+  const [urlState, setUrlState] = useState<{
+    assets: Map<string, CheckedPreviewAsset>
+    urls: Map<string, string>
+  }>(() => ({ assets, urls: new Map() }))
+
+  useEffect(() => {
+    const next = new Map<string, string>()
+    if (typeof URL.createObjectURL !== 'function') {
+      setUrlState({ assets, urls: next })
+      return
+    }
+    for (const [sourceAssetId, asset] of assets) {
+      if (
+        asset.mediaType !== 'image/png' &&
+        asset.mediaType !== 'image/jpeg' &&
+        asset.mediaType !== 'image/gif' &&
+        asset.mediaType !== 'image/svg+xml'
+      ) {
+        continue
+      }
+      next.set(
+        sourceAssetId,
+        URL.createObjectURL(
+          new Blob([asset.bytes as BlobPart], { type: asset.mediaType }),
+        ),
+      )
+    }
+    setUrlState({ assets, urls: next })
+    return () => {
+      for (const url of next.values()) URL.revokeObjectURL(url)
+    }
+  }, [assets])
+
+  return urlState.assets === assets ? urlState.urls : new Map<string, string>()
+}
+
+function SemanticTable({
+  node,
+}: {
+  node: Extract<ResearchNode, { type: 'figure' }>
+}) {
+  if (node.objectType !== 'table' || !node.table?.rows.length) return null
+  return (
+    <table data-semantic-table="true">
+      <tbody>
+        {node.table.rows.map((row, rowIndex) => (
+          <tr key={rowIndex}>
+            {row.cells.map((cell, cellIndex) => {
+              const Cell = cell.header ? 'th' : 'td'
+              return (
+                <Cell
+                  key={cellIndex}
+                  colSpan={cell.columnSpan}
+                  rowSpan={cell.rowSpan}
+                  {...(cell.header ? { scope: 'col' as const } : {})}
+                >
+                  {cell.text}
+                </Cell>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function UnresolvedVisual({ assetId }: { assetId?: string }) {
+  return (
+    <p className="srt-visual-unresolved" role="status" data-asset-id={assetId}>
+      Source visual unavailable in this checked preview.
+    </p>
+  )
+}
+
+function ImportedFigure({
+  node,
+  caption,
+  relationship,
+  assets,
+  urls,
+}: {
+  node: Extract<ResearchNode, { type: 'figure' }>
+  caption?: CaptionNode
+  relationship?: PublicationVisualRelationship
+  assets: Map<string, CheckedPreviewAsset>
+  urls: Map<string, string>
+}) {
+  const captionId = stablePublicationId(node.relationships.caption)
+  const matched = relationship?.status === 'matched'
+  const assetIds = matched ? relationship.assetIds : []
+  return (
+    <figure
+      id={stablePublicationId(node.id)}
+      data-node-id={node.id}
+      data-canonical-id={stablePublicationId(node.id)}
+      data-caption-id={captionId}
+      data-object-type={relationship?.kind ?? node.objectType ?? 'figure'}
+      data-relationship-id={relationship?.id}
+      data-source-object-ids={relationship?.sourceObjectIds.join(' ')}
+      role="group"
+    >
+      {assetIds.length === 0 && <UnresolvedVisual />}
+      {assetIds.map((assetId, occurrence) => {
+        const asset = assets.get(assetId)
+        if (!asset) {
+          return (
+            <UnresolvedVisual
+              key={`${assetId}-${occurrence}`}
+              assetId={assetId}
+            />
+          )
+        }
+        if (asset.mediaType === 'application/xhtml+xml') {
+          return node.objectType === 'table' && node.table?.rows.length ? (
+            <div
+              key={`${assetId}-${occurrence}`}
+              className="srt-semantic-table"
+              data-asset-id={asset.id}
+              data-asset-source-id={asset.sourceAssetId}
+              data-asset-occurrence={occurrence}
+            >
+              <SemanticTable node={node} />
+            </div>
+          ) : (
+            <UnresolvedVisual
+              key={`${assetId}-${occurrence}`}
+              assetId={assetId}
+            />
+          )
+        }
+        const url = urls.get(assetId)
+        return url ? (
+          <img
+            key={`${assetId}-${occurrence}`}
+            src={url}
+            alt={relationship?.altText ?? node.title}
+            data-alt-source={relationship?.altTextSource}
+            data-asset-id={asset.id}
+            data-asset-source-id={asset.sourceAssetId}
+            data-asset-occurrence={occurrence}
+          />
+        ) : (
+          <span
+            key={`${assetId}-${occurrence}`}
+            className="srt-visual-pending"
+            role="status"
+            data-asset-id={asset.id}
+            data-asset-source-id={asset.sourceAssetId}
+            data-asset-occurrence={occurrence}
+          >
+            Preparing local visual…
+          </span>
+        )
+      })}
+      {caption && (
+        <figcaption
+          id={captionId}
+          data-node-id={caption.id}
+          data-canonical-id={captionId}
+          data-relationship-id={relationship?.id}
+        >
+          {caption.text}
+        </figcaption>
+      )}
+    </figure>
+  )
+}
+
+function ImportedNode({
+  node,
+  captions,
+  relationships,
+  assets,
+  urls,
+}: {
+  node: ResearchNode
+  captions: Map<string, CaptionNode>
+  relationships: Map<string, PublicationVisualRelationship>
+  assets: Map<string, CheckedPreviewAsset>
+  urls: Map<string, string>
+}) {
+  const id = stablePublicationId(node.id)
+  const data = { 'data-node-id': node.id, 'data-canonical-id': id }
+  if (node.type === 'heading') {
+    return createElement(
+      `h${Math.min(4, node.level + 1)}`,
+      { ...data, id },
+      <SemanticText node={node} />,
+    )
+  }
+  if (node.type === 'paragraph') {
+    return (
+      <p {...data} id={id}>
+        <SemanticText node={node} />
+      </p>
+    )
+  }
+  if (node.type === 'quote') {
+    return (
+      <blockquote {...data} id={id}>
+        <p>
+          <SemanticText node={node} />
+        </p>
+      </blockquote>
+    )
+  }
+  if (node.type === 'footnote') {
+    return (
+      <aside
+        {...data}
+        id={id}
+        role={`doc-${node.kind}`}
+        data-note-kind={node.kind}
+        className="publication-note"
+      >
+        <span className="note-label">{node.label}</span> {node.text}{' '}
+        {node.relationships.backlinks.map((backlink, index) => (
+          <a
+            key={backlink}
+            href={`#${stablePublicationId(backlink)}`}
+            className="note-backlink"
+            aria-label={`Back to reference ${index + 1}`}
+          >
+            ↩
+          </a>
+        ))}
+      </aside>
+    )
+  }
+  if (node.type === 'figure') {
+    return (
+      <ImportedFigure
+        node={node}
+        caption={captions.get(node.relationships.caption)}
+        relationship={relationships.get(node.id)}
+        assets={assets}
+        urls={urls}
+      />
+    )
+  }
+  return (
+    <aside {...data} id={id} className="orphan-caption">
+      {node.text}
+    </aside>
+  )
+}
+
+type ListParagraph = Extract<ResearchNode, { type: 'paragraph' }> & {
+  list: NonNullable<Extract<ResearchNode, { type: 'paragraph' }>['list']>
+}
+
+function isListParagraph(node: ResearchNode): node is ListParagraph {
+  return node.type === 'paragraph' && node.list !== undefined
+}
+
+type ImportedListGroup = {
+  level: number
+  ordered: boolean
+  numberingId: string
+  items: Array<{
+    node: ListParagraph
+    children: ImportedListGroup[]
+  }>
+}
+
+function buildImportedList(
+  nodes: ResearchNode[],
+  start: number,
+): { group: ImportedListGroup; next: number } | null {
+  const first = nodes[start]
+  if (!first || !isListParagraph(first)) return null
+  const level = first.list.level
+  const ordered = first.list.ordered
+  const numberingId = first.list.numberingId
+  const items: ImportedListGroup['items'] = []
+  let index = start
+
+  while (index < nodes.length) {
+    const node = nodes[index]
+    if (!isListParagraph(node) || node.list.level < level) break
+    if (
+      node.list.level === level &&
+      (node.list.ordered !== ordered || node.list.numberingId !== numberingId)
+    ) {
+      break
+    }
+    if (node.list.level > level) {
+      const child = buildImportedList(nodes, index)
+      const previous = items.at(-1)
+      if (!previous || !child || child.next === index) break
+      previous.children.push(child.group)
+      index = child.next
+      continue
+    }
+    items.push({ node, children: [] })
+    index += 1
+  }
+
+  return {
+    group: { level, ordered, numberingId, items },
+    next: index,
+  }
+}
+
+function ImportedList({ group }: { group: ImportedListGroup }) {
+  const List = group.ordered ? 'ol' : 'ul'
+  return (
+    <List data-list-level={group.level} data-numbering-id={group.numberingId}>
+      {group.items.map(({ node, children }) => {
+        const id = stablePublicationId(node.id)
+        return (
+          <li
+            key={node.id}
+            id={id}
+            data-node-id={node.id}
+            data-canonical-id={id}
+            data-list-level={node.list.level}
+            data-numbering-id={node.list.numberingId}
+          >
+            <SemanticText node={node} />
+            {children.map((child, index) => (
+              <ImportedList key={`${node.id}-nested-${index}`} group={child} />
+            ))}
+          </li>
+        )
+      })}
+    </List>
+  )
+}
+
+function ImportedFlow({
+  paper,
+  relationships,
+  assets,
+  urls,
+}: {
+  paper: ResearchPaper
+  relationships: Map<string, PublicationVisualRelationship>
+  assets: Map<string, CheckedPreviewAsset>
+  urls: Map<string, string>
+}) {
+  const captions = new Map(
+    paper.nodes
+      .filter((node): node is CaptionNode => node.type === 'caption')
+      .map((node) => [node.id, node]),
+  )
+  const associatedCaptions = new Set(
+    paper.nodes
+      .filter(
+        (node): node is Extract<ResearchNode, { type: 'figure' }> =>
+          node.type === 'figure',
+      )
+      .map((node) => node.relationships.caption),
+  )
+  const content: ReactNode[] = []
+  let index = 0
+  while (index < paper.nodes.length) {
+    const node = paper.nodes[index]
+    if (isListParagraph(node)) {
+      const list = buildImportedList(paper.nodes, index)
+      if (!list) {
+        index += 1
+        continue
+      }
+      content.push(<ImportedList key={`list-${index}`} group={list.group} />)
+      index = list.next
+      continue
+    }
+    if (node.type === 'caption' && associatedCaptions.has(node.id)) {
+      index += 1
+      continue
+    }
+    content.push(
+      <ImportedNode
+        key={node.id}
+        node={node}
+        captions={captions}
+        relationships={relationships}
+        assets={assets}
+        urls={urls}
+      />,
+    )
+    index += 1
+  }
+  return content
+}
+
+function ImportedResearchStudio({
+  reconstruction,
+  previewEpub,
+}: {
+  reconstruction: DocumentReconstruction
+  previewEpub?: EpubExport
+}) {
+  const paper = reconstruction.paper
+  const profile = getTargetProfile('mobile')
+  const preview = getPreviewMetrics(profile)
+  const [widthScale, setWidthScale] = useState(1)
+  const [fontScale, setFontScale] = useState(1)
+  const assets = useMemo(
+    () => checkedPreviewAssets(reconstruction, previewEpub),
+    [previewEpub, reconstruction],
+  )
+  const urls = usePreviewAssetUrls(assets)
+  const relationships = useMemo(
+    () =>
+      new Map(
+        reconstruction.visualRelationships
+          .filter(
+            (relationship) =>
+              relationship.status === 'matched' && relationship.canonicalNodeId,
+          )
+          .map((relationship) => [relationship.canonicalNodeId!, relationship]),
+      ),
+    [reconstruction],
+  )
+  const paperStyle = {
+    width: preview.widthCssPx * widthScale,
+    maxWidth: preview.widthCssPx * widthScale,
+    '--srt-page-height': 'auto',
+    '--srt-header-height': 'auto',
+    '--srt-margin-top': `${preview.marginTopCssPx}px`,
+    '--srt-margin-right': `${preview.marginRightCssPx * widthScale}px`,
+    '--srt-margin-bottom': `${preview.marginBottomCssPx}px`,
+    '--srt-margin-left': `${preview.marginLeftCssPx * widthScale}px`,
+    '--srt-font-family': profile.typography.fontFamily,
+    '--srt-body-size': `${profile.typography.bodySizeCssPx * fontScale}px`,
+    '--srt-line-height': profile.typography.lineHeight,
+    '--srt-title-size': `${profile.typography.titleSizeCssPx * fontScale}px`,
+    '--srt-subtitle-size': `${18 * fontScale}px`,
+    '--srt-abstract-size': `${14 * fontScale}px`,
+    '--srt-heading-size': `${profile.typography.headingSizeCssPx * fontScale}px`,
+    '--srt-quote-size': `${profile.typography.quoteSizeCssPx * fontScale}px`,
+    '--srt-caption-size': `${12 * fontScale}px`,
+    '--srt-column-count': 1,
+    '--srt-column-gap': '0px',
+  } as CSSProperties
+
+  return (
+    <section className="srt-studio" aria-label="Imported publication preview">
+      <header className="srt-toolbar">
+        <div>
+          <span className="srt-kicker">Source review</span>
+          <strong>Continuous reflow from the checked Mobile EPUB</strong>
+        </div>
+        <div className="srt-profiles" aria-label="Target profile">
+          <button
+            type="button"
+            className="active"
+            aria-pressed="true"
+            data-profile-id={profile.id}
+            data-profile-version={profile.version}
+          >
+            {profile.label}
+          </button>
+        </div>
+        <div className="srt-reflow-controls" aria-label="Reader controls">
+          <button
+            type="button"
+            aria-pressed={widthScale !== 1}
+            onClick={() =>
+              setWidthScale((current) => (current === 1 ? 0.86 : 1))
+            }
+          >
+            Narrow width
+          </button>
+          <button
+            type="button"
+            aria-pressed={fontScale !== 1}
+            onClick={() =>
+              setFontScale((current) => (current === 1 ? 1.12 : 1))
+            }
+          >
+            Larger text
+          </button>
+        </div>
+      </header>
+      <div className="srt-stage">
+        <div className="srt-viewport">
+          <div
+            className="srt-paper"
+            data-target-profile={profile.id}
+            data-profile-version={profile.version}
+            data-columns="1"
+            data-finite-height="false"
+            data-flow-mode="canonical-reading-order"
+            data-interaction={profile.interactionMode}
+            data-page-count="continuous"
+            data-page-count-status="continuous"
+            data-source-review="true"
+            data-source-sha256={reconstruction.source.sha256}
+            data-preview-status={previewEpub ? 'checked' : 'awaiting-epub'}
+            data-epub-sha256={previewEpub?.sha256}
+            data-width-scale={widthScale}
+            data-font-scale={fontScale}
+            style={paperStyle}
+          >
+            <article className="srt-page" data-page="1" data-continuous="true">
+              <DocumentHeader paper={paper} />
+              <div className="srt-page-regions" data-spanning="false">
+                <div className="srt-page-region" data-region="0">
+                  <ImportedFlow
+                    paper={paper}
+                    relationships={relationships}
+                    assets={assets}
+                    urls={urls}
+                  />
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+        <aside className="srt-inspector">
+          <span className="srt-kicker">Preview contract</span>
+          <code>{reconstruction.source.fileName}</code>
+          <dl>
+            <div>
+              <dt>Profile</dt>
+              <dd>{profile.label}</dd>
+            </div>
+            <div>
+              <dt>Flow</dt>
+              <dd>Continuous canonical order</dd>
+            </div>
+            <div>
+              <dt>Columns</dt>
+              <dd>One semantic stream</dd>
+            </div>
+            <div>
+              <dt>Artifact</dt>
+              <dd>{previewEpub ? 'EPUB checked' : 'Validation pending'}</dd>
+            </div>
+            <div>
+              <dt>Reader controls</dt>
+              <dd>Width and type are advisory</dd>
+            </div>
+          </dl>
+          <p className="srt-preview-disclaimer">
+            This continuous review shows canonical reading order. The optional
+            download is validated separately for compatible EPUB readers.
+          </p>
+        </aside>
+      </div>
+    </section>
+  )
+}
+
+function DemoResearchStudio({ paper }: { paper: ResearchPaper }) {
   const [profileId, setProfileId] = useState<TargetProfileId>('paperPro')
   const [widthScale, setWidthScale] = useState(1)
   const [fontScale, setFontScale] = useState(1)
@@ -702,4 +1356,25 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
       </div>
     </section>
   )
+}
+
+export default function ResearchStudio({
+  paper,
+  reconstruction,
+  previewEpub,
+}: {
+  paper?: ResearchPaper
+  reconstruction?: DocumentReconstruction
+  previewEpub?: EpubExport
+}) {
+  if (reconstruction) {
+    return (
+      <ImportedResearchStudio
+        reconstruction={reconstruction}
+        previewEpub={previewEpub}
+      />
+    )
+  }
+  if (!paper) throw new Error('ResearchStudio requires a paper')
+  return <DemoResearchStudio paper={paper} />
 }

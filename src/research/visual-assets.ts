@@ -398,6 +398,21 @@ function tableRows(lines: PdfRegionLine[]) {
   return rows
 }
 
+export function semanticTableFromLines(lines: PdfRegionLine[]) {
+  const rows = tableRows(lines)
+  if (!rows) return null
+  return {
+    rows: rows.map((row, rowIndex) => ({
+      cells: row.map((cell) => ({
+        text: cell.text,
+        header: rowIndex === 0,
+        columnSpan: 1,
+        rowSpan: 1,
+      })),
+    })),
+  }
+}
+
 export async function createTableAsset(input: {
   sourceObjectId: string
   sourceBox: NormalizedSourceBox

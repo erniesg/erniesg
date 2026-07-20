@@ -946,6 +946,15 @@ describe('PDF.js browser ingestion', () => {
         expect.objectContaining({
           type: 'figure',
           objectType: 'table',
+          table: expect.objectContaining({
+            rows: expect.arrayContaining([
+              expect.objectContaining({
+                cells: expect.arrayContaining([
+                  expect.objectContaining({ header: true }),
+                ]),
+              }),
+            ]),
+          }),
           relationships: expect.objectContaining({
             caption: expect.stringMatching(/^caption-/),
             assets: expect.arrayContaining([

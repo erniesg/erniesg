@@ -57,11 +57,10 @@ npm run pdf:export -- tests/fixtures/pdf/pdf-to-epub-fidelity.pdf --target paper
 npm run pdf:export -- tests/fixtures/pdf/pdf-to-epub-fidelity.pdf --target mobile --readable-fallback --out /tmp/srt-fidelity-mobile-b
 npm run pdf:export -- tests/fixtures/pdf/pdf-to-epub-fidelity.pdf --target paperProMove --readable-fallback --out /tmp/srt-fidelity-papermove-b
 npm run pdf:export -- tests/fixtures/pdf/pdf-to-epub-fidelity.pdf --target paperPro --readable-fallback --out /tmp/srt-fidelity-paperpro-b
-npm run pdf:benchmark:compare -- /tmp/srt-fidelity-mobile-a/corpus-audit.json /tmp/srt-fidelity-mobile-b/corpus-audit.json --require-identical-artifacts
-npm run pdf:benchmark:compare -- /tmp/srt-fidelity-papermove-a/corpus-audit.json /tmp/srt-fidelity-papermove-b/corpus-audit.json --require-identical-artifacts
-npm run pdf:benchmark:compare -- /tmp/srt-fidelity-paperpro-a/corpus-audit.json /tmp/srt-fidelity-paperpro-b/corpus-audit.json --require-identical-artifacts
-test -n "${SRT_PRIVATE_PDF_2408_10903V5:-}"
-npm run pdf:private-fidelity -- --input "$SRT_PRIVATE_PDF_2408_10903V5" --paper-id 2408.10903v5 --expected-size 8873089 --expected-sha256 f5c8f963c4d17409b6ab163e0be914db139f9bc83cca0274a88863098e865a80 --profiles mobile,paperProMove,paperPro --repeat 2 --out /tmp/srt-private-2408-fidelity
+npm run pdf:benchmark:compare -- /tmp/srt-fidelity-mobile-a/corpus-audit.json /tmp/srt-fidelity-mobile-b/corpus-audit.json --require-identical-artifacts --require-identical-structure
+npm run pdf:benchmark:compare -- /tmp/srt-fidelity-papermove-a/corpus-audit.json /tmp/srt-fidelity-papermove-b/corpus-audit.json --require-identical-artifacts --require-identical-structure
+npm run pdf:benchmark:compare -- /tmp/srt-fidelity-paperpro-a/corpus-audit.json /tmp/srt-fidelity-paperpro-b/corpus-audit.json --require-identical-artifacts --require-identical-structure
+npm --silent run pdf:private-fidelity -- --input-env SRT_PRIVATE_PDF_2408_10903V5 --paper-id 2408.10903v5 --expected-size 8873089 --expected-sha256 f5c8f963c4d17409b6ab163e0be914db139f9bc83cca0274a88863098e865a80 --profiles mobile,paperProMove,paperPro --repeat 2 --out /tmp/srt-private-2408-fidelity
 scripts/agent-evidence --all
 git diff --check
 test -z "$(git status --porcelain --untracked-files=all)"

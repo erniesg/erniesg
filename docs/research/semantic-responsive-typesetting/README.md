@@ -4,7 +4,7 @@ This bundle contains the product/implementation brief and its companion research
 
 ## Start here
 
-1. Read `PRD/semantic_responsive_typesetting_PRD_handoff.docx` for the product thesis, POC scope, architecture, requirements, milestones, and fresh-agent kickoff.
+1. Read [`PRD/semantic_responsive_typesetting_PRD_handoff.md`](./PRD/semantic_responsive_typesetting_PRD_handoff.md) for the current product thesis, implementation acceptance gates, architecture, requirements, milestones, and fresh-agent kickoff. The adjacent `.docx` is the original handoff snapshot and may lag this active Markdown contract.
 2. Read `research/semantic_responsive_typesetting_literature_review.docx` before making novelty claims or choosing the technical approach.
 3. Import `research/semantic_responsive_typesetting_references.bib` into the project bibliography.
 
@@ -19,3 +19,7 @@ The scholarly-paper/e-ink workflow is the proof-of-concept domain. The broader p
 ## Engineering evaluation
 
 The reproducible POC benchmark, machine-readable results, limitations log, ADR index, evidence inventory, and demo instructions are in [`evaluation/`](./evaluation/README.md).
+
+The current PDF-ingestion release contract is layered: component behavior is owned by issues 012, 013, 018, and 023-026; issue 032 is the integrated privacy-safe `2408.10903v5` upload, semantic reflow, multi-profile preview, and optional EPUB-download regression gate. Deterministic benchmark policy and private-corpus handling are defined in [`pdf-ingestion-benchmark.md`](./pdf-ingestion-benchmark.md).
+
+Authoritative e-ink device geometry comes from the target registry: Paper Pro Move is `954 × 1696` device pixels and Paper Pro is `1620 × 2160` device pixels. Browser previews may scale those viewports, but must retain their aspect ratio, profile/version receipt, semantic reading order, and honest distinction between publisher-controlled output and reader-controlled EPUB behavior.

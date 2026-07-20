@@ -3,8 +3,8 @@
 ## Product Requirements Document + Agent Handoff
 
 **Proof of concept:** scholarly document recomposition across print, e-ink, and digital surfaces  
-**Version:** 0.1  
-**Status:** Ready for implementation discovery  
+**Version:** 0.2
+**Status:** Active implementation and PDF-ingestion fidelity hardening
 **Prepared:** 12 July 2026
 
 > **Core proposition:** One semantic document. Multiple computed renditions. Persistent identity, relationships, reading position, and annotations.
@@ -15,23 +15,23 @@
 
 ### Mission
 
-Build a narrow end-to-end proof of concept that demonstrates **semantic responsive typesetting**. Do not begin by building a universal PDF converter.
+Build and harden the end-to-end proof of concept that demonstrates **semantic responsive typesetting**. PDF ingestion is now a shipped local adapter, but it remains lossy and fail-closed rather than a universal converter.
 
 The POC should take one canonical scholarly document and compose it into four materially different surfaces while preserving semantic identity, figure-caption relationships, reading position, and text annotations. The system should make layout decisions visible and permit target-specific overrides without mutating source content.
 
 ### Defaults
 
-| Decision | Default |
-|---|---|
-| Name | Semantic Responsive Typesetting (SRT) |
-| Canonical model | Custom validated JSON graph inspired by JATS; not PDF, EPUB, or TeX |
-| First input | Structured article fixture, preferably JATS-derived or manually normalized |
-| Rendering approach | HTML/CSS plus a paged-media engine and a thin policy layer |
-| Targets | A4 print, large 4:3 e-ink, small tall e-ink, continuous mobile |
-| Annotations | Text highlight and anchored note in P0; freehand ink is a stretch goal |
-| PDF ingestion | P2 adapter; do not let extraction errors obscure the composition POC |
-| Designer editability | Target-specific rule overrides in P1; design-tool round-trip is out of MVP |
-| Automation | Deterministic, explainable rules first; no generative layout dependency |
+| Decision             | Default                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Name                 | Semantic Responsive Typesetting (SRT)                                                                                    |
+| Canonical model      | Custom validated JSON graph inspired by JATS; not PDF, EPUB, or TeX                                                      |
+| First input          | Structured article fixture, preferably JATS-derived or manually normalized                                               |
+| Rendering approach   | HTML/CSS plus a paged-media engine and a thin policy layer                                                               |
+| Targets              | A4 print, large 4:3 e-ink, small tall e-ink, continuous mobile                                                           |
+| Annotations          | Text highlight and anchored note in P0; freehand ink is a stretch goal                                                   |
+| PDF ingestion        | Local lossy adapter with deterministic fixtures, private-corpus regression gates, provenance, and explicit review states |
+| Designer editability | Target-specific rule overrides in P1; design-tool round-trip is out of MVP                                               |
+| Automation           | Deterministic, explainable rules first; no generative layout dependency                                                  |
 
 ### Immediate deliverable
 
@@ -44,6 +44,10 @@ The POC should take one canonical scholarly document and compose it into four ma
 - ADRs for schema, pagination, and annotation anchoring.
 
 > A clean demonstration of one paper across four targets is more valuable than partial support for arbitrary PDFs, scans, equations, collaboration, and design-tool round-tripping.
+
+### Current PDF-ingestion acceptance authority
+
+Issues 012, 013, 018, and 023-026 own the region/order/note, visual-object, inline-structure, truthful-preview, adjudication, and target-profile contracts. Issue 032 is the integrated privacy-safe `2408.10903v5` regression gate. A component issue is not complete if its isolated fixture passes while that integrated upload-to-preview-to-EPUB gate still reproduces title fragments, broken prose, missing scientific objects, or stale/mismatched previews.
 
 ---
 
@@ -171,6 +175,25 @@ Core jobs:
 - **FR-13:** HTML, paginated, PDF, EPUB-oriented, and manifest outputs.
 - **FR-14:** Inspection studio.
 - **FR-15:** Structural and visual regression harness.
+- **FR-16:** Source-backed inline semantics for bold, italic, superscript, subscript, safe links, citations, and footnote references, with preview/EPUB parity and measured supported/mapped coverage.
+- **FR-17:** Evidence-based scholarly structure recovery for title/authors/abstract, numbered and unnumbered section headings, nested lists, references, bibliography, captions, notes, tables, and display equations.
+- **FR-18:** Truthful upload preview of the checked selected-profile artifact before an optional matching-profile download; a fresh upload invalidates every prior reconstruction, object URL, receipt, preview, and download.
+- **FR-19:** Authoritative Paper Pro Move `954 × 1696` and Paper Pro `1620 × 2160` device-pixel profiles, with browser scaling derived from the registry and reader-controlled EPUB behavior stated explicitly.
+- **FR-20:** Deterministic PDF-to-EPUB regression benchmarking using generated redistributable fixtures plus hash-bound private inputs whose bytes, prose, paths, screenshots, and traces never enter Git or GitHub.
+
+### 8.1 PDF ingestion and rendition acceptance gates
+
+These gates measure semantic recovery. They do not require an EPUB reader to reproduce the source PDF's coordinates.
+
+- **Continuous prose:** every source line boundary has a recorded decision. Supported decisions cover spaces, no-space joins, preserved lexical hyphens, removed discretionary line-wrap hyphens, and unresolved evidence. Readiness requires zero unresolved corrupting joins, isolated alphabetic prose glyphs, overlapping duplicate spans, and cross-column/cross-region joins.
+- **No reconstruction debris:** small-cap/all-cap styling, font size, boldness, or whitespace alone cannot create a heading. A heading requires compatible geometry plus section syntax/boundary evidence. Title, author, affiliation, list-marker, equation-label, and page-furniture fragments cannot become detached prose nodes.
+- **Inline meaning and hierarchy:** every deterministically supported bold, italic, bold-italic, superscript, subscript, link, citation, and note-marker span maps once with valid Unicode offsets. Relative hierarchy remains ordered as title > section heading > body, while captions, affiliations, and notes remain subordinate; absolute PDF font sizes and families are not copied as semantics.
+- **Document structure:** numbered/unnumbered sections, nested lists, references, and bibliography entries retain typed nodes and canonical order. List markers do not become paragraphs, bibliography entries do not merge across columns, and table rows or equation glyphs claimed by an object region do not leak into body prose.
+- **Notes and citations:** supported footnote markers map to typed note bodies and backlinks. Citations retain their marker semantics and relationships. Ambiguous citation-versus-note or marker-to-body evidence remains review-required.
+- **Scientific objects:** each accepted diagram, figure, table, and display equation has stable source object/region ids, normalized bounds, provenance, a canonical position, and a complete anchored caption when one exists. Tables use validated semantic structure or a bounded sharp rendition; equations use source semantics when available or a bounded SVG/raster fallback. No invented cells, labels, LaTeX, or MathML are allowed.
+- **Semantic reflow:** Mobile, Paper Pro Move, and Paper Pro follow canonical reading order and do not mimic source PDF columns, source line breaks, or coordinate-shaped whitespace. Figures/captions/floats are placed by semantic relationships and target policy rather than raw page coordinates.
+- **Preview and download:** choosing a new upload reprocesses its bytes even when filename metadata matches the prior upload. The user can inspect Mobile, Paper Pro Move, and Paper Pro checked previews before downloading; switching previews has no download side effect, and every optional action returns only the artifact whose profile id/version and hash match the visible receipt.
+- **Deterministic evidence:** generated fixtures gate CI. Named/private papers are keyed by basename/public id and SHA-256 and may emit only aggregate metrics, normalized boxes, diagnostic codes, versions, hashes, timings, and verdicts. Source bytes/text, absolute paths, screenshots, browser traces, and unpacked artifacts remain owner-only outside the repository.
 
 ## 9. Non-functional requirements
 

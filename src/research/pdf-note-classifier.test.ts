@@ -5,12 +5,15 @@ import {
   orphanedNoteFixture,
   type NoteMarkerFixture,
 } from '../../tests/fixtures/note-marker-fixtures'
-import type { ReconstructionDiagnostic } from './import-types'
+import type { PdfPageRegion, ReconstructionDiagnostic } from './import-types'
 import {
   PDF_NOTE_RELATIONSHIP_THRESHOLD,
   reconstructPageAnalyses,
 } from './pdf-layout'
-import { PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD } from './pdf-note-classifier'
+import {
+  classifyPdfNoteMarkers,
+  PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
+} from './pdf-note-classifier'
 import { assessPdfCompleteness } from './pdf-quality'
 
 const BLOCKING_NOTE_CODES = new Set<ReconstructionDiagnostic['code']>([
@@ -35,6 +38,62 @@ function markerDiagnostics(result: Awaited<ReturnType<typeof reconstruct>>) {
 }
 
 describe('scholarly note-marker taxonomy', () => {
+  it('keeps an unpaired symbolic superscript out of the bibliography citation graph', () => {
+    const region = (
+      id: string,
+      page: number,
+      kind: PdfPageRegion['kind'],
+      text: string,
+    ): PdfPageRegion => ({
+      id,
+      page,
+      kind,
+      column: 'single',
+      text,
+      confidence: 1,
+      box: {
+        page,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.03,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: [],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+    const classifications = classifyPdfNoteMarkers([
+      region('body', 1, 'body', 'Prior work¹ and follow-up² annotate Table*.'),
+      region('references', 2, 'body', 'References'),
+    ]).classifications
+
+    expect(
+      classifications.map(({ label, taxonomy, disposition }) => ({
+        label,
+        taxonomy,
+        disposition,
+      })),
+    ).toEqual([
+      {
+        label: '1',
+        taxonomy: 'superscript-bibliography-citation',
+        disposition: 'citation',
+      },
+      {
+        label: '2',
+        taxonomy: 'superscript-bibliography-citation',
+        disposition: 'citation',
+      },
+      {
+        label: '*',
+        taxonomy: 'symbolic-annotation-marker',
+        disposition: 'plain-text',
+      },
+    ])
+  })
+
   for (const [index, fixture] of decisiveNoteMarkerFixtures.entries()) {
     it(`classifies ${fixture.name} with recorded deciding evidence`, async () => {
       const result = await reconstruct(fixture, String(index + 1))
@@ -381,6 +440,97 @@ describe('scholarly note-marker taxonomy', () => {
       expectedRelationshipCount: 2,
       resolvedRelationshipCount: 2,
       relationshipCoverage: 1,
+    })
+  })
+
+  it('targets a bracketed bibliography entry retained in a reference footnote region', async () => {
+    const fixture: NoteMarkerFixture = {
+      name: 'body-region bracketed bibliography entry',
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: 97,
+          imageCount: 0,
+          runs: [
+            {
+              page: 1,
+              text: 'Citation study',
+              x: 0.1,
+              y: 0.08,
+              width: 0.5,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text',
+              fontName: 'Heading',
+              fontSize: 18,
+              confidence: 1,
+            },
+            {
+              page: 1,
+              text: 'Prior work [1] and later work [1] support the claim.',
+              x: 0.1,
+              y: 0.18,
+              width: 0.7,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text',
+              fontName: 'Body',
+              fontSize: 11,
+              confidence: 1,
+            },
+            {
+              page: 1,
+              text: 'References',
+              x: 0.1,
+              y: 0.42,
+              width: 0.3,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text',
+              fontName: 'Heading',
+              fontSize: 16,
+              confidence: 1,
+            },
+            {
+              page: 1,
+              text: '[1] Reference-footnote entry.',
+              x: 0.1,
+              y: 0.9,
+              width: 0.72,
+              height: 0.012,
+              rotation: 0,
+              method: 'pdf-text',
+              fontName: 'Body',
+              fontSize: 8,
+              confidence: 1,
+            },
+          ],
+        },
+      ],
+      expectedTaxonomies: [
+        'bracketed-bibliography-citation',
+        'bibliography-entry',
+      ],
+    }
+
+    const result = await reconstruct(fixture, 'g')
+    const bibliography = result.paper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' && node.list?.numberingId === 'references',
+    )
+    const citation = result.citationRelationships[0]
+
+    expect(bibliography).toMatchObject({
+      list: { markerText: '[1]', ordinal: 1, numberingId: 'references' },
+    })
+    expect(citation).toMatchObject({
+      label: '1',
+      status: 'matched',
+      targetNodeIds: [bibliography!.id],
     })
   })
 

@@ -75,6 +75,33 @@ function clamp(value: number) {
   return Math.max(0, Math.min(1, finite(value)))
 }
 
+export function isFlowAlignedPdfTextTransform(transform: readonly number[]) {
+  // The x-axis of a horizontal glyph run is predominantly horizontal. A
+  // vertical marginal stamp instead has a predominantly vertical x-axis and
+  // must not be allowed to bridge body columns during line reconstruction.
+  return Math.abs(transform[0] ?? 0) >= Math.abs(transform[1] ?? 0)
+}
+
+export function isPdfLocalPathArtifact(
+  text: string,
+  fontHeight: number,
+  viewportHeight: number,
+) {
+  const value = text.trim()
+  if (
+    /(?:^|[/\\])(?:users?|downloads?|documents?|desktop|library)(?:[/\\]|$)/iu.test(
+      value,
+    ) ||
+    /[/\\][^/\\\s]+\.html?$/iu.test(value)
+  ) {
+    return true
+  }
+  // Broken PDF exports sometimes split a local `file:///…` overlay into
+  // tiny `fi` and `1/1` runs around its path fragments. Those runs have no
+  // standalone prose meaning; retain genuine normal-size text instead.
+  return fontHeight <= viewportHeight * 0.008 && /^(?:fi|1\/1)$/iu.test(value)
+}
+
 function extractEmbeddedLinks(
   page: number,
   rotation: number,
@@ -805,8 +832,17 @@ export async function reconstructPdf(
             viewport.transform,
             item.transform,
           )
+          // PDF.js reports a 90°-rotated marginal stamp as one enormous
+          // horizontal bounding box. If it enters line grouping it bridges
+          // otherwise separate columns and turns real prose into a discarded
+          // `side` region. Rotated source text remains visible in any bounded
+          // page crop, but it is not safe canonical reading-order prose.
+          if (!isFlowAlignedPdfTextTransform(transform)) continue
           const fontHeight =
             Math.hypot(transform[2], transform[3]) || Math.abs(item.height) || 1
+          if (isPdfLocalPathArtifact(item.str, fontHeight, viewport.height)) {
+            continue
+          }
           const x = finite(transform[4])
           const y = finite(transform[5] - fontHeight)
           const width = Math.max(Math.abs(item.width * viewport.scale), 0.5)

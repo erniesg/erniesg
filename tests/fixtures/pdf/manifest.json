@@ -24,6 +24,27 @@
       ]
     },
     {
+      "file": "caption-direction-figures.pdf",
+      "sha256": "ff0976cf127268eb628a3b8bd935780206f0448e3187c8485d5dc92437d2e052",
+      "features": [
+        "figure-caption-above",
+        "figure-caption-below",
+        "unique-directional-source-ownership",
+        "complete-source-raster-figures"
+      ]
+    },
+    {
+      "file": "table-citation-crop.pdf",
+      "sha256": "d1740c51679f90b474f72beaf17186c28f47b766a077befcc7d22f55c9c3e06c",
+      "features": [
+        "caption-bounded-text-slab",
+        "source-page-crop-table",
+        "table-citation-canonical-owner",
+        "bibliography",
+        "epub-bibliorefs"
+      ]
+    },
+    {
       "file": "pdf-to-epub-fidelity.pdf",
       "contract": "pdf-to-epub-fidelity.contract.json",
       "contractSha256": "421a0a3d8243117f36d8817f7b299917588e975319868ea8da1821e9ed7fae62",

@@ -16,13 +16,15 @@ const encoder = new TextEncoder()
 let temporaryFileSequence = 0
 
 function usage() {
-  return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... --out <directory>\n'
+  return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--readable-fallback] [--require-epubcheck] --out <directory>\n'
 }
 
 function parseArguments(arguments_) {
   const inputs = []
   const targets = []
   let outputDirectory
+  let readableFallback = false
+  let requireEpubCheck = false
 
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
@@ -48,6 +50,14 @@ function parseArguments(arguments_) {
       outputDirectory = argument.slice('--out='.length)
       continue
     }
+    if (argument === '--readable-fallback') {
+      readableFallback = true
+      continue
+    }
+    if (argument === '--require-epubcheck') {
+      requireEpubCheck = true
+      continue
+    }
     if (argument.startsWith('--')) throw new Error('INVALID_USAGE')
     inputs.push(argument)
   }
@@ -58,6 +68,8 @@ function parseArguments(arguments_) {
   return {
     inputs,
     outputDirectory: resolve(outputDirectory),
+    readableFallback,
+    requireEpubCheck,
     targets: [...new Set(targets.length > 0 ? targets : DEFAULT_TARGETS)],
   }
 }
@@ -179,11 +191,17 @@ async function exportDocument({
 }) {
   const artifacts = []
   for (const profile of profiles) {
-    const epub = await exportModules.buildEpub(
-      record.reconstruction.paper,
-      record.reconstruction,
-      profile,
-    )
+    const epub = record.reconstruction.readiness.ready
+      ? await exportModules.buildEpub(
+          record.reconstruction.paper,
+          record.reconstruction,
+          profile,
+        )
+      : await exportModules.buildReadableEpub(
+          record.reconstruction.paper,
+          record.reconstruction,
+          profile,
+        )
     exportModules.inspectEpub(epub.bytes, profile)
     artifacts.push({
       epub,
@@ -192,6 +210,7 @@ async function exportDocument({
         basename: epub.fileName,
         byteLength: epub.bytes.byteLength,
         sha256: epub.sha256,
+        mode: epub.mode,
         structuralValidation: 'passed',
         epubCheck: await validateWithEpubCheck(epub.bytes, validator),
       },
@@ -274,8 +293,20 @@ async function main() {
     }
     const profiles = parsed.targets.map(exportModules.getTargetProfile)
     const validator = await epubCheckValidator()
+    if (parsed.requireEpubCheck && validator.kind === 'skipped') {
+      throw new Error('EPUBCHECK_REQUIRED')
+    }
     for (const record of records) {
-      if (!record.reconstruction?.readiness.ready) continue
+      if (!record.reconstruction) continue
+      if (!record.reconstruction.readiness.ready) {
+        if (!parsed.readableFallback) continue
+        if (
+          record.reconstruction.completeness.ocrRequiredPages.length > 0 ||
+          record.reconstruction.paper.nodes.length === 0
+        ) {
+          continue
+        }
+      }
       record.document.exports = await exportDocument({
         record,
         profiles,

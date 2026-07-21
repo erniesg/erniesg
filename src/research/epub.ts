@@ -120,6 +120,21 @@ function text(value: string) {
     .replace(/>/g, '&gt;')
 }
 
+function renderAuthors(paper: ResearchPaper) {
+  return paper.authors
+    .map((author) => {
+      const references = (paper.authorNotes ?? [])
+        .filter((reference) => reference.author === author)
+        .map(
+          (reference) =>
+            `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${text(reference.label)}</a>`,
+        )
+        .join('')
+      return `${text(author)}${references}`
+    })
+    .join(', ')
+}
+
 function attribute(value: string) {
   return text(value).replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
@@ -550,11 +565,14 @@ function renderNode(
               .join('')
       const sourceEquationCaption =
         visual.kind === 'equation' && visual.altTextSource === 'source-text'
+      const sourceTranscript = node.sourceText
+        ? `<span class="visually-hidden visual-source-transcript" data-source-transcript-for="${id}">${renderTextWithNoteReferences(node.sourceText, undefined, node.inlineRuns)}</span>`
+        : ''
       const figureClass =
         visual.kind === 'table' && node.table
           ? ' class="semantic-table-figure"'
           : ''
-      return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visual.kind}" role="group"${figureClass}>${renderedAssets}${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceEquationCaption ? ' class="equation-source-text"' : ''}>${text(caption.text)}</figcaption>` : ''}</figure>`
+      return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visual.kind}" role="group"${figureClass}>${renderedAssets}${sourceTranscript}${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceEquationCaption ? ' class="equation-source-text"' : ''}>${text(caption.text)}</figcaption>` : ''}</figure>`
     }
     if (omitMissingVisuals) {
       return `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual" role="note"><p>Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.</p>${caption ? `<p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${text(caption.text)}</p>` : ''}</aside>`
@@ -621,8 +639,9 @@ export function renderPublicationXhtml(
   const renderableNodes = paper.nodes.filter(
     (node) => node.type !== 'caption' || !associatedCaptions.has(node.id),
   )
-  const renderedNoteReferenceIds = new Set(
-    renderableNodes.flatMap((node) =>
+  const renderedNoteReferenceIds = new Set([
+    ...(paper.authorNotes ?? []).map((reference) => stableId(reference.id)),
+    ...renderableNodes.flatMap((node) =>
       node.type === 'heading' ||
       node.type === 'paragraph' ||
       node.type === 'quote'
@@ -631,7 +650,7 @@ export function renderPublicationXhtml(
           )
         : [],
     ),
-  )
+  ])
   const renderedNodes: string[] = []
   for (let index = 0; index < renderableNodes.length; index += 1) {
     const node = renderableNodes[index]
@@ -672,14 +691,14 @@ export function renderPublicationXhtml(
       ? ''
       : `<header class="reconstructed-header">
       <h1 id="publication-title">${text(paper.title)}</h1>
-      <p class="authors">${paper.authors.map(text).join(', ')}</p>
+      <p class="authors">${renderAuthors(paper)}</p>
       ${paper.affiliations?.length ? `<p class="affiliations">${paper.affiliations.map(text).join('; ')}</p>` : ''}
     </header>`
     : `<header class="publication-header">
       <p class="status">${text(paper.status)} · ${text(paper.updated)}</p>
       <h1 id="publication-title">${text(paper.title)}</h1>
       <p class="subtitle">${text(paper.subtitle)}</p>
-      <p class="authors">${paper.authors.map(text).join(', ')}</p>
+      <p class="authors">${renderAuthors(paper)}</p>
       ${paper.affiliations?.length ? `<p class="affiliations">${paper.affiliations.map(text).join('; ')}</p>` : ''}
       <section class="abstract" aria-labelledby="abstract-title">
         <h2 id="abstract-title">Abstract</h2>

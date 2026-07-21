@@ -4,7 +4,11 @@ import { readFile } from 'node:fs/promises'
 import { buildEpub, inspectEpub } from './epub'
 import { PdfImportError } from './import-types'
 import { buildLayoutManifest, validateLayoutManifest } from './manifest'
-import { reconstructPdf } from './pdf'
+import {
+  isFlowAlignedPdfTextTransform,
+  isPdfLocalPathArtifact,
+  reconstructPdf,
+} from './pdf'
 import type { PdfOcrOptions, PdfOcrRecognition, PdfOcrSession } from './pdf-ocr'
 import { getTargetProfile, TARGET_PROFILE_IDS } from './targets'
 import {
@@ -17,6 +21,21 @@ afterEach(() => {
 })
 
 describe('PDF.js browser ingestion', () => {
+  it('keeps vertical marginal text out of canonical reading-order lines', () => {
+    expect(isFlowAlignedPdfTextTransform([10, 0, 0, -10, 0, 0])).toBe(true)
+    expect(isFlowAlignedPdfTextTransform([0, 20, -20, 0, 32, 232])).toBe(false)
+  })
+
+  it('keeps split local filesystem overlays out of canonical prose', () => {
+    expect(
+      isPdfLocalPathArtifact('le:///Users/example/Downloads/', 4, 792),
+    ).toBe(true)
+    expect(isPdfLocalPathArtifact('gures/Emotion.html', 4, 792)).toBe(true)
+    expect(isPdfLocalPathArtifact('fi', 4, 792)).toBe(true)
+    expect(isPdfLocalPathArtifact('1/1', 4, 792)).toBe(true)
+    expect(isPdfLocalPathArtifact('Figure', 10, 792)).toBe(false)
+  })
+
   it('runs a textless page through a bounded local OCR session', async () => {
     let terminated = 0
     const recognizedPages: number[] = []

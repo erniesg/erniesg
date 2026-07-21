@@ -103,6 +103,8 @@ const figureNode = canonicalNodeBase
     type: z.literal('figure'),
     title: z.string().min(1),
     objectType: z.enum(['figure', 'table', 'equation']).optional(),
+    sourceText: z.string().min(1).optional(),
+    inlineRuns: z.array(inlineRun).optional(),
     table: z
       .object({
         rows: z
@@ -160,6 +162,18 @@ const researchPaperBaseSchema = z
     title: z.string().min(1),
     subtitle: z.string().min(1),
     authors: z.array(z.string().min(1)).min(1),
+    authorNotes: z
+      .array(
+        z
+          .object({
+            id: canonicalId,
+            author: z.string().min(1),
+            label: z.string().min(1),
+            target: canonicalId,
+          })
+          .strict(),
+      )
+      .optional(),
     affiliations: z.array(z.string().min(1)).optional(),
     updated: z.string().date(),
     abstract: z.string().min(1),
@@ -195,6 +209,34 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
     const nodeIds = new Set(paper.nodes.map((node) => node.id))
     const noteReferenceIds = new Set<string>()
     const noteReferenceTargets = new Map<string, string>()
+    for (const [index, reference] of (paper.authorNotes ?? []).entries()) {
+      if (noteReferenceIds.has(reference.id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['authorNotes', index, 'id'],
+          message: `Duplicate note reference id: ${reference.id}`,
+        })
+      }
+      noteReferenceIds.add(reference.id)
+      noteReferenceTargets.set(reference.id, reference.target)
+      if (!paper.authors.includes(reference.author)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['authorNotes', index, 'author'],
+          message: `Author note names an unknown author: ${reference.author}`,
+        })
+      }
+      const target = paper.nodes.find(
+        (candidate) => candidate.id === reference.target,
+      )
+      if (!target || target.type !== 'footnote') {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['authorNotes', index, 'target'],
+          message: `Dangling author-note relationship: ${reference.target}`,
+        })
+      }
+    }
     for (const [index, node] of paper.nodes.entries()) {
       if (node.type === 'figure' && !nodeIds.has(node.relationships.caption)) {
         context.addIssue({
@@ -246,8 +288,14 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
         }
       }
       if ('inlineRuns' in node && node.inlineRuns) {
+        const inlineText =
+          node.type === 'figure'
+            ? (node.sourceText ?? '')
+            : 'text' in node
+              ? node.text
+              : ''
         for (const [runIndex, run] of node.inlineRuns.entries()) {
-          if (run.end > node.text.length || run.start >= run.end) {
+          if (run.end > inlineText.length || run.start >= run.end) {
             context.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['nodes', index, 'inlineRuns', runIndex],
@@ -256,15 +304,22 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
           }
         }
       }
-      if (
-        node.type === 'figure' &&
-        ((node.objectType === 'table' && !node.table) ||
-          (node.objectType !== 'table' && node.table))
-      ) {
+      if (node.type === 'figure' && node.objectType !== 'table' && node.table) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['nodes', index, 'table'],
           message: 'Structured table data must accompany only table figures',
+        })
+      }
+      if (
+        node.type === 'figure' &&
+        node.inlineRuns?.length &&
+        !node.sourceText
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['nodes', index, 'sourceText'],
+          message: 'Figure inline runs require an exact source-text transcript',
         })
       }
       if (node.type === 'figure' && node.table) {

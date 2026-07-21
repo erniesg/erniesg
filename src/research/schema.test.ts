@@ -162,6 +162,35 @@ describe('SRT canonical graph schema', () => {
     }
 
     expect(researchPaperSchema.safeParse(withNote).success).toBe(true)
+    const withAuthorNote = {
+      ...withNote,
+      authorNotes: [
+        {
+          id: 'author-noteref-1',
+          author: withNote.authors[0],
+          label: '*',
+          target: 'fn-1',
+        },
+      ],
+      nodes: [
+        withNote.nodes[0],
+        {
+          ...withNote.nodes[1],
+          relationships: {
+            backlinks: ['noteref-1', 'author-noteref-1'],
+          },
+        },
+      ],
+    }
+    expect(researchPaperSchema.safeParse(withAuthorNote).success).toBe(true)
+    expect(
+      researchPaperSchema.safeParse({
+        ...withAuthorNote,
+        authorNotes: [
+          { ...withAuthorNote.authorNotes[0], author: 'Unknown Author' },
+        ],
+      }).success,
+    ).toBe(false)
     expect(
       researchPaperSchema.safeParse({
         ...withNote,

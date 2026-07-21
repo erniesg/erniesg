@@ -9,6 +9,7 @@ import {
   captionProvenanceEnvelope,
   reconstructPageAnalyses,
   residualPdfRegionAfterLineConsumption,
+  residualPdfRegionFragmentsAfterLineConsumption,
 } from './pdf-layout'
 import { assessPdfCompleteness } from './pdf-quality'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
@@ -125,6 +126,81 @@ describe('PDF semantic reconstruction', () => {
       },
       lines: [{ id: 'mixed-line-1' }, { id: 'mixed-line-2' }],
     })
+  })
+
+  it('splits noncontiguous residual lines without inventing a source boundary', () => {
+    const lines = ['Alpha', 'Table row', 'Omega'].map((text, index) => ({
+      id: `interleaved-line-${index + 1}`,
+      text,
+      fontSize: 10,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2 + index * 0.02,
+        width: 0.7,
+        height: 0.018,
+        rotation: 0,
+        method: 'pdf-text' as const,
+      },
+      runs: [],
+    }))
+    const region = {
+      id: 'interleaved-prose-table-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: 'Alpha Table row Omega',
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.058,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines,
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies import('./import-types').PdfPageRegion
+    const decisions = lines.slice(1).map((line, index) => ({
+      id: `interleaved-boundary-${index + 1}`,
+      page: 1,
+      regionId: region.id,
+      fromLineId: lines[index].id,
+      toLineId: line.id,
+      outcome: 'space' as const,
+      evidence: ['ordinary-wrap'],
+    }))
+
+    const fragments = residualPdfRegionFragmentsAfterLineConsumption(
+      region,
+      new Set(['interleaved-line-2']),
+      decisions,
+    )
+
+    expect(
+      fragments.map(({ region: fragment, sourceStart, sourceEnd }) => ({
+        text: fragment.text,
+        lineIds: fragment.lines.map((line) => line.id),
+        sourceStart,
+        sourceEnd,
+      })),
+    ).toEqual([
+      {
+        text: 'Alpha',
+        lineIds: ['interleaved-line-1'],
+        sourceStart: 0,
+        sourceEnd: 5,
+      },
+      {
+        text: 'Omega',
+        lineIds: ['interleaved-line-3'],
+        sourceStart: 16,
+        sourceEnd: 21,
+      },
+    ])
   })
 
   it('separates title-page metadata and abstract from continuous body nodes', async () => {

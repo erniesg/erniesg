@@ -443,6 +443,8 @@ function provenanceTextConservation({
     }
     return value
   }
+  const sourceMarkerStrippedMetadataText = (region: PdfPageRegion) =>
+    region.text.replace(/(?<=\p{L})[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+(?=(?:[\s,;]|$))/gu, '')
   const metadataRegionIds = (value: string) => {
     const comparable = (text: string) =>
       text
@@ -454,6 +456,7 @@ function provenanceTextConservation({
     const representations = [
       (region: PdfPageRegion) => region.text,
       markerStrippedMetadataSourceText,
+      sourceMarkerStrippedMetadataText,
     ]
     for (const representation of representations) {
       for (let start = 0; start < orderedRegions.length; start += 1) {
@@ -763,9 +766,22 @@ export function detectPdfSemanticSignals(
 ): PdfSemanticSignals {
   const regions = suppliedRegions ?? reconstructPageRegions(pages).regions
   const markerResult = classifyPdfNoteMarkers(regions)
+  const captionFigures = regions.filter(
+    (region) =>
+      region.kind === 'caption' &&
+      /^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(region.text),
+  ).length
   const signals: PdfSemanticSignals = {
-    captions: 0,
-    tables: 0,
+    // Once region reconstruction is available, a figure obligation requires
+    // the same caption-region proof as tables. Counting raw PDF lines here
+    // double-counts a split caption (or incidental "Figure:" text) and makes
+    // an otherwise complete visual graph fail closed.
+    captions: suppliedRegions ? captionFigures : 0,
+    tables: regions.filter(
+      (region) =>
+        region.kind === 'caption' &&
+        /^table\s+(?:\d+|[ivxlcdm]+)\b/i.test(region.text),
+    ).length,
     equations: 0,
     citations: markerResult.classifications.filter(
       (classification) => classification.disposition === 'citation',
@@ -777,11 +793,11 @@ export function detectPdfSemanticSignals(
   }
   for (const page of pages) {
     for (const line of pageLines(page)) {
-      if (/^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(line.text)) {
+      if (
+        !suppliedRegions &&
+        /^(?:fig(?:ure)?\.?\s*\d+\b|figure\s*[:.-])/i.test(line.text)
+      ) {
         signals.captions += 1
-      }
-      if (/^table\s+(?:\d+|[ivxlcdm]+)\b/i.test(line.text)) {
-        signals.tables += 1
       }
       if (/(?:^|\b)(?:equation|eq\.?)\s*\(?\d+\)?/i.test(line.text)) {
         signals.equations += 1
@@ -840,9 +856,14 @@ function relationshipCounts(
       .filter((node) => node.type === 'footnote')
       .map((node) => node.id),
   )
-  const noteReferences = paper.nodes.flatMap((node) =>
-    'noteReferences' in node && node.noteReferences ? node.noteReferences : [],
-  )
+  const noteReferences = [
+    ...(paper.authorNotes ?? []),
+    ...paper.nodes.flatMap((node) =>
+      'noteReferences' in node && node.noteReferences
+        ? node.noteReferences
+        : [],
+    ),
+  ]
   const resolvedNoteReferences = noteReferences.filter((reference) =>
     noteIds.has(reference.target),
   )
@@ -861,14 +882,25 @@ function relationshipCounts(
         return false
       }
       const node = nodesById.get(anchor.nodeId)
+      const anchorText =
+        node?.type === 'figure'
+          ? (node.sourceText ?? '')
+          : node && 'text' in node
+            ? node.text
+            : ''
       if (
         !node ||
         (node.type !== 'heading' &&
           node.type !== 'paragraph' &&
-          node.type !== 'quote') ||
+          node.type !== 'quote' &&
+          !(
+            node.type === 'figure' &&
+            node.objectType === 'table' &&
+            node.sourceText
+          )) ||
         anchor.start < 0 ||
         anchor.start >= anchor.end ||
-        anchor.end > node.text.length ||
+        anchor.end > anchorText.length ||
         !relationship.targetNodeIds.every((targetId) => {
           const target = nodesById.get(targetId)
           return (

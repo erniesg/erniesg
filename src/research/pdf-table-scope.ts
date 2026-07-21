@@ -25,11 +25,23 @@ const MIN_LINE_BAND_HEIGHT = 0.025
 const MAX_LINE_BAND_AREA = 0.5
 const MIN_CAPTION_HORIZONTAL_COVERAGE = 0.8
 const MIN_TABULAR_ROW_ANCHORS = 3
+const MAX_TEXT_SLAB_ROW_GAP = 0.0185
+const MAX_TEXT_SLAB_CAPTION_GAP = 0.02
+const MIN_TEXT_SLAB_ROWS = 5
+const MIN_TEXT_SLAB_WIDTH = 0.25
+const MIN_WIDE_TEXT_SLAB_WIDTH = 0.65
+const MIN_TEXT_SLAB_HEIGHT = 0.05
+const MIN_TEXT_SLAB_SINGLE_ANCHOR_RATIO = 0.6
+const MAX_COMPRESSED_TEXT_SLAB_FONT_RATIO = 0.82
+const MIN_TABULAR_SLAB_ROWS = 5
+const MIN_TABULAR_SLAB_ANCHORS = 3
+const MIN_REPEATED_TABULAR_SLAB_ANCHORS = 3
 
 export type PdfTableScopeProof =
   | 'text-grid'
   | 'text-nonuniform-grid'
   | 'text-tabular-line-band'
+  | 'caption-bounded-text-slab'
   | 'native-raster'
   | 'native-ruled'
 
@@ -70,6 +82,21 @@ export type PdfTableScopeEvidence =
       partialRegionIds: string[]
       selectedLineIds: string[]
       retainedLineIds: string[]
+    }
+  | {
+      code: 'contiguous-single-anchor-slab'
+      rowCount: number
+      lineIds: string[]
+      singleAnchorRowCount: number
+      wideLayout: boolean
+      compressedTypography: boolean
+    }
+  | {
+      code: 'contiguous-tabular-slab'
+      rowCount: number
+      lineIds: string[]
+      tabularRowCount: number
+      repeatedAnchorCount: number
     }
   | {
       code: 'source-native-raster'
@@ -351,6 +378,28 @@ function directionalLanes(
       interveningCaptionRegionId: next?.id ?? null,
     },
   ]
+}
+
+function completeAboveCaptionLane(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+): DirectionalLane {
+  const captionTop = caption.box.y
+  const previous = captionBoundaryCandidates(caption, pageRegions)
+    .filter(
+      (candidate) =>
+        candidate.box.y + candidate.box.height <= captionTop + BOX_TOLERANCE,
+    )
+    .at(-1)
+  return {
+    direction: 'above',
+    top: rounded(
+      previous ? previous.box.y + previous.box.height + BOX_TOLERANCE : 0,
+    ),
+    bottom: rounded(captionTop),
+    boundaryRegionIds: previous ? [previous.id, caption.id] : [caption.id],
+    interveningCaptionRegionId: previous?.id ?? null,
+  }
 }
 
 function boxWithinLane(sourceBox: NormalizedSourceBox, lane: DirectionalLane) {
@@ -834,6 +883,26 @@ function tableLineRows(entries: TableLineEntry[]) {
   })
 }
 
+function repeatedTabularAnchorCount(rows: TableLineRow[]) {
+  const anchors: Array<{ x: number; rowIndexes: Set<number> }> = []
+  for (const [rowIndex, row] of rows.entries()) {
+    for (const x of row.anchors) {
+      const existing = anchors.find(
+        (anchor) => Math.abs(anchor.x - x) <= COLUMN_ANCHOR_TOLERANCE,
+      )
+      if (existing) {
+        existing.x =
+          (existing.x * existing.rowIndexes.size + x) /
+          (existing.rowIndexes.size + 1)
+        existing.rowIndexes.add(rowIndex)
+      } else {
+        anchors.push({ x, rowIndexes: new Set([rowIndex]) })
+      }
+    }
+  }
+  return anchors.filter((anchor) => anchor.rowIndexes.size >= 3).length
+}
+
 function tableLineBands(rows: TableLineRow[]) {
   const bands: TableLineRow[][] = []
   for (const row of rows) {
@@ -1304,6 +1373,181 @@ function tabularLineBandCandidates(
   return candidates
 }
 
+function captionBoundedTextSlabCandidates(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+  existingTextCandidates: PdfTableScope[],
+) {
+  if (existingTextCandidates.length > 0) return []
+  const candidates: PdfTableScope[] = []
+  for (const lane of [completeAboveCaptionLane(caption, pageRegions)]) {
+    const entries = pageRegions
+      .filter(
+        (region) =>
+          region.page === caption.page &&
+          region.id !== caption.id &&
+          region.lines.length > 0 &&
+          region.text.trim().length > 0 &&
+          region.nativeObjectIds.length === 0 &&
+          ['body', 'spanning', 'side', 'chart-label', 'footnote'].includes(
+            region.kind,
+          ) &&
+          validBox(region.box) &&
+          horizontalOverlap(caption.box, region.box) > BOX_TOLERANCE,
+      )
+      .flatMap<TableLineEntry>((region) =>
+        region.lines
+          .map((line) => ({ region, line }))
+          .filter(
+            (entry) =>
+              validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+          ),
+      )
+    const rows = tableLineRows(entries)
+    const nearest = lane.direction === 'above' ? rows.at(-1) : rows[0]
+    if (
+      !nearest ||
+      captionGap(caption, nearest.box, lane.direction) >
+        MAX_TEXT_SLAB_CAPTION_GAP + BOX_TOLERANCE
+    ) {
+      continue
+    }
+    const selectedRows = [nearest]
+    const increment = lane.direction === 'above' ? -1 : 1
+    for (
+      let index = lane.direction === 'above' ? rows.length - 2 : 1;
+      index >= 0 && index < rows.length;
+      index += increment
+    ) {
+      const candidate = rows[index]
+      const current =
+        lane.direction === 'above' ? selectedRows[0] : selectedRows.at(-1)!
+      if (
+        gapBetween(candidate.box, current.box).vertical > MAX_TEXT_SLAB_ROW_GAP
+      ) {
+        break
+      }
+      if (lane.direction === 'above') selectedRows.unshift(candidate)
+      else selectedRows.push(candidate)
+    }
+    if (selectedRows.length < MIN_TEXT_SLAB_ROWS) continue
+    const selectedEntries = selectedRows.flatMap((row) => row.entries)
+    const selectedLineBoxes = selectedEntries.map((entry) => entry.line.box)
+    const cropBox = unionBoxes(
+      selectedLineBoxes,
+      selectedLineBoxes.some((sourceBox) => sourceBox.method === 'ocr')
+        ? 'ocr'
+        : 'pdf-text',
+    )
+    const singleAnchorRowCount = selectedRows.filter(
+      (row) => row.anchors.length === 1,
+    ).length
+    const wideLayout = cropBox.width >= MIN_WIDE_TEXT_SLAB_WIDTH
+    const selectedMaximumFontSize = Math.max(
+      ...selectedEntries.map((entry) => entry.line.fontSize),
+    )
+    const pageMaximumFontSize = Math.max(
+      ...pageRegions.flatMap((region) =>
+        region.page === caption.page && region.kind !== 'caption'
+          ? region.lines.map((line) => line.fontSize)
+          : [],
+      ),
+      selectedMaximumFontSize,
+    )
+    const compressedTypography =
+      selectedMaximumFontSize < pageMaximumFontSize &&
+      selectedMaximumFontSize / pageMaximumFontSize <=
+        MAX_COMPRESSED_TEXT_SLAB_FONT_RATIO
+    const tabularRowCount = selectedRows.filter(
+      (row) => row.anchors.length >= MIN_TABULAR_SLAB_ANCHORS,
+    ).length
+    const repeatedAnchorCount = repeatedTabularAnchorCount(selectedRows)
+    const singleAnchorSlab =
+      singleAnchorRowCount / selectedRows.length >=
+      MIN_TEXT_SLAB_SINGLE_ANCHOR_RATIO
+    const tabularSlab =
+      tabularRowCount >= MIN_TABULAR_SLAB_ROWS &&
+      repeatedAnchorCount >= MIN_REPEATED_TABULAR_SLAB_ANCHORS
+    if (
+      cropBox.width < MIN_TEXT_SLAB_WIDTH ||
+      cropBox.height < MIN_TEXT_SLAB_HEIGHT ||
+      cropBox.width * cropBox.height > MAX_SCOPE_AREA ||
+      horizontalOverlap(caption.box, cropBox) <= BOX_TOLERANCE ||
+      (!singleAnchorSlab && !tabularSlab) ||
+      (!wideLayout && !compressedTypography)
+    ) {
+      continue
+    }
+    const regionsById = new Map<string, PdfPageRegion>()
+    const selectedLineIdsByRegion = new Map<string, Set<string>>()
+    for (const entry of selectedEntries) {
+      regionsById.set(entry.region.id, entry.region)
+      const selected =
+        selectedLineIdsByRegion.get(entry.region.id) ?? new Set<string>()
+      selected.add(entry.line.id)
+      selectedLineIdsByRegion.set(entry.region.id, selected)
+    }
+    const regions = [...regionsById.values()].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    )
+    const {
+      regionLineage,
+      lineLineage,
+      sourceRegionIds,
+      sourceLineIds,
+      sourceLineBoxes,
+    } = selectedTextLineage(regions, selectedLineIdsByRegion)
+    candidates.push({
+      id: scopeId(
+        'caption-bounded-text-slab',
+        sourceRegionIds,
+        lineLineage,
+        [],
+        cropBox,
+      ),
+      proof: 'caption-bounded-text-slab',
+      page: caption.page,
+      direction: lane.direction,
+      sourceRegionIds,
+      sourceLineIds,
+      sourceObjectIds: [],
+      sourceBoxes: sourceLineBoxes.map((sourceBox) => ({ ...sourceBox })),
+      sourceLineBoxes,
+      cropBox,
+      regionLineage,
+      lineLineage,
+      objectLineage: [],
+      evidence: [
+        captionEvidence(caption, lane),
+        ...(singleAnchorSlab
+          ? ([
+              {
+                code: 'contiguous-single-anchor-slab',
+                rowCount: selectedRows.length,
+                lineIds: [...sourceLineIds],
+                singleAnchorRowCount,
+                wideLayout,
+                compressedTypography,
+              },
+            ] satisfies PdfTableScopeEvidence[])
+          : []),
+        ...(tabularSlab
+          ? ([
+              {
+                code: 'contiguous-tabular-slab',
+                rowCount: selectedRows.length,
+                lineIds: [...sourceLineIds],
+                tabularRowCount,
+                repeatedAnchorCount,
+              },
+            ] satisfies PdfTableScopeEvidence[])
+          : []),
+      ],
+    })
+  }
+  return candidates
+}
+
 function exactMappings(object: PdfNativeObject, pageRegions: PdfPageRegion[]) {
   return pageRegions
     .filter(
@@ -1607,18 +1851,33 @@ export function resolvePdfTableScope({
     lanes,
     textGrids,
   )
-  const raster = rasterCandidates(caption, regions, objects, lanes)
-  const ruled = ruledCandidates(caption, regions, objects, lanes)
-  const candidates = [
+  const textSlabs = captionBoundedTextSlabCandidates(caption, regions, [
     ...textGrids,
     ...tabularLineBands,
-    ...raster.candidates,
-    ...ruled.candidates,
-  ].sort((left, right) => left.id.localeCompare(right.id))
+  ])
+  const raster = rasterCandidates(caption, regions, objects, lanes)
+  const ruled = ruledCandidates(caption, regions, objects, lanes)
+  const uniqueGridOverUnprovenRasters =
+    textGrids.length === 1 &&
+    tabularLineBands.length === 0 &&
+    textSlabs.length === 0 &&
+    ruled.candidates.length === 0 &&
+    raster.candidates.length > 0
+  const candidates = (
+    uniqueGridOverUnprovenRasters
+      ? [textGrids[0]]
+      : [
+          ...textGrids,
+          ...tabularLineBands,
+          ...textSlabs,
+          ...raster.candidates,
+          ...ruled.candidates,
+        ]
+  ).sort((left, right) => left.id.localeCompare(right.id))
   const duplicateObjectIds = [
     ...new Set([...raster.duplicateObjectIds, ...ruled.duplicateObjectIds]),
   ].sort()
-  if (duplicateObjectIds.length > 0) {
+  if (!uniqueGridOverUnprovenRasters && duplicateObjectIds.length > 0) {
     return unresolved(
       caption,
       'duplicate-source-lineage',

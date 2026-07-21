@@ -26,6 +26,7 @@ type ClassifiedLine = PdfTextLine & {
   kind: PdfRegionKind
   confidence: number
   noteLabel: string | null
+  captionContinuationSeedId?: string
 }
 
 type ColumnLayout = {
@@ -108,6 +109,8 @@ export function normalizedNoteLabel(value: string) {
 
 export function noteLabelFromText(text: string) {
   const normalized = normalizedNoteLabel(text)
+  const attachedSymbolic = normalized.match(/^([*†‡§])/u)
+  if (attachedSymbolic) return attachedSymbolic[1]
   const explicit = normalized.match(
     new RegExp(`^(?:footnote|note)\\s+(${NOTE_LABEL})(?:\\s*[:.)-]|\\s+)`, 'i'),
   )
@@ -220,7 +223,11 @@ function captionContinuationGeometry(
   previous: ClassifiedLine,
   candidate: ClassifiedLine,
 ) {
-  if (candidate.page !== seed.page || candidate.kind !== 'body') return false
+  if (
+    candidate.page !== seed.page ||
+    (candidate.kind !== 'body' && candidate.kind !== 'caption')
+  )
+    return false
   if (candidate.y <= previous.y + previous.height * 0.35) return false
 
   const gap = candidate.y - (previous.y + previous.height)
@@ -310,9 +317,54 @@ function promoteCaptionContinuations(lines: ClassifiedLine[]) {
       }
 
       candidate.kind = 'caption'
+      candidate.captionContinuationSeedId = seed.id
       candidate.confidence = Math.min(seed.confidence, candidate.confidence)
       claimed.add(candidate.id)
       widestLine = Math.max(widestLine, candidate.width)
+      previous = candidate
+    }
+  }
+}
+
+function promoteNoteContinuations(lines: ClassifiedLine[]) {
+  const claimed = new Set<string>()
+  const seeds = lines
+    .filter(
+      (line) =>
+        (line.kind === 'footnote' || line.kind === 'endnote') && line.y >= 0.65,
+    )
+    .sort((left, right) => left.y - right.y || left.x - right.x)
+
+  for (const seed of seeds) {
+    let previous = seed
+    while (!endsCaptionSentence(previous.text)) {
+      const candidate = lines
+        .filter((line) => {
+          if (
+            line.page !== seed.page ||
+            line.kind !== 'body' ||
+            claimed.has(line.id) ||
+            line.y <= previous.y
+          ) {
+            return false
+          }
+          const verticalGap = line.y - (previous.y + previous.height)
+          const fontTolerance = Math.max(0.6, seed.fontSize * 0.08)
+          return (
+            verticalGap <= Math.max(0.008, seed.height * 0.8) &&
+            Math.abs(line.x - seed.x) <= 0.04 &&
+            Math.abs(line.fontSize - seed.fontSize) <= fontTolerance
+          )
+        })
+        .sort(
+          (left, right) =>
+            left.y - right.y ||
+            Math.abs(left.x - seed.x) - Math.abs(right.x - seed.x),
+        )[0]
+      if (!candidate) break
+      candidate.kind = seed.kind
+      candidate.confidence = Math.min(seed.confidence, candidate.confidence)
+      claimed.add(candidate.id)
       previous = candidate
     }
   }
@@ -1114,10 +1166,11 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
           `^(?:footnote|note)\\s+${NOTE_LABEL}`,
           'i',
         ).test(normalized)
+        const symbolicFootnote = /^[*†‡§]/u.test(normalized)
         const renderedFootnote =
           label !== null &&
-          line.fontSize <= fontSize * 0.9 &&
-          line.y + line.height >= lowerBand
+          line.y + line.height >= lowerBand &&
+          line.fontSize <= fontSize * (symbolicFootnote ? 0.96 : 0.9)
         let kind: PdfRegionKind = 'body'
         let confidence = 0.9
         if (inEndnotes && label !== null) {
@@ -1189,6 +1242,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
       })
 
     promoteCaptionContinuations(preliminary)
+    promoteNoteContinuations(preliminary)
     preclassifyMarginNotes(preliminary, fontSize)
     const spreadBoundary =
       page.spread?.status === 'split' ? page.spread.boundary : null
@@ -1206,7 +1260,14 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
       preliminary.filter((line) => line.kind === 'body').map((line) => line.x),
     )
     for (const line of preliminary) {
-      line.column = columnFor(line, layout)
+      const continuationSeed = line.captionContinuationSeedId
+        ? preliminary.find(
+            (candidate) => candidate.id === line.captionContinuationSeedId,
+          )
+        : undefined
+      line.column = continuationSeed
+        ? columnFor(continuationSeed, layout)
+        : columnFor(line, layout)
       if (
         line.kind === 'body' &&
         line.column === 'span' &&

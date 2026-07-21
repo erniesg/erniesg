@@ -4,6 +4,7 @@ import {
   groupRunsIntoLines,
   inlineUnhyphenatedLexicon,
   joinPdfLineTexts,
+  replayPdfRegionLineRanges,
   replayPdfRegionLineText,
   type PdfTextLine,
 } from './pdf-lines'
@@ -29,6 +30,135 @@ function line(text: string): PdfTextLine {
 }
 
 describe('PDF line joining', () => {
+  it('fails closed when duplicate line ids make source ranges ambiguous', () => {
+    const region: PdfPageRegion = {
+      id: 'page-001-region-duplicate-lines',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: 'Alpha Beta Gamma',
+      confidence: 0.9,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.06,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: ['Alpha', 'Beta', 'Gamma'].map((text, index) => ({
+        id: index < 2 ? 'duplicate-line' : 'line-3',
+        text,
+        fontSize: 10,
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2 + index * 0.02,
+          width: 0.7,
+          height: 0.02,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [],
+      })),
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const decisions: PdfLineBoundaryDecision[] = [
+      {
+        id: 'boundary-1',
+        page: 1,
+        regionId: region.id,
+        fromLineId: 'duplicate-line',
+        toLineId: 'duplicate-line',
+        outcome: 'space',
+        evidence: ['ordinary-wrap'],
+      },
+      {
+        id: 'boundary-2',
+        page: 1,
+        regionId: region.id,
+        fromLineId: 'duplicate-line',
+        toLineId: 'line-3',
+        outcome: 'space',
+        evidence: ['ordinary-wrap'],
+      },
+    ]
+
+    expect(replayPdfRegionLineRanges(region, decisions)).toBeNull()
+  })
+
+  it('replays exact per-line ranges across a removed discretionary hyphen', () => {
+    const region: PdfPageRegion = {
+      id: 'page-001-region-001',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: 'Prompt hyphenated result [1] tail',
+      confidence: 0.9,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.06,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: ['Prompt hyphen-', 'ated result [1]', 'tail'].map(
+        (text, index) => ({
+          id: `line-${index + 1}`,
+          text,
+          fontSize: 10,
+          box: {
+            page: 1,
+            x: 0.1,
+            y: 0.2 + index * 0.02,
+            width: 0.7,
+            height: 0.02,
+            rotation: 0,
+            method: 'pdf-text' as const,
+          },
+          runs: [],
+        }),
+      ),
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const decisions: PdfLineBoundaryDecision[] = [
+      {
+        id: 'boundary-1',
+        page: 1,
+        regionId: region.id,
+        fromLineId: 'line-1',
+        toLineId: 'line-2',
+        outcome: 'removed-discretionary-hyphen',
+        evidence: ['same-document-unhyphenated-word'],
+      },
+      {
+        id: 'boundary-2',
+        page: 1,
+        regionId: region.id,
+        fromLineId: 'line-2',
+        toLineId: 'line-3',
+        outcome: 'space',
+        evidence: ['ordinary-wrap'],
+      },
+    ]
+
+    const replay = replayPdfRegionLineRanges(region, decisions)
+
+    expect(replay?.text).toBe(region.text)
+    expect(replay?.ranges).toEqual(
+      new Map([
+        ['line-1', { start: 0, end: 13 }],
+        ['line-2', { start: 13, end: 28 }],
+        ['line-3', { start: 29, end: 33 }],
+      ]),
+    )
+  })
+
   it('replays the exact duplicate boundary occurrence by transition identity', () => {
     const region: PdfPageRegion = {
       id: 'page-001-region-001',

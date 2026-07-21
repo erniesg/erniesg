@@ -359,6 +359,34 @@ const structuredFigureTwo = rasterText({
   decorations: [{ x: 10, y: 10, width: 400, height: 100, value: 228 }],
   lines: [{ text: 'BOUNDED RASTER', x: 38, y: 42 }],
 })
+const captionAboveFigure = rasterText({
+  width: 640,
+  height: 280,
+  scale: 6,
+  decorations: [
+    { x: 20, y: 20, width: 270, height: 240, value: 232 },
+    { x: 350, y: 20, width: 270, height: 240, value: 208 },
+    { x: 290, y: 132, width: 60, height: 12, value: 48 },
+  ],
+  lines: [
+    { text: 'ABOVE A', x: 48, y: 104 },
+    { text: 'ABOVE B', x: 378, y: 104 },
+  ],
+})
+const captionBelowFigure = rasterText({
+  width: 640,
+  height: 280,
+  scale: 6,
+  decorations: [
+    { x: 20, y: 20, width: 270, height: 240, value: 216 },
+    { x: 350, y: 20, width: 270, height: 240, value: 188 },
+    { x: 290, y: 132, width: 60, height: 12, value: 48 },
+  ],
+  lines: [
+    { text: 'BELOW A', x: 48, y: 104 },
+    { text: 'BELOW B', x: 378, y: 104 },
+  ],
+})
 const structuredEquation = rasterText({
   width: 420,
   height: 120,
@@ -525,6 +553,139 @@ const fixtures = {
           width: 165,
           height: 42,
           raster: structuredEquation,
+        },
+      ],
+    },
+  ],
+  'caption-direction-figures.pdf': [
+    {
+      lines: [
+        {
+          text: 'Deterministic caption direction fixture',
+          x: 54,
+          y: 748,
+          size: 20,
+          font: 'F2',
+        },
+        {
+          text: 'Two nearby source rasters exercise caption ownership in both directions.',
+          x: 54,
+          y: 710,
+        },
+        {
+          text: 'Figure 1. This complete caption appears above its source raster.',
+          x: 82,
+          y: 650,
+          font: 'F3',
+        },
+        {
+          text: 'Figure 2. This complete caption appears below its source raster.',
+          x: 82,
+          y: 320,
+          font: 'F3',
+        },
+        {
+          text: 'The two figures must retain unique source-object ownership.',
+          x: 54,
+          y: 276,
+        },
+      ],
+      images: [
+        {
+          x: 100,
+          y: 520,
+          width: 220,
+          height: 100,
+          raster: captionAboveFigure,
+        },
+        {
+          x: 100,
+          y: 380,
+          width: 220,
+          height: 100,
+          raster: captionBelowFigure,
+        },
+      ],
+    },
+  ],
+  'table-citation-crop.pdf': [
+    {
+      lines: [
+        {
+          text: 'Deterministic crop table citation study',
+          x: 54,
+          y: 748,
+          size: 20,
+          font: 'F2',
+        },
+        {
+          text: 'The compact source rows below must remain one exact visual transcript.',
+          x: 54,
+          y: 680,
+        },
+        {
+          text: 'Metric name | Baseline | Calibrated | Evidence',
+          x: 54,
+          y: 600,
+          size: 8,
+          font: 'F2',
+        },
+        {
+          text: 'Readability score | 71 | 82 | [1]',
+          x: 54,
+          y: 587,
+          size: 8,
+        },
+        {
+          text: 'Diagram fidelity | 68 | 91 | [2]',
+          x: 54,
+          y: 574,
+          size: 8,
+        },
+        {
+          text: 'Equation fidelity | 70 | 93 | [1-2]',
+          x: 54,
+          y: 561,
+          size: 8,
+        },
+        {
+          text: 'Table continuity | 73 | 95 | Verified',
+          x: 54,
+          y: 548,
+          size: 8,
+        },
+        {
+          text: 'Aggregate result | 71 | 90 | Stable',
+          x: 54,
+          y: 535,
+          size: 8,
+        },
+        {
+          text: 'Table 1. Canonical citation crop.',
+          x: 54,
+          y: 514,
+          size: 9,
+          font: 'F3',
+        },
+        {
+          text: 'The visible prose resumes after the complete table caption.',
+          x: 54,
+          y: 460,
+        },
+      ],
+    },
+    {
+      lines: [
+        { text: 'References', x: 54, y: 748, size: 16, font: 'F2' },
+        {
+          text: '[1] A. Fixture. Exact source ownership. Local Press, 2025.',
+          x: 54,
+          y: 712,
+        },
+        {
+          text: '[2] L. Test. Deterministic crop evidence. Example Journal, 2026.',
+          x: 54,
+          y: 686,
         },
       ],
     },

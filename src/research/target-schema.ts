@@ -140,6 +140,18 @@ export const targetProfileSchema = z
       })
     }
     if (profile.manufacturerDisplay) {
+      if (
+        profile.manufacturerDisplay.logicalOrientation === 'portrait' &&
+        profile.dimensions.height !== null &&
+        profile.dimensions.width >= profile.dimensions.height
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['dimensions'],
+          message:
+            'Portrait manufacturer profiles require a portrait logical viewport',
+        })
+      }
       const logicalPixels = [
         profile.dimensions.width,
         profile.dimensions.height ?? 0,
@@ -172,6 +184,23 @@ export const targetProfileSchema = z
               'Manufacturer diagonal must agree with listed pixels and density',
           })
         }
+      }
+    }
+    if (
+      profile.dimensions.height !== null &&
+      profile.preview.heightCssPx !== null
+    ) {
+      const deviceAspect = profile.dimensions.width / profile.dimensions.height
+      const previewAspect =
+        profile.preview.widthCssPx / profile.preview.heightCssPx
+      const relativeAspectError =
+        Math.abs(previewAspect - deviceAspect) / deviceAspect
+      if (relativeAspectError > 0.005) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['preview'],
+          message: 'Scaled preview must preserve the target aspect ratio',
+        })
       }
     }
     if (

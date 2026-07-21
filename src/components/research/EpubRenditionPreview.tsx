@@ -311,6 +311,9 @@ export default function EpubRenditionPreview({
     ),
   )
   const hasSupportedProfile = availableScreens.length > 0
+  const showsRelativeEInkScale = ['paperProMove', 'paperPro'].every((id) =>
+    availableScreens.some((screen) => screen.id === id),
+  )
   const initialProfileId = availableScreens.some(
     (screen) => screen.id === 'paperPro',
   )
@@ -431,6 +434,12 @@ export default function EpubRenditionPreview({
               </button>
             ))}
           </div>
+          {showsRelativeEInkScale && (
+            <p className="epub-device-scale-note">
+              Both reMarkable frames use one physical scale. On narrow screens,
+              scroll sideways; the frames do not shrink.
+            </p>
+          )}
         </fieldset>
         <dl
           className="epub-preview-receipt"

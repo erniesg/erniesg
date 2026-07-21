@@ -114,6 +114,9 @@ describe('EPUB rendition preview', () => {
     expect(markup).toContain('7.3″ · 954 × 1696 · 264 PPI')
     expect(markup).toContain('Paper Pro')
     expect(markup).toContain('11.8″ · 1620 × 2160 · 229 PPI')
+    expect(markup).toContain(
+      'Both reMarkable frames use one physical scale. On narrow screens, scroll sideways; the frames do not shrink.',
+    )
     expect(markup).not.toContain('1,872 × 2,480')
     expect(markup).toContain('aria-pressed="true"')
     expect(markup.match(/aria-pressed="false"/g)).toHaveLength(2)

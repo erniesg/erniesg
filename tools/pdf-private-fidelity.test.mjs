@@ -1,6 +1,9 @@
 import {
+  chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -187,6 +190,7 @@ function artifact(target, suffix = '', source = reconstruction()) {
     assetManifestSha256: parity.assetManifestSha256,
     inlineSemanticLedger: parity.inlineSemanticLedger,
     structuralValidation: 'passed',
+    epubCheck: { status: 'skipped', reason: 'not-required' },
   }
   return { ...evidence, receiptSha256: canonicalJsonHash(evidence) }
 }
@@ -794,6 +798,7 @@ describe('private PDF fidelity runner', () => {
       '2',
       '--out',
       '/tmp/private-proof',
+      '--require-epubcheck',
     ]
     const parsed = parsePrivateFidelityArguments(arguments_, {
       SRT_PRIVATE_TEST_PDF: '/private/input.pdf',
@@ -804,6 +809,7 @@ describe('private PDF fidelity runner', () => {
       expectedSha256: hash,
       profiles: ['mobile', 'paperProMove', 'paperPro'],
       repeat: 2,
+      requireEpubCheck: true,
     })
     expect(() =>
       parsePrivateFidelityArguments([
@@ -1063,6 +1069,75 @@ describe('private PDF fidelity runner', () => {
     expect(serialized).not.toContain('/private/input.pdf')
     expect(serialized).not.toContain('/private/operator-staged/input.pdf')
     expect(serialized).not.toContain('SRT_PRIVATE_TEST_PDF')
+  })
+
+  it('requires six passing EPUBCheck results for a required three-profile repeat', () => {
+    const profiles = ['mobile', 'paperProMove', 'paperPro']
+    const checkedRuns = [1, 2].map((ordinal) =>
+      run(
+        ordinal,
+        reconstruction(),
+        profiles.map((profile) => {
+          const { receiptSha256: _receiptSha256, ...evidence } =
+            artifact(profile)
+          const checkedEvidence = {
+            ...evidence,
+            epubCheck: { status: 'passed' },
+          }
+          return {
+            ...checkedEvidence,
+            receiptSha256: canonicalJsonHash(checkedEvidence),
+          }
+        }),
+      ),
+    )
+    const checked = createPrivateFidelityReceipt({
+      paperId: 'paper-v1',
+      sourceSha256: hash,
+      byteLength: 123,
+      runs: checkedRuns,
+      repeat: 2,
+      profiles,
+      epubCheckRequired: true,
+    })
+
+    expect(checked.schemaVersion).toBe('1.6.0')
+    expect(checked.execution).toMatchObject({
+      epubCheckRequired: true,
+      epubCheckPassedCount: 6,
+      allEpubCheckPassed: true,
+      localValidationPassed: true,
+    })
+    expect(
+      checked.runs.flatMap((candidate) => candidate.artifacts),
+    ).toHaveLength(6)
+    expect(
+      checked.runs
+        .flatMap((candidate) => candidate.artifacts)
+        .every((candidate) => candidate.epubCheck.status === 'passed'),
+    ).toBe(true)
+
+    const unchecked = createPrivateFidelityReceipt({
+      paperId: 'paper-v1',
+      sourceSha256: hash,
+      byteLength: 123,
+      runs: [1, 2].map((ordinal) =>
+        run(
+          ordinal,
+          reconstruction(),
+          profiles.map((profile) => artifact(profile)),
+        ),
+      ),
+      repeat: 2,
+      profiles,
+      epubCheckRequired: true,
+    })
+    expect(unchecked.execution).toMatchObject({
+      epubCheckRequired: true,
+      epubCheckPassedCount: 0,
+      allEpubCheckPassed: false,
+      localValidationPassed: false,
+    })
   })
 
   it('accepts strict structural boundaries while preserving their separate count', () => {
@@ -1470,7 +1545,7 @@ describe('private PDF fidelity runner', () => {
       profiles,
     })
 
-    expect(receipt.schemaVersion).toBe('1.5.0')
+    expect(receipt.schemaVersion).toBe('1.6.0')
     expect(receipt.execution.localValidationPassed).toBe(true)
     expect(receipt.baselineComparison).toEqual({
       status: 'not-configured',
@@ -1847,6 +1922,237 @@ describe('private PDF fidelity runner', () => {
       rmSync(temporaryDirectory, { recursive: true, force: true })
     }
   })
+
+  it('emits only a safe error class, code, and message digest when diagnostic output is requested', () => {
+    const temporaryDirectory = mkdtempSync(
+      join(tmpdir(), 'pdf-private-fidelity-diagnostic-test-'),
+    )
+    const privatePath = join(temporaryDirectory, 'missing owner source.pdf')
+    const outputDirectory = join(temporaryDirectory, 'proof')
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL('./pdf-private-fidelity.mjs', import.meta.url)),
+          '--input-env',
+          'SRT_PRIVATE_TEST_PDF',
+          '--paper-id',
+          'paper-v1',
+          '--expected-size',
+          '123',
+          '--expected-sha256',
+          hash,
+          '--profiles',
+          'mobile',
+          '--repeat',
+          '2',
+          '--out',
+          outputDirectory,
+          '--safe-error-diagnostic',
+        ],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, SRT_PRIVATE_TEST_PDF: privatePath },
+        },
+      )
+      const output = `${result.stdout}\n${result.stderr}`
+      const diagnosticLine = result.stderr
+        .split('\n')
+        .find((line) => line.startsWith('{'))
+
+      expect(result.status).toBe(2)
+      expect(diagnosticLine).toBeDefined()
+      expect(JSON.parse(diagnosticLine)).toEqual({
+        errorClass: 'Error',
+        errorCode: 'ENOENT',
+        messageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        stage: 'source-stat',
+      })
+      expect(output).not.toContain(privatePath)
+      expect(output).not.toContain('missing owner source.pdf')
+      expect(output).not.toContain('no such file')
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reinterpret an arbitrary identifier-shaped error message as a diagnostic code', () => {
+    expect(
+      privateFidelity.safePrivateFailureDiagnostic(
+        new Error('private-source.pdf'),
+        'test-stage',
+      ),
+    ).toEqual({
+      errorClass: 'Error',
+      errorCode: 'UNCLASSIFIED',
+      messageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      stage: 'test-stage',
+    })
+  })
+
+  it('treats EPUBCheck warnings as a pre-publication failure in required mode', () => {
+    const temporaryDirectory = mkdtempSync(
+      join(tmpdir(), 'pdf-private-epubcheck-test-'),
+    )
+    const binaryDirectory = join(temporaryDirectory, 'bin')
+    const argumentsLog = join(temporaryDirectory, 'epubcheck-arguments.jsonl')
+    const outputDirectory = join(temporaryDirectory, 'proof')
+    const inputPath = resolve('tests/fixtures/pdf/born-digital.pdf')
+    const inputBytes = readFileSync(inputPath)
+    const inputSha256 = createHash('sha256').update(inputBytes).digest('hex')
+    try {
+      mkdirSync(binaryDirectory)
+      const fakeEpubCheck = join(binaryDirectory, 'epubcheck')
+      writeFileSync(
+        fakeEpubCheck,
+        `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs')
+if (process.argv.includes('--version')) process.exit(0)
+appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+process.exit(1)
+`,
+      )
+      chmodSync(fakeEpubCheck, 0o755)
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL('./pdf-private-fidelity.mjs', import.meta.url)),
+          '--input-env',
+          'SRT_PRIVATE_TEST_PDF',
+          '--paper-id',
+          'public-fixture',
+          '--expected-size',
+          String(inputBytes.byteLength),
+          '--expected-sha256',
+          inputSha256,
+          '--profiles',
+          'mobile',
+          '--repeat',
+          '2',
+          '--out',
+          outputDirectory,
+          '--require-epubcheck',
+          '--safe-error-diagnostic',
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            EPUBCHECK_ARGUMENTS_LOG: argumentsLog,
+            PATH: `${binaryDirectory}:${process.env.PATH ?? ''}`,
+            SRT_PRIVATE_TEST_PDF: inputPath,
+          },
+          timeout: 120_000,
+        },
+      )
+      const diagnostic = JSON.parse(
+        result.stderr.split('\n').find((line) => line.startsWith('{')),
+      )
+
+      expect(result.status, result.stderr).toBe(2)
+      expect(diagnostic).toMatchObject({
+        errorClass: 'Error',
+        errorCode: 'EPUBCHECK_FAILED',
+        stage: 'epubcheck-validate',
+      })
+      expect(
+        readFileSync(argumentsLog, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line)),
+      ).toEqual([
+        ['--failonwarnings', expect.stringMatching(/publication\.epub$/)],
+      ])
+      expect(readdirSync(outputDirectory)).toEqual([])
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(inputPath)
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('records every required EPUBCheck pass in the sanitized private receipt', () => {
+    const temporaryDirectory = mkdtempSync(
+      join(tmpdir(), 'pdf-private-epubcheck-pass-test-'),
+    )
+    const binaryDirectory = join(temporaryDirectory, 'bin')
+    const argumentsLog = join(temporaryDirectory, 'epubcheck-arguments.jsonl')
+    const outputDirectory = join(temporaryDirectory, 'proof')
+    const inputPath = resolve('tests/fixtures/pdf/born-digital.pdf')
+    const inputBytes = readFileSync(inputPath)
+    const inputSha256 = createHash('sha256').update(inputBytes).digest('hex')
+    try {
+      mkdirSync(binaryDirectory)
+      const fakeEpubCheck = join(binaryDirectory, 'epubcheck')
+      writeFileSync(
+        fakeEpubCheck,
+        `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs')
+if (process.argv.includes('--version')) process.exit(0)
+appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+`,
+      )
+      chmodSync(fakeEpubCheck, 0o755)
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL('./pdf-private-fidelity.mjs', import.meta.url)),
+          '--input-env',
+          'SRT_PRIVATE_TEST_PDF',
+          '--paper-id',
+          'public-fixture',
+          '--expected-size',
+          String(inputBytes.byteLength),
+          '--expected-sha256',
+          inputSha256,
+          '--profiles',
+          'mobile',
+          '--repeat',
+          '2',
+          '--out',
+          outputDirectory,
+          '--require-epubcheck',
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            EPUBCHECK_ARGUMENTS_LOG: argumentsLog,
+            PATH: `${binaryDirectory}:${process.env.PATH ?? ''}`,
+            SRT_PRIVATE_TEST_PDF: inputPath,
+          },
+          timeout: 120_000,
+        },
+      )
+      const receipt = JSON.parse(result.stdout)
+
+      expect(result.status, result.stderr).toBe(1)
+      expect(receipt).toMatchObject({
+        schemaVersion: '1.6.0',
+        execution: {
+          epubCheckRequired: true,
+          epubCheckPassedCount: 2,
+          allEpubCheckPassed: true,
+        },
+      })
+      expect(
+        receipt.runs
+          .flatMap((run) => run.artifacts)
+          .map((artifact) => artifact.epubCheck),
+      ).toEqual([{ status: 'passed' }, { status: 'passed' }])
+      expect(readdirSync(outputDirectory).sort()).toEqual([
+        'private-fidelity-receipt.json',
+        'run-1-mobile.epub',
+        'run-2-mobile.epub',
+      ])
+      expect(
+        readFileSync(argumentsLog, 'utf8').trim().split('\n'),
+      ).toHaveLength(2)
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true })
+    }
+  }, 120_000)
 
   it('replays a hash-pinned empty decision set without exposing either local path', () => {
     const temporaryDirectory = mkdtempSync(

@@ -11,6 +11,19 @@ relationships, and linked note must all survive reconstruction before the
 fixture can export. Readable text-SVG and hardcoded-paint vector approximations
 are intentionally not used as publication evidence.
 
+`caption-direction-figures.pdf` places one complete caption immediately above
+its source raster and a second complete caption below a nearby source raster.
+Both rasters share the same horizontal lane so the regression must prove unique
+direction-aware ownership rather than relying on column separation or fixture
+order. The two raster diagrams and all caption text are repository-owned.
+
+`table-citation-crop.pdf` places six compressed, single-run table rows directly
+above a complete caption. The layout intentionally proves a bounded source-page
+crop without claiming invented semantic cells. Three citations in those source
+rows must belong to the canonical table figure's exact hidden transcript, link
+to the two repository-owned bibliography entries, and never leak into duplicate
+visible prose.
+
 `pdf-to-epub-fidelity.pdf` is the integrated, redistributable upload-to-EPUB
 benchmark. It combines a unique title, continuous prose with both discretionary
 and authored hyphens, mixed inline font semantics, a safe link annotation,

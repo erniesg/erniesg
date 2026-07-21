@@ -126,6 +126,212 @@ function objectRegion(
 }
 
 describe('bounded PDF table source scoping', () => {
+  it('returns one exact crop scope for a wide contiguous single-anchor slab above its caption', () => {
+    const slabLines = Array.from({ length: 8 }, (_, index) => {
+      const y = 0.18 + index * 0.024
+      const sourceBox = box(0.12, y, 0.68 - index * 0.02, 0.016)
+      return {
+        id: `slab-line-${index + 1}`,
+        text: `slab-line-${index + 1}`,
+        fontSize: 9,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `slab-line-${index + 1}`,
+            fontName: 'PromptSerif',
+            fontSize: 9,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const slab = textRegion(
+      'wide-single-anchor-slab',
+      box(0.12, 0.18, 0.68, 0.184),
+      slabLines,
+    )
+    const precedingProseLine = proseLine('preceding-prose-line', 0.143)
+    const precedingProse = textRegion(
+      'preceding-prose',
+      box(0.12, 0.143, 0.324, 0.016),
+      [precedingProseLine],
+    )
+    const tableCaption = caption(
+      'caption-table-prompt',
+      0.38,
+      'Table 4. Source-authored prompt template.',
+    )
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [precedingProse, slab, tableCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'above',
+        sourceRegionIds: [slab.id],
+        sourceLineIds: slabLines.map((item) => item.id),
+        cropBox: box(0.12, 0.18, 0.68, 0.184),
+        regionLineage: [
+          {
+            regionId: slab.id,
+            selection: 'whole',
+            lineIds: slabLines.map((item) => item.id),
+          },
+        ],
+        evidence: expect.arrayContaining([
+          expect.objectContaining({ code: 'caption-bounded-scope' }),
+          expect.objectContaining({
+            code: 'contiguous-single-anchor-slab',
+            rowCount: 8,
+            wideLayout: true,
+          }),
+        ]),
+      },
+    })
+  })
+
+  it('does not turn a narrow ordinary paragraph into a caption-bounded table slab', () => {
+    const paragraphLines = Array.from({ length: 6 }, (_, index) =>
+      proseLine(`ordinary-paragraph-${index + 1}`, 0.2 + index * 0.024),
+    )
+    const paragraph = textRegion(
+      'ordinary-paragraph',
+      box(0.12, 0.2, 0.324, 0.136),
+      paragraphLines,
+    )
+    const tableCaption = caption('caption-after-prose', 0.36)
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [paragraph, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+      ambiguity: { code: 'no-proven-scope' },
+    })
+  })
+
+  it('keeps a unique wide slab when a short caption only touches its edge', () => {
+    const slabLines = Array.from({ length: 6 }, (_, index) => {
+      const sourceBox = box(0.12, 0.2 + index * 0.024, 0.68, 0.016)
+      return {
+        id: `edge-slab-line-${index + 1}`,
+        text: `edge-slab-line-${index + 1}`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `edge-slab-line-${index + 1}`,
+            fontName: 'TableSerif',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const slab = textRegion(
+      'edge-touching-wide-slab',
+      box(0.12, 0.2, 0.68, 0.136),
+      slabLines,
+    )
+    const shortCaption = {
+      ...caption('short-edge-caption', 0.36),
+      box: box(0.05, 0.36, 0.09, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: shortCaption,
+        pageRegions: [slab, shortCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        sourceRegionIds: [slab.id],
+        sourceLineIds: slabLines.map((line) => line.id),
+      },
+    })
+  })
+
+  it('keeps an interleaved neighboring column out of a caption-bounded text slab', () => {
+    const singleAnchorLines = (
+      prefix: string,
+      x: number,
+      y: number,
+      width: number,
+      fontSize: number,
+    ) =>
+      Array.from({ length: 6 }, (_, index) => {
+        const sourceBox = box(x, y + index * 0.024, width, 0.016)
+        return {
+          id: `${prefix}-${index + 1}`,
+          text: `${prefix}-${index + 1}`,
+          fontSize,
+          box: sourceBox,
+          runs: [
+            {
+              ...sourceBox,
+              text: `${prefix}-${index + 1}`,
+              fontName: prefix === 'table' ? 'TableSerif' : 'BodySerif',
+              fontSize,
+              confidence: 0.99,
+            },
+          ],
+        } satisfies PdfRegionLine
+      })
+    const tableLines = singleAnchorLines('table', 0.56, 0.194, 0.32, 8)
+    const neighboringLines = singleAnchorLines(
+      'neighboring-prose',
+      0.08,
+      0.206,
+      0.32,
+      10,
+    )
+    const table = textRegion(
+      'right-column-table',
+      box(0.56, 0.194, 0.32, 0.136),
+      tableLines,
+    )
+    const neighboringProse = textRegion(
+      'left-column-prose',
+      box(0.08, 0.206, 0.32, 0.136),
+      neighboringLines,
+    )
+    const tableCaption = {
+      ...caption('right-column-caption', 0.348),
+      box: box(0.52, 0.348, 0.4, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [neighboringProse, table, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        sourceRegionIds: [table.id],
+        sourceLineIds: tableLines.map((item) => item.id),
+        cropBox: box(0.56, 0.194, 0.32, 0.136),
+      },
+    })
+  })
+
   it('returns one exact text scope when repeated row and column geometry proves it', () => {
     const table = textRegion('table-grid', box(0.12, 0.2, 0.63, 0.116), [
       line('header', 0.2, [0.12, 0.4, 0.67]),
@@ -810,6 +1016,44 @@ describe('bounded PDF table source scoping', () => {
       },
     })
     expect(result.candidates).toHaveLength(2)
+  })
+
+  it('prefers one exact repeated text grid over unproven raster candidates', () => {
+    const grid = textRegion('proven-table-grid', box(0.12, 0.2, 0.63, 0.116), [
+      line('header', 0.2, [0.12, 0.4, 0.67]),
+      line('row-1', 0.25, [0.12, 0.4, 0.67]),
+      line('row-2', 0.3, [0.12, 0.4, 0.67]),
+    ])
+    const tableCaption = caption('caption-proven-grid', 0.38)
+    const rasterBoxes = [
+      box(0.12, 0.42, 0.18, 0.1, 'pdf-object'),
+      box(0.34, 0.42, 0.18, 0.1, 'pdf-object'),
+      box(0.56, 0.42, 0.18, 0.1, 'pdf-object'),
+    ]
+    const rasters = rasterBoxes.map((sourceBox, index) =>
+      nativeObject(`image-p001-chart-${index + 1}`, 'image', sourceBox),
+    )
+    const rasterRegions = rasters.map((raster, index) =>
+      objectRegion(`chart-raster-${index + 1}`, raster.id, raster.box),
+    )
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [grid, tableCaption, ...rasterRegions],
+      nativeObjects: rasters,
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      ambiguity: { code: 'none' },
+      scope: {
+        proof: 'text-grid',
+        direction: 'above',
+        sourceRegionIds: [grid.id],
+        sourceObjectIds: [],
+      },
+    })
+    expect(result.candidates).toHaveLength(1)
   })
 
   it('fails closed when duplicate regions claim the same native object lineage', () => {

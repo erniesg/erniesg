@@ -109,6 +109,22 @@ describe('SRT target profiles', () => {
     expect(targetProfileSchema.safeParse(invalid).success).toBe(false)
   })
 
+  it('rejects a landscape logical viewport for a portrait manufacturer profile', () => {
+    const invalid = structuredClone(TARGET_PROFILES.paperProMove)
+    const portraitWidth = invalid.dimensions.width
+    invalid.dimensions.width = invalid.dimensions.height!
+    invalid.dimensions.height = portraitWidth
+
+    expect(targetProfileSchema.safeParse(invalid).success).toBe(false)
+  })
+
+  it('rejects a scaled preview whose aspect ratio drifts from device geometry', () => {
+    const invalid = structuredClone(TARGET_PROFILES.paperPro)
+    invalid.preview.heightCssPx! += 24
+
+    expect(targetProfileSchema.safeParse(invalid).success).toBe(false)
+  })
+
   it('rejects profiles whose finite-height capability contradicts their dimensions', () => {
     const invalid = structuredClone(TARGET_PROFILES.mobile)
     invalid.finiteHeight = true

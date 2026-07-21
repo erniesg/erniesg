@@ -282,6 +282,29 @@ function classification(
   }
 }
 
+function bibliographyEntryMarker(region: PdfPageRegion) {
+  const normalized = normalizedNoteLabel(region.text)
+  const bracketed = normalized.match(/^\s*\[\s*(\d{1,3}|[*†‡§])\s*\](?=\s|$)/u)
+  if (bracketed?.[1]) {
+    const start = Math.max(0, normalized.indexOf(bracketed[1]))
+    return {
+      label: bracketed[1],
+      start,
+      end: start + bracketed[1].length,
+      syntax: 'bracketed-numeric-syntax' as const,
+    }
+  }
+  const label = noteLabelFromText(normalized)
+  if (!label) return null
+  const start = Math.max(0, normalized.indexOf(label))
+  return {
+    label: normalizedNoteLabel(label),
+    start,
+    end: start + label.length,
+    syntax: 'rendered-superscript-geometry' as const,
+  }
+}
+
 export function classifyPdfNoteMarkers(
   regions: PdfPageRegion[],
 ): PdfNoteMarkerClassificationResult {
@@ -315,31 +338,30 @@ export function classifyPdfNoteMarkers(
   const ordinaryCandidates = orderedRegions
     .filter((region) => region.kind === 'body' || region.kind === 'spanning')
     .flatMap(markerCandidates)
-  const bibliographyNoteCandidates = orderedRegions
+  const bibliographyEntryCandidates = orderedRegions
     .filter(
       (region) =>
         bibliographyRegionIds.has(region.id) &&
         (region.kind === 'footnote' || region.kind === 'endnote'),
     )
     .flatMap((region) => {
-      const label = noteLabelFromText(region.text)
-      if (!label) return []
-      const start = Math.max(0, region.text.indexOf(label))
+      const marker = bibliographyEntryMarker(region)
+      if (!marker) return []
       return [
         {
-          label: normalizedNoteLabel(label),
-          labels: [normalizedNoteLabel(label)],
+          label: marker.label,
+          labels: [marker.label],
           region,
-          start,
-          end: start + label.length,
-          syntax: 'rendered-superscript-geometry' as const,
+          start: marker.start,
+          end: marker.end,
+          syntax: marker.syntax,
           sourceBox: sourceBox(region),
         },
       ]
     })
   const candidates = [
     ...ordinaryCandidates,
-    ...bibliographyNoteCandidates,
+    ...bibliographyEntryCandidates,
   ].sort(
     (left, right) =>
       positionCompare(left.region, right.region) ||
@@ -403,6 +425,46 @@ export function classifyPdfNoteMarkers(
           'before-first-body-section',
           'no-matching-note-body',
         ],
+      )
+    }
+
+    const symbolicSuperscriptAnnotation =
+      candidate.labels.every((label) => /^[*†‡§]+$/u.test(label)) &&
+      (candidate.syntax === 'superscript-syntax' ||
+        candidate.syntax === 'rendered-superscript-geometry')
+    if (symbolicSuperscriptAnnotation) {
+      const samePageFootnotes = matchingBodies.filter(
+        (region) =>
+          region.kind === 'footnote' && region.page === candidate.region.page,
+      )
+      if (samePageFootnotes.length > 0) {
+        return classification(
+          candidate,
+          'footnote-reference',
+          'note-reference',
+          0.97,
+          ['matching-note-label', 'same-page-footnote-band'],
+        )
+      }
+      const laterEndnotes = matchingBodies.filter(
+        (region) =>
+          region.kind === 'endnote' && region.page >= candidate.region.page,
+      )
+      if (laterEndnotes.length > 0) {
+        return classification(
+          candidate,
+          'endnote-reference',
+          'note-reference',
+          0.93,
+          ['matching-note-label', 'later-endnote-section-scope'],
+        )
+      }
+      return classification(
+        candidate,
+        'symbolic-annotation-marker',
+        'plain-text',
+        0.96,
+        ['symbolic-marker-not-bibliography-citation', 'no-matching-note-body'],
       )
     }
 

@@ -653,6 +653,9 @@
   .epub-device-switcher .epub-preview-profile-key {
     @apply break-all leading-tight;
   }
+  .epub-device-scale-note {
+    @apply text-xs text-muted-foreground;
+  }
   .epub-preview-receipt {
     @apply mt-5 border-t text-xs;
   }

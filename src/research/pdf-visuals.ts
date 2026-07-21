@@ -47,6 +47,11 @@ const FIGURE_OVERLAY_BOX_TOLERANCE = 0.004
 // to the established native render scope. The area cap is a secondary bound;
 // individually small fragments are not evidence that canonical prose is safe.
 const MAX_FIGURE_TEXT_OVERLAY_AREA_RATIO = 0.2
+const MAX_CAPTION_BOUNDED_FLOW_OVERLAY_AREA_RATIO = 0.45
+const MIN_CAPTION_BOUNDED_FLOW_OVERLAY_COUNT = 2
+const MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT = 8
+const MIN_NATIVE_SCAFFOLD_AREA = 0.04
+const MIN_COEXTENSIVE_NATIVE_LAYER_OVERLAP = 0.9
 const SOURCE_CROP_CONTAINMENT_TOLERANCE = 0.00001
 
 type VisualCandidate = {
@@ -154,6 +159,14 @@ function isPageFurnitureVectorBox(box: NormalizedSourceBox) {
   )
 }
 
+function isStructuralVectorRuleBox(box: NormalizedSourceBox) {
+  return (
+    (box.width >= 0.02 && box.height <= 0.0001) ||
+    (box.width >= 0.45 && box.height <= 0.008) ||
+    (box.height >= 0.2 && box.width <= 0.012)
+  )
+}
+
 function sameRepeatedGeometry(left: PdfNativeObject, right: PdfNativeObject) {
   if (left.page === right.page || left.box.rotation !== right.box.rotation)
     return false
@@ -168,7 +181,11 @@ export function decorativeNativeObjectIds(pages: PdfPageAnalysis[]) {
     .filter((object) => object.kind === 'vector')
   const decorative = new Set(
     vectors
-      .filter((object) => isPageFurnitureVectorBox(object.box))
+      .filter(
+        (object) =>
+          isPageFurnitureVectorBox(object.box) ||
+          isStructuralVectorRuleBox(object.box),
+      )
       .map((object) => object.id),
   )
   for (const object of vectors.filter((candidate) =>
@@ -282,10 +299,12 @@ function boundedTextOverlays(
 function scopeContainsReadingOrderText(
   scope: NormalizedSourceBox,
   regions: PdfPageRegion[],
+  claimedRegionIds: ReadonlySet<string> = new Set<string>(),
 ) {
   return regions.some(
     (region) =>
       region.page === scope.page &&
+      !claimedRegionIds.has(region.id) &&
       region.includedInReadingOrder &&
       region.nativeObjectIds.length === 0 &&
       region.lines.length > 0 &&
@@ -316,6 +335,53 @@ function isCompositeScaffold(
   )
 }
 
+function intersectionArea(
+  left: NormalizedSourceBox,
+  right: NormalizedSourceBox,
+) {
+  if (left.page !== right.page || left.rotation !== right.rotation) return 0
+  const width = Math.max(
+    0,
+    Math.min(left.x + left.width, right.x + right.width) -
+      Math.max(left.x, right.x),
+  )
+  const height = Math.max(
+    0,
+    Math.min(left.y + left.height, right.y + right.height) -
+      Math.max(left.y, right.y),
+  )
+  return width * height
+}
+
+function coextensiveNativeLayers(group: PdfPageRegion[]) {
+  return group.some((left, leftIndex) =>
+    group.slice(leftIndex + 1).some((right) => {
+      const smallerArea = Math.min(
+        left.box.width * left.box.height,
+        right.box.width * right.box.height,
+      )
+      return (
+        smallerArea >= MIN_NATIVE_SCAFFOLD_AREA &&
+        intersectionArea(left.box, right.box) / smallerArea >=
+          MIN_COEXTENSIVE_NATIVE_LAYER_OVERLAP
+      )
+    }),
+  )
+}
+
+function provesCaptionBoundedNativeScaffold(
+  group: PdfPageRegion[],
+  figureRegions: PdfPageRegion[],
+) {
+  const scope = unionObjectBox(group)
+  if (scope.width * scope.height < MIN_NATIVE_SCAFFOLD_AREA) return false
+  return (
+    group.some((region) => isCompositeScaffold(region, figureRegions)) ||
+    coextensiveNativeLayers(group) ||
+    group.length >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+  )
+}
+
 function unionObjectBox(regions: PdfPageRegion[]): NormalizedSourceBox {
   const left = Math.min(...regions.map((region) => region.box.x))
   const top = Math.min(...regions.map((region) => region.box.y))
@@ -336,9 +402,11 @@ function unionObjectBox(regions: PdfPageRegion[]): NormalizedSourceBox {
   }
 }
 
-function renderBoxForGroup(group: PdfPageRegion[], captions: PdfPageRegion[]) {
-  const box = unionObjectBox(group)
-  const caption = captions
+function owningCaptionForBox(
+  box: NormalizedSourceBox,
+  captions: PdfPageRegion[],
+) {
+  return captions
     .filter((candidate) => {
       if (candidate.page !== box.page || candidate.box.y < box.y) return false
       const overlap = Math.max(
@@ -349,9 +417,52 @@ function renderBoxForGroup(group: PdfPageRegion[], captions: PdfPageRegion[]) {
       return overlap >= Math.min(candidate.box.width, box.width) * 0.35
     })
     .sort((left, right) => left.box.y - right.box.y)[0]
+}
+
+function renderBoxForGroup(group: PdfPageRegion[], captions: PdfPageRegion[]) {
+  const box = unionObjectBox(group)
+  const caption = owningCaptionForBox(box, captions)
   if (!caption || box.y + box.height <= caption.box.y - 0.002) return box
   const bottom = Math.max(box.y + 0.004, caption.box.y - 0.004)
   return { ...box, height: rounded(bottom - box.y) }
+}
+
+function captionBoundedReadingOrderOverlays(
+  group: PdfPageRegion[],
+  figureRegions: PdfPageRegion[],
+  regions: PdfPageRegion[],
+  captions: PdfPageRegion[],
+) {
+  if (!provesCaptionBoundedNativeScaffold(group, figureRegions)) return []
+  const nativeBox = unionObjectBox(group)
+  const caption = owningCaptionForBox(nativeBox, captions)
+  if (!caption) return []
+  const scope = renderBoxForGroup(group, captions)
+  const scopeArea = scope.width * scope.height
+  const candidates = regions
+    .filter(
+      (region) =>
+        region.page === scope.page &&
+        region.includedInReadingOrder &&
+        region.nativeObjectIds.length === 0 &&
+        region.lines.length > 0 &&
+        region.text.trim().length > 0 &&
+        ['body', 'spanning'].includes(region.kind) &&
+        region.box.y + region.box.height <=
+          caption.box.y + FIGURE_OVERLAY_BOX_TOLERANCE &&
+        fullyContainsBox(scope, region.box, FIGURE_OVERLAY_BOX_TOLERANCE) &&
+        region.box.width * region.box.height <=
+          scopeArea * MAX_CAPTION_BOUNDED_FLOW_OVERLAY_AREA_RATIO,
+    )
+    .sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    )
+  return candidates.length >= MIN_CAPTION_BOUNDED_FLOW_OVERLAY_COUNT
+    ? candidates
+    : []
 }
 
 function figureCandidates(
@@ -385,12 +496,27 @@ function figureCandidates(
   return groups
     .map<VisualCandidate>((group) => {
       const nativeRenderBox = renderBoxForGroup(group, captions)
+      const flowOverlays = captionBoundedReadingOrderOverlays(
+        group,
+        figureRegions,
+        regions,
+        captions,
+      )
+      const overlays = [
+        ...boundedTextOverlays(group, regions, captions),
+        ...flowOverlays,
+      ].sort(
+        (left, right) =>
+          left.box.y - right.box.y ||
+          left.box.x - right.box.x ||
+          left.id.localeCompare(right.id),
+      )
       const sourcePageCropBlockedByReadingOrderText =
         scopeContainsReadingOrderText(
           paddedUnionBox([nativeRenderBox]),
           regions,
+          new Set(flowOverlays.map((region) => region.id)),
         )
-      const overlays = boundedTextOverlays(group, regions, captions)
       const nativeLineage = group.flatMap((region) =>
         region.nativeObjectIds.map((sourceObjectId) => ({
           sourceObjectId,
@@ -415,9 +541,14 @@ function figureCandidates(
         page: group[0].page,
         renderBox: renderBoxForGroup([...group, ...overlays], captions),
         sourcePageCropBlockedByReadingOrderText,
-        ...(sourcePageCropBlockedByReadingOrderText
-          ? { evidence: ['source-page-crop-vetoed-reading-order-text'] }
-          : {}),
+        evidence: [
+          ...(flowOverlays.length > 0
+            ? ['caption-bounded-native-scaffold']
+            : []),
+          ...(sourcePageCropBlockedByReadingOrderText
+            ? ['source-page-crop-vetoed-reading-order-text']
+            : []),
+        ],
         column: [...group, ...overlays].every(
           (region) => region.column === group[0].column,
         )
@@ -984,15 +1115,28 @@ function candidateScore(
     : candidate.sourceBoxes
   const top = Math.min(...scopeBoxes.map((box) => box.y))
   const bottom = Math.max(...scopeBoxes.map((box) => box.y + box.height))
+  const captionBottom = caption.box.y + caption.box.height
+  const figureDirection =
+    label.kind !== 'figure'
+      ? null
+      : bottom <= caption.box.y + 0.004
+        ? ('object-above-caption' as const)
+        : top >= captionBottom - 0.004
+          ? ('object-below-caption' as const)
+          : null
+  if (label.kind === 'figure' && !figureDirection) return null
   const distance =
     label.kind === 'figure'
-      ? caption.box.y - bottom
+      ? figureDirection === 'object-above-caption'
+        ? caption.box.y - bottom
+        : top - captionBottom
       : label.kind === 'table' && bottom <= caption.box.y + 0.004
         ? caption.box.y - bottom
-        : top - (caption.box.y + caption.box.height)
+        : top - captionBottom
   if (distance < -0.02 || distance > 0.28) return null
   let score = 0.44
   const evidence = ['same-page-scope', ...(candidate.evidence ?? [])]
+  if (figureDirection) evidence.push(figureDirection)
   if (distance <= 0.08) {
     score += 0.24 * (1 - Math.max(distance, 0) / 0.08)
     evidence.push('bounded-distance')
@@ -1014,13 +1158,16 @@ function candidateScore(
     Math.max(...scopeBoxes.map((box) => box.x + box.width)),
   )
   const horizontalOverlap = Math.max(right - left, 0)
-  const horizontalScope = Math.min(
-    caption.box.width,
+  const candidateWidth =
     Math.max(...scopeBoxes.map((box) => box.x + box.width)) -
-      Math.min(...scopeBoxes.map((box) => box.x)),
-  )
+    Math.min(...scopeBoxes.map((box) => box.x))
   const horizontalAlignment =
-    horizontalScope > 0 ? horizontalOverlap / horizontalScope : 0
+    caption.box.width > 0 && candidateWidth > 0
+      ? Math.min(
+          horizontalOverlap / caption.box.width,
+          horizontalOverlap / candidateWidth,
+        )
+      : 0
   if (horizontalAlignment >= 0.5) {
     score += 0.14 * horizontalAlignment
     evidence.push('horizontal-alignment')
@@ -1029,6 +1176,9 @@ function candidateScore(
   if (Number.isFinite(numericSequence) && numericSequence === sequence + 1) {
     score += 0.12
     evidence.push('label-sequence')
+  } else if (Number.isFinite(numericSequence)) {
+    score -= 0.08
+    evidence.push('label-sequence-mismatch')
   }
   if (caption.confidence >= 0.9) {
     score += 0.05
@@ -1055,19 +1205,28 @@ function matchCandidate(
   candidates: VisualCandidate[],
   regions: PdfPageRegion[],
 ) {
-  const scored = candidates
+  const allScored = candidates
     .map((candidate, index) => {
       const score = candidateScore(caption, label, candidate, index, regions)
       return score ? { candidate, ...score } : null
     })
     .filter((value): value is NonNullable<typeof value> => Boolean(value))
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.candidate.sourceObjectIds
-          .join(':')
-          .localeCompare(right.candidate.sourceObjectIds.join(':')),
+  const scored = (
+    label.kind === 'figure' &&
+    allScored.some((candidate) =>
+      candidate.evidence.includes('object-above-caption'),
     )
+      ? allScored.filter((candidate) =>
+          candidate.evidence.includes('object-above-caption'),
+        )
+      : allScored
+  ).sort(
+    (left, right) =>
+      right.score - left.score ||
+      left.candidate.sourceObjectIds
+        .join(':')
+        .localeCompare(right.candidate.sourceObjectIds.join(':')),
+  )
   const best = scored[0]
   const ambiguous =
     Boolean(best) && Boolean(scored[1]) && best.score - scored[1].score < 0.08
@@ -1093,7 +1252,8 @@ function tableScopeCandidate(
   const textScope =
     scope.proof === 'text-grid' ||
     scope.proof === 'text-nonuniform-grid' ||
-    scope.proof === 'text-tabular-line-band'
+    scope.proof === 'text-tabular-line-band' ||
+    scope.proof === 'caption-bounded-text-slab'
   const syntheticTextGridObjectId = `table-scope-source:${scope.id}`
   const sourceObjectIds = textScope
     ? [syntheticTextGridObjectId]
@@ -1426,13 +1586,20 @@ export async function reconstructPdfVisuals({
         label.kind === 'table'
           ? detectTableNearCaption(caption, availableTableRegions)
           : null
-      if (label.kind === 'table' && detectedTable === null) {
-        tableScopeResolution = resolvePdfTableScope({
+      if (label.kind === 'table') {
+        const boundedScope = resolvePdfTableScope({
           caption,
           pageRegions: availableTableRegions,
           nativeObjects:
             pages.find((page) => page.page === caption.page)?.objects ?? [],
         })
+        // A proved bounded text/native scope outranks the legacy geometric
+        // detector. The latter may join a neighbouring chart that shares row
+        // coordinates with a table; a scope carries exact line/object lineage.
+        tableScopeResolution =
+          boundedScope.status === 'matched' || detectedTable === null
+            ? boundedScope
+            : null
       }
       const nearbySources = nextSourceRegions(caption, regions, label.kind)
       const sources =
@@ -1505,6 +1672,7 @@ export async function reconstructPdfVisuals({
           candidates.push({
             kind: label.kind,
             sourceRegionIds: sources.map((source) => source.id),
+            sourceLineIds: lines.map((line) => line.id),
             sourceObjectIds: [sourceObjectId],
             assetIds: visualAsset ? [visualAsset.id] : [],
             sourceBoxes: [sourceBox],

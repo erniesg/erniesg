@@ -959,6 +959,106 @@ describe('PDF visual association graph', () => {
     expect(result.consumedRegionIds.has(orderedLabel.id)).toBe(false)
   })
 
+  it('reclaims reading-order labels only when coextensive native layers prove a caption-bounded figure', async () => {
+    const firstLayerBox = box(0.12, 0.1, 0.76, 0.32)
+    const secondLayerBox = box(0.121, 0.101, 0.758, 0.318)
+    const firstLayer = sourcePreservedSvgAsset(
+      'vector-p001-caption-scaffold-001',
+      firstLayerBox,
+    )
+    const secondLayer = sourcePreservedSvgAsset(
+      'vector-p001-caption-scaffold-002',
+      secondLayerBox,
+    )
+    const internalLabels = textRegion(
+      'ordered-internal-diagram-labels',
+      'Input profile   Dialogue response   Aligned output',
+      box(0.2, 0.18, 0.5, 0.035),
+    )
+    const internalOutcomes = textRegion(
+      'ordered-internal-diagram-outcomes',
+      'Local evidence   Owner checks   Final graph',
+      box(0.2, 0.3, 0.5, 0.035),
+    )
+    const followingProse = textRegion(
+      'following-prose-region',
+      'Canonical prose after the figure remains in reading order.',
+      box(0.12, 0.5, 0.76, 0.03),
+    )
+    const objects = [
+      {
+        id: 'vector-p001-caption-scaffold-001',
+        page: 1,
+        kind: 'vector' as const,
+        box: firstLayerBox,
+        confidence: 0.99,
+        assetId: firstLayer.id,
+      },
+      {
+        id: 'vector-p001-caption-scaffold-002',
+        page: 1,
+        kind: 'vector' as const,
+        box: secondLayerBox,
+        confidence: 0.99,
+        assetId: secondLayer.id,
+      },
+    ]
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 20,
+          height: 10,
+          pixels: new Uint8Array(20 * 10 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects, 1, [firstLayer, secondLayer])],
+      regions: [
+        objectRegion(
+          'caption-scaffold-region-001',
+          objects[0].id,
+          firstLayerBox,
+        ),
+        objectRegion(
+          'caption-scaffold-region-002',
+          objects[1].id,
+          secondLayerBox,
+        ),
+        internalLabels,
+        internalOutcomes,
+        captionRegion(
+          'Figure 1. A source-native layered framework diagram.',
+          box(0.12, 0.44, 0.76, 0.025),
+        ),
+        followingProse,
+      ],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: [
+        'vector-p001-caption-scaffold-001',
+        'vector-p001-caption-scaffold-002',
+        'text-overlay:ordered-internal-diagram-labels',
+        'text-overlay:ordered-internal-diagram-outcomes',
+      ],
+      evidence: expect.arrayContaining([
+        'caption-bounded-native-scaffold',
+        'source-page-crop',
+      ]),
+    })
+    expect(result.consumedRegionIds.has(internalLabels.id)).toBe(true)
+    expect(result.consumedRegionIds.has(internalOutcomes.id)).toBe(true)
+    expect(result.consumedRegionIds.has(followingProse.id)).toBe(false)
+  })
+
   it('uses one exact native asset while vetoing a crop across canonical prose', async () => {
     const sourceBox = box(0.15, 0.14, 0.7, 0.38)
     const vector = sourcePreservedSvgAsset(
@@ -1995,6 +2095,61 @@ describe('PDF visual association graph', () => {
     )
   })
 
+  it('does not require an interior short hairline to have a figure caption', async () => {
+    const rule = box(0.2, 0.46, 0.03, 0.00001)
+    const figure = box(0.2, 0.62, 0.58, 0.23)
+    const figureAsset = await createPngAsset({
+      sourceObjectId: 'image-p001-001',
+      sourceBox: figure,
+      width: 2,
+      height: 2,
+      colorSpace: 'rgba',
+      pixels: new Uint8Array(16).fill(128),
+    })
+    const objects = [
+      {
+        id: 'vector-p001-table-rule',
+        page: 1,
+        kind: 'vector' as const,
+        box: rule,
+        confidence: 0.98,
+        assetId: 'asset-table-rule',
+      },
+      {
+        id: 'image-p001-001',
+        page: 1,
+        kind: 'image' as const,
+        box: figure,
+        confidence: 0.98,
+        assetId: figureAsset.id,
+      },
+    ]
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects, 1, [figureAsset])],
+      regions: [
+        objectRegion('rule-region', objects[0].id, rule),
+        objectRegion('figure-region', objects[1].id, figure),
+      ],
+    })
+
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNREFERENCED_VISUAL_ASSET',
+          sourceBoxes: [rule],
+        }),
+      ]),
+    )
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNREFERENCED_VISUAL_ASSET',
+          sourceBoxes: [figure],
+        }),
+      ]),
+    )
+  })
+
   it('uses horizontal alignment to associate side-by-side figures', async () => {
     const left = box(0.08, 0.2, 0.38, 0.18)
     const right = box(0.54, 0.2, 0.38, 0.18)
@@ -2047,6 +2202,111 @@ describe('PDF visual association graph', () => {
     })
     expect(result.relationships[0].candidates[0].evidence).toContain(
       'horizontal-alignment',
+    )
+  })
+
+  it('prefers a conventional above-caption figure before using caption-above fallback', async () => {
+    const above = box(0.12, 0.18, 0.76, 0.18)
+    const below = box(0.12, 0.42, 0.76, 0.18)
+    const sourceAssets = await Promise.all(
+      [above, below].map((sourceBox, index) =>
+        createPngAsset({
+          sourceObjectId: `image-p001-00${index + 1}`,
+          sourceBox,
+          width: 4,
+          height: 2,
+          colorSpace: 'rgba',
+          pixels: new Uint8Array(4 * 2 * 4).fill(80 + index * 40),
+        }),
+      ),
+    )
+    const objects = [above, below].map((sourceBox, index) => ({
+      id: `image-p001-00${index + 1}`,
+      page: 1,
+      kind: 'image' as const,
+      box: sourceBox,
+      confidence: 0.98,
+      assetId: sourceAssets[index].id,
+    }))
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects, 1, sourceAssets)],
+      regions: [
+        objectRegion('above-region', objects[0].id, above),
+        objectRegion('below-region', objects[1].id, below),
+        captionRegion(
+          'Figure IV. Directionally bounded source figure.',
+          box(0.12, 0.38, 0.76, 0.02),
+        ),
+      ],
+    })
+
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: [objects[0].id],
+      assetIds: [sourceAssets[0].id],
+      evidence: expect.arrayContaining(['object-above-caption']),
+    })
+  })
+
+  it('does not let a thin aligned vector sliver tie a caption-width figure', async () => {
+    const figureBox = box(0.2, 0.2, 0.45, 0.18)
+    const sliverBox = box(0.82, 0.2, 0.015, 0.18)
+    const figureAsset = sourcePreservedSvgAsset(
+      'vector-p001-caption-width-figure',
+      figureBox,
+    )
+    const sliverAsset = sourcePreservedSvgAsset(
+      'vector-p001-caption-sliver',
+      sliverBox,
+    )
+    const objects = [
+      {
+        id: 'vector-p001-caption-width-figure',
+        page: 1,
+        kind: 'vector' as const,
+        box: figureBox,
+        confidence: 0.99,
+        assetId: figureAsset.id,
+      },
+      {
+        id: 'vector-p001-caption-sliver',
+        page: 1,
+        kind: 'vector' as const,
+        box: sliverBox,
+        confidence: 0.99,
+        assetId: sliverAsset.id,
+      },
+    ]
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects, 1, [figureAsset, sliverAsset])],
+      regions: [
+        objectRegion('caption-width-figure-region', objects[0].id, figureBox),
+        objectRegion('caption-sliver-region', objects[1].id, sliverBox),
+        captionRegion(
+          'Figure IV. Caption-width figure with a decorative sliver.',
+          box(0.2, 0.4, 0.65, 0.02),
+        ),
+      ],
+    })
+
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: ['vector-p001-caption-width-figure'],
+      assetIds: [figureAsset.id],
+    })
+    expect(result.relationships[0].candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceObjectIds: ['vector-p001-caption-width-figure'],
+          evidence: expect.arrayContaining(['horizontal-alignment']),
+        }),
+        expect.objectContaining({
+          sourceObjectIds: ['vector-p001-caption-sliver'],
+          evidence: expect.not.arrayContaining(['horizontal-alignment']),
+        }),
+      ]),
     )
   })
 

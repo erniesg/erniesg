@@ -389,7 +389,10 @@ export function validatedPdfVisualRelationships({
     ) {
       return false
     }
-    const captionSourceBox = boundingSourceBox(captionEvidence.boxes)
+    const captionSourceBox =
+      hasExplicitLineScope && relationship.kind === 'table'
+        ? (relationship.sourceBoxes[0] ?? null)
+        : boundingSourceBox(captionEvidence.boxes)
     if (!captionSourceBox) return false
     const visualSourceBoxes = subtractBoxes(relationship.sourceBoxes, [
       captionSourceBox,

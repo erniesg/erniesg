@@ -1,11 +1,24 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, open, readFile, realpath, stat } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { spawnSync } from 'node:child_process'
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import {
   basename,
   dirname,
   isAbsolute,
+  join,
   parse,
   relative,
   resolve,
@@ -20,7 +33,7 @@ import {
   PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION,
 } from './pdf-corpus-audit-lib.mjs'
 
-export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.5.0'
+export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.6.0'
 const PDF_PRIVATE_FIDELITY_PRIVACY =
   'public-id-hash-aggregate-counters-artifact-hashes-only'
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -30,9 +43,28 @@ const MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL = 16
 const MAX_READABLE_FALLBACK_ASSETS_PER_BOOK = 64
 const ARTIFACT_MODES = ['publication', 'readable-fallback']
 const INLINE_SEMANTIC_LEDGER_SCHEMA_VERSION = '1.0.0'
+const PRIVATE_FAILURE_CODES = new Set([
+  'ARTIFACT_HASH_MISMATCH',
+  'EPUBCHECK_FAILED',
+  'EPUBCHECK_REQUIRED',
+  'EPUBCHECK_RESULT_INVALID',
+  'EPUB_CONTENT_MISSING',
+  'EPUB_INLINE_SEMANTIC_LEDGER_INVALID',
+  'INVALID_PRIVATE_FIDELITY_BASELINE',
+  'INVALID_USAGE',
+  'OUTPUT_DIRECTORY_NOT_OWNER_ONLY',
+  'OUTPUT_MUST_BE_NEW_EXTERNAL_DIRECTORY',
+  'PRIVATE_DECISION_SET_IDENTITY_MISMATCH',
+  'PRIVATE_DECISION_SET_INVALID',
+  'PRIVATE_DECISION_SET_STALE',
+  'SOURCE_IDENTITY_MISMATCH',
+  'UNKNOWN_PROFILE',
+  'UNSAFE_PRIVATE_RECEIPT_IDENTIFIER',
+])
+let privateFailureStage = 'entry'
 
 function usage() {
-  return 'Usage: npm --silent run pdf:private-fidelity -- --input-env <ENV_NAME> --paper-id <public-id> --expected-size <bytes> --expected-sha256 <sha256> --profiles <id,...> --repeat <count> --out <new-external-directory> [--decisions-env <ENV_NAME> --expected-decisions-sha256 <sha256>] [--baseline <external-sanitized-receipt> --expected-baseline-sha256 <accepted-receipt-sha256>]\n'
+  return 'Usage: npm --silent run pdf:private-fidelity -- --input-env <ENV_NAME> --paper-id <public-id> --expected-size <bytes> --expected-sha256 <sha256> --profiles <id,...> --repeat <count> --out <new-external-directory> [--decisions-env <ENV_NAME> --expected-decisions-sha256 <sha256>] [--baseline <external-sanitized-receipt> --expected-baseline-sha256 <accepted-receipt-sha256>] [--require-epubcheck] [--safe-error-diagnostic]\n'
 }
 
 function valueAfter(arguments_, index) {
@@ -46,8 +78,20 @@ export function parsePrivateFidelityArguments(
   environment = process.env,
 ) {
   const values = {}
+  let safeErrorDiagnostic = false
+  let requireEpubCheck = false
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
+    if (argument === '--safe-error-diagnostic') {
+      if (safeErrorDiagnostic) throw new Error('INVALID_USAGE')
+      safeErrorDiagnostic = true
+      continue
+    }
+    if (argument === '--require-epubcheck') {
+      if (requireEpubCheck) throw new Error('INVALID_USAGE')
+      requireEpubCheck = true
+      continue
+    }
     if (!argument.startsWith('--')) throw new Error('INVALID_USAGE')
     const equals = argument.indexOf('=')
     const key = argument.slice(2, equals < 0 ? undefined : equals)
@@ -155,6 +199,37 @@ export function parsePrivateFidelityArguments(
     expectedBaselineSha256: expectedBaselineSha256 ?? null,
     decisions: decisions ? resolve(decisions) : null,
     expectedDecisionsSha256: expectedDecisionsSha256 ?? null,
+    requireEpubCheck,
+    safeErrorDiagnostic,
+  }
+}
+
+export function safePrivateFailureDiagnostic(
+  error,
+  stage = privateFailureStage,
+) {
+  const candidateClass =
+    error && typeof error === 'object' && 'name' in error
+      ? String(error.name)
+      : 'Error'
+  const systemCode =
+    error && typeof error === 'object' && 'code' in error
+      ? String(error.code)
+      : null
+  const safeValue = (value, fallback) =>
+    SAFE_IDENTIFIER_PATTERN.test(value) ? value : fallback
+  const message =
+    error && typeof error === 'object' && 'message' in error
+      ? String(error.message)
+      : ''
+  const candidateCode =
+    systemCode ??
+    (PRIVATE_FAILURE_CODES.has(message) ? message : 'UNCLASSIFIED')
+  return {
+    errorClass: safeValue(candidateClass, 'Error'),
+    errorCode: safeValue(candidateCode, 'UNCLASSIFIED'),
+    messageSha256: sha256(message),
+    stage: safeValue(stage, 'unclassified-stage'),
   }
 }
 
@@ -844,7 +919,36 @@ function createPrivateStructuralEvidence(reconstruction, artifactParity) {
   }
 }
 
-export function createPrivateArtifactEvidence(epub, inspection) {
+function normalizedPrivateEpubCheck(value) {
+  if (value?.status === 'passed' && Object.keys(value).length === 1) {
+    return { status: 'passed' }
+  }
+  if (
+    value?.status === 'skipped' &&
+    value.reason === 'not-required' &&
+    Object.keys(value).length === 2
+  ) {
+    return { status: 'skipped', reason: 'not-required' }
+  }
+  throw new Error('EPUBCHECK_RESULT_INVALID')
+}
+
+function validPrivateEpubCheck(value) {
+  try {
+    return (
+      canonicalJsonHash(normalizedPrivateEpubCheck(value)) ===
+      canonicalJsonHash(value)
+    )
+  } catch {
+    return false
+  }
+}
+
+export function createPrivateArtifactEvidence(
+  epub,
+  inspection,
+  epubCheck = { status: 'skipped', reason: 'not-required' },
+) {
   const manifest = inspection.manifest ?? {}
   const artifactSha256 = sha256(epub.bytes)
   if (artifactSha256 !== epub.sha256) {
@@ -859,6 +963,7 @@ export function createPrivateArtifactEvidence(epub, inspection) {
     sha256: artifactSha256,
     ...artifactParityFromManifest(manifest, inlineSemanticLedger),
     structuralValidation: 'passed',
+    epubCheck: normalizedPrivateEpubCheck(epubCheck),
   }
   return { ...evidence, receiptSha256: canonicalJsonHash(evidence) }
 }
@@ -1010,6 +1115,7 @@ export function createPrivateFidelityReceipt({
   runs,
   repeat,
   profiles,
+  epubCheckRequired = false,
   baselineComparison,
 }) {
   const expectedOrdinals = Array.from(
@@ -1080,13 +1186,26 @@ export function createPrivateFidelityReceipt({
       run.artifacts.length === profiles.length &&
       run.artifacts.every((artifact) => profiles.includes(artifact.target)),
   )
+  const epubCheckPassedCount = runs.reduce(
+    (total, run) =>
+      total +
+      run.artifacts.filter(
+        (artifact) => artifact.epubCheck?.status === 'passed',
+      ).length,
+    0,
+  )
+  const allEpubCheckPassed =
+    runSetValid &&
+    noUnexpectedArtifacts &&
+    epubCheckPassedCount === repeat * profiles.length
   const localValidationPassed =
     reconstructionDeterministic &&
     artifactsDeterministic &&
     artifactsStructurallyValid &&
     noUnexpectedArtifacts &&
     allReady &&
-    lineTransitionGatePassed
+    lineTransitionGatePassed &&
+    (!epubCheckRequired || allEpubCheckPassed)
   const normalizedBaseline = normalizedBaselineComparison(baselineComparison)
   return {
     schemaVersion: PDF_PRIVATE_FIDELITY_SCHEMA_VERSION,
@@ -1102,6 +1221,9 @@ export function createPrivateFidelityReceipt({
       noUnexpectedArtifacts,
       allReady,
       lineTransitionGatePassed,
+      epubCheckRequired,
+      epubCheckPassedCount,
+      allEpubCheckPassed,
       localValidationPassed,
       profileResults,
     },
@@ -1710,6 +1832,7 @@ function validArtifactEvidence(value) {
       'assetManifestSha256',
       'inlineSemanticLedger',
       'structuralValidation',
+      'epubCheck',
       'receiptSha256',
     ]) ||
     typeof value.target !== 'string' ||
@@ -1736,6 +1859,7 @@ function validArtifactEvidence(value) {
     ].every((key) => SHA256_PATTERN.test(value[key])) ||
     !validInlineSemanticLedger(value.inlineSemanticLedger) ||
     value.structuralValidation !== 'passed' ||
+    !validPrivateEpubCheck(value.epubCheck) ||
     !ARTIFACT_MODES.includes(value.mode)
   ) {
     return false
@@ -1820,6 +1944,9 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
         'noUnexpectedArtifacts',
         'allReady',
         'lineTransitionGatePassed',
+        'epubCheckRequired',
+        'epubCheckPassedCount',
+        'allEpubCheckPassed',
         'localValidationPassed',
         'profileResults',
       ]) ||
@@ -1840,8 +1967,11 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
         'noUnexpectedArtifacts',
         'allReady',
         'lineTransitionGatePassed',
+        'epubCheckRequired',
+        'allEpubCheckPassed',
         'localValidationPassed',
       ].some((key) => typeof receipt.execution[key] !== 'boolean') ||
+      !isNonNegativeInteger(receipt.execution.epubCheckPassedCount) ||
       !Array.isArray(receipt.execution.profileResults) ||
       receipt.execution.profileResults.some(
         (result) =>
@@ -1872,6 +2002,7 @@ function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
       runs: receipt.runs,
       repeat: receipt.execution.repeat,
       profiles: receipt.execution.profiles,
+      epubCheckRequired: receipt.execution.epubCheckRequired,
       baselineComparison: receipt.baselineComparison,
     })
     if (
@@ -2048,7 +2179,9 @@ export function comparePrivateFidelityReceipts(
     baseline.decisionSetSha256 === candidate.decisionSetSha256 &&
     baseline.execution.repeat === candidate.execution.repeat &&
     canonicalJsonHash(baseline.execution.profiles) ===
-      canonicalJsonHash(candidate.execution.profiles)
+      canonicalJsonHash(candidate.execution.profiles) &&
+    baseline.execution.epubCheckRequired ===
+      candidate.execution.epubCheckRequired
   const invariantRunsMatch =
     canonicalJsonHash(baseline.runs.map(invariantRunProjection)) ===
     canonicalJsonHash(candidate.runs.map(invariantRunProjection))
@@ -2220,8 +2353,69 @@ async function loadPinnedPrivateDecisionSet(parsed, pipeline) {
   }
 }
 
+function privateCommandResult(command, arguments_, timeout = 10_000) {
+  return spawnSync(command, arguments_, {
+    stdio: 'ignore',
+    timeout,
+    windowsHide: true,
+  })
+}
+
+async function requiredPrivateEpubCheckValidator() {
+  const direct = privateCommandResult('epubcheck', ['--version'])
+  if (!direct.error && direct.status === 0) {
+    return {
+      command: 'epubcheck',
+      arguments: ['--failonwarnings'],
+    }
+  }
+
+  const java = privateCommandResult('java', ['-version'])
+  if (java.error || java.status !== 0) {
+    throw new Error('EPUBCHECK_REQUIRED')
+  }
+  const jarCandidates = [
+    process.env.EPUBCHECK_JAR,
+    resolve('tools/epubcheck/epubcheck.jar'),
+    '/usr/share/java/epubcheck.jar',
+    '/usr/local/share/java/epubcheck.jar',
+  ].filter(Boolean)
+  for (const jar of jarCandidates) {
+    try {
+      await access(jar)
+      return {
+        command: 'java',
+        arguments: ['-jar', jar, '--failonwarnings'],
+      }
+    } catch {
+      // Validator paths remain local and never enter the sanitized receipt.
+    }
+  }
+  throw new Error('EPUBCHECK_REQUIRED')
+}
+
+async function validatePrivateEpubWithEpubCheck(bytes, validator) {
+  const directory = await mkdtemp(join(tmpdir(), 'srt-private-epubcheck-'))
+  const path = join(directory, 'publication.epub')
+  try {
+    await writeFile(path, bytes, { mode: 0o600 })
+    const result = privateCommandResult(
+      validator.command,
+      [...validator.arguments, path],
+      120_000,
+    )
+    if (result.error || result.status !== 0) {
+      throw new Error('EPUBCHECK_FAILED')
+    }
+    return { status: 'passed' }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}
+
 async function main() {
   let parsed
+  privateFailureStage = 'argument-parse'
   try {
     parsed = parsePrivateFidelityArguments(process.argv.slice(2))
   } catch {
@@ -2230,6 +2424,7 @@ async function main() {
     return
   }
 
+  privateFailureStage = 'baseline-load'
   const baseline = parsed.baseline
     ? await loadPrivateFidelityBaseline(
         parsed.baseline,
@@ -2237,19 +2432,24 @@ async function main() {
       )
     : null
 
+  privateFailureStage = 'source-stat'
   const details = await stat(parsed.input)
   if (!details.isFile() || details.size !== parsed.expectedSize) {
     throw new Error('SOURCE_IDENTITY_MISMATCH')
   }
+  privateFailureStage = 'source-read'
   const bytes = await readFile(parsed.input)
   const sourceSha256 = sha256(bytes)
   if (sourceSha256 !== parsed.expectedSha256) {
     throw new Error('SOURCE_IDENTITY_MISMATCH')
   }
 
+  privateFailureStage = 'pipeline-create'
   const pipeline = await createPdfPipeline()
   try {
+    privateFailureStage = 'export-modules-load'
     const modules = await pipeline.loadExportModules()
+    privateFailureStage = 'decision-set-load'
     const decisionSet = await loadPinnedPrivateDecisionSet(parsed, pipeline)
     if (
       parsed.profiles.some(
@@ -2259,11 +2459,19 @@ async function main() {
       throw new Error('UNKNOWN_PROFILE')
     }
 
+    privateFailureStage = 'epubcheck-resolve'
+    const epubCheckValidator = parsed.requireEpubCheck
+      ? await requiredPrivateEpubCheckValidator()
+      : null
+
+    privateFailureStage = 'output-prepare'
     parsed.outputDirectory = await prepareOwnerOnlyDirectory(
       parsed.outputDirectory,
     )
     const runs = []
+    const pendingArtifactWrites = []
     for (let ordinal = 1; ordinal <= parsed.repeat; ordinal += 1) {
+      privateFailureStage = 'reconstruction'
       const reconstructed = await pipeline.reconstructPdf(
         new File([bytes], `${parsed.paperId}.pdf`, {
           type: 'application/pdf',
@@ -2272,6 +2480,7 @@ async function main() {
         undefined,
         { standardFontDataUrl: pipeline.standardFontDataUrl },
       )
+      privateFailureStage = 'decision-apply'
       const reconstruction = decisionSet
         ? applyPrivateDecisionSet(
             reconstructed,
@@ -2279,6 +2488,7 @@ async function main() {
             decisionSet.applyHumanDecisionFile,
           )
         : reconstructed
+      privateFailureStage = 'artifact-projection'
       const artifactProjections = reconstruction.readiness.ready
         ? undefined
         : {
@@ -2287,6 +2497,7 @@ async function main() {
           }
       const artifacts = []
       for (const profileId of parsed.profiles) {
+        privateFailureStage = 'artifact-build'
         const profile = modules.getTargetProfile(profileId)
         const epub = reconstruction.readiness.ready
           ? await modules.buildEpub(
@@ -2299,13 +2510,25 @@ async function main() {
               reconstruction,
               profile,
             )
+        privateFailureStage = 'artifact-inspect'
         const inspection = modules.inspectEpub(epub.bytes, profile)
-        artifacts.push(createPrivateArtifactEvidence(epub, inspection))
-        await writeExclusive(
-          resolve(parsed.outputDirectory, `run-${ordinal}-${profileId}.epub`),
-          epub.bytes,
+        privateFailureStage = 'epubcheck-validate'
+        const epubCheck = epubCheckValidator
+          ? await validatePrivateEpubWithEpubCheck(
+              epub.bytes,
+              epubCheckValidator,
+            )
+          : { status: 'skipped', reason: 'not-required' }
+        privateFailureStage = 'artifact-receipt'
+        artifacts.push(
+          createPrivateArtifactEvidence(epub, inspection, epubCheck),
         )
+        pendingArtifactWrites.push({
+          fileName: `run-${ordinal}-${profileId}.epub`,
+          bytes: epub.bytes,
+        })
       }
+      privateFailureStage = 'run-receipt'
       runs.push(
         createPrivateFidelityRunReceipt({
           ordinal,
@@ -2316,6 +2539,7 @@ async function main() {
       )
     }
 
+    privateFailureStage = 'final-receipt'
     const receiptInput = {
       paperId: parsed.paperId,
       sourceSha256,
@@ -2324,6 +2548,7 @@ async function main() {
       runs,
       repeat: parsed.repeat,
       profiles: parsed.profiles,
+      epubCheckRequired: parsed.requireEpubCheck,
     }
     const localReceipt = createPrivateFidelityReceipt(receiptInput)
     const receipt = baseline
@@ -2337,14 +2562,28 @@ async function main() {
         })
       : localReceipt
     const serialized = `${JSON.stringify(receipt, null, 2)}\n`
+    privateFailureStage = 'artifact-publish'
+    for (const artifact of pendingArtifactWrites) {
+      await writeExclusive(
+        resolve(parsed.outputDirectory, artifact.fileName),
+        artifact.bytes,
+      )
+    }
+    privateFailureStage = 'receipt-write'
     await writeExclusive(
       resolve(parsed.outputDirectory, 'private-fidelity-receipt.json'),
       serialized,
     )
+    privateFailureStage = 'receipt-publish'
     process.stdout.write(serialized)
     if (!receipt.passed) process.exitCode = 1
   } finally {
-    await pipeline.close()
+    try {
+      await pipeline.close()
+    } catch (error) {
+      privateFailureStage = 'pipeline-close'
+      throw error
+    }
   }
 }
 
@@ -2352,7 +2591,12 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  main().catch(() => {
+  main().catch((error) => {
+    if (process.argv.includes('--safe-error-diagnostic')) {
+      process.stderr.write(
+        `${JSON.stringify(safePrivateFailureDiagnostic(error))}\n`,
+      )
+    }
     process.stderr.write(
       'Private PDF fidelity validation failed without exposing local paths or source content.\n',
     )

@@ -2488,6 +2488,159 @@ describe('PDF semantic signal detection', () => {
     expect(detectPdfSemanticSignals([page])).toMatchObject({ captions: 1 })
   })
 
+  it('counts figure obligations only from proven caption regions when regions are supplied', () => {
+    const figureCaption = run('Figure 1. Proven caption.', 0.1, 0.2, 9, 0.4)
+    const incidentalText = run(
+      'Figure: is used as body prose here.',
+      0.1,
+      0.3,
+      10,
+      0.5,
+    )
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: figureCaption.text.length + incidentalText.text.length,
+      imageCount: 1,
+      runs: [figureCaption, incidentalText],
+    }
+    const captionRegion: PdfPageRegion = {
+      id: 'figure-caption',
+      page: 1,
+      kind: 'caption',
+      column: 'single',
+      text: figureCaption.text,
+      confidence: 1,
+      box: { ...figureCaption },
+      lines: [
+        {
+          id: 'figure-caption-line',
+          text: figureCaption.text,
+          fontSize: figureCaption.fontSize,
+          box: { ...figureCaption },
+          runs: [{ ...figureCaption }],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const bodyRegion: PdfPageRegion = {
+      ...captionRegion,
+      id: 'incidental-body',
+      kind: 'body',
+      text: incidentalText.text,
+      box: { ...incidentalText },
+      lines: [
+        {
+          id: 'incidental-body-line',
+          text: incidentalText.text,
+          fontSize: incidentalText.fontSize,
+          box: { ...incidentalText },
+          runs: [{ ...incidentalText }],
+        },
+      ],
+    }
+
+    expect(
+      detectPdfSemanticSignals([page], [captionRegion, bodyRegion]),
+    ).toMatchObject({
+      captions: 1,
+    })
+  })
+
+  it('does not count table cross-references in ordinary body regions as table obligations', () => {
+    const runs = [
+      run('Table 1 shows the primary result.', 0.1, 0.2, 10, 0.5),
+      run('Table 2 compares the ablations.', 0.1, 0.24, 10, 0.5),
+      run('Table III reports the error bands.', 0.1, 0.28, 10, 0.5),
+      run('Table IV summarizes prior work.', 0.1, 0.32, 10, 0.5),
+    ]
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: runs.reduce((total, item) => total + item.text.length, 0),
+      imageCount: 0,
+      runs,
+    }
+    const regions = runs.map(
+      (sourceRun, index) =>
+        ({
+          id: `body-${index + 1}`,
+          page: 1,
+          kind: 'body',
+          column: 'single',
+          text: sourceRun.text,
+          confidence: 1,
+          box: { ...sourceRun },
+          lines: [
+            {
+              id: `body-line-${index + 1}`,
+              text: sourceRun.text,
+              fontSize: sourceRun.fontSize,
+              box: { ...sourceRun },
+              runs: [{ ...sourceRun }],
+            },
+          ],
+          nativeObjectIds: [],
+          includedInReadingOrder: true,
+        }) satisfies PdfPageRegion,
+    )
+
+    expect(detectPdfSemanticSignals([page], regions)).toMatchObject({
+      tables: 0,
+    })
+  })
+
+  it('counts numeric and Roman table captions only with caption-region proof', () => {
+    const runs = [
+      run('Table 5. Numeric source caption.', 0.1, 0.2, 9, 0.5),
+      run('Table VI. Roman source caption.', 0.1, 0.3, 9, 0.5),
+    ]
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: runs.reduce((total, item) => total + item.text.length, 0),
+      imageCount: 0,
+      runs,
+    }
+    const regions = runs.map(
+      (sourceRun, index) =>
+        ({
+          id: `caption-${index + 1}`,
+          page: 1,
+          kind: 'caption',
+          column: 'single',
+          text: sourceRun.text,
+          confidence: 1,
+          box: { ...sourceRun },
+          lines: [
+            {
+              id: `caption-line-${index + 1}`,
+              text: sourceRun.text,
+              fontSize: sourceRun.fontSize,
+              box: { ...sourceRun },
+              runs: [{ ...sourceRun }],
+            },
+          ],
+          nativeObjectIds: [],
+          includedInReadingOrder: true,
+        }) satisfies PdfPageRegion,
+    )
+
+    expect(detectPdfSemanticSignals([page], regions)).toMatchObject({
+      tables: 2,
+    })
+  })
+
   it('does not count duplicate links to one caption as separate relationships', () => {
     const runs = [run('Figure 1. Shared caption', 0.1, 0.2)]
     const page: PdfPageAnalysis = {

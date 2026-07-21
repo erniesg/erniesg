@@ -258,6 +258,7 @@ export type PdfNoteMarkerTaxonomy =
   | 'superscript-bibliography-citation'
   | 'human-reclassified-citation'
   | 'author-affiliation-superscript'
+  | 'symbolic-annotation-marker'
   | 'equation-reference'
   | 'section-reference'
   | 'bibliography-entry'

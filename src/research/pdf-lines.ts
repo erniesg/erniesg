@@ -103,10 +103,20 @@ export function buildPdfLineJoinReviewContext(
   }
 }
 
-export function replayPdfRegionLineText(
+export type PdfRegionLineReplay = {
+  text: string
+  ranges: Map<string, { start: number; end: number }>
+}
+
+export function replayPdfRegionLineRanges(
   region: PdfPageRegion,
   decisions: readonly PdfLineBoundaryDecision[],
-) {
+): PdfRegionLineReplay | null {
+  if (
+    new Set(region.lines.map((line) => line.id)).size !== region.lines.length
+  ) {
+    return null
+  }
   const byTransition = new Map(
     decisions
       .filter((decision) => decision.regionId === region.id)
@@ -117,12 +127,18 @@ export function replayPdfRegionLineText(
   )
   if (byTransition.size !== Math.max(region.lines.length - 1, 0)) return null
 
-  let text = region.lines[0]?.text.trim() ?? ''
+  const normalizedLineText = (value: string) =>
+    value.replace(/\s+/g, ' ').trim()
+  let text = normalizedLineText(region.lines[0]?.text ?? '')
+  const ranges = new Map<string, { start: number; end: number }>()
+  if (region.lines[0]) {
+    ranges.set(region.lines[0].id, { start: 0, end: text.length })
+  }
   for (let index = 1; index < region.lines.length; index += 1) {
     const previous = region.lines[index - 1]
     const current = region.lines[index]
     const decision = byTransition.get(`${previous.id}\u0000${current.id}`)
-    const next = current.text.trim()
+    const next = normalizedLineText(current.text)
     if (
       !decision ||
       decision.page !== region.page ||
@@ -131,19 +147,33 @@ export function replayPdfRegionLineText(
     ) {
       return null
     }
+    let start = text.length
     if (decision.outcome === 'space') {
+      start += 1
       text += ` ${next}`
     } else if (decision.outcome === 'no-space') {
       text += next
     } else if (decision.outcome === 'removed-discretionary-hyphen') {
       if (!/[-‐‑\u00ad]$/u.test(text)) return null
+      const previousRange = ranges.get(previous.id)
+      if (!previousRange || previousRange.end !== text.length) return null
       text = `${text.slice(0, -1)}${next}`
+      previousRange.end -= 1
+      start -= 1
     } else {
       if (!/[-‐‑]$/u.test(text)) return null
       text += next
     }
+    ranges.set(current.id, { start, end: start + next.length })
   }
-  return text.replace(/\s+/g, ' ').trim()
+  return { text, ranges }
+}
+
+export function replayPdfRegionLineText(
+  region: PdfPageRegion,
+  decisions: readonly PdfLineBoundaryDecision[],
+) {
+  return replayPdfRegionLineRanges(region, decisions)?.text ?? null
 }
 
 function normalizedHyphenatedWord(value: string) {

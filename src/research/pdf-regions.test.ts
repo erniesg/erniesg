@@ -6,6 +6,7 @@ import { reconstructPageAnalyses } from './pdf-layout'
 import {
   evaluateReadingOrder,
   hasAcceptedCycle,
+  noteLabelFromText,
   reconstructPageRegions,
 } from './pdf-regions'
 
@@ -61,6 +62,10 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('recognizes an attached symbolic footnote marker', () => {
+    expect(noteLabelFromText('*Work done during the internship.')).toBe('*')
+  })
+
   it('checks dense reading-order graphs without overflowing the call stack', () => {
     const regionIds = Array.from(
       { length: 20_000 },
@@ -911,6 +916,63 @@ describe('deterministic scholarly page regions', () => {
     expect(content).toContain('epub:type="noteref"')
     expect(content).toContain('epub:type="footnote"')
     expect(content).toContain('class="note-backlink"')
+  })
+
+  it('retains a near-body-size symbolic bottom note as a footnote', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body line one.', 0.08, 0.2, 0.7, 10),
+        run(1, 'Body line two.', 0.08, 0.25, 0.7, 10),
+        run(1, 'Body line three.', 0.08, 0.3, 0.7, 10),
+        run(1, '* Work done during the internship.', 0.08, 0.86, 0.7, 9.5),
+      ]),
+    ])
+
+    expect(result.regions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'footnote',
+          text: expect.stringContaining('Work done during the internship.'),
+        }),
+      ]),
+    )
+    expect(
+      result.paper.nodes.some(
+        (node) => node.type === 'footnote' && node.text.includes('Work done'),
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps a wrapped symbolic note continuation in the note', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'LightSpeed Studios, Tencent', 0.2, 0.1, 0.5, 9),
+        run(1, 'Body line one.', 0.08, 0.2, 0.7, 10),
+        run(1, 'Body line two.', 0.08, 0.25, 0.7, 10),
+        run(1, 'Body line three.', 0.08, 0.3, 0.7, 10),
+        run(
+          1,
+          '*Work done during the internship at Tencent Lightspeed stu-',
+          0.109,
+          0.862,
+          0.369,
+          9,
+          0.011,
+        ),
+        run(1, 'dios.', 0.088, 0.875, 0.028, 9, 0.011),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes.find((node) => node.type === 'footnote'),
+    ).toMatchObject({
+      text: '*Work done during the internship at Tencent Lightspeed studios.',
+    })
+    expect(
+      result.paper.nodes.some(
+        (node) => node.type === 'paragraph' && node.text.includes('dios.'),
+      ),
+    ).toBe(false)
   })
 
   it('retains unresolved and equally plausible note candidates as explicit diagnostics', async () => {

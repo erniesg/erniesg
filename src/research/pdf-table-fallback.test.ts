@@ -134,9 +134,9 @@ describe('fail-closed non-semantic PDF table fallback', () => {
         assetIds: [],
         status: 'unresolved',
         evidence: expect.arrayContaining([
-          'detected-table-geometry',
-          'semantic-table-unresolved',
-          'exact-source-raster-unavailable',
+          'bounded-table-scope',
+          'non-semantic-source-scope',
+          'source-rendition-unavailable',
         ]),
         candidates: [
           expect.objectContaining({
@@ -182,7 +182,7 @@ describe('fail-closed non-semantic PDF table fallback', () => {
       kind: 'table',
       status: 'matched',
       sourceRegionIds: [table.id],
-      sourceObjectIds: ['table-p001-001'],
+      sourceObjectIds: [expect.stringMatching(/^table-scope-source:/)],
       assetIds: [expect.stringMatching(/^asset-/)],
       evidence: expect.arrayContaining(['source-page-crop']),
     })

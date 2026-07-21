@@ -452,6 +452,37 @@ describe('EPUB 3 export', () => {
     expect(content).toContain('The note remains readable.')
   })
 
+  it('renders title-page author annotations as linked EPUB notes', () => {
+    const notePaper = structuredClone(paper)
+    notePaper.authors = ['Yeyong Yu', 'Runsheng Yu']
+    notePaper.authorNotes = [
+      {
+        id: 'author-noteref-1',
+        author: 'Yeyong Yu',
+        label: '*',
+        target: 'author-note-1',
+      },
+    ]
+    notePaper.nodes = [
+      {
+        id: 'author-note-1',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '*',
+        text: 'Work done during the internship.',
+        relationships: { backlinks: ['author-noteref-1'] },
+        source: 'synthetic-author-note',
+      },
+    ]
+
+    const content = renderPublicationXhtml(notePaper)
+
+    expect(content).toContain(
+      'Yeyong Yu<a id="author-noteref-1" href="#author-note-1" epub:type="noteref">*</a>, Runsheng Yu',
+    )
+    expect(content).toContain('href="#author-noteref-1"')
+  })
+
   it('renders an explicit source note marker instead of discarding its note-kind text', () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [

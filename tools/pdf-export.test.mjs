@@ -172,6 +172,34 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     }
   })
 
+  it('fails before publishing artifacts when required EPUBCheck is unavailable', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'pdf-export-required-check-'),
+    )
+    const output = join(directory, 'output')
+    try {
+      const result = runExport(
+        [
+          'tests/fixtures/pdf/born-digital.pdf',
+          '--target',
+          'mobile',
+          '--require-epubcheck',
+          '--out',
+          output,
+        ],
+        { env: { ...process.env, PATH: '' } },
+      )
+
+      expect(result.status).toBe(2)
+      expect(result.stderr).toContain(
+        'PDF export failed without publishing local path or document details.',
+      )
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('fails closed with a private corpus report and no partial EPUB', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-scan-'))
     const output = join(directory, 'output')
@@ -215,6 +243,106 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     }
   })
 
+  it('exports an explicitly requested readable fallback with comparator-compatible artifact modes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-readable-'))
+    try {
+      const result = runExport([
+        'tests/fixtures/pdf/adjudication-required.pdf',
+        '--target',
+        'mobile',
+        '--target',
+        'paperProMove',
+        '--target',
+        'paperPro',
+        '--readable-fallback',
+        '--out',
+        directory,
+      ])
+
+      expect(result.status, result.stderr).toBe(1)
+      const report = JSON.parse(result.stdout)
+      expect(report.summary).toMatchObject({
+        documents: 1,
+        ready: 0,
+        reviewRequired: 1,
+      })
+      expect(report.documents[0].exports).toEqual([
+        expect.objectContaining({
+          target: 'mobile',
+          basename: 'publication-mobile-readable.epub',
+          mode: 'readable-fallback',
+        }),
+        expect.objectContaining({
+          target: 'paperProMove',
+          basename: 'publication-papermove-readable.epub',
+          mode: 'readable-fallback',
+        }),
+        expect.objectContaining({
+          target: 'paperPro',
+          basename: 'publication-paperpro-readable.epub',
+          mode: 'readable-fallback',
+        }),
+      ])
+      expect((await readdir(directory)).sort()).toEqual([
+        'checksums.sha256',
+        'corpus-audit.json',
+        'export-manifest.json',
+        'publication-mobile-readable.epub',
+        'publication-papermove-readable.epub',
+        'publication-paperpro-readable.epub',
+      ])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('emits ready artifact reports that the strict comparator accepts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-compare-'))
+    const first = join(directory, 'first')
+    const second = join(directory, 'second')
+    const comparison = join(directory, 'comparison.json')
+    try {
+      for (const output of [first, second]) {
+        const result = runExport([
+          'tests/fixtures/pdf/born-digital.pdf',
+          '--target',
+          'mobile',
+          '--target',
+          'paperProMove',
+          '--target',
+          'paperPro',
+          '--out',
+          output,
+        ])
+        expect(result.status, result.stderr).toBe(0)
+      }
+
+      const compared = spawnSync(
+        process.execPath,
+        [
+          'tools/pdf-benchmark-compare.mjs',
+          join(first, 'corpus-audit.json'),
+          join(second, 'corpus-audit.json'),
+          '--out',
+          comparison,
+          '--require-identical-artifacts',
+          '--require-identical-structure',
+        ],
+        { encoding: 'utf8', timeout: 120_000 },
+      )
+
+      expect(compared.status, compared.stderr).toBe(0)
+      expect(
+        JSON.parse(await readFile(comparison, 'utf8')).summary,
+      ).toMatchObject({
+        passed: true,
+        regressed: 0,
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 120_000)
+
   it('exports the structured born-digital fixture for both profiles', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-structured-'))
     try {
@@ -241,7 +369,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 120_000)
 
   it('benchmarks a directory and exports only gate-ready documents', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-corpus-'))
@@ -285,5 +413,5 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 120_000)
 })

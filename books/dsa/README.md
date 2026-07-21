@@ -14,6 +14,24 @@ definition of done.
 
 Requires Python 3.11+. No dependencies.
 
+### Read and run in the browser
+
+```bash
+python3 book/tools/reader.py
+```
+
+That opens the local executable edition at `http://127.0.0.1:8765` (or the
+next available localhost port): chapter
+navigation, the complete Markdown text, an editor backed by
+`book/workspace/`, tier-by-tier grader output, XP, badges, and streaks. The
+reader binds to localhost only. Your Python still runs in the grader's
+time-limited subprocesses; nothing is sent to a remote service.
+
+Use `python3 book/tools/reader.py --no-open` when you do not want it to open a
+browser automatically. Press Ctrl-C in the terminal to stop the reader.
+
+### Terminal loop
+
 ```bash
 python3 book/tools/runner.py list          # what's available, what's green
 python3 book/tools/runner.py start ch01    # copy starter into your workspace

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="book-token" content="__BOOK_TOKEN__" />
+    <meta
+      name="description"
+      content="Read and run The Rucksack Book of Data Structures & Algorithms."
+    />
+    <title>The Rucksack Book of Data Structures &amp; Algorithms</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="read-progress" aria-hidden="true"><span id="read-progress"></span></div>
+    <header class="masthead">
+      <a class="brand" href="#ch01" aria-label="Rucksack DSA book home">
+        <span class="brand-mark">R/</span>
+        <span>
+          <strong>Rucksack</strong>
+          <small>The algorithm field guide</small>
+        </span>
+      </a>
+      <div class="edition">
+        <span>Executable edition</span>
+        <strong id="edition-label">0.1.0</strong>
+      </div>
+      <div class="score" aria-label="Book progress">
+        <span><strong id="xp-count">0</strong> XP</span>
+        <span><strong id="streak-count">0</strong> day streak</span>
+      </div>
+    </header>
+
+    <div class="book-shell">
+      <nav class="chapter-rail" aria-label="Book chapters">
+        <div class="rail-heading">
+          <span>Part I</span>
+          <strong>Learning to measure</strong>
+        </div>
+        <ol id="chapter-list" class="chapter-list"></ol>
+        <div class="rail-foot">
+          <span id="badge-count">No badges yet</span>
+          <small>Progress stays on this machine.</small>
+        </div>
+      </nav>
+
+      <main id="reading-pane" class="reading-pane" tabindex="-1">
+        <header class="chapter-header">
+          <div class="chapter-number" id="chapter-number" aria-hidden="true">01</div>
+          <div class="chapter-meta">
+            <span id="chapter-part">Part I</span>
+            <span id="reading-time">1 min read</span>
+          </div>
+          <h1 id="chapter-title">Loading the book…</h1>
+          <p class="chapter-deck" id="chapter-deck">
+            Read the idea. Change the code. Make every tier turn green.
+          </p>
+        </header>
+
+        <article id="chapter-content" class="chapter-content" aria-live="polite"></article>
+
+        <nav class="page-turn" aria-label="Chapter pagination">
+          <button id="previous-chapter" class="text-button" type="button">← Previous</button>
+          <button id="next-chapter" class="text-button" type="button">Next chapter →</button>
+        </nav>
+      </main>
+
+      <aside class="exercise-desk" aria-label="Executable exercise">
+        <header class="desk-header">
+          <div>
+            <span class="eyebrow">Practice desk</span>
+            <h2>Make it green.</h2>
+          </div>
+          <span id="save-state" class="save-state">Workspace</span>
+        </header>
+
+        <div id="tier-list" class="tier-list" aria-label="Grading tiers"></div>
+
+        <label class="editor-label" for="code-editor">
+          <span id="source-path">book/workspace/…</span>
+          <span>Python</span>
+        </label>
+        <textarea
+          id="code-editor"
+          class="code-editor"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          aria-label="Python exercise editor"
+        ></textarea>
+
+        <div class="desk-actions">
+          <button id="run-button" class="run-button" type="button">
+            <span>Run all tiers</span>
+            <kbd>⌘↵</kbd>
+          </button>
+          <button id="reset-button" class="quiet-button" type="button">Reset starter</button>
+        </div>
+
+        <div id="run-status" class="run-status" role="status" aria-live="polite">
+          Ready. The first run is supposed to be red.
+        </div>
+        <div id="result-list" class="result-list"></div>
+        <pre id="console-output" class="console-output" tabindex="0">No run yet.</pre>
+      </aside>
+    </div>
+
+    <noscript>This executable edition needs JavaScript for chapter navigation and grading.</noscript>
+  </body>
+</html>

@@ -2,8 +2,7 @@
 
 ## Unreleased
 
-- Added a publication-first Article view, complete book and chapter contents,
-  and an optional standalone Full reader with the executable practice desk.
+- Added complete book and chapter contents to the standalone executable reader.
 - Added a standards-based EPUB 3 export with Rucksack cover, front matter,
   navigation, and all authored chapters.
 - Defined canonical book metadata for later Ernie.SG Study integration.

@@ -12,24 +12,19 @@
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
-  <body>
+  <body data-view="full" data-surface="reader">
     <div class="read-progress" aria-hidden="true"><span id="read-progress"></span></div>
     <header class="masthead">
       <a class="brand" href="#ch01" aria-label="Rucksack book home">
         <span class="brand-slash" aria-hidden="true">R/</span>
         <strong>Rucksack</strong>
       </a>
-      <nav class="study-crumb" aria-label="Publication location">
-        <a href="https://ernie.sg">Ernie.SG</a><span>/</span><a href="https://ernie.sg/study">Study</a><span>/</span><strong>Books</strong>
+      <nav class="study-crumb" aria-label="Reader location">
+        <strong>Rucksack</strong><span>/</span><span>Book</span><span>/</span><span>Standalone</span>
       </nav>
       <div class="publication-actions">
         <button id="contents-button" class="header-link" type="button">Contents</button>
-        <button id="practice-button" class="header-link" type="button">Practice</button>
-        <a class="header-link epub-link" href="/book.epub" download>EPUB</a>
-        <div class="view-switch" aria-label="Reading view">
-          <button id="compact-view" type="button" aria-pressed="true">Article</button>
-          <button id="full-view" type="button" aria-pressed="false">Full reader</button>
-        </div>
+        <a class="header-link epub-link" href="/book.epub" download>Download EPUB</a>
       </div>
     </header>
 
@@ -98,8 +93,6 @@
           </div>
           <span id="save-state" class="save-state">Workspace</span>
         </header>
-
-        <button id="close-practice" class="close-practice" type="button" aria-label="Close practice desk">Close</button>
 
         <div id="tier-list" class="tier-list" aria-label="Grading tiers"></div>
 

@@ -20,13 +20,15 @@ Requires Python 3.11+. No dependencies.
 python3 book/tools/reader.py
 ```
 
-That opens the publication at `http://127.0.0.1:8765` (or the next available
-localhost port). The default **Article** view is the focused Ernie.SG Study
-reading experience: book contents, chapter contents, long-form typography,
-chapter pagination, and an EPUB download. Choose **Full reader** or
-**Practice** for the standalone Rucksack edition with the full chapter rail,
-an editor backed by `book/workspace/`, tier-by-tier grader output, XP, badges,
-and streaks.
+That opens the standalone Rucksack publication at `http://127.0.0.1:8765`
+(or the next available localhost port): book and chapter contents, chapter
+pagination, EPUB download, the full chapter rail, an editor backed by
+`book/workspace/`, tier-by-tier grader output, XP, badges, and streaks.
+
+The Ernie.SG Study listing, inline web rendition, device-profile EPUB preview,
+and link to this standalone reader are a separate publication-library surface
+tracked in `erniesg/erniesg#70`; this localhost app does not pretend to be the
+blog.
 
 The reader binds to localhost only. Your Python still runs in the grader's
 time-limited subprocesses; nothing is sent to a remote service.

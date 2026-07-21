@@ -197,8 +197,9 @@ Each tier runs in a subprocess with a hard timeout; exceeding it reports
 
 ## Publishing pipeline (phased)
 
-- **Phase 0 (done):** the local publication has an Ernie.SG-compatible Article
-  view and a standalone Rucksack Full reader; chapters are graded locally.
+- **Phase 0 (done):** the local publication is the standalone executable
+  Rucksack reader; chapters are graded locally. It does not simulate the
+  Ernie.SG Study library or inline blog rendition.
 - **Phase 1a (done):** `book/tools/export.py` emits a self-contained,
   reflowable EPUB 3 with cover, title page, preface, navigation, and authored
   chapters from the same Markdown sources.

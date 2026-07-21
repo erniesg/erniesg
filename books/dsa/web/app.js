@@ -10,9 +10,7 @@ const elements = {
   chapterNumber: document.querySelector('#chapter-number'),
   chapterPart: document.querySelector('#chapter-part'),
   chapterTitle: document.querySelector('#chapter-title'),
-  closePractice: document.querySelector('#close-practice'),
   codeEditor: document.querySelector('#code-editor'),
-  compactView: document.querySelector('#compact-view'),
   consoleOutput: document.querySelector('#console-output'),
   contentsAuthor: document.querySelector('#contents-author'),
   contentsButton: document.querySelector('#contents-button'),
@@ -20,11 +18,8 @@ const elements = {
   contentsDrawer: document.querySelector('#contents-drawer'),
   contentsTitle: document.querySelector('#contents-title'),
   editionLabel: document.querySelector('#edition-label'),
-  exerciseDesk: document.querySelector('.exercise-desk'),
-  fullView: document.querySelector('#full-view'),
   nextChapter: document.querySelector('#next-chapter'),
   previousChapter: document.querySelector('#previous-chapter'),
-  practiceButton: document.querySelector('#practice-button'),
   readProgress: document.querySelector('#read-progress'),
   readingPane: document.querySelector('#reading-pane'),
   readingTime: document.querySelector('#reading-time'),
@@ -45,20 +40,6 @@ const state = {
   chapters: [],
   current: null,
   running: false,
-}
-
-function setView(view, { updateUrl = true } = {}) {
-  const selected = view === 'full' ? 'full' : 'article'
-  document.body.dataset.view = selected
-  elements.compactView.setAttribute('aria-pressed', String(selected === 'article'))
-  elements.fullView.setAttribute('aria-pressed', String(selected === 'full'))
-  elements.practiceButton.textContent = selected === 'full' ? 'Read' : 'Practice'
-  if (updateUrl) {
-    const url = new URL(location.href)
-    if (selected === 'full') url.searchParams.set('view', 'full')
-    else url.searchParams.delete('view')
-    history.replaceState(null, '', url)
-  }
 }
 
 function renderBookContents() {
@@ -390,20 +371,6 @@ elements.contentsButton.addEventListener('click', () => {
   elements.contentsDrawer.hidden = !elements.contentsDrawer.hidden
   elements.contentsButton.setAttribute('aria-expanded', String(!elements.contentsDrawer.hidden))
 })
-elements.compactView.addEventListener('click', () => setView('article'))
-elements.fullView.addEventListener('click', () => setView('full'))
-elements.practiceButton.addEventListener('click', () => {
-  if (document.body.dataset.view === 'full') {
-    setView('article')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  } else {
-    if (state.current?.id === 'preface') navigate(state.chapters[0]?.id)
-    setView('full')
-    elements.codeEditor.focus({ preventScroll: true })
-    elements.exerciseDesk?.scrollIntoView({ behavior: 'smooth' })
-  }
-})
-elements.closePractice.addEventListener('click', () => setView('article'))
 elements.previousChapter.addEventListener('click', (event) => navigate(event.currentTarget.dataset.chapter))
 elements.nextChapter.addEventListener('click', (event) => navigate(event.currentTarget.dataset.chapter))
 window.addEventListener('hashchange', () => loadChapter(chapterIdFromLocation()))
@@ -419,7 +386,6 @@ window.addEventListener(
 
 async function start() {
   try {
-    setView(new URL(location.href).searchParams.get('view') === 'full' ? 'full' : 'article', { updateUrl: false })
     await refreshIndex()
     await loadChapter(chapterIdFromLocation())
   } catch (error) {

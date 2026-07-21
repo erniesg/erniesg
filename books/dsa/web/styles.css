@@ -48,9 +48,6 @@ button:focus-visible, a:focus-visible, textarea:focus-visible, [tabindex]:focus-
 .publication-actions { display: flex; align-items: center; gap: 1rem; }
 .header-link { padding: 0; color: var(--ink-soft); background: none; border: 0; font-size: 0.75rem; font-weight: 650; text-decoration: none; cursor: pointer; }
 .header-link:hover { color: var(--ink); }
-.view-switch { display: flex; padding: 0.18rem; border: 0.0625rem solid var(--line); border-radius: 999px; }
-.view-switch button { padding: 0.42rem 0.7rem; color: var(--muted); background: none; border: 0; border-radius: 999px; font-size: 0.68rem; font-weight: 700; cursor: pointer; }
-.view-switch button[aria-pressed="true"] { color: var(--paper); background: var(--ink); }
 
 .contents-drawer { position: sticky; top: 4.5rem; z-index: 50; max-height: calc(100vh - 4.5rem); overflow-y: auto; color: var(--paper); background: var(--ink); }
 .contents-inner { display: grid; grid-template-columns: minmax(18rem, 0.72fr) minmax(28rem, 1.28fr); gap: clamp(3rem, 8vw, 8rem); max-width: 90rem; margin: auto; padding: clamp(3rem, 6vw, 6rem) clamp(1.5rem, 5vw, 5rem); }
@@ -140,7 +137,6 @@ body[data-view="full"] .chapter-header h1 { font-size: clamp(2.8rem, 4.8vw, 4.8r
 .desk-header h2 { margin: 0.35rem 0 0; font: 500 1.7rem/1 var(--serif); }
 .eyebrow, .save-state { color: oklch(0.68 0.01 125); font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase; }
 .save-state { font-family: var(--mono); letter-spacing: 0; text-transform: none; }
-.close-practice { display: none; position: absolute; top: 1.45rem; right: 1.45rem; padding: 0; color: oklch(0.7 0.01 125); background: none; border: 0; font-size: 0.68rem; cursor: pointer; }
 .tier-list { display: grid; grid-template-columns: repeat(4, 1fr); margin: 1.3rem 0; border-block: 0.0625rem solid var(--desk-line); }
 .tier { min-width: 0; padding: 0.8rem 0.5rem 0.72rem 0; color: oklch(0.62 0.01 125); border-right: 0.0625rem solid var(--desk-line); }
 .tier:last-child { border-right: 0; padding-left: 0.5rem; }
@@ -170,6 +166,60 @@ body[data-view="full"] .chapter-header h1 { font-size: clamp(2.8rem, 4.8vw, 4.8r
 .console-output { min-height: 4.6rem; max-height: 11rem; margin: 0.85rem 0 0; overflow: auto; color: oklch(0.65 0.01 125); white-space: pre-wrap; font: 0.62rem/1.55 var(--mono); }
 noscript { display: block; padding: 1.2rem; color: var(--paper); background: var(--danger); }
 
+/* Standalone executable edition: canonical Rucksack Brief/Lab language. */
+body[data-surface="reader"] {
+  --paper: #f7f7f2;
+  --paper-deep: #edede6;
+  --ink: #101010;
+  --ink-soft: #31312e;
+  --muted: #686864;
+  --line: #c9c9c1;
+  --signal: #2858f5;
+  --desk: #101010;
+  --desk-line: #3b3b37;
+  --desk-text: #f7f7f2;
+}
+
+body[data-surface="reader"] .masthead {
+  border-bottom: 0.125rem solid #101010;
+  background: color-mix(in srgb, #f7f7f2 96%, transparent);
+}
+
+body[data-surface="reader"] .brand {
+  font-family: "Avenir Next Condensed", "DIN Condensed", var(--sans);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+body[data-surface="reader"] .brand-slash { color: #2858f5; }
+body[data-surface="reader"] .study-crumb { font-family: "Avenir Next Condensed", "DIN Condensed", var(--sans); }
+body[data-surface="reader"] .publication-label { color: #2858f5; font-family: "Avenir Next Condensed", "DIN Condensed", var(--sans); }
+
+body[data-surface="reader"] .chapter-header {
+  min-height: 0;
+  padding: clamp(1.8rem, 4vw, 3rem);
+  border: 0.125rem solid #101010;
+  background: #d8ff47;
+}
+
+body[data-surface="reader"] .chapter-header h1 {
+  max-width: 15ch;
+  font-family: "Avenir Next", Avenir, var(--sans);
+  font-weight: 760;
+  letter-spacing: -0.06em;
+}
+
+body[data-surface="reader"] .chapter-deck { color: #31312e; font-family: "Avenir Next", Avenir, var(--sans); }
+body[data-surface="reader"] .chapter-number { color: color-mix(in srgb, #101010 10%, transparent); z-index: 0; }
+body[data-surface="reader"] .chapter-meta,
+body[data-surface="reader"] .chapter-header h1,
+body[data-surface="reader"] .chapter-deck { position: relative; z-index: 1; }
+body[data-surface="reader"] .on-page-toc { border-color: #101010; }
+body[data-surface="reader"] .chapter-link[aria-current="page"] { background: #d8ff47; }
+body[data-surface="reader"] .run-button { color: #101010; background: #d8ff47; }
+body[data-surface="reader"] .run-button:hover:not(:disabled) { background: #e4ff78; }
+
 @keyframes chapter-in { from { opacity: 0; transform: translateY(0.6rem); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { to { opacity: 0.25; transform: scale(0.75); } }
 
@@ -179,7 +229,6 @@ noscript { display: block; padding: 1.2rem; color: var(--paper); background: var
   body[data-view="full"] .book-shell { grid-template-columns: 14rem minmax(0, 1fr); }
   body[data-view="full"] .exercise-desk { position: static; grid-column: 2; height: auto; min-height: 45rem; }
   body[data-view="full"] .chapter-rail { grid-row: 1 / span 2; }
-  .close-practice { display: block; }
 }
 
 @media (max-width: 48rem) {
@@ -187,7 +236,6 @@ noscript { display: block; padding: 1.2rem; color: var(--paper); background: var
   .brand strong { font-size: 0.92rem; }
   .publication-actions { gap: 0.75rem; }
   .epub-link { display: none; }
-  .view-switch { display: none; }
   .contents-drawer { top: 4rem; max-height: calc(100vh - 4rem); }
   .contents-inner { display: block; padding: 2.5rem 1.25rem 4rem; }
   .contents-intro { margin-bottom: 3.5rem; }

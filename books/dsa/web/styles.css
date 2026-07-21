@@ -38,9 +38,8 @@ button:focus-visible, a:focus-visible, textarea:focus-visible, [tabindex]:focus-
 .read-progress span { display: block; width: 0; height: 100%; background: var(--signal); transition: width 100ms linear; }
 
 .masthead { position: sticky; top: 0; z-index: 60; display: grid; grid-template-columns: auto 1fr auto; align-items: center; min-height: 4.5rem; padding-inline: clamp(1.25rem, 4vw, 4rem); border-bottom: 0.0625rem solid var(--line); background: color-mix(in oklch, var(--paper) 94%, transparent); backdrop-filter: blur(1rem); }
-.brand { display: flex; align-items: baseline; gap: 0.58rem; text-decoration: none; }
-.brand-slash { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.08em; }
-.brand strong { font-size: 1.05rem; letter-spacing: -0.025em; }
+.brand { display: flex; align-items: center; text-decoration: none; }
+.brand img { display: block; width: 10.5rem; height: auto; }
 .study-crumb { display: flex; justify-content: center; gap: 0.55rem; color: var(--muted); font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; }
 .study-crumb a { text-decoration: none; }
 .study-crumb a:hover { color: var(--ink); }
@@ -174,7 +173,7 @@ body[data-surface="reader"] {
   --ink-soft: #31312e;
   --muted: #686864;
   --line: #c9c9c1;
-  --signal: #2858f5;
+  --signal: #557000;
   --desk: #101010;
   --desk-line: #3b3b37;
   --desk-text: #f7f7f2;
@@ -192,9 +191,8 @@ body[data-surface="reader"] .brand {
   text-transform: uppercase;
 }
 
-body[data-surface="reader"] .brand-slash { color: #2858f5; }
 body[data-surface="reader"] .study-crumb { font-family: "Avenir Next Condensed", "DIN Condensed", var(--sans); }
-body[data-surface="reader"] .publication-label { color: #2858f5; font-family: "Avenir Next Condensed", "DIN Condensed", var(--sans); }
+body[data-surface="reader"] .publication-label { color: #557000; font-family: "Avenir Next Condensed", "DIN Condensed", var(--sans); }
 
 body[data-surface="reader"] .chapter-header {
   min-height: 0;

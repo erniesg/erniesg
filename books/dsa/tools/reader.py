@@ -487,6 +487,14 @@ class BookRequestHandler(BaseHTTPRequestHandler):
             static_files = {
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+                "/assets/rucksack-lockup-on-light.svg": (
+                    "assets/rucksack-lockup-on-light.svg",
+                    "image/svg+xml; charset=utf-8",
+                ),
+                "/assets/rucksack-lockup-on-dark.svg": (
+                    "assets/rucksack-lockup-on-dark.svg",
+                    "image/svg+xml; charset=utf-8",
+                ),
             }
             if path in static_files:
                 filename, content_type = static_files[path]

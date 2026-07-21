@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Replaced the improvised blue `R/` mark with paired Rucksack lockups for light
+  and dark surfaces, and carried the lime product mark onto the EPUB cover.
+
 - Added complete book and chapter contents to the standalone executable reader.
 - Added a standards-based EPUB 3 export with Rucksack cover, front matter,
   navigation, and all authored chapters.

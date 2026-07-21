@@ -107,13 +107,15 @@ def _xhtml(title: str, body: str, language: str, body_class: str = "chapter") ->
 def _cover_svg(metadata: BookMetadata) -> str:
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600" viewBox="0 0 1200 1600" role="img" aria-labelledby="title desc">
 <title id="title">{_xml(metadata.title)}</title><desc id="desc">Book cover</desc>
-<rect width="1200" height="1600" fill="#f2efe7"/><rect x="84" y="84" width="1032" height="1432" fill="none" stroke="#1b1b18" stroke-width="2"/>
-<text x="90" y="220" fill="#1b1b18" font-family="sans-serif" font-size="48" font-weight="700" letter-spacing="3">R/ RUCKSACK</text>
-<text x="90" y="350" fill="#65645e" font-family="sans-serif" font-size="24" letter-spacing="5">A BOOK FROM ERNIE.SG STUDY · EDITION {metadata.edition}</text>
-<text x="90" y="590" fill="#1b1b18" font-family="serif" font-size="118"><tspan x="90" dy="0">The Rucksack</tspan><tspan x="90" dy="132">Book of Data</tspan><tspan x="90" dy="132">Structures &amp;</tspan><tspan x="90" dy="132">Algorithms</tspan></text>
-<line x1="90" y1="1190" x2="1110" y2="1190" stroke="#1b1b18" stroke-width="2"/>
-<text x="90" y="1260" fill="#65645e" font-family="sans-serif" font-size="31">{_xml(metadata.subtitle)}</text>
-<text x="90" y="1430" fill="#1b1b18" font-family="sans-serif" font-size="34">{_xml(metadata.author)}</text></svg>'''
+<rect width="1200" height="1600" fill="#0c120c"/><rect x="84" y="84" width="1032" height="1432" fill="none" stroke="#3d463b" stroke-width="2"/>
+<rect x="90" y="130" width="112" height="112" rx="26" fill="#d8ff47"/>
+<text x="146" y="207" fill="#10120d" font-family="Arial Black, sans-serif" font-size="48" font-weight="900" text-anchor="middle">R</text>
+<text x="240" y="207" fill="#f7f5ed" font-family="Arial Black, sans-serif" font-size="50" font-weight="900" letter-spacing="3">RUCKSACK</text>
+<text x="90" y="350" fill="#a8b0a5" font-family="sans-serif" font-size="24" letter-spacing="5">A BOOK FROM ERNIE.SG STUDY · EDITION {metadata.edition}</text>
+<text x="90" y="590" fill="#f7f5ed" font-family="serif" font-size="118"><tspan x="90" dy="0">The Rucksack</tspan><tspan x="90" dy="132">Book of Data</tspan><tspan x="90" dy="132">Structures &amp;</tspan><tspan x="90" dy="132">Algorithms</tspan></text>
+<line x1="90" y1="1190" x2="1110" y2="1190" stroke="#d8ff47" stroke-width="3"/>
+<text x="90" y="1260" fill="#c4cbc1" font-family="sans-serif" font-size="31">{_xml(metadata.subtitle)}</text>
+<text x="90" y="1430" fill="#f7f5ed" font-family="sans-serif" font-size="34">{_xml(metadata.author)}</text></svg>'''
 
 
 EPUB_CSS = """

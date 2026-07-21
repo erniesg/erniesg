@@ -81,6 +81,10 @@ class PublicationTests(unittest.TestCase):
             navigation = archive.read("OEBPS/nav.xhtml").decode()
             self.assertIn("How to read this book", navigation)
             self.assertIn("Tests as executable definitions", navigation)
+            cover = archive.read("OEBPS/cover.svg").decode()
+            self.assertIn("#d8ff47", cover)
+            self.assertIn(">RUCKSACK</text>", cover)
+            self.assertNotIn("R/ RUCKSACK", cover)
             for name in names:
                 if name.endswith((".xhtml", ".xml", ".opf", ".svg")):
                     ElementTree.fromstring(archive.read(name))
@@ -157,6 +161,12 @@ class ReaderHttpTests(IsolatedReaderTestCase):
         with urlopen(f"{self.base_url}/book.epub", timeout=2) as response:
             self.assertEqual(response.headers.get_content_type(), "application/epub+zip")
             self.assertTrue(response.read().startswith(b"PK"))
+        with urlopen(f"{self.base_url}/assets/rucksack-lockup-on-light.svg", timeout=2) as response:
+            self.assertEqual(response.headers.get_content_type(), "image/svg+xml")
+            self.assertIn(b"#d8ff47", response.read())
+        with urlopen(f"{self.base_url}/assets/rucksack-lockup-on-dark.svg", timeout=2) as response:
+            self.assertEqual(response.headers.get_content_type(), "image/svg+xml")
+            self.assertIn(b"#f7f5ed", response.read())
 
     def test_write_endpoint_requires_session_token(self):
         request = Request(

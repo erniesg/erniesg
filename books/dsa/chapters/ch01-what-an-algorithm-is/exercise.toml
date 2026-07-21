@@ -1,0 +1,19 @@
+id = "ch01"
+title = "What an algorithm actually is"
+module = "warmup"
+
+[tiers.public]
+xp = 10
+timeout = 30
+
+[tiers.edge]
+xp = 15
+timeout = 30
+
+[tiers.stress]
+xp = 20
+timeout = 60
+
+[tiers.perf]
+xp = 25
+timeout = 10

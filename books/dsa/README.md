@@ -20,15 +20,30 @@ Requires Python 3.11+. No dependencies.
 python3 book/tools/reader.py
 ```
 
-That opens the local executable edition at `http://127.0.0.1:8765` (or the
-next available localhost port): chapter
-navigation, the complete Markdown text, an editor backed by
-`book/workspace/`, tier-by-tier grader output, XP, badges, and streaks. The
-reader binds to localhost only. Your Python still runs in the grader's
+That opens the publication at `http://127.0.0.1:8765` (or the next available
+localhost port). The default **Article** view is the focused Ernie.SG Study
+reading experience: book contents, chapter contents, long-form typography,
+chapter pagination, and an EPUB download. Choose **Full reader** or
+**Practice** for the standalone Rucksack edition with the full chapter rail,
+an editor backed by `book/workspace/`, tier-by-tier grader output, XP, badges,
+and streaks.
+
+The reader binds to localhost only. Your Python still runs in the grader's
 time-limited subprocesses; nothing is sent to a remote service.
 
 Use `python3 book/tools/reader.py --no-open` when you do not want it to open a
 browser automatically. Press Ctrl-C in the terminal to stop the reader.
+
+### Export the EPUB
+
+```bash
+python3 book/tools/export.py
+```
+
+The standards-based EPUB 3 file is written to `book/dist/`. It contains the
+Rucksack cover, title page, preface, table of contents, and every authored
+chapter. The EPUB is reflowable for e-readers and tablets; executable Python
+stays in the web edition, where the grader can isolate and time it safely.
 
 ### Terminal loop
 

@@ -1,0 +1,17 @@
+[book]
+title = "The Rucksack Book of Data Structures & Algorithms"
+short_title = "Rucksack DSA"
+subtitle = "An executable field guide to algorithms, tests, and context engines"
+author = "Chen Enjiao (Ernie)"
+language = "en-SG"
+identifier = "https://ernie.sg/study/books/rucksack-dsa"
+publisher = "Ernie.SG Study"
+description = "Learn data structures and algorithms from zero by building the ideas behind a context engine. Every authored chapter pairs long-form reading with a tested Python exercise."
+rights = "Copyright © 2026 Chen Enjiao (Ernie). All rights reserved."
+modified = "2026-07-21T12:00:00Z"
+
+[[parts]]
+id = "part-i"
+number = "I"
+title = "Learning to measure"
+description = "Begin with executable definitions, empirical tests, and the shape of computational work."

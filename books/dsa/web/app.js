@@ -1,17 +1,30 @@
 const token = document.querySelector('meta[name="book-token"]').content
 
 const elements = {
+  articleEdition: document.querySelector('#article-edition'),
   badgeCount: document.querySelector('#badge-count'),
+  bookContents: document.querySelector('#book-contents'),
   chapterContent: document.querySelector('#chapter-content'),
+  chapterDeck: document.querySelector('#chapter-deck'),
   chapterList: document.querySelector('#chapter-list'),
   chapterNumber: document.querySelector('#chapter-number'),
   chapterPart: document.querySelector('#chapter-part'),
   chapterTitle: document.querySelector('#chapter-title'),
+  closePractice: document.querySelector('#close-practice'),
   codeEditor: document.querySelector('#code-editor'),
+  compactView: document.querySelector('#compact-view'),
   consoleOutput: document.querySelector('#console-output'),
+  contentsAuthor: document.querySelector('#contents-author'),
+  contentsButton: document.querySelector('#contents-button'),
+  contentsDescription: document.querySelector('#contents-description'),
+  contentsDrawer: document.querySelector('#contents-drawer'),
+  contentsTitle: document.querySelector('#contents-title'),
   editionLabel: document.querySelector('#edition-label'),
+  exerciseDesk: document.querySelector('.exercise-desk'),
+  fullView: document.querySelector('#full-view'),
   nextChapter: document.querySelector('#next-chapter'),
   previousChapter: document.querySelector('#previous-chapter'),
+  practiceButton: document.querySelector('#practice-button'),
   readProgress: document.querySelector('#read-progress'),
   readingPane: document.querySelector('#reading-pane'),
   readingTime: document.querySelector('#reading-time'),
@@ -20,6 +33,7 @@ const elements = {
   runButton: document.querySelector('#run-button'),
   runStatus: document.querySelector('#run-status'),
   saveState: document.querySelector('#save-state'),
+  sectionList: document.querySelector('#section-list'),
   sourcePath: document.querySelector('#source-path'),
   streakCount: document.querySelector('#streak-count'),
   tierList: document.querySelector('#tier-list'),
@@ -27,9 +41,71 @@ const elements = {
 }
 
 const state = {
+  book: null,
   chapters: [],
   current: null,
   running: false,
+}
+
+function setView(view, { updateUrl = true } = {}) {
+  const selected = view === 'full' ? 'full' : 'article'
+  document.body.dataset.view = selected
+  elements.compactView.setAttribute('aria-pressed', String(selected === 'article'))
+  elements.fullView.setAttribute('aria-pressed', String(selected === 'full'))
+  elements.practiceButton.textContent = selected === 'full' ? 'Read' : 'Practice'
+  if (updateUrl) {
+    const url = new URL(location.href)
+    if (selected === 'full') url.searchParams.set('view', 'full')
+    else url.searchParams.delete('view')
+    history.replaceState(null, '', url)
+  }
+}
+
+function renderBookContents() {
+  if (!state.book) return
+  elements.contentsTitle.textContent = state.book.title
+  elements.contentsDescription.textContent = state.book.description
+  elements.contentsAuthor.textContent = state.book.author
+  elements.editionLabel.textContent = state.book.edition
+  elements.articleEdition.textContent = state.book.edition
+  const frontMatter = `<section class="contents-part contents-frontmatter">
+    <div><span>Front matter</span><h3>Before you begin</h3><p>Reading order, exercise loop, and edition notes.</p></div>
+    <ol><li><button type="button" data-preface><span>00</span><strong>How to read this book</strong><small>3 min</small></button></li></ol>
+  </section>`
+  elements.bookContents.innerHTML = frontMatter + state.book.parts
+    .map((part) => {
+      const chapters = state.chapters.filter((chapter) => chapter.part === part.number || !chapter.part)
+      return `<section class="contents-part">
+        <div><span>Part ${escapeHtml(part.number)}</span><h3>${escapeHtml(part.title)}</h3><p>${escapeHtml(part.description)}</p></div>
+        <ol>${chapters.map((chapter) => `<li><button type="button" data-content-chapter="${chapter.id}"><span>${String(chapter.number).padStart(2, '0')}</span><strong>${escapeHtml(chapter.title)}</strong><small>${chapter.complete ? 'Complete' : 'Runnable'}</small></button></li>`).join('')}</ol>
+      </section>`
+    })
+    .join('')
+  elements.bookContents.querySelectorAll('[data-content-chapter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      elements.contentsDrawer.hidden = true
+      navigate(button.dataset.contentChapter)
+    })
+  })
+  elements.bookContents.querySelector('[data-preface]')?.addEventListener('click', () => {
+    elements.contentsDrawer.hidden = true
+    navigate('preface')
+  })
+}
+
+function renderSectionList(sections) {
+  elements.sectionList.innerHTML = sections.length
+    ? `<ol>${sections.map((section) => `<li class="depth-${section.depth}"><a href="#section-${section.id}">${escapeHtml(section.label)}</a></li>`).join('')}</ol>`
+    : '<p>This short chapter has no subsections.</p>'
+  elements.sectionList.querySelectorAll('a').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault()
+      document.querySelector(link.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth' })
+    })
+  })
+  elements.chapterContent.querySelectorAll('h2, h3').forEach((heading) => {
+    if (heading.id) heading.id = `section-${heading.id}`
+  })
 }
 
 async function request(path, options = {}) {
@@ -57,6 +133,7 @@ async function post(path, body) {
 
 function chapterIdFromLocation() {
   const requested = location.hash.replace(/^#/, '')
+  if (requested === 'preface') return requested
   return state.chapters.some((chapter) => chapter.id === requested)
     ? requested
     : state.chapters[0]?.id
@@ -130,6 +207,11 @@ function updatePager() {
 
 async function loadChapter(chapterId) {
   if (!chapterId || state.running) return
+  if (chapterId === 'preface') {
+    loadPreface()
+    return
+  }
+  document.body.classList.remove('frontmatter')
   elements.chapterTitle.textContent = 'Opening chapter…'
   elements.chapterContent.setAttribute('aria-busy', 'true')
   try {
@@ -141,9 +223,11 @@ async function loadChapter(chapterId) {
     elements.chapterNumber.textContent = String(summary.number).padStart(2, '0')
     elements.chapterPart.textContent = `Part ${chapter.part}`
     elements.chapterTitle.textContent = chapter.title
+    elements.chapterDeck.textContent = 'Read the idea. Change the code. Make every tier turn green.'
     elements.readingTime.textContent = `${chapter.readingMinutes} min read`
     elements.editionLabel.textContent = chapter.edition
     elements.chapterContent.innerHTML = chapter.html
+    renderSectionList(chapter.sections || [])
     elements.sourcePath.textContent = chapter.sourcePath
     elements.codeEditor.value = localDraft ?? chapter.source
     elements.saveState.textContent = localDraft ? 'Local draft' : 'Workspace'
@@ -165,6 +249,27 @@ async function loadChapter(chapterId) {
   }
 }
 
+function loadPreface() {
+  document.body.classList.add('frontmatter')
+  state.current = { id: 'preface' }
+  elements.chapterNumber.textContent = '00'
+  elements.chapterPart.textContent = 'Front matter'
+  elements.chapterTitle.textContent = 'How to read this book'
+  elements.chapterDeck.textContent = 'The reading order, exercise loop, and what travels into the EPUB edition.'
+  elements.readingTime.textContent = '3 min read'
+  elements.chapterContent.innerHTML = state.book.prefaceHtml
+  renderSectionList(state.book.prefaceSections || [])
+  elements.previousChapter.disabled = true
+  elements.nextChapter.disabled = false
+  elements.nextChapter.dataset.chapter = state.chapters[0]?.id || ''
+  elements.runStatus.className = 'run-status'
+  elements.runStatus.textContent = 'Practice begins in Chapter 1.'
+  renderChapterList()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+  elements.readingPane.focus({ preventScroll: true })
+  document.title = `How to read this book — ${state.book.shortTitle}`
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -181,10 +286,12 @@ function navigate(chapterId) {
 }
 
 async function refreshIndex() {
-  const data = await request('/api/chapters')
+  const data = await request('/api/book')
+  state.book = { ...data.book, prefaceHtml: data.prefaceHtml, prefaceSections: data.prefaceSections }
   state.chapters = data.chapters
   renderProgress(data.progress)
   renderChapterList()
+  renderBookContents()
   return data
 }
 
@@ -279,6 +386,24 @@ elements.codeEditor.addEventListener('keydown', (event) => {
 
 elements.runButton.addEventListener('click', runCode)
 elements.resetButton.addEventListener('click', resetCode)
+elements.contentsButton.addEventListener('click', () => {
+  elements.contentsDrawer.hidden = !elements.contentsDrawer.hidden
+  elements.contentsButton.setAttribute('aria-expanded', String(!elements.contentsDrawer.hidden))
+})
+elements.compactView.addEventListener('click', () => setView('article'))
+elements.fullView.addEventListener('click', () => setView('full'))
+elements.practiceButton.addEventListener('click', () => {
+  if (document.body.dataset.view === 'full') {
+    setView('article')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  } else {
+    if (state.current?.id === 'preface') navigate(state.chapters[0]?.id)
+    setView('full')
+    elements.codeEditor.focus({ preventScroll: true })
+    elements.exerciseDesk?.scrollIntoView({ behavior: 'smooth' })
+  }
+})
+elements.closePractice.addEventListener('click', () => setView('article'))
 elements.previousChapter.addEventListener('click', (event) => navigate(event.currentTarget.dataset.chapter))
 elements.nextChapter.addEventListener('click', (event) => navigate(event.currentTarget.dataset.chapter))
 window.addEventListener('hashchange', () => loadChapter(chapterIdFromLocation()))
@@ -294,6 +419,7 @@ window.addEventListener(
 
 async function start() {
   try {
+    setView(new URL(location.href).searchParams.get('view') === 'full' ? 'full' : 'article', { updateUrl: false })
     await refreshIndex()
     await loadChapter(chapterIdFromLocation())
   } catch (error) {

@@ -197,14 +197,15 @@ Each tier runs in a subprocess with a hard timeout; exceeding it reports
 
 ## Publishing pipeline (phased)
 
-- **Phase 0 (now):** book lives in this worktree; chapters graded locally.
-- **Phase 1 — EPUB:** `book/tools/export.py` walks chapters and emits a
-  publication bundle (chapter HTML, quizzes, non-executable challenge specs)
-  into the ernie.sg research pipeline
-  (`erniesg-typesetting/src/research/publications/`), which already builds
-  EPUBs (see `src/research/epub.ts` and the if-letters-home-could-sing
-  publication). The book becomes a versioned research publication edited on
-  an ongoing basis on the blog.
+- **Phase 0 (done):** the local publication has an Ernie.SG-compatible Article
+  view and a standalone Rucksack Full reader; chapters are graded locally.
+- **Phase 1a (done):** `book/tools/export.py` emits a self-contained,
+  reflowable EPUB 3 with cover, title page, preface, navigation, and authored
+  chapters from the same Markdown sources.
+- **Phase 1b — Study integration:** publish the same metadata, Markdown, and
+  EPUB artifact through the `/study/books/` information architecture after
+  the universal-publication dependency chain is ready. Do not couple this
+  book to the active PDF semantic reconstruction implementation.
 - **Phase 2 — Web (runnable online):** the blog's web edition embeds an
   editor + Pyodide test runner reusing the same `tests/` files, with
   progressive hints and the "why it failed" explanations (e.g. "correct
@@ -242,5 +243,6 @@ Per release (edition bump):
 
 1. **Done in this branch:** grader + tests, chapters 1–3 runnable, this plan.
 2. Author ch04–ch05 and the Part I milestone (identifier index) + Interlude A.
-3. `export.py` Phase-1 EPUB bundle; wire into the blog research pipeline.
+3. Wire the existing EPUB and web publication into Ernie.SG Study after its
+   universal-publication dependencies land.
 4. Draft Part II (the inverted-index arc from the sample chapter).

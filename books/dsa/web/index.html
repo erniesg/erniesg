@@ -15,37 +15,56 @@
   <body>
     <div class="read-progress" aria-hidden="true"><span id="read-progress"></span></div>
     <header class="masthead">
-      <a class="brand" href="#ch01" aria-label="Rucksack DSA book home">
-        <span class="brand-mark">R/</span>
-        <span>
-          <strong>Rucksack</strong>
-          <small>The algorithm field guide</small>
-        </span>
+      <a class="brand" href="#ch01" aria-label="Rucksack book home">
+        <span class="brand-slash" aria-hidden="true">R/</span>
+        <strong>Rucksack</strong>
       </a>
-      <div class="edition">
-        <span>Executable edition</span>
-        <strong id="edition-label">0.1.0</strong>
-      </div>
-      <div class="score" aria-label="Book progress">
-        <span><strong id="xp-count">0</strong> XP</span>
-        <span><strong id="streak-count">0</strong> day streak</span>
+      <nav class="study-crumb" aria-label="Publication location">
+        <a href="https://ernie.sg">Ernie.SG</a><span>/</span><a href="https://ernie.sg/study">Study</a><span>/</span><strong>Books</strong>
+      </nav>
+      <div class="publication-actions">
+        <button id="contents-button" class="header-link" type="button">Contents</button>
+        <button id="practice-button" class="header-link" type="button">Practice</button>
+        <a class="header-link epub-link" href="/book.epub" download>EPUB</a>
+        <div class="view-switch" aria-label="Reading view">
+          <button id="compact-view" type="button" aria-pressed="true">Article</button>
+          <button id="full-view" type="button" aria-pressed="false">Full reader</button>
+        </div>
       </div>
     </header>
+
+    <section id="contents-drawer" class="contents-drawer" aria-label="Book contents" hidden>
+      <div class="contents-inner">
+        <div class="contents-intro">
+          <span>Contents</span>
+          <h2 id="contents-title">The Rucksack Book</h2>
+          <p id="contents-description"></p>
+          <p class="edition-line">Edition <strong id="edition-label">0.1.0</strong> · <span id="contents-author"></span></p>
+          <a class="download-link" href="/book.epub" download>Download EPUB <span>↓</span></a>
+        </div>
+        <div id="book-contents" class="book-contents"></div>
+      </div>
+    </section>
 
     <div class="book-shell">
       <nav class="chapter-rail" aria-label="Book chapters">
         <div class="rail-heading">
-          <span>Part I</span>
-          <strong>Learning to measure</strong>
+          <span>Table of contents</span>
+          <strong>Part I · Learning to measure</strong>
         </div>
         <ol id="chapter-list" class="chapter-list"></ol>
         <div class="rail-foot">
+          <span><strong id="xp-count">0</strong> XP · <strong id="streak-count">0</strong> day streak</span>
           <span id="badge-count">No badges yet</span>
           <small>Progress stays on this machine.</small>
         </div>
       </nav>
 
       <main id="reading-pane" class="reading-pane" tabindex="-1">
+        <div class="publication-label">
+          <span>Book · Executable edition</span>
+          <span id="article-edition">0.1.0</span>
+        </div>
         <header class="chapter-header">
           <div class="chapter-number" id="chapter-number" aria-hidden="true">01</div>
           <div class="chapter-meta">
@@ -57,6 +76,11 @@
             Read the idea. Change the code. Make every tier turn green.
           </p>
         </header>
+
+        <details class="on-page-toc">
+          <summary>In this chapter <span aria-hidden="true">＋</span></summary>
+          <nav id="section-list" aria-label="Chapter contents"></nav>
+        </details>
 
         <article id="chapter-content" class="chapter-content" aria-live="polite"></article>
 
@@ -74,6 +98,8 @@
           </div>
           <span id="save-state" class="save-state">Workspace</span>
         </header>
+
+        <button id="close-practice" class="close-practice" type="button" aria-label="Close practice desk">Close</button>
 
         <div id="tier-list" class="tier-list" aria-label="Grading tiers"></div>
 

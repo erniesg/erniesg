@@ -27,6 +27,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import runner
+import publication
 
 
 WEB_DIR = runner.BOOK_DIR / "web"
@@ -255,9 +256,12 @@ class ReaderApp:
         }
 
     def chapters(self) -> dict:
+        metadata = publication.load_metadata()
         progress = runner.load_progress()
         chapters = []
         for position, chapter in enumerate(runner.discover_chapters(), start=1):
+            markdown = (chapter.path / "chapter.md").read_text()
+            chapter_metadata, _ = _frontmatter(markdown)
             state = progress["chapters"].get(chapter.id, {})
             passed = [
                 tier.name
@@ -270,12 +274,34 @@ class ReaderApp:
                     "slug": chapter.slug,
                     "number": position,
                     "title": chapter.title,
+                    "part": chapter_metadata.get("part", "I"),
                     "tiers": [tier.name for tier in chapter.tiers],
                     "passed": passed,
                     "complete": len(passed) == len(chapter.tiers),
                 }
             )
-        return {"chapters": chapters, "progress": self._progress_summary(progress)}
+        return {
+            "book": {
+                "title": metadata.title,
+                "shortTitle": metadata.short_title,
+                "subtitle": metadata.subtitle,
+                "author": metadata.author,
+                "publisher": metadata.publisher,
+                "description": metadata.description,
+                "edition": metadata.edition,
+                "epubFilename": publication.epub_filename(metadata),
+                "parts": [asdict(part) for part in metadata.parts],
+            },
+            "chapters": chapters,
+            "progress": self._progress_summary(progress),
+        }
+
+    def book(self) -> dict:
+        index = self.chapters()
+        preface = (publication.FRONTMATTER_DIR / "preface.md").read_text()
+        index["prefaceHtml"] = render_markdown(preface)
+        index["prefaceSections"] = publication.headings(preface)
+        return index
 
     def chapter(self, chapter_id: str) -> dict:
         chapter = self._chapter(chapter_id)
@@ -295,6 +321,7 @@ class ReaderApp:
             "edition": metadata.get("edition", "0.1.0"),
             "readingMinutes": max(1, round(words / 220)),
             "html": render_markdown(markdown),
+            "sections": publication.headings(markdown),
             "source": self._source(chapter),
             "sourcePath": displayed_source_path,
             "tiers": [
@@ -432,6 +459,9 @@ class BookRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/chapters":
                 self._json(self.server.app.chapters())
                 return
+            if path == "/api/book":
+                self._json(self.server.app.book())
+                return
             if path.startswith("/api/chapters/"):
                 self._json(self.server.app.chapter(path.rsplit("/", 1)[-1]))
                 return
@@ -439,6 +469,20 @@ class BookRequestHandler(BaseHTTPRequestHandler):
                 template = (WEB_DIR / "index.html").read_text()
                 document = template.replace("__BOOK_TOKEN__", self.server.token).encode()
                 self._send(HTTPStatus.OK, document, "text/html; charset=utf-8")
+                return
+            if path == "/book.epub":
+                payload = publication.build_epub(render_markdown)
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", publication.MIMETYPE)
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{publication.epub_filename()}"',
+                )
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "no-store")
+                self._security_headers()
+                self.end_headers()
+                self.wfile.write(payload)
                 return
             static_files = {
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),

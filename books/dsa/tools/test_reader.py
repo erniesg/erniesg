@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import io
 import sys
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
+from xml.etree import ElementTree
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -15,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reader
 import runner
+import publication
 
 
 class MarkdownRenderingTests(unittest.TestCase):
@@ -55,6 +59,31 @@ def solve():
         self.assertNotIn("<script>", rendered)
         self.assertIn("&lt;script&gt;", rendered)
         self.assertNotIn('href="javascript:', rendered)
+
+
+class PublicationTests(unittest.TestCase):
+    def test_book_metadata_and_table_of_contents_are_canonical(self):
+        metadata = publication.load_metadata()
+        self.assertEqual(metadata.publisher, "Ernie.SG Study")
+        self.assertEqual(metadata.parts[0].title, "Learning to measure")
+        sections = publication.headings(
+            (runner.CHAPTERS_DIR / "ch01-what-an-algorithm-is" / "chapter.md").read_text()
+        )
+        self.assertIn("The challenge: add", [section["label"] for section in sections])
+
+    def test_epub_has_uncompressed_mimetype_navigation_and_valid_xml(self):
+        payload = publication.build_epub(reader.render_markdown)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = archive.namelist()
+            self.assertEqual(names[0], "mimetype")
+            self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+            self.assertEqual(archive.getinfo("mimetype").compress_type, zipfile.ZIP_STORED)
+            navigation = archive.read("OEBPS/nav.xhtml").decode()
+            self.assertIn("How to read this book", navigation)
+            self.assertIn("Tests as executable definitions", navigation)
+            for name in names:
+                if name.endswith((".xhtml", ".xml", ".opf", ".svg")):
+                    ElementTree.fromstring(archive.read(name))
 
 
 class IsolatedReaderTestCase(unittest.TestCase):
@@ -124,6 +153,10 @@ class ReaderHttpTests(IsolatedReaderTestCase):
         with urlopen(f"{self.base_url}/api/chapters", timeout=2) as response:
             payload = json.load(response)
             self.assertEqual(len(payload["chapters"]), 3)
+            self.assertEqual(payload["book"]["publisher"], "Ernie.SG Study")
+        with urlopen(f"{self.base_url}/book.epub", timeout=2) as response:
+            self.assertEqual(response.headers.get_content_type(), "application/epub+zip")
+            self.assertTrue(response.read().startswith(b"PK"))
 
     def test_write_endpoint_requires_session_token(self):
         request = Request(

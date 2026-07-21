@@ -82,3 +82,5 @@ The same responses were observed on `https://ernie.sg`, `https://erniesg.pages.d
 | `/migration-404-proof`                                                   | `404 text/html` with the custom 404 page                            |
 
 Pages HTML responses recorded `server: cloudflare`, `cache-control: public, max-age=0, must-revalidate`, `referrer-policy: strict-origin-when-cross-origin`, and `x-content-type-options: nosniff`.
+
+These shared content and security headers are not platform identity. The verifier distinguishes Pages from Workers static assets through the platform-owned clean-URL response (`308` for Pages and `307` for Workers), while still requiring `noindex` on a `workers.dev` preview.

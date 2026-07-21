@@ -81,7 +81,7 @@ function documentText(node) {
   return (node?.childNodes ?? []).map(documentText).join(' ')
 }
 
-function validatePlatformHeaders(artifact, label) {
+function validateSharedHeaders(artifact, label) {
   assert(
     headerValue(artifact.headers, 'server') === 'cloudflare',
     `${label}: expected server: cloudflare`,
@@ -91,21 +91,14 @@ function validatePlatformHeaders(artifact, label) {
     `${label}: expected x-content-type-options: nosniff`,
   )
 
-  const marker = headerValue(artifact.headers, 'x-ernie-deployment')
-  if (expectedPlatform === 'workers') {
+  if (
+    expectedPlatform === 'workers' &&
+    artifact.url.includes('.workers.dev/')
+  ) {
     assert(
-      marker === 'workers-static-assets',
-      `${label}: missing Workers deployment marker`,
+      headerValue(artifact.headers, 'x-robots-tag').includes('noindex'),
+      `${label}: workers.dev preview is not marked noindex`,
     )
-    if (artifact.url.includes('.workers.dev/')) {
-      assert(
-        headerValue(artifact.headers, 'x-robots-tag').includes('noindex'),
-        `${label}: workers.dev preview is not marked noindex`,
-      )
-    }
-  }
-  if (expectedPlatform === 'pages') {
-    assert(!marker, `${label}: unexpected Workers deployment marker`)
   }
 }
 
@@ -119,7 +112,7 @@ function validateLocalizedPost(artifact, locale, authorName, tagLabels) {
     contentTypeEssence(artifact.headers) === 'text/html',
     `${label}: expected HTML content type`,
   )
-  validatePlatformHeaders(artifact, label)
+  validateSharedHeaders(artifact, label)
 
   const document = parse(artifact.body)
   const html = findElements(document, 'html')[0]
@@ -202,7 +195,7 @@ assert(
   home.body.includes('Essays and experiments'),
   '/: homepage copy is missing',
 )
-validatePlatformHeaders(home, '/')
+validateSharedHeaders(home, '/')
 results.push(home)
 
 for (const check of postChecks) {
@@ -266,7 +259,7 @@ assert(
   notFound.body.includes('404: Page not found'),
   '404 probe: custom page is missing',
 )
-validatePlatformHeaders(notFound, '/migration-404-proof')
+validateSharedHeaders(notFound, '/migration-404-proof')
 results.push(notFound)
 
 const robots = await fetchArtifact(base, '/robots.txt')
@@ -324,9 +317,8 @@ if (compareBase) {
 }
 
 for (const result of results) {
-  const marker = headerValue(result.headers, 'x-ernie-deployment') || '-'
   console.log(
-    `${result.status} ${result.path} ${contentTypeEssence(result.headers) || '-'} ${marker}`,
+    `${result.status} ${result.path} ${contentTypeEssence(result.headers) || '-'}`,
   )
 }
 

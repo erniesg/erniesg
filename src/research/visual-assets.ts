@@ -4,6 +4,7 @@ import type {
   PdfRegionLine,
   PdfVisualAsset,
 } from './import-types'
+import { isBoundedPdfPageCropBox } from './pdf-page-crop'
 
 function xml(value: string) {
   return value
@@ -12,6 +13,25 @@ function xml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;')
+}
+
+const BASE64_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+function base64(bytes: Uint8Array) {
+  let output = ''
+  for (let index = 0; index < bytes.length; index += 3) {
+    const remaining = bytes.length - index
+    const value =
+      (bytes[index] << 16) |
+      ((remaining > 1 ? bytes[index + 1] : 0) << 8) |
+      (remaining > 2 ? bytes[index + 2] : 0)
+    output += BASE64_ALPHABET[(value >>> 18) & 63]
+    output += BASE64_ALPHABET[(value >>> 12) & 63]
+    output += remaining > 1 ? BASE64_ALPHABET[(value >>> 6) & 63] : '='
+    output += remaining > 2 ? BASE64_ALPHABET[value & 63] : '='
+  }
+  return output
 }
 
 function finite(value: number) {
@@ -49,9 +69,16 @@ async function asset({
   resolutionDpi,
   sourceObjectIds,
   sourceBoxes,
-}: Omit<PdfVisualAsset, 'id' | 'href' | 'sha256'>) {
+  sourceCropBox,
+  identityKey,
+}: Omit<PdfVisualAsset, 'id' | 'href' | 'sha256'> & {
+  identityKey?: string
+}) {
   const hash = await sha256(bytes)
-  const id = `asset-${hash.slice(0, 24)}`
+  const identityHash = identityKey
+    ? await sha256(strToU8(`${hash}\n${identityKey}`))
+    : hash
+  const id = `asset-${identityHash.slice(0, 24)}`
   return {
     id,
     href: `assets/${id}.${extension(mediaType)}`,
@@ -65,6 +92,7 @@ async function asset({
     resolutionDpi,
     sourceObjectIds: [...sourceObjectIds],
     sourceBoxes: sourceBoxes.map((box) => ({ ...box })),
+    ...(sourceCropBox ? { sourceCropBox: { ...sourceCropBox } } : {}),
   } satisfies PdfVisualAsset
 }
 
@@ -244,6 +272,51 @@ function decodeGeneratedPng(bytes: Uint8Array) {
   return { width, height, pixels }
 }
 
+function hasNontrivialSourceInk(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+) {
+  if (pixels.byteLength !== width * height * 4) return false
+  const minimumInkPixels = Math.max(4, Math.ceil(width * height * 0.0001))
+  let inkPixels = 0
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    const alpha = pixels[offset + 3] / 255
+    const red = pixels[offset] * alpha + 255 * (1 - alpha)
+    const green = pixels[offset + 1] * alpha + 255 * (1 - alpha)
+    const blue = pixels[offset + 2] * alpha + 255 * (1 - alpha)
+    if (Math.min(red, green, blue) < 248) inkPixels += 1
+    if (inkPixels >= minimumInkPixels) return true
+  }
+  return false
+}
+
+export function isValidSourcePageCropPayload(asset: PdfVisualAsset) {
+  if (
+    asset.rendition !== 'source-page-crop' ||
+    asset.mediaType !== 'image/png' ||
+    !asset.sourceCropBox ||
+    !isBoundedPdfPageCropBox(asset.sourceCropBox) ||
+    !Number.isInteger(asset.width) ||
+    asset.width < 2 ||
+    !Number.isInteger(asset.height) ||
+    asset.height < 2 ||
+    asset.bytes.byteLength === 0
+  ) {
+    return false
+  }
+  try {
+    const decoded = decodeGeneratedPng(asset.bytes)
+    return (
+      decoded.width === asset.width &&
+      decoded.height === asset.height &&
+      hasNontrivialSourceInk(decoded.pixels, decoded.width, decoded.height)
+    )
+  } catch {
+    return false
+  }
+}
+
 export async function downscalePngAsset(
   source: PdfVisualAsset,
   maximumWidth: number,
@@ -283,6 +356,17 @@ export async function downscalePngAsset(
     resolutionDpi: pixelsPerInch,
     sourceObjectIds: source.sourceObjectIds,
     sourceBoxes: source.sourceBoxes,
+    ...(source.sourceCropBox
+      ? {
+          sourceCropBox: source.sourceCropBox,
+          identityKey: JSON.stringify({
+            sourceAssetId: source.id,
+            sourceCropBox: source.sourceCropBox,
+            maximumWidth,
+            pixelsPerInch,
+          }),
+        }
+      : {}),
   })
 }
 
@@ -304,6 +388,269 @@ export async function createPngAsset(input: {
     resolutionDpi: null,
     sourceObjectIds: [input.sourceObjectId],
     sourceBoxes: [input.sourceBox],
+  })
+}
+
+export async function createCompositePngAsset(input: {
+  sourceObjectIds: string[]
+  sourceBoxes: NormalizedSourceBox[]
+  width: number
+  height: number
+  pixels: Uint8Array
+}) {
+  if (
+    input.sourceObjectIds.length < 2 ||
+    input.sourceObjectIds.length !== input.sourceBoxes.length
+  ) {
+    throw new Error(
+      'Composite PNG assets require a source box for every source object',
+    )
+  }
+  return asset({
+    bytes: encodePng({ ...input, colorSpace: 'rgba' }),
+    mediaType: 'image/png',
+    kind: 'raster',
+    rendition: 'browser-composite-raster',
+    width: input.width,
+    height: input.height,
+    resolutionDpi: null,
+    sourceObjectIds: input.sourceObjectIds,
+    sourceBoxes: input.sourceBoxes,
+  })
+}
+
+export async function createSourcePageCropAsset(input: {
+  kind: 'raster' | 'table' | 'equation'
+  cropBox: NormalizedSourceBox
+  sourceObjectIds: string[]
+  sourceBoxes: NormalizedSourceBox[]
+  width: number
+  height: number
+  pixels: Uint8Array
+}) {
+  if (
+    input.sourceObjectIds.length === 0 ||
+    input.sourceObjectIds.length !== input.sourceBoxes.length ||
+    new Set(input.sourceObjectIds).size !== input.sourceObjectIds.length ||
+    input.sourceObjectIds.some((id) => !id.trim())
+  ) {
+    throw new Error(
+      'Source page crops require one unique source box for every source object',
+    )
+  }
+  const geometry = [
+    input.cropBox.x,
+    input.cropBox.y,
+    input.cropBox.width,
+    input.cropBox.height,
+  ]
+  if (
+    !Number.isInteger(input.cropBox.page) ||
+    input.cropBox.page < 1 ||
+    geometry.some((value) => !Number.isFinite(value)) ||
+    input.cropBox.x < 0 ||
+    input.cropBox.y < 0 ||
+    input.cropBox.width <= 0 ||
+    input.cropBox.height <= 0 ||
+    input.cropBox.x + input.cropBox.width > 1 ||
+    input.cropBox.y + input.cropBox.height > 1 ||
+    !isBoundedPdfPageCropBox(input.cropBox) ||
+    input.sourceBoxes.some((box) => box.page !== input.cropBox.page)
+  ) {
+    throw new Error(
+      'Source page crops require one valid bounded source region on one page',
+    )
+  }
+  if (
+    !Number.isInteger(input.width) ||
+    input.width < 2 ||
+    !Number.isInteger(input.height) ||
+    input.height < 2 ||
+    input.pixels.byteLength !== input.width * input.height * 4
+  ) {
+    throw new Error('Source page crops require complete RGBA source pixels')
+  }
+  if (!hasNontrivialSourceInk(input.pixels, input.width, input.height)) {
+    throw new Error('Source page crop contains no nontrivial source ink')
+  }
+  const boxIdentity = (box: NormalizedSourceBox) => [
+    box.page,
+    box.x,
+    box.y,
+    box.width,
+    box.height,
+    box.rotation,
+    box.method,
+  ]
+  const identityKey = JSON.stringify({
+    kind: input.kind,
+    cropBox: boxIdentity(input.cropBox),
+    lineage: input.sourceObjectIds.map((sourceObjectId, index) => [
+      sourceObjectId,
+      boxIdentity(input.sourceBoxes[index]),
+    ]),
+  })
+  return asset({
+    bytes: encodePng({ ...input, colorSpace: 'rgba' }),
+    mediaType: 'image/png',
+    kind: input.kind,
+    rendition: 'source-page-crop',
+    width: input.width,
+    height: input.height,
+    resolutionDpi: null,
+    sourceObjectIds: input.sourceObjectIds,
+    sourceBoxes: input.sourceBoxes,
+    sourceCropBox: input.cropBox,
+    identityKey,
+  })
+}
+
+export async function createHeadlessCompositePngAsset(input: {
+  sourceBox: NormalizedSourceBox
+  fragments: Array<{
+    sourceObjectId: string
+    sourceBox: NormalizedSourceBox
+    asset: PdfVisualAsset
+  }>
+}) {
+  if (input.fragments.length < 2) {
+    throw new Error('Headless composites require at least two source fragments')
+  }
+  const decoded = input.fragments.map((fragment) => {
+    if (
+      fragment.asset.mediaType !== 'image/png' ||
+      fragment.asset.rendition !== 'source-preserved' ||
+      fragment.asset.bytes.byteLength === 0 ||
+      fragment.sourceBox.page !== input.sourceBox.page
+    ) {
+      throw new Error(
+        'Headless composites require same-page source-preserved PNG fragments',
+      )
+    }
+    return { ...fragment, decoded: decodeGeneratedPng(fragment.asset.bytes) }
+  })
+  const sourceScaleX = Math.max(
+    ...decoded.map(
+      (fragment) => fragment.decoded.width / fragment.sourceBox.width,
+    ),
+  )
+  const sourceScaleY = Math.max(
+    ...decoded.map(
+      (fragment) => fragment.decoded.height / fragment.sourceBox.height,
+    ),
+  )
+  let width = Math.max(1, Math.ceil(input.sourceBox.width * sourceScaleX))
+  let height = Math.max(1, Math.ceil(input.sourceBox.height * sourceScaleY))
+  const maximumPixels = 16_000_000
+  const maximumDimension = 4096
+  const reduction = Math.min(
+    1,
+    maximumDimension / Math.max(width, height),
+    Math.sqrt(maximumPixels / (width * height)),
+  )
+  width = Math.max(1, Math.floor(width * reduction))
+  height = Math.max(1, Math.floor(height * reduction))
+  const pixels = new Uint8Array(width * height * 4).fill(255)
+  const outputScaleX = width / input.sourceBox.width
+  const outputScaleY = height / input.sourceBox.height
+  for (const fragment of decoded) {
+    const left = Math.round(
+      (fragment.sourceBox.x - input.sourceBox.x) * outputScaleX,
+    )
+    const top = Math.round(
+      (fragment.sourceBox.y - input.sourceBox.y) * outputScaleY,
+    )
+    const fragmentWidth = Math.max(
+      1,
+      Math.round(fragment.sourceBox.width * outputScaleX),
+    )
+    const fragmentHeight = Math.max(
+      1,
+      Math.round(fragment.sourceBox.height * outputScaleY),
+    )
+    for (let y = 0; y < fragmentHeight; y += 1) {
+      const targetY = top + y
+      if (targetY < 0 || targetY >= height) continue
+      const sourceY = Math.min(
+        fragment.decoded.height - 1,
+        Math.floor((y * fragment.decoded.height) / fragmentHeight),
+      )
+      for (let x = 0; x < fragmentWidth; x += 1) {
+        const targetX = left + x
+        if (targetX < 0 || targetX >= width) continue
+        const sourceX = Math.min(
+          fragment.decoded.width - 1,
+          Math.floor((x * fragment.decoded.width) / fragmentWidth),
+        )
+        const sourceOffset = (sourceY * fragment.decoded.width + sourceX) * 4
+        const targetOffset = (targetY * width + targetX) * 4
+        const alpha = fragment.decoded.pixels[sourceOffset + 3] / 255
+        if (alpha === 0) continue
+        for (let channel = 0; channel < 3; channel += 1) {
+          pixels[targetOffset + channel] = Math.round(
+            fragment.decoded.pixels[sourceOffset + channel] * alpha +
+              pixels[targetOffset + channel] * (1 - alpha),
+          )
+        }
+        pixels[targetOffset + 3] = 255
+      }
+    }
+  }
+  return createCompositePngAsset({
+    sourceObjectIds: input.fragments.map((fragment) => fragment.sourceObjectId),
+    sourceBoxes: input.fragments.map((fragment) => fragment.sourceBox),
+    width,
+    height,
+    pixels,
+  })
+}
+
+export async function createHeadlessCompositeSvgAsset(input: {
+  sourceBox: NormalizedSourceBox
+  fragments: Array<{
+    sourceObjectId: string
+    sourceBox: NormalizedSourceBox
+    asset: PdfVisualAsset
+  }>
+}) {
+  if (
+    input.fragments.length < 2 ||
+    input.fragments.some(
+      (fragment) =>
+        fragment.sourceBox.page !== input.sourceBox.page ||
+        !fragment.asset.mediaType.startsWith('image/') ||
+        fragment.asset.rendition !== 'source-preserved' ||
+        fragment.asset.bytes.byteLength === 0,
+    )
+  ) {
+    throw new Error(
+      'Headless SVG composites require same-page preserved image fragments',
+    )
+  }
+  const scale = 1000
+  const width = Math.max(1, input.sourceBox.width * scale)
+  const height = Math.max(1, input.sourceBox.height * scale)
+  const content = input.fragments
+    .map((fragment) => {
+      const x = rounded((fragment.sourceBox.x - input.sourceBox.x) * scale)
+      const y = rounded((fragment.sourceBox.y - input.sourceBox.y) * scale)
+      const fragmentWidth = rounded(fragment.sourceBox.width * scale)
+      const fragmentHeight = rounded(fragment.sourceBox.height * scale)
+      const href = `data:${fragment.asset.mediaType};base64,${base64(fragment.asset.bytes)}`
+      return `<image href="${xml(href)}" x="${x}" y="${y}" width="${fragmentWidth}" height="${fragmentHeight}" preserveAspectRatio="none" />`
+    })
+    .join('')
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${rounded(width)} ${rounded(height)}" role="img" data-pdf-composite="true">${content}</svg>\n`
+  return asset({
+    bytes: strToU8(svg),
+    mediaType: 'image/svg+xml',
+    kind: 'vector',
+    rendition: 'source-preserved',
+    width,
+    height,
+    resolutionDpi: null,
+    sourceObjectIds: input.fragments.map((fragment) => fragment.sourceObjectId),
+    sourceBoxes: input.fragments.map((fragment) => fragment.sourceBox),
   })
 }
 
@@ -329,7 +676,7 @@ export async function createVectorSvgAsset(input: {
     bytes: strToU8(svg),
     mediaType: 'image/svg+xml',
     kind: 'vector',
-    rendition: 'source-preserved',
+    rendition: 'bounded-svg-fallback',
     width: input.viewBox.width,
     height: input.viewBox.height,
     resolutionDpi: null,
@@ -346,15 +693,27 @@ export async function createTextSvgAsset(input: {
   pageWidth: number
   pageHeight: number
 }) {
-  const width = Math.max(1, input.sourceBox.width * input.pageWidth)
-  const height = Math.max(1, input.sourceBox.height * input.pageHeight)
-  const content = input.lines
-    .flatMap((line) => line.runs)
+  const runs = input.lines.flatMap((line) => line.runs)
+  const left = Math.min(input.sourceBox.x, ...runs.map((run) => run.x))
+  const top = Math.min(input.sourceBox.y, ...runs.map((run) => run.y))
+  const right = Math.max(
+    input.sourceBox.x + input.sourceBox.width,
+    ...runs.map((run) => run.x + run.width),
+  )
+  const bottom = Math.max(
+    input.sourceBox.y + input.sourceBox.height,
+    ...runs.map((run) => run.y + run.height),
+  )
+  // PDF text boxes commonly stop at the baseline. A fixed one-point inset is
+  // enough to preserve superscript/subscript and descender ink without
+  // guessing at font metrics or changing the source lineage box.
+  const inset = 1
+  const width = Math.max(1, (right - left) * input.pageWidth + inset * 2)
+  const height = Math.max(1, (bottom - top) * input.pageHeight + inset * 2)
+  const content = runs
     .map((run) => {
-      const x = rounded((run.x - input.sourceBox.x) * input.pageWidth)
-      const y = rounded(
-        (run.y - input.sourceBox.y) * input.pageHeight + run.fontSize,
-      )
+      const x = rounded((run.x - left) * input.pageWidth + inset)
+      const y = rounded((run.y - top) * input.pageHeight + run.fontSize + inset)
       return `<text x="${x}" y="${y}" font-size="${rounded(run.fontSize)}">${xml(run.text)}</text>`
     })
     .join('')
@@ -373,8 +732,19 @@ export async function createTextSvgAsset(input: {
 }
 
 function tableRows(lines: PdfRegionLine[]) {
-  const rows = lines.map((line) =>
-    [...line.runs]
+  const bands: PdfRegionLine[][] = []
+  for (const line of [...lines].sort(
+    (left, right) => left.box.y - right.box.y,
+  )) {
+    const band = bands.find(
+      (candidate) => Math.abs(candidate[0].box.y - line.box.y) <= 0.004,
+    )
+    if (band) band.push(line)
+    else bands.push([line])
+  }
+  const rows = bands.map((band) =>
+    band
+      .flatMap((line) => line.runs)
       .filter((run) => run.text.trim())
       .sort((left, right) => left.x - right.x),
   )
@@ -389,13 +759,57 @@ function tableRows(lines: PdfRegionLine[]) {
   }
   const anchors = rows[0].map((run) => run.x)
   if (
-    rows.some((row) =>
-      row.some((run, index) => Math.abs(run.x - anchors[index]) > 0.035),
+    rows.some(
+      (row) =>
+        row.some((run, index) => Math.abs(run.x - anchors[index]) > 0.035) ||
+        row.slice(1).some((run, index) => {
+          const previous = row[index]
+          return run.x - (previous.x + previous.width) < 0.012
+        }),
     )
   ) {
     return null
   }
   return rows
+}
+
+export type CanonicalTable = {
+  rows: Array<{
+    cells: Array<{
+      text: string
+      headerScope: 'column' | 'row' | null
+      columnSpan: number
+      rowSpan: number
+    }>
+  }>
+}
+
+function hasExplicitHeaderStyle(run: PdfRegionLine['runs'][number]) {
+  return run.bold === true || /(?:bold|black|demi|semibold)/i.test(run.fontName)
+}
+
+export function canonicalTableFromLines(
+  lines: PdfRegionLine[],
+): CanonicalTable | null {
+  const rows = tableRows(lines)
+  if (!rows) return null
+  const headerRuns = rows[0]
+  const explicitHeader = headerRuns.every(hasExplicitHeaderStyle)
+  const bodyHasNonHeaderStyle = rows
+    .slice(1)
+    .flat()
+    .some((run) => !hasExplicitHeaderStyle(run))
+  if (!explicitHeader || !bodyHasNonHeaderStyle) return null
+  return {
+    rows: rows.map((row, rowIndex) => ({
+      cells: row.map((cell) => ({
+        text: cell.text,
+        headerScope: rowIndex === 0 ? 'column' : null,
+        columnSpan: 1,
+        rowSpan: 1,
+      })),
+    })),
+  }
 }
 
 export async function createTableAsset(input: {
@@ -405,11 +819,11 @@ export async function createTableAsset(input: {
   pageWidth: number
   pageHeight: number
 }) {
-  const rows = tableRows(input.lines)
-  if (!rows) return createTextSvgAsset({ ...input, kind: 'table' })
-  const [head, ...body] = rows
+  const table = canonicalTableFromLines(input.lines)
+  if (!table) return null
+  const [head, ...body] = table.rows
   const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="UTF-8" /><title>Source table</title></head><body><table><thead><tr>${head.map((cell) => `<th scope="col">${xml(cell.text)}</th>`).join('')}</tr></thead><tbody>${body.map((row) => `<tr>${row.map((cell) => `<td>${xml(cell.text)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="UTF-8" /><title>Source table</title></head><body><table><thead><tr>${head.cells.map((cell) => `<th scope="col">${xml(cell.text)}</th>`).join('')}</tr></thead><tbody>${body.map((row) => `<tr>${row.cells.map((cell) => `<td>${xml(cell.text)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>
 `
   return asset({
     bytes: strToU8(xhtml),

@@ -186,6 +186,9 @@ function inferredBoxes(
   relationship?: PdfNoteRelationship,
 ) {
   if (diagnostic.sourceBoxes?.length) return diagnostic.sourceBoxes
+  if (diagnostic.noteMarkerClassification) {
+    return [diagnostic.noteMarkerClassification.sourceBox]
+  }
   if (relationship) {
     return [
       ...relationship.sourceBoxes,

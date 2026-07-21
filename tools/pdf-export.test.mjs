@@ -1,12 +1,14 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  chmod,
   copyFile,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   rm,
+  writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -16,9 +18,10 @@ import { createPdfPipeline } from './pdf-corpus-audit-lib.mjs'
 let pipeline
 let exportModules
 
-function runExport(arguments_) {
+function runExport(arguments_, options = {}) {
   return spawnSync(process.execPath, ['tools/pdf-export.mjs', ...arguments_], {
     encoding: 'utf8',
+    env: options.env ?? process.env,
     timeout: 120_000,
   })
 }
@@ -56,7 +59,7 @@ describe('headless PDF export', () => {
       expect(secondResult.status, secondResult.stderr).toBe(0)
       const report = JSON.parse(firstResult.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.1.0',
+        schemaVersion: '1.4.0',
         summary: {
           documents: 1,
           ready: 1,
@@ -118,6 +121,56 @@ describe('headless PDF export', () => {
       await rm(directory, { recursive: true, force: true })
     }
   }, 120_000)
+
+  it('treats EPUBCheck warnings as validation failures', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-epubcheck-'))
+    const binaryDirectory = join(directory, 'bin')
+    const argumentsLog = join(directory, 'epubcheck-arguments.jsonl')
+    const output = join(directory, 'output')
+    try {
+      await mkdir(binaryDirectory)
+      const fakeEpubCheck = join(binaryDirectory, 'epubcheck')
+      await writeFile(
+        fakeEpubCheck,
+        `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs')
+if (process.argv.includes('--version')) process.exit(0)
+appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+`,
+      )
+      await chmod(fakeEpubCheck, 0o755)
+
+      const result = runExport(
+        [
+          'tests/fixtures/pdf/born-digital.pdf',
+          '--target',
+          'paperPro',
+          '--out',
+          output,
+        ],
+        {
+          env: {
+            ...process.env,
+            EPUBCHECK_ARGUMENTS_LOG: argumentsLog,
+            PATH: `${binaryDirectory}:${process.env.PATH ?? ''}`,
+          },
+        },
+      )
+
+      expect(result.status, result.stderr).toBe(0)
+      const invocations = (await readFile(argumentsLog, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(invocations).toHaveLength(1)
+      expect(invocations[0]).toEqual([
+        '--failonwarnings',
+        expect.stringMatching(/publication\.epub$/),
+      ])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 
   it('fails closed with a private corpus report and no partial EPUB', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-scan-'))

@@ -52,6 +52,7 @@ export type ScholarlyReadingOrderFixture = {
   ambiguityClass: AmbiguityClass
   pages: PdfPageAnalysis[]
   expectedNodeText: string[]
+  expectedListMarkers?: string[]
   expectedEvidence: string[]
 }
 
@@ -125,11 +126,12 @@ export const scholarlyReadingOrderFixtures: ScholarlyReadingOrderFixture[] = [
     ],
     expectedNodeText: [
       'References',
-      '[1] Left reference one.',
-      '[2] Left reference two.',
-      '[3] Right reference one.',
-      '[4] Right reference two.',
+      'Left reference one.',
+      'Left reference two.',
+      'Right reference one.',
+      'Right reference two.',
     ],
+    expectedListMarkers: ['[1]', '[2]', '[3]', '[4]'],
     expectedEvidence: ['font-metrics', 'indentation-continuity'],
   },
   {

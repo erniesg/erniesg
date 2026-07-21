@@ -27,7 +27,17 @@ const inlineRun = z
     bold: z.boolean().optional(),
     italic: z.boolean().optional(),
     href: z.string().min(1).optional(),
+    verticalAlign: z.enum(['superscript', 'subscript']).optional(),
     relationshipId: canonicalId.optional(),
+    semanticRole: z
+      .enum([
+        'citation',
+        'cross-reference',
+        'affiliation-marker',
+        'bibliography-entry',
+      ])
+      .optional(),
+    targetIds: z.array(canonicalId).optional(),
   })
   .strict()
 
@@ -36,6 +46,19 @@ const listContext = z
     level: z.number().int().min(1).max(9),
     ordered: z.boolean(),
     numberingId: canonicalId,
+    markerStyle: z
+      .enum([
+        'decimal',
+        'lower-roman',
+        'upper-roman',
+        'lower-alpha',
+        'upper-alpha',
+        'disc',
+      ])
+      .optional(),
+    ordinal: z.number().int().positive().optional(),
+    markerText: z.string().min(1).optional(),
+    continuedFromPreviousPage: z.boolean().optional(),
   })
   .strict()
 
@@ -91,7 +114,7 @@ const figureNode = canonicalNodeBase
                     z
                       .object({
                         text: z.string(),
-                        header: z.boolean(),
+                        headerScope: z.enum(['column', 'row']).nullable(),
                         columnSpan: z.number().int().positive(),
                         rowSpan: z.number().int().positive(),
                       })
@@ -119,6 +142,7 @@ const footnoteNode = canonicalNodeBase
     type: z.literal('footnote'),
     kind: z.enum(['footnote', 'endnote']),
     label: z.string().min(1),
+    markerText: z.string().min(1).optional(),
     text: z.string().min(1),
     relationships: z
       .object({
@@ -136,6 +160,7 @@ const researchPaperBaseSchema = z
     title: z.string().min(1),
     subtitle: z.string().min(1),
     authors: z.array(z.string().min(1)).min(1),
+    affiliations: z.array(z.string().min(1)).optional(),
     updated: z.string().date(),
     abstract: z.string().min(1),
     nodes: z
@@ -241,6 +266,87 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
           path: ['nodes', index, 'table'],
           message: 'Structured table data must accompany only table figures',
         })
+      }
+      if (node.type === 'figure' && node.table) {
+        const occupied = node.table.rows.map(() => [] as boolean[])
+        let invalidSpanTopology = false
+        for (const [rowIndex, row] of node.table.rows.entries()) {
+          let columnIndex = 0
+          for (const cell of row.cells) {
+            while (occupied[rowIndex][columnIndex]) columnIndex += 1
+            for (
+              let targetRow = rowIndex;
+              targetRow < rowIndex + cell.rowSpan;
+              targetRow += 1
+            ) {
+              if (targetRow >= occupied.length) {
+                invalidSpanTopology = true
+                continue
+              }
+              for (
+                let targetColumn = columnIndex;
+                targetColumn < columnIndex + cell.columnSpan;
+                targetColumn += 1
+              ) {
+                if (occupied[targetRow][targetColumn]) {
+                  invalidSpanTopology = true
+                }
+                occupied[targetRow][targetColumn] = true
+              }
+            }
+            columnIndex += cell.columnSpan
+          }
+        }
+        const columnCount = Math.max(0, ...occupied.map((row) => row.length))
+        if (
+          occupied.some(
+            (row) =>
+              row.length !== columnCount ||
+              Array.from(
+                { length: columnCount },
+                (_, column) => row[column],
+              ).some((filled) => !filled),
+          )
+        ) {
+          invalidSpanTopology = true
+        }
+        if (invalidSpanTopology) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes', index, 'table', 'rows'],
+            message:
+              'Structured table cells must form a complete rectangular span grid',
+          })
+        }
+
+        const headerRowCount = node.table.rows.findIndex(
+          (row) => !row.cells.every((cell) => cell.headerScope === 'column'),
+        )
+        const boundary =
+          headerRowCount === -1 ? node.table.rows.length : headerRowCount
+        for (let rowIndex = 0; rowIndex < boundary; rowIndex += 1) {
+          for (const [cellIndex, cell] of node.table.rows[
+            rowIndex
+          ].cells.entries()) {
+            if (rowIndex + cell.rowSpan > boundary) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [
+                  'nodes',
+                  index,
+                  'table',
+                  'rows',
+                  rowIndex,
+                  'cells',
+                  cellIndex,
+                  'rowSpan',
+                ],
+                message:
+                  'Table cell rowspan must not cross the header/body row-group boundary',
+              })
+            }
+          }
+        }
       }
     }
     for (const [index, node] of paper.nodes.entries()) {

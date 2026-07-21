@@ -1,5 +1,6 @@
 import type {
   NormalizedSourceBox,
+  PdfLineBoundaryDecision,
   PdfPageAnalysis,
   PdfPageRegion,
   PdfReadingOrderAmbiguityClass,
@@ -12,7 +13,13 @@ import type {
   PdfRegionKind,
   PdfRegionLine,
 } from './import-types'
-import { groupRunsIntoLines, type PdfTextLine } from './pdf-lines'
+import {
+  groupRunsIntoLines,
+  inlineHardHyphenLexicon,
+  inlineUnhyphenatedLexicon,
+  joinPdfLineTexts,
+  type PdfTextLine,
+} from './pdf-lines'
 
 type ClassifiedLine = PdfTextLine & {
   id: string
@@ -200,6 +207,113 @@ function preclassifyMarginNotes(
     ) {
       line.kind = 'side'
       line.confidence = 0.9
+    }
+  }
+}
+
+function endsCaptionSentence(text: string) {
+  return /[.!?][”’'"\])}]*$/u.test(text.trim())
+}
+
+function captionContinuationGeometry(
+  seed: ClassifiedLine,
+  previous: ClassifiedLine,
+  candidate: ClassifiedLine,
+) {
+  if (candidate.page !== seed.page || candidate.kind !== 'body') return false
+  if (candidate.y <= previous.y + previous.height * 0.35) return false
+
+  const gap = candidate.y - (previous.y + previous.height)
+  const maximumGap = Math.max(
+    0.006,
+    Math.max(previous.height, candidate.height) * 0.72,
+  )
+  if (gap < -0.004 || gap > maximumGap) return false
+
+  const fontRatio =
+    Math.max(seed.fontSize, candidate.fontSize) /
+    Math.max(1, Math.min(seed.fontSize, candidate.fontSize))
+  if (fontRatio > 1.12) return false
+
+  const intersection = Math.max(
+    0,
+    Math.min(seed.x + seed.width, candidate.x + candidate.width) -
+      Math.max(seed.x, candidate.x),
+  )
+  const overlapRatio =
+    intersection / Math.max(0.001, Math.min(seed.width, candidate.width))
+  const alignmentTolerance = Math.max(0.025, seed.height * 1.6)
+  const aligned =
+    Math.abs(candidate.x - seed.x) <= alignmentTolerance ||
+    Math.abs(candidate.x + candidate.width - (seed.x + seed.width)) <=
+      alignmentTolerance ||
+    Math.abs(candidate.x + candidate.width / 2 - (seed.x + seed.width / 2)) <=
+      alignmentTolerance
+  return overlapRatio >= 0.72 && aligned
+}
+
+/**
+ * PDF text extraction marks only the label-bearing first line of a wrapped
+ * caption. Promote its geometrically continuous wrap lines before column
+ * classification so a page-spanning table caption does not become a separate
+ * `spanning` prose region. The chain stops at whitespace, font, alignment, and
+ * paragraph-boundary evidence rather than consuming the following body flow.
+ */
+function promoteCaptionContinuations(lines: ClassifiedLine[]) {
+  const claimed = new Set<string>()
+  const seeds = lines
+    .filter((line) => line.kind === 'caption')
+    .sort((left, right) => left.y - right.y || left.x - right.x)
+
+  for (const seed of seeds) {
+    let previous = seed
+    const alignmentTolerance = Math.max(0.025, seed.height * 1.6)
+    let widestLine = Math.max(
+      seed.width,
+      ...lines
+        .filter((line) => {
+          const fontRatio =
+            Math.max(seed.fontSize, line.fontSize) /
+            Math.max(1, Math.min(seed.fontSize, line.fontSize))
+          return (
+            line.page === seed.page &&
+            fontRatio <= 1.12 &&
+            Math.abs(line.x - seed.x) <= alignmentTolerance
+          )
+        })
+        .map((line) => line.width),
+    )
+    while (true) {
+      const previousIsShortConclusion =
+        endsCaptionSentence(previous.text) && previous.width < widestLine * 0.82
+      if (previousIsShortConclusion) break
+
+      const candidate = lines
+        .filter(
+          (line) =>
+            !claimed.has(line.id) &&
+            captionContinuationGeometry(seed, previous, line),
+        )
+        .sort(
+          (left, right) =>
+            left.y - right.y ||
+            Math.abs(left.x - seed.x) - Math.abs(right.x - seed.x),
+        )[0]
+      if (!candidate) break
+
+      const paragraphIndent = candidate.x - seed.x
+      if (
+        endsCaptionSentence(previous.text) &&
+        paragraphIndent > Math.max(0.018, seed.height * 1.25)
+      ) {
+        break
+      }
+
+      candidate.kind = 'caption'
+      candidate.confidence = Math.min(seed.confidence, candidate.confidence)
+      claimed.add(candidate.id)
+      widestLine = Math.max(widestLine, candidate.width)
+      previous = candidate
     }
   }
 }
@@ -543,18 +657,60 @@ function joinsRegion(previous: ClassifiedLine, line: ClassifiedLine) {
     return false
   }
   if (line.kind === 'chart-label' || line.kind === 'page-number') return false
+  if (
+    previous.page === 1 &&
+    previous.y < 0.3 &&
+    /(?:,|\s(?:and|&)\s)/i.test(previous.text) &&
+    /(?:university|institute|department|laborator(?:y|ies)|\blab\b|school|college|centre|center|hospital|academy|research group)/i.test(
+      line.text,
+    )
+  ) {
+    return false
+  }
+  const listItem =
+    /^(?:\[\s*\d+\s*\]|\(\s*(?:\d+|[A-Za-z]|[ivxlcdm]+)\s*\)|(?:\d+|[A-Za-z]|[ivxlcdm]+)[.)])\s+/i
+  if (listItem.test(line.text.trim())) {
+    return false
+  }
   const gap = line.y - (previous.y + previous.height)
   const fontRatio =
     Math.max(previous.fontSize, line.fontSize) /
     Math.max(1, Math.min(previous.fontSize, line.fontSize))
+  if (gap < -0.004 || fontRatio > 1.18) return false
+  const lineHeight = Math.max(previous.height, line.height)
+  return gap <= Math.max(0.014, lineHeight * 1.25)
+}
+
+function beginsRepeatedFirstLineIndent(
+  group: ClassifiedLine[],
+  line: ClassifiedLine,
+) {
+  if (group.length < 2) return false
+  const first = group[0]
+  const previous = group.at(-1)!
+  if (
+    line.page !== first.page ||
+    line.kind !== first.kind ||
+    line.column !== first.column
+  ) {
+    return false
+  }
+  const continuationX = median(group.slice(1).map((candidate) => candidate.x))
+  const indent = first.x - continuationX
+  const tolerance = Math.max(0.007, first.height * 0.45)
   return (
-    gap >= -0.004 &&
-    gap <= Math.max(0.024, Math.max(previous.height, line.height) * 1.6) &&
-    fontRatio <= 1.2
+    indent >= Math.max(0.018, first.height) &&
+    Math.abs(line.x - first.x) <= tolerance &&
+    Math.abs(previous.x - continuationX) <= tolerance
   )
 }
 
-function makeRegions(lines: ClassifiedLine[]) {
+function makeRegions(
+  lines: ClassifiedLine[],
+  hardHyphenLexicon: ReadonlySet<string>,
+  unhyphenatedLexicon: ReadonlySet<string>,
+  lineBoundaryDecisions: PdfLineBoundaryDecision[],
+) {
   const groups: ClassifiedLine[][] = []
   const ordered = [...lines].sort(
     (left, right) =>
@@ -566,7 +722,12 @@ function makeRegions(lines: ClassifiedLine[]) {
   for (const line of ordered) {
     const previousGroup = groups.at(-1)
     const previous = previousGroup?.at(-1)
-    if (previous && joinsRegion(previous, line)) previousGroup!.push(line)
+    if (
+      previous &&
+      !beginsRepeatedFirstLineIndent(previousGroup!, line) &&
+      joinsRegion(previous, line)
+    )
+      previousGroup!.push(line)
     else groups.push([line])
   }
 
@@ -581,6 +742,7 @@ function makeRegions(lines: ClassifiedLine[]) {
     const page = group[0].page
     const number = (pageCounters.get(page) ?? 0) + 1
     pageCounters.set(page, number)
+    const id = `page-${String(page).padStart(3, '0')}-region-${String(number).padStart(3, '0')}`
     const regionLines = group.map<PdfRegionLine>((line) => ({
       id: line.id,
       text: line.text,
@@ -590,11 +752,16 @@ function makeRegions(lines: ClassifiedLine[]) {
     }))
     const kind = group[0].kind
     return {
-      id: `page-${String(page).padStart(3, '0')}-region-${String(number).padStart(3, '0')}`,
+      id,
       page,
       kind,
       column: group[0].column,
-      text: group.map((line) => line.text).join(' '),
+      text: joinPdfLineTexts(group, {
+        hardHyphenLexicon,
+        unhyphenatedLexicon,
+        regionId: id,
+        decisions: lineBoundaryDecisions,
+      }),
       confidence: rounded(Math.min(...group.map((line) => line.confidence))),
       box: unionBox(regionLines),
       lines: regionLines,
@@ -692,16 +859,16 @@ function orderPageRegions(regions: PdfPageRegion[], layout: ColumnLayout) {
     .sort((left, right) => left.box.y - right.box.y)
   const columnFlow = flow.filter((region) => region.column !== 'span')
   const ordered: PdfPageRegion[] = []
-  let boundary = Number.NEGATIVE_INFINITY
+  const emitted = new Set<string>()
   for (const span of spanning) {
     const band = columnFlow.filter(
-      (region) => region.box.y >= boundary && region.box.y < span.box.y,
+      (region) => !emitted.has(region.id) && region.box.y < span.box.y,
     )
     ordered.push(...columnOrdered(band), span)
-    boundary = span.box.y + span.box.height
+    for (const region of band) emitted.add(region.id)
   }
   ordered.push(
-    ...columnOrdered(columnFlow.filter((region) => region.box.y >= boundary)),
+    ...columnOrdered(columnFlow.filter((region) => !emitted.has(region.id))),
     ...columnOrdered(notes),
   )
   return ordered
@@ -743,7 +910,10 @@ function edgeEvidence(from: PdfPageRegion, to: PdfPageRegion) {
   }
 }
 
-function hasAcceptedCycle(regionIds: string[], edges: PdfReadingOrderEdge[]) {
+export function hasAcceptedCycle(
+  regionIds: string[],
+  edges: PdfReadingOrderEdge[],
+) {
   const outgoing = new Map<string, string[]>()
   for (const edge of edges.filter(
     (candidate) => candidate.status === 'accepted',
@@ -752,18 +922,28 @@ function hasAcceptedCycle(regionIds: string[], edges: PdfReadingOrderEdge[]) {
     targets.push(edge.to)
     outgoing.set(edge.from, targets)
   }
-  const visiting = new Set<string>()
-  const visited = new Set<string>()
-  const visit = (id: string): boolean => {
-    if (visiting.has(id)) return true
-    if (visited.has(id)) return false
-    visiting.add(id)
-    if ((outgoing.get(id) ?? []).some(visit)) return true
-    visiting.delete(id)
-    visited.add(id)
-    return false
+  const state = new Map<string, 'visiting' | 'visited'>()
+  for (const root of regionIds) {
+    if (state.has(root)) continue
+    state.set(root, 'visiting')
+    const stack = [{ id: root, nextTarget: 0 }]
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!
+      const targets = outgoing.get(frame.id) ?? []
+      if (frame.nextTarget >= targets.length) {
+        state.set(frame.id, 'visited')
+        stack.pop()
+        continue
+      }
+      const target = targets[frame.nextTarget]
+      frame.nextTarget += 1
+      if (state.get(target) === 'visiting') return true
+      if (state.get(target) === 'visited') continue
+      state.set(target, 'visiting')
+      stack.push({ id: target, nextTarget: 0 })
+    }
   }
-  return regionIds.some(visit)
+  return false
 }
 
 function buildReadingOrder(
@@ -910,6 +1090,8 @@ export function evaluateReadingOrder(
 
 export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
   const rawLines = pages.map(groupRunsIntoLines)
+  const hardHyphenLexicon = inlineHardHyphenLexicon(rawLines.flat())
+  const unhyphenatedLexicon = inlineUnhyphenatedLexicon(rawLines.flat())
   const repeated = repeatedMarginKeys(rawLines)
   const classified: ClassifiedLine[] = []
   const layouts = new Map<number, ColumnLayout>()
@@ -945,12 +1127,24 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
           kind = 'footnote'
           confidence = explicitFootnote ? 0.98 : 0.9
         } else if (
+          page.page === 1 &&
+          /^arxiv:\s*\d{4}\.\d{4,5}(?:v\d+)?\b/i.test(normalized) &&
+          line.width >= 0.45 &&
+          line.height <= 0.04 &&
+          line.fontSize >= 16
+        ) {
+          kind = 'side'
+          confidence = 0.99
+        } else if (
           (line.y <= 0.1 || line.y + line.height >= 0.9) &&
           /^(?:\d{1,4}|[ivxlcdm]+)$/i.test(normalized)
         ) {
           kind = 'page-number'
           confidence = 0.98
-        } else if (repeated.has(normalizeMarginText(line.text))) {
+        } else if (
+          (line.y <= 0.08 || line.y + line.height >= 0.92) &&
+          repeated.has(normalizeMarginText(line.text))
+        ) {
           kind = line.y < 0.5 ? 'header' : 'footer'
           confidence = 0.99
         } else if (line.y <= 0.08 && line.fontSize <= fontSize * 0.9) {
@@ -963,7 +1157,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
           kind = 'footer'
           confidence = 0.78
         } else if (
-          /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)\b|figure\s*[:.-])/i.test(
+          /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)(?:\s*[.:–—-]|\s*$)|figure\s*[:.–—-])/i.test(
             normalized,
           )
         ) {
@@ -979,7 +1173,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         } else if (
           line.fontSize <= fontSize * 0.82 &&
           normalized.length <= 32 &&
-          /(?:%|^[-+]?\d+(?:\.\d+)?$|^[A-Za-z]{1,12}$)/.test(normalized)
+          /(?:%|^[-+]?\d+(?:\.\d+)?$|^[A-Za-z]{2,12}$)/.test(normalized)
         ) {
           kind = 'chart-label'
           confidence = 0.82
@@ -994,6 +1188,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         }
       })
 
+    promoteCaptionContinuations(preliminary)
     preclassifyMarginNotes(preliminary, fontSize)
     const spreadBoundary =
       page.spread?.status === 'split' ? page.spread.boundary : null
@@ -1021,6 +1216,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         line.confidence = layout.accepted ? 0.95 : 0.58
       } else if (
         line.kind === 'body' &&
+        !/^\p{L}$/u.test(normalizedNoteLabel(line.text)) &&
         line.fontSize <= fontSize * 0.85 &&
         line.text.length <= 120 &&
         Math.abs(line.x - commonX) > Math.max(0.18, line.width * 0.8)
@@ -1054,8 +1250,14 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
     }
   }
 
+  const lineBoundaryDecisions: PdfLineBoundaryDecision[] = []
   const regions = [
-    ...makeRegions(classified),
+    ...makeRegions(
+      classified,
+      hardHyphenLexicon,
+      unhyphenatedLexicon,
+      lineBoundaryDecisions,
+    ),
     ...makeObjectRegions(pages, layouts),
   ].sort(
     (left, right) =>
@@ -1067,6 +1269,10 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
   const readingOrder = buildReadingOrder(regions, layouts)
   return {
     regions,
+    lineBoundaryDecisions,
+    unresolvedCorruptingJoinCount: lineBoundaryDecisions.filter(
+      (decision) => decision.outcome === 'unresolved',
+    ).length,
     readingOrder,
     repeatedMarginCount: repeated.size,
     ambiguousPages: [...layouts.entries()]

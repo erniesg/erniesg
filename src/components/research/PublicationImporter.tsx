@@ -17,7 +17,11 @@ import {
   upsertHumanDecision,
   type HumanDecisionFile,
 } from '../../research/decision-record'
-import { buildEpub, type EpubExport } from '../../research/epub'
+import {
+  buildEpub,
+  buildReadableEpub,
+  type EpubExport,
+} from '../../research/epub'
 import {
   buildDiagnosticOverlayDocument,
   DIAGNOSTIC_OVERLAY_PALETTE,
@@ -32,10 +36,18 @@ import type {
   ReconstructionDiagnostic,
 } from '../../research/import-types'
 import { DocxImportError, PdfImportError } from '../../research/import-types'
+import {
+  buildPdfLineJoinReviewContext,
+  type PdfLineJoinReviewContext,
+} from '../../research/pdf-lines'
 import { downloadLinkedPdf } from '../../research/pdf-url'
 import { getTargetProfile } from '../../research/targets'
 import EpubDownloadLink from './EpubDownloadLink'
-import ResearchStudio from './ResearchStudio'
+import EpubRenditionPreview, {
+  epubPreviewArtifactKey,
+  selectCurrentProfileEpub,
+  type PreviewProfileId,
+} from './EpubRenditionPreview'
 import './PublicationImporter.css'
 
 type StudioState =
@@ -65,6 +77,27 @@ const initialProgress: DocumentImportProgress = {
 function formatBytes(value: number) {
   if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KB`
   return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function epubDownloadLabel(epub: EpubExport) {
+  const target =
+    epub.profile?.id === 'paperPro'
+      ? 'Paper Pro EPUB'
+      : epub.profile?.id === 'paperProMove'
+        ? 'Paper Pro Move EPUB'
+        : epub.profile?.id === 'mobile'
+          ? 'Mobile EPUB'
+          : 'EPUB'
+  return epub.mode === 'readable-fallback'
+    ? `Download readable ${target} (review recommended)`
+    : `Download ${target}`
+}
+
+export function isSelectedEpubPreviewReady(
+  epub: EpubExport,
+  readyArtifactKey?: string,
+) {
+  return readyArtifactKey === epubPreviewArtifactKey(epub)
 }
 
 function PdfPageRaster({ file, page }: { file: File; page: number }) {
@@ -247,6 +280,150 @@ function AdjudicationControls({
     )
   }
   return null
+}
+
+type LineJoinChoice = Extract<
+  HumanAdjudicationRecord['resolution'],
+  { type: 'resolve-line-join' }
+>['outcome']
+
+export function LineJoinAdjudicationCard({
+  context,
+  selectedOutcome,
+  onDecision,
+}: {
+  context: PdfLineJoinReviewContext
+  selectedOutcome?: LineJoinChoice
+  onDecision: (outcome: LineJoinChoice) => void
+}) {
+  const choices: Array<{ outcome: LineJoinChoice; label: string }> = [
+    { outcome: 'remove-wrap-hyphen', label: 'Remove wrap hyphen' },
+    {
+      outcome: 'preserve-authored-hyphen',
+      label: 'Preserve authored hyphen',
+    },
+    { outcome: 'leave-unresolved', label: 'Leave unresolved' },
+  ]
+  return (
+    <section
+      className="pdf-diagnostic-selection"
+      aria-label={`Line transition ${context.identity.transitionId}`}
+    >
+      <h4>Line-join review · page {context.page}</h4>
+      <p>
+        Compare the two adjacent source lines. The displayed text is bounded,
+        remains on this device, and is not written to the decision JSON.
+      </p>
+      <ol>
+        <li>
+          <strong>{context.identity.fromLineId}</strong>
+          <span>{context.from.text}</span>
+        </li>
+        <li>
+          <strong>{context.identity.toLineId}</strong>
+          <span>{context.to.text}</span>
+        </li>
+      </ol>
+      <div className="publication-adjudication-options">
+        {choices.map((choice) => (
+          <button
+            key={choice.outcome}
+            type="button"
+            aria-pressed={selectedOutcome === choice.outcome ? true : undefined}
+            onClick={() => onDecision(choice.outcome)}
+          >
+            {choice.label}
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function LineJoinAdjudicationReview({
+  baseResult,
+  result,
+  onDecision,
+}: {
+  baseResult: PdfReconstruction
+  result: PdfReconstruction
+  onDecision: (decision: HumanAdjudicationRecord) => void
+}) {
+  const contexts = baseResult.lineBoundaryDecisions.flatMap((transition) => {
+    if (transition.outcome !== 'unresolved') return []
+    const region = baseResult.regions.find(
+      (candidate) => candidate.id === transition.regionId,
+    )
+    const context = region
+      ? buildPdfLineJoinReviewContext(region, transition)
+      : null
+    return context ? [{ context, transition }] : []
+  })
+  if (contexts.length === 0) return null
+
+  return (
+    <section
+      className="pdf-diagnostic-inspector"
+      aria-labelledby="pdf-line-join-review-heading"
+    >
+      <div className="pdf-diagnostic-inspector__heading">
+        <div>
+          <span>Owner-local adjudication</span>
+          <h3 id="pdf-line-join-review-heading">Line-join review</h3>
+          <p>
+            {contexts.length} source line transition
+            {contexts.length === 1 ? '' : 's'} need an explicit choice. Nothing
+            is selected automatically.
+          </p>
+        </div>
+      </div>
+      <ol className="publication-diagnostic-list">
+        {contexts.map(({ context, transition }) => {
+          const applied = result.humanAdjudications.applied.find(
+            (decision) =>
+              decision.resolution.type === 'resolve-line-join' &&
+              decision.resolution.transition.id === transition.id,
+          )
+          const selectedOutcome =
+            applied?.resolution.type === 'resolve-line-join'
+              ? applied.resolution.outcome
+              : undefined
+          return (
+            <li key={transition.id}>
+              <LineJoinAdjudicationCard
+                context={context}
+                selectedOutcome={selectedOutcome}
+                onDecision={(outcome) =>
+                  onDecision({
+                    diagnosticCode: 'UNRESOLVED_CORRUPTING_JOIN',
+                    target: {
+                      regionIds: [transition.regionId],
+                      markerId: transition.id,
+                    },
+                    resolution: {
+                      type: 'resolve-line-join',
+                      transition: {
+                        id: transition.id,
+                        regionId: transition.regionId,
+                        fromLineId: transition.fromLineId,
+                        toLineId: transition.toLineId,
+                      },
+                      outcome,
+                      confidence: 1,
+                      evidence: [
+                        'bounded-source-context',
+                        'owner-local-adjudication',
+                      ],
+                    },
+                  })
+                }
+              />
+            </li>
+          )
+        })}
+      </ol>
+    </section>
+  )
 }
 
 function DiagnosticDetails({
@@ -448,9 +625,14 @@ export default function PublicationImporter({
   showIntro?: boolean
 }) {
   const [state, setState] = useState<StudioState>({ status: 'idle' })
+  const [isHydrated, setIsHydrated] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [paperUrl, setPaperUrl] = useState('')
   const [ocrLanguage, setOcrLanguage] = useState<'auto' | 'eng'>('auto')
+  const [selectedProfileId, setSelectedProfileId] =
+    useState<PreviewProfileId>('mobile')
+  const [previewReadyArtifactKey, setPreviewReadyArtifactKey] =
+    useState<string>()
   const [pendingDecisionFile, setPendingDecisionFile] =
     useState<HumanDecisionFile>()
   const [decisionError, setDecisionError] = useState<string>()
@@ -458,12 +640,12 @@ export default function PublicationImporter({
   const decisionInput = useRef<HTMLInputElement>(null)
   const activeImport = useRef<AbortController>()
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    setIsHydrated(true)
+    return () => {
       activeImport.current?.abort()
-    },
-    [],
-  )
+    }
+  }, [])
 
   const showError = (error: unknown) => {
     setState({
@@ -507,11 +689,33 @@ export default function PublicationImporter({
     }
     if (!result.readiness.ready) {
       setState({ status: 'review-required', ...completed })
+      if (isPdfReconstruction(result)) {
+        try {
+          const epubs = await Promise.all([
+            buildReadableEpub(result.paper, result, getTargetProfile('mobile')),
+            buildReadableEpub(
+              result.paper,
+              result,
+              getTargetProfile('paperPro'),
+            ),
+            buildReadableEpub(
+              result.paper,
+              result,
+              getTargetProfile('paperProMove'),
+            ),
+          ])
+          if (isCurrent()) {
+            setState({ status: 'review-required', ...completed, epubs })
+          }
+        } catch {
+          // Missing-page text still requires OCR before a readable fallback.
+        }
+      }
       return
     }
     setState({ status: 'ready', ...completed })
     const epubs = await Promise.all([
-      buildEpub(result.paper, result),
+      buildEpub(result.paper, result, getTargetProfile('mobile')),
       buildEpub(result.paper, result, getTargetProfile('paperPro')),
       buildEpub(result.paper, result, getTargetProfile('paperProMove')),
     ])
@@ -523,6 +727,8 @@ export default function PublicationImporter({
     if (!file) return
     const isCurrent = () =>
       activeImport.current === controller && !controller.signal.aborted
+    setSelectedProfileId('mobile')
+    setPreviewReadyArtifactKey(undefined)
     setState({
       status: 'processing',
       fileName: file.name,
@@ -617,6 +823,8 @@ export default function PublicationImporter({
     setPaperUrl('')
     setPendingDecisionFile(undefined)
     setDecisionError(undefined)
+    setSelectedProfileId('mobile')
+    setPreviewReadyArtifactKey(undefined)
     setState({ status: 'idle' })
   }
 
@@ -685,6 +893,14 @@ export default function PublicationImporter({
           (state.progress.completed / Math.max(state.progress.total, 1)) * 100,
         )
       : 0
+  const selectedEpub =
+    (state.status === 'ready' || state.status === 'review-required') &&
+    state.epubs
+      ? selectCurrentProfileEpub(state.epubs, selectedProfileId)
+      : undefined
+  const selectedEpubPreviewReady = selectedEpub
+    ? isSelectedEpubPreviewReady(selectedEpub, previewReadyArtifactKey)
+    : false
 
   return (
     <section
@@ -729,6 +945,7 @@ export default function PublicationImporter({
             <label htmlFor="publication-ocr-language">OCR language</label>
             <select
               id="publication-ocr-language"
+              disabled={!isHydrated}
               value={ocrLanguage}
               onChange={(event) =>
                 setOcrLanguage(event.target.value === 'eng' ? 'eng' : 'auto')
@@ -744,7 +961,7 @@ export default function PublicationImporter({
           </div>
           <div className="publication-intake">
             <div
-              className={`publication-dropzone${dragging ? 'is-dragging' : ''}`}
+              className={`publication-dropzone ${dragging ? 'is-dragging' : ''}`}
               onDragEnter={(event) => {
                 event.preventDefault()
                 setDragging(true)
@@ -757,13 +974,14 @@ export default function PublicationImporter({
                 ref={input}
                 id="publication-pdf"
                 type="file"
+                disabled={!isHydrated}
                 accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.docx"
                 onChange={(event) => void processFile(event.target.files?.[0])}
               />
               <label htmlFor="publication-pdf">
                 <strong>Choose a PDF or DOCX</strong>
                 <span>or drop it here</span>
-                <small>Up to 50 MB. Your file stays on this device.</small>
+                <small>Up to 75 MB. Your file stays on this device.</small>
               </label>
             </div>
 
@@ -776,13 +994,16 @@ export default function PublicationImporter({
                 <input
                   id="publication-url"
                   type="url"
+                  disabled={!isHydrated}
                   inputMode="url"
                   required
                   value={paperUrl}
                   placeholder="https://…/paper.pdf"
                   onChange={(event) => setPaperUrl(event.target.value)}
                 />
-                <button type="submit">Create EPUB</button>
+                <button type="submit" disabled={!isHydrated}>
+                  Create EPUB
+                </button>
               </div>
               <small>
                 If the link is blocked, download the PDF and upload it instead.
@@ -822,7 +1043,11 @@ export default function PublicationImporter({
           <div className="publication-result-bar">
             <div>
               <span className="srt-kicker">
-                {state.status === 'ready' ? 'EPUB ready' : 'Review required'}
+                {state.status === 'ready'
+                  ? state.epubs
+                    ? 'EPUB ready'
+                    : 'Validating EPUB'
+                  : 'Review required'}
               </span>
               <strong>{state.result.source.fileName}</strong>
               <small>
@@ -855,25 +1080,15 @@ export default function PublicationImporter({
                   Export decisions JSON
                 </a>
               )}
-              {state.status === 'ready' && state.epubs ? (
-                state.epubs.map((epub) => (
-                  <EpubDownloadLink key={epub.identifier} epub={epub}>
-                    {epub.profile?.id === 'paperPro'
-                      ? 'Download Paper Pro EPUB'
-                      : epub.profile?.id === 'paperProMove'
-                        ? 'Download Paper Pro Move EPUB'
-                        : 'Download EPUB'}
-                  </EpubDownloadLink>
-                ))
+              {selectedEpub && selectedEpubPreviewReady ? (
+                <EpubDownloadLink key={selectedEpub.sha256} epub={selectedEpub}>
+                  {epubDownloadLabel(selectedEpub)}
+                </EpubDownloadLink>
+              ) : selectedEpub ? (
+                <span aria-live="polite">Preparing selected EPUB preview…</span>
               ) : state.status === 'ready' ? (
                 <span aria-live="polite">Validating EPUB…</span>
               ) : null}
-              <button
-                onClick={() => window.print()}
-                disabled={state.status !== 'ready'}
-              >
-                Print / PDF
-              </button>
               <button className="secondary" onClick={reset}>
                 New paper
               </button>
@@ -885,17 +1100,42 @@ export default function PublicationImporter({
               <span>Completeness gate</span>
               <h3>This reconstruction is incomplete.</h3>
               <p>
-                This version won't make a partial EPUB while source text,
-                images, relationships, reading order, or OCR requirements are
-                unresolved. Your file has not left this device.
+                Publication-grade export remains blocked while source images,
+                relationships, or reading order need review. When every page has
+                recoverable text, the readable EPUB downloads preserve the
+                current text flow and matched visuals without claiming those
+                unresolved details are final. Your file has not left this
+                device.
               </p>
+              <ul
+                className="publication-blocking-issues"
+                aria-label="Blocking issue groups"
+              >
+                {state.result.readiness.blockingDiagnosticCodes.map((code) => {
+                  const count = state.result.diagnostics.filter(
+                    (diagnostic) => diagnostic.code === code,
+                  ).length
+                  return (
+                    <li key={code}>
+                      <strong>{code.replaceAll('_', ' ')}</strong>
+                      <span>{count || 1}</span>
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           )}
 
-          <details
-            className="publication-diagnostics"
-            open={state.status === 'review-required'}
-          >
+          {state.epubs?.[0] && (
+            <EpubRenditionPreview
+              epubs={state.epubs}
+              selectedProfileId={selectedProfileId}
+              onSelectedProfileChange={setSelectedProfileId}
+              onPreviewReadyChange={setPreviewReadyArtifactKey}
+            />
+          )}
+
+          <details className="publication-diagnostics">
             <summary>
               Conversion details · {state.result.diagnostics.length}{' '}
               {state.result.diagnostics.length === 1 ? 'note' : 'notes'}
@@ -1010,6 +1250,13 @@ export default function PublicationImporter({
                 </ol>
               </div>
             </div>
+            {isPdfReconstruction(state.result) && (
+              <LineJoinAdjudicationReview
+                baseResult={state.baseResult ?? state.result}
+                result={state.result}
+                onDecision={(decision) => void applyDecision(decision)}
+              />
+            )}
             {state.result.diagnostics.length > 0 &&
               (isPdfReconstruction(state.result) ? (
                 <PdfDiagnosticReview
@@ -1031,19 +1278,6 @@ export default function PublicationImporter({
                 </ul>
               ))}
           </details>
-
-          {state.result.paper.nodes.length > 0 && (
-            <div
-              className={
-                state.status === 'ready' ? '' : 'publication-preview-blocked'
-              }
-            >
-              <ResearchStudio
-                key={`${state.result.paper.id}:${state.result.paper.version}`}
-                paper={state.result.paper}
-              />
-            </div>
-          )}
         </>
       )}
     </section>

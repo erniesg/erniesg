@@ -37,8 +37,9 @@ The repository already proves useful pieces:
 - PDF import has completeness gates, source evidence, diagnostic overlays, and
   replayable human decisions for note and reading-order ambiguity;
 - DOCX preserves explicit inline formatting, links, notes, images, and tables;
-- matched PDF figures, tables, and equations can carry source-backed rendition
-  assets into EPUB.
+- matched PDF figures, validated semantic tables, and source-backed equations
+  can carry complete rendition assets into EPUB; missing payloads remain
+  review-required.
 
 The current system is not yet a universal compiler:
 
@@ -50,20 +51,23 @@ The current system is not yet a universal compiler:
   one renderer-neutral layout plan;
 - the finite paginator estimates text and figure geometry instead of shaping
   and measuring the actual selected assets and fonts;
-- PDF text reconstruction does not populate inline runs and has no explicit
-  line-end dehyphenation decision model;
+- PDF text reconstruction now populates deterministically source-backed inline
+  runs and an exact line-transition/dehyphenation ledger, but ambiguous styling,
+  joins, and citation targets still fail closed;
 - visual-match diagnostics have no legal human adjudication path;
 - Payload is not present in this repository;
-- the engineering benchmark covers one trusted eleven-node fixture and cannot
-  support a broad quality or market claim.
+- the engineering benchmark now includes redistributable synthetic reductions,
+  a frozen exploratory random-ten identity, and an owner-only named-paper path,
+  but lacks enough human gold decisions to support a broad quality or market
+  claim; `2408.10903v5` remains review-required.
 
 ## PDF-ingestion product gate
 
 The lossy PDF adapter may advance only when its outputs behave like semantic publications rather than enlarged PDF columns. Component contracts live in issues 012, 013, 018, and 023-026; issue 032 binds them into the privacy-safe `2408.10903v5` regression.
 
-Promotion requires measurable evidence that inline bold/italic/super/subscript/link/citation/note semantics and relative hierarchy survive; section headings require geometry plus syntax; lists/references/bibliography remain typed; discretionary wrap hyphens disappear while lexical compounds survive; no isolated glyph, duplicate small-cap, table-row, or equation-glyph debris enters prose; captions remain complete and anchored to source-backed diagrams/figures/tables/equations; and ambiguous objects remain review-required. Mobile and e-ink output must follow canonical one-stream reading order rather than imitate PDF columns.
+Promotion requires ordered provenance text conservation and an exact line-transition ledger; measurable evidence that inline bold/italic/super/subscript/link/citation/note semantics and explicit citation targets survive; typed front matter, sections, lists, references, and bibliography; discretionary wrap hyphens removed while lexical compounds survive; and no isolated glyph, duplicate span, table-row, or equation-glyph debris in prose. Captions remain complete and anchored to source-backed diagrams/figures/tables/equations. A nonsemantic/nonuniform table is publishable only as a real complete bounded page crop; without a page raster/crop capability it remains review-required, and a synthetic table is never called an exact crop. Mobile and e-ink output must follow canonical one-stream reading order rather than imitate PDF columns.
 
-The upload studio must discard stale state and reprocess every fresh file, then show checked Mobile, Paper Pro Move (`954 × 1696`), and Paper Pro (`1620 × 2160`) previews before optional matching-profile downloads. The same graph, profile version, relationships, and artifact hash bind preview and download receipts. Generated redistributable fixtures gate CI; private/named papers contribute only hashes, aggregate metrics, normalized boxes, codes, versions, timings, and verdicts, never source bytes/text, local paths, screenshots, traces, or unpacked artifacts in Git or GitHub.
+The upload studio must discard stale state and reprocess every fresh file, then show checked Mobile, Paper Pro Move (`954 × 1696 @ 264 PPI`), and Paper Pro (`1620 × 2160 @ 229 PPI`) previews before optional matching-profile downloads. The same graph, profile version, relationships, and artifact hash bind preview and download receipts. Generated redistributable fixtures gate CI; private/named papers contribute only hashes, aggregate metrics, normalized boxes, codes, versions, timings, and verdicts, never source bytes/text, local paths, screenshots, traces, or unpacked artifacts in Git or GitHub. Named acceptance additionally requires a separately human-reviewed sanitized baseline outside the repository; candidate self-repeatability cannot appoint its own ground truth.
 
 ## Architecture
 

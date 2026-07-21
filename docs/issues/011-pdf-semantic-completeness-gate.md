@@ -12,9 +12,11 @@ Replace the current text-present equals EPUB-ready decision with a measurable se
 
 - Add repo-owned synthetic PDF fixtures covering two columns, a spanning block, a figure/caption pair, a table, an equation fallback, footnote references and notes, a scanned page, a mixed page, a two-page scan, and an oversized input.
 - Do not copy or commit private, downloaded, subscription, or ambiguously licensed PDFs. A local corpus command may read operator-supplied files but records only stable basenames, hashes, metrics, and diagnostics.
-- Measure source/output text coverage, source/exported asset coverage, relationship coverage, unresolved object counts, OCR-required pages, and reading-order diagnostics.
+- Measure ordered, provenance-scoped source/output text coverage; duplicate canonical spans; exact decided/unresolved source-line transitions; source/exported asset coverage; citation/note/visual relationship coverage; unresolved object counts; OCR-required pages; and reading-order diagnostics. An unordered document-wide character multiset cannot satisfy text conservation.
+- The line ledger contains exactly one unique decision for every adjacent source-line transition inside each region and validates page/region membership plus unresolved totals. Missing, duplicate, extra, cross-region, or unresolved corrupting entries block readiness.
+- A detected citation counts as resolved only when its source-backed inline run targets canonical bibliography-entry node IDs. Reclassification preserves the obligation; unmatched targets remain blocking.
 - `EPUB ready` is emitted only when all error-severity diagnostics are cleared and configured completeness thresholds pass.
-- Image-bearing or caption-bearing inputs with zero reconstructed objects fail closed instead of silently exporting text-only output.
+- Image-bearing or caption-bearing inputs with zero reconstructed objects fail closed instead of silently exporting text-only output. Missing diagram components, orphan captions, and nonsemantic/nonuniform tables without a real bounded page crop remain review-required; a text-derived or synthetic table image cannot be reported as an exact crop.
 - The resource limit reports a specific bounded diagnostic and cleans up work after cancellation or rejection.
 - The current fellowship PDF and generated born-digital fixture remain covered as non-private local evidence.
 
@@ -55,4 +57,3 @@ Failing closed reduces the number of immediately downloadable EPUBs, but prevent
 ## Free-form response
 
 Observed local audit baseline: 71 PDFs and 2,098 pages; 59 image-bearing exports lost every image, 68 caption-signal documents produced zero semantic captions, and median text-character coverage was approximately 84 percent.
-

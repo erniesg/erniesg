@@ -37,7 +37,8 @@ const REFERENCE_HEADING =
 const REFERENCE_SECTION_END =
   /^(?:appendix\b|acknowledg(?:e)?ments?\b|supplement(?:ary)?\b|author contributions?\b|data availability\b)/i
 const BODY_SECTION_HEADING = /^(?:abstract|introduction)\b/i
-const NOTE_TOKEN = /\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§]/gu
+const NOTE_TOKEN_SOURCE = String.raw`(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])`
+const MAX_EXPANDED_CITATION_RANGE = 100
 
 function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
@@ -50,6 +51,15 @@ function markerSlug(value: string) {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || 'marker'
   )
+}
+
+function markerSourceAnchor(
+  marker: Pick<
+    PdfNoteMarkerClassification,
+    'referenceRegionId' | 'start' | 'end'
+  >,
+) {
+  return `${markerSlug(marker.referenceRegionId)}-s${String(marker.start).padStart(6, '0')}-e${String(marker.end).padStart(6, '0')}`
 }
 
 function positionCompare(left: PdfPageRegion, right: PdfPageRegion) {
@@ -66,9 +76,34 @@ function sourceBox(region: PdfPageRegion): NormalizedSourceBox {
 }
 
 function labelsFrom(value: string) {
-  return [...value.matchAll(NOTE_TOKEN)].map((match) =>
-    normalizedNoteLabel(match[0]),
+  const labels: string[] = []
+  const pattern = new RegExp(
+    `(${NOTE_TOKEN_SOURCE})(?:\\s*[–—-]\\s*(${NOTE_TOKEN_SOURCE}))?`,
+    'gu',
   )
+  const add = (label: string) => {
+    if (label && !labels.includes(label)) labels.push(label)
+  }
+  for (const match of value.matchAll(pattern)) {
+    const first = normalizedNoteLabel(match[1])
+    const last = match[2] ? normalizedNoteLabel(match[2]) : null
+    const firstOrdinal = /^\d+$/.test(first) ? Number(first) : null
+    const lastOrdinal = last && /^\d+$/.test(last) ? Number(last) : null
+    if (
+      firstOrdinal !== null &&
+      lastOrdinal !== null &&
+      lastOrdinal >= firstOrdinal &&
+      lastOrdinal - firstOrdinal <= MAX_EXPANDED_CITATION_RANGE
+    ) {
+      for (let ordinal = firstOrdinal; ordinal <= lastOrdinal; ordinal += 1) {
+        add(String(ordinal))
+      }
+      continue
+    }
+    add(first)
+    if (last) add(last)
+  }
+  return labels
 }
 
 function markerCandidates(region: PdfPageRegion) {
@@ -82,13 +117,20 @@ function markerCandidates(region: PdfPageRegion) {
   ) => {
     const labels = rawLabels.map(normalizedNoteLabel).filter(Boolean)
     if (labels.length === 0 || start < 0 || end <= start) return
-    if (
-      found.some(
-        (candidate) =>
-          Math.max(candidate.start, start) < Math.min(candidate.end, end),
-      )
-    ) {
-      return
+    const overlappingIndex = found.findIndex(
+      (candidate) =>
+        Math.max(candidate.start, start) < Math.min(candidate.end, end),
+    )
+    if (overlappingIndex >= 0) {
+      const overlapping = found[overlappingIndex]
+      const strongerGeometryRange =
+        syntax === 'rendered-superscript-geometry' &&
+        overlapping.syntax === 'superscript-syntax' &&
+        start <= overlapping.start &&
+        end >= overlapping.end &&
+        end - start > overlapping.end - overlapping.start
+      if (!strongerGeometryRange) return
+      found.splice(overlappingIndex, 1)
     }
     found.push({
       label: labels.join(','),
@@ -147,22 +189,40 @@ function markerCandidates(region: PdfPageRegion) {
   let lineOffset = 0
   for (const line of region.lines) {
     const largestRun = Math.max(...line.runs.map((run) => run.fontSize), 0)
+    const baselineRuns = line.runs.filter(
+      (run) => run.fontSize >= largestRun * 0.9,
+    )
+    const baselineCenter =
+      baselineRuns.reduce((total, run) => total + run.y + run.height / 2, 0) /
+      Math.max(1, baselineRuns.length)
+    let runTextCursor = 0
     for (const run of line.runs) {
-      const raw = run.text.trim()
+      const raw = run.text.trim().replace(/\s+/g, ' ')
       const label = normalizedNoteLabel(raw)
+      const geometryLabels = labelsFrom(raw)
+      const rawPosition = line.text.indexOf(raw, runTextCursor)
+      const labelPosition =
+        rawPosition < 0 ? line.text.indexOf(label, runTextCursor) : -1
+      const withinLine = Math.max(rawPosition, labelPosition)
+      if (withinLine >= 0) {
+        runTextCursor = withinLine + raw.length
+      }
+      const runCenter = run.y + run.height / 2
+      const baselineHeight = Math.max(
+        ...baselineRuns.map((candidate) => candidate.height),
+        0,
+      )
       if (
-        !/^(?:\d{1,3}|[*†‡§])$/.test(label) ||
-        run.fontSize > largestRun * 0.82
+        !/^(?:\d{1,3}[*†‡§]+|[*†‡§]+\d{1,3}|[*†‡§]+|\d{1,3})$/.test(label) ||
+        geometryLabels.length === 0 ||
+        run.fontSize > largestRun * 0.82 ||
+        runCenter >= baselineCenter - Math.max(0.0005, baselineHeight * 0.04)
       ) {
         continue
       }
-      const withinLine = Math.max(
-        line.text.lastIndexOf(raw),
-        line.text.lastIndexOf(label),
-      )
       if (withinLine < 0) continue
       add(
-        [label],
+        geometryLabels,
         lineOffset + withinLine,
         lineOffset + withinLine + raw.length,
         'rendered-superscript-geometry',
@@ -349,7 +409,7 @@ export function classifyPdfNoteMarkers(
     const citationEvidence =
       referenceHeadingIndex >= 0 &&
       citationMarkerDensity >= PDF_NOTE_CITATION_DENSITY_THRESHOLD &&
-      noteBodies.length === 0
+      matchingBodies.length === 0
     if (citationEvidence && candidate.syntax === 'bracketed-numeric-syntax') {
       return classification(
         candidate,
@@ -360,7 +420,7 @@ export function classifyPdfNoteMarkers(
           'reference-list-section-detected',
           `citation-marker-density-at-least-${PDF_NOTE_CITATION_DENSITY_THRESHOLD}`,
           'no-footnote-band',
-          'no-note-body-region',
+          'no-matching-note-body',
         ],
       )
     }
@@ -374,7 +434,24 @@ export function classifyPdfNoteMarkers(
           'reference-list-section-detected',
           `citation-marker-density-at-least-${PDF_NOTE_CITATION_DENSITY_THRESHOLD}`,
           'no-footnote-band',
-          'no-note-body-region',
+          'no-matching-note-body',
+        ],
+      )
+    }
+    if (
+      citationEvidence &&
+      (candidate.syntax === 'superscript-syntax' ||
+        candidate.syntax === 'rendered-superscript-geometry')
+    ) {
+      return classification(
+        candidate,
+        'superscript-bibliography-citation',
+        'citation',
+        0.94,
+        [
+          'reference-list-section-detected',
+          `citation-marker-density-at-least-${PDF_NOTE_CITATION_DENSITY_THRESHOLD}`,
+          'no-matching-note-body',
         ],
       )
     }
@@ -423,11 +500,12 @@ export function classifyPdfNoteMarkers(
   const counters = new Map<string, number>()
   const classifications = drafts.map<PdfNoteMarkerClassification>((draft) => {
     const page = draft.sourceBox.page
-    const key = `${page}:${draft.label}`
+    const idBase = `noteref-p${String(page).padStart(3, '0')}-${markerSlug(draft.label)}-${markerSourceAnchor(draft)}`
+    const key = idBase
     const count = (counters.get(key) ?? 0) + 1
     counters.set(key, count)
     return {
-      id: `noteref-p${String(page).padStart(3, '0')}-${markerSlug(draft.label)}-${String(count).padStart(3, '0')}`,
+      id: `${idBase}-${String(count).padStart(3, '0')}`,
       ...draft,
     }
   })

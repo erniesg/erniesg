@@ -1,4 +1,3 @@
-import { strFromU8 } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import {
   applyHumanDecisionFile,
@@ -9,8 +8,9 @@ import {
   serializeHumanDecisionFile,
   upsertHumanDecision,
 } from './decision-record'
-import { buildEpub, inspectEpub } from './epub'
+import { buildEpub } from './epub'
 import type {
+  HumanAdjudicationRecord,
   PdfPageAnalysis,
   PdfSourceRun,
   ReconstructionDiagnostic,
@@ -66,6 +66,60 @@ function ambiguousReconstruction() {
   })
 }
 
+async function unresolvedLineJoinReconstruction() {
+  const runs = [
+    run('This source contains a scenar-', 0.1, 0.2, 0.42),
+    run('io that remains continuous prose.', 0.1, 0.225, 0.48),
+  ]
+  const page: PdfPageAnalysis = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: runs.reduce((total, item) => total + item.text.length, 0),
+    imageCount: 0,
+    runs,
+  }
+  return reconstructPageAnalyses({
+    pages: [page],
+    sourceHash: '1'.repeat(64),
+    fileName: 'unresolved-line-join.pdf',
+    byteLength: 2048,
+  })
+}
+
+function lineJoinDecision(
+  base: Awaited<ReturnType<typeof unresolvedLineJoinReconstruction>>,
+  outcome:
+    | 'remove-wrap-hyphen'
+    | 'preserve-authored-hyphen'
+    | 'leave-unresolved',
+) {
+  const transition = base.lineBoundaryDecisions.find(
+    (candidate) => candidate.outcome === 'unresolved',
+  )!
+  return {
+    diagnosticCode: 'UNRESOLVED_CORRUPTING_JOIN',
+    target: {
+      regionIds: [transition.regionId],
+      markerId: transition.id,
+    },
+    resolution: {
+      type: 'resolve-line-join',
+      transition: {
+        id: transition.id,
+        regionId: transition.regionId,
+        fromLineId: transition.fromLineId,
+        toLineId: transition.toLineId,
+      },
+      outcome,
+      confidence: 1,
+      evidence: ['bounded-source-context', 'owner-local-adjudication'],
+    },
+  } as unknown as HumanAdjudicationRecord
+}
+
 function targeted(
   diagnostic: ReconstructionDiagnostic,
 ): asserts diagnostic is ReconstructionDiagnostic & {
@@ -75,6 +129,223 @@ function targeted(
 }
 
 describe('human adjudication decision records', () => {
+  it('emits v1.1 line-join decisions without serializing source text', async () => {
+    const base = await unresolvedLineJoinReconstruction()
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      lineJoinDecision(base, 'remove-wrap-hyphen'),
+    )
+    const json = serializeHumanDecisionFile(file)
+    const parsed = JSON.parse(json)
+
+    expect(parsed).toMatchObject({
+      schemaVersion: '1.1.0',
+      documentSha256: base.source.sha256,
+      decisions: [
+        {
+          diagnosticCode: 'UNRESOLVED_CORRUPTING_JOIN',
+          resolution: {
+            type: 'resolve-line-join',
+            outcome: 'remove-wrap-hyphen',
+            confidence: 1,
+            evidence: ['bounded-source-context', 'owner-local-adjudication'],
+          },
+        },
+      ],
+    })
+    expect(json).not.toContain('This source contains')
+    expect(json).not.toContain('continuous prose')
+  })
+
+  it('continues to parse and replay v1.0 decision files', async () => {
+    const base = await ambiguousReconstruction()
+    const diagnostic = base.diagnostics.find(
+      (item) => item.code === 'AMBIGUOUS_READING_ORDER',
+    )!
+    targeted(diagnostic)
+    const legacy = {
+      schemaVersion: '1.0.0',
+      documentSha256: base.source.sha256,
+      decisions: [
+        {
+          diagnosticCode: diagnostic.code,
+          target: diagnostic.target,
+          resolution: {
+            type: 'accept-reading-order',
+            regionIds: readingOrderCandidates(base, diagnostic)[0],
+          },
+        },
+      ],
+    }
+
+    const parsed = parseHumanDecisionFile(JSON.stringify(legacy))
+    expect(parsed.schemaVersion).toBe('1.0.0')
+    expect(
+      applyHumanDecisionFile(base, parsed).humanAdjudications,
+    ).toMatchObject({
+      schemaVersion: '1.0.0',
+      countsByDiagnosticCode: { AMBIGUOUS_READING_ORDER: 1 },
+    })
+  })
+
+  it.each([
+    {
+      choice: 'remove-wrap-hyphen' as const,
+      expectedText:
+        'This source contains a scenario that remains continuous prose.',
+      expectedOutcome: 'removed-discretionary-hyphen',
+    },
+    {
+      choice: 'preserve-authored-hyphen' as const,
+      expectedText:
+        'This source contains a scenar-io that remains continuous prose.',
+      expectedOutcome: 'preserved-lexical-hyphen',
+    },
+  ])(
+    'replays $choice deterministically before reassessing readiness',
+    async ({ choice, expectedText, expectedOutcome }) => {
+      const base = await unresolvedLineJoinReconstruction()
+      const file = upsertHumanDecision(
+        createHumanDecisionFile(base.source.sha256),
+        lineJoinDecision(base, choice),
+      )
+
+      const first = applyHumanDecisionFile(base, file)
+      const second = applyHumanDecisionFile(base, file)
+
+      expect(first).toEqual(second)
+      expect(first.regions[0].text).toBe(expectedText)
+      expect(first.paper.nodes[0]).toMatchObject({ text: expectedText })
+      expect(first.lineBoundaryDecisions[0]).toMatchObject({
+        outcome: expectedOutcome,
+        evidence: expect.arrayContaining([
+          'bounded-source-context',
+          'owner-local-adjudication',
+        ]),
+      })
+      expect(first.unresolvedCorruptingJoinCount).toBe(0)
+      expect(first.completeness.unresolvedCorruptingJoinCount).toBe(0)
+      expect(first.readiness.blockingDiagnosticCodes).not.toContain(
+        'UNRESOLVED_CORRUPTING_JOIN',
+      )
+    },
+  )
+
+  it('records leave-unresolved without silently clearing its gate', async () => {
+    const base = await unresolvedLineJoinReconstruction()
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      lineJoinDecision(base, 'leave-unresolved'),
+    )
+    const result = applyHumanDecisionFile(base, file)
+
+    expect(result.regions[0].text).toBe(base.regions[0].text)
+    expect(result.lineBoundaryDecisions[0]).toMatchObject({
+      outcome: 'unresolved',
+      evidence: expect.arrayContaining(['owner-local-adjudication']),
+    })
+    expect(result.unresolvedCorruptingJoinCount).toBe(1)
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_CORRUPTING_JOIN',
+    )
+    expect(result.humanAdjudications.applied).toHaveLength(1)
+  })
+
+  it('removes the transition-selected occurrence when a boundary word repeats', async () => {
+    const runs = [
+      run('First dupli-', 0.1, 0.2, 0.2),
+      run('cate token and second dupli-', 0.1, 0.225, 0.42),
+      run('cate token.', 0.1, 0.25, 0.2),
+    ]
+    const base = await reconstructPageAnalyses({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: runs.reduce(
+            (total, item) => total + item.text.length,
+            0,
+          ),
+          imageCount: 0,
+          runs,
+        },
+      ],
+      sourceHash: '2'.repeat(64),
+      fileName: 'duplicate-boundary-word.pdf',
+      byteLength: 2048,
+    })
+    const transitions = base.lineBoundaryDecisions.filter(
+      (candidate) => candidate.outcome === 'unresolved',
+    )
+    expect(transitions).toHaveLength(2)
+    const transition = transitions[1]
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      {
+        diagnosticCode: 'UNRESOLVED_CORRUPTING_JOIN',
+        target: {
+          regionIds: [transition.regionId],
+          markerId: transition.id,
+        },
+        resolution: {
+          type: 'resolve-line-join',
+          transition: {
+            id: transition.id,
+            regionId: transition.regionId,
+            fromLineId: transition.fromLineId,
+            toLineId: transition.toLineId,
+          },
+          outcome: 'remove-wrap-hyphen',
+          confidence: 1,
+          evidence: ['bounded-source-context', 'owner-local-adjudication'],
+        },
+      },
+    )
+
+    const result = applyHumanDecisionFile(base, file)
+
+    expect(result.regions[0].text).toBe(
+      'First dupli-cate token and second duplicate token.',
+    )
+    expect(result.humanAdjudications).toMatchObject({
+      applied: [
+        expect.objectContaining({
+          target: expect.objectContaining({ markerId: transition.id }),
+        }),
+      ],
+      stale: [],
+    })
+    expect(result.unresolvedCorruptingJoinCount).toBe(1)
+  })
+
+  it('fails closed when a saved line-transition identity drifts', async () => {
+    const base = await unresolvedLineJoinReconstruction()
+    const decision = lineJoinDecision(base, 'remove-wrap-hyphen')
+    if (decision.resolution.type !== 'resolve-line-join') {
+      throw new Error('Expected a line-join decision')
+    }
+    decision.resolution.transition.toLineId = 'page-001-line-missing'
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      decision,
+    )
+    const result = applyHumanDecisionFile(base, file)
+
+    expect(result.regions[0].text).toBe(base.regions[0].text)
+    expect(result.unresolvedCorruptingJoinCount).toBe(1)
+    expect(result.humanAdjudications.stale).toEqual([
+      expect.objectContaining({ reason: 'resolution-no-longer-legal' }),
+    ])
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'STALE_HUMAN_DECISION' }),
+      ]),
+    )
+  })
+
   it.each([
     ['reclassify-citation', 'citation'],
     ['reclassify-plain-text', 'plain-text'],
@@ -118,7 +389,27 @@ describe('human adjudication decision records', () => {
 
       const result = applyHumanDecisionFile(base, file)
       expect(result.noteRelationships[0].status).toBe(status)
-      expect(result.readiness.ready).toBe(true)
+      expect(result.readiness.ready).toBe(false)
+      expect(result.readiness.blockingDiagnosticCodes).toContain(
+        'UNPROVENANCED_RENDERED_UNIT',
+      )
+      if (resolution === 'reclassify-citation') {
+        expect(result.citationRelationships).toEqual([
+          expect.objectContaining({
+            id: result.noteRelationships[0].id,
+            status: 'unresolved',
+          }),
+        ])
+        expect(
+          result.paper.nodes.flatMap((node) =>
+            'inlineRuns' in node ? (node.inlineRuns ?? []) : [],
+          ),
+        ).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ semanticRole: 'citation' }),
+          ]),
+        )
+      }
       expect(result.humanAdjudications.applied).toHaveLength(1)
     },
   )
@@ -164,7 +455,12 @@ describe('human adjudication decision records', () => {
     })
 
     const result = applyHumanDecisionFile(base, file)
-    expect(result.readiness.ready).toBe(true)
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      blockingDiagnosticCodes: expect.arrayContaining([
+        'UNPROVENANCED_RENDERED_UNIT',
+      ]),
+    })
     expect(result.noteRelationships.map((item) => item.status)).toEqual([
       'matched',
       'matched',
@@ -174,14 +470,19 @@ describe('human adjudication decision records', () => {
       AMBIGUOUS_READING_ORDER: 1,
     })
 
-    const directEpub = await buildEpub(result.paper, result)
+    await expect(buildEpub(result.paper, result)).rejects.toThrow(
+      /UNPROVENANCED_RENDERED_UNIT/u,
+    )
     const replayed = await reconstructPdf(
       await fixtureFile('adjudication-required.pdf'),
       undefined,
       { decisionFile: file },
     )
-    const replayedEpub = await buildEpub(replayed.paper, replayed)
-    expect(replayedEpub.bytes).toEqual(directEpub.bytes)
+    expect(replayed.paper).toEqual(result.paper)
+    expect(replayed.readiness).toEqual(result.readiness)
+    await expect(buildEpub(replayed.paper, replayed)).rejects.toThrow(
+      /UNPROVENANCED_RENDERED_UNIT/u,
+    )
   })
 
   it('preserves visual completeness when a sidecar is applied', async () => {
@@ -221,7 +522,12 @@ describe('human adjudication decision records', () => {
     )
     const result = applyHumanDecisionFile(base, file)
 
-    expect(result.readiness.ready).toBe(true)
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      blockingDiagnosticCodes: expect.arrayContaining([
+        'UNPROVENANCED_RENDERED_UNIT',
+      ]),
+    })
     expect(result.readiness.policy).toEqual(base.readiness.policy)
     expect(result.humanAdjudications).toMatchObject({
       applied: [expect.objectContaining({ diagnosticCode: diagnostic.code })],
@@ -234,17 +540,9 @@ describe('human adjudication decision records', () => {
       ]),
     )
 
-    const epub = await buildEpub(result.paper, result)
-    const manifest = JSON.parse(
-      strFromU8(inspectEpub(epub.bytes).files['EPUB/export.json']),
+    await expect(buildEpub(result.paper, result)).rejects.toThrow(
+      /UNPROVENANCED_RENDERED_UNIT/u,
     )
-    expect(manifest.humanAdjudications).toEqual({
-      schemaVersion: '1.0.0',
-      appliedCount: 1,
-      staleCount: 0,
-      countsByDiagnosticCode: { AMBIGUOUS_READING_ORDER: 1 },
-      applied: [expect.objectContaining({ diagnosticCode: diagnostic.code })],
-    })
   })
 
   it('contains identifiers and choices but no reconstructed document text', async () => {

@@ -15,7 +15,16 @@ import {
   type PdfOcrRaster,
   type PdfOcrSession,
 } from './pdf-ocr'
-import { createPngAsset, createVectorSvgAsset } from './visual-assets'
+import {
+  createPngAsset,
+  createSourcePageCropAsset,
+  createVectorSvgAsset,
+} from './visual-assets'
+import {
+  renderPdfPageCrop,
+  type PdfCanvasFactory,
+  type PdfPageCropSource,
+} from './pdf-page-crop'
 import {
   applyHumanDecisionFile,
   type HumanDecisionFile,
@@ -29,6 +38,7 @@ type PdfImportOptions = {
 }
 
 export const MAX_OCR_RASTER_PIXELS = 3_200_000
+const COMPOSITE_RASTER_TIMEOUT_MS = 15_000
 
 function cancelledError() {
   return new PdfImportError(
@@ -115,6 +125,7 @@ type RasterizablePage = {
     canvas: HTMLCanvasElement
     canvasContext: CanvasRenderingContext2D
     viewport: { width: number; height: number }
+    transform?: number[]
   }): { promise: Promise<unknown>; cancel?: () => void }
 }
 
@@ -155,8 +166,17 @@ async function renderPageRaster(
   })
   const cancelRender = () => renderTask.cancel?.()
   signal?.addEventListener('abort', cancelRender, { once: true })
+  let timeout: ReturnType<typeof setTimeout> | undefined
   try {
-    await renderTask.promise
+    await Promise.race([
+      renderTask.promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          cancelRender()
+          reject(new Error('Composite figure rasterization timed out'))
+        }, COMPOSITE_RASTER_TIMEOUT_MS)
+      }),
+    ])
     throwIfAborted(signal)
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
@@ -177,6 +197,7 @@ async function renderPageRaster(
       sha256: await sha256(bytes),
     }
   } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
     signal?.removeEventListener('abort', cancelRender)
     canvas.width = 0
     canvas.height = 0
@@ -426,6 +447,8 @@ function extractNativeObjects({
 }
 
 const MAX_DECODED_IMAGE_PIXELS = 16_777_216
+const MAX_ASYNC_IMAGE_SOURCES_PER_PAGE = 64
+const IMAGE_DECODE_TIMEOUT_MS = 10_000
 
 function bitmapPixelData(
   bitmap: CanvasImageSource,
@@ -484,7 +507,7 @@ function pixelData(value: unknown) {
   return colorSpace ? { width, height, pixels, colorSpace } : null
 }
 
-async function resolveNativeObjects(
+export async function resolveNativeObjects(
   page: {
     objs: {
       get(id: string, callback?: (value: unknown) => void): unknown
@@ -493,6 +516,7 @@ async function resolveNativeObjects(
   },
   drafts: NativeObjectDraft[],
   signal?: AbortSignal,
+  decodeTimeoutMs = IMAGE_DECODE_TIMEOUT_MS,
 ) {
   throwIfAborted(signal)
   const assets = new Map<
@@ -519,11 +543,22 @@ async function resolveNativeObjects(
     }
   }
   const resolvedSources = new Map<string, Promise<unknown>>()
+  const asyncSourceCount = new Set(
+    drafts.flatMap((draft) =>
+      typeof draft.source === 'string' ? [draft.source] : [],
+    ),
+  ).size
   for (const draft of drafts) {
     if (typeof draft.source !== 'string' || resolvedSources.has(draft.source)) {
       continue
     }
     const source = draft.source
+    if (asyncSourceCount > MAX_ASYNC_IMAGE_SOURCES_PER_PAGE) {
+      // Dense image mosaics do not form a bounded standalone rendition and
+      // waiting on their callback order made coverage cache- and load-sensitive.
+      resolvedSources.set(source, Promise.resolve(null))
+      continue
+    }
     resolvedSources.set(
       source,
       new Promise<unknown>((resolve) => {
@@ -542,19 +577,31 @@ async function resolveNativeObjects(
           return
         }
         signal?.addEventListener('abort', abort, { once: true })
-        timeout = setTimeout(() => finish(null), 500)
+        // Bounded operator-list dependencies resolve concurrently so callback
+        // order does not decide which payloads survive. A source that does not
+        // settle within the page budget remains unresolved.
+        timeout = setTimeout(() => finish(null), decodeTimeoutMs)
         try {
           if (page.objs.has?.(source)) finish(page.objs.get(source))
-          else {
-            const immediate = page.objs.get(source, finish)
-            if (immediate !== null && immediate !== undefined) finish(immediate)
-          }
+          else page.objs.get(source, finish)
         } catch {
           finish(null)
         }
       }),
     )
   }
+  const resolvedEntries = await Promise.all(
+    [...resolvedSources].map(
+      async ([source, value]) => [source, await value] as const,
+    ),
+  )
+  const incompleteAsyncPage = resolvedEntries.some(([, value]) => !value)
+  const resolvedValues = new Map(
+    resolvedEntries.map(([source, value]) => [
+      source,
+      incompleteAsyncPage ? null : value,
+    ]),
+  )
   for (const draft of drafts) {
     throwIfAborted(signal)
     if (draft.vector) {
@@ -570,7 +617,7 @@ async function resolveNativeObjects(
     let decoded: unknown = draft.source
     try {
       if (typeof draft.source === 'string') {
-        decoded = await resolvedSources.get(draft.source)
+        decoded = resolvedValues.get(draft.source)
       }
     } catch {
       decoded = null
@@ -742,6 +789,18 @@ export async function reconstructPdf(
 
         for (const item of textContent.items) {
           if (!('str' in item) || !item.str.trim()) continue
+          let font:
+            | { name?: unknown; bold?: unknown; italic?: unknown }
+            | undefined
+          try {
+            font = page.commonObjs.get(item.fontName) as typeof font
+          } catch {
+            font = undefined
+          }
+          const sourceFontName =
+            typeof font?.name === 'string' && font.name.trim()
+              ? font.name
+              : item.fontName
           const transform = pdfjs.Util.transform(
             viewport.transform,
             item.transform,
@@ -760,8 +819,12 @@ export async function reconstructPdf(
             height: clamp(fontHeight / viewport.height),
             rotation: viewport.rotation,
             method: 'pdf-text',
-            fontName: item.fontName,
+            fontName: sourceFontName,
             fontSize: fontHeight,
+            ...(typeof font?.bold === 'boolean' ? { bold: font.bold } : {}),
+            ...(typeof font?.italic === 'boolean'
+              ? { italic: font.italic }
+              : {}),
             confidence: 1,
           })
         }
@@ -938,7 +1001,29 @@ export async function reconstructPdf(
       fileName: file.name,
       byteLength: file.size,
       metadata,
+      rasterizeFigure: async (input) => {
+        const page = await document.getPage(input.page)
+        try {
+          const raster = await renderPdfPageCrop({
+            page: page as unknown as PdfPageCropSource,
+            canvasFactory:
+              document.canvasFactory as unknown as PdfCanvasFactory,
+            sourceBox: input.sourceBox,
+            signal: options.signal,
+          })
+          return await createSourcePageCropAsset({
+            kind: input.kind === 'figure' ? 'raster' : input.kind,
+            cropBox: input.sourceBox,
+            sourceObjectIds: input.sourceObjectIds,
+            sourceBoxes: input.sourceBoxes,
+            ...raster,
+          })
+        } finally {
+          page.cleanup()
+        }
+      },
     })
+    throwIfAborted(options.signal)
     return options.decisionFile
       ? applyHumanDecisionFile(reconstruction, options.decisionFile)
       : reconstruction

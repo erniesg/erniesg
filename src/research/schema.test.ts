@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
 import { canonicalContentHash } from './canonical-hash'
-import { researchPaperSchema } from './schema'
+import { researchPaperSchema, type ResearchPaper } from './schema'
 
 type RawFigureNode = (typeof rawPaper.nodes)[number] & {
   type: 'figure'
@@ -15,6 +15,65 @@ type RawHeadingNode = (typeof rawPaper.nodes)[number] & {
 
 function clonePaper() {
   return structuredClone(rawPaper)
+}
+
+function scopedTablePaper() {
+  const paper = researchPaperSchema.parse(rawPaper)
+  return {
+    ...paper,
+    nodes: [
+      {
+        id: 'table-node',
+        type: 'figure' as const,
+        title: 'Scoped table',
+        objectType: 'table' as const,
+        table: {
+          rows: [
+            {
+              cells: [
+                {
+                  text: 'Group',
+                  headerScope: 'column' as const,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                },
+                {
+                  text: 'Score',
+                  headerScope: 'column' as const,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                },
+              ],
+            },
+            {
+              cells: [
+                {
+                  text: 'Control',
+                  headerScope: 'row' as const,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                },
+                {
+                  text: '10',
+                  headerScope: null,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                },
+              ],
+            },
+          ],
+        },
+        relationships: { caption: 'table-caption' },
+        source: 'test',
+      },
+      {
+        id: 'table-caption',
+        type: 'caption' as const,
+        text: 'Table 1. Scoped table.',
+        source: 'test',
+      },
+    ],
+  } satisfies ResearchPaper
 }
 
 describe('SRT canonical graph schema', () => {
@@ -146,6 +205,31 @@ describe('SRT canonical graph schema', () => {
         nodes: [{ ...paper.nodes[0], x: 10, y: 20 }, ...paper.nodes.slice(1)],
       }).success,
     ).toBe(false)
+  })
+
+  it('accepts an explicit row-header scope in a canonical table body', () => {
+    const paper = scopedTablePaper()
+
+    expect(researchPaperSchema.safeParse(paper).success).toBe(true)
+  })
+
+  it('rejects a column-header rowspan that crosses into the table body', () => {
+    const paper = scopedTablePaper()
+    const table = paper.nodes[0].table
+    if (!table) throw new Error('Scoped table fixture lost its table data')
+    table.rows[0].cells[0].rowSpan = 2
+    table.rows[1].cells.splice(0, 1)
+
+    expect(researchPaperSchema.safeParse(paper).success).toBe(false)
+  })
+
+  it('rejects nonrectangular canonical table span topology', () => {
+    const paper = scopedTablePaper()
+    const table = paper.nodes[0].table
+    if (!table) throw new Error('Scoped table fixture lost its table data')
+    table.rows[1].cells[1].columnSpan = 2
+
+    expect(researchPaperSchema.safeParse(paper).success).toBe(false)
   })
 
   it('computes a deterministic hash that ignores rendition geometry', () => {

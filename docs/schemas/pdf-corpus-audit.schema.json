@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.1.0.json",
+  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.4.0.json",
   "title": "Local PDF corpus audit report",
   "type": "object",
   "additionalProperties": false,
@@ -13,7 +13,7 @@
     "documents"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.1.0" },
+    "schemaVersion": { "const": "1.4.0" },
     "reportSchema": {
       "const": "docs/schemas/pdf-corpus-audit.schema.json"
     },
@@ -54,6 +54,96 @@
   },
   "$defs": {
     "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "safeIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "countMap": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+      },
+      "additionalProperties": { "type": "integer", "minimum": 1 }
+    },
+    "sourceBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "x", "y", "width", "height", "rotation", "method"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 },
+        "rotation": { "type": "number" },
+        "method": {
+          "enum": ["pdf-text", "pdf-object", "pdf-link", "ocr"]
+        }
+      }
+    },
+    "citationRelationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "taxonomy",
+        "referenceRegionId",
+        "referenceStart",
+        "referenceEnd",
+        "labels",
+        "targetNodeIds",
+        "canonicalAnchor",
+        "sourceBoxes"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/sha256" },
+        "status": { "enum": ["matched", "unresolved"] },
+        "taxonomy": {
+          "enum": [
+            "bracketed-bibliography-citation",
+            "superscript-citation-cluster",
+            "superscript-bibliography-citation",
+            "human-reclassified-citation"
+          ]
+        },
+        "referenceRegionId": { "$ref": "#/$defs/sha256" },
+        "referenceStart": { "type": "integer", "minimum": 0 },
+        "referenceEnd": { "type": "integer", "minimum": 1 },
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256" }
+        },
+        "targetNodeIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256" }
+        },
+        "canonicalAnchor": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["nodeId", "start", "end"],
+              "properties": {
+                "nodeId": { "$ref": "#/$defs/sha256" },
+                "start": { "type": "integer", "minimum": 0 },
+                "end": { "type": "integer", "minimum": 1 }
+              }
+            }
+          ]
+        },
+        "sourceBoxes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sourceBox" }
+        }
+      }
+    },
     "policy": {
       "type": "object",
       "additionalProperties": false,
@@ -85,6 +175,16 @@
         "outputTextCharacters",
         "matchedTextCharacters",
         "textCoverage",
+        "duplicateCanonicalSpanCount",
+        "missingSourceRegionCount",
+        "unprovenancedRenderedUnitCount",
+        "expectedInlineSpanCount",
+        "mappedInlineSpanCount",
+        "inlineSpanCoverage",
+        "lineBoundaryCount",
+        "decidedLineBoundaryCount",
+        "unresolvedCorruptingJoinCount",
+        "structurallyConsumedLineBoundaryCount",
         "sourceAssetCount",
         "exportedAssetCount",
         "assetCoverage",
@@ -102,6 +202,25 @@
         "outputTextCharacters": { "type": "integer", "minimum": 0 },
         "matchedTextCharacters": { "type": "integer", "minimum": 0 },
         "textCoverage": { "$ref": "#/$defs/ratio" },
+        "duplicateCanonicalSpanCount": { "type": "integer", "minimum": 0 },
+        "missingSourceRegionCount": { "type": "integer", "minimum": 0 },
+        "unprovenancedRenderedUnitCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedInlineSpanCount": { "type": "integer", "minimum": 0 },
+        "mappedInlineSpanCount": { "type": "integer", "minimum": 0 },
+        "inlineSpanCoverage": { "$ref": "#/$defs/ratio" },
+        "lineBoundaryCount": { "type": "integer", "minimum": 0 },
+        "decidedLineBoundaryCount": { "type": "integer", "minimum": 0 },
+        "unresolvedCorruptingJoinCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "structurallyConsumedLineBoundaryCount": {
+          "type": "integer",
+          "minimum": 0
+        },
         "sourceAssetCount": { "type": "integer", "minimum": 0 },
         "exportedAssetCount": { "type": "integer", "minimum": 0 },
         "assetCoverage": { "$ref": "#/$defs/ratio" },
@@ -117,6 +236,7 @@
             "captions",
             "tables",
             "equations",
+            "citations",
             "footnoteReferences",
             "footnotes"
           ],
@@ -125,6 +245,7 @@
             "captions": { "type": "integer", "minimum": 0 },
             "tables": { "type": "integer", "minimum": 0 },
             "equations": { "type": "integer", "minimum": 0 },
+            "citations": { "type": "integer", "minimum": 0 },
             "footnoteReferences": { "type": "integer", "minimum": 0 },
             "footnotes": { "type": "integer", "minimum": 0 }
           }
@@ -185,17 +306,115 @@
         "policy": { "$ref": "#/$defs/policy" },
         "blockingDiagnosticCodes": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": { "$ref": "#/$defs/safeIdentifier" },
           "uniqueItems": true
         }
       }
+    },
+    "structuralReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "canonicalNodeCount",
+        "canonicalNodeSequenceSha256",
+        "canonicalNodeTypeSequenceSha256",
+        "canonicalContentSha256",
+        "readingOrderGraphSha256",
+        "nodeCounts",
+        "visualRelationshipCount",
+        "visualRelationshipCounts",
+        "visualRelationshipGraphSha256",
+        "noteRelationshipCount",
+        "noteRelationshipCounts",
+        "noteRelationshipGraphSha256",
+        "citationRelationshipCount",
+        "citationRelationshipCounts",
+        "citationRelationshipGraph",
+        "citationRelationshipGraphSha256",
+        "assetCount",
+        "assetCounts",
+        "assetManifestSha256",
+        "lineTransitionLedgerAvailable",
+        "lineTransitionCount",
+        "lineTransitionLedgerSha256",
+        "unresolvedCorruptingJoinCount",
+        "structurallyConsumedLineBoundaryCount"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.2.0" },
+        "canonicalNodeCount": { "type": "integer", "minimum": 0 },
+        "canonicalNodeSequenceSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalNodeTypeSequenceSha256": { "$ref": "#/$defs/sha256" },
+        "canonicalContentSha256": { "$ref": "#/$defs/sha256" },
+        "readingOrderGraphSha256": { "$ref": "#/$defs/sha256" },
+        "nodeCounts": { "$ref": "#/$defs/countMap" },
+        "visualRelationshipCount": { "type": "integer", "minimum": 0 },
+        "visualRelationshipCounts": { "$ref": "#/$defs/countMap" },
+        "visualRelationshipGraphSha256": { "$ref": "#/$defs/sha256" },
+        "noteRelationshipCount": { "type": "integer", "minimum": 0 },
+        "noteRelationshipCounts": { "$ref": "#/$defs/countMap" },
+        "noteRelationshipGraphSha256": { "$ref": "#/$defs/sha256" },
+        "citationRelationshipCount": { "type": "integer", "minimum": 0 },
+        "citationRelationshipCounts": { "$ref": "#/$defs/countMap" },
+        "citationRelationshipGraph": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citationRelationship" }
+        },
+        "citationRelationshipGraphSha256": { "$ref": "#/$defs/sha256" },
+        "assetCount": { "type": "integer", "minimum": 0 },
+        "assetCounts": { "$ref": "#/$defs/countMap" },
+        "assetManifestSha256": { "$ref": "#/$defs/sha256" },
+        "lineTransitionLedgerAvailable": { "type": "boolean" },
+        "lineTransitionCount": { "type": "integer", "minimum": 0 },
+        "lineTransitionLedgerSha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "unresolvedCorruptingJoinCount": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "structurallyConsumedLineBoundaryCount": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lineTransitionLedgerAvailable": { "const": true }
+            },
+            "required": ["lineTransitionLedgerAvailable"]
+          },
+          "then": {
+            "properties": {
+              "lineTransitionLedgerSha256": { "$ref": "#/$defs/sha256" },
+              "unresolvedCorruptingJoinCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "structurallyConsumedLineBoundaryCount": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "lineTransitionCount": { "const": 0 },
+              "lineTransitionLedgerSha256": { "type": "null" },
+              "unresolvedCorruptingJoinCount": { "type": "null" },
+              "structurallyConsumedLineBoundaryCount": { "type": "null" }
+            }
+          }
+        }
+      ]
     },
     "diagnostic": {
       "type": "object",
       "additionalProperties": false,
       "required": ["code", "severity", "message"],
       "properties": {
-        "code": { "type": "string", "minLength": 1 },
+        "code": { "$ref": "#/$defs/safeIdentifier" },
         "severity": { "enum": ["info", "warning", "error"] },
         "page": { "type": "integer", "minimum": 1 },
         "message": { "type": "string", "minLength": 1 }
@@ -211,17 +430,38 @@
         "pageCount",
         "completeness",
         "readiness",
+        "structure",
+        "diagnosticCounts",
+        "diagnosticSampleLimit",
+        "diagnosticSamplesTruncated",
         "diagnostics"
       ],
       "properties": {
-        "basename": { "type": "string", "minLength": 1 },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "basename": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
         "byteLength": { "type": "integer", "minimum": 0 },
         "pageCount": { "type": "integer", "minimum": 1 },
         "completeness": { "$ref": "#/$defs/completeness" },
         "readiness": { "$ref": "#/$defs/readiness" },
+        "structure": { "$ref": "#/$defs/structuralReceipt" },
+        "diagnosticCounts": { "$ref": "#/$defs/countMap" },
+        "diagnosticSampleLimit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "perCode"],
+          "properties": {
+            "total": { "const": 64 },
+            "perCode": { "const": 3 }
+          }
+        },
+        "diagnosticSamplesTruncated": { "type": "integer", "minimum": 0 },
         "diagnostics": {
           "type": "array",
+          "maxItems": 64,
           "items": { "$ref": "#/$defs/diagnostic" }
         },
         "exports": {
@@ -255,7 +495,7 @@
           "additionalProperties": false,
           "required": ["status"],
           "properties": {
-            "status": { "enum": ["passed", "skipped"] },
+            "status": { "enum": ["passed", "failed", "skipped"] },
             "reason": { "enum": ["java-unavailable", "epubcheck-unavailable"] }
           },
           "allOf": [
@@ -264,7 +504,8 @@
                 "properties": { "status": { "const": "skipped" } },
                 "required": ["status"]
               },
-              "then": { "required": ["reason"] }
+              "then": { "required": ["reason"] },
+              "else": { "not": { "required": ["reason"] } }
             }
           ]
         }
@@ -275,9 +516,13 @@
       "additionalProperties": false,
       "required": ["basename", "sha256", "code", "message"],
       "properties": {
-        "basename": { "type": "string", "minLength": 1 },
+        "basename": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$"
+        },
         "sha256": { "type": "null" },
-        "code": { "type": "string", "minLength": 1 },
+        "code": { "$ref": "#/$defs/safeIdentifier" },
         "message": { "type": "string", "minLength": 1 }
       }
     }

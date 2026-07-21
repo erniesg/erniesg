@@ -12,17 +12,18 @@ and fails closed if it cannot be resolved. Reclassification never deletes source
 text: citations, affiliations, equation references, section references, and
 bibliography entries remain canonical prose with their normal PDF provenance.
 
-| Taxonomy                          | Disposition                 | Required evidence                                                                                           |
-| --------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `footnote-reference`              | note reference              | Exact label in a same-page footnote band                                                                    |
-| `endnote-reference`               | note reference              | Exact label in a later endnote section                                                                      |
-| `bracketed-bibliography-citation` | citation retained as prose  | Reference-list heading, bracket syntax, at least two citation markers, and no note body region              |
-| `superscript-citation-cluster`    | citation retained as prose  | Reference-list heading, clustered superscript syntax, at least two citation labels, and no note body region |
-| `author-affiliation-superscript`  | plain text                  | Page-one superscript before Abstract or Introduction with no matching note body                             |
-| `equation-reference`              | plain text                  | Marker immediately governed by Equation or Eq. context                                                      |
-| `section-reference`               | plain text                  | Marker immediately governed by Section or Sec. context                                                      |
-| `bibliography-entry`              | plain text                  | Numbered marker inside a detected reference-list section                                                    |
-| `unresolved-note-marker`          | note reference, fail closed | Candidate marker lacks enough evidence for safe reclassification                                            |
+| Taxonomy                            | Disposition                 | Required evidence                                                                                           |
+| ----------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `footnote-reference`                | note reference              | Exact label in a same-page footnote band                                                                    |
+| `endnote-reference`                 | note reference              | Exact label in a later endnote section                                                                      |
+| `bracketed-bibliography-citation`   | citation retained as prose  | Reference-list heading, bracket syntax, at least two citation markers, and no note body region              |
+| `superscript-citation-cluster`      | citation retained as prose  | Reference-list heading, clustered superscript syntax, at least two citation labels, and no note body region |
+| `superscript-bibliography-citation` | citation retained as prose  | Reference-list heading, repeated superscript citation syntax, and no note body with the same label          |
+| `author-affiliation-superscript`    | plain text                  | Page-one superscript before Abstract or Introduction with no matching note body                             |
+| `equation-reference`                | plain text                  | Marker immediately governed by Equation or Eq. context                                                      |
+| `section-reference`                 | plain text                  | Marker immediately governed by Section or Sec. context                                                      |
+| `bibliography-entry`                | plain text                  | Numbered marker inside a detected reference-list section                                                    |
+| `unresolved-note-marker`            | note reference, fail closed | Candidate marker lacks enough evidence for safe reclassification                                            |
 
 Note relationships use the existing exact-label confidence score and are
 accepted only at or above `0.70`. Candidates within `0.04` of the best score

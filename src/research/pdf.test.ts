@@ -164,7 +164,12 @@ describe('PDF.js browser ingestion', () => {
       confidence: 0.98,
     })
     expect(result.completeness.ocrRequiredPages).toEqual([])
-    expect(result.readiness.ready).toBe(true)
+    expect(result.readiness.ready).toBe(false)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'UNPROVENANCED_RENDERED_UNIT' }),
+      ]),
+    )
   })
 
   it('keeps one physical spread and records two confident logical page regions', async () => {
@@ -847,7 +852,7 @@ describe('PDF.js browser ingestion', () => {
             method: 'pdf-object',
             x: expect.closeTo(220 / 612, 4),
             y: expect.closeTo(222 / 792, 4),
-            width: expect.closeTo(170 / 612, 4),
+            width: expect.closeTo(260 / 612, 4),
             height: expect.closeTo(110 / 792, 4),
           }),
         }),
@@ -857,8 +862,8 @@ describe('PDF.js browser ingestion', () => {
           assetId: expect.stringMatching(/^asset-[a-f0-9]{24}$/),
         }),
         expect.objectContaining({
-          id: 'vector-p001-001',
-          kind: 'vector',
+          id: 'image-p001-003',
+          kind: 'image',
           assetId: expect.stringMatching(/^asset-[a-f0-9]{24}$/),
         }),
       ]),
@@ -871,14 +876,9 @@ describe('PDF.js browser ingestion', () => {
           rendition: 'source-preserved',
           sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         }),
-        expect.objectContaining({
-          kind: 'vector',
-          mediaType: 'image/svg+xml',
-          rendition: 'source-preserved',
-          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-        }),
       ]),
     )
+    expect(result.pages[0].assets).toHaveLength(3)
     expect(result.regions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'caption' }),
@@ -902,14 +902,14 @@ describe('PDF.js browser ingestion', () => {
         assetIds: expect.arrayContaining([
           expect.stringMatching(/^asset-[a-f0-9]{24}$/),
         ]),
-        sourceObjectIds: ['image-p001-001', 'image-p001-002'],
+        sourceObjectIds: ['image-p001-001'],
         altTextSource: 'caption',
       }),
       expect.objectContaining({
         kind: 'figure',
         label: 'Figure 2',
         status: 'matched',
-        sourceObjectIds: ['vector-p001-001'],
+        sourceObjectIds: ['image-p001-002'],
       }),
       expect.objectContaining({
         kind: 'table',
@@ -920,19 +920,16 @@ describe('PDF.js browser ingestion', () => {
         kind: 'equation',
         label: 'Equation 1',
         status: 'matched',
+        sourceObjectIds: ['image-p001-003'],
+        evidence: expect.arrayContaining(['source-glyph-raster']),
       }),
     ])
     expect(result.assets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'raster' }),
-        expect.objectContaining({ kind: 'vector' }),
         expect.objectContaining({
           kind: 'table',
           rendition: 'semantic-table',
-        }),
-        expect.objectContaining({
-          kind: 'equation',
-          rendition: 'bounded-svg-fallback',
         }),
       ]),
     )
@@ -946,6 +943,31 @@ describe('PDF.js browser ingestion', () => {
         expect.objectContaining({
           type: 'figure',
           objectType: 'table',
+          table: {
+            rows: [
+              {
+                cells: [
+                  expect.objectContaining({
+                    text: 'Group',
+                    headerScope: 'column',
+                  }),
+                  expect.objectContaining({
+                    text: 'Score',
+                    headerScope: 'column',
+                  }),
+                ],
+              },
+              {
+                cells: [
+                  expect.objectContaining({
+                    text: 'Control',
+                    headerScope: null,
+                  }),
+                  expect.objectContaining({ text: '10', headerScope: null }),
+                ],
+              },
+            ],
+          },
           relationships: expect.objectContaining({
             caption: expect.stringMatching(/^caption-/),
             assets: expect.arrayContaining([
@@ -955,17 +977,57 @@ describe('PDF.js browser ingestion', () => {
         }),
       ]),
     )
+    const equationRelationship = result.visualRelationships.find(
+      (relationship) => relationship.kind === 'equation',
+    )!
+    const equationNodeIndex = result.paper.nodes.findIndex(
+      (node) => node.id === equationRelationship.canonicalNodeId,
+    )
+    const equationCaptionIndex = result.paper.nodes.findIndex(
+      (node) => node.id === equationRelationship.captionNodeId,
+    )
+    expect(equationRelationship).toMatchObject({
+      captionRegionId: expect.stringMatching(/^page-001-region-/),
+      sourceText: 'x + y = z',
+      altText: 'Equation 1. A display equation uses a source glyph raster.',
+      altTextSource: 'caption',
+      sourceRegionIds: [
+        expect.stringMatching(/^page-001-region-/),
+        expect.stringMatching(/^page-001-object-region-/),
+      ],
+      sourceObjectIds: ['image-p001-003'],
+      assetIds: [expect.stringMatching(/^asset-/)],
+      evidence: expect.arrayContaining(['source-glyph-raster']),
+    })
+    expect(equationNodeIndex).toBeGreaterThan(-1)
+    expect(equationCaptionIndex).toBe(equationNodeIndex + 1)
+    expect(
+      result.paper.nodes.some(
+        (node) => node.type === 'paragraph' && node.text === 'x + y = z',
+      ),
+    ).toBe(false)
+    const equationAsset = result.assets.find(
+      (asset) => asset.id === equationRelationship.assetIds[0],
+    )!
+    expect(equationAsset).toMatchObject({
+      kind: 'raster',
+      mediaType: 'image/png',
+      rendition: 'source-preserved',
+      sourceObjectIds: ['image-p001-003'],
+    })
+    expect(equationAsset.bytes.byteLength).toBeGreaterThan(0)
     expect(result.semanticSignals).toEqual({
       captions: 2,
       tables: 1,
       equations: 1,
+      citations: 0,
       footnoteReferences: 1,
       footnotes: 1,
     })
     expect(result.completeness).toMatchObject({
       textCoverage: 1,
-      sourceAssetCount: 5,
-      exportedAssetCount: 5,
+      sourceAssetCount: 4,
+      exportedAssetCount: 4,
       assetCoverage: 1,
       expectedRelationshipCount: 5,
       resolvedRelationshipCount: 5,
@@ -990,13 +1052,25 @@ describe('PDF.js browser ingestion', () => {
       expect(files[`EPUB/${visualAsset.href}`]).toEqual(visualAsset.bytes)
       expect(opf).toContain(`href="${visualAsset.href}"`)
     }
-    const firstPanelAsset = result.assets.find(
+    const firstFigureAsset = result.assets.find(
       (visualAsset) =>
         visualAsset.id === result.visualRelationships[0].assetIds[0],
     )!
-    expect(content.split(firstPanelAsset.href)).toHaveLength(3)
-    expect(content).toContain('<object')
+    const semanticTableAsset = result.assets.find(
+      (visualAsset) => visualAsset.mediaType === 'application/xhtml+xml',
+    )!
+    expect(content.split(firstFigureAsset.href)).toHaveLength(2)
+    for (const imageAsset of result.assets.filter((visualAsset) =>
+      visualAsset.mediaType.startsWith('image/'),
+    )) {
+      expect(content).toContain(`<img src="${imageAsset.href}"`)
+    }
+    expect(content).toContain(`data-asset-id="${semanticTableAsset.id}"`)
+    expect(content).toContain('<table aria-describedby=')
+    expect(content).not.toContain('<object')
     expect(content).toContain('alt="Figure 1.')
+    expect(content).toContain('data-object-type="equation"')
+    expect(content).not.toMatch(/<p\b[^>]*>x \+ y = z<\/p>|<math\b/i)
     expect(content).not.toMatch(/figure-placeholder|placeholder only/i)
     expect(exportManifest.assets).toEqual(
       expect.arrayContaining([

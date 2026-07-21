@@ -19,8 +19,14 @@ describe('SRT target profiles', () => {
       expect(profile.columns.count).toBeGreaterThan(0)
       expect(profile.interactionMode).toBeTruthy()
       expect(profile.finiteHeight).toBe(profile.dimensions.height !== null)
-      expect(profile.version).toBe('1.0.0')
+      expect(profile.version).toBe('1.1.0')
       expect(profile.epub.fileName).toMatch(/^publication-[a-z]+\.epub$/)
+      expect(profile.truth).toEqual({
+        geometry: 'authoritative',
+        typography: 'advisory',
+        pagination: 'reader-controlled',
+        orientation: 'reader-controlled',
+      })
     }
   })
 
@@ -52,6 +58,11 @@ describe('SRT target profiles', () => {
     })
     expect(TARGET_PROFILES.paperPro).toMatchObject({
       pixelsPerInch: 229,
+      manufacturerDisplay: {
+        diagonalInches: 11.8,
+        listedPixels: { width: 2160, height: 1620 },
+        logicalOrientation: 'portrait',
+      },
       epub: {
         fileName: 'publication-paperpro.epub',
         pageProgressionDirection: 'ltr',
@@ -59,9 +70,43 @@ describe('SRT target profiles', () => {
       },
     })
     expect(TARGET_PROFILES.paperProMove).toMatchObject({
+      label: 'Paper Pro Move',
       pixelsPerInch: 264,
+      manufacturerDisplay: {
+        diagonalInches: 7.3,
+        listedPixels: { width: 1696, height: 954 },
+        logicalOrientation: 'portrait',
+      },
       epub: { fileName: 'publication-papermove.epub' },
     })
+    expect(TARGET_PROFILES.mobile.preview).toMatchObject({
+      heightCssPx: null,
+      continuousWindowHeightCssPx: 844,
+    })
+  })
+
+  it('shows both e-ink screens at one relative physical preview scale', () => {
+    const move = TARGET_PROFILES.paperProMove
+    const pro = TARGET_PROFILES.paperPro
+    const cssPixelsPerPhysicalInch = (profile: typeof move) =>
+      (profile.preview.widthCssPx / profile.dimensions.width) *
+      profile.pixelsPerInch!
+
+    expect(cssPixelsPerPhysicalInch(move)).toBeCloseTo(
+      cssPixelsPerPhysicalInch(pro),
+      0,
+    )
+    expect(move.preview).toEqual({ widthCssPx: 276, heightCssPx: 490 })
+    expect(pro.preview).toEqual({ widthCssPx: 540, heightCssPx: 720 })
+    expect(move.preview.widthCssPx).toBeLessThan(pro.preview.widthCssPx)
+    expect(move.preview.heightCssPx!).toBeLessThan(pro.preview.heightCssPx!)
+  })
+
+  it('rejects manufacturer pixels that do not transpose to logical device geometry', () => {
+    const invalid = structuredClone(TARGET_PROFILES.paperProMove)
+    invalid.manufacturerDisplay!.listedPixels.width += 1
+
+    expect(targetProfileSchema.safeParse(invalid).success).toBe(false)
   })
 
   it('rejects profiles whose finite-height capability contradicts their dimensions', () => {

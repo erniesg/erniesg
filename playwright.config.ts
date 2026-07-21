@@ -3,6 +3,8 @@ import path from 'node:path'
 
 const evidenceRoot = process.env.AGENT_EVIDENCE_DIR ?? '.agent/evidence'
 const staticBuildDirectory = process.env.SRT_STATIC_BUILD_DIR
+const devPort = process.env.SRT_E2E_PORT ?? '1234'
+const devBaseUrl = `http://127.0.0.1:${devPort}`
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -15,9 +17,7 @@ export default defineConfig({
   updateSnapshots: 'none',
   use: {
     ...(staticBuildDirectory ? { channel: 'chromium' as const } : {}),
-    baseURL: staticBuildDirectory
-      ? 'https://srt-evaluation.test'
-      : 'http://127.0.0.1:1234',
+    baseURL: staticBuildDirectory ? 'https://srt-evaluation.test' : devBaseUrl,
     browserName: 'chromium',
     colorScheme: 'light',
     deviceScaleFactor: 1,
@@ -30,8 +30,8 @@ export default defineConfig({
   webServer: staticBuildDirectory
     ? undefined
     : {
-        command: 'ASTRO_DEV_BACKGROUND=0 npm run dev -- --host 127.0.0.1',
-        url: 'http://127.0.0.1:1234/research',
+        command: `ASTRO_DEV_BACKGROUND=0 npm run dev -- --host 127.0.0.1 --port ${devPort}`,
+        url: `${devBaseUrl}/research`,
         reuseExistingServer: false,
         timeout: 120_000,
         stdout: 'pipe',

@@ -12,17 +12,46 @@ const fixture = (name: string) =>
     name,
   )
 
+function unresolvedLineJoinPdf() {
+  const content = [
+    'BT /F1 11 Tf 54 632 Td (This source contains a scenar-) Tj ET',
+    'BT /F1 11 Tf 54 614 Td (io that remains continuous prose.) Tj ET',
+  ].join('\n')
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [4 0 R] /Count 1 >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+  ]
+  let pdf = '%PDF-1.4\n% owner-local line-join fixture\n'
+  const offsets = [0]
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length)
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
+  })
+  const xref = pdf.length
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  pdf += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
+    .join('')
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(pdf)
+}
+
 test.describe.configure({ timeout: 120_000 })
 test.beforeEach(async ({ page }) => installStaticRoutes(page))
 
 async function waitForImporter(page: Page) {
-  await expect(
-    page.locator('astro-island[component-url$="PublicationImporter.tsx"]'),
-  ).toHaveAttribute('client-render-time', /.+/)
+  await expect(page.locator('#publication-pdf')).toBeEnabled({
+    timeout: 30_000,
+  })
 }
 
 test('offers an explicit offline OCR language choice', async ({ page }) => {
   await page.goto('/research/studio')
+  await waitForImporter(page)
 
   await expect(page.getByLabel('OCR language')).toHaveValue('auto')
   await expect(
@@ -31,6 +60,11 @@ test('offers an explicit offline OCR language choice', async ({ page }) => {
     ),
   ).toBeVisible()
   await expect(page.getByText(/local language pack/i)).toBeVisible()
+  await expect(async () => {
+    const dropzone = page.locator('.publication-dropzone')
+    await dropzone.dispatchEvent('dragenter')
+    await expect(dropzone).toHaveClass(/\bis-dragging\b/)
+  }).toPass({ timeout: 10_000 })
 })
 
 test('recognizes a scanned fixture without any cross-origin request', async ({
@@ -47,7 +81,7 @@ test('recognizes a scanned fixture without any cross-origin request', async ({
       await route.abort('blockedbyclient')
       return
     }
-    await route.continue()
+    await route.fallback()
   })
 
   await page
@@ -99,22 +133,41 @@ test('emits EPUB ready only after the completeness gate passes', async ({
 
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
   await expect(
-    page.getByRole('link', { name: 'Download EPUB', exact: true }),
+    page.getByRole('link', { name: 'Download Mobile EPUB', exact: true }),
   ).toBeVisible()
+  const rendition = page.getByTitle('Generated EPUB rendition on Mobile')
+  await expect(rendition).toBeVisible()
+  await expect(
+    rendition.contentFrame().locator('[data-canonical-id]').first(),
+  ).toBeVisible()
+  await expect(rendition.contentFrame().locator('script')).toHaveCount(0)
   await expect(
     page.getByRole('link', { name: 'Download Paper Pro EPUB', exact: true }),
-  ).toBeVisible()
+  ).toHaveCount(0)
   await expect(
     page.getByRole('link', {
       name: 'Download Paper Pro Move EPUB',
       exact: true,
     }),
-  ).toBeVisible()
+  ).toHaveCount(0)
+  const switcher = page.locator('.epub-device-switcher')
+  await expect(
+    switcher.locator('button[data-profile-id="mobile"]'),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.srt-paper')).toHaveCount(0)
 
-  for (const [linkName, profileId] of [
-    ['Download Paper Pro EPUB', 'paperPro'],
-    ['Download Paper Pro Move EPUB', 'paperProMove'],
+  for (const [label, linkName, profileId] of [
+    ['Mobile', 'Download Mobile EPUB', 'mobile'],
+    ['Paper Pro', 'Download Paper Pro EPUB', 'paperPro'],
+    ['Paper Pro Move', 'Download Paper Pro Move EPUB', 'paperProMove'],
   ] as const) {
+    await switcher.getByText(label, { exact: true }).locator('..').click()
+    await expect(
+      switcher.locator(`button[data-profile-id="${profileId}"]`),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(
+      page.locator('.publication-actions a[data-artifact-sha256]'),
+    ).toHaveCount(1)
     const files = await downloadedEpub(page, linkName)
     const manifest = JSON.parse(strFromU8(files['EPUB/export.json']))
     expect(manifest).toMatchObject({
@@ -125,68 +178,6 @@ test('emits EPUB ready only after the completeness gate passes', async ({
     })
   }
 
-  for (const [buttonName, profileId] of [
-    ['Paper Pro', 'paperPro'],
-    ['Pro Move', 'paperProMove'],
-  ] as const) {
-    await page.getByRole('button', { name: buttonName, exact: true }).click()
-    const paper = page.locator('.srt-paper')
-    await expect(paper).toHaveAttribute('data-target-profile', profileId)
-    const diagnostics = await paper.evaluate((root) => {
-      const nodes = [
-        ...root.querySelectorAll<HTMLElement>('[data-canonical-id]'),
-      ]
-      const clipped = nodes
-        .filter((node) => {
-          const page = node.closest<HTMLElement>('.srt-page')
-          if (!page) return true
-          const box = node.getBoundingClientRect()
-          const pageBox = page.getBoundingClientRect()
-          return (
-            box.left < pageBox.left - 1 ||
-            box.right > pageBox.right + 1 ||
-            box.top < pageBox.top - 1 ||
-            box.bottom > pageBox.bottom + 1
-          )
-        })
-        .map((node) => node.dataset.canonicalId)
-      const overlaps: string[] = []
-      for (let index = 0; index < nodes.length; index += 1) {
-        for (let other = index + 1; other < nodes.length; other += 1) {
-          const left = nodes[index]
-          const right = nodes[other]
-          if (
-            left.contains(right) ||
-            right.contains(left) ||
-            left.closest('.srt-page-region') !==
-              right.closest('.srt-page-region')
-          ) {
-            continue
-          }
-          const a = left.getBoundingClientRect()
-          const b = right.getBoundingClientRect()
-          if (
-            Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
-            Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1
-          ) {
-            overlaps.push(
-              `${left.dataset.canonicalId}:${right.dataset.canonicalId}`,
-            )
-          }
-        }
-      }
-      return {
-        clipped,
-        overlaps,
-        horizontalOverflow: root.scrollWidth > root.clientWidth + 1,
-      }
-    })
-    expect(diagnostics).toEqual({
-      clipped: [],
-      overlaps: [],
-      horizontalOverflow: false,
-    })
-  }
   await page.locator('.publication-diagnostics summary').click()
   await expect(page.getByText('Text coverage')).toBeVisible()
 })
@@ -199,41 +190,150 @@ test('imports a born-structured DOCX and downloads its EPUB', async ({
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
   await page.locator('.publication-diagnostics summary').click()
   await expect(page.getByText('100%').first()).toBeVisible()
-  const files = await downloadedEpub(page, 'Download EPUB')
+  const frame = page
+    .getByTitle('Generated EPUB rendition on Mobile')
+    .contentFrame()
+  await expect(frame.locator('strong', { hasText: 'bold' })).toBeVisible()
+  await expect(frame.locator('em', { hasText: 'italic' })).toBeVisible()
+  const inertExternalLink = frame.locator(
+    'a[role="link"][data-original-href="https://example.com/source"]',
+    { hasText: 'linked text' },
+  )
+  await expect(inertExternalLink).toBeVisible()
+  await expect(inertExternalLink).not.toHaveAttribute('href')
+  await expect(inertExternalLink).toHaveAttribute(
+    'aria-label',
+    /link disabled in preview/,
+  )
+  await expect(inertExternalLink).toHaveAttribute('tabindex', '0')
+  const internalLink = frame.locator('a[href^="#"]').first()
+  await expect(internalLink).toBeVisible()
+  await internalLink.focus()
+  await expect
+    .poll(() =>
+      internalLink.evaluate(
+        (element) => getComputedStyle(element).outlineStyle,
+      ),
+    )
+    .not.toBe('none')
+  await expect(frame.locator('aside[role="doc-footnote"]')).toBeVisible()
+  await expect(frame.locator('aside[role="doc-endnote"]')).toBeVisible()
+  const backlink = frame.locator('.note-backlink').first()
+  await expect(backlink).toBeVisible()
+  const backlinkHref = await backlink.getAttribute('href')
+  expect(backlinkHref).toMatch(/^#.+/)
+  await expect(frame.locator(backlinkHref!)).toHaveCount(1)
+  const files = await downloadedEpub(page, 'Download Mobile EPUB')
   expect(files['EPUB/content.xhtml']).toBeTruthy()
   expect(files['EPUB/export.json']).toBeTruthy()
+  expect(strFromU8(files['EPUB/content.xhtml'])).toContain(
+    '<a href="https://example.com/source">linked text</a>',
+  )
 })
 
 test('packages scientific visual objects as real EPUB assets', async ({
   page,
 }) => {
+  await page.addInitScript(() => {
+    const trackedWindow = window as unknown as Window & {
+      __revokedPreviewUrls: string[]
+    }
+    trackedWindow.__revokedPreviewUrls = []
+    const revokeObjectUrl = URL.revokeObjectURL.bind(URL)
+    URL.revokeObjectURL = (url) => {
+      trackedWindow.__revokedPreviewUrls.push(url)
+      revokeObjectUrl(url)
+    }
+  })
   await uploadFixture(page, 'structured-scientific.pdf')
 
   await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
   await page.locator('.publication-diagnostics summary').click()
   await expect(page.getByText('Asset coverage')).toBeVisible()
-  await expect(page.getByText('5 of 5 source visual objects')).toBeVisible()
+  await expect(page.getByText('4 of 4 source visual objects')).toBeVisible()
   await expect(page.getByText('UNRESOLVED_SEMANTIC_OBJECTS')).toHaveCount(0)
-
-  const files = await downloadedEpub(page, 'Download EPUB')
+  const frame = page
+    .getByTitle('Generated EPUB rendition on Mobile')
+    .contentFrame()
+  await expect(frame.locator('.srt-pipeline')).toHaveCount(0)
+  await expect(
+    frame.locator('figure').first().locator('img, table').first(),
+  ).toBeVisible()
+  await expect(frame.locator('iframe, object')).toHaveCount(0)
+  const files = await downloadedEpub(page, 'Download Mobile EPUB')
   const content = strFromU8(files['EPUB/content.xhtml'])
   const opf = strFromU8(files['EPUB/package.opf'])
   const manifest = JSON.parse(strFromU8(files['EPUB/export.json']))
 
+  const firstFigureRelationship = manifest.visualRelationships.find(
+    (relationship: { label: string }) => relationship.label === 'Figure 1',
+  )
+  expect(firstFigureRelationship).toMatchObject({
+    sourceObjectIds: ['image-p001-001'],
+    assetIds: [expect.any(String)],
+  })
+  const firstFigureAssets = frame
+    .locator('figure')
+    .first()
+    .locator('[data-asset-id]')
+  await expect(firstFigureAssets).toHaveCount(
+    firstFigureRelationship.assetIds.length,
+  )
+  expect(
+    await firstFigureAssets.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('data-asset-id')),
+    ),
+  ).toEqual(firstFigureRelationship.assetIds)
+
   expect(content).not.toMatch(/figure-placeholder|placeholder only/i)
-  expect(content).toContain('<object')
+  const tableRelationship = manifest.visualRelationships.find(
+    (relationship: { kind: string }) => relationship.kind === 'table',
+  )
+  expect(tableRelationship).toMatchObject({
+    captionNodeId: expect.any(String),
+  })
+  expect(content).toContain(
+    `<table aria-describedby="${tableRelationship.captionNodeId}">`,
+  )
+  expect(content).toContain('<thead>')
+  expect(content).toContain('<tbody>')
+  expect(content).not.toContain('<object')
   expect(manifest.assets).toHaveLength(4)
   expect(manifest.visualRelationships).toHaveLength(4)
   for (const asset of manifest.assets) {
     expect(files[`EPUB/${asset.href}`]).toBeTruthy()
     expect(opf).toContain(`href="${asset.href}"`)
   }
+
+  await page.getByRole('button', { name: 'New paper' }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as Window & {
+              __revokedPreviewUrls?: string[]
+            }
+          ).__revokedPreviewUrls?.length ?? 0,
+      ),
+    )
+    .toBeGreaterThanOrEqual(
+      manifest.assets.filter(
+        (asset: { mediaType: string }) =>
+          asset.mediaType !== 'application/xhtml+xml',
+      ).length,
+    )
 })
 
 test('visually links note candidates and both ambiguous reading orders', async ({
   page,
 }) => {
   await uploadFixture(page, 'diagnostic-overlays.pdf')
+  await expect(page.locator('.publication-diagnostics')).not.toHaveAttribute(
+    'open',
+    '',
+  )
+  await page.locator('.publication-diagnostics summary').click()
 
   await expect(
     page.getByRole('heading', { name: 'Diagnostic page inspector' }),
@@ -267,12 +367,20 @@ test('visually links note candidates and both ambiguous reading orders', async (
   ).toHaveCount(2)
 })
 
-test('adjudicates ambiguous structure and replays the exact sidecar', async ({
+test('adjudicates ambiguous structure while preserving independent blockers and replays the exact sidecar', async ({
   page,
 }) => {
   await uploadFixture(page, 'adjudication-required.pdf')
 
   await expect(page.getByText('Review required', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('link', {
+      name: 'Download readable Mobile EPUB (review recommended)',
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(page.getByLabel('Blocking issue groups')).toBeVisible()
+  await page.locator('.publication-diagnostics summary').click()
   for (let remaining = 2; remaining > 0; remaining -= 1) {
     const noteDiagnostics = page.getByRole('button', {
       name: /AMBIGUOUS_NOTE_MATCH/,
@@ -291,7 +399,13 @@ test('adjudicates ambiguous structure and replays the exact sidecar', async ({
     .getByRole('button', { name: 'Accept reading order 1', exact: true })
     .click()
 
-  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  await expect(page.getByText('Review required', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Blocking issue groups')).toContainText(
+    'UNPROVENANCED RENDERED UNIT',
+  )
+  await expect(page.getByLabel('Blocking issue groups')).toContainText(
+    'INCOMPLETE TEXT COVERAGE',
+  )
   await expect(page.getByText(/Human adjudications:/)).toContainText(
     'AMBIGUOUS_NOTE_MATCH 2',
   )
@@ -300,7 +414,10 @@ test('adjudicates ambiguous structure and replays the exact sidecar', async ({
   )
 
   const decisionBytes = await downloadedBytes(page, 'Export decisions JSON')
-  const directEpub = await downloadedBytes(page, 'Download EPUB')
+  const directEpub = await downloadedBytes(
+    page,
+    'Download readable Mobile EPUB (review recommended)',
+  )
   const decisionFile = JSON.parse(new TextDecoder().decode(decisionBytes))
   expect(decisionFile.decisions).toHaveLength(3)
 
@@ -315,9 +432,105 @@ test('adjudicates ambiguous structure and replays the exact sidecar', async ({
     .locator('#publication-pdf')
     .setInputFiles(fixture('adjudication-required.pdf'))
 
-  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
-  const replayedEpub = await downloadedBytes(page, 'Download EPUB')
+  await expect(page.getByText('Review required', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Blocking issue groups')).toContainText(
+    'UNPROVENANCED RENDERED UNIT',
+  )
+  await expect(page.getByLabel('Blocking issue groups')).toContainText(
+    'INCOMPLETE TEXT COVERAGE',
+  )
+  const replayedEpub = await downloadedBytes(
+    page,
+    'Download readable Mobile EPUB (review recommended)',
+  )
   expect(replayedEpub).toEqual(directEpub)
+})
+
+test('adjudicates an unresolved line join with three explicit choices and replays the exact sidecar', async ({
+  page,
+}) => {
+  const source = unresolvedLineJoinPdf()
+  const upload = async () => {
+    await page.locator('#publication-pdf').setInputFiles({
+      name: 'unresolved-line-join.pdf',
+      mimeType: 'application/pdf',
+      buffer: source,
+    })
+    await expect(page.locator('.publication-result-bar')).toBeVisible({
+      timeout: 45_000,
+    })
+  }
+
+  await page.goto('/research/studio')
+  await waitForImporter(page)
+  await upload()
+  await expect(page.getByText('Review required', { exact: true })).toBeVisible()
+  await page.locator('.publication-diagnostics summary').click()
+  await expect(
+    page.getByRole('heading', { name: 'Line-join review', exact: true }),
+  ).toBeVisible()
+  const remove = page.getByRole('button', { name: 'Remove wrap hyphen' })
+  const preserve = page.getByRole('button', {
+    name: 'Preserve authored hyphen',
+  })
+  const unresolved = page.getByRole('button', { name: 'Leave unresolved' })
+  await expect(remove).not.toHaveAttribute('aria-pressed', 'true')
+  await expect(preserve).not.toHaveAttribute('aria-pressed', 'true')
+  await expect(unresolved).not.toHaveAttribute('aria-pressed', 'true')
+
+  await unresolved.click()
+  await expect(unresolved).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByLabel('Blocking issue groups')).toContainText(
+    'UNRESOLVED CORRUPTING JOIN',
+  )
+
+  await preserve.click()
+  await expect(preserve).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByLabel('Blocking issue groups')).not.toContainText(
+    'UNRESOLVED CORRUPTING JOIN',
+  )
+
+  await remove.click()
+  await expect(remove).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByText(/scenar-\s*$/u)).toBeVisible()
+  await expect(
+    page.getByText(/^io that remains continuous prose\./u),
+  ).toBeVisible()
+
+  const decisionBytes = await downloadedBytes(page, 'Export decisions JSON')
+  const decisionFile = JSON.parse(new TextDecoder().decode(decisionBytes))
+  expect(decisionFile).toMatchObject({
+    schemaVersion: '1.1.0',
+    decisions: [
+      {
+        diagnosticCode: 'UNRESOLVED_CORRUPTING_JOIN',
+        resolution: {
+          type: 'resolve-line-join',
+          outcome: 'remove-wrap-hyphen',
+          confidence: 1,
+          evidence: ['bounded-source-context', 'owner-local-adjudication'],
+        },
+      },
+    ],
+  })
+  expect(JSON.stringify(decisionFile)).not.toContain('continuous prose')
+
+  await page.getByRole('button', { name: 'New paper' }).click()
+  await page.locator('#publication-decisions').setInputFiles({
+    name: 'line-join.decisions.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(decisionBytes),
+  })
+  await upload()
+  await page.locator('.publication-diagnostics summary').click()
+  await expect(
+    page.getByRole('button', { name: 'Remove wrap hyphen' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  const replayedDecisionBytes = await downloadedBytes(
+    page,
+    'Export decisions JSON',
+  )
+  expect(replayedDecisionBytes).toEqual(decisionBytes)
 })
 
 test('keeps the newest result when an active import is superseded', async ({
@@ -358,6 +571,7 @@ test('keeps the newest result when an active import is superseded', async ({
     .locator('#publication-pdf')
     .setInputFiles(fixture('born-digital.pdf'))
   await expect(page.getByText('Validating EPUB…')).toBeVisible()
+  await expect(page.getByText('EPUB ready', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'New paper' }).click()
   await page
     .locator('#publication-pdf')

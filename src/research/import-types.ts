@@ -24,7 +24,25 @@ export type PdfSourceRun = NormalizedSourceBox & {
   text: string
   fontName: string
   fontSize: number
+  bold?: boolean
+  italic?: boolean
   confidence: number
+}
+
+export type PdfLineBoundaryDecision = {
+  id: string
+  page: number
+  regionId: string
+  fromLineId: string
+  toLineId: string
+  outcome:
+    | 'space'
+    | 'no-space'
+    | 'preserved-lexical-hyphen'
+    | 'removed-discretionary-hyphen'
+    | 'structural-boundary'
+    | 'unresolved'
+  evidence: string[]
 }
 
 export type PdfVisualAsset = {
@@ -40,6 +58,8 @@ export type PdfVisualAsset = {
   rendition:
     | 'source-preserved'
     | 'profile-downscaled'
+    | 'browser-composite-raster'
+    | 'source-page-crop'
     | 'bounded-svg-fallback'
     | 'semantic-table'
   sha256: string
@@ -49,6 +69,7 @@ export type PdfVisualAsset = {
   resolutionDpi: number | null
   sourceObjectIds: string[]
   sourceBoxes: NormalizedSourceBox[]
+  sourceCropBox?: NormalizedSourceBox
 }
 
 export type PdfNativeObject = {
@@ -234,6 +255,8 @@ export type PdfNoteMarkerTaxonomy =
   | 'endnote-reference'
   | 'bracketed-bibliography-citation'
   | 'superscript-citation-cluster'
+  | 'superscript-bibliography-citation'
+  | 'human-reclassified-citation'
   | 'author-affiliation-superscript'
   | 'equation-reference'
   | 'section-reference'
@@ -270,6 +293,32 @@ export type PdfNoteRelationship = {
   sourceBoxes: NormalizedSourceBox[]
 }
 
+export type PdfCitationRelationship = {
+  id: string
+  label: string
+  labels: string[]
+  referenceRegionId: string
+  referenceStart: number
+  referenceEnd: number
+  taxonomy: Extract<
+    PdfNoteMarkerTaxonomy,
+    | 'bracketed-bibliography-citation'
+    | 'superscript-citation-cluster'
+    | 'superscript-bibliography-citation'
+    | 'human-reclassified-citation'
+  >
+  targetNodeIds: string[]
+  status: 'matched' | 'unresolved'
+  canonicalAnchor: {
+    nodeId: string
+    start: number
+    end: number
+  } | null
+  confidence: number
+  evidence: string[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
 export type PdfVisualMatchCandidate = {
   sourceRegionIds: string[]
   sourceObjectIds: string[]
@@ -285,6 +334,7 @@ export type PdfVisualRelationship = {
   label: string
   captionRegionId: string
   sourceRegionIds: string[]
+  sourceLineIds?: string[]
   sourceObjectIds: string[]
   assetIds: string[]
   status: 'matched' | 'ambiguous' | 'unresolved'
@@ -335,6 +385,8 @@ export type ReconstructionDiagnostic = {
     | 'CLASSIFIED_NOTE_MARKER'
     | 'AMBIGUOUS_NOTE_MATCH'
     | 'UNRESOLVED_NOTE_REFERENCE'
+    | 'UNRESOLVED_CITATION_REFERENCE'
+    | 'UNMAPPED_CITATION_ANCHOR'
     | 'UNREFERENCED_NOTE'
     | 'MALFORMED_DOCX'
     | 'MISSING_DOCX_PART'
@@ -345,8 +397,16 @@ export type ReconstructionDiagnostic = {
     | 'UNSUPPORTED_DOCX_FEATURE'
     | 'AMBIGUOUS_VISUAL_MATCH'
     | 'UNRESOLVED_VISUAL_OBJECT'
+    | 'BOUNDED_TABLE_FALLBACK'
     | 'UNREFERENCED_VISUAL_ASSET'
     | 'NO_RECONSTRUCTABLE_TEXT'
+    | 'ISOLATED_PROSE_GLYPH'
+    | 'DUPLICATE_CANONICAL_SPAN'
+    | 'MISSING_SOURCE_REGION'
+    | 'UNPROVENANCED_RENDERED_UNIT'
+    | 'INCOMPLETE_INLINE_STYLE_COVERAGE'
+    | 'INVALID_LINE_BOUNDARY_LEDGER'
+    | 'UNRESOLVED_CORRUPTING_JOIN'
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
     | 'INCOMPLETE_RELATIONSHIP_COVERAGE'
@@ -371,6 +431,7 @@ export type PdfSemanticSignals = {
   captions: number
   tables: number
   equations: number
+  citations: number
   footnoteReferences: number
   footnotes: number
 }
@@ -380,6 +441,16 @@ export type PdfCompletenessMetrics = {
   outputTextCharacters: number
   matchedTextCharacters: number
   textCoverage: number
+  duplicateCanonicalSpanCount: number
+  missingSourceRegionCount: number
+  unprovenancedRenderedUnitCount: number
+  expectedInlineSpanCount: number
+  mappedInlineSpanCount: number
+  inlineSpanCoverage: number
+  lineBoundaryCount: number
+  decidedLineBoundaryCount: number
+  unresolvedCorruptingJoinCount: number
+  structurallyConsumedLineBoundaryCount: number
   sourceAssetCount: number
   exportedAssetCount: number
   assetCoverage: number
@@ -428,6 +499,21 @@ export type HumanAdjudicationResolution =
   | { type: 'reclassify-citation' }
   | { type: 'reclassify-plain-text' }
   | { type: 'accept-reading-order'; regionIds: string[] }
+  | {
+      type: 'resolve-line-join'
+      transition: {
+        id: string
+        regionId: string
+        fromLineId: string
+        toLineId: string
+      }
+      outcome:
+        | 'remove-wrap-hyphen'
+        | 'preserve-authored-hyphen'
+        | 'leave-unresolved'
+      confidence: number
+      evidence: Array<'bounded-source-context' | 'owner-local-adjudication'>
+    }
   | { type: 'dismiss' }
 
 export type HumanAdjudicationRecord = {
@@ -440,7 +526,7 @@ export type HumanAdjudicationRecord = {
 }
 
 export type HumanAdjudicationProvenance = {
-  schemaVersion: '1.0.0'
+  schemaVersion: '1.0.0' | '1.1.0'
   documentSha256: string
   applied: HumanAdjudicationRecord[]
   stale: Array<
@@ -466,8 +552,12 @@ export type PdfReconstruction = {
   paper: ResearchPaper
   pages: PdfPageAnalysis[]
   regions: PdfPageRegion[]
+  lineBoundaryDecisions: PdfLineBoundaryDecision[]
+  unresolvedCorruptingJoinCount: number
+  structurallyConsumedLineBoundaryCount: number
   readingOrder: PdfReadingOrderGraph
   noteRelationships: PdfNoteRelationship[]
+  citationRelationships: PdfCitationRelationship[]
   visualRelationships: PdfVisualRelationship[]
   assets: PdfVisualAsset[]
   provenance: Record<string, NodeSourceEvidence>

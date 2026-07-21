@@ -32,6 +32,7 @@ type GeometryReport = {
   invalidFragmentLineage: string[]
   textLoss: string[]
   clippedContent: string[]
+  headerContentOverflow: string[]
   overlaps: string[]
   orphanedCaptions: string[]
   horizontalOverflow: Array<{ element: string; amount: number }>
@@ -229,6 +230,26 @@ async function inspectGeometry(
           )
         })
         .map(({ label }) => label)
+      const headerContentOverflow = headers.flatMap((header, index) => {
+        const headerRect = toRect(header.getBoundingClientRect())
+        const style = getComputedStyle(header)
+        const contentBottom =
+          headerRect.bottom -
+          (Number.parseFloat(style.borderBottomWidth) || 0) -
+          (Number.parseFloat(style.paddingBottom) || 0)
+        const childBottom = Math.max(
+          headerRect.top,
+          ...Array.from(
+            header.children,
+            (child) => child.getBoundingClientRect().bottom,
+          ),
+        )
+        const scrollOverflow = header.scrollHeight - header.clientHeight
+        return childBottom > contentBottom + options.geometryEpsilon ||
+          scrollOverflow > options.geometryEpsilon
+          ? [`document-header-${index + 1}`]
+          : []
+      })
 
       const overlaps: string[] = []
       for (let firstIndex = 0; firstIndex < measured.length; firstIndex += 1) {
@@ -315,6 +336,7 @@ async function inspectGeometry(
         invalidFragmentLineage,
         textLoss,
         clippedContent,
+        headerContentOverflow,
         overlaps,
         orphanedCaptions,
         horizontalOverflow: overflowCandidates.filter(
@@ -412,6 +434,12 @@ test('captures every paginated target and rejects invalid geometry', async ({
       .toEqual([])
 
     if (profile.finiteHeight) {
+      expect
+        .soft(
+          report.headerContentOverflow,
+          `${target}: header content overflow`,
+        )
+        .toEqual([])
       expect
         .soft(report.pages.length, `${target}: final page count`)
         .toBe(renditionManifest?.pagination.finalPageCount)

@@ -287,6 +287,15 @@
   .srt-paper[data-finite-height='true'] .srt-document-header {
     height: var(--srt-header-height);
   }
+  .srt-paper[data-target-profile='paperProMove'] .srt-document-header {
+    padding-bottom: 16px;
+  }
+  .srt-paper[data-target-profile='paperProMove'] .srt-authors {
+    margin-top: 18px;
+  }
+  .srt-paper[data-target-profile='paperProMove'] .srt-abstract {
+    margin-top: 22px;
+  }
   .srt-document-header small {
     display: block;
     line-height: 12px;
@@ -564,6 +573,15 @@
   .publication-ocr-gate p {
     @apply text-background/75;
   }
+  .publication-blocking-issues {
+    @apply mt-5 flex flex-wrap gap-2;
+  }
+  .publication-blocking-issues li {
+    @apply flex items-center gap-2 rounded border border-background/25 px-2 py-1 font-mono text-[9px] uppercase tracking-wide;
+  }
+  .publication-blocking-issues span {
+    @apply rounded bg-background px-1.5 py-0.5 text-foreground;
+  }
   .publication-result-bar {
     @apply mt-6 flex flex-col gap-5 rounded-lg border bg-background p-4 sm:flex-row sm:items-center sm:justify-between;
   }
@@ -588,6 +606,89 @@
   }
   .publication-actions > span {
     @apply text-xs text-muted-foreground;
+  }
+  .epub-rendition-preview {
+    @apply my-6 overflow-hidden rounded-lg border bg-muted/20;
+  }
+  .epub-preview-header {
+    @apply border-b p-4;
+  }
+  .epub-preview-kicker {
+    @apply font-mono text-[10px] uppercase tracking-wider text-muted-foreground;
+  }
+  .epub-rendition-preview h3 {
+    @apply mt-1 text-lg font-semibold;
+  }
+  .epub-rendition-preview p {
+    @apply mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground;
+  }
+  .epub-rendition-preview > p {
+    @apply m-4;
+  }
+  .epub-device-switcher {
+    @apply mt-5 min-w-0 border-0 p-0;
+  }
+  .epub-device-switcher legend {
+    @apply mb-2 text-xs font-medium text-foreground;
+  }
+  .epub-device-switcher > div {
+    @apply grid grid-cols-2 gap-2 sm:grid-cols-4;
+  }
+  .epub-device-switcher button {
+    @apply min-h-11 rounded-md border bg-background px-3 py-2 text-left text-foreground transition-colors hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground;
+  }
+  .epub-device-switcher button[aria-pressed='true'] {
+    @apply border-foreground bg-foreground text-background;
+  }
+  .epub-device-switcher strong,
+  .epub-device-switcher small {
+    @apply block;
+  }
+  .epub-device-switcher strong {
+    @apply text-xs font-medium leading-tight;
+  }
+  .epub-device-switcher small {
+    @apply mt-1 font-mono text-[9px] leading-none opacity-70;
+  }
+  .epub-device-switcher .epub-preview-profile-key {
+    @apply break-all leading-tight;
+  }
+  .epub-preview-receipt {
+    @apply mt-5 border-t text-xs;
+  }
+  .epub-preview-receipt > div {
+    @apply grid min-w-0 gap-1 border-b py-2 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-4;
+  }
+  .epub-preview-receipt dt {
+    @apply text-muted-foreground;
+  }
+  .epub-preview-receipt dd {
+    @apply min-w-0 font-medium sm:text-right;
+  }
+  .epub-preview-receipt code {
+    @apply block break-all font-mono text-[10px] font-normal;
+  }
+  .epub-preview-stage {
+    @apply flex min-h-[32rem] justify-center overflow-x-auto bg-muted/40 p-3 sm:p-6;
+    justify-content: safe center;
+  }
+  .epub-preview-stage:focus-visible {
+    @apply outline outline-2 outline-offset-[-3px] outline-foreground;
+  }
+  .epub-preview-device {
+    width: min(100%, var(--epub-device-width));
+    aspect-ratio: var(--epub-device-ratio);
+    @apply shrink-0 overflow-hidden border border-foreground/30 bg-white shadow-sm;
+  }
+  .epub-preview-device[data-device='paperProMove'],
+  .epub-preview-device[data-device='paperPro'] {
+    /* Preserve one CSS-pixel-per-physical-inch scale between both e-ink
+       screens. Narrow hosts scroll the stage instead of shrinking one device
+       by a different factor. */
+    width: var(--epub-device-width);
+  }
+  .epub-preview-device iframe {
+    @apply block h-full w-full border-0 bg-white;
   }
   .publication-decision-file {
     @apply mb-6 flex flex-wrap items-center gap-3 border-y py-3 text-sm;

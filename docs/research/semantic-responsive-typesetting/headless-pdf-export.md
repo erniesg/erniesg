@@ -36,12 +36,17 @@ npm run pdf:corpus-audit -- ./local-pdf-corpus
 
 Every artifact passes `inspectEpub` and its canonical-node, relationship, and
 manifest-reference invariants before it is written. If an `epubcheck` command
-is already on `PATH`, the command runs it locally. With Java and a separately
-installed EPUBCheck JAR, set `EPUBCHECK_JAR` for that invocation. Common local
-system JAR locations are also detected. Nothing is downloaded at runtime.
+is already on `PATH`, the command runs it locally with `--failonwarnings`. With
+Java and a separately installed EPUBCheck JAR, set `EPUBCHECK_JAR` for that
+invocation; the JAR path is also invoked with `--failonwarnings`. Common local
+system JAR locations are detected. Nothing is downloaded at runtime. EPUBCheck
+warnings and errors both abort export before any artifact for that document is
+published, so neither can be reported as externally valid.
 
-The artifact and corpus reports record EPUBCheck as `passed`, or as `skipped`
-with `java-unavailable` / `epubcheck-unavailable`. Structural validation remains
+Successful artifact and corpus reports record EPUBCheck as `passed`, or as
+`skipped` with `java-unavailable` / `epubcheck-unavailable`. A skip is explicit
+and may be comparator-allowlisted for deterministic internal evidence, but it
+is never equivalent to an EPUBCheck pass. Structural validation remains
 required even when EPUBCheck is unavailable.
 
 ## Reproducible fixture transcript

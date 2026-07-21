@@ -10,12 +10,17 @@ vm-codex
 
 Make target selection an explicit, inspectable export contract: the chosen capability profile and orientation determine the primary artifact and manifest, while width and font controls are labelled as reader simulations rather than silently disconnected export settings.
 
+## Current status (2026-07-21)
+
+This issue remains open. The PDF importer now lifts one selected Mobile/Paper Pro Move/Paper Pro profile into the generated-EPUB preview and exposes only the matching hash-bound download; the former parallel `ResearchStudio` approximation is not rendered for imports. The registry also records the manufacturers' listed pixel orientation and a versioned advisory height for the continuous Mobile inspection window. Print artifact generation, controlled orientation choices, landscape recomposition, and a complete policy for every `TARGET_PROFILE_IDS` member are still target work and must not be inferred from the three-profile issue-032 slice.
+
 ## Acceptance tests
 
 - `ResearchStudio` supports controlled profile selection and reports changes to `PublicationImporter`; there is one selected profile shared by preview metadata, primary download labeling, export manifest, and print-preview behavior.
-- The authoritative registry records Paper Pro Move as `954 × 1696` device pixels and Paper Pro as `1620 × 2160` device pixels. Preview CSS may scale those viewports to fit the browser, but its aspect ratio, finite-height pagination, profile id/version, and geometry receipt derive from those exact dimensions rather than copied UI constants.
+- The authoritative registry records the 7.3-inch Paper Pro Move display as `954 × 1696` device pixels at `264 PPI` and the 11.8-inch Paper Pro display as `1620 × 2160` device pixels at `229 PPI`. These are device-display facts, not CSS preview sizes. Preview CSS derives both simulated frames from one common relative physical scale (`device pixels / PPI`) and the registry's aspect ratio, profile id/version, density, and geometry receipt rather than copied UI constants or independent native-pixel shrink factors. Profile padding is the only authored rendition margin; `@page` and preview-only body rules may not double it. The finite-height preview is publisher-side evidence only; a reflowable EPUB reader may repaginate it and no copy claims firmware-exact pages or physical CSS inches.
+- The registry values are checked against reMarkable's official [Paper Pro Move specifications](https://remarkable.com/products/remarkable-paper/pro-move/details/features) and [Paper Pro specifications](https://remarkable.com/products/remarkable-paper/pro/details/features). A source-spec change requires a versioned profile change and regression evidence rather than an unversioned UI edit.
 - Every profile in `TARGET_PROFILE_IDS` has an honest artifact policy. Mobile, Paper Pro, Paper Pro Move, and print-profile outputs are either generated and structurally validated or visibly marked unsupported with a reason; the UI never offers a profile that has no corresponding result.
-- After every fresh upload, the user can inspect Mobile, Paper Pro Move, and Paper Pro previews before choosing whether to download. Switching profiles is side-effect free, downloads remain optional explicit actions, and each action names and returns only the checked artifact whose profile id/version and hash match the visible preview receipt.
+- After every fresh upload, the user can inspect Mobile, Paper Pro Move, and Paper Pro previews before choosing whether to download. Renditions are keyed by source hash plus profile id/version and rendering mode; a fresh source invalidates and revokes stale artifacts, while switching back to an already checked profile may reuse only that exact cached artifact. Switching profiles is side-effect free, downloads remain optional explicit actions, and each action names and returns only the checked artifact whose profile id/version and hash match the visible preview receipt.
 - A print action is restored only for a selected print profile with a generated, checked PDF whose page geometry and receipt match the preview contract. It downloads that artifact and never aliases the continuous source-review surface to `window.print()`.
 - Target profiles declare orientation support and whether orientation is publisher-locked, reader-controlled, or unsupported. A portrait/landscape choice swaps logical dimensions and recomposes without mutating canonical content.
 - The export manifest records profile id/version, orientation, composition policy, reader-control assumptions, artifact renderer, and whether pagination is authoritative, advisory, or reader-controlled.
@@ -28,14 +33,14 @@ Make target selection an explicit, inspectable export contract: the chosen capab
 
 1. **Red:** extend the four named research tests plus importer/visual E2E, run `npx vitest run src/research/targets.test.ts src/research/epub.test.ts src/research/export-package.test.ts src/research/manifest.test.ts`, and preserve failures proving preview state, actions, manifests, orientation, and `window.print()` disagree.
 2. **Green:** introduce one controlled rendition-selection contract and move profile/orientation facts into the validated registry until resolver tests pass without duplicated constants.
-3. **Red then green:** make selected EPUB/PDF artifacts and receipts consume that resolver, then test fresh-upload invalidation, scaled `954 × 1696` and `1620 × 2160` preview geometry, preview-before-download behavior, profile/orientation changes, unsupported combinations, filenames, and checked PDF geometry.
+3. **Red then green:** make selected EPUB/PDF artifacts and receipts consume that resolver, then test fresh-upload invalidation, exact cache identity, scaled `954 × 1696 @ 264 PPI` and `1620 × 2160 @ 229 PPI` preview geometry, preview-before-download behavior, profile/orientation changes, unsupported combinations, filenames, and checked PDF geometry.
 4. **Refactor:** remove duplicated selection/orientation logic and choose eager or on-demand generation only after every supported geometry/structural/E2E case passes; then run the full validation command.
 
 ## Exact-head definition of done
 
 - One selected profile/orientation drives preview metadata, artifact label/bytes, filenames, manifests, receipts, and supported controls at the exact PR head; preview-only reader simulations are explicitly separate.
 - Resolver, export, importer, visual-geometry, and full validation commands pass with exact-head evidence and no skipped target/orientation or stale artifact.
-- No profile fact is duplicated, no `window.print()` output is called production PDF, and no EPUB copy promises reader-controlled pagination or typography parity.
+- No profile fact is duplicated, no `window.print()` output is called production PDF, and no EPUB copy promises firmware-exact pagination, physical-size parity, or typography parity.
 - From a clean checkout of the immutable PR head, the canonical evidence manifest records `commit` equal to that head, `dirty: false`, `result: passed`, and every required lane; a post-lane clean-worktree check proves validation did not modify tracked or generated source files.
 - Every generated artifact receipt binds source, selected profile/version/orientation, renderer/toolchain versions, geometry authority, and artifact hash to that exact head.
 
@@ -76,4 +81,4 @@ Generating every target eagerly makes switching fast but costs browser time and 
 
 ## Free-form response
 
-The current importer automatically builds a generic EPUB plus two reMarkable variants, while the preview also offers mobile and A4 and its width/font state never reaches export. Orientation is absent from the target schema. Issue 032 is the named end-to-end acceptance gate proving these profile contracts against a fresh PDF upload without committing private source or rendered evidence.
+The current importer eagerly builds Mobile plus two reMarkable variants and keeps one profile shared by the generated-artifact preview and optional primary download. It does not offer A4/print in this flow. Orientation selection and landscape geometry remain absent from the target schema. Issue 032 is the named three-profile end-to-end regression gate; it does not close the remaining print/orientation scope here.

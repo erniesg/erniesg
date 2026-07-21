@@ -81,7 +81,11 @@ function commandResult(command, arguments_, timeout = 10_000) {
 async function epubCheckValidator() {
   const direct = commandResult('epubcheck', ['--version'])
   if (!direct.error && direct.status === 0) {
-    return { kind: 'command', command: 'epubcheck', arguments: [] }
+    return {
+      kind: 'command',
+      command: 'epubcheck',
+      arguments: ['--failonwarnings'],
+    }
   }
 
   const java = commandResult('java', ['-version'])
@@ -98,7 +102,11 @@ async function epubCheckValidator() {
   for (const jar of jarCandidates) {
     try {
       await access(jar)
-      return { kind: 'command', command: 'java', arguments: ['-jar', jar] }
+      return {
+        kind: 'command',
+        command: 'java',
+        arguments: ['-jar', jar, '--failonwarnings'],
+      }
     } catch {
       // Missing local validators are reported without exposing their paths.
     }

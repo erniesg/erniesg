@@ -127,6 +127,58 @@ export const decisiveNoteMarkerFixtures: NoteMarkerFixture[] = [
     expectedTaxonomies: ['footnote-reference'],
   },
   {
+    name: 'bibliography citations with an unrelated same-page footnote',
+    pages: [
+      page(1, [
+        run(1, 'Mixed scholarly markers', 0.1, 0.08, 0.72, 18),
+        run(1, 'Abstract', 0.1, 0.18, 0.25, 16),
+        run(1, 'Prior work [1] establishes the baseline.', 0.1, 0.28, 0.72),
+        run(1, 'Later work [2] confirms the result.', 0.1, 0.34, 0.72),
+        run(1, 'A separate claim', 0.1, 0.42, 0.24),
+        run(1, '9', 0.345, 0.416, 0.008, 6, 0.009),
+        run(1, '9. Same-page note body.', 0.1, 0.82, 0.72, 7),
+      ]),
+      page(2, [
+        run(2, 'References', 0.1, 0.12, 0.3, 18),
+        run(2, '[1] First reference entry.', 0.1, 0.24, 0.72, 9),
+        run(2, '[2] Second reference entry.', 0.1, 0.3, 0.72, 9),
+      ]),
+    ],
+    expectedTaxonomies: [
+      'bracketed-bibliography-citation',
+      'bracketed-bibliography-citation',
+      'footnote-reference',
+      'bibliography-entry',
+      'bibliography-entry',
+    ],
+  },
+  {
+    name: 'individual superscript citations with an unrelated footnote label',
+    pages: [
+      page(1, [
+        run(1, 'Individual superscript citations', 0.1, 0.08, 0.72, 18),
+        run(1, 'Abstract', 0.1, 0.18, 0.25, 16),
+        run(1, 'Prior evidence¹ establishes the baseline.', 0.1, 0.28, 0.72),
+        run(1, 'Later evidence² confirms the result.', 0.1, 0.34, 0.72),
+        run(1, 'A separate claim', 0.1, 0.42, 0.24),
+        run(1, '9', 0.345, 0.416, 0.008, 6, 0.009),
+        run(1, '9. Same-page note body.', 0.1, 0.82, 0.72, 7),
+      ]),
+      page(2, [
+        run(2, 'References', 0.1, 0.12, 0.3, 18),
+        run(2, '1. First reference entry.', 0.1, 0.24, 0.72, 9),
+        run(2, '2. Second reference entry.', 0.1, 0.3, 0.72, 9),
+      ]),
+    ],
+    expectedTaxonomies: [
+      'superscript-bibliography-citation',
+      'superscript-bibliography-citation',
+      'footnote-reference',
+      'bibliography-entry',
+      'bibliography-entry',
+    ],
+  },
+  {
     name: 'end-of-document endnote section',
     pages: [
       page(1, [run(1, 'A claim has note reference 1.', 0.1, 0.24, 0.72)]),

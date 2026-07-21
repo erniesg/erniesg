@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, extname, join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
-export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.1.0'
+export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.4.0'
+export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.2.0'
+
+const MAX_DIAGNOSTIC_SAMPLES = 64
+const MAX_DIAGNOSTIC_SAMPLES_PER_CODE = 3
 
 const SAFE_FAILURE_MESSAGES = Object.freeze({
   INVALID_PDF: 'The file is not a valid PDF.',
@@ -56,6 +61,294 @@ function safeError(error) {
   return { code, message: SAFE_FAILURE_MESSAGES[code] }
 }
 
+export function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+export function canonicalJsonHash(value) {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex')
+}
+
+function countsBy(values, keyFor) {
+  const counts = new Map()
+  for (const value of values) {
+    const key = keyFor(value)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return Object.fromEntries(
+    [...counts].sort(([left], [right]) => left.localeCompare(right)),
+  )
+}
+
+export function summarizeAuditDiagnostics(diagnostics) {
+  const safeDiagnostics = diagnostics.map(safeAuditDiagnostic)
+  const diagnosticCounts = countsBy(safeDiagnostics, ({ code }) => code)
+  const sorted = [...safeDiagnostics].sort(
+    (left, right) =>
+      left.code.localeCompare(right.code) ||
+      left.severity.localeCompare(right.severity) ||
+      (left.page ?? Number.MAX_SAFE_INTEGER) -
+        (right.page ?? Number.MAX_SAFE_INTEGER) ||
+      left.message.localeCompare(right.message),
+  )
+  const samples = []
+  const samplesPerCode = new Map()
+  const sampleKeys = new Set()
+
+  for (const diagnostic of sorted) {
+    if (samples.length >= MAX_DIAGNOSTIC_SAMPLES) break
+    const codeSamples = samplesPerCode.get(diagnostic.code) ?? 0
+    if (codeSamples >= MAX_DIAGNOSTIC_SAMPLES_PER_CODE) continue
+    const sampleKey = canonicalJson(diagnostic)
+    if (sampleKeys.has(sampleKey)) continue
+    sampleKeys.add(sampleKey)
+    samplesPerCode.set(diagnostic.code, codeSamples + 1)
+    samples.push(diagnostic)
+  }
+
+  return {
+    diagnosticCounts,
+    diagnosticSampleLimit: {
+      total: MAX_DIAGNOSTIC_SAMPLES,
+      perCode: MAX_DIAGNOSTIC_SAMPLES_PER_CODE,
+    },
+    diagnosticSamplesTruncated: Math.max(
+      0,
+      safeDiagnostics.length - samples.length,
+    ),
+    diagnostics: samples,
+  }
+}
+
+function normalizedAssetManifest(assets) {
+  return assets.map((asset) => ({
+    id: asset.id,
+    kind: asset.kind,
+    mediaType: asset.mediaType,
+    rendition: asset.rendition,
+    sha256: asset.sha256,
+    width: asset.width ?? null,
+    height: asset.height ?? null,
+    sourceBoxes: asset.sourceBoxes ?? [],
+    ...(asset.sourceCropBox ? { sourceCropBox: asset.sourceCropBox } : {}),
+  }))
+}
+
+function normalizedVisualRelationships(relationships) {
+  return relationships.map((relationship) => ({
+    id: relationship.id,
+    kind: relationship.kind,
+    status: relationship.status,
+    canonicalNodeId: relationship.canonicalNodeId ?? null,
+    captionRegionId: relationship.captionRegionId ?? null,
+    sourceRegionIds: relationship.sourceRegionIds ?? [],
+    sourceObjectIds: relationship.sourceObjectIds ?? [],
+    sourceLineIds: relationship.sourceLineIds ?? [],
+    assetIds: relationship.assetIds ?? [],
+    sourceBoxes: relationship.sourceBoxes ?? [],
+    altTextSource: relationship.altTextSource ?? null,
+  }))
+}
+
+function normalizedNoteRelationships(relationships) {
+  return relationships.map((relationship) => ({
+    id: relationship.id,
+    status: relationship.status,
+    referenceRegionId: relationship.referenceRegionId,
+    targetNoteId: relationship.targetNoteId ?? null,
+    label: relationship.label,
+    sourceBoxes: relationship.sourceBoxes ?? [],
+  }))
+}
+
+function opaqueStructuralId(kind, value) {
+  return createHash('sha256')
+    .update(`${kind}\0${String(value ?? '')}`)
+    .digest('hex')
+}
+
+function normalizedCitationRelationships(relationships) {
+  return relationships.map((relationship) => ({
+    id: opaqueStructuralId('citation-relationship', relationship.id),
+    status: relationship.status,
+    taxonomy: relationship.taxonomy,
+    referenceRegionId: opaqueStructuralId(
+      'region',
+      relationship.referenceRegionId,
+    ),
+    referenceStart: relationship.referenceStart,
+    referenceEnd: relationship.referenceEnd,
+    labels: (relationship.labels ?? []).map((label) =>
+      opaqueStructuralId('citation-label', label),
+    ),
+    targetNodeIds: (relationship.targetNodeIds ?? []).map((nodeId) =>
+      opaqueStructuralId('node', nodeId),
+    ),
+    canonicalAnchor: relationship.canonicalAnchor
+      ? {
+          ...relationship.canonicalAnchor,
+          nodeId: opaqueStructuralId(
+            'node',
+            relationship.canonicalAnchor.nodeId,
+          ),
+        }
+      : null,
+    sourceBoxes: (relationship.sourceBoxes ?? []).map((box) => ({ ...box })),
+  }))
+}
+
+function lineTransitionLedger(reconstruction) {
+  for (const key of [
+    'lineBoundaryDecisions',
+    'lineTransitions',
+    'transitionDecisions',
+    'lineJoinDecisions',
+  ]) {
+    if (Array.isArray(reconstruction[key])) {
+      return { available: true, decisions: reconstruction[key] }
+    }
+  }
+  return { available: false, decisions: [] }
+}
+
+const LINE_TRANSITION_OUTCOMES = new Set([
+  'space',
+  'no-space',
+  'preserved-lexical-hyphen',
+  'removed-discretionary-hyphen',
+  'structural-boundary',
+  'unresolved',
+  'unresolved-corrupting-join',
+])
+
+function lineTransitionOutcome(decision) {
+  const outcome = String(
+    decision.outcome ?? decision.decision ?? decision.kind ?? '',
+  )
+  if (!LINE_TRANSITION_OUTCOMES.has(outcome)) {
+    throw new Error('Line transition decision outcome is invalid.')
+  }
+  return outcome
+}
+
+function lineTransitionCounts(reconstruction, ledger) {
+  if (!ledger.available) {
+    return {
+      unresolvedCorruptingJoinCount: null,
+      structurallyConsumedLineBoundaryCount: null,
+    }
+  }
+  let unresolvedCorruptingJoinCount = 0
+  let structurallyConsumedLineBoundaryCount = 0
+  for (const decision of ledger.decisions) {
+    const outcome = lineTransitionOutcome(decision)
+    if (outcome === 'structural-boundary') {
+      structurallyConsumedLineBoundaryCount += 1
+    } else if (
+      outcome === 'unresolved' ||
+      outcome === 'unresolved-corrupting-join'
+    ) {
+      unresolvedCorruptingJoinCount += 1
+    }
+  }
+  const reportedUnresolved = reconstruction.unresolvedCorruptingJoinCount
+  const reportedStructurallyConsumed =
+    reconstruction.structurallyConsumedLineBoundaryCount
+  if (
+    (reportedUnresolved !== undefined &&
+      (!Number.isInteger(reportedUnresolved) ||
+        reportedUnresolved < 0 ||
+        reportedUnresolved !== unresolvedCorruptingJoinCount)) ||
+    (reportedStructurallyConsumed !== undefined &&
+      (!Number.isInteger(reportedStructurallyConsumed) ||
+        reportedStructurallyConsumed < 0 ||
+        reportedStructurallyConsumed !==
+          structurallyConsumedLineBoundaryCount)) ||
+    unresolvedCorruptingJoinCount + structurallyConsumedLineBoundaryCount >
+      ledger.decisions.length
+  ) {
+    throw new Error('Line transition counts do not match the decision ledger.')
+  }
+  return {
+    unresolvedCorruptingJoinCount,
+    structurallyConsumedLineBoundaryCount,
+  }
+}
+
+export function createPdfStructuralReceipt(reconstruction) {
+  const nodes = reconstruction.paper?.nodes ?? []
+  const visualRelationships = normalizedVisualRelationships(
+    reconstruction.visualRelationships ?? [],
+  )
+  const noteRelationships = normalizedNoteRelationships(
+    reconstruction.noteRelationships ?? [],
+  )
+  const citationRelationships = normalizedCitationRelationships(
+    reconstruction.citationRelationships ?? [],
+  )
+  const assets = normalizedAssetManifest(reconstruction.assets ?? [])
+  const transitionLedger = lineTransitionLedger(reconstruction)
+  const transitions = transitionLedger.decisions
+  const transitionCounts = lineTransitionCounts(
+    reconstruction,
+    transitionLedger,
+  )
+  return {
+    schemaVersion: PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION,
+    canonicalNodeCount: nodes.length,
+    canonicalNodeSequenceSha256: canonicalJsonHash(
+      nodes.map((node) => node.id),
+    ),
+    canonicalNodeTypeSequenceSha256: canonicalJsonHash(
+      nodes.map((node) => node.type),
+    ),
+    canonicalContentSha256: canonicalJsonHash(
+      reconstruction.paper ?? { nodes },
+    ),
+    readingOrderGraphSha256: canonicalJsonHash(
+      reconstruction.readingOrder ?? null,
+    ),
+    nodeCounts: countsBy(nodes, (node) => node.type),
+    visualRelationshipCount: visualRelationships.length,
+    visualRelationshipCounts: countsBy(
+      visualRelationships,
+      (relationship) => `${relationship.kind}:${relationship.status}`,
+    ),
+    visualRelationshipGraphSha256: canonicalJsonHash(visualRelationships),
+    noteRelationshipCount: noteRelationships.length,
+    noteRelationshipCounts: countsBy(
+      noteRelationships,
+      (relationship) => relationship.status,
+    ),
+    noteRelationshipGraphSha256: canonicalJsonHash(noteRelationships),
+    citationRelationshipCount: citationRelationships.length,
+    citationRelationshipCounts: countsBy(
+      citationRelationships,
+      (relationship) => relationship.status,
+    ),
+    citationRelationshipGraph: citationRelationships,
+    citationRelationshipGraphSha256: canonicalJsonHash(citationRelationships),
+    assetCount: assets.length,
+    assetCounts: countsBy(assets, (asset) => asset.kind),
+    assetManifestSha256: canonicalJsonHash(assets),
+    lineTransitionLedgerAvailable: transitionLedger.available,
+    lineTransitionCount: transitions.length,
+    lineTransitionLedgerSha256: transitionLedger.available
+      ? canonicalJsonHash(transitions)
+      : null,
+    ...transitionCounts,
+  }
+}
+
 export async function createPdfPipeline() {
   const cacheDir = await mkdtemp(join(tmpdir(), 'srt-pdf-vite-'))
   const vite = await createServer({
@@ -75,6 +368,7 @@ export async function createPdfPipeline() {
   ])
   let exportModules
   let diagnosticModules
+  let decisionModules
 
   return {
     reconstructPdf: pdf.reconstructPdf,
@@ -87,6 +381,9 @@ export async function createPdfPipeline() {
         vite.ssrLoadModule('/src/research/targets.ts'),
       ]).then(([epub, targets]) => ({
         buildEpub: epub.buildEpub,
+        buildReadableEpub: epub.buildReadableEpub,
+        projectReadableFallbackReconstruction:
+          epub.projectReadableFallbackReconstruction,
         inspectEpub: epub.inspectEpub,
         getTargetProfile: targets.getTargetProfile,
         targetProfileIds: targets.TARGET_PROFILE_IDS,
@@ -97,10 +394,19 @@ export async function createPdfPipeline() {
       diagnosticModules ??= vite
         .ssrLoadModule('/src/research/diagnostic-overlays.ts')
         .then((overlays) => ({
-          renderDiagnosticEvidenceHtml:
-            overlays.renderDiagnosticEvidenceHtml,
+          renderDiagnosticEvidenceHtml: overlays.renderDiagnosticEvidenceHtml,
         }))
       return diagnosticModules
+    },
+    async loadDecisionModules() {
+      decisionModules ??= vite
+        .ssrLoadModule('/src/research/decision-record.ts')
+        .then((decisions) => ({
+          applyHumanDecisionFile: decisions.applyHumanDecisionFile,
+          parseHumanDecisionFile: decisions.parseHumanDecisionFile,
+          maximumBytes: decisions.MAX_HUMAN_DECISION_FILE_BYTES,
+        }))
+      return decisionModules
     },
     async close() {
       try {
@@ -144,7 +450,8 @@ export async function auditPdfPath(path, pipeline) {
         pageCount: reconstruction.source.pageCount,
         completeness: reconstruction.completeness,
         readiness: reconstruction.readiness,
-        diagnostics: reconstruction.diagnostics.map(safeAuditDiagnostic),
+        structure: createPdfStructuralReceipt(reconstruction),
+        ...summarizeAuditDiagnostics(reconstruction.diagnostics),
       },
     }
   } catch (error) {

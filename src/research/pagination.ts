@@ -181,8 +181,15 @@ function estimateLineRanges(text: string, charactersPerLine: number) {
   return lines
 }
 
-function charactersPerLine(widthCssPx: number, fontSizeCssPx: number) {
-  return Math.max(12, Math.floor(widthCssPx / (fontSizeCssPx * 0.56)))
+function charactersPerLine(
+  widthCssPx: number,
+  fontSizeCssPx: number,
+  glyphWidthRatio = 0.56,
+) {
+  return Math.max(
+    12,
+    Math.floor(widthCssPx / (fontSizeCssPx * glyphWidthRatio)),
+  )
 }
 
 function textHeight(
@@ -190,10 +197,13 @@ function textHeight(
   widthCssPx: number,
   fontSizeCssPx: number,
   lineHeight: number,
+  glyphWidthRatio = 0.56,
 ) {
   return (
-    estimateLineRanges(text, charactersPerLine(widthCssPx, fontSizeCssPx))
-      .length *
+    estimateLineRanges(
+      text,
+      charactersPerLine(widthCssPx, fontSizeCssPx, glyphWidthRatio),
+    ).length *
     fontSizeCssPx *
     lineHeight
   )
@@ -218,16 +228,74 @@ function estimateHeaderHeight(
     18 * fontScale,
     1.4,
   )
-  const abstract = textHeight(
-    paper.abstract,
+  const authors = textHeight(
+    `${paper.authors.join(', ')} · updated ${paper.updated}`,
+    contentWidthCssPx,
+    12,
+    14 / 12,
+    0.52,
+  )
+  const labelledAbstract = textHeight(
+    `Abstract. ${paper.abstract}`,
     contentWidthCssPx,
     14 * fontScale,
     1.65,
   )
 
+  if (target === 'paperProMove') {
+    const compactSubtitle = textHeight(
+      paper.subtitle,
+      contentWidthCssPx,
+      18 * fontScale,
+      1.4,
+      0.48,
+    )
+    const compactAuthors = textHeight(
+      `${paper.authors.join(', ')} · updated ${paper.updated}`,
+      contentWidthCssPx,
+      12,
+      14 / 12,
+      0.52,
+    )
+    const compactAbstract = textHeight(
+      `Abstract. ${paper.abstract}`,
+      contentWidthCssPx,
+      14 * fontScale,
+      1.65,
+      0.49,
+    )
+
+    // The 7.3-inch target keeps the same type sizes but uses a compact
+    // vertical rhythm. These values mirror its CSS overrides. The final pixel
+    // accounts for the header rule inside the border-box height.
+    return Math.ceil(
+      12 +
+        16 +
+        title +
+        12 +
+        compactSubtitle +
+        18 +
+        compactAuthors +
+        22 +
+        compactAbstract +
+        16 +
+        1,
+    )
+  }
+
   // These constants mirror the explicit document-header gaps in global.css.
   return Math.ceil(
-    12 + 16 + title + 12 + subtitle + 24 + 14 + 28 + abstract + 24,
+    12 +
+      16 +
+      title +
+      12 +
+      subtitle +
+      24 +
+      authors +
+      28 +
+      labelledAbstract +
+      24 +
+      1,
   )
 }
 

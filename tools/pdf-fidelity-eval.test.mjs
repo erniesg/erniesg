@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
@@ -941,6 +941,7 @@ await writeFile(args.output, JSON.stringify(predictions))
         '1.0.0',
         '--out',
         output,
+        '--allow-non-darwin',
       ],
       {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
@@ -966,7 +967,7 @@ await writeFile(args.output, JSON.stringify(predictions))
       passed: true,
       execution: {
         lane: 'local-mac',
-        platform: 'darwin',
+        platform: platform(),
         offlineRequested: true,
         allInputsVerified: true,
       },

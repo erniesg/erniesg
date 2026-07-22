@@ -10,10 +10,15 @@ vm-codex
 
 Join the PDF import pipeline to the target-profile registry so a gate-passing imported paper composes through all four targets and exports device-profile EPUB packages for reMarkable Paper Pro and Paper Pro Move, instead of one generic reflowable EPUB.
 
+## Current status (2026-07-21)
+
+This issue remains open. The importer now builds and structurally validates selected Mobile, Paper Pro Move, and Paper Pro reflowable EPUBs from one canonical reconstruction, but it does not yet emit a checked print artifact or a per-target four-profile layout-manifest set. The three-profile upload/preview/download slice is issue 032 evidence, not proof that this four-target contract is complete.
+
 ## Acceptance tests
 
 - An imported born-digital PDF that passes the completeness gate composes through `mobile`, `paperProMove`, `paperPro`, and `print` with a layout manifest per target recording page/fragment lineage, decisions, and violations.
 - `buildEpub` accepts a target profile and derives typography, margins, and page-progression CSS from the profile registry in `src/research/targets.ts`; no profile values are duplicated or hard-coded in export code.
+- The registry identifies the 7.3-inch Paper Pro Move as `954 × 1696` device pixels at `264 PPI` and the 11.8-inch Paper Pro as `1620 × 2160` device pixels at `229 PPI`. Those facts drive intended viewport and asset policy; reflowable reader pagination, fonts, margins, and orientation remain reader-controlled and are not promised to match the browser page-for-page.
 - Exports emit `publication-paperpro.epub` and `publication-papermove.epub` alongside the existing reflowable baseline, and the export manifest records the profile id, version, and policy that produced each artifact.
 - Figure and equation assets are packaged at a resolution appropriate to the profile's device pixels and PPI, never upscaled beyond source fidelity, with the downscale policy documented in the export manifest.
 - Structural invariants hold for every device EPUB: each canonical node appears exactly once or as ordered fragments, figure/caption relationships survive, and `inspectEpub` verifies there are no dangling manifest references per profile.
@@ -40,7 +45,7 @@ Profile-aware EPUB exporter, per-target export manifests, device EPUB fixtures e
 
 ## Stop conditions
 
-Stop before adding a new runtime dependency, emitting fixed-layout EPUB pages when reflowable output is possible, forking profile data into export code, or weakening the completeness gate to make an export succeed.
+Stop before adding an unjustified runtime dependency, emitting fixed-layout EPUB pages when reflowable output is possible, forking profile data into export code, or weakening the completeness gate to make an export succeed.
 
 ## Human clarification protocol
 

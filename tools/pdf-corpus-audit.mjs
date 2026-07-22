@@ -11,9 +11,10 @@ import {
   sep,
 } from 'node:path'
 import {
-  auditPdfInputs,
+  auditPdfPath,
   createCorpusReport,
   createPdfPipeline,
+  pdfPaths,
   serializeCorpusReport,
 } from './pdf-corpus-audit-lib.mjs'
 
@@ -110,12 +111,13 @@ async function main() {
 
   const pipeline = await createPdfPipeline()
   try {
-    const records = await auditPdfInputs(inputs, pipeline)
-    if (localOverlayOutput) {
-      const { renderDiagnosticEvidenceHtml } =
-        await pipeline.loadDiagnosticModules()
-      for (const record of records) {
-        if (!record.reconstruction) continue
+    const documents = []
+    const diagnosticModules = localOverlayOutput
+      ? await pipeline.loadDiagnosticModules()
+      : null
+    for (const path of await pdfPaths(inputs)) {
+      const record = await auditPdfPath(path, pipeline)
+      if (localOverlayOutput && diagnosticModules && record.reconstruction) {
         await writeFile(
           resolve(
             localOverlayOutput,
@@ -124,15 +126,21 @@ async function main() {
               record.reconstruction.source.sha256,
             ),
           ),
-          renderDiagnosticEvidenceHtml(record.reconstruction),
+          diagnosticModules.renderDiagnosticEvidenceHtml(record.reconstruction),
           { mode: 0o600 },
         )
       }
+      // Retain only the privacy-safe report row. Full reconstructions include
+      // source assets and diagnostic SVGs that can otherwise accumulate across
+      // a corpus-sized overlay run and exhaust the local process heap.
+      documents.push(record.document)
     }
-    const report = createCorpusReport(
-      records.map((record) => record.document),
-      pipeline.policy,
+    documents.sort(
+      (left, right) =>
+        left.basename.localeCompare(right.basename) ||
+        String(left.sha256).localeCompare(String(right.sha256)),
     )
+    const report = createCorpusReport(documents, pipeline.policy)
     process.stdout.write(serializeCorpusReport(report))
     if (
       !reportOnly &&

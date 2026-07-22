@@ -54,6 +54,59 @@ function replaceParagraph(
 }
 
 describe('SRT finite-height pagination', () => {
+  it('keeps the Paper Pro Move header inside the finite page content box', () => {
+    const constraints = getPaginationConstraints(paper, 'paperProMove')
+
+    expect(constraints.contentHeightCssPx).not.toBeNull()
+    expect(constraints.firstPageHeaderHeightCssPx).toBeLessThanOrEqual(
+      constraints.contentHeightCssPx ?? 0,
+    )
+  })
+
+  it('reserves a wrapped line for the rendered abstract label', () => {
+    const compact = researchPaperSchema.parse({
+      ...rawPaper,
+      abstract: 'Short.',
+    })
+    const wrappedByLabel = researchPaperSchema.parse({
+      ...rawPaper,
+      abstract: 'One two three four five six.',
+    })
+
+    expect(
+      getPaginationConstraints(wrappedByLabel, 'paperProMove')
+        .firstPageHeaderHeightCssPx,
+    ).toBeGreaterThan(
+      getPaginationConstraints(compact, 'paperProMove')
+        .firstPageHeaderHeightCssPx,
+    )
+  })
+
+  it.each(['paperPro', 'print'] as const)(
+    'reserves every wrapped byline on %s',
+    (target) => {
+      const shortByline = researchPaperSchema.parse({
+        ...rawPaper,
+        authors: ['A. Author'],
+      })
+      const wrappedByline = researchPaperSchema.parse({
+        ...rawPaper,
+        authors: Array.from(
+          { length: 10 },
+          (_, index) => `Researcher ${index + 1} With A Long Name`,
+        ),
+      })
+
+      expect(
+        getPaginationConstraints(wrappedByline, target)
+          .firstPageHeaderHeightCssPx,
+      ).toBeGreaterThan(
+        getPaginationConstraints(shortByline, target)
+          .firstPageHeaderHeightCssPx,
+      )
+    },
+  )
+
   it('treats width and finite height as independent constraints', () => {
     const original = getPaginationConstraints(paper, 'paperPro')
     const narrow = getPaginationConstraints(paper, 'paperPro', {

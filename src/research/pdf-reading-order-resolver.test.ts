@@ -28,6 +28,15 @@ describe('evidence-scored scholarly reading-order resolution', () => {
       const result = await reconstruct(fixture.pages)
 
       expect(nodeText(result)).toEqual(fixture.expectedNodeText)
+      if (fixture.expectedListMarkers) {
+        expect(
+          result.paper.nodes.flatMap((node) =>
+            node.type === 'paragraph' && node.list?.markerText
+              ? [node.list.markerText]
+              : [],
+          ),
+        ).toEqual(fixture.expectedListMarkers)
+      }
       expect(result.diagnostics).not.toEqual(
         expect.arrayContaining([
           expect.objectContaining({ code: 'AMBIGUOUS_READING_ORDER' }),

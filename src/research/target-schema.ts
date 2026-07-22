@@ -46,6 +46,19 @@ export const targetProfileSchema = z
     interactionMode: z.enum(['continuous-scroll', 'page-turn', 'print-static']),
     finiteHeight: z.boolean(),
     pixelsPerInch: z.number().positive().nullable(),
+    manufacturerDisplay: z
+      .object({
+        diagonalInches: z.number().positive(),
+        listedPixels: z
+          .object({
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          })
+          .strict(),
+        logicalOrientation: z.literal('portrait'),
+      })
+      .strict()
+      .optional(),
     epub: z
       .object({
         fileName: z.string().regex(/^publication-[a-z]+\.epub$/),
@@ -53,10 +66,19 @@ export const targetProfileSchema = z
         renditionFlow: z.enum(['paginated', 'scrolled-continuous']),
       })
       .strict(),
+    truth: z
+      .object({
+        geometry: z.enum(['authoritative', 'advisory', 'reader-controlled']),
+        typography: z.enum(['authoritative', 'advisory', 'reader-controlled']),
+        pagination: z.enum(['authoritative', 'advisory', 'reader-controlled']),
+        orientation: z.enum(['authoritative', 'advisory', 'reader-controlled']),
+      })
+      .strict(),
     preview: z
       .object({
         widthCssPx: z.number().positive(),
         heightCssPx: z.number().positive().nullable(),
+        continuousWindowHeightCssPx: z.number().positive().optional(),
       })
       .strict(),
   })
@@ -79,6 +101,17 @@ export const targetProfileSchema = z
         message: 'Finite-height capability must match preview dimensions',
       })
     }
+    if (
+      profile.finiteHeight ===
+      Boolean(profile.preview.continuousWindowHeightCssPx)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['preview', 'continuousWindowHeightCssPx'],
+        message:
+          'Only continuous profiles declare an advisory preview-window height',
+      })
+    }
     if (profile.margins.unit !== profile.dimensions.unit) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -95,6 +128,80 @@ export const targetProfileSchema = z
         path: ['pixelsPerInch'],
         message: 'Only device-pixel profiles declare pixels per inch',
       })
+    }
+    if (
+      profile.dimensions.unit === 'device-px' &&
+      !profile.manufacturerDisplay
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['manufacturerDisplay'],
+        message: 'Device-pixel profiles require manufacturer display evidence',
+      })
+    }
+    if (profile.manufacturerDisplay) {
+      if (
+        profile.manufacturerDisplay.logicalOrientation === 'portrait' &&
+        profile.dimensions.height !== null &&
+        profile.dimensions.width >= profile.dimensions.height
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['dimensions'],
+          message:
+            'Portrait manufacturer profiles require a portrait logical viewport',
+        })
+      }
+      const logicalPixels = [
+        profile.dimensions.width,
+        profile.dimensions.height ?? 0,
+      ].sort((left, right) => left - right)
+      const listedPixels = [
+        profile.manufacturerDisplay.listedPixels.width,
+        profile.manufacturerDisplay.listedPixels.height,
+      ].sort((left, right) => left - right)
+      if (
+        profile.dimensions.unit !== 'device-px' ||
+        logicalPixels[0] !== listedPixels[0] ||
+        logicalPixels[1] !== listedPixels[1]
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['manufacturerDisplay', 'listedPixels'],
+          message:
+            'Manufacturer pixels must be an orientation-only transpose of logical device geometry',
+        })
+      }
+      if (profile.pixelsPerInch) {
+        const diagonal = Math.hypot(...listedPixels) / profile.pixelsPerInch
+        if (
+          Math.abs(diagonal - profile.manufacturerDisplay.diagonalInches) > 0.15
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['manufacturerDisplay', 'diagonalInches'],
+            message:
+              'Manufacturer diagonal must agree with listed pixels and density',
+          })
+        }
+      }
+    }
+    if (
+      profile.dimensions.height !== null &&
+      profile.preview.heightCssPx !== null
+    ) {
+      const deviceAspect = profile.dimensions.width / profile.dimensions.height
+      const previewAspect =
+        profile.preview.widthCssPx / profile.preview.heightCssPx
+      const relativeAspectError =
+        Math.abs(previewAspect - deviceAspect) / deviceAspect
+      if (relativeAspectError > 0.005) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['preview'],
+          message: 'Scaled preview must preserve the target aspect ratio',
+        })
+      }
     }
     if (
       (profile.interactionMode === 'continuous-scroll') !==

@@ -12,14 +12,59 @@
     },
     {
       "file": "structured-scientific.pdf",
+      "sha256": "a56c4e07804958c9a6a26290d18993a974a8b771542925ffef336cea2704593a",
       "features": [
         "two-columns",
         "spanning-block",
-        "figure-caption-pair",
-        "table",
-        "equation-fallback",
+        "complete-source-raster-figures",
+        "semantic-table-explicit-header",
+        "equation-source-glyph-raster",
         "footnote-reference",
         "footnote-note"
+      ]
+    },
+    {
+      "file": "caption-direction-figures.pdf",
+      "sha256": "ff0976cf127268eb628a3b8bd935780206f0448e3187c8485d5dc92437d2e052",
+      "features": [
+        "figure-caption-above",
+        "figure-caption-below",
+        "unique-directional-source-ownership",
+        "complete-source-raster-figures"
+      ]
+    },
+    {
+      "file": "table-citation-crop.pdf",
+      "sha256": "d1740c51679f90b474f72beaf17186c28f47b766a077befcc7d22f55c9c3e06c",
+      "features": [
+        "caption-bounded-text-slab",
+        "source-page-crop-table",
+        "table-citation-canonical-owner",
+        "bibliography",
+        "epub-bibliorefs"
+      ]
+    },
+    {
+      "file": "pdf-to-epub-fidelity.pdf",
+      "contract": "pdf-to-epub-fidelity.contract.json",
+      "contractSha256": "421a0a3d8243117f36d8817f7b299917588e975319868ea8da1821e9ed7fae62",
+      "sha256": "23a9f2fee8dd76a20d0db6f7c2c42bcf6633cbea46a34e1cf65a65ec03dcd1d2",
+      "features": [
+        "unique-title-region",
+        "continuous-prose",
+        "discretionary-dehyphenation",
+        "authored-hyphen",
+        "inline-font-semantics",
+        "equation-super-subscript-geometry",
+        "safe-link-annotation",
+        "numbered-and-unnumbered-sections",
+        "nested-list",
+        "figure-multiline-caption-source-raster",
+        "semantic-table-explicit-header",
+        "equation-source-glyph-raster",
+        "footnote-reference",
+        "footnote-note",
+        "bibliography"
       ]
     },
     {

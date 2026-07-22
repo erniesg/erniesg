@@ -10,6 +10,14 @@ vm-codex
 
 Make the browser studio a truthful pre-export view of an imported PDF or DOCX: render the reconstruction's actual visual assets, semantic tables, inline formatting, links, and note references; do not inject demo annotations into uploaded documents; and do not report an EPUB as ready before its artifacts finish validating.
 
+## Current status (2026-07-21)
+
+The PDF importer now defaults to Mobile but builds and exposes checked Mobile,
+Paper Pro Move, and Paper Pro EPUB renditions. The generated-artifact iframe,
+visible profile receipt, and optional download share one selected profile and
+artifact hash. The remaining issue scope is fidelity/readiness on hard papers,
+not a Mobile-only preview limitation.
+
 ## Acceptance tests
 
 - `src/components/research/PublicationImporter.tsx` passes the complete `DocumentReconstruction` into `ResearchStudio`; an import preview is no longer rendered from `paper` alone.
@@ -17,11 +25,22 @@ Make the browser studio a truthful pre-export view of an imported PDF or DOCX: r
 - Repeated relationship asset ids remain repeated visual occurrences in canonical order; content-addressed asset reuse does not collapse panels.
 - A ready `structured-manuscript.docx` preview renders its known bold, italic, hyperlink, and note-reference ranges plus correctly typed footnote/endnote bodies and return links with semantic HTML matching the EPUB rendition.
 - A ready scholarly-PDF preview renders source-backed bold, italic, bold-italic, superscript, subscript, safe links, citation markers, footnote references/backlinks, numbered section hierarchy, nested lists, references, and bibliography structure with semantic HTML equivalent to the selected EPUB. Relative title/heading/body/caption/note hierarchy remains meaningful without copying absolute PDF point sizes.
-- Figures, diagrams, semantic tables, bounded table fallbacks, display equations, and their complete captions render at the canonical relationship position. Captions retain their full accepted source span, asset/object provenance, and figure/table/equation anchor; they do not float to the top of unrelated prose or disappear while their label remains.
+- Figures, diagrams, semantic tables, real source-backed bounded table crops when a page-raster/crop capability supplies them, display equations, and their complete captions render at the canonical relationship position. A nonsemantic/nonuniform table with no real crop remains visibly review-required rather than receiving a synthetic preview. Captions retain their full accepted source span, asset/object provenance, and figure/table/equation anchor; they do not float to the top of unrelated prose or disappear while their label remains.
 - Continuous Mobile and e-ink EPUB previews follow canonical semantic reading order and never imitate the source PDF's multi-column coordinates. Columns are reconstruction evidence only; reflow emits one coherent reading stream unless a target policy explicitly and truthfully selects a supported semantic multi-column rendition.
-- Imported documents open in a continuous `mobile` source-review profile, carry no synthetic highlight or note, and do not auto-scroll to a fabricated reading anchor. Finite profile controls remain unavailable until asset-aware pagination and authoritative profile export land; the authored research demo continues to receive its explicit demo annotations and full preview matrix.
+- Imported documents open in the continuous `mobile` source-review profile,
+  carry no synthetic highlight or note, and do not auto-scroll to a fabricated
+  reading anchor. After their checked artifacts finish, Paper Pro Move and
+  Paper Pro controls expose advisory finite publisher previews of the same
+  canonical rendition; the UI states that reflowable reading software remains
+  free to repaginate. The authored research demo continues to receive its
+  explicit demo annotations and full preview matrix.
 - Preview object URLs are local-only, are revoked when the reconstruction changes or the component unmounts, and never serialize document bytes into logs, manifests, or source markup.
-- The available Mobile profile button exposes its selected state with `aria-pressed`, and copy distinguishes the continuous source review from separately validated downloads; the drag-active class resolves to both `publication-dropzone` and `is-dragging`; and the result bar displays `Validating EPUB` until every promised EPUB artifact is built.
+- Every available profile button exposes its selected state with
+  `aria-pressed`, and copy distinguishes the continuous Mobile review from the
+  advisory e-ink frames and separately validated downloads; the drag-active
+  class resolves to both `publication-dropzone` and `is-dragging`; and the
+  result bar displays `Validating EPUB` until every promised EPUB artifact is
+  built.
 - The misleading `Print / PDF` action is absent while the only truthful imported preview is continuous Mobile; issue 026 may restore a print action only when an authoritative paged artifact and matching profile are selected.
 - Generated XHTML table assets render from the semantic table already in the graph. XHTML without a valid canonical table receives an explicit unresolved state; the studio has no `<object>`, iframe, or HTML-injection preview path.
 - A table region claimed by a semantic table or bounded table fallback is excluded from ordinary paragraph reconstruction. Browser assertions prove row/cell strings do not reappear before or after the rendered table as leaked prose.
@@ -35,7 +54,11 @@ Make the browser studio a truthful pre-export view of an imported PDF or DOCX: r
 
 1. **Red:** add the hostile-XHTML and semantic-preview cases to `src/components/research/ResearchStudio.test.tsx`, add the import journeys to `tests/e2e/publication-importer.spec.ts`, run `npx vitest run src/components/research/ResearchStudio.test.tsx src/components/research/PublicationImporter.test.tsx`, and preserve the expected failures before implementation.
 2. **Green:** wire the complete reconstruction into `ResearchStudio` and implement only the semantic inline/visual rendering, explicit unresolved fallback, local object-URL lifecycle, and import-specific defaults needed to turn those tests green.
-3. **Red then green:** add drag-class, accessible selected/focus-state, fresh-same-name upload invalidation, Mobile-only, no-`Print / PDF`, table-prose deduplication, isolated-glyph rejection, and readiness-timing assertions; fix the smallest copy/class/control defects without changing import heuristics or export gates.
+3. **Red then green:** add drag-class, accessible selected/focus-state,
+   fresh-same-name upload invalidation, checked three-profile selection,
+   no-`Print / PDF`, table-prose deduplication, isolated-glyph rejection, and
+   readiness-timing assertions; fix the smallest copy/class/control defects
+   without changing import heuristics or export gates.
 4. **Refactor:** extract shared segmentation and safe preview/object-URL helpers only after focused tests pass, then run the full validation command to prove the authored demo and importer behavior remain unchanged.
 
 ## Exact-head definition of done

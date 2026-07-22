@@ -2,6 +2,8 @@ import { strFromU8 } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import type { NormalizedSourceBox, PdfRegionLine } from './import-types'
 import {
+  canonicalTableFromLines,
+  createCompositePngAsset,
   createPngAsset,
   createTableAsset,
   createTextSvgAsset,
@@ -75,7 +77,38 @@ describe('PDF visual asset primitives', () => {
     expect(first.href).toBe(`assets/${first.id}.png`)
   })
 
-  it('preserves simple source vector geometry as bounded SVG', async () => {
+  it('encodes a composite raster with complete fragment lineage', async () => {
+    const sourceBoxes = [sourceBox, { ...sourceBox, x: 0.61 }]
+    const input = {
+      sourceObjectIds: ['vector-p001-001', 'image-p001-001'],
+      sourceBoxes,
+      width: 2,
+      height: 1,
+      pixels: new Uint8Array([255, 255, 255, 255, 0, 0, 0, 255]),
+    }
+
+    const first = await createCompositePngAsset(input)
+    const second = await createCompositePngAsset(input)
+
+    expect(first).toEqual(second)
+    expect(first).toMatchObject({
+      mediaType: 'image/png',
+      kind: 'raster',
+      rendition: 'browser-composite-raster',
+      sourceObjectIds: input.sourceObjectIds,
+      sourceBoxes,
+      width: 2,
+      height: 1,
+    })
+    await expect(
+      createCompositePngAsset({
+        ...input,
+        sourceBoxes: [sourceBox],
+      }),
+    ).rejects.toThrow(/source box for every source object/)
+  })
+
+  it('labels hardcoded-paint vector SVG as a readable approximation', async () => {
     const asset = await createVectorSvgAsset({
       sourceObjectId: 'vector-p001-001',
       sourceBox,
@@ -88,7 +121,7 @@ describe('PDF visual asset primitives', () => {
     expect(asset).toMatchObject({
       mediaType: 'image/svg+xml',
       kind: 'vector',
-      rendition: 'source-preserved',
+      rendition: 'bounded-svg-fallback',
     })
     expect(svg).toContain('viewBox="0 0 40 30"')
     expect(svg).toContain('d="M 0 0 L 40 0 L 20 30 Z"')
@@ -143,6 +176,54 @@ describe('PDF visual asset primitives', () => {
     expect(svg).not.toMatch(/latex|mathml/i)
   })
 
+  it('expands equation render bounds for lowered source runs without changing lineage', async () => {
+    const tightSourceBox = {
+      ...sourceBox,
+      y: 0.3,
+      height: 0.012,
+      method: 'pdf-text' as const,
+    }
+    const equationLine: PdfRegionLine = {
+      id: 'equation-line',
+      text: 'Dr',
+      fontSize: 10,
+      box: tightSourceBox,
+      runs: [
+        {
+          ...tightSourceBox,
+          text: 'D',
+          width: 0.02,
+          fontName: 'Equation',
+          fontSize: 10,
+          confidence: 1,
+        },
+        {
+          ...tightSourceBox,
+          text: 'r',
+          x: 0.22,
+          y: 0.309,
+          width: 0.01,
+          height: 0.008,
+          fontName: 'EquationSubscript',
+          fontSize: 6,
+          confidence: 1,
+        },
+      ],
+    }
+    const result = await createTextSvgAsset({
+      kind: 'equation',
+      sourceObjectId: 'equation-p001-lowered',
+      sourceBox: tightSourceBox,
+      lines: [equationLine],
+      pageWidth: 612,
+      pageHeight: 792,
+    })
+
+    expect(result.sourceBoxes).toEqual([tightSourceBox])
+    expect(result.height).toBeGreaterThan(tightSourceBox.height * 792)
+    expect(strFromU8(result.bytes)).toContain('>r</text>')
+  })
+
   it('emits semantic XHTML only for aligned rectangular table rows', async () => {
     const aligned = [
       line('header', 0.4, [
@@ -154,6 +235,7 @@ describe('PDF visual asset primitives', () => {
         { text: '10', x: 0.5 },
       ]),
     ]
+    for (const run of aligned[0].runs) run.bold = true
     const semantic = await createTableAsset({
       sourceObjectId: 'table-p001-001',
       sourceBox,
@@ -174,12 +256,121 @@ describe('PDF visual asset primitives', () => {
       kind: 'table',
       rendition: 'semantic-table',
     })
+    expect(semantic).not.toBeNull()
+    if (!semantic) throw new Error('Expected an aligned semantic table asset')
     expect(strFromU8(semantic.bytes)).toContain('<th scope="col">Group</th>')
     expect(strFromU8(semantic.bytes)).toContain('<td>10</td>')
-    expect(fallback).toMatchObject({
-      mediaType: 'image/svg+xml',
-      kind: 'table',
-      rendition: 'bounded-svg-fallback',
+    expect(canonicalTableFromLines(aligned)).toEqual({
+      rows: [
+        {
+          cells: [
+            {
+              text: 'Group',
+              headerScope: 'column',
+              columnSpan: 1,
+              rowSpan: 1,
+            },
+            {
+              text: 'Score',
+              headerScope: 'column',
+              columnSpan: 1,
+              rowSpan: 1,
+            },
+          ],
+        },
+        {
+          cells: [
+            {
+              text: 'Control',
+              headerScope: null,
+              columnSpan: 1,
+              rowSpan: 1,
+            },
+            {
+              text: '10',
+              headerScope: null,
+              columnSpan: 1,
+              rowSpan: 1,
+            },
+          ],
+        },
+      ],
     })
+    expect(
+      canonicalTableFromLines([
+        aligned[0],
+        line('bad-row', 0.44, [{ text: '10', x: 0.5 }]),
+      ]),
+    ).toBeNull()
+    const nonuniform = [
+      line('wide-header', 0.4, [
+        { text: 'Model', x: 0.2 },
+        { text: 'English', x: 0.5 },
+        { text: 'Chinese', x: 0.7 },
+      ]),
+      line('missing-cell', 0.44, [
+        { text: 'Baseline', x: 0.2 },
+        { text: '72.1', x: 0.7 },
+      ]),
+      line('wide-row', 0.48, [
+        { text: 'Proposed', x: 0.2 },
+        { text: '81.4', x: 0.5 },
+        { text: '79.8', x: 0.7 },
+      ]),
+    ]
+    expect(canonicalTableFromLines(nonuniform)).toBeNull()
+    await expect(
+      createTableAsset({
+        sourceObjectId: 'table-p001-003',
+        sourceBox,
+        lines: nonuniform,
+        pageWidth: 612,
+        pageHeight: 792,
+      }),
+    ).resolves.toBeNull()
+    expect(fallback).toBeNull()
+  })
+
+  it('does not invent header cells for a uniform headerless numeric table', async () => {
+    const headerless = [
+      line('row-1', 0.4, [
+        { text: '10', x: 0.2 },
+        { text: '20', x: 0.5 },
+      ]),
+      line('row-2', 0.44, [
+        { text: '30', x: 0.2 },
+        { text: '40', x: 0.5 },
+      ]),
+    ]
+
+    expect(canonicalTableFromLines(headerless)).toBeNull()
+    await expect(
+      createTableAsset({
+        sourceObjectId: 'table-p001-headerless',
+        sourceBox,
+        lines: headerless,
+        pageWidth: 612,
+        pageHeight: 792,
+      }),
+    ).resolves.toBeNull()
+  })
+
+  it('accepts an explicit PDF bold font name as table-header evidence', () => {
+    const styled = [
+      line('header', 0.4, [
+        { text: 'Profile', x: 0.2 },
+        { text: 'Nodes', x: 0.5 },
+      ]),
+      line('body', 0.44, [
+        { text: 'Mobile', x: 0.2 },
+        { text: '12', x: 0.5 },
+      ]),
+    ]
+    for (const run of styled[0].runs) run.fontName = 'Helvetica-BoldMT'
+
+    expect(canonicalTableFromLines(styled)?.rows[0].cells).toEqual([
+      expect.objectContaining({ text: 'Profile', headerScope: 'column' }),
+      expect.objectContaining({ text: 'Nodes', headerScope: 'column' }),
+    ])
   })
 })

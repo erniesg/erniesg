@@ -83,6 +83,21 @@ describe('PDF diagnostic overlays', () => {
     expect(svg.match(/<line /g)).toHaveLength(2)
   })
 
+  it('keeps classification overlays bounded to the classified marker', async () => {
+    const result = await reconstruct([
+      run('A spanning claim has note reference 1.', 0.1, 0.42, 0.8),
+    ])
+    const model = buildDiagnosticOverlayDocument(result)
+    const diagnostic = model.diagnostics.find(
+      (item) => item.diagnostic.code === 'CLASSIFIED_NOTE_MARKER',
+    )
+
+    expect(diagnostic?.sourceBoxes).toEqual([
+      diagnostic?.diagnostic.noteMarkerClassification?.sourceBox,
+    ])
+    expect(diagnostic?.sourceBoxes).toHaveLength(1)
+  })
+
   it('draws both numbered region sequences and emits byte-stable HTML', async () => {
     const result = await reconstruct([
       run('Left one.', 0.08, 0.2, 0.32),

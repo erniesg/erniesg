@@ -1,0 +1,174 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixture": "pdf-to-epub-fidelity.pdf",
+  "license": "CC0-1.0",
+  "sourceSha256": "23a9f2fee8dd76a20d0db6f7c2c42bcf6633cbea46a34e1cf65a65ec03dcd1d2",
+  "title": "A Deterministic Reflow Fidelity Benchmark",
+  "authors": ["Ada Fixture", "Lin Test"],
+  "canonicalSpans": [
+    {
+      "kind": "paragraph",
+      "text": "This benchmark preserves continuous prose across a discretionary line break while an authored state-of-the-art phrase remains. Discretionary evidence keeps canonical spans unique and prevents title text leakage."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Inline evidence keeps bold, italic, combined, and a safe link intact."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Inline formula H2O remains readable."
+    },
+    {
+      "kind": "paragraph",
+      "text": "The method follows source order and retains a linked note reference 1."
+    },
+    {
+      "kind": "paragraph",
+      "text": "The result places each semantic object once at a meaningful reading position."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Continuous reflow must not alternate columns or preserve source-line whitespace."
+    }
+  ],
+  "headings": [
+    { "text": "Abstract", "level": 1 },
+    { "text": "1 Methods", "level": 1 },
+    { "text": "1.1 Structure", "level": 2 },
+    { "text": "2 Results", "level": 1 },
+    { "text": "Discussion", "level": 1 },
+    { "text": "References", "level": 1 }
+  ],
+  "listItems": [
+    {
+      "text": "First ordered benchmark item.",
+      "level": 1,
+      "ordered": true,
+      "numberingId": "pdf-list-p001-001"
+    },
+    {
+      "text": "Nested evidence item.",
+      "level": 2,
+      "ordered": true,
+      "numberingId": "pdf-list-p001-001"
+    },
+    {
+      "text": "Second ordered benchmark item.",
+      "level": 1,
+      "ordered": true,
+      "numberingId": "pdf-list-p001-001"
+    }
+  ],
+  "inlineSemantics": [
+    { "container": "Inline evidence", "text": "bold", "bold": true },
+    { "container": "Inline evidence", "text": "italic", "italic": true },
+    {
+      "container": "Inline evidence",
+      "text": "combined",
+      "bold": true,
+      "italic": true
+    },
+    {
+      "container": "Inline evidence",
+      "text": "safe link",
+      "italic": true,
+      "href": "https://example.com/fidelity-evidence"
+    },
+    {
+      "container": "Inline formula",
+      "text": "2",
+      "verticalAlign": "subscript"
+    },
+    {
+      "container": "linked note reference",
+      "text": "1",
+      "verticalAlign": "superscript",
+      "relationship": "footnote"
+    }
+  ],
+  "inlineSpanLedger": {
+    "expected": 14,
+    "mapped": 14,
+    "coverage": 1
+  },
+  "note": {
+    "label": "1",
+    "text": "This typed note must retain its backlink."
+  },
+  "references": [
+    "A. Fixture. Deterministic document evidence. Local Press, 2025.",
+    "L. Test. Reflowable benchmark methods. Example Journal, 2026."
+  ],
+  "visuals": [
+    {
+      "kind": "figure",
+      "label": "Figure 1",
+      "caption": "Figure 1. A bounded diagram connects input evidence to output semantics and keeps this complete second caption line attached.",
+      "asset": {
+        "kind": "raster",
+        "mediaType": "image/png",
+        "rendition": "source-preserved"
+      }
+    },
+    {
+      "kind": "table",
+      "label": "Table 1",
+      "caption": "Table 1. Validated benchmark values remain structured.",
+      "asset": {
+        "kind": "table",
+        "mediaType": "application/xhtml+xml",
+        "rendition": "semantic-table"
+      },
+      "headerEvidence": "bold-font",
+      "rows": [
+        ["Profile", "Nodes"],
+        ["Mobile", "12"],
+        ["E-ink", "12"]
+      ]
+    },
+    {
+      "kind": "equation",
+      "label": "Equation 1",
+      "caption": "Equation 1. The bounded display equation remains source backed.",
+      "sourceText": "E1 = m c2 (1)",
+      "asset": {
+        "kind": "raster",
+        "mediaType": "image/png",
+        "rendition": "source-preserved"
+      },
+      "evidence": ["source-glyph-raster", "accessible-source-text"]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "mobile",
+      "version": "1.1.0",
+      "width": 390,
+      "height": null,
+      "unit": "css-px",
+      "pixelsPerInch": null,
+      "previewWidthCssPx": 390,
+      "margins": { "top": 35, "right": 31, "bottom": 35, "left": 31 }
+    },
+    {
+      "id": "paperProMove",
+      "version": "1.1.0",
+      "width": 954,
+      "height": 1696,
+      "unit": "device-px",
+      "pixelsPerInch": 264,
+      "previewWidthCssPx": 276,
+      "margins": { "top": 108, "right": 84, "bottom": 108, "left": 84 }
+    },
+    {
+      "id": "paperPro",
+      "version": "1.1.0",
+      "width": 1620,
+      "height": 2160,
+      "unit": "device-px",
+      "pixelsPerInch": 229,
+      "previewWidthCssPx": 540,
+      "margins": { "top": 145, "right": 130, "bottom": 145, "left": 130 }
+    }
+  ]
+}

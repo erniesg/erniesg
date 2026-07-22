@@ -13,11 +13,19 @@ Provide one local command that turns a PDF file into device-profile EPUB artifac
 ## Acceptance tests
 
 - `npm run pdf:export -- <pdf-or-directory> --target paperPro --target paperProMove --out <dir>` runs the same import, completeness-gate, composition, and EPUB modules the studio uses (shared code, no forked logic) and writes the `.epub` files, per-document export manifests, and SHA-256 checksums.
-- A gate-failing document produces a non-zero exit with the corpus-audit readiness report for that document; no partial EPUB is written.
-- The corpus benchmark aggregates a machine-readable report over a local directory of PDFs: ready/review-required/failed counts, pass-rate, and failure reasons bucketed by gate code, following the privacy rules of `docs/schemas/pdf-corpus-audit.schema.json` (basenames, hashes, and metrics only; no document text or paths).
+- In strict publication mode, a gate-failing document produces a non-zero exit
+  with its corpus-audit readiness report and writes no EPUB. The explicit
+  `--readable-fallback` review mode may instead write a provenance-projected
+  EPUB and exit non-zero after labelling it `review-required`; it includes only
+  relationships and assets that pass the same strict validator, records every
+  excluded source relationship/object in its manifest, and rejects dangling
+  canonical targets. A review artifact is never reported as publication-ready
+  or silently promoted to the strict result.
+- The corpus benchmark aggregates a machine-readable report over a local directory of PDFs: ready/review-required/failed counts, pass-rate, and failure reasons bucketed by gate code, following the privacy rules of `docs/schemas/pdf-corpus-audit.schema.json`. It retains exact per-code counts and deterministic redacted samples bounded to three per code and 64 per document with an explicit truncation count; it emits no document text or paths.
 - All born-digital test fixtures export valid EPUBs for both device targets, verified by `inspectEpub` and the structural invariants; scanned fixtures fail closed with `OCR_REQUIRED` when the OCR configuration is absent.
-- If a local Java runtime is present, exported EPUBs pass EPUBCheck; otherwise EPUBCheck is recorded as skipped in the report and the documented structural checks stand in. No runtime, validator, or document may be fetched from the network.
-- Repeated runs over the same inputs are byte-identical, including the benchmark report apart from documented fields.
+- If a local Java runtime is present, exported EPUBs pass EPUBCheck; otherwise EPUBCheck is recorded as skipped in the report and the documented structural checks stand in. No runtime, validator, or document may be fetched from the network. The comparator validates baseline-matched and candidate-only documents: an added failed or review-required document fails promotion, and an added ready document must carry every artifact target checked by the baseline corpus, so a newly added failure or missing EPUB cannot be ignored.
+- Repeated runs over the same inputs are byte-identical, including the benchmark report apart from documented fields. Strict repeatability compares artifact bytes and recomputed structural receipts for canonical node order/content, inline/list semantics, citation/note/visual relationships, assets, and the exact line-transition ledger; matching aggregate counters alone is insufficient.
+- Cross-parser or cross-model comparisons use frozen corpus identity plus human-approved bounded decisions and directional non-regression rather than byte identity. A candidate run may not appoint its own output as an accepted baseline; private comparisons require the full sanitized baseline-receipt SHA-256 to be recorded independently and supplied separately from the baseline file.
 - Evidence includes a demo transcript: one fixture PDF converted to `publication-paperpro.epub` and `publication-papermove.epub` with file sizes and checksums.
 
 ## Validation command

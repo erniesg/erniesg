@@ -40,6 +40,10 @@ const GLYPHS = {
   9: ['01110', '10001', '10001', '01111', '00001', '00001', '01110'],
   '-': ['00000', '00000', '00000', '11111', '00000', '00000', '00000'],
   '.': ['00000', '00000', '00000', '00000', '00000', '01100', '01100'],
+  '+': ['00000', '00100', '00100', '11111', '00100', '00100', '00000'],
+  '=': ['00000', '11111', '00000', '11111', '00000', '00000', '00000'],
+  '(': ['00010', '00100', '01000', '01000', '01000', '00100', '00010'],
+  ')': ['01000', '00100', '00010', '00010', '00010', '00100', '01000'],
 }
 
 const CJK_GLYPHS = {
@@ -96,8 +100,9 @@ function escaped(value) {
     .replace(/\)/g, '\\)')
 }
 
-function textCommand({ text, x, y, size = 11 }) {
-  return `BT\n/F1 ${size} Tf\n${x} ${y} Td\n(${escaped(text)}) Tj\nET`
+function textCommand({ text, x, y, size = 11, font = 'F1', renderMode = 0 }) {
+  const rendering = renderMode === 0 ? '' : `${renderMode} Tr\n`
+  return `BT\n/${font} ${size} Tf\n${rendering}${x} ${y} Td\n(${escaped(text)}) Tj\nET`
 }
 
 function rasterText({
@@ -121,24 +126,28 @@ function rasterText({
     }
   }
   for (const line of lines) {
+    const glyphScale = line.scale ?? scale
     let cursor = line.x
     for (const character of line.text.toUpperCase()) {
       if (character === ' ') {
-        cursor += scale * 4
+        cursor += glyphScale * 4
         continue
       }
       const glyph = GLYPHS[character] ?? GLYPHS['-']
       for (const [glyphY, row] of glyph.entries()) {
         for (const [glyphX, bit] of [...row].entries()) {
           if (bit !== '1') continue
-          for (let dy = 0; dy < scale; dy += 1) {
-            for (let dx = 0; dx < scale; dx += 1) {
-              paint(cursor + glyphX * scale + dx, line.y + glyphY * scale + dy)
+          for (let dy = 0; dy < glyphScale; dy += 1) {
+            for (let dx = 0; dx < glyphScale; dx += 1) {
+              paint(
+                cursor + glyphX * glyphScale + dx,
+                line.y + glyphY * glyphScale + dy,
+              )
             }
           }
         }
       }
-      cursor += scale * 6
+      cursor += glyphScale * 6
     }
   }
   for (const mark of marks) {
@@ -181,20 +190,41 @@ function createPdf(pageDefinitions) {
 
   const catalogId = reserve()
   const pagesId = reserve()
-  const fontId = reserve()
+  const fontNames = [
+    ...new Set(
+      pageDefinitions.flatMap((page) =>
+        (page.lines ?? []).map((line) => line.font ?? 'F1'),
+      ),
+    ),
+  ].sort()
+  const fontIds = new Map(fontNames.map((name) => [name, reserve()]))
   const pageIds = pageDefinitions.map(() => reserve())
   const contentIds = pageDefinitions.map(() => reserve())
   const pageImages = pageDefinitions.map(
     (page) => page.images ?? (page.image ? [page.image] : []),
   )
   const imageIds = pageImages.map((images) => images.map(() => reserve()))
+  const annotationIds = pageDefinitions.map((page) =>
+    (page.links ?? []).map(() => reserve()),
+  )
 
   set(catalogId, `<< /Type /Catalog /Pages ${pagesId} 0 R >>`)
   set(
     pagesId,
     `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`,
   )
-  set(fontId, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+  const baseFonts = {
+    F1: 'Helvetica',
+    F2: 'Helvetica-Bold',
+    F3: 'Helvetica-Oblique',
+    F4: 'Helvetica-BoldOblique',
+  }
+  for (const [name, id] of fontIds) {
+    set(
+      id,
+      `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFonts[name] ?? 'Helvetica'} >>`,
+    )
+  }
 
   pageDefinitions.forEach((page, index) => {
     const commands = (page.lines ?? []).map(textCommand)
@@ -215,9 +245,20 @@ function createPdf(pageDefinitions) {
             .join(' ')} >>`
         : ''
     const rotation = page.rotation ? `/Rotate ${page.rotation}` : ''
+    for (const [linkIndex, link] of (page.links ?? []).entries()) {
+      const annotationId = annotationIds[index][linkIndex]
+      set(
+        annotationId,
+        `<< /Type /Annot /Subtype /Link /Rect [${link.rect.join(' ')}] /Border [0 0 0] /A << /S /URI /URI (${escaped(link.url)}) >> >>`,
+      )
+    }
+    const annotations =
+      annotationIds[index].length > 0
+        ? ` /Annots [${annotationIds[index].map((id) => `${id} 0 R`).join(' ')}]`
+        : ''
     set(
       pageIds[index],
-      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${mediaWidth} ${mediaHeight}] ${rotation} /Resources << /Font << /F1 ${fontId} 0 R >> ${xObjects} >> /Contents ${contentIds[index]} 0 R >>`,
+      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${mediaWidth} ${mediaHeight}] ${rotation}${annotations} /Resources << /Font << ${[...fontIds].map(([name, id]) => `/${name} ${id} 0 R`).join(' ')} >> ${xObjects} >> /Contents ${contentIds[index]} 0 R >>`,
     )
     set(
       contentIds[index],
@@ -294,6 +335,91 @@ const multilingualScan = rasterText({
     { text: '地', x: 220, y: 470, scale: 8 },
     { text: '研', x: 340, y: 470, scale: 8 },
     { text: '究', x: 460, y: 470, scale: 8 },
+  ],
+})
+
+const structuredFigureOne = rasterText({
+  width: 520,
+  height: 220,
+  scale: 5,
+  decorations: [
+    { x: 15, y: 15, width: 230, height: 190, value: 232 },
+    { x: 275, y: 15, width: 230, height: 190, value: 214 },
+    { x: 245, y: 105, width: 30, height: 8, value: 48 },
+  ],
+  lines: [
+    { text: 'PANEL A', x: 28, y: 70 },
+    { text: 'PANEL B', x: 288, y: 70 },
+  ],
+})
+const structuredFigureTwo = rasterText({
+  width: 420,
+  height: 120,
+  scale: 4,
+  decorations: [{ x: 10, y: 10, width: 400, height: 100, value: 228 }],
+  lines: [{ text: 'BOUNDED RASTER', x: 38, y: 42 }],
+})
+const captionAboveFigure = rasterText({
+  width: 640,
+  height: 280,
+  scale: 6,
+  decorations: [
+    { x: 20, y: 20, width: 270, height: 240, value: 232 },
+    { x: 350, y: 20, width: 270, height: 240, value: 208 },
+    { x: 290, y: 132, width: 60, height: 12, value: 48 },
+  ],
+  lines: [
+    { text: 'ABOVE A', x: 48, y: 104 },
+    { text: 'ABOVE B', x: 378, y: 104 },
+  ],
+})
+const captionBelowFigure = rasterText({
+  width: 640,
+  height: 280,
+  scale: 6,
+  decorations: [
+    { x: 20, y: 20, width: 270, height: 240, value: 216 },
+    { x: 350, y: 20, width: 270, height: 240, value: 188 },
+    { x: 290, y: 132, width: 60, height: 12, value: 48 },
+  ],
+  lines: [
+    { text: 'BELOW A', x: 48, y: 104 },
+    { text: 'BELOW B', x: 378, y: 104 },
+  ],
+})
+const structuredEquation = rasterText({
+  width: 420,
+  height: 120,
+  scale: 7,
+  lines: [{ text: 'X + Y = Z', x: 22, y: 34 }],
+})
+const fidelityDiagram = rasterText({
+  width: 750,
+  height: 420,
+  scale: 5,
+  decorations: [
+    { x: 20, y: 55, width: 190, height: 300, value: 235 },
+    { x: 280, y: 55, width: 190, height: 300, value: 216 },
+    { x: 540, y: 55, width: 190, height: 300, value: 196 },
+    { x: 210, y: 198, width: 70, height: 12, value: 48 },
+    { x: 470, y: 198, width: 70, height: 12, value: 48 },
+  ],
+  lines: [
+    { text: 'INPUT', x: 40, y: 175 },
+    { text: 'EVIDENCE', x: 255, y: 175 },
+    { text: 'OUTPUT', x: 545, y: 175 },
+  ],
+})
+const fidelityEquation = rasterText({
+  width: 680,
+  height: 150,
+  scale: 10,
+  lines: [
+    { text: 'E', x: 40, y: 42, scale: 12 },
+    { text: '1', x: 115, y: 80, scale: 6 },
+    { text: '= M C', x: 165, y: 42, scale: 12 },
+    { text: '2', x: 480, y: 18, scale: 6 },
+    { text: '(1)', x: 520, y: 48, scale: 8 },
   ],
 })
 
@@ -374,7 +500,7 @@ const fixtures = {
           y: 430,
         },
         {
-          text: 'Figure 2. A source vector diagram remains scalable.',
+          text: 'Figure 2. A complete source raster diagram remains bounded.',
           x: 170,
           y: 300,
         },
@@ -383,16 +509,22 @@ const fixtures = {
           x: 54,
           y: 250,
         },
-        { text: 'Group', x: 72, y: 225 },
-        { text: 'Score', x: 115, y: 225 },
+        { text: 'Group', x: 72, y: 225, font: 'F2' },
+        { text: 'Score', x: 115, y: 225, font: 'F2' },
         { text: 'Control', x: 72, y: 205 },
         { text: '10', x: 115, y: 205 },
         {
-          text: 'Equation 1. A display equation uses a source fallback.',
+          text: 'Equation 1. A display equation uses a source glyph raster.',
           x: 54,
           y: 160,
         },
-        { text: 'x + y = z', x: 250, y: 135, size: 14 },
+        {
+          text: 'x + y = z',
+          x: 250,
+          y: 135,
+          size: 14,
+          renderMode: 3,
+        },
         {
           text: 'Footnote 1: This note must stay linked to its reference.',
           x: 54,
@@ -401,10 +533,315 @@ const fixtures = {
         },
       ],
       images: [
-        { x: 220, y: 460, width: 170, height: 110 },
-        { x: 400, y: 460, width: 80, height: 110 },
+        {
+          x: 220,
+          y: 460,
+          width: 260,
+          height: 110,
+          raster: structuredFigureOne,
+        },
+        {
+          x: 240,
+          y: 330,
+          width: 150,
+          height: 70,
+          raster: structuredFigureTwo,
+        },
+        {
+          x: 225,
+          y: 112,
+          width: 165,
+          height: 42,
+          raster: structuredEquation,
+        },
       ],
-      commands: ['q\n120 0 0 70 240 330 cm\n0 0 m\n1 0 l\n0.5 1 l\nh\nB\nQ'],
+    },
+  ],
+  'caption-direction-figures.pdf': [
+    {
+      lines: [
+        {
+          text: 'Deterministic caption direction fixture',
+          x: 54,
+          y: 748,
+          size: 20,
+          font: 'F2',
+        },
+        {
+          text: 'Two nearby source rasters exercise caption ownership in both directions.',
+          x: 54,
+          y: 710,
+        },
+        {
+          text: 'Figure 1. This complete caption appears above its source raster.',
+          x: 82,
+          y: 650,
+          font: 'F3',
+        },
+        {
+          text: 'Figure 2. This complete caption appears below its source raster.',
+          x: 82,
+          y: 320,
+          font: 'F3',
+        },
+        {
+          text: 'The two figures must retain unique source-object ownership.',
+          x: 54,
+          y: 276,
+        },
+      ],
+      images: [
+        {
+          x: 100,
+          y: 520,
+          width: 220,
+          height: 100,
+          raster: captionAboveFigure,
+        },
+        {
+          x: 100,
+          y: 380,
+          width: 220,
+          height: 100,
+          raster: captionBelowFigure,
+        },
+      ],
+    },
+  ],
+  'table-citation-crop.pdf': [
+    {
+      lines: [
+        {
+          text: 'Deterministic crop table citation study',
+          x: 54,
+          y: 748,
+          size: 20,
+          font: 'F2',
+        },
+        {
+          text: 'The compact source rows below must remain one exact visual transcript.',
+          x: 54,
+          y: 680,
+        },
+        {
+          text: 'Metric name | Baseline | Calibrated | Evidence',
+          x: 54,
+          y: 600,
+          size: 8,
+          font: 'F2',
+        },
+        {
+          text: 'Readability score | 71 | 82 | [1]',
+          x: 54,
+          y: 587,
+          size: 8,
+        },
+        {
+          text: 'Diagram fidelity | 68 | 91 | [2]',
+          x: 54,
+          y: 574,
+          size: 8,
+        },
+        {
+          text: 'Equation fidelity | 70 | 93 | [1-2]',
+          x: 54,
+          y: 561,
+          size: 8,
+        },
+        {
+          text: 'Table continuity | 73 | 95 | Verified',
+          x: 54,
+          y: 548,
+          size: 8,
+        },
+        {
+          text: 'Aggregate result | 71 | 90 | Stable',
+          x: 54,
+          y: 535,
+          size: 8,
+        },
+        {
+          text: 'Table 1. Canonical citation crop.',
+          x: 54,
+          y: 514,
+          size: 9,
+          font: 'F3',
+        },
+        {
+          text: 'The visible prose resumes after the complete table caption.',
+          x: 54,
+          y: 460,
+        },
+      ],
+    },
+    {
+      lines: [
+        { text: 'References', x: 54, y: 748, size: 16, font: 'F2' },
+        {
+          text: '[1] A. Fixture. Exact source ownership. Local Press, 2025.',
+          x: 54,
+          y: 712,
+        },
+        {
+          text: '[2] L. Test. Deterministic crop evidence. Example Journal, 2026.',
+          x: 54,
+          y: 686,
+        },
+      ],
+    },
+  ],
+  'pdf-to-epub-fidelity.pdf': [
+    {
+      lines: [
+        {
+          text: 'A Deterministic Reflow Fidelity Benchmark',
+          x: 54,
+          y: 748,
+          size: 21,
+          font: 'F2',
+        },
+        { text: 'Ada Fixture and Lin Test', x: 54, y: 716, size: 12 },
+        {
+          text: 'Repository Laboratory, Local Systems Group',
+          x: 54,
+          y: 696,
+          size: 9,
+          font: 'F3',
+        },
+        { text: 'Abstract', x: 54, y: 660, size: 14, font: 'F2' },
+        {
+          text: 'This benchmark preserves continuous prose across a discre-',
+          x: 54,
+          y: 632,
+        },
+        {
+          text: 'tionary line break while an authored state-of-the-art phrase remains.',
+          x: 54,
+          y: 614,
+        },
+        {
+          text: 'Discretionary evidence keeps canonical spans unique and prevents title text leakage.',
+          x: 54,
+          y: 596,
+        },
+        { text: 'Inline evidence keeps ', x: 54, y: 562 },
+        { text: 'bold', x: 162, y: 562, font: 'F2' },
+        { text: ', ', x: 185, y: 562 },
+        { text: 'italic', x: 190, y: 562, font: 'F3' },
+        { text: ', ', x: 212, y: 562 },
+        { text: 'combined', x: 221, y: 562, font: 'F4' },
+        { text: ', and a ', x: 273, y: 562 },
+        { text: 'safe link', x: 309, y: 562, font: 'F3' },
+        { text: ' intact.', x: 352, y: 562 },
+        { text: 'Inline formula H', x: 54, y: 536 },
+        { text: '2', x: 131.8, y: 533, size: 7 },
+        { text: 'O remains readable.', x: 136, y: 536 },
+        { text: '1 Methods', x: 54, y: 514, size: 16, font: 'F2' },
+        { text: '1.1 Structure', x: 54, y: 480, size: 13, font: 'F2' },
+        {
+          text: 'The method follows source order and retains a linked note reference ',
+          x: 54,
+          y: 450,
+        },
+        { text: '1', x: 393, y: 454, size: 7 },
+        { text: '.', x: 397, y: 450 },
+        { text: '1. First ordered benchmark item.', x: 72, y: 416 },
+        { text: 'a. Nested evidence item.', x: 92, y: 394 },
+        { text: '2. Second ordered benchmark item.', x: 72, y: 372 },
+        {
+          text: 'Footnote 1: This typed note must retain its backlink.',
+          x: 54,
+          y: 70,
+          size: 8,
+        },
+      ],
+      links: [
+        {
+          url: 'https://example.com/fidelity-evidence',
+          rect: [307, 558, 351, 572],
+        },
+      ],
+    },
+    {
+      lines: [
+        { text: '2 Results', x: 54, y: 748, size: 16, font: 'F2' },
+        {
+          text: 'The result places each semantic object once at a meaningful reading position.',
+          x: 54,
+          y: 716,
+        },
+        {
+          text: 'Figure 1. A bounded diagram connects input evidence to output',
+          x: 104,
+          y: 468,
+        },
+        {
+          text: 'semantics and keeps this complete second caption line attached.',
+          x: 104,
+          y: 450,
+        },
+        {
+          text: 'Table 1. Validated benchmark values remain structured.',
+          x: 54,
+          y: 380,
+        },
+        { text: 'Profile', x: 72, y: 352, font: 'F2' },
+        { text: 'Nodes', x: 190, y: 352, font: 'F2' },
+        { text: 'Mobile', x: 72, y: 330 },
+        { text: '12', x: 190, y: 330 },
+        { text: 'E-ink', x: 72, y: 308 },
+        { text: '12', x: 190, y: 308 },
+        {
+          text: 'Equation 1. The bounded display equation remains source backed.',
+          x: 54,
+          y: 232,
+        },
+        {
+          text: 'E1 = m c2 (1)',
+          x: 244,
+          y: 194,
+          size: 15,
+          font: 'F3',
+          renderMode: 3,
+        },
+      ],
+      images: [
+        {
+          x: 180,
+          y: 510,
+          width: 250,
+          height: 150,
+          raster: fidelityDiagram,
+        },
+        {
+          x: 220,
+          y: 174,
+          width: 190,
+          height: 48,
+          raster: fidelityEquation,
+        },
+      ],
+    },
+    {
+      lines: [
+        { text: 'Discussion', x: 54, y: 748, size: 16, font: 'F2' },
+        {
+          text: 'Continuous reflow must not alternate columns or preserve source-line whitespace.',
+          x: 54,
+          y: 716,
+        },
+        { text: 'References', x: 54, y: 658, size: 16, font: 'F2' },
+        {
+          text: '[1] A. Fixture. Deterministic document evidence. Local Press, 2025.',
+          x: 54,
+          y: 626,
+        },
+        {
+          text: '[2] L. Test. Reflowable benchmark methods. Example Journal, 2026.',
+          x: 54,
+          y: 602,
+        },
+      ],
     },
   ],
   'diagnostic-overlays.pdf': [
@@ -534,6 +971,8 @@ const fixtures = {
   ],
 }
 
+const selectedFixtures = new Set(process.argv.slice(2))
 for (const [name, pages] of Object.entries(fixtures)) {
+  if (selectedFixtures.size > 0 && !selectedFixtures.has(name)) continue
   writeFileSync(new URL(name, import.meta.url), createPdf(pages))
 }

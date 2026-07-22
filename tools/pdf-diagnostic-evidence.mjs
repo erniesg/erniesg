@@ -128,7 +128,10 @@ reconstruction rule, or overlay renderer changes.
   }
 }
 
-main().catch(() => {
+main().catch((error) => {
   process.stderr.write('Fixture diagnostic evidence generation failed.\n')
+  process.stderr.write(
+    `${error instanceof Error ? error.stack : String(error)}\n`,
+  )
   process.exitCode = 1
 })

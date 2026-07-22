@@ -123,7 +123,7 @@ function documentRelationships({ malformed = false } = {}) {
 // A tiny repository-owned PNG; no private or externally licensed content.
 const figurePng = new Uint8Array(
   Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8Dwn4GBgYGJAQoAHgQCAe2f2JcAAAAASUVORK5CYII=',
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64',
   ),
 )

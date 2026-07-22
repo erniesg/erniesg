@@ -79,7 +79,7 @@ type StructuredTable = {
   rows: Array<{
     cells: Array<{
       text: string
-      header: boolean
+      headerScope: 'column' | 'row' | null
       columnSpan: number
       rowSpan: number
     }>
@@ -631,7 +631,8 @@ function parseTable(table: XmlElement, index: number): ParsedTable {
             )
             .join('\n')
             .trim(),
-          header: declaredHeader || rowIndex === 0,
+          headerScope:
+            declaredHeader || rowIndex === 0 ? ('column' as const) : null,
           columnSpan: Number.isInteger(columnSpan)
             ? Math.max(1, columnSpan)
             : 1,
@@ -725,8 +726,11 @@ function tableXhtml(table: StructuredTable) {
       (row) =>
         `<tr>${row.cells
           .map((cell) => {
-            const tag = cell.header ? 'th' : 'td'
-            return `<${tag} colspan="${cell.columnSpan}" rowspan="${cell.rowSpan}">${cleanXmlText(cell.text)}</${tag}>`
+            const tag = cell.headerScope ? 'th' : 'td'
+            const scope = cell.headerScope
+              ? ` scope="${cell.headerScope === 'column' ? 'col' : 'row'}"`
+              : ''
+            return `<${tag}${scope} colspan="${cell.columnSpan}" rowspan="${cell.rowSpan}">${cleanXmlText(cell.text)}</${tag}>`
           })
           .join('')}</tr>`,
     )
@@ -1454,6 +1458,7 @@ export async function reconstructDocx(
           relationship.kind === 'table' && relationship.status !== 'matched',
       ).length,
       equations: 0,
+      citations: 0,
       footnoteReferences: unresolvedNotes,
       footnotes: unreferencedNotes,
     }
@@ -1466,6 +1471,16 @@ export async function reconstructDocx(
       outputTextCharacters,
       matchedTextCharacters,
       textCoverage: coverage(matchedTextCharacters, sourceTextCharacters),
+      duplicateCanonicalSpanCount: 0,
+      missingSourceRegionCount: 0,
+      unprovenancedRenderedUnitCount: 0,
+      expectedInlineSpanCount: 0,
+      mappedInlineSpanCount: 0,
+      inlineSpanCoverage: 1,
+      lineBoundaryCount: 0,
+      decidedLineBoundaryCount: 0,
+      unresolvedCorruptingJoinCount: 0,
+      structurallyConsumedLineBoundaryCount: 0,
       sourceAssetCount,
       exportedAssetCount: assets.length,
       assetCoverage: coverage(assets.length, sourceAssetCount),
@@ -1556,6 +1571,7 @@ export async function reconstructDocx(
         captions: visualRelationships.length,
         tables: blocks.filter((block) => block.kind === 'table').length,
         equations: 0,
+        citations: 0,
         footnoteReferences: noteRelationships.length,
         footnotes: footnotes.size + endnotes.size,
       },

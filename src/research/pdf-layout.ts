@@ -1,17 +1,26 @@
 import type { ResearchNode, ResearchPaper } from './schema'
 import type {
   NodeSourceEvidence,
+  NormalizedSourceBox,
+  PdfCitationRelationship,
   PdfEmbeddedLink,
+  PdfLineBoundaryDecision,
   PdfNoteMarkerClassification,
   PdfNoteRelationship,
   PdfPageAnalysis,
   PdfPageRegion,
   PdfReconstruction,
+  PdfVisualAsset,
+  PdfVisualRelationship,
   ReconstructionDiagnostic,
 } from './import-types'
-import { assessPdfCompleteness } from './pdf-quality'
+import {
+  assessPdfCompleteness,
+  classifyStructuralLineBoundaryDecisions,
+} from './pdf-quality'
 import { classifyPdfNoteMarkers } from './pdf-note-classifier'
-import { reconstructPdfVisuals } from './pdf-visuals'
+import { replayPdfRegionLineRanges } from './pdf-lines'
+import { reconstructPdfVisuals, type PdfFigureRasterizer } from './pdf-visuals'
 import {
   normalizedNoteLabel,
   noteLabelFromText,
@@ -30,9 +39,39 @@ type RegionBlock = {
   region: PdfPageRegion
   text: string
   confidence: number
+  headingLevel?: 1 | 2 | 3
+  list?: {
+    level: number
+    ordered: boolean
+    numberingId: string
+    markerStyle:
+      | 'decimal'
+      | 'lower-roman'
+      | 'upper-roman'
+      | 'lower-alpha'
+      | 'upper-alpha'
+      | 'disc'
+    ordinal?: number
+    markerText?: string
+    continuedFromPreviousPage?: boolean
+  }
   noteKind?: 'footnote' | 'endnote'
   noteLabel?: string
+  noteMarkerText?: string
+  sourceSegments?: Array<{
+    region: PdfPageRegion
+    evidenceRegion?: PdfPageRegion
+    sourceStart: number
+    canonicalStart: number
+    text: string
+  }>
   nodeId?: string
+  frontMatterRole?:
+    | 'title'
+    | 'author'
+    | 'affiliation'
+    | 'abstract-heading'
+    | 'abstract-body'
 }
 
 type NoteReferenceDraft = {
@@ -44,7 +83,27 @@ type NoteReferenceDraft = {
   classification: PdfNoteMarkerClassification
 }
 
+type AuthorNoteReferenceDraft = NoteReferenceDraft & {
+  author: string
+}
+
+type SemanticReferenceDraft = {
+  id: string
+  start: number
+  end: number
+  semanticRole:
+    | 'citation'
+    | 'cross-reference'
+    | 'affiliation-marker'
+    | 'bibliography-entry'
+  targetIds?: string[]
+}
+
 export const PDF_NOTE_RELATIONSHIP_THRESHOLD = 0.7
+
+type CanonicalInlineRun = NonNullable<
+  Extract<ResearchNode, { type: 'paragraph' }>['inlineRuns']
+>[number]
 
 function median(values: number[]) {
   if (values.length === 0) return 0
@@ -65,6 +124,206 @@ function parseAuthors(author?: string) {
     .map((value) => value.trim())
     .filter(Boolean)
   return authors?.length ? authors : ['Imported locally']
+}
+
+function headingLevel(text: string, largestFont: number, bodySize: number) {
+  const numbered = text.trim().match(/^(\d+(?:\.\d+){0,2})\s+\S/)
+  if (numbered) {
+    return Math.min(3, numbered[1].split('.').length) as 1 | 2 | 3
+  }
+  if (
+    /^(?:abstract|introduction|methods?|results?|discussion|conclusion|references|endnotes?|notes?)\b/i.test(
+      text,
+    )
+  ) {
+    return 1 as const
+  }
+  return largestFont >= bodySize * 1.45 ? (1 as const) : (2 as const)
+}
+
+function likelyAffiliation(value: string) {
+  return /(?:university|institute|department|laborator(?:y|ies)|\blab\b|school|college|centre|center|hospital|academy|research group|corporation|\binc\b|@|https?:\/\/)/i.test(
+    value,
+  )
+}
+
+function normalizedAuthorName(value: string) {
+  return value
+    .replace(/[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function likelyPersonName(value: string) {
+  const normalized = normalizedAuthorName(value)
+  if (!normalized || likelyAffiliation(normalized)) return false
+  const words = normalized.split(/\s+/)
+  if (words.length < 2 || words.length > 8) return false
+  return words.every((word) =>
+    /^(?:\p{Lu}[\p{L}'’.-]*|(?:de|del|der|di|du|la|le|van|von))$/u.test(word),
+  )
+}
+
+function authorNamesFromLine(value: string) {
+  const separated = value
+    .split(/\s+(?:and|&)\s+|\s*[;,]\s*/i)
+    .map(normalizedAuthorName)
+    .filter(Boolean)
+  if (separated.length > 1 && separated.every(likelyPersonName)) {
+    return separated
+  }
+  return likelyPersonName(value) ? [normalizedAuthorName(value)] : []
+}
+
+function inferredAuthors(blocks: RegionBlock[]) {
+  const firstPage = blocks.filter(
+    (block) => block.region.page === 1 && block.region.box.y < 0.32,
+  )
+  const titleIndex = firstPage.findIndex((block) => block.type === 'heading')
+  if (titleIndex < 0) return []
+  const candidates: string[] = []
+  for (const block of firstPage.slice(titleIndex + 1)) {
+    if (block.type === 'heading') break
+    if (block.type !== 'paragraph' || likelyAffiliation(block.text)) continue
+    candidates.push(...authorNamesFromLine(block.text))
+  }
+  return [...new Set(candidates)]
+}
+
+function largestBlockFont(block: RegionBlock) {
+  return Math.max(...block.region.lines.map((line) => line.fontSize), 0)
+}
+
+function classifyFrontMatter(blocks: RegionBlock[], metadataTitle?: string) {
+  const firstPage = blocks.filter((block) => block.region.page === 1)
+  const comparableTitle = (value: string) =>
+    value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  const comparableMetadataTitle = metadataTitle
+    ? comparableTitle(metadataTitle)
+    : undefined
+  const metadataMatchesVisibleBlock = Boolean(
+    comparableMetadataTitle &&
+      firstPage.some(
+        (block) => comparableTitle(block.text) === comparableMetadataTitle,
+      ),
+  )
+  const abstractIndex = firstPage.findIndex((block) =>
+    /^abstract(?:\s|$)/i.test(block.text.trim()),
+  )
+  const hasTitlePageEvidence =
+    abstractIndex >= 0 ||
+    metadataMatchesVisibleBlock ||
+    (firstPage.some(
+      (block) => block.region.box.y < 0.32 && likelyAffiliation(block.text),
+    ) &&
+      firstPage.some(
+        (block) => block.region.box.y < 0.2 && largestBlockFont(block) >= 14,
+      ))
+  if (!hasTitlePageEvidence) {
+    return { title: undefined, authors: [], affiliations: [], abstract: '' }
+  }
+  const beforeAbstract =
+    abstractIndex >= 0
+      ? firstPage.slice(0, abstractIndex)
+      : firstPage.filter((block) => block.region.box.y < 0.32)
+  const metadataTitleBlock = comparableMetadataTitle
+    ? beforeAbstract.find(
+        (block) => comparableTitle(block.text) === comparableMetadataTitle,
+      )
+    : undefined
+  const titleBlock =
+    metadataTitleBlock ??
+    [...beforeAbstract]
+      .filter((block) => !likelyAffiliation(block.text))
+      .sort(
+        (left, right) =>
+          largestBlockFont(right) - largestBlockFont(left) ||
+          left.region.box.y - right.region.box.y,
+      )[0]
+  if (titleBlock) titleBlock.frontMatterRole = 'title'
+
+  const titleFont = titleBlock ? largestBlockFont(titleBlock) : 0
+  for (const block of beforeAbstract) {
+    if (block === titleBlock) continue
+    const alignedWithTitle = Boolean(
+      titleBlock &&
+        (Math.abs(block.region.box.x - titleBlock.region.box.x) <= 0.025 ||
+          Math.abs(
+            block.region.box.x +
+              block.region.box.width / 2 -
+              (titleBlock.region.box.x + titleBlock.region.box.width / 2),
+          ) <= 0.035),
+    )
+    const strongTitleContinuation = Boolean(
+      titleBlock &&
+        block.region.box.y > titleBlock.region.box.y &&
+        !/^\p{L}$/u.test(block.text.trim()) &&
+        !likelyAffiliation(block.text) &&
+        authorNamesFromLine(block.text).length === 0 &&
+        alignedWithTitle &&
+        (largestBlockFont(block) >= titleFont * 0.62 ||
+          (!/[.!?](?:\s|$)/.test(block.text) && block.region.box.y < 0.32)),
+    )
+    if (strongTitleContinuation) {
+      block.frontMatterRole = 'title'
+    } else if (authorNamesFromLine(block.text).length > 0) {
+      block.frontMatterRole = 'author'
+    } else if (likelyAffiliation(block.text)) {
+      block.frontMatterRole = 'affiliation'
+    }
+  }
+
+  const abstractBlock =
+    abstractIndex >= 0 ? firstPage[abstractIndex] : undefined
+  let abstractText = ''
+  if (abstractBlock) {
+    const inlineAbstract = abstractBlock.text
+      .trim()
+      .match(/^abstract\s*[:.—-]?\s+(.+)$/i)?.[1]
+    abstractBlock.frontMatterRole = inlineAbstract
+      ? 'abstract-body'
+      : 'abstract-heading'
+    if (inlineAbstract) abstractText = inlineAbstract.trim()
+    for (const block of firstPage.slice(abstractIndex + 1)) {
+      if (block.type === 'heading') break
+      if (block.region.box.y <= abstractBlock.region.box.y) continue
+      block.frontMatterRole = 'abstract-body'
+      abstractText = [abstractText, block.text].filter(Boolean).join(' ')
+    }
+  }
+
+  const inferredTitle = beforeAbstract
+    .filter((block) => block.frontMatterRole === 'title')
+    .sort(
+      (left, right) =>
+        left.region.page - right.region.page ||
+        left.region.box.y - right.region.box.y ||
+        left.region.box.x - right.region.box.x,
+    )
+    .map((block) => block.text.trim())
+    .filter(Boolean)
+    .join(' ')
+  const metadataCorroborated = Boolean(
+    metadataTitle?.trim() &&
+      inferredTitle &&
+      comparableTitle(metadataTitle) === comparableTitle(inferredTitle),
+  )
+  const title =
+    (metadataCorroborated ? metadataTitle?.trim() : undefined) ||
+    inferredTitle ||
+    undefined
+  const authors = beforeAbstract.flatMap((block) =>
+    block.frontMatterRole === 'author' ? authorNamesFromLine(block.text) : [],
+  )
+  const affiliations = beforeAbstract.flatMap((block) =>
+    block.frontMatterRole === 'affiliation' ? [block.text.trim()] : [],
+  )
+  return {
+    title,
+    authors: [...new Set(authors)],
+    affiliations: [...new Set(affiliations)],
+    abstract: abstractText.trim(),
+  }
 }
 
 function validDate(value?: string) {
@@ -92,6 +351,41 @@ function nodeId(index: number, type: RegionBlock['type'], text: string) {
   return `${prefix}-${String(index + 1).padStart(3, '0')}-${slug(text)}`
 }
 
+function visualCanonicalNodeId(
+  relationship: PdfVisualRelationship,
+  page: number,
+) {
+  const sourceAnchor =
+    relationship.sourceObjectIds[0] ??
+    relationship.sourceRegionIds[0] ??
+    relationship.captionRegionId
+  return [
+    'visual',
+    relationship.kind,
+    `p${String(page).padStart(3, '0')}`,
+    slug(relationship.label, 24),
+    slug(sourceAnchor, 40),
+    slug(relationship.id, 32),
+  ].join('-')
+}
+
+function assertUniqueCanonicalNodeIds(nodes: ResearchNode[]) {
+  const seen = new Set<string>()
+  for (const node of nodes) {
+    if (seen.has(node.id)) {
+      throw new Error('PDF canonical node ids must be globally unique.')
+    }
+    seen.add(node.id)
+  }
+}
+
+function isIsolatedProseGlyph(block: RegionBlock) {
+  return (
+    (block.type === 'paragraph' || block.type === 'heading') &&
+    /^\p{L}$/u.test(block.text.trim())
+  )
+}
+
 function noteText(region: PdfPageRegion, label: string) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return (
@@ -107,31 +401,396 @@ function noteText(region: PdfPageRegion, label: string) {
   )
 }
 
+function noteMarkerText(region: PdfPageRegion, label: string) {
+  const marker = region.text
+    .trim()
+    .match(
+      /^(?:(?:footnote|note)\s+)?(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:\s*[:.)\]-])?/iu,
+    )?.[0]
+    ?.trim()
+  return marker && normalizedNoteLabel(marker).includes(label) ? marker : label
+}
+
+function romanOrdinal(value: string) {
+  const digits: Record<string, number> = {
+    i: 1,
+    v: 5,
+    x: 10,
+    l: 50,
+    c: 100,
+    d: 500,
+    m: 1000,
+  }
+  const normalized = value.toLocaleLowerCase()
+  let total = 0
+  for (let index = 0; index < normalized.length; index += 1) {
+    const current = digits[normalized[index]] ?? 0
+    const next = digits[normalized[index + 1]] ?? 0
+    total += current < next ? -current : current
+  }
+  return Math.max(total, 1)
+}
+
+function orderedMarker(marker: string) {
+  if (/^\d+$/.test(marker)) {
+    return { markerStyle: 'decimal' as const, ordinal: Number(marker) }
+  }
+  if (/^[ivxlcdm]+$/i.test(marker)) {
+    return {
+      markerStyle: (marker === marker.toLocaleUpperCase()
+        ? 'upper-roman'
+        : 'lower-roman') as 'upper-roman' | 'lower-roman',
+      ordinal: romanOrdinal(marker),
+    }
+  }
+  return {
+    markerStyle: (marker === marker.toLocaleUpperCase()
+      ? 'upper-alpha'
+      : 'lower-alpha') as 'upper-alpha' | 'lower-alpha',
+    ordinal: marker.toLocaleLowerCase().charCodeAt(0) - 96,
+  }
+}
+
+function parsedOrderedListMarker(value: string) {
+  const trimmed = value.trimStart()
+  const match = trimmed.match(
+    /^(?:(\[\s*(\d+)\s*\])|(\(\s*(\d+|[A-Za-z]|[ivxlcdm]+)\s*\))|((\d+|[A-Za-z]|[ivxlcdm]+)[.)]))\s+(.+)$/i,
+  )
+  if (!match) return null
+  const markerText = match[1] ?? match[3] ?? match[5]
+  const marker = match[2] ?? match[4] ?? match[6]
+  return {
+    markerText,
+    itemText: match[7],
+    contentStart:
+      value.length - trimmed.length + match[0].length - match[7].length,
+    ...orderedMarker(marker),
+  }
+}
+
+function parsedBulletListMarker(value: string) {
+  const trimmed = value.trimStart()
+  const match = trimmed.match(/^([•◦▪‣–—-])\s+(.+)$/u)
+  return match
+    ? {
+        markerText: match[1],
+        itemText: match[2],
+        contentStart:
+          value.length - trimmed.length + match[0].length - match[2].length,
+      }
+    : null
+}
+
+function blockSourceSegments(block: RegionBlock) {
+  return (
+    block.sourceSegments ?? [
+      {
+        region: block.region,
+        sourceStart: 0,
+        canonicalStart: 0,
+        text: block.text,
+      },
+    ]
+  )
+}
+
+function stripBlockMarker(
+  block: RegionBlock,
+  marker: { itemText: string; contentStart: number },
+) {
+  const text = marker.itemText.trim()
+  const contentEnd = marker.contentStart + text.length
+  const existingSegments = blockSourceSegments(block)
+  block.text = text
+  block.sourceSegments = existingSegments.flatMap((segment) => {
+    const segmentEnd = segment.canonicalStart + segment.text.length
+    const overlapStart = Math.max(marker.contentStart, segment.canonicalStart)
+    const overlapEnd = Math.min(contentEnd, segmentEnd)
+    if (overlapStart >= overlapEnd) return []
+    const relativeStart = overlapStart - segment.canonicalStart
+    const relativeEnd = overlapEnd - segment.canonicalStart
+    return [
+      {
+        region: segment.region,
+        ...(segment.evidenceRegion
+          ? { evidenceRegion: segment.evidenceRegion }
+          : {}),
+        sourceStart: segment.sourceStart + relativeStart,
+        canonicalStart: overlapStart - marker.contentStart,
+        text: segment.text.slice(relativeStart, relativeEnd),
+      },
+    ]
+  })
+}
+
+function appendBlockContinuation(
+  target: RegionBlock,
+  continuation: RegionBlock,
+) {
+  const separator = target.text ? ' ' : ''
+  const canonicalStart = target.text.length + separator.length
+  target.sourceSegments = [
+    ...blockSourceSegments(target),
+    ...blockSourceSegments(continuation).map((segment) => ({
+      ...segment,
+      canonicalStart: canonicalStart + segment.canonicalStart,
+    })),
+  ]
+  target.text = `${target.text}${separator}${continuation.text}`
+  target.confidence = Math.min(target.confidence, continuation.confidence)
+  if (target.list) target.list.continuedFromPreviousPage = true
+}
+
+function likelyUnmarkedCrossPageContinuation(
+  target: RegionBlock,
+  continuation: RegionBlock,
+) {
+  const previousText = target.text.trimEnd()
+  const continuationText = continuation.text.trimStart()
+  return Boolean(
+    previousText &&
+      continuationText &&
+      !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
+      /^\p{Ll}/u.test(continuationText),
+  )
+}
+
+function mergeProseContinuations(blocks: RegionBlock[]) {
+  for (let index = 0; index < blocks.length; index += 1) {
+    const target = blocks[index]
+    if (target.type !== 'paragraph' || target.list) continue
+    while (true) {
+      let continuationIndex = index + 1
+      while (
+        continuationIndex < blocks.length &&
+        (blocks[continuationIndex].type === 'caption' ||
+          blocks[continuationIndex].type === 'footnote')
+      ) {
+        continuationIndex += 1
+      }
+      const continuation = blocks[continuationIndex]
+      if (
+        continuation?.type !== 'paragraph' ||
+        continuation.list ||
+        !likelyUnmarkedCrossPageContinuation(target, continuation)
+      ) {
+        break
+      }
+      appendBlockContinuation(target, continuation)
+      blocks.splice(continuationIndex, 1)
+    }
+  }
+}
+
+function boxForRegionLines(lines: PdfPageRegion['lines']): NormalizedSourceBox {
+  const left = Math.min(...lines.map((line) => line.box.x))
+  const top = Math.min(...lines.map((line) => line.box.y))
+  const right = Math.max(...lines.map((line) => line.box.x + line.box.width))
+  const bottom = Math.max(...lines.map((line) => line.box.y + line.box.height))
+  return {
+    page: lines[0].box.page,
+    x: rounded(left),
+    y: rounded(top),
+    width: rounded(right - left),
+    height: rounded(bottom - top),
+    rotation: lines[0].box.rotation,
+    method: lines.some((line) => line.box.method === 'ocr')
+      ? 'ocr'
+      : 'pdf-text',
+  }
+}
+
+export type PdfResidualRegionFragment = {
+  region: PdfPageRegion
+  sourceRegion: PdfPageRegion
+  sourceStart: number
+  sourceEnd: number
+}
+
+export function residualPdfRegionFragmentsAfterLineConsumption(
+  region: PdfPageRegion,
+  consumedLineIds: ReadonlySet<string>,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+): PdfResidualRegionFragment[] {
+  if (region.lines.every((line) => !consumedLineIds.has(line.id))) {
+    return [
+      {
+        region,
+        sourceRegion: region,
+        sourceStart: 0,
+        sourceEnd: region.text.length,
+      },
+    ]
+  }
+  const replay = replayPdfRegionLineRanges(region, lineBoundaryDecisions)
+  if (!replay || replay.text !== region.text) {
+    throw new Error(
+      `Cannot replay source line boundaries for partial PDF region ${region.id}.`,
+    )
+  }
+  const retainedRuns: PdfPageRegion['lines'][] = []
+  for (const line of region.lines) {
+    if (consumedLineIds.has(line.id)) continue
+    const previous = region.lines[region.lines.indexOf(line) - 1]
+    if (!previous || consumedLineIds.has(previous.id)) retainedRuns.push([])
+    retainedRuns.at(-1)!.push(line)
+  }
+  return retainedRuns.map((lines) => {
+    const first = replay.ranges.get(lines[0].id)
+    const last = replay.ranges.get(lines.at(-1)!.id)
+    if (!first || !last || first.start > last.end) {
+      throw new Error(
+        `Cannot map retained source lines for partial PDF region ${region.id}.`,
+      )
+    }
+    const sourceStart = first.start
+    const sourceEnd = last.end
+    return {
+      region: {
+        ...region,
+        box: boxForRegionLines(lines),
+        lines,
+        text: region.text.slice(sourceStart, sourceEnd),
+      },
+      sourceRegion: region,
+      sourceStart,
+      sourceEnd,
+    }
+  })
+}
+
+export function residualPdfRegionAfterLineConsumption(
+  region: PdfPageRegion,
+  consumedLineIds: ReadonlySet<string>,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+): PdfPageRegion | null {
+  const fragments = residualPdfRegionFragmentsAfterLineConsumption(
+    region,
+    consumedLineIds,
+    lineBoundaryDecisions,
+  )
+  if (fragments.length > 1) {
+    throw new Error(
+      `Cannot collapse noncontiguous retained lines for partial PDF region ${region.id}.`,
+    )
+  }
+  return fragments[0]?.region ?? null
+}
+
 function blocksFromRegions(
   orderedRegions: PdfPageRegion[],
   regions: PdfPageRegion[],
   excludedRegionIds = new Set<string>(),
   bibliographyRegionIds: ReadonlySet<string> = new Set<string>(),
+  sourceEquationCaptions: ReadonlyMap<string, string> = new Map<
+    string,
+    string
+  >(),
+  consumedLineIds: ReadonlySet<string> = new Set<string>(),
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[] = [],
 ) {
-  const readingRegions = orderedRegions.filter(
-    (region) =>
-      !excludedRegionIds.has(region.id) &&
-      ['body', 'spanning', 'caption', 'footnote', 'endnote'].includes(
-        region.kind,
-      ),
-  )
+  const residualFragments = new WeakMap<
+    PdfPageRegion,
+    PdfResidualRegionFragment
+  >()
+  const readingRegions = orderedRegions.flatMap((region) => {
+    if (
+      excludedRegionIds.has(region.id) ||
+      ![
+        'body',
+        'spanning',
+        'caption',
+        'equation',
+        'footnote',
+        'endnote',
+      ].includes(region.kind)
+    ) {
+      return []
+    }
+    const fragments = residualPdfRegionFragmentsAfterLineConsumption(
+      region,
+      consumedLineIds,
+      lineBoundaryDecisions,
+    )
+    for (const fragment of fragments) {
+      if (
+        fragment.sourceStart !== 0 ||
+        fragment.sourceEnd !== fragment.sourceRegion.text.length
+      ) {
+        residualFragments.set(fragment.region, fragment)
+      }
+    }
+    return fragments.map((fragment) => fragment.region)
+  })
   const bodySize =
     median(
       regions
         .filter((region) => region.kind === 'body')
         .flatMap((region) => region.lines.map((line) => line.fontSize)),
     ) || 12
-  return readingRegions.map<RegionBlock>((region) => {
+  const numberedCandidates = readingRegions.flatMap((region, index) => {
+    const match = region.text
+      .trim()
+      .match(/^(\d+(?:\.\d+){0,3})[.)]?\s+(\S.*)$/u)
+    if (
+      !match ||
+      region.lines.length > 2 ||
+      region.text.trim().length > 180 ||
+      /[.!?](?:["'’”)\]]*)$/u.test(region.text.trim())
+    ) {
+      return []
+    }
+    return [
+      {
+        index,
+        regionId: region.id,
+        ordinal: match[1].split('.').map(Number),
+      },
+    ]
+  })
+  const sequencedNumberedHeadingRegions = new Set<PdfPageRegion>()
+  const followsInSequence = (left: number[], right: number[]) =>
+    left.length === right.length &&
+    left.slice(0, -1).every((part, index) => part === right[index]) &&
+    right.at(-1) === (left.at(-1) ?? 0) + 1
+  for (let index = 0; index < numberedCandidates.length - 1; index += 1) {
+    const current = numberedCandidates[index]
+    const next = numberedCandidates[index + 1]
+    if (
+      next.index > current.index + 1 &&
+      followsInSequence(current.ordinal, next.ordinal)
+    ) {
+      sequencedNumberedHeadingRegions.add(readingRegions[current.index])
+      sequencedNumberedHeadingRegions.add(readingRegions[next.index])
+    }
+  }
+  const blocks = readingRegions.map<RegionBlock>((region, regionIndex) => {
+    const residualFragment = residualFragments.get(region)
+    const sourceSegments = residualFragment
+      ? [
+          {
+            region: residualFragment.sourceRegion,
+            evidenceRegion: region,
+            sourceStart: residualFragment.sourceStart,
+            canonicalStart: 0,
+            text: region.text,
+          },
+        ]
+      : undefined
     if (region.kind === 'caption') {
       return {
         type: 'caption',
         region,
         text: region.text,
+        confidence: region.confidence,
+        ...(sourceSegments ? { sourceSegments } : {}),
+      }
+    }
+    if (region.kind === 'equation' && sourceEquationCaptions.has(region.id)) {
+      return {
+        type: 'caption',
+        region,
+        text: sourceEquationCaptions.get(region.id)!,
         confidence: region.confidence,
       }
     }
@@ -147,25 +806,206 @@ function blocksFromRegions(
         confidence: region.confidence,
         noteKind: region.kind,
         noteLabel: label,
+        noteMarkerText: noteMarkerText(region, label),
       }
     }
     const largestFont = Math.max(
       ...region.lines.map((line) => line.fontSize),
       bodySize,
     )
+    const namedSectionHeading =
+      /^(?:abstract|introduction|methods?|results?|discussion|conclusion|references|endnotes?|notes?)\b/i.test(
+        region.text,
+      )
+    const numberedSectionHeading =
+      /^\d+(?:\.\d+){0,3}[.)]?\s+(?:abstract|introduction|background|related work|literature review|methods?|methodology|approach|framework|experiments?|evaluation|results?|discussion|limitations?|conclusion|references|appendix)\b/i.test(
+        region.text.trim(),
+      )
+    const headingBoundaryEvidence =
+      region.lines.length <= 2 &&
+      region.text.trim().length <= 180 &&
+      !/[.!?](?:["'’”)]*)$/.test(region.text.trim())
+    const probableFirstPageAuthorLine =
+      region.page === 1 &&
+      regionIndex > 0 &&
+      region.box.y < 0.28 &&
+      !/[.!?](?:\s|$)/.test(region.text) &&
+      authorNamesFromLine(region.text).length > 0
     const heading =
-      region.text.length <= 180 &&
-      (largestFont >= bodySize * 1.28 ||
-        /^(?:abstract|introduction|methods?|results?|discussion|conclusion|references|endnotes?|notes?)\b/i.test(
-          region.text,
-        ))
+      !probableFirstPageAuthorLine &&
+      headingBoundaryEvidence &&
+      (namedSectionHeading ||
+        numberedSectionHeading ||
+        sequencedNumberedHeadingRegions.has(region) ||
+        (region.text.trim().length > 1 && largestFont >= bodySize * 1.18))
     return {
       type: heading ? 'heading' : 'paragraph',
       region,
       text: region.text,
       confidence: Math.min(region.confidence, heading ? 0.9 : 0.86),
+      ...(sourceSegments ? { sourceSegments } : {}),
+      ...(heading
+        ? { headingLevel: headingLevel(region.text, largestFont, bodySize) }
+        : {}),
     }
   })
+
+  let activeList:
+    | {
+        page: number
+        baseX: number
+        numberingId: string
+        ordered: boolean
+        markerStyle: NonNullable<RegionBlock['list']>['markerStyle']
+        lastOrdinal?: number
+      }
+    | undefined
+  let lastBibliographyEntryPage: number | undefined
+  let pendingBibliographyContinuation:
+    | { target: RegionBlock; tailPage: number }
+    | undefined
+  let lastListBlock: RegionBlock | undefined
+  const mergedContinuationBlocks = new Set<RegionBlock>()
+  const listCounts = new Map<number, number>()
+  for (const block of blocks) {
+    if (block.type !== 'paragraph') {
+      lastBibliographyEntryPage = undefined
+      pendingBibliographyContinuation = undefined
+      activeList = undefined
+      lastListBlock = undefined
+      continue
+    }
+    const bibliography =
+      bibliographyRegionIds.has(block.region.id) ||
+      /^\[\d+\]\s+/.test(block.text.trim())
+    if (bibliography) {
+      const entry = parsedOrderedListMarker(block.text)
+      if (
+        !entry &&
+        pendingBibliographyContinuation &&
+        block.region.page === pendingBibliographyContinuation.tailPage + 1 &&
+        likelyUnmarkedCrossPageContinuation(
+          pendingBibliographyContinuation.target,
+          block,
+        )
+      ) {
+        appendBlockContinuation(pendingBibliographyContinuation.target, block)
+        mergedContinuationBlocks.add(block)
+        lastBibliographyEntryPage = block.region.page
+        pendingBibliographyContinuation.tailPage = block.region.page
+        activeList = undefined
+        continue
+      }
+      pendingBibliographyContinuation = undefined
+      if (entry) stripBlockMarker(block, entry)
+      const continuedFromPreviousPage =
+        lastBibliographyEntryPage !== undefined &&
+        block.region.page > lastBibliographyEntryPage
+      block.list = {
+        level: 1,
+        ordered: true,
+        numberingId: 'references',
+        markerStyle: 'decimal',
+        ...(entry
+          ? { ordinal: entry.ordinal, markerText: entry.markerText }
+          : {}),
+        ...(continuedFromPreviousPage
+          ? { continuedFromPreviousPage: true }
+          : {}),
+      }
+      lastBibliographyEntryPage = block.region.page
+      if (entry) {
+        pendingBibliographyContinuation = {
+          target: block,
+          tailPage: block.region.page,
+        }
+      }
+      activeList = undefined
+      lastListBlock = entry ? block : undefined
+      continue
+    }
+    lastBibliographyEntryPage = undefined
+    pendingBibliographyContinuation = undefined
+    const ordered = parsedOrderedListMarker(block.text)
+    const bullet = parsedBulletListMarker(block.text)
+    const marker = ordered
+    const itemText = ordered?.itemText ?? bullet?.itemText
+    if (!itemText) {
+      if (
+        activeList &&
+        lastListBlock &&
+        block.region.page > activeList.page &&
+        block.region.box.x >= activeList.baseX - 0.012 &&
+        likelyUnmarkedCrossPageContinuation(lastListBlock, block)
+      ) {
+        appendBlockContinuation(lastListBlock, block)
+        mergedContinuationBlocks.add(block)
+        activeList.page = block.region.page
+        continue
+      }
+      activeList = undefined
+      lastListBlock = undefined
+      continue
+    }
+    const continuesAcrossPage = Boolean(
+      activeList &&
+        activeList.page !== block.region.page &&
+        activeList.ordered &&
+        marker &&
+        activeList.markerStyle === marker.markerStyle &&
+        activeList.lastOrdinal !== undefined &&
+        marker.ordinal > activeList.lastOrdinal,
+    )
+    const isNestedItem = Boolean(
+      activeList &&
+        activeList.page === block.region.page &&
+        block.region.box.x > activeList.baseX + 0.012,
+    )
+    const continuesCurrentList = Boolean(
+      activeList &&
+        (isNestedItem ||
+          ((activeList.page === block.region.page || continuesAcrossPage) &&
+            activeList.ordered === Boolean(ordered) &&
+            activeList.markerStyle === (marker?.markerStyle ?? 'disc') &&
+            (!marker ||
+              activeList.lastOrdinal === undefined ||
+              marker.ordinal > activeList.lastOrdinal))),
+    )
+    if (!continuesCurrentList) {
+      const sequence = (listCounts.get(block.region.page) ?? 0) + 1
+      listCounts.set(block.region.page, sequence)
+      activeList = {
+        page: block.region.page,
+        baseX: block.region.box.x,
+        numberingId: `pdf-list-p${String(block.region.page).padStart(3, '0')}-${String(sequence).padStart(3, '0')}`,
+        ordered: Boolean(ordered),
+        markerStyle: marker?.markerStyle ?? 'disc',
+        lastOrdinal: marker?.ordinal,
+      }
+    } else if (activeList && !isNestedItem) {
+      activeList.page = block.region.page
+      activeList.lastOrdinal = marker?.ordinal
+    }
+    const list = activeList
+    if (!list) continue
+    const indentation = Math.max(0, block.region.box.x - list.baseX)
+    stripBlockMarker(block, ordered ?? bullet!)
+    block.list = {
+      level: Math.min(9, Math.max(1, Math.round(indentation / 0.025) + 1)),
+      ordered: Boolean(ordered),
+      numberingId: list.numberingId,
+      markerStyle: marker?.markerStyle ?? 'disc',
+      ...(marker ? { ordinal: marker.ordinal } : {}),
+      ...(ordered
+        ? { markerText: ordered.markerText }
+        : bullet
+          ? { markerText: bullet.markerText }
+          : {}),
+      ...(continuesAcrossPage ? { continuedFromPreviousPage: true } : {}),
+    }
+    lastListBlock = block
+  }
+  return blocks.filter((block) => !mergedContinuationBlocks.has(block))
 }
 
 function noteNodeIds(blocks: RegionBlock[]) {
@@ -196,6 +1036,157 @@ function detectReferences(
         start: classification.start,
         end: classification.end,
         classification,
+      },
+    ]
+  })
+}
+
+function detectAuthorNoteReferences(
+  blocks: RegionBlock[],
+): AuthorNoteReferenceDraft[] {
+  const symbolicLabels = [
+    ...new Set(
+      blocks
+        .filter((block) => block.type === 'footnote')
+        .map((block) => normalizedNoteLabel(block.noteLabel ?? ''))
+        .filter((label) => /^[*†‡§]$/u.test(label)),
+    ),
+  ]
+  return blocks.flatMap((block) => {
+    if (block.frontMatterRole !== 'author') return []
+    return symbolicLabels.flatMap((label, labelIndex) => {
+      const start = block.text.indexOf(label)
+      if (start < 0) return []
+      const authorFragment = block.text
+        .slice(0, start)
+        .split(/[;,]/u)
+        .at(-1)
+        ?.trim()
+      const author = normalizedAuthorName(authorFragment ?? '')
+      if (!author) return []
+      return [
+        {
+          id: `author-noteref-${block.region.id}-${String(labelIndex + 1).padStart(3, '0')}`,
+          label,
+          author,
+          region: block.region,
+          start,
+          end: start + label.length,
+          classification: {
+            id: `author-note-marker-${block.region.id}-${String(labelIndex + 1).padStart(3, '0')}`,
+            label,
+            referenceRegionId: block.region.id,
+            start,
+            end: start + label.length,
+            taxonomy: 'footnote-reference',
+            disposition: 'note-reference',
+            accepted: true,
+            confidence: 1,
+            threshold: 1,
+            evidence: ['author-front-matter-marker', 'matching-symbolic-note'],
+            sourceBox: { ...block.region.box },
+          },
+        },
+      ]
+    })
+  })
+}
+
+function semanticRoleForClassification(
+  classification: PdfNoteMarkerClassification,
+): SemanticReferenceDraft['semanticRole'] | undefined {
+  if (classification.disposition === 'citation') return 'citation'
+  if (
+    classification.taxonomy === 'equation-reference' ||
+    classification.taxonomy === 'section-reference'
+  ) {
+    return 'cross-reference'
+  }
+  if (classification.taxonomy === 'author-affiliation-superscript') {
+    return 'affiliation-marker'
+  }
+  if (classification.taxonomy === 'bibliography-entry') {
+    return 'bibliography-entry'
+  }
+  return undefined
+}
+
+function buildCitationRelationships(
+  classifications: PdfNoteMarkerClassification[],
+  blocks: RegionBlock[],
+) {
+  const blocksBySourceRegion = new Map<string, RegionBlock[]>()
+  for (const block of blocks) {
+    for (const regionId of new Set(
+      blockSourceSegments(block).map((segment) => segment.region.id),
+    )) {
+      const owners = blocksBySourceRegion.get(regionId) ?? []
+      owners.push(block)
+      blocksBySourceRegion.set(regionId, owners)
+    }
+  }
+  const bibliographyTargets = new Map<string, string>()
+  for (const classification of classifications.filter(
+    (candidate) => candidate.taxonomy === 'bibliography-entry',
+  )) {
+    const owners =
+      blocksBySourceRegion.get(classification.referenceRegionId) ?? []
+    const bibliographyOrdinal = /^\d+$/.test(classification.label)
+      ? Number(classification.label)
+      : null
+    const markerOwners = owners.filter(
+      (block) =>
+        block.list?.numberingId === 'references' &&
+        ((bibliographyOrdinal !== null &&
+          block.list.ordinal === bibliographyOrdinal) ||
+          normalizedNoteLabel(block.list.markerText ?? '') ===
+            normalizedNoteLabel(classification.label)),
+    )
+    const target = (
+      markerOwners.length === 1
+        ? markerOwners[0]
+        : owners.length === 1
+          ? owners[0]
+          : undefined
+    )?.nodeId
+    if (!target) continue
+    for (const label of classification.label.split(',')) {
+      if (!bibliographyTargets.has(label))
+        bibliographyTargets.set(label, target)
+    }
+  }
+
+  return classifications.flatMap<PdfCitationRelationship>((classification) => {
+    if (!classification.accepted || classification.disposition !== 'citation')
+      return []
+    const labels = classification.label.split(',').filter(Boolean)
+    const targetNodeIds = labels.flatMap((label) => {
+      const target = bibliographyTargets.get(label)
+      return target ? [target] : []
+    })
+    const status =
+      targetNodeIds.length === labels.length ? 'matched' : 'unresolved'
+    return [
+      {
+        id: classification.id,
+        label: classification.label,
+        labels,
+        referenceRegionId: classification.referenceRegionId,
+        referenceStart: classification.start,
+        referenceEnd: classification.end,
+        taxonomy:
+          classification.taxonomy as PdfCitationRelationship['taxonomy'],
+        targetNodeIds: [...new Set(targetNodeIds)],
+        status,
+        canonicalAnchor: null,
+        confidence: classification.confidence,
+        evidence: [
+          ...classification.evidence,
+          ...(status === 'matched'
+            ? ['bibliography-label-target']
+            : ['bibliography-label-target-missing']),
+        ],
+        sourceBoxes: [{ ...classification.sourceBox }],
       },
     ]
   })
@@ -356,30 +1347,675 @@ function boxesOverlap(
   )
 }
 
+const CAPTION_ENVELOPE_TOLERANCE = 0.00002
+
+function validNormalizedSourceBox(box: NormalizedSourceBox) {
+  return (
+    Number.isInteger(box.page) &&
+    box.page > 0 &&
+    [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+    box.x >= 0 &&
+    box.y >= 0 &&
+    box.width > 0 &&
+    box.height > 0 &&
+    box.x + box.width <= 1 + CAPTION_ENVELOPE_TOLERANCE &&
+    box.y + box.height <= 1 + CAPTION_ENVELOPE_TOLERANCE
+  )
+}
+
+function boxGap(left: NormalizedSourceBox, right: NormalizedSourceBox) {
+  return {
+    horizontal: Math.max(
+      left.x - (right.x + right.width),
+      right.x - (left.x + left.width),
+      0,
+    ),
+    vertical: Math.max(
+      left.y - (right.y + right.height),
+      right.y - (left.y + left.height),
+      0,
+    ),
+  }
+}
+
+function connectedCaptionBoxes(
+  left: NormalizedSourceBox,
+  right: NormalizedSourceBox,
+) {
+  const gap = boxGap(left, right)
+  const verticalOverlap =
+    Math.min(left.y + left.height, right.y + right.height) -
+    Math.max(left.y, right.y)
+  const horizontalOverlap =
+    Math.min(left.x + left.width, right.x + right.width) -
+    Math.max(left.x, right.x)
+  return (
+    (verticalOverlap > 0 &&
+      gap.horizontal <= Math.max(0.04, left.height * 2, right.height * 2)) ||
+    (horizontalOverlap > 0 &&
+      gap.vertical <= Math.max(0.03, left.height * 1.5, right.height * 1.5))
+  )
+}
+
+function oneConnectedCaptionComponent(boxes: NormalizedSourceBox[]) {
+  const reached = new Set<number>([0])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (let index = 0; index < boxes.length; index += 1) {
+      if (reached.has(index)) continue
+      if (
+        [...reached].some((candidate) =>
+          connectedCaptionBoxes(boxes[candidate], boxes[index]),
+        )
+      ) {
+        reached.add(index)
+        changed = true
+      }
+    }
+  }
+  return reached.size === boxes.length
+}
+
+function sameSourceBox(left: NormalizedSourceBox, right: NormalizedSourceBox) {
+  return (
+    left.page === right.page &&
+    left.rotation === right.rotation &&
+    left.method === right.method &&
+    (['x', 'y', 'width', 'height'] as const).every(
+      (key) => rounded(left[key]) === rounded(right[key]),
+    )
+  )
+}
+
+function visualLineageBoxes(
+  relationship: PdfVisualRelationship,
+  assetsById: ReadonlyMap<string, PdfVisualAsset>,
+) {
+  if (
+    relationship.assetIds.length === 0 ||
+    new Set(relationship.assetIds).size !== relationship.assetIds.length
+  ) {
+    return null
+  }
+  const assets = relationship.assetIds.map((assetId) => assetsById.get(assetId))
+  if (assets.some((asset) => asset === undefined)) return null
+  const matchedAssets = assets.filter(
+    (asset): asset is PdfVisualAsset => asset !== undefined,
+  )
+  const sourceObjectIds = matchedAssets.flatMap(
+    (asset) => asset.sourceObjectIds,
+  )
+  const sourceBoxes = matchedAssets.flatMap((asset) => asset.sourceBoxes)
+  if (
+    sourceBoxes.length === 0 ||
+    sourceBoxes.some((box) => !validNormalizedSourceBox(box)) ||
+    sourceObjectIds.length !== relationship.sourceObjectIds.length ||
+    sourceObjectIds.some(
+      (sourceObjectId, index) =>
+        sourceObjectId !== relationship.sourceObjectIds[index],
+    )
+  ) {
+    return null
+  }
+  return sourceBoxes.map((box) => ({ ...box }))
+}
+
+export function captionProvenanceEnvelope(
+  evidence: NodeSourceEvidence | undefined,
+  captionRegionId: string,
+  placeholder: NormalizedSourceBox,
+  options: { allowExactRegionOverflow?: boolean } = {},
+) {
+  const boxes = evidence?.boxes ?? []
+  const first = boxes[0]
+  if (
+    !evidence ||
+    evidence.regionIds.length !== 1 ||
+    evidence.regionIds[0] !== captionRegionId ||
+    evidence.pages.length !== 1 ||
+    !validNormalizedSourceBox(placeholder) ||
+    !first ||
+    boxes.some(
+      (box) =>
+        !validNormalizedSourceBox(box) ||
+        box.page !== first.page ||
+        box.rotation !== first.rotation ||
+        box.method !== first.method ||
+        box.page !== placeholder.page ||
+        box.rotation !== placeholder.rotation ||
+        box.method !== placeholder.method ||
+        (!options.allowExactRegionOverflow &&
+          (box.x < placeholder.x - CAPTION_ENVELOPE_TOLERANCE ||
+            box.y < placeholder.y - CAPTION_ENVELOPE_TOLERANCE ||
+            box.x + box.width >
+              placeholder.x + placeholder.width + CAPTION_ENVELOPE_TOLERANCE ||
+            box.y + box.height >
+              placeholder.y + placeholder.height + CAPTION_ENVELOPE_TOLERANCE)),
+    ) ||
+    evidence.pages[0] !== first.page ||
+    !oneConnectedCaptionComponent(boxes)
+  ) {
+    return null
+  }
+  const left = Math.min(...boxes.map((box) => box.x))
+  const top = Math.min(...boxes.map((box) => box.y))
+  const right = Math.max(...boxes.map((box) => box.x + box.width))
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height))
+  const envelope: NormalizedSourceBox = {
+    page: first.page,
+    x: rounded(left),
+    y: rounded(top),
+    width: rounded(right - left),
+    height: rounded(bottom - top),
+    rotation: first.rotation,
+    method: first.method,
+  }
+  return validNormalizedSourceBox(envelope) ? envelope : null
+}
+
+function safeHyperlink(value: string) {
+  // WHATWG URL parsing repairs backslashes and ASCII whitespace in special
+  // URLs. Keeping the original repaired-looking annotation would still emit
+  // an invalid EPUB IRI, and rewriting it could silently change its target.
+  if (/[\u0000-\u0020\u007f\\]/u.test(value)) return false
+  try {
+    return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
+const ACADEMIC_MATH_ITALIC_FONT_NAME =
+  /(?:^|[+,._\s-])(?:(?:cm|lm)mi(?:b)?\d+|mtmi\d*|math(?:italic|ital))(?=$|[+,._\s-])/iu
+const EXPLICIT_ITALIC_STYLE_FONT_NAME =
+  /(?:^|[+,._\s-])(?:(?:(?:regular|regu|roman|book|medium|med|bold|demi|semi(?:bold)?)?(?:italic|ital|oblique|obl)|it)(?:mt)?)(?=$|[+,._\s-])/iu
+
+function fontNameIndicatesItalic(fontName: string) {
+  return (
+    ACADEMIC_MATH_ITALIC_FONT_NAME.test(fontName) ||
+    EXPLICIT_ITALIC_STYLE_FONT_NAME.test(fontName)
+  )
+}
+
+function unmatchedClosingDelimiter(value: string, open: string, close: string) {
+  return value.split(close).length > value.split(open).length
+}
+
+function literalAbsoluteHyperlinks(value: string) {
+  const links: Array<{ start: number; end: number; url: string }> = []
+  for (const match of value.matchAll(/(?:https?:\/\/|mailto:)[^\s<>"']+/giu)) {
+    if (match.index === undefined) continue
+    let url = match[0].replace(/[.,;:!?]+$/u, '')
+    for (const [open, close] of [
+      ['(', ')'],
+      ['[', ']'],
+      ['{', '}'],
+    ]) {
+      while (
+        url.endsWith(close) &&
+        unmatchedClosingDelimiter(url, open, close)
+      ) {
+        url = url.slice(0, -1)
+      }
+    }
+    if (!url || !safeHyperlink(url)) continue
+    links.push({ start: match.index, end: match.index + url.length, url })
+  }
+  return links
+}
+
+function runVerticalAlign(
+  line: PdfPageRegion['lines'][number],
+  run: PdfPageRegion['lines'][number]['runs'][number],
+) {
+  const maximumFontSize = Math.max(
+    ...line.runs.map((candidate) => candidate.fontSize),
+  )
+  if (run.fontSize >= maximumFontSize * 0.82) return undefined
+  const baselineRuns = line.runs.filter(
+    (candidate) => candidate.fontSize >= maximumFontSize * 0.9,
+  )
+  const baselineCenter = median(
+    baselineRuns.map((candidate) => candidate.y + candidate.height / 2),
+  )
+  const runCenter = run.y + run.height / 2
+  const threshold = Math.max(
+    0.0015,
+    median(baselineRuns.map((candidate) => candidate.height)) * 0.12,
+  )
+  if (runCenter < baselineCenter - threshold) return 'superscript' as const
+  if (runCenter > baselineCenter + threshold) return 'subscript' as const
+  return undefined
+}
+
+type InlineMappingLedger = { expected: number; mapped: number }
+
+function canonicalRangeForSource(
+  block: RegionBlock,
+  regionId: string,
+  start: number,
+  end: number,
+) {
+  for (const segment of blockSourceSegments(block)) {
+    if (segment.region.id !== regionId) continue
+    const sourceEnd = segment.sourceStart + segment.text.length
+    const overlapStart = Math.max(start, segment.sourceStart)
+    const overlapEnd = Math.min(end, sourceEnd)
+    if (overlapStart >= overlapEnd) continue
+    return {
+      start: segment.canonicalStart + overlapStart - segment.sourceStart,
+      end: segment.canonicalStart + overlapEnd - segment.sourceStart,
+    }
+  }
+  return null
+}
+
+function exactCanonicalRangeForSource(
+  block: RegionBlock,
+  regionId: string,
+  start: number,
+  end: number,
+) {
+  if (start < 0 || start >= end) return null
+  const containsExactRange = blockSourceSegments(block).some(
+    (segment) =>
+      segment.region.id === regionId &&
+      segment.sourceStart <= start &&
+      segment.sourceStart + segment.text.length >= end,
+  )
+  if (!containsExactRange) return null
+  const range = canonicalRangeForSource(block, regionId, start, end)
+  return range && range.end - range.start === end - start ? range : null
+}
+
+type CanonicalVisualTextSegment = {
+  regionId: string
+  lineId: string
+  sourceStart: number
+  sourceEnd: number
+  canonicalStart: number
+  text: string
+  box: NormalizedSourceBox
+}
+
+type CanonicalVisualTextOwner = {
+  nodeId: string
+  relationshipId: string
+  text: string
+  segments: CanonicalVisualTextSegment[]
+}
+
+function canonicalVisualTextOwner(
+  relationship: PdfVisualRelationship,
+  nodeId: string,
+  regions: PdfPageRegion[],
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+): CanonicalVisualTextOwner | null {
+  if (
+    relationship.kind !== 'table' ||
+    relationship.status !== 'matched' ||
+    !relationship.sourceText ||
+    !relationship.sourceLineIds?.length ||
+    new Set(relationship.sourceLineIds).size !==
+      relationship.sourceLineIds.length
+  ) {
+    return null
+  }
+  const selectedRegionIds = new Set(relationship.sourceRegionIds)
+  const lineOwners = new Map<
+    string,
+    Array<{ region: PdfPageRegion; line: PdfPageRegion['lines'][number] }>
+  >()
+  for (const region of regions.filter((candidate) =>
+    selectedRegionIds.has(candidate.id),
+  )) {
+    for (const line of region.lines) {
+      const owners = lineOwners.get(line.id) ?? []
+      owners.push({ region, line })
+      lineOwners.set(line.id, owners)
+    }
+  }
+  const sourceRangesByRegion = new Map<
+    string,
+    ReturnType<typeof replayPdfRegionLineRanges>
+  >()
+  const segments: CanonicalVisualTextSegment[] = []
+  let canonicalStart = 0
+  for (const lineId of relationship.sourceLineIds) {
+    const owners = lineOwners.get(lineId) ?? []
+    if (owners.length !== 1) return null
+    const { region, line } = owners[0]
+    let ranges = sourceRangesByRegion.get(region.id)
+    if (ranges === undefined) {
+      ranges = replayPdfRegionLineRanges(region, lineBoundaryDecisions)
+      sourceRangesByRegion.set(region.id, ranges)
+    }
+    if (ranges?.text !== region.text) return null
+    const range = ranges.ranges.get(line.id)
+    if (!range) return null
+    segments.push({
+      regionId: region.id,
+      lineId,
+      sourceStart: range.start,
+      sourceEnd: range.end,
+      canonicalStart,
+      text: line.text,
+      box: { ...line.box },
+    })
+    canonicalStart += line.text.length + 1
+  }
+  if (
+    segments.map((segment) => segment.text).join(' ') !==
+    relationship.sourceText
+  ) {
+    return null
+  }
+  return {
+    nodeId,
+    relationshipId: relationship.id,
+    text: relationship.sourceText,
+    segments,
+  }
+}
+
+function exactVisualCanonicalRangeForSource(
+  owner: CanonicalVisualTextOwner,
+  relationship: PdfCitationRelationship,
+  regionsById: ReadonlyMap<string, PdfPageRegion>,
+) {
+  if (
+    relationship.referenceStart < 0 ||
+    relationship.referenceStart >= relationship.referenceEnd
+  ) {
+    return null
+  }
+  const region = regionsById.get(relationship.referenceRegionId)
+  if (!region) return null
+  const markerText = region.text.slice(
+    relationship.referenceStart,
+    relationship.referenceEnd,
+  )
+  if (!markerText) return null
+  const segments = owner.segments.filter(
+    (segment) =>
+      segment.regionId === relationship.referenceRegionId &&
+      segment.sourceStart <= relationship.referenceStart &&
+      segment.sourceEnd >= relationship.referenceEnd &&
+      relationship.sourceBoxes.some((box) => boxesOverlap(box, segment.box)),
+  )
+  if (segments.length !== 1) return null
+  const segment = segments[0]
+  const start =
+    segment.canonicalStart + relationship.referenceStart - segment.sourceStart
+  const end = start + markerText.length
+  return owner.text.slice(start, end) === markerText
+    ? { nodeId: owner.nodeId, start, end }
+    : null
+}
+
+function sourceInlineRuns(
+  block: RegionBlock,
+  links: PdfEmbeddedLink[],
+  noteReferences: Array<{
+    id: string
+    start: number
+    end: number
+    regionId: string
+  }>,
+  semanticReferences: Array<SemanticReferenceDraft & { regionId: string }> = [],
+) {
+  const mapped = new Map<string, CanonicalInlineRun>()
+  const ledger: InlineMappingLedger = { expected: 0, mapped: 0 }
+  const store = (run: CanonicalInlineRun) => {
+    const key = `${run.start}:${run.end}`
+    mapped.set(key, { ...mapped.get(key), ...run })
+  }
+  for (const segment of blockSourceSegments(block)) {
+    let cursor = 0
+    for (const line of segment.region.lines) {
+      for (const run of line.runs) {
+        const sourceText = run.text
+          .replace(/\u00ad/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (!sourceText) continue
+        const bold =
+          run.bold ?? /(?:bold|black|demi|semibold)/i.test(run.fontName)
+        const italic = run.italic ?? fontNameIndicatesItalic(run.fontName)
+        const verticalAlign = runVerticalAlign(line, run)
+        const overlappingLinks = links.filter((candidate) =>
+          boxesOverlap(candidate.box, run),
+        )
+        const annotationLink = overlappingLinks.find((candidate) =>
+          safeHyperlink(candidate.url),
+        )
+        const rawLiteralLinks =
+          overlappingLinks.length === 0
+            ? literalAbsoluteHyperlinks(sourceText)
+            : []
+        const expectedStyleCount =
+          Number(bold) + Number(italic) + Number(Boolean(verticalAlign))
+        let sourceStart = segment.region.text.indexOf(sourceText, cursor)
+        let mappedText = sourceText
+        if (sourceStart < 0 && /[-‐‑]$/u.test(sourceText)) {
+          mappedText = sourceText.slice(0, -1)
+          sourceStart = segment.region.text.indexOf(mappedText, cursor)
+        }
+        if (sourceStart < 0) {
+          ledger.expected +=
+            expectedStyleCount + (annotationLink ? 1 : rawLiteralLinks.length)
+          continue
+        }
+        const sourceEnd = sourceStart + mappedText.length
+        cursor = sourceEnd
+        const canonicalRange = canonicalRangeForSource(
+          block,
+          segment.region.id,
+          sourceStart,
+          sourceEnd,
+        )
+        if (!canonicalRange) continue
+        const intersectionStart =
+          segment.sourceStart + canonicalRange.start - segment.canonicalStart
+        const canonicalText = segment.region.text.slice(
+          intersectionStart,
+          intersectionStart + canonicalRange.end - canonicalRange.start,
+        )
+        const hyperlinkSpans = (
+          annotationLink
+            ? [{ start: sourceStart, end: sourceEnd, url: annotationLink.url }]
+            : rawLiteralLinks.map((link) => ({
+                start: sourceStart + link.start,
+                end: sourceStart + link.end,
+                url: link.url,
+              }))
+        ).flatMap((link) => {
+          const start = Math.max(link.start, intersectionStart)
+          const end = Math.min(
+            link.end,
+            intersectionStart + canonicalText.length,
+          )
+          return start < end
+            ? [
+                {
+                  start: start - intersectionStart,
+                  end: end - intersectionStart,
+                  url: link.url,
+                },
+              ]
+            : []
+        })
+        ledger.expected += expectedStyleCount + hyperlinkSpans.length
+        if (bold || italic || hyperlinkSpans.length > 0 || verticalAlign) {
+          const boundaries = [
+            0,
+            canonicalText.length,
+            ...hyperlinkSpans.flatMap((link) => [link.start, link.end]),
+          ]
+          const points = [...new Set(boundaries)].sort(
+            (left, right) => left - right,
+          )
+          for (let index = 0; index < points.length - 1; index += 1) {
+            const segmentStart = points[index]
+            const segmentEnd = points[index + 1]
+            if (segmentStart === segmentEnd) continue
+            const hyperlink = hyperlinkSpans.find(
+              (candidate) =>
+                candidate.start <= segmentStart && candidate.end >= segmentEnd,
+            )
+            store({
+              start: canonicalRange.start + segmentStart,
+              end: canonicalRange.start + segmentEnd,
+              ...(bold ? { bold: true } : {}),
+              ...(italic ? { italic: true } : {}),
+              ...(hyperlink ? { href: hyperlink.url } : {}),
+              ...(verticalAlign ? { verticalAlign } : {}),
+            })
+          }
+          ledger.mapped += expectedStyleCount + hyperlinkSpans.length
+        }
+      }
+    }
+  }
+  for (const reference of noteReferences) {
+    const range = canonicalRangeForSource(
+      block,
+      reference.regionId,
+      reference.start,
+      reference.end,
+    )
+    if (!range) continue
+    store({ ...range, relationshipId: reference.id })
+  }
+  for (const reference of semanticReferences) {
+    const range = canonicalRangeForSource(
+      block,
+      reference.regionId,
+      reference.start,
+      reference.end,
+    )
+    if (!range) continue
+    store({
+      ...range,
+      relationshipId: reference.id,
+      semanticRole: reference.semanticRole,
+      ...(reference.targetIds ? { targetIds: reference.targetIds } : {}),
+    })
+  }
+  return {
+    runs: [...mapped.values()].sort(
+      (left, right) => left.start - right.start || left.end - right.end,
+    ),
+    ledger,
+  }
+}
+
 function sourceEvidence(
   block: RegionBlock,
   links: PdfEmbeddedLink[],
 ): NodeSourceEvidence {
+  const sourceRegions = blockSourceSegments(block).map(
+    (segment) => segment.evidenceRegion ?? segment.region,
+  )
   return {
     confidence: rounded(block.confidence),
-    pages: [block.region.page],
-    regionIds: [block.region.id],
-    boxes: block.region.lines.flatMap((line) =>
-      line.runs.map((run) => ({
-        ...run,
-        x: rounded(run.x),
-        y: rounded(run.y),
-        width: rounded(run.width),
-        height: rounded(run.height),
-        fontSize: rounded(run.fontSize),
-        confidence: rounded(run.confidence),
-      })),
+    pages: [...new Set(sourceRegions.map((region) => region.page))],
+    regionIds: [...new Set(sourceRegions.map((region) => region.id))],
+    boxes: sourceRegions.flatMap((region) =>
+      region.lines.flatMap((line) =>
+        line.runs.map((run) => ({
+          ...run,
+          x: rounded(run.x),
+          y: rounded(run.y),
+          width: rounded(run.width),
+          height: rounded(run.height),
+          fontSize: rounded(run.fontSize),
+          confidence: rounded(run.confidence),
+        })),
+      ),
     ),
-    links: links.filter(
-      (link) =>
-        link.box.page === block.region.page &&
-        boxesOverlap(link.box, block.region.box),
+    links: links.filter((link) =>
+      sourceRegions.some(
+        (region) =>
+          link.box.page === region.page && boxesOverlap(link.box, region.box),
+      ),
     ),
+  }
+}
+
+type CanonicalVisualDraft = {
+  captionBlock: RegionBlock & { nodeId: string }
+  captionEnvelope: NormalizedSourceBox
+  lineageBoxes: NormalizedSourceBox[]
+  page: number
+  id: string
+  source: string
+}
+
+function canonicalVisualDraft(
+  relationship: PdfVisualRelationship,
+  blocks: RegionBlock[],
+  assetsById: ReadonlyMap<string, PdfVisualAsset>,
+  embeddedLinks: PdfEmbeddedLink[],
+  sourceHash: string,
+): CanonicalVisualDraft | null {
+  const captionBlock = blocks.find(
+    (block): block is RegionBlock & { nodeId: string } =>
+      block.region.id === relationship.captionRegionId && Boolean(block.nodeId),
+  )
+  relationship.captionNodeId = captionBlock?.nodeId ?? null
+  // Table and equation relationships carry their bounded content scope in
+  // sourceBoxes. The caption is identified separately, so never infer it from
+  // the first content box: doing so loses a valid caption-below table node.
+  const captionPlaceholder = captionBlock?.region.box
+  const lineageBoxes = visualLineageBoxes(relationship, assetsById)
+  const verifiedCaptionEnvelope =
+    captionBlock && captionPlaceholder
+      ? captionProvenanceEnvelope(
+          sourceEvidence(captionBlock, embeddedLinks),
+          relationship.captionRegionId,
+          captionPlaceholder,
+          {
+            allowExactRegionOverflow:
+              relationship.kind === 'equation' &&
+              relationship.altTextSource === 'source-text' &&
+              relationship.sourceRegionIds.includes(
+                relationship.captionRegionId,
+              ),
+          },
+        )
+      : null
+  // A caption can contain source-backed runs whose PDF coordinates extend
+  // beyond its classified region (for example, an adjacent export stamp). The
+  // caption node is already canonical and source-identified; retain its
+  // bounded region as the relationship anchor instead of discarding a fully
+  // validated table crop and all of its table-cell provenance.
+  const captionEnvelope =
+    verifiedCaptionEnvelope ??
+    (captionBlock && validNormalizedSourceBox(captionBlock.region.box)
+      ? { ...captionBlock.region.box }
+      : null)
+  if (
+    relationship.status !== 'matched' ||
+    !captionBlock ||
+    !captionPlaceholder ||
+    !sameSourceBox(captionPlaceholder, captionBlock.region.box) ||
+    !captionEnvelope ||
+    !lineageBoxes
+  ) {
+    return null
+  }
+  const page = captionEnvelope.page
+  const id = visualCanonicalNodeId(relationship, page)
+  relationship.canonicalNodeId = id
+  return {
+    captionBlock,
+    captionEnvelope,
+    lineageBoxes,
+    page,
+    id,
+    source: `pdf:${sourceHash.slice(0, 16)}#page=${page}`,
   }
 }
 
@@ -389,12 +2025,14 @@ export async function reconstructPageAnalyses({
   fileName,
   byteLength,
   metadata = {},
+  rasterizeFigure,
 }: {
   pages: PdfPageAnalysis[]
   sourceHash: string
   fileName: string
   byteLength: number
   metadata?: PdfDocumentMetadata
+  rasterizeFigure?: PdfFigureRasterizer
 }): Promise<PdfReconstruction> {
   const diagnostics: ReconstructionDiagnostic[] = []
   for (const page of pages) {
@@ -559,6 +2197,7 @@ export async function reconstructPageAnalyses({
   const visualResult = await reconstructPdfVisuals({
     pages,
     regions: regionResult.regions,
+    rasterizeFigure,
   })
   diagnostics.push(...visualResult.diagnostics)
   const blocks = blocksFromRegions(
@@ -566,9 +2205,161 @@ export async function reconstructPageAnalyses({
     regionResult.regions,
     visualResult.consumedRegionIds,
     bibliographyRegionIds,
+    new Map(
+      visualResult.relationships
+        .filter(
+          (relationship) =>
+            relationship.kind === 'equation' &&
+            relationship.status === 'matched' &&
+            relationship.altTextSource === 'source-text' &&
+            relationship.sourceRegionIds.includes(relationship.captionRegionId),
+        )
+        .map(
+          (relationship) =>
+            [relationship.captionRegionId, relationship.sourceText] as const,
+        ),
+    ),
+    visualResult.consumedLineIds,
+    regionResult.lineBoundaryDecisions,
   )
+  const frontMatter = classifyFrontMatter(blocks, metadata.title)
+  const canonicalBlocks = blocks.filter(
+    (block) =>
+      block.frontMatterRole !== 'title' &&
+      block.frontMatterRole !== 'author' &&
+      block.frontMatterRole !== 'affiliation',
+  )
+  mergeProseContinuations(canonicalBlocks)
   noteNodeIds(blocks)
-  const references = detectReferences(markerResult.classifications, regionMap)
+  for (const [index, block] of blocks.entries()) {
+    block.nodeId ??= nodeId(index, block.type, block.text)
+  }
+  const authorNoteReferences = detectAuthorNoteReferences(blocks)
+  const embeddedLinks = pages.flatMap((page) => page.links ?? [])
+  const visualAssetsById = new Map(
+    visualResult.assets.map((asset) => [asset.id, asset] as const),
+  )
+  const canonicalVisualDrafts = new Map<string, CanonicalVisualDraft>()
+  for (const relationship of visualResult.relationships) {
+    const draft = canonicalVisualDraft(
+      relationship,
+      blocks,
+      visualAssetsById,
+      embeddedLinks,
+      sourceHash,
+    )
+    if (draft) canonicalVisualDrafts.set(relationship.id, draft)
+  }
+  const canonicalVisualTextOwners = visualResult.relationships.flatMap(
+    (relationship) => {
+      const draft = canonicalVisualDrafts.get(relationship.id)
+      if (!draft) return []
+      const owner = canonicalVisualTextOwner(
+        relationship,
+        draft.id,
+        regionResult.regions,
+        regionResult.lineBoundaryDecisions,
+      )
+      return owner ? [owner] : []
+    },
+  )
+  const canonicalVisualTextOwnersByNodeId = new Map(
+    canonicalVisualTextOwners.map((owner) => [owner.nodeId, owner] as const),
+  )
+  const citationRelationships = buildCitationRelationships(
+    markerResult.classifications,
+    canonicalBlocks,
+  )
+  for (const relationship of citationRelationships) {
+    const candidates = canonicalBlocks.flatMap((block) => {
+      if (block.type !== 'heading' && block.type !== 'paragraph') return []
+      const range = exactCanonicalRangeForSource(
+        block,
+        relationship.referenceRegionId,
+        relationship.referenceStart,
+        relationship.referenceEnd,
+      )
+      return range && block.nodeId ? [{ nodeId: block.nodeId, ...range }] : []
+    })
+    candidates.push(
+      ...canonicalVisualTextOwners.flatMap((owner) => {
+        const range = exactVisualCanonicalRangeForSource(
+          owner,
+          relationship,
+          regionMap,
+        )
+        return range ? [range] : []
+      }),
+    )
+    relationship.canonicalAnchor =
+      candidates.length === 1 ? candidates[0] : null
+  }
+  for (const relationship of citationRelationships.filter(
+    (candidate) => candidate.status === 'unresolved',
+  )) {
+    diagnostics.push({
+      code: 'UNRESOLVED_CITATION_REFERENCE',
+      severity: 'error',
+      page: relationship.sourceBoxes[0]?.page,
+      message: `Citation marker ${relationship.id} has no complete bibliography-label target.`,
+      sourceBoxes: relationship.sourceBoxes,
+      relationshipId: relationship.id,
+      target: {
+        regionIds: [relationship.referenceRegionId],
+        markerId: relationship.id,
+      },
+    })
+  }
+  for (const relationship of citationRelationships.filter(
+    (candidate) =>
+      candidate.status === 'matched' && candidate.canonicalAnchor === null,
+  )) {
+    diagnostics.push({
+      code: 'UNMAPPED_CITATION_ANCHOR',
+      severity: 'error',
+      page: relationship.sourceBoxes[0]?.page,
+      message: `Citation marker ${relationship.id} has bibliography targets but no exact canonical inline anchor.`,
+      sourceBoxes: relationship.sourceBoxes,
+      relationshipId: relationship.id,
+      target: {
+        regionIds: [relationship.referenceRegionId],
+        markerId: relationship.id,
+      },
+    })
+  }
+  const citationsById = new Map(
+    citationRelationships.map((relationship) => [
+      relationship.id,
+      relationship,
+    ]),
+  )
+  const semanticReferencesByRegion = new Map<string, SemanticReferenceDraft[]>()
+  for (const classification of markerResult.classifications) {
+    const semanticRole = semanticRoleForClassification(classification)
+    if (!semanticRole || !classification.accepted) continue
+    const citation = citationsById.get(classification.id)
+    const values =
+      semanticReferencesByRegion.get(classification.referenceRegionId) ?? []
+    values.push({
+      id: classification.id,
+      start: classification.start,
+      end: classification.end,
+      semanticRole,
+      ...(citation?.targetNodeIds.length
+        ? { targetIds: citation.targetNodeIds }
+        : {}),
+    })
+    semanticReferencesByRegion.set(classification.referenceRegionId, values)
+  }
+  const authorRegionIds = new Set(
+    authorNoteReferences.map((reference) => reference.region.id),
+  )
+  const references = [
+    ...detectReferences(markerResult.classifications, regionMap).filter(
+      (reference) => !authorRegionIds.has(reference.region.id),
+    ),
+    ...authorNoteReferences,
+  ]
   const noteRelationships = matchNotes(blocks, references, diagnostics)
   const matchedReferences = new Map(
     noteRelationships
@@ -585,7 +2376,7 @@ export async function reconstructPageAnalyses({
     references.map((reference) => [reference.id, reference]),
   )
 
-  if (blocks.length === 0) {
+  if (canonicalBlocks.length === 0) {
     diagnostics.push({
       code: 'NO_RECONSTRUCTABLE_TEXT',
       severity: 'error',
@@ -594,11 +2385,28 @@ export async function reconstructPageAnalyses({
   }
 
   const provenance: Record<string, NodeSourceEvidence> = {}
-  const embeddedLinks = pages.flatMap((page) => page.links ?? [])
-  const nodes: ResearchNode[] = blocks.map((block, index) => {
+  const inlineSpanLedger: InlineMappingLedger = {
+    expected: citationRelationships.length,
+    mapped: citationRelationships.filter(
+      (relationship) => relationship.canonicalAnchor !== null,
+    ).length,
+  }
+  const nodes: ResearchNode[] = canonicalBlocks.map((block, index) => {
     const id = block.nodeId ?? nodeId(index, block.type, block.text)
-    block.nodeId = id
     provenance[id] = sourceEvidence(block, embeddedLinks)
+    if (isIsolatedProseGlyph(block)) {
+      diagnostics.push({
+        code: 'ISOLATED_PROSE_GLYPH',
+        severity: 'error',
+        page: block.region.page,
+        message: `An isolated alphabetic glyph remains in canonical prose on page ${block.region.page}; source-region evidence is insufficient to classify it as a visual, table, list, equation, or page-furniture fragment.`,
+        sourceBoxes: [block.region.box],
+        target: {
+          regionIds: [block.region.id],
+          markerId: null,
+        },
+      })
+    }
     if (
       block.confidence < 0.75 &&
       !regionResult.ambiguousPages.includes(block.region.page)
@@ -629,14 +2437,18 @@ export async function reconstructPageAnalyses({
         type: 'footnote' as const,
         kind: block.noteKind!,
         label: block.noteLabel!,
+        ...(block.noteMarkerText ? { markerText: block.noteMarkerText } : {}),
         text: block.text,
         relationships: { backlinks },
         source,
       }
     }
-    const noteReferences = [...matchedReferences.values()]
-      .filter(
-        (relationship) => relationship.referenceRegionId === block.region.id,
+    const sourceRegionIds = new Set(
+      blockSourceSegments(block).map((segment) => segment.region.id),
+    )
+    const sourceNoteReferences = [...matchedReferences.values()]
+      .filter((relationship) =>
+        sourceRegionIds.has(relationship.referenceRegionId),
       )
       .map((relationship) => {
         const draft = referenceDrafts.get(relationship.id)!
@@ -646,16 +2458,59 @@ export async function reconstructPageAnalyses({
           target: relationship.targetNoteId,
           start: draft.start,
           end: draft.end,
+          regionId: relationship.referenceRegionId,
           confidence: relationship.confidence,
         }
       })
+    const noteReferences = sourceNoteReferences.flatMap((reference) => {
+      const range = canonicalRangeForSource(
+        block,
+        reference.regionId,
+        reference.start,
+        reference.end,
+      )
+      return range
+        ? [
+            {
+              id: reference.id,
+              label: reference.label,
+              target: reference.target,
+              ...range,
+              confidence: reference.confidence,
+            },
+          ]
+        : []
+    })
+    const semanticReferences = blockSourceSegments(block).flatMap((segment) =>
+      (semanticReferencesByRegion.get(segment.region.id) ?? []).flatMap(
+        (reference) => {
+          if (reference.semanticRole !== 'citation') {
+            return [{ ...reference, regionId: segment.region.id }]
+          }
+          const anchor = citationsById.get(reference.id)?.canonicalAnchor
+          return anchor?.nodeId === id
+            ? [{ ...reference, regionId: segment.region.id }]
+            : []
+        },
+      ),
+    )
+    const inlineMapping = sourceInlineRuns(
+      block,
+      embeddedLinks,
+      sourceNoteReferences,
+      semanticReferences,
+    )
+    inlineSpanLedger.expected += inlineMapping.ledger.expected
+    inlineSpanLedger.mapped += inlineMapping.ledger.mapped
+    const inlineRuns = inlineMapping.runs
     if (block.type === 'heading') {
       return {
         id,
         type: 'heading' as const,
-        level: 2 as const,
+        level: block.headingLevel ?? (2 as const),
         text: block.text,
         ...(noteReferences.length > 0 ? { noteReferences } : {}),
+        ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
         source,
       }
     }
@@ -672,40 +2527,55 @@ export async function reconstructPageAnalyses({
       type: 'paragraph' as const,
       text: block.text,
       ...(noteReferences.length > 0 ? { noteReferences } : {}),
+      ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
+      ...(block.list ? { list: block.list } : {}),
       source,
     }
   })
 
   for (const relationship of visualResult.relationships) {
-    const captionBlock = blocks.find(
-      (block) => block.region.id === relationship.captionRegionId,
-    )
-    relationship.captionNodeId = captionBlock?.nodeId ?? null
-    if (
-      relationship.status !== 'matched' ||
-      !relationship.captionNodeId ||
-      relationship.assetIds.length === 0
-    ) {
-      continue
-    }
-    const page = relationship.sourceBoxes[0]?.page ?? 1
-    const id = `visual-${relationship.kind}-p${String(page).padStart(3, '0')}-${slug(relationship.label, 24)}`
-    relationship.canonicalNodeId = id
-    const source = `pdf:${sourceHash.slice(0, 16)}#page=${page}`
+    const draft = canonicalVisualDrafts.get(relationship.id)
+    if (!draft) continue
+    relationship.sourceBoxes = [draft.captionEnvelope, ...draft.lineageBoxes]
+    const table =
+      relationship.kind === 'table'
+        ? relationship.assetIds
+            .map((assetId) =>
+              visualResult.canonicalTablesByAssetId.get(assetId),
+            )
+            .find((candidate) => candidate !== undefined)
+        : undefined
+    const textOwner = canonicalVisualTextOwnersByNodeId.get(draft.id)
+    const inlineRuns = textOwner
+      ? citationRelationships.flatMap((citation) =>
+          citation.canonicalAnchor?.nodeId === draft.id
+            ? [
+                {
+                  start: citation.canonicalAnchor.start,
+                  end: citation.canonicalAnchor.end,
+                  relationshipId: citation.id,
+                  semanticRole: 'citation' as const,
+                  targetIds: citation.targetNodeIds,
+                },
+              ]
+            : [],
+        )
+      : []
     const node: ResearchNode = {
-      id,
+      id: draft.id,
       type: 'figure',
       objectType: relationship.kind,
-      title: relationship.sourceText
-        ? `${relationship.label}: ${relationship.sourceText}`
-        : relationship.label,
+      ...(table ? { table } : {}),
+      ...(textOwner ? { sourceText: textOwner.text } : {}),
+      ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
+      title: relationship.altText,
       relationships: {
-        caption: relationship.captionNodeId,
+        caption: draft.captionBlock.nodeId,
         assets: relationship.assetIds,
       },
-      source,
+      source: draft.source,
     }
-    provenance[id] = {
+    provenance[draft.id] = {
       confidence: relationship.confidence,
       pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],
       regionIds: [...relationship.sourceRegionIds],
@@ -713,10 +2583,12 @@ export async function reconstructPageAnalyses({
       links: [],
     }
     const captionIndex = nodes.findIndex(
-      (candidate) => candidate.id === relationship.captionNodeId,
+      (candidate) => candidate.id === draft.captionBlock.nodeId,
     )
     nodes.splice(captionIndex < 0 ? nodes.length : captionIndex, 0, node)
   }
+
+  assertUniqueCanonicalNodeIds(nodes)
 
   const firstHeading = nodes.find(
     (node): node is Extract<ResearchNode, { type: 'heading' }> =>
@@ -726,23 +2598,63 @@ export async function reconstructPageAnalyses({
     (node): node is Extract<ResearchNode, { type: 'paragraph' }> =>
       node.type === 'paragraph',
   )
+  const sourceAuthors =
+    frontMatter.authors.length > 0
+      ? frontMatter.authors
+      : inferredAuthors(blocks)
+  const paperAuthors = metadata.author?.trim()
+    ? parseAuthors(metadata.author)
+    : sourceAuthors.length > 0
+      ? sourceAuthors
+      : ['Imported locally']
+  const authorNotes = authorNoteReferences.flatMap((reference) => {
+    const relationship = noteRelationships.find(
+      (candidate) =>
+        candidate.id === reference.id &&
+        candidate.status === 'matched' &&
+        candidate.targetNoteId !== null,
+    )
+    return relationship && paperAuthors.includes(reference.author)
+      ? [
+          {
+            id: reference.id,
+            author: reference.author,
+            label: reference.label,
+            target: relationship.targetNoteId!,
+          },
+        ]
+      : []
+  })
   const paper: ResearchPaper = {
     id: `pdf-${sourceHash.slice(0, 16)}`,
     version: '1.0.0-import',
     status: 'working',
     title:
-      metadata.title?.trim() ||
+      frontMatter.title ||
       firstHeading?.text ||
       fileName.replace(/\.pdf$/i, ''),
     subtitle:
       metadata.subject?.trim() || `Reconstructed locally from ${fileName}`,
-    authors: parseAuthors(metadata.author),
+    authors: paperAuthors,
+    ...(authorNotes.length > 0 ? { authorNotes } : {}),
+    ...(frontMatter.affiliations.length > 0
+      ? { affiliations: frontMatter.affiliations }
+      : {}),
     updated: validDate(metadata.modified),
     abstract:
+      frontMatter.abstract.slice(0, 700) ||
       firstParagraph?.text.slice(0, 700) ||
       'This document requires OCR or manual reconstruction before publication.',
     nodes,
   }
+
+  const classifiedLineBoundaries = classifyStructuralLineBoundaryDecisions({
+    decisions: regionResult.lineBoundaryDecisions,
+    paper,
+    provenance,
+    visualRelationships: visualResult.relationships,
+    assets: visualResult.assets,
+  })
 
   const assessment = assessPdfCompleteness({
     pages,
@@ -751,6 +2663,15 @@ export async function reconstructPageAnalyses({
     readingOrder: regionResult.readingOrder,
     regions: regionResult.regions,
     visualRelationships: visualResult.relationships,
+    assets: visualResult.assets,
+    citationRelationships,
+    provenance,
+    lineBoundaryDecisions: classifiedLineBoundaries.decisions,
+    unresolvedCorruptingJoinCount:
+      classifiedLineBoundaries.unresolvedCorruptingJoinCount,
+    structurallyConsumedLineBoundaryCount:
+      classifiedLineBoundaries.structurallyConsumedLineBoundaryCount,
+    inlineSpanLedger,
   })
 
   return {
@@ -764,8 +2685,14 @@ export async function reconstructPageAnalyses({
     paper,
     pages,
     regions: regionResult.regions,
+    lineBoundaryDecisions: classifiedLineBoundaries.decisions,
+    unresolvedCorruptingJoinCount:
+      classifiedLineBoundaries.unresolvedCorruptingJoinCount,
+    structurallyConsumedLineBoundaryCount:
+      classifiedLineBoundaries.structurallyConsumedLineBoundaryCount,
     readingOrder: regionResult.readingOrder,
     noteRelationships,
+    citationRelationships,
     visualRelationships: visualResult.relationships,
     assets: visualResult.assets,
     provenance,

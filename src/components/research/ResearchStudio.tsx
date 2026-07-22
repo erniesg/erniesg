@@ -27,6 +27,11 @@ import {
   type PaginationFragment,
   type PaginationResult,
 } from '@/research/pagination'
+import type {
+  DocumentReconstruction,
+  PublicationAsset,
+  PublicationVisualRelationship,
+} from '@/research/import-types'
 import type { ResearchNode, ResearchPaper } from '@/research/schema'
 import {
   getPreviewMetrics,
@@ -36,30 +41,85 @@ import {
 } from '@/research/targets'
 
 type CaptionNode = Extract<ResearchNode, { type: 'caption' }>
+type TextNode = Extract<
+  ResearchNode,
+  { type: 'heading' | 'paragraph' | 'quote' }
+>
+type PreviewVisual = {
+  relationship: PublicationVisualRelationship
+  assets: Array<{
+    asset: PublicationAsset
+    occurrence: number
+    url?: string
+  }>
+}
 type ResolvedTextAnnotation = {
   annotation: TextAnnotation
   resolution: Extract<TextAnchorResolution, { status: 'resolved' }>
+}
+
+function safeHref(value: string) {
+  if (value.startsWith('#')) return true
+  try {
+    return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
 }
 
 function AnnotatedText({
   text,
   range,
   annotations,
+  inlineRuns,
+  noteReferences,
 }: {
   text: string
   range: { start: number; end: number }
   annotations: ResolvedTextAnnotation[]
+  inlineRuns?: TextNode['inlineRuns']
+  noteReferences?: TextNode['noteReferences']
 }) {
   const relevant = annotations.filter(
     ({ resolution }) =>
       resolution.start < range.end && resolution.end > range.start,
   )
-  if (relevant.length === 0) return text.slice(range.start, range.end)
+  const relevantRuns = (inlineRuns ?? []).filter(
+    (run) =>
+      run.start < range.end &&
+      run.end > range.start &&
+      run.start >= 0 &&
+      run.start < run.end &&
+      run.end <= text.length,
+  )
+  const relevantReferences = (noteReferences ?? []).filter(
+    (reference) =>
+      reference.start < range.end &&
+      reference.end > range.start &&
+      reference.start >= 0 &&
+      reference.start < reference.end &&
+      reference.end <= text.length,
+  )
+  if (
+    relevant.length === 0 &&
+    relevantRuns.length === 0 &&
+    relevantReferences.length === 0
+  ) {
+    return text.slice(range.start, range.end)
+  }
 
   const boundaries = new Set([range.start, range.end])
   for (const { resolution } of relevant) {
     boundaries.add(Math.max(range.start, resolution.start))
     boundaries.add(Math.min(range.end, resolution.end))
+  }
+  for (const run of relevantRuns) {
+    boundaries.add(Math.max(range.start, run.start))
+    boundaries.add(Math.min(range.end, run.end))
+  }
+  for (const reference of relevantReferences) {
+    boundaries.add(Math.max(range.start, reference.start))
+    boundaries.add(Math.min(range.end, reference.end))
   }
   const orderedBoundaries = [...boundaries].sort((left, right) => left - right)
 
@@ -73,6 +133,32 @@ function AnnotatedText({
     const highlight = active.find(
       ({ annotation }) => annotation.kind === 'highlight',
     )
+    const runs = relevantRuns.filter(
+      (candidate) => candidate.start <= start && candidate.end >= end,
+    )
+    const reference = relevantReferences.find(
+      (candidate) => candidate.start <= start && candidate.end >= end,
+    )
+    const linkRun = runs.find(
+      (candidate) => candidate.href && safeHref(candidate.href),
+    )
+
+    if (runs.some((run) => run.italic)) content = <em>{content}</em>
+    if (runs.some((run) => run.bold)) content = <strong>{content}</strong>
+    if (reference) {
+      content = (
+        <a
+          id={start === reference.start ? reference.id : undefined}
+          href={`#${reference.target}`}
+          role="doc-noteref"
+          aria-label={`Note ${reference.label}`}
+        >
+          {content}
+        </a>
+      )
+    } else if (linkRun?.href) {
+      content = <a href={linkRun.href}>{content}</a>
+    }
 
     if (note?.annotation.kind === 'note') {
       content = (
@@ -107,6 +193,155 @@ function AnnotatedText({
   })
 }
 
+function PreviewTable({
+  node,
+}: {
+  node: Extract<ResearchNode, { type: 'figure' }>
+}) {
+  if (!node.table) return null
+  return (
+    <div className="srt-preview-table" role="region" aria-label={node.title}>
+      <table>
+        <tbody>
+          {node.table.rows.map((row, rowIndex) => (
+            <tr key={`${node.id}-row-${rowIndex}`}>
+              {row.cells.map((cell, cellIndex) => {
+                const Cell = cell.headerScope ? 'th' : 'td'
+                return (
+                  <Cell
+                    key={`${node.id}-cell-${rowIndex}-${cellIndex}`}
+                    colSpan={cell.columnSpan}
+                    rowSpan={cell.rowSpan}
+                    scope={
+                      cell.headerScope === 'column'
+                        ? 'col'
+                        : cell.headerScope === 'row'
+                          ? 'row'
+                          : undefined
+                    }
+                  >
+                    {cell.text}
+                  </Cell>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function PreviewVisualContent({
+  node,
+  visual,
+  reconstructionProvided,
+}: {
+  node: Extract<ResearchNode, { type: 'figure' }>
+  visual?: PreviewVisual
+  reconstructionProvided: boolean
+}) {
+  if (!reconstructionProvided) {
+    return (
+      <div className="srt-pipeline" aria-label="Semantic composition pipeline">
+        <span>semantic graph</span>
+        <i>+</i>
+        <span>target policy</span>
+        <i>→</i>
+        <span>rendition</span>
+      </div>
+    )
+  }
+
+  if (node.objectType === 'table' && node.table) {
+    return <PreviewTable node={node} />
+  }
+
+  if (!visual || visual.assets.length === 0) {
+    return (
+      <div
+        className="srt-preview-unresolved"
+        role="img"
+        aria-label={node.title}
+      >
+        Source visual unresolved · review required
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="srt-preview-assets"
+      data-object-type={visual.relationship.kind}
+      data-alt-source={visual.relationship.altTextSource}
+    >
+      {visual.assets.map(({ asset, occurrence, url }) =>
+        asset.mediaType === 'application/xhtml+xml' ? (
+          <span
+            key={`${asset.id}:${occurrence}`}
+            className="srt-preview-unresolved"
+            role="img"
+            aria-label={visual.relationship.altText}
+            data-asset-id={asset.id}
+          >
+            Structured source asset available in export · safe preview requires
+            a semantic table
+          </span>
+        ) : url ? (
+          <img
+            key={`${asset.id}:${occurrence}`}
+            className="srt-preview-asset"
+            src={url}
+            alt={visual.relationship.altText}
+            width={asset.width}
+            height={asset.height}
+            data-asset-id={asset.id}
+          />
+        ) : (
+          <span
+            key={`${asset.id}:${occurrence}`}
+            className="srt-preview-asset-loading"
+          >
+            Preparing source visual…
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
+
+function usePreviewAssetUrls(reconstruction?: DocumentReconstruction) {
+  const [urls, setUrls] = useState<Map<string, string>>(() => new Map())
+
+  useEffect(() => {
+    if (
+      !reconstruction ||
+      typeof URL === 'undefined' ||
+      typeof URL.createObjectURL !== 'function'
+    ) {
+      setUrls(new Map())
+      return
+    }
+
+    const next = new Map(
+      reconstruction.assets
+        .filter((asset) => asset.mediaType !== 'application/xhtml+xml')
+        .map((asset) => [
+          asset.id,
+          URL.createObjectURL(
+            new Blob([asset.bytes as BlobPart], { type: asset.mediaType }),
+          ),
+        ]),
+    )
+    setUrls(next)
+    return () => {
+      next.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [reconstruction])
+
+  return urls
+}
+
 function fragmentData(
   fragment: PaginationFragment,
   fragmentCount: number,
@@ -139,6 +374,8 @@ function PaperNode({
   fragmentCount,
   captionFragment,
   annotations,
+  visual,
+  reconstructionProvided,
 }: {
   node: ResearchNode
   captions: Map<string, CaptionNode>
@@ -147,6 +384,8 @@ function PaperNode({
   fragmentCount: number
   captionFragment?: PaginationFragment
   annotations: ResolvedTextAnnotation[]
+  visual?: PreviewVisual
+  reconstructionProvided: boolean
 }) {
   const composition = resolveNodeComposition(target, node)
   const data = fragmentData(fragment, fragmentCount)
@@ -154,14 +393,30 @@ function PaperNode({
   if (node.type === 'heading') {
     return (
       <h2 {...data} data-variant={composition.chosenVariant}>
-        {node.text}
+        <AnnotatedText
+          text={node.text}
+          range={{ start: 0, end: node.text.length }}
+          annotations={annotations.filter(
+            ({ resolution }) => resolution.nodeId === node.id,
+          )}
+          inlineRuns={node.inlineRuns}
+          noteReferences={node.noteReferences}
+        />
       </h2>
     )
   }
   if (node.type === 'quote') {
     return (
       <blockquote {...data} data-variant={composition.chosenVariant}>
-        {node.text}
+        <AnnotatedText
+          text={node.text}
+          range={{ start: 0, end: node.text.length }}
+          annotations={annotations.filter(
+            ({ resolution }) => resolution.nodeId === node.id,
+          )}
+          inlineRuns={node.inlineRuns}
+          noteReferences={node.noteReferences}
+        />
       </blockquote>
     )
   }
@@ -172,10 +427,21 @@ function PaperNode({
       <aside
         {...data}
         id={node.id}
-        role="doc-footnote"
+        role={node.kind === 'footnote' ? 'doc-footnote' : 'doc-endnote'}
+        data-note-kind={node.kind}
         data-variant={composition.chosenVariant}
       >
-        <sup>{node.label}</sup> {node.text}
+        <sup>{node.label}</sup> {node.text}{' '}
+        {node.relationships.backlinks.map((backlink, index) => (
+          <a
+            key={backlink}
+            className="srt-note-backlink"
+            href={`#${backlink}`}
+            aria-label={`Back to reference ${index + 1}`}
+          >
+            ↩
+          </a>
+        ))}
       </aside>
     )
   }
@@ -187,16 +453,11 @@ function PaperNode({
       : { 'data-node-id': node.relationships.caption }
     return (
       <figure {...data} data-variant={composition.chosenVariant}>
-        <div
-          className="srt-pipeline"
-          aria-label="Semantic composition pipeline"
-        >
-          <span>semantic graph</span>
-          <i>+</i>
-          <span>target policy</span>
-          <i>→</i>
-          <span>rendition</span>
-        </div>
+        <PreviewVisualContent
+          node={node}
+          visual={visual}
+          reconstructionProvided={reconstructionProvided}
+        />
         <figcaption
           {...captionData}
           id={node.relationships.caption}
@@ -221,6 +482,8 @@ function PaperNode({
         annotations={annotations.filter(
           ({ resolution }) => resolution.nodeId === node.id,
         )}
+        inlineRuns={node.inlineRuns}
+        noteReferences={node.noteReferences}
       />
     </p>
   )
@@ -244,14 +507,27 @@ function DocumentHeader({ paper }: { paper: ResearchPaper }) {
   )
 }
 
-export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
-  const [profileId, setProfileId] = useState<TargetProfileId>('paperPro')
+export default function ResearchStudio({
+  paper,
+  reconstruction,
+  initialAnnotations,
+  initialProfileId = 'paperPro',
+}: {
+  paper: ResearchPaper
+  reconstruction?: DocumentReconstruction
+  initialAnnotations?: TextAnnotation[]
+  initialProfileId?: TargetProfileId
+}) {
+  const [profileId, setProfileId] = useState<TargetProfileId>(() =>
+    reconstruction ? 'mobile' : initialProfileId,
+  )
   const [widthScale, setWidthScale] = useState(1)
   const [fontScale, setFontScale] = useState(1)
   const [selected, setSelected] = useState(paper.nodes[0].id)
-  const [annotations, setAnnotations] = useState<TextAnnotation[]>(() =>
-    createDemoAnnotations(paper),
+  const [annotations, setAnnotations] = useState<TextAnnotation[]>(
+    () => initialAnnotations ?? createDemoAnnotations(paper),
   )
+  const assetUrls = usePreviewAssetUrls(reconstruction)
   const viewport = useRef<HTMLDivElement>(null)
   const previousPagination = useRef<PaginationResult | null>(null)
   const readingAnchor = annotations[0]?.target
@@ -332,6 +608,31 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
       .filter((node): node is CaptionNode => node.type === 'caption')
       .map((node) => [node.id, node]),
   )
+  const assets = new Map(
+    (reconstruction?.assets ?? []).map((asset) => [asset.id, asset]),
+  )
+  const previewVisuals = new Map(
+    (reconstruction?.visualRelationships ?? [])
+      .filter(
+        (relationship) =>
+          relationship.status === 'matched' && relationship.canonicalNodeId,
+      )
+      .map((relationship) => [
+        relationship.canonicalNodeId!,
+        {
+          relationship,
+          assets: relationship.assetIds.flatMap((assetId, occurrence) => {
+            const asset = assets.get(assetId)
+            return asset
+              ? [{ asset, occurrence, url: assetUrls.get(asset.id) }]
+              : []
+          }),
+        },
+      ]),
+  )
+  const availableProfileIds: readonly TargetProfileId[] = reconstruction
+    ? ['mobile']
+    : TARGET_PROFILE_IDS
   const paperStyle = {
     width: pagination.constraints.widthCssPx,
     maxWidth: pagination.constraints.widthCssPx,
@@ -438,6 +739,8 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
           fragmentCount={plan?.fragments.length ?? 1}
           captionFragment={captionFragment}
           annotations={resolvedAnnotations}
+          visual={previewVisuals.get(node.id)}
+          reconstructionProvided={Boolean(reconstruction)}
         />
       )
     })
@@ -447,13 +750,19 @@ export default function ResearchStudio({ paper }: { paper: ResearchPaper }) {
       <header className="srt-toolbar">
         <div>
           <span className="srt-kicker">Preview</span>
-          <strong>{profile.note}</strong>
+          <strong>
+            {reconstruction
+              ? 'Continuous source review; profile downloads are validated separately.'
+              : profile.note}
+          </strong>
         </div>
         <div className="srt-profiles" aria-label="Target profile">
-          {TARGET_PROFILE_IDS.map((key) => (
+          {availableProfileIds.map((key) => (
             <button
               key={key}
+              type="button"
               className={profileId === key ? 'active' : ''}
+              aria-pressed={profileId === key}
               onClick={() => switchProfile(key)}
             >
               {getTargetProfile(key).label}

@@ -255,6 +255,85 @@ describe('PDF semantic reconstruction', () => {
     expect(result.completeness.textCoverage).toBe(1)
   })
 
+  it('separates adjacent section headings before semantic classification', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, '1 Introduction', 0.1, 0.22, 0.35, 10),
+          run(
+            1,
+            'Continuous body prose starts immediately below.',
+            0.1,
+            0.239,
+            0.72,
+          ),
+        ]),
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'adjacent-heading.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.map((node) =>
+        'text' in node ? { type: node.type, text: node.text } : null,
+      ),
+    ).toEqual([
+      { type: 'heading', text: '1 Introduction' },
+      {
+        type: 'paragraph',
+        text: 'Continuous body prose starts immediately below.',
+      },
+    ])
+  })
+
+  it('recognizes adjacent author names separated by affiliation markers', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Marker-aware authors', 0.1, 0.08, 0.72, 18),
+          run(1, 'Ada Example2 Ben Reader1', 0.1, 0.15, 0.6, 11),
+          run(1, '1 Example University', 0.1, 0.21, 0.7, 9),
+          run(1, 'Abstract', 0.1, 0.3, 0.25, 16),
+          run(1, 'The abstract remains canonical prose.', 0.1, 0.36, 0.72),
+        ]),
+      ],
+      sourceHash: 'c'.repeat(64),
+      fileName: 'marker-aware-authors.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.paper.authors).toEqual(['Ada Example', 'Ben Reader'])
+  })
+
+  it('collects right-side authors above an abstract despite column-major order', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Four-Author Paper', 0.16, 0.08, 0.68, 18),
+          run(1, 'Kevin Yang1 Yuandong Tian2', 0.16, 0.15, 0.31, 11),
+          run(1, 'Nanyun Peng3 Dan Klein1', 0.54, 0.15, 0.3, 11),
+          run(1, '1UC Berkeley, 2Meta AI, 3UCLA', 0.16, 0.19, 0.31, 9),
+          run(1, 'Research Group', 0.54, 0.19, 0.3, 9),
+          run(1, 'Abstract', 0.16, 0.27, 0.31, 16),
+          run(1, 'Visual summary', 0.54, 0.27, 0.3, 9),
+          run(1, 'The abstract remains canonical prose.', 0.16, 0.33, 0.31),
+          run(1, 'Diagram evidence', 0.54, 0.33, 0.3, 9),
+        ]),
+      ],
+      sourceHash: 'a'.repeat(64),
+      fileName: 'column-major-authors.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.paper.authors).toEqual([
+      'Kevin Yang',
+      'Yuandong Tian',
+      'Nanyun Peng',
+      'Dan Klein',
+    ])
+  })
+
   it('proves shared author markers from stripped source while retaining a raw affiliation marker', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
@@ -489,6 +568,31 @@ describe('PDF semantic reconstruction', () => {
       }),
     ])
     expect(new Set(lists.map((list) => list.numberingId)).size).toBe(1)
+  })
+
+  it('does not interpret a two-column list transition as deep nesting', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, '1. Left item one', 0.08, 0.2, 0.34),
+          run(1, '1. Right item one', 0.56, 0.2, 0.34),
+          run(1, '2. Left item two', 0.08, 0.26, 0.34),
+          run(1, '2. Right item two', 0.56, 0.26, 0.34),
+          run(1, '3. Left item three', 0.08, 0.32, 0.34),
+          run(1, '3. Right item three', 0.56, 0.32, 0.34),
+        ]),
+      ],
+      sourceHash: 'c'.repeat(64),
+      fileName: 'two-column-lists.pdf',
+      byteLength: 4096,
+    })
+
+    const lists = result.paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' && node.list ? [node.list] : [],
+    )
+    expect(lists).toHaveLength(6)
+    expect(lists.map((list) => list.level)).toEqual([1, 1, 1, 1, 1, 1])
+    expect(new Set(lists.map((list) => list.numberingId)).size).toBe(2)
   })
 
   it('preserves bracketed, parenthesized, and suffixed list markers with gaps', async () => {
@@ -731,6 +835,55 @@ describe('PDF semantic reconstruction', () => {
     })
 
     expect(Object.values(result.provenance)[0].links).toEqual(linked.links)
+  })
+
+  it('does not project a link annotation onto matching geometry on another page', async () => {
+    const first = page(1, [
+      run(1, 'Linked text on the annotated page.', 0.1, 0.2, 0.7),
+    ])
+    first.links = [
+      {
+        url: 'https://example.test/page-one',
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2,
+          width: 0.3,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-link',
+        },
+      },
+    ]
+    const second = page(2, [
+      run(2, 'Plain text at matching coordinates.', 0.1, 0.2, 0.7),
+    ])
+
+    const result = await reconstructPageAnalyses({
+      pages: [first, second],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'page-scoped-link.pdf',
+      byteLength: 2048,
+    })
+    const linked = result.paper.nodes.find(
+      (node) => 'text' in node && node.text.includes('Linked text'),
+    )
+    const plain = result.paper.nodes.find(
+      (node) => 'text' in node && node.text.includes('Plain text'),
+    )
+
+    expect(
+      linked && 'inlineRuns' in linked
+        ? linked.inlineRuns?.some(
+            (inline) => inline.href === 'https://example.test/page-one',
+          )
+        : false,
+    ).toBe(true)
+    expect(
+      plain && 'inlineRuns' in plain
+        ? plain.inlineRuns?.some((inline) => inline.href)
+        : false,
+    ).toBe(false)
   })
 
   it('orders detected columns left before right without storing target geometry', async () => {

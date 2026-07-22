@@ -545,6 +545,57 @@ describe('PDF line joining', () => {
 })
 
 describe('PDF run grouping', () => {
+  it('keeps staggered two-column runs separate regardless of merge direction', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+    ): PdfSourceRun => ({
+      page: 1,
+      text,
+      x,
+      y,
+      width,
+      height: 0.013,
+      fontSize: 10,
+      fontName: 'SyntheticBody',
+      rotation: 0,
+      method: 'pdf-text',
+      confidence: 1,
+    })
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 595,
+      height: 842,
+      rotation: 0,
+      textCharacters: 71,
+      imageCount: 0,
+      objects: [],
+      runs: [
+        sourceRun('Earlier left column.', 0.119, 0.7, 0.37),
+        sourceRun('Earlier right column.', 0.514, 0.7, 0.37),
+        sourceRun('Second left column.', 0.119, 0.75, 0.37),
+        sourceRun('Second right column.', 0.514, 0.75, 0.37),
+        sourceRun('Left column begins', 0.119, 0.8134, 0.212),
+        sourceRun('and continues.', 0.343, 0.8134, 0.146),
+        sourceRun('Right column remains separate.', 0.514, 0.8063, 0.37),
+      ],
+    }
+
+    expect(groupRunsIntoLines(page).map((candidate) => candidate.text)).toEqual(
+      [
+        'Earlier left column.',
+        'Earlier right column.',
+        'Second left column.',
+        'Second right column.',
+        'Right column remains separate.',
+        'Left column begins and continues.',
+      ],
+    )
+  })
+
   it('attaches staggered small-cap fragments to the nearest baseline line', () => {
     const sourceRun = (
       text: string,

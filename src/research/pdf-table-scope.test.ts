@@ -126,6 +126,66 @@ function objectRegion(
 }
 
 describe('bounded PDF table source scoping', () => {
+  it('rejects a numbered prose sequence that competes with the actual table', () => {
+    const tableLines = [
+      line('header', 0.26, [0.14, 0.3, 0.46]),
+      line('row-1', 0.284, [0.14, 0.3, 0.46]),
+      line('row-2', 0.308, [0.14, 0.3, 0.46]),
+      line('row-3', 0.332, [0.14, 0.3, 0.46]),
+    ]
+    const table = textRegion(
+      'actual-table',
+      box(0.14, 0.26, 0.395, 0.088),
+      tableLines,
+    )
+    const listRegions = [1, 2, 3].map((ordinal, index) => {
+      const y = 0.42 + index * 0.024
+      const runs = [
+        {
+          ...box(0.52, y, 0.035, 0.016),
+          text: `${ordinal}.`,
+          fontName: 'BodySerif',
+          fontSize: 10,
+          confidence: 0.99,
+        },
+        {
+          ...box(0.6, y, 0.24, 0.016),
+          text: `Prose item ${ordinal}.`,
+          fontName: 'BodySerif',
+          fontSize: 10,
+          confidence: 0.99,
+        },
+      ]
+      const sourceLine = {
+        id: `list-line-${ordinal}`,
+        text: `${ordinal}. Prose item ${ordinal}.`,
+        fontSize: 10,
+        box: box(0.52, y, 0.32, 0.016),
+        runs,
+      }
+      return textRegion(`list-region-${ordinal}`, sourceLine.box, [sourceLine])
+    })
+    const tableCaption = caption('caption-between-table-and-list', 0.38)
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [table, tableCaption, ...listRegions],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      candidates: [
+        {
+          sourceRegionIds: [table.id],
+        },
+      ],
+      scope: {
+        sourceRegionIds: [table.id],
+      },
+    })
+  })
+
   it('returns one exact crop scope for a wide contiguous single-anchor slab above its caption', () => {
     const slabLines = Array.from({ length: 8 }, (_, index) => {
       const y = 0.18 + index * 0.024
@@ -654,6 +714,55 @@ describe('bounded PDF table source scoping', () => {
         ),
       ),
     ).toBe(true)
+  })
+
+  it('assigns an adjacent table band to its closer numbered caption', () => {
+    const aboveLines = [
+      line('above-row-1', 0.38, [0.12, 0.4, 0.67]),
+      line('above-row-2', 0.42, [0.12, 0.4, 0.67]),
+      line('above-row-3', 0.46, [0.12, 0.4, 0.67]),
+    ]
+    const belowLines = [
+      line('below-row-1', 0.544, [0.12, 0.4, 0.67]),
+      line('below-row-2', 0.584, [0.12, 0.4, 0.67]),
+      line('below-row-3', 0.624, [0.12, 0.4, 0.67]),
+    ]
+    const above = textRegion(
+      'table-14-grid',
+      box(0.12, 0.38, 0.63, 0.096),
+      aboveLines,
+    )
+    const below = textRegion(
+      'table-15-grid',
+      box(0.12, 0.544, 0.63, 0.096),
+      belowLines,
+    )
+    const currentCaption = caption(
+      'caption-table-14',
+      0.5,
+      'Table 14. Baseline results.',
+    )
+    const nextCaption = caption(
+      'caption-table-15',
+      0.65,
+      'Table 15. Ablation results.',
+    )
+
+    const result = resolvePdfTableScope({
+      caption: currentCaption,
+      pageRegions: [above, currentCaption, below, nextCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        direction: 'above',
+        sourceRegionIds: ['table-14-grid'],
+      },
+      candidates: [{ sourceRegionIds: ['table-14-grid'] }],
+      ambiguity: { code: 'none' },
+    })
   })
 
   it('recognizes dense repeated columns without splitting ordinary word gaps', () => {

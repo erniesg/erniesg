@@ -698,10 +698,30 @@ function unionBox(lines: PdfRegionLine[]): NormalizedSourceBox {
   }
 }
 
+function standaloneSectionHeading(line: ClassifiedLine) {
+  if (line.kind !== 'body' && line.kind !== 'spanning') return false
+  const text = line.text.replace(/\s+/g, ' ').trim()
+  if (!text || text.length > 120) return false
+  if (
+    /^(?:abstract|acknowledg(?:e)?ments?|limitations?|ethics statement|references|bibliography|appendix)$/i.test(
+      text,
+    )
+  ) {
+    return true
+  }
+  return (
+    /^\d{1,3}(?:\.\d+){0,3}\s+\p{Lu}[^.,;:!?]{0,100}$/u.test(text) ||
+    /^[A-Z](?:\.\d+)?\s+\p{Lu}[^,;:!?]{0,100}$/u.test(text)
+  )
+}
+
 function joinsRegion(previous: ClassifiedLine, line: ClassifiedLine) {
   if (previous.page !== line.page) return false
   if (previous.kind !== line.kind || previous.column !== line.column)
     return false
+  if (standaloneSectionHeading(previous) || standaloneSectionHeading(line)) {
+    return false
+  }
   if (
     (line.kind === 'footnote' || line.kind === 'endnote') &&
     line.noteLabel !== null

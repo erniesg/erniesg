@@ -1814,6 +1814,56 @@ function unresolved(
   }
 }
 
+function orderedProseScope(
+  scope: PdfTableScope,
+  regionsById: ReadonlyMap<string, PdfPageRegion>,
+) {
+  const scopedRegions = scope.sourceRegionIds
+    .map((id) => regionsById.get(id))
+    .filter((region): region is PdfPageRegion => Boolean(region))
+    .sort((left, right) => left.box.y - right.box.y || left.box.x - right.box.x)
+  if (scopedRegions.length < 2) return false
+  const ordinals = scopedRegions.map((region) => {
+    const match = region.text.trim().match(/^(\d+)[.)]\s+\p{L}/u)
+    return match ? Number(match[1]) : null
+  })
+  return ordinals.every(
+    (ordinal, index) =>
+      ordinal !== null &&
+      (index === 0 || ordinal === (ordinals[index - 1] ?? 0) + 1),
+  )
+}
+
+function arabicTableNumber(region: PdfPageRegion) {
+  const match = region.text.match(/^\s*table(?:\s|[.:])*(\d+)\b/i)
+  return match ? Number(match[1]) : null
+}
+
+function belongsToFollowingNumberedCaption(
+  scope: PdfTableScope,
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+) {
+  if (scope.direction !== 'below') return false
+  const currentNumber = arabicTableNumber(caption)
+  if (currentNumber === null) return false
+  const currentGap = gapBetween(scope.cropBox, caption.box).vertical
+  return pageRegions.some((candidate) => {
+    if (
+      candidate.id === caption.id ||
+      arabicTableNumber(candidate) !== currentNumber + 1 ||
+      candidate.box.y < scope.cropBox.y + scope.cropBox.height ||
+      !overlapsCaption(candidate, scope.cropBox)
+    ) {
+      return false
+    }
+    return (
+      gapBetween(scope.cropBox, candidate.box).vertical + BOX_TOLERANCE / 2 <
+      currentGap
+    )
+  })
+}
+
 /**
  * Resolves only an exact, caption-bounded source scope for a PDF table.
  *
@@ -1874,6 +1924,22 @@ export function resolvePdfTableScope({
           ...ruled.candidates,
         ]
   ).sort((left, right) => left.id.localeCompare(right.id))
+  const regionsById = new Map(regions.map((region) => [region.id, region]))
+  const captionOwnedCandidates = candidates.some(
+    (candidate) => candidate.direction === 'above',
+  )
+    ? candidates.filter(
+        (candidate) =>
+          !belongsToFollowingNumberedCaption(candidate, caption, regions),
+      )
+    : candidates
+  const nonProseCandidates = captionOwnedCandidates.filter(
+    (candidate) => !orderedProseScope(candidate, regionsById),
+  )
+  const resolvedCandidates =
+    captionOwnedCandidates.length > 1 && nonProseCandidates.length === 1
+      ? nonProseCandidates
+      : captionOwnedCandidates
   const duplicateObjectIds = [
     ...new Set([...raster.duplicateObjectIds, ...ruled.duplicateObjectIds]),
   ].sort()
@@ -1881,19 +1947,19 @@ export function resolvePdfTableScope({
     return unresolved(
       caption,
       'duplicate-source-lineage',
-      candidates,
+      resolvedCandidates,
       duplicateObjectIds,
     )
   }
-  if (candidates.length === 0) {
+  if (resolvedCandidates.length === 0) {
     const evidence = ['deterministic-geometry-required']
     if (lanes.some((lane) => lane.interveningCaptionRegionId)) {
       evidence.push('intervening-caption-boundary')
     }
     return unresolved(caption, 'no-proven-scope', [], evidence)
   }
-  if (candidates.length > 1) {
-    return unresolved(caption, 'competing-scopes', candidates, [
+  if (resolvedCandidates.length > 1) {
+    return unresolved(caption, 'competing-scopes', resolvedCandidates, [
       'more-than-one-bounded-scope',
     ])
   }
@@ -1902,8 +1968,8 @@ export function resolvePdfTableScope({
     captionRegionId: caption.id,
     page: caption.page,
     status: 'matched',
-    scope: candidates[0],
-    candidates,
+    scope: resolvedCandidates[0],
+    candidates: resolvedCandidates,
     ambiguity: { code: 'none', candidateIds: [], evidence: [] },
   }
 }

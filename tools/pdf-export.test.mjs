@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import Ajv2020 from 'ajv/dist/2020.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createPdfPipeline } from './pdf-corpus-audit-lib.mjs'
 
@@ -283,6 +284,11 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           mode: 'readable-fallback',
         }),
       ])
+      const schema = JSON.parse(
+        await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
+      )
+      const validate = new Ajv2020({ strict: false }).compile(schema)
+      expect(validate(report), validate.errors).toBe(true)
       expect((await readdir(directory)).sort()).toEqual([
         'checksums.sha256',
         'corpus-audit.json',

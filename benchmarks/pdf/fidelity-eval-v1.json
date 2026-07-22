@@ -1,0 +1,825 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "scholarly-pdf-fidelity-seed-2026-07-v1",
+  "annotationSchemaVersion": "1.0.0",
+  "privacy": "public-identities-normalized-geometry-no-source-content",
+  "scoring": {
+    "detectionIouThreshold": 0.8,
+    "minimumOverallScore": 0.9,
+    "requireAllCriticalCases": true
+  },
+  "strata": [
+    { "id": "front-matter-role", "task": "classification", "critical": true },
+    { "id": "note-ownership", "task": "relationship", "critical": true },
+    { "id": "visual-boundary", "task": "detection", "critical": true },
+    { "id": "caption-ownership", "task": "relationship", "critical": true },
+    { "id": "display-math-grouping", "task": "detection", "critical": true },
+    { "id": "column-reading-order", "task": "reading-order", "critical": true },
+    { "id": "heading-role", "task": "classification", "critical": true },
+    { "id": "table-structure", "task": "classification", "critical": true },
+    { "id": "table-boundary", "task": "detection", "critical": true },
+    { "id": "caption-boundary", "task": "detection", "critical": true },
+    {
+      "id": "equation-number-ownership",
+      "task": "relationship",
+      "critical": true
+    },
+    {
+      "id": "figure-content-ownership",
+      "task": "relationship",
+      "critical": true
+    },
+    { "id": "reference-scope", "task": "classification", "critical": true },
+    { "id": "document-invariant", "task": "classification", "critical": true },
+    {
+      "id": "semantic-type-confusion",
+      "task": "classification",
+      "critical": true
+    }
+  ],
+  "documents": [
+    {
+      "id": "2408.10903v5",
+      "fileName": "2408.10903v5.pdf",
+      "byteLength": 8873089,
+      "sha256": "f5c8f963c4d17409b6ab163e0be914db139f9bc83cca0274a88863098e865a80",
+      "pageCount": 35
+    },
+    {
+      "id": "2412.13575v1",
+      "fileName": "2412.13575v1.pdf",
+      "byteLength": 1683269,
+      "sha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+      "pageCount": 39
+    },
+    {
+      "id": "2210.06774v3",
+      "fileName": "2210.06774v3.pdf",
+      "byteLength": 1531892,
+      "sha256": "dd8ce0000a217f31ae55e107f66fab4608a1972319c9d7999609a9fdc1ccdcb4",
+      "pageCount": 86
+    },
+    {
+      "id": "2502.00873v1",
+      "fileName": "2502.00873v1.pdf",
+      "byteLength": 6212927,
+      "sha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+      "pageCount": 24
+    }
+  ],
+  "cases": [
+    {
+      "id": "2408.10903v5.p001.title-single-canonical-occurrence",
+      "documentId": "2408.10903v5",
+      "page": 1,
+      "stratum": "document-invariant",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "title-occurrence-invariant",
+          "kind": "document-invariant",
+          "box": null
+        }
+      ],
+      "expected": {
+        "labels": [
+          {
+            "targetId": "title-occurrence-invariant",
+            "label": "not-duplicated"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2412.13575v1.p001.figure-1-complete-boundary",
+      "documentId": "2412.13575v1",
+      "page": 1,
+      "stratum": "visual-boundary",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "figure-1-source-area",
+          "kind": "figure",
+          "box": [0.514, 0.269, 0.37, 0.205]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "figure-1",
+            "label": "figure",
+            "box": [0.514, 0.269, 0.37, 0.205]
+          }
+        ]
+      }
+    },
+    {
+      "id": "2412.13575v1.p001.figure-1-caption-ownership",
+      "documentId": "2412.13575v1",
+      "page": 1,
+      "stratum": "caption-ownership",
+      "task": "relationship",
+      "critical": true,
+      "targets": [
+        {
+          "id": "figure-1",
+          "kind": "figure",
+          "box": [0.514, 0.269, 0.37, 0.205]
+        },
+        {
+          "id": "caption-1",
+          "kind": "caption",
+          "box": [0.514, 0.486, 0.37, 0.153]
+        }
+      ],
+      "expected": {
+        "relationships": [
+          {
+            "type": "caption-of",
+            "sourceId": "caption-1",
+            "targetId": "figure-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2210.06774v3.p002.footnote-2-ownership",
+      "documentId": "2210.06774v3",
+      "page": 2,
+      "stratum": "note-ownership",
+      "task": "relationship",
+      "critical": true,
+      "targets": [
+        {
+          "id": "note-reference-2",
+          "kind": "note-reference",
+          "box": [0.448, 0.86, 0.012, 0.012]
+        },
+        {
+          "id": "page-footnote-2",
+          "kind": "footnote",
+          "box": [0.119, 0.895, 0.369, 0.023]
+        }
+      ],
+      "expected": {
+        "relationships": [
+          {
+            "type": "note-body-of",
+            "sourceId": "page-footnote-2",
+            "targetId": "note-reference-2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2210.06774v3.p002.column-order-left-before-right",
+      "documentId": "2210.06774v3",
+      "page": 2,
+      "stratum": "column-reading-order",
+      "task": "reading-order",
+      "critical": true,
+      "targets": [
+        {
+          "id": "left-column-tail",
+          "kind": "prose",
+          "box": [0.118, 0.801, 0.371, 0.077]
+        },
+        {
+          "id": "right-column-head",
+          "kind": "heading",
+          "box": [0.514, 0.087, 0.151, 0.014]
+        },
+        {
+          "id": "right-column-prose",
+          "kind": "prose",
+          "box": [0.513, 0.112, 0.371, 0.64]
+        }
+      ],
+      "expected": {
+        "order": ["left-column-tail", "right-column-head", "right-column-prose"]
+      }
+    },
+    {
+      "id": "2210.06774v3.p003.section-3-2-heading-role",
+      "documentId": "2210.06774v3",
+      "page": 3,
+      "stratum": "heading-role",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "section-3-2",
+          "kind": "heading",
+          "box": [0.514286, 0.32349, 0.148625, 0.011649]
+        }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "section-3-2", "label": "heading" }]
+      }
+    },
+    {
+      "id": "2210.06774v3.p006.table-1-semantic-structure",
+      "documentId": "2210.06774v3",
+      "page": 6,
+      "stratum": "table-structure",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        { "id": "table-1", "kind": "table", "box": [0.188, 0.08, 0.618, 0.087] }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "table-1", "label": "semantic-table" }]
+      }
+    },
+    {
+      "id": "2502.00873v1.p001.affiliation-footnote-role",
+      "documentId": "2502.00873v1",
+      "page": 1,
+      "stratum": "front-matter-role",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "affiliation-footnote",
+          "kind": "footnote",
+          "box": [0.091, 0.87, 0.384, 0.023]
+        }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "affiliation-footnote", "label": "footnote" }]
+      }
+    },
+    {
+      "id": "2502.00873v1.p001.affiliation-note-ownership",
+      "documentId": "2502.00873v1",
+      "page": 1,
+      "stratum": "note-ownership",
+      "task": "relationship",
+      "critical": true,
+      "targets": [
+        {
+          "id": "author-note-reference-1",
+          "kind": "note-reference",
+          "box": [0.502, 0.18, 0.009, 0.009]
+        },
+        {
+          "id": "affiliation-footnote",
+          "kind": "footnote",
+          "box": [0.091, 0.87, 0.384, 0.023]
+        }
+      ],
+      "expected": {
+        "relationships": [
+          {
+            "type": "note-body-of",
+            "sourceId": "affiliation-footnote",
+            "targetId": "author-note-reference-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p001.figure-1-complete-boundary",
+      "documentId": "2502.00873v1",
+      "page": 1,
+      "stratum": "visual-boundary",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "figure-1-source-area",
+          "kind": "figure",
+          "box": [0.501, 0.216, 0.387, 0.285]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "figure-1",
+            "label": "figure",
+            "box": [0.501, 0.216, 0.387, 0.285]
+          }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p001.figure-1-caption-ownership",
+      "documentId": "2502.00873v1",
+      "page": 1,
+      "stratum": "caption-ownership",
+      "task": "relationship",
+      "critical": true,
+      "targets": [
+        {
+          "id": "figure-1",
+          "kind": "figure",
+          "box": [0.501, 0.216, 0.387, 0.285]
+        },
+        {
+          "id": "caption-1",
+          "kind": "caption",
+          "box": [0.501, 0.521, 0.387, 0.057]
+        }
+      ],
+      "expected": {
+        "relationships": [
+          {
+            "type": "caption-of",
+            "sourceId": "caption-1",
+            "targetId": "figure-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p001.numeric-range-not-citation",
+      "documentId": "2502.00873v1",
+      "page": 1,
+      "stratum": "semantic-type-confusion",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        { "id": "numeric-domain-range", "kind": "inline-span", "box": null }
+      ],
+      "expected": {
+        "labels": [
+          { "targetId": "numeric-domain-range", "label": "numeric-range" }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p002.equation-1-aligned-group",
+      "documentId": "2502.00873v1",
+      "page": 2,
+      "stratum": "display-math-grouping",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "equation-1-source-area",
+          "kind": "equation",
+          "box": [0.57, 0.465, 0.319, 0.072]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "equation-1",
+            "label": "equation",
+            "box": [0.57, 0.465, 0.319, 0.072]
+          }
+        ]
+      }
+    },
+    {
+      "id": "2408.10903v5.p003.table-1-header-complete-boundary",
+      "documentId": "2408.10903v5",
+      "page": 3,
+      "stratum": "table-boundary",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.088235, 0.068518, 0.782356, 0.165926]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "object-a",
+            "label": "table",
+            "box": [0.088235, 0.068518, 0.782356, 0.165926]
+          }
+        ]
+      }
+    },
+    {
+      "id": "2408.10903v5.p003.table-1-header-complete-semantic-structure",
+      "documentId": "2408.10903v5",
+      "page": 3,
+      "stratum": "table-structure",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.088235, 0.068518, 0.782356, 0.165926]
+        }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "region-a", "label": "semantic-table" }]
+      }
+    },
+    {
+      "id": "2502.00873v1.p014.figures-15-18-column-isolated-boundaries",
+      "documentId": "2502.00873v1",
+      "page": 14,
+      "stratum": "visual-boundary",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.090588, 0.091268, 0.382367, 0.149264]
+        },
+        {
+          "id": "region-b",
+          "kind": "candidate",
+          "box": [0.090588, 0.320327, 0.382353, 0.136364]
+        },
+        {
+          "id": "region-c",
+          "kind": "candidate",
+          "box": [0.090588, 0.575676, 0.382359, 0.236367]
+        },
+        {
+          "id": "region-d",
+          "kind": "candidate",
+          "box": [0.502353, 0.268729, 0.382356, 0.368171]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "object-a",
+            "label": "figure",
+            "box": [0.090588, 0.091268, 0.382367, 0.149264]
+          },
+          {
+            "id": "object-b",
+            "label": "figure",
+            "box": [0.090588, 0.320327, 0.382353, 0.136364]
+          },
+          {
+            "id": "object-c",
+            "label": "figure",
+            "box": [0.090588, 0.575676, 0.382359, 0.236367]
+          },
+          {
+            "id": "object-d",
+            "label": "figure",
+            "box": [0.502353, 0.268729, 0.382356, 0.368171]
+          }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p014.figure-captions-15-18-complete-boundaries",
+      "documentId": "2502.00873v1",
+      "page": 14,
+      "stratum": "caption-boundary",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.089768, 0.259271, 0.385611, 0.037795]
+        },
+        {
+          "id": "region-b",
+          "kind": "candidate",
+          "box": [0.089768, 0.47525, 0.3856, 0.079487]
+        },
+        {
+          "id": "region-c",
+          "kind": "candidate",
+          "box": [0.089768, 0.830603, 0.385006, 0.065651]
+        },
+        {
+          "id": "region-d",
+          "kind": "candidate",
+          "box": [0.501533, 0.654826, 0.38318, 0.066285]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "object-a",
+            "label": "caption",
+            "box": [0.089768, 0.259271, 0.385611, 0.037795]
+          },
+          {
+            "id": "object-b",
+            "label": "caption",
+            "box": [0.089768, 0.47525, 0.3856, 0.079487]
+          },
+          {
+            "id": "object-c",
+            "label": "caption",
+            "box": [0.089768, 0.830603, 0.385006, 0.065651]
+          },
+          {
+            "id": "object-d",
+            "label": "caption",
+            "box": [0.501533, 0.654826, 0.38318, 0.066285]
+          }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p014.figure-16-complete-caption-ownership",
+      "documentId": "2502.00873v1",
+      "page": 14,
+      "stratum": "caption-ownership",
+      "task": "relationship",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.090588, 0.320327, 0.382353, 0.136364]
+        },
+        {
+          "id": "region-b",
+          "kind": "candidate",
+          "box": [0.089768, 0.47525, 0.3856, 0.079487]
+        }
+      ],
+      "expected": {
+        "relationships": [
+          {
+            "type": "caption-of",
+            "sourceId": "region-b",
+            "targetId": "region-a"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2412.13575v1.p006.equation-4-number-ownership",
+      "documentId": "2412.13575v1",
+      "page": 6,
+      "stratum": "equation-number-ownership",
+      "task": "relationship",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.217781, 0.868376, 0.1692, 0.012232]
+        },
+        {
+          "id": "region-b",
+          "kind": "candidate",
+          "box": [0.465574, 0.869309, 0.021368, 0.011584]
+        }
+      ],
+      "expected": {
+        "relationships": [
+          {
+            "type": "equation-number-of",
+            "sourceId": "region-b",
+            "targetId": "region-a"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2412.13575v1.p006.post-equation-prose-not-list",
+      "documentId": "2412.13575v1",
+      "page": 6,
+      "stratum": "semantic-type-confusion",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.118387, 0.892889, 0.367324, 0.027885]
+        }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "region-a", "label": "prose" }]
+      }
+    },
+    {
+      "id": "2502.00873v1.p013.decimal-chart-tick-not-footnote",
+      "documentId": "2502.00873v1",
+      "page": 13,
+      "stratum": "semantic-type-confusion",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.140151, 0.649081, 0.012633, 0.011611]
+        }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "region-a", "label": "chart-axis-tick" }]
+      }
+    },
+    {
+      "id": "2502.00873v1.p012.appendix-exits-reference-scope",
+      "documentId": "2502.00873v1",
+      "page": 12,
+      "stratum": "reference-scope",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.090588, 0.086775, 0.334054, 0.013631]
+        },
+        {
+          "id": "region-b",
+          "kind": "candidate",
+          "box": [0.089824, 0.113184, 0.385969, 0.207204]
+        }
+      ],
+      "expected": {
+        "labels": [
+          { "targetId": "region-a", "label": "heading" },
+          { "targetId": "region-b", "label": "prose" }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p005.numbered-task-list-not-equation",
+      "documentId": "2502.00873v1",
+      "page": 5,
+      "stratum": "semantic-type-confusion",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.102797, 0.466236, 0.169587, 0.012151]
+        }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "region-a", "label": "ordered-list-item" }]
+      }
+    },
+    {
+      "id": "2502.00873v1.p001.figure-1-internal-text-ownership",
+      "documentId": "2502.00873v1",
+      "page": 1,
+      "stratum": "figure-content-ownership",
+      "task": "relationship",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.544181, 0.215927, 0.295595, 0.07384]
+        },
+        {
+          "id": "region-b",
+          "kind": "candidate",
+          "box": [0.501, 0.216, 0.387, 0.285]
+        }
+      ],
+      "expected": {
+        "relationships": [
+          {
+            "type": "figure-internal-text-of",
+            "sourceId": "region-a",
+            "targetId": "region-b"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p005.section-and-numbered-list-role",
+      "documentId": "2502.00873v1",
+      "page": 5,
+      "stratum": "semantic-type-confusion",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.50235, 0.29585, 0.38226, 0.0327]
+        },
+        {
+          "id": "region-b",
+          "kind": "candidate",
+          "box": [0.53772, 0.51642, 0.32382, 0.01258]
+        },
+        {
+          "id": "region-c",
+          "kind": "candidate",
+          "box": [0.53772, 0.57177, 0.32671, 0.01258]
+        }
+      ],
+      "expected": {
+        "labels": [
+          { "targetId": "region-a", "label": "heading" },
+          { "targetId": "region-b", "label": "ordered-list-item" },
+          { "targetId": "region-c", "label": "ordered-list-item" }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p012.lowercase-continuation-not-heading",
+      "documentId": "2502.00873v1",
+      "page": 12,
+      "stratum": "heading-role",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "candidate",
+          "box": [0.50235, 0.64836, 0.38426, 0.01258]
+        }
+      ],
+      "expected": {
+        "labels": [{ "targetId": "region-a", "label": "prose" }]
+      }
+    },
+    {
+      "id": "2502.00873v1.p014.figure-column-reading-order",
+      "documentId": "2502.00873v1",
+      "page": 14,
+      "stratum": "column-reading-order",
+      "task": "reading-order",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "figure",
+          "box": [0.090588, 0.091268, 0.382367, 0.149264]
+        },
+        {
+          "id": "region-b",
+          "kind": "figure",
+          "box": [0.090588, 0.320327, 0.382353, 0.136364]
+        },
+        {
+          "id": "region-c",
+          "kind": "figure",
+          "box": [0.090588, 0.575676, 0.382359, 0.236367]
+        },
+        {
+          "id": "region-d",
+          "kind": "figure",
+          "box": [0.502353, 0.268729, 0.382356, 0.368171]
+        }
+      ],
+      "expected": {
+        "order": ["region-a", "region-b", "region-c", "region-d"]
+      }
+    },
+    {
+      "id": "2502.00873v1.p007.equation-3-complete-group",
+      "documentId": "2502.00873v1",
+      "page": 7,
+      "stratum": "display-math-grouping",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "equation",
+          "box": [0.50235, 0.09339, 0.41531, 0.05923]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "object-a",
+            "label": "equation",
+            "box": [0.50235, 0.09339, 0.41531, 0.05923]
+          }
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p015.figure-19-complete-caption-boundary",
+      "documentId": "2502.00873v1",
+      "page": 15,
+      "stratum": "caption-boundary",
+      "task": "detection",
+      "critical": true,
+      "targets": [
+        {
+          "id": "region-a",
+          "kind": "caption",
+          "box": [0.08977, 0.68239, 0.38317, 0.039]
+        }
+      ],
+      "expected": {
+        "objects": [
+          {
+            "id": "object-a",
+            "label": "caption",
+            "box": [0.08977, 0.68239, 0.38317, 0.039]
+          }
+        ]
+      }
+    }
+  ]
+}

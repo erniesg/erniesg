@@ -5,10 +5,7 @@ export const MAX_LOCAL_DOCX_BYTES = 50 * 1024 * 1024
 export const DOCX_IMPORTER_VERSION = '1.0.0'
 
 export type PdfPageKind =
-  | 'born-digital'
-  | 'mixed'
-  | 'ocr-required'
-  | 'ocr-complete'
+  'born-digital' | 'mixed' | 'ocr-required' | 'ocr-complete'
 
 export type NormalizedSourceBox = {
   page: number
@@ -254,6 +251,7 @@ export type PdfNoteMarkerTaxonomy =
   | 'footnote-reference'
   | 'endnote-reference'
   | 'bracketed-bibliography-citation'
+  | 'author-year-bibliography-citation'
   | 'superscript-citation-cluster'
   | 'superscript-bibliography-citation'
   | 'human-reclassified-citation'
@@ -304,6 +302,7 @@ export type PdfCitationRelationship = {
   taxonomy: Extract<
     PdfNoteMarkerTaxonomy,
     | 'bracketed-bibliography-citation'
+    | 'author-year-bibliography-citation'
     | 'superscript-citation-cluster'
     | 'superscript-bibliography-citation'
     | 'human-reclassified-citation'
@@ -408,6 +407,8 @@ export type ReconstructionDiagnostic = {
     | 'INCOMPLETE_INLINE_STYLE_COVERAGE'
     | 'INVALID_LINE_BOUNDARY_LEDGER'
     | 'UNRESOLVED_CORRUPTING_JOIN'
+    | 'EPUB_TEXT_SANITIZATION_LOSS'
+    | 'DANGLING_EPUB_INTERNAL_REFERENCE'
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
     | 'INCOMPLETE_RELATIONSHIP_COVERAGE'
@@ -509,9 +510,7 @@ export type HumanAdjudicationResolution =
         toLineId: string
       }
       outcome:
-        | 'remove-wrap-hyphen'
-        | 'preserve-authored-hyphen'
-        | 'leave-unresolved'
+        'remove-wrap-hyphen' | 'preserve-authored-hyphen' | 'leave-unresolved'
       confidence: number
       evidence: Array<'bounded-source-context' | 'owner-local-adjudication'>
     }

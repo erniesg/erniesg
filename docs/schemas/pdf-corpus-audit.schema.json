@@ -103,6 +103,7 @@
         "taxonomy": {
           "enum": [
             "bracketed-bibliography-citation",
+            "author-year-bibliography-citation",
             "superscript-citation-cluster",
             "superscript-bibliography-citation",
             "human-reclassified-citation"
@@ -478,6 +479,7 @@
         "basename",
         "byteLength",
         "sha256",
+        "mode",
         "structuralValidation",
         "epubCheck"
       ],
@@ -485,10 +487,11 @@
         "target": { "enum": ["mobile", "paperProMove", "paperPro", "print"] },
         "basename": {
           "type": "string",
-          "pattern": "^publication-[a-z]+\\.epub$"
+          "pattern": "^publication-[a-z]+(?:-readable)?\\.epub$"
         },
         "byteLength": { "type": "integer", "minimum": 1 },
         "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "mode": { "enum": ["publication", "readable-fallback"] },
         "structuralValidation": { "const": "passed" },
         "epubCheck": {
           "type": "object",

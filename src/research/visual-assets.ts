@@ -731,7 +731,10 @@ export async function createTextSvgAsset(input: {
   })
 }
 
-function tableRows(lines: PdfRegionLine[]) {
+function tableRows(
+  lines: PdfRegionLine[],
+  options: { detectedRectangularGeometry?: boolean } = {},
+) {
   const bands: PdfRegionLine[][] = []
   for (const line of [...lines].sort(
     (left, right) => left.box.y - right.box.y,
@@ -762,15 +765,16 @@ function tableRows(lines: PdfRegionLine[]) {
     rows.some(
       (row) =>
         row.some((run, index) => Math.abs(run.x - anchors[index]) > 0.035) ||
-        row.slice(1).some((run, index) => {
-          const previous = row[index]
-          return run.x - (previous.x + previous.width) < 0.012
-        }),
+        (!options.detectedRectangularGeometry &&
+          row.slice(1).some((run, index) => {
+            const previous = row[index]
+            return run.x - (previous.x + previous.width) < 0.012
+          })),
     )
   ) {
     return null
   }
-  return rows
+  return { bands, rows }
 }
 
 export type CanonicalTable = {
@@ -785,16 +789,37 @@ export type CanonicalTable = {
 }
 
 function hasExplicitHeaderStyle(run: PdfRegionLine['runs'][number]) {
-  return run.bold === true || /(?:bold|black|demi|semibold)/i.test(run.fontName)
+  return (
+    run.bold === true ||
+    /(?:bold|black|demi|semibold|(?:^|[-_])medi(?:um)?(?:$|[-_]))/i.test(
+      run.fontName,
+    )
+  )
 }
 
 export function canonicalTableFromLines(
   lines: PdfRegionLine[],
+  options: {
+    sourceHeaderLineIds?: readonly string[]
+    detectedRectangularGeometry?: boolean
+  } = {},
 ): CanonicalTable | null {
-  const rows = tableRows(lines)
-  if (!rows) return null
+  const table = tableRows(lines, options)
+  if (!table) return null
+  const { bands, rows } = table
   const headerRuns = rows[0]
-  const explicitHeader = headerRuns.every(hasExplicitHeaderStyle)
+  const expectedHeaderLineIds = bands[0].map((line) => line.id).sort()
+  const sourceHeaderLineIds = [
+    ...new Set(options.sourceHeaderLineIds ?? []),
+  ].sort()
+  const exactSourceHeaderRole =
+    sourceHeaderLineIds.length > 0 &&
+    sourceHeaderLineIds.length === expectedHeaderLineIds.length &&
+    sourceHeaderLineIds.every(
+      (lineId, index) => lineId === expectedHeaderLineIds[index],
+    )
+  const explicitHeader =
+    exactSourceHeaderRole || headerRuns.every(hasExplicitHeaderStyle)
   const bodyHasNonHeaderStyle = rows
     .slice(1)
     .flat()
@@ -816,10 +841,15 @@ export async function createTableAsset(input: {
   sourceObjectId: string
   sourceBox: NormalizedSourceBox
   lines: PdfRegionLine[]
+  sourceHeaderLineIds?: readonly string[]
+  detectedRectangularGeometry?: boolean
   pageWidth: number
   pageHeight: number
 }) {
-  const table = canonicalTableFromLines(input.lines)
+  const table = canonicalTableFromLines(input.lines, {
+    sourceHeaderLineIds: input.sourceHeaderLineIds,
+    detectedRectangularGeometry: input.detectedRectangularGeometry,
+  })
   if (!table) return null
   const [head, ...body] = table.rows
   const xhtml = `<?xml version="1.0" encoding="UTF-8"?>

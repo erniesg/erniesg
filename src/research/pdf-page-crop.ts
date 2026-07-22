@@ -3,6 +3,7 @@ import type { NormalizedSourceBox } from './import-types'
 export const MAX_PDF_PAGE_CROP_PIXELS = 3_200_000
 export const PDF_PAGE_CROP_TIMEOUT_MS = 15_000
 export const MAX_SOURCE_PAGE_CROP_AREA = 0.72
+const SOURCE_INK_PADDING = 0.004
 
 type CropCanvas = {
   width: number
@@ -54,6 +55,123 @@ export type PdfPageCropRaster = {
   width: number
   height: number
   pixels: Uint8Array
+  sourceBox: NormalizedSourceBox
+}
+
+function isSourceInkPixel(pixels: Uint8Array, offset: number) {
+  const alpha = pixels[offset + 3] / 255
+  const red = pixels[offset] * alpha + 255 * (1 - alpha)
+  const green = pixels[offset + 1] * alpha + 255 * (1 - alpha)
+  const blue = pixels[offset + 2] * alpha + 255 * (1 - alpha)
+  return Math.min(red, green, blue) < 248
+}
+
+export function hasSourceInkOnCropEdge(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+) {
+  if (
+    !Number.isInteger(width) ||
+    width < 1 ||
+    !Number.isInteger(height) ||
+    height < 1 ||
+    pixels.byteLength !== width * height * 4
+  ) {
+    return true
+  }
+  for (let x = 0; x < width; x += 1) {
+    if (
+      isSourceInkPixel(pixels, x * 4) ||
+      isSourceInkPixel(pixels, ((height - 1) * width + x) * 4)
+    ) {
+      return true
+    }
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    if (
+      isSourceInkPixel(pixels, y * width * 4) ||
+      isSourceInkPixel(pixels, (y * width + width - 1) * 4)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function rounded(value: number) {
+  return Math.round(value * 100_000) / 100_000
+}
+
+function sourceInkBounds(pixels: Uint8Array, width: number, height: number) {
+  let left = width
+  let top = height
+  let right = 0
+  let bottom = 0
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!isSourceInkPixel(pixels, (y * width + x) * 4)) continue
+      left = Math.min(left, x)
+      top = Math.min(top, y)
+      right = Math.max(right, x + 1)
+      bottom = Math.max(bottom, y + 1)
+    }
+  }
+  return right > left && bottom > top ? { left, top, right, bottom } : null
+}
+
+function tightenRasterToSourceInk(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+  sourceBox: NormalizedSourceBox,
+): PdfPageCropRaster {
+  const ink = sourceInkBounds(pixels, width, height)
+  if (!ink) return { width, height, pixels, sourceBox }
+  const normalizedPixelWidth = sourceBox.width / width
+  const normalizedPixelHeight = sourceBox.height / height
+  const horizontalPadding = Math.max(
+    1,
+    Math.ceil(SOURCE_INK_PADDING / normalizedPixelWidth),
+  )
+  const verticalPadding = Math.max(
+    1,
+    Math.ceil(SOURCE_INK_PADDING / normalizedPixelHeight),
+  )
+  const left = Math.max(0, ink.left - horizontalPadding)
+  const top = Math.max(0, ink.top - verticalPadding)
+  const right = Math.min(width, ink.right + horizontalPadding)
+  const bottom = Math.min(height, ink.bottom + verticalPadding)
+  if (left === 0 && top === 0 && right === width && bottom === height) {
+    return { width, height, pixels, sourceBox }
+  }
+  const tightenedWidth = right - left
+  const tightenedHeight = bottom - top
+  const tightenedPixels = new Uint8Array(tightenedWidth * tightenedHeight * 4)
+  for (let y = 0; y < tightenedHeight; y += 1) {
+    const sourceOffset = ((top + y) * width + left) * 4
+    const targetOffset = y * tightenedWidth * 4
+    tightenedPixels.set(
+      pixels.subarray(sourceOffset, sourceOffset + tightenedWidth * 4),
+      targetOffset,
+    )
+  }
+  const tightenedLeft = sourceBox.x + left * normalizedPixelWidth
+  const tightenedTop = sourceBox.y + top * normalizedPixelHeight
+  const tightenedRight = sourceBox.x + right * normalizedPixelWidth
+  const tightenedBottom = sourceBox.y + bottom * normalizedPixelHeight
+  return {
+    width: tightenedWidth,
+    height: tightenedHeight,
+    pixels: tightenedPixels,
+    sourceBox: {
+      ...sourceBox,
+      x: rounded(tightenedLeft),
+      y: rounded(tightenedTop),
+      width: rounded(tightenedRight - tightenedLeft),
+      height: rounded(tightenedBottom - tightenedTop),
+    },
+  }
 }
 
 export function isBoundedPdfPageCropBox(sourceBox: NormalizedSourceBox) {
@@ -100,6 +218,7 @@ export async function renderPdfPageCrop({
   signal,
   maximumPixels = MAX_PDF_PAGE_CROP_PIXELS,
   timeoutMs = PDF_PAGE_CROP_TIMEOUT_MS,
+  tightenToSourceInk = false,
 }: {
   page: PdfPageCropSource
   canvasFactory: PdfCanvasFactory
@@ -107,6 +226,7 @@ export async function renderPdfPageCrop({
   signal?: AbortSignal
   maximumPixels?: number
   timeoutMs?: number
+  tightenToSourceInk?: boolean
 }): Promise<PdfPageCropRaster> {
   validateSourceBox(page, sourceBox)
   if (signal?.aborted) throw abortError()
@@ -177,7 +297,12 @@ export async function renderPdfPageCrop({
     const image = target.context.getImageData(0, 0, width, height)
     const pixels = new Uint8Array(image.data.byteLength)
     pixels.set(image.data)
-    return { width, height, pixels }
+    if (hasSourceInkOnCropEdge(pixels, width, height)) {
+      throw new Error('PDF page crop has source ink touching its edge')
+    }
+    return tightenToSourceInk
+      ? tightenRasterToSourceInk(pixels, width, height, sourceBox)
+      : { width, height, pixels, sourceBox }
   } catch (error) {
     // `cancel()` is advisory in PDF.js and custom browser renderers. Some
     // implementations never settle their render promise after cancellation,

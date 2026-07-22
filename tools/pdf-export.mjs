@@ -14,6 +14,70 @@ import {
 const DEFAULT_TARGETS = ['paperPro', 'paperProMove']
 const encoder = new TextEncoder()
 let temporaryFileSequence = 0
+let failureStage = 'startup'
+
+function safeFailureCode(error) {
+  const message = error instanceof Error ? error.message : ''
+  const symbolicCode = message.match(/^([A-Z][A-Z0-9_]+)(?::|$)/)?.[1]
+  if (symbolicCode) return symbolicCode
+  if (message.includes('canonical node ids must be globally unique')) {
+    return 'EPUB_DUPLICATE_CANONICAL_NODE_ID'
+  }
+  if (message.includes('well-formed XML')) return 'EPUB_XML_INVALID'
+  if (message.includes('dangling')) return 'EPUB_DANGLING_REFERENCE'
+  if (message.includes('unsafe')) return 'EPUB_UNSAFE_REFERENCE'
+  if (message.includes('missing selected asset')) {
+    return 'EPUB_MISSING_SELECTED_ASSET'
+  }
+  if (message.includes('bytes do not match')) {
+    return 'EPUB_ASSET_MEDIA_TYPE_MISMATCH'
+  }
+  return 'UNCLASSIFIED_EXPORT_FAILURE'
+}
+
+function recordDocumentExportFailure(document, error, stage) {
+  const code = safeFailureCode(error)
+  const diagnostic = {
+    code,
+    severity: 'error',
+    message: `EPUB generation stopped at ${stage}; no artifact for this document was published.`,
+  }
+  const diagnostics = [...(document.diagnostics ?? [])]
+  let truncated = document.diagnosticSamplesTruncated ?? 0
+  if (diagnostics.length < 64) {
+    diagnostics.push(diagnostic)
+    diagnostics.sort(
+      (left, right) =>
+        left.code.localeCompare(right.code) ||
+        left.severity.localeCompare(right.severity) ||
+        (left.page ?? Number.MAX_SAFE_INTEGER) -
+          (right.page ?? Number.MAX_SAFE_INTEGER) ||
+        left.message.localeCompare(right.message),
+    )
+  } else {
+    truncated += 1
+  }
+  document.diagnosticCounts = {
+    ...(document.diagnosticCounts ?? {}),
+    [code]: (document.diagnosticCounts?.[code] ?? 0) + 1,
+  }
+  document.diagnosticCounts = Object.fromEntries(
+    Object.entries(document.diagnosticCounts).sort(([left], [right]) =>
+      left.localeCompare(right),
+    ),
+  )
+  document.diagnostics = diagnostics
+  document.diagnosticSamplesTruncated = truncated
+  document.exports = []
+  document.readiness = {
+    ...document.readiness,
+    status: 'review-required',
+    ready: false,
+    blockingDiagnosticCodes: [
+      ...new Set([...document.readiness.blockingDiagnosticCodes, code]),
+    ].sort(),
+  }
+}
 
 function usage() {
   return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--readable-fallback] [--require-epubcheck] --out <directory>\n'
@@ -191,6 +255,7 @@ async function exportDocument({
 }) {
   const artifacts = []
   for (const profile of profiles) {
+    failureStage = 'epub-build'
     const epub = record.reconstruction.readiness.ready
       ? await exportModules.buildEpub(
           record.reconstruction.paper,
@@ -202,7 +267,9 @@ async function exportDocument({
           record.reconstruction,
           profile,
         )
+    failureStage = 'epub-structural-validation'
     exportModules.inspectEpub(epub.bytes, profile)
+    failureStage = 'epubcheck-validation'
     artifacts.push({
       epub,
       metadata: {
@@ -252,6 +319,7 @@ async function exportDocument({
 
   // All gates and validators finish before any artifact for this document is
   // published to the caller's output directory.
+  failureStage = 'artifact-publication'
   for (const { epub } of artifacts) {
     await writeAtomically(join(destination, epub.fileName), epub.bytes)
   }
@@ -264,6 +332,7 @@ async function exportDocument({
 }
 
 async function main() {
+  failureStage = 'argument-validation'
   let parsed
   try {
     parsed = parseArguments(process.argv.slice(2))
@@ -273,8 +342,10 @@ async function main() {
     return
   }
 
+  failureStage = 'pipeline-initialization'
   const pipeline = await createPdfPipeline()
   try {
+    failureStage = 'pdf-audit'
     const records = await auditPdfInputs(parsed.inputs, pipeline)
     if (records.length === 0) {
       process.stderr.write('No local PDF inputs were found.\n')
@@ -282,6 +353,7 @@ async function main() {
       return
     }
 
+    failureStage = 'export-module-load'
     const exportModules = await pipeline.loadExportModules()
     const unknownTarget = parsed.targets.find(
       (target) => !exportModules.targetProfileIds.includes(target),
@@ -291,7 +363,9 @@ async function main() {
       process.exitCode = 2
       return
     }
+    failureStage = 'profile-resolution'
     const profiles = parsed.targets.map(exportModules.getTargetProfile)
+    failureStage = 'epubcheck-resolution'
     const validator = await epubCheckValidator()
     if (parsed.requireEpubCheck && validator.kind === 'skipped') {
       throw new Error('EPUBCHECK_REQUIRED')
@@ -307,16 +381,21 @@ async function main() {
           continue
         }
       }
-      record.document.exports = await exportDocument({
-        record,
-        profiles,
-        exportModules,
-        validator,
-        outputDirectory: parsed.outputDirectory,
-        documentCount: records.length,
-      })
+      try {
+        record.document.exports = await exportDocument({
+          record,
+          profiles,
+          exportModules,
+          validator,
+          outputDirectory: parsed.outputDirectory,
+          documentCount: records.length,
+        })
+      } catch (error) {
+        recordDocumentExportFailure(record.document, error, failureStage)
+      }
     }
 
+    failureStage = 'corpus-report'
     const report = createCorpusReport(
       records.map((record) => record.document),
       pipeline.policy,
@@ -335,9 +414,9 @@ async function main() {
   }
 }
 
-main().catch(() => {
+main().catch((error) => {
   process.stderr.write(
-    'PDF export failed without publishing local path or document details.\n',
+    `PDF export failed without publishing local path or document details. Stage: ${failureStage}. Code: ${safeFailureCode(error)}.\n`,
   )
   process.exitCode = 2
 })

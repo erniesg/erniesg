@@ -17,6 +17,7 @@ bibliography entries remain canonical prose with their normal PDF provenance.
 | `footnote-reference`                | note reference              | Exact label in a same-page footnote band                                                                    |
 | `endnote-reference`                 | note reference              | Exact label in a later endnote section                                                                      |
 | `bracketed-bibliography-citation`   | citation retained as prose  | Reference-list heading, bracket syntax, at least two citation markers, and no note body region              |
+| `author-year-bibliography-citation` | citation retained as prose  | Reference-list heading plus a bounded `Surname et al., YYYY` cluster or `Surname et al. (YYYY)` form        |
 | `superscript-citation-cluster`      | citation retained as prose  | Reference-list heading, clustered superscript syntax, at least two citation labels, and no note body region |
 | `superscript-bibliography-citation` | citation retained as prose  | Reference-list heading, repeated superscript citation syntax, and no note body with the same label          |
 | `author-affiliation-superscript`    | plain text                  | Page-one superscript before Abstract or Introduction with no matching note body                             |
@@ -32,3 +33,9 @@ remain `AMBIGUOUS_NOTE_MATCH`; a best candidate below the threshold remains
 candidate source boxes, and evidence such as same-page scope, same-column
 geometry, page-wide note region, note-following-reference, or later-endnote
 scope.
+
+Author-year relationships resolve only when every normalized first-surname and
+year key names exactly one canonical entry inside the detected reference-list
+scope. Missing keys, duplicate keys, entries with multiple plausible years, and
+unsupported name forms remain unresolved; the importer does not choose a
+bibliography target heuristically.

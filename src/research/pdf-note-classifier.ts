@@ -11,6 +11,7 @@ export const PDF_NOTE_CITATION_DENSITY_THRESHOLD = 2
 
 type MarkerSyntax =
   | 'explicit-note-language'
+  | 'author-year-syntax'
   | 'bracketed-numeric-syntax'
   | 'superscript-cluster-syntax'
   | 'superscript-syntax'
@@ -38,6 +39,8 @@ const REFERENCE_SECTION_END =
   /^(?:appendix\b|acknowledg(?:e)?ments?\b|supplement(?:ary)?\b|author contributions?\b|data availability\b)/i
 const BODY_SECTION_HEADING = /^(?:abstract|introduction)\b/i
 const NOTE_TOKEN_SOURCE = String.raw`(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])`
+const AUTHOR_YEAR_SURNAME_SOURCE = String.raw`\p{Lu}[\p{L}\p{M}'’.-]*`
+const AUTHOR_YEAR_SOURCE = String.raw`(?:18|19|20)\d{2}[a-z]?`
 const MAX_EXPANDED_CITATION_RANGE = 100
 
 function rounded(value: number) {
@@ -68,6 +71,32 @@ function positionCompare(left: PdfPageRegion, right: PdfPageRegion) {
     left.box.y - right.box.y ||
     left.box.x - right.box.x ||
     left.id.localeCompare(right.id)
+  )
+}
+
+function median(values: number[]) {
+  if (values.length === 0) return 0
+  const ordered = [...values].sort((left, right) => left - right)
+  const middle = Math.floor(ordered.length / 2)
+  return ordered.length % 2 === 0
+    ? (ordered[middle - 1] + ordered[middle]) / 2
+    : ordered[middle]
+}
+
+function endsReferenceSection(region: PdfPageRegion, bodyFontSize: number) {
+  const text = region.text.trim()
+  if (REFERENCE_SECTION_END.test(text)) return true
+  const largestFontSize = Math.max(
+    ...region.lines.map((line) => line.fontSize),
+    0,
+  )
+  return (
+    bodyFontSize > 0 &&
+    region.lines.length > 0 &&
+    region.lines.length <= 2 &&
+    text.length <= 180 &&
+    /^[A-Z]\.\s+\p{Lu}/u.test(text) &&
+    largestFontSize >= bodyFontSize * 1.12
   )
 }
 
@@ -104,6 +133,42 @@ function labelsFrom(value: string) {
     if (last) add(last)
   }
   return labels
+}
+
+function isMathematicalBracket(text: string, start: number) {
+  const prefix = text.slice(Math.max(0, start - 64), start).trimEnd()
+  return /(?:[:=∈∉≤≥<>]|\b(?:set|list|array|vector|matrix|tuple|values?|numbers?|tokens?|tokenizes?|integers?|ranges?|periods?|moduli|indices|dimensions?|shape)\s*(?::|=)?)$/iu.test(
+    prefix,
+  )
+}
+
+function isMathematicalScript(text: string, start: number, end: number) {
+  const scriptCharacters = '0-9⁰¹²³⁴⁵⁶⁷⁸⁹'
+  const tokenCharacters = new RegExp(`[\\p{L}${scriptCharacters}]`, 'u')
+  let tokenStart = start
+  let tokenEnd = end
+  while (tokenStart > 0 && tokenCharacters.test(text[tokenStart - 1])) {
+    tokenStart -= 1
+  }
+  while (tokenEnd < text.length && tokenCharacters.test(text[tokenEnd])) {
+    tokenEnd += 1
+  }
+  const token = text.slice(tokenStart, tokenEnd)
+  const variableWithScript = new RegExp(
+    `^[\\p{L}][${scriptCharacters}]+$`,
+    'u',
+  ).test(token)
+  const before = text.slice(Math.max(0, start - 1), start)
+  const after = text.slice(end, end + 8)
+  const embeddedBetweenSymbols =
+    /[\p{L}\p{N})\]}]/u.test(before) && /^[\p{L}\p{N}([{]/u.test(after)
+  const followedByMathematicalRelation =
+    /[\p{L}\p{N})\]}]/u.test(before) && /^\s*(?:=|[+\-−×÷≤≥≈∈∉])/u.test(after)
+  return (
+    variableWithScript ||
+    embeddedBetweenSymbols ||
+    followedByMathematicalRelation
+  )
 }
 
 function markerCandidates(region: PdfPageRegion) {
@@ -155,6 +220,7 @@ function markerCandidates(region: PdfPageRegion) {
     /\[\s*((?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§])(?:\s*(?:[,;]|[–—-])\s*(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§]))*)\s*\]/gu
   for (const match of region.text.matchAll(bracketed)) {
     const start = match.index ?? 0
+    if (isMathematicalBracket(region.text, start)) continue
     add(
       labelsFrom(match[1]),
       start,
@@ -166,6 +232,9 @@ function markerCandidates(region: PdfPageRegion) {
   const superscriptCluster = /[⁰¹²³⁴⁵⁶⁷⁸⁹]+(?:\s*[,;˒]\s*[⁰¹²³⁴⁵⁶⁷⁸⁹]+)+/gu
   for (const match of region.text.matchAll(superscriptCluster)) {
     const start = match.index ?? 0
+    if (isMathematicalScript(region.text, start, start + match[0].length)) {
+      continue
+    }
     add(
       labelsFrom(match[0]),
       start,
@@ -177,6 +246,9 @@ function markerCandidates(region: PdfPageRegion) {
   const inlineSuperscript = /[⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu
   for (const match of region.text.matchAll(inlineSuperscript)) {
     const start = match.index ?? 0
+    if (isMathematicalScript(region.text, start, start + match[0].length)) {
+      continue
+    }
     add([match[0]], start, start + match[0].length, 'superscript-syntax')
   }
 
@@ -221,25 +293,76 @@ function markerCandidates(region: PdfPageRegion) {
         continue
       }
       if (withinLine < 0) continue
-      add(
-        geometryLabels,
-        lineOffset + withinLine,
-        lineOffset + withinLine + raw.length,
-        'rendered-superscript-geometry',
-        {
-          page: run.page,
-          x: run.x,
-          y: run.y,
-          width: run.width,
-          height: run.height,
-          rotation: run.rotation,
-          method: run.method,
-        },
-      )
+      const start = lineOffset + withinLine
+      const end = start + raw.length
+      if (isMathematicalScript(region.text, start, end)) continue
+      add(geometryLabels, start, end, 'rendered-superscript-geometry', {
+        page: run.page,
+        x: run.x,
+        y: run.y,
+        width: run.width,
+        height: run.height,
+        rotation: run.rotation,
+        method: run.method,
+      })
     }
     lineOffset += line.text.length + 1
   }
 
+  return found.sort(
+    (left, right) => left.start - right.start || left.end - right.end,
+  )
+}
+
+function normalizedAuthorYearKey(surname: string, year: string) {
+  const normalizedSurname = surname
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/’/gu, "'")
+    .toLowerCase()
+  return `${normalizedSurname}:${year.toLowerCase()}`
+}
+
+function authorYearMarkerCandidates(region: PdfPageRegion) {
+  const found: MarkerCandidate[] = []
+  const add = (labels: string[], start: number, end: number) => {
+    if (labels.length === 0 || start < 0 || end <= start) return
+    found.push({
+      label: labels.join(','),
+      labels,
+      region,
+      start,
+      end,
+      syntax: 'author-year-syntax',
+      sourceBox: sourceBox(region),
+    })
+  }
+  const component = new RegExp(
+    `^\\s*(${AUTHOR_YEAR_SURNAME_SOURCE})\\s+et\\s+al\\.\\s*,\\s*(${AUTHOR_YEAR_SOURCE})\\s*$`,
+    'u',
+  )
+  for (const match of region.text.matchAll(/\([^()]{1,240}\)/gu)) {
+    const parts = match[0].slice(1, -1).split(/\s*;\s*/u)
+    const parsed = parts.map((part) => part.match(component))
+    if (parsed.some((part) => !part)) continue
+    add(
+      parsed.map((part) => normalizedAuthorYearKey(part![1], part![2])),
+      match.index ?? 0,
+      (match.index ?? 0) + match[0].length,
+    )
+  }
+  const narrative = new RegExp(
+    `(?<![\\p{L}\\p{M}'’.-])(${AUTHOR_YEAR_SURNAME_SOURCE})\\s+et\\s+al\\.\\s*\\(\\s*(${AUTHOR_YEAR_SOURCE})\\s*\\)`,
+    'gu',
+  )
+  for (const match of region.text.matchAll(narrative)) {
+    const start = match.index ?? 0
+    add(
+      [normalizedAuthorYearKey(match[1], match[2])],
+      start,
+      start + match[0].length,
+    )
+  }
   return found.sort(
     (left, right) => left.start - right.start || left.end - right.end,
   )
@@ -307,8 +430,24 @@ function bibliographyEntryMarker(region: PdfPageRegion) {
 
 export function classifyPdfNoteMarkers(
   regions: PdfPageRegion[],
+  readingOrder?: readonly string[],
 ): PdfNoteMarkerClassificationResult {
-  const orderedRegions = [...regions].sort(positionCompare)
+  const regionById = new Map(regions.map((region) => [region.id, region]))
+  const orderedRegionIds = new Set(readingOrder ?? [])
+  const orderedRegions = [
+    ...(readingOrder ?? []).flatMap((id) => {
+      const region = regionById.get(id)
+      return region ? [region] : []
+    }),
+    ...regions
+      .filter((region) => !orderedRegionIds.has(region.id))
+      .sort(positionCompare),
+  ]
+  const bodyFontSize = median(
+    orderedRegions.flatMap((region) =>
+      region.lines.map((line) => line.fontSize).filter((value) => value > 0),
+    ),
+  )
   const referenceHeadingIndex = orderedRegions.findLastIndex((region) =>
     REFERENCE_HEADING.test(region.text.trim()),
   )
@@ -318,7 +457,7 @@ export function classifyPdfNoteMarkers(
       : orderedRegions.findIndex(
           (region, index) =>
             index > referenceHeadingIndex &&
-            REFERENCE_SECTION_END.test(region.text.trim()),
+            endsReferenceSection(region, bodyFontSize),
         )
   const bibliographyRegionIds = new Set(
     referenceHeadingIndex < 0
@@ -338,6 +477,16 @@ export function classifyPdfNoteMarkers(
   const ordinaryCandidates = orderedRegions
     .filter((region) => region.kind === 'body' || region.kind === 'spanning')
     .flatMap(markerCandidates)
+  const authorYearCandidates =
+    referenceHeadingIndex < 0
+      ? []
+      : orderedRegions
+          .filter(
+            (region) =>
+              (region.kind === 'body' || region.kind === 'spanning') &&
+              !bibliographyRegionIds.has(region.id),
+          )
+          .flatMap(authorYearMarkerCandidates)
   const bibliographyEntryCandidates = orderedRegions
     .filter(
       (region) =>
@@ -361,6 +510,7 @@ export function classifyPdfNoteMarkers(
     })
   const candidates = [
     ...ordinaryCandidates,
+    ...authorYearCandidates,
     ...bibliographyEntryCandidates,
   ].sort(
     (left, right) =>
@@ -400,6 +550,16 @@ export function classifyPdfNoteMarkers(
       return classification(candidate, contextual, 'plain-text', 0.98, [
         'scholarly-cross-reference-context',
       ])
+    }
+
+    if (candidate.syntax === 'author-year-syntax') {
+      return classification(
+        candidate,
+        'author-year-bibliography-citation',
+        'citation',
+        0.98,
+        ['reference-list-section-detected', 'bounded-author-year-syntax'],
+      )
     }
 
     const matchingBodies = noteBodies.filter((region) => {

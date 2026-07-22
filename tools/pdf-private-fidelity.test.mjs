@@ -1578,6 +1578,27 @@ describe('private PDF fidelity runner', () => {
     })
   })
 
+  it('accepts author-year citation relationships in sanitized evidence', () => {
+    const baseline = fidelityReceipt({
+      transformReconstruction(source) {
+        source.citationRelationships = [
+          citationRelationship({
+            taxonomy: 'author-year-bibliography-citation',
+          }),
+        ]
+        return source
+      },
+    })
+
+    expect(
+      comparePrivateFidelityReceipts(
+        baseline,
+        structuredClone(baseline),
+        acceptedBaselineSha256(baseline),
+      ),
+    ).toMatchObject({ status: 'passed', passed: true })
+  })
+
   it('requires an independently supplied digest before a not-configured receipt can act as the accepted baseline', () => {
     const baseline = fidelityReceipt()
     const candidate = fidelityReceipt()

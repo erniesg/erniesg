@@ -78,6 +78,76 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('preserves inline mathematical styling in complete figure captions', () => {
+    const captionPaper = structuredClone(paper)
+    const captionText = 'Figure 1. Terms h2 and R2 remain semantic.'
+    const hStart = captionText.indexOf('h2')
+    const rStart = captionText.indexOf('R2')
+    captionPaper.nodes = [
+      {
+        id: 'styled-caption-figure',
+        type: 'figure',
+        objectType: 'figure',
+        title: captionText,
+        relationships: { caption: 'styled-caption' },
+        source: 'synthetic-caption-style',
+      },
+      {
+        id: 'styled-caption',
+        type: 'caption',
+        text: captionText,
+        inlineRuns: [
+          { start: hStart, end: hStart + 1, italic: true },
+          {
+            start: hStart + 1,
+            end: hStart + 2,
+            verticalAlign: 'subscript',
+          },
+          {
+            start: rStart + 1,
+            end: rStart + 2,
+            verticalAlign: 'superscript',
+          },
+        ],
+        source: 'synthetic-caption-style',
+      },
+    ]
+
+    const content = renderPublicationXhtml(captionPaper)
+
+    expect(content).toContain(
+      '<figcaption id="styled-caption" data-canonical-id="styled-caption">Figure 1. Terms <em>h</em><sub>2</sub> and R<sup>2</sup> remain semantic.</figcaption>',
+    )
+  })
+
+  it('percent-encodes RFC-unwise external-link characters for EPUB readers', async () => {
+    const linkPaper = structuredClone(paper)
+    const value = 'Open the reviewed paper.'
+    linkPaper.nodes = [
+      {
+        id: 'encoded-external-link',
+        type: 'paragraph',
+        text: value,
+        inlineRuns: [
+          {
+            start: 0,
+            end: 23,
+            href: 'https://example.test/forum?referrer=%5Bprofile%5D(%2Fid%3D{~}Author1)',
+          },
+        ],
+        source: 'synthetic-rfc-unwise-link',
+      },
+    ]
+
+    const content = renderPublicationXhtml(linkPaper)
+    expect(content).toContain(
+      'href="https://example.test/forum?referrer=%5Bprofile%5D(%2Fid%3D%7B~%7DAuthor1)"',
+    )
+    expect(content).not.toContain('{~}')
+    const epub = await buildEpub(linkPaper)
+    expect(() => inspectEpub(epub.bytes)).not.toThrow()
+  })
+
   it('renders malformed external-link text without an invalid XHTML href', () => {
     const inlinePaper = structuredClone(paper)
     const value = 'Malformed link text remains readable.'
@@ -411,7 +481,7 @@ describe('EPUB 3 export', () => {
     )
   })
 
-  it('emits footnote backlinks only for rendered note-reference anchors', async () => {
+  it('emits footnote backlinks for rendered note-reference anchors', async () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [
       {
@@ -437,7 +507,7 @@ describe('EPUB 3 export', () => {
         label: '1',
         text: 'The note remains readable.',
         relationships: {
-          backlinks: ['rendered-note-reference', 'missing-note-reference'],
+          backlinks: ['rendered-note-reference'],
         },
         source: 'synthetic-orphan-backlink',
       },
@@ -448,8 +518,26 @@ describe('EPUB 3 export', () => {
     const content = strFromU8(files['EPUB/content.xhtml'])
 
     expect(content).toContain('href="#rendered-note-reference"')
-    expect(content).not.toContain('href="#missing-note-reference"')
     expect(content).toContain('The note remains readable.')
+  })
+
+  it('rejects a canonical note backlink with no rendered reference anchor', async () => {
+    const notePaper = structuredClone(paper)
+    notePaper.nodes = [
+      {
+        id: 'orphan-note',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '1',
+        text: 'An affiliation note with an orphan source-region backlink.',
+        relationships: { backlinks: ['page-001-author-region'] },
+        source: 'synthetic-orphan-author-note',
+      },
+    ]
+
+    await expect(buildEpub(notePaper)).rejects.toThrow(
+      /DANGLING_EPUB_INTERNAL_REFERENCE/u,
+    )
   })
 
   it('renders title-page author annotations as linked EPUB notes', () => {
@@ -481,6 +569,63 @@ describe('EPUB 3 export', () => {
       'Yeyong Yu<a id="author-noteref-1" href="#author-note-1" epub:type="noteref">*</a>, Runsheng Yu',
     )
     expect(content).toContain('href="#author-noteref-1"')
+  })
+
+  it('renders a reconstructed byline immediately after its canonical title so author-note backlinks resolve', () => {
+    const notePaper = structuredClone(paper)
+    notePaper.title = 'Canonical reconstructed title'
+    notePaper.authors = ['Yeyong Yu', 'Runsheng Yu']
+    notePaper.authorNotes = [
+      {
+        id: 'reconstructed-author-noteref-1',
+        author: 'Yeyong Yu',
+        label: '*',
+        target: 'reconstructed-author-note-1',
+      },
+    ]
+    notePaper.nodes = [
+      {
+        id: 'canonical-title-node',
+        type: 'heading',
+        level: 1,
+        text: notePaper.title,
+        source: 'pdf:synthetic#page=1',
+      },
+      {
+        id: 'first-body-node',
+        type: 'paragraph',
+        text: 'The body follows the source byline.',
+        source: 'pdf:synthetic#page=1',
+      },
+      {
+        id: 'reconstructed-author-note-1',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '*',
+        text: 'Work done during the internship.',
+        relationships: { backlinks: ['reconstructed-author-noteref-1'] },
+        source: 'pdf:synthetic#page=1',
+      },
+    ]
+    const reconstruction = {
+      readiness: { ready: true },
+      visualRelationships: [],
+      assets: [],
+    } as unknown as PdfReconstruction
+
+    const content = renderPublicationXhtml(notePaper, { reconstruction })
+
+    expect(content).toContain(
+      'Yeyong Yu<a id="reconstructed-author-noteref-1" href="#reconstructed-author-note-1" epub:type="noteref">*</a>, Runsheng Yu',
+    )
+    expect(content).toContain('href="#reconstructed-author-noteref-1"')
+    expect(content.indexOf('id="canonical-title-node"')).toBeLessThan(
+      content.indexOf('class="authors"'),
+    )
+    expect(content.indexOf('class="authors"')).toBeLessThan(
+      content.indexOf('id="first-body-node"'),
+    )
+    expect(XMLValidator.validate(content)).toBe(true)
   })
 
   it('renders an explicit source note marker instead of discarding its note-kind text', () => {
@@ -525,6 +670,25 @@ describe('EPUB 3 export', () => {
 
     await expect(buildEpub(danglingPaper)).rejects.toThrow(
       /dangling internal reference/i,
+    )
+  })
+
+  it.each([
+    { label: 'forbidden C0 control', text: '\u0012' },
+    { label: 'Unicode replacement glyph', text: 'term \ufffd value' },
+  ])('rejects lossy canonical text containing a $label', async ({ text }) => {
+    const corruptPaper = structuredClone(paper)
+    corruptPaper.nodes = [
+      {
+        id: 'corrupt-canonical-node',
+        type: 'paragraph',
+        text,
+        source: 'synthetic-corrupt-text',
+      },
+    ]
+
+    await expect(buildEpub(corruptPaper)).rejects.toThrow(
+      /EPUB_TEXT_SANITIZATION_LOSS/u,
     )
   })
 
@@ -837,6 +1001,11 @@ describe('EPUB 3 export', () => {
       {
         markup: "<a href='#missing-fragment'>missing</a>",
         expected: /dangling internal reference #missing-fragment/i,
+      },
+      {
+        markup:
+          "<a href='missing-document.xhtml#missing-fragment'>missing document</a>",
+        expected: /dangling internal reference missing-document\.xhtml/i,
       },
       {
         markup: "<img src='assets/missing.png' alt='missing' />",
@@ -1237,6 +1406,145 @@ describe('EPUB 3 export', () => {
       publicationGrade: false,
       sourceReadiness: { ready: false },
     })
+  })
+
+  it('projects readable-fallback note backlinks onto anchors that can actually render', async () => {
+    const run: PdfSourceRun = {
+      page: 1,
+      text: 'A claim with note 1.',
+      x: 0.1,
+      y: 0.2,
+      width: 0.7,
+      height: 0.02,
+      rotation: 0,
+      method: 'pdf-text',
+      fontName: 'Body',
+      fontSize: 10,
+      confidence: 1,
+    }
+    const reconstruction = await reconstructPageAnalyses({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: run.text.length,
+          imageCount: 1,
+          objects: [],
+          runs: [run],
+        },
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'readable-note-projection.pdf',
+      byteLength: 1024,
+    })
+    const paragraph = reconstruction.paper.nodes.find(
+      (node) => node.type === 'paragraph' && node.text === run.text,
+    )
+    expect(paragraph?.type).toBe('paragraph')
+    if (paragraph?.type !== 'paragraph') throw new Error('missing paragraph')
+    paragraph.noteReferences = [
+      {
+        id: 'rendered-reference',
+        label: '1',
+        target: 'rendered-note',
+        start: run.text.indexOf('1'),
+        end: run.text.indexOf('1') + 1,
+        confidence: 1,
+      },
+    ]
+    reconstruction.paper.nodes.push(
+      {
+        id: 'rendered-note',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '1',
+        text: 'A source-backed note.',
+        relationships: {
+          backlinks: ['rendered-reference', 'orphan-source-marker'],
+        },
+        source: 'pdf:synthetic#page=1',
+      },
+      {
+        id: 'orphan-note',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '2',
+        text: 'A note whose extracted marker cannot render.',
+        relationships: { backlinks: ['another-orphan-source-marker'] },
+        source: 'pdf:synthetic#page=1',
+      },
+    )
+
+    const fallback = await buildReadableEpub(
+      reconstruction.paper,
+      reconstruction,
+    )
+    const { files } = inspectEpub(fallback.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(content).toContain('id="rendered-reference"')
+    expect(content).toContain('href="#rendered-reference"')
+    expect(content).not.toContain('orphan-source-marker')
+    expect(content).not.toContain('another-orphan-source-marker')
+    expect(content).toContain('A note whose extracted marker cannot render.')
+  })
+
+  it('keeps owned text from an unresolved diagram with its orphan caption', () => {
+    const paper = {
+      id: 'unresolved-diagram-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Unresolved diagram transcript',
+      subtitle: 'Source-backed fallback',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A bounded unresolved diagram.',
+      nodes: [
+        {
+          id: 'caption-figure-1',
+          type: 'caption' as const,
+          text: 'Figure 1. A bounded unresolved diagram.',
+          source: 'pdf:test#page=1',
+        },
+      ],
+    }
+    const content = renderPublicationXhtml(paper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            id: 'visual-relationship-1',
+            kind: 'figure',
+            label: 'Figure 1',
+            captionRegionId: 'page-001-caption',
+            sourceRegionIds: [],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: ['unresolved-visual-text-owned'],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: 'Step 1: embed inputs. Step 2: create the output.',
+            altText: 'Figure 1. A bounded unresolved diagram.',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'caption-figure-1',
+          },
+        ],
+        assets: [],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('class="orphan-caption omitted-visual"')
+    expect(content).toContain('Recovered text inside the unresolved visual:')
+    expect(content).toContain(
+      'Step 1: embed inputs. Step 2: create the output.',
+    )
+    expect(content.match(/Step 1: embed inputs/g)).toHaveLength(1)
   })
 
   it('excludes prose-overlap false visuals and their canonical caption nodes from readable fallbacks', async () => {

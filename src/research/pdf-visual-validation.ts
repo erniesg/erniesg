@@ -6,6 +6,7 @@ import type {
   PdfVisualRelationship,
 } from './import-types'
 import type { ResearchPaper } from './schema'
+import { isStrictSemanticTable } from './semantic-table'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const ASSET_ID_PATTERN = /^asset-[a-f0-9]{24}$/
@@ -321,10 +322,10 @@ export function validatedPdfVisualRelationships({
   return (relationships ?? []).filter((relationship) => {
     const hasExplicitLineScope = Boolean(
       relationship.kind === 'table' &&
-        relationship.sourceLineIds?.length &&
-        relationship.sourceLineIds.every((lineId) => lineId.length > 0) &&
-        new Set(relationship.sourceLineIds).size ===
-          relationship.sourceLineIds.length,
+      relationship.sourceLineIds?.length &&
+      relationship.sourceLineIds.every((lineId) => lineId.length > 0) &&
+      new Set(relationship.sourceLineIds).size ===
+        relationship.sourceLineIds.length,
     )
     if (
       relationshipCounts.get(relationship.id) !== 1 ||
@@ -363,6 +364,8 @@ export function validatedPdfVisualRelationships({
     if (
       canonicalNode?.type !== 'figure' ||
       (canonicalNode.objectType ?? 'figure') !== relationship.kind ||
+      (relationship.kind === 'table' &&
+        !isStrictSemanticTable(canonicalNode.table)) ||
       !sameStrings(
         canonicalNode.relationships.assets ?? [],
         relationship.assetIds,
@@ -431,10 +434,10 @@ export function hasValidatedNativeAsset(
   const asset = uniqueAssetsById(assets ?? []).get(object.assetId)
   return Boolean(
     asset &&
-      validAssetContent(asset) &&
-      asset.rendition === 'source-preserved' &&
-      asset.kind === (object.kind === 'image' ? 'raster' : 'vector') &&
-      sameStrings(asset.sourceObjectIds, [object.id]) &&
-      sameBoxes(asset.sourceBoxes, [object.box]),
+    validAssetContent(asset) &&
+    asset.rendition === 'source-preserved' &&
+    asset.kind === (object.kind === 'image' ? 'raster' : 'vector') &&
+    sameStrings(asset.sourceObjectIds, [object.id]) &&
+    sameBoxes(asset.sourceBoxes, [object.box]),
   )
 }

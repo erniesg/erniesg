@@ -95,6 +95,7 @@ const captionNode = canonicalNodeBase
   .extend({
     type: z.literal('caption'),
     text: z.string().min(1),
+    inlineRuns: z.array(inlineRun).optional(),
   })
   .strict()
 

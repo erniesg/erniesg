@@ -373,4 +373,103 @@ describe('PDF visual asset primitives', () => {
       expect.objectContaining({ text: 'Nodes', headerScope: 'column' }),
     ])
   })
+
+  it('accepts a PDF medium face as explicit printed table-header evidence', () => {
+    const styled = [
+      line('header', 0.4, [
+        { text: 'Method', x: 0.2 },
+        { text: 'Score', x: 0.5 },
+      ]),
+      line('body', 0.44, [
+        { text: 'Baseline', x: 0.2 },
+        { text: '10', x: 0.5 },
+      ]),
+    ]
+    for (const run of styled[0].runs) {
+      run.fontName = 'Subset+NimbusRomNo9L-Medi'
+    }
+
+    expect(canonicalTableFromLines(styled)?.rows[0].cells).toEqual([
+      expect.objectContaining({ text: 'Method', headerScope: 'column' }),
+      expect.objectContaining({ text: 'Score', headerScope: 'column' }),
+    ])
+  })
+
+  it('accepts a regular header only with exact source header-line evidence', async () => {
+    const sourceClassified = [
+      line('source-header', 0.4, [
+        { text: 'Dataset', x: 0.2 },
+        { text: 'Scope', x: 0.5 },
+      ]),
+      line('body', 0.44, [
+        { text: 'Example', x: 0.2 },
+        { text: 'Dialogue', x: 0.5 },
+      ]),
+    ]
+
+    expect(canonicalTableFromLines(sourceClassified)).toBeNull()
+    expect(
+      canonicalTableFromLines(sourceClassified, {
+        sourceHeaderLineIds: ['source-header'],
+      })?.rows[0].cells,
+    ).toEqual([
+      expect.objectContaining({ text: 'Dataset', headerScope: 'column' }),
+      expect.objectContaining({ text: 'Scope', headerScope: 'column' }),
+    ])
+    await expect(
+      createTableAsset({
+        sourceObjectId: 'table-p001-source-classified-header',
+        sourceBox,
+        lines: sourceClassified,
+        sourceHeaderLineIds: ['source-header'],
+        pageWidth: 612,
+        pageHeight: 792,
+      }),
+    ).resolves.toMatchObject({ rendition: 'semantic-table' })
+    expect(
+      canonicalTableFromLines(sourceClassified, {
+        sourceHeaderLineIds: ['body'],
+      }),
+    ).toBeNull()
+  })
+
+  it('accepts dense columns only with proved rectangular detector geometry', async () => {
+    const dense = [
+      line('dense-header', 0.4, [
+        { text: 'Dataset', x: 0.2 },
+        { text: 'Character', x: 0.31 },
+        { text: 'Evaluation', x: 0.42 },
+      ]),
+      line('dense-body-1', 0.44, [
+        { text: 'Baseline', x: 0.2 },
+        { text: 'Yes', x: 0.31 },
+        { text: 'Dialogue', x: 0.42 },
+      ]),
+      line('dense-body-2', 0.48, [
+        { text: 'Proposed', x: 0.2 },
+        { text: 'Yes', x: 0.31 },
+        { text: 'Interview', x: 0.42 },
+      ]),
+    ]
+    const sourceHeaderLineIds = ['dense-header']
+
+    expect(canonicalTableFromLines(dense, { sourceHeaderLineIds })).toBeNull()
+    expect(
+      canonicalTableFromLines(dense, {
+        sourceHeaderLineIds,
+        detectedRectangularGeometry: true,
+      })?.rows,
+    ).toHaveLength(3)
+    await expect(
+      createTableAsset({
+        sourceObjectId: 'table-p001-dense-proved-grid',
+        sourceBox,
+        lines: dense,
+        sourceHeaderLineIds,
+        detectedRectangularGeometry: true,
+        pageWidth: 612,
+        pageHeight: 792,
+      }),
+    ).resolves.toMatchObject({ rendition: 'semantic-table' })
+  })
 })

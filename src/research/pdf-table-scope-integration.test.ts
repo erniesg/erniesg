@@ -20,6 +20,20 @@ function box(
   return { page: 1, x, y, width, height, rotation: 0, method }
 }
 
+function paddedCropBox(sourceBox: NormalizedSourceBox) {
+  const rounded = (value: number) => Math.round(value * 100_000) / 100_000
+  const left = Math.max(0, sourceBox.x - 0.004)
+  const top = Math.max(0, sourceBox.y - 0.004)
+  const right = Math.min(1, sourceBox.x + sourceBox.width + 0.004)
+  const bottom = Math.min(1, sourceBox.y + sourceBox.height + 0.004)
+  return box(
+    rounded(left),
+    rounded(top),
+    rounded(right - left),
+    rounded(bottom - top),
+  )
+}
+
 function caption(
   id: string,
   text: string,
@@ -287,7 +301,7 @@ describe('bounded table-scope visual fallback', () => {
     expect(rasterizeFigure).toHaveBeenCalledWith({
       kind: 'table',
       page: 1,
-      sourceBox: box(0.15, 0.2, 0.602, 0.162),
+      sourceBox: paddedCropBox(box(0.15, 0.2, 0.602, 0.162)),
       sourceObjectIds: objects.map((object) => object.id).sort(),
       sourceBoxes: objects
         .sort((left, right) => left.id.localeCompare(right.id))
@@ -449,7 +463,7 @@ describe('bounded table-scope visual fallback', () => {
     expect(firstInput.sourceObjectIds).toEqual(secondInput.sourceObjectIds)
     expect(firstInput.sourceObjectIds[0]).not.toContain(firstCaption.id)
     expect(firstInput.sourceObjectIds[0]).not.toContain(secondCaption.id)
-    expect(firstInput.sourceBox).toEqual(grid.box)
+    expect(firstInput.sourceBox).toEqual(paddedCropBox(grid.box))
     expect(first.relationships[0]).toMatchObject({
       status: 'matched',
       sourceRegionIds: [grid.id],
@@ -529,7 +543,7 @@ describe('bounded table-scope visual fallback', () => {
     expect(rasterizeFigure).toHaveBeenCalledWith({
       kind: 'table',
       page: 1,
-      sourceBox: cropBox,
+      sourceBox: paddedCropBox(cropBox),
       sourceObjectIds: [expect.stringMatching(/^table-scope-source:/)],
       sourceBoxes: [cropBox],
     })
@@ -562,6 +576,100 @@ describe('bounded table-scope visual fallback', () => {
       },
     ])
     expect(result.canonicalTablesByAssetId.size).toBe(0)
+  })
+
+  it('fails closed when a table-like header band sits just above the proved body scope', async () => {
+    const headerLine = tabularLine('omitted-header', 0.49, [0.12, 0.4, 0.67])
+    const header = {
+      ...mixedParent(
+        'omitted-header-region',
+        box(0.12, 0.49, 0.625, 0.014, 'pdf-text'),
+        [headerLine],
+      ),
+      kind: 'header' as const,
+    }
+    const bodyLines = [
+      tabularLine('body-row-1', 0.52, [0.12, 0.4, 0.67]),
+      tabularLine('body-row-2', 0.56, [0.12, 0.3, 0.5, 0.7]),
+      tabularLine('body-row-3', 0.6, [0.12, 0.25, 0.38, 0.53, 0.7]),
+    ]
+    const body = mixedParent(
+      'table-body-region',
+      box(0.12, 0.52, 0.655, 0.094, 'pdf-text'),
+      bodyLines,
+    )
+    const tableCaption = caption(
+      'header-omission-caption',
+      'Table 9. Header-complete results.',
+      box(0.12, 0.638, 0.68, 0.02, 'pdf-text'),
+    )
+    const rasterizeFigure = cropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [header, body, tableCaption],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(result.relationships[0]).toMatchObject({
+      kind: 'table',
+      status: 'unresolved',
+      sourceRegionIds: [],
+      evidence: expect.arrayContaining(['table-header-outside-source-scope']),
+    })
+    expect(result.consumedRegionIds.size).toBe(0)
+    expect(result.consumedLineIds.size).toBe(0)
+  })
+
+  it('promotes a complete rectangular table when source header regions close the proved body scope', async () => {
+    const headerLine = tabularLine('source-header', 0.49, [0.12, 0.4, 0.67])
+    const header = {
+      ...mixedParent(
+        'source-header-region',
+        box(0.12, 0.49, 0.625, 0.014, 'pdf-text'),
+        [headerLine],
+      ),
+      kind: 'header' as const,
+    }
+    const bodyLines = [
+      tabularLine('body-row-1', 0.52, [0.12, 0.4, 0.67]),
+      tabularLine('body-row-2', 0.56, [0.12, 0.4, 0.67]),
+      tabularLine('body-row-3', 0.6, [0.12, 0.4, 0.67]),
+    ]
+    const body = mixedParent(
+      'complete-table-body',
+      box(0.12, 0.52, 0.625, 0.094, 'pdf-text'),
+      bodyLines,
+    )
+    const tableCaption = caption(
+      'source-header-caption',
+      'Table 10. Header-complete rectangular results.',
+      box(0.12, 0.638, 0.68, 0.02, 'pdf-text'),
+    )
+    const rasterizeFigure = cropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [header, body, tableCaption],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(result.relationships[0]).toMatchObject({
+      kind: 'table',
+      status: 'matched',
+      sourceRegionIds: [header.id, body.id],
+      sourceLineIds: [headerLine.id, ...bodyLines.map((line) => line.id)],
+      evidence: expect.arrayContaining([
+        'detected-table-geometry',
+        'semantic-table',
+        'semantic-header-table-local-geometry',
+        'complete-bounded-table-scope',
+      ]),
+    })
+    expect(result.canonicalTablesByAssetId.size).toBe(1)
+    expect(result.consumedRegionIds).toEqual(new Set([header.id, body.id]))
   })
 
   it('does not crop or consume either partial parent when line bands compete', async () => {

@@ -23,6 +23,11 @@ import {
 } from './pdf-visuals'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import type { ResearchNode, ResearchPaper } from './schema'
+import {
+  canonicalTextIntegrityIssues,
+  internalReferenceIntegrityIssues,
+} from './publication-integrity'
+import { isStrictSemanticTable } from './semantic-table'
 
 export const DEFAULT_PDF_COMPLETENESS_POLICY: PdfCompletenessPolicy = {
   minimumTextCoverage: 0.98,
@@ -126,10 +131,10 @@ function validatedVisualRepresentationByNode(
       relationship.altTextSource === 'source-text'
     const selfCaptionedSourceText = Boolean(
       sourceTextEquation &&
-        relationship.sourceRegionIds.includes(relationship.captionRegionId) &&
-        captionNode?.type === 'caption' &&
-        normalizedText(captionNode.text) ===
-          normalizedText(relationship.sourceText),
+      relationship.sourceRegionIds.includes(relationship.captionRegionId) &&
+      captionNode?.type === 'caption' &&
+      normalizedText(captionNode.text) ===
+        normalizedText(relationship.sourceText),
     )
     if (selfCaptionedSourceText) {
       lineageConnectorNodeIds.add(relationship.canonicalNodeId)
@@ -380,12 +385,12 @@ function provenanceTextConservation({
     const evidence = provenance[node.id]
     const validEvidence = Boolean(
       evidence &&
-        evidence.regionIds.length > 0 &&
-        evidence.boxes.length > 0 &&
-        evidence.regionIds.every((regionId) => {
-          const region = allRegionMap.get(regionId)
-          return region && evidence.pages.includes(region.page)
-        }),
+      evidence.regionIds.length > 0 &&
+      evidence.boxes.length > 0 &&
+      evidence.regionIds.every((regionId) => {
+        const region = allRegionMap.get(regionId)
+        return region && evidence.pages.includes(region.page)
+      }),
     )
     const regionIds = validEvidence ? [...new Set(evidence!.regionIds)] : []
     const visualEvidenceRegionIds = new Set(
@@ -653,7 +658,7 @@ export function classifyStructuralLineBoundaryDecisions({
     const selectedLineIds = selectedVisualLineIdsByRegion.get(decision.regionId)
     const isSourceLineVisualBoundary = Boolean(
       selectedLineIds?.has(decision.fromLineId) ||
-        selectedLineIds?.has(decision.toLineId),
+      selectedLineIds?.has(decision.toLineId),
     )
     const isStructural = isStrictVisualOnly || isSourceLineVisualBoundary
     const structuralEvidence = isStrictVisualOnly
@@ -821,7 +826,10 @@ function relationshipCounts(
   visualRelationships?: PdfVisualRelationship[],
   citationRelationships?: PdfCitationRelationship[],
   provenance?: Record<string, NodeSourceEvidence>,
+  assets: PdfVisualAsset[] = [],
 ) {
+  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
   const captions = new Set(
     paper.nodes
       .filter((node) => node.type === 'caption')
@@ -842,10 +850,30 @@ function relationshipCounts(
           .map((node) => node.relationships.caption),
       ).size
   const resolvedTables =
-    visualRelationships?.filter(
-      (relationship) =>
-        relationship.kind === 'table' && relationship.status === 'matched',
-    ).length ?? 0
+    visualRelationships?.filter((relationship) => {
+      if (
+        relationship.kind !== 'table' ||
+        relationship.status !== 'matched' ||
+        !relationship.canonicalNodeId
+      ) {
+        return false
+      }
+      const node = nodesById.get(relationship.canonicalNodeId)
+      return (
+        node?.type === 'figure' &&
+        node.objectType === 'table' &&
+        isStrictSemanticTable(node.table) &&
+        relationship.assetIds.some((assetId) => {
+          const asset = assetsById.get(assetId)
+          return (
+            node.relationships.assets?.includes(assetId) &&
+            asset?.kind === 'table' &&
+            asset.mediaType === 'application/xhtml+xml' &&
+            asset.rendition === 'semantic-table'
+          )
+        })
+      )
+    }).length ?? 0
   const resolvedEquations =
     visualRelationships?.filter(
       (relationship) =>
@@ -870,7 +898,6 @@ function relationshipCounts(
   const resolvedNotes = new Set(
     resolvedNoteReferences.map((reference) => reference.target),
   )
-  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
   const resolvedCitations = (citationRelationships ?? []).filter(
     (relationship) => {
       const anchor = relationship.canonicalAnchor
@@ -986,7 +1013,7 @@ function connectedVisualComponentCount(boxes: NormalizedSourceBox[]) {
   let count = 0
   while (remaining.length > 0) {
     const component = [remaining.shift()!]
-    for (let index = 0; index < remaining.length; ) {
+    for (let index = 0; index < remaining.length;) {
       if (
         component.some((candidate) =>
           boxesConnected(candidate, remaining[index]),
@@ -1179,6 +1206,7 @@ export function assessPdfCompleteness({
       : validatedVisualRelationships,
     citationRelationships,
     provenance,
+    assets,
   )
   const unresolvedObjects = {
     assets: Math.max(sourceAssetCount - exportedAssetCount, 0),
@@ -1266,6 +1294,50 @@ export function assessPdfCompleteness({
     readingOrderEvaluation,
   }
   const qualityDiagnostics: ReconstructionDiagnostic[] = []
+  const textIntegrityIssues = canonicalTextIntegrityIssues(paper)
+  if (textIntegrityIssues.length > 0) {
+    const forbiddenXmlCharacterCount = textIntegrityIssues.reduce(
+      (total, issue) => total + issue.forbiddenXmlCharacterCount,
+      0,
+    )
+    const replacementGlyphCount = textIntegrityIssues.reduce(
+      (total, issue) => total + issue.replacementGlyphCount,
+      0,
+    )
+    const regionIds = [
+      ...new Set(
+        textIntegrityIssues.flatMap(
+          (issue) => provenance?.[issue.nodeId]?.regionIds ?? [],
+        ),
+      ),
+    ]
+    qualityDiagnostics.push({
+      code: 'EPUB_TEXT_SANITIZATION_LOSS',
+      severity: 'error',
+      message: `${textIntegrityIssues.length} canonical text field${textIntegrityIssues.length === 1 ? '' : 's'} contain ${forbiddenXmlCharacterCount} forbidden XML code point${forbiddenXmlCharacterCount === 1 ? '' : 's'} and ${replacementGlyphCount} Unicode replacement glyph${replacementGlyphCount === 1 ? '' : 's'}; EPUB export would be lossy or preserve known character corruption.`,
+      ...(regionIds.length > 0
+        ? { target: { regionIds, markerId: null } }
+        : {}),
+    })
+  }
+  const internalReferenceIssues = internalReferenceIntegrityIssues(paper)
+  if (internalReferenceIssues.length > 0) {
+    const regionIds = [
+      ...new Set(
+        internalReferenceIssues.flatMap(
+          (issue) => provenance?.[issue.sourceId]?.regionIds ?? [],
+        ),
+      ),
+    ]
+    qualityDiagnostics.push({
+      code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+      severity: 'error',
+      message: `${internalReferenceIssues.length} canonical internal relationship${internalReferenceIssues.length === 1 ? '' : 's'} would render with a missing target or be silently omitted from EPUB navigation.`,
+      ...(regionIds.length > 0
+        ? { target: { regionIds, markerId: null } }
+        : {}),
+    })
+  }
   if (completeness.textCoverage < policy.minimumTextCoverage) {
     qualityDiagnostics.push({
       code: 'INCOMPLETE_TEXT_COVERAGE',

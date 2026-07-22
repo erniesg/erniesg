@@ -5,6 +5,26 @@ const COLUMN_ANCHOR_TOLERANCE = 0.025
 const MIN_ADAPTIVE_GAP_ROWS = 3
 const MIN_ADAPTIVE_GAP_BAND_SEPARATION = 0.002
 const MIN_ADAPTIVE_GAP_RATIO = 1.5
+const COLUMN_CENTER_TOLERANCE = 0.045
+const MAX_TABLE_LOCAL_HEADER_GAP = 0.024
+
+export type PdfDetectedTableHeaderEvidence = {
+  kind: 'table-local-geometry'
+  sourceRegionIds: string[]
+  sourceLineIds: string[]
+  detectedHeaderLineIds: string[]
+}
+
+type TableLineEntry = {
+  region: PdfPageRegion
+  line: PdfRegionLine
+}
+
+type ClusteredTableRow = PdfRegionLine & {
+  sourceLineIds: string[]
+  sourceRegionIds: string[]
+  sourceRegionKinds: PdfPageRegion['kind'][]
+}
 
 function median(values: number[]) {
   if (values.length === 0) return 0
@@ -24,42 +44,151 @@ function overlapsCaption(caption: PdfPageRegion, region: PdfPageRegion) {
   return right - left >= Math.min(caption.box.width, region.box.width) * 0.35
 }
 
-function clusterRows(lines: PdfRegionLine[]) {
-  const ordered = [...lines].sort(
-    (left, right) => left.box.y - right.box.y || left.box.x - right.box.x,
+function clusterRows(entries: TableLineEntry[]) {
+  const ordered = [...entries].sort(
+    (left, right) =>
+      left.line.box.y - right.line.box.y ||
+      left.line.box.x - right.line.box.x ||
+      left.region.id.localeCompare(right.region.id) ||
+      left.line.id.localeCompare(right.line.id),
   )
-  const rows: PdfRegionLine[][] = []
-  for (const line of ordered) {
+  const rows: TableLineEntry[][] = []
+  for (const entry of ordered) {
     const row = rows.at(-1)
-    const anchor = row?.[0]
+    const anchor = row?.[0]?.line
+    const line = entry.line
     const tolerance = Math.max(
       0.003,
       Math.min(anchor?.box.height ?? line.box.height, line.box.height) * 0.85,
     )
     if (anchor && Math.abs(anchor.box.y - line.box.y) <= tolerance)
-      row!.push(line)
-    else rows.push([line])
+      row!.push(entry)
+    else rows.push([entry])
   }
-  return rows.map<PdfRegionLine>((row, index) => {
-    const runs = row.flatMap((line) => line.runs).sort((a, b) => a.x - b.x)
-    const left = Math.min(...row.map((line) => line.box.x))
-    const top = Math.min(...row.map((line) => line.box.y))
-    const right = Math.max(...row.map((line) => line.box.x + line.box.width))
-    const bottom = Math.max(...row.map((line) => line.box.y + line.box.height))
+  return rows.map<ClusteredTableRow>((row, index) => {
+    const runs = row
+      .flatMap((entry) => entry.line.runs)
+      .sort((a, b) => a.x - b.x)
+    const left = Math.min(...row.map((entry) => entry.line.box.x))
+    const top = Math.min(...row.map((entry) => entry.line.box.y))
+    const right = Math.max(
+      ...row.map((entry) => entry.line.box.x + entry.line.box.width),
+    )
+    const bottom = Math.max(
+      ...row.map((entry) => entry.line.box.y + entry.line.box.height),
+    )
     return {
       id: `detected-table-row-${String(index + 1).padStart(3, '0')}`,
       text: runs.map((run) => run.text).join(' '),
-      fontSize: Math.min(...row.map((line) => line.fontSize)),
+      fontSize: Math.min(...row.map((entry) => entry.line.fontSize)),
       box: {
-        ...row[0].box,
+        ...row[0].line.box,
         x: left,
         y: top,
         width: right - left,
         height: bottom - top,
       },
       runs,
+      sourceLineIds: row.map((entry) => entry.line.id).sort(),
+      sourceRegionIds: [...new Set(row.map((entry) => entry.region.id))].sort(),
+      sourceRegionKinds: [
+        ...new Set(row.map((entry) => entry.region.kind)),
+      ].sort(),
     }
   })
+}
+
+function pageHeaderCandidateRow(row: ClusteredTableRow) {
+  return (
+    row.sourceRegionKinds.length > 0 &&
+    row.sourceRegionKinds.every((kind) => kind === 'header')
+  )
+}
+
+function mergePageHeaderCandidateContinuations(rows: ClusteredTableRow[]) {
+  const merged = rows.map<ClusteredTableRow>((row) => ({
+    ...row,
+    box: { ...row.box },
+    runs: row.runs.map((run) => ({ ...run })),
+    sourceLineIds: [...row.sourceLineIds],
+    sourceRegionIds: [...row.sourceRegionIds],
+    sourceRegionKinds: [...row.sourceRegionKinds],
+  }))
+  const headerIndex = merged.findIndex(pageHeaderCandidateRow)
+  if (headerIndex < 0) return merged
+  const header = merged[headerIndex]
+  if (header.runs.length < 2) return merged
+  let nextIndex = headerIndex + 1
+  while (nextIndex < merged.length) {
+    const continuation = merged[nextIndex]
+    const verticalGap = continuation.box.y - (header.box.y + header.box.height)
+    if (
+      !pageHeaderCandidateRow(continuation) ||
+      continuation.runs.length >= header.runs.length ||
+      verticalGap < -0.003 ||
+      verticalGap > Math.max(0.004, header.box.height * 0.75)
+    ) {
+      break
+    }
+    let complete = true
+    for (const run of continuation.runs) {
+      const center = run.x + run.width / 2
+      const candidates = header.runs
+        .map((target, index) => ({
+          index,
+          distance: Math.abs(target.x + target.width / 2 - center),
+        }))
+        .sort(
+          (left, right) =>
+            left.distance - right.distance || left.index - right.index,
+        )
+      const selected = candidates[0]
+      if (!selected || selected.distance > COLUMN_CENTER_TOLERANCE) {
+        complete = false
+        break
+      }
+      const target = header.runs[selected.index]
+      const left = Math.min(target.x, run.x)
+      const top = Math.min(target.y, run.y)
+      const right = Math.max(target.x + target.width, run.x + run.width)
+      const bottom = Math.max(target.y + target.height, run.y + run.height)
+      header.runs[selected.index] = {
+        ...target,
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+        text: `${target.text} ${run.text}`.trim(),
+      }
+    }
+    if (!complete) break
+    const left = Math.min(header.box.x, continuation.box.x)
+    const top = Math.min(header.box.y, continuation.box.y)
+    const right = Math.max(
+      header.box.x + header.box.width,
+      continuation.box.x + continuation.box.width,
+    )
+    const bottom = Math.max(
+      header.box.y + header.box.height,
+      continuation.box.y + continuation.box.height,
+    )
+    header.box = {
+      ...header.box,
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    }
+    header.text = header.runs.map((run) => run.text).join(' ')
+    header.sourceLineIds = [
+      ...new Set([...header.sourceLineIds, ...continuation.sourceLineIds]),
+    ].sort()
+    header.sourceRegionIds = [
+      ...new Set([...header.sourceRegionIds, ...continuation.sourceRegionIds]),
+    ].sort()
+    merged.splice(nextIndex, 1)
+  }
+  return merged
 }
 
 function orderedRuns(line: PdfRegionLine) {
@@ -172,29 +301,27 @@ function rowCells(
       ...first,
       width: right - first.x,
       height: bottom - first.y,
-      text: group.map((run) => run.text).join(' '),
+      text: group.reduce((text, run, index) => {
+        if (index === 0) return run.text
+        const previous = group[index - 1]
+        const gap = run.x - (previous.x + previous.width)
+        const noSpaceThreshold = Math.max(
+          0.0005,
+          Math.min(previous.height, run.height) * 0.18,
+        )
+        return `${text}${gap <= noSpaceThreshold ? '' : ' '}${run.text}`
+      }, ''),
     }
   })
 }
 
-function columnAnchors(lines: PdfRegionLine[], gapThreshold: number) {
-  const anchors: number[] = []
-  for (const x of lines
-    .flatMap((line) => rowCells(line, gapThreshold).map((cell) => cell.x))
-    .sort()) {
-    const existing = anchors.findIndex(
-      (anchor) => Math.abs(anchor - x) <= COLUMN_ANCHOR_TOLERANCE,
-    )
-    if (existing === -1) anchors.push(x)
-    else anchors[existing] = (anchors[existing] + x) / 2
-  }
-  return anchors
-}
-
-function tableShape(lines: PdfRegionLine[]) {
+function tableShape(lines: ClusteredTableRow[]) {
   const gapThreshold = adaptiveCellGapThreshold(lines)
-  const rowColumnCounts = lines
-    .map((line) => rowCells(line, gapThreshold).length)
+  const cellsByLine = new Map(
+    lines.map((line) => [line, rowCells(line, gapThreshold)]),
+  )
+  const rowColumnCounts = [...cellsByLine.values()]
+    .map((cells) => cells.length)
     .filter((count) => count >= 2 && count <= 12)
   const frequency = new Map<number, number>()
   for (const count of rowColumnCounts) {
@@ -205,40 +332,45 @@ function tableShape(lines: PdfRegionLine[]) {
   )[0]?.[0]
   if (!modalColumnCount) return null
   const structuralRows = lines.filter(
-    (line) => rowCells(line, gapThreshold).length === modalColumnCount,
+    (line) => cellsByLine.get(line)?.length === modalColumnCount,
   )
-  const anchors = columnAnchors(structuralRows, gapThreshold)
-  if (anchors.length < 2 || anchors.length > 12) return null
-  const populatedRows = lines
-    .map((line) => {
-      const cells = new Map<number, typeof line.runs>()
-      for (const run of rowCells(line, gapThreshold)) {
-        let closest = 0
-        for (let index = 1; index < anchors.length; index += 1) {
-          if (
-            Math.abs(anchors[index] - run.x) <
-            Math.abs(anchors[closest] - run.x)
-          ) {
-            closest = index
-          }
-        }
-        cells.set(closest, [...(cells.get(closest) ?? []), run])
-      }
-      if (cells.size !== anchors.length) return null
-      return {
-        ...line,
-        runs: anchors.map((anchor, index) => {
-          const grouped = cells.get(index)!
-          return {
-            ...grouped[0],
-            x: anchor,
-            text: grouped.map((run) => run.text).join(' '),
-          }
-        }),
-      }
-    })
-    .filter((line): line is PdfRegionLine => Boolean(line))
-  if (populatedRows.length < 2) return null
+  if (structuralRows.length !== lines.length) return null
+  const cellsByColumn = Array.from({ length: modalColumnCount }, (_, index) =>
+    structuralRows.map((line) => cellsByLine.get(line)![index]),
+  )
+  const centerAnchors = cellsByColumn.map((cells) =>
+    median(cells.map((cell) => cell.x + cell.width / 2)),
+  )
+  if (
+    centerAnchors.length < 2 ||
+    centerAnchors.length > 12 ||
+    structuralRows.some((line) =>
+      cellsByLine
+        .get(line)!
+        .some(
+          (cell, index) =>
+            Math.abs(cell.x + cell.width / 2 - centerAnchors[index]) >
+            COLUMN_CENTER_TOLERANCE,
+        ),
+    )
+  ) {
+    return null
+  }
+  const anchors = cellsByColumn.map((cells) =>
+    median(cells.map((cell) => cell.x)),
+  )
+  const populatedRows = lines.map<ClusteredTableRow>((line) => {
+    const cells = cellsByLine.get(line)!
+    return {
+      ...line,
+      runs: anchors.map((anchor, index) => ({
+        ...cells[index],
+        x: anchor,
+      })),
+    }
+  })
+  if (populatedRows.length < 2 || populatedRows.length !== lines.length)
+    return null
   const density =
     populatedRows.reduce((total, line) => total + line.runs.length, 0) /
     (populatedRows.length * anchors.length)
@@ -252,6 +384,46 @@ function tableShape(lines: PdfRegionLine[]) {
     : null
 }
 
+function closeBodyShapeWithTableLocalHeader(
+  headerRows: ClusteredTableRow[],
+  bodyShape: NonNullable<ReturnType<typeof tableShape>>,
+) {
+  if (headerRows.length !== 1) return null
+  const sourceHeader = headerRows[0]
+  const headerCells = rowCells(sourceHeader, FIXED_CELL_GAP_THRESHOLD)
+  if (headerCells.length !== bodyShape.anchors.length) return null
+  const bodyCenterAnchors = bodyShape.anchors.map((_, columnIndex) =>
+    median(
+      bodyShape.rows.map((row) => {
+        const cell = row.runs[columnIndex]
+        return cell.x + cell.width / 2
+      }),
+    ),
+  )
+  const sameColumns = headerCells.every((cell, columnIndex) => {
+    const leftDistance = Math.abs(cell.x - bodyShape.anchors[columnIndex])
+    const centerDistance = Math.abs(
+      cell.x + cell.width / 2 - bodyCenterAnchors[columnIndex],
+    )
+    return (
+      Math.min(leftDistance, centerDistance) <= COLUMN_ANCHOR_TOLERANCE
+    )
+  })
+  if (!sameColumns) return null
+  const header: ClusteredTableRow = {
+    ...sourceHeader,
+    id: 'detected-table-header-row-001',
+    runs: headerCells.map((cell, columnIndex) => ({
+      ...cell,
+      x: bodyShape.anchors[columnIndex],
+    })),
+  }
+  return {
+    ...bodyShape,
+    rows: [header, ...bodyShape.rows],
+  }
+}
+
 function directionalCandidate(
   caption: PdfPageRegion,
   regions: PdfPageRegion[],
@@ -263,9 +435,9 @@ function directionalCandidate(
       region.page !== caption.page ||
       region.id === caption.id ||
       region.lines.length === 0 ||
-      ['caption', 'page-number', 'figure'].includes(region.kind) ||
-      ((region.kind === 'header' || region.kind === 'footer') &&
-        (region.box.y < 0.1 || region.box.y > 0.9))
+      ['caption', 'page-number', 'figure', 'header', 'footer'].includes(
+        region.kind,
+      )
     ) {
       return false
     }
@@ -331,8 +503,62 @@ function directionalCandidate(
     )
     sourceRegions = [...sourceRegions, ...rowPeers]
   }
-  const lines = clusterRows(sourceRegions.flatMap((region) => region.lines))
-  const shape = tableShape(lines)
+  const bodyRows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines.map((line) => ({ region, line })),
+    ),
+  )
+  const bodyShape = tableShape(bodyRows)
+  if (!bodyShape) return null
+  let shape = bodyShape
+  let headerEvidence: PdfDetectedTableHeaderEvidence | null = null
+  if (direction === 'above') {
+    const tableTop = Math.min(
+      ...sourceRegions.map((region) => region.box.y),
+    )
+    const pageHeaderCandidates = regions.filter((region) => {
+      if (
+        region.page !== caption.page ||
+        region.kind !== 'header' ||
+        region.lines.length === 0 ||
+        !overlapsCaption(caption, region)
+      ) {
+        return false
+      }
+      const gap = tableTop - (region.box.y + region.box.height)
+      return gap >= -0.003 && gap <= MAX_TABLE_LOCAL_HEADER_GAP
+    })
+    const headerRows = mergePageHeaderCandidateContinuations(
+      clusterRows(
+        pageHeaderCandidates.flatMap((region) =>
+          region.lines.map((line) => ({ region, line })),
+        ),
+      ),
+    )
+    if (headerRows.length === 1) {
+      const closedShape = closeBodyShapeWithTableLocalHeader(
+        headerRows,
+        bodyShape,
+      )
+      if (closedShape) {
+        shape = closedShape
+        const header = closedShape.rows[0]
+        const acceptedHeaderIds = new Set(header.sourceRegionIds)
+        sourceRegions = [
+          ...pageHeaderCandidates.filter((region) =>
+            acceptedHeaderIds.has(region.id),
+          ),
+          ...sourceRegions,
+        ]
+        headerEvidence = {
+          kind: 'table-local-geometry',
+          sourceRegionIds: [...header.sourceRegionIds],
+          sourceLineIds: [...header.sourceLineIds],
+          detectedHeaderLineIds: [header.id],
+        }
+      }
+    }
+  }
   if (!shape) return null
   const usedRegions = sourceRegions.filter((region) =>
     region.lines.some((line) =>
@@ -344,6 +570,13 @@ function directionalCandidate(
     ),
   )
   if (usedRegions.length === 0) return null
+  const orderedUsedRegions = [...usedRegions].sort(
+    (left, right) =>
+      left.page - right.page ||
+      left.box.y - right.box.y ||
+      left.box.x - right.box.x ||
+      left.id.localeCompare(right.id),
+  )
   const nearest = Math.min(
     ...usedRegions.map((region) =>
       direction === 'above'
@@ -352,9 +585,11 @@ function directionalCandidate(
     ),
   )
   return {
-    sourceRegions: usedRegions,
+    sourceRegions: orderedUsedRegions,
+    sourceLineIds: [...new Set(shape.rows.flatMap((row) => row.sourceLineIds))],
     lines: shape.rows,
     structure: shape.structure,
+    headerEvidence,
     score:
       shape.density + (direction === 'above' ? 0.2 : 0) - Math.max(nearest, 0),
     direction,

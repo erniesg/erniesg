@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-predictions-1.0.0.json",
+  "title": "Model-neutral scholarly PDF fidelity predictions",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evalSetId",
+    "evalSetSha256",
+    "candidate",
+    "cases"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "evalSetId": { "$ref": "#/$defs/id" },
+    "evalSetSha256": { "$ref": "#/$defs/sha256" },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "format",
+        "formatVersion",
+        "adapterSha256",
+        "runtimeIdentity"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "format": { "$ref": "#/$defs/id" },
+        "formatVersion": { "$ref": "#/$defs/id" },
+        "adapterSha256": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
+        "runtimeIdentity": { "$ref": "#/$defs/runtimeIdentity" }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["caseId", "output"],
+        "properties": {
+          "caseId": { "$ref": "#/$defs/id" },
+          "output": { "$ref": "#/$defs/output" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "runtimeToolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "executableSha256", "versionOutputSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "executableSha256": { "$ref": "#/$defs/sha256" },
+        "versionOutputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeModelIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeIdentity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "not-applicable" },
+            "tool": { "type": "null" },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "unattested" },
+            "tool": {
+              "oneOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/runtimeToolIdentity" }
+              ]
+            },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "attested" },
+            "tool": { "$ref": "#/$defs/runtimeToolIdentity" },
+            "model": { "$ref": "#/$defs/runtimeModelIdentity" }
+          }
+        }
+      ]
+    },
+    "box": {
+      "type": "array",
+      "normalizedPdfBox": true,
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      ],
+      "items": false
+    },
+    "labelDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "label"],
+      "properties": {
+        "targetId": { "$ref": "#/$defs/id" },
+        "label": { "$ref": "#/$defs/id" }
+      }
+    },
+    "detectedObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "box"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "label": { "$ref": "#/$defs/id" },
+        "box": { "$ref": "#/$defs/box" }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sourceId", "targetId"],
+      "properties": {
+        "type": { "$ref": "#/$defs/id" },
+        "sourceId": { "$ref": "#/$defs/id" },
+        "targetId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "output": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["labels"],
+          "properties": {
+            "labels": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/labelDecision" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["objects"],
+          "properties": {
+            "objects": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/detectedObject" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["order"],
+          "properties": {
+            "order": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/id" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["relationships"],
+          "properties": {
+            "relationships": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/relationship" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-eval-receipt-1.0.0.json",
+  "title": "Sanitized scholarly PDF fidelity evaluation receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "privacy",
+    "evalSet",
+    "candidate",
+    "predictionSha256",
+    "execution",
+    "summary",
+    "cases",
+    "passed",
+    "receiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "privacy": {
+      "const": "public-identities-hashes-aggregate-scores-bounded-case-results-only"
+    },
+    "evalSet": { "$ref": "#/$defs/evalSetIdentity" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "predictionSha256": { "$ref": "#/$defs/sha256" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/caseResult" }
+    },
+    "passed": { "type": "boolean" },
+    "receiptSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "count": { "type": "integer", "minimum": 0 },
+    "task": {
+      "enum": ["classification", "detection", "reading-order", "relationship"]
+    },
+    "evalSetIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sha256",
+        "annotationSchemaVersion",
+        "documentIdentitySha256",
+        "caseIdentitySha256"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "annotationSchemaVersion": { "const": "1.0.0" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "format",
+        "formatVersion",
+        "adapterSha256",
+        "runtimeIdentity"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "format": { "$ref": "#/$defs/id" },
+        "formatVersion": { "$ref": "#/$defs/id" },
+        "adapterSha256": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
+        "runtimeIdentity": { "$ref": "#/$defs/runtimeIdentity" }
+      }
+    },
+    "runtimeToolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "executableSha256", "versionOutputSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "executableSha256": { "$ref": "#/$defs/sha256" },
+        "versionOutputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeModelIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeIdentity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "not-applicable" },
+            "tool": { "type": "null" },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "unattested" },
+            "tool": {
+              "oneOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/runtimeToolIdentity" }
+              ]
+            },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "attested" },
+            "tool": { "$ref": "#/$defs/runtimeToolIdentity" },
+            "model": { "$ref": "#/$defs/runtimeModelIdentity" }
+          }
+        }
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "platform",
+        "architecture",
+        "offlineRequested",
+        "allInputsVerified"
+      ],
+      "properties": {
+        "lane": { "$ref": "#/$defs/id" },
+        "platform": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
+        },
+        "architecture": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
+        },
+        "offlineRequested": { "type": "boolean" },
+        "allInputsVerified": { "type": "boolean" }
+      }
+    },
+    "scoreGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cases", "passed", "score"],
+      "properties": {
+        "cases": { "type": "integer", "minimum": 1 },
+        "passed": { "$ref": "#/$defs/count" },
+        "score": { "$ref": "#/$defs/ratio" }
+      }
+    },
+    "scoreGroups": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/id" },
+      "additionalProperties": { "$ref": "#/$defs/scoreGroup" }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cases",
+        "present",
+        "passed",
+        "failed",
+        "passRate",
+        "overallScore",
+        "criticalCases",
+        "criticalPassed",
+        "criticalPassRate",
+        "taskScores",
+        "stratumScores"
+      ],
+      "properties": {
+        "cases": { "$ref": "#/$defs/count" },
+        "present": { "$ref": "#/$defs/count" },
+        "passed": { "$ref": "#/$defs/count" },
+        "failed": { "$ref": "#/$defs/count" },
+        "passRate": { "$ref": "#/$defs/ratio" },
+        "overallScore": { "$ref": "#/$defs/ratio" },
+        "criticalCases": { "$ref": "#/$defs/count" },
+        "criticalPassed": { "$ref": "#/$defs/count" },
+        "criticalPassRate": { "$ref": "#/$defs/ratio" },
+        "taskScores": { "$ref": "#/$defs/scoreGroups" },
+        "stratumScores": { "$ref": "#/$defs/scoreGroups" }
+      }
+    },
+    "caseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "documentId",
+        "page",
+        "stratum",
+        "task",
+        "critical",
+        "present",
+        "passed",
+        "score",
+        "correct",
+        "total",
+        "truePositive",
+        "falsePositive",
+        "falseNegative"
+      ],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/id" },
+        "documentId": { "$ref": "#/$defs/id" },
+        "page": { "type": "integer", "minimum": 1 },
+        "stratum": { "$ref": "#/$defs/id" },
+        "task": { "$ref": "#/$defs/task" },
+        "critical": { "type": "boolean" },
+        "present": { "type": "boolean" },
+        "passed": { "type": "boolean" },
+        "score": { "$ref": "#/$defs/ratio" },
+        "correct": { "$ref": "#/$defs/count" },
+        "total": { "$ref": "#/$defs/count" },
+        "truePositive": { "$ref": "#/$defs/count" },
+        "falsePositive": { "$ref": "#/$defs/count" },
+        "falseNegative": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}

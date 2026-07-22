@@ -4,7 +4,7 @@ import { strFromU8 } from 'fflate'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import fixtureManifest from '../../tests/fixtures/pdf/manifest.json'
-import { buildEpub, inspectEpub } from './epub'
+import { buildEpub, buildReadableEpub, inspectEpub } from './epub'
 import type { PdfReconstruction } from './import-types'
 import { reconstructPdf } from './pdf'
 
@@ -147,11 +147,17 @@ describe('raw PDF source-backed table citation regression', () => {
     ).toEqual([])
     expect(reconstruction.completeness).toMatchObject({
       inlineSpanCoverage: 1,
-      unresolvedObjects: { citations: 0, tables: 0 },
+      unresolvedObjects: { citations: 0, tables: 1 },
+    })
+    expect(reconstruction.readiness).toMatchObject({
+      ready: false,
+      blockingDiagnosticCodes: expect.arrayContaining([
+        'UNRESOLVED_SEMANTIC_OBJECTS',
+      ]),
     })
   })
 
-  it('exports one hidden transcript with navigable XHTML bibliorefs and no prose copy', async () => {
+  it('blocks publication export and omits the non-semantic crop from the readable fallback', async () => {
     const table = reconstruction.paper.nodes.find(
       (node) => node.type === 'figure' && node.objectType === 'table',
     )
@@ -169,26 +175,20 @@ describe('raw PDF source-backed table citation regression', () => {
       ),
     ).toHaveLength(1)
 
-    const epub = await buildEpub(reconstruction.paper, reconstruction)
+    await expect(
+      buildEpub(reconstruction.paper, reconstruction),
+    ).rejects.toMatchObject({ code: 'INCOMPLETE_RECONSTRUCTION' })
+    const epub = await buildReadableEpub(reconstruction.paper, reconstruction)
     const inspected = inspectEpub(epub.bytes)
     const xhtml = strFromU8(inspected.files['EPUB/content.xhtml'])
     const bibliorefs = [...xhtml.matchAll(/<a\b[^>]*epub:type="biblioref"/gu)]
 
-    expect(
-      xhtml.match(/class="visually-hidden visual-source-transcript"/gu),
-    ).toHaveLength(1)
-    expect(
-      xhtml.match(/Aggregate result \| 71 \| 90 \| Stable/gu),
-    ).toHaveLength(1)
+    expect(xhtml).not.toContain(
+      'class="visually-hidden visual-source-transcript"',
+    )
+    expect(xhtml).not.toContain('Aggregate result | 71 | 90 | Stable')
     expect(xhtml).not.toMatch(/<p\b[^>]*>[^<]*Readability score/gu)
-    expect(bibliorefs).toHaveLength(4)
-    for (const citation of reconstruction.citationRelationships.filter(
-      (candidate) => candidate.canonicalAnchor?.nodeId === table?.id,
-    )) {
-      expect(xhtml).toContain(`data-relationship-id="${citation.id}"`)
-      for (const targetId of citation.targetNodeIds) {
-        expect(xhtml).toContain(`href="#${targetId}"`)
-      }
-    }
+    expect(bibliorefs).toHaveLength(0)
+    expect(xhtml).not.toContain(`data-canonical-id="${table?.id}"`)
   })
 })

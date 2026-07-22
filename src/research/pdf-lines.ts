@@ -226,6 +226,48 @@ function unhyphenatedBoundaryWord(lines: PdfTextLine[], index: number) {
     : null
 }
 
+function inflectionalFamily(word: string) {
+  const stems = new Set([word])
+  if (word.endsWith('s') && word.length > 4) stems.add(word.slice(0, -1))
+  if (word.endsWith('es') && word.length > 5) stems.add(word.slice(0, -2))
+  if (word.endsWith('ed') && word.length > 5) {
+    stems.add(word.slice(0, -2))
+    stems.add(word.slice(0, -1))
+  }
+  if (word.endsWith('ing') && word.length > 6) {
+    stems.add(word.slice(0, -3))
+    stems.add(`${word.slice(0, -3)}e`)
+  }
+  if (word.endsWith('ies') && word.length > 5) {
+    stems.add(`${word.slice(0, -3)}y`)
+  }
+  if (word.endsWith('tion') && word.length > 7) {
+    stems.add(word.slice(0, -3))
+  }
+  const family = new Set<string>()
+  for (const stem of stems) {
+    family.add(stem)
+    for (const suffix of ['s', 'es', 'ed', 'ing']) {
+      family.add(`${stem}${suffix}`)
+    }
+    if (stem.endsWith('e')) {
+      family.add(`${stem}d`)
+      family.add(`${stem.slice(0, -1)}ing`)
+    }
+  }
+  family.delete(word)
+  return family
+}
+
+function hasSameDocumentInflection(
+  word: string | null,
+  lexicon: ReadonlySet<string>,
+) {
+  return Boolean(
+    word && [...inflectionalFamily(word)].some((form) => lexicon.has(form)),
+  )
+}
+
 function sourcePreservationEvidence(lines: PdfTextLine[], index: number) {
   const fragments = boundaryFragments(lines, index)
   if (!fragments) return null
@@ -323,6 +365,17 @@ export function joinPdfLineTexts(
           options,
         )
         joined = `${joined.slice(0, -1)}${next}`
+      } else if (
+        hasSameDocumentInflection(unhyphenatedCandidate, unhyphenatedLexicon)
+      ) {
+        boundaryDecision(
+          lines,
+          index,
+          'removed-discretionary-hyphen',
+          ['same-document-inflectional-word'],
+          options,
+        )
+        joined = `${joined.slice(0, -1)}${next}`
       } else {
         boundaryDecision(
           lines,
@@ -383,15 +436,36 @@ function mergeRunText(runs: PdfSourceRun[]) {
     const gap = previous
       ? run.x - (previous.x + previous.width)
       : Number.POSITIVE_INFINITY
+    const raisedLeadingMarker =
+      previous !== undefined &&
+      text === previous.text.trim() &&
+      /^(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡§]+)$/u.test(text) &&
+      previous.fontSize <= run.fontSize * 0.85 &&
+      previous.y + previous.height / 2 <
+        run.y + run.height / 2 - Math.max(0.0005, run.height * 0.04)
     const needsSpace =
       text.length > 0 &&
       !/^[,.;:!?%)}\]]/.test(word) &&
       !/[({[]$/.test(text) &&
-      gap > Math.max(0.0015, run.height * 0.08)
+      (raisedLeadingMarker || gap > Math.max(0.0015, run.height * 0.08))
     text += `${needsSpace ? ' ' : ''}${word}`
     previous = run
   }
   return text.replace(/\s+/g, ' ').trim()
+}
+
+function expandLineBounds(
+  target: PdfTextLine,
+  source: Pick<PdfTextLine, 'x' | 'y' | 'width' | 'height'>,
+) {
+  const left = Math.min(target.x, source.x)
+  const top = Math.min(target.y, source.y)
+  const right = Math.max(target.x + target.width, source.x + source.width)
+  const bottom = Math.max(target.y + target.height, source.y + source.height)
+  target.x = left
+  target.y = top
+  target.width = right - left
+  target.height = bottom - top
 }
 
 function crossesProbableColumnGutter(
@@ -507,12 +581,8 @@ function probableColumnGutterCenter(runs: PdfSourceRun[]) {
 }
 
 function mergeLineInto(target: PdfTextLine, source: PdfTextLine) {
-  const right = Math.max(target.x + target.width, source.x + source.width)
   target.runs.push(...source.runs)
-  target.x = Math.min(target.x, source.x)
-  target.y = Math.min(target.y, source.y)
-  target.width = right - target.x
-  target.height = Math.max(target.height, source.height)
+  expandLineBounds(target, source)
   target.fontSize = Math.max(target.fontSize, source.fontSize)
 }
 
@@ -537,12 +607,8 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
         )
       })[0]
     if (matching) {
-      const right = Math.max(matching.x + matching.width, run.x + run.width)
       matching.runs.push(run)
-      matching.x = Math.min(matching.x, run.x)
-      matching.y = Math.min(matching.y, run.y)
-      matching.width = right - matching.x
-      matching.height = Math.max(matching.height, run.height)
+      expandLineBounds(matching, run)
       matching.fontSize = Math.max(matching.fontSize, run.fontSize)
       for (const candidate of [...lines]) {
         if (candidate === matching) continue

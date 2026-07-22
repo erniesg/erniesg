@@ -457,6 +457,62 @@ describe('PDF line joining', () => {
     ])
   })
 
+  it('removes a line-break hyphen when an inflection of the joined word occurs elsewhere', () => {
+    const decisions: PdfLineBoundaryDecision[] = []
+    const unhyphenatedLexicon = inlineUnhyphenatedLexicon([
+      line('The system is discovering stable representations.'),
+    ])
+
+    expect(
+      joinPdfLineTexts([line('We dis-'), line('cover a pattern')], {
+        unhyphenatedLexicon,
+        decisions,
+      }),
+    ).toBe('We discover a pattern')
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        outcome: 'removed-discretionary-hyphen',
+        evidence: ['same-document-inflectional-word'],
+      }),
+    ])
+  })
+
+  it('uses a same-document verb stem to resolve a nominalized line break', () => {
+    const decisions: PdfLineBoundaryDecision[] = []
+    const unhyphenatedLexicon = inlineUnhyphenatedLexicon([
+      line('The models subtract integers.'),
+    ])
+
+    expect(
+      joinPdfLineTexts([line('addition and subtrac-'), line('tion tasks')], {
+        unhyphenatedLexicon,
+        decisions,
+      }),
+    ).toBe('addition and subtraction tasks')
+    expect(decisions[0]).toMatchObject({
+      outcome: 'removed-discretionary-hyphen',
+      evidence: ['same-document-inflectional-word'],
+    })
+  })
+
+  it('recognizes two inflections that share the same source-document stem', () => {
+    const decisions: PdfLineBoundaryDecision[] = []
+    const unhyphenatedLexicon = inlineUnhyphenatedLexicon([
+      line('The later section is discovering another pattern.'),
+    ])
+
+    expect(
+      joinPdfLineTexts([line('The study dis-'), line('covered a pattern')], {
+        unhyphenatedLexicon,
+        decisions,
+      }),
+    ).toBe('The study discovered a pattern')
+    expect(decisions[0]).toMatchObject({
+      outcome: 'removed-discretionary-hyphen',
+      evidence: ['same-document-inflectional-word'],
+    })
+  })
+
   it('preserves an acronym-to-TitleCase compound at a line boundary', () => {
     const decisions: PdfLineBoundaryDecision[] = []
 
@@ -545,6 +601,50 @@ describe('PDF line joining', () => {
 })
 
 describe('PDF run grouping', () => {
+  it('uses the full vertical union when a raised run joins a baseline line', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      fontSize: number,
+    ): PdfSourceRun => ({
+      page: 1,
+      text,
+      x,
+      y,
+      width,
+      height,
+      fontSize,
+      fontName: 'SyntheticMath',
+      rotation: 0,
+      method: 'pdf-text',
+      confidence: 1,
+    })
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: 9,
+      imageCount: 0,
+      objects: [],
+      runs: [
+        sourceRun('1', 0.1, 0.195, 0.01, 0.012, 7),
+        sourceRun('Baseline', 0.11, 0.2, 0.12, 0.02, 10),
+      ],
+    }
+
+    const grouped = groupRunsIntoLines(page)
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].y).toBeCloseTo(0.195)
+    expect(grouped[0].height).toBeCloseTo(0.025)
+    expect(grouped[0].y + grouped[0].height).toBeCloseTo(0.22)
+  })
+
   it('keeps staggered two-column runs separate regardless of merge direction', () => {
     const sourceRun = (
       text: string,
@@ -618,11 +718,11 @@ describe('PDF run grouping', () => {
       confidence: 1,
     })
     const runs = [
-      sourceRun('B', 0.09, 0.119, 0.016, 0.018, 14),
-      sourceRun('EYOND', 0.107, 0.123, 0.071, 0.014, 11),
-      sourceRun('D', 0.185, 0.119, 0.017, 0.018, 14),
-      sourceRun('IALOGUE', 0.203, 0.123, 0.096, 0.014, 11),
-      sourceRun(': A Profile-Dialogue Study', 0.3, 0.119, 0.4, 0.018, 14),
+      sourceRun('S', 0.09, 0.119, 0.016, 0.018, 14),
+      sourceRun('YNTHETIC', 0.107, 0.123, 0.071, 0.014, 11),
+      sourceRun('P', 0.185, 0.119, 0.017, 0.018, 14),
+      sourceRun('ROFILE', 0.203, 0.123, 0.096, 0.014, 11),
+      sourceRun(': A Typesetting Study', 0.3, 0.119, 0.4, 0.018, 14),
     ]
     const page: PdfPageAnalysis = {
       page: 1,
@@ -637,7 +737,7 @@ describe('PDF run grouping', () => {
     }
 
     expect(groupRunsIntoLines(page).map((candidate) => candidate.text)).toEqual(
-      ['BEYOND DIALOGUE: A Profile-Dialogue Study'],
+      ['SYNTHETIC PROFILE: A Typesetting Study'],
     )
   })
 })

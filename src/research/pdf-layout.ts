@@ -18,7 +18,10 @@ import {
   assessPdfCompleteness,
   classifyStructuralLineBoundaryDecisions,
 } from './pdf-quality'
-import { classifyPdfNoteMarkers } from './pdf-note-classifier'
+import {
+  classifyPdfNoteMarkers,
+  PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
+} from './pdf-note-classifier'
 import { replayPdfRegionLineRanges } from './pdf-lines'
 import { reconstructPdfVisuals, type PdfFigureRasterizer } from './pdf-visuals'
 import {
@@ -66,12 +69,9 @@ type RegionBlock = {
     text: string
   }>
   nodeId?: string
+  bibliographyContinuedFromPreviousPage?: boolean
   frontMatterRole?:
-    | 'title'
-    | 'author'
-    | 'affiliation'
-    | 'abstract-heading'
-    | 'abstract-body'
+    'title' | 'author' | 'affiliation' | 'abstract-heading' | 'abstract-body'
 }
 
 type NoteReferenceDraft = {
@@ -92,10 +92,7 @@ type SemanticReferenceDraft = {
   start: number
   end: number
   semanticRole:
-    | 'citation'
-    | 'cross-reference'
-    | 'affiliation-marker'
-    | 'bibliography-entry'
+    'citation' | 'cross-reference' | 'affiliation-marker' | 'bibliography-entry'
   targetIds?: string[]
 }
 
@@ -143,7 +140,7 @@ function headingLevel(text: string, largestFont: number, bodySize: number) {
 
 function likelyAffiliation(value: string) {
   return (
-    /(?:university|institute|department|laborator(?:y|ies)|\blab\b|school|college|centre|center|hospital|academy|research group|corporation|\binc\b|@|https?:\/\/)/i.test(
+    /(?:university|institute|department|laborator(?:y|ies)|\blabs?\b|school|college|centre|center|hospital|academy|research group|corporation|\binc\b|compan(?:y|ies)|studios?|technolog(?:y|ies)|@|https?:\/\/)/i.test(
       value,
     ) ||
     /(?:\b[A-Z]{2,}\s+\p{Lu}\p{Ll}[\p{L}.-]*|\p{Lu}\p{Ll}[\p{L}.-]*\s+[A-Z]{2,}\b)/u.test(
@@ -154,7 +151,7 @@ function likelyAffiliation(value: string) {
 
 function normalizedAuthorName(value: string) {
   return value
-    .replace(/[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u, '')
+    .replace(/(?:\s*[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+)+\s*$/u, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -171,9 +168,14 @@ function likelyPersonName(value: string) {
 
 function authorNamesFromLine(value: string) {
   const hasAttachedAffiliationMarkers =
-    /(\p{L})[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+\s+(?=\p{Lu}\p{Ll})/u.test(value)
+    /(\p{L})\s*[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+(?:\s+[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+)*\s+(?=\p{Lu}\p{Ll})/u.test(
+      value,
+    )
   const separated = value
-    .replace(/(\p{L})[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+\s+(?=\p{Lu}\p{Ll})/gu, '$1; ')
+    .replace(
+      /(\p{L})\s*[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+(?:\s+[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+)*\s+(?=\p{Lu}\p{Ll})/gu,
+      '$1; ',
+    )
     .replace(/\s+\d+(?=[A-Z]{2,}\b)/g, '; ')
     .split(/\s+(?:and|&)\s+|\s*[;,]\s*/i)
     .map(normalizedAuthorName)
@@ -216,9 +218,9 @@ function classifyFrontMatter(blocks: RegionBlock[], metadataTitle?: string) {
     : undefined
   const metadataMatchesVisibleBlock = Boolean(
     comparableMetadataTitle &&
-      firstPage.some(
-        (block) => comparableTitle(block.text) === comparableMetadataTitle,
-      ),
+    firstPage.some(
+      (block) => comparableTitle(block.text) === comparableMetadataTitle,
+    ),
   )
   const abstractIndex = firstPage.findIndex((block) =>
     /^abstract(?:\s|$)/i.test(block.text.trim()),
@@ -266,22 +268,22 @@ function classifyFrontMatter(blocks: RegionBlock[], metadataTitle?: string) {
     if (block === titleBlock) continue
     const alignedWithTitle = Boolean(
       titleBlock &&
-        (Math.abs(block.region.box.x - titleBlock.region.box.x) <= 0.025 ||
-          Math.abs(
-            block.region.box.x +
-              block.region.box.width / 2 -
-              (titleBlock.region.box.x + titleBlock.region.box.width / 2),
-          ) <= 0.035),
+      (Math.abs(block.region.box.x - titleBlock.region.box.x) <= 0.025 ||
+        Math.abs(
+          block.region.box.x +
+            block.region.box.width / 2 -
+            (titleBlock.region.box.x + titleBlock.region.box.width / 2),
+        ) <= 0.035),
     )
     const strongTitleContinuation = Boolean(
       titleBlock &&
-        block.region.box.y > titleBlock.region.box.y &&
-        !/^\p{L}$/u.test(block.text.trim()) &&
-        !likelyAffiliation(block.text) &&
-        authorNamesFromLine(block.text).length === 0 &&
-        alignedWithTitle &&
-        (largestBlockFont(block) >= titleFont * 0.62 ||
-          (!/[.!?](?:\s|$)/.test(block.text) && block.region.box.y < 0.32)),
+      block.region.box.y > titleBlock.region.box.y &&
+      !/^\p{L}$/u.test(block.text.trim()) &&
+      !likelyAffiliation(block.text) &&
+      authorNamesFromLine(block.text).length === 0 &&
+      alignedWithTitle &&
+      (largestBlockFont(block) >= titleFont * 0.62 ||
+        (!/[.!?](?:\s|$)/.test(block.text) && block.region.box.y < 0.32)),
     )
     if (strongTitleContinuation) {
       block.frontMatterRole = 'title'
@@ -322,8 +324,8 @@ function classifyFrontMatter(blocks: RegionBlock[], metadataTitle?: string) {
     .join(' ')
   const metadataCorroborated = Boolean(
     metadataTitle?.trim() &&
-      inferredTitle &&
-      comparableTitle(metadataTitle) === comparableTitle(inferredTitle),
+    inferredTitle &&
+    comparableTitle(metadataTitle) === comparableTitle(inferredTitle),
   )
   const title =
     (metadataCorroborated ? metadataTitle?.trim() : undefined) ||
@@ -476,6 +478,7 @@ function parsedOrderedListMarker(value: string) {
   if (!match) return null
   const markerText = match[1] ?? match[3] ?? match[5]
   const marker = match[2] ?? match[4] ?? match[6]
+  if (/^\d{4}$/.test(marker) && Number(marker) >= 1800) return null
   return {
     markerText,
     itemText: match[7],
@@ -483,6 +486,129 @@ function parsedOrderedListMarker(value: string) {
       value.length - trimmed.length + match[0].length - match[7].length,
     ...orderedMarker(marker),
   }
+}
+
+function parsedBibliographyListMarker(value: string) {
+  const trimmed = value.trimStart()
+  const match = trimmed.match(
+    /^(?:(\[\s*(\d{1,4})\s*\])|(\(\s*(\d{1,4})\s*\))|((\d{1,3})[.)]))\s+(.+)$/u,
+  )
+  if (!match) return null
+  const markerText = match[1] ?? match[3] ?? match[5]
+  const marker = match[2] ?? match[4] ?? match[6]
+  if (/^\d{4}$/u.test(marker) && Number(marker) >= 1800) return null
+  return {
+    label: marker,
+    markerText,
+    itemText: match[7],
+    contentStart:
+      value.length - trimmed.length + match[0].length - match[7].length,
+    markerStyle: 'decimal' as const,
+    ordinal: Number(marker),
+  }
+}
+
+export type RecoveredBibliographyClassificationBlock = {
+  region: PdfPageRegion
+  list?: {
+    numberingId: string
+    ordinal?: number
+    markerText?: string
+  }
+  sourceSegments?: Array<{
+    region: PdfPageRegion
+    evidenceRegion?: PdfPageRegion
+    sourceStart: number
+    canonicalStart: number
+    text: string
+  }>
+}
+
+export function synthesizeRecoveredBibliographyClassifications(
+  classifications: readonly PdfNoteMarkerClassification[],
+  blocks: readonly RecoveredBibliographyClassificationBlock[],
+) {
+  const recovered = [...classifications]
+  const classifiedLabels = new Set(
+    classifications
+      .filter(
+        (classification) => classification.taxonomy === 'bibliography-entry',
+      )
+      .map(
+        (classification) =>
+          `${classification.referenceRegionId}:${normalizedNoteLabel(classification.label)}`,
+      ),
+  )
+  const usedIds = new Set(
+    classifications.map((classification) => classification.id),
+  )
+
+  for (const block of blocks) {
+    if (
+      block.list?.numberingId !== 'references' ||
+      block.list.ordinal === undefined ||
+      !block.list.markerText
+    ) {
+      continue
+    }
+    const firstSegment = block.sourceSegments?.find(
+      (segment) => segment.canonicalStart === 0,
+    )
+    if (!firstSegment) continue
+    const evidenceRegion = firstSegment.evidenceRegion ?? firstSegment.region
+    const marker = parsedBibliographyListMarker(evidenceRegion.text)
+    if (
+      !marker ||
+      marker.ordinal !== block.list.ordinal ||
+      marker.markerText !== block.list.markerText
+    ) {
+      continue
+    }
+    const labelKey = `${firstSegment.region.id}:${normalizedNoteLabel(marker.label)}`
+    if (classifiedLabels.has(labelKey)) continue
+
+    const markerOffset = evidenceRegion.text.indexOf(marker.markerText)
+    const evidenceSourceStart = firstSegment.sourceStart - marker.contentStart
+    const start = evidenceSourceStart + markerOffset
+    const end = start + marker.markerText.length
+    if (
+      markerOffset < 0 ||
+      start < 0 ||
+      firstSegment.region.text.slice(start, end) !== marker.markerText
+    ) {
+      continue
+    }
+
+    const idBase = `noteref-p${String(firstSegment.region.page).padStart(3, '0')}-${slug(marker.label, 16)}-${slug(firstSegment.region.id, 48)}-s${String(start).padStart(6, '0')}-e${String(end).padStart(6, '0')}`
+    let occurrence = 1
+    let id = `${idBase}-${String(occurrence).padStart(3, '0')}`
+    while (usedIds.has(id)) {
+      occurrence += 1
+      id = `${idBase}-${String(occurrence).padStart(3, '0')}`
+    }
+    usedIds.add(id)
+    classifiedLabels.add(labelKey)
+    recovered.push({
+      id,
+      label: marker.label,
+      referenceRegionId: firstSegment.region.id,
+      start,
+      end,
+      taxonomy: 'bibliography-entry',
+      disposition: 'plain-text',
+      confidence: 0.99,
+      threshold: PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
+      accepted: true,
+      evidence: [
+        'source-backed-bibliography-marker',
+        'recovered-bibliography-entry',
+        'reference-list-section-scope',
+      ],
+      sourceBox: { ...evidenceRegion.box },
+    })
+  }
+
+  return recovered
 }
 
 function parsedBulletListMarker(value: string) {
@@ -544,6 +670,9 @@ function appendBlockContinuation(
   target: RegionBlock,
   continuation: RegionBlock,
 ) {
+  const previousMaximumPage = Math.max(
+    ...blockSourceSegments(target).map((segment) => segment.region.page),
+  )
   const separator = target.text ? ' ' : ''
   const canonicalStart = target.text.length + separator.length
   target.sourceSegments = [
@@ -555,7 +684,9 @@ function appendBlockContinuation(
   ]
   target.text = `${target.text}${separator}${continuation.text}`
   target.confidence = Math.min(target.confidence, continuation.confidence)
-  if (target.list) target.list.continuedFromPreviousPage = true
+  if (target.list && continuation.region.page > previousMaximumPage) {
+    target.list.continuedFromPreviousPage = true
+  }
 }
 
 function likelyUnmarkedCrossPageContinuation(
@@ -566,9 +697,9 @@ function likelyUnmarkedCrossPageContinuation(
   const continuationText = continuation.text.trimStart()
   return Boolean(
     previousText &&
-      continuationText &&
-      !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
-      /^\p{Ll}/u.test(continuationText),
+    continuationText &&
+    !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
+    /^\p{Ll}/u.test(continuationText),
   )
 }
 
@@ -617,11 +748,322 @@ function boxForRegionLines(lines: PdfPageRegion['lines']): NormalizedSourceBox {
   }
 }
 
+type BibliographyIndentationProfile = {
+  baseX: number
+  continuationX: number
+}
+
+function bibliographyFlowKey(region: Pick<PdfPageRegion, 'page' | 'column'>) {
+  return `${region.page}:${region.column}`
+}
+
+function bibliographyIndentationProfiles(
+  blocks: RegionBlock[],
+  bibliographyRegionIds: ReadonlySet<string>,
+) {
+  const linesByFlow = new Map<string, PdfPageRegion['lines']>()
+  for (const block of blocks) {
+    if (
+      block.type !== 'paragraph' ||
+      !bibliographyRegionIds.has(block.region.id)
+    ) {
+      continue
+    }
+    const key = bibliographyFlowKey(block.region)
+    const lines = linesByFlow.get(key) ?? []
+    lines.push(...block.region.lines.filter((line) => line.text.trim()))
+    linesByFlow.set(key, lines)
+  }
+
+  const profiles = new Map<string, BibliographyIndentationProfile>()
+  for (const [key, lines] of linesByFlow) {
+    if (lines.length < 4) continue
+    const baseX = Math.min(...lines.map((line) => line.box.x))
+    const baseLines = lines.filter(
+      (line) => Math.abs(line.box.x - baseX) <= 0.004,
+    )
+    const continuationCandidates = lines.filter((line) => {
+      const indentation = line.box.x - baseX
+      return indentation >= 0.008 && indentation <= 0.04
+    })
+    const continuationX = median(
+      continuationCandidates.map((line) => line.box.x),
+    )
+    const continuationLines = continuationCandidates.filter(
+      (line) => Math.abs(line.box.x - continuationX) <= 0.004,
+    )
+    if (
+      baseLines.length < 2 ||
+      continuationLines.length < 2 ||
+      continuationX - baseX < 0.008
+    ) {
+      continue
+    }
+    profiles.set(key, { baseX, continuationX })
+  }
+  return profiles
+}
+
+function bibliographyLineIndentation(
+  line: PdfPageRegion['lines'][number],
+  profile: BibliographyIndentationProfile,
+) {
+  if (Math.abs(line.box.x - profile.baseX) <= 0.004) return 'entry' as const
+  if (Math.abs(line.box.x - profile.continuationX) <= 0.004) {
+    return 'continuation' as const
+  }
+  return 'unknown' as const
+}
+
+function splitBibliographyBlock(
+  block: RegionBlock,
+  bibliographyRegionIds: ReadonlySet<string>,
+  profiles: ReadonlyMap<string, BibliographyIndentationProfile>,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+) {
+  const bibliography =
+    bibliographyRegionIds.has(block.region.id) ||
+    /^\[\d+\]\s+/u.test(block.text.trim())
+  if (
+    !bibliography ||
+    block.type !== 'paragraph' ||
+    block.region.lines.length < 2 ||
+    block.sourceSegments
+  ) {
+    return [block]
+  }
+  const replay = replayPdfRegionLineRanges(block.region, lineBoundaryDecisions)
+  if (!replay || replay.text !== block.text) return [block]
+
+  const profile = profiles.get(bibliographyFlowKey(block.region))
+  const fragmentStarts = [0]
+  for (let index = 1; index < block.region.lines.length; index += 1) {
+    const line = block.region.lines[index]
+    const previous = block.region.lines[index - 1]
+    const lineRange = replay.ranges.get(line.id)
+    const previousRange = replay.ranges.get(previous.id)
+    if (
+      !lineRange ||
+      !previousRange ||
+      lineRange.start !== previousRange.end + 1
+    ) {
+      continue
+    }
+    const explicitEntry = Boolean(parsedBibliographyListMarker(line.text))
+    const hangingIndentEntry =
+      profile && bibliographyLineIndentation(line, profile) === 'entry'
+    if (explicitEntry || hangingIndentEntry) fragmentStarts.push(index)
+  }
+  if (fragmentStarts.length === 1) return [block]
+
+  const fragments: RegionBlock[] = []
+  for (const [fragmentIndex, startIndex] of fragmentStarts.entries()) {
+    const endIndex =
+      (fragmentStarts[fragmentIndex + 1] ?? block.region.lines.length) - 1
+    const lines = block.region.lines.slice(startIndex, endIndex + 1)
+    const firstRange = replay.ranges.get(lines[0].id)
+    const lastRange = replay.ranges.get(lines.at(-1)!.id)
+    if (!firstRange || !lastRange || firstRange.start >= lastRange.end) {
+      return [block]
+    }
+    const sourceStart = firstRange.start
+    const sourceEnd = lastRange.end
+    const text = block.region.text.slice(sourceStart, sourceEnd)
+    const evidenceRegion: PdfPageRegion = {
+      ...block.region,
+      box: boxForRegionLines(lines),
+      lines,
+      text,
+    }
+    fragments.push({
+      ...block,
+      region: evidenceRegion,
+      text,
+      sourceSegments: [
+        {
+          region: block.region,
+          evidenceRegion,
+          sourceStart,
+          canonicalStart: 0,
+          text,
+        },
+      ],
+    })
+  }
+  return fragments
+}
+
+function recoverBibliographyBlocks(
+  blocks: RegionBlock[],
+  bibliographyRegionIds: ReadonlySet<string>,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+) {
+  const profiles = bibliographyIndentationProfiles(
+    blocks,
+    bibliographyRegionIds,
+  )
+  const splitBlocks = blocks.flatMap((block) =>
+    splitBibliographyBlock(
+      block,
+      bibliographyRegionIds,
+      profiles,
+      lineBoundaryDecisions,
+    ),
+  )
+  const recovered: RegionBlock[] = []
+  let previousBibliographyBlock: RegionBlock | undefined
+  for (const block of splitBlocks) {
+    const bibliography =
+      block.type === 'paragraph' &&
+      (bibliographyRegionIds.has(block.region.id) ||
+        /^\[\d+\]\s+/u.test(block.text.trim()))
+    if (!bibliography) {
+      recovered.push(block)
+      previousBibliographyBlock = undefined
+      continue
+    }
+    const profile = profiles.get(bibliographyFlowKey(block.region))
+    const firstLine = block.region.lines[0]
+    const continuation = Boolean(
+      !parsedBibliographyListMarker(block.text) &&
+      profile &&
+      firstLine &&
+      bibliographyLineIndentation(firstLine, profile) === 'continuation',
+    )
+    if (continuation && previousBibliographyBlock) {
+      const previousPages = blockSourceSegments(previousBibliographyBlock).map(
+        (segment) => segment.region.page,
+      )
+      if (block.region.page > Math.max(...previousPages)) {
+        previousBibliographyBlock.bibliographyContinuedFromPreviousPage = true
+      }
+      appendBlockContinuation(previousBibliographyBlock, block)
+      continue
+    }
+    recovered.push(block)
+    previousBibliographyBlock = block
+  }
+  return recovered
+}
+
 export type PdfResidualRegionFragment = {
   region: PdfPageRegion
   sourceRegion: PdfPageRegion
   sourceStart: number
   sourceEnd: number
+}
+
+function splitLeadingStyledHeadingRegion(
+  region: PdfPageRegion,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+): PdfResidualRegionFragment[] {
+  if (region.lines.length < 2) {
+    return [
+      {
+        region,
+        sourceRegion: region,
+        sourceStart: 0,
+        sourceEnd: region.text.length,
+      },
+    ]
+  }
+  const firstLine = region.lines[0]
+  const continuationLine = region.lines[1]
+  const match = firstLine.text
+    .trim()
+    .match(/^\d+(?:\.\d+){0,3}[.)]?\s+(\S.*)$/u)
+  if (!match) {
+    return [
+      {
+        region,
+        sourceRegion: region,
+        sourceStart: 0,
+        sourceEnd: region.text.length,
+      },
+    ]
+  }
+  const emphasizedShare = (line: PdfPageRegion['lines'][number]) => {
+    const runs = line.runs.filter((run) => run.text.trim())
+    const visible = runs.reduce(
+      (total, run) => total + run.text.trim().length,
+      0,
+    )
+    const emphasized = runs.reduce(
+      (total, run) =>
+        total +
+        (run.bold ||
+        /(?:bold|black|demi|semibold|(?:^|[-+,_])medi(?:$|[-+,_]))/i.test(
+          run.fontName,
+        )
+          ? run.text.trim().length
+          : 0),
+      0,
+    )
+    return visible > 0 ? emphasized / visible : 0
+  }
+  const titleText = match[1]
+  const multiLevelSmallCaps =
+    /^\d+(?:\.\d+){2,3}[.)]?\s/u.test(firstLine.text.trim()) &&
+    /\p{Lu}/u.test(titleText) &&
+    !/\p{Ll}/u.test(titleText)
+  const styledHeadingPrefix =
+    emphasizedShare(firstLine) >= 0.6 && emphasizedShare(continuationLine) < 0.5
+  if (!styledHeadingPrefix && !multiLevelSmallCaps) {
+    return [
+      {
+        region,
+        sourceRegion: region,
+        sourceStart: 0,
+        sourceEnd: region.text.length,
+      },
+    ]
+  }
+  const replay = replayPdfRegionLineRanges(region, lineBoundaryDecisions)
+  const firstRange = replay?.ranges.get(firstLine.id)
+  const continuationRange = replay?.ranges.get(continuationLine.id)
+  if (
+    !replay ||
+    replay.text !== region.text ||
+    !firstRange ||
+    !continuationRange ||
+    continuationRange.start !== firstRange.end + 1
+  ) {
+    return [
+      {
+        region,
+        sourceRegion: region,
+        sourceStart: 0,
+        sourceEnd: region.text.length,
+      },
+    ]
+  }
+  const headingRegion: PdfPageRegion = {
+    ...region,
+    box: boxForRegionLines([firstLine]),
+    lines: [firstLine],
+    text: region.text.slice(0, firstRange.end),
+  }
+  const proseLines = region.lines.slice(1)
+  const proseRegion: PdfPageRegion = {
+    ...region,
+    box: boxForRegionLines(proseLines),
+    lines: proseLines,
+    text: region.text.slice(continuationRange.start),
+  }
+  return [
+    {
+      region: headingRegion,
+      sourceRegion: region,
+      sourceStart: 0,
+      sourceEnd: firstRange.end,
+    },
+    {
+      region: proseRegion,
+      sourceRegion: region,
+      sourceStart: continuationRange.start,
+      sourceEnd: region.text.length,
+    },
+  ]
 }
 
 export function residualPdfRegionFragmentsAfterLineConsumption(
@@ -710,7 +1152,7 @@ function blocksFromRegions(
     PdfPageRegion,
     PdfResidualRegionFragment
   >()
-  const readingRegions = orderedRegions.flatMap((region) => {
+  const retainedRegions = orderedRegions.flatMap((region) => {
     if (
       excludedRegionIds.has(region.id) ||
       ![
@@ -745,15 +1187,41 @@ function blocksFromRegions(
         .filter((region) => region.kind === 'body')
         .flatMap((region) => region.lines.map((line) => line.fontSize)),
     ) || 12
+  const readingRegions = retainedRegions.flatMap((region) => {
+    if (bibliographyRegionIds.has(region.id) || residualFragments.has(region)) {
+      return [region]
+    }
+    const fragments = splitLeadingStyledHeadingRegion(
+      region,
+      lineBoundaryDecisions,
+    )
+    if (fragments.length === 1) return [region]
+    for (const fragment of fragments) {
+      residualFragments.set(fragment.region, fragment)
+    }
+    return fragments.map((fragment) => fragment.region)
+  })
   const numberedCandidates = readingRegions.flatMap((region, index) => {
-    const match = region.text
-      .trim()
-      .match(/^(\d+(?:\.\d+){0,3})[.)]?\s+(\S.*)$/u)
+    const trimmed = region.text.trim()
+    const match = trimmed.match(/^(\d+(?:\.\d+){0,3})[.)]?\s+(\S.*)$/u)
+    const styledAsHeading =
+      Math.max(...region.lines.map((line) => line.fontSize), bodySize) >=
+        bodySize * 1.12 ||
+      region.lines
+        .flatMap((line) => line.runs)
+        .some(
+          (run) =>
+            run.bold ||
+            /(?:bold|black|demi|semibold|(?:^|[-+,_])medi(?:$|[-+,_]))/i.test(
+              run.fontName,
+            ),
+        )
     if (
       !match ||
+      (/^\d+[.)]\s/u.test(trimmed) && !styledAsHeading) ||
       region.lines.length > 2 ||
-      region.text.trim().length > 180 ||
-      /[.!?](?:["'’”)\]]*)$/u.test(region.text.trim())
+      trimmed.length > 180 ||
+      /[.!?](?:["'’”)\]]*)$/u.test(trimmed)
     ) {
       return []
     }
@@ -781,98 +1249,146 @@ function blocksFromRegions(
       sequencedNumberedHeadingRegions.add(readingRegions[next.index])
     }
   }
-  const blocks = readingRegions.map<RegionBlock>((region, regionIndex) => {
-    const residualFragment = residualFragments.get(region)
-    const sourceSegments = residualFragment
-      ? [
-          {
-            region: residualFragment.sourceRegion,
-            evidenceRegion: region,
-            sourceStart: residualFragment.sourceStart,
-            canonicalStart: 0,
-            text: region.text,
-          },
-        ]
-      : undefined
-    if (region.kind === 'caption') {
+  const initialBlocks = readingRegions.map<RegionBlock>(
+    (region, regionIndex) => {
+      const residualFragment = residualFragments.get(region)
+      const sourceSegments = residualFragment
+        ? [
+            {
+              region: residualFragment.sourceRegion,
+              evidenceRegion: region,
+              sourceStart: residualFragment.sourceStart,
+              canonicalStart: 0,
+              text: region.text,
+            },
+          ]
+        : undefined
+      if (region.kind === 'caption') {
+        return {
+          type: 'caption',
+          region,
+          text: region.text,
+          confidence: region.confidence,
+          ...(sourceSegments ? { sourceSegments } : {}),
+        }
+      }
+      if (region.kind === 'equation' && sourceEquationCaptions.has(region.id)) {
+        return {
+          type: 'caption',
+          region,
+          text: sourceEquationCaptions.get(region.id)!,
+          confidence: region.confidence,
+        }
+      }
+      if (
+        (region.kind === 'footnote' || region.kind === 'endnote') &&
+        !bibliographyRegionIds.has(region.id)
+      ) {
+        const label = noteLabelFromText(region.text) ?? '?'
+        return {
+          type: 'footnote',
+          region,
+          text: noteText(region, label),
+          confidence: region.confidence,
+          noteKind: region.kind,
+          noteLabel: label,
+          noteMarkerText: noteMarkerText(region, label),
+        }
+      }
+      const largestFont = Math.max(
+        ...region.lines.map((line) => line.fontSize),
+        bodySize,
+      )
+      const styledRuns = region.lines.flatMap((line) =>
+        line.runs.filter((run) => run.text.trim()),
+      )
+      const emphasizedCharacters = styledRuns.reduce(
+        (total, run) =>
+          total +
+          (run.bold ||
+          /(?:bold|black|demi|semibold|(?:^|[-+,_])medi(?:$|[-+,_]))/i.test(
+            run.fontName,
+          )
+            ? run.text.trim().length
+            : 0),
+        0,
+      )
+      const visibleCharacters = styledRuns.reduce(
+        (total, run) => total + run.text.trim().length,
+        0,
+      )
+      const compactEquationSyntax = (() => {
+        if (region.kind !== 'equation' || !/[=+−×÷∫∑√≤≥≈]/u.test(region.text)) {
+          return false
+        }
+        const words = region.text.match(/\p{L}+/gu) ?? []
+        return (
+          words.length <= 6 &&
+          words.filter((word) => word.length > 2).length <= 1
+        )
+      })()
+      const emphasizedNumberedHeading =
+        emphasizedCharacters >= Math.max(1, visibleCharacters * 0.6) &&
+        /^\d+(?:\.\d+){0,3}[.)]?\s+\p{Lu}/u.test(region.text.trim()) &&
+        (!/^\d+[.)]\s/u.test(region.text.trim()) ||
+          largestFont >= bodySize * 1.12)
+      const namedSectionPrefix =
+        /^(?:abstract|introduction|methods?|results?|discussion|conclusion|references|endnotes?|notes?)\b/i.test(
+          region.text,
+        )
+      const namedSectionHeading =
+        namedSectionPrefix &&
+        (/^\p{Lu}/u.test(region.text.trim()) ||
+          /^(?:abstract|introduction|methods?|results?|discussion|conclusion|references|endnotes?|notes?)$/i.test(
+            region.text.trim(),
+          ) ||
+          emphasizedCharacters >= Math.max(1, visibleCharacters * 0.6))
+      const numberedSectionHeading =
+        /^\d+(?:\.\d+){0,3}[.)]?\s+(?:abstract|introduction|background|related work|literature review|methods?|methodology|approach|framework|experiments?|evaluation|results?|discussion|limitations?|conclusion|references|appendix)\b/i.test(
+          region.text.trim(),
+        )
+      const headingBoundaryEvidence =
+        region.lines.length <= 2 &&
+        region.text.trim().length <= 180 &&
+        !/[.](?:["'’”)]*)$/.test(region.text.trim())
+      const probableFirstPageAuthorLine =
+        region.page === 1 &&
+        regionIndex > 0 &&
+        region.box.y < 0.28 &&
+        !/[.!?](?:\s|$)/.test(region.text) &&
+        authorNamesFromLine(region.text).length > 0
+      const fontOnlyHeading =
+        region.text.trim().length > 1 &&
+        largestFont >= bodySize * 1.18 &&
+        (/^\p{Lu}/u.test(region.text.trim()) ||
+          /^\d+(?:\.\d+){1,3}\s+\p{Lu}/u.test(region.text.trim()) ||
+          compactEquationSyntax) &&
+        !/[,;]/u.test(region.text)
+      const heading =
+        !probableFirstPageAuthorLine &&
+        headingBoundaryEvidence &&
+        (namedSectionHeading ||
+          numberedSectionHeading ||
+          emphasizedNumberedHeading ||
+          sequencedNumberedHeadingRegions.has(region) ||
+          fontOnlyHeading)
       return {
-        type: 'caption',
+        type: heading ? 'heading' : 'paragraph',
         region,
         text: region.text,
-        confidence: region.confidence,
+        confidence: Math.min(region.confidence, heading ? 0.9 : 0.86),
         ...(sourceSegments ? { sourceSegments } : {}),
+        ...(heading
+          ? { headingLevel: headingLevel(region.text, largestFont, bodySize) }
+          : {}),
       }
-    }
-    if (region.kind === 'equation' && sourceEquationCaptions.has(region.id)) {
-      return {
-        type: 'caption',
-        region,
-        text: sourceEquationCaptions.get(region.id)!,
-        confidence: region.confidence,
-      }
-    }
-    if (
-      (region.kind === 'footnote' || region.kind === 'endnote') &&
-      !bibliographyRegionIds.has(region.id)
-    ) {
-      const label = noteLabelFromText(region.text) ?? '?'
-      return {
-        type: 'footnote',
-        region,
-        text: noteText(region, label),
-        confidence: region.confidence,
-        noteKind: region.kind,
-        noteLabel: label,
-        noteMarkerText: noteMarkerText(region, label),
-      }
-    }
-    const largestFont = Math.max(
-      ...region.lines.map((line) => line.fontSize),
-      bodySize,
-    )
-    const namedSectionHeading =
-      /^(?:abstract|introduction|methods?|results?|discussion|conclusion|references|endnotes?|notes?)\b/i.test(
-        region.text,
-      )
-    const numberedSectionHeading =
-      /^\d+(?:\.\d+){0,3}[.)]?\s+(?:abstract|introduction|background|related work|literature review|methods?|methodology|approach|framework|experiments?|evaluation|results?|discussion|limitations?|conclusion|references|appendix)\b/i.test(
-        region.text.trim(),
-      )
-    const headingBoundaryEvidence =
-      region.lines.length <= 2 &&
-      region.text.trim().length <= 180 &&
-      !/[.!?](?:["'’”)]*)$/.test(region.text.trim())
-    const probableFirstPageAuthorLine =
-      region.page === 1 &&
-      regionIndex > 0 &&
-      region.box.y < 0.28 &&
-      !/[.!?](?:\s|$)/.test(region.text) &&
-      authorNamesFromLine(region.text).length > 0
-    const fontOnlyHeading =
-      region.text.trim().length > 1 &&
-      largestFont >= bodySize * 1.18 &&
-      (region.kind === 'equation' ||
-        /^\p{Lu}/u.test(region.text.trim()) ||
-        /^\d+(?:\.\d+){1,3}\s+\p{Lu}/u.test(region.text.trim())) &&
-      !/[,;]/u.test(region.text)
-    const heading =
-      !probableFirstPageAuthorLine &&
-      headingBoundaryEvidence &&
-      (namedSectionHeading ||
-        numberedSectionHeading ||
-        sequencedNumberedHeadingRegions.has(region) ||
-        fontOnlyHeading)
-    return {
-      type: heading ? 'heading' : 'paragraph',
-      region,
-      text: region.text,
-      confidence: Math.min(region.confidence, heading ? 0.9 : 0.86),
-      ...(sourceSegments ? { sourceSegments } : {}),
-      ...(heading
-        ? { headingLevel: headingLevel(region.text, largestFont, bodySize) }
-        : {}),
-    }
-  })
+    },
+  )
+  const blocks = recoverBibliographyBlocks(
+    initialBlocks,
+    bibliographyRegionIds,
+    lineBoundaryDecisions,
+  )
 
   let activeList:
     | {
@@ -887,8 +1403,7 @@ function blocksFromRegions(
     | undefined
   let lastBibliographyEntryPage: number | undefined
   let pendingBibliographyContinuation:
-    | { target: RegionBlock; tailPage: number }
-    | undefined
+    { target: RegionBlock; tailPage: number } | undefined
   let lastListBlock: RegionBlock | undefined
   const mergedContinuationBlocks = new Set<RegionBlock>()
   const listCounts = new Map<number, number>()
@@ -904,7 +1419,7 @@ function blocksFromRegions(
       bibliographyRegionIds.has(block.region.id) ||
       /^\[\d+\]\s+/.test(block.text.trim())
     if (bibliography) {
-      const entry = parsedOrderedListMarker(block.text)
+      const entry = parsedBibliographyListMarker(block.text)
       if (
         !entry &&
         pendingBibliographyContinuation &&
@@ -936,7 +1451,9 @@ function blocksFromRegions(
           : {}),
         ...(continuedFromPreviousPage
           ? { continuedFromPreviousPage: true }
-          : {}),
+          : block.bibliographyContinuedFromPreviousPage
+            ? { continuedFromPreviousPage: true }
+            : {}),
       }
       lastBibliographyEntryPage = block.region.page
       if (entry) {
@@ -956,11 +1473,32 @@ function blocksFromRegions(
     const marker = ordered
     const itemText = ordered?.itemText ?? bullet?.itemText
     if (!itemText) {
+      const targetTailSegment = lastListBlock
+        ? blockSourceSegments(lastListBlock).at(-1)
+        : undefined
+      const targetTailRegion =
+        targetTailSegment?.evidenceRegion ?? targetTailSegment?.region
+      const samePageVerticalGap = targetTailRegion
+        ? block.region.box.y -
+          (targetTailRegion.box.y + targetTailRegion.box.height)
+        : Number.POSITIVE_INFINITY
+      const samePageIndentedContinuation = Boolean(
+        activeList &&
+        block.region.page === activeList.page &&
+        block.region.column === activeList.column &&
+        block.region.box.x > activeList.baseX + 0.012 &&
+        samePageVerticalGap >= -0.004 &&
+        samePageVerticalGap <= 0.03,
+      )
+      const crossPageContinuation = Boolean(
+        activeList &&
+        block.region.page > activeList.page &&
+        block.region.box.x >= activeList.baseX - 0.012,
+      )
       if (
         activeList &&
         lastListBlock &&
-        block.region.page > activeList.page &&
-        block.region.box.x >= activeList.baseX - 0.012 &&
+        (samePageIndentedContinuation || crossPageContinuation) &&
         likelyUnmarkedCrossPageContinuation(lastListBlock, block)
       ) {
         appendBlockContinuation(lastListBlock, block)
@@ -975,30 +1513,30 @@ function blocksFromRegions(
     }
     const continuesAcrossPage = Boolean(
       activeList &&
-        activeList.page !== block.region.page &&
-        activeList.ordered &&
-        marker &&
-        activeList.markerStyle === marker.markerStyle &&
-        activeList.lastOrdinal !== undefined &&
-        marker.ordinal > activeList.lastOrdinal,
+      activeList.page !== block.region.page &&
+      activeList.ordered &&
+      marker &&
+      activeList.markerStyle === marker.markerStyle &&
+      activeList.lastOrdinal !== undefined &&
+      marker.ordinal > activeList.lastOrdinal,
     )
     const isNestedItem = Boolean(
       activeList &&
-        activeList.page === block.region.page &&
-        activeList.column === block.region.column &&
-        block.region.box.x > activeList.baseX + 0.012,
+      activeList.page === block.region.page &&
+      activeList.column === block.region.column &&
+      block.region.box.x > activeList.baseX + 0.012,
     )
     const continuesCurrentList = Boolean(
       activeList &&
-        (isNestedItem ||
-          ((activeList.page === block.region.page || continuesAcrossPage) &&
-            (activeList.page !== block.region.page ||
-              activeList.column === block.region.column) &&
-            activeList.ordered === Boolean(ordered) &&
-            activeList.markerStyle === (marker?.markerStyle ?? 'disc') &&
-            (!marker ||
-              activeList.lastOrdinal === undefined ||
-              marker.ordinal > activeList.lastOrdinal))),
+      (isNestedItem ||
+        ((activeList.page === block.region.page || continuesAcrossPage) &&
+          (activeList.page !== block.region.page ||
+            activeList.column === block.region.column) &&
+          activeList.ordered === Boolean(ordered) &&
+          activeList.markerStyle === (marker?.markerStyle ?? 'disc') &&
+          (!marker ||
+            activeList.lastOrdinal === undefined ||
+            marker.ordinal > activeList.lastOrdinal))),
     )
     if (!continuesCurrentList) {
       const sequence = (listCounts.get(block.region.page) ?? 0) + 1
@@ -1072,54 +1610,87 @@ function detectReferences(
   })
 }
 
+function exactAuthorSpans(block: RegionBlock) {
+  return authorNamesFromLine(block.text).flatMap((author) => {
+    const occurrences: Array<{ author: string; start: number; end: number }> =
+      []
+    let cursor = 0
+    while (cursor < block.text.length) {
+      const start = block.text.indexOf(author, cursor)
+      if (start < 0) break
+      const end = start + author.length
+      const before = block.text.slice(Math.max(0, start - 1), start)
+      const after = block.text.slice(end, end + 1)
+      if (!/\p{L}/u.test(before) && !/\p{L}/u.test(after)) {
+        occurrences.push({ author, start, end })
+      }
+      cursor = Math.max(end, start + 1)
+    }
+    return occurrences.length === 1 ? occurrences : []
+  })
+}
+
 function detectAuthorNoteReferences(
   blocks: RegionBlock[],
+  classifications: PdfNoteMarkerClassification[],
 ): AuthorNoteReferenceDraft[] {
-  const symbolicLabels = [
-    ...new Set(
-      blocks
-        .filter((block) => block.type === 'footnote')
-        .map((block) => normalizedNoteLabel(block.noteLabel ?? ''))
-        .filter((label) => /^[*†‡§]$/u.test(label)),
-    ),
-  ]
+  const classificationsByRegion = new Map<
+    string,
+    PdfNoteMarkerClassification[]
+  >()
+  for (const classification of classifications) {
+    if (
+      !classification.accepted ||
+      classification.disposition !== 'note-reference'
+    ) {
+      continue
+    }
+    const values =
+      classificationsByRegion.get(classification.referenceRegionId) ?? []
+    values.push(classification)
+    classificationsByRegion.set(classification.referenceRegionId, values)
+  }
   return blocks.flatMap((block) => {
     if (block.frontMatterRole !== 'author') return []
-    return symbolicLabels.flatMap((label, labelIndex) => {
-      const start = block.text.indexOf(label)
-      if (start < 0) return []
-      const authorFragment = block.text
-        .slice(0, start)
-        .split(/[;,]/u)
-        .at(-1)
-        ?.trim()
-      const author = normalizedAuthorName(authorFragment ?? '')
-      if (!author) return []
-      return [
-        {
-          id: `author-noteref-${block.region.id}-${String(labelIndex + 1).padStart(3, '0')}`,
-          label,
-          author,
-          region: block.region,
-          start,
-          end: start + label.length,
-          classification: {
-            id: `author-note-marker-${block.region.id}-${String(labelIndex + 1).padStart(3, '0')}`,
-            label,
-            referenceRegionId: block.region.id,
-            start,
-            end: start + label.length,
-            taxonomy: 'footnote-reference',
-            disposition: 'note-reference',
-            accepted: true,
-            confidence: 1,
-            threshold: 1,
-            evidence: ['author-front-matter-marker', 'matching-symbolic-note'],
-            sourceBox: { ...block.region.box },
+    const authorSpans = exactAuthorSpans(block).sort(
+      (left, right) => left.start - right.start || left.end - right.end,
+    )
+    return (classificationsByRegion.get(block.region.id) ?? []).flatMap(
+      (classification) => {
+        const sourceMarker = block.text.slice(
+          classification.start,
+          classification.end,
+        )
+        if (
+          classification.start < 0 ||
+          classification.end > block.text.length ||
+          normalizedNoteLabel(sourceMarker) !==
+            normalizedNoteLabel(classification.label)
+        ) {
+          return []
+        }
+        const preceding = authorSpans.filter(
+          (span) => span.end <= classification.start,
+        )
+        const owner = preceding.at(-1)
+        if (!owner) return []
+        const markerPrefix = block.text.slice(owner.end, classification.start)
+        if (!/^[\s\d⁰¹²³⁴⁵⁶⁷⁸⁹*†‡§]*$/u.test(markerPrefix)) return []
+        const nextAuthor = authorSpans.find((span) => span.start > owner.start)
+        if (nextAuthor && classification.start >= nextAuthor.start) return []
+        return [
+          {
+            id: classification.id,
+            label: classification.label,
+            author: owner.author,
+            region: block.region,
+            start: classification.start,
+            end: classification.end,
+            classification,
           },
-        },
-      ]
-    })
+        ]
+      },
+    )
   })
 }
 
@@ -1140,6 +1711,33 @@ function semanticRoleForClassification(
     return 'bibliography-entry'
   }
   return undefined
+}
+
+function normalizedAuthorYearCitationKey(surname: string, year: string) {
+  const normalizedSurname = surname
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/’/gu, "'")
+    .toLowerCase()
+  return `${normalizedSurname}:${year.toLowerCase()}`
+}
+
+function bibliographyAuthorYearKey(text: string) {
+  const normalized = text.replace(/\s+/gu, ' ').trim()
+  const surname = normalized.match(
+    /^(\p{Lu}[\p{L}\p{M}'’.-]*)(?=\s*,|\s+et\s+al\.)/u,
+  )?.[1]
+  if (!surname) return null
+  const years = [
+    ...new Set(
+      [...normalized.matchAll(/\b((?:18|19|20)\d{2}[a-z]?)\b/gu)].map((match) =>
+        match[1].toLowerCase(),
+      ),
+    ),
+  ]
+  return years.length === 1
+    ? normalizedAuthorYearCitationKey(surname, years[0])
+    : null
 }
 
 function buildCitationRelationships(
@@ -1186,11 +1784,56 @@ function buildCitationRelationships(
         bibliographyTargets.set(label, target)
     }
   }
+  const authorYearTargets = new Map<string, string[]>()
+  for (const block of blocks) {
+    if (block.list?.numberingId !== 'references' || !block.nodeId) continue
+    const key = bibliographyAuthorYearKey(block.text)
+    if (!key) continue
+    const targets = authorYearTargets.get(key) ?? []
+    if (!targets.includes(block.nodeId)) targets.push(block.nodeId)
+    authorYearTargets.set(key, targets)
+  }
 
   return classifications.flatMap<PdfCitationRelationship>((classification) => {
     if (!classification.accepted || classification.disposition !== 'citation')
       return []
     const labels = classification.label.split(',').filter(Boolean)
+    if (classification.taxonomy === 'author-year-bibliography-citation') {
+      const candidates = labels.map(
+        (label) => authorYearTargets.get(label) ?? [],
+      )
+      const missing = candidates.some((targets) => targets.length === 0)
+      const ambiguous = candidates.some((targets) => targets.length > 1)
+      const status = !missing && !ambiguous ? 'matched' : 'unresolved'
+      const targetNodeIds =
+        status === 'matched'
+          ? [...new Set(candidates.map((targets) => targets[0]))]
+          : []
+      return [
+        {
+          id: classification.id,
+          label: classification.label,
+          labels,
+          referenceRegionId: classification.referenceRegionId,
+          referenceStart: classification.start,
+          referenceEnd: classification.end,
+          taxonomy: classification.taxonomy,
+          targetNodeIds,
+          status,
+          canonicalAnchor: null,
+          confidence: classification.confidence,
+          evidence: [
+            ...classification.evidence,
+            ...(ambiguous
+              ? ['bibliography-author-year-target-ambiguous']
+              : missing
+                ? ['bibliography-author-year-target-missing']
+                : ['bibliography-author-year-key-unique']),
+          ],
+          sourceBoxes: [{ ...classification.sourceBox }],
+        },
+      ]
+    }
     const targetNodeIds = labels.flatMap((label) => {
       const target = bibliographyTargets.get(label)
       return target ? [target] : []
@@ -1999,6 +2642,48 @@ type CanonicalVisualDraft = {
   source: string
 }
 
+function orderCanonicalVisualPairs(
+  nodes: ResearchNode[],
+  pairs: readonly {
+    page: number
+    visualNodeId: string
+    captionNodeId: string
+  }[],
+) {
+  const pairsByPage = new Map<number, typeof pairs>()
+  for (const pair of pairs) {
+    const pagePairs = pairsByPage.get(pair.page) ?? []
+    pairsByPage.set(pair.page, [...pagePairs, pair])
+  }
+
+  for (const pagePairs of pairsByPage.values()) {
+    const orderedIds = pagePairs.flatMap(({ visualNodeId, captionNodeId }) => [
+      visualNodeId,
+      captionNodeId,
+    ])
+    const uniqueIds = new Set(orderedIds)
+    if (uniqueIds.size !== orderedIds.length) continue
+
+    const nodesById = new Map(
+      nodes
+        .filter((node) => uniqueIds.has(node.id))
+        .map((node) => [node.id, node]),
+    )
+    const slots = nodes.flatMap((node, index) =>
+      uniqueIds.has(node.id) ? [index] : [],
+    )
+    if (
+      nodesById.size !== orderedIds.length ||
+      slots.length !== orderedIds.length
+    ) {
+      continue
+    }
+    for (const [index, nodeId] of orderedIds.entries()) {
+      nodes[slots[index]] = nodesById.get(nodeId)!
+    }
+  }
+}
+
 function canonicalVisualDraft(
   relationship: PdfVisualRelationship,
   blocks: RegionBlock[],
@@ -2152,7 +2837,10 @@ export async function reconstructPageAnalyses({
   const regionMap = new Map(
     regionResult.regions.map((region) => [region.id, region]),
   )
-  const markerResult = classifyPdfNoteMarkers(regionResult.regions)
+  const markerResult = classifyPdfNoteMarkers(
+    regionResult.regions,
+    regionResult.readingOrder.order,
+  )
   const bibliographyRegionIds = new Set(markerResult.bibliographyRegionIds)
   const orderedRegions = regionResult.readingOrder.order
     .map((id) => regionMap.get(id))
@@ -2257,17 +2945,45 @@ export async function reconstructPageAnalyses({
           (relationship) =>
             relationship.kind === 'equation' &&
             relationship.status === 'matched' &&
-            relationship.altTextSource === 'source-text' &&
-            relationship.sourceRegionIds.includes(relationship.captionRegionId),
+            relationship.sourceRegionIds.includes(
+              relationship.captionRegionId,
+            ) &&
+            (relationship.altTextSource === 'source-text' ||
+              relationship.evidence.includes(
+                'source-text-transcript-unresolved',
+              )),
         )
         .map(
           (relationship) =>
-            [relationship.captionRegionId, relationship.sourceText] as const,
+            [
+              relationship.captionRegionId,
+              relationship.altTextSource === 'source-text'
+                ? relationship.sourceText
+                : relationship.altText,
+            ] as const,
         ),
     ),
     visualResult.consumedLineIds,
     regionResult.lineBoundaryDecisions,
   )
+  const markerClassifications = synthesizeRecoveredBibliographyClassifications(
+    markerResult.classifications,
+    blocks,
+  )
+  const originalClassificationIds = new Set(
+    markerResult.classifications.map((classification) => classification.id),
+  )
+  for (const classification of markerClassifications.filter(
+    (candidate) => !originalClassificationIds.has(candidate.id),
+  )) {
+    diagnostics.push({
+      code: 'CLASSIFIED_NOTE_MARKER',
+      severity: 'info',
+      page: classification.sourceBox.page,
+      message: `Classified ${classification.id} as ${classification.taxonomy} at confidence ${classification.confidence.toFixed(2)} against threshold ${classification.threshold.toFixed(2)} using ${classification.evidence.join(', ')}.`,
+      noteMarkerClassification: classification,
+    })
+  }
   const frontMatter = classifyFrontMatter(blocks, metadata.title)
   const canonicalBlocks = blocks.filter(
     (block) =>
@@ -2280,7 +2996,22 @@ export async function reconstructPageAnalyses({
   for (const [index, block] of blocks.entries()) {
     block.nodeId ??= nodeId(index, block.type, block.text)
   }
-  const authorNoteReferences = detectAuthorNoteReferences(blocks)
+  const authorNoteReferences = detectAuthorNoteReferences(
+    blocks,
+    markerClassifications,
+  )
+  const sourceAuthors =
+    frontMatter.authors.length > 0
+      ? frontMatter.authors
+      : inferredAuthors(blocks)
+  const paperAuthors = metadata.author?.trim()
+    ? parseAuthors(metadata.author)
+    : sourceAuthors.length > 0
+      ? sourceAuthors
+      : ['Imported locally']
+  const renderedAuthorNoteReferences = authorNoteReferences.filter(
+    (reference) => paperAuthors.includes(reference.author),
+  )
   const embeddedLinks = pages.flatMap((page) => page.links ?? [])
   const visualAssetsById = new Map(
     visualResult.assets.map((asset) => [asset.id, asset] as const),
@@ -2313,7 +3044,7 @@ export async function reconstructPageAnalyses({
     canonicalVisualTextOwners.map((owner) => [owner.nodeId, owner] as const),
   )
   const citationRelationships = buildCitationRelationships(
-    markerResult.classifications,
+    markerClassifications,
     canonicalBlocks,
   )
   for (const relationship of citationRelationships) {
@@ -2380,7 +3111,7 @@ export async function reconstructPageAnalyses({
     ]),
   )
   const semanticReferencesByRegion = new Map<string, SemanticReferenceDraft[]>()
-  for (const classification of markerResult.classifications) {
+  for (const classification of markerClassifications) {
     const semanticRole = semanticRoleForClassification(classification)
     if (!semanticRole || !classification.accepted) continue
     const citation = citationsById.get(classification.id)
@@ -2398,13 +3129,15 @@ export async function reconstructPageAnalyses({
     semanticReferencesByRegion.set(classification.referenceRegionId, values)
   }
   const authorRegionIds = new Set(
-    authorNoteReferences.map((reference) => reference.region.id),
+    blocks
+      .filter((block) => block.frontMatterRole === 'author')
+      .map((block) => block.region.id),
   )
   const references = [
-    ...detectReferences(markerResult.classifications, regionMap).filter(
+    ...detectReferences(markerClassifications, regionMap).filter(
       (reference) => !authorRegionIds.has(reference.region.id),
     ),
-    ...authorNoteReferences,
+    ...renderedAuthorNoteReferences,
   ]
   const noteRelationships = matchNotes(blocks, references, diagnostics)
   const matchedReferences = new Map(
@@ -2565,6 +3298,7 @@ export async function reconstructPageAnalyses({
         id,
         type: 'caption' as const,
         text: block.text,
+        ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
         source,
       }
     }
@@ -2634,6 +3368,22 @@ export async function reconstructPageAnalyses({
     nodes.splice(captionIndex < 0 ? nodes.length : captionIndex, 0, node)
   }
 
+  orderCanonicalVisualPairs(
+    nodes,
+    visualResult.relationships.flatMap((relationship) => {
+      const draft = canonicalVisualDrafts.get(relationship.id)
+      return draft
+        ? [
+            {
+              page: draft.page,
+              visualNodeId: draft.id,
+              captionNodeId: draft.captionBlock.nodeId,
+            },
+          ]
+        : []
+    }),
+  )
+
   assertUniqueCanonicalNodeIds(nodes)
 
   const firstHeading = nodes.find(
@@ -2644,16 +3394,7 @@ export async function reconstructPageAnalyses({
     (node): node is Extract<ResearchNode, { type: 'paragraph' }> =>
       node.type === 'paragraph',
   )
-  const sourceAuthors =
-    frontMatter.authors.length > 0
-      ? frontMatter.authors
-      : inferredAuthors(blocks)
-  const paperAuthors = metadata.author?.trim()
-    ? parseAuthors(metadata.author)
-    : sourceAuthors.length > 0
-      ? sourceAuthors
-      : ['Imported locally']
-  const authorNotes = authorNoteReferences.flatMap((reference) => {
+  const authorNotes = renderedAuthorNoteReferences.flatMap((reference) => {
     const relationship = noteRelationships.find(
       (candidate) =>
         candidate.id === reference.id &&

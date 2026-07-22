@@ -236,6 +236,7 @@ function validCitationRelationshipGraph(value) {
         ['matched', 'unresolved'].includes(relationship.status) &&
         [
           'bracketed-bibliography-citation',
+          'author-year-bibliography-citation',
           'superscript-citation-cluster',
           'superscript-bibliography-citation',
           'human-reclassified-citation',

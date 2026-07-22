@@ -66,6 +66,128 @@ describe('deterministic scholarly page regions', () => {
     expect(noteLabelFromText('*Work done during the internship.')).toBe('*')
   })
 
+  it('does not let a script-expanded line envelope erase a paragraph break', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'First paragraph remains separate.', 0.1, 0.2, 0.5, 10, 0.018),
+        run(1, 'Inline formula H', 0.1, 0.242, 0.16, 10, 0.018),
+        run(1, '2', 0.26, 0.252, 0.008, 6, 0.014),
+        run(1, 'O remains readable.', 0.268, 0.242, 0.2, 10, 0.018),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'paragraph')
+        .map((node) => node.text),
+    ).toEqual([
+      'First paragraph remains separate.',
+      expect.stringContaining('Inline formula H'),
+    ])
+  })
+
+  it('keeps a detached right-margin equation number out of following prose', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'CR = m/N × 100%,', 0.22, 0.4, 0.17),
+        run(1, '(4)', 0.466, 0.4, 0.022),
+        run(
+          1,
+          'where N is the number of quadruples in the graph.',
+          0.12,
+          0.424,
+          0.37,
+        ),
+      ]),
+    ])
+
+    const texts = result.regions.map((region) => region.text)
+    expect(texts).toContain('(4)')
+    expect(texts).toContain('where N is the number of quadruples in the graph.')
+    expect(texts).not.toContain(
+      '(4) where N is the number of quadruples in the graph.',
+    )
+    expect(
+      result.paper.nodes.some(
+        (node) =>
+          node.type === 'paragraph' &&
+          node.list !== undefined &&
+          node.text.includes('quadruples'),
+      ),
+    ).toBe(false)
+  })
+
+  it('rejoins an emphasized section number stranded at a column gutter', async () => {
+    const body = [
+      run(1, 'Left column establishes its first line.', 0.1, 0.2, 0.39, 11),
+      run(1, 'Right column establishes its first line.', 0.54, 0.2, 0.36, 11),
+      run(1, 'Left column establishes its second line.', 0.1, 0.26, 0.39, 11),
+      run(1, 'Right column establishes its second line.', 0.54, 0.26, 0.36, 11),
+      run(1, 'Left column establishes its third line.', 0.1, 0.32, 0.39, 11),
+      run(1, 'Right column establishes its third line.', 0.54, 0.32, 0.36, 11),
+    ]
+    const prefix = run(1, '2', 0.505, 0.65, 0.012, 12)
+    const title = run(1, 'Related Work', 0.54, 0.65, 0.12, 12)
+    prefix.fontName = 'Synthetic-Medium'
+    title.fontName = 'Synthetic-Medium'
+    const result = await reconstruct([
+      page(1, [
+        ...body,
+        prefix,
+        title,
+        run(
+          1,
+          'Following left-column prose must not absorb the section number.',
+          0.1,
+          0.675,
+          0.39,
+          11,
+        ),
+        run(1, '2.1 Prior Systems', 0.54, 0.7, 0.18, 11),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'heading'),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: '2 Related Work' }),
+      ]),
+    )
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'paragraph')
+        .map((node) => node.text),
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('2 Following left-column prose'),
+      ]),
+    )
+  })
+
+  it('classifies decimal plot ticks as chart labels instead of footnotes', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body text establishes the page font.', 0.1, 0.15, 0.5, 10),
+        run(1, 'A second ordinary body line.', 0.1, 0.2, 0.5, 10),
+        run(1, 'A third ordinary body line.', 0.1, 0.25, 0.5, 10),
+        run(1, 'A fourth ordinary body line.', 0.1, 0.3, 0.5, 10),
+        run(1, '0.0', 0.12, 0.74, 0.025, 7),
+        run(1, '0.1', 0.2, 0.74, 0.025, 7),
+        run(1, '0,198', 0.28, 0.74, 0.04, 7),
+      ]),
+    ])
+
+    const ticks = result.regions.filter((region) =>
+      ['0.0', '0.1', '0,198'].includes(region.text),
+    )
+    expect(ticks).toHaveLength(3)
+    expect(ticks.every((region) => region.kind === 'chart-label')).toBe(true)
+    expect(result.paper.nodes.some((node) => node.type === 'footnote')).toBe(
+      false,
+    )
+  })
+
   it('checks dense reading-order graphs without overflowing the call stack', () => {
     const regionIds = Array.from(
       { length: 20_000 },
@@ -634,6 +756,167 @@ describe('deterministic scholarly page regions', () => {
     })
   })
 
+  it('keeps caption continuations together when opposite-column prose interleaves by y', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Figure 19. A left-column caption begins with a long first',
+          0.09,
+          0.68,
+          0.383,
+          9,
+          0.011,
+        ),
+        run(
+          1,
+          'Right-column prose is geometrically interleaved.',
+          0.502,
+          0.691,
+          0.382,
+          10,
+          0.012,
+        ),
+        run(
+          1,
+          'line and continues at the same left-column indent before',
+          0.091,
+          0.696,
+          0.382,
+          9,
+          0.011,
+        ),
+        run(
+          1,
+          'More right-column prose follows independently.',
+          0.502,
+          0.706,
+          0.382,
+          10,
+          0.012,
+        ),
+        run(1, 'ending with a short final line.', 0.091, 0.712, 0.19, 9, 0.011),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'caption'),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'Figure 19. A left-column caption begins with a long first line and continues at the same left-column indent before ending with a short final line.',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            text: 'ending with a short final line.',
+          }),
+        ]),
+      }),
+    ])
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'caption'),
+    ).toHaveLength(1)
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'paragraph')
+        .map((node) => node.text)
+        .join(' '),
+    ).toContain('Right-column prose is geometrically interleaved.')
+  })
+
+  it('keeps interleaved side-by-side figure captions as separate regions', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Figure 30. Left result begins here', 0.09, 0.28, 0.383, 9, 0.009),
+        run(1, 'Figure 32. Right result begins here', 0.502, 0.291, 0.383, 9, 0.009),
+        run(1, 'and finishes in its own column.', 0.09, 0.294, 0.24, 9, 0.009),
+        run(1, 'and continues on the right', 0.502, 0.305, 0.28, 9, 0.009),
+        run(1, 'before ending there.', 0.502, 0.319, 0.2, 9, 0.009),
+      ]),
+    ])
+
+    const captions = result.regions
+      .filter((region) => region.kind === 'caption')
+      .map((region) => region.text)
+    expect(captions).toHaveLength(2)
+    expect(captions[0]).toMatch(/^Figure 30\./)
+    expect(captions[0]).toContain('finishes in its own column')
+    expect(captions[1]).toMatch(/^Figure 32\./)
+    expect(captions[1]).toContain('continues on the right')
+    expect(captions[1]).toContain('ending there')
+  })
+
+  it('keeps prose with inline equations in the complete caption', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Figure 16. We plot the magnitude of each Fourier feature.',
+          0.09,
+          0.2,
+          0.39,
+          9,
+        ),
+        run(
+          1,
+          'The period T = 2 component is omitted from the plotted basis.',
+          0.09,
+          0.222,
+          0.39,
+          9,
+        ),
+        run(
+          1,
+          'Its output is measured on a different scale.',
+          0.09,
+          0.244,
+          0.32,
+          9,
+        ),
+        run(1, 'Following body prose.', 0.09, 0.29, 0.39, 10),
+      ]),
+    ])
+
+    const caption = result.regions.find((region) => region.kind === 'caption')
+    expect(caption?.text).toBe(
+      'Figure 16. We plot the magnitude of each Fourier feature. The period T = 2 component is omitted from the plotted basis. Its output is measured on a different scale.',
+    )
+    expect(caption?.lines).toHaveLength(3)
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          node.type === 'paragraph' && node.text === 'Following body prose.',
+      ),
+    ).toBeDefined()
+  })
+
+  it('keeps a short sentence-like inline equation continuation in its caption', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Figure 39. We analyze each selected neuron’s maximally',
+          0.09,
+          0.28,
+          0.79,
+          9,
+          0.011,
+        ),
+        run(1, 'activating a + b example.', 0.091, 0.294, 0.15, 9, 0.011),
+        run(1, 'Following prose remains separate.', 0.09, 0.35, 0.36, 9),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'caption'),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'Figure 39. We analyze each selected neuron’s maximally activating a + b example.',
+        lines: expect.arrayContaining([
+          expect.objectContaining({ text: 'activating a + b example.' }),
+        ]),
+      }),
+    ])
+  })
+
   it('keeps enumerated subfigure prose in one complete caption', async () => {
     const result = await reconstruct([
       page(1, [
@@ -992,6 +1275,49 @@ describe('deterministic scholarly page regions', () => {
         (node) => node.type === 'footnote' && node.text.includes('Work done'),
       ),
     ).toBe(true)
+  })
+
+  it('separates an attached raised affiliation note before paragraph joining', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Introduction', 0.1, 0.12, 0.3, 16),
+        run(1, 'Body line one.', 0.1, 0.2, 0.7, 10),
+        run(1, 'Body line two.', 0.1, 0.25, 0.7, 10),
+        run(1, 'Body line three.', 0.1, 0.3, 0.7, 10),
+        run(1, 'LLMs use a form', 0.1, 0.82, 0.32, 10),
+        run(1, '1', 0.1, 0.848, 0.008, 6, 0.008),
+        run(
+          1,
+          'Example Institute. Correspondence to:',
+          0.108,
+          0.849,
+          0.52,
+          9,
+          0.016,
+        ),
+        run(1, 'Ada <ada@example.edu>.', 0.1, 0.866, 0.36, 9, 0.016),
+      ]),
+    ])
+
+    const note = result.regions.find((region) => region.kind === 'footnote')
+    const prose = result.regions
+      .filter((region) => region.kind === 'body')
+      .map((region) => region.text)
+      .join(' ')
+
+    expect(note).toMatchObject({
+      kind: 'footnote',
+      text: '1 Example Institute. Correspondence to: Ada <ada@example.edu>.',
+    })
+    expect(note?.lines).toHaveLength(2)
+    expect(prose).toContain('LLMs use a form')
+    expect(prose).not.toContain('Example Institute')
+    expect(
+      result.paper.nodes.find((node) => node.type === 'footnote'),
+    ).toMatchObject({
+      label: '1',
+      text: 'Example Institute. Correspondence to: Ada <ada@example.edu>.',
+    })
   })
 
   it('keeps a wrapped symbolic note continuation in the note', async () => {

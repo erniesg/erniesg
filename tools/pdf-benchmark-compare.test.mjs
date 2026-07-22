@@ -688,6 +688,18 @@ describe('deterministic PDF benchmark comparison', () => {
     }
   })
 
+  it('accepts author-year citation relationships in benchmark evidence', () => {
+    const baseline = report([document()])
+    const graph = baseline.documents[0].structure.citationRelationshipGraph
+    graph[0].taxonomy = 'author-year-bibliography-citation'
+    baseline.documents[0].structure.citationRelationshipGraphSha256 =
+      canonicalJsonHash(graph)
+
+    expect(() =>
+      comparePdfBenchmarkReports(baseline, structuredClone(baseline)),
+    ).not.toThrow()
+  })
+
   it('rejects missing, malformed, stale, or inconsistent citation graph evidence', () => {
     const baseline = report([document()])
     const missing = structuredClone(baseline)

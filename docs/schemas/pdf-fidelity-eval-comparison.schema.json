@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-eval-comparison-1.0.0.json",
+  "title": "Sanitized scholarly PDF fidelity candidate comparison",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "privacy",
+    "evalSet",
+    "baseline",
+    "candidate",
+    "overallScoreDelta",
+    "criticalRegressionCount",
+    "cases",
+    "passed",
+    "comparisonSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "privacy": {
+      "const": "public-identities-hashes-aggregate-scores-bounded-case-results-only"
+    },
+    "evalSet": { "$ref": "#/$defs/evalSetIdentity" },
+    "baseline": { "$ref": "#/$defs/receiptReference" },
+    "candidate": { "$ref": "#/$defs/receiptReference" },
+    "overallScoreDelta": { "type": "number", "minimum": -1, "maximum": 1 },
+    "criticalRegressionCount": { "type": "integer", "minimum": 0 },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/caseComparison" }
+    },
+    "passed": { "type": "boolean" },
+    "comparisonSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "task": {
+      "enum": ["classification", "detection", "reading-order", "relationship"]
+    },
+    "evalSetIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sha256",
+        "annotationSchemaVersion",
+        "documentIdentitySha256",
+        "caseIdentitySha256"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "annotationSchemaVersion": { "const": "1.0.0" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "receiptReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidateId", "candidateVersion", "receiptSha256"],
+      "properties": {
+        "candidateId": { "$ref": "#/$defs/id" },
+        "candidateVersion": { "$ref": "#/$defs/id" },
+        "receiptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "caseComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "stratum",
+        "task",
+        "critical",
+        "baselineScore",
+        "candidateScore",
+        "delta",
+        "change"
+      ],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/id" },
+        "stratum": { "$ref": "#/$defs/id" },
+        "task": { "$ref": "#/$defs/task" },
+        "critical": { "type": "boolean" },
+        "baselineScore": { "$ref": "#/$defs/ratio" },
+        "candidateScore": { "$ref": "#/$defs/ratio" },
+        "delta": { "type": "number", "minimum": -1, "maximum": 1 },
+        "change": { "enum": ["improved", "regressed", "unchanged"] }
+      }
+    }
+  }
+}

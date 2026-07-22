@@ -10,8 +10,10 @@ import {
   reconstructPageAnalyses,
   residualPdfRegionAfterLineConsumption,
   residualPdfRegionFragmentsAfterLineConsumption,
+  synthesizeRecoveredBibliographyClassifications,
 } from './pdf-layout'
 import { assessPdfCompleteness } from './pdf-quality'
+import { internalReferenceIntegrityIssues } from './publication-integrity'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import { createSourcePageCropAsset } from './visual-assets'
 
@@ -287,6 +289,30 @@ describe('PDF semantic reconstruction', () => {
     ])
   })
 
+  it('recognizes same-size medium-face hierarchical section headings', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Previous body paragraph ends here.', 0.1, 0.1, 0.72, 10),
+          {
+            ...run(1, '3.2 Draft Module', 0.52, 0.2, 0.25, 10),
+            fontName: 'NimbusRomNo9L-Medi',
+          },
+          run(1, 'Following body prose.', 0.52, 0.25, 0.35, 10),
+        ]),
+      ],
+      sourceHash: '9'.repeat(64),
+      fileName: 'medium-face-heading.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.find(
+        (node) => node.type === 'heading' && node.text === '3.2 Draft Module',
+      ),
+    ).toMatchObject({ type: 'heading', level: 2 })
+  })
+
   it('recognizes adjacent author names separated by affiliation markers', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
@@ -304,6 +330,185 @@ describe('PDF semantic reconstruction', () => {
     })
 
     expect(result.paper.authors).toEqual(['Ada Example', 'Ben Reader'])
+  })
+
+  it('owns exact title-page note markers through canonical author references', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Source-backed author notes', 0.1, 0.08, 0.72, 18),
+          run(1, 'Subhash Kantamneni', 0.24, 0.15, 0.2, 11),
+          {
+            ...run(1, '1', 0.441, 0.146, 0.008, 6),
+            height: 0.009,
+          },
+          run(1, 'Max Tegmark', 0.46, 0.15, 0.13, 11),
+          {
+            ...run(1, '1', 0.591, 0.146, 0.008, 6),
+            height: 0.009,
+          },
+          run(1, 'Abstract', 0.1, 0.28, 0.25, 16),
+          run(1, 'The abstract remains canonical prose.', 0.1, 0.34, 0.72),
+          run(
+            1,
+            '1 Massachusetts Institute of Technology. Correspondence to: Subhash Kantamneni <subhashk@mit.edu>.',
+            0.1,
+            0.86,
+            0.72,
+            7,
+          ),
+        ]),
+      ],
+      sourceHash: '1'.repeat(64),
+      fileName: 'numeric-author-note.pdf',
+      byteLength: 4096,
+    })
+
+    const note = result.paper.nodes.find((node) => node.type === 'footnote')
+    expect(note).toBeDefined()
+    expect(result.paper.authorNotes).toEqual([
+      {
+        id: expect.any(String),
+        author: 'Subhash Kantamneni',
+        label: '1',
+        target: note!.id,
+      },
+      {
+        id: expect.any(String),
+        author: 'Max Tegmark',
+        label: '1',
+        target: note!.id,
+      },
+    ])
+    expect(note).toMatchObject({
+      relationships: {
+        backlinks: result.paper.authorNotes!.map((reference) => reference.id),
+      },
+    })
+    expect(internalReferenceIntegrityIssues(result.paper)).toEqual([])
+  })
+
+  it('leaves a title-page note unowned when intervening prose makes author ownership ambiguous', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Ambiguous author note', 0.1, 0.08, 0.72, 18),
+          run(1, 'Ada Example and corresponding author', 0.2, 0.15, 0.38, 11),
+          {
+            ...run(1, '1', 0.581, 0.146, 0.008, 6),
+            height: 0.009,
+          },
+          run(1, 'Abstract', 0.1, 0.28, 0.25, 16),
+          run(1, 'The abstract remains canonical prose.', 0.1, 0.34, 0.72),
+          run(
+            1,
+            '1 A source-backed note whose author owner is not explicit.',
+            0.1,
+            0.86,
+            0.72,
+            7,
+          ),
+        ]),
+      ],
+      sourceHash: '2'.repeat(64),
+      fileName: 'ambiguous-author-note.pdf',
+      byteLength: 4096,
+    })
+
+    const note = result.paper.nodes.find((node) => node.type === 'footnote')
+    expect(result.paper.authorNotes).toBeUndefined()
+    expect(note).toMatchObject({ relationships: { backlinks: [] } })
+    expect(internalReferenceIntegrityIssues(result.paper)).toEqual([])
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'UNREFERENCED_NOTE' }),
+      ]),
+    )
+  })
+
+  it('keeps space-separated affiliation markers out of the publication title', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Source-Backed Paper Title', 0.22, 0.08, 0.56, 18),
+          run(1, 'Ada Example 1 Ben Reader 1', 0.34, 0.15, 0.32, 11),
+          run(1, '1 Example University', 0.1, 0.21, 0.7, 9),
+          run(1, 'Abstract', 0.1, 0.3, 0.25, 16),
+          run(1, 'The abstract remains canonical prose.', 0.1, 0.36, 0.72),
+        ]),
+      ],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'spaced-affiliation-markers.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.paper.title).toBe('A Source-Backed Paper Title')
+    expect(result.paper.authors).toEqual(['Ada Example', 'Ben Reader'])
+  })
+
+  it('splits a dense author line with repeated space-separated markers', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Multi-Institution Paper', 0.2, 0.08, 0.6, 18),
+          run(
+            1,
+            'Qianyue Wang 1 2* Jinwu Hu 1 2* Zhengping Li 1 Yufeng Wang 1 3 Daiyuan Li 1 Yu Hu 4 Mingkui Tan 1 †',
+            0.16,
+            0.15,
+            0.68,
+            11,
+          ),
+          run(
+            1,
+            '1 Example University, 2 Example Laboratory',
+            0.2,
+            0.21,
+            0.6,
+            9,
+          ),
+          run(1, 'Abstract', 0.1, 0.3, 0.25, 16),
+          run(1, 'The abstract remains canonical prose.', 0.1, 0.36, 0.72),
+        ]),
+      ],
+      sourceHash: '7'.repeat(64),
+      fileName: 'dense-author-markers.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.paper.authors).toEqual([
+      'Qianyue Wang',
+      'Jinwu Hu',
+      'Zhengping Li',
+      'Yufeng Wang',
+      'Daiyuan Li',
+      'Yu Hu',
+      'Mingkui Tan',
+    ])
+  })
+
+  it('does not append a company affiliation to the title', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Source-Backed Paper Title', 0.22, 0.08, 0.56, 18),
+          run(1, 'Ada Example1, Ben Reader2', 0.3, 0.15, 0.4, 11),
+          run(1, '1 Example University', 0.33, 0.2, 0.34, 9),
+          run(1, '2 LightSpeed Studios, Example Company', 0.28, 0.23, 0.44, 9),
+          run(1, 'Abstract', 0.1, 0.3, 0.25, 16),
+          run(1, 'The abstract remains canonical prose.', 0.1, 0.36, 0.72),
+        ]),
+      ],
+      sourceHash: '8'.repeat(64),
+      fileName: 'company-affiliation.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.paper.title).toBe('A Source-Backed Paper Title')
+    expect(result.paper.authors).toEqual(['Ada Example', 'Ben Reader'])
+    expect(result.paper.affiliations).toEqual(
+      expect.arrayContaining([expect.stringContaining('LightSpeed Studios')]),
+    )
   })
 
   it('collects right-side authors above an abstract despite column-major order', async () => {
@@ -495,6 +700,182 @@ describe('PDF semantic reconstruction', () => {
     ).toEqual(['1 Überblick', '2 Methode'])
   })
 
+  it('keeps sequenced decimal steps as list items when typography does not mark headings', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, '3. MLPs 14-18 fit the b token', 0.1, 0.18, 0.55),
+          run(
+            1,
+            'and retain the ordinary step explanation.',
+            0.12,
+            0.205,
+            0.68,
+          ),
+          run(1, '4. MLPs 19-27 fit the a token', 0.1, 0.34, 0.55),
+          run(
+            1,
+            'and retain the next ordinary step explanation.',
+            0.12,
+            0.365,
+            0.7,
+          ),
+        ]),
+      ],
+      sourceHash: '4'.repeat(64),
+      fileName: 'numbered-list-steps.pdf',
+      byteLength: 4096,
+    })
+
+    const steps = result.paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' &&
+      node.list?.numberingId.startsWith('pdf-list-')
+        ? [node]
+        : [],
+    )
+    expect(
+      steps.map((node) => ({ text: node.text, ordinal: node.list?.ordinal })),
+    ).toEqual([
+      {
+        text: 'MLPs 14-18 fit the b token and retain the ordinary step explanation.',
+        ordinal: 3,
+      },
+      {
+        text: 'MLPs 19-27 fit the a token and retain the next ordinary step explanation.',
+        ordinal: 4,
+      },
+    ])
+    expect(new Set(steps.map((node) => node.list!.numberingId)).size).toBe(1)
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'heading'),
+    ).toEqual([])
+  })
+
+  it('separates source-styled section lines from merged prose while retaining the complete heading text', async () => {
+    const mainHeading = run(
+      2,
+      '5. LLMs Use the Clock Algorithm to Compute Addition',
+      0.1,
+      0.12,
+      0.72,
+      12,
+    )
+    mainHeading.fontName = 'NimbusRomNo9L-Medi'
+    const subsection = run(
+      2,
+      '5.2. Investigating Attention Heads',
+      0.1,
+      0.22,
+      0.5,
+    )
+    subsection.fontName = 'NimbusRomNo9L-Medi'
+    const nextSubsection = run(2, '5.3. Looking at MLPs', 0.1, 0.38, 0.4)
+    nextSubsection.fontName = 'NimbusRomNo9L-Medi'
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Paper', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+          run(1, 'Introductory context.', 0.1, 0.24, 0.7),
+        ]),
+        page(2, [
+          mainHeading,
+          subsection,
+          run(
+            2,
+            'In GPT-J, every attention layer is the sum of its heads.',
+            0.1,
+            0.243,
+            0.7,
+          ),
+          nextSubsection,
+          run(
+            2,
+            'GPT-J predominantly relies on the last token MLPs.',
+            0.1,
+            0.403,
+            0.7,
+          ),
+          run(2, '5.4.1. MODELING NEURON PREACTIVATIONS', 0.1, 0.54, 0.58),
+          run(
+            2,
+            'The first nested subsection remains ordinary prose.',
+            0.1,
+            0.563,
+            0.7,
+          ),
+          run(2, '5.4.2. UNDERSTANDING MLP INPUTS', 0.1, 0.68, 0.56),
+          run(
+            2,
+            'The second nested subsection remains ordinary prose.',
+            0.1,
+            0.703,
+            0.7,
+          ),
+        ]),
+      ],
+      sourceHash: '6'.repeat(64),
+      fileName: 'styled-section-prefixes.pdf',
+      byteLength: 4096,
+    })
+
+    const headings = result.paper.nodes.flatMap((node) =>
+      node.type === 'heading' && node.text !== 'Abstract' ? [node] : [],
+    )
+    expect(headings.map((node) => node.text)).toEqual([
+      '5. LLMs Use the Clock Algorithm to Compute Addition',
+      '5.2. Investigating Attention Heads',
+      '5.3. Looking at MLPs',
+      '5.4.1. MODELING NEURON PREACTIVATIONS',
+      '5.4.2. UNDERSTANDING MLP INPUTS',
+    ])
+    expect(
+      result.paper.nodes.filter(
+        (node) => node.type === 'paragraph' && node.list,
+      ),
+    ).toEqual([])
+    expect(
+      headings.map((node) => result.provenance[node.id].boxes.length),
+    ).toEqual([1, 1, 1, 1, 1])
+  })
+
+  it('keeps lowercase equation-shaped prose out of the heading hierarchy', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(
+            1,
+            'Ordinary context establishes the experiment.',
+            0.1,
+            0.16,
+            0.7,
+          ),
+          run(1, 'More ordinary context fixes the body size.', 0.1, 0.2, 0.7),
+          run(
+            1,
+            'results hold when fitting the b token = stable',
+            0.1,
+            0.3,
+            0.7,
+            12,
+          ),
+          run(1, 'The explanation then continues as prose.', 0.1, 0.4, 0.7),
+        ]),
+      ],
+      sourceHash: '5'.repeat(64),
+      fileName: 'lowercase-equation-prose.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          'text' in node &&
+          node.text === 'results hold when fitting the b token = stable',
+      ),
+    ).toMatchObject({ type: 'paragraph' })
+  })
+
   it('requires section syntax or boundary evidence instead of font size alone', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
@@ -678,6 +1059,226 @@ describe('PDF semantic reconstruction', () => {
     expect(new Set(proseListIds).size).toBe(1)
   })
 
+  it('synthesizes an exact later marker classification when one bibliography region is split', () => {
+    const firstText = '[1] First source-backed reference.'
+    const secondText = '[2] Second source-backed reference.'
+    const sourceText = `${firstText} ${secondText}`
+    const firstRun = run(2, firstText, 0.1, 0.2, 0.72)
+    const secondRun = run(2, secondText, 0.1, 0.222, 0.72)
+    const sourceRegion = {
+      id: 'merged-bibliography-region',
+      page: 2,
+      kind: 'endnote',
+      column: 'single',
+      text: sourceText,
+      confidence: 1,
+      box: {
+        page: 2,
+        x: 0.1,
+        y: 0.2,
+        width: 0.72,
+        height: 0.04,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: [firstRun, secondRun].map((sourceRun, index) => ({
+        id: `merged-reference-line-${index + 1}`,
+        text: sourceRun.text,
+        fontSize: sourceRun.fontSize,
+        box: { ...sourceRun },
+        runs: [{ ...sourceRun }],
+      })),
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies import('./import-types').PdfPageRegion
+    const secondSourceStart = firstText.length + 1
+    const evidenceRegion = {
+      ...sourceRegion,
+      text: secondText,
+      box: { ...secondRun },
+      lines: [sourceRegion.lines[1]],
+    }
+    const classifications = synthesizeRecoveredBibliographyClassifications(
+      [
+        {
+          id: 'existing-reference-1',
+          label: '1',
+          referenceRegionId: sourceRegion.id,
+          start: 0,
+          end: 3,
+          taxonomy: 'bibliography-entry',
+          disposition: 'plain-text',
+          confidence: 0.99,
+          threshold: 0.85,
+          accepted: true,
+          evidence: ['source-backed-bibliography-marker'],
+          sourceBox: { ...firstRun },
+        },
+      ],
+      [
+        {
+          region: evidenceRegion,
+          list: {
+            numberingId: 'references',
+            ordinal: 2,
+            markerText: '[2]',
+          },
+          sourceSegments: [
+            {
+              region: sourceRegion,
+              evidenceRegion,
+              sourceStart: secondSourceStart + 4,
+              canonicalStart: 0,
+              text: 'Second source-backed reference.',
+            },
+          ],
+        },
+      ],
+    )
+
+    expect(classifications).toHaveLength(2)
+    expect(classifications[1]).toMatchObject({
+      label: '2',
+      referenceRegionId: sourceRegion.id,
+      start: secondSourceStart,
+      end: secondSourceStart + 3,
+      taxonomy: 'bibliography-entry',
+      accepted: true,
+      sourceBox: secondRun,
+    })
+    expect(
+      sourceRegion.text.slice(classifications[1].start, classifications[1].end),
+    ).toBe('[2]')
+  })
+
+  it('maps citations to every numbered bibliography entry', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Citation Study', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+          run(
+            1,
+            'Prior work [1, 2] establishes the baseline.',
+            0.1,
+            0.24,
+            0.72,
+          ),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[1] First source-backed reference.', 0.1, 0.82, 0.72, 7),
+          run(2, '[2] Second source-backed reference.', 0.1, 0.838, 0.72, 7),
+        ]),
+      ],
+      sourceHash: '6'.repeat(64),
+      fileName: 'merged-numbered-references.pdf',
+      byteLength: 4096,
+    })
+
+    const references = result.paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' && node.list?.numberingId === 'references'
+        ? [node]
+        : [],
+    )
+    expect(references).toHaveLength(2)
+    expect(references.map((node) => node.list?.ordinal)).toEqual([1, 2])
+
+    const bibliographyClassifications = result.diagnostics.flatMap(
+      (diagnostic) =>
+        diagnostic.noteMarkerClassification?.taxonomy === 'bibliography-entry'
+          ? [diagnostic.noteMarkerClassification]
+          : [],
+    )
+    expect(
+      bibliographyClassifications.map((classification) => ({
+        label: classification.label,
+        sourceText: result.regions
+          .find((region) => region.id === classification.referenceRegionId)!
+          .text.slice(classification.start, classification.end),
+      })),
+    ).toEqual([
+      { label: '1', sourceText: '[1]' },
+      { label: '2', sourceText: '[2]' },
+    ])
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        labels: ['1', '2'],
+        status: 'matched',
+        targetNodeIds: [references[0].id, references[1].id],
+      }),
+    ])
+    expect(result.provenance[references[0].id].regionIds).not.toEqual(
+      result.provenance[references[1].id].regionIds,
+    )
+    expect(result.provenance[references[0].id].boxes).not.toEqual(
+      result.provenance[references[1].id].boxes,
+    )
+  })
+
+  it('does not turn a parenthesized citation year into a numbered list', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Source-Backed Paper', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.18, 0.3, 16),
+          run(1, 'Zhou et al.', 0.1, 0.3, 0.7),
+          run(
+            1,
+            '(2024) analyze a fine-tuned model and report results.',
+            0.1,
+            0.34,
+            0.7,
+          ),
+        ]),
+      ],
+      sourceHash: 'f'.repeat(64),
+      fileName: 'citation-year.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.filter(
+        (node) => node.type === 'paragraph' && node.list,
+      ),
+    ).toEqual([])
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'paragraph')
+        .map((node) => node.text)
+        .join(' '),
+    ).toContain('(2024) analyze a fine-tuned model')
+  })
+
+  it('retains a typographic section heading phrased as a question', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Source-Backed Paper', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.18, 0.3, 16),
+          run(1, 'Introductory prose line one', 0.1, 0.24, 0.7),
+          run(1, 'continues on line two', 0.1, 0.27, 0.7),
+          run(1, 'and continues on line three', 0.1, 0.3, 0.7),
+          run(1, 'before ending on line four.', 0.1, 0.33, 0.7),
+          run(1, 'E. Why Use This Algorithm at All?', 0.1, 0.4, 0.5, 16),
+          run(1, 'The appendix answer remains prose.', 0.1, 0.48, 0.7),
+        ]),
+      ],
+      sourceHash: 'e'.repeat(64),
+      fileName: 'question-heading.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.paper.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'heading',
+          text: 'E. Why Use This Algorithm at All?',
+        }),
+      ]),
+    )
+  })
+
   it('preserves an immediate cross-page bibliography continuation', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
@@ -715,6 +1316,92 @@ describe('PDF semantic reconstruction', () => {
       },
     })
     expect(result.provenance[references[0].id].regionIds).toHaveLength(2)
+  })
+
+  it('recovers hanging-indent bibliography entries with exact source-line provenance', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Citation Study', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+          run(
+            1,
+            'Prior work (Ahn et al., 2024; Biderman et al., 2023) establishes the baseline.',
+            0.1,
+            0.24,
+            0.72,
+          ),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, 'Ahn, J., Verma, R., and Yin,', 0.1, 0.2, 0.55),
+          run(
+            2,
+            'W. Large language models for reasoning, 2024.',
+            0.12,
+            0.22,
+            0.6,
+          ),
+          run(2, 'Biderman, S., and Example, A.', 0.1, 0.25, 0.55),
+          run(2, 'Pythia at scale, 2023.', 0.12, 0.27, 0.5),
+        ]),
+      ],
+      sourceHash: 'a'.repeat(64),
+      fileName: 'hanging-indent-references.pdf',
+      byteLength: 4096,
+    })
+
+    const references = result.paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' && node.list?.numberingId === 'references'
+        ? [node]
+        : [],
+    )
+    expect(references.map((node) => node.text)).toEqual([
+      'Ahn, J., Verma, R., and Yin, W. Large language models for reasoning, 2024.',
+      'Biderman, S., and Example, A. Pythia at scale, 2023.',
+    ])
+    expect(
+      references.every((node) => node.list?.markerText === undefined),
+    ).toBe(true)
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        labels: ['ahn:2024', 'biderman:2023'],
+        status: 'matched',
+        targetNodeIds: [references[0].id, references[1].id],
+      }),
+    ])
+    expect(
+      references.map((node) =>
+        result.provenance[node.id].boxes.map((box) => box.x),
+      ),
+    ).toEqual([
+      [0.1, 0.12],
+      [0.1, 0.12],
+    ])
+  })
+
+  it('fails closed instead of merging unmarked bibliography regions without an indentation profile', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Paper', 0.1, 0.08, 0.7, 22),
+          run(1, 'References', 0.1, 0.16, 0.3, 16),
+          run(1, 'Alpha reference fragment.', 0.1, 0.26, 0.6),
+          run(1, 'Beta independent fragment.', 0.1, 0.36, 0.6),
+        ]),
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'ambiguous-reference-indentation.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.flatMap((node) =>
+        node.type === 'paragraph' && node.list?.numberingId === 'references'
+          ? [node.text]
+          : [],
+      ),
+    ).toEqual(['Alpha reference fragment.', 'Beta independent fragment.'])
   })
 
   it('does not merge a bibliography continuation across intervening canonical content', async () => {
@@ -1077,6 +1764,98 @@ describe('PDF semantic reconstruction', () => {
     ).toEqual([relationship])
   })
 
+  it('orders canonical figure-caption pairs by the verified visual column flow', async () => {
+    const figureBoxes: NormalizedSourceBox[] = [
+      {
+        page: 1,
+        x: 0.09,
+        y: 0.09,
+        width: 0.38,
+        height: 0.15,
+        rotation: 0,
+        method: 'pdf-object',
+      },
+      {
+        page: 1,
+        x: 0.09,
+        y: 0.32,
+        width: 0.38,
+        height: 0.14,
+        rotation: 0,
+        method: 'pdf-object',
+      },
+      {
+        page: 1,
+        x: 0.09,
+        y: 0.58,
+        width: 0.38,
+        height: 0.23,
+        rotation: 0,
+        method: 'pdf-object',
+      },
+      {
+        page: 1,
+        x: 0.502,
+        y: 0.27,
+        width: 0.38,
+        height: 0.36,
+        rotation: 0,
+        method: 'pdf-object',
+      },
+    ]
+    const sourcePage = page(1, [
+      run(1, 'Figure 15. First left-column figure.', 0.09, 0.255, 0.38, 8),
+      run(1, 'Figure 16. Second left-column figure.', 0.09, 0.47, 0.38, 8),
+      run(1, 'Figure 17. Third left-column figure.', 0.09, 0.827, 0.38, 8),
+      run(1, 'Figure 18. Right-column figure.', 0.502, 0.652, 0.38, 8),
+    ])
+    sourcePage.imageCount = figureBoxes.length
+    sourcePage.objects = figureBoxes.map((box, index) => ({
+      id: `image-visual-column-${index + 1}`,
+      page: 1,
+      kind: 'image',
+      box,
+      confidence: 0.98,
+      assetId: null,
+      role: 'semantic',
+    }))
+
+    const result = await reconstructPageAnalyses({
+      pages: [sourcePage],
+      sourceHash: 'f'.repeat(64),
+      fileName: 'visual-column-order.pdf',
+      byteLength: 4096,
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind: input.kind === 'figure' ? 'raster' : input.kind,
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 8,
+          height: 8,
+          pixels: new Uint8Array(8 * 8 * 4).fill(96),
+        }),
+    })
+    const labelByNodeId = new Map(
+      result.visualRelationships.map((relationship) => [
+        relationship.canonicalNodeId,
+        relationship.label,
+      ]),
+    )
+
+    expect(result.visualRelationships.map(({ label }) => label)).toEqual([
+      'Figure 15',
+      'Figure 16',
+      'Figure 17',
+      'Figure 18',
+    ])
+    expect(
+      result.paper.nodes.flatMap((node) =>
+        node.type === 'figure' ? [labelByNodeId.get(node.id)] : [],
+      ),
+    ).toEqual(['Figure 15', 'Figure 16', 'Figure 17', 'Figure 18'])
+  })
+
   it('retains source-text equation lineage when the equation is its own caption', async () => {
     const equationRun = run(1, 'E = m c 2', 0.3, 0.28, 0.24, 12)
     const result = await reconstructPageAnalyses({
@@ -1125,6 +1904,60 @@ describe('PDF semantic reconstruction', () => {
         assets: result.assets,
       }),
     ).toEqual([relationship])
+  })
+
+  it('uses a source equation label without publishing an unsafe glyph transcript', async () => {
+    const opening = run(1, '\u0012', 0.81, 0.09, 0.012, 10)
+    opening.fontName = 'Synthetic-CMEX10'
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Ordinary prose establishes the body font.', 0.1, 0.3, 0.36),
+          run(1, 'Another ordinary prose line.', 0.1, 0.33, 0.3),
+          opening,
+          run(1, 'N(a,b) = c + d', 0.5, 0.115, 0.35, 12),
+          run(1, 'd(a,b) = e', 0.52, 0.135, 0.3, 12),
+          run(1, '(3)', 0.87, 0.155, 0.02, 10),
+        ]),
+      ],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'unsafe-source-equation.pdf',
+      byteLength: 2048,
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind: input.kind === 'figure' ? 'raster' : input.kind,
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 16,
+          height: 6,
+          pixels: new Uint8Array(16 * 6 * 4).fill(96),
+        }),
+    })
+
+    const relationship = result.visualRelationships.find(
+      (candidate) => candidate.kind === 'equation',
+    )!
+    expect(relationship).toMatchObject({
+      status: 'matched',
+      label: 'Equation 3',
+      sourceText: '',
+      altText: 'Equation 3',
+      altTextSource: 'caption',
+      canonicalNodeId: expect.any(String),
+      captionNodeId: expect.any(String),
+      evidence: expect.arrayContaining(['source-text-transcript-unresolved']),
+    })
+    expect(
+      result.paper.nodes.find((node) => node.id === relationship.captionNodeId),
+    ).toMatchObject({ type: 'caption', text: 'Equation 3' })
+    expect(
+      result.paper.nodes.some(
+        (node) =>
+          'text' in node &&
+          /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(node.text),
+      ),
+    ).toBe(false)
   })
 
   it('assigns source-anchored unique canonical ids to repeated equation labels', async () => {
@@ -1584,6 +2417,47 @@ describe('PDF semantic reconstruction', () => {
     expect(styleFor(syntheticRuns[1].text)?.italic).toBe(true)
     expect(styleFor(syntheticRuns[2].text)?.italic).toBe(true)
     expect(styleFor(syntheticRuns[3].text)?.italic).not.toBe(true)
+  })
+
+  it('retains raised caption glyphs as canonical caption inline semantics', async () => {
+    const captionRuns = [
+      {
+        ...run(1, 'Figure 1. Score R', 0.1, 0.65, 0.25, 9),
+        fontName: 'Caption',
+      },
+      {
+        ...run(1, '2', 0.351, 0.646, 0.012, 6),
+        height: 0.009,
+        fontName: 'Caption',
+      },
+      {
+        ...run(1, ' remains stable.', 0.372, 0.65, 0.16, 9),
+        fontName: 'Caption',
+      },
+    ]
+    const result = await reconstructPageAnalyses({
+      pages: [page(1, captionRuns)],
+      sourceHash: '7'.repeat(64),
+      fileName: 'synthetic-caption-inline.pdf',
+      byteLength: 2048,
+    })
+    const caption = result.paper.nodes.find(
+      (node) => node.type === 'caption' && node.text.includes('Score'),
+    )
+
+    expect(caption?.type).toBe('caption')
+    if (caption?.type !== 'caption') throw new Error('missing caption')
+    expect(caption.text).toBe('Figure 1. Score R2 remains stable.')
+    const superscriptStart = caption.text.indexOf('2')
+    expect(caption.inlineRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          start: superscriptStart,
+          end: superscriptStart + 1,
+          verticalAlign: 'superscript',
+        }),
+      ]),
+    )
   })
 
   it('maps a safe literal absolute URL when no PDF link annotation exists', async () => {

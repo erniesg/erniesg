@@ -292,8 +292,8 @@ function equationAssetWithPayload(
 
 function strictTableBoundaryFixture() {
   const captionRun = run('Table 1. Source-backed values.', 0.2, 0.18, 10, 0.4)
-  const firstRun = run('inter-', 0.2, 0.3, 10, 0.12)
-  const secondRun = run('national', 0.2, 0.325, 10, 0.14)
+  const firstRun = run('Header Value inter-', 0.2, 0.3, 10, 0.3)
+  const secondRun = run('national 1', 0.2, 0.325, 10, 0.18)
   const captionRegion = {
     id: 'table-caption-region',
     page: 1,
@@ -328,7 +328,7 @@ function strictTableBoundaryFixture() {
     page: 1,
     kind: 'body',
     column: 'single',
-    text: 'inter-national',
+    text: 'Header Value inter-national 1',
     confidence: 1,
     box: {
       page: 1,
@@ -359,7 +359,7 @@ function strictTableBoundaryFixture() {
     includedInReadingOrder: true,
   } satisfies PdfPageRegion
   const bytes = new TextEncoder().encode(
-    '<table><tr><td>international</td></tr></table>',
+    '<table><tr><th>Header</th><th>Value</th></tr><tr><td>international</td><td>1</td></tr></table>',
   )
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   const asset = {
@@ -415,7 +415,29 @@ function strictTableBoundaryFixture() {
             {
               cells: [
                 {
+                  text: 'Header',
+                  headerScope: 'column',
+                  columnSpan: 1,
+                  rowSpan: 1,
+                },
+                {
+                  text: 'Value',
+                  headerScope: 'column',
+                  columnSpan: 1,
+                  rowSpan: 1,
+                },
+              ],
+            },
+            {
+              cells: [
+                {
                   text: 'international',
+                  headerScope: null,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                },
+                {
+                  text: '1',
                   headerScope: null,
                   columnSpan: 1,
                   rowSpan: 1,
@@ -618,6 +640,111 @@ describe('PDF semantic signal detection', () => {
     expect(assessed.readiness.blockingDiagnosticCodes).not.toContain(
       'UNRESOLVED_CORRUPTING_JOIN',
     )
+  })
+
+  it('does not count a matched non-semantic table crop as semantic table resolution', async () => {
+    const fixture = strictTableBoundaryFixture()
+    const width = 12
+    const height = 8
+    const pixels = new Uint8Array(width * height * 4).fill(255)
+    for (let y = 2; y < 6; y += 1) {
+      for (let x = 2; x < 10; x += 1) {
+        const offset = (y * width + x) * 4
+        pixels.set([0, 0, 0, 255], offset)
+      }
+    }
+    const crop = await createSourcePageCropAsset({
+      kind: 'table',
+      cropBox: fixture.asset.sourceBoxes[0],
+      sourceObjectIds: fixture.asset.sourceObjectIds,
+      sourceBoxes: fixture.asset.sourceBoxes,
+      width,
+      height,
+      pixels,
+    })
+    const relationship = {
+      ...fixture.relationship,
+      assetIds: [crop.id],
+      evidence: ['bounded-table-scope', 'non-semantic-source-scope'],
+    } satisfies PdfVisualRelationship
+    const paper = {
+      ...fixture.paper,
+      nodes: fixture.paper.nodes.map((node) =>
+        node.type === 'figure'
+          ? {
+              ...node,
+              relationships: { ...node.relationships, assets: [crop.id] },
+            }
+          : node,
+      ),
+    } satisfies ResearchPaper
+
+    const assessed = assessPdfCompleteness({
+      pages: [fixture.page],
+      paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: [relationship],
+      assets: [crop],
+      lineBoundaryDecisions: [fixture.decision],
+    })
+
+    expect(assessed.completeness.assetCoverage).toBe(1)
+    expect(assessed.completeness.relationshipCoverage).toBe(0)
+    expect(assessed.completeness.unresolvedObjects.tables).toBe(1)
+    expect(assessed.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_SEMANTIC_OBJECTS',
+    )
+  })
+
+  it('does not resolve empty, one-cell, or headerless semantic-table claims', () => {
+    const fixture = strictTableBoundaryFixture()
+    const cell = (text: string, headerScope: 'column' | null) => ({
+      text,
+      headerScope,
+      columnSpan: 1,
+      rowSpan: 1,
+    })
+    const invalidTables: Array<
+      NonNullable<
+        Extract<ResearchPaper['nodes'][number], { type: 'figure' }>['table']
+      >
+    > = [
+      { rows: [] },
+      { rows: [{ cells: [cell('Only', 'column')] }] },
+      {
+        rows: [
+          { cells: [cell('A', null), cell('B', null)] },
+          { cells: [cell('1', null), cell('2', null)] },
+        ],
+      },
+    ]
+
+    for (const table of invalidTables) {
+      const paper: ResearchPaper = structuredClone(fixture.paper)
+      const node = paper.nodes.find((candidate) => candidate.type === 'figure')
+      if (!node || node.type !== 'figure') throw new Error('missing table node')
+      node.table = table
+      const assessed = assessPdfCompleteness({
+        pages: [fixture.page],
+        paper,
+        diagnostics: [],
+        regions: fixture.regions,
+        readingOrder: fixture.readingOrder,
+        provenance: fixture.provenance,
+        visualRelationships: [fixture.relationship],
+        assets: [fixture.asset],
+        lineBoundaryDecisions: [fixture.decision],
+      })
+
+      expect(assessed.completeness.relationshipCoverage).toBe(0)
+      expect(assessed.completeness.unresolvedObjects.tables).toBe(1)
+      expect(assessed.readiness.blockingDiagnosticCodes).toContain(
+        'UNRESOLVED_SEMANTIC_OBJECTS',
+      )
+    }
   })
 
   it('keeps an unresolved rejected table transition corrupting', () => {
@@ -1234,7 +1361,29 @@ describe('PDF semantic signal detection', () => {
                           {
                             cells: [
                               {
-                                text: equationRegion.text,
+                                text: 'q',
+                                headerScope: 'column' as const,
+                                columnSpan: 1,
+                                rowSpan: 1,
+                              },
+                              {
+                                text: '=',
+                                headerScope: 'column' as const,
+                                columnSpan: 1,
+                                rowSpan: 1,
+                              },
+                            ],
+                          },
+                          {
+                            cells: [
+                              {
+                                text: 'r',
+                                headerScope: null,
+                                columnSpan: 1,
+                                rowSpan: 1,
+                              },
+                              {
+                                text: '.',
                                 headerScope: null,
                                 columnSpan: 1,
                                 rowSpan: 1,
@@ -1538,7 +1687,7 @@ describe('PDF semantic signal detection', () => {
     }
 
     const semanticBytes = new TextEncoder().encode(
-      '<table><tr><td>beta</td><td>alpha</td></tr></table>',
+      '<table><tr><th>beta</th><th>.</th></tr><tr><td>alpha</td><td>.</td></tr></table>',
     )
     const semanticSha256 = createHash('sha256')
       .update(semanticBytes)
@@ -1572,12 +1721,28 @@ describe('PDF semantic signal detection', () => {
                     cells: [
                       {
                         text: 'beta',
+                        headerScope: 'column',
+                        columnSpan: 1,
+                        rowSpan: 1,
+                      },
+                      {
+                        text: '.',
+                        headerScope: 'column',
+                        columnSpan: 1,
+                        rowSpan: 1,
+                      },
+                    ],
+                  },
+                  {
+                    cells: [
+                      {
+                        text: 'alpha',
                         headerScope: null,
                         columnSpan: 1,
                         rowSpan: 1,
                       },
                       {
-                        text: 'alpha',
+                        text: '.',
                         headerScope: null,
                         columnSpan: 1,
                         rowSpan: 1,
@@ -2849,6 +3014,104 @@ describe('PDF semantic signal detection', () => {
         'INCOMPLETE_RELATIONSHIP_COVERAGE',
         'UNRESOLVED_SEMANTIC_OBJECTS',
       ]),
+    )
+  })
+
+  it.each([
+    { label: 'forbidden C0 control', text: '\u0012' },
+    { label: 'Unicode replacement glyph', text: 'term \ufffd value' },
+  ])('blocks canonical text containing a $label', ({ text }) => {
+    const sourceRun = run(text, 0.1, 0.2)
+    const sourcePage: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: text.length,
+      imageCount: 0,
+      runs: [sourceRun],
+    }
+    const corruptPaper: ResearchPaper = {
+      id: 'corrupt-text-paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Corrupt text',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-23',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'corrupt-node',
+          type: 'paragraph',
+          text,
+          source: 'test',
+        },
+      ],
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [sourcePage],
+      paper: corruptPaper,
+      diagnostics: [],
+    })
+
+    expect(result.readiness.ready).toBe(false)
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'EPUB_TEXT_SANITIZATION_LOSS',
+    )
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'EPUB_TEXT_SANITIZATION_LOSS',
+        severity: 'error',
+      }),
+    )
+  })
+
+  it('blocks an orphan canonical note backlink before EPUB rendering', () => {
+    const sourceRun = run('Affiliation note', 0.1, 0.82)
+    const sourcePage: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: sourceRun.text.length,
+      imageCount: 0,
+      runs: [sourceRun],
+    }
+    const notePaper: ResearchPaper = {
+      id: 'orphan-note-paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Orphan note',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-23',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'orphan-note',
+          type: 'footnote',
+          kind: 'footnote',
+          label: '1',
+          text: sourceRun.text,
+          relationships: { backlinks: ['page-001-author-region'] },
+          source: 'test',
+        },
+      ],
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [sourcePage],
+      paper: notePaper,
+      diagnostics: [],
+    })
+
+    expect(result.readiness.ready).toBe(false)
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'DANGLING_EPUB_INTERNAL_REFERENCE',
     )
   })
 })

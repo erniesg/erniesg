@@ -38,6 +38,160 @@ function markerDiagnostics(result: Awaited<ReturnType<typeof reconstruct>>) {
 }
 
 describe('scholarly note-marker taxonomy', () => {
+  it('does not promote mathematical intervals or numeric lists to citations', () => {
+    const region = (id: string, text: string): PdfPageRegion => ({
+      id,
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text,
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: id === 'references' ? 0.8 : 0.2,
+        width: 0.7,
+        height: 0.03,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: [],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+
+    const classifications = classifyPdfNoteMarkers([
+      region('citations', 'Prior work [1] and later work [2] support this.'),
+      region(
+        'math',
+        'For a, b ∈ [0,99], evaluate periods T = [2,5,10,100], numbers [0,361], tokenizes [0,557], and Helix: [2,5,10,100]. Hidden states h⁰³⁶⁰ and h⁰⁹⁹ yield R² = 0.788.',
+      ),
+      region('references', 'References'),
+    ]).classifications
+
+    expect(
+      classifications.map(({ label, taxonomy, disposition }) => ({
+        label,
+        taxonomy,
+        disposition,
+      })),
+    ).toEqual([
+      {
+        label: '1',
+        taxonomy: 'bracketed-bibliography-citation',
+        disposition: 'citation',
+      },
+      {
+        label: '2',
+        taxonomy: 'bracketed-bibliography-citation',
+        disposition: 'citation',
+      },
+    ])
+  })
+
+  it('ends a bibliography before a font-backed lettered appendix heading', () => {
+    const region = (
+      id: string,
+      page: number,
+      text: string,
+      fontSize: number,
+      lines = 1,
+    ): PdfPageRegion => {
+      const y = id === 'reference-entry' ? 0.2 : 0.1
+      return {
+        id,
+        page,
+        kind: 'body',
+        column: 'single',
+        text,
+        confidence: 1,
+        box: {
+          page,
+          x: 0.1,
+          y,
+          width: 0.7,
+          height: 0.02 * lines,
+          rotation: 0,
+          method: 'pdf-text',
+        },
+        lines: Array.from({ length: lines }, (_, index) => ({
+          id: `${id}-line-${index + 1}`,
+          text,
+          fontSize,
+          box: {
+            page,
+            x: 0.1,
+            y: y + index * 0.02,
+            width: 0.7,
+            height: 0.02,
+            rotation: 0,
+            method: 'pdf-text',
+          },
+          runs: [],
+        })),
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }
+    }
+
+    const result = classifyPdfNoteMarkers([
+      region('references', 1, 'References', 16),
+      region(
+        'reference-entry',
+        1,
+        'A. Localizing model behavior with path patching, 2023.',
+        10,
+        4,
+      ),
+      region('appendix-heading', 2, 'A. Performance of all models', 12),
+      region('appendix-body', 2, 'Appendix prose remains ordinary body.', 10),
+    ])
+
+    expect(result.bibliographyRegionIds).toEqual(['reference-entry'])
+  })
+
+  it('uses canonical column reading order to scope references that start above the left-column heading', () => {
+    const region = (
+      id: string,
+      text: string,
+      column: PdfPageRegion['column'],
+      x: number,
+      y: number,
+    ): PdfPageRegion => ({
+      id,
+      page: 9,
+      kind: 'body',
+      column,
+      text,
+      confidence: 1,
+      box: {
+        page: 9,
+        x,
+        y,
+        width: 0.38,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: [],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+    const regions = [
+      region('right-entry', 'Fiotto-Kaufman, J. 2024.', 'right', 0.52, 0.08),
+      region('references', 'References', 'left', 0.1, 0.22),
+      region('left-entry', 'Ahn, J. 2024.', 'left', 0.1, 0.25),
+    ]
+
+    const result = classifyPdfNoteMarkers(regions, [
+      'references',
+      'left-entry',
+      'right-entry',
+    ])
+
+    expect(result.bibliographyRegionIds).toEqual(['left-entry', 'right-entry'])
+  })
+
   it('keeps an unpaired symbolic superscript out of the bibliography citation graph', () => {
     const region = (
       id: string,
@@ -441,6 +595,147 @@ describe('scholarly note-marker taxonomy', () => {
       resolvedRelationshipCount: 2,
       relationshipCoverage: 1,
     })
+  })
+
+  it('maps bounded author-year citations to unique canonical reference entries', async () => {
+    const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
+    fixture.name = 'author-year citations with unique reference entries'
+    fixture.pages[0].runs[2].text =
+      'Prior work (Ahn et al., 2024; Satpute et al., 2024) establishes the baseline.'
+    fixture.pages[0].runs[3].text =
+      'Nanda et al. (2023a) confirms it; an unbounded 2024 mention and standalone (2024) label are plain prose.'
+    fixture.pages[1].runs[1].text =
+      'Ahn, J., Example, A. (2024). First reference entry.'
+    fixture.pages[1].runs[2].text =
+      'Satpute, A., Example, B. 2024. Second reference entry.'
+    fixture.pages[1].runs.push({
+      ...fixture.pages[1].runs[2],
+      text: 'Nanda, N., Example, C. (2023a). Third reference entry.',
+      y: 0.36,
+    })
+
+    const result = await reconstruct(fixture, 'f')
+
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        taxonomy: 'author-year-bibliography-citation',
+        labels: ['ahn:2024', 'satpute:2024'],
+        status: 'matched',
+        targetNodeIds: [
+          expect.stringMatching(/^p-/),
+          expect.stringMatching(/^p-/),
+        ],
+      }),
+      expect.objectContaining({
+        taxonomy: 'author-year-bibliography-citation',
+        labels: ['nanda:2023a'],
+        status: 'matched',
+        targetNodeIds: [expect.stringMatching(/^p-/)],
+      }),
+    ])
+
+    const expectedMarkers = [
+      '(Ahn et al., 2024; Satpute et al., 2024)',
+      'Nanda et al. (2023a)',
+    ]
+    for (const [
+      index,
+      relationship,
+    ] of result.citationRelationships.entries()) {
+      const anchor = relationship.canonicalAnchor
+      const owner = anchor
+        ? result.paper.nodes.find((node) => node.id === anchor.nodeId)
+        : undefined
+      expect(anchor).not.toBeNull()
+      expect(owner && 'text' in owner && anchor).toBeTruthy()
+      if (!owner || !('text' in owner) || !anchor) continue
+      expect(owner.text.slice(anchor.start, anchor.end)).toBe(
+        expectedMarkers[index],
+      )
+      const citationRun =
+        'inlineRuns' in owner
+          ? owner.inlineRuns?.find(
+              (run) => run.relationshipId === relationship.id,
+            )
+          : undefined
+      expect(citationRun).toMatchObject({
+        start: anchor.start,
+        end: anchor.end,
+        semanticRole: 'citation',
+        targetIds: relationship.targetNodeIds,
+      })
+      expect(result.provenance[owner.id]?.regionIds).toContain(
+        relationship.referenceRegionId,
+      )
+    }
+  })
+
+  it('maps a long reference when its unique publication year follows the first 240 characters', async () => {
+    const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
+    fixture.name = 'long author-year reference entry'
+    fixture.pages[0].runs[2].text =
+      'Prior work (Biderman et al., 2023) establishes the baseline.'
+    fixture.pages[0].runs[3].text = 'The result remains reproducible.'
+    fixture.pages[1].runs[1].text = `Biderman, S., Example, A., and Reader, B. ${'Detailed model analysis and evaluation '.repeat(8)}PMLR, 2023. URL https://example.test/2023/paper.`
+    fixture.pages[1].runs.splice(2)
+
+    const result = await reconstruct(fixture, 'b')
+
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        labels: ['biderman:2023'],
+        status: 'matched',
+        targetNodeIds: [expect.stringMatching(/^p-/)],
+      }),
+    ])
+  })
+
+  it('leaves missing and duplicate author-year keys unresolved instead of guessing', async () => {
+    const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
+    fixture.name = 'ambiguous and missing author-year targets'
+    fixture.pages[0].runs[2].text =
+      'Prior work (Ahn et al., 2024) establishes the baseline.'
+    fixture.pages[0].runs[3].text =
+      'Unknown et al. (2025) reports a different result.'
+    fixture.pages[1].runs[1].text =
+      'Ahn, J., Example, A. (2024). First reference entry.'
+    fixture.pages[1].runs[2].text =
+      'Ahn, K., Example, B. (2024). Second reference entry.'
+
+    const result = await reconstruct(fixture, 'a')
+
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        labels: ['ahn:2024'],
+        status: 'unresolved',
+        targetNodeIds: [],
+        evidence: expect.arrayContaining([
+          'bibliography-author-year-target-ambiguous',
+        ]),
+      }),
+      expect.objectContaining({
+        labels: ['unknown:2025'],
+        status: 'unresolved',
+        targetNodeIds: [],
+        evidence: expect.arrayContaining([
+          'bibliography-author-year-target-missing',
+        ]),
+      }),
+    ])
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_CITATION_REFERENCE',
+    )
+    const unresolvedRuns = result.paper.nodes.flatMap((node) =>
+      'inlineRuns' in node
+        ? (node.inlineRuns ?? []).filter(
+            (run) => run.semanticRole === 'citation',
+          )
+        : [],
+    )
+    expect(unresolvedRuns).toHaveLength(2)
+    expect(unresolvedRuns.every((run) => run.targetIds === undefined)).toBe(
+      true,
+    )
   })
 
   it('targets a bracketed bibliography entry retained in a reference footnote region', async () => {

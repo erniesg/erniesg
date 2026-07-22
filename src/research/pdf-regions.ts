@@ -69,6 +69,12 @@ function normalizeMarginText(text: string) {
     .trim()
 }
 
+function beginsVisualCaption(text: string) {
+  return /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)(?:\s*[.:–—-]|\s*$)|figure\s*[:.–—-])/i.test(
+    text.trim(),
+  )
+}
+
 function repeatedMarginKeys(linesByPage: PdfTextLine[][]) {
   const occurrences = new Map<string, Set<number>>()
   for (const lines of linesByPage) {
@@ -223,9 +229,18 @@ function captionContinuationGeometry(
   previous: ClassifiedLine,
   candidate: ClassifiedLine,
 ) {
+  const candidateProseWordCount =
+    candidate.text.match(/\p{L}{2,}/gu)?.length ?? 0
+  const equationClassifiedCaptionProse =
+    candidate.kind === 'equation' &&
+    (candidateProseWordCount >= 4 ||
+      (candidateProseWordCount >= 2 && endsCaptionSentence(candidate.text)))
   if (
     candidate.page !== seed.page ||
-    (candidate.kind !== 'body' && candidate.kind !== 'caption')
+    beginsVisualCaption(candidate.text) ||
+    (candidate.kind !== 'body' &&
+      candidate.kind !== 'caption' &&
+      !equationClassifiedCaptionProse)
   )
     return false
   if (candidate.y <= previous.y + previous.height * 0.35) return false
@@ -715,10 +730,101 @@ function standaloneSectionHeading(line: ClassifiedLine) {
   )
 }
 
+function dominantLineHeight(line: ClassifiedLine) {
+  const largestFont = Math.max(...line.runs.map((run) => run.fontSize), 0)
+  const baselineHeights = line.runs
+    .filter((run) => run.fontSize >= largestFont * 0.9)
+    .map((run) => run.height)
+    .filter((height) => height > 0)
+  return median(baselineHeights) || line.height
+}
+
+function hasEmphasizedFace(line: ClassifiedLine) {
+  return line.runs.some(
+    (run) =>
+      run.bold === true ||
+      /(?:bold|semibold|demi|medi(?:um)?|black)/i.test(run.fontName),
+  )
+}
+
+function repairCrossGutterHeadingPrefixes(
+  lines: ClassifiedLine[],
+  layout: ColumnLayout,
+) {
+  const split = layout.split
+  if (split === null) return lines
+  const consumed = new Set<ClassifiedLine>()
+  for (const prefix of lines) {
+    const prefixText = prefix.text.trim()
+    if (
+      prefix.kind !== 'body' ||
+      prefix.column !== 'left' ||
+      !/^\d{1,3}$/u.test(prefixText) ||
+      !hasEmphasizedFace(prefix)
+    ) {
+      continue
+    }
+    const prefixRight = prefix.x + prefix.width
+    if (Math.abs(prefixRight - split) > 0.04) continue
+    const candidates = lines
+      .filter((candidate) => {
+        const text = candidate.text.replace(/\s+/g, ' ').trim()
+        const baselineTolerance = Math.max(
+          0.003,
+          Math.min(prefix.height, candidate.height) * 0.25,
+        )
+        const gap = candidate.x - prefixRight
+        const fontRatio =
+          Math.max(prefix.fontSize, candidate.fontSize) /
+          Math.max(1, Math.min(prefix.fontSize, candidate.fontSize))
+        return (
+          candidate !== prefix &&
+          candidate.page === prefix.page &&
+          candidate.kind === 'body' &&
+          candidate.column === 'right' &&
+          hasEmphasizedFace(candidate) &&
+          Math.abs(candidate.y - prefix.y) <= baselineTolerance &&
+          gap >= 0 &&
+          gap <= 0.06 &&
+          candidate.x - split <= 0.08 &&
+          fontRatio <= 1.08 &&
+          text.length <= 80 &&
+          /^\p{Lu}[\p{L}\p{N}'’&/–—-]*(?:\s+\p{Lu}[\p{L}\p{N}'’&/–—-]*){1,10}$/u.test(
+            text,
+          )
+        )
+      })
+      .sort(
+        (left, right) =>
+          left.x - prefixRight - (right.x - prefixRight) || left.x - right.x,
+      )
+    if (candidates.length !== 1) continue
+    const heading = candidates[0]
+    const right = Math.max(prefix.x + prefix.width, heading.x + heading.width)
+    const bottom = Math.max(
+      prefix.y + prefix.height,
+      heading.y + heading.height,
+    )
+    heading.text = `${prefixText} ${heading.text.trim()}`
+    heading.x = prefix.x
+    heading.y = Math.min(prefix.y, heading.y)
+    heading.width = right - heading.x
+    heading.height = bottom - heading.y
+    heading.fontSize = Math.max(prefix.fontSize, heading.fontSize)
+    heading.confidence = Math.min(prefix.confidence, heading.confidence)
+    heading.runs = [...prefix.runs, ...heading.runs].sort(
+      (left, right) => left.x - right.x,
+    )
+    consumed.add(prefix)
+  }
+  return lines.filter((line) => !consumed.has(line))
+}
+
 function joinsRegion(previous: ClassifiedLine, line: ClassifiedLine) {
   if (previous.page !== line.page) return false
   if (previous.kind !== line.kind || previous.column !== line.column)
     return false
+  if (line.kind === 'caption' && beginsVisualCaption(line.text)) return false
   if (standaloneSectionHeading(previous) || standaloneSectionHeading(line)) {
     return false
   }
@@ -729,6 +835,17 @@ function joinsRegion(previous: ClassifiedLine, line: ClassifiedLine) {
     return false
   }
   if (line.kind === 'chart-label' || line.kind === 'page-number') return false
+  // A printed display-equation number is often emitted as a standalone line at
+  // the right edge of a column.  Do not merge it into the prose explanation
+  // that begins below and to its left: the visual pass needs the detached
+  // fragment so it can attach the number to the aligned equation instead of
+  // layout interpreting `(4) where ...` as an ordered-list item.
+  if (
+    /^\(\s*\d+[a-z]?\s*\)$/iu.test(previous.text.trim()) &&
+    line.x + Math.max(0.08, line.width * 0.2) < previous.x
+  ) {
+    return false
+  }
   if (
     previous.page === 1 &&
     previous.y < 0.3 &&
@@ -749,7 +866,14 @@ function joinsRegion(previous: ClassifiedLine, line: ClassifiedLine) {
     Math.max(previous.fontSize, line.fontSize) /
     Math.max(1, Math.min(previous.fontSize, line.fontSize))
   if (gap < -0.004 || fontRatio > 1.18) return false
-  const lineHeight = Math.max(previous.height, line.height)
+  // Scripts legitimately expand the source-backed line envelope, but they do
+  // not expand the body leading that decides whether the next baseline starts
+  // a new paragraph. Using the full union here can merge separate paragraphs
+  // whenever a subscript or superscript reaches toward the following line.
+  const lineHeight = Math.max(
+    dominantLineHeight(previous),
+    dominantLineHeight(line),
+  )
   return gap <= Math.max(0.014, lineHeight * 1.25)
 }
 
@@ -792,6 +916,17 @@ function makeRegions(
       left.x - right.x,
   )
   for (const line of ordered) {
+    const captionGroup = line.captionContinuationSeedId
+      ? groups.find((group) =>
+          group.some(
+            (candidate) => candidate.id === line.captionContinuationSeedId,
+          ),
+        )
+      : undefined
+    if (captionGroup) {
+      captionGroup.push(line)
+      continue
+    }
     const previousGroup = groups.at(-1)
     const previous = previousGroup?.at(-1)
     if (
@@ -1187,10 +1322,16 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
           'i',
         ).test(normalized)
         const symbolicFootnote = /^[*†‡§]/u.test(normalized)
+        // Decimal-only lower-band labels are overwhelmingly plot ticks, not
+        // note bodies.  The comma form covers decimal-comma plots as well.
+        // Integer-only labels remain eligible because a genuine footnote may
+        // place its marker on a line of its own.
+        const decimalChartTick = /^[-+]?\d+[.,]\d+$/u.test(normalized)
         const renderedFootnote =
           label !== null &&
+          !decimalChartTick &&
           line.y + line.height >= lowerBand &&
-          line.fontSize <= fontSize * (symbolicFootnote ? 0.96 : 0.9)
+          line.fontSize <= fontSize * (symbolicFootnote ? 0.96 : 0.9) + 0.01
         let kind: PdfRegionKind = 'body'
         let confidence = 0.9
         if (inEndnotes && label !== null) {
@@ -1229,11 +1370,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         ) {
           kind = 'footer'
           confidence = 0.78
-        } else if (
-          /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)(?:\s*[.:–—-]|\s*$)|figure\s*[:.–—-])/i.test(
-            normalized,
-          )
-        ) {
+        } else if (beginsVisualCaption(normalized)) {
           kind = 'caption'
           confidence = 0.94
         } else if (
@@ -1246,7 +1383,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         } else if (
           line.fontSize <= fontSize * 0.82 &&
           normalized.length <= 32 &&
-          /(?:%|^[-+]?\d+(?:\.\d+)?$|^[A-Za-z]{2,12}$)/.test(normalized)
+          /(?:%|^[-+]?\d+(?:[.,]\d+)?$|^[A-Za-z]{2,12}$)/.test(normalized)
         ) {
           kind = 'chart-label'
           confidence = 0.82
@@ -1311,8 +1448,8 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
       ) {
         line.confidence = Math.min(line.confidence, 0.58)
       }
-      classified.push(line)
     }
+    classified.push(...repairCrossGutterHeadingPrefixes(preliminary, layout))
   }
 
   const hasSingleColumnPage =

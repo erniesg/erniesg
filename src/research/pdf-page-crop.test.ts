@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  hasSourceInkOnCropEdge,
   renderPdfPageCrop,
   type PdfCanvasFactory,
   type PdfPageCropSource,
@@ -8,6 +9,120 @@ import {
 import { createSourcePageCropAsset, downscalePngAsset } from './visual-assets'
 
 describe('PDF source-page crops', () => {
+  it('detects source ink that reaches any crop edge', () => {
+    const width = 8
+    const height = 6
+    const clear = new Uint8Array(width * height * 4).fill(255)
+    expect(hasSourceInkOnCropEdge(clear, width, height)).toBe(false)
+    const clipped = clear.slice()
+    clipped[(width * 3 - 1) * 4] = 0
+    expect(hasSourceInkOnCropEdge(clipped, width, height)).toBe(true)
+  })
+
+  it('rejects a rendered crop whose source ink touches its boundary', async () => {
+    const width = 20
+    const height = 20
+    const pixels = new Uint8ClampedArray(width * height * 4).fill(255)
+    pixels[0] = 0
+    await expect(
+      renderPdfPageCrop({
+        page: {
+          pageNumber: 1,
+          getViewport: ({ scale }) => ({
+            width: 100 * scale,
+            height: 100 * scale,
+            rotation: 0,
+          }),
+          render: () => ({ promise: Promise.resolve() }),
+        },
+        canvasFactory: {
+          create: () => ({
+            canvas: { width, height },
+            context: {
+              fillStyle: '',
+              fillRect: vi.fn(),
+              getImageData: vi.fn(() => ({ data: pixels })),
+            },
+          }),
+          destroy: vi.fn(),
+        },
+        sourceBox: {
+          page: 1,
+          x: 0.1,
+          y: 0.1,
+          width: 0.2,
+          height: 0.2,
+          rotation: 0,
+          method: 'pdf-object',
+        },
+        maximumPixels: 400,
+      }),
+    ).rejects.toThrow(/ink touching its edge/i)
+  })
+
+  it('tightens declared PDF geometry to padded rendered-ink bounds', async () => {
+    const sourceBox = {
+      page: 1,
+      x: 0.1,
+      y: 0.1,
+      width: 0.4,
+      height: 0.4,
+      rotation: 0,
+      method: 'pdf-object' as const,
+    }
+    const raster = await renderPdfPageCrop({
+      page: {
+        pageNumber: 1,
+        getViewport: ({ scale }) => ({
+          width: 1_000 * scale,
+          height: 1_000 * scale,
+          rotation: 0,
+        }),
+        render: () => ({ promise: Promise.resolve() }),
+      },
+      canvasFactory: {
+        create: (width, height) => {
+          const pixels = new Uint8ClampedArray(width * height * 4).fill(255)
+          for (let y = 80; y < 320; y += 1) {
+            for (let x = 40; x < 360; x += 1) {
+              const offset = (y * width + x) * 4
+              pixels[offset] = 0
+              pixels[offset + 1] = 0
+              pixels[offset + 2] = 0
+            }
+          }
+          return {
+            canvas: { width, height },
+            context: {
+              fillStyle: '',
+              fillRect: vi.fn(),
+              getImageData: vi.fn(() => ({ data: pixels })),
+            },
+          }
+        },
+        destroy: vi.fn(),
+      },
+      sourceBox,
+      maximumPixels: 160_000,
+      tightenToSourceInk: true,
+    })
+
+    expect(raster.sourceBox).toEqual({
+      ...sourceBox,
+      x: 0.136,
+      y: 0.176,
+      width: 0.328,
+      height: 0.248,
+    })
+    expect({ width: raster.width, height: raster.height }).toEqual({
+      width: 328,
+      height: 248,
+    })
+    expect(
+      hasSourceInkOnCropEdge(raster.pixels, raster.width, raster.height),
+    ).toBe(false)
+  })
+
   it('renders deterministic source pixels headlessly without a DOM', async () => {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
     const bytes = await readFile(

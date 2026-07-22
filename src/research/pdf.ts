@@ -1,4 +1,5 @@
 import type {
+  NormalizedSourceBox,
   PdfEmbeddedLink,
   PdfImportProgress,
   PdfNativeObject,
@@ -73,6 +74,54 @@ function finite(value: number, fallback = 0) {
 
 function clamp(value: number) {
   return Math.max(0, Math.min(1, finite(value)))
+}
+
+function roundedSourceCoordinate(value: number) {
+  return Math.round(value * 100_000) / 100_000
+}
+
+function sourceLineageWithinCrop(
+  sourceObjectIds: string[],
+  sourceBoxes: NormalizedSourceBox[],
+  sourceCropBox: NormalizedSourceBox,
+) {
+  const lineage = sourceObjectIds.flatMap((sourceObjectId, index) => {
+    const sourceBox = sourceBoxes[index]
+    if (
+      !sourceBox ||
+      sourceBox.page !== sourceCropBox.page ||
+      sourceBox.rotation !== sourceCropBox.rotation
+    ) {
+      return []
+    }
+    const left = Math.max(sourceCropBox.x, sourceBox.x)
+    const top = Math.max(sourceCropBox.y, sourceBox.y)
+    const right = Math.min(
+      sourceCropBox.x + sourceCropBox.width,
+      sourceBox.x + sourceBox.width,
+    )
+    const bottom = Math.min(
+      sourceCropBox.y + sourceCropBox.height,
+      sourceBox.y + sourceBox.height,
+    )
+    if (right <= left || bottom <= top) return []
+    return [
+      {
+        sourceObjectId,
+        sourceBox: {
+          ...sourceBox,
+          x: roundedSourceCoordinate(left),
+          y: roundedSourceCoordinate(top),
+          width: roundedSourceCoordinate(right - left),
+          height: roundedSourceCoordinate(bottom - top),
+        },
+      },
+    ]
+  })
+  return {
+    sourceObjectIds: lineage.map((item) => item.sourceObjectId),
+    sourceBoxes: lineage.map((item) => item.sourceBox),
+  }
 }
 
 export function isFlowAlignedPdfTextTransform(transform: readonly number[]) {
@@ -303,7 +352,7 @@ function vectorPath(value: unknown, minMax: number[]) {
   const values = Array.from(value as unknown as ArrayLike<number>)
   const commands: string[] = []
   const flipY = (y: number) => minMax[1] + minMax[3] - y
-  for (let index = 0; index < values.length; ) {
+  for (let index = 0; index < values.length;) {
     const operation = values[index++]
     const take = (count: number) => {
       const result = values.slice(index, index + count)
@@ -710,9 +759,8 @@ export async function reconstructPdf(
       ? await import('pdfjs-dist/legacy/build/pdf.mjs')
       : await import('pdfjs-dist')
   if (typeof window !== 'undefined') {
-    const { default: pdfWorkerUrl } = await import(
-      'pdfjs-dist/build/pdf.worker.min.mjs?url'
-    )
+    const { default: pdfWorkerUrl } =
+      await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
     pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
   }
   throwIfAborted(options.signal)
@@ -817,8 +865,7 @@ export async function reconstructPdf(
         for (const item of textContent.items) {
           if (!('str' in item) || !item.str.trim()) continue
           let font:
-            | { name?: unknown; bold?: unknown; italic?: unknown }
-            | undefined
+            { name?: unknown; bold?: unknown; italic?: unknown } | undefined
           try {
             font = page.commonObjs.get(item.fontName) as typeof font
           } catch {
@@ -1046,13 +1093,19 @@ export async function reconstructPdf(
               document.canvasFactory as unknown as PdfCanvasFactory,
             sourceBox: input.sourceBox,
             signal: options.signal,
+            tightenToSourceInk: input.kind === 'figure',
           })
+          const { sourceBox: renderedSourceBox, ...renderedRaster } = raster
+          const sourceLineage = sourceLineageWithinCrop(
+            input.sourceObjectIds,
+            input.sourceBoxes,
+            renderedSourceBox,
+          )
           return await createSourcePageCropAsset({
             kind: input.kind === 'figure' ? 'raster' : input.kind,
-            cropBox: input.sourceBox,
-            sourceObjectIds: input.sourceObjectIds,
-            sourceBoxes: input.sourceBoxes,
-            ...raster,
+            cropBox: renderedSourceBox,
+            ...sourceLineage,
+            ...renderedRaster,
           })
         } finally {
           page.cleanup()

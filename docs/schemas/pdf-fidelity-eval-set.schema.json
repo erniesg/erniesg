@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-eval-set-1.0.0.json",
+  "title": "Versioned scholarly PDF fidelity evaluation set",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "annotationSchemaVersion",
+    "privacy",
+    "scoring",
+    "strata",
+    "documents",
+    "cases"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "annotationSchemaVersion": { "const": "1.0.0" },
+    "privacy": {
+      "const": "public-identities-normalized-geometry-no-source-content"
+    },
+    "scoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detectionIouThreshold",
+        "minimumOverallScore",
+        "requireAllCriticalCases"
+      ],
+      "properties": {
+        "detectionIouThreshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "minimumOverallScore": { "$ref": "#/$defs/ratio" },
+        "requireAllCriticalCases": { "type": "boolean" }
+      }
+    },
+    "strata": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/stratum" }
+    },
+    "documents": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/document" }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "task": {
+      "enum": ["classification", "detection", "reading-order", "relationship"]
+    },
+    "box": {
+      "type": "array",
+      "normalizedPdfBox": true,
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "$ref": "#/$defs/ratio" },
+        { "$ref": "#/$defs/ratio" },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      ],
+      "items": false
+    },
+    "stratum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "task", "critical"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "task": { "$ref": "#/$defs/task" },
+        "critical": { "type": "boolean" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fileName", "byteLength", "sha256", "pageCount"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "fileName": { "type": "string", "pattern": "^[A-Za-z0-9._-]+\\.pdf$" },
+        "byteLength": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "pageCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "box"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "$ref": "#/$defs/id" },
+        "box": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/box" }]
+        }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sourceId", "targetId"],
+      "properties": {
+        "type": { "$ref": "#/$defs/id" },
+        "sourceId": { "$ref": "#/$defs/id" },
+        "targetId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "labelDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "label"],
+      "properties": {
+        "targetId": { "$ref": "#/$defs/id" },
+        "label": { "$ref": "#/$defs/id" }
+      }
+    },
+    "detectedObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "box"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "label": { "$ref": "#/$defs/id" },
+        "box": { "$ref": "#/$defs/box" }
+      }
+    },
+    "expected": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["labels"],
+          "properties": {
+            "labels": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/labelDecision" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["objects"],
+          "properties": {
+            "objects": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/detectedObject" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["order"],
+          "properties": {
+            "order": {
+              "type": "array",
+              "minItems": 2,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/id" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["relationships"],
+          "properties": {
+            "relationships": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/relationship" }
+            }
+          }
+        }
+      ]
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "documentId",
+        "page",
+        "stratum",
+        "task",
+        "critical",
+        "targets",
+        "expected"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "documentId": { "$ref": "#/$defs/id" },
+        "page": { "type": "integer", "minimum": 1 },
+        "stratum": { "$ref": "#/$defs/id" },
+        "task": { "$ref": "#/$defs/task" },
+        "critical": { "type": "boolean" },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/target" }
+        },
+        "expected": { "$ref": "#/$defs/expected" }
+      }
+    }
+  }
+}

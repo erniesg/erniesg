@@ -31,6 +31,9 @@ describe('local PDF corpus audit', () => {
     expect(Object.keys(completeness.properties)).toEqual(
       expect.arrayContaining(required),
     )
+    expect(
+      schema.$defs.citationRelationship.properties.taxonomy.enum,
+    ).toContain('author-year-bibliography-citation')
   })
 
   it('validates the required structural line-boundary count in report and receipt schemas', async () => {

@@ -259,6 +259,30 @@ test('packages scientific visual objects as real EPUB assets', async ({
   await expect(
     frame.locator('figure').first().locator('img, table').first(),
   ).toBeVisible()
+  expect(
+    await frame.locator('img').evaluateAll((images) =>
+      (images as HTMLImageElement[]).map((image) => ({
+        complete: image.complete,
+        naturalWidth: image.naturalWidth,
+        naturalHeight: image.naturalHeight,
+      })),
+    ),
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        complete: true,
+        naturalWidth: expect.any(Number),
+        naturalHeight: expect.any(Number),
+      }),
+    ]),
+  )
+  expect(
+    await frame
+      .locator('img')
+      .evaluateAll((images) =>
+        (images as HTMLImageElement[]).every((image) => image.naturalWidth > 0),
+      ),
+  ).toBe(true)
   await expect(frame.locator('iframe, object')).toHaveCount(0)
   const files = await downloadedEpub(page, 'Download Mobile EPUB')
   const content = strFromU8(files['EPUB/content.xhtml'])

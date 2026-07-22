@@ -505,7 +505,7 @@ export default function EpubRenditionPreview({
             <iframe
               key={`${screen.id}-${epub.sha256}`}
               title={`Generated EPUB rendition on ${screen.label}`}
-              sandbox=""
+              sandbox="allow-same-origin"
               srcDoc={preview.srcDoc}
             />
           </div>

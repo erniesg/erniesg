@@ -427,6 +427,29 @@ function renderBoxForGroup(group: PdfPageRegion[], captions: PdfPageRegion[]) {
   return { ...box, height: rounded(bottom - box.y) }
 }
 
+function captionBoundedRenderBox(
+  group: PdfPageRegion[],
+  captions: PdfPageRegion[],
+  useCaptionBounds: boolean,
+) {
+  const box = renderBoxForGroup(group, captions)
+  if (!useCaptionBounds) return box
+  const caption = owningCaptionForBox(box, captions)
+  if (!caption) return box
+  const left = Math.min(box.x, caption.box.x)
+  const right = Math.max(box.x + box.width, caption.box.x + caption.box.width)
+  const bottom = Math.max(
+    box.y + box.height,
+    Math.max(box.y + 0.004, caption.box.y - 0.008),
+  )
+  return {
+    ...box,
+    x: rounded(left),
+    width: rounded(right - left),
+    height: rounded(bottom - box.y),
+  }
+}
+
 function captionBoundedReadingOrderOverlays(
   group: PdfPageRegion[],
   figureRegions: PdfPageRegion[],
@@ -495,15 +518,37 @@ function figureCandidates(
   }
   return groups
     .map<VisualCandidate>((group) => {
-      const nativeRenderBox = renderBoxForGroup(group, captions)
       const flowOverlays = captionBoundedReadingOrderOverlays(
         group,
         figureRegions,
         regions,
         captions,
       )
+      const claimedFlowOverlayIds = new Set(
+        flowOverlays.map((region) => region.id),
+      )
+      const unclaimedReadingOrderText = regions.filter(
+        (region) =>
+          region.page === group[0].page &&
+          region.includedInReadingOrder &&
+          !claimedFlowOverlayIds.has(region.id) &&
+          region.nativeObjectIds.length === 0 &&
+          region.lines.length > 0 &&
+          region.text.trim().length > 0 &&
+          ['body', 'spanning'].includes(region.kind),
+      )
+      const uncontaminatedGroup = group.filter(
+        (region) =>
+          !materiallyOverlapsSourceText(region, unclaimedReadingOrderText),
+      )
+      const nativeGroup =
+        provesCaptionBoundedNativeScaffold(group, figureRegions) &&
+        uncontaminatedGroup.length >= MIN_COMPOSITE_FIGURE_FRAGMENTS
+          ? uncontaminatedGroup
+          : group
+      const nativeRenderBox = renderBoxForGroup(nativeGroup, captions)
       const overlays = [
-        ...boundedTextOverlays(group, regions, captions),
+        ...boundedTextOverlays(nativeGroup, regions, captions),
         ...flowOverlays,
       ].sort(
         (left, right) =>
@@ -517,7 +562,7 @@ function figureCandidates(
           regions,
           new Set(flowOverlays.map((region) => region.id)),
         )
-      const nativeLineage = group.flatMap((region) =>
+      const nativeLineage = nativeGroup.flatMap((region) =>
         region.nativeObjectIds.map((sourceObjectId) => ({
           sourceObjectId,
           sourceBox: region.box,
@@ -531,7 +576,7 @@ function figureCandidates(
       return {
         kind: 'figure',
         sourceRegionIds: [
-          ...group.map((region) => region.id),
+          ...nativeGroup.map((region) => region.id),
           ...overlays.map((region) => region.id),
         ],
         sourceObjectIds: lineage.map((item) => item.sourceObjectId),
@@ -539,20 +584,28 @@ function figureCandidates(
         sourceBoxes: lineage.map((item) => item.sourceBox),
         sourceText: overlays.map((region) => region.text).join(' '),
         page: group[0].page,
-        renderBox: renderBoxForGroup([...group, ...overlays], captions),
+        renderBox: captionBoundedRenderBox(
+          [...nativeGroup, ...overlays],
+          captions,
+          provesCaptionBoundedNativeScaffold(group, figureRegions) &&
+            overlays.length >= MIN_CAPTION_BOUNDED_FLOW_OVERLAY_COUNT,
+        ),
         sourcePageCropBlockedByReadingOrderText,
         evidence: [
           ...(flowOverlays.length > 0
             ? ['caption-bounded-native-scaffold']
             : []),
+          ...(nativeGroup.length < group.length
+            ? ['source-scaffold-trimmed-reading-order-overlap']
+            : []),
           ...(sourcePageCropBlockedByReadingOrderText
             ? ['source-page-crop-vetoed-reading-order-text']
             : []),
         ],
-        column: [...group, ...overlays].every(
-          (region) => region.column === group[0].column,
+        column: [...nativeGroup, ...overlays].every(
+          (region) => region.column === nativeGroup[0].column,
         )
-          ? group[0].column
+          ? nativeGroup[0].column
           : 'span',
       }
     })

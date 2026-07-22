@@ -1914,6 +1914,121 @@ describe('PDF visual association graph', () => {
     )
   })
 
+  it('trims scaffold and glyph objects that overlap unrelated reading-order text', async () => {
+    const scaffold = box(0.48, 0.12, 0.36, 0.36)
+    const authorGlyph = box(0.6, 0.18, 0.04, 0.02)
+    const fragmentBoxes = Array.from({ length: 8 }, (_, index) =>
+      box(
+        0.52 + (index % 4) * 0.07,
+        0.26 + Math.floor(index / 4) * 0.12,
+        0.05,
+        0.06,
+      ),
+    )
+    const figureIds = fragmentBoxes.map(
+      (_, index) => `vector-p001-figure-${index + 1}`,
+    )
+    const objects = [
+      {
+        id: 'vector-p001-overbroad-scaffold',
+        page: 1,
+        kind: 'vector' as const,
+        box: scaffold,
+        confidence: 0.98,
+        assetId: null,
+      },
+      {
+        id: 'vector-p001-author-glyph',
+        page: 1,
+        kind: 'vector' as const,
+        box: authorGlyph,
+        confidence: 0.98,
+        assetId: null,
+      },
+      ...fragmentBoxes.map((sourceBox, index) => ({
+        id: figureIds[index],
+        page: 1,
+        kind: 'vector' as const,
+        box: sourceBox,
+        confidence: 0.98,
+        assetId: null,
+      })),
+    ]
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 40,
+          height: 20,
+          pixels: new Uint8Array(40 * 20 * 4).fill(64),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects)],
+      regions: [
+        ...objects.map((object, index) =>
+          objectRegion(`scaffold-region-${index + 1}`, object.id, object.box),
+        ),
+        textRegion(
+          'author-line',
+          'Author One, Author Two, University Laboratory',
+          box(0.3, 0.17, 0.45, 0.035),
+          'body',
+        ),
+        textRegion(
+          'diagram-label-one',
+          'Premise',
+          box(0.55, 0.27, 0.08, 0.015),
+          'body',
+        ),
+        textRegion(
+          'diagram-label-two',
+          'Write content',
+          box(0.68, 0.39, 0.09, 0.015),
+          'body',
+        ),
+        captionRegion(
+          'Figure 1. A bounded diagram below the author block.',
+          box(0.5, 0.5, 0.36, 0.025),
+        ),
+      ],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    expect(rasterizeFigure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceObjectIds: [
+          ...figureIds,
+          'text-overlay:diagram-label-one',
+          'text-overlay:diagram-label-two',
+        ],
+        sourceBox: expect.objectContaining({ y: expect.any(Number) }),
+      }),
+    )
+    const sourceBox = rasterizeFigure.mock.calls[0]![0].sourceBox
+    expect(sourceBox.y).toBeGreaterThan(0.2)
+    expect(sourceBox.x).toBeLessThanOrEqual(0.5)
+    expect(sourceBox.x + sourceBox.width).toBeGreaterThanOrEqual(0.86)
+    expect(sourceBox.y + sourceBox.height).toBeGreaterThanOrEqual(0.49)
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: [
+        ...figureIds,
+        'text-overlay:diagram-label-one',
+        'text-overlay:diagram-label-two',
+      ],
+      evidence: expect.arrayContaining([
+        'source-scaffold-trimmed-reading-order-overlap',
+        'source-page-crop',
+      ]),
+    })
+  })
+
   it('uses an intervening caption to split overlapping composite scaffolds', async () => {
     const firstScaffold = box(0.05, 0.08, 0.9, 0.38)
     const secondScaffold = box(0.05, 0.4, 0.9, 0.36)

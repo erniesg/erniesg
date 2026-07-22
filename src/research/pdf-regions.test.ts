@@ -634,6 +634,57 @@ describe('deterministic scholarly page regions', () => {
     })
   })
 
+  it('keeps enumerated subfigure prose in one complete caption', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Figure 1. Comparison of three strategies. (a) Fixed planning.',
+          0.54,
+          0.2,
+          0.36,
+          9,
+        ),
+        run(
+          1,
+          '(b) Interactive planning. The proposed method appears in (c).',
+          0.54,
+          0.222,
+          0.36,
+          9,
+        ),
+        run(
+          1,
+          'Following body prose remains independent.',
+          0.54,
+          0.27,
+          0.34,
+          10,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'caption'),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'Figure 1. Comparison of three strategies. (a) Fixed planning. (b) Interactive planning. The proposed method appears in (c).',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            text: '(b) Interactive planning. The proposed method appears in (c).',
+          }),
+        ]),
+      }),
+    ])
+    expect(
+      result.paper.nodes.some(
+        (node) =>
+          node.type === 'paragraph' &&
+          node.text === 'Following body prose remains independent.',
+      ),
+    ).toBe(true)
+  })
+
   it('stops after a short terminal caption even when prose follows at normal leading', async () => {
     const result = await reconstruct([
       page(1, [

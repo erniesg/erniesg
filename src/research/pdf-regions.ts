@@ -721,7 +721,7 @@ function joinsRegion(previous: ClassifiedLine, line: ClassifiedLine) {
   }
   const listItem =
     /^(?:\[\s*\d+\s*\]|\(\s*(?:\d+|[A-Za-z]|[ivxlcdm]+)\s*\)|(?:\d+|[A-Za-z]|[ivxlcdm]+)[.)])\s+/i
-  if (listItem.test(line.text.trim())) {
+  if (line.kind !== 'caption' && listItem.test(line.text.trim())) {
     return false
   }
   const gap = line.y - (previous.y + previous.height)

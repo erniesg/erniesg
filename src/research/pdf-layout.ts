@@ -142,8 +142,13 @@ function headingLevel(text: string, largestFont: number, bodySize: number) {
 }
 
 function likelyAffiliation(value: string) {
-  return /(?:university|institute|department|laborator(?:y|ies)|\blab\b|school|college|centre|center|hospital|academy|research group|corporation|\binc\b|@|https?:\/\/)/i.test(
-    value,
+  return (
+    /(?:university|institute|department|laborator(?:y|ies)|\blab\b|school|college|centre|center|hospital|academy|research group|corporation|\binc\b|@|https?:\/\/)/i.test(
+      value,
+    ) ||
+    /(?:\b[A-Z]{2,}\s+\p{Lu}\p{Ll}[\p{L}.-]*|\p{Lu}\p{Ll}[\p{L}.-]*\s+[A-Z]{2,}\b)/u.test(
+      value,
+    )
   )
 }
 
@@ -165,12 +170,20 @@ function likelyPersonName(value: string) {
 }
 
 function authorNamesFromLine(value: string) {
+  const hasAttachedAffiliationMarkers =
+    /(\p{L})[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+\s+(?=\p{Lu}\p{Ll})/u.test(value)
   const separated = value
+    .replace(/(\p{L})[\d*†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+\s+(?=\p{Lu}\p{Ll})/gu, '$1; ')
+    .replace(/\s+\d+(?=[A-Z]{2,}\b)/g, '; ')
     .split(/\s+(?:and|&)\s+|\s*[;,]\s*/i)
     .map(normalizedAuthorName)
     .filter(Boolean)
-  if (separated.length > 1 && separated.every(likelyPersonName)) {
-    return separated
+  const names = separated.filter(likelyPersonName)
+  if (
+    names.length > 0 &&
+    (!likelyAffiliation(value) || hasAttachedAffiliationMarkers)
+  ) {
+    return names
   }
   return likelyPersonName(value) ? [normalizedAuthorName(value)] : []
 }
@@ -222,10 +235,16 @@ function classifyFrontMatter(blocks: RegionBlock[], metadataTitle?: string) {
   if (!hasTitlePageEvidence) {
     return { title: undefined, authors: [], affiliations: [], abstract: '' }
   }
-  const beforeAbstract =
-    abstractIndex >= 0
-      ? firstPage.slice(0, abstractIndex)
-      : firstPage.filter((block) => block.region.box.y < 0.32)
+  const abstractBlock =
+    abstractIndex >= 0 ? firstPage[abstractIndex] : undefined
+  const beforeAbstract = abstractBlock
+    ? firstPage.filter(
+        (block) =>
+          block !== abstractBlock &&
+          block.region.box.y + block.region.box.height <=
+            abstractBlock.region.box.y + 0.01,
+      )
+    : firstPage.filter((block) => block.region.box.y < 0.32)
   const metadataTitleBlock = comparableMetadataTitle
     ? beforeAbstract.find(
         (block) => comparableTitle(block.text) === comparableMetadataTitle,
@@ -273,8 +292,6 @@ function classifyFrontMatter(blocks: RegionBlock[], metadataTitle?: string) {
     }
   }
 
-  const abstractBlock =
-    abstractIndex >= 0 ? firstPage[abstractIndex] : undefined
   let abstractText = ''
   if (abstractBlock) {
     const inlineAbstract = abstractBlock.text
@@ -831,13 +848,20 @@ function blocksFromRegions(
       region.box.y < 0.28 &&
       !/[.!?](?:\s|$)/.test(region.text) &&
       authorNamesFromLine(region.text).length > 0
+    const fontOnlyHeading =
+      region.text.trim().length > 1 &&
+      largestFont >= bodySize * 1.18 &&
+      (region.kind === 'equation' ||
+        /^\p{Lu}/u.test(region.text.trim()) ||
+        /^\d+(?:\.\d+){1,3}\s+\p{Lu}/u.test(region.text.trim())) &&
+      !/[,;]/u.test(region.text)
     const heading =
       !probableFirstPageAuthorLine &&
       headingBoundaryEvidence &&
       (namedSectionHeading ||
         numberedSectionHeading ||
         sequencedNumberedHeadingRegions.has(region) ||
-        (region.text.trim().length > 1 && largestFont >= bodySize * 1.18))
+        fontOnlyHeading)
     return {
       type: heading ? 'heading' : 'paragraph',
       region,
@@ -853,6 +877,7 @@ function blocksFromRegions(
   let activeList:
     | {
         page: number
+        column: PdfPageRegion['column']
         baseX: number
         numberingId: string
         ordered: boolean
@@ -941,6 +966,7 @@ function blocksFromRegions(
         appendBlockContinuation(lastListBlock, block)
         mergedContinuationBlocks.add(block)
         activeList.page = block.region.page
+        activeList.column = block.region.column
         continue
       }
       activeList = undefined
@@ -959,12 +985,15 @@ function blocksFromRegions(
     const isNestedItem = Boolean(
       activeList &&
         activeList.page === block.region.page &&
+        activeList.column === block.region.column &&
         block.region.box.x > activeList.baseX + 0.012,
     )
     const continuesCurrentList = Boolean(
       activeList &&
         (isNestedItem ||
           ((activeList.page === block.region.page || continuesAcrossPage) &&
+            (activeList.page !== block.region.page ||
+              activeList.column === block.region.column) &&
             activeList.ordered === Boolean(ordered) &&
             activeList.markerStyle === (marker?.markerStyle ?? 'disc') &&
             (!marker ||
@@ -976,6 +1005,7 @@ function blocksFromRegions(
       listCounts.set(block.region.page, sequence)
       activeList = {
         page: block.region.page,
+        column: block.region.column,
         baseX: block.region.box.x,
         numberingId: `pdf-list-p${String(block.region.page).padStart(3, '0')}-${String(sequence).padStart(3, '0')}`,
         ordered: Boolean(ordered),
@@ -984,6 +1014,7 @@ function blocksFromRegions(
       }
     } else if (activeList && !isNestedItem) {
       activeList.page = block.region.page
+      activeList.column = block.region.column
       activeList.lastOrdinal = marker?.ordinal
     }
     const list = activeList
@@ -1336,10 +1367,25 @@ function matchNotes(
 }
 
 function boxesOverlap(
-  left: { x: number; y: number; width: number; height: number },
-  right: { x: number; y: number; width: number; height: number },
+  left: {
+    page?: number
+    x: number
+    y: number
+    width: number
+    height: number
+  },
+  right: {
+    page?: number
+    x: number
+    y: number
+    width: number
+    height: number
+  },
 ) {
   return (
+    (left.page === undefined ||
+      right.page === undefined ||
+      left.page === right.page) &&
     Math.min(left.x + left.width, right.x + right.width) >
       Math.max(left.x, right.x) &&
     Math.min(left.y + left.height, right.y + right.height) >

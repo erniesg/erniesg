@@ -398,17 +398,34 @@ function crossesProbableColumnGutter(
   line: PdfTextLine,
   run: PdfSourceRun,
   horizontalGap: number,
+  gutterCenter: number | null,
 ) {
   if (
     horizontalGap < Math.max(0.012, Math.min(line.height, run.height) * 0.65)
   ) {
     return false
   }
+  const combinedText = [...line.runs, run]
+    .sort((left, right) => left.x - right.x)
+    .map((candidate) => candidate.text.trim())
+    .filter(Boolean)
+    .join(' ')
+  if (
+    /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)(?:\s*[.:–—-]|\s)|figure\s*[:.–—-])/i.test(
+      combinedText,
+    )
+  ) {
+    return false
+  }
   const lineRight = line.x + line.width
   const runRight = run.x + run.width
-  const gapCenter = (lineRight + run.x) / 2
+  const leftRight = line.x <= run.x ? lineRight : runRight
+  const rightLeft = line.x <= run.x ? run.x : line.x
+  const gapCenter = (leftRight + rightLeft) / 2
   const combinedWidth = Math.max(lineRight, runRight) - Math.min(line.x, run.x)
-  return gapCenter >= 0.35 && gapCenter <= 0.65 && combinedWidth >= 0.55
+  return gutterCenter === null
+    ? gapCenter >= 0.35 && gapCenter <= 0.65 && combinedWidth >= 0.55
+    : Math.abs(gapCenter - gutterCenter) <= 0.03
 }
 
 function horizontalGap(
@@ -422,7 +439,11 @@ function horizontalGap(
   )
 }
 
-function runFitsLine(line: PdfTextLine, run: PdfSourceRun) {
+function runFitsLine(
+  line: PdfTextLine,
+  run: PdfSourceRun,
+  gutterCenter: number | null,
+) {
   const center = run.y + run.height / 2
   const lineCenter = line.y + line.height / 2
   const gap = horizontalGap(line, run)
@@ -430,8 +451,59 @@ function runFitsLine(line: PdfTextLine, run: PdfSourceRun) {
     Math.abs(center - lineCenter) <=
       Math.max(0.004, run.height * 0.65, line.height * 0.65) &&
     gap <= Math.max(0.025, run.height * 2) &&
-    !crossesProbableColumnGutter(line, run, gap)
+    !crossesProbableColumnGutter(line, run, gap, gutterCenter)
   )
+}
+
+function probableColumnGutterCenter(runs: PdfSourceRun[]) {
+  const bands: Array<{ center: number; runs: PdfSourceRun[] }> = []
+  for (const run of [...runs].sort(
+    (left, right) => left.y - right.y || left.x - right.x,
+  )) {
+    const center = run.y + run.height / 2
+    const band = bands.find(
+      (candidate) =>
+        Math.abs(candidate.center - center) <=
+        Math.max(0.004, run.height * 0.65),
+    )
+    if (band) band.runs.push(run)
+    else bands.push({ center, runs: [run] })
+  }
+
+  const candidates: Array<{ center: number; band: number }> = []
+  for (const [bandIndex, band] of bands.entries()) {
+    const ordered = [...band.runs].sort((left, right) => left.x - right.x)
+    for (let index = 1; index < ordered.length; index += 1) {
+      const left = ordered[index - 1]
+      const right = ordered[index]
+      const gap = right.x - (left.x + left.width)
+      if (gap < Math.max(0.012, Math.min(left.height, right.height) * 0.65)) {
+        continue
+      }
+      const center = left.x + left.width + gap / 2
+      if (center >= 0.25 && center <= 0.75) {
+        candidates.push({ center, band: bandIndex })
+      }
+    }
+  }
+  const clusters = candidates.map((seed) => {
+    const members = candidates.filter(
+      (candidate) => Math.abs(candidate.center - seed.center) <= 0.025,
+    )
+    return {
+      members,
+      center:
+        members.reduce((total, member) => total + member.center, 0) /
+        members.length,
+      bandCount: new Set(members.map((member) => member.band)).size,
+    }
+  })
+  const strongest = clusters.sort(
+    (left, right) =>
+      right.bandCount - left.bandCount ||
+      Math.abs(left.center - 0.5) - Math.abs(right.center - 0.5),
+  )[0]
+  return strongest && strongest.bandCount >= 3 ? strongest.center : null
 }
 
 function mergeLineInto(target: PdfTextLine, source: PdfTextLine) {
@@ -449,11 +521,12 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
   const runs = page.runs
     .filter((run) => run.text.trim())
     .sort((left, right) => left.y - right.y || left.x - right.x)
+  const gutterCenter = probableColumnGutterCenter(runs)
 
   for (const run of runs) {
     const center = run.y + run.height / 2
     const matching = lines
-      .filter((line) => runFitsLine(line, run))
+      .filter((line) => runFitsLine(line, run, gutterCenter))
       .sort((left, right) => {
         const leftCenter = left.y + left.height / 2
         const rightCenter = right.y + right.height / 2
@@ -477,8 +550,8 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
           candidate.runs.some((candidateRun) =>
             matching.runs.some(
               (matchingRun) =>
-                runFitsLine(candidate, matchingRun) ||
-                runFitsLine(matching, candidateRun),
+                runFitsLine(candidate, matchingRun, gutterCenter) ||
+                runFitsLine(matching, candidateRun, gutterCenter),
             ),
           )
         ) {

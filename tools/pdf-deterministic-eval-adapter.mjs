@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { sourceMathAtomCompactionRanges } from '../src/research/pdf-inline-script-integrity.ts'
 import { isStrictSemanticTable } from '../src/research/semantic-table.ts'
 import { assertAdapterSourceIdentity } from './adapter-source-identity.mjs'
 
@@ -208,6 +209,25 @@ function canonicalRegionLabels(reconstruction) {
       }
     }
   }
+  for (const relationship of reconstruction.visualRelationships ?? []) {
+    const evidence = [
+      ...(relationship.evidence ?? []),
+      ...(relationship.candidates ?? []).flatMap(
+        (candidate) => candidate.evidence ?? [],
+      ),
+    ]
+    if (
+      relationship.kind === 'equation' &&
+      relationship.status !== 'matched' &&
+      evidence.includes('incomplete-equation-source-scope') &&
+      relationship.captionRegionId
+    ) {
+      labels.set(
+        relationship.captionRegionId,
+        'not-standalone-display-equation',
+      )
+    }
+  }
   return labels
 }
 
@@ -351,6 +371,73 @@ function semanticTableEntities(reconstruction) {
   })
 }
 
+function normalizedAtom(value) {
+  return value.normalize('NFC').replace(/\s+/gu, ' ').trim()
+}
+
+function sourceSubrangeBox(run, range) {
+  const sourceBox = normalizedBox(run)
+  if (!sourceBox || run.text.length === 0) return null
+  const startRatio = range.start / run.text.length
+  const widthRatio = (range.end - range.start) / run.text.length
+  const box = [
+    sourceBox[0] + sourceBox[2] * startRatio,
+    sourceBox[1],
+    sourceBox[2] * widthRatio,
+    sourceBox[3],
+  ].map(rounded)
+  return validBox(box) ? box : null
+}
+
+function compactMathAtomEntities(reconstruction) {
+  const regions = new Map(
+    (reconstruction.regions ?? []).map((region) => [region.id, region]),
+  )
+  const entities = []
+  for (const node of reconstruction.paper?.nodes ?? []) {
+    if (typeof node.text !== 'string' || !node.inlineRuns?.length) continue
+    const wanted = new Map()
+    for (const inlineRun of node.inlineRuns) {
+      if (!inlineRun.compactMathAtom) continue
+      const atom = normalizedAtom(
+        node.text.slice(inlineRun.start, inlineRun.end),
+      )
+      if (atom) wanted.set(atom, (wanted.get(atom) ?? 0) + 1)
+    }
+    if (wanted.size === 0) continue
+
+    const matches = new Map([...wanted.keys()].map((atom) => [atom, []]))
+    for (const regionId of reconstruction.provenance?.[node.id]?.regionIds ??
+      []) {
+      const region = regions.get(regionId)
+      if (!region) continue
+      for (const line of region.lines ?? []) {
+        for (const [runIndex, run] of (line.runs ?? []).entries()) {
+          for (const range of sourceMathAtomCompactionRanges(
+            run.text,
+            run.fontName,
+          )) {
+            const atom = normalizedAtom(run.text.slice(range.start, range.end))
+            const box = matches.has(atom) ? sourceSubrangeBox(run, range) : null
+            if (!box) continue
+            matches.get(atom).push({
+              id: `contiguous-token:${node.id}:${line.id}:${String(runIndex).padStart(3, '0')}:${String(range.start).padStart(4, '0')}`,
+              page: run.page,
+              label: 'contiguous-token',
+              box,
+            })
+          }
+        }
+      }
+    }
+    for (const [atom, expectedCount] of wanted) {
+      const atomMatches = matches.get(atom)
+      if (atomMatches.length === expectedCount) entities.push(...atomMatches)
+    }
+  }
+  return entities
+}
+
 function numericRangeEntities(reconstruction) {
   const citations = reconstruction.citationRelationships ?? []
   const entities = []
@@ -430,6 +517,7 @@ export function observeDeterministicReconstruction(reconstruction) {
 
   for (const entity of [
     ...semanticTableEntities(reconstruction),
+    ...compactMathAtomEntities(reconstruction),
     ...numericRangeEntities(reconstruction),
   ]) {
     pageByNumber.get(entity.page)?.entities.push({

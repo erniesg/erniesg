@@ -589,6 +589,166 @@ describe('deterministic PDF fidelity adapter', () => {
     })
   })
 
+  it('projects a source-proved compact math atom instead of its enclosing prose role', () => {
+    const result = reconstruction()
+    const atomBox = sourceBox(2, 0.71, 0.197, 0.045, 0.01)
+    const lineBox = sourceBox(2, 0.51, 0.2, 0.35, 0.016)
+    const text = 'The score is CP lot.'
+    const atomStart = text.indexOf('P lot')
+    result.paper.nodes.push({
+      id: 'inline-atom-node',
+      type: 'paragraph',
+      text,
+      inlineRuns: [
+        {
+          start: atomStart,
+          end: atomStart + 'P lot'.length,
+          italic: true,
+          verticalAlign: 'superscript',
+          compactMathAtom: true,
+        },
+      ],
+    })
+    result.provenance['inline-atom-node'] = {
+      pages: [2],
+      regionIds: ['inline-atom-region'],
+      boxes: [lineBox],
+    }
+    result.regions.push({
+      id: 'inline-atom-region',
+      page: 2,
+      kind: 'body',
+      text,
+      box: lineBox,
+      lines: [
+        {
+          id: 'inline-atom-line',
+          text,
+          fontSize: 10,
+          box: lineBox,
+          runs: [
+            {
+              ...sourceBox(2, 0.51, 0.2, 0.18, 0.016),
+              text: 'The score is ',
+              fontName: 'Synthetic-Serif',
+              fontSize: 10,
+            },
+            {
+              ...sourceBox(2, 0.695, 0.2, 0.012, 0.016),
+              text: 'C',
+              fontName: 'Synthetic-CMMI10',
+              fontSize: 10,
+            },
+            {
+              ...atomBox,
+              text: 'P lot',
+              fontName: 'Synthetic-CMMI8',
+              fontSize: 8,
+            },
+            {
+              ...sourceBox(2, 0.757, 0.2, 0.006, 0.016),
+              text: '.',
+              fontName: 'Synthetic-Serif',
+              fontSize: 10,
+            },
+          ],
+        },
+      ],
+    })
+    const item = evalCase(
+      'classification',
+      [
+        {
+          id: 'opaque-inline-atom',
+          kind: 'candidate',
+          box: [atomBox.x, atomBox.y, atomBox.width, atomBox.height],
+        },
+      ],
+      { page: 2, stratum: 'opaque-inline-role' },
+    )
+
+    expect(predictDeterministicCase(item, result)).toEqual({
+      labels: [
+        {
+          targetId: 'opaque-inline-atom',
+          label: 'contiguous-token',
+        },
+      ],
+    })
+  })
+
+  it('projects an incomplete inline equation veto instead of its generated caption role', () => {
+    const result = reconstruction()
+    const fragmentBox = sourceBox(1, 0.84, 0.24, 0.018, 0.014)
+    result.paper.nodes.push({
+      id: 'generated-fragment-caption',
+      type: 'caption',
+      text: 'Display equation p001-001',
+    })
+    result.provenance['generated-fragment-caption'] = {
+      pages: [1],
+      regionIds: ['inline-fragment-region'],
+      boxes: [fragmentBox],
+    }
+    result.regions.push({
+      id: 'inline-fragment-region',
+      page: 1,
+      kind: 'equation',
+      text: '',
+      box: fragmentBox,
+      lines: [],
+    })
+    result.visualRelationships.push({
+      id: 'inline-fragment-relationship',
+      kind: 'equation',
+      status: 'unresolved',
+      captionRegionId: 'inline-fragment-region',
+      captionNodeId: 'generated-fragment-caption',
+      sourceRegionIds: [],
+      sourceText: '',
+      assetIds: [],
+      evidence: ['source-equation-region', 'incomplete-equation-source-scope'],
+      candidates: [
+        {
+          sourceRegionIds: ['inline-fragment-region'],
+          sourceObjectIds: ['inline-fragment-source'],
+          assetIds: [],
+          score: 0.9,
+          evidence: [
+            'source-equation-region',
+            'incomplete-equation-source-scope',
+          ],
+          sourceBoxes: [fragmentBox],
+        },
+      ],
+    })
+    const item = evalCase(
+      'classification',
+      [
+        {
+          id: 'opaque-inline-fragment',
+          kind: 'candidate',
+          box: [
+            fragmentBox.x,
+            fragmentBox.y,
+            fragmentBox.width,
+            fragmentBox.height,
+          ],
+        },
+      ],
+      { stratum: 'opaque-inline-role' },
+    )
+
+    expect(predictDeterministicCase(item, result)).toEqual({
+      labels: [
+        {
+          targetId: 'opaque-inline-fragment',
+          label: 'not-standalone-display-equation',
+        },
+      ],
+    })
+  })
+
   it('uses the canonical table asset boundary when provenance also contains its caption', () => {
     const result = reconstruction()
     const tableBox = sourceBox(2, 0.19, 0.08, 0.62, 0.09)

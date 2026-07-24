@@ -2,6 +2,41 @@ import { z } from 'zod'
 
 const canonicalId = z.string().min(1)
 
+function isCanonicalBcp47LanguageTag(value: string) {
+  try {
+    const canonical = Intl.getCanonicalLocales(value)
+    return canonical.length === 1 && canonical[0] === value
+  } catch {
+    return false
+  }
+}
+
+const canonicalPublicationLanguage = z
+  .string()
+  .min(1)
+  .refine(isCanonicalBcp47LanguageTag, {
+    message:
+      'Publication language must be a canonical BCP 47 tag (use "und" when unproven)',
+  })
+
+const publicationMetadataLineage = z
+  .object({
+    status: z.enum(['proven', 'unresolved']),
+    source: z.enum([
+      'authored-canonical',
+      'pdf-ocr-explicit',
+      'pdf-text-language-inference',
+      'publication-language',
+      'pdf-strong-script',
+      'pdf-info-mod-date',
+      'file-last-modified',
+      'pdf-xmp-not-extracted',
+      'unproven',
+    ]),
+    evidence: z.array(z.string().min(1)).min(1),
+  })
+  .strict()
+
 const canonicalNodeBase = z
   .object({
     id: canonicalId,
@@ -27,7 +62,9 @@ const inlineRun = z
     bold: z.boolean().optional(),
     italic: z.boolean().optional(),
     href: z.string().min(1).optional(),
+    annotationId: canonicalId.optional(),
     verticalAlign: z.enum(['superscript', 'subscript']).optional(),
+    compactMathAtom: z.boolean().optional(),
     relationshipId: canonicalId.optional(),
     semanticRole: z
       .enum([
@@ -38,6 +75,50 @@ const inlineRun = z
       ])
       .optional(),
     targetIds: z.array(canonicalId).optional(),
+  })
+  .strict()
+  .superRefine((run, context) => {
+    if (run.compactMathAtom && !run.verticalAlign && !run.italic) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['compactMathAtom'],
+        message:
+          'Compact math atoms require mathematical emphasis or source-backed vertical alignment.',
+      })
+    }
+  })
+
+const normalizedSourceBox = z
+  .object({
+    page: z.number().int().positive(),
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().positive(),
+    height: z.number().finite().positive(),
+    rotation: z.number().finite(),
+    method: z.enum(['pdf-text', 'pdf-object', 'pdf-link', 'ocr']),
+  })
+  .strict()
+
+const semanticTableInlineRun = z
+  .object({
+    start: z.number().int().nonnegative(),
+    end: z.number().int().positive(),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    href: z.string().min(1).optional(),
+    annotationId: canonicalId.optional(),
+    verticalAlign: z.enum(['superscript', 'subscript']).optional(),
+  })
+  .strict()
+
+const semanticTableSourceRun = z
+  .object({
+    regionId: canonicalId,
+    lineId: canonicalId,
+    runIndex: z.number().int().nonnegative(),
+    text: z.string().min(1),
+    box: normalizedSourceBox,
   })
   .strict()
 
@@ -120,6 +201,20 @@ const figureNode = canonicalNodeBase
                         headerScope: z.enum(['column', 'row']).nullable(),
                         columnSpan: z.number().int().positive(),
                         rowSpan: z.number().int().positive(),
+                        id: canonicalId.optional(),
+                        headerIds: z.array(canonicalId).optional(),
+                        sourceRuns: z
+                          .array(semanticTableSourceRun)
+                          .min(1)
+                          .optional(),
+                        inlineRuns: z.array(semanticTableInlineRun).optional(),
+                        inlineMapping: z
+                          .object({
+                            expected: z.number().int().nonnegative(),
+                            mapped: z.number().int().nonnegative(),
+                          })
+                          .strict()
+                          .optional(),
                       })
                       .strict(),
                   )
@@ -147,6 +242,7 @@ const footnoteNode = canonicalNodeBase
     label: z.string().min(1),
     markerText: z.string().min(1).optional(),
     text: z.string().min(1),
+    inlineRuns: z.array(inlineRun).optional(),
     relationships: z
       .object({
         backlinks: z.array(canonicalId),
@@ -163,6 +259,19 @@ const researchPaperBaseSchema = z
     title: z.string().min(1),
     subtitle: z.string().min(1),
     authors: z.array(z.string().min(1)).min(1),
+    language: canonicalPublicationLanguage.optional(),
+    baseDirection: z.enum(['ltr', 'rtl', 'unknown']).optional(),
+    publicationDate: z.string().date().optional(),
+    artifactModifiedAt: z.string().datetime({ offset: true }).optional(),
+    metadataLineage: z
+      .object({
+        language: publicationMetadataLineage,
+        baseDirection: publicationMetadataLineage,
+        publicationDate: publicationMetadataLineage,
+        artifactModifiedAt: publicationMetadataLineage,
+      })
+      .strict()
+      .optional(),
     authorNotes: z
       .array(
         z
@@ -171,6 +280,16 @@ const researchPaperBaseSchema = z
             author: z.string().min(1),
             label: z.string().min(1),
             target: canonicalId,
+          })
+          .strict(),
+      )
+      .optional(),
+    authorAffiliations: z
+      .array(
+        z
+          .object({
+            author: z.string().min(1),
+            label: z.string().min(1),
           })
           .strict(),
       )
@@ -210,6 +329,27 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
     const nodeIds = new Set(paper.nodes.map((node) => node.id))
     const noteReferenceIds = new Set<string>()
     const noteReferenceTargets = new Map<string, string>()
+    const authorAffiliationKeys = new Set<string>()
+    for (const [index, reference] of (
+      paper.authorAffiliations ?? []
+    ).entries()) {
+      if (!paper.authors.includes(reference.author)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['authorAffiliations', index, 'author'],
+          message: `Author affiliation names an unknown author: ${reference.author}`,
+        })
+      }
+      const key = `${reference.author}\u0000${reference.label}`
+      if (authorAffiliationKeys.has(key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['authorAffiliations', index],
+          message: `Duplicate author affiliation marker: ${reference.author} ${reference.label}`,
+        })
+      }
+      authorAffiliationKeys.add(key)
+    }
     for (const [index, reference] of (paper.authorNotes ?? []).entries()) {
       if (noteReferenceIds.has(reference.id)) {
         context.addIssue({

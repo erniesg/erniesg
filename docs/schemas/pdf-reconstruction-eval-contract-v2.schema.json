@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-reconstruction-eval-contract-2.0.0.json",
+  "title": "Additive governance contract for scholarly PDF reconstruction evaluation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "privacy",
+    "extends",
+    "additiveFidelityEval",
+    "additiveObservations",
+    "aggregatePublicCalibration",
+    "robustnessEvidence",
+    "splitStatus",
+    "objectiveEvaluators",
+    "comparatorReceipt",
+    "taxonomySaturation",
+    "coverageGaps"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "2.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "privacy": {
+      "const": "public-identities-hashes-governance-metadata-no-source-content-or-local-paths"
+    },
+    "extends": { "$ref": "#/$defs/baseContract" },
+    "additiveFidelityEval": { "$ref": "#/$defs/additiveEval" },
+    "additiveObservations": { "$ref": "#/$defs/additiveObservations" },
+    "aggregatePublicCalibration": { "$ref": "#/$defs/aggregate" },
+    "robustnessEvidence": { "$ref": "#/$defs/robustness" },
+    "splitStatus": { "$ref": "#/$defs/splitStatus" },
+    "objectiveEvaluators": {
+      "type": "array",
+      "minItems": 3,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/objectiveEvaluator" }
+    },
+    "comparatorReceipt": { "$ref": "#/$defs/comparatorReceipt" },
+    "taxonomySaturation": { "$ref": "#/$defs/taxonomySaturation" },
+    "coverageGaps": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/coverageGap" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,191}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "path": {
+      "type": "string",
+      "pattern": "^(benchmarks/pdf|docs/schemas|tools)/[A-Za-z0-9._/-]+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "fileSha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "baseContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "fileSha256"],
+      "properties": {
+        "id": {
+          "const": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1"
+        },
+        "path": {
+          "const": "benchmarks/pdf/reconstruction-eval-contract-v1.json"
+        },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "additiveEval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "schema",
+        "id",
+        "evalSetSha256",
+        "documentIdentitySha256",
+        "caseIdentitySha256",
+        "documentCount",
+        "caseCount",
+        "stratumCount"
+      ],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "schema": { "$ref": "#/$defs/artifact" },
+        "id": { "const": "scholarly-pdf-fidelity-additions-2026-07-v2" },
+        "evalSetSha256": { "$ref": "#/$defs/sha256" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "documentCount": { "const": 2 },
+        "caseCount": { "const": 3 },
+        "stratumCount": { "const": 3 }
+      }
+    },
+    "additiveObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "schema",
+        "observationCount",
+        "selectionStatus"
+      ],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "schema": { "$ref": "#/$defs/artifact" },
+        "observationCount": { "const": 3 },
+        "selectionStatus": {
+          "const": "complaint-driven-candidate-output-consulted-source-pdf-labelled"
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseCaseCount",
+        "additiveCaseCount",
+        "totalCaseCount",
+        "distinctDocumentCount",
+        "stratumCount",
+        "labelsExposed",
+        "identityBasis",
+        "identitySha256"
+      ],
+      "properties": {
+        "baseCaseCount": { "const": 29 },
+        "additiveCaseCount": { "const": 3 },
+        "totalCaseCount": { "const": 32 },
+        "distinctDocumentCount": { "const": 4 },
+        "stratumCount": { "const": 18 },
+        "labelsExposed": { "const": true },
+        "identityBasis": {
+          "const": "ordered-v1-and-v2-eval-set-sha256s"
+        },
+        "identitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "robustness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runCount",
+        "distinctDocumentCount",
+        "overlapDocumentCount",
+        "role"
+      ],
+      "properties": {
+        "runCount": { "const": 20 },
+        "distinctDocumentCount": { "const": 18 },
+        "overlapDocumentCount": { "const": 2 },
+        "role": {
+          "const": "whole-paper-discovery-and-regression-not-labelled-holdout"
+        }
+      }
+    },
+    "splitStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publicCalibration",
+        "blindHoldout",
+        "judgeTrain",
+        "judgeDev",
+        "judgeTest"
+      ],
+      "properties": {
+        "publicCalibration": { "const": "available-labels-exposed" },
+        "blindHoldout": { "const": "not-built" },
+        "judgeTrain": {
+          "const": "not-built-no-subjective-judge-authorized"
+        },
+        "judgeDev": {
+          "const": "not-built-no-subjective-judge-authorized"
+        },
+        "judgeTest": {
+          "const": "not-built-no-subjective-judge-authorized"
+        }
+      }
+    },
+    "objectiveEvaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "outcome", "criterion", "implementation"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "const": "code" },
+        "outcome": { "const": "binary-pass-fail" },
+        "criterion": { "$ref": "#/$defs/id" },
+        "implementation": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/path" }
+        }
+      }
+    },
+    "comparatorReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "authority"],
+      "properties": {
+        "schema": { "$ref": "#/$defs/artifact" },
+        "authority": {
+          "const": "performance-provenance-sidecar-never-promotion-authority"
+        }
+      }
+    },
+    "taxonomySaturation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "labeledBoundedTraceCount",
+        "targetApproximateTraceCount",
+        "requiredFinalNoNewClassWindow",
+        "observedFinalNoNewClassWindow",
+        "robustnessRunCount",
+        "distinctRobustnessDocumentCount"
+      ],
+      "properties": {
+        "status": { "const": "not-saturated" },
+        "labeledBoundedTraceCount": { "const": 32 },
+        "targetApproximateTraceCount": { "const": 100 },
+        "requiredFinalNoNewClassWindow": { "const": 20 },
+        "observedFinalNoNewClassWindow": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 19
+        },
+        "robustnessRunCount": { "const": 20 },
+        "distinctRobustnessDocumentCount": { "const": 18 }
+      }
+    },
+    "coverageGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "reason", "requiredEvidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "status": { "const": "not-labelled" },
+        "reason": { "$ref": "#/$defs/id" },
+        "requiredEvidence": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    }
+  }
+}

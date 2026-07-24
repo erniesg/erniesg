@@ -17,12 +17,56 @@ SHA-256 identities, page numbers, normalized geometry, safe labels, and
 relationships. It contains no PDF bytes, source prose, formulas, local paths,
 model output text, or generated EPUBs.
 
+## Versioned governance, provenance, and splits
+
+`benchmarks/pdf/reconstruction-eval-contract-v1.json` is the machine-readable
+governance envelope for the current benchmark family. Its schema is
+`docs/schemas/pdf-reconstruction-eval-contract.schema.json`. The envelope
+binds:
+
+- the raw-file and canonical SHA-256 identities of
+  `corpus-contract-v1.json`;
+- the raw-file, document-set, case-set, and canonical SHA-256 identities of
+  `fidelity-eval-v1.json`;
+- all 29 source-reviewed first-failure annotations in
+  `fidelity-eval-observations-v1.json`;
+- the implemented objective binary evaluators and their implementation entry
+  points; and
+- explicit data-governance, split, judge-validation, and saturation status.
+
+The available lanes have different jobs and must not be pooled into one vanity
+score:
+
+| Lane                      | Role                                         | Size                       | Labels exposed?        |
+| ------------------------- | -------------------------------------------- | -------------------------- | ---------------------- |
+| Public calibration        | Failure-driven parser/model development      | 4 papers, 29 bounded cases | Yes                    |
+| Frozen regression         | Whole-paper integrity and non-regression     | 10 executions              | No bounded gold labels |
+| Seeded-random discovery   | Whole-paper robustness and failure discovery | 10 executions              | No bounded gold labels |
+| Independent blind holdout | Candidate-independent final measurement      | Not built                  | N/A                    |
+| Judge train/dev/test      | Future subjective-judge calibration          | Not built                  | N/A                    |
+
+The two ten-paper lanes are 20 executions over **18 distinct paper
+identities**, not 20 unique papers: `2405.07987v5` and `2507.21509v3` appear in
+both. The overlap is frozen in the governance contract instead of being hidden
+by the aggregate run count.
+
 This is a calibration seed, not a saturated benchmark or publication
 acceptance claim. Expand it by reviewing representative outputs until roughly
 100 bounded traces have been labeled and the final 20 reveal no new failure
 class. Keep random cases alongside complaint-driven, outlier, and
 failure-stratified samples. New or materially changed annotations create a new
 eval-set version; never rewrite a frozen result to make a candidate pass.
+
+The latest whole-paper error-analysis round read the complete
+`2502.00873v1` source and EPUB rather than sampling only the originally
+reported pages. Its first-failure annotations exposed four strata not fully
+represented by v1: contiguous section-subtree order across columns,
+bibliography entry cardinality across column/page boundaries, source-backed
+float resumption and section containment, and two-dimensional inline formula
+layout. These belong in a new eval-set version after their source-only boxes
+and relationships receive independent review; they must not be backfilled
+into the frozen v1 manifest. Until that expansion and a final no-new-class
+window, a passing v1 score remains calibration evidence only.
 
 The July failure-driven expansion adds source-verified decisions for the P0
 classes observed during whole-paper review:
@@ -58,6 +102,48 @@ same-label completeness. It corrected the Section 3.2 heading box on
 `2210.06774v3` page 3 from unrelated continuation prose to the source heading's
 normalized glyph bounds; no candidate prediction was consulted when making
 that correction.
+
+## Additive v2 cases
+
+The frozen v1 files remain byte-identical. The complaint-driven whole-output
+audit is captured separately in `benchmarks/pdf/fidelity-eval-v2.json`, whose
+schema is `docs/schemas/pdf-fidelity-eval-set-v2.schema.json`. V2 explicitly
+binds the v1 raw-file and canonical identities and adds three critical
+calibration cases:
+
+- a six-anchor `2502.00873v1` figure-order case spanning source pages 16–20,
+  bounded to Figures 21, 22, 23, 24, 29, and 30; this subset is sufficient to
+  detect the observed cross-page inversions without claiming all 42 figures
+  were independently annotated;
+- the `2502.00873v1` page-5 inline-stacked fragment that must not become a
+  standalone display equation; and
+- the `2412.13575v1` page-3 superscript whose source glyphs form one contiguous
+  token rather than a token with an invented internal space.
+
+Every v2 target has its own one-based `sourcePage` plus normalized source box.
+That is the only annotation-schema change needed for a reading-order case to
+span pages. Gold-stripped adapter request `1.2.0` preserves those page numbers
+and boxes while replacing semantic kinds and IDs; v1 continues to use request
+`1.1.0`. All-pairs scoring is unchanged, so moving even one bounded figure
+anchor across another produces a failing critical case.
+
+The additive observation file is
+`benchmarks/pdf/fidelity-eval-observations-v2.json`. Unlike the source-only v1
+review, these three cases were selected after inspecting candidate output.
+Their labels were then checked against the hash-pinned source pages. The
+observation metadata says so explicitly: this is complaint-driven public
+calibration, not a blind holdout. V1 plus v2 now contain 32 labelled bounded
+cases across 18 strata, still far below the approximate 100-case saturation
+target, with no final 20-case no-new-class window.
+
+`benchmarks/pdf/reconstruction-eval-contract-v2.json` binds those additive
+artifacts and their schemas while extending the exact v1 governance contract.
+It also records a deliberate gap: profile-level wide-visual legibility is not
+yet a labelled model-neutral case. A defensible binary evaluator needs an exact
+official profile/version and viewport, a rendered-artifact SHA-256,
+`scrollWidth`/`clientWidth`, a minimum cell inline size, and a clipping/overflow
+assertion. The current prediction envelope binds none of those rendition
+measurements, so assigning a passing label now would invent evidence.
 
 ## Common candidate contract
 
@@ -124,22 +210,71 @@ npm --silent run pdf:eval -- \
   --out /private/evals/mineru-receipt.json
 ```
 
-Compare two receipts on the exact same frozen source and case identity:
+## Development calibration versus promotion evidence
+
+The evaluator has two explicit modes, distinguished by `execution.lane`:
+
+- `score` produces an `external-predictions` receipt for public development
+  calibration. Its `passed` value means only that the imported predictions met
+  the frozen scoring thresholds. `promotionEligible` is always `false`, even
+  when the score passes and the imported candidate reports a runtime identity.
+- `local` produces a `local-mac` calibration receipt after the runner verifies
+  every hash-pinned input and records the transitive adapter source SHA-256.
+  Tool and model hashes in the current adapter protocol are still supplied by
+  that adapter, so the receipt records
+  `runtimeIdentityAuthority: "adapter-self-reported"`. The runner cannot yet
+  independently prove which executable and checkpoint produced the output.
+  Consequently every current local receipt has `promotionEligible: false` and
+  `passed: false`, even when all accuracy cases score perfectly.
+
+Receipt schema `1.2.0` makes that authority boundary explicit, requires
+`promotionEligible: false`, and binds both values into the receipt hash.
+Imported predictions and verified-input local runs remain useful calibration
+evidence, but comparison is evaluation-only and cannot pass promotion today.
+Pre-`1.2.0` receipts are rejected with
+`PDF_FIDELITY_PROMOTION_RECEIPT_V1_2_REQUIRED`; regenerate or re-score the
+predictions instead of treating an adapter-attested receipt as release
+evidence. Promotion must stay closed until a trusted runner independently
+verifies the executable, model artifact, and isolated execution environment.
+
+These controls harden provenance for repeatable development decisions. They do
+not make the public v1 manifest a blinded benchmark: documents, case identities,
+and annotations are available for repeated calibration and may influence
+implementation. A future blinded holdout must keep its sampled documents and
+labels private through candidate freeze, execute independently of the candidate
+owner, and disclose results only after scoring. No such holdout is implemented
+by this repository today.
+
+Compare an imported or local baseline with a local candidate on the exact same
+frozen source and case identity:
 
 ```bash
 npm --silent run pdf:eval:compare -- \
   --manifest benchmarks/pdf/fidelity-eval-v1.json \
-  --baseline /private/evals/deterministic-receipt.json \
+  --baseline /private/evals/deterministic-calibration-receipt.json \
   --baseline-predictions /private/evals/deterministic-predictions.json \
-  --candidate /private/evals/mineru-receipt.json \
-  --candidate-predictions /private/evals/mineru-predictions.json \
+  --candidate /private/evals/mineru-fidelity-v1/eval-receipt.json \
+  --candidate-predictions /private/evals/mineru-fidelity-v1/predictions.json \
   --out /private/evals/deterministic-vs-mineru.json
 ```
 
-The comparison reports every case delta and fails promotion when the candidate
-does not pass the eval policy or regresses a critical case. Runtime and cost
-belong in a separate benchmark; they are deliberately excluded from the
-deterministic accuracy receipt.
+The comparison reports every case delta, but its promotion result remains false
+under receipt `1.2.0`. Runtime and cost belong in a separate benchmark; they are
+deliberately excluded from the deterministic accuracy receipt.
+
+For future parser/model comparisons, that separate sidecar has a strict schema:
+`docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json`. It requires the
+provider ID and version, model ID/version and optional artifact hash, adapter
+ID/version/source hash, input identity, repeat/warmup counts, network-isolation
+status, latency scope plus sample count/p50/p95/mean/total, and USD cost with an
+explicit attribution basis and nullable token counts. It also binds the
+deterministic accuracy-receipt SHA-256.
+
+The performance sidecar is intentionally never promotion-authoritative.
+Latency and cost are empirical and may vary while objective accuracy remains
+identical; they must not be folded into a semantic-fidelity score or used to
+rewrite a frozen label. Missing provider, model version, latency, or cost makes
+the sidecar schema-invalid.
 
 ## Local-Mac-first runner
 
@@ -170,6 +305,13 @@ offline modes with `SRT_PDF_EVAL_OFFLINE=1`, `HF_HUB_OFFLINE=1`, and
 gold answers and is deleted after the run. The new external output directory is
 owner-only and contains only normalized `predictions.json` and
 `eval-receipt.json`.
+
+The `local-mac` lane is deliberately fail-closed and currently never
+promotion-eligible. The command still writes normalized predictions and the
+sanitized receipt, then exits nonzero because `passed` is false. The offline
+request flags remain cooperative controls and do not substitute for an
+independently isolated runtime. `--allow-non-darwin` exists only for test and
+adapter-development calibration; it never creates promotion evidence.
 
 The adapter receives:
 
@@ -233,6 +375,13 @@ relationships emit no object or caption edge, and a table is called
 structure. This makes the receipt an honest baseline for parser failure modes,
 with candidate labels and detection boxes coming from reconstruction evidence
 rather than being copied from target descriptors.
+
+This bundled adapter is deterministic and correctly reports
+`runtimeIdentity.status: "not-applicable"`; it therefore cannot produce passing
+promotion evidence in the `local-mac` lane. Its normalized `predictions.json`
+remains useful as a baseline. Re-score that file with `pdf:eval` when a
+score-passing `external-predictions` calibration receipt is useful, while
+retaining the local receipt as evidence that the private inputs were verified.
 
 ### Bundled MinerU adapter
 
@@ -300,11 +449,12 @@ rules fail closed rather than inventing content. Offline environment flags are
 still cooperative controls, not an OS network sandbox.
 
 If either model identity variable is absent, the adapter records the runtime as
-`unattested` and the receipt cannot pass promotion even when every bounded case
-scores perfectly. The checkpoint digest is an explicit operator attestation:
-the adapter binds and reports it but cannot independently prove that MinerU
-loaded those exact weights. The executable digest is observed from the exact
-resolved binary that the adapter invokes.
+`unattested`. If both are present, the runtime identity is still explicitly
+adapter-self-reported. Neither state can pass promotion. The checkpoint digest
+is an operator assertion that the adapter binds and reports, but the current
+runner cannot independently prove that MinerU loaded those exact weights. The
+executable digest is observed by the adapter from the binary it invokes, not by
+an external verifier.
 
 ## Receipt and review policy
 
@@ -328,3 +478,18 @@ decisions. Promotion still requires the existing structural/EPUB gates,
 side-by-side human review of changed critical cases, and a larger annotated set
 with held-out coverage. A model's own output may never become ground truth
 without independent review.
+
+## License and privacy boundary
+
+Public arXiv identifiers do not imply a repository-wide redistribution
+license. The benchmark therefore makes no license assertion for the paper
+PDFs, commits no paper bytes, and requires the operator to obtain and use every
+paper under its source terms. Hash-pinned paper inputs stay owner-local.
+Repository-owned generated fixtures are separately identified as CC0 in
+`tests/fixtures/pdf/manifest.json`.
+
+Private inputs and comparison runs must keep PDF bytes, source prose, formulas,
+screenshots, local paths, and raw model payloads out of committed manifests and
+sanitized receipts. Provider/model/version, aggregate latency, and cost are
+allowed only in the comparator sidecar because they describe the execution
+identity without reproducing paper content.

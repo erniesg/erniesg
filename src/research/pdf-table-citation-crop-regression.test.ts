@@ -157,7 +157,7 @@ describe('raw PDF source-backed table citation regression', () => {
     })
   })
 
-  it('blocks publication export and omits the non-semantic crop from the readable fallback', async () => {
+  it('blocks publication export while preserving the complete source crop in the readable fallback', async () => {
     const table = reconstruction.paper.nodes.find(
       (node) => node.type === 'figure' && node.objectType === 'table',
     )
@@ -183,12 +183,13 @@ describe('raw PDF source-backed table citation regression', () => {
     const xhtml = strFromU8(inspected.files['EPUB/content.xhtml'])
     const bibliorefs = [...xhtml.matchAll(/<a\b[^>]*epub:type="biblioref"/gu)]
 
-    expect(xhtml).not.toContain(
+    expect(xhtml).toContain(
       'class="visually-hidden visual-source-transcript"',
     )
-    expect(xhtml).not.toContain('Aggregate result | 71 | 90 | Stable')
+    expect(xhtml).toContain('Aggregate result | 71 | 90 | Stable')
     expect(xhtml).not.toMatch(/<p\b[^>]*>[^<]*Readability score/gu)
-    expect(bibliorefs).toHaveLength(0)
-    expect(xhtml).not.toContain(`data-canonical-id="${table?.id}"`)
+    expect(xhtml).not.toContain('<table')
+    expect(bibliorefs).toHaveLength(4)
+    expect(xhtml).toContain(`data-canonical-id="${table?.id}"`)
   })
 })

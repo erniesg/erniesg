@@ -12,17 +12,31 @@ import {
   PdfImportError,
   type DocumentReconstruction,
   type DocxReconstruction,
+  type NormalizedSourceBox,
+  type PdfLinkAnnotation,
   type PdfReconstruction,
+  type PdfScholarlyCrossReferenceKind,
   type PublicationAsset,
   type PublicationVisualRelationship,
 } from './import-types'
 import { getCompositionPolicy } from './composition'
+import { resolvePdfScholarlyCrossReferences } from './pdf-cross-references'
+import {
+  assessPdfCompleteness,
+  hasResolvedEquationTranscript,
+} from './pdf-quality'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import {
   assertPublicationIntegrity,
+  isBoundedScholarlyReferenceText,
   renderableAuthorNoteReferences,
   sanitizeXmlText,
 } from './publication-integrity'
+import { safePdfExternalLinkTarget } from './pdf-links'
+import {
+  expandPdfScholarlyVisualIdentifierRange,
+  parsePdfScholarlyVisualLabel,
+} from './pdf-scholarly-label'
 import type { ResearchNode, ResearchPaper } from './schema'
 import {
   getTargetProfile,
@@ -39,11 +53,630 @@ export const EPUB_EXPORT_POLICY_VERSION = '1.1.0' as const
 export type EpubExportMode = 'publication' | 'readable-fallback'
 const MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL = 16
 const MAX_READABLE_FALLBACK_ASSETS_PER_BOOK = 64
+const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
+const READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE =
+  'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.'
+const READABLE_FALLBACK_INCOMPLETE_MESSAGE =
+  'This readable fallback is incomplete and is not publication-grade.'
+const READABLE_FALLBACK_REVIEW_MESSAGE =
+  'Omitted source visuals and unresolved relationships require review against the source PDF.'
+
+function isCompactScrollableTableImage({
+  kind,
+  mediaType,
+  width,
+  height,
+}: Pick<PublicationAsset, 'kind' | 'mediaType' | 'width' | 'height'>) {
+  return (
+    kind === 'table' &&
+    mediaType.startsWith('image/') &&
+    (width / height >= 2 ||
+      width >= COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX)
+  )
+}
 
 function isDocxReconstruction(
   reconstruction: DocumentReconstruction,
 ): reconstruction is DocxReconstruction {
   return reconstruction.source.format === 'docx'
+}
+
+function hasCompletePdfAssessmentEvidence(
+  reconstruction: PdfReconstruction,
+): boolean {
+  return Boolean(
+    Array.isArray(reconstruction.pages) &&
+    reconstruction.pages.length > 0 &&
+    Array.isArray(reconstruction.regions) &&
+    reconstruction.readingOrder &&
+    Array.isArray(reconstruction.visualRelationships) &&
+    Array.isArray(reconstruction.assets) &&
+    Array.isArray(reconstruction.citationRelationships) &&
+    Array.isArray(reconstruction.noteRelationships) &&
+    Array.isArray(reconstruction.crossReferenceRelationships) &&
+    Array.isArray(reconstruction.lineBoundaryDecisions) &&
+    reconstruction.provenance &&
+    reconstruction.completeness &&
+    Number.isInteger(reconstruction.completeness.expectedInlineSpanCount) &&
+    Number.isInteger(reconstruction.completeness.mappedInlineSpanCount) &&
+    Number.isInteger(reconstruction.completeness.expectedHyperlinkCount) &&
+    Number.isInteger(reconstruction.completeness.mappedHyperlinkCount) &&
+    reconstruction.readiness?.policy &&
+    typeof reconstruction.readiness.policy.minimumTextCoverage === 'number' &&
+    reconstruction.source?.sha256,
+  )
+}
+
+type CanonicalHyperlinkOccurrence = {
+  annotationId: string
+  href: string | undefined
+  ownerNodeId: string
+  owner: string
+  start: number
+  end: number
+  textLength: number
+}
+
+function canonicalHyperlinkOccurrences(
+  paper: ResearchPaper,
+): CanonicalHyperlinkOccurrence[] {
+  return paper.nodes.flatMap((node) => {
+    const nodeOccurrences =
+      'inlineRuns' in node
+        ? (node.inlineRuns ?? []).flatMap((run, runIndex) =>
+            run.annotationId
+              ? [
+                  {
+                    annotationId: run.annotationId,
+                    href: run.href,
+                    ownerNodeId: node.id,
+                    owner: `${node.id}.inlineRuns[${runIndex}]`,
+                    start: run.start,
+                    end: run.end,
+                    textLength:
+                      node.type === 'figure'
+                        ? (node.sourceText?.length ?? 0)
+                        : node.text.length,
+                  },
+                ]
+              : [],
+          )
+        : []
+    const tableOccurrences =
+      node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row, rowIndex) =>
+            row.cells.flatMap((cell, cellIndex) =>
+              (cell.inlineRuns ?? []).flatMap((run, runIndex) =>
+                run.annotationId
+                  ? [
+                      {
+                        annotationId: run.annotationId,
+                        href: run.href,
+                        ownerNodeId: node.id,
+                        owner: `${node.id}.table.rows[${rowIndex}].cells[${cellIndex}].inlineRuns[${runIndex}]`,
+                        start: run.start,
+                        end: run.end,
+                        textLength: cell.text.length,
+                      },
+                    ]
+                  : [],
+              ),
+            ),
+          )
+        : []
+    return [...nodeOccurrences, ...tableOccurrences]
+  })
+}
+
+function normalizedSourceLinkAnnotations(
+  reconstruction: PdfReconstruction,
+): PdfLinkAnnotation[] {
+  return reconstruction.pages.flatMap((page) =>
+    (page.links ?? []).map((annotation) => {
+      if (
+        !('id' in annotation) ||
+        typeof annotation.id !== 'string' ||
+        !('status' in annotation) ||
+        annotation.status === undefined
+      ) {
+        throw new PdfImportError(
+          'INCOMPLETE_RECONSTRUCTION',
+          `PDF hyperlink evidence on page ${page.page} is not a normalized source annotation.`,
+        )
+      }
+      if (annotation.page !== page.page) {
+        throw new PdfImportError(
+          'INCOMPLETE_RECONSTRUCTION',
+          `PDF hyperlink evidence ${annotation.id} claims page ${annotation.page} but is stored on page ${page.page}.`,
+        )
+      }
+      return annotation as PdfLinkAnnotation
+    }),
+  )
+}
+
+function validatePdfHyperlinkEvidence({
+  reconstruction,
+  paper,
+}: {
+  reconstruction: PdfReconstruction
+  paper: ResearchPaper
+}) {
+  const annotations = normalizedSourceLinkAnnotations(reconstruction)
+  const annotationIds = annotations.map((annotation) => annotation.id)
+  const duplicateAnnotationId = annotationIds.find(
+    (id, index) => annotationIds.indexOf(id) !== index,
+  )
+  if (duplicateAnnotationId) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      `PDF hyperlink evidence contains duplicate source annotation ${duplicateAnnotationId}.`,
+    )
+  }
+  const annotationsById = new Map(
+    annotations.map((annotation) => [annotation.id, annotation]),
+  )
+  const occurrences = canonicalHyperlinkOccurrences(paper)
+  for (const occurrence of occurrences) {
+    if (!occurrence.href) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF hyperlink evidence ${occurrence.annotationId} has canonical owner ${occurrence.owner} without an href.`,
+      )
+    }
+    if (
+      occurrence.start < 0 ||
+      occurrence.end <= occurrence.start ||
+      occurrence.end > occurrence.textLength
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF hyperlink evidence ${occurrence.annotationId} has a non-renderable canonical range at ${occurrence.owner}.`,
+      )
+    }
+    if (!annotationsById.has(occurrence.annotationId)) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF hyperlink evidence ${occurrence.annotationId} at ${occurrence.owner} has no source annotation.`,
+      )
+    }
+  }
+  const occurrencesById = new Map<string, CanonicalHyperlinkOccurrence[]>()
+  for (const occurrence of occurrences) {
+    const owners = occurrencesById.get(occurrence.annotationId) ?? []
+    owners.push(occurrence)
+    occurrencesById.set(occurrence.annotationId, owners)
+  }
+  let mapped = 0
+  const nodeIds = new Set(paper.nodes.map((node) => node.id))
+  for (const annotation of annotations) {
+    const owners = occurrencesById.get(annotation.id) ?? []
+    if (owners.length !== 1) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF hyperlink evidence ${annotation.id} must have exactly one canonical inline or table-cell owner; found ${owners.length}.`,
+      )
+    }
+    const href = owners[0].href!
+    if (annotation.status === 'unresolved') {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF hyperlink evidence ${annotation.id} remains unresolved (${annotation.reason}).`,
+      )
+    }
+    if (annotation.status === 'external') {
+      if (
+        !safePdfExternalLinkTarget(annotation.url) ||
+        href !== annotation.url
+      ) {
+        throw new PdfImportError(
+          'INCOMPLETE_RECONSTRUCTION',
+          `PDF hyperlink evidence ${annotation.id} external target does not equal its canonical href.`,
+        )
+      }
+    } else {
+      const fragment = href.match(/^#([A-Za-z_][A-Za-z0-9_.:-]{0,511})$/u)?.[1]
+      if (!fragment || !nodeIds.has(fragment)) {
+        throw new PdfImportError(
+          'INCOMPLETE_RECONSTRUCTION',
+          `PDF hyperlink evidence ${annotation.id} internal fragment does not resolve to one canonical node.`,
+        )
+      }
+    }
+    mapped += 1
+  }
+  return { expected: annotations.length, mapped }
+}
+
+type CanonicalCrossReferenceOccurrence = {
+  relationshipId: string | undefined
+  semanticRole: string | undefined
+  targetIds: string[] | undefined
+  nodeId: string
+  start: number
+  end: number
+}
+
+function canonicalCrossReferenceOccurrences(
+  paper: ResearchPaper,
+): CanonicalCrossReferenceOccurrence[] {
+  return paper.nodes.flatMap((node) =>
+    'inlineRuns' in node
+      ? (node.inlineRuns ?? []).flatMap((run) =>
+          run.semanticRole === 'cross-reference' ||
+          run.relationshipId?.startsWith('scholarly-cross-reference-')
+            ? [
+                {
+                  relationshipId: run.relationshipId,
+                  semanticRole: run.semanticRole,
+                  targetIds: run.targetIds,
+                  nodeId: node.id,
+                  start: run.start,
+                  end: run.end,
+                },
+              ]
+            : [],
+        )
+      : [],
+  )
+}
+
+function boxesOverlap(left: NormalizedSourceBox, right: NormalizedSourceBox) {
+  return (
+    left.page === right.page &&
+    left.x < right.x + right.width &&
+    right.x < left.x + left.width &&
+    left.y < right.y + right.height &&
+    right.y < left.y + left.height
+  )
+}
+
+type ExportCrossReferenceTarget = {
+  kind: PdfScholarlyCrossReferenceKind
+  label: string
+  nodeId: string
+  evidence: string[]
+}
+
+function canonicalHeadingCrossReferenceTargets(
+  paper: ResearchPaper,
+): ExportCrossReferenceTarget[] {
+  const headings = paper.nodes.filter(
+    (node): node is Extract<ResearchNode, { type: 'heading' }> =>
+      node.type === 'heading',
+  )
+  const plainLettered = headings.flatMap((node) => {
+    const match = node.text.trim().match(/^([A-Z])\s+\p{Lu}/u)
+    return match ? [{ node, ordinal: match[1].charCodeAt(0) }] : []
+  })
+  const sequencedPlainLetteredIds = new Set<string>()
+  for (let index = 0; index < plainLettered.length - 1; index += 1) {
+    if (plainLettered[index + 1].ordinal === plainLettered[index].ordinal + 1) {
+      sequencedPlainLetteredIds.add(plainLettered[index].node.id)
+      sequencedPlainLetteredIds.add(plainLettered[index + 1].node.id)
+    }
+  }
+  const nestedLetteredParentLabels = new Set(
+    headings.flatMap((node) => {
+      const match = node.text.trim().match(/^([A-Z])\.\d+(?:\.\d+)*\.?\s+\S/u)
+      return match ? [match[1]] : []
+    }),
+  )
+  return headings.flatMap((node) => {
+    const value = node.text.trim()
+    const explicitAppendix = value.match(/^appendix\s+([A-Z](?:\.\d+)*)\b/iu)
+    const lettered = value.match(/^([A-Z](?:\.\d+)*)\.\s+\S/u)
+    const nestedLettered = value.match(/^([A-Z](?:\.\d+)+)\s+\S/u)
+    const plainLetteredMatch = value.match(/^([A-Z])\s+\p{Lu}/u)
+    const plainLettered =
+      plainLetteredMatch &&
+      (sequencedPlainLetteredIds.has(node.id) ||
+        nestedLetteredParentLabels.has(plainLetteredMatch[1]))
+        ? plainLetteredMatch
+        : null
+    const numbered = value.match(/^(\d+(?:\.\d+)*)\.?\s+\S/u)
+    const appendixIdentifier =
+      explicitAppendix?.[1] ??
+      lettered?.[1] ??
+      nestedLettered?.[1] ??
+      plainLettered?.[1]
+    return [
+      ...(numbered
+        ? [
+            {
+              kind: 'section' as const,
+              label: `Section ${numbered[1]}`,
+              nodeId: node.id,
+              evidence: [
+                'canonical-heading-label',
+                'source-heading-typography',
+              ],
+            },
+          ]
+        : []),
+      ...(appendixIdentifier
+        ? [
+            {
+              kind: 'appendix' as const,
+              label: `Appendix ${appendixIdentifier}`,
+              nodeId: node.id,
+              evidence: [
+                'canonical-heading-label',
+                'source-heading-typography',
+              ],
+            },
+            ...(appendixIdentifier.includes('.')
+              ? [
+                  {
+                    kind: 'section' as const,
+                    label: `Section ${appendixIdentifier}`,
+                    nodeId: node.id,
+                    evidence: [
+                      'canonical-appendix-subheading-label',
+                      'source-heading-typography',
+                    ],
+                  },
+                ]
+              : []),
+          ]
+        : []),
+    ]
+  })
+}
+
+function canonicalVisualCrossReferenceTargets(
+  reconstruction: PdfReconstruction,
+): ExportCrossReferenceTarget[] {
+  return reconstruction.visualRelationships.flatMap((relationship) => {
+    const parsedLabel = parsePdfScholarlyVisualLabel(relationship.label, {
+      context: 'reference',
+    })
+    if (
+      relationship.status !== 'matched' ||
+      !relationship.canonicalNodeId ||
+      parsedLabel?.status !== 'parsed' ||
+      parsedLabel.plural ||
+      parsedLabel.kind !== relationship.kind ||
+      relationship.label.slice(parsedLabel.consumedEnd).trim().length > 0
+    ) {
+      return []
+    }
+    return [
+      {
+        kind: relationship.kind,
+        label: relationship.label,
+        nodeId: relationship.canonicalNodeId,
+        evidence: [
+          'matched-canonical-visual-relationship',
+          'source-proved-visual-label',
+        ],
+      },
+    ]
+  })
+}
+
+function crossReferenceSourceClaim(
+  relationship: PdfReconstruction['crossReferenceRelationships'][number],
+) {
+  return {
+    id: relationship.id,
+    kind: relationship.kind,
+    text: relationship.text,
+    labels: relationship.labels,
+    referenceRegionId: relationship.referenceRegionId,
+    referenceStart: relationship.referenceStart,
+    referenceEnd: relationship.referenceEnd,
+    targets: relationship.targets,
+    targetNodeIds: relationship.targetNodeIds,
+    status: relationship.status,
+    sourceBoxes: relationship.sourceBoxes,
+  }
+}
+
+function validatePdfCrossReferenceEvidence({
+  reconstruction,
+  paper,
+}: {
+  reconstruction: PdfReconstruction
+  paper: ResearchPaper
+}) {
+  const relationships = reconstruction.crossReferenceRelationships
+  const relationshipIds = relationships.map((relationship) => relationship.id)
+  const duplicateRelationshipId = relationshipIds.find(
+    (id, index) => relationshipIds.indexOf(id) !== index,
+  )
+  if (duplicateRelationshipId) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      `PDF scholarly cross-reference evidence contains duplicate relationship ${duplicateRelationshipId}.`,
+    )
+  }
+  const occurrences = canonicalCrossReferenceOccurrences(paper)
+  const relationshipIdsSet = new Set(relationshipIds)
+  const orphan = occurrences.find(
+    (occurrence) =>
+      !occurrence.relationshipId ||
+      !relationshipIdsSet.has(occurrence.relationshipId),
+  )
+  if (orphan) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      `PDF scholarly cross-reference canonical inline owner has no exact relationship claim.`,
+    )
+  }
+  const canonicalAnchorKeys = new Set<string>()
+  const sourceAnchorKeys = new Set<string>()
+  const nodeById = new Map(paper.nodes.map((node) => [node.id, node]))
+  const regionById = new Map(
+    reconstruction.regions.map((region) => [region.id, region]),
+  )
+  const canonicalTargets = [
+    ...canonicalHeadingCrossReferenceTargets(paper),
+    ...canonicalVisualCrossReferenceTargets(reconstruction),
+  ]
+  const validTargets = new Set(
+    canonicalTargets.map(
+      (target) => `${target.kind}:${target.label}:${target.nodeId}`,
+    ),
+  )
+  const sourceParagraphRegionIds = new Set(
+    paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' && node.list?.numberingId !== 'references'
+        ? (reconstruction.provenance[node.id]?.regionIds ?? [])
+        : [],
+    ),
+  )
+  const redetectedRelationships = resolvePdfScholarlyCrossReferences({
+    regions: reconstruction.regions.filter((region) =>
+      sourceParagraphRegionIds.has(region.id),
+    ),
+    canonicalTargets,
+  })
+  const relationshipsById = new Map(
+    relationships.map((relationship) => [relationship.id, relationship]),
+  )
+  const redetectedIds = new Set(
+    redetectedRelationships.map((relationship) => relationship.id),
+  )
+  for (const redetected of redetectedRelationships) {
+    const claimed = relationshipsById.get(redetected.id)
+    if (!claimed) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${redetected.id} is a missing source-detected relationship claim.`,
+      )
+    }
+    if (
+      redetected.status !== 'matched' ||
+      JSON.stringify(crossReferenceSourceClaim(claimed)) !==
+        JSON.stringify(crossReferenceSourceClaim(redetected))
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${redetected.id} canonical inline target or source claim is stale, unresolved, or ambiguous.`,
+      )
+    }
+  }
+  const staleExtraRelationship = relationships.find(
+    (relationship) => !redetectedIds.has(relationship.id),
+  )
+  if (staleExtraRelationship) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      `PDF scholarly cross-reference ${staleExtraRelationship.id} has no source-detected relationship claim.`,
+    )
+  }
+  for (const relationship of relationships) {
+    if (
+      relationship.status !== 'matched' ||
+      !relationship.canonicalAnchor ||
+      relationship.targets.length === 0 ||
+      relationship.targets.some(
+        (target) =>
+          target.status !== 'matched' ||
+          !target.targetNodeId ||
+          target.candidateNodeIds.length !== 1 ||
+          target.candidateNodeIds[0] !== target.targetNodeId ||
+          target.kind !== relationship.kind,
+      )
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${relationship.id} is unresolved, ambiguous, or lacks an exact canonical claim.`,
+      )
+    }
+    const targetNodeIds = relationship.targets.map(
+      (target) => target.targetNodeId!,
+    )
+    if (
+      JSON.stringify(relationship.labels) !==
+        JSON.stringify(relationship.targets.map((target) => target.label)) ||
+      JSON.stringify(relationship.targetNodeIds) !==
+        JSON.stringify(targetNodeIds) ||
+      relationship.targets.some(
+        (target) =>
+          !validTargets.has(
+            `${target.kind}:${target.label}:${target.targetNodeId}`,
+          ),
+      )
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${relationship.id} canonical inline target claim is stale or unsupported by a canonical source target.`,
+      )
+    }
+    const canonicalAnchorKey = `${relationship.canonicalAnchor.nodeId}:${relationship.canonicalAnchor.start}:${relationship.canonicalAnchor.end}`
+    const sourceAnchorKey = `${relationship.referenceRegionId}:${relationship.referenceStart}:${relationship.referenceEnd}`
+    if (
+      canonicalAnchorKeys.has(canonicalAnchorKey) ||
+      sourceAnchorKeys.has(sourceAnchorKey)
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${relationship.id} duplicates another canonical or source claim.`,
+      )
+    }
+    canonicalAnchorKeys.add(canonicalAnchorKey)
+    sourceAnchorKeys.add(sourceAnchorKey)
+    const owner = nodeById.get(relationship.canonicalAnchor.nodeId)
+    const sourceRegion = regionById.get(relationship.referenceRegionId)
+    const provenance =
+      reconstruction.provenance[relationship.canonicalAnchor.nodeId]
+    if (
+      !owner ||
+      !('text' in owner) ||
+      relationship.canonicalAnchor.start < 0 ||
+      relationship.canonicalAnchor.end <= relationship.canonicalAnchor.start ||
+      owner.text.slice(
+        relationship.canonicalAnchor.start,
+        relationship.canonicalAnchor.end,
+      ) !== relationship.text ||
+      !sourceRegion ||
+      relationship.referenceStart < 0 ||
+      relationship.referenceEnd <= relationship.referenceStart ||
+      sourceRegion.text.slice(
+        relationship.referenceStart,
+        relationship.referenceEnd,
+      ) !== relationship.text ||
+      relationship.sourceBoxes.length === 0 ||
+      !provenance ||
+      !provenance.regionIds.includes(relationship.referenceRegionId) ||
+      !provenance.pages.includes(sourceRegion.page) ||
+      relationship.sourceBoxes.some(
+        (box) =>
+          box.page !== sourceRegion.page ||
+          !provenance.boxes.some((sourceBox) => boxesOverlap(box, sourceBox)),
+      )
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${relationship.id} lacks exact source-region and canonical provenance.`,
+      )
+    }
+    const owners = occurrences.filter(
+      (occurrence) => occurrence.relationshipId === relationship.id,
+    )
+    if (owners.length !== 1) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${relationship.id} must have exactly one canonical inline owner; found ${owners.length}.`,
+      )
+    }
+    const occurrence = owners[0]
+    if (
+      occurrence.semanticRole !== 'cross-reference' ||
+      occurrence.nodeId !== relationship.canonicalAnchor.nodeId ||
+      occurrence.start !== relationship.canonicalAnchor.start ||
+      occurrence.end !== relationship.canonicalAnchor.end ||
+      JSON.stringify(occurrence.targetIds) !==
+        JSON.stringify(relationship.targetNodeIds)
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `PDF scholarly cross-reference ${relationship.id} canonical inline owner does not match its source-proved anchor and targets.`,
+      )
+    }
+  }
 }
 
 export type EpubProfileMetadata = {
@@ -66,6 +699,12 @@ export type EpubExport = {
   entries: string[]
   mode: EpubExportMode
   profile?: EpubProfileMetadata
+}
+
+export type EpubInspectionExpectation = {
+  canonicalPaper?: ResearchPaper
+  sourceCanonicalPaper?: ResearchPaper
+  sourcePdfSha256?: string
 }
 
 function profileMetadata(profile: TargetProfile): EpubProfileMetadata {
@@ -129,6 +768,13 @@ function renderAuthors(paper: ResearchPaper) {
   const authorNotes = renderableAuthorNoteReferences(paper)
   return paper.authors
     .map((author) => {
+      const affiliationMarkers = (paper.authorAffiliations ?? [])
+        .filter((reference) => reference.author === author)
+        .map(
+          (reference) =>
+            `<sup class="author-affiliation-marker">${text(reference.label)}</sup>`,
+        )
+        .join('')
       const references = authorNotes
         .filter((reference) => reference.author === author)
         .map(
@@ -136,15 +782,29 @@ function renderAuthors(paper: ResearchPaper) {
             `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${text(reference.label)}</a>`,
         )
         .join('')
-      return `${text(author)}${references}`
+      return `${text(author)}${affiliationMarkers}${references}`
     })
     .join(', ')
+}
+
+function renderAffiliations(paper: ResearchPaper) {
+  return (paper.affiliations ?? [])
+    .map((affiliation, index, affiliations) => {
+      const separator =
+        index === affiliations.length - 1
+          ? ''
+          : /[,;]\s*$/u.test(affiliation)
+            ? ' '
+            : '; '
+      return `${text(affiliation)}${separator}`
+    })
+    .join('')
 }
 
 function renderReconstructedByline(paper: ResearchPaper) {
   return `<div class="reconstructed-byline">
       <p class="authors">${renderAuthors(paper)}</p>
-      ${paper.affiliations?.length ? `<p class="affiliations">${paper.affiliations.map(text).join('; ')}</p>` : ''}
+      ${paper.affiliations?.length ? `<p class="affiliations">${renderAffiliations(paper)}</p>` : ''}
     </div>`
 }
 
@@ -186,16 +846,592 @@ function validNoteReferences<
     start: number
     end: number
   },
->(
-  value: string,
-  references?: Reference[],
-) {
+>(value: string, references?: Reference[]) {
   return (references ?? []).filter(
     (reference) =>
       reference.start >= 0 &&
       reference.start < reference.end &&
       reference.end <= value.length,
   )
+}
+
+type ScholarlyTargetKind = 'figure' | 'table' | 'equation' | 'section'
+
+type ScholarlyTarget = {
+  kind: ScholarlyTargetKind
+  identifier?: string
+}
+
+type CanonicalSemanticTarget =
+  | ScholarlyTarget
+  | { kind: 'citation'; identifier: string }
+
+type VisibleTextRange = {
+  start: number
+  end: number
+}
+
+type ParsedSurfaceIdentifier = VisibleTextRange & {
+  consumedEnd: number
+  identifier: string
+}
+
+type ParsedSemanticSurface = {
+  identities: string[]
+  links: Array<VisibleTextRange & { identityIndex: number }>
+  kind?: ScholarlyTargetKind
+}
+
+const MAX_SEMANTIC_RANGE_TARGETS = 32
+const CANONICAL_UPPER_ROMAN_IDENTIFIER = String.raw`(?=[IVXLCDM])M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})`
+const INLINE_SCHOLARLY_IDENTIFIER = String.raw`(?:\([A-Za-z]?\d+(?:\.\d+)*(?:[A-Za-z])?\)|\(${CANONICAL_UPPER_ROMAN_IDENTIFIER}\)|[A-Za-z](?:\.\d+)*|[A-Za-z]?\d+(?:\.\d+)*(?:[A-Za-z])?|${CANONICAL_UPPER_ROMAN_IDENTIFIER})`
+const CROSS_REFERENCE_IDENTIFIER_AT_START = new RegExp(
+  String.raw`^(?:[A-Za-z](?:[.-]\d+)+|[A-Za-z]?\d+(?:\.\d+)*(?:[A-Za-z])?|${CANONICAL_UPPER_ROMAN_IDENTIFIER}|[A-Za-z](?:\.\d+)*)`,
+  'u',
+)
+const SEMANTIC_RANGE_CONNECTOR = /^\s*([-\u2013\u2014])\s*/u
+const SEMANTIC_LIST_CONNECTOR = /^(?:\s*[,;]\s*|\s+(?:and|or)\s+)/iu
+
+function explicitScholarlyIdentifierRanges(
+  value: string,
+  semanticRole: 'citation' | 'cross-reference',
+) {
+  const prefix =
+    semanticRole === 'cross-reference'
+      ? (value.match(
+          /^(?:fig(?:ure)?s?|tables?|sections?|secs?|appendix|appendices|eq(?:uation)?s?)\.?\s+/iu,
+        )?.[0].length ?? 0)
+      : 0
+  const ranges: VisibleTextRange[] = []
+  const identifierPattern = new RegExp(
+    String.raw`(^|[^\p{L}\p{N}])(${INLINE_SCHOLARLY_IDENTIFIER})(?![\p{L}\p{N}])`,
+    'gu',
+  )
+  for (const match of value.slice(prefix).matchAll(identifierPattern)) {
+    const start = prefix + (match.index ?? 0) + match[1].length
+    ranges.push({ start, end: start + match[2].length })
+  }
+  return ranges
+}
+
+function trimmedBounds(value: string, start = 0, end = value.length) {
+  while (start < end && /\s/u.test(value[start])) start += 1
+  while (end > start && /\s/u.test(value[end - 1])) end -= 1
+  return { start, end }
+}
+
+function innerPairedExpression(
+  value: string,
+  start: number,
+  end: number,
+  open: '[' | '(',
+  close: ']' | ')',
+) {
+  const trimmed = trimmedBounds(value, start, end)
+  if (value[trimmed.start] !== open) return trimmed
+  let depth = 0
+  for (let index = trimmed.start; index < trimmed.end; index += 1) {
+    if (value[index] === open) depth += 1
+    if (value[index] !== close) continue
+    depth -= 1
+    if (depth === 0) {
+      return index === trimmed.end - 1
+        ? trimmedBounds(value, trimmed.start + 1, index)
+        : trimmed
+    }
+  }
+  return trimmed
+}
+
+function normalizedNumericIdentity(value: string) {
+  if (!/^\d{1,9}$/u.test(value)) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? String(parsed) : null
+}
+
+function normalizedCrossReferenceIdentity(value: string) {
+  if (
+    new RegExp(String.raw`^${CANONICAL_UPPER_ROMAN_IDENTIFIER}$`, 'u').test(
+      value,
+    )
+  ) {
+    return value
+  }
+  if (
+    !/^(?:[A-Za-z](?:[.-]\d+)+|[A-Za-z]?\d+(?:\.\d+)*(?:[A-Za-z])?|[A-Za-z](?:\.\d+)*)$/u.test(
+      value,
+    )
+  ) {
+    return null
+  }
+  return /^[A-Za-z]/u.test(value)
+    ? `${value[0].toUpperCase()}${value.slice(1)}`
+    : value
+}
+
+function parsedCitationIdentifier(
+  value: string,
+  start: number,
+  end: number,
+): ParsedSurfaceIdentifier | null {
+  const match = value.slice(start, end).match(/^(\d{1,9})(?!\d)/u)
+  if (!match) return null
+  const identifier = normalizedNumericIdentity(match[1])
+  return identifier
+    ? {
+        identifier,
+        start,
+        end: start + match[1].length,
+        consumedEnd: start + match[1].length,
+      }
+    : null
+}
+
+function parsedCrossReferenceIdentifier(
+  value: string,
+  start: number,
+  end: number,
+): ParsedSurfaceIdentifier | null {
+  let tokenStart = start
+  let parenthesized = false
+  if (value[tokenStart] === '(') {
+    parenthesized = true
+    tokenStart = trimmedBounds(value, tokenStart + 1, end).start
+  }
+  const match = value
+    .slice(tokenStart, end)
+    .match(CROSS_REFERENCE_IDENTIFIER_AT_START)
+  if (!match) return null
+  const tokenEnd = tokenStart + match[0].length
+  if (/[\p{L}\p{N}.]/u.test(value[tokenEnd] ?? '')) return null
+  const identifier = normalizedCrossReferenceIdentity(match[0])
+  if (!identifier) return null
+  let consumedEnd = tokenEnd
+  if (parenthesized) {
+    consumedEnd = trimmedBounds(value, tokenEnd, end).start
+    if (value[consumedEnd] !== ')') return null
+    consumedEnd += 1
+  }
+  return {
+    identifier,
+    start: tokenStart,
+    end: tokenEnd,
+    consumedEnd,
+  }
+}
+
+function parseDelimitedSemanticExpression({
+  value,
+  start,
+  end,
+  parseIdentifier,
+  expandRange,
+}: {
+  value: string
+  start: number
+  end: number
+  parseIdentifier: (
+    value: string,
+    start: number,
+    end: number,
+  ) => ParsedSurfaceIdentifier | null
+  expandRange: (first: string, last: string) => string[] | null
+}): Omit<ParsedSemanticSurface, 'kind'> | null {
+  const bounds = trimmedBounds(value, start, end)
+  const identities: string[] = []
+  const links: Array<VisibleTextRange & { identityIndex: number }> = []
+  let cursor = bounds.start
+  while (cursor < bounds.end) {
+    const first = parseIdentifier(value, cursor, bounds.end)
+    if (!first) return null
+    const identityIndex = identities.length
+    let groupIdentities = [first.identifier]
+    let consumedEnd = first.consumedEnd
+    let last: ParsedSurfaceIdentifier | null = null
+    const rangeConnector = value
+      .slice(consumedEnd, bounds.end)
+      .match(SEMANTIC_RANGE_CONNECTOR)
+    if (rangeConnector) {
+      const lastStart = consumedEnd + rangeConnector[0].length
+      last = parseIdentifier(value, lastStart, bounds.end)
+      if (!last) return null
+      groupIdentities = expandRange(first.identifier, last.identifier) ?? []
+      if (
+        groupIdentities.length < 2 ||
+        groupIdentities.length > MAX_SEMANTIC_RANGE_TARGETS
+      ) {
+        return null
+      }
+      consumedEnd = last.consumedEnd
+    }
+    identities.push(...groupIdentities)
+    links.push({ start: first.start, end: first.end, identityIndex })
+    if (last) {
+      links.push({
+        start: last.start,
+        end: last.end,
+        identityIndex: identityIndex + groupIdentities.length - 1,
+      })
+    }
+    const remaining = trimmedBounds(value, consumedEnd, bounds.end)
+    if (remaining.start === bounds.end) break
+    const connector = value
+      .slice(consumedEnd, bounds.end)
+      .match(SEMANTIC_LIST_CONNECTOR)
+    if (!connector) return null
+    cursor = trimmedBounds(
+      value,
+      consumedEnd + connector[0].length,
+      bounds.end,
+    ).start
+    if (cursor >= bounds.end) return null
+  }
+  return identities.length > 0 &&
+    new Set(identities).size === identities.length
+    ? { identities, links }
+    : null
+}
+
+function parseCitationSurface(value: string): ParsedSemanticSurface | null {
+  let bounds = trimmedBounds(value)
+  bounds =
+    value[bounds.start] === '['
+      ? innerPairedExpression(value, bounds.start, bounds.end, '[', ']')
+      : value[bounds.start] === '('
+        ? innerPairedExpression(value, bounds.start, bounds.end, '(', ')')
+        : bounds
+  return parseDelimitedSemanticExpression({
+    value,
+    ...bounds,
+    parseIdentifier: parsedCitationIdentifier,
+    expandRange: (first, last) => {
+      const start = Number(first)
+      const finish = Number(last)
+      const count = finish - start + 1
+      return Number.isSafeInteger(start) &&
+        Number.isSafeInteger(finish) &&
+        count >= 2 &&
+        count <= MAX_SEMANTIC_RANGE_TARGETS
+        ? Array.from({ length: count }, (_, index) => String(start + index))
+        : null
+    },
+  })
+}
+
+function crossReferencePrefix(value: string) {
+  const trimmed = trimmedBounds(value)
+  if (value[trimmed.start] === '§') {
+    const match = value.slice(trimmed.start).match(/^§\s*/u)
+    return match
+      ? {
+          kind: 'section' as const,
+          expressionStart: trimmed.start + match[0].length,
+          expressionEnd: trimmed.end,
+        }
+      : null
+  }
+  const match = value.slice(trimmed.start).match(
+    /^(fig(?:ure)?s?|tables?|sections?|secs?|appendix|appendices|eq(?:uation)?s?)\.?\s+/iu,
+  )
+  if (!match) return null
+  const prefix = match[1].toLocaleLowerCase()
+  return {
+    kind: (prefix.startsWith('fig')
+      ? 'figure'
+      : prefix.startsWith('table')
+        ? 'table'
+        : prefix.startsWith('eq')
+          ? 'equation'
+          : 'section') as ScholarlyTargetKind,
+    expressionStart: trimmed.start + match[0].length,
+    expressionEnd: trimmed.end,
+  }
+}
+
+function parseCrossReferenceSurface(
+  value: string,
+): ParsedSemanticSurface | null {
+  const prefix = crossReferencePrefix(value)
+  if (!prefix) return null
+  const bounds = innerPairedExpression(
+    value,
+    prefix.expressionStart,
+    prefix.expressionEnd,
+    '(',
+    ')',
+  )
+  const parsed = parseDelimitedSemanticExpression({
+    value,
+    ...bounds,
+    parseIdentifier: parsedCrossReferenceIdentifier,
+    expandRange: (first, last) => {
+      const expanded = expandPdfScholarlyVisualIdentifierRange(first, last)
+      if (!expanded) return null
+      const normalized = expanded.map(normalizedCrossReferenceIdentity)
+      return normalized.every(
+        (identifier): identifier is string => identifier !== null,
+      )
+        ? normalized
+        : null
+    },
+  })
+  return parsed ? { ...parsed, kind: prefix.kind } : null
+}
+
+function targetRangesForSemanticGroup(
+  value: string,
+  semanticRole: 'citation' | 'cross-reference',
+  targets: readonly string[],
+  canonicalTargets: ReadonlyMap<string, CanonicalSemanticTarget>,
+) {
+  if (new Set(targets).size !== targets.length) return null
+  const evidence = targets.map((target) => canonicalTargets.get(target))
+  if (evidence.some((target) => !target?.identifier)) return null
+  if (
+    semanticRole === 'citation'
+      ? evidence.some((target) => target?.kind !== 'citation')
+      : evidence.some((target) => target?.kind === 'citation')
+  ) {
+    return null
+  }
+  const parsed =
+    semanticRole === 'citation'
+      ? parseCitationSurface(value)
+      : parseCrossReferenceSurface(value)
+  if (!parsed) return null
+  if (
+    semanticRole === 'cross-reference' &&
+    evidence.some(
+      (target) => target?.kind === 'citation' || target?.kind !== parsed.kind,
+    )
+  ) {
+    return null
+  }
+  const targetIdentities = evidence.map((target) => target!.identifier!)
+  if (
+    targetIdentities.length !== parsed.identities.length ||
+    new Set(targetIdentities).size !== targetIdentities.length ||
+    targetIdentities.some(
+      (identifier, index) => identifier !== parsed.identities[index],
+    )
+  ) {
+    return null
+  }
+  return parsed.links.map((range) => ({
+    start: range.start,
+    end: range.end,
+    target: targets[range.identityIndex],
+  }))
+}
+
+function inlineHtmlVisibleBoundaries(html: string, value: string) {
+  const starts = new Map<number, number>()
+  const ends = new Map<number, number>()
+  let htmlIndex = 0
+  let visibleIndex = 0
+  while (htmlIndex < html.length) {
+    if (html[htmlIndex] === '<') {
+      const tagEnd = html.indexOf('>', htmlIndex + 1)
+      if (tagEnd < 0) return null
+      htmlIndex = tagEnd + 1
+      continue
+    }
+    let decoded = html[htmlIndex]
+    let tokenEnd = htmlIndex + 1
+    if (html[htmlIndex] === '&') {
+      const entityEnd = html.indexOf(';', htmlIndex + 1)
+      if (entityEnd < 0) return null
+      const entity = html.slice(htmlIndex, entityEnd + 1)
+      decoded =
+        entity === '&amp;'
+          ? '&'
+          : entity === '&lt;'
+            ? '<'
+            : entity === '&gt;'
+              ? '>'
+              : ''
+      if (!decoded) return null
+      tokenEnd = entityEnd + 1
+    }
+    if (!value.startsWith(decoded, visibleIndex)) return null
+    starts.set(visibleIndex, htmlIndex)
+    visibleIndex += decoded.length
+    ends.set(visibleIndex, tokenEnd)
+    htmlIndex = tokenEnd
+  }
+  return visibleIndex === value.length ? { starts, ends } : null
+}
+
+function injectInlineLinks({
+  html,
+  value,
+  ranges,
+  semanticRole,
+  annotationId,
+}: {
+  html: string
+  value: string
+  ranges: Array<VisibleTextRange & { target: string }>
+  semanticRole?: 'citation' | 'cross-reference'
+  annotationId?: string
+}) {
+  const boundaries = inlineHtmlVisibleBoundaries(html, value)
+  if (!boundaries) return null
+  const ordered = [...ranges].sort(
+    (left, right) => left.start - right.start || left.end - right.end,
+  )
+  if (
+    ordered.some(
+      (range, index) =>
+        range.start < 0 ||
+        range.start >= range.end ||
+        range.end > value.length ||
+        (index > 0 && range.start < ordered[index - 1].end),
+    )
+  ) {
+    return null
+  }
+  let linked = html
+  for (const range of [...ordered].reverse()) {
+    const start = boundaries.starts.get(range.start)
+    const end = boundaries.ends.get(range.end)
+    if (start === undefined || end === undefined) return null
+    const attributes = [
+      `href="#${attribute(stableId(range.target))}"`,
+      ...(semanticRole === 'citation' ? ['epub:type="biblioref"'] : []),
+      ...(annotationId
+        ? [`data-source-annotation-id="${attribute(stableId(annotationId))}"`]
+        : []),
+    ].join(' ')
+    linked = `${linked.slice(0, start)}<a ${attributes}>${linked.slice(start, end)}</a>${linked.slice(end)}`
+  }
+  return XMLValidator.validate(
+    `<root xmlns:epub="http://www.idpf.org/2007/ops">${linked}</root>`,
+  ) === true
+    ? linked
+    : null
+}
+
+function scholarlyReferenceCandidateRanges(
+  value: string,
+  kind: ScholarlyTargetKind,
+) {
+  const prefix =
+    kind === 'figure'
+      ? String.raw`[Ff][Ii][Gg](?:[Uu][Rr][Ee])?[Ss]?`
+      : kind === 'table'
+        ? String.raw`[Tt][Aa][Bb][Ll][Ee][Ss]?`
+        : kind === 'equation'
+          ? String.raw`[Ee][Qq](?:[Uu][Aa][Tt][Ii][Oo][Nn])?[Ss]?`
+          : String.raw`(?:[Ss][Ee][Cc][Tt][Ii][Oo][Nn][Ss]?|[Ss][Ee][Cc][Ss]?|[Aa][Pp][Pp][Ee][Nn][Dd][Ii][Xx]|[Aa][Pp][Pp][Ee][Nn][Dd][Ii][Cc][Ee][Ss])`
+  const candidates: VisibleTextRange[] = []
+  const explicit = new RegExp(
+    String.raw`\b${prefix}\.?\s+${INLINE_SCHOLARLY_IDENTIFIER}(?:(?:\s*(?:[,;]|\b(?:[Aa][Nn][Dd]|[Oo][Rr])\b|[\u2013\u2014-])\s*)${INLINE_SCHOLARLY_IDENTIFIER})*(?![\p{L}\p{N}])`,
+    'gu',
+  )
+  for (const match of value.matchAll(explicit)) {
+    candidates.push({
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+    })
+  }
+  if (kind === 'section') {
+    for (const match of value.matchAll(
+      new RegExp(
+        String.raw`§\s*${INLINE_SCHOLARLY_IDENTIFIER}(?![\p{L}\p{N}])`,
+        'gu',
+      ),
+    )) {
+      candidates.push({
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
+      })
+    }
+  }
+  if (kind === 'equation' || kind === 'section') {
+    for (const match of value.matchAll(
+      /\([A-Z]?\d+(?:\.\d+)*(?:[A-Za-z])?\)/gu,
+    )) {
+      candidates.push({
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
+      })
+    }
+  }
+  const maximal = candidates.filter(
+    (candidate, index) =>
+      !candidates.some(
+        (other, otherIndex) =>
+          otherIndex !== index &&
+          other.start <= candidate.start &&
+          other.end >= candidate.end &&
+          other.end - other.start > candidate.end - candidate.start,
+      ),
+  )
+  return maximal.filter(
+    (candidate, index) =>
+      maximal.findIndex(
+        (other) =>
+          other.start === candidate.start && other.end === candidate.end,
+      ) === index,
+  )
+}
+
+function scholarlyReferenceRangesForTarget(
+  value: string,
+  target: ScholarlyTarget,
+) {
+  const candidates = scholarlyReferenceCandidateRanges(value, target.kind)
+  if (!target.identifier) return candidates
+  const escapedIdentifier = target.identifier.replace(
+    /[.*+?^${}()|[\]\\]/gu,
+    '\\$&',
+  )
+  const identifiers: VisibleTextRange[] = []
+  for (const match of value.matchAll(
+    new RegExp(String.raw`\(${escapedIdentifier}\)`, 'gu'),
+  )) {
+    identifiers.push({
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+    })
+  }
+  for (const match of value.matchAll(
+    new RegExp(
+      String.raw`(^|[^\p{L}\p{N}.])(${escapedIdentifier})(?![\p{L}\p{N}]|\.\d)`,
+      'gu',
+    ),
+  )) {
+    const start = (match.index ?? 0) + match[1].length
+    identifiers.push({ start, end: start + match[2].length })
+  }
+  const maximalIdentifiers = identifiers.filter(
+    (identifier, index) =>
+      !identifiers.some(
+        (other, otherIndex) =>
+          otherIndex !== index &&
+          other.start <= identifier.start &&
+          other.end >= identifier.end &&
+          other.end - other.start > identifier.end - identifier.start,
+      ),
+  )
+  if (maximalIdentifiers.length !== 1) return []
+  const identifier = maximalIdentifiers[0]
+  const containingCandidates = candidates.filter(
+    (candidate) =>
+      candidate.start <= identifier.start && candidate.end >= identifier.end,
+  )
+  if (containingCandidates.length === 1) {
+    const candidate = containingCandidates[0]
+    const candidateValue = value.slice(candidate.start, candidate.end)
+    if (
+      explicitScholarlyIdentifierRanges(candidateValue, 'cross-reference')
+        .length === 1
+    ) {
+      return [candidate]
+    }
+  }
+  return [identifier]
 }
 
 function renderTextWithNoteReferences(
@@ -212,7 +1448,9 @@ function renderTextWithNoteReferences(
     bold?: boolean
     italic?: boolean
     href?: string
+    annotationId?: string
     verticalAlign?: 'superscript' | 'subscript'
+    compactMathAtom?: boolean
     relationshipId?: string
     semanticRole?:
       | 'citation'
@@ -221,12 +1459,45 @@ function renderTextWithNoteReferences(
       | 'bibliography-entry'
     targetIds?: string[]
   }>,
+  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget> = new Map(),
 ) {
   if (!references?.length && !inlineRuns?.length) return text(value)
   const validReferences = validNoteReferences(value, references)
-  const validRuns = (inlineRuns ?? []).filter(
-    (run) => run.start >= 0 && run.start < run.end && run.end <= value.length,
-  )
+  const validRuns = (inlineRuns ?? [])
+    .filter(
+      (run) => run.start >= 0 && run.start < run.end && run.end <= value.length,
+    )
+    .flatMap((run) => {
+      const fragment = run.href?.match(/^#(.+)$/u)?.[1]
+      const target = fragment ? scholarlyTargetKinds.get(fragment) : undefined
+      if (
+        !run.annotationId ||
+        !fragment ||
+        !target ||
+        target.kind === 'citation'
+      ) {
+        return [run]
+      }
+      const runValue = value.slice(run.start, run.end)
+      const hasConflictingScholarlyKind =
+        scholarlyReferenceCandidateRanges(runValue, target.kind).length === 0 &&
+        (['figure', 'table', 'equation', 'section'] as const).some(
+          (kind) =>
+            kind !== target.kind &&
+            scholarlyReferenceCandidateRanges(runValue, kind).length > 0,
+        )
+      if (hasConflictingScholarlyKind) return []
+      const candidates = scholarlyReferenceRangesForTarget(runValue, target)
+      return candidates.length === 1
+        ? [
+            {
+              ...run,
+              start: run.start + candidates[0].start,
+              end: run.start + candidates[0].end,
+            },
+          ]
+        : [run]
+    })
   const boundaries = [
     0,
     value.length,
@@ -236,15 +1507,7 @@ function renderTextWithNoteReferences(
   const points = [...new Set(boundaries)].sort((left, right) => left - right)
   type Wrapper =
     | { kind: 'note'; id: string; target: string }
-    | { kind: 'hyperlink'; href: string }
-    | {
-        kind: 'semantic-hyperlink'
-        href: string
-        relationshipId: string
-        semanticRole: NonNullable<
-          NonNullable<typeof inlineRuns>[number]['semanticRole']
-        >
-      }
+    | { kind: 'hyperlink'; href: string; annotationId?: string }
     | {
         kind: 'semantic'
         relationshipId: string
@@ -253,18 +1516,27 @@ function renderTextWithNoteReferences(
         >
         targetIds: string[]
       }
-  const segments: Array<{ html: string; wrapper?: Wrapper; key: string }> = []
+  const segments: Array<{
+    html: string
+    value: string
+    wrapper?: Wrapper
+    key: string
+  }> = []
   for (let index = 0; index < points.length - 1; index += 1) {
     const start = points[index]
     const end = points[index + 1]
     if (start === end) continue
+    const segmentValue = value.slice(start, end)
     const activeRuns = validRuns.filter(
       (candidate) => candidate.start <= start && candidate.end >= end,
     )
     const reference = validReferences.find(
       (candidate) => candidate.start <= start && candidate.end >= end,
     )
-    let segment = text(value.slice(start, end))
+    const renderedSegmentValue = activeRuns.some((run) => run.compactMathAtom)
+      ? segmentValue.replace(/\s+/gu, '')
+      : segmentValue
+    let segment = text(renderedSegmentValue)
     if (activeRuns.some((run) => run.italic)) segment = `<em>${segment}</em>`
     if (activeRuns.some((run) => run.bold))
       segment = `<strong>${segment}</strong>`
@@ -279,38 +1551,50 @@ function renderTextWithNoteReferences(
     const hyperlinkHref = hyperlinkRun?.href
       ? normalizedEpubHref(hyperlinkRun.href)
       : null
+    const linkableHyperlinkHref = segmentValue.trim() ? hyperlinkHref : null
     const semanticRun = activeRuns.find(
       (run) => run.semanticRole && run.relationshipId,
     )
-    let wrapper: Wrapper | undefined
-    if (reference) {
-      wrapper = { kind: 'note', id: reference.id, target: reference.target }
-    } else if (
-      hyperlinkHref &&
+    if (
+      !reference &&
+      linkableHyperlinkHref &&
       semanticRun?.semanticRole &&
       semanticRun.relationshipId &&
       (semanticRun.targetIds?.length ?? 0) === 0
     ) {
-      wrapper = {
-        kind: 'semantic-hyperlink',
-        href: hyperlinkHref,
-        relationshipId: semanticRun.relationshipId,
-        semanticRole: semanticRun.semanticRole,
-      }
-    } else if (hyperlinkHref) {
-      wrapper = { kind: 'hyperlink', href: hyperlinkHref }
+      const annotation =
+        hyperlinkRun?.annotationId && linkableHyperlinkHref.startsWith('#')
+          ? ` data-source-annotation-id="${attribute(stableId(hyperlinkRun.annotationId))}"`
+          : ''
+      segment = `<a href="${attribute(linkableHyperlinkHref)}"${annotation}>${segment}</a>`
+    }
+    let wrapper: Wrapper | undefined
+    if (reference) {
+      wrapper = { kind: 'note', id: reference.id, target: reference.target }
     } else if (semanticRun?.semanticRole && semanticRun.relationshipId) {
       wrapper = {
         kind: 'semantic',
         relationshipId: semanticRun.relationshipId,
         semanticRole: semanticRun.semanticRole,
-        targetIds: [...new Set(semanticRun.targetIds ?? [])],
+        targetIds: [...(semanticRun.targetIds ?? [])],
+      }
+    } else if (linkableHyperlinkHref) {
+      wrapper = {
+        kind: 'hyperlink',
+        href: linkableHyperlinkHref,
+        ...(hyperlinkRun?.annotationId
+          ? { annotationId: hyperlinkRun.annotationId }
+          : {}),
       }
     }
     const key = wrapper ? JSON.stringify(wrapper) : ''
     const previous = segments.at(-1)
-    if (previous?.key === key) previous.html += segment
-    else segments.push({ html: segment, wrapper, key })
+    if (previous?.key === key) {
+      previous.html += segment
+      previous.value += segmentValue
+    } else {
+      segments.push({ html: segment, value: segmentValue, wrapper, key })
+    }
   }
 
   const emittedIds = new Set<string>()
@@ -321,17 +1605,42 @@ function renderTextWithNoteReferences(
     return ` id="${attribute(id)}"`
   }
   return segments
-    .map(({ html, wrapper }) => {
+    .map(({ html, value: segmentValue, wrapper }) => {
       if (!wrapper) return html
       if (wrapper.kind === 'note') {
         return `<a${idAttribute(wrapper.id)} href="#${attribute(stableId(wrapper.target))}" epub:type="noteref">${html}</a>`
       }
       if (wrapper.kind === 'hyperlink') {
-        return `<a href="${attribute(wrapper.href)}">${html}</a>`
-      }
-      if (wrapper.kind === 'semantic-hyperlink') {
-        const relationshipId = stableId(wrapper.relationshipId)
-        return `<span${idAttribute(relationshipId)} data-semantic-role="${attribute(wrapper.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${wrapper.semanticRole === 'citation' ? ' epub:type="biblioref"' : ''}><a href="${attribute(wrapper.href)}">${html}</a></span>`
+        const target = wrapper.href.match(/^#(.+)$/u)?.[1]
+        const scholarlyTarget = target
+          ? scholarlyTargetKinds.get(target)
+          : undefined
+        if (
+          wrapper.annotationId &&
+          target &&
+          scholarlyTarget &&
+          scholarlyTarget.kind !== 'citation'
+        ) {
+          const candidates = scholarlyReferenceRangesForTarget(
+            segmentValue,
+            scholarlyTarget,
+          )
+          if (candidates.length === 1) {
+            return (
+              injectInlineLinks({
+                html,
+                value: segmentValue,
+                ranges: [{ ...candidates[0], target }],
+                annotationId: wrapper.annotationId,
+              }) ?? html
+            )
+          }
+        }
+        const annotation =
+          wrapper.annotationId && wrapper.href.startsWith('#')
+            ? ` data-source-annotation-id="${attribute(stableId(wrapper.annotationId))}"`
+            : ''
+        return `<a href="${attribute(wrapper.href)}"${annotation}>${html}</a>`
       }
       const relationshipId = stableId(wrapper.relationshipId)
       const targets = wrapper.targetIds.map(stableId)
@@ -339,14 +1648,51 @@ function renderTextWithNoteReferences(
         if (targets.length === 1) {
           return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" epub:type="biblioref" data-relationship-id="${attribute(relationshipId)}">${html}</a>`
         }
-        const links = targets
-          .map((target, index) =>
-            index === 0
-              ? `<a href="#${attribute(target)}" epub:type="biblioref">${html}</a>`
-              : `<a href="#${attribute(target)}" epub:type="biblioref" class="additional-biblioref" aria-label="Additional bibliographic target ${index + 1}"><span class="visually-hidden">${html}</span></a>`,
+        const ranges = targetRangesForSemanticGroup(
+          segmentValue,
+          'citation',
+          targets,
+          scholarlyTargetKinds,
+        )
+        const links =
+          ranges &&
+          injectInlineLinks({
+            html,
+            value: segmentValue,
+            ranges,
+            semanticRole: 'citation',
+          })
+        if (!links) {
+          throw new Error(
+            `EPUB_SEMANTIC_LINK_ALIGNMENT: Citation ${relationshipId} has ${targets.length} canonical targets but its visible labels cannot be mapped one-to-one without duplicating text.`,
           )
-          .join('')
+        }
         return `<span${idAttribute(relationshipId)} data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}" epub:type="biblioref">${links}</span>`
+      }
+      if (wrapper.semanticRole === 'cross-reference' && targets.length > 0) {
+        if (targets.length === 1) {
+          return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" data-semantic-role="cross-reference" data-relationship-id="${attribute(relationshipId)}">${html}</a>`
+        }
+        const ranges = targetRangesForSemanticGroup(
+          segmentValue,
+          'cross-reference',
+          targets,
+          scholarlyTargetKinds,
+        )
+        const links =
+          ranges &&
+          injectInlineLinks({
+            html,
+            value: segmentValue,
+            ranges,
+            semanticRole: 'cross-reference',
+          })
+        if (!links) {
+          throw new Error(
+            `EPUB_SEMANTIC_LINK_ALIGNMENT: Cross-reference ${relationshipId} has ${targets.length} canonical targets but its visible labels cannot be mapped one-to-one without duplicating text.`,
+          )
+        }
+        return `<span${idAttribute(relationshipId)} data-semantic-role="cross-reference" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}">${links}</span>`
       }
       return `<span${idAttribute(relationshipId)} data-semantic-role="${attribute(wrapper.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}${wrapper.semanticRole === 'citation' ? ' epub:type="biblioref"' : ''}>${html}</span>`
     })
@@ -362,8 +1708,10 @@ function normalizedEpubHref(value: string) {
   try {
     const parsed = new URL(value)
     if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) return null
-    return parsed.href.replace(/[<>"{}|^`]/gu, (character) =>
-      `%${character.codePointAt(0)!.toString(16).toUpperCase().padStart(2, '0')}`,
+    return parsed.href.replace(
+      /[<>"{}|^`]/gu,
+      (character) =>
+        `%${character.codePointAt(0)!.toString(16).toUpperCase().padStart(2, '0')}`,
     )
   } catch {
     return null
@@ -384,39 +1732,63 @@ async function sha256(value: Uint8Array | string) {
 
 function renderSemanticTable(
   table: NonNullable<Extract<ResearchNode, { type: 'figure' }>['table']>,
+  canonicalNodeId: string,
   assetId?: string,
   captionId?: string,
+  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget> = new Map(),
 ) {
+  const columnCount = Math.max(
+    0,
+    ...table.rows.map((row) =>
+      row.cells.reduce((total, cell) => total + cell.columnSpan, 0),
+    ),
+  )
   const firstBodyRow = table.rows.findIndex(
     (row) => !row.cells.every((cell) => cell.headerScope === 'column'),
   )
   const headerRows =
     firstBodyRow === -1 ? table.rows : table.rows.slice(0, firstBodyRow)
   const bodyRows = firstBodyRow === -1 ? [] : table.rows.slice(firstBodyRow)
-  const renderRows = (rows: typeof table.rows) =>
+  const renderRows = (rows: typeof table.rows, rowOffset: number) =>
     rows
-      .map(
-        (row) =>
-          `<tr>${row.cells
-            .map((cell) => {
-              const tag = cell.headerScope ? 'th' : 'td'
-              const scope = cell.headerScope
-                ? ` scope="${cell.headerScope === 'column' ? 'col' : 'row'}"`
+      .map((row, relativeRowIndex) => {
+        const rowIndex = rowOffset + relativeRowIndex
+        return `<tr>${row.cells
+          .map((cell, columnIndex) => {
+            const tag = cell.headerScope ? 'th' : 'td'
+            const scope = cell.headerScope
+              ? ` scope="${cell.headerScope === 'column' ? 'col' : 'row'}"`
+              : ''
+            const localId =
+              cell.id ?? `cell-r${rowIndex + 1}-c${columnIndex + 1}`
+            const cellId = stableId(`${canonicalNodeId}-${localId}`)
+            const headers =
+              cell.headerScope === null && (cell.headerIds?.length ?? 0) > 0
+                ? ` headers="${attribute(
+                    cell
+                      .headerIds!.map((headerId) =>
+                        stableId(`${canonicalNodeId}-${headerId}`),
+                      )
+                      .join(' '),
+                  )}"`
                 : ''
-              const columnSpan =
-                cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
-              const rowSpan =
-                cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''
-              return `<${tag}${scope}${columnSpan}${rowSpan}>${text(cell.text)}</${tag}>`
-            })
-            .join('')}</tr>`,
-      )
+            const columnSpan =
+              cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
+            const rowSpan = cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''
+            return `<${tag} id="${attribute(cellId)}"${scope}${headers}${columnSpan}${rowSpan}>${renderTextWithNoteReferences(cell.text, undefined, cell.inlineRuns, scholarlyTargetKinds)}</${tag}>`
+          })
+          .join('')}</tr>`
+      })
       .join('')
   const source = assetId ? ` data-asset-id="${attribute(assetId)}"` : ''
   const describedBy = captionId
     ? ` aria-describedby="${attribute(captionId)}"`
     : ''
-  return `<div class="semantic-table-wrapper" role="region" aria-label="Scrollable table" tabindex="0"${source}><table${describedBy}>${headerRows.length > 0 ? `<thead>${renderRows(headerRows)}</thead>` : ''}${bodyRows.length > 0 ? `<tbody>${renderRows(bodyRows)}</tbody>` : ''}</table></div>`
+  const wideTable =
+    columnCount >= 6
+      ? ` data-wide-table="true" data-table-columns="${columnCount}"`
+      : ` data-table-columns="${columnCount}"`
+  return `<div class="semantic-table-wrapper" role="region" aria-label="Scrollable table" tabindex="0"${wideTable}${source}><table${describedBy}>${headerRows.length > 0 ? `<thead>${renderRows(headerRows, 0)}</thead>` : ''}${bodyRows.length > 0 ? `<tbody>${renderRows(bodyRows, Math.max(firstBodyRow, 0))}</tbody>` : ''}</table></div>`
 }
 
 type ParagraphNode = Extract<ResearchNode, { type: 'paragraph' }>
@@ -442,11 +1814,25 @@ function isListParagraph(node: ResearchNode): node is ListParagraphNode {
 }
 
 function isOrderedList(node: ListParagraphNode) {
-  return node.list.numberingId === 'references' || node.list.ordered
+  if (node.list.numberingId !== 'references') return node.list.ordered
+  return (
+    node.list.ordered &&
+    (node.list.ordinal !== undefined || Boolean(node.list.markerText))
+  )
 }
 
-function renderPublicationListGroup(group: PublicationListGroup): string {
+function renderPublicationListGroup(
+  group: PublicationListGroup,
+  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget>,
+): string {
   const tag = group.ordered ? 'ol' : 'ul'
+  const markerless =
+    !group.ordered &&
+    group.numberingId === 'references' &&
+    group.items.every(
+      ({ node }) =>
+        node.list.ordinal === undefined && !node.list.markerText?.trim(),
+    )
   const firstOrdinal = group.items[0]?.node.list.ordinal
   const listType =
     group.markerStyle === 'lower-alpha'
@@ -475,7 +1861,7 @@ function renderPublicationListGroup(group: PublicationListGroup): string {
       const continued = node.list.continuedFromPreviousPage
         ? ' data-continued-from-previous-page="true"'
         : ''
-      return `<li id="${id}" data-canonical-id="${id}" class="publication-list-item${preservedMarker ? ' has-preserved-marker' : ''}" data-list-level="${node.list.level}"${value}${continued}>${preservedMarker}${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}${children.map(renderPublicationListGroup).join('')}</li>`
+      return `<li id="${id}" data-canonical-id="${id}" class="publication-list-item${preservedMarker ? ' has-preserved-marker' : ''}" data-list-level="${node.list.level}"${value}${continued}>${preservedMarker}${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns, scholarlyTargetKinds)}${children.map((child) => renderPublicationListGroup(child, scholarlyTargetKinds)).join('')}</li>`
     })
     .join('')
   const start =
@@ -483,10 +1869,13 @@ function renderPublicationListGroup(group: PublicationListGroup): string {
       ? ` start="${firstOrdinal}"`
       : ''
   const type = group.ordered && listType ? ` type="${listType}"` : ''
-  return `<${tag} class="publication-list" data-list-level="${group.level}" data-numbering-id="${attribute(group.numberingId)}" data-marker-style="${attribute(group.markerStyle ?? (group.ordered ? 'decimal' : 'disc'))}"${type}${start}>${items}</${tag}>`
+  return `<${tag} class="publication-list${markerless ? ' markerless-list' : ''}" data-list-level="${group.level}" data-numbering-id="${attribute(group.numberingId)}" data-marker-style="${attribute(group.markerStyle ?? (group.ordered ? 'decimal' : 'disc'))}"${type}${start}>${items}</${tag}>`
 }
 
-function renderPublicationList(nodes: ListParagraphNode[]) {
+function renderPublicationList(
+  nodes: ListParagraphNode[],
+  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget>,
+) {
   const roots: PublicationListGroup[] = []
   const ancestors: Array<{ level: number; item: PublicationListItem }> = []
 
@@ -520,7 +1909,43 @@ function renderPublicationList(nodes: ListParagraphNode[]) {
     ancestors.push({ level, item })
   }
 
-  return roots.map(renderPublicationListGroup).join('')
+  return roots
+    .map((group) => renderPublicationListGroup(group, scholarlyTargetKinds))
+    .join('')
+}
+
+function literalExternalHyperlinkRuns(value: string) {
+  const runs: Array<{ start: number; end: number; href: string }> = []
+  const unmatchedClosingDelimiter = (
+    candidate: string,
+    open: string,
+    close: string,
+  ) => candidate.split(close).length > candidate.split(open).length
+  for (const match of value.matchAll(/(?:https?:\/\/|mailto:)[^\s<>"']+/giu)) {
+    if (match.index === undefined) continue
+    let visible = match[0].replace(/[.,;:!?]+$/u, '')
+    for (const [open, close] of [
+      ['(', ')'],
+      ['[', ']'],
+      ['{', '}'],
+    ]) {
+      while (
+        visible.endsWith(close) &&
+        unmatchedClosingDelimiter(visible, open, close)
+      ) {
+        visible = visible.slice(0, -1)
+      }
+    }
+    if (!visible || !safePdfExternalLinkTarget(visible)) continue
+    const href = normalizedEpubHref(visible)
+    if (!href) continue
+    runs.push({
+      start: match.index,
+      end: match.index + visible.length,
+      href,
+    })
+  }
+  return runs
 }
 
 function renderNode(
@@ -531,36 +1956,67 @@ function renderNode(
   omitMissingVisuals = false,
   canonicalTitleNodeId?: string,
   renderedNoteReferenceIds: ReadonlySet<string> = new Set(),
+  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget> = new Map(),
 ) {
   const id = attribute(stableId(node.id))
   if (node.type === 'heading') {
     const level =
       node.id === canonicalTitleNodeId
         ? 1
-        : Math.min(3, Math.max(2, node.level + 1))
-    return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</h${level}>`
+        : Math.min(4, Math.max(2, node.level + 1))
+    return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns, scholarlyTargetKinds)}</h${level}>`
   }
   if (node.type === 'paragraph') {
-    return `<p id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</p>`
+    return `<p id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns, scholarlyTargetKinds)}</p>`
   }
   if (node.type === 'quote') {
-    return `<blockquote id="${id}" data-canonical-id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns)}</p></blockquote>`
+    return `<blockquote id="${id}" data-canonical-id="${id}"><p>${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns, scholarlyTargetKinds)}</p></blockquote>`
   }
   if (node.type === 'footnote') {
+    const backlinkLabel = attribute(node.label)
     const backlinks = node.relationships.backlinks
       .filter((backlink) => renderedNoteReferenceIds.has(stableId(backlink)))
       .map(
         (backlink, index) =>
-          `<a href="#${attribute(stableId(backlink))}" class="note-backlink" aria-label="Back to reference ${index + 1}">↩</a>`,
+          `<a href="#${attribute(stableId(backlink))}" class="note-backlink" aria-label="Back to reference ${backlinkLabel || index + 1}">↩</a>`,
       )
       .join(' ')
-    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label">${text(node.markerText ?? node.label)}</span> ${text(node.text)}${backlinks ? ` ${backlinks}` : ''}</aside>`
+    const inlineRuns = [
+      ...(node.inlineRuns ?? []),
+      ...literalExternalHyperlinkRuns(node.text),
+    ]
+    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label">${text(node.markerText ?? node.label)}</span> ${renderTextWithNoteReferences(node.text, undefined, inlineRuns, scholarlyTargetKinds)}${backlinks ? ` ${backlinks}` : ''}</aside>`
   }
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
     const captionId = attribute(stableId(node.relationships.caption))
     const visual = visualRelationships.get(node.id)
     if (visual) {
+      const visualObjectType = visual.semanticKind ?? visual.kind
+      const sourceAlgorithm =
+        visual.semanticKind === 'algorithm' &&
+        visual.evidence.includes('source-algorithm-block')
+      const sourceCode =
+        visual.semanticKind === 'code' &&
+        visual.evidence.includes('source-preformatted-block')
+      const provedSourceCode =
+        sourceCode &&
+        visual.preformatted?.status === 'proved' &&
+        visual.preformatted.lines.length > 0
+      const syntheticEquationCaption = Boolean(
+        visual.kind === 'equation' &&
+        caption &&
+        /^Display equation p\d{3}-\d{3}$/u.test(caption.text.trim()),
+      )
+      const unresolvedEquationTranscript =
+        syntheticEquationCaption &&
+        visual.evidence.includes('source-text-transcript-unresolved')
+      const renderedAltText = unresolvedEquationTranscript
+        ? 'Equation image; semantic transcript unresolved.'
+        : visual.altText
+      const renderedAltTextSource = unresolvedEquationTranscript
+        ? 'unresolved'
+        : visual.altTextSource
       const visualAssets = visual.assetIds
         .map((assetId) => assets.get(assetId))
         .filter((visualAsset): visualAsset is PublicationAsset =>
@@ -571,38 +2027,140 @@ function renderNode(
           visualAsset.mediaType === 'application/xhtml+xml' &&
           visualAsset.kind === 'table',
       )
-      const renderedAssets =
-        visual.kind === 'table' && node.table && semanticTableAsset
-          ? renderSemanticTable(node.table, semanticTableAsset.id, captionId)
+      const renderedAssets = provedSourceCode
+        ? `<pre class="source-code" data-whitespace-source="source-lines"><code>${text(
+            visual.preformatted!.lines.map((line) => line.text).join('\n'),
+          )}</code></pre>`
+        : visual.kind === 'table' && node.table && semanticTableAsset
+          ? renderSemanticTable(
+              node.table,
+              node.id,
+              semanticTableAsset.id,
+              captionId,
+              scholarlyTargetKinds,
+            )
           : visualAssets
               .map((visualAsset) => {
                 const href = attribute(visualAsset.href)
-                const alt = attribute(visual.altText)
+                const alt = attribute(renderedAltText)
                 if (visualAsset.mediaType === 'application/xhtml+xml') {
-                  return `<object data="${href}" type="application/xhtml+xml" aria-label="${alt}" data-alt-source="${visual.altTextSource}"><p>${text(visual.altText)}</p></object>`
+                  return `<object data="${href}" type="application/xhtml+xml" aria-label="${alt}" data-alt-source="${renderedAltTextSource}"><p>${text(renderedAltText)}</p></object>`
                 }
                 const width = Math.max(1, Math.round(visualAsset.width))
                 const height = Math.max(1, Math.round(visualAsset.height))
-                return `<img src="${href}" width="${width}" height="${height}" loading="lazy" decoding="async" alt="${alt}" data-alt-source="${visual.altTextSource}" data-asset-id="${attribute(visualAsset.id)}" />`
+                const image = `<img src="${href}" width="${width}" height="${height}" loading="eager" decoding="async" alt="${alt}" data-alt-source="${renderedAltTextSource}" data-asset-id="${attribute(visualAsset.id)}" />`
+                const wideSourceVisual =
+                  (visual.kind === 'table' &&
+                    isCompactScrollableTableImage({
+                      ...visualAsset,
+                      kind: 'table',
+                    })) ||
+                  (width / height >= 2 &&
+                    visual.kind === 'figure' &&
+                    visual.semanticKind !== 'algorithm')
+                return wideSourceVisual
+                  ? `<div class="wide-source-visual-scroll" data-wide-source-visual="true" data-source-visual-kind="${visual.kind}" role="region" aria-label="Scrollable ${visual.kind === 'table' ? 'table image' : 'figure'}" tabindex="0">${image}</div>`
+                  : image
               })
               .join('')
       const sourceEquationCaption =
         visual.kind === 'equation' && visual.altTextSource === 'source-text'
-      const sourceTranscript = node.sourceText
-        ? `<span class="visually-hidden visual-source-transcript" data-source-transcript-for="${id}">${renderTextWithNoteReferences(node.sourceText, undefined, node.inlineRuns)}</span>`
-        : ''
-      const figureClass =
-        visual.kind === 'table' && node.table
-          ? ' class="semantic-table-figure"'
+      const sourceTranscript =
+        node.sourceText && !sourceCode
+          ? `<span class="visually-hidden visual-source-transcript"${
+              visual.kind === 'table' && node.table && semanticTableAsset
+                ? ' aria-hidden="true"'
+                : ''
+            } data-source-transcript-for="${id}">${renderTextWithNoteReferences(node.sourceText, undefined, node.inlineRuns, scholarlyTargetKinds)}</span>`
           : ''
-      return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visual.kind}" role="group"${figureClass}>${renderedAssets}${sourceTranscript}${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceEquationCaption ? ' class="equation-source-text"' : ''}>${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns)}</figcaption>` : ''}</figure>`
+      const figureClasses = [
+        ...(visual.kind === 'table' && node.table
+          ? ['semantic-table-figure']
+          : []),
+        ...(sourceAlgorithm ? ['algorithm-figure'] : []),
+        ...(sourceCode ? ['source-code-figure'] : []),
+      ]
+      const figureClass =
+        figureClasses.length > 0
+          ? ` class="${attribute(figureClasses.join(' '))}"`
+          : ''
+      const renderedCaption = caption
+        ? syntheticEquationCaption
+          ? `<figcaption id="${captionId}" data-canonical-id="${captionId}" class="synthetic-equation-caption" aria-hidden="true"></figcaption>`
+          : `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceAlgorithm ? ' class="algorithm-source-caption visually-hidden"' : sourceCode && visual.evidence.includes('fallback-source-line-caption') ? ' class="code-source-caption visually-hidden"' : sourceEquationCaption ? ' class="equation-source-text"' : ''}>${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>`
+        : ''
+      return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visualObjectType}" role="group"${figureClass}>${renderedAssets}${sourceTranscript}${renderedCaption}</figure>`
     }
     if (omitMissingVisuals) {
-      return `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual" role="note"><p>Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.</p>${caption ? `<p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns)}</p>` : ''}</aside>`
+      return `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual" role="note"><p>${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p>${caption ? `<p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</p>` : ''}</aside>`
     }
-    return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns)}</figcaption>` : ''}</figure>`
+    return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>` : ''}</figure>`
   }
   return ''
+}
+
+function exactNumericMarker(value: string) {
+  const match = value.match(
+    /^\s*(?:\[\s*(\d{1,9})\s*\]|(\d{1,9})[.)]?|(?:references?|refs?\.?)\s+(\d{1,9}))\s*$/iu,
+  )
+  const raw = match?.slice(1).find(Boolean)
+  return raw ? normalizedNumericIdentity(raw) : null
+}
+
+function leadingNumericReferenceIdentity(value: string) {
+  const match = value.match(
+    /^\s*(?:\[\s*(\d{1,9})\s*\]|(\d{1,9})[.)](?=\s|$)|(?:references?|refs?\.?)\s+(\d{1,9})(?=[.:\s]|$))/iu,
+  )
+  if (
+    match?.[2] &&
+    match[2].length === 4 &&
+    Number(match[2]) >= 1800 &&
+    Number(match[2]) <= 2099
+  ) {
+    return null
+  }
+  const raw = match?.slice(1).find(Boolean)
+  return raw ? normalizedNumericIdentity(raw) : null
+}
+
+function canonicalCitationTargetIdentifier(node: ResearchNode) {
+  if (node.type !== 'paragraph') return null
+  const candidates = [
+    node.list?.numberingId === 'references' &&
+    node.list.ordinal !== undefined &&
+    Number.isSafeInteger(node.list.ordinal) &&
+    node.list.ordinal >= 0
+      ? String(node.list.ordinal)
+      : null,
+    node.list?.numberingId === 'references' && node.list.markerText
+      ? exactNumericMarker(node.list.markerText)
+      : null,
+    leadingNumericReferenceIdentity(node.text),
+  ].filter((candidate): candidate is string => candidate !== null)
+  const identities = new Set(candidates)
+  return identities.size === 1 ? candidates[0] : null
+}
+
+function canonicalHeadingIdentifier(value: string) {
+  const source = value.trim().replace(/^appendix\s+/iu, '')
+  const raw = source.match(/^(\S+?)(?:\.\s+|\s+\S)/u)?.[1]
+  return raw ? normalizedCrossReferenceIdentity(raw) : null
+}
+
+function publicationLanguage(paper: ResearchPaper) {
+  return paper.language ?? 'und'
+}
+
+function publicationBaseDirection(paper: ResearchPaper) {
+  return paper.baseDirection === 'ltr' || paper.baseDirection === 'rtl'
+    ? paper.baseDirection
+    : undefined
+}
+
+function xhtmlLanguageAttributes(paper: ResearchPaper) {
+  const language = attribute(publicationLanguage(paper))
+  const direction = publicationBaseDirection(paper)
+  return `xml:lang="${language}" lang="${language}"${direction ? ` dir="${direction}"` : ''}`
 }
 
 export function renderPublicationXhtml(
@@ -614,7 +2172,7 @@ export function renderPublicationXhtml(
     visualAssets?: Map<string, PublicationAsset>
   } = {},
 ) {
-  assertPublicationIntegrity(paper)
+  assertPublicationIntegrity(paper, options.reconstruction?.noteRelationships)
   const captions = new Map(
     paper.nodes
       .filter(
@@ -623,6 +2181,44 @@ export function renderPublicationXhtml(
       )
       .map((node) => [node.id, node]),
   )
+  const sourceVisualLabels = new Map(
+    (options.reconstruction?.visualRelationships ?? []).flatMap(
+      (relationship) =>
+        relationship.canonicalNodeId
+          ? [[relationship.canonicalNodeId, relationship.label] as const]
+          : [],
+    ),
+  )
+  const scholarlyTargetKinds = new Map<string, CanonicalSemanticTarget>()
+  for (const node of paper.nodes) {
+    const citationIdentifier = canonicalCitationTargetIdentifier(node)
+    if (citationIdentifier) {
+      scholarlyTargetKinds.set(stableId(node.id), {
+        kind: 'citation',
+        identifier: citationIdentifier,
+      })
+    } else if (node.type === 'heading') {
+      const identifier = canonicalHeadingIdentifier(node.text)
+      scholarlyTargetKinds.set(stableId(node.id), {
+        kind: 'section',
+        ...(identifier ? { identifier } : {}),
+      })
+    } else if (node.type === 'figure') {
+      const labelSource =
+        sourceVisualLabels.get(node.id) ??
+        captions.get(node.relationships.caption)?.text ??
+        node.title
+      const parsedLabel = parsePdfScholarlyVisualLabel(labelSource, {
+        context: 'reference',
+      })
+      scholarlyTargetKinds.set(stableId(node.id), {
+        kind: node.objectType ?? parsedLabel?.kind ?? 'figure',
+        ...(parsedLabel?.status === 'parsed'
+          ? { identifier: parsedLabel.identifier }
+          : {}),
+      })
+    }
+  }
   const associatedCaptions = new Set(
     paper.nodes
       .filter(
@@ -639,14 +2235,11 @@ export function renderPublicationXhtml(
       )
       .map((relationship) => [relationship.canonicalNodeId!, relationship]),
   )
-  const unresolvedVisualTranscripts = new Map(
+  const unresolvedVisuals = new Map(
     (options.reconstruction?.visualRelationships ?? [])
       .filter(
         (relationship) =>
-          relationship.status !== 'matched' &&
-          relationship.captionNodeId &&
-          relationship.sourceText.trim() &&
-          relationship.evidence.includes('unresolved-visual-text-owned'),
+          relationship.status !== 'matched' && relationship.captionNodeId,
       )
       .map((relationship) => [relationship.captionNodeId!, relationship]),
   )
@@ -671,9 +2264,24 @@ export function renderPublicationXhtml(
           comparableText(node.text) === comparableText(paper.title),
       )
     : undefined
-  const renderableNodes = paper.nodes.filter(
+  const sourceRenderableNodes = paper.nodes.filter(
     (node) => node.type !== 'caption' || !associatedCaptions.has(node.id),
   )
+  const authorNoteNodeIds = new Set(
+    (paper.authorNotes ?? []).map((reference) => reference.target),
+  )
+  const authorNoteNodes = sourceRenderableNodes.filter((node) =>
+    authorNoteNodeIds.has(node.id),
+  )
+  const renderableNodes =
+    canonicalTitleNode && authorNoteNodes.length > 0
+      ? sourceRenderableNodes.flatMap((node) => {
+          if (authorNoteNodeIds.has(node.id)) return []
+          return node.id === canonicalTitleNode.id
+            ? [node, ...authorNoteNodes]
+            : [node]
+        })
+      : sourceRenderableNodes
   const renderedNoteReferenceIds = new Set([
     ...renderableAuthorNoteReferences(paper).map((reference) =>
       stableId(reference.id),
@@ -705,16 +2313,38 @@ export function renderPublicationXhtml(
         listNodes.push(nextNode)
         index += 1
       }
-      renderedNodes.push(renderPublicationList(listNodes))
+      renderedNodes.push(renderPublicationList(listNodes, scholarlyTargetKinds))
       continue
     }
     renderedNodes.push(
       node.type === 'caption'
         ? (() => {
-            const unresolvedVisual = unresolvedVisualTranscripts.get(node.id)
-            return unresolvedVisual
-              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption omitted-visual" role="note"><p>${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns)}</p><div class="omitted-visual-transcript"><p>Recovered text inside the unresolved visual:</p><p>${text(unresolvedVisual.sourceText)}</p></div></aside>`
-              : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns)}</aside>`
+            const unresolvedVisual = unresolvedVisuals.get(node.id)
+            const unresolvedAlgorithm =
+              unresolvedVisual?.semanticKind === 'algorithm'
+            const unresolvedCode = unresolvedVisual?.semanticKind === 'code'
+            const unresolvedBoundedTable =
+              unresolvedVisual?.kind === 'table' &&
+              unresolvedVisual.evidence.includes(
+                'unresolved-bounded-table-text-owned',
+              )
+            const unresolvedTranscript =
+              unresolvedVisual?.sourceText.trim() &&
+              (unresolvedVisual.evidence.includes(
+                'unresolved-visual-text-owned',
+              ) ||
+                unresolvedBoundedTable)
+                ? unresolvedBoundedTable
+                  ? `<div class="omitted-table-transcript"><p>Recovered table source text; row and column semantics remain unresolved:</p><pre class="omitted-table-transcript-source" data-transcript-status="unresolved">${text(unresolvedVisual.sourceText)}</pre></div>`
+                  : unresolvedAlgorithm
+                    ? `<div class="omitted-visual-transcript"><p>Recovered source text; semantic line order remains unresolved:</p><pre class="omitted-algorithm-transcript" data-transcript-status="unresolved">${text(unresolvedVisual.sourceText)}</pre></div>`
+                    : unresolvedCode
+                      ? `<div class="omitted-visual-transcript"><p>Recovered source lines; source crop unavailable:</p><pre class="omitted-code-transcript" data-transcript-status="unresolved">${text(unresolvedVisual.sourceText)}</pre></div>`
+                      : `<div class="omitted-visual-transcript"><p>Recovered text inside the unresolved visual:</p><p>${text(unresolvedVisual.sourceText)}</p></div>`
+                : ''
+            return unresolvedVisual || omitMissingVisuals
+              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}"${unresolvedAlgorithm ? ' data-object-type="algorithm"' : unresolvedCode ? ' data-object-type="code"' : ''} class="orphan-caption omitted-visual${unresolvedAlgorithm ? ' unresolved-algorithm' : unresolvedCode ? ' unresolved-code' : ''}" role="note"><p class="omitted-visual-message">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p><p class="omitted-visual-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</p>${unresolvedTranscript}</aside>`
+              : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
           })()
         : renderNode(
             node,
@@ -724,6 +2354,7 @@ export function renderPublicationXhtml(
             omitMissingVisuals,
             canonicalTitleNode?.id,
             renderedNoteReferenceIds,
+            scholarlyTargetKinds,
           ),
     )
     if (node.id === canonicalTitleNode?.id) {
@@ -737,36 +2368,46 @@ export function renderPublicationXhtml(
       : `<header class="reconstructed-header">
       <h1 id="publication-title">${text(paper.title)}</h1>
       <p class="authors">${renderAuthors(paper)}</p>
-      ${paper.affiliations?.length ? `<p class="affiliations">${paper.affiliations.map(text).join('; ')}</p>` : ''}
+      ${paper.affiliations?.length ? `<p class="affiliations">${renderAffiliations(paper)}</p>` : ''}
     </header>`
     : `<header class="publication-header">
       <p class="status">${text(paper.status)} · ${text(paper.updated)}</p>
       <h1 id="publication-title">${text(paper.title)}</h1>
       <p class="subtitle">${text(paper.subtitle)}</p>
       <p class="authors">${renderAuthors(paper)}</p>
-      ${paper.affiliations?.length ? `<p class="affiliations">${paper.affiliations.map(text).join('; ')}</p>` : ''}
+      ${paper.affiliations?.length ? `<p class="affiliations">${renderAffiliations(paper)}</p>` : ''}
       <section class="abstract" aria-labelledby="abstract-title">
         <h2 id="abstract-title">Abstract</h2>
         <p>${text(paper.abstract)}</p>
       </section>
     </header>`
+  const reconstructionStatus =
+    options.reconstruction && !options.reconstruction.readiness.ready
+      ? `<aside class="reconstruction-status" role="note" aria-label="Reconstruction status">
+      <p>${READABLE_FALLBACK_INCOMPLETE_MESSAGE}</p>
+      <p>${READABLE_FALLBACK_REVIEW_MESSAGE}</p>
+    </aside>`
+      : ''
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" ${xhtmlLanguageAttributes(paper)}>
 <head>
   <meta charset="UTF-8" />
-  <title>Publication</title>
+  <title>${text(paper.title)}</title>
   ${options.embedStyles ? `<style type="text/css">${options.styles ?? EPUB_CSS}</style>` : '<link rel="stylesheet" type="text/css" href="styles.css" />'}
 </head>
 <body>
   <main epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
     ${publicationHeader}
+    ${reconstructionStatus}
     ${body}
   </main>
 </body>
 </html>
 `
+  assertSerializedXhtmlSemanticIntegrity(xhtml, 'EPUB content')
+  return xhtml
 }
 
 function navXhtml(paper: ResearchPaper) {
@@ -782,16 +2423,37 @@ function navXhtml(paper: ResearchPaper) {
   const titleHref = canonicalTitleNode
     ? `content.xhtml#${attribute(stableId(canonicalTitleNode.id))}`
     : 'content.xhtml#publication-title'
+  type NavigationItem = {
+    node: (typeof headings)[number]
+    children: NavigationItem[]
+  }
+  const roots: NavigationItem[] = []
+  const ancestors: Array<{
+    level: number
+    item: NavigationItem
+  }> = []
+  for (const node of headings) {
+    while (
+      ancestors.length > 0 &&
+      ancestors[ancestors.length - 1].level >= node.level
+    ) {
+      ancestors.pop()
+    }
+    const item = { node, children: [] }
+    const parent = ancestors.at(-1)?.item
+    if (parent) parent.children.push(item)
+    else roots.push(item)
+    ancestors.push({ level: node.level, item })
+  }
+  const renderNavigationItem = (item: NavigationItem): string =>
+    `<li><a href="content.xhtml#${attribute(stableId(item.node.id))}">${text(item.node.text)}</a>${item.children.length > 0 ? `<ol>${item.children.map(renderNavigationItem).join('')}</ol>` : ''}</li>`
   const items = [
     `<li><a href="${titleHref}">${text(paper.title)}</a></li>`,
-    ...headings.map(
-      (node) =>
-        `<li><a href="content.xhtml#${attribute(stableId(node.id))}">${text(node.text)}</a></li>`,
-    ),
+    ...roots.map(renderNavigationItem),
   ]
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" ${xhtmlLanguageAttributes(paper)}>
 <head><meta charset="UTF-8" /><title>Contents</title></head>
 <body>
   <nav epub:type="toc" id="toc" aria-label="Table of contents">
@@ -811,12 +2473,18 @@ body { margin: 0; max-width: 100%; color: #111; background: #fff; font-family: G
 main { box-sizing: border-box; width: 100%; max-width: 42rem; margin: 0 auto; padding: 5%; }
 .publication-header { border-bottom: 0.08rem solid currentColor; margin-bottom: 2.5rem; padding-bottom: 2rem; }
 .reconstructed-header { margin-bottom: 2rem; }
+.reconstruction-status { border: 0.12rem solid currentColor; margin: 0 0 2rem; padding: 0.9rem 1rem; }
+.reconstruction-status > p { font-family: sans-serif; font-size: 0.8rem; margin: 0; }
+.reconstruction-status > p:first-child { font-weight: 700; }
+.reconstruction-status > p + p { margin-top: 0.35rem; }
 .status, .authors { font-family: sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; }
 h1 { font-size: 2.2rem; line-height: 1.05; margin: 0.5rem 0 0.75rem; }
 h2 { font-size: 1.45rem; margin: 2.4rem 0 0.6rem; break-after: avoid; }
 h3 { font-size: 1.15rem; margin: 2rem 0 0.5rem; break-after: avoid; }
+h4 { font-size: 1rem; margin: 1.7rem 0 0.45rem; break-after: avoid; }
 p { margin: 0.8rem 0; orphans: 3; widows: 3; }
-h1, h2, h3, p, figcaption, .orphan-caption, .publication-note, .publication-list, .publication-list-item { overflow-wrap: anywhere; word-break: break-word; }
+h1, h2, h3, h4, p, figcaption, .orphan-caption, .publication-note, .publication-list, .publication-list-item { overflow-wrap: break-word; word-break: normal; }
+a, code, pre { overflow-wrap: anywhere; word-break: break-word; }
 .subtitle { font-size: 1.15rem; font-style: italic; }
 .abstract { margin-top: 1.8rem; }
 .abstract h2 { font-family: sans-serif; font-size: 0.86rem; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -828,12 +2496,18 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .omitted-visual { border: 0.08rem dashed currentColor; margin: 2rem 0; padding: 1rem; }
 .omitted-visual > p:first-child { font-family: sans-serif; font-size: 0.8rem; font-style: italic; }
 .omitted-visual-caption { font-size: 0.86rem; }
-.omitted-visual-transcript { border-top: 0.06rem solid currentColor; margin-top: 0.75rem; padding-top: 0.75rem; }
-.omitted-visual-transcript > p:first-child { font-family: sans-serif; font-size: 0.76rem; font-weight: 700; }
+.omitted-visual-transcript, .omitted-table-transcript { border-top: 0.06rem solid currentColor; margin-top: 0.75rem; padding-top: 0.75rem; }
+.omitted-visual-transcript > p:first-child, .omitted-table-transcript > p:first-child { font-family: sans-serif; font-size: 0.76rem; font-weight: 700; }
+.omitted-table-transcript-source { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.omitted-algorithm-transcript { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
+.source-code { max-width: 100%; margin: 0; overflow-x: auto; padding: 0.8rem; border: 0.06rem solid currentColor; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; }
+.source-code code { font: inherit; white-space: inherit; }
+.omitted-code-transcript { max-width: 100%; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; }
 .publication-note { border-top: 0.06rem solid currentColor; font-size: 0.84rem; margin-top: 1rem; padding-top: 0.5rem; }
 .note-label { font-weight: bold; }
 .note-backlink { margin-inline-start: 0.35rem; }
 .publication-list { max-width: 100%; min-width: 0; margin: 0.8rem 0; padding-inline-start: 1.5rem; }
+.publication-list.markerless-list { list-style-type: none; padding-inline-start: 0; }
 .publication-list .publication-list { margin: 0.35rem 0 0; }
 .publication-list-item { margin: 0.35rem 0; }
 .publication-list-item.has-preserved-marker { list-style-type: none; }
@@ -842,12 +2516,15 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .semantic-table-wrapper { max-width: 100%; overflow-x: auto; }
 .semantic-table-figure, .semantic-table-wrapper, .semantic-table-wrapper table { break-inside: auto; }
 .semantic-table-wrapper table { border-collapse: collapse; font-size: 0.86rem; line-height: 1.35; min-width: 0; table-layout: fixed; width: 100%; }
+.semantic-table-wrapper[data-wide-table="true"] table { min-width: 100%; table-layout: auto; width: auto; }
 .semantic-table-wrapper thead { display: table-header-group; }
 .semantic-table-figure > figcaption { break-before: avoid; }
 .semantic-table-wrapper tr { break-inside: avoid; }
 .semantic-table-wrapper th, .semantic-table-wrapper td { border: 0.06rem solid currentColor; padding: 0.3rem 0.4rem; text-align: start; vertical-align: top; }
 .semantic-table-wrapper th, .semantic-table-wrapper td { overflow-wrap: anywhere; word-break: break-word; }
+.semantic-table-wrapper[data-wide-table="true"] th, .semantic-table-wrapper[data-wide-table="true"] td { min-width: 3.5rem; overflow-wrap: break-word; word-break: normal; }
 .semantic-table-wrapper th { font-weight: bold; }
+.wide-source-visual-scroll { max-width: 100%; overflow-x: auto; }
 img, svg { display: block; height: auto; max-width: 100%; }
 object { border: 0; display: block; min-height: 8rem; width: 100%; }
 a { color: inherit; text-decoration: underline; }
@@ -864,14 +2541,36 @@ function percentage(value: number, whole: number) {
 export function profileEpubCss(profileInput: TargetProfile) {
   const profile = targetProfileSchema.parse(profileInput)
   const width = profile.dimensions.width
+  const contentWidth = width - profile.margins.left - profile.margins.right
+  const compactProfile =
+    profile.columns.count === 1 &&
+    profile.dimensions.unit !== 'mm' &&
+    width <= 1_000
+  const wideSourceVisualMinimumWidth = Math.ceil(contentWidth * 1.35)
+  const bodySize = profile.typography.bodySizeCssPx
+  const fourthOrderHeadingSize = Math.max(
+    bodySize + 1,
+    Math.round(profile.typography.headingSizeCssPx * 0.8),
+  )
+  const thirdOrderHeadingSize = Math.max(
+    fourthOrderHeadingSize + 1,
+    Math.round(profile.typography.headingSizeCssPx * 0.9),
+  )
+  const secondOrderHeadingSize = Math.max(
+    thirdOrderHeadingSize + 1,
+    profile.typography.headingSizeCssPx,
+  )
   return `${EPUB_CSS}
 /* Profile values are derived from src/research/targets.ts (${profile.id}@${profile.version}). */
 html { font-size: ${profile.typography.bodySizeCssPx}px; }
 body { font-family: ${profile.typography.fontFamily}; line-height: ${profile.typography.lineHeight}; }
 main { max-width: none; padding: ${percentage(profile.margins.top, width)} ${percentage(profile.margins.right, width)} ${percentage(profile.margins.bottom, width)} ${percentage(profile.margins.left, width)}; }
 h1 { font-size: ${profile.typography.titleSizeCssPx}px; }
-h2, h3 { font-size: ${profile.typography.headingSizeCssPx}px; }
+h2 { font-size: ${secondOrderHeadingSize}px; }
+h3 { font-size: ${thirdOrderHeadingSize}px; }
+h4 { font-size: ${fourthOrderHeadingSize}px; }
 blockquote { font-size: ${profile.typography.quoteSizeCssPx}px; }
+${compactProfile ? `.wide-source-visual-scroll[data-wide-source-visual="true"] img { max-width: none; min-width: max(100%, ${wideSourceVisualMinimumWidth}px); width: auto; }` : ''}
 @page { margin: 0; }
 `
 }
@@ -880,7 +2579,9 @@ type PackagedAsset = {
   source: PublicationAsset
   asset: PublicationAsset
   policy: {
-    id: 'fit-device-content-width-no-upscale'
+    id:
+      | 'fit-device-content-width-no-upscale'
+      | 'preserve-scrollable-table-source'
     version: typeof EPUB_EXPORT_POLICY_VERSION
     action: 'preserved' | 'downscaled' | 'scalable-source'
     sourceWidth: number
@@ -905,7 +2606,11 @@ async function packageVisualAssets(
       : null
   return Promise.all(
     assets.map(async (source): Promise<PackagedAsset> => {
+      const preserveScrollableTableSource =
+        profile?.id === 'paperProMove' &&
+        isCompactScrollableTableImage(source)
       const asset =
+        !preserveScrollableTableSource &&
         maximumWidth !== null &&
         profile?.pixelsPerInch !== null &&
         profile?.pixelsPerInch !== undefined
@@ -915,7 +2620,9 @@ async function packageVisualAssets(
         source,
         asset,
         policy: {
-          id: 'fit-device-content-width-no-upscale',
+          id: preserveScrollableTableSource
+            ? 'preserve-scrollable-table-source'
+            : 'fit-device-content-width-no-upscale',
           version: EPUB_EXPORT_POLICY_VERSION,
           action:
             source.mediaType === 'image/svg+xml'
@@ -928,7 +2635,7 @@ async function packageVisualAssets(
           sourceHeight: source.height,
           packagedWidth: asset.width,
           packagedHeight: asset.height,
-          maximumWidth,
+          maximumWidth: preserveScrollableTableSource ? null : maximumWidth,
           targetPixelsPerInch: profile?.pixelsPerInch ?? null,
           sourcePixelsPerInch: source.resolutionDpi,
           resampling:
@@ -967,14 +2674,16 @@ function packageOpf(
         `<item id="${attribute(stableId(visualAsset.id))}" href="${attribute(visualAsset.href)}" media-type="${attribute(visualAsset.mediaType)}" />`,
     )
     .join('\n    ')
+  const language = publicationLanguage(paper)
+  const direction = publicationBaseDirection(paper)
   return `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="publication-id" xml:lang="en">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="publication-id" xml:lang="${attribute(language)}">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="publication-id">${text(identifier)}</dc:identifier>
     <dc:title>${text(paper.title)}</dc:title>
-    <dc:language>en</dc:language>
+    <dc:language>${text(language)}</dc:language>
     ${paper.authors.map((author) => `<dc:creator>${text(author)}</dc:creator>`).join('\n    ')}
-    <dc:date>${text(paper.updated)}</dc:date>
+    ${paper.publicationDate ? `<dc:date>${text(paper.publicationDate)}</dc:date>` : ''}
     <meta property="dcterms:modified">${text(modified)}</meta>
     ${
       profile
@@ -991,11 +2700,20 @@ function packageOpf(
     <item id="export-manifest" href="export.json" media-type="application/json" />
     ${assetItems}
   </manifest>
-  <spine${profile ? ` page-progression-direction="${profile.epub.pageProgressionDirection}"` : ''}>
+  <spine${direction ? ` page-progression-direction="${direction}"` : ''}>
     <itemref idref="content" />
   </spine>
 </package>
 `
+}
+
+function epubArtifactModifiedAt(paper: ResearchPaper) {
+  const candidate = paper.artifactModifiedAt ?? `${paper.updated}T00:00:00.000Z`
+  const parsed = new Date(candidate)
+  const normalized = Number.isNaN(parsed.valueOf())
+    ? `${paper.updated}T00:00:00.000Z`
+    : parsed.toISOString()
+  return normalized.replace(/\.\d{3}Z$/, 'Z')
 }
 
 function entry(value: string, level: 0 | 6 = 6): [Uint8Array, ZipOptions] {
@@ -1084,6 +2802,258 @@ function sha256Sync(bytes: Uint8Array) {
   return [...state].map((word) => word.toString(16).padStart(8, '0')).join('')
 }
 
+type EpubExportManifestReceipt = {
+  schemaVersion: typeof EPUB_EXPORT_SCHEMA_VERSION
+  identifier: string
+  exportMode: EpubExportMode
+  publicationGrade: boolean
+  canonicalContentSha256: string
+  sourceCanonicalContentSha256: string
+  sourcePdfSha256?: string
+  sourceDocxSha256?: string
+  sourceFormat?: 'pdf' | 'docx'
+  sourcePackageParts?: string[]
+  sourceImporterVersion?: string
+  canonicalNodeIds: string[]
+  excludedCanonicalNodeIds: string[]
+  sourceProvenanceIncluded: boolean
+  sourceCompleteness?: Record<string, unknown>
+  sourceReadiness?: Record<string, unknown>
+  humanAdjudications?: Record<string, unknown>
+  assets: unknown[]
+  visualRelationships?: unknown[]
+  excludedUnresolvedVisualRelationshipCount: number
+  profile?: ReturnType<typeof profileManifestReceipt>
+  rendition:
+    | 'reflowable-epub'
+    | 'profile-tuned-reflowable-epub'
+    | 'readable-fallback-reflowable-epub'
+}
+
+const EPUB_EXPORT_MANIFEST_FIELDS = new Set([
+  'schemaVersion',
+  'identifier',
+  'exportMode',
+  'publicationGrade',
+  'canonicalContentSha256',
+  'sourceCanonicalContentSha256',
+  'sourcePdfSha256',
+  'sourceDocxSha256',
+  'sourceFormat',
+  'sourcePackageParts',
+  'sourceImporterVersion',
+  'canonicalNodeIds',
+  'excludedCanonicalNodeIds',
+  'sourceProvenanceIncluded',
+  'sourceCompleteness',
+  'sourceReadiness',
+  'humanAdjudications',
+  'assets',
+  'visualRelationships',
+  'excludedUnresolvedVisualRelationshipCount',
+  'profile',
+  'rendition',
+])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
+function requireSha256(value: unknown, field: string): asserts value is string {
+  if (!isSha256(value)) {
+    throw new Error(
+      `EPUB export manifest ${field} must be a lowercase SHA-256 digest`,
+    )
+  }
+}
+
+function invalidExportManifest(profiled: boolean): never {
+  throw new Error(
+    `EPUB ${profiled ? 'profiled ' : ''}export manifest contract is invalid`,
+  )
+}
+
+function parseExportManifest(
+  value: string,
+  profiled = false,
+): EpubExportManifestReceipt {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error('EPUB export manifest must be valid JSON')
+  }
+  if (!isRecord(parsed)) {
+    invalidExportManifest(profiled)
+  }
+  const unknownField = Object.keys(parsed).find(
+    (field) => !EPUB_EXPORT_MANIFEST_FIELDS.has(field),
+  )
+  if (unknownField) {
+    throw new Error(
+      `EPUB export manifest contains unknown export manifest field ${unknownField}`,
+    )
+  }
+
+  requireSha256(parsed.canonicalContentSha256, 'canonicalContentSha256')
+  requireSha256(
+    parsed.sourceCanonicalContentSha256,
+    'sourceCanonicalContentSha256',
+  )
+  if (parsed.sourcePdfSha256 !== undefined) {
+    requireSha256(parsed.sourcePdfSha256, 'sourcePdfSha256')
+  }
+  if (parsed.sourceDocxSha256 !== undefined) {
+    requireSha256(parsed.sourceDocxSha256, 'sourceDocxSha256')
+  }
+  if (
+    !Array.isArray(parsed.canonicalNodeIds) ||
+    parsed.canonicalNodeIds.length === 0 ||
+    parsed.canonicalNodeIds.some(
+      (id) => typeof id !== 'string' || id.trim().length === 0,
+    )
+  ) {
+    throw new Error(
+      'EPUB canonicalNodeIds receipt must contain non-empty strings',
+    )
+  }
+
+  if (
+    parsed.schemaVersion !== EPUB_EXPORT_SCHEMA_VERSION ||
+    (parsed.exportMode !== 'publication' &&
+      parsed.exportMode !== 'readable-fallback') ||
+    typeof parsed.identifier !== 'string' ||
+    parsed.identifier.trim().length === 0 ||
+    typeof parsed.publicationGrade !== 'boolean' ||
+    parsed.publicationGrade !== (parsed.exportMode === 'publication') ||
+    typeof parsed.sourceProvenanceIncluded !== 'boolean' ||
+    new Set(parsed.canonicalNodeIds).size !== parsed.canonicalNodeIds.length ||
+    !Array.isArray(parsed.excludedCanonicalNodeIds) ||
+    parsed.excludedCanonicalNodeIds.some(
+      (id) => typeof id !== 'string' || id.trim().length === 0,
+    ) ||
+    new Set(parsed.excludedCanonicalNodeIds).size !==
+      parsed.excludedCanonicalNodeIds.length ||
+    parsed.excludedCanonicalNodeIds.some((id) =>
+      (parsed.canonicalNodeIds as string[]).includes(id as string),
+    ) ||
+    !Array.isArray(parsed.assets) ||
+    (parsed.visualRelationships !== undefined &&
+      (!Array.isArray(parsed.visualRelationships) ||
+        parsed.visualRelationships.some((entry) => !isRecord(entry)))) ||
+    !Number.isInteger(parsed.excludedUnresolvedVisualRelationshipCount) ||
+    (parsed.excludedUnresolvedVisualRelationshipCount as number) < 0 ||
+    (parsed.sourceCompleteness !== undefined &&
+      !isRecord(parsed.sourceCompleteness)) ||
+    (parsed.sourceReadiness !== undefined &&
+      !isRecord(parsed.sourceReadiness)) ||
+    (parsed.humanAdjudications !== undefined &&
+      !isRecord(parsed.humanAdjudications))
+  ) {
+    invalidExportManifest(profiled)
+  }
+
+  if (
+    parsed.sourceFormat !== undefined &&
+    parsed.sourceFormat !== 'pdf' &&
+    parsed.sourceFormat !== 'docx'
+  ) {
+    throw new Error('EPUB export manifest sourceFormat is invalid')
+  }
+  if (
+    parsed.sourcePackageParts !== undefined &&
+    (!Array.isArray(parsed.sourcePackageParts) ||
+      parsed.sourcePackageParts.some(
+        (part) => typeof part !== 'string' || part.length === 0,
+      ))
+  ) {
+    throw new Error('EPUB export manifest sourcePackageParts is invalid')
+  }
+  if (
+    parsed.sourceImporterVersion !== undefined &&
+    (typeof parsed.sourceImporterVersion !== 'string' ||
+      parsed.sourceImporterVersion.length === 0)
+  ) {
+    throw new Error('EPUB export manifest sourceImporterVersion is invalid')
+  }
+  if (
+    (parsed.sourceFormat === 'pdf' &&
+      (parsed.sourcePdfSha256 === undefined ||
+        parsed.sourceDocxSha256 !== undefined ||
+        parsed.sourcePackageParts !== undefined ||
+        parsed.sourceImporterVersion !== undefined)) ||
+    (parsed.sourceFormat === 'docx' &&
+      (parsed.sourceDocxSha256 === undefined ||
+        parsed.sourcePdfSha256 !== undefined ||
+        !parsed.sourcePackageParts ||
+        parsed.sourceImporterVersion === undefined)) ||
+    (parsed.sourceFormat === undefined &&
+      (parsed.sourcePdfSha256 !== undefined ||
+        parsed.sourceDocxSha256 !== undefined ||
+        parsed.sourcePackageParts !== undefined ||
+        parsed.sourceImporterVersion !== undefined)) ||
+    parsed.sourceProvenanceIncluded !== (parsed.sourceFormat !== undefined)
+  ) {
+    throw new Error('EPUB export manifest source identity contract is invalid')
+  }
+
+  let profile: ReturnType<typeof profileManifestReceipt> | undefined
+  if (parsed.profile !== undefined) {
+    if (!isRecord(parsed.profile) || typeof parsed.profile.id !== 'string') {
+      throw new Error('EPUB profiled export manifest contract is invalid')
+    }
+    let currentProfile: TargetProfile
+    try {
+      currentProfile = getTargetProfile(parsed.profile.id as TargetProfileId)
+    } catch {
+      throw new Error('EPUB profiled export manifest contract is invalid')
+    }
+    profile = profileManifestReceipt(currentProfile)
+    if (canonicalJson(parsed.profile) !== canonicalJson(profile)) {
+      throw new Error('EPUB profiled export manifest contract is invalid')
+    }
+  }
+  const expectedRendition =
+    parsed.exportMode === 'readable-fallback'
+      ? 'readable-fallback-reflowable-epub'
+      : profile
+        ? 'profile-tuned-reflowable-epub'
+        : 'reflowable-epub'
+  if (parsed.rendition !== expectedRendition) {
+    invalidExportManifest(profiled)
+  }
+  if (
+    !parsed.sourceProvenanceIncluded &&
+    parsed.sourceCanonicalContentSha256 !== parsed.canonicalContentSha256
+  ) {
+    throw new Error(
+      'EPUB export manifest sourceCanonicalContentSha256 does not match its canonical input',
+    )
+  }
+
+  return {
+    ...(parsed as Omit<EpubExportManifestReceipt, 'profile'>),
+    ...(profile ? { profile } : {}),
+  }
+}
+
+function canonicalPaperSha256(paper: ResearchPaper) {
+  return sha256Sync(strToU8(JSON.stringify(paper)))
+}
+
+function exportIdentifier(
+  paperId: string,
+  canonicalContentSha256: string,
+  mode: EpubExportMode,
+  profile?: { id: string; version: string },
+) {
+  return `urn:srt:${stableId(paperId)}:${canonicalContentSha256.slice(0, 24)}:${mode}${profile ? `:${profile.id}:${profile.version}:${EPUB_EXPORT_POLICY_VERSION}` : ''}`
+}
+
 function requireWellFormedXml(value: string, documentName: string) {
   if (XMLValidator.validate(value) !== true) {
     throw new Error(`${documentName} must be well-formed XML`)
@@ -1105,6 +3075,149 @@ function xmlAttributeValues(value: string, name: string) {
     if (attributeValue !== undefined) values.push(attributeValue)
   }
   return values
+}
+
+function xmlTextElements(value: string, tagName: string) {
+  const escapedTagName = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return [
+    ...value.matchAll(
+      new RegExp(
+        `<${escapedTagName}\\b([^>]*)>([^<]*)<\\/${escapedTagName}>`,
+        'g',
+      ),
+    ),
+  ].map((match) => ({
+    attributes: tagAttributes(`<${tagName}${match[1]}>`),
+    escapedText: match[2],
+  }))
+}
+
+function decodedXmlFragmentText(value: string) {
+  return value
+    .replace(/<[^>]*>/gu, '')
+    .replace(
+      /&(amp|lt|gt|quot|apos);|&#(x[0-9a-f]+|\d+);/giu,
+      (entity, named: string | undefined, numeric: string | undefined) => {
+        if (named) {
+          return named.toLocaleLowerCase() === 'amp'
+            ? '&'
+            : named.toLocaleLowerCase() === 'lt'
+              ? '<'
+              : named.toLocaleLowerCase() === 'gt'
+                ? '>'
+                : named.toLocaleLowerCase() === 'quot'
+                  ? '"'
+                  : "'"
+        }
+        const codePoint = numeric?.toLocaleLowerCase().startsWith('x')
+          ? Number.parseInt(numeric.slice(1), 16)
+          : Number.parseInt(numeric ?? '', 10)
+        return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : ''
+      },
+    )
+}
+
+function isBareScholarlyIdentifier(value: string) {
+  return new RegExp(String.raw`^${INLINE_SCHOLARLY_IDENTIFIER}$`, 'u').test(
+    value.trim(),
+  )
+}
+
+function assertSerializedXhtmlSemanticIntegrity(
+  value: string,
+  documentName: string,
+) {
+  const scholarlyTargetIds = new Set<string>()
+  for (const match of value.matchAll(/<(h[1-6]|figure)\b[^>]*>/giu)) {
+    const id = tagAttributes(match[0]).get('id')
+    if (id) scholarlyTargetIds.add(id)
+  }
+
+  const relationshipIds = new Set<string>()
+  const semanticWrapper = /<(a|span)\b([^>]*)>([\s\S]*?)<\/\1>/giu
+  for (const match of value.matchAll(semanticWrapper)) {
+    const attributes = tagAttributes(`<${match[1]}${match[2]}>`)
+    const semanticRole = attributes.get('data-semantic-role')
+    if (!semanticRole) continue
+    const relationshipId = attributes.get('data-relationship-id')
+    if (!relationshipId || relationshipIds.has(relationshipId)) {
+      throw new Error(
+        `${documentName} contains a duplicate or unowned semantic relationship wrapper`,
+      )
+    }
+    relationshipIds.add(relationshipId)
+    const inner = match[3]
+    if (
+      /class\s*=\s*(?:"[^"]*\bvisually-hidden\b|'[^']*\bvisually-hidden\b)/iu.test(
+        inner,
+      )
+    ) {
+      throw new Error(
+        `${documentName} contains hidden semantic text that duplicates canonical citation text`,
+      )
+    }
+    const visibleText = decodedXmlFragmentText(inner).trim()
+    if (!visibleText) {
+      throw new Error(`${documentName} contains an empty semantic relationship`)
+    }
+    if (
+      semanticRole === 'cross-reference' &&
+      !isBoundedScholarlyReferenceText(visibleText)
+    ) {
+      throw new Error(
+        `${documentName} contains unbounded scholarly destination text for semantic relationship ${relationshipId} (${visibleText.length} visible characters)`,
+      )
+    }
+    const childAnchors = [...inner.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/giu)]
+    const childTexts = childAnchors.map((anchor) =>
+      decodedXmlFragmentText(anchor[1]).trim(),
+    )
+    if (childTexts.some((textValue) => !textValue)) {
+      throw new Error(
+        `${documentName} contains an empty semantic target link in relationship ${relationshipId}`,
+      )
+    }
+    if (
+      new Set(childTexts.map((textValue) => comparableText(textValue))).size !==
+      childTexts.length
+    ) {
+      throw new Error(
+        `${documentName} contains duplicate canonical citation text`,
+      )
+    }
+  }
+
+  for (const match of value.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/giu)) {
+    if (/<a\b/iu.test(match[2])) {
+      throw new Error(
+        `${documentName} contains overlapping nested destination anchors`,
+      )
+    }
+    const attributes = tagAttributes(`<a${match[1]}>`)
+    const fragment = attributes.get('href')?.match(/^#(.+)$/u)?.[1]
+    if (
+      !attributes.has('data-source-annotation-id') ||
+      !fragment ||
+      !scholarlyTargetIds.has(fragment)
+    ) {
+      continue
+    }
+    const visibleText = decodedXmlFragmentText(match[2]).trim()
+    const containsScholarlyMarker = (
+      ['figure', 'table', 'equation', 'section'] as const
+    ).some(
+      (kind) => scholarlyReferenceCandidateRanges(visibleText, kind).length > 0,
+    )
+    if (
+      containsScholarlyMarker &&
+      !isBoundedScholarlyReferenceText(visibleText) &&
+      !isBareScholarlyIdentifier(visibleText)
+    ) {
+      throw new Error(
+        `${documentName} contains unbounded scholarly destination text for ${attributes.get('data-source-annotation-id')} to #${fragment}`,
+      )
+    }
+  }
 }
 
 function inspectOpfPackage(opf: string, files: Record<string, Uint8Array>) {
@@ -1537,9 +3650,15 @@ function validateInternalHrefs(
   }
 }
 
+/**
+ * Validates EPUB structure and internal receipt consistency. Supply an
+ * `expectation` to bind the artifact to trusted canonical/source inputs;
+ * without one, this is structural validation rather than authenticity proof.
+ */
 export function inspectEpub(
   bytes: Uint8Array,
   expectedProfile?: TargetProfile,
+  expectation: EpubInspectionExpectation = {},
 ) {
   if (
     bytes[0] !== 0x50 ||
@@ -1600,37 +3719,11 @@ export function inspectEpub(
     xhtmlDocuments,
     new Set(opfPackage.items.map((item) => item.href)),
   )
-  const manifest = JSON.parse(strFromU8(files['EPUB/export.json'])) as {
-    schemaVersion?: unknown
-    exportMode?: unknown
-    rendition?: unknown
-    canonicalNodeIds?: unknown
-    excludedCanonicalNodeIds?: unknown
-    canonicalContentSha256?: unknown
-    sourceCanonicalContentSha256?: unknown
-    profile?: unknown
-    assets?: unknown[]
-    visualRelationships?: unknown[]
-  }
-  const expectedRendition =
-    manifest.exportMode === 'readable-fallback'
-      ? 'readable-fallback-reflowable-epub'
-      : manifest.exportMode === 'publication'
-        ? manifest.profile
-          ? 'profile-tuned-reflowable-epub'
-          : 'reflowable-epub'
-        : undefined
-  if (
-    manifest.schemaVersion !== EPUB_EXPORT_SCHEMA_VERSION ||
-    expectedRendition === undefined ||
-    manifest.rendition !== expectedRendition ||
-    (manifest.profile !== undefined &&
-      (!manifest.profile || typeof manifest.profile !== 'object'))
-  ) {
-    throw new Error(
-      `EPUB ${expectedProfile ? 'profiled ' : ''}export manifest contract is invalid`,
-    )
-  }
+  assertSerializedXhtmlSemanticIntegrity(content, 'EPUB content')
+  const manifest = parseExportManifest(
+    strFromU8(files['EPUB/export.json']),
+    Boolean(expectedProfile),
+  )
   if (
     expectedProfile &&
     canonicalJson(manifest.profile) !==
@@ -1639,16 +3732,85 @@ export function inspectEpub(
     throw new Error('EPUB profiled export manifest contract is invalid')
   }
   const canonicalNodeIds = manifest.canonicalNodeIds
+
+  const opfIdentifiers = xmlTextElements(opf, 'dc:identifier')
   if (
-    !Array.isArray(canonicalNodeIds) ||
-    canonicalNodeIds.length === 0 ||
-    canonicalNodeIds.some(
-      (id) => typeof id !== 'string' || id.trim().length === 0,
-    )
+    opfIdentifiers.length !== 1 ||
+    opfIdentifiers[0].attributes.get('id') !== 'publication-id' ||
+    !/<package\b[^>]*\bunique-identifier\s*=\s*(?:"publication-id"|'publication-id')/.test(
+      opf,
+    ) ||
+    opfIdentifiers[0].escapedText !== text(manifest.identifier)
   ) {
     throw new Error(
-      'EPUB canonicalNodeIds receipt must contain non-empty strings',
+      'EPUB export manifest identifier does not match the OPF dc:identifier',
     )
+  }
+  const opfTitles = xmlTextElements(opf, 'dc:title')
+  const contentTitles = xmlTextElements(content, 'title')
+  if (
+    opfTitles.length !== 1 ||
+    contentTitles.length !== 1 ||
+    opfTitles[0].escapedText !== contentTitles[0].escapedText
+  ) {
+    throw new Error('EPUB XHTML title does not match the OPF title')
+  }
+
+  if (expectation.canonicalPaper) {
+    const expectedCanonicalHash = canonicalPaperSha256(
+      expectation.canonicalPaper,
+    )
+    if (manifest.canonicalContentSha256 !== expectedCanonicalHash) {
+      throw new Error(
+        'EPUB export manifest canonicalContentSha256 does not match its canonical input',
+      )
+    }
+    if (opfTitles[0].escapedText !== text(expectation.canonicalPaper.title)) {
+      throw new Error(
+        'EPUB OPF and XHTML title do not match the canonical paper title',
+      )
+    }
+    const expectedIdentifier = exportIdentifier(
+      expectation.canonicalPaper.id,
+      expectedCanonicalHash,
+      manifest.exportMode,
+      manifest.profile,
+    )
+    if (manifest.identifier !== expectedIdentifier) {
+      throw new Error(
+        'EPUB export manifest identifier does not match its canonical input',
+      )
+    }
+  } else {
+    const profileSuffix = manifest.profile
+      ? `:${manifest.profile.id}:${manifest.profile.version}:${EPUB_EXPORT_POLICY_VERSION}`
+      : ''
+    const receiptPattern = new RegExp(
+      `^urn:srt:[A-Za-z_][A-Za-z0-9_.:-]*:${manifest.canonicalContentSha256.slice(0, 24)}:${manifest.exportMode}${profileSuffix}$`,
+    )
+    if (!receiptPattern.test(manifest.identifier)) {
+      throw new Error(
+        'EPUB export manifest identifier does not match its canonical hash and rendition',
+      )
+    }
+  }
+  if (expectation.sourceCanonicalPaper) {
+    const expectedSourceCanonicalHash = canonicalPaperSha256(
+      expectation.sourceCanonicalPaper,
+    )
+    if (manifest.sourceCanonicalContentSha256 !== expectedSourceCanonicalHash) {
+      throw new Error(
+        'EPUB export manifest sourceCanonicalContentSha256 does not match its canonical input',
+      )
+    }
+  }
+  if (expectation.sourcePdfSha256 !== undefined) {
+    requireSha256(expectation.sourcePdfSha256, 'expected sourcePdfSha256')
+    if (manifest.sourcePdfSha256 !== expectation.sourcePdfSha256) {
+      throw new Error(
+        'EPUB export manifest sourcePdfSha256 does not match the expected source',
+      )
+    }
   }
   const declaredHrefs = new Set(opfPackage.items.map(({ href }) => href))
   for (const attributeName of ['src', 'data']) {
@@ -1794,9 +3956,8 @@ function projectRenderableNoteRelationships(
     return true
   }
 
-  const authorNotes = renderableAuthorNoteReferences(paper).filter(
-    retainReference,
-  )
+  const authorNotes =
+    renderableAuthorNoteReferences(paper).filter(retainReference)
   const noteReferencesByNode = new Map<
     string,
     Array<{
@@ -1810,9 +3971,10 @@ function projectRenderableNoteRelationships(
   >()
   for (const node of paper.nodes) {
     if (!('noteReferences' in node) || !node.noteReferences) continue
-    const references = validNoteReferences(node.text, node.noteReferences).filter(
-      retainReference,
-    )
+    const references = validNoteReferences(
+      node.text,
+      node.noteReferences,
+    ).filter(retainReference)
     noteReferencesByNode.set(node.id, references)
   }
 
@@ -1858,55 +4020,66 @@ export function projectReadableFallbackReconstruction(
       .map((asset) => asset.id),
   )
   let selectedAssetCount = 0
-  const relationships = validatedPdfVisualRelationships({
+  const validatedRelationships = validatedPdfVisualRelationships({
     paper: reconstruction.paper,
     provenance: reconstruction.provenance,
     relationships: reconstruction.visualRelationships,
     assets: reconstruction.assets,
-  }).flatMap((relationship) => {
-    const nextAssetCount = selectedAssetCount + relationship.assetIds.length
-    const accepted =
-      relationship.assetIds.length <= MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL &&
-      nextAssetCount <= MAX_READABLE_FALLBACK_ASSETS_PER_BOOK &&
-      relationship.assetIds.every((assetId) => availableAssetIds.has(assetId))
-    if (accepted) selectedAssetCount = nextAssetCount
-    return accepted ? [relationship] : []
+    regions: reconstruction.regions,
   })
+  const validatedRelationshipsById = new Map(
+    validatedRelationships.map((relationship) => [
+      relationship.id,
+      relationship,
+    ]),
+  )
+  const captionNodeIds = new Set(
+    reconstruction.paper.nodes
+      .filter((node) => node.type === 'caption')
+      .map((node) => node.id),
+  )
+  const retainedUnresolvedRelationshipIds = new Set(
+    reconstruction.visualRelationships.flatMap((relationship) => {
+      if (
+        relationship.status === 'matched' ||
+        relationship.canonicalNodeId !== null ||
+        relationship.assetIds.length > 0 ||
+        !relationship.captionNodeId ||
+        !captionNodeIds.has(relationship.captionNodeId)
+      ) {
+        return []
+      }
+      const captionProvenance =
+        reconstruction.provenance[relationship.captionNodeId]
+      return captionProvenance?.regionIds.includes(
+        relationship.captionRegionId,
+      ) && captionProvenance.boxes.length > 0
+        ? [relationship.id]
+        : []
+    }),
+  )
+  const relationships = reconstruction.visualRelationships.flatMap(
+    (relationship) => {
+      const validated = validatedRelationshipsById.get(relationship.id)
+      if (!validated) {
+        return retainedUnresolvedRelationshipIds.has(relationship.id)
+          ? [relationship]
+          : []
+      }
+      const nextAssetCount = selectedAssetCount + relationship.assetIds.length
+      const accepted =
+        relationship.assetIds.length <=
+          MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL &&
+        nextAssetCount <= MAX_READABLE_FALLBACK_ASSETS_PER_BOOK &&
+        relationship.assetIds.every((assetId) => availableAssetIds.has(assetId))
+      if (accepted) selectedAssetCount = nextAssetCount
+      return accepted ? [validated] : []
+    },
+  )
   const selectedAssetIds = new Set(
     relationships.flatMap((relationship) => relationship.assetIds),
   )
-  const retainedFigureIds = new Set(
-    relationships.map((relationship) => relationship.canonicalNodeId!),
-  )
-  const retainedCaptionIds = new Set(
-    relationships.map((relationship) => relationship.captionNodeId!),
-  )
-  const paper = projectRenderableNoteRelationships({
-    ...reconstruction.paper,
-    nodes: reconstruction.paper.nodes.filter((node) =>
-      node.type === 'figure'
-        ? retainedFigureIds.has(node.id)
-        : node.type === 'caption'
-          ? retainedCaptionIds.has(node.id)
-          : true,
-    ),
-  })
-  const retainedNodeIds = new Set(paper.nodes.map((node) => node.id))
-  const excludedCanonicalNodeIds = new Set(
-    reconstruction.paper.nodes
-      .filter((node) => !retainedNodeIds.has(node.id))
-      .map((node) => node.id),
-  )
-  const danglingTarget = paper.nodes
-    .flatMap((node) => ('inlineRuns' in node ? (node.inlineRuns ?? []) : []))
-    .flatMap((run) => run.targetIds ?? [])
-    .find((targetId) => excludedCanonicalNodeIds.has(targetId))
-  if (danglingTarget) {
-    throw new PdfImportError(
-      'INCOMPLETE_RECONSTRUCTION',
-      `A readable EPUB cannot safely omit rejected visual target ${danglingTarget}.`,
-    )
-  }
+  const paper = projectRenderableNoteRelationships(reconstruction.paper)
   if (!hasReadableText(paper)) {
     throw new PdfImportError(
       'INCOMPLETE_RECONSTRUCTION',
@@ -1916,11 +4089,7 @@ export function projectReadableFallbackReconstruction(
   return {
     ...reconstruction,
     paper,
-    provenance: Object.fromEntries(
-      Object.entries(reconstruction.provenance).filter(
-        ([nodeId]) => !excludedCanonicalNodeIds.has(nodeId),
-      ),
-    ),
+    provenance: reconstruction.provenance,
     visualRelationships: relationships,
     assets: reconstruction.assets.filter((asset) =>
       selectedAssetIds.has(asset.id),
@@ -1932,11 +4101,13 @@ function epubFileName(
   paper: ResearchPaper,
   profile: TargetProfile | undefined,
   mode: EpubExportMode,
+  canonicalContentSha256: string,
 ) {
-  const base = profile?.epub.fileName ?? `${slug(paper.title)}.epub`
-  return mode === 'readable-fallback'
-    ? base.replace(/\.epub$/i, '-readable.epub')
-    : base
+  const profileName = slug(
+    profile ? profile.id.replace(/([a-z0-9])([A-Z])/g, '$1-$2') : 'reflowable',
+  )
+  const modeSuffix = mode === 'readable-fallback' ? '-readable' : ''
+  return `${slug(paper.title)}-${profileName}-${canonicalContentSha256.slice(0, 12)}${modeSuffix}.epub`
 }
 
 async function buildEpubInternal(
@@ -1986,18 +4157,60 @@ async function buildEpubInternal(
     mode === 'readable-fallback' && renderReconstruction
       ? renderReconstruction.paper
       : paper
+  let publicationPdfAssessment:
+    ReturnType<typeof assessPdfCompleteness> | undefined
   assertUniqueCanonicalNodeIds(renderPaper)
-  assertPublicationIntegrity(renderPaper)
+  assertPublicationIntegrity(
+    renderPaper,
+    renderReconstruction?.noteRelationships,
+  )
   if (renderReconstruction) {
+    const validatedPdfRelationshipIds = isDocxReconstruction(
+      renderReconstruction,
+    )
+      ? null
+      : new Set(
+          validatedPdfVisualRelationships({
+            paper: renderPaper,
+            provenance: renderReconstruction.provenance,
+            relationships: renderReconstruction.visualRelationships,
+            assets: renderReconstruction.assets,
+            regions: (renderReconstruction as PdfReconstruction).regions,
+          }).map((relationship) => relationship.id),
+        )
     const assetIds = new Set(
       renderReconstruction.assets.map((asset) => asset.id),
     )
+    const renderNodeIds = new Set(renderPaper.nodes.map((node) => node.id))
     const invalid = renderReconstruction.visualRelationships.find(
-      (relationship) =>
-        relationship.status !== 'matched' ||
-        !relationship.canonicalNodeId ||
-        relationship.assetIds.length === 0 ||
-        relationship.assetIds.some((assetId) => !assetIds.has(assetId)),
+      (relationship) => {
+        if (relationship.status === 'matched') {
+          if (validatedPdfRelationshipIds) {
+            if (!validatedPdfRelationshipIds.has(relationship.id)) return true
+            return (
+              mode === 'publication' &&
+              relationship.kind === 'equation' &&
+              !hasResolvedEquationTranscript(
+                relationship,
+                (renderReconstruction as PdfReconstruction).regions,
+                (renderReconstruction as PdfReconstruction).pages,
+              )
+            )
+          }
+          return (
+            !relationship.canonicalNodeId ||
+            relationship.assetIds.length === 0 ||
+            relationship.assetIds.some((assetId) => !assetIds.has(assetId))
+          )
+        }
+        return !(
+          mode === 'readable-fallback' &&
+          relationship.canonicalNodeId === null &&
+          relationship.assetIds.length === 0 &&
+          relationship.captionNodeId &&
+          renderNodeIds.has(relationship.captionNodeId)
+        )
+      },
     )
     if (invalid) {
       const message = `EPUB export is blocked by visual relationship ${invalid.id}.`
@@ -2005,6 +4218,60 @@ async function buildEpubInternal(
         ? new DocxImportError('INCOMPLETE_RECONSTRUCTION', message)
         : new PdfImportError('INCOMPLETE_RECONSTRUCTION', message)
     }
+  }
+  if (
+    reconstruction &&
+    !isDocxReconstruction(reconstruction) &&
+    mode === 'publication'
+  ) {
+    if (!hasCompletePdfAssessmentEvidence(reconstruction)) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        'EPUB publication export requires complete PDF source, layout, provenance, relationship, and completeness evidence.',
+      )
+    }
+    const hyperlinkLedger = validatePdfHyperlinkEvidence({
+      reconstruction,
+      paper: renderPaper,
+    })
+    validatePdfCrossReferenceEvidence({
+      reconstruction,
+      paper: renderPaper,
+    })
+    const assessment = assessPdfCompleteness({
+      pages: reconstruction.pages,
+      paper: renderPaper,
+      diagnostics: reconstruction.diagnostics,
+      readingOrder: reconstruction.readingOrder,
+      regions: reconstruction.regions,
+      visualRelationships: reconstruction.visualRelationships,
+      assets: reconstruction.assets,
+      citationRelationships: reconstruction.citationRelationships,
+      noteRelationships: reconstruction.noteRelationships,
+      policy: reconstruction.readiness.policy,
+      lineBoundaryDecisions: reconstruction.lineBoundaryDecisions,
+      unresolvedCorruptingJoinCount:
+        reconstruction.unresolvedCorruptingJoinCount,
+      structurallyConsumedLineBoundaryCount:
+        reconstruction.structurallyConsumedLineBoundaryCount,
+      provenance: reconstruction.provenance,
+      inlineSpanLedger: {
+        expected: reconstruction.completeness.expectedInlineSpanCount,
+        mapped: reconstruction.completeness.mappedInlineSpanCount,
+      },
+      hyperlinkLedger: {
+        expected: hyperlinkLedger.expected,
+        mapped: hyperlinkLedger.mapped,
+      },
+      sourceSha256: reconstruction.source.sha256,
+    })
+    if (!assessment.readiness.ready) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `EPUB export-time reconstruction validation failed: ${assessment.readiness.blockingDiagnosticCodes.join(', ')}.`,
+      )
+    }
+    publicationPdfAssessment = assessment
   }
   const packaged = await packageVisualAssets(
     renderReconstruction?.assets ?? [],
@@ -2032,8 +4299,13 @@ async function buildEpubInternal(
   const sourceCanonicalHash = await sha256(
     JSON.stringify(reconstruction?.paper ?? paper),
   )
-  const identifier = `urn:srt:${stableId(renderPaper.id)}:${canonicalHash.slice(0, 24)}:${mode}${profile ? `:${profile.id}:${profile.version}:${EPUB_EXPORT_POLICY_VERSION}` : ''}`
-  const modified = `${renderPaper.updated}T00:00:00Z`
+  const identifier = exportIdentifier(
+    renderPaper.id,
+    canonicalHash,
+    mode,
+    profile,
+  )
+  const modified = epubArtifactModifiedAt(renderPaper)
   const exportProfileMetadata = profile ? profileMetadata(profile) : undefined
   const exportManifest = {
     schemaVersion: EPUB_EXPORT_SCHEMA_VERSION,
@@ -2072,8 +4344,10 @@ async function buildEpubInternal(
       )
       .map((node) => node.id),
     sourceProvenanceIncluded: Boolean(reconstruction),
-    sourceCompleteness: reconstruction?.completeness,
-    sourceReadiness: reconstruction?.readiness,
+    sourceCompleteness:
+      publicationPdfAssessment?.completeness ?? reconstruction?.completeness,
+    sourceReadiness:
+      publicationPdfAssessment?.readiness ?? reconstruction?.readiness,
     humanAdjudications:
       reconstruction && !isDocxReconstruction(reconstruction)
         ? {
@@ -2127,7 +4401,14 @@ async function buildEpubInternal(
     ),
   }
   const bytes = zipSync(archive)
-  const { files, entries } = inspectEpub(bytes, profile)
+  const { files, entries } = inspectEpub(bytes, profile, {
+    canonicalPaper: renderPaper,
+    sourceCanonicalPaper: reconstruction?.paper ?? paper,
+    sourcePdfSha256:
+      reconstruction && !isDocxReconstruction(reconstruction)
+        ? reconstruction.source.sha256
+        : undefined,
+  })
   if (renderReconstruction) {
     const content = strFromU8(files['EPUB/content.xhtml'])
     const opf = strFromU8(files['EPUB/package.opf'])
@@ -2152,7 +4433,7 @@ async function buildEpubInternal(
   }
   return {
     bytes,
-    fileName: epubFileName(renderPaper, profile, mode),
+    fileName: epubFileName(renderPaper, profile, mode, canonicalHash),
     mediaType: EPUB_MIMETYPE,
     sha256: await sha256(bytes),
     identifier,

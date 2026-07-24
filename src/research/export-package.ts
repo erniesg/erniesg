@@ -184,8 +184,9 @@ function deviceEpubMetadata(epub: EpubExport) {
   if (!epub.profile) {
     throw new Error(`${epub.fileName} is missing target-profile metadata`)
   }
+  const artifact = getTargetProfile(epub.profile.id).epub.fileName
   return {
-    artifact: epub.fileName as
+    artifact: artifact as
       | 'publication-paperpro.epub'
       | 'publication-papermove.epub',
     profileId: epub.profile.id as 'paperPro' | 'paperProMove',
@@ -348,7 +349,8 @@ export async function buildExportPackage(
     file('publication.epub', epub.mediaType, epub.bytes),
     ...deviceEpubs.map((deviceEpub) =>
       file(
-        deviceEpub.fileName as ExportPackagePath,
+        getTargetProfile(deviceEpub.profile!.id).epub
+          .fileName as ExportPackagePath,
         deviceEpub.mediaType,
         deviceEpub.bytes,
       ),
@@ -563,6 +565,10 @@ export async function verifyExportPackage(
       const epub = inspectEpub(
         getExportFile(exportPackage, artifact.path).bytes,
         artifact.profile,
+        {
+          canonicalPaper: paper,
+          sourceCanonicalPaper: paper,
+        },
       )
       epubContent = strFromU8(epub.files['EPUB/content.xhtml'])
       if (artifact.profile) {

@@ -5,6 +5,9 @@
   "title": "If Letters Home Could Sing",
   "subtitle": "A biometric installation giving voice to Hainanese women",
   "authors": ["Chen Enjiao (Ernie)"],
+  "language": "en",
+  "baseDirection": "ltr",
+  "artifactModifiedAt": "2026-07-13T00:00:00Z",
   "updated": "2026-07-13",
   "abstract": "This research transforms historical qiao pi correspondence into an embodied encounter: heart rate-synchronised sound experiences that centre Hainanese women’s everyday voices and challenge monolithic narratives of the Chinese diaspora.",
   "nodes": [

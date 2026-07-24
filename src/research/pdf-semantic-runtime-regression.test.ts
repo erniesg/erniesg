@@ -159,7 +159,7 @@ describe('PDF semantic runtime regressions', () => {
       reconstruction: result,
     })
     expect(xhtml).toContain('class="visually-hidden visual-source-transcript"')
-    expect(xhtml).toContain('[1-2]')
+    expect(xhtml.replace(/<[^>]+>/gu, '')).toContain('[1-2]')
     for (const citation of citations) {
       expect(xhtml).toContain(`data-relationship-id="${citation.id}"`)
     }
@@ -446,7 +446,7 @@ describe('PDF semantic runtime regressions', () => {
     )
   })
 
-  it('emits nonempty accessible links for every target in a citation range', () => {
+  it('emits one nonempty link for every explicit label in a citation range', () => {
     const paper = {
       id: 'citation-range-paper',
       version: '1.0.0',
@@ -487,9 +487,12 @@ describe('PDF semantic runtime regressions', () => {
       ),
     ]
 
-    expect(anchors).toHaveLength(3)
+    expect(anchors).toHaveLength(2)
     expect(anchors.every((match) => match[1].trim().length > 0)).toBe(true)
     expect(xhtml.match(/Prior work/g)).toHaveLength(1)
-    expect(xhtml.match(/\[1–3\]/g)).toHaveLength(3)
+    expect(xhtml).toContain(
+      'data-target-ids="reference-1 reference-2 reference-3"',
+    )
+    expect(xhtml.match(/>1<\/a>–<a[^>]*>3<\/a>/gu)).toHaveLength(1)
   })
 })

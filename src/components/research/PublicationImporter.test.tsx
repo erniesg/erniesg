@@ -11,8 +11,11 @@ vi.mock('./ResearchStudio', () => ({ default: () => null }))
 vi.mock('./EpubDownloadLink', () => ({ default: () => null }))
 
 import PublicationImporter, {
+  importErrorCode,
+  importErrorMessage,
   isSelectedEpubPreviewReady,
   LineJoinAdjudicationCard,
+  shouldReloadStaleApplicationModule,
 } from './PublicationImporter'
 
 describe('publication importer OCR controls', () => {
@@ -117,5 +120,39 @@ describe('publication importer OCR controls', () => {
     expect(markup).toContain('value="auto" selected=""')
     expect(markup).toContain('English fallback')
     expect(markup).toContain('local language pack')
+  })
+
+  it('states the actual 50 MiB local upload limit', () => {
+    const markup = renderToStaticMarkup(<PublicationImporter />)
+
+    expect(markup).toContain('Up to 50 MiB')
+    expect(markup).not.toContain('Up to 75 MB')
+  })
+
+  it('recognizes an outdated Vite dynamic import without exposing its internal URL', () => {
+    const staleImportA = new TypeError(
+      'Failed to fetch dynamically imported module: http://127.0.0.1:4321/node_modules/.vite/deps/pdfjs-dist.js?v=bfb6b1be',
+    )
+    const staleImportB = new TypeError(
+      'Failed to fetch dynamically imported module: http://127.0.0.1:4321/node_modules/.vite/deps/pdfjs-dist.js?v=c9af6a8a',
+    )
+
+    expect(importErrorCode(staleImportA)).toBe('STALE_APPLICATION_MODULE')
+    expect(importErrorMessage(staleImportA)).toBe(
+      'The converter changed while this tab was open. Reload the studio once, then choose the same paper again.',
+    )
+    expect(importErrorMessage(staleImportA)).not.toContain('node_modules')
+    expect(shouldReloadStaleApplicationModule(staleImportA)).toBe(true)
+    expect(
+      shouldReloadStaleApplicationModule(staleImportA, staleImportA.message),
+    ).toBe(false)
+    expect(
+      shouldReloadStaleApplicationModule(staleImportB, staleImportA.message),
+    ).toBe(true)
+    expect(
+      shouldReloadStaleApplicationModule(
+        new Error('The selected file is not a PDF.'),
+      ),
+    ).toBe(false)
   })
 })

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-eval-observations-2.0.0.json",
+  "title": "Observed first-failure annotations for additive PDF fidelity cases",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "privacy",
+    "evalSet",
+    "method",
+    "observations"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "2.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "privacy": {
+      "const": "public-identities-hashes-normalized-case-provenance-no-source-content"
+    },
+    "evalSet": { "$ref": "#/$defs/evalSetBinding" },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit",
+        "firstFailureDefinition",
+        "annotationStatus",
+        "selectionStatus",
+        "candidateOutputConsulted"
+      ],
+      "properties": {
+        "unit": { "const": "bounded-source-to-output-case" },
+        "firstFailureDefinition": {
+          "const": "earliest-source-backed-pipeline-decision-that-can-explain-the-bounded-failure"
+        },
+        "annotationStatus": {
+          "const": "source-verified-complaint-driven-public-calibration-not-independent-blind-holdout"
+        },
+        "selectionStatus": {
+          "const": "candidate-output-used-for-case-selection-source-pdf-used-for-label"
+        },
+        "candidateOutputConsulted": { "const": true }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/observation" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "evalSetBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "fileSha256",
+        "evalSetSha256",
+        "documentIdentitySha256",
+        "caseIdentitySha256"
+      ],
+      "properties": {
+        "path": { "const": "benchmarks/pdf/fidelity-eval-v2.json" },
+        "fileSha256": { "$ref": "#/$defs/sha256" },
+        "evalSetSha256": { "$ref": "#/$defs/sha256" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentId", "sourcePdfSha256", "pages", "evidence"],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/id" },
+        "sourcePdfSha256": { "$ref": "#/$defs/sha256" },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "evidence": {
+          "const": "hash-pinned-source-pdf-pages-and-per-target-normalized-geometry"
+        }
+      }
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "outcome"],
+      "properties": {
+        "id": {
+          "enum": ["exact-classification", "all-pairs-reading-order"]
+        },
+        "kind": { "const": "code" },
+        "outcome": { "const": "binary-pass-fail" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "firstFailureClass",
+        "sourceArtifact",
+        "evaluator"
+      ],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/id" },
+        "firstFailureClass": {
+          "enum": [
+            "reading-topology",
+            "semantic-type-confusion",
+            "lexical-and-operator-loss"
+          ]
+        },
+        "sourceArtifact": { "$ref": "#/$defs/sourceArtifact" },
+        "evaluator": { "$ref": "#/$defs/evaluator" }
+      }
+    }
+  }
+}

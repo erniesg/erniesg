@@ -50,6 +50,9 @@ teaser.pptx
 resumes/
 outputs/
 
+# Local PDF fidelity corpora and rendered review artifacts
+/tmp/
+
 # Local rucksack outputs and generated artifacts
 .agent/evidence/
 .agent/submissions/

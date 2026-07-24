@@ -1,0 +1,157 @@
+{
+  "schemaVersion": "2.0.0",
+  "id": "scholarly-pdf-fidelity-additions-2026-07-v2",
+  "annotationSchemaVersion": "2.0.0",
+  "privacy": "public-identities-normalized-geometry-no-source-content",
+  "extends": {
+    "id": "scholarly-pdf-fidelity-seed-2026-07-v1",
+    "schemaVersion": "1.0.0",
+    "path": "benchmarks/pdf/fidelity-eval-v1.json",
+    "fileSha256": "35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002",
+    "evalSetSha256": "e7072984f8afb438086780b1544eb38ce8be42b10f8f87e7659ed9bd3d6cb2aa"
+  },
+  "scoring": {
+    "detectionIouThreshold": 0.8,
+    "minimumOverallScore": 1,
+    "requireAllCriticalCases": true
+  },
+  "strata": [
+    {
+      "id": "document-figure-reading-order",
+      "task": "reading-order",
+      "critical": true
+    },
+    {
+      "id": "inline-stacked-fragment-role",
+      "task": "classification",
+      "critical": true
+    },
+    {
+      "id": "inline-script-token-boundary",
+      "task": "classification",
+      "critical": true
+    }
+  ],
+  "documents": [
+    {
+      "id": "2412.13575v1",
+      "fileName": "2412.13575v1.pdf",
+      "byteLength": 1683269,
+      "sha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+      "pageCount": 39
+    },
+    {
+      "id": "2502.00873v1",
+      "fileName": "2502.00873v1.pdf",
+      "byteLength": 6212927,
+      "sha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+      "pageCount": 24
+    }
+  ],
+  "cases": [
+    {
+      "id": "2502.00873v1.p016-p020.figures-21-30-global-order",
+      "documentId": "2502.00873v1",
+      "page": 16,
+      "stratum": "document-figure-reading-order",
+      "task": "reading-order",
+      "critical": true,
+      "targets": [
+        {
+          "id": "figure-21-caption-anchor",
+          "kind": "figure-caption-anchor",
+          "sourcePage": 16,
+          "box": [0.089768, 0.761805, 0.06023, 0.010121]
+        },
+        {
+          "id": "figure-22-caption-anchor",
+          "kind": "figure-caption-anchor",
+          "sourcePage": 17,
+          "box": [0.089768, 0.43431, 0.06023, 0.010121]
+        },
+        {
+          "id": "figure-23-caption-anchor",
+          "kind": "figure-caption-anchor",
+          "sourcePage": 17,
+          "box": [0.089768, 0.851005, 0.06023, 0.010121]
+        },
+        {
+          "id": "figure-24-caption-anchor",
+          "kind": "figure-caption-anchor",
+          "sourcePage": 18,
+          "box": [0.089768, 0.583333, 0.06023, 0.010121]
+        },
+        {
+          "id": "figure-29-caption-anchor",
+          "kind": "figure-caption-anchor",
+          "sourcePage": 19,
+          "box": [0.089768, 0.820368, 0.06023, 0.010121]
+        },
+        {
+          "id": "figure-30-caption-anchor",
+          "kind": "figure-caption-anchor",
+          "sourcePage": 20,
+          "box": [0.089768, 0.28665, 0.06023, 0.010121]
+        }
+      ],
+      "expected": {
+        "order": [
+          "figure-21-caption-anchor",
+          "figure-22-caption-anchor",
+          "figure-23-caption-anchor",
+          "figure-24-caption-anchor",
+          "figure-29-caption-anchor",
+          "figure-30-caption-anchor"
+        ]
+      }
+    },
+    {
+      "id": "2502.00873v1.p005.inline-stacked-fragment-role",
+      "documentId": "2502.00873v1",
+      "page": 5,
+      "stratum": "inline-stacked-fragment-role",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "inline-stacked-fragment",
+          "kind": "inline-stacked-fragment",
+          "sourcePage": 5,
+          "box": [0.843753, 0.246373, 0.017811, 0.013503]
+        }
+      ],
+      "expected": {
+        "labels": [
+          {
+            "targetId": "inline-stacked-fragment",
+            "label": "not-standalone-display-equation"
+          }
+        ]
+      }
+    },
+    {
+      "id": "2412.13575v1.p003.inline-script-contiguous-token",
+      "documentId": "2412.13575v1",
+      "page": 3,
+      "stratum": "inline-script-token-boundary",
+      "task": "classification",
+      "critical": true,
+      "targets": [
+        {
+          "id": "inline-superscript-token",
+          "kind": "inline-superscript-token",
+          "sourcePage": 3,
+          "box": [0.852702, 0.730856, 0.027419, 0.008407]
+        }
+      ],
+      "expected": {
+        "labels": [
+          {
+            "targetId": "inline-superscript-token",
+            "label": "contiguous-token"
+          }
+        ]
+      }
+    }
+  ]
+}

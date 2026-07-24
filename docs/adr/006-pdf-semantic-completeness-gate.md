@@ -113,7 +113,7 @@ npm run pdf:corpus-audit -- /operator/supplied/file-or-directory
 
 The command exits nonzero if any document needs review. `--report-only` emits the
 same JSON without using incompleteness as the process exit status. Reports use
-schema `1.4.0`, validated by `docs/schemas/pdf-corpus-audit.schema.json`, and
+schema `1.5.0`, validated by `docs/schemas/pdf-corpus-audit.schema.json`, and
 contain only stable basenames, SHA-256 hashes, byte/page counts, completeness
 metrics, readiness, deterministic structural hashes derived from the canonical
 evidence, exact per-code diagnostic counts, and redacted samples bounded to

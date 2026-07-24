@@ -25,9 +25,16 @@ const MIN_LINE_BAND_HEIGHT = 0.025
 const MAX_LINE_BAND_AREA = 0.5
 const MIN_CAPTION_HORIZONTAL_COVERAGE = 0.8
 const MIN_TABULAR_ROW_ANCHORS = 3
+const MIN_ROW_BAND_LINE_HEIGHT_RATIO = 0.9
+const MAX_ROW_BAND_LINE_HEIGHT_RATIO = 1.2
+const MIN_ATOMIC_BAND_REGION_HORIZONTAL_COVERAGE = 0.5
 const MAX_TEXT_SLAB_ROW_GAP = 0.0185
 const MAX_TEXT_SLAB_CAPTION_GAP = 0.02
+const MAX_PROMPT_SLAB_ROW_GAP = 0.035
+const MAX_PROMPT_SLAB_CAPTION_GAP = 0.03
 const MIN_TEXT_SLAB_ROWS = 5
+const MIN_PROMPT_SLAB_ROWS = 6
+const MIN_PROMPT_STRUCTURED_RECORDS = 3
 const MIN_TEXT_SLAB_WIDTH = 0.25
 const MIN_WIDE_TEXT_SLAB_WIDTH = 0.65
 const MIN_TEXT_SLAB_HEIGHT = 0.05
@@ -36,6 +43,9 @@ const MAX_COMPRESSED_TEXT_SLAB_FONT_RATIO = 0.82
 const MIN_TABULAR_SLAB_ROWS = 5
 const MIN_TABULAR_SLAB_ANCHORS = 3
 const MIN_REPEATED_TABULAR_SLAB_ANCHORS = 3
+const MIN_LABELED_RECORD_ROWS = 3
+const MIN_LABELED_RECORD_WIDTH = 0.5
+const MAX_UNPROVEN_PAGE_TOP_TABLE_START = 0.105
 
 export type PdfTableScopeProof =
   | 'text-grid'
@@ -78,6 +88,12 @@ export type PdfTableScopeEvidence =
       lineIds: string[]
     }
   | {
+      code: 'supplemental-equation-cell-shard'
+      regionIds: string[]
+      lineIds: string[]
+      columnAnchors: number[]
+    }
+  | {
       code: 'partial-parent-line-selection'
       partialRegionIds: string[]
       selectedLineIds: string[]
@@ -90,6 +106,7 @@ export type PdfTableScopeEvidence =
       singleAnchorRowCount: number
       wideLayout: boolean
       compressedTypography: boolean
+      sourceStartHeading: boolean
     }
   | {
       code: 'contiguous-tabular-slab'
@@ -97,6 +114,19 @@ export type PdfTableScopeEvidence =
       lineIds: string[]
       tabularRowCount: number
       repeatedAnchorCount: number
+    }
+  | {
+      code: 'caption-bounded-prompt-slab'
+      rowCount: number
+      lineIds: string[]
+      monospacedRowCount: number
+      structuredRecordCount: number
+    }
+  | {
+      code: 'repeated-labeled-record-rows'
+      rowCount: number
+      lineIds: string[]
+      labeledRowCount: number
     }
   | {
       code: 'source-native-raster'
@@ -402,10 +432,70 @@ function completeAboveCaptionLane(
   }
 }
 
+function completeBelowCaptionLane(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+): DirectionalLane {
+  const captionBottom = caption.box.y + caption.box.height
+  const next = captionBoundaryCandidates(caption, pageRegions).find(
+    (candidate) => candidate.box.y >= captionBottom - BOX_TOLERANCE,
+  )
+  return {
+    direction: 'below',
+    top: rounded(captionBottom),
+    bottom: rounded(next ? next.box.y - BOX_TOLERANCE : 1),
+    boundaryRegionIds: next ? [caption.id, next.id] : [caption.id],
+    interveningCaptionRegionId: next?.id ?? null,
+  }
+}
+
 function boxWithinLane(sourceBox: NormalizedSourceBox, lane: DirectionalLane) {
   return (
     sourceBox.y >= lane.top - BOX_TOLERANCE &&
     sourceBox.y + sourceBox.height <= lane.bottom + BOX_TOLERANCE
+  )
+}
+
+function explicitTableStyle(run: PdfRegionLine['runs'][number]) {
+  return (
+    run.bold === true ||
+    /(?:bold|black|demi|semibold|(?:^|[-_])medi(?:um)?(?:$|[-_]))/i.test(
+      run.fontName,
+    )
+  )
+}
+
+function labeledRecordLine(line: PdfRegionLine) {
+  const text = line.text.trim()
+  const colonIndex = text.indexOf(':')
+  const firstRun = line.runs.find((run) => run.text.trim())
+  const value = colonIndex >= 0 ? text.slice(colonIndex + 1).trim() : ''
+  return Boolean(
+    firstRun &&
+    colonIndex >= 2 &&
+    colonIndex <= 120 &&
+    explicitTableStyle(firstRun) &&
+    (value.match(/\p{L}{2,}/gu)?.length ?? 0) >= 3,
+  )
+}
+
+function proseDominantTabularEquationLine(line: PdfRegionLine) {
+  const proseWordCount = line.text.match(/\p{L}{2,}/gu)?.length ?? 0
+  return (
+    proseWordCount >= 3 &&
+    (cellAnchors(line.runs).length >= MIN_TABULAR_ROW_ANCHORS ||
+      labeledRecordLine(line))
+  )
+}
+
+function eligibleTableTextRegion(region: PdfPageRegion) {
+  return (
+    ['body', 'spanning', 'side', 'chart-label', 'footnote'].includes(
+      region.kind,
+    ) ||
+    (region.kind === 'equation' &&
+      (region.lines.length === 1 ||
+        region.lines.some(proseDominantTabularEquationLine)))
   )
 }
 
@@ -441,7 +531,7 @@ function connectedComponents<T>(
   const components: T[][] = []
   while (remaining.length > 0) {
     const component = [remaining.shift()!]
-    for (let index = 0; index < remaining.length; ) {
+    for (let index = 0; index < remaining.length;) {
       const candidate = remaining[index]!
       if (component.some((item) => connected(item, candidate))) {
         component.push(remaining.splice(index, 1)[0]!)
@@ -903,14 +993,100 @@ function repeatedTabularAnchorCount(rows: TableLineRow[]) {
   return anchors.filter((anchor) => anchor.rowIndexes.size >= 3).length
 }
 
+function sourceStyledSectionBoundaryRow(
+  row: TableLineRow,
+  precedingRows: TableLineRow[],
+) {
+  if (precedingRows.length < MIN_GRID_ROWS) return false
+  const orderedEntries = [...row.entries].sort(
+    (left, right) =>
+      left.line.box.x - right.line.box.x ||
+      left.line.id.localeCompare(right.line.id),
+  )
+  const visibleText = orderedEntries
+    .map((entry) => entry.line.text.trim())
+    .filter(Boolean)
+    .join(' ')
+  if (
+    !/^(?:\d+(?:\.\d+){0,3}[.)]?|[A-Z](?:\.\d+)+[.)]?)\s+\p{Lu}/u.test(
+      visibleText,
+    )
+  ) {
+    return false
+  }
+  const runs = orderedEntries.flatMap((entry) => entry.line.runs)
+  const visibleCharacters = runs.reduce(
+    (total, run) => total + run.text.trim().length,
+    0,
+  )
+  const emphasizedCharacters = runs.reduce(
+    (total, run) =>
+      total + (explicitTableStyle(run) ? run.text.trim().length : 0),
+    0,
+  )
+  const precedingFontSize = median(
+    precedingRows.flatMap((candidate) =>
+      candidate.entries.map((entry) => entry.line.fontSize),
+    ),
+  )
+  const rowFontSize = Math.max(
+    ...orderedEntries.map((entry) => entry.line.fontSize),
+  )
+  const hierarchicalNumberedHeading = /^\d+\.\d/u.test(visibleText)
+  return (
+    visibleCharacters > 0 &&
+    ((hierarchicalNumberedHeading && rowFontSize >= precedingFontSize * 1.12) ||
+      (emphasizedCharacters >= visibleCharacters * 0.6 &&
+        rowFontSize >= precedingFontSize * 1.05))
+  )
+}
+
+function startsSparseContinuation(
+  establishedRows: TableLineRow[],
+  remainingRows: TableLineRow[],
+) {
+  if (
+    establishedRows.length < MIN_GRID_ROWS ||
+    remainingRows.length < MIN_GRID_ROWS ||
+    !tabularLineBandProof(establishedRows) ||
+    remainingRows
+      .slice(0, MIN_GRID_ROWS)
+      .some((row) => row.anchors.length >= MIN_TABULAR_ROW_ANCHORS)
+  ) {
+    return false
+  }
+  const previous = establishedRows.at(-1)!
+  const boundaryGap = gapBetween(previous.box, remainingRows[0].box).vertical
+  const establishedGaps = establishedRows
+    .slice(1)
+    .map((row, index) =>
+      gapBetween(establishedRows[index].box, row.box).vertical,
+    )
+  const continuation = remainingRows.slice(0, MIN_GRID_ROWS)
+  const continuationGaps = continuation
+    .slice(1)
+    .map((row, index) =>
+      gapBetween(continuation[index].box, row.box).vertical,
+    )
+  const establishedGap = median(establishedGaps)
+  const continuationGap = median(continuationGaps)
+  return (
+    boundaryGap >= 0.018 &&
+    boundaryGap >= Math.max(establishedGap, 0.001) * 2.5 &&
+    boundaryGap >= Math.max(continuationGap, 0.001) * 2.5
+  )
+}
+
 function tableLineBands(rows: TableLineRow[]) {
   const bands: TableLineRow[][] = []
-  for (const row of rows) {
+  for (const [rowIndex, row] of rows.entries()) {
     const band = bands.at(-1)
     const previous = band?.at(-1)
     if (
       band &&
       previous &&
+      !sourceStyledSectionBoundaryRow(row, band) &&
+      !startsSparseContinuation(band, rows.slice(rowIndex)) &&
       gapBetween(previous.box, row.box).vertical <= MAX_ATOMIC_ROW_GAP
     ) {
       band.push(row)
@@ -919,6 +1095,19 @@ function tableLineBands(rows: TableLineRow[]) {
     }
   }
   return bands
+}
+
+function lineHeightMatchesBand(
+  line: PdfRegionLine,
+  referenceHeights: number[],
+) {
+  const referenceHeight = median(referenceHeights)
+  if (referenceHeight <= 0) return false
+  const ratio = line.box.height / referenceHeight
+  return (
+    ratio >= MIN_ROW_BAND_LINE_HEIGHT_RATIO &&
+    ratio <= MAX_ROW_BAND_LINE_HEIGHT_RATIO
+  )
 }
 
 function captionGap(
@@ -948,6 +1137,276 @@ function tabularLineBandProof(rows: TableLineRow[]) {
     lineIds: rows
       .flatMap((row) => row.entries.map((entry) => entry.line.id))
       .sort(),
+  }
+}
+
+function matchingTableRowIndex(
+  rows: TableLineRow[],
+  line: PdfRegionLine,
+) {
+  const matches = rows
+    .map((row, index) => ({ index, distance: Math.abs(row.y - line.box.y) }))
+    .filter((candidate) => candidate.distance <= BOX_TOLERANCE)
+    .sort(
+      (left, right) =>
+        left.distance - right.distance || left.index - right.index,
+    )
+  return matches.length === 1 ? matches[0].index : null
+}
+
+function recurringCaptionBandEntries(
+  captionRows: TableLineRow[],
+  laneEntries: TableLineEntry[],
+) {
+  const captionEntryKeys = new Set(
+    captionRows
+      .flatMap((row) => row.entries)
+      .map((entry) => tableLineEntryKey(entry)),
+  )
+  const entries = laneEntries
+    .map((entry) => ({
+      entry,
+      rowIndex: matchingTableRowIndex(captionRows, entry.line),
+      anchors: cellAnchors(entry.line.runs),
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        entry: TableLineEntry
+        rowIndex: number
+        anchors: number[]
+      } =>
+        candidate.rowIndex !== null &&
+        candidate.anchors.length > 0,
+    )
+  const anchorBands: Array<{
+    anchor: number
+    values: number[]
+    rowIndexes: Set<number>
+  }> = []
+  for (const { rowIndex, anchors } of entries) {
+    for (const anchor of anchors) {
+      const band = anchorBands
+        .map((candidate) => ({
+          candidate,
+          distance: Math.abs(candidate.anchor - anchor),
+        }))
+        .filter(
+          ({ distance }) => distance <= COLUMN_ANCHOR_TOLERANCE,
+        )
+        .sort(
+          (left, right) =>
+            left.distance - right.distance ||
+            left.candidate.anchor - right.candidate.anchor,
+        )[0]?.candidate
+      if (band) {
+        band.values.push(anchor)
+        band.anchor = median(band.values)
+        band.rowIndexes.add(rowIndex)
+      } else {
+        anchorBands.push({
+          anchor,
+          values: [anchor],
+          rowIndexes: new Set([rowIndex]),
+        })
+      }
+    }
+  }
+  const recurringBands = anchorBands.filter(
+    (band) => band.rowIndexes.size === captionRows.length,
+  )
+  return entries
+    .filter(({ entry, anchors }) => {
+      if (captionEntryKeys.has(tableLineEntryKey(entry))) return true
+      return anchors.every((anchor) =>
+        recurringBands.some(
+          (band) =>
+            Math.abs(band.anchor - anchor) <= COLUMN_ANCHOR_TOLERANCE,
+        ),
+      )
+    })
+    .map(({ entry }) => entry)
+}
+
+type SupplementalEquationCellShards = {
+  entries: TableLineEntry[]
+  ambiguous: boolean
+  regionIds: string[]
+  lineIds: string[]
+  columnAnchors: number[]
+}
+
+function supplementalEquationCellShardEntries({
+  caption,
+  lane,
+  pageRegions,
+  ordinaryEntries,
+}: {
+  caption: PdfPageRegion
+  lane: DirectionalLane
+  pageRegions: PdfPageRegion[]
+  ordinaryEntries: TableLineEntry[]
+}): SupplementalEquationCellShards {
+  const none = {
+    entries: [],
+    ambiguous: false,
+    regionIds: [],
+    lineIds: [],
+    columnAnchors: [],
+  } satisfies SupplementalEquationCellShards
+  const ordinaryRows = tableLineRows(
+    ordinaryEntries.filter((entry) => entry.region.kind !== 'equation'),
+  )
+  const strongRows = ordinaryRows
+    .map((row, rowIndex) => ({ row, rowIndex }))
+    .filter(({ row }) => row.anchors.length >= MIN_TABULAR_ROW_ANCHORS)
+  if (strongRows.length < 2) return none
+
+  const establishedColumns: Array<{
+    anchor: number
+    values: number[]
+    rowIndexes: Set<number>
+  }> = []
+  for (const { row, rowIndex } of strongRows) {
+    for (const anchor of row.anchors) {
+      const column = establishedColumns
+        .map((candidate) => ({
+          candidate,
+          distance: Math.abs(candidate.anchor - anchor),
+        }))
+        .filter(
+          ({ distance }) => distance <= COLUMN_ANCHOR_TOLERANCE,
+        )
+        .sort(
+          (left, right) =>
+            left.distance - right.distance ||
+            left.candidate.anchor - right.candidate.anchor,
+        )[0]?.candidate
+      if (column) {
+        column.values.push(anchor)
+        column.anchor = median(column.values)
+        column.rowIndexes.add(rowIndex)
+      } else {
+        establishedColumns.push({
+          anchor,
+          values: [anchor],
+          rowIndexes: new Set([rowIndex]),
+        })
+      }
+    }
+  }
+  const provenColumns = establishedColumns.filter(
+    (column) => column.rowIndexes.size >= 2,
+  )
+  if (provenColumns.length < MIN_TABULAR_ROW_ANCHORS) return none
+
+  const qualified = pageRegions.flatMap((region) => {
+    if (
+      region.page !== caption.page ||
+      region.id === caption.id ||
+      region.kind !== 'equation' ||
+      region.lines.length < 2 ||
+      region.nativeObjectIds.length > 0 ||
+      eligibleTableTextRegion(region) ||
+      !validBox(region.box)
+    ) {
+      return []
+    }
+    const lines = region.lines.map((line) => {
+      const entry = { region, line }
+      const anchors = cellAnchors(line.runs)
+      if (
+        !validTableLineEntry(entry) ||
+        !boxWithinLane(line.box, lane) ||
+        !overlapsCaption(caption, line.box) ||
+        anchors.length !== 1
+      ) {
+        return null
+      }
+      const rowIndex = matchingTableRowIndex(ordinaryRows, line)
+      if (rowIndex === null) return null
+      const anchor = anchors[0]
+      const ordinaryAnchors = ordinaryRows[rowIndex].anchors
+      if (
+        !ordinaryAnchors.some(
+          (candidate) => candidate < anchor - MIN_DENSE_CELL_GAP,
+        ) ||
+        !ordinaryAnchors.some(
+          (candidate) => candidate > anchor + MIN_DENSE_CELL_GAP,
+        )
+      ) {
+        return null
+      }
+      const columns = provenColumns
+        .map((column, columnIndex) => ({
+          columnIndex,
+          anchor: column.anchor,
+          distance: Math.abs(column.anchor - anchor),
+        }))
+        .filter(
+          (candidate) =>
+            candidate.distance <= COLUMN_ANCHOR_TOLERANCE,
+        )
+        .sort(
+          (left, right) =>
+            left.distance - right.distance ||
+            left.columnIndex - right.columnIndex,
+        )
+      if (columns.length !== 1) return null
+      return {
+        entry,
+        rowIndex,
+        columnIndex: columns[0].columnIndex,
+        columnAnchor: rounded(columns[0].anchor),
+      }
+    })
+    if (
+      lines.some((line) => line === null) ||
+      new Set(
+        lines.map((line) =>
+          line ? `${line.rowIndex}:${line.columnIndex}` : '',
+        ),
+      ).size !== lines.length
+    ) {
+      return []
+    }
+    return [
+      {
+        region,
+        lines: lines as Array<NonNullable<(typeof lines)[number]>>,
+      },
+    ]
+  })
+  if (qualified.length === 0) return none
+
+  const slotOwners = new Map<string, Set<string>>()
+  for (const candidate of qualified) {
+    for (const line of candidate.lines) {
+      const slot = `${line.rowIndex}:${line.columnIndex}`
+      const owners = slotOwners.get(slot) ?? new Set<string>()
+      owners.add(candidate.region.id)
+      slotOwners.set(slot, owners)
+    }
+  }
+  if ([...slotOwners.values()].some((owners) => owners.size > 1)) {
+    return { ...none, ambiguous: true }
+  }
+  const entries = qualified.flatMap((candidate) =>
+    candidate.lines.map((line) => line.entry),
+  )
+  return {
+    entries,
+    ambiguous: false,
+    regionIds: qualified.map((candidate) => candidate.region.id).sort(),
+    lineIds: entries.map((entry) => entry.line.id).sort(),
+    columnAnchors: [
+      ...new Set(
+        qualified.flatMap((candidate) =>
+          candidate.lines.map((line) => line.columnAnchor),
+        ),
+      ),
+    ].sort((left, right) => left - right),
   }
 }
 
@@ -1132,9 +1591,7 @@ function textGridCandidates(
         region.lines.length > 0 &&
         region.text.trim().length > 0 &&
         region.nativeObjectIds.length === 0 &&
-        ['body', 'spanning', 'side', 'chart-label', 'footnote'].includes(
-          region.kind,
-        ) &&
+        eligibleTableTextRegion(region) &&
         validBox(region.box) &&
         boxWithinLane(region.box, lane) &&
         overlapsCaption(caption, region.box),
@@ -1183,11 +1640,23 @@ function textGridCandidates(
           : 'pdf-text',
       )
       const atomicIds = new Set(atomic.map((region) => region.id))
+      const atomicLineHeights = atomic.flatMap((region) =>
+        region.lines.map((line) => line.box.height),
+      )
       const containedMultilineRegions = eligible.filter(
         (region) =>
           !atomicIds.has(region.id) &&
           region.lines.length > 1 &&
-          containsBox(atomicCrop, region.box),
+          horizontalOverlap(atomicCrop, region.box) /
+            Math.min(atomicCrop.width, region.box.width) >=
+            MIN_ATOMIC_BAND_REGION_HORIZONTAL_COVERAGE &&
+          region.lines.every(
+            (line) =>
+              line.box.y >= atomicCrop.y - BOX_TOLERANCE &&
+              line.box.y + line.box.height <=
+                atomicCrop.y + atomicCrop.height + BOX_TOLERANCE &&
+              lineHeightMatchesBand(line, atomicLineHeights),
+          ),
       )
       const scope = textGridScope(
         caption,
@@ -1222,6 +1691,75 @@ function lineSelectionIds(lineLineage: PdfTableLineLineage[]) {
   )
 }
 
+function tableLineEntryKey(entry: TableLineEntry) {
+  return `${entry.region.id}/${entry.line.id}`
+}
+
+function closeProvenTableLineBand(
+  caption: PdfPageRegion,
+  lane: DirectionalLane,
+  pageRegions: PdfPageRegion[],
+  initiallySelected: TableLineEntry[],
+) {
+  const selected = new Map(
+    initiallySelected.map((entry) => [tableLineEntryKey(entry), entry]),
+  )
+  const candidates = pageRegions
+    .filter(
+      (region) =>
+        region.page === caption.page &&
+        region.id !== caption.id &&
+        region.lines.length > 0 &&
+        region.text.trim().length > 0 &&
+        validBox(region.box),
+    )
+    .flatMap<TableLineEntry>((region) =>
+      region.lines
+        .map((line) => ({ region, line }))
+        .filter(
+          (entry) =>
+            validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+        ),
+    )
+  let changed = true
+  while (changed) {
+    changed = false
+    const selectedEntries = [...selected.values()]
+    const selectedBoxes = selectedEntries.map((entry) => entry.line.box)
+    const cropBox = unionBoxes(
+      selectedBoxes,
+      selectedBoxes.some((sourceBox) => sourceBox.method === 'ocr')
+        ? 'ocr'
+        : 'pdf-text',
+    )
+    for (const candidate of candidates) {
+      const key = tableLineEntryKey(candidate)
+      if (selected.has(key)) continue
+      const sameParentSourceRow = selectedEntries.some(
+        (entry) =>
+          entry.region.id === candidate.region.id &&
+          Math.abs(entry.line.box.y - candidate.line.box.y) <= BOX_TOLERANCE,
+      )
+      const candidateCenterX =
+        candidate.line.box.x + candidate.line.box.width / 2
+      const candidateCenterY =
+        candidate.line.box.y + candidate.line.box.height / 2
+      const enclosedByCrop =
+        candidateCenterX >= cropBox.x - BOX_TOLERANCE &&
+        candidateCenterX <= cropBox.x + cropBox.width + BOX_TOLERANCE &&
+        candidateCenterY >= cropBox.y - BOX_TOLERANCE &&
+        candidateCenterY <= cropBox.y + cropBox.height + BOX_TOLERANCE &&
+        horizontalOverlap(cropBox, candidate.line.box) /
+          candidate.line.box.width >=
+          0.5
+      if (!sameParentSourceRow && !enclosedByCrop) continue
+      selected.set(key, candidate)
+      changed = true
+    }
+  }
+  return [...selected.values()]
+}
+
 function tabularLineBandCandidates(
   caption: PdfPageRegion,
   pageRegions: PdfPageRegion[],
@@ -1238,7 +1776,7 @@ function tabularLineBandCandidates(
     lineSelectionIds(candidate.lineLineage),
   )
   for (const lane of lanes) {
-    const entries = pageRegions
+    const laneEntries = pageRegions
       .filter(
         (region) =>
           region.page === caption.page &&
@@ -1246,9 +1784,7 @@ function tabularLineBandCandidates(
           region.lines.length > 0 &&
           region.text.trim().length > 0 &&
           region.nativeObjectIds.length === 0 &&
-          ['body', 'spanning', 'side', 'chart-label', 'footnote'].includes(
-            region.kind,
-          ) &&
+          eligibleTableTextRegion(region) &&
           validBox(region.box),
       )
       .flatMap<TableLineEntry>((region) =>
@@ -1256,15 +1792,58 @@ function tabularLineBandCandidates(
           .map((line) => ({ region, line }))
           .filter(
             (entry) =>
-              validTableLineEntry(entry) &&
-              boxWithinLane(entry.line.box, lane) &&
-              overlapsCaption(caption, entry.line.box),
+              validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
           ),
       )
-    for (const rows of tableLineBands(tableLineRows(entries))) {
+    const captionEntries = laneEntries.filter((entry) =>
+      overlapsCaption(caption, entry.line.box),
+    )
+    for (const captionRows of tableLineBands(tableLineRows(captionEntries))) {
+      const recurringEntries = recurringCaptionBandEntries(
+        captionRows,
+        laneEntries,
+      )
+      const supplementalEquationCells =
+        supplementalEquationCellShardEntries({
+          caption,
+          lane,
+          pageRegions,
+          ordinaryEntries: recurringEntries,
+        })
+      if (supplementalEquationCells.ambiguous) continue
+      const scopedLaneEntries =
+        supplementalEquationCells.entries.length > 0
+          ? [...recurringEntries, ...supplementalEquationCells.entries]
+          : laneEntries
+      const bandTop = Math.min(...captionRows.map((row) => row.box.y))
+      const bandBottom = Math.max(
+        ...captionRows.map((row) => row.box.y + row.box.height),
+      )
+      const captionLineHeights = captionRows.flatMap((row) =>
+        row.entries.map((entry) => entry.line.box.height),
+      )
+      // A centered caption can be substantially narrower than its source
+      // table. First prove the vertically contiguous band from caption-
+      // overlapping lines, then close only that already-proven vertical span
+      // across the page. This recovers atomized left/right cells without
+      // extending into adjacent prose rows or another caption lane.
+      const rows = tableLineRows(
+        scopedLaneEntries.filter(
+          (entry) =>
+            entry.line.box.y >= bandTop - BOX_TOLERANCE &&
+            entry.line.box.y + entry.line.box.height <=
+              bandBottom + BOX_TOLERANCE &&
+            lineHeightMatchesBand(entry.line, captionLineHeights),
+        ),
+      )
       const proof = tabularLineBandProof(rows)
       if (!proof) continue
-      const selectedEntries = rows.flatMap((row) => row.entries)
+      const selectedEntries = closeProvenTableLineBand(
+        caption,
+        lane,
+        pageRegions,
+        rows.flatMap((row) => row.entries),
+      )
       const selectedLineBoxes = selectedEntries.map((entry) => entry.line.box)
       const cropBox = unionBoxes(
         selectedLineBoxes,
@@ -1278,7 +1857,8 @@ function tabularLineBandCandidates(
         cropBox.width < MIN_LINE_BAND_WIDTH ||
         cropBox.height < MIN_LINE_BAND_HEIGHT ||
         cropBox.width * cropBox.height > MAX_LINE_BAND_AREA ||
-        horizontalOverlap(caption.box, cropBox) / caption.box.width <
+        horizontalOverlap(caption.box, cropBox) /
+          Math.min(caption.box.width, cropBox.width) <
           MIN_CAPTION_HORIZONTAL_COVERAGE
       ) {
         continue
@@ -1347,12 +1927,23 @@ function tabularLineBandCandidates(
           {
             code: 'repeated-row-bands',
             rowCount: proof.rowCount,
-            lineIds: proof.lineIds,
+            lineIds: [...sourceLineIds],
           },
           {
             code: 'multi-run-tabular-line-band',
             ...proof,
+            lineIds: [...sourceLineIds],
           },
+          ...(supplementalEquationCells.entries.length > 0
+            ? ([
+                {
+                  code: 'supplemental-equation-cell-shard',
+                  regionIds: supplementalEquationCells.regionIds,
+                  lineIds: supplementalEquationCells.lineIds,
+                  columnAnchors: supplementalEquationCells.columnAnchors,
+                },
+              ] satisfies PdfTableScopeEvidence[])
+            : []),
           ...(partialRegionIds.length > 0
             ? ([
                 {
@@ -1378,9 +1969,18 @@ function captionBoundedTextSlabCandidates(
   pageRegions: PdfPageRegion[],
   existingTextCandidates: PdfTableScope[],
 ) {
-  if (existingTextCandidates.length > 0) return []
   const candidates: PdfTableScope[] = []
-  for (const lane of [completeAboveCaptionLane(caption, pageRegions)]) {
+  for (const lane of [
+    completeAboveCaptionLane(caption, pageRegions),
+    completeBelowCaptionLane(caption, pageRegions),
+  ]) {
+    if (
+      existingTextCandidates.some(
+        (candidate) => candidate.direction === lane.direction,
+      )
+    ) {
+      continue
+    }
     const entries = pageRegions
       .filter(
         (region) =>
@@ -1389,9 +1989,7 @@ function captionBoundedTextSlabCandidates(
           region.lines.length > 0 &&
           region.text.trim().length > 0 &&
           region.nativeObjectIds.length === 0 &&
-          ['body', 'spanning', 'side', 'chart-label', 'footnote'].includes(
-            region.kind,
-          ) &&
+          eligibleTableTextRegion(region) &&
           validBox(region.box) &&
           horizontalOverlap(caption.box, region.box) > BOX_TOLERANCE,
       )
@@ -1442,7 +2040,7 @@ function captionBoundedTextSlabCandidates(
     const singleAnchorRowCount = selectedRows.filter(
       (row) => row.anchors.length === 1,
     ).length
-    const wideLayout = cropBox.width >= MIN_WIDE_TEXT_SLAB_WIDTH
+    const wideLayout = cropBox.width + BOX_TOLERANCE >= MIN_WIDE_TEXT_SLAB_WIDTH
     const selectedMaximumFontSize = Math.max(
       ...selectedEntries.map((entry) => entry.line.fontSize),
     )
@@ -1462,19 +2060,36 @@ function captionBoundedTextSlabCandidates(
       (row) => row.anchors.length >= MIN_TABULAR_SLAB_ANCHORS,
     ).length
     const repeatedAnchorCount = repeatedTabularAnchorCount(selectedRows)
+    const labeledRowCount = selectedRows.filter((row) =>
+      row.entries.some((entry) => labeledRecordLine(entry.line)),
+    ).length
+    const sourceStartHeading = selectedRows[0].entries.some((entry) => {
+      const firstRun = entry.line.runs.find((run) => run.text.trim())
+      return Boolean(firstRun && explicitTableStyle(firstRun))
+    })
     const singleAnchorSlab =
       singleAnchorRowCount / selectedRows.length >=
       MIN_TEXT_SLAB_SINGLE_ANCHOR_RATIO
+    const structuredSingleAnchorSlab =
+      singleAnchorSlab &&
+      (compressedTypography ||
+        sourceStartHeading ||
+        labeledRowCount >= MIN_LABELED_RECORD_ROWS)
     const tabularSlab =
       tabularRowCount >= MIN_TABULAR_SLAB_ROWS &&
       repeatedAnchorCount >= MIN_REPEATED_TABULAR_SLAB_ANCHORS
+    const labeledRecordSlab =
+      lane.direction === 'below' &&
+      cropBox.width >= MIN_LABELED_RECORD_WIDTH &&
+      labeledRowCount >= MIN_LABELED_RECORD_ROWS
     if (
       cropBox.width < MIN_TEXT_SLAB_WIDTH ||
       cropBox.height < MIN_TEXT_SLAB_HEIGHT ||
       cropBox.width * cropBox.height > MAX_SCOPE_AREA ||
       horizontalOverlap(caption.box, cropBox) <= BOX_TOLERANCE ||
-      (!singleAnchorSlab && !tabularSlab) ||
-      (!wideLayout && !compressedTypography)
+      (!structuredSingleAnchorSlab && !tabularSlab && !labeledRecordSlab) ||
+      (!wideLayout && !compressedTypography && !labeledRecordSlab) ||
+      (lane.direction === 'below' && !labeledRecordSlab)
     ) {
       continue
     }
@@ -1519,7 +2134,7 @@ function captionBoundedTextSlabCandidates(
       objectLineage: [],
       evidence: [
         captionEvidence(caption, lane),
-        ...(singleAnchorSlab
+        ...(structuredSingleAnchorSlab
           ? ([
               {
                 code: 'contiguous-single-anchor-slab',
@@ -1528,6 +2143,7 @@ function captionBoundedTextSlabCandidates(
                 singleAnchorRowCount,
                 wideLayout,
                 compressedTypography,
+                sourceStartHeading,
               },
             ] satisfies PdfTableScopeEvidence[])
           : []),
@@ -1542,9 +2158,180 @@ function captionBoundedTextSlabCandidates(
               },
             ] satisfies PdfTableScopeEvidence[])
           : []),
+        ...(labeledRecordSlab
+          ? ([
+              {
+                code: 'repeated-labeled-record-rows',
+                rowCount: selectedRows.length,
+                lineIds: [...sourceLineIds],
+                labeledRowCount,
+              },
+            ] satisfies PdfTableScopeEvidence[])
+          : []),
       ],
     })
   }
+  return candidates
+}
+
+const MONOSPACED_TABLE_SOURCE_FONT =
+  /(?:mono|code|courier|inconsolata|sourcecode|typewriter|cmtt|lmtt|nimbusmon)/iu
+
+function monospacedTableLine(line: PdfRegionLine) {
+  const runs = line.runs.filter((run) => run.text.trim())
+  return (
+    runs.length > 0 &&
+    runs.every((run) => MONOSPACED_TABLE_SOURCE_FONT.test(run.fontName))
+  )
+}
+
+function structuredPromptRecord(line: PdfRegionLine) {
+  return /^(?:(?:question|context|premise|setting|characters?|outline|generated(?:\s+(?:story|outline))?|extract\s+attributes|attribute|input|output)\s*:|(?:\d{1,2}[.)]\s+\S)|(?:[-—]{2,}))\s*/iu.test(
+    line.text.trim(),
+  )
+}
+
+/**
+ * Prompt-example tables often preserve source-authored paragraph spacing
+ * inside a compressed monospaced panel. Those gaps are intentionally wider
+ * than a numeric grid, so require the exact caption lane plus multiple
+ * prompt-record markers before accepting the complete line scope.
+ */
+function captionBoundedPromptSlabCandidates(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+  existingTextCandidates: PdfTableScope[],
+) {
+  if (!/\bprompt\b/iu.test(caption.text)) return []
+  const candidates: PdfTableScope[] = []
+  const lane = completeAboveCaptionLane(caption, pageRegions)
+  if (
+    existingTextCandidates.some(
+      (candidate) => candidate.direction === lane.direction,
+    )
+  ) {
+    return candidates
+  }
+  const entries = pageRegions
+    .filter(
+      (region) =>
+        region.page === caption.page &&
+        region.id !== caption.id &&
+        region.lines.length > 0 &&
+        region.text.trim().length > 0 &&
+        region.nativeObjectIds.length === 0 &&
+        eligibleTableTextRegion(region) &&
+        validBox(region.box) &&
+        horizontalOverlap(caption.box, region.box) > BOX_TOLERANCE,
+    )
+    .flatMap<TableLineEntry>((region) =>
+      region.lines
+        .map((line) => ({ region, line }))
+        .filter(
+          (entry) =>
+            validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+        ),
+    )
+  const rows = tableLineRows(entries)
+  const nearest = rows.at(-1)
+  if (
+    !nearest ||
+    captionGap(caption, nearest.box, 'above') >
+      MAX_PROMPT_SLAB_CAPTION_GAP + BOX_TOLERANCE
+  ) {
+    return candidates
+  }
+  const selectedRows = [nearest]
+  for (let index = rows.length - 2; index >= 0; index -= 1) {
+    const candidate = rows[index]
+    const current = selectedRows[0]
+    if (
+      gapBetween(candidate.box, current.box).vertical >
+      MAX_PROMPT_SLAB_ROW_GAP + BOX_TOLERANCE
+    ) {
+      break
+    }
+    selectedRows.unshift(candidate)
+  }
+  const monospacedRowCount = selectedRows.filter((row) =>
+    row.entries.every((entry) => monospacedTableLine(entry.line)),
+  ).length
+  const structuredRecordCount = selectedRows.filter((row) =>
+    row.entries.some((entry) => structuredPromptRecord(entry.line)),
+  ).length
+  if (
+    selectedRows.length < MIN_PROMPT_SLAB_ROWS ||
+    monospacedRowCount !== selectedRows.length ||
+    structuredRecordCount < MIN_PROMPT_STRUCTURED_RECORDS
+  ) {
+    return candidates
+  }
+  const selectedEntries = selectedRows.flatMap((row) => row.entries)
+  const selectedLineBoxes = selectedEntries.map((entry) => entry.line.box)
+  const cropBox = unionBoxes(
+    selectedLineBoxes,
+    selectedLineBoxes.some((sourceBox) => sourceBox.method === 'ocr')
+      ? 'ocr'
+      : 'pdf-text',
+  )
+  if (
+    cropBox.width < MIN_TEXT_SLAB_WIDTH ||
+    cropBox.height < MIN_TEXT_SLAB_HEIGHT ||
+    cropBox.width * cropBox.height > MAX_SCOPE_AREA ||
+    horizontalOverlap(caption.box, cropBox) <= BOX_TOLERANCE
+  ) {
+    return candidates
+  }
+  const regionsById = new Map<string, PdfPageRegion>()
+  const selectedLineIdsByRegion = new Map<string, Set<string>>()
+  for (const entry of selectedEntries) {
+    regionsById.set(entry.region.id, entry.region)
+    const selected =
+      selectedLineIdsByRegion.get(entry.region.id) ?? new Set<string>()
+    selected.add(entry.line.id)
+    selectedLineIdsByRegion.set(entry.region.id, selected)
+  }
+  const regions = [...regionsById.values()].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  )
+  const {
+    regionLineage,
+    lineLineage,
+    sourceRegionIds,
+    sourceLineIds,
+    sourceLineBoxes,
+  } = selectedTextLineage(regions, selectedLineIdsByRegion)
+  candidates.push({
+    id: scopeId(
+      'caption-bounded-text-slab',
+      sourceRegionIds,
+      lineLineage,
+      [],
+      cropBox,
+    ),
+    proof: 'caption-bounded-text-slab',
+    page: caption.page,
+    direction: 'above',
+    sourceRegionIds,
+    sourceLineIds,
+    sourceObjectIds: [],
+    sourceBoxes: sourceLineBoxes.map((sourceBox) => ({ ...sourceBox })),
+    sourceLineBoxes,
+    cropBox,
+    regionLineage,
+    lineLineage,
+    objectLineage: [],
+    evidence: [
+      captionEvidence(caption, lane),
+      {
+        code: 'caption-bounded-prompt-slab',
+        rowCount: selectedRows.length,
+        lineIds: [...sourceLineIds],
+        monospacedRowCount,
+        structuredRecordCount,
+      },
+    ],
+  })
   return candidates
 }
 
@@ -1595,6 +2382,40 @@ function nativeSourceLineage(source: ExactNativeSource) {
   }
 }
 
+function interveningSourceTextRegionIds(
+  caption: PdfPageRegion,
+  sourceBox: NormalizedSourceBox,
+  pageRegions: PdfPageRegion[],
+) {
+  const captionBottom = caption.box.y + caption.box.height
+  const sourceBottom = sourceBox.y + sourceBox.height
+  const gap =
+    sourceBox.y >= captionBottom - BOX_TOLERANCE
+      ? { top: captionBottom, bottom: sourceBox.y }
+      : caption.box.y >= sourceBottom - BOX_TOLERANCE
+        ? { top: sourceBottom, bottom: caption.box.y }
+        : null
+  if (!gap || gap.bottom - gap.top <= BOX_TOLERANCE) return []
+
+  return pageRegions
+    .filter(
+      (region) =>
+        region.id !== caption.id &&
+        region.page === caption.page &&
+        region.text.trim().length > 0 &&
+        region.lines.some(
+          (line) =>
+            validBox(line.box) &&
+            line.box.page === sourceBox.page &&
+            line.box.y >= gap.top - BOX_TOLERANCE &&
+            line.box.y + line.box.height <= gap.bottom + BOX_TOLERANCE &&
+            horizontalOverlap(line.box, sourceBox) > BOX_TOLERANCE,
+        ),
+    )
+    .map((region) => region.id)
+    .sort()
+}
+
 function rasterCandidates(
   caption: PdfPageRegion,
   pageRegions: PdfPageRegion[],
@@ -1603,6 +2424,7 @@ function rasterCandidates(
 ) {
   const candidates: PdfTableScope[] = []
   const duplicateObjectIds = new Set<string>()
+  const interveningTextRegionIds = new Set<string>()
   for (const lane of lanes) {
     for (const object of nativeObjects
       .filter(
@@ -1615,6 +2437,17 @@ function rasterCandidates(
           overlapsCaption(caption, candidate.box),
       )
       .sort((left, right) => left.id.localeCompare(right.id))) {
+      const separatingRegionIds = interveningSourceTextRegionIds(
+        caption,
+        object.box,
+        pageRegions,
+      )
+      if (separatingRegionIds.length > 0) {
+        for (const regionId of separatingRegionIds) {
+          interveningTextRegionIds.add(regionId)
+        }
+        continue
+      }
       const mappings = exactMappings(object, pageRegions)
       if (mappings.length > 1) duplicateObjectIds.add(object.id)
       for (const region of mappings) {
@@ -1655,7 +2488,7 @@ function rasterCandidates(
       }
     }
   }
-  return { candidates, duplicateObjectIds }
+  return { candidates, duplicateObjectIds, interveningTextRegionIds }
 }
 
 function horizontalRule(source: ExactNativeSource) {
@@ -1834,6 +2667,74 @@ function orderedProseScope(
   )
 }
 
+function unprovenPageTopTableStart(
+  scope: PdfTableScope,
+  regionsById: ReadonlyMap<string, PdfPageRegion>,
+) {
+  if (
+    scope.proof !== 'caption-bounded-text-slab' ||
+    scope.direction !== 'above' ||
+    scope.cropBox.y > MAX_UNPROVEN_PAGE_TOP_TABLE_START + BOX_TOLERANCE ||
+    scope.evidence.some(
+      (evidence) => evidence.code === 'caption-bounded-prompt-slab',
+    ) ||
+    !scope.evidence.some(
+      (evidence) => evidence.code === 'contiguous-single-anchor-slab',
+    )
+  ) {
+    return false
+  }
+  const firstLineage = [...scope.lineLineage].sort(
+    (left, right) =>
+      compareBoxes(left.box, right.box) ||
+      left.regionId.localeCompare(right.regionId) ||
+      left.lineId.localeCompare(right.lineId),
+  )[0]
+  const firstLine = firstLineage
+    ? regionsById
+        .get(firstLineage.regionId)
+        ?.lines.find((line) => line.id === firstLineage.lineId)
+    : null
+  const firstRun = firstLine?.runs.find((run) => run.text.trim())
+  // A compressed prose slab touching the page's content origin can be the
+  // terminal page of a source object. Ordinary body typography does not prove
+  // that the object begins here; a source-authored heading does.
+  return !firstRun || !explicitTableStyle(firstRun)
+}
+
+function siblingTableCaptionLanesCrossed(
+  scope: PdfTableScope,
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+) {
+  if (scope.direction !== 'above') return []
+  return pageRegions
+    .filter((candidate) => {
+      if (
+        candidate.id === caption.id ||
+        candidate.page !== caption.page ||
+        !isTableCaption(candidate) ||
+        !validBox(candidate.box)
+      ) {
+        return false
+      }
+      const captionOverlap = horizontalOverlap(caption.box, candidate.box)
+      if (captionOverlap > BOX_TOLERANCE) return false
+      const targetCoverage =
+        horizontalOverlap(scope.cropBox, caption.box) / caption.box.width
+      const siblingCoverage =
+        horizontalOverlap(scope.cropBox, candidate.box) / candidate.box.width
+      return (
+        targetCoverage >= MIN_CAPTION_HORIZONTAL_COVERAGE &&
+        siblingCoverage >= MIN_CAPTION_HORIZONTAL_COVERAGE &&
+        scope.cropBox.y <=
+          candidate.box.y + candidate.box.height + BOX_TOLERANCE
+      )
+    })
+    .map((candidate) => candidate.id)
+    .sort()
+}
+
 function arabicTableNumber(region: PdfPageRegion) {
   const match = region.text.match(/^\s*table(?:\s|[.:])*(\d+)\b/i)
   return match ? Number(match[1]) : null
@@ -1862,6 +2763,44 @@ function belongsToFollowingNumberedCaption(
       currentGap
     )
   })
+}
+
+function unscopedAdjacentTableHeaderLineIds(
+  scope: PdfTableScope,
+  pageRegions: PdfPageRegion[],
+) {
+  if (scope.direction !== 'above') return []
+  const selectedLineIds = new Set(scope.sourceLineIds)
+  return pageRegions
+    .filter(
+      (region) =>
+        region.page === scope.page &&
+        !scope.sourceRegionIds.includes(region.id) &&
+        ['body', 'equation', 'spanning'].includes(region.kind),
+    )
+    .flatMap((region) =>
+      region.lines.filter((line) => {
+        if (
+          selectedLineIds.has(line.id) ||
+          !validTableLineEntry({ region, line })
+        ) {
+          return false
+        }
+        const gap = scope.cropBox.y - (line.box.y + line.box.height)
+        const overlap = horizontalOverlap(scope.cropBox, line.box)
+        const headerStyled =
+          region.kind === 'equation' || line.runs.every(explicitTableStyle)
+        return (
+          gap >= -BOX_TOLERANCE &&
+          gap <= MAX_LINE_BAND_CAPTION_GAP &&
+          overlap / Math.min(scope.cropBox.width, line.box.width) >= 0.5 &&
+          cellAnchors(line.runs).length >= MIN_TABULAR_ROW_ANCHORS &&
+          headerStyled
+        )
+      }),
+    )
+    .map((line) => line.id)
+    .sort()
 }
 
 /**
@@ -1905,6 +2844,11 @@ export function resolvePdfTableScope({
     ...textGrids,
     ...tabularLineBands,
   ])
+  const promptSlabs = captionBoundedPromptSlabCandidates(caption, regions, [
+    ...textGrids,
+    ...tabularLineBands,
+    ...textSlabs,
+  ])
   const raster = rasterCandidates(caption, regions, objects, lanes)
   const ruled = ruledCandidates(caption, regions, objects, lanes)
   const uniqueGridOverUnprovenRasters =
@@ -1920,6 +2864,7 @@ export function resolvePdfTableScope({
           ...textGrids,
           ...tabularLineBands,
           ...textSlabs,
+          ...promptSlabs,
           ...raster.candidates,
           ...ruled.candidates,
         ]
@@ -1933,13 +2878,39 @@ export function resolvePdfTableScope({
           !belongsToFollowingNumberedCaption(candidate, caption, regions),
       )
     : candidates
-  const nonProseCandidates = captionOwnedCandidates.filter(
+  const incompleteHeaderLineIds = [
+    ...new Set(
+      captionOwnedCandidates.flatMap((candidate) =>
+        unscopedAdjacentTableHeaderLineIds(candidate, regions),
+      ),
+    ),
+  ].sort()
+  const headerCompleteCandidates = captionOwnedCandidates.filter(
+    (candidate) =>
+      unscopedAdjacentTableHeaderLineIds(candidate, regions).length === 0,
+  )
+  const crossedSiblingCaptionIds = [
+    ...new Set(
+      headerCompleteCandidates.flatMap((candidate) =>
+        siblingTableCaptionLanesCrossed(candidate, caption, regions),
+      ),
+    ),
+  ].sort()
+  const unprovenStartCandidates = headerCompleteCandidates.filter((candidate) =>
+    unprovenPageTopTableStart(candidate, regionsById),
+  )
+  const sourceCompleteCandidates = headerCompleteCandidates.filter(
+    (candidate) =>
+      siblingTableCaptionLanesCrossed(candidate, caption, regions).length ===
+        0 && !unprovenPageTopTableStart(candidate, regionsById),
+  )
+  const nonProseCandidates = sourceCompleteCandidates.filter(
     (candidate) => !orderedProseScope(candidate, regionsById),
   )
   const resolvedCandidates =
-    captionOwnedCandidates.length > 1 && nonProseCandidates.length === 1
+    sourceCompleteCandidates.length > 1 && nonProseCandidates.length === 1
       ? nonProseCandidates
-      : captionOwnedCandidates
+      : sourceCompleteCandidates
   const duplicateObjectIds = [
     ...new Set([...raster.duplicateObjectIds, ...ruled.duplicateObjectIds]),
   ].sort()
@@ -1955,6 +2926,26 @@ export function resolvePdfTableScope({
     const evidence = ['deterministic-geometry-required']
     if (lanes.some((lane) => lane.interveningCaptionRegionId)) {
       evidence.push('intervening-caption-boundary')
+    }
+    const interveningTextRegionIds = [...raster.interveningTextRegionIds].sort()
+    if (interveningTextRegionIds.length > 0) {
+      evidence.push('intervening-source-text', ...interveningTextRegionIds)
+    }
+    if (incompleteHeaderLineIds.length > 0) {
+      evidence.push(
+        'table-header-outside-source-scope',
+        'incomplete-table-header-scope',
+        ...incompleteHeaderLineIds,
+      )
+    }
+    if (crossedSiblingCaptionIds.length > 0) {
+      evidence.push(
+        'table-scope-crosses-sibling-caption-lane',
+        ...crossedSiblingCaptionIds,
+      )
+    }
+    if (unprovenStartCandidates.length > 0) {
+      evidence.push('table-source-start-boundary-unproven')
     }
     return unresolved(caption, 'no-proven-scope', [], evidence)
   }

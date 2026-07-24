@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-eval-observations-1.0.0.json",
+  "title": "Observed first-failure annotations for the scholarly PDF fidelity seed",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "privacy",
+    "evalSet",
+    "method",
+    "observations"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "privacy": {
+      "const": "public-identities-hashes-normalized-case-provenance-no-source-content"
+    },
+    "evalSet": { "$ref": "#/$defs/evalSetBinding" },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit",
+        "firstFailureDefinition",
+        "annotationStatus",
+        "candidateOutputConsulted"
+      ],
+      "properties": {
+        "unit": { "const": "bounded-source-to-output-case" },
+        "firstFailureDefinition": {
+          "const": "earliest-source-backed-pipeline-decision-that-can-explain-the-bounded-failure"
+        },
+        "annotationStatus": {
+          "const": "source-verified-public-calibration-not-independent-blind-holdout"
+        },
+        "candidateOutputConsulted": { "const": false }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/observation" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "evalSetBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "fileSha256",
+        "evalSetSha256",
+        "documentIdentitySha256",
+        "caseIdentitySha256"
+      ],
+      "properties": {
+        "path": { "const": "benchmarks/pdf/fidelity-eval-v1.json" },
+        "fileSha256": { "$ref": "#/$defs/sha256" },
+        "evalSetSha256": { "$ref": "#/$defs/sha256" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentId", "sourcePdfSha256", "page", "evidence"],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/id" },
+        "sourcePdfSha256": { "$ref": "#/$defs/sha256" },
+        "page": { "type": "integer", "minimum": 1 },
+        "evidence": {
+          "const": "hash-pinned-source-pdf-page-and-normalized-geometry"
+        }
+      }
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "outcome"],
+      "properties": {
+        "id": {
+          "enum": [
+            "exact-classification",
+            "complete-label-scoped-detection-iou",
+            "all-pairs-reading-order",
+            "exact-typed-relationship"
+          ]
+        },
+        "kind": { "const": "code" },
+        "outcome": { "const": "binary-pass-fail" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "firstFailureClass",
+        "sourceArtifact",
+        "evaluator"
+      ],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/id" },
+        "firstFailureClass": {
+          "enum": [
+            "reading-topology",
+            "semantic-type-confusion",
+            "formula-layout-flattening",
+            "boundary-incompleteness",
+            "boundary-contamination",
+            "ownership-and-cardinality",
+            "nested-list-topology-loss",
+            "affiliation-marker-set-compression",
+            "bibliography-item-boundary-collapse",
+            "table-data-and-header-truth",
+            "front-matter-and-metadata-authority",
+            "conservation-blind-spot"
+          ]
+        },
+        "sourceArtifact": { "$ref": "#/$defs/sourceArtifact" },
+        "evaluator": { "$ref": "#/$defs/evaluator" }
+      }
+    }
+  }
+}

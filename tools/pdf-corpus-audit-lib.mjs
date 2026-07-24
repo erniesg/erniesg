@@ -5,8 +5,8 @@ import { basename, extname, join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
-export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.4.0'
-export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.2.0'
+export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.5.0'
+export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.3.0'
 
 const MAX_DIAGNOSTIC_SAMPLES = 64
 const MAX_DIAGNOSTIC_SAMPLES_PER_CODE = 3
@@ -143,12 +143,65 @@ function normalizedAssetManifest(assets) {
   }))
 }
 
-function normalizedVisualRelationships(relationships) {
+function normalizedVisualCandidate(candidate) {
+  return {
+    sourceRegionIds: candidate.sourceRegionIds ?? [],
+    sourceObjectIds: candidate.sourceObjectIds ?? [],
+    assetIds: candidate.assetIds ?? [],
+    score: candidate.score ?? null,
+    evidence: candidate.evidence ?? [],
+    sourceBoxes: candidate.sourceBoxes ?? [],
+  }
+}
+
+function selectedVisualCandidateSha256(relationship) {
+  const selected = relationship.candidates?.[0]
+  return relationship.status === 'matched' && selected
+    ? canonicalJsonHash(normalizedVisualCandidate(selected))
+    : null
+}
+
+function selectedVisualCropSha256(relationship, assetsById) {
+  if (relationship.status !== 'matched') return null
+  const crops = (relationship.assetIds ?? []).flatMap((assetId) => {
+    const sourceCropBox = assetsById.get(assetId)?.sourceCropBox
+    return sourceCropBox
+      ? [
+          {
+            assetId: opaqueStructuralId('asset', assetId),
+            sourceCropBox,
+          },
+        ]
+      : []
+  })
+  return crops.length > 0 ? canonicalJsonHash(crops) : null
+}
+
+function preformattedSourceSha256(relationship) {
+  const source = relationship.preformatted
+  if (!source) return null
+  return canonicalJsonHash({
+    status: source.status,
+    evidence: source.evidence ?? [],
+    lines: (source.lines ?? []).map((line) => ({
+      textSha256: opaqueStructuralId('preformatted-line-text', line.text),
+      sourceRegionId: opaqueStructuralId('region', line.sourceRegionId),
+      sourceLineId: opaqueStructuralId('line', line.sourceLineId),
+      sourceBox: line.sourceBox,
+      sourceRunBoxes: line.sourceRunBoxes ?? [],
+    })),
+  })
+}
+
+function normalizedVisualRelationships(relationships, assets) {
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
   return relationships.map((relationship) => ({
     id: relationship.id,
     kind: relationship.kind,
+    semanticKind: relationship.semanticKind ?? null,
     status: relationship.status,
     canonicalNodeId: relationship.canonicalNodeId ?? null,
+    captionNodeId: relationship.captionNodeId ?? null,
     captionRegionId: relationship.captionRegionId ?? null,
     sourceRegionIds: relationship.sourceRegionIds ?? [],
     sourceObjectIds: relationship.sourceObjectIds ?? [],
@@ -156,7 +209,28 @@ function normalizedVisualRelationships(relationships) {
     assetIds: relationship.assetIds ?? [],
     sourceBoxes: relationship.sourceBoxes ?? [],
     altTextSource: relationship.altTextSource ?? null,
+    preformattedSourceSha256: preformattedSourceSha256(relationship),
+    selectedCandidateSha256: selectedVisualCandidateSha256(relationship),
+    selectedCropSha256: selectedVisualCropSha256(relationship, assetsById),
   }))
+}
+
+function normalizedNoteCanonicalAnchor(anchor) {
+  if (anchor?.kind === 'node') {
+    return {
+      kind: 'node',
+      nodeId: opaqueStructuralId('node', anchor.nodeId),
+      start: anchor.start,
+      end: anchor.end,
+    }
+  }
+  if (anchor?.kind === 'author') {
+    return {
+      kind: 'author',
+      authorSha256: opaqueStructuralId('author', anchor.author),
+    }
+  }
+  return null
 }
 
 function normalizedNoteRelationships(relationships) {
@@ -166,6 +240,9 @@ function normalizedNoteRelationships(relationships) {
     referenceRegionId: relationship.referenceRegionId,
     targetNoteId: relationship.targetNoteId ?? null,
     label: relationship.label,
+    canonicalAnchor: normalizedNoteCanonicalAnchor(
+      relationship.canonicalAnchor,
+    ),
     sourceBoxes: relationship.sourceBoxes ?? [],
   }))
 }
@@ -204,6 +281,101 @@ function normalizedCitationRelationships(relationships) {
       : null,
     sourceBoxes: (relationship.sourceBoxes ?? []).map((box) => ({ ...box })),
   }))
+}
+
+function normalizedCrossReferenceTarget(target) {
+  return {
+    kind: target.kind,
+    labelSha256: opaqueStructuralId(
+      'scholarly-cross-reference-label',
+      target.label,
+    ),
+    referenceStart: target.referenceStart,
+    referenceEnd: target.referenceEnd,
+    status: target.status,
+    candidateNodeIds: (target.candidateNodeIds ?? []).map((nodeId) =>
+      opaqueStructuralId('node', nodeId),
+    ),
+    targetNodeId: target.targetNodeId
+      ? opaqueStructuralId('node', target.targetNodeId)
+      : null,
+    evidenceSha256s: [...new Set(target.evidence ?? [])].map((evidence) =>
+      opaqueStructuralId('scholarly-cross-reference-evidence', evidence),
+    ),
+  }
+}
+
+function normalizedCrossReferenceRelationships(relationships) {
+  return relationships.map((relationship) => ({
+    id: opaqueStructuralId(
+      'scholarly-cross-reference-relationship',
+      relationship.id,
+    ),
+    kind: relationship.kind,
+    status: relationship.status,
+    textSha256: opaqueStructuralId(
+      'scholarly-cross-reference-text',
+      relationship.text,
+    ),
+    referenceRegionId: opaqueStructuralId(
+      'region',
+      relationship.referenceRegionId,
+    ),
+    referenceStart: relationship.referenceStart,
+    referenceEnd: relationship.referenceEnd,
+    labels: (relationship.labels ?? []).map((label) =>
+      opaqueStructuralId('scholarly-cross-reference-label', label),
+    ),
+    targets: (relationship.targets ?? []).map(normalizedCrossReferenceTarget),
+    targetNodeIds: (relationship.targetNodeIds ?? []).map((nodeId) =>
+      opaqueStructuralId('node', nodeId),
+    ),
+    canonicalAnchor: relationship.canonicalAnchor
+      ? {
+          ...relationship.canonicalAnchor,
+          nodeId: opaqueStructuralId(
+            'node',
+            relationship.canonicalAnchor.nodeId,
+          ),
+        }
+      : null,
+    confidence: relationship.confidence,
+    evidenceSha256s: [...new Set(relationship.evidence ?? [])].map((evidence) =>
+      opaqueStructuralId('scholarly-cross-reference-evidence', evidence),
+    ),
+    sourceBoxes: (relationship.sourceBoxes ?? []).map((box) => ({ ...box })),
+  }))
+}
+
+function normalizedNodeProvenance(nodes, provenance) {
+  return nodes.map((node) => {
+    const evidence = provenance?.[node.id]
+    const provenanceSha256 = evidence
+      ? canonicalJsonHash({
+          confidence: evidence.confidence ?? null,
+          pages: evidence.pages ?? [],
+          regionIds: (evidence.regionIds ?? []).map((regionId) =>
+            opaqueStructuralId('region', regionId),
+          ),
+          boxes: evidence.boxes ?? [],
+          links: (evidence.links ?? []).map((link) =>
+            canonicalJsonHash({ kind: 'node-source-link', link }),
+          ),
+          part:
+            evidence.part === undefined
+              ? null
+              : opaqueStructuralId('provenance-part', evidence.part),
+          relationshipIds: (evidence.relationshipIds ?? []).map(
+            (relationshipId) =>
+              opaqueStructuralId('relationship', relationshipId),
+          ),
+        })
+      : null
+    return {
+      nodeId: opaqueStructuralId('node', node.id),
+      provenanceSha256,
+    }
+  })
 }
 
 function lineTransitionLedger(reconstruction) {
@@ -286,8 +458,10 @@ function lineTransitionCounts(reconstruction, ledger) {
 
 export function createPdfStructuralReceipt(reconstruction) {
   const nodes = reconstruction.paper?.nodes ?? []
+  const sourceAssets = reconstruction.assets ?? []
   const visualRelationships = normalizedVisualRelationships(
     reconstruction.visualRelationships ?? [],
+    sourceAssets,
   )
   const noteRelationships = normalizedNoteRelationships(
     reconstruction.noteRelationships ?? [],
@@ -295,7 +469,14 @@ export function createPdfStructuralReceipt(reconstruction) {
   const citationRelationships = normalizedCitationRelationships(
     reconstruction.citationRelationships ?? [],
   )
-  const assets = normalizedAssetManifest(reconstruction.assets ?? [])
+  const crossReferenceRelationships = normalizedCrossReferenceRelationships(
+    reconstruction.crossReferenceRelationships ?? [],
+  )
+  const assets = normalizedAssetManifest(sourceAssets)
+  const nodeProvenance = normalizedNodeProvenance(
+    nodes,
+    reconstruction.provenance,
+  )
   const transitionLedger = lineTransitionLedger(reconstruction)
   const transitions = transitionLedger.decisions
   const transitionCounts = lineTransitionCounts(
@@ -314,6 +495,7 @@ export function createPdfStructuralReceipt(reconstruction) {
     canonicalContentSha256: canonicalJsonHash(
       reconstruction.paper ?? { nodes },
     ),
+    canonicalNodeProvenanceSha256: canonicalJsonHash(nodeProvenance),
     readingOrderGraphSha256: canonicalJsonHash(
       reconstruction.readingOrder ?? null,
     ),
@@ -337,6 +519,15 @@ export function createPdfStructuralReceipt(reconstruction) {
     ),
     citationRelationshipGraph: citationRelationships,
     citationRelationshipGraphSha256: canonicalJsonHash(citationRelationships),
+    crossReferenceRelationshipCount: crossReferenceRelationships.length,
+    crossReferenceRelationshipCounts: countsBy(
+      crossReferenceRelationships,
+      (relationship) => `${relationship.kind}:${relationship.status}`,
+    ),
+    crossReferenceRelationshipGraph: crossReferenceRelationships,
+    crossReferenceRelationshipGraphSha256: canonicalJsonHash(
+      crossReferenceRelationships,
+    ),
     assetCount: assets.length,
     assetCounts: countsBy(assets, (asset) => asset.kind),
     assetManifestSha256: canonicalJsonHash(assets),
@@ -418,10 +609,23 @@ export async function createPdfPipeline() {
   }
 }
 
-export async function auditPdfPath(path, pipeline) {
+export async function auditPdfPath(
+  path,
+  pipeline,
+  { expectedSource = null } = {},
+) {
   const stableBasename = basename(path)
   try {
+    if (
+      expectedSource &&
+      basename(stableBasename, extname(stableBasename)) !== expectedSource.id
+    ) {
+      throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+    }
     const details = await stat(path)
+    if (expectedSource && details.size !== expectedSource.byteLength) {
+      throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+    }
     if (details.size > pipeline.maximumBytes) {
       return {
         document: {
@@ -433,6 +637,14 @@ export async function auditPdfPath(path, pipeline) {
       }
     }
     const bytes = await readFile(path)
+    if (
+      expectedSource &&
+      (bytes.byteLength !== expectedSource.byteLength ||
+        createHash('sha256').update(bytes).digest('hex') !==
+          expectedSource.sha256)
+    ) {
+      throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+    }
     const reconstruction = await pipeline.reconstructPdf(
       new File([bytes], stableBasename, {
         type: 'application/pdf',
@@ -455,6 +667,12 @@ export async function auditPdfPath(path, pipeline) {
       },
     }
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'PDF_CORPUS_CONTRACT_MISMATCH'
+    ) {
+      throw error
+    }
     return {
       document: {
         basename: stableBasename,
@@ -465,10 +683,33 @@ export async function auditPdfPath(path, pipeline) {
   }
 }
 
-export async function auditPdfInputs(inputs, pipeline) {
+export async function auditPdfInputs(
+  inputs,
+  pipeline,
+  { corpusContract = null } = {},
+) {
   const records = []
+  const expectedById = new Map(
+    (corpusContract?.documents ?? []).map((document) => [
+      document.id,
+      document,
+    ]),
+  )
   for (const path of await pdfPaths(inputs)) {
-    records.push({ path, ...(await auditPdfPath(path, pipeline)) })
+    const id = basename(path, extname(path))
+    const expectedSource = expectedById.get(id) ?? null
+    if (corpusContract && !expectedSource) {
+      throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+    }
+    records.push({
+      path,
+      ...(await auditPdfPath(path, pipeline, {
+        expectedSource,
+      })),
+    })
+  }
+  if (corpusContract && records.length !== corpusContract.documents.length) {
+    throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
   }
   records.sort(
     (left, right) =>
@@ -478,7 +719,7 @@ export async function auditPdfInputs(inputs, pipeline) {
   return records
 }
 
-function roundedRate(numerator, denominator) {
+export function canonicalPassRate(numerator, denominator) {
   if (denominator === 0) return 0
   return Math.round((numerator / denominator) * 100_000) / 100_000
 }
@@ -500,7 +741,11 @@ function failureReasons(documents) {
   )
 }
 
-export function createCorpusReport(documents, policy) {
+export function createCorpusReport(
+  documents,
+  policy,
+  { corpusContract = null } = {},
+) {
   const summary = {
     documents: documents.length,
     ready: documents.filter((document) => document.readiness?.ready).length,
@@ -514,9 +759,10 @@ export function createCorpusReport(documents, policy) {
     reportSchema: 'docs/schemas/pdf-corpus-audit.schema.json',
     privacy: 'basenames-hashes-metrics-diagnostics-only',
     policy,
+    ...(corpusContract ? { corpusContract } : {}),
     summary: {
       ...summary,
-      passRate: roundedRate(summary.ready, summary.documents),
+      passRate: canonicalPassRate(summary.ready, summary.documents),
       failureReasons: failureReasons(documents),
     },
     documents,

@@ -5,10 +5,13 @@ import { buildEpub, inspectEpub } from './epub'
 import { PdfImportError } from './import-types'
 import { buildLayoutManifest, validateLayoutManifest } from './manifest'
 import {
+  extractPdfLinkAnnotations,
   isFlowAlignedPdfTextTransform,
   isPdfLocalPathArtifact,
   reconstructPdf,
+  resolvePdfTextFontHeight,
 } from './pdf'
+import { resolvePdfNamedDestinationEvidence } from './pdf-links'
 import type { PdfOcrOptions, PdfOcrRecognition, PdfOcrSession } from './pdf-ocr'
 import { getTargetProfile, TARGET_PROFILE_IDS } from './targets'
 import {
@@ -21,6 +24,315 @@ afterEach(() => {
 })
 
 describe('PDF.js browser ingestion', () => {
+  it('extracts every link annotation with a stable discriminated obligation', () => {
+    const annotations = [
+      {
+        subtype: 'Link',
+        url: 'https://example.test/external',
+        rect: [10, 20, 50, 40],
+      },
+      {
+        subtype: 'Link',
+        dest: 'section-two',
+        rect: [20, 30, 60, 50],
+      },
+      {
+        subtype: 'Link',
+        unsafeUrl: 'javascript:alert(1)',
+        rect: [30, 40, 70, 60],
+      },
+      {
+        subtype: 'Link',
+        rect: [40, 50, 80, 70],
+      },
+      {
+        subtype: 'Link',
+        url: 'https://example.test/no-geometry',
+        rect: ['invalid'],
+      },
+      {
+        subtype: 'Text',
+        contents: 'A non-link annotation is outside this obligation ledger.',
+        rect: [0, 0, 1, 1],
+      },
+    ]
+    const first = extractPdfLinkAnnotations({
+      page: 3,
+      rotation: 0,
+      viewportWidth: 100,
+      viewportHeight: 100,
+      annotations,
+      convertToViewportRectangle: (rect) => rect,
+      resolvedInternalDestinations: new Map([
+        [
+          'section-two',
+          {
+            source: 'pdfjs-named-destination',
+            destination: 'section-two',
+            view: 'XYZ',
+            page: 7,
+            point: {
+              page: 7,
+              x: 0.25,
+              y: 0.4,
+              rotation: 0,
+              method: 'pdf-destination',
+            },
+            box: null,
+          },
+        ],
+      ]),
+    })
+    const second = extractPdfLinkAnnotations({
+      page: 3,
+      rotation: 0,
+      viewportWidth: 100,
+      viewportHeight: 100,
+      annotations,
+      convertToViewportRectangle: (rect) => rect,
+      resolvedInternalDestinations: new Map([
+        [
+          'section-two',
+          {
+            source: 'pdfjs-named-destination',
+            destination: 'section-two',
+            view: 'XYZ',
+            page: 7,
+            point: {
+              page: 7,
+              x: 0.25,
+              y: 0.4,
+              rotation: 0,
+              method: 'pdf-destination',
+            },
+            box: null,
+          },
+        ],
+      ]),
+    })
+
+    expect(second).toEqual(first)
+    expect(first).toEqual([
+      expect.objectContaining({
+        id: 'pdf-link-p003-a0001',
+        page: 3,
+        status: 'external',
+        url: 'https://example.test/external',
+        box: expect.objectContaining({ page: 3, method: 'pdf-link' }),
+      }),
+      expect.objectContaining({
+        id: 'pdf-link-p003-a0002',
+        page: 3,
+        status: 'internal',
+        destination: 'section-two',
+        destinationEvidence: {
+          source: 'pdfjs-named-destination',
+          destination: 'section-two',
+          view: 'XYZ',
+          page: 7,
+          point: {
+            page: 7,
+            x: 0.25,
+            y: 0.4,
+            rotation: 0,
+            method: 'pdf-destination',
+          },
+          box: null,
+        },
+        box: expect.objectContaining({ page: 3, method: 'pdf-link' }),
+      }),
+      expect.objectContaining({
+        id: 'pdf-link-p003-a0003',
+        page: 3,
+        status: 'unresolved',
+        target: 'javascript:alert(1)',
+        reason: 'unsafe-external-target',
+      }),
+      expect.objectContaining({
+        id: 'pdf-link-p003-a0004',
+        page: 3,
+        status: 'unresolved',
+        target: null,
+        reason: 'missing-target',
+      }),
+      expect.objectContaining({
+        id: 'pdf-link-p003-a0005',
+        page: 3,
+        status: 'unresolved',
+        target: 'https://example.test/no-geometry',
+        reason: 'invalid-geometry',
+        box: null,
+      }),
+    ])
+  })
+
+  it('resolves a named XYZ destination through authoritative PDF.js document APIs', async () => {
+    const pageReference = { num: 41, gen: 0 }
+    const calls: string[] = []
+
+    const evidence = await resolvePdfNamedDestinationEvidence({
+      destination: 'cite.SourceKey',
+      document: {
+        async getDestination(destination: string) {
+          calls.push(`destination:${destination}`)
+          return [pageReference, { name: 'XYZ' }, 50, 120, null]
+        },
+        async getPageIndex(reference: unknown) {
+          calls.push(`page-index:${reference === pageReference}`)
+          return 1
+        },
+        async getPage(pageNumber: number) {
+          calls.push(`page:${pageNumber}`)
+          return {
+            getViewport() {
+              calls.push('viewport')
+              return {
+                width: 200,
+                height: 300,
+                rotation: 0,
+                convertToViewportPoint(x: number, y: number) {
+                  return [x, 300 - y]
+                },
+                convertToViewportRectangle(rect: number[]) {
+                  return [rect[0], 300 - rect[1], rect[2], 300 - rect[3]]
+                },
+              }
+            },
+          }
+        },
+      },
+    })
+
+    expect(calls).toEqual([
+      'destination:cite.SourceKey',
+      'page-index:true',
+      'page:2',
+      'viewport',
+    ])
+    expect(evidence).toEqual({
+      source: 'pdfjs-named-destination',
+      destination: 'cite.SourceKey',
+      view: 'XYZ',
+      page: 2,
+      point: {
+        page: 2,
+        x: 0.25,
+        y: 0.6,
+        rotation: 0,
+        method: 'pdf-destination',
+      },
+      box: null,
+    })
+  })
+
+  it('normalizes a named FitR destination as an exact target box', async () => {
+    const evidence = await resolvePdfNamedDestinationEvidence({
+      destination: 'figure.caption.3',
+      document: {
+        async getDestination() {
+          return [2, { name: 'FitR' }, 20, 40, 100, 160]
+        },
+        async getPageIndex() {
+          throw new Error('numeric page index must not use getPageIndex')
+        },
+        async getPage(pageNumber: number) {
+          expect(pageNumber).toBe(3)
+          return {
+            getViewport() {
+              return {
+                width: 200,
+                height: 300,
+                rotation: 0,
+                convertToViewportPoint(x: number, y: number) {
+                  return [x, 300 - y]
+                },
+                convertToViewportRectangle(rect: number[]) {
+                  return [rect[0], 300 - rect[1], rect[2], 300 - rect[3]]
+                },
+              }
+            },
+          }
+        },
+      },
+    })
+
+    expect(evidence).toEqual({
+      source: 'pdfjs-named-destination',
+      destination: 'figure.caption.3',
+      view: 'FitR',
+      page: 3,
+      point: null,
+      box: {
+        page: 3,
+        x: 0.1,
+        y: 0.46667,
+        width: 0.4,
+        height: 0.4,
+        rotation: 0,
+        method: 'pdf-destination',
+      },
+    })
+  })
+
+  it('persists named-destination target geometry during a real PDF.js import', async () => {
+    const result = await reconstructPdf(
+      await fixtureFile('internal-named-destination.pdf'),
+    )
+
+    expect(result.pages[0].links).toEqual([
+      expect.objectContaining({
+        status: 'internal',
+        destination: 'cite.SourceKey',
+        destinationEvidence: {
+          source: 'pdfjs-named-destination',
+          destination: 'cite.SourceKey',
+          view: 'XYZ',
+          page: 2,
+          point: {
+            page: 2,
+            x: expect.closeTo(54 / 612, 5),
+            y: expect.closeTo((792 - 650) / 792, 5),
+            rotation: 0,
+            method: 'pdf-destination',
+          },
+          box: null,
+        },
+      }),
+    ])
+
+    const linkedNode = result.paper.nodes.find(
+      (node) =>
+        'text' in node &&
+        node.text.includes('See the source-key bibliography entry.'),
+    )
+    const internalHref =
+      linkedNode && 'inlineRuns' in linkedNode
+        ? linkedNode.inlineRuns?.find(
+            (run) => run.annotationId === 'pdf-link-p001-a0001',
+          )?.href
+        : undefined
+    expect(internalHref).toBeUndefined()
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          node.type === 'paragraph' &&
+          node.text.includes('Geometry-backed bibliography evidence.'),
+      ),
+    ).toMatchObject({
+      type: 'paragraph',
+      text: expect.stringContaining('Geometry-backed bibliography evidence.'),
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_HYPERLINK',
+          relationshipId: 'pdf-link-p001-a0001',
+          message: expect.stringMatching(/no exact canonical inline owner/iu),
+        }),
+      ]),
+    )
+  })
+
   it('keeps vertical marginal text out of canonical reading-order lines', () => {
     expect(isFlowAlignedPdfTextTransform([10, 0, 0, -10, 0, 0])).toBe(true)
     expect(isFlowAlignedPdfTextTransform([0, 20, -20, 0, 32, 232])).toBe(false)
@@ -34,6 +346,27 @@ describe('PDF.js browser ingestion', () => {
     expect(isPdfLocalPathArtifact('fi', 4, 792)).toBe(true)
     expect(isPdfLocalPathArtifact('1/1', 4, 792)).toBe(true)
     expect(isPdfLocalPathArtifact('Figure', 10, 792)).toBe(false)
+  })
+
+  it('does not suppress an ordinary prose run whose entire text is a path directory name', () => {
+    expect(isPdfLocalPathArtifact('library', 8.9664, 792)).toBe(false)
+    expect(isPdfLocalPathArtifact('Library', 10, 792)).toBe(false)
+    expect(isPdfLocalPathArtifact('/Users/example/Library', 4, 792)).toBe(true)
+  })
+
+  it('rejects microscopic LaTeXiT payload text before line reconstruction', () => {
+    expect(
+      resolvePdfTextFontHeight(
+        [2.9785e-7, 0, 0, 2.9785e-7, 343.98, 616.24],
+        2.9785e-7,
+        792,
+      ),
+    ).toBeNull()
+    expect(resolvePdfTextFontHeight([0, 0, 0, 0, 100, 200], 0, 792)).toBeNull()
+    expect(
+      resolvePdfTextFontHeight([0.001, 0, 0, 0.001, 100, 200], 0.001, 792),
+    ).toBe(0.001)
+    expect(resolvePdfTextFontHeight([10, 0, 0, 10, 100, 200], 10, 792)).toBe(10)
   })
 
   it('runs a textless page through a bounded local OCR session', async () => {
@@ -819,6 +1152,24 @@ describe('PDF.js browser ingestion', () => {
       unresolvedObjectCount: 0,
     })
     expect(result.readiness).toMatchObject({ ready: true, status: 'ready' })
+    expect(result.paper).toMatchObject({
+      language: 'und',
+      baseDirection: 'unknown',
+      artifactModifiedAt: '1970-01-01T00:00:00.000Z',
+      metadataLineage: {
+        publicationDate: {
+          status: 'unresolved',
+          source: 'pdf-xmp-not-extracted',
+          evidence: ['pdf-xmp-metadata-not-extracted'],
+        },
+        artifactModifiedAt: {
+          status: 'unresolved',
+          source: 'unproven',
+          evidence: ['artifact-modified-time-unavailable'],
+        },
+      },
+    })
+    expect(result.paper).not.toHaveProperty('publicationDate')
 
     const layout = buildLayoutManifest(result.paper)
     expect(layout.renditions.map(({ target }) => target)).toEqual(
@@ -848,12 +1199,90 @@ describe('PDF.js browser ingestion', () => {
     expect(strFromU8(files['EPUB/content.xhtml'])).toContain(
       'Reconstructed Research Paper',
     )
+    expect(strFromU8(files['EPUB/content.xhtml'])).toContain(
+      'xml:lang="und" lang="und"',
+    )
+    expect(strFromU8(files['EPUB/package.opf'])).toContain(
+      '<dc:language>und</dc:language>',
+    )
+    expect(strFromU8(files['EPUB/package.opf'])).not.toMatch(/<dc:date\b/)
+    expect(strFromU8(files['EPUB/package.opf'])).toContain(
+      '<meta property="dcterms:modified">1970-01-01T00:00:00Z</meta>',
+    )
     expect(JSON.parse(strFromU8(files['EPUB/export.json']))).toMatchObject({
       sourcePdfSha256: result.source.sha256,
       sourceReadiness: { ready: true },
       rendition: 'reflowable-epub',
     })
   })
+
+  it('keeps reconstruction and EPUB bytes deterministic across filesystem mtimes', async () => {
+    const fixture = await fixtureFile('born-digital.pdf')
+    const bytes = new Uint8Array(await fixture.arrayBuffer())
+    const file = (lastModified: number) =>
+      new File([bytes as BlobPart], fixture.name, {
+        type: fixture.type,
+        lastModified,
+      })
+    const [first, second] = await Promise.all([
+      reconstructPdf(file(Date.UTC(2020, 0, 1))),
+      reconstructPdf(file(Date.UTC(2030, 11, 31))),
+    ])
+
+    expect(first.paper).toEqual(second.paper)
+    expect(first.paper).toMatchObject({
+      artifactModifiedAt: '1970-01-01T00:00:00.000Z',
+      metadataLineage: {
+        artifactModifiedAt: {
+          status: 'unresolved',
+          source: 'unproven',
+          evidence: ['artifact-modified-time-unavailable'],
+        },
+      },
+    })
+
+    const profile = getTargetProfile('paperPro')
+    const [firstEpub, secondEpub] = await Promise.all([
+      buildEpub(first.paper, first, profile),
+      buildEpub(second.paper, second, profile),
+    ])
+    expect(firstEpub.bytes).toEqual(secondEpub.bytes)
+    expect(firstEpub.sha256).toBe(secondEpub.sha256)
+  })
+
+  const localCmexPdfPath = process.env.SRT_REAL_CMEX_PDF
+  const localCmexPdfIt = localCmexPdfPath ? it : it.skip
+  localCmexPdfIt(
+    'resolves opaque PDF.js font ids before decoding a local CMEX paper',
+    async () => {
+      const bytes = await readFile(localCmexPdfPath!)
+      const result = await reconstructPdf(
+        new File([bytes], 'local-cmex-replay.pdf', {
+          type: 'application/pdf',
+        }),
+      )
+      const cmexRuns = result.pages.flatMap((page) =>
+        page.runs.filter((run) => /CMEX\d*/iu.test(run.fontName)),
+      )
+
+      expect(cmexRuns.length).toBeGreaterThan(0)
+      expect(cmexRuns.some((run) => run.text.includes('∑'))).toBe(true)
+      expect(cmexRuns.every((run) => !run.fontName.startsWith('g_'))).toBe(true)
+      expect(cmexRuns.every((run) => !/[\\/]/u.test(run.fontName))).toBe(true)
+      expect(
+        result.visualRelationships.find(
+          (relationship) =>
+            relationship.kind === 'equation' &&
+            relationship.label === 'Equation 3' &&
+            relationship.sourceBoxes.some((box) => box.page === 7),
+        ),
+      ).toMatchObject({
+        status: 'matched',
+        evidence: expect.arrayContaining(['source-page-crop']),
+      })
+    },
+    30_000,
+  )
 
   it('reconstructs scientific objects with inspectable assets and relationships', async () => {
     const result = await reconstructPdf(
@@ -1109,6 +1538,7 @@ describe('PDF.js browser ingestion', () => {
     const deviceEpub = await buildEpub(result.paper, result, moveProfile)
     const deviceInspection = inspectEpub(deviceEpub.bytes, moveProfile)
     const deviceManifest = deviceInspection.manifest as {
+      canonicalContentSha256: string
       assets: Array<{
         width: number
         sourceAssetId: string
@@ -1121,7 +1551,10 @@ describe('PDF.js browser ingestion', () => {
         }
       }>
     }
-    expect(deviceEpub.fileName).toBe('publication-papermove.epub')
+    expect(deviceEpub.fileName).toMatch(/^[a-z0-9-]+\.epub$/)
+    expect(deviceEpub.fileName).toContain(
+      `-paper-pro-move-${deviceManifest.canonicalContentSha256.slice(0, 12)}.epub`,
+    )
     expect(deviceManifest.assets).not.toHaveLength(0)
     for (const asset of deviceManifest.assets) {
       expect(asset.policy).toMatchObject({

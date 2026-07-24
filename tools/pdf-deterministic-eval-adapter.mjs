@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isStrictSemanticTable } from '../src/research/semantic-table.ts'
 import { assertAdapterSourceIdentity } from './adapter-source-identity.mjs'
 
-const REQUEST_SCHEMA_VERSION = '1.1.0'
+const REQUEST_SCHEMA_VERSIONS = new Set(['1.1.0', '1.2.0'])
 const PREDICTIONS_SCHEMA_VERSION = '1.0.0'
 const ADAPTER_FORMAT_VERSION = '1.1.0'
 const ADAPTER_PATH = fileURLToPath(import.meta.url)
@@ -682,6 +682,59 @@ function classifyTarget(item, target, observations, page) {
 
 export function predictDeterministicCase(item, reconstruction) {
   const observations = observationsFor(reconstruction)
+  if (item.task === 'reading-order') {
+    const matches = item.targets.flatMap((target) => {
+      const sourcePage = target.sourcePage ?? item.page
+      const targetPage = observations.pages.find(
+        (candidate) => candidate.page === sourcePage,
+      )
+      if (!targetPage) return []
+      const visualPositions = new Map(
+        (targetPage.visualOrder ?? []).map((id, index) => [id, index]),
+      )
+      const visualEntity = bestEntity(
+        targetPage.entities,
+        target,
+        new Set(visualPositions.keys()),
+      )
+      if (visualEntity) {
+        return [
+          {
+            id: target.id,
+            sourcePage,
+            position: visualPositions.get(visualEntity.id),
+          },
+        ]
+      }
+      const positions = new Map(
+        targetPage.order.map((id, index) => [id, index]),
+      )
+      const entity = bestEntity(
+        targetPage.entities,
+        target,
+        new Set(targetPage.order),
+      )
+      return entity
+        ? [
+            {
+              id: target.id,
+              sourcePage,
+              position: positions.get(entity.id),
+            },
+          ]
+        : []
+    })
+    return {
+      order: matches
+        .sort(
+          (left, right) =>
+            left.sourcePage - right.sourcePage ||
+            left.position - right.position ||
+            left.id.localeCompare(right.id),
+        )
+        .map(({ id }) => id),
+    }
+  }
   const page = observations.pages.find(
     (candidate) => candidate.page === item.page,
   )
@@ -700,51 +753,6 @@ export function predictDeterministicCase(item, reconstruction) {
         const label = classifyTarget(item, target, observations, page)
         return label ? [{ targetId: target.id, label }] : []
       }),
-    }
-  }
-  if (item.task === 'reading-order') {
-    const visualPositions = new Map(
-      (page.visualOrder ?? []).map((id, index) => [id, index]),
-    )
-    const visualAllowed = new Set(visualPositions.keys())
-    const visualMatches = item.targets.map((target) => ({
-      id: target.id,
-      entity: bestEntity(page.entities, target, visualAllowed),
-    }))
-    if (
-      visualMatches.length > 0 &&
-      visualMatches.every(({ entity }) => entity) &&
-      new Set(visualMatches.map(({ entity }) => entity.id)).size ===
-        visualMatches.length
-    ) {
-      return {
-        order: visualMatches
-          .map(({ id, entity }) => ({
-            id,
-            position: visualPositions.get(entity.id),
-          }))
-          .sort(
-            (left, right) =>
-              left.position - right.position || left.id.localeCompare(right.id),
-          )
-          .map(({ id }) => id),
-      }
-    }
-    const positions = new Map(page.order.map((id, index) => [id, index]))
-    const allowed = new Set(page.order)
-    return {
-      order: item.targets
-        .flatMap((target) => {
-          const entity = bestEntity(page.entities, target, allowed)
-          return entity
-            ? [{ id: target.id, position: positions.get(entity.id) }]
-            : []
-        })
-        .sort(
-          (left, right) =>
-            left.position - right.position || left.id.localeCompare(right.id),
-        )
-        .map(({ id }) => id),
     }
   }
   if (item.task === 'relationship') {
@@ -790,7 +798,7 @@ function validateRequest(request) {
       'documents',
       'cases',
     ]) &&
-    request.schemaVersion === REQUEST_SCHEMA_VERSION &&
+    REQUEST_SCHEMA_VERSIONS.has(request.schemaVersion) &&
     request.privacy ===
       'owner-local-paths-present-ephemeral-delete-after-run' &&
     exactKeys(request.evalSet, ['id', 'sha256']) &&
@@ -838,13 +846,21 @@ function validateRequest(request) {
         TASKS.has(item.task) &&
         Array.isArray(item.targets) &&
         (item.task !== 'detection' || item.targets.length === 0) &&
-        item.targets.every(
-          (target) =>
-            exactKeys(target, ['id', 'kind', 'box']) &&
+        item.targets.every((target) => {
+          const keys =
+            request.schemaVersion === '1.2.0'
+              ? ['id', 'kind', 'sourcePage', 'box']
+              : ['id', 'kind', 'box']
+          return (
+            exactKeys(target, keys) &&
             SAFE_ID.test(target.id) &&
             target.kind === 'candidate' &&
-            (target.box === null || validBox(target.box)),
-        ),
+            (request.schemaVersion !== '1.2.0' ||
+              (Number.isSafeInteger(target.sourcePage) &&
+                target.sourcePage > 0)) &&
+            (target.box === null || validBox(target.box))
+          )
+        }),
     )
   if (!valid) invalid('INVALID_DETERMINISTIC_EVAL_REQUEST')
 }

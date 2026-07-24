@@ -17,7 +17,10 @@ import {
   detectPdfSemanticSignals,
 } from './pdf-quality'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
-import { createSourcePageCropAsset } from './visual-assets'
+import {
+  canonicalTableFromLines,
+  createSourcePageCropAsset,
+} from './visual-assets'
 
 function run(
   text: string,
@@ -97,6 +100,7 @@ function sourceBackedEquationFixture() {
     label: 'Equation 1',
     captionRegionId: captionRegion.id,
     sourceRegionIds: [equationRegion.id],
+    sourceLineIds: equationRegion.lines.map((line) => line.id),
     sourceObjectIds: ['equation-object'],
     assetIds: [assetId],
     status: 'matched',
@@ -292,8 +296,10 @@ function equationAssetWithPayload(
 
 function strictTableBoundaryFixture() {
   const captionRun = run('Table 1. Source-backed values.', 0.2, 0.18, 10, 0.4)
-  const firstRun = run('Header Value inter-', 0.2, 0.3, 10, 0.3)
-  const secondRun = run('national 1', 0.2, 0.325, 10, 0.18)
+  const headerLabelRun = run('Header', 0.2, 0.3, 10, 0.18)
+  const headerValueRun = run('Value', 0.45, 0.3, 10, 0.12)
+  const bodyLabelRun = run('inter-national', 0.2, 0.325, 10, 0.18)
+  const bodyValueRun = run('1', 0.45, 0.325, 10, 0.04)
   const captionRegion = {
     id: 'table-caption-region',
     page: 1,
@@ -342,22 +348,33 @@ function strictTableBoundaryFixture() {
     lines: [
       {
         id: 'table-line-1',
-        text: firstRun.text,
-        fontSize: firstRun.fontSize,
-        box: { ...firstRun },
-        runs: [{ ...firstRun }],
+        text: `${headerLabelRun.text} ${headerValueRun.text}`,
+        fontSize: headerLabelRun.fontSize,
+        box: {
+          ...headerLabelRun,
+          width: headerValueRun.x + headerValueRun.width - headerLabelRun.x,
+        },
+        runs: [{ ...headerLabelRun }, { ...headerValueRun }],
       },
       {
         id: 'table-line-2',
-        text: secondRun.text,
-        fontSize: secondRun.fontSize,
-        box: { ...secondRun },
-        runs: [{ ...secondRun }],
+        text: `${bodyLabelRun.text} ${bodyValueRun.text}`,
+        fontSize: bodyLabelRun.fontSize,
+        box: {
+          ...bodyLabelRun,
+          width: bodyValueRun.x + bodyValueRun.width - bodyLabelRun.x,
+        },
+        runs: [{ ...bodyLabelRun }, { ...bodyValueRun }],
       },
     ],
     nativeObjectIds: ['table-object'],
     includedInReadingOrder: true,
   } satisfies PdfPageRegion
+  const table = canonicalTableFromLines(tableRegion.lines, {
+    sourceHeaderLineIds: ['table-line-1'],
+    sourceRegions: [tableRegion],
+  })
+  if (!table) throw new Error('expected source-verifiable table fixture')
   const bytes = new TextEncoder().encode(
     '<table><tr><th>Header</th><th>Value</th></tr><tr><td>international</td><td>1</td></tr></table>',
   )
@@ -382,6 +399,7 @@ function strictTableBoundaryFixture() {
     label: 'Table 1',
     captionRegionId: captionRegion.id,
     sourceRegionIds: [tableRegion.id],
+    sourceLineIds: tableRegion.lines.map((line) => line.id),
     sourceObjectIds: ['table-object'],
     assetIds: [asset.id],
     status: 'matched',
@@ -410,42 +428,8 @@ function strictTableBoundaryFixture() {
         type: 'figure',
         objectType: 'table',
         title: 'Table 1',
-        table: {
-          rows: [
-            {
-              cells: [
-                {
-                  text: 'Header',
-                  headerScope: 'column',
-                  columnSpan: 1,
-                  rowSpan: 1,
-                },
-                {
-                  text: 'Value',
-                  headerScope: 'column',
-                  columnSpan: 1,
-                  rowSpan: 1,
-                },
-              ],
-            },
-            {
-              cells: [
-                {
-                  text: 'international',
-                  headerScope: null,
-                  columnSpan: 1,
-                  rowSpan: 1,
-                },
-                {
-                  text: '1',
-                  headerScope: null,
-                  columnSpan: 1,
-                  rowSpan: 1,
-                },
-              ],
-            },
-          ],
-        },
+        sourceText: tableRegion.text,
+        table,
         relationships: {
           caption: 'table-caption-1',
           assets: [asset.id],
@@ -492,10 +476,20 @@ function strictTableBoundaryFixture() {
     height: 792,
     rotation: 0,
     textCharacters:
-      captionRun.text.length + firstRun.text.length + secondRun.text.length,
+      captionRun.text.length +
+      headerLabelRun.text.length +
+      headerValueRun.text.length +
+      bodyLabelRun.text.length +
+      bodyValueRun.text.length,
     imageCount: 0,
     objects: [],
-    runs: [captionRun, firstRun, secondRun],
+    runs: [
+      captionRun,
+      headerLabelRun,
+      headerValueRun,
+      bodyLabelRun,
+      bodyValueRun,
+    ],
   } satisfies PdfPageAnalysis
   const readingOrder = {
     schemaVersion: '1.0.0',
@@ -587,6 +581,125 @@ describe('PDF semantic signal detection', () => {
     return { region, readingOrder, evidence }
   }
 
+  it('aggregates canonical-flow ambiguity into reading-order review truth', () => {
+    const sourceRun = run('A source-backed paragraph.', 0.1, 0.2)
+    const { region, readingOrder, evidence } = singleRegionEvidence(sourceRun)
+    const paper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-23',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'paragraph-1',
+          type: 'paragraph',
+          text: sourceRun.text,
+          source: 'test',
+        },
+      ],
+    } satisfies ResearchPaper
+    const assessed = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: sourceRun.text.length,
+          imageCount: 0,
+          runs: [sourceRun],
+        },
+      ],
+      paper,
+      diagnostics: [
+        {
+          code: 'AMBIGUOUS_READING_ORDER',
+          severity: 'warning',
+          page: 1,
+          message:
+            'A canonical visual has exact references in multiple heading scopes.',
+        },
+      ],
+      readingOrder,
+      regions: [region],
+      provenance: { 'paragraph-1': evidence },
+    })
+
+    expect(assessed.completeness.readingOrderDiagnostics).toBe(1)
+    expect(assessed.completeness.readingOrderEvaluation).toMatchObject({
+      regionCount: 1,
+      unresolvedEdgeCount: 0,
+      reviewRequired: true,
+    })
+    expect(assessed.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+  })
+
+  it('fails a configured hyperlink obligation ledger closed', () => {
+    const sourceRun = run('A source-backed link owner.', 0.1, 0.2)
+    const { region, readingOrder, evidence } = singleRegionEvidence(sourceRun)
+    const paper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-23',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'paragraph-1',
+          type: 'paragraph',
+          text: sourceRun.text,
+          source: 'test',
+        },
+      ],
+    } satisfies ResearchPaper
+    const assessed = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: sourceRun.text.length,
+          imageCount: 0,
+          runs: [sourceRun],
+        },
+      ],
+      paper,
+      diagnostics: [],
+      readingOrder,
+      regions: [region],
+      provenance: { 'paragraph-1': evidence },
+      hyperlinkLedger: { expected: 1, mapped: 0 },
+    })
+
+    expect(assessed.completeness).toMatchObject({
+      expectedHyperlinkCount: 1,
+      mappedHyperlinkCount: 0,
+      hyperlinkCoverage: 0,
+    })
+    expect(assessed.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_HYPERLINK',
+          severity: 'error',
+        }),
+      ]),
+    )
+    expect(assessed.readiness.ready).toBe(false)
+  })
+
   it('classifies an unresolved strict table-only transition as structural', () => {
     const fixture = strictTableBoundaryFixture()
     expect(
@@ -595,6 +708,7 @@ describe('PDF semantic signal detection', () => {
         provenance: fixture.provenance,
         relationships: [fixture.relationship],
         assets: [fixture.asset],
+        regions: fixture.regions,
       }),
     ).toEqual([fixture.relationship])
 
@@ -604,6 +718,7 @@ describe('PDF semantic signal detection', () => {
       provenance: fixture.provenance,
       visualRelationships: [fixture.relationship],
       assets: [fixture.asset],
+      regions: fixture.regions,
     })
     expect(classified).toMatchObject({
       unresolvedCorruptingJoinCount: 0,
@@ -642,7 +757,7 @@ describe('PDF semantic signal detection', () => {
     )
   })
 
-  it('does not count a matched non-semantic table crop as semantic table resolution', async () => {
+  it('retains a complete bounded table crop without counting it as semantic table resolution', async () => {
     const fixture = strictTableBoundaryFixture()
     const width = 12
     const height = 8
@@ -665,7 +780,12 @@ describe('PDF semantic signal detection', () => {
     const relationship = {
       ...fixture.relationship,
       assetIds: [crop.id],
-      evidence: ['bounded-table-scope', 'non-semantic-source-scope'],
+      sourceLineIds: fixture.regions[1].lines.map((line) => line.id),
+      evidence: [
+        'bounded-table-scope',
+        'non-semantic-source-scope',
+        'source-page-crop',
+      ],
     } satisfies PdfVisualRelationship
     const paper = {
       ...fixture.paper,
@@ -673,11 +793,95 @@ describe('PDF semantic signal detection', () => {
         node.type === 'figure'
           ? {
               ...node,
+              table: undefined,
+              sourceText: fixture.relationship.sourceText,
               relationships: { ...node.relationships, assets: [crop.id] },
             }
           : node,
       ),
     } satisfies ResearchPaper
+
+    expect(
+      validatedPdfVisualRelationships({
+        paper,
+        provenance: fixture.provenance,
+        relationships: [relationship],
+        assets: [crop],
+      }),
+    ).toEqual([relationship])
+    expect(
+      validatedPdfVisualRelationships({
+        paper,
+        provenance: fixture.provenance,
+        relationships: [{ ...relationship, sourceLineIds: [] }],
+        assets: [crop],
+      }),
+    ).toEqual([])
+    expect(
+      validatedPdfVisualRelationships({
+        paper,
+        provenance: fixture.provenance,
+        relationships: [
+          {
+            ...relationship,
+            evidence: relationship.evidence.filter(
+              (item) => item !== 'source-page-crop',
+            ),
+          },
+        ],
+        assets: [crop],
+      }),
+    ).toEqual([])
+    expect(
+      validatedPdfVisualRelationships({
+        paper: {
+          ...paper,
+          nodes: paper.nodes.map((node) =>
+            node.type === 'figure'
+              ? { ...node, sourceText: `${node.sourceText} missing` }
+              : node,
+          ),
+        },
+        provenance: fixture.provenance,
+        relationships: [relationship],
+        assets: [crop],
+      }),
+    ).toEqual([])
+
+    const clippedCrop = await createSourcePageCropAsset({
+      kind: 'table',
+      cropBox: {
+        ...fixture.asset.sourceBoxes[0],
+        width: fixture.asset.sourceBoxes[0].width / 2,
+        height: fixture.asset.sourceBoxes[0].height / 2,
+      },
+      sourceObjectIds: fixture.asset.sourceObjectIds,
+      sourceBoxes: fixture.asset.sourceBoxes,
+      width,
+      height,
+      pixels,
+    })
+    expect(
+      validatedPdfVisualRelationships({
+        paper: {
+          ...paper,
+          nodes: paper.nodes.map((node) =>
+            node.type === 'figure'
+              ? {
+                  ...node,
+                  relationships: {
+                    ...node.relationships,
+                    assets: [clippedCrop.id],
+                  },
+                }
+              : node,
+          ),
+        },
+        provenance: fixture.provenance,
+        relationships: [{ ...relationship, assetIds: [clippedCrop.id] }],
+        assets: [clippedCrop],
+      }),
+    ).toEqual([])
 
     const assessed = assessPdfCompleteness({
       pages: [fixture.page],
@@ -851,7 +1055,7 @@ describe('PDF semantic signal detection', () => {
     })
   })
 
-  it('classifies only selected-band and crossing transitions as structural for a partial table region', () => {
+  it('keeps partial table transitions corrupting when the selected cells do not replay their source lines', () => {
     const fixture = strictTableBoundaryFixture()
     const tableRegion = fixture.regions.find(
       (region) => region.id === fixture.decision.regionId,
@@ -909,8 +1113,8 @@ describe('PDF semantic signal detection', () => {
     })
 
     expect(classified).toMatchObject({
-      unresolvedCorruptingJoinCount: 1,
-      structurallyConsumedLineBoundaryCount: 2,
+      unresolvedCorruptingJoinCount: 3,
+      structurallyConsumedLineBoundaryCount: 0,
       decisions: [
         {
           fromLineId: 'prose-line-1',
@@ -920,14 +1124,12 @@ describe('PDF semantic signal detection', () => {
         {
           fromLineId: 'prose-line-2',
           toLineId: 'table-line-1',
-          outcome: 'structural-boundary',
-          evidence: expect.arrayContaining(['source-line-visual-boundary']),
+          outcome: 'unresolved',
         },
         {
           fromLineId: 'table-line-1',
           toLineId: 'table-line-2',
-          outcome: 'structural-boundary',
-          evidence: expect.arrayContaining(['source-line-visual-boundary']),
+          outcome: 'unresolved',
         },
       ],
     })
@@ -1167,6 +1369,935 @@ describe('PDF semantic signal detection', () => {
     )
   })
 
+  it('fails closed when metadata titles or adjacent headings repeat as canonical roles', () => {
+    const titleRun = run('Paper Title', 0.1, 0.1, 16, 0.3)
+    const firstMethodRun = run('Method', 0.1, 0.2, 14, 0.2)
+    const secondMethodRun = run('Method', 0.1, 0.3, 14, 0.2)
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters:
+        titleRun.text.length +
+        firstMethodRun.text.length +
+        secondMethodRun.text.length,
+      imageCount: 0,
+      runs: [titleRun, firstMethodRun, secondMethodRun],
+    }
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper Title',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'title-heading',
+          type: 'heading',
+          level: 1,
+          text: 'Paper Title',
+          source: 'test',
+        },
+        {
+          id: 'method-one',
+          type: 'heading',
+          level: 2,
+          text: 'Method',
+          source: 'test',
+        },
+        {
+          id: 'method-two',
+          type: 'heading',
+          level: 2,
+          text: 'Method',
+          source: 'test',
+        },
+      ],
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [page],
+      paper,
+      diagnostics: [],
+    })
+
+    expect(result.readiness.ready).toBe(false)
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'DUPLICATE_CANONICAL_ROLE',
+    )
+  })
+
+  it('allows one source-backed canonical node to carry the publication title role', () => {
+    const titleRun = run('Paper Title', 0.1, 0.1, 16, 0.3)
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: titleRun.text,
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'title-heading',
+          type: 'heading',
+          level: 1,
+          text: titleRun.text,
+          source: 'test',
+        },
+      ],
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: titleRun.text.length,
+          imageCount: 0,
+          runs: [titleRun],
+        },
+      ],
+      paper,
+      diagnostics: [],
+    })
+
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'DUPLICATE_CANONICAL_ROLE',
+    )
+  })
+
+  it('fails closed when canonical prose reverses source reading-order intervals', () => {
+    const firstRun = run('First source paragraph.', 0.1, 0.2, 10, 0.6)
+    const secondRun = run('Second source paragraph.', 0.1, 0.3, 10, 0.6)
+    const sourceRegion = (id: string, sourceRun: PdfSourceRun) => ({
+      id,
+      page: 1,
+      kind: 'body' as const,
+      column: 'single' as const,
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `${id}-line`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [{ ...sourceRun }],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+    const firstRegion = sourceRegion('first-region', firstRun)
+    const secondRegion = sourceRegion('second-region', secondRun)
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'second-node',
+          type: 'paragraph',
+          text: secondRun.text,
+          source: 'test',
+        },
+        {
+          id: 'first-node',
+          type: 'paragraph',
+          text: firstRun.text,
+          source: 'test',
+        },
+      ],
+    }
+    const provenance: Record<string, NodeSourceEvidence> = {
+      'first-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [firstRegion.id],
+        boxes: [{ ...firstRegion.box }],
+        links: [],
+      },
+      'second-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [secondRegion.id],
+        boxes: [{ ...secondRegion.box }],
+        links: [],
+      },
+    }
+    const readingOrder: PdfReadingOrderGraph = {
+      schemaVersion: '1.0.0',
+      regionIds: [firstRegion.id, secondRegion.id],
+      order: [firstRegion.id, secondRegion.id],
+      edges: [],
+      resolutions: [],
+      acyclic: true,
+      evaluation: {
+        schemaVersion: '1.0.0',
+        algorithm: 'deterministic-geometry-v1',
+        mode: 'deterministic-only',
+        regionCount: 2,
+        acceptedEdgeCount: 0,
+        unresolvedEdgeCount: 0,
+        cycleRate: 0,
+        orderAccuracy: null,
+        provider: null,
+        modelVersion: null,
+        latencyMs: 0,
+        costUsd: 0,
+        reviewRequired: false,
+      },
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: firstRun.text.length + secondRun.text.length,
+          imageCount: 0,
+          runs: [firstRun, secondRun],
+        },
+      ],
+      paper,
+      diagnostics: [],
+      regions: [firstRegion, secondRegion],
+      readingOrder,
+      provenance,
+    })
+
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'CANONICAL_FLOW_ORDER_VIOLATION',
+    )
+    expect(result.completeness.readingOrderDiagnostics).toBe(1)
+    expect(result.completeness.readingOrderEvaluation).toMatchObject({
+      regionCount: 2,
+      unresolvedEdgeCount: 0,
+      reviewRequired: true,
+    })
+  })
+
+  it('fails closed on a small same-region line reversal above the coverage threshold', () => {
+    const sourceRuns = [
+      run('a'.repeat(700), 0.1, 0.2, 10, 0.6),
+      run('second marker', 0.1, 0.23, 10, 0.3),
+      run('third marker', 0.1, 0.26, 10, 0.3),
+      run('z'.repeat(700), 0.1, 0.29, 10, 0.6),
+    ]
+    const region: PdfPageRegion = {
+      id: 'shared-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: sourceRuns.map((sourceRun) => sourceRun.text).join(' '),
+      confidence: 1,
+      box: {
+        ...sourceRuns[0],
+        height:
+          sourceRuns.at(-1)!.y + sourceRuns.at(-1)!.height - sourceRuns[0].y,
+      },
+      lines: sourceRuns.map((sourceRun, index) => ({
+        id: `shared-line-${index + 1}`,
+        text: sourceRun.text,
+        fontSize: sourceRun.fontSize,
+        box: { ...sourceRun },
+        runs: [{ ...sourceRun }],
+      })),
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const nodeOrder = [0, 2, 1, 3]
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: nodeOrder.map((sourceIndex) => ({
+        id: `node-${sourceIndex + 1}`,
+        type: 'paragraph' as const,
+        text: sourceRuns[sourceIndex].text,
+        source: 'test',
+      })),
+    }
+    const provenance: Record<string, NodeSourceEvidence> = Object.fromEntries(
+      sourceRuns.map(
+        (sourceRun, index) =>
+          [
+            `node-${index + 1}`,
+            {
+              confidence: 1,
+              pages: [1],
+              regionIds: [region.id],
+              boxes: [{ ...sourceRun }],
+              links: [],
+            },
+          ] satisfies [string, NodeSourceEvidence],
+      ),
+    )
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: sourceRuns.reduce(
+            (total, sourceRun) => total + sourceRun.text.length,
+            0,
+          ),
+          imageCount: 0,
+          runs: sourceRuns,
+        },
+      ],
+      paper,
+      diagnostics: [],
+      regions: [region],
+      readingOrder: {
+        schemaVersion: '1.0.0',
+        regionIds: [region.id],
+        order: [region.id],
+        edges: [],
+        resolutions: [],
+        acyclic: true,
+        evaluation: {
+          schemaVersion: '1.0.0',
+          algorithm: 'deterministic-geometry-v1',
+          mode: 'deterministic-only',
+          regionCount: 1,
+          acceptedEdgeCount: 0,
+          unresolvedEdgeCount: 0,
+          cycleRate: 0,
+          orderAccuracy: null,
+          provider: null,
+          modelVersion: null,
+          latencyMs: 0,
+          costUsd: 0,
+          reviewRequired: false,
+        },
+      },
+      provenance,
+    })
+
+    expect(result.completeness.textCoverage).toBeGreaterThan(0.98)
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'CANONICAL_FLOW_ORDER_VIOLATION',
+    )
+  })
+
+  it('fails closed on a small same-region omission above the coverage threshold', () => {
+    const retainedRun = run('a'.repeat(1_000), 0.1, 0.2, 10, 0.6)
+    const omittedRun = run('omitted marker', 0.1, 0.23, 10, 0.3)
+    const region: PdfPageRegion = {
+      id: 'partially-rendered-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: `${retainedRun.text} ${omittedRun.text}`,
+      confidence: 1,
+      box: {
+        ...retainedRun,
+        height: omittedRun.y + omittedRun.height - retainedRun.y,
+      },
+      lines: [retainedRun, omittedRun].map((sourceRun, index) => ({
+        id: `partial-line-${index + 1}`,
+        text: sourceRun.text,
+        fontSize: sourceRun.fontSize,
+        box: { ...sourceRun },
+        runs: [{ ...sourceRun }],
+      })),
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'retained-node',
+          type: 'paragraph',
+          text: retainedRun.text,
+          source: 'test',
+        },
+      ],
+    }
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: retainedRun.text.length + omittedRun.text.length,
+          imageCount: 0,
+          runs: [retainedRun, omittedRun],
+        },
+      ],
+      paper,
+      diagnostics: [],
+      regions: [region],
+      readingOrder: {
+        schemaVersion: '1.0.0',
+        regionIds: [region.id],
+        order: [region.id],
+        edges: [],
+        resolutions: [],
+        acyclic: true,
+        evaluation: {
+          schemaVersion: '1.0.0',
+          algorithm: 'deterministic-geometry-v1',
+          mode: 'deterministic-only',
+          regionCount: 1,
+          acceptedEdgeCount: 0,
+          unresolvedEdgeCount: 0,
+          cycleRate: 0,
+          orderAccuracy: null,
+          provider: null,
+          modelVersion: null,
+          latencyMs: 0,
+          costUsd: 0,
+          reviewRequired: false,
+        },
+      },
+      provenance: {
+        'retained-node': {
+          confidence: 1,
+          pages: [1],
+          regionIds: [region.id],
+          boxes: [{ ...retainedRun }],
+          links: [],
+        },
+      },
+    })
+
+    expect(result.completeness.textCoverage).toBeGreaterThan(0.98)
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'CANONICAL_FLOW_ORDER_VIOLATION',
+    )
+  })
+
+  it.each([
+    {
+      name: 'numeric page range',
+      source: ['Conference proceedings, pp. 36–', '49. IEEE Press.'],
+      output: 'Conference proceedings, pp. 36–49. IEEE Press.',
+    },
+    {
+      name: 'hyphenated identifier',
+      source: ['ISBN 979-8-4007-0103-', '0. ACM Press.'],
+      output: 'ISBN 979-8-4007-0103-0. ACM Press.',
+    },
+    {
+      name: 'four-digit year',
+      source: ['Example venue, 202', '0. doi: 10.1000/example.'],
+      output: 'Example venue, 2020. doi: 10.1000/example.',
+    },
+  ])(
+    'accepts a source-proven numeric fragment join across regions for $name',
+    ({ source, output }) => {
+      const sourceRuns = source.map((text, index) =>
+        run(text, index === 0 ? 0.1 : 0.12, 0.2 + index * 0.05, 10, 0.7),
+      )
+      const regions = sourceRuns.map(
+        (sourceRun, index) =>
+          ({
+            id: `numeric-fragment-region-${index + 1}`,
+            page: 1,
+            kind: 'body',
+            column: 'single',
+            text: sourceRun.text,
+            confidence: 1,
+            box: { ...sourceRun },
+            lines: [
+              {
+                id: `numeric-fragment-line-${index + 1}`,
+                text: sourceRun.text,
+                fontSize: sourceRun.fontSize,
+                box: { ...sourceRun },
+                runs: [{ ...sourceRun }],
+              },
+            ],
+            nativeObjectIds: [],
+            includedInReadingOrder: true,
+          }) satisfies PdfPageRegion,
+      )
+      const paper: ResearchPaper = {
+        id: 'paper',
+        version: '1.0.0',
+        status: 'working',
+        title: output,
+        subtitle: 'Test',
+        authors: ['Test'],
+        updated: '2026-07-14',
+        abstract: 'Test',
+        nodes: [
+          {
+            id: 'numeric-fragment-node',
+            type: 'paragraph',
+            text: output,
+            source: 'test',
+          },
+        ],
+      }
+      const result = assessPdfCompleteness({
+        pages: [
+          {
+            page: 1,
+            kind: 'born-digital',
+            width: 612,
+            height: 792,
+            rotation: 0,
+            textCharacters: source.reduce(
+              (total, text) => total + text.length,
+              0,
+            ),
+            imageCount: 0,
+            runs: sourceRuns,
+          },
+        ],
+        paper,
+        diagnostics: [],
+        regions,
+        readingOrder: {
+          schemaVersion: '1.0.0',
+          regionIds: regions.map((region) => region.id),
+          order: regions.map((region) => region.id),
+          edges: [],
+          resolutions: [],
+          acyclic: true,
+          evaluation: {
+            schemaVersion: '1.0.0',
+            algorithm: 'deterministic-geometry-v1',
+            mode: 'deterministic-only',
+            regionCount: regions.length,
+            acceptedEdgeCount: 0,
+            unresolvedEdgeCount: 0,
+            cycleRate: 0,
+            orderAccuracy: null,
+            provider: null,
+            modelVersion: null,
+            latencyMs: 0,
+            costUsd: 0,
+            reviewRequired: false,
+          },
+        },
+        provenance: {
+          'numeric-fragment-node': {
+            confidence: 1,
+            pages: [1],
+            regionIds: regions.map((region) => region.id),
+            boxes: sourceRuns.map((sourceRun) => ({ ...sourceRun })),
+            links: [],
+          },
+        },
+      })
+
+      expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+        'CANONICAL_FLOW_ORDER_VIOLATION',
+      )
+    },
+  )
+
+  it.each([
+    {
+      name: 'scientific operators and signs',
+      source: 'The estimate is −0.5 ≤ p < 0.01.',
+      output: 'The estimate is 0.5 p 0.01.',
+    },
+    {
+      name: 'word boundaries',
+      source: 'The model is robust.',
+      output: 'Themodel is robust.',
+    },
+  ])(
+    'fails closed when normalized character coverage hides changed $name',
+    ({ source, output }) => {
+      const sourceRun = run(source, 0.1, 0.2, 10, 0.7)
+      const region: PdfPageRegion = {
+        id: 'semantic-text-region',
+        page: 1,
+        kind: 'body',
+        column: 'single',
+        text: source,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: 'semantic-text-line',
+            text: source,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [{ ...sourceRun }],
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }
+      const result = assessPdfCompleteness({
+        pages: [
+          {
+            page: 1,
+            kind: 'born-digital',
+            width: 612,
+            height: 792,
+            rotation: 0,
+            textCharacters: source.length,
+            imageCount: 0,
+            runs: [sourceRun],
+          },
+        ],
+        paper: {
+          id: 'paper',
+          version: '1.0.0',
+          status: 'working',
+          title: '',
+          subtitle: 'Test',
+          authors: [],
+          updated: '2026-07-14',
+          abstract: 'Test',
+          nodes: [
+            {
+              id: 'semantic-text-node',
+              type: 'paragraph',
+              text: output,
+              source: 'test',
+            },
+          ],
+        },
+        diagnostics: [],
+        regions: [region],
+        readingOrder: {
+          schemaVersion: '1.0.0',
+          regionIds: [region.id],
+          order: [region.id],
+          edges: [],
+          resolutions: [],
+          acyclic: true,
+          evaluation: {
+            schemaVersion: '1.0.0',
+            algorithm: 'deterministic-geometry-v1',
+            mode: 'deterministic-only',
+            regionCount: 1,
+            acceptedEdgeCount: 0,
+            unresolvedEdgeCount: 0,
+            cycleRate: 0,
+            orderAccuracy: null,
+            provider: null,
+            modelVersion: null,
+            latencyMs: 0,
+            costUsd: 0,
+            reviewRequired: false,
+          },
+        },
+        provenance: {
+          'semantic-text-node': {
+            confidence: 1,
+            pages: [1],
+            regionIds: [region.id],
+            boxes: [{ ...sourceRun }],
+            links: [],
+          },
+        },
+      })
+
+      expect(result.completeness.textCoverage).toBe(1)
+      expect(result.readiness.blockingDiagnosticCodes).toContain(
+        'CANONICAL_FLOW_ORDER_VIOLATION',
+      )
+    },
+  )
+
+  it('allows complete ordered canonical fragments from one styled source line', () => {
+    const headingRun = run('Background', 0.1, 0.2, 12, 0.16)
+    const paragraphRun = run('This is the complete prose.', 0.27, 0.2, 10, 0.43)
+    const region: PdfPageRegion = {
+      id: 'styled-line-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: `${headingRun.text} ${paragraphRun.text}`,
+      confidence: 1,
+      box: {
+        ...headingRun,
+        width: paragraphRun.x + paragraphRun.width - headingRun.x,
+      },
+      lines: [
+        {
+          id: 'styled-line',
+          text: `${headingRun.text} ${paragraphRun.text}`,
+          fontSize: headingRun.fontSize,
+          box: {
+            ...headingRun,
+            width: paragraphRun.x + paragraphRun.width - headingRun.x,
+          },
+          runs: [{ ...headingRun }, { ...paragraphRun }],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'background-heading',
+          type: 'heading',
+          level: 2,
+          text: headingRun.text,
+          source: 'test',
+        },
+        {
+          id: 'background-paragraph',
+          type: 'paragraph',
+          text: paragraphRun.text,
+          source: 'test',
+        },
+      ],
+    }
+    const provenance: Record<string, NodeSourceEvidence> = {
+      'background-heading': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [region.id],
+        boxes: [{ ...headingRun }],
+        links: [],
+      },
+      'background-paragraph': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [region.id],
+        boxes: [{ ...paragraphRun }],
+        links: [],
+      },
+    }
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: headingRun.text.length + paragraphRun.text.length,
+          imageCount: 0,
+          runs: [headingRun, paragraphRun],
+        },
+      ],
+      paper,
+      diagnostics: [],
+      regions: [region],
+      readingOrder: {
+        schemaVersion: '1.0.0',
+        regionIds: [region.id],
+        order: [region.id],
+        edges: [],
+        resolutions: [],
+        acyclic: true,
+        evaluation: {
+          schemaVersion: '1.0.0',
+          algorithm: 'deterministic-geometry-v1',
+          mode: 'deterministic-only',
+          regionCount: 1,
+          acceptedEdgeCount: 0,
+          unresolvedEdgeCount: 0,
+          cycleRate: 0,
+          orderAccuracy: null,
+          provider: null,
+          modelVersion: null,
+          latencyMs: 0,
+          costUsd: 0,
+          reviewRequired: false,
+        },
+      },
+      provenance,
+    })
+
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'CANONICAL_FLOW_ORDER_VIOLATION',
+    )
+  })
+
+  it('does not treat floating visual provenance as canonical prose flow', () => {
+    const firstRun = run('First source paragraph.', 0.1, 0.2, 10, 0.6)
+    const secondRun = run('Second source paragraph.', 0.1, 0.3, 10, 0.6)
+    const visualRun = run('Figure artwork.', 0.1, 0.7, 10, 0.6)
+    const sourceRegion = (
+      id: string,
+      sourceRun: PdfSourceRun,
+      kind: PdfPageRegion['kind'],
+    ): PdfPageRegion => ({
+      id,
+      page: 1,
+      kind,
+      column: 'single',
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `${id}-line`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [{ ...sourceRun }],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+    const firstRegion = sourceRegion('first-region', firstRun, 'body')
+    const secondRegion = sourceRegion('second-region', secondRun, 'body')
+    const visualRegion = sourceRegion('visual-region', visualRun, 'figure')
+    const paper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'first-node',
+          type: 'paragraph',
+          text: firstRun.text,
+          source: 'test',
+        },
+        {
+          id: 'figure-1',
+          type: 'figure',
+          objectType: 'figure',
+          title: 'Figure 1',
+          relationships: { caption: 'caption-1' },
+          source: 'test',
+        },
+        {
+          id: 'second-node',
+          type: 'paragraph',
+          text: secondRun.text,
+          source: 'test',
+        },
+        {
+          id: 'caption-1',
+          type: 'caption',
+          text: 'Figure 1. Synthetic visual.',
+          source: 'test',
+        },
+      ],
+    } satisfies ResearchPaper
+    const provenance: Record<string, NodeSourceEvidence> = {
+      'first-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [firstRegion.id],
+        boxes: [{ ...firstRegion.box }],
+        links: [],
+      },
+      'second-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [secondRegion.id],
+        boxes: [{ ...secondRegion.box }],
+        links: [],
+      },
+      'figure-1': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [visualRegion.id],
+        boxes: [{ ...visualRegion.box }],
+        links: [],
+      },
+    }
+    const readingOrder: PdfReadingOrderGraph = {
+      schemaVersion: '1.0.0',
+      regionIds: [firstRegion.id, secondRegion.id, visualRegion.id],
+      order: [firstRegion.id, secondRegion.id, visualRegion.id],
+      edges: [],
+      resolutions: [],
+      acyclic: true,
+      evaluation: {
+        schemaVersion: '1.0.0',
+        algorithm: 'deterministic-geometry-v1',
+        mode: 'deterministic-only',
+        regionCount: 3,
+        acceptedEdgeCount: 0,
+        unresolvedEdgeCount: 0,
+        cycleRate: 0,
+        orderAccuracy: null,
+        provider: null,
+        modelVersion: null,
+        latencyMs: 0,
+        costUsd: 0,
+        reviewRequired: false,
+      },
+    }
+
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters:
+            firstRun.text.length +
+            secondRun.text.length +
+            visualRun.text.length,
+          imageCount: 1,
+          runs: [firstRun, secondRun, visualRun],
+        },
+      ],
+      paper,
+      diagnostics: [],
+      regions: [firstRegion, secondRegion, visualRegion],
+      readingOrder,
+      provenance,
+    })
+
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'CANONICAL_FLOW_ORDER_VIOLATION',
+    )
+  })
+
   it('fails closed when provenance omits an extra rendered canonical node', () => {
     const sourceRun = run('Source-backed canonical prose.', 0.1, 0.2, 10, 0.5)
     const page: PdfPageAnalysis = {
@@ -1286,6 +2417,7 @@ describe('PDF semantic signal detection', () => {
   it('conserves validated visual text locally without treating other non-reading regions as prose', () => {
     const fixture = sourceBackedEquationFixture()
     const titleRun = run('Paper', 0.1, 0.1, 12, 0.2)
+    const authorRun = run('Test', 0.1, 0.13, 10, 0.12)
     const titleRegion = {
       id: 'title-region',
       page: 1,
@@ -1306,6 +2438,26 @@ describe('PDF semantic signal detection', () => {
       nativeObjectIds: [],
       includedInReadingOrder: true,
     } satisfies PdfPageRegion
+    const authorRegion = {
+      id: 'author-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: authorRun.text,
+      confidence: 1,
+      box: { ...authorRun },
+      lines: [
+        {
+          id: 'author-line',
+          text: authorRun.text,
+          fontSize: authorRun.fontSize,
+          box: { ...authorRun },
+          runs: [{ ...authorRun }],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies PdfPageRegion
     const captionRegion = fixture.regions.find(
       (region) => region.id === 'caption-region',
     )!
@@ -1318,17 +2470,20 @@ describe('PDF semantic signal detection', () => {
     } satisfies PdfPageRegion
     const readingOrder = {
       ...fixture.readingOrder,
-      regionIds: [titleRegion.id, captionRegion.id],
-      order: [titleRegion.id, captionRegion.id],
+      regionIds: [titleRegion.id, authorRegion.id, captionRegion.id],
+      order: [titleRegion.id, authorRegion.id, captionRegion.id],
       evaluation: {
         ...fixture.readingOrder.evaluation,
-        regionCount: 2,
+        regionCount: 3,
       },
     } satisfies PdfReadingOrderGraph
     const page = {
       ...fixture.page,
-      textCharacters: fixture.page.textCharacters + titleRun.text.length,
-      runs: [titleRun, ...fixture.page.runs],
+      textCharacters:
+        fixture.page.textCharacters +
+        titleRun.text.length +
+        authorRun.text.length,
+      runs: [titleRun, authorRun, ...fixture.page.runs],
     } satisfies PdfPageAnalysis
     const titleEvidence = {
       confidence: 1,
@@ -1337,7 +2492,12 @@ describe('PDF semantic signal detection', () => {
       boxes: [{ ...titleRegion.box }],
       links: [],
     } satisfies NodeSourceEvidence
-    const regions = [titleRegion, captionRegion, nonReadingEquationRegion]
+    const regions = [
+      titleRegion,
+      authorRegion,
+      captionRegion,
+      nonReadingEquationRegion,
+    ]
     const paperFor = (
       objectType: 'figure' | 'table' | 'equation',
     ): ResearchPaper => ({
@@ -1403,30 +2563,65 @@ describe('PDF semantic signal detection', () => {
       ...fixture.provenance,
       'title-node': titleEvidence,
     } satisfies Record<string, NodeSourceEvidence>
+    const semanticTableBytes = new TextEncoder().encode(
+      '<table><tr><th>q</th><th>=</th></tr><tr><td>r</td><td>.</td></tr></table>',
+    )
+    const semanticTableSha256 = createHash('sha256')
+      .update(semanticTableBytes)
+      .digest('hex')
+    const semanticTableAsset = {
+      ...fixture.asset,
+      id: `asset-${semanticTableSha256.slice(0, 24)}`,
+      href: `assets/asset-${semanticTableSha256.slice(0, 24)}.xhtml`,
+      mediaType: 'application/xhtml+xml',
+      kind: 'table',
+      rendition: 'semantic-table',
+      sha256: semanticTableSha256,
+      bytes: semanticTableBytes,
+    } satisfies PdfVisualAsset
 
-    for (const objectType of ['figure', 'table', 'equation'] as const) {
+    // This fixture has one equation source run, so treating it as a fabricated
+    // 2×2 semantic table must no longer count as source conservation. Genuine
+    // source-run-backed tables are covered by semantic-table-source.test.ts.
+    for (const objectType of ['figure', 'equation'] as const) {
+      const selectedAsset = fixture.asset
+      const selectedPaper = paperFor(objectType)
+      const visualNode = selectedPaper.nodes.find(
+        (node) => node.type === 'figure',
+      )
+      if (visualNode?.type !== 'figure') throw new Error('missing visual node')
+      visualNode.relationships.assets = [selectedAsset.id]
       const result = assessPdfCompleteness({
         pages: [page],
-        paper: paperFor(objectType),
+        paper: selectedPaper,
         diagnostics: [],
         regions,
         readingOrder,
         provenance,
-        visualRelationships: [{ ...fixture.relationship, kind: objectType }],
-        assets: [fixture.asset],
+        visualRelationships: [
+          {
+            ...fixture.relationship,
+            kind: objectType,
+            assetIds: [selectedAsset.id],
+          },
+        ],
+        assets: [selectedAsset],
       })
 
       expect(result.completeness, objectType).toMatchObject({
         sourceTextCharacters:
           normalizedLength(titleRegion.text) +
+          normalizedLength(authorRegion.text) +
           normalizedLength(captionRegion.text) +
           normalizedLength(nonReadingEquationRegion.text),
         outputTextCharacters:
           normalizedLength(titleRegion.text) +
+          normalizedLength(authorRegion.text) +
           normalizedLength(captionRegion.text) +
           normalizedLength(nonReadingEquationRegion.text),
         matchedTextCharacters:
           normalizedLength(titleRegion.text) +
+          normalizedLength(authorRegion.text) +
           normalizedLength(captionRegion.text) +
           normalizedLength(nonReadingEquationRegion.text),
         textCoverage: 1,
@@ -1765,8 +2960,9 @@ describe('PDF semantic signal detection', () => {
         provenance,
         relationships: [semanticRelationship],
         assets: [semanticAsset],
+        regions: [alphaRegion, betaRegion, captionRegion],
       }),
-    ).toEqual([semanticRelationship])
+    ).toEqual([])
     const semanticResult = assessPdfCompleteness({
       pages: [page],
       paper: semanticPaper,
@@ -2095,6 +3291,913 @@ describe('PDF semantic signal detection', () => {
       relationshipCoverage: 0,
     })
     expect(tampered.readiness.ready).toBe(false)
+  })
+
+  it('does not resolve a matched equation crop whose semantic transcript is unresolved or empty', () => {
+    const fixture = sourceBackedEquationFixture()
+    const unresolvedEvidence = assessSourceBackedEquation(fixture, {
+      relationship: {
+        evidence: [
+          ...fixture.relationship.evidence,
+          'source-text-transcript-unresolved',
+        ],
+      },
+    })
+    const emptyTranscript = assessSourceBackedEquation(fixture, {
+      relationship: {
+        sourceText: '',
+        altText: fixture.relationship.label,
+        altTextSource: 'caption',
+      },
+    })
+
+    for (const result of [unresolvedEvidence, emptyTranscript]) {
+      expect(result.completeness).toMatchObject({
+        assetCoverage: 1,
+        missingSourceRegionCount: 0,
+        resolvedRelationshipCount: 0,
+        relationshipCoverage: 0,
+        unresolvedObjects: { equations: 1 },
+      })
+      expect(result.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'UNRESOLVED_EQUATION_TRANSCRIPT',
+            severity: 'error',
+            relationshipId: fixture.relationship.id,
+          }),
+        ]),
+      )
+      expect(result.readiness).toMatchObject({
+        ready: false,
+        blockingDiagnosticCodes: expect.arrayContaining([
+          'UNRESOLVED_EQUATION_TRANSCRIPT',
+        ]),
+      })
+    }
+  })
+
+  it('blocks readiness when an exact algorithm crop has no proved semantic line transcript', () => {
+    const fixture = sourceBackedEquationFixture()
+    fixture.regions[0].text = 'Algorithm 1 Deterministic Search'
+    fixture.regions[0].lines[0].text = fixture.regions[0].text
+    fixture.regions[0].lines[0].runs[0].text = fixture.regions[0].text
+    fixture.regions[1].kind = 'body'
+    fixture.regions[1].text =
+      'Require: graph G 1: Initialize queue. 2: Visit node. 3: return result.'
+    fixture.regions[1].lines[0].text = fixture.regions[1].text
+    fixture.regions[1].lines[0].runs[0].text = fixture.regions[1].text
+    const relationship = {
+      ...fixture.relationship,
+      kind: 'figure',
+      semanticKind: 'algorithm',
+      label: 'Algorithm 1',
+      sourceText: '',
+      evidence: [
+        'source-algorithm-block',
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ],
+      altText: fixture.regions[0].text,
+    } satisfies PdfVisualRelationship
+    const paper = {
+      ...fixture.paper,
+      nodes: fixture.paper.nodes.map((node) =>
+        node.type === 'figure'
+          ? {
+              ...node,
+              objectType: 'figure' as const,
+              title: relationship.altText,
+            }
+          : node.type === 'caption'
+            ? { ...node, text: relationship.altText }
+            : node,
+      ),
+    } satisfies ResearchPaper
+    const page = {
+      ...fixture.page,
+      textCharacters: fixture.regions.reduce(
+        (total, region) => total + region.text.length,
+        0,
+      ),
+      runs: fixture.regions.flatMap((region) =>
+        region.lines.flatMap((line) => line.runs),
+      ),
+    } satisfies PdfPageAnalysis
+
+    const result = assessPdfCompleteness({
+      pages: [page],
+      paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: [relationship],
+      assets: [fixture.asset],
+    })
+
+    expect(result.completeness).toMatchObject({
+      assetCoverage: 1,
+      missingSourceRegionCount: 0,
+      relationshipCoverage: 1,
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_ALGORITHM_TRANSCRIPT',
+          severity: 'error',
+          relationshipId: relationship.id,
+          target: expect.objectContaining({
+            regionIds: relationship.sourceRegionIds,
+          }),
+        }),
+      ]),
+    )
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      blockingDiagnosticCodes: expect.arrayContaining([
+        'UNRESOLVED_ALGORITHM_TRANSCRIPT',
+      ]),
+    })
+  })
+
+  it('blocks readiness when a preformatted crop has no exact ordered-line transcript', () => {
+    const fixture = sourceBackedEquationFixture()
+    fixture.regions[0].text = 'Theorems and Tactics'
+    fixture.regions[0].lines[0].text = fixture.regions[0].text
+    fixture.regions[0].lines[0].runs[0].text = fixture.regions[0].text
+    fixture.regions[1].kind = 'body'
+    fixture.regions[1].text = '" state_after " : " 2 goals \\ n⊢ -π < π / 2 "'
+    fixture.regions[1].lines[0].text = fixture.regions[1].text
+    fixture.regions[1].lines[0].runs[0].text = fixture.regions[1].text
+    const relationship = {
+      ...fixture.relationship,
+      kind: 'figure',
+      semanticKind: 'code',
+      label: 'Code block p001-001',
+      sourceText: '',
+      preformatted: {
+        status: 'unresolved',
+        lines: [],
+        evidence: [
+          'deterministic-source-line-order',
+          'source-text-exactness-unresolved',
+        ],
+      },
+      evidence: [
+        'source-preformatted-block',
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ],
+      altText: 'Source code block',
+    } as unknown as PdfVisualRelationship
+    const paper = {
+      ...fixture.paper,
+      nodes: fixture.paper.nodes.map((node) =>
+        node.type === 'figure'
+          ? {
+              ...node,
+              objectType: 'figure' as const,
+              title: relationship.altText,
+            }
+          : node.type === 'caption'
+            ? { ...node, text: relationship.altText }
+            : node,
+      ),
+    } satisfies ResearchPaper
+    const page = {
+      ...fixture.page,
+      textCharacters: fixture.regions.reduce(
+        (total, region) => total + region.text.length,
+        0,
+      ),
+      runs: fixture.regions.flatMap((region) =>
+        region.lines.flatMap((line) => line.runs),
+      ),
+    } satisfies PdfPageAnalysis
+
+    const result = assessPdfCompleteness({
+      pages: [page],
+      paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: [relationship],
+      assets: [fixture.asset],
+    })
+
+    expect(result.completeness).toMatchObject({
+      assetCoverage: 1,
+      missingSourceRegionCount: 0,
+      relationshipCoverage: 1,
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_PREFORMATTED_TRANSCRIPT',
+          severity: 'error',
+          relationshipId: relationship.id,
+          target: expect.objectContaining({
+            regionIds: relationship.sourceRegionIds,
+          }),
+        }),
+      ]),
+    )
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      blockingDiagnosticCodes: expect.arrayContaining([
+        'UNRESOLVED_PREFORMATTED_TRANSCRIPT',
+      ]),
+    })
+  })
+
+  it('counts every detected equation relationship whose transcript remains unresolved', () => {
+    const fixture = sourceBackedEquationFixture()
+    const relationships = Array.from({ length: 3 }, (_, index) => ({
+      ...fixture.relationship,
+      id: `relationship-${index + 1}`,
+      label: `Equation ${index + 1}`,
+      evidence: [
+        ...fixture.relationship.evidence,
+        'source-text-transcript-unresolved',
+      ],
+    })) satisfies PdfVisualRelationship[]
+
+    const result = assessPdfCompleteness({
+      pages: [fixture.page],
+      paper: fixture.paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: relationships,
+      assets: [fixture.asset],
+    })
+
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'UNRESOLVED_EQUATION_TRANSCRIPT',
+      ),
+    ).toHaveLength(3)
+    expect(result.semanticSignals.equations).toBe(3)
+    expect(result.completeness).toMatchObject({
+      expectedRelationshipCount: 3,
+      resolvedRelationshipCount: 0,
+      unresolvedObjects: { equations: 3 },
+    })
+  })
+
+  it('does not resolve a nonempty equation transcript that omits a selected source line', () => {
+    const fixture = sourceBackedEquationFixture()
+    const continuationRun = run('+ s', 0.25, 0.325, 14, 0.06)
+    const equationRegion = fixture.regions[1]
+    equationRegion.text = `${equationRegion.text} ${continuationRun.text}`
+    equationRegion.lines.push({
+      id: 'equation-region-line-continuation',
+      text: continuationRun.text,
+      fontSize: continuationRun.fontSize,
+      box: { ...continuationRun },
+      runs: [{ ...continuationRun }],
+    })
+    fixture.page.runs.push(continuationRun)
+    fixture.page.textCharacters += continuationRun.text.length
+
+    const partialTranscript = assessSourceBackedEquation(fixture, {
+      relationship: {
+        sourceLineIds: equationRegion.lines.map((line) => line.id),
+        sourceText: 'q = r',
+      },
+    })
+
+    expect(partialTranscript.completeness).toMatchObject({
+      resolvedRelationshipCount: 0,
+      relationshipCoverage: 0,
+      unresolvedObjects: { equations: 1 },
+    })
+    expect(partialTranscript.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_EQUATION_TRANSCRIPT',
+          severity: 'error',
+          relationshipId: fixture.relationship.id,
+        }),
+      ]),
+    )
+  })
+
+  it('does not accept a producer-declared subset of a multi-line equation region', () => {
+    const fixture = sourceBackedEquationFixture()
+    const continuationRun = run('+ s', 0.25, 0.325, 14, 0.06)
+    const equationRegion = fixture.regions[1]
+    equationRegion.text = `${equationRegion.text} ${continuationRun.text}`
+    equationRegion.lines.push({
+      id: 'equation-region-line-continuation',
+      text: continuationRun.text,
+      fontSize: continuationRun.fontSize,
+      box: { ...continuationRun },
+      runs: [{ ...continuationRun }],
+    })
+    fixture.page.runs.push(continuationRun)
+    fixture.page.textCharacters += continuationRun.text.length
+
+    const producerSubset = assessSourceBackedEquation(fixture, {
+      relationship: {
+        sourceLineIds: [equationRegion.lines[0].id],
+        sourceText: equationRegion.lines[0].text,
+      },
+    })
+
+    expect(producerSubset.completeness).toMatchObject({
+      resolvedRelationshipCount: 0,
+      relationshipCoverage: 0,
+      unresolvedObjects: { equations: 1 },
+    })
+    expect(producerSubset.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_EQUATION_TRANSCRIPT',
+    )
+  })
+
+  it('does not accept a transcript that omits an adjacent equation source region', () => {
+    const fixture = sourceBackedEquationFixture()
+    const omittedRun = run('+ s', 0.25, 0.325, 14, 0.06)
+    const omittedRegion = {
+      id: 'omitted-equation-region',
+      page: 1,
+      kind: 'equation',
+      column: 'single',
+      text: omittedRun.text,
+      confidence: 1,
+      box: { ...omittedRun },
+      lines: [
+        {
+          id: 'omitted-equation-line',
+          text: omittedRun.text,
+          fontSize: omittedRun.fontSize,
+          box: { ...omittedRun },
+          runs: [{ ...omittedRun }],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies PdfPageRegion
+    fixture.regions.push(omittedRegion)
+    fixture.page.runs.push(omittedRun)
+    fixture.page.textCharacters += omittedRun.text.length
+
+    const missingAssociatedRegion = assessSourceBackedEquation(fixture)
+
+    expect(missingAssociatedRegion.completeness.resolvedRelationshipCount).toBe(
+      0,
+    )
+    expect(missingAssociatedRegion.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_EQUATION_TRANSCRIPT',
+    )
+  })
+
+  it('rejects a flattened transcript for unproved two-dimensional script geometry', () => {
+    const fixture = sourceBackedEquationFixture()
+    const equationRegion = fixture.regions[1]
+    const baseline = run('q', 0.25, 0.3, 14, 0.03, 0.018)
+    baseline.fontName = 'Synthetic-Math-Regular'
+    const superscript = run('2', 0.28, 0.291, 8, 0.012, 0.01)
+    superscript.fontName = 'Synthetic-Math-Regular'
+    const remainder = run(' = r', 0.298, 0.3, 14, 0.07, 0.018)
+    remainder.fontName = 'Synthetic-Math-Regular'
+    equationRegion.text = 'q2 = r'
+    equationRegion.lines[0] = {
+      ...equationRegion.lines[0],
+      text: equationRegion.text,
+      runs: [baseline, superscript, remainder],
+    }
+    fixture.page.runs = [
+      ...fixture.regions[0].lines[0].runs,
+      baseline,
+      superscript,
+      remainder,
+    ]
+    fixture.page.textCharacters =
+      fixture.regions[0].text.length + equationRegion.text.length
+
+    const result = assessSourceBackedEquation(fixture, {
+      relationship: {
+        sourceText: equationRegion.text,
+        altText: equationRegion.text,
+        altTextSource: 'source-text',
+      },
+    })
+
+    expect(result.completeness).toMatchObject({
+      resolvedRelationshipCount: 0,
+      relationshipCoverage: 0,
+      unresolvedObjects: { equations: 1 },
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_EQUATION_TRANSCRIPT',
+          severity: 'error',
+          relationshipId: fixture.relationship.id,
+        }),
+      ]),
+    )
+  })
+
+  it('does not accept a transcript that omits an overlapping equation object', () => {
+    const fixture = sourceBackedEquationFixture()
+    const equationRegion = fixture.regions[1]
+    const objectBox = {
+      ...equationRegion.box,
+      method: 'pdf-object' as const,
+    }
+    fixture.regions.push({
+      id: 'omitted-equation-object-region',
+      page: 1,
+      kind: 'figure',
+      column: 'single',
+      text: '',
+      confidence: 1,
+      box: objectBox,
+      lines: [],
+      nativeObjectIds: ['omitted-equation-object'],
+      includedInReadingOrder: true,
+    })
+    fixture.page.objects ??= []
+    fixture.page.objects.push({
+      id: 'omitted-equation-object',
+      page: 1,
+      kind: 'image',
+      box: objectBox,
+      confidence: 1,
+      assetId: 'omitted-equation-object-asset',
+    })
+    fixture.page.imageCount += 1
+
+    const missingAssociatedObject = assessSourceBackedEquation(fixture)
+
+    expect(missingAssociatedObject.completeness.resolvedRelationshipCount).toBe(
+      0,
+    )
+    expect(missingAssociatedObject.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_EQUATION_TRANSCRIPT',
+    )
+  })
+
+  it('fails equation transcript completeness closed without an exact source-line ledger', () => {
+    const fixture = sourceBackedEquationFixture()
+    const missingLineLedger = assessSourceBackedEquation(fixture, {
+      relationship: { sourceLineIds: undefined },
+    })
+    const unknownLine = assessSourceBackedEquation(fixture, {
+      relationship: { sourceLineIds: ['missing-equation-source-line'] },
+    })
+
+    for (const result of [missingLineLedger, unknownLine]) {
+      expect(result.completeness).toMatchObject({
+        resolvedRelationshipCount: 0,
+        relationshipCoverage: 0,
+        unresolvedObjects: { equations: 1 },
+      })
+      expect(result.readiness).toMatchObject({
+        ready: false,
+        blockingDiagnosticCodes: expect.arrayContaining([
+          'UNRESOLVED_EQUATION_TRANSCRIPT',
+        ]),
+      })
+    }
+  })
+
+  it('requires OCR evidence for a mixed raster page with only sparse embedded text', () => {
+    const fixture = sourceBackedEquationFixture()
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          ...fixture.page,
+          kind: 'mixed',
+          imageCount: fixture.page.imageCount + 1,
+          ocr: undefined,
+        },
+      ],
+      paper: fixture.paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: [fixture.relationship],
+      assets: [fixture.asset],
+    })
+
+    expect(result.completeness.ocrRequiredPages).toEqual([1])
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'OCR_REQUIRED',
+          severity: 'error',
+          page: 1,
+        }),
+      ]),
+    )
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+      blockingDiagnosticCodes: expect.arrayContaining(['OCR_REQUIRED']),
+    })
+  })
+
+  it('requires substantive internally valid OCR evidence for mixed and OCR-complete pages', () => {
+    const fixture = sourceBackedEquationFixture()
+    const evidence = {
+      engine: 'local-engine',
+      engineVersion: '1.0.0',
+      model: 'local-model',
+      modelVersion: '1.0.0',
+      languages: ['eng'],
+      languageMode: 'explicit',
+      sourceSha256: 'a'.repeat(64),
+      rasterSha256: 'b'.repeat(64),
+      confidence: 1,
+      words: [],
+      lines: [],
+    } satisfies NonNullable<PdfPageAnalysis['ocr']>
+    const invalidPages: PdfPageAnalysis[] = [
+      {
+        ...fixture.page,
+        kind: 'mixed',
+        imageCount: fixture.page.imageCount + 1,
+        ocr: evidence,
+      },
+      {
+        ...fixture.page,
+        kind: 'ocr-complete',
+        imageCount: fixture.page.imageCount + 1,
+        ocr: undefined,
+      },
+      {
+        ...fixture.page,
+        kind: 'mixed',
+        imageCount: fixture.page.imageCount + 1,
+        ocr: { ...evidence, sourceSha256: 'not-a-sha256' },
+      },
+      {
+        ...fixture.page,
+        kind: 'mixed',
+        imageCount: fixture.page.imageCount + 1,
+        ocr: { ...evidence, sourceSha256: 'c'.repeat(64) },
+      },
+    ]
+
+    for (const page of invalidPages) {
+      const result = assessPdfCompleteness({
+        pages: [page],
+        paper: fixture.paper,
+        diagnostics: [],
+        regions: fixture.regions,
+        readingOrder: fixture.readingOrder,
+        provenance: fixture.provenance,
+        visualRelationships: [fixture.relationship],
+        assets: [fixture.asset],
+        sourceSha256: 'a'.repeat(64),
+      })
+
+      expect(result.completeness.ocrRequiredPages).toEqual([1])
+      expect(result.readiness.blockingDiagnosticCodes).toContain('OCR_REQUIRED')
+    }
+  })
+
+  it('accepts page-bound recovered OCR content with matching source identity', () => {
+    const fixture = sourceBackedEquationFixture()
+    const acceptedRun = {
+      ...run('Recovered', 0.2, 0.5, 10, 0.2),
+      method: 'ocr' as const,
+      fontName: 'OCR',
+    }
+    const ocr = {
+      engine: 'local-engine',
+      engineVersion: '1.0.0',
+      model: 'local-model',
+      modelVersion: '1.0.0',
+      languages: ['eng'],
+      languageMode: 'explicit',
+      sourceSha256: 'a'.repeat(64),
+      rasterSha256: 'b'.repeat(64),
+      confidence: 1,
+      words: [
+        {
+          text: acceptedRun.text,
+          confidence: 1,
+          lineId: 'ocr-line-1',
+          box: { ...acceptedRun },
+          mergeStatus: 'accepted',
+        },
+      ],
+      lines: [
+        {
+          id: 'ocr-line-1',
+          text: acceptedRun.text,
+          confidence: 1,
+          box: { ...acceptedRun },
+        },
+      ],
+    } satisfies NonNullable<PdfPageAnalysis['ocr']>
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          ...fixture.page,
+          kind: 'mixed',
+          imageCount: fixture.page.imageCount + 1,
+          runs: [...fixture.page.runs, acceptedRun],
+          ocr,
+        },
+      ],
+      paper: fixture.paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: [fixture.relationship],
+      assets: [fixture.asset],
+      sourceSha256: 'a'.repeat(64),
+    })
+
+    expect(result.completeness.ocrRequiredPages).toEqual([])
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'OCR_REQUIRED',
+    )
+  })
+
+  it('accepts source-matched duplicate-only OCR confirmation for an embedded-only sparse page', () => {
+    const fixture = sourceBackedEquationFixture()
+    const embeddedRun = fixture.page.runs[0]
+    const duplicateBox = {
+      page: embeddedRun.page,
+      x: embeddedRun.x,
+      y: embeddedRun.y,
+      width: embeddedRun.width,
+      height: embeddedRun.height,
+      rotation: embeddedRun.rotation,
+      method: 'ocr' as const,
+    }
+    const result = assessPdfCompleteness({
+      pages: [
+        {
+          ...fixture.page,
+          kind: 'ocr-complete',
+          imageCount: 0,
+          objects: [],
+          textCharacters: embeddedRun.text.replace(/\s/gu, '').length,
+          runs: [embeddedRun],
+          ocr: {
+            engine: 'local-engine',
+            engineVersion: '1.0.0',
+            model: 'local-model',
+            modelVersion: '1.0.0',
+            languages: ['eng'],
+            languageMode: 'explicit',
+            sourceSha256: 'a'.repeat(64),
+            rasterSha256: 'b'.repeat(64),
+            confidence: 0.99,
+            words: [
+              {
+                text: embeddedRun.text,
+                confidence: 0.99,
+                lineId: 'ocr-line-1',
+                box: duplicateBox,
+                mergeStatus: 'duplicate',
+              },
+            ],
+            lines: [],
+          },
+        },
+      ],
+      paper: fixture.paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: [fixture.relationship],
+      assets: [fixture.asset],
+      sourceSha256: 'a'.repeat(64),
+    })
+
+    expect(result.completeness.ocrRequiredPages).toEqual([])
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'OCR_REQUIRED',
+    )
+  })
+
+  it('rejects duplicate-only OCR evidence that is not embedded-only and source-matched', () => {
+    const fixture = sourceBackedEquationFixture()
+    const embeddedRun = fixture.page.runs[0]
+    const duplicateEvidence = {
+      engine: 'local-engine',
+      engineVersion: '1.0.0',
+      model: 'local-model',
+      modelVersion: '1.0.0',
+      languages: ['eng'],
+      languageMode: 'explicit',
+      sourceSha256: 'a'.repeat(64),
+      rasterSha256: 'b'.repeat(64),
+      confidence: 0.99,
+      words: [
+        {
+          text: embeddedRun.text,
+          confidence: 0.99,
+          lineId: 'ocr-line-1',
+          box: {
+            page: embeddedRun.page,
+            x: embeddedRun.x,
+            y: embeddedRun.y,
+            width: embeddedRun.width,
+            height: embeddedRun.height,
+            rotation: embeddedRun.rotation,
+            method: 'ocr' as const,
+          },
+          mergeStatus: 'duplicate' as const,
+        },
+      ],
+      lines: [],
+    } satisfies NonNullable<PdfPageAnalysis['ocr']>
+    const basePage = {
+      ...fixture.page,
+      kind: 'ocr-complete',
+      imageCount: 0,
+      objects: [],
+      textCharacters: embeddedRun.text.replace(/\s/gu, '').length,
+      runs: [embeddedRun],
+      ocr: duplicateEvidence,
+    } satisfies PdfPageAnalysis
+    const invalidPages: PdfPageAnalysis[] = [
+      {
+        ...basePage,
+        imageCount: 1,
+        objects: fixture.page.objects,
+      },
+      {
+        ...basePage,
+        ocr: {
+          ...duplicateEvidence,
+          words: [
+            {
+              ...duplicateEvidence.words[0],
+              text: 'Fabricated text',
+            },
+          ],
+        },
+      },
+      {
+        ...basePage,
+        ocr: {
+          ...duplicateEvidence,
+          words: [
+            {
+              ...duplicateEvidence.words[0],
+              box: {
+                ...duplicateEvidence.words[0].box,
+                x: 0.75,
+              },
+            },
+          ],
+        },
+      },
+      {
+        ...basePage,
+        ocr: {
+          ...duplicateEvidence,
+          sourceSha256: 'c'.repeat(64),
+        },
+      },
+    ]
+
+    for (const page of invalidPages) {
+      const result = assessPdfCompleteness({
+        pages: [page],
+        paper: fixture.paper,
+        diagnostics: [],
+        regions: fixture.regions,
+        readingOrder: fixture.readingOrder,
+        provenance: fixture.provenance,
+        visualRelationships: [fixture.relationship],
+        assets: [fixture.asset],
+        sourceSha256: 'a'.repeat(64),
+      })
+
+      expect(result.completeness.ocrRequiredPages).toEqual([1])
+      expect(result.readiness.blockingDiagnosticCodes).toContain('OCR_REQUIRED')
+    }
+  })
+
+  it('requires accepted OCR words to be page-bound and present in recovered runs', () => {
+    const fixture = sourceBackedEquationFixture()
+    const acceptedBox = {
+      page: 1,
+      x: 0.2,
+      y: 0.5,
+      width: 0.2,
+      height: 0.02,
+      rotation: 0,
+      method: 'ocr' as const,
+    }
+    const evidence = {
+      engine: 'local-engine',
+      engineVersion: '1.0.0',
+      model: 'local-model',
+      modelVersion: '1.0.0',
+      languages: ['eng'],
+      languageMode: 'explicit',
+      sourceSha256: 'a'.repeat(64),
+      rasterSha256: 'b'.repeat(64),
+      confidence: 1,
+      words: [
+        {
+          text: 'Recovered',
+          confidence: 1,
+          lineId: 'ocr-line-1',
+          box: acceptedBox,
+          mergeStatus: 'accepted',
+        },
+      ],
+      lines: [
+        {
+          id: 'ocr-line-1',
+          text: 'Recovered',
+          confidence: 1,
+          box: acceptedBox,
+        },
+      ],
+    } satisfies NonNullable<PdfPageAnalysis['ocr']>
+    const missingRecoveredRun = {
+      ...fixture.page,
+      kind: 'mixed',
+      imageCount: fixture.page.imageCount + 1,
+      ocr: evidence,
+    } satisfies PdfPageAnalysis
+    const outOfBounds = {
+      ...fixture.page,
+      kind: 'mixed',
+      imageCount: fixture.page.imageCount + 1,
+      runs: [
+        ...fixture.page.runs,
+        {
+          ...fixture.page.runs[0],
+          text: 'Recovered',
+          method: 'ocr',
+          x: 1.1,
+          y: 0.5,
+          width: 0.2,
+          height: 0.02,
+        },
+      ],
+      ocr: {
+        ...evidence,
+        words: [
+          {
+            ...evidence.words[0],
+            box: { ...acceptedBox, x: 1.1 },
+          },
+        ],
+        lines: [
+          {
+            ...evidence.lines[0],
+            box: { ...acceptedBox, x: 1.1 },
+          },
+        ],
+      },
+    } satisfies PdfPageAnalysis
+
+    for (const page of [missingRecoveredRun, outOfBounds]) {
+      const result = assessPdfCompleteness({
+        pages: [page],
+        paper: fixture.paper,
+        diagnostics: [],
+        regions: fixture.regions,
+        readingOrder: fixture.readingOrder,
+        provenance: fixture.provenance,
+        visualRelationships: [fixture.relationship],
+        assets: [fixture.asset],
+      })
+
+      expect(result.completeness.ocrRequiredPages).toEqual([1])
+      expect(result.readiness.blockingDiagnosticCodes).toContain('OCR_REQUIRED')
+    }
+  })
+
+  it('does not require OCR when every mixed-page object is a validated semantic visual', () => {
+    const fixture = sourceBackedEquationFixture()
+    const result = assessPdfCompleteness({
+      pages: [{ ...fixture.page, kind: 'mixed', ocr: undefined }],
+      paper: fixture.paper,
+      diagnostics: [],
+      regions: fixture.regions,
+      readingOrder: fixture.readingOrder,
+      provenance: fixture.provenance,
+      visualRelationships: [fixture.relationship],
+      assets: [fixture.asset],
+    })
+
+    expect(result.completeness.ocrRequiredPages).toEqual([])
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'OCR_REQUIRED',
+    )
   })
 
   it('counts one validated multi-fragment figure crop as one semantic asset', async () => {
@@ -2716,6 +4819,50 @@ describe('PDF semantic signal detection', () => {
     })
   })
 
+  it('keeps a proven caption-region obligation when the printed label is unparseable', () => {
+    const sourceRun = run(
+      'Figure: Explicit caption with unresolved numbering.',
+      0.1,
+      0.2,
+      9,
+      0.5,
+    )
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: sourceRun.text.length,
+      imageCount: 1,
+      runs: [sourceRun],
+    }
+    const captionRegion: PdfPageRegion = {
+      id: 'unparseable-figure-caption',
+      page: 1,
+      kind: 'caption',
+      column: 'single',
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: 'unparseable-figure-caption-line',
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [{ ...sourceRun }],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+
+    expect(detectPdfSemanticSignals([page], [captionRegion])).toMatchObject({
+      captions: 1,
+    })
+  })
+
   it('does not count table cross-references in ordinary body regions as table obligations', () => {
     const runs = [
       run('Table 1 shows the primary result.', 0.1, 0.2, 10, 0.5),
@@ -2762,10 +4909,13 @@ describe('PDF semantic signal detection', () => {
     })
   })
 
-  it('counts numeric and Roman table captions only with caption-region proof', () => {
+  it('counts ordinary, supplementary, and compound table captions only with caption-region proof', () => {
     const runs = [
       run('Table 5. Numeric source caption.', 0.1, 0.2, 9, 0.5),
       run('Table VI. Roman source caption.', 0.1, 0.3, 9, 0.5),
+      run('Table S2. Supplementary source caption.', 0.1, 0.4, 9, 0.5),
+      run('Table A.1. Dotted source caption.', 0.1, 0.5, 9, 0.5),
+      run('Table B-2. Hyphenated source caption.', 0.1, 0.6, 9, 0.5),
     ]
     const page: PdfPageAnalysis = {
       page: 1,
@@ -2802,7 +4952,7 @@ describe('PDF semantic signal detection', () => {
     )
 
     expect(detectPdfSemanticSignals([page], regions)).toMatchObject({
-      tables: 2,
+      tables: 5,
     })
   })
 

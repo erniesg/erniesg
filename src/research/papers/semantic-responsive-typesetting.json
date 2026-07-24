@@ -5,6 +5,9 @@
   "title": "Semantic Responsive Typesetting",
   "subtitle": "The page is a rendition, not the document.",
   "authors": ["Chen Enjiao (Ernie)"],
+  "language": "en",
+  "baseDirection": "ltr",
+  "artifactModifiedAt": "2026-07-13T00:00:00Z",
   "updated": "2026-07-13",
   "abstract": "We investigate whether one semantic scholarly document can produce coherent renditions for print, e-ink, and continuous reading while preserving identity, relationships, reading position, and annotations.",
   "nodes": [

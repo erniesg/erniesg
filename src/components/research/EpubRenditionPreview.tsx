@@ -44,22 +44,14 @@ export function selectCurrentProfileEpub(
   epubs: EpubExport[],
   selectedProfileId: PreviewProfileId,
 ) {
-  const profileOrder = [
-    selectedProfileId,
-    ...previewProfileIds.filter((id) => id !== selectedProfileId),
-  ]
-  for (const profileId of profileOrder) {
-    const profileVersion = TARGET_PROFILES[profileId].version
-    const epub = epubs.find(
-      (candidate) =>
-        candidate.profile?.id === profileId &&
-        candidate.profile.version === profileVersion &&
-        candidate.profile.exportPolicy?.id === 'profile-tuned-reflowable' &&
-        candidate.profile.exportPolicy.version === EPUB_EXPORT_POLICY_VERSION,
-    )
-    if (epub) return epub
-  }
-  return undefined
+  const profileVersion = TARGET_PROFILES[selectedProfileId].version
+  return epubs.find(
+    (candidate) =>
+      candidate.profile?.id === selectedProfileId &&
+      candidate.profile.version === profileVersion &&
+      candidate.profile.exportPolicy?.id === 'profile-tuned-reflowable' &&
+      candidate.profile.exportPolicy.version === EPUB_EXPORT_POLICY_VERSION,
+  )
 }
 
 const truthLabels = {
@@ -219,8 +211,7 @@ function buildPreview(epub: EpubExport) {
 }
 
 type PreviewResult =
-  | { srcDoc: string; error?: never }
-  | { srcDoc?: never; error: string }
+  { srcDoc: string; error?: never } | { srcDoc?: never; error: string }
 
 type PreparedPreview = {
   srcDoc: string
@@ -293,11 +284,13 @@ export function createEpubPreviewCache(
 export default function EpubRenditionPreview({
   epubs,
   selectedProfileId,
+  buildingProfileId,
   onSelectedProfileChange,
   onPreviewReadyChange,
 }: {
   epubs: EpubExport[]
   selectedProfileId?: PreviewProfileId
+  buildingProfileId?: PreviewProfileId
   onSelectedProfileChange?: (profileId: PreviewProfileId) => void
   onPreviewReadyChange?: (artifactKey?: string) => void
 }) {
@@ -311,8 +304,11 @@ export default function EpubRenditionPreview({
     ),
   )
   const hasSupportedProfile = availableScreens.length > 0
+  const selectableScreens = onSelectedProfileChange
+    ? previewScreens
+    : availableScreens
   const showsRelativeEInkScale = ['paperProMove', 'paperPro'].every((id) =>
-    availableScreens.some((screen) => screen.id === id),
+    selectableScreens.some((screen) => screen.id === id),
   )
   const initialProfileId = availableScreens.some(
     (screen) => screen.id === 'paperPro',
@@ -327,7 +323,7 @@ export default function EpubRenditionPreview({
   if (!cache.current) cache.current = createEpubPreviewCache()
   const epub = selectCurrentProfileEpub(epubs, profileId)
   const screen =
-    availableScreens.find((candidate) => candidate.id === epub?.profile?.id) ??
+    previewScreens.find((candidate) => candidate.id === profileId) ??
     availableScreens[0] ??
     previewScreens[2]
   const preview = epub ? cache.current.get(epub) : undefined
@@ -337,12 +333,9 @@ export default function EpubRenditionPreview({
   useEffect(() => {
     const previews = cache.current
     if (!previews) return
-    if (!hasSupportedProfile || !epub) {
-      previews.retain([])
-      return
-    }
     const currentEpubs = epubs.filter(isCurrentPreviewArtifact)
     previews.retain(currentEpubs)
+    if (!hasSupportedProfile || !epub) return
     const queue = [epub, ...currentEpubs].filter(
       (candidate, index, candidates) =>
         previews.get(candidate) === undefined &&
@@ -379,7 +372,9 @@ export default function EpubRenditionPreview({
     onPreviewReadyChange?.(readyArtifactKey)
   }, [onPreviewReadyChange, readyArtifactKey])
 
-  if (!hasSupportedProfile || !epub) {
+  const canBuildSelectedProfile =
+    hasSupportedProfile && Boolean(onSelectedProfileChange)
+  if (!hasSupportedProfile || (!epub && !canBuildSelectedProfile)) {
     return (
       <section className="epub-rendition-preview" aria-label="EPUB preview">
         <p role="alert">
@@ -395,10 +390,10 @@ export default function EpubRenditionPreview({
     <section
       className="epub-rendition-preview"
       aria-labelledby="epub-preview-heading"
-      data-profile-id={epub.profile?.id}
-      data-profile-version={epub.profile?.version}
-      data-artifact-sha256={epub.sha256}
-      data-export-mode={epub.mode}
+      data-profile-id={epub?.profile?.id ?? screen.id}
+      data-profile-version={epub?.profile?.version ?? screen.version}
+      data-artifact-sha256={epub?.sha256}
+      data-export-mode={epub?.mode}
     >
       <div className="epub-preview-header">
         <span className="epub-preview-kicker">Generated artifact</span>
@@ -410,29 +405,40 @@ export default function EpubRenditionPreview({
         <fieldset className="epub-device-switcher">
           <legend>Preview screen</legend>
           <div>
-            {availableScreens.map((candidate) => (
-              <button
-                aria-pressed={candidate.id === screen.id}
-                aria-label={`Preview ${candidate.label}, profile ${candidate.id} version ${candidate.version}`}
-                data-profile-id={candidate.id}
-                data-profile-version={candidate.version}
-                key={candidate.id}
-                onClick={() => {
-                  if (onSelectedProfileChange) {
-                    onSelectedProfileChange(candidate.id)
-                  } else {
-                    setUncontrolledProfileId(candidate.id)
-                  }
-                }}
-                type="button"
-              >
-                <strong>{candidate.label}</strong>
-                <small>{candidate.detail}</small>
-                <small className="epub-preview-profile-key">
-                  {candidate.id}@{candidate.version}
-                </small>
-              </button>
-            ))}
+            {selectableScreens.map((candidate) => {
+              const artifactStatus = selectCurrentProfileEpub(
+                epubs,
+                candidate.id,
+              )
+                ? 'ready'
+                : buildingProfileId === candidate.id
+                  ? 'building'
+                  : 'unbuilt'
+              return (
+                <button
+                  aria-pressed={candidate.id === screen.id}
+                  aria-label={`Preview ${candidate.label}, profile ${candidate.id} version ${candidate.version}`}
+                  data-artifact-status={artifactStatus}
+                  data-profile-id={candidate.id}
+                  data-profile-version={candidate.version}
+                  key={candidate.id}
+                  onClick={() => {
+                    if (onSelectedProfileChange) {
+                      onSelectedProfileChange(candidate.id)
+                    } else {
+                      setUncontrolledProfileId(candidate.id)
+                    }
+                  }}
+                  type="button"
+                >
+                  <strong>{candidate.label}</strong>
+                  <small>{candidate.detail}</small>
+                  <small className="epub-preview-profile-key">
+                    {candidate.id}@{candidate.version} · {artifactStatus}
+                  </small>
+                </button>
+              )
+            })}
           </div>
           {showsRelativeEInkScale && (
             <p className="epub-device-scale-note">
@@ -441,49 +447,57 @@ export default function EpubRenditionPreview({
             </p>
           )}
         </fieldset>
-        <dl
-          className="epub-preview-receipt"
-          aria-label="Selected EPUB artifact receipt"
-          aria-live="polite"
-        >
-          <div>
-            <dt>Profile</dt>
-            <dd>
-              <code>
-                {epub.profile?.id}@{epub.profile?.version}
-              </code>
-            </dd>
-          </div>
-          <div>
-            <dt>Artifact SHA-256</dt>
-            <dd>
-              <code>{epub.sha256}</code>
-            </dd>
-          </div>
-          {(
-            [
-              ['Profile geometry', 'geometry'],
-              ['Typography and margins', 'typography'],
-              ['Pagination', 'pagination'],
-              ['Orientation', 'orientation'],
-            ] as const
-          ).map(([label, key]) => (
-            <div key={key}>
-              <dt>{label}</dt>
-              <dd data-truth-authority={screen.truth[key]}>
-                {truthLabels[screen.truth[key]]}
+        {epub && (
+          <dl
+            className="epub-preview-receipt"
+            aria-label="Selected EPUB artifact receipt"
+            aria-live="polite"
+          >
+            <div>
+              <dt>Profile</dt>
+              <dd>
+                <code>
+                  {epub.profile?.id}@{epub.profile?.version}
+                </code>
               </dd>
             </div>
-          ))}
-          <div>
-            <dt>Preview window</dt>
-            <dd data-truth-authority={screen.previewWindowTruth}>
-              {truthLabels[screen.previewWindowTruth]}
-            </dd>
-          </div>
-        </dl>
+            <div>
+              <dt>Artifact SHA-256</dt>
+              <dd>
+                <code>{epub.sha256}</code>
+              </dd>
+            </div>
+            {(
+              [
+                ['Profile geometry', 'geometry'],
+                ['Typography and margins', 'typography'],
+                ['Pagination', 'pagination'],
+                ['Orientation', 'orientation'],
+              ] as const
+            ).map(([label, key]) => (
+              <div key={key}>
+                <dt>{label}</dt>
+                <dd data-truth-authority={screen.truth[key]}>
+                  {truthLabels[screen.truth[key]]}
+                </dd>
+              </div>
+            ))}
+            <div>
+              <dt>Preview window</dt>
+              <dd data-truth-authority={screen.previewWindowTruth}>
+                {truthLabels[screen.previewWindowTruth]}
+              </dd>
+            </div>
+          </dl>
+        )}
       </div>
-      {preview?.error ? (
+      {!epub ? (
+        <p aria-live="polite">
+          {buildingProfileId === profileId
+            ? `Building ${screen.label} EPUB locally…`
+            : `Preparing ${screen.label} EPUB build…`}
+        </p>
+      ) : preview?.error ? (
         <p role="alert">Preview unavailable: {preview.error}</p>
       ) : preview?.srcDoc ? (
         <div

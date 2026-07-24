@@ -23,8 +23,9 @@ export {
 } from './adapter-source-identity.mjs'
 
 export const PDF_FIDELITY_EVAL_SET_SCHEMA_VERSION = '1.0.0'
+export const PDF_FIDELITY_EVAL_SET_SCHEMA_VERSIONS = ['1.0.0', '2.0.0']
 export const PDF_FIDELITY_PREDICTIONS_SCHEMA_VERSION = '1.0.0'
-export const PDF_FIDELITY_EVAL_RECEIPT_SCHEMA_VERSION = '1.0.0'
+export const PDF_FIDELITY_EVAL_RECEIPT_SCHEMA_VERSION = '1.2.0'
 export const PDF_FIDELITY_EVAL_COMPARISON_SCHEMA_VERSION = '1.0.0'
 
 const EVAL_SET_PRIVACY =
@@ -99,11 +100,19 @@ export function isNormalizedPdfBox(value) {
   )
 }
 
-function validTarget(value) {
+function validTarget(value, schemaVersion, pageCount) {
+  const expectedKeys =
+    schemaVersion === '2.0.0'
+      ? ['id', 'kind', 'sourcePage', 'box']
+      : ['id', 'kind', 'box']
   return (
-    exactKeys(value, ['id', 'kind', 'box']) &&
+    exactKeys(value, expectedKeys) &&
     SAFE_ID.test(value.id) &&
     SAFE_ID.test(value.kind) &&
+    (schemaVersion !== '2.0.0' ||
+      (Number.isSafeInteger(value.sourcePage) &&
+        value.sourcePage >= 1 &&
+        value.sourcePage <= pageCount)) &&
     (value.box === null || isNormalizedPdfBox(value.box))
   )
 }
@@ -160,6 +169,23 @@ function validRuntimeIdentity(value) {
 
 function uniqueBy(values, selector) {
   return new Set(values.map(selector)).size === values.length
+}
+
+function validEvalSetExtension(value) {
+  return (
+    exactKeys(value, [
+      'id',
+      'schemaVersion',
+      'path',
+      'fileSha256',
+      'evalSetSha256',
+    ]) &&
+    SAFE_ID.test(value.id) &&
+    value.schemaVersion === '1.0.0' &&
+    /^benchmarks\/pdf\/[A-Za-z0-9._-]+\.json$/.test(value.path) &&
+    SHA256.test(value.fileSha256) &&
+    SHA256.test(value.evalSetSha256)
+  )
 }
 
 function validateExpected(task, expected, targets) {
@@ -222,21 +248,39 @@ function validateExpected(task, expected, targets) {
 
 export function validatePdfFidelityEvalSet(value) {
   try {
+    const annotationSchemaVersion =
+      value?.schemaVersion === '2.0.0' ? '2.0.0' : '1.0.0'
+    const expectedEvalSetKeys =
+      value?.schemaVersion === '2.0.0'
+        ? [
+            'schemaVersion',
+            'id',
+            'annotationSchemaVersion',
+            'privacy',
+            'extends',
+            'scoring',
+            'strata',
+            'documents',
+            'cases',
+          ]
+        : [
+            'schemaVersion',
+            'id',
+            'annotationSchemaVersion',
+            'privacy',
+            'scoring',
+            'strata',
+            'documents',
+            'cases',
+          ]
     if (
-      !exactKeys(value, [
-        'schemaVersion',
-        'id',
-        'annotationSchemaVersion',
-        'privacy',
-        'scoring',
-        'strata',
-        'documents',
-        'cases',
-      ]) ||
-      value.schemaVersion !== PDF_FIDELITY_EVAL_SET_SCHEMA_VERSION ||
+      !exactKeys(value, expectedEvalSetKeys) ||
+      !PDF_FIDELITY_EVAL_SET_SCHEMA_VERSIONS.includes(value.schemaVersion) ||
       !SAFE_ID.test(value.id) ||
-      value.annotationSchemaVersion !== '1.0.0' ||
+      value.annotationSchemaVersion !== annotationSchemaVersion ||
       value.privacy !== EVAL_SET_PRIVACY ||
+      (value.schemaVersion === '2.0.0' &&
+        !validEvalSetExtension(value.extends)) ||
       !exactKeys(value.scoring, [
         'detectionIouThreshold',
         'minimumOverallScore',
@@ -286,6 +330,7 @@ export function validatePdfFidelityEvalSet(value) {
     const strata = new Map(value.strata.map((item) => [item.id, item]))
     const documents = new Map(value.documents.map((item) => [item.id, item]))
     for (const item of value.cases) {
+      const document = documents.get(item.documentId)
       if (
         !exactKeys(item, [
           'id',
@@ -298,21 +343,33 @@ export function validatePdfFidelityEvalSet(value) {
           'expected',
         ]) ||
         !SAFE_ID.test(item.id) ||
-        !documents.has(item.documentId) ||
+        !document ||
         !Number.isSafeInteger(item.page) ||
         item.page < 1 ||
-        item.page > documents.get(item.documentId).pageCount ||
+        item.page > document.pageCount ||
         !strata.has(item.stratum) ||
         item.task !== strata.get(item.stratum).task ||
         typeof item.critical !== 'boolean' ||
         item.critical !== strata.get(item.stratum).critical ||
         !Array.isArray(item.targets) ||
         item.targets.length === 0 ||
-        !item.targets.every(validTarget) ||
+        !item.targets.every((target) =>
+          validTarget(target, value.schemaVersion, document.pageCount),
+        ) ||
         !uniqueBy(item.targets, ({ id }) => id) ||
         !validateExpected(item.task, item.expected, item.targets)
       ) {
         invalid('INVALID_PDF_FIDELITY_EVAL_SET')
+      }
+      if (value.schemaVersion === '2.0.0') {
+        const sourcePages = item.targets.map(({ sourcePage }) => sourcePage)
+        if (
+          item.page !== Math.min(...sourcePages) ||
+          (item.task !== 'reading-order' &&
+            sourcePages.some((sourcePage) => sourcePage !== item.page))
+        ) {
+          invalid('INVALID_PDF_FIDELITY_EVAL_SET')
+        }
       }
     }
     const usedStrata = new Set(value.cases.map(({ stratum }) => stratum))
@@ -660,9 +717,22 @@ function deriveReceiptSummary(caseResults) {
   }
 }
 
-function receiptPassesPolicy(summary, scoring, candidate) {
+function isImportedPredictionsEvaluation(execution) {
+  return execution.lane === 'external-predictions'
+}
+
+function promotionEligibility(_candidate, _execution) {
+  // The current local adapter protocol can bind self-reported hashes, but it
+  // cannot independently prove which executable and checkpoint produced the
+  // output. Keep promotion closed until a trusted runner verifies those
+  // artifacts (and the execution environment) outside the adapter process.
+  return false
+}
+
+function receiptPassesPolicy(summary, scoring, candidate, execution) {
   return (
-    candidate.runtimeIdentity.status !== 'unattested' &&
+    (isImportedPredictionsEvaluation(execution) ||
+      promotionEligibility(candidate, execution)) &&
     summary.present === summary.cases &&
     summary.overallScore >= scoring.minimumOverallScore &&
     (!scoring.requireAllCriticalCases ||
@@ -713,10 +783,23 @@ export function scorePdfFidelityPredictions(
     }
   })
   const summary = deriveReceiptSummary(caseResults)
+  const executionEvidence = execution ?? {
+    lane: 'external-predictions',
+    platform: null,
+    architecture: null,
+    offlineRequested: false,
+    allInputsVerified: false,
+    runtimeIdentityAuthority: 'not-applicable',
+  }
+  const promotionEligible = promotionEligibility(
+    predictions.candidate,
+    executionEvidence,
+  )
   const passed = receiptPassesPolicy(
     summary,
     evalSet.scoring,
     predictions.candidate,
+    executionEvidence,
   )
   const receipt = {
     schemaVersion: PDF_FIDELITY_EVAL_RECEIPT_SCHEMA_VERSION,
@@ -730,15 +813,10 @@ export function scorePdfFidelityPredictions(
     },
     candidate: structuredClone(predictions.candidate),
     predictionSha256: canonicalHash(predictions),
-    execution: execution ?? {
-      lane: 'external-predictions',
-      platform: null,
-      architecture: null,
-      offlineRequested: false,
-      allInputsVerified: false,
-    },
+    execution: executionEvidence,
     summary,
     cases: caseResults,
+    promotionEligible,
     passed,
   }
   return { ...receipt, receiptSha256: canonicalHash(receipt) }
@@ -801,6 +879,7 @@ export function validatePdfFidelityEvalReceipt(receipt, evalSet, predictions) {
         'execution',
         'summary',
         'cases',
+        'promotionEligible',
         'passed',
         'receiptSha256',
       ]) ||
@@ -814,7 +893,8 @@ export function validatePdfFidelityEvalReceipt(receipt, evalSet, predictions) {
         'caseIdentitySha256',
       ]) ||
       !SAFE_ID.test(receipt.evalSet.id) ||
-      receipt.evalSet.annotationSchemaVersion !== '1.0.0' ||
+      receipt.evalSet.annotationSchemaVersion !==
+        evalSet.annotationSchemaVersion ||
       ['sha256', 'documentIdentitySha256', 'caseIdentitySha256'].some(
         (key) => !SHA256.test(receipt.evalSet[key]),
       ) ||
@@ -842,6 +922,7 @@ export function validatePdfFidelityEvalReceipt(receipt, evalSet, predictions) {
         'architecture',
         'offlineRequested',
         'allInputsVerified',
+        'runtimeIdentityAuthority',
       ]) ||
       !SAFE_ID.test(receipt.execution.lane) ||
       !(
@@ -854,10 +935,15 @@ export function validatePdfFidelityEvalReceipt(receipt, evalSet, predictions) {
       ) ||
       typeof receipt.execution.offlineRequested !== 'boolean' ||
       typeof receipt.execution.allInputsVerified !== 'boolean' ||
+      ![
+        'not-applicable',
+        'adapter-self-reported',
+      ].includes(receipt.execution.runtimeIdentityAuthority) ||
       !validReceiptSummary(receipt.summary) ||
       !Array.isArray(receipt.cases) ||
       !receipt.cases.every(validReceiptCase) ||
       !uniqueBy(receipt.cases, ({ caseId }) => caseId) ||
+      typeof receipt.promotionEligible !== 'boolean' ||
       typeof receipt.passed !== 'boolean' ||
       !SHA256.test(receipt.receiptSha256) ||
       receipt.receiptSha256 !== canonicalHash(evidenceWithoutHash(receipt)) ||
@@ -873,8 +959,15 @@ export function validatePdfFidelityEvalReceipt(receipt, evalSet, predictions) {
     const expectedSummary = deriveReceiptSummary(receipt.cases)
     if (
       canonicalJson(receipt.summary) !== canonicalJson(expectedSummary) ||
+      receipt.promotionEligible !==
+        promotionEligibility(receipt.candidate, receipt.execution) ||
       receipt.passed !==
-        receiptPassesPolicy(expectedSummary, evalSet.scoring, receipt.candidate)
+        receiptPassesPolicy(
+          expectedSummary,
+          evalSet.scoring,
+          receipt.candidate,
+          receipt.execution,
+        )
     ) {
       invalid('INVALID_PDF_FIDELITY_EVAL_RECEIPT')
     }
@@ -1028,12 +1121,23 @@ function buildPdfFidelityEvalComparison(baseline, candidate) {
     ).length,
     cases,
     passed:
+      candidate.promotionEligible &&
       candidate.passed &&
       cases.every(
         ({ critical, change }) => !critical || change !== 'regressed',
       ),
   }
   return { ...comparison, comparisonSha256: canonicalHash(comparison) }
+}
+
+function assertPromotionReceiptContract(receipt) {
+  if (
+    !isRecord(receipt) ||
+    receipt.schemaVersion !== PDF_FIDELITY_EVAL_RECEIPT_SCHEMA_VERSION ||
+    typeof receipt.promotionEligible !== 'boolean'
+  ) {
+    invalid('PDF_FIDELITY_PROMOTION_RECEIPT_V1_2_REQUIRED')
+  }
 }
 
 export function validatePdfFidelityEvalComparison(
@@ -1044,6 +1148,8 @@ export function validatePdfFidelityEvalComparison(
   baselinePredictions,
   candidatePredictions,
 ) {
+  assertPromotionReceiptContract(baseline)
+  assertPromotionReceiptContract(candidate)
   try {
     validatePdfFidelityEvalReceipt(baseline, evalSet, baselinePredictions)
     validatePdfFidelityEvalReceipt(candidate, evalSet, candidatePredictions)
@@ -1064,6 +1170,8 @@ export function comparePdfFidelityEvalReceipts(
   baselinePredictions,
   candidatePredictions,
 ) {
+  assertPromotionReceiptContract(baseline)
+  assertPromotionReceiptContract(candidate)
   validatePdfFidelityEvalReceipt(baseline, evalSet, baselinePredictions)
   validatePdfFidelityEvalReceipt(candidate, evalSet, candidatePredictions)
   return buildPdfFidelityEvalComparison(baseline, candidate)
@@ -1257,6 +1365,9 @@ export function goldStripAdapterCases(evalSet) {
             return {
               id: targetId,
               kind: 'candidate',
+              ...(evalSet.schemaVersion === '2.0.0'
+                ? { sourcePage: target.sourcePage }
+                : {}),
               box: target.box === null ? null : [...target.box],
             }
           })
@@ -1377,7 +1488,8 @@ async function runLocalEval(parsed) {
   try {
     const publicRequestMapping = goldStripAdapterCases(evalSet)
     const request = {
-      schemaVersion: '1.1.0',
+      schemaVersion:
+        evalSet.schemaVersion === '2.0.0' ? '1.2.0' : '1.1.0',
       privacy: ADAPTER_REQUEST_PRIVACY,
       evalSet: { id: evalSet.id, sha256: identity.evalSetSha256 },
       candidate: {
@@ -1431,6 +1543,7 @@ async function runLocalEval(parsed) {
       architecture: arch(),
       offlineRequested: true,
       allInputsVerified: true,
+      runtimeIdentityAuthority: 'adapter-self-reported',
     })
     validatePdfFidelityEvalReceipt(receipt, evalSet, predictions)
     await writeExclusive(

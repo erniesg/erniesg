@@ -60,7 +60,7 @@ describe('headless PDF export', () => {
       expect(secondResult.status, secondResult.stderr).toBe(0)
       const report = JSON.parse(firstResult.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.4.0',
+        schemaVersion: '1.5.0',
         summary: {
           documents: 1,
           ready: 1,
@@ -74,15 +74,17 @@ describe('headless PDF export', () => {
 
       for (const target of ['paperPro', 'paperProMove']) {
         const profile = exportModules.getTargetProfile(target)
-        const bytes = new Uint8Array(
-          await readFile(join(first, profile.epub.fileName)),
-        )
-        expect(() => exportModules.inspectEpub(bytes, profile)).not.toThrow()
         const metadata = report.documents[0].exports.find(
           (candidate) => candidate.target === target,
         )
+        const bytes = new Uint8Array(
+          await readFile(join(first, metadata.basename)),
+        )
+        expect(() => exportModules.inspectEpub(bytes, profile)).not.toThrow()
+        const profileSlug = target
+          .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+          .toLowerCase()
         expect(metadata).toMatchObject({
-          basename: profile.epub.fileName,
           byteLength: bytes.byteLength,
           sha256: digest(bytes),
           structuralValidation: 'passed',
@@ -90,17 +92,24 @@ describe('headless PDF export', () => {
             status: expect.stringMatching(/^(?:passed|skipped)$/),
           },
         })
+        expect(metadata.basename).toMatch(
+          new RegExp(`^[a-z0-9-]+-${profileSlug}-[a-f0-9]{12}\\.epub$`),
+        )
       }
 
       const firstFiles = (await readdir(first)).sort()
       const secondFiles = (await readdir(second)).sort()
-      expect(firstFiles).toEqual([
-        'checksums.sha256',
-        'corpus-audit.json',
-        'export-manifest.json',
-        'publication-papermove.epub',
-        'publication-paperpro.epub',
-      ])
+      const artifactNames = report.documents[0].exports
+        .map((artifact) => artifact.basename)
+        .sort()
+      expect(firstFiles).toEqual(
+        [
+          'checksums.sha256',
+          'corpus-audit.json',
+          'export-manifest.json',
+          ...artifactNames,
+        ].sort(),
+      )
       expect(secondFiles).toEqual(firstFiles)
       for (const file of firstFiles) {
         expect(await readFile(join(first, file))).toEqual(
@@ -109,11 +118,7 @@ describe('headless PDF export', () => {
       }
 
       const checksums = await readFile(join(first, 'checksums.sha256'), 'utf8')
-      for (const file of [
-        'publication-paperpro.epub',
-        'publication-papermove.epub',
-        'export-manifest.json',
-      ]) {
+      for (const file of [...artifactNames, 'export-manifest.json']) {
         expect(checksums).toContain(
           `${digest(await readFile(join(first, file)))}  ${file}`,
         )
@@ -201,6 +206,29 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     }
   })
 
+  it('rejects a substituted contract-bound corpus before creating output', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-contract-'))
+    const output = join(directory, 'output')
+    try {
+      const result = runExport([
+        'tests/fixtures/pdf/born-digital.pdf',
+        '--corpus-contract',
+        'benchmarks/pdf/corpus-contract-v1.json',
+        '--corpus-set',
+        'seededRandom',
+        '--out',
+        output,
+      ])
+
+      expect(result.status).toBe(2)
+      expect(result.stderr).toBe('PDF corpus contract binding failed.\n')
+      expect(result.stdout).toBe('')
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('fails closed with a private corpus report and no partial EPUB', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-scan-'))
     const output = join(directory, 'output')
@@ -270,17 +298,23 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(report.documents[0].exports).toEqual([
         expect.objectContaining({
           target: 'mobile',
-          basename: 'publication-mobile-readable.epub',
+          basename: expect.stringMatching(
+            /^adjudication-required-mobile-[a-f0-9]{12}-readable\.epub$/,
+          ),
           mode: 'readable-fallback',
         }),
         expect.objectContaining({
           target: 'paperProMove',
-          basename: 'publication-papermove-readable.epub',
+          basename: expect.stringMatching(
+            /^adjudication-required-paper-pro-move-[a-f0-9]{12}-readable\.epub$/,
+          ),
           mode: 'readable-fallback',
         }),
         expect.objectContaining({
           target: 'paperPro',
-          basename: 'publication-paperpro-readable.epub',
+          basename: expect.stringMatching(
+            /^adjudication-required-paper-pro-[a-f0-9]{12}-readable\.epub$/,
+          ),
           mode: 'readable-fallback',
         }),
       ])
@@ -289,14 +323,14 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       )
       const validate = new Ajv2020({ strict: false }).compile(schema)
       expect(validate(report), validate.errors).toBe(true)
-      expect((await readdir(directory)).sort()).toEqual([
-        'checksums.sha256',
-        'corpus-audit.json',
-        'export-manifest.json',
-        'publication-mobile-readable.epub',
-        'publication-papermove-readable.epub',
-        'publication-paperpro-readable.epub',
-      ])
+      expect((await readdir(directory)).sort()).toEqual(
+        [
+          'checksums.sha256',
+          'corpus-audit.json',
+          'export-manifest.json',
+          ...report.documents[0].exports.map((artifact) => artifact.basename),
+        ].sort(),
+      )
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -367,8 +401,11 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       })
       for (const target of ['paperPro', 'paperProMove']) {
         const profile = exportModules.getTargetProfile(target)
+        const metadata = report.documents[0].exports.find(
+          (candidate) => candidate.target === target,
+        )
         const bytes = new Uint8Array(
-          await readFile(join(directory, profile.epub.fileName)),
+          await readFile(join(directory, metadata.basename)),
         )
         expect(() => exportModules.inspectEpub(bytes, profile)).not.toThrow()
       }
@@ -409,12 +446,23 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(outputEntries).toHaveLength(2)
       expect(outputEntries[0]).toMatch(/^corpus-audit\.json$/)
       expect(outputEntries[1]).toMatch(/^ready-[a-f0-9]{12}$/)
-      expect((await readdir(join(output, outputEntries[1]))).sort()).toEqual([
+      const artifactFiles = (
+        await readdir(join(output, outputEntries[1]))
+      ).sort()
+      expect(artifactFiles.filter((file) => !file.endsWith('.epub'))).toEqual([
         'checksums.sha256',
         'export-manifest.json',
-        'publication-papermove.epub',
-        'publication-paperpro.epub',
       ])
+      const epubFiles = artifactFiles.filter((file) => file.endsWith('.epub'))
+      expect(epubFiles).toHaveLength(2)
+      expect(epubFiles).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^[a-z0-9-]+-paper-pro-[a-f0-9]{12}\.epub$/),
+          expect.stringMatching(
+            /^[a-z0-9-]+-paper-pro-move-[a-f0-9]{12}\.epub$/,
+          ),
+        ]),
+      )
       expect(result.stdout).not.toContain(resolve(directory))
     } finally {
       await rm(directory, { recursive: true, force: true })

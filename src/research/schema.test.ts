@@ -77,6 +77,86 @@ function scopedTablePaper() {
 }
 
 describe('SRT canonical graph schema', () => {
+  it('accepts typed canonical publication language, direction, dates, and source lineage', () => {
+    const candidate = {
+      ...clonePaper(),
+      language: 'ar',
+      baseDirection: 'rtl',
+      publicationDate: '2024-08-19',
+      artifactModifiedAt: '2026-07-23T00:42:00Z',
+      metadataLineage: {
+        language: {
+          status: 'proven',
+          source: 'pdf-ocr-explicit',
+          evidence: ['ocr-language:ara->ar'],
+        },
+        baseDirection: {
+          status: 'proven',
+          source: 'publication-language',
+          evidence: ['language:ar'],
+        },
+        publicationDate: {
+          status: 'unresolved',
+          source: 'pdf-xmp-not-extracted',
+          evidence: ['pdf-xmp-metadata-not-extracted'],
+        },
+        artifactModifiedAt: {
+          status: 'proven',
+          source: 'pdf-info-mod-date',
+          evidence: ['pdf-info:ModDate'],
+        },
+      },
+    }
+
+    expect(researchPaperSchema.safeParse(candidate).success).toBe(true)
+  })
+
+  it('accepts bounded PDF text language inference lineage', () => {
+    const candidate = {
+      ...clonePaper(),
+      language: 'en',
+      baseDirection: 'ltr',
+      metadataLineage: {
+        language: {
+          status: 'proven',
+          source: 'pdf-text-language-inference',
+          evidence: [
+            'pdf-text-language:en:words=450:markers=92:density=0.20444:latin=1:competitor=0',
+          ],
+        },
+        baseDirection: {
+          status: 'proven',
+          source: 'publication-language',
+          evidence: ['language:en'],
+        },
+        publicationDate: {
+          status: 'unresolved',
+          source: 'pdf-xmp-not-extracted',
+          evidence: ['pdf-xmp-metadata-not-extracted'],
+        },
+        artifactModifiedAt: {
+          status: 'unresolved',
+          source: 'unproven',
+          evidence: ['no-authoritative-artifact-modified-at'],
+        },
+      },
+    }
+
+    expect(researchPaperSchema.safeParse(candidate).success).toBe(true)
+  })
+
+  it.each([
+    ['non-BCP47 OCR code', { language: 'chi_sim' }],
+    ['noncanonical language casing', { language: 'EN-us' }],
+    ['invalid base direction', { baseDirection: 'auto' }],
+    ['non-date publication date', { publicationDate: 'August 19, 2024' }],
+    ['date-only artifact timestamp', { artifactModifiedAt: '2026-07-23' }],
+  ])('rejects %s in canonical publication metadata', (_label, override) => {
+    expect(
+      researchPaperSchema.safeParse({ ...clonePaper(), ...override }).success,
+    ).toBe(false)
+  })
+
   it('validates the golden paper fixture and freezes stable node ids', () => {
     const paper = researchPaperSchema.parse(rawPaper)
 
@@ -94,7 +174,7 @@ describe('SRT canonical graph schema', () => {
       'p-method-1',
     ])
     expect(canonicalContentHash(paper)).toBe(
-      'eb39feffbb23855457fdb5bba9021898aec721a3c308b8aae756c32df2f1d16e',
+      'ccc381d2455fb3c2551f02b1cb62fede7f867872328f51fa57bf212ca5e2dd35',
     )
   })
 

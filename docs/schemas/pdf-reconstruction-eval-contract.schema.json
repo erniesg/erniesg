@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-reconstruction-eval-contract-1.0.0.json",
+  "title": "Versioned governance contract for scholarly PDF reconstruction evaluation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "privacy",
+    "corpus",
+    "fidelityEval",
+    "observations",
+    "comparatorReceipt",
+    "splits",
+    "objectiveEvaluators",
+    "subjectiveJudgePolicy",
+    "dataGovernance",
+    "taxonomySaturation"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "privacy": {
+      "const": "public-identities-hashes-governance-metadata-no-source-content-or-local-paths"
+    },
+    "corpus": { "$ref": "#/$defs/corpusBinding" },
+    "fidelityEval": { "$ref": "#/$defs/evalBinding" },
+    "observations": { "$ref": "#/$defs/observationBinding" },
+    "comparatorReceipt": { "$ref": "#/$defs/comparatorReceiptBinding" },
+    "splits": { "$ref": "#/$defs/splits" },
+    "objectiveEvaluators": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/objectiveEvaluator" }
+    },
+    "subjectiveJudgePolicy": { "$ref": "#/$defs/subjectiveJudgePolicy" },
+    "dataGovernance": { "$ref": "#/$defs/dataGovernance" },
+    "taxonomySaturation": { "$ref": "#/$defs/taxonomySaturation" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,191}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "path": {
+      "type": "string",
+      "pattern": "^(benchmarks/pdf|docs/schemas|tests/fixtures/pdf|tools)/[A-Za-z0-9._/-]+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "fileSha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "corpusBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "canonicalContractSha256",
+        "frozenSet",
+        "seededRandomSet",
+        "runCount",
+        "distinctDocumentCount",
+        "overlapDocumentIds"
+      ],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "canonicalContractSha256": { "$ref": "#/$defs/sha256" },
+        "frozenSet": { "$ref": "#/$defs/corpusSet" },
+        "seededRandomSet": { "$ref": "#/$defs/corpusSet" },
+        "runCount": { "const": 20 },
+        "distinctDocumentCount": { "const": 18 },
+        "overlapDocumentIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "corpusSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "documentCount", "documentIdentitySha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "documentCount": { "const": 10 },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "evalBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "id",
+        "evalSetSha256",
+        "documentIdentitySha256",
+        "caseIdentitySha256",
+        "documentCount",
+        "caseCount",
+        "stratumCount"
+      ],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "id": { "$ref": "#/$defs/id" },
+        "evalSetSha256": { "$ref": "#/$defs/sha256" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "documentCount": { "const": 4 },
+        "caseCount": { "const": 29 },
+        "stratumCount": { "const": 15 }
+      }
+    },
+    "observationBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "schema", "observationCount"],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "schema": { "$ref": "#/$defs/artifact" },
+        "observationCount": { "const": 29 }
+      }
+    },
+    "comparatorReceiptBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "authority"],
+      "properties": {
+        "schema": { "$ref": "#/$defs/artifact" },
+        "authority": {
+          "const": "performance-provenance-sidecar-never-promotion-authority"
+        }
+      }
+    },
+    "availableSplit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "role",
+        "documentCount",
+        "caseCount",
+        "labelsExposed",
+        "identitySha256"
+      ],
+      "properties": {
+        "status": { "const": "available" },
+        "role": {
+          "enum": [
+            "public-development-calibration",
+            "frozen-whole-paper-regression",
+            "seeded-random-whole-paper-discovery"
+          ]
+        },
+        "documentCount": { "type": "integer", "minimum": 1 },
+        "caseCount": { "type": "integer", "minimum": 0 },
+        "labelsExposed": { "type": "boolean" },
+        "identitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "unavailableSplit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "role", "documentCount", "caseCount", "reason"],
+      "properties": {
+        "status": { "const": "not-built" },
+        "role": {
+          "enum": [
+            "independent-blind-holdout",
+            "llm-judge-train",
+            "llm-judge-dev",
+            "llm-judge-test"
+          ]
+        },
+        "documentCount": { "const": 0 },
+        "caseCount": { "const": 0 },
+        "reason": { "$ref": "#/$defs/id" }
+      }
+    },
+    "splits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publicCalibration",
+        "frozenRegression",
+        "seededRandomDiscovery",
+        "blindHoldout",
+        "judgeTrain",
+        "judgeDev",
+        "judgeTest"
+      ],
+      "properties": {
+        "publicCalibration": { "$ref": "#/$defs/availableSplit" },
+        "frozenRegression": { "$ref": "#/$defs/availableSplit" },
+        "seededRandomDiscovery": { "$ref": "#/$defs/availableSplit" },
+        "blindHoldout": { "$ref": "#/$defs/unavailableSplit" },
+        "judgeTrain": { "$ref": "#/$defs/unavailableSplit" },
+        "judgeDev": { "$ref": "#/$defs/unavailableSplit" },
+        "judgeTest": { "$ref": "#/$defs/unavailableSplit" }
+      }
+    },
+    "objectiveEvaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "outcome", "criterion", "implementation"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "const": "code" },
+        "outcome": { "const": "binary-pass-fail" },
+        "criterion": { "$ref": "#/$defs/id" },
+        "implementation": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/path" }
+        }
+      }
+    },
+    "subjectiveJudgePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "permittedScope",
+        "requiredValidationMetrics",
+        "minimumHumanPassLabels",
+        "minimumHumanFailLabels",
+        "splitLeakagePermitted"
+      ],
+      "properties": {
+        "status": { "const": "not-implemented" },
+        "permittedScope": {
+          "const": "subjective-authored-interpretation-only-objective-invariants-remain-code-evaluated"
+        },
+        "requiredValidationMetrics": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["TPR", "TNR"] }
+        },
+        "minimumHumanPassLabels": { "const": 50 },
+        "minimumHumanFailLabels": { "const": 50 },
+        "splitLeakagePermitted": { "const": false }
+      }
+    },
+    "publicPaperInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "licenseStatus",
+        "redistribution",
+        "storage",
+        "operatorRequirement"
+      ],
+      "properties": {
+        "licenseStatus": { "const": "not-asserted-by-this-benchmark" },
+        "redistribution": { "const": "pdf-bytes-excluded-from-repository" },
+        "storage": { "const": "owner-local-hash-verified" },
+        "operatorRequirement": {
+          "const": "obtain-and-use-each-paper-under-its-source-terms"
+        }
+      }
+    },
+    "repositoryFixtures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "license"],
+      "properties": {
+        "manifest": { "$ref": "#/$defs/path" },
+        "license": { "const": "CC0-1.0" }
+      }
+    },
+    "privateInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["storage", "excludedFromReceipts"],
+      "properties": {
+        "storage": { "const": "owner-local-only" },
+        "excludedFromReceipts": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "pdf-bytes",
+              "source-prose",
+              "local-paths",
+              "screenshots",
+              "raw-model-payloads"
+            ]
+          }
+        }
+      }
+    },
+    "dataGovernance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicPaperInputs", "repositoryFixtures", "privateInputs"],
+      "properties": {
+        "publicPaperInputs": { "$ref": "#/$defs/publicPaperInputs" },
+        "repositoryFixtures": { "$ref": "#/$defs/repositoryFixtures" },
+        "privateInputs": { "$ref": "#/$defs/privateInputs" }
+      }
+    },
+    "taxonomySaturation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "labeledBoundedTraceCount",
+        "targetApproximateTraceCount",
+        "requiredFinalNoNewClassWindow",
+        "observedFinalNoNewClassWindow",
+        "robustnessRunCount",
+        "distinctRobustnessDocumentCount"
+      ],
+      "properties": {
+        "status": { "const": "not-saturated" },
+        "labeledBoundedTraceCount": { "const": 29 },
+        "targetApproximateTraceCount": { "const": 100 },
+        "requiredFinalNoNewClassWindow": { "const": 20 },
+        "observedFinalNoNewClassWindow": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 19
+        },
+        "robustnessRunCount": { "const": 20 },
+        "distinctRobustnessDocumentCount": { "const": 18 }
+      }
+    }
+  }
+}

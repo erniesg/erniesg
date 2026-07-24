@@ -87,8 +87,8 @@
     }
   ],
   "inlineSpanLedger": {
-    "expected": 14,
-    "mapped": 14,
+    "expected": 16,
+    "mapped": 16,
     "coverage": 1
   },
   "note": {

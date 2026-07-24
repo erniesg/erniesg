@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "2.0.0",
+  "id": "scholarly-pdf-first-failure-observations-2026-07-v2",
+  "privacy": "public-identities-hashes-normalized-case-provenance-no-source-content",
+  "evalSet": {
+    "path": "benchmarks/pdf/fidelity-eval-v2.json",
+    "fileSha256": "7420fc497895a058d24592b7c5164ded261846a5da4fed2f014c8a52cbafccf9",
+    "evalSetSha256": "9671fdc99e78f027ac8547bd30628c6f7186f40ca12024edb173d9c0c9ed15f1",
+    "documentIdentitySha256": "c87dc2adcb180f49135a2e3c41e7ad528060d0c93eb2fcb35161e382a146b781",
+    "caseIdentitySha256": "098450e4aba41009c012460c0f13d67c0e89bf9561325ae7a74a45ee17922903"
+  },
+  "method": {
+    "unit": "bounded-source-to-output-case",
+    "firstFailureDefinition": "earliest-source-backed-pipeline-decision-that-can-explain-the-bounded-failure",
+    "annotationStatus": "source-verified-complaint-driven-public-calibration-not-independent-blind-holdout",
+    "selectionStatus": "candidate-output-used-for-case-selection-source-pdf-used-for-label",
+    "candidateOutputConsulted": true
+  },
+  "observations": [
+    {
+      "caseId": "2502.00873v1.p016-p020.figures-21-30-global-order",
+      "firstFailureClass": "reading-topology",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "pages": [16, 17, 18, 19, 20],
+        "evidence": "hash-pinned-source-pdf-pages-and-per-target-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "all-pairs-reading-order",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p005.inline-stacked-fragment-role",
+      "firstFailureClass": "semantic-type-confusion",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "pages": [5],
+        "evidence": "hash-pinned-source-pdf-pages-and-per-target-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2412.13575v1.p003.inline-script-contiguous-token",
+      "firstFailureClass": "lexical-and-operator-loss",
+      "sourceArtifact": {
+        "documentId": "2412.13575v1",
+        "sourcePdfSha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+        "pages": [3],
+        "evidence": "hash-pinned-source-pdf-pages-and-per-target-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    }
+  ]
+}

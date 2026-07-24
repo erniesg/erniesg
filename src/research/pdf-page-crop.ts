@@ -211,10 +211,36 @@ function abortError() {
   return error
 }
 
+function validOwnedSourceBox(
+  sourceBox: NormalizedSourceBox,
+  ownedSourceBox: NormalizedSourceBox,
+) {
+  const tolerance = 0.00001
+  return (
+    ownedSourceBox.page === sourceBox.page &&
+    ownedSourceBox.rotation === sourceBox.rotation &&
+    [
+      ownedSourceBox.x,
+      ownedSourceBox.y,
+      ownedSourceBox.width,
+      ownedSourceBox.height,
+    ].every(Number.isFinite) &&
+    ownedSourceBox.width > 0 &&
+    ownedSourceBox.height > 0 &&
+    ownedSourceBox.x >= sourceBox.x - tolerance &&
+    ownedSourceBox.y >= sourceBox.y - tolerance &&
+    ownedSourceBox.x + ownedSourceBox.width <=
+      sourceBox.x + sourceBox.width + tolerance &&
+    ownedSourceBox.y + ownedSourceBox.height <=
+      sourceBox.y + sourceBox.height + tolerance
+  )
+}
+
 export async function renderPdfPageCrop({
   page,
   canvasFactory,
   sourceBox,
+  ownedSourceBoxes,
   signal,
   maximumPixels = MAX_PDF_PAGE_CROP_PIXELS,
   timeoutMs = PDF_PAGE_CROP_TIMEOUT_MS,
@@ -223,12 +249,24 @@ export async function renderPdfPageCrop({
   page: PdfPageCropSource
   canvasFactory: PdfCanvasFactory
   sourceBox: NormalizedSourceBox
+  ownedSourceBoxes?: readonly NormalizedSourceBox[]
   signal?: AbortSignal
   maximumPixels?: number
   timeoutMs?: number
   tightenToSourceInk?: boolean
 }): Promise<PdfPageCropRaster> {
   validateSourceBox(page, sourceBox)
+  if (
+    ownedSourceBoxes &&
+    (ownedSourceBoxes.length === 0 ||
+      ownedSourceBoxes.some(
+        (ownedSourceBox) => !validOwnedSourceBox(sourceBox, ownedSourceBox),
+      ))
+  ) {
+    throw new Error(
+      'PDF page crop owned source boxes must be bounded by its source region',
+    )
+  }
   if (signal?.aborted) throw abortError()
   if (!Number.isFinite(maximumPixels) || maximumPixels < 1) {
     throw new Error('PDF page crop maximumPixels must be positive')

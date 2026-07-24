@@ -30,6 +30,14 @@ import {
 import * as privateFidelity from './pdf-private-fidelity.mjs'
 
 const hash = 'a'.repeat(64)
+const privateCompletenessPolicy = {
+  minimumTextCoverage: 0.98,
+  minimumAssetCoverage: 1,
+  minimumRelationshipCoverage: 1,
+  maximumUnresolvedObjects: 0,
+  maximumOcrRequiredPages: 0,
+  maximumReadingOrderDiagnostics: 0,
+}
 
 function citationRelationship(overrides = {}) {
   return {
@@ -57,6 +65,57 @@ function citationRelationship(overrides = {}) {
   }
 }
 
+function crossReferenceRelationship(overrides = {}) {
+  return {
+    id: 'cross-reference-private-1',
+    kind: 'figure',
+    text: 'Figure 1',
+    labels: ['Figure 1'],
+    referenceRegionId: 'region-private-1',
+    referenceStart: 4,
+    referenceEnd: 12,
+    targets: [
+      {
+        kind: 'figure',
+        label: 'Figure 1',
+        referenceStart: 11,
+        referenceEnd: 12,
+        status: 'matched',
+        candidateNodeIds: ['figure-private-1'],
+        targetNodeId: 'figure-private-1',
+        evidence: [
+          'explicit-scholarly-cross-reference-syntax',
+          'canonical-label-unique',
+        ],
+      },
+    ],
+    targetNodeIds: ['figure-private-1'],
+    status: 'matched',
+    canonicalAnchor: {
+      nodeId: 'paragraph-private-1',
+      start: 4,
+      end: 12,
+    },
+    confidence: 0.99,
+    evidence: [
+      'explicit-scholarly-cross-reference-syntax',
+      'all-canonical-labels-unique',
+    ],
+    sourceBoxes: [
+      {
+        page: 1,
+        x: 0.2,
+        y: 0.3,
+        width: 0.2,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+    ],
+    ...overrides,
+  }
+}
+
 function reconstruction(ready = true, ledgerAvailable = true) {
   return {
     source: { pageCount: 3 },
@@ -71,6 +130,9 @@ function reconstruction(ready = true, ledgerAvailable = true) {
       expectedInlineSpanCount: 1,
       mappedInlineSpanCount: 1,
       inlineSpanCoverage: 1,
+      expectedHyperlinkCount: 1,
+      mappedHyperlinkCount: 1,
+      hyperlinkCoverage: 1,
       lineBoundaryCount: ledgerAvailable ? 1 : 0,
       decidedLineBoundaryCount: ledgerAvailable ? 1 : 0,
       unresolvedCorruptingJoinCount: 0,
@@ -112,6 +174,7 @@ function reconstruction(ready = true, ledgerAvailable = true) {
     readiness: {
       ready,
       status: ready ? 'ready' : 'review-required',
+      policy: privateCompletenessPolicy,
       blockingDiagnosticCodes: ready ? [] : ['INCOMPLETE_TEXT_COVERAGE'],
     },
     paper: {
@@ -151,7 +214,14 @@ function reconstruction(ready = true, ledgerAvailable = true) {
     visualRelationships: [{ kind: 'figure', status: 'matched' }],
     noteRelationships: [],
     assets: [],
-    diagnostics: [{ severity: 'info', code: 'SOURCE_OK' }],
+    diagnostics: ready
+      ? [{ severity: 'info', code: 'SOURCE_OK' }]
+      : [
+          {
+            severity: 'error',
+            code: 'INCOMPLETE_TEXT_COVERAGE',
+          },
+        ],
     ...(ledgerAvailable
       ? {
           lineBoundaryDecisions: [
@@ -170,6 +240,14 @@ function reconstruction(ready = true, ledgerAvailable = true) {
         }
       : {}),
   }
+}
+
+function requireReconstructionReview(source, code) {
+  source.readiness.ready = false
+  source.readiness.status = 'review-required'
+  source.readiness.blockingDiagnosticCodes = [code]
+  source.diagnostics.push({ severity: 'error', code })
+  return source
 }
 
 function artifact(target, suffix = '', source = reconstruction()) {
@@ -271,6 +349,28 @@ function acceptedBaselineSha256(receipt) {
 }
 
 describe('private PDF fidelity runner', () => {
+  it('records policy and error-diagnostic evidence for derived readiness round trips', () => {
+    const ready = createPrivateReconstructionEvidence(reconstruction(true))
+    const blocked = createPrivateReconstructionEvidence(reconstruction(false))
+    const receipt = fidelityReceipt()
+
+    expect(ready.readiness).toMatchObject({
+      policy: privateCompletenessPolicy,
+      errorDiagnosticCodes: [],
+    })
+    expect(blocked.readiness).toMatchObject({
+      policy: privateCompletenessPolicy,
+      errorDiagnosticCodes: ['INCOMPLETE_TEXT_COVERAGE'],
+    })
+    expect(
+      comparePrivateFidelityReceipts(
+        receipt,
+        receipt,
+        acceptedBaselineSha256(receipt),
+      ),
+    ).toMatchObject({ status: 'passed', passed: true })
+  })
+
   it('binds readable fallback parity to its strictly validated canonical projection', () => {
     const source = reconstruction(false)
     source.paper.nodes.push(
@@ -569,24 +669,58 @@ describe('private PDF fidelity runner', () => {
     expect(receipt.passed).toBe(true)
   })
 
-  it('binds visual source-line lineage consistently across private parity receipts', () => {
+  it('binds visual semantics and source lineage consistently across private parity receipts', () => {
     const relationship = {
       id: 'relationship-1',
       kind: 'table',
+      semanticKind: 'source-code',
       status: 'matched',
       canonicalNodeId: 'paragraph-1',
+      preformatted: {
+        status: 'ordered-lines',
+        evidence: ['monospaced-source-lines'],
+        lines: [
+          {
+            text: 'PRIVATE source code',
+            sourceRegionId: 'region-2',
+            sourceLineId: 'line-3',
+            sourceBox: {
+              page: 1,
+              x: 0.1,
+              y: 0.2,
+              width: 0.3,
+              height: 0.04,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+            sourceRunBoxes: [],
+          },
+        ],
+      },
     }
-    const evidenceFor = (sourceLineIds) => {
+    const evidenceFor = (
+      sourceLineIds,
+      preformatted = relationship.preformatted,
+    ) => {
       const source = reconstruction()
       source.visualRelationships = [
         sourceLineIds === undefined
           ? relationship
-          : { ...relationship, sourceLineIds },
+          : { ...relationship, sourceLineIds, preformatted },
       ]
       return createPrivateReconstructionEvidence(source)
     }
     const receipt = evidenceFor(['line-1', 'line-2'])
     const changed = evidenceFor(['line-1'])
+    const changedPreformatted = evidenceFor(['line-1', 'line-2'], {
+      ...relationship.preformatted,
+      lines: [
+        {
+          ...relationship.preformatted.lines[0],
+          text: 'PRIVATE changed source code',
+        },
+      ],
+    })
 
     expect(receipt.artifactParity.publication.relationshipGraphSha256).toBe(
       receipt.structure.visualRelationshipGraphSha256,
@@ -597,6 +731,13 @@ describe('private PDF fidelity runner', () => {
     expect(canonicalJsonHash(changed.structure)).not.toBe(
       canonicalJsonHash(receipt.structure),
     )
+    expect(
+      changedPreformatted.artifactParity.publication.relationshipGraphSha256,
+    ).not.toBe(receipt.artifactParity.publication.relationshipGraphSha256)
+    expect(
+      changedPreformatted.artifactParity.publication.relationshipGraphSha256,
+    ).toBe(changedPreformatted.structure.visualRelationshipGraphSha256)
+    expect(JSON.stringify(receipt)).not.toContain('PRIVATE source code')
     expect(
       evidenceFor().artifactParity.publication.relationshipGraphSha256,
     ).toBe(evidenceFor([]).artifactParity.publication.relationshipGraphSha256)
@@ -1101,7 +1242,7 @@ describe('private PDF fidelity runner', () => {
       epubCheckRequired: true,
     })
 
-    expect(checked.schemaVersion).toBe('1.6.0')
+    expect(checked.schemaVersion).toBe('1.7.0')
     expect(checked.execution).toMatchObject({
       epubCheckRequired: true,
       epubCheckPassedCount: 6,
@@ -1412,7 +1553,7 @@ describe('private PDF fidelity runner', () => {
       [expect.stringMatching(/^[a-f0-9]{64}$/)],
     )
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.2.0',
+      schemaVersion: '1.3.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraphSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -1458,6 +1599,118 @@ describe('private PDF fidelity runner', () => {
     const malformed = structuredClone(baseline)
     malformed.runs[0].reconstruction.structure.citationRelationshipGraph[0].canonicalAnchor =
       { nodeId: '', start: 7, end: 4 }
+
+    for (const invalid of [missing, malformed]) {
+      expect(() =>
+        comparePrivateFidelityReceipts(
+          invalid,
+          baseline,
+          canonicalJsonHash(invalid),
+        ),
+      ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
+    }
+  })
+
+  it('keeps scholarly cross-reference topology opaque and binds anchor-only and target-only changes', () => {
+    const source = reconstruction()
+    source.crossReferenceRelationships = [
+      crossReferenceRelationship({
+        id: 'PRIVATE cross-reference relationship',
+        text: 'PRIVATE Figure 1',
+        labels: ['PRIVATE Figure 1'],
+        referenceRegionId: 'PRIVATE source region',
+        targets: [
+          {
+            ...crossReferenceRelationship().targets[0],
+            label: 'PRIVATE Figure 1',
+            candidateNodeIds: ['PRIVATE figure target'],
+            targetNodeId: 'PRIVATE figure target',
+          },
+        ],
+        targetNodeIds: ['PRIVATE figure target'],
+        canonicalAnchor: {
+          nodeId: 'PRIVATE canonical anchor',
+          start: 4,
+          end: 12,
+        },
+      }),
+    ]
+    const evidence = createPrivateReconstructionEvidence(source)
+    const serializedGraph = JSON.stringify(
+      evidence.structure.crossReferenceRelationshipGraph,
+    )
+    expect(serializedGraph).not.toContain('PRIVATE')
+    expect(serializedGraph).not.toContain('"x"')
+    expect(
+      evidence.structure.crossReferenceRelationshipGraph[0].sourceBoxes,
+    ).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)])
+    expect(evidence.structure).toMatchObject({
+      schemaVersion: '1.3.0',
+      crossReferenceRelationshipCount: 1,
+      crossReferenceRelationshipCounts: { 'figure:matched': 1 },
+      crossReferenceRelationshipGraphSha256:
+        expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+
+    const baseline = fidelityReceipt({
+      transformReconstruction(value) {
+        value.crossReferenceRelationships = [crossReferenceRelationship()]
+        return value
+      },
+    })
+    for (const relationship of [
+      crossReferenceRelationship({
+        canonicalAnchor: {
+          nodeId: 'paragraph-private-2',
+          start: 4,
+          end: 12,
+        },
+      }),
+      crossReferenceRelationship({
+        targets: [
+          {
+            ...crossReferenceRelationship().targets[0],
+            candidateNodeIds: ['figure-private-2'],
+            targetNodeId: 'figure-private-2',
+          },
+        ],
+        targetNodeIds: ['figure-private-2'],
+      }),
+    ]) {
+      const candidate = fidelityReceipt({
+        transformReconstruction(value) {
+          value.crossReferenceRelationships = [relationship]
+          return value
+        },
+      })
+      expect(
+        comparePrivateFidelityReceipts(
+          baseline,
+          candidate,
+          acceptedBaselineSha256(baseline),
+        ),
+      ).toEqual({ status: 'failed', passed: false })
+    }
+  })
+
+  it('rejects missing or malformed private scholarly cross-reference graph evidence', () => {
+    const baseline = fidelityReceipt({
+      transformReconstruction(value) {
+        value.crossReferenceRelationships = [crossReferenceRelationship()]
+        return value
+      },
+    })
+    const missing = structuredClone(baseline)
+    delete missing.runs[0].reconstruction.structure
+      .crossReferenceRelationshipGraph
+    const malformed = structuredClone(baseline)
+    malformed.runs[0].reconstruction.structure.crossReferenceRelationshipGraph[0].targets[0] =
+      {
+        ...malformed.runs[0].reconstruction.structure
+          .crossReferenceRelationshipGraph[0].targets[0],
+        status: 'unresolved',
+        targetNodeId: 'a'.repeat(64),
+      }
 
     for (const invalid of [missing, malformed]) {
       expect(() =>
@@ -1545,7 +1798,7 @@ describe('private PDF fidelity runner', () => {
       profiles,
     })
 
-    expect(receipt.schemaVersion).toBe('1.6.0')
+    expect(receipt.schemaVersion).toBe('1.7.0')
     expect(receipt.execution.localValidationPassed).toBe(true)
     expect(receipt.baselineComparison).toEqual({
       status: 'not-configured',
@@ -1658,31 +1911,45 @@ describe('private PDF fidelity runner', () => {
       fidelityReceipt({
         transformReconstruction(source) {
           source.completeness.missingSourceRegionCount = 1
-          return source
+          return requireReconstructionReview(source, 'MISSING_SOURCE_REGION')
         },
       }),
       fidelityReceipt({
         transformReconstruction(source) {
           source.completeness.unprovenancedRenderedUnitCount = 1
-          return source
+          return requireReconstructionReview(
+            source,
+            'UNPROVENANCED_RENDERED_UNIT',
+          )
         },
       }),
       fidelityReceipt({
         transformReconstruction(source) {
           source.completeness.mappedInlineSpanCount = 0
           source.completeness.inlineSpanCoverage = 0
-          return source
+          return requireReconstructionReview(
+            source,
+            'INCOMPLETE_INLINE_STYLE_COVERAGE',
+          )
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.mappedHyperlinkCount = 0
+          source.completeness.hyperlinkCoverage = 0
+          return requireReconstructionReview(source, 'UNRESOLVED_HYPERLINK')
         },
       }),
     ]
 
-    for (const candidate of regressions) {
+    for (const [index, candidate] of regressions.entries()) {
       expect(
         comparePrivateFidelityReceipts(
           baseline,
           candidate,
           acceptedBaselineSha256(baseline),
         ),
+        `regression fixture ${index}`,
       ).toEqual({ status: 'failed', passed: false })
     }
   })
@@ -1770,9 +2037,9 @@ describe('private PDF fidelity runner', () => {
     ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
   })
 
-  it('rejects legacy private receipts that predate decision-set identity', () => {
+  it('rejects legacy private receipts that predate complete semantic evidence', () => {
     const legacy = fidelityReceipt()
-    legacy.schemaVersion = '1.4.0'
+    legacy.schemaVersion = '1.6.0'
 
     expect(() =>
       comparePrivateFidelityReceipts(
@@ -1804,6 +2071,68 @@ describe('private PDF fidelity runner', () => {
         return source
       },
     })
+    const invalidCompletenessEvidence = [
+      fidelityReceipt({
+        transformReconstruction(source) {
+          delete source.completeness.expectedHyperlinkCount
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.hyperlinkCoverage = 0.5
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.mappedHyperlinkCount = 2
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.textCoverage = 0.5
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.assetCoverage = 0.5
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.relationshipCoverage = 0.5
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.matchedTextCharacters = 101
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.exportedAssetCount = 2
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.resolvedRelationshipCount = 2
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.decidedLineBoundaryCount = 2
+          return source
+        },
+      }),
+    ]
 
     for (const baseline of [
       invalidSchema,
@@ -1811,11 +2140,79 @@ describe('private PDF fidelity runner', () => {
       locallyBlocked,
       emptyFallbackArtifact,
       invalidInlineCoverage,
+      ...invalidCompletenessEvidence,
     ]) {
       expect(() =>
         comparePrivateFidelityReceipts(
           baseline,
           fidelityReceipt(),
+          acceptedBaselineSha256(baseline),
+        ),
+      ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
+    }
+  })
+
+  it('rejects private readiness claims that contradict policy, completeness, diagnostics, or blockers', () => {
+    const baseline = fidelityReceipt()
+    const invalidCandidates = [
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.readiness.blockingDiagnosticCodes = ['SOURCE_ERROR']
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.diagnostics.push({
+            severity: 'error',
+            code: 'SOURCE_ERROR',
+          })
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.outputTextCharacters = 97
+          source.completeness.matchedTextCharacters = 97
+          source.completeness.textCoverage = 0.97
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.unresolvedObjectCount = 1
+          source.completeness.unresolvedObjects.assets = 1
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.ocrRequiredPages = [1]
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.completeness.readingOrderDiagnostics = 1
+          source.completeness.readingOrderEvaluation.unresolvedEdgeCount = 1
+          source.completeness.readingOrderEvaluation.reviewRequired = true
+          return source
+        },
+      }),
+      fidelityReceipt({
+        transformReconstruction(source) {
+          source.readiness.ready = false
+          source.readiness.status = 'review-required'
+          return source
+        },
+      }),
+    ]
+
+    for (const candidate of invalidCandidates) {
+      expect(() =>
+        comparePrivateFidelityReceipts(
+          baseline,
+          candidate,
           acceptedBaselineSha256(baseline),
         ),
       ).toThrow('INVALID_PRIVATE_FIDELITY_BASELINE')
@@ -2150,7 +2547,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
 
       expect(result.status, result.stderr).toBe(1)
       expect(receipt).toMatchObject({
-        schemaVersion: '1.6.0',
+        schemaVersion: '1.7.0',
         execution: {
           epubCheckRequired: true,
           epubCheckPassedCount: 2,

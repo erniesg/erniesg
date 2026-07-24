@@ -25,6 +25,8 @@ const MIN_LINE_BAND_HEIGHT = 0.025
 const MAX_LINE_BAND_AREA = 0.5
 const MIN_CAPTION_HORIZONTAL_COVERAGE = 0.8
 const MIN_TABULAR_ROW_ANCHORS = 3
+const MAX_NUMERIC_TABLE_ROW_STUB_WIDTH = 0.18
+const MAX_NUMERIC_TABLE_ROW_STUB_WORDS = 6
 const MIN_ROW_BAND_LINE_HEIGHT_RATIO = 0.9
 const MAX_ROW_BAND_LINE_HEIGHT_RATIO = 1.2
 const MIN_ATOMIC_BAND_REGION_HORIZONTAL_COVERAGE = 0.5
@@ -1144,6 +1146,151 @@ function tabularLineBandProof(rows: TableLineRow[]) {
     lineIds: rows
       .flatMap((row) => row.entries.map((entry) => entry.line.id))
       .sort(),
+  }
+}
+
+function numericMetricRun(run: PdfRegionLine['runs'][number]) {
+  const text = run.text.trim()
+  return /\d/u.test(text) && (text.match(/\p{L}/gu)?.length ?? 0) <= 1
+}
+
+function numericTableRowStub(run: PdfRegionLine['runs'][number]) {
+  const text = run.text.trim()
+  const wordCount =
+    text.match(/[\p{L}\p{N}]+(?:[-'’][\p{L}\p{N}]+)*/gu)?.length ?? 0
+  return (
+    text.length > 0 &&
+    run.width <= MAX_NUMERIC_TABLE_ROW_STUB_WIDTH &&
+    wordCount <= MAX_NUMERIC_TABLE_ROW_STUB_WORDS &&
+    !/[.!?](?:["')\]]*)$/u.test(text)
+  )
+}
+
+// Crossing the ordinary caption-distance cap is safe only when source
+// geometry supplies both an explicit header and one dominant numeric column
+// signature. Mixed signatures fail closed instead of exporting a lower shard.
+function stableNumericTableBandProof(rows: TableLineRow[]) {
+  if (!explicitTableHeaderRow(rows[0])) return false
+  const numericRows = rows.filter((row) => {
+    const runs = row.entries.flatMap((entry) =>
+      entry.line.runs.filter((run) => run.text.trim()),
+    )
+    const numericRuns = runs.filter(numericMetricRun)
+    const nonNumericRuns = runs.filter((run) => !numericMetricRun(run))
+    const leftmostNumericX = Math.min(...numericRuns.map((run) => run.x))
+    const hasOnlyOwnedRowStub =
+      nonNumericRuns.length === 0 ||
+      (nonNumericRuns.length === 1 &&
+        nonNumericRuns[0].x <= leftmostNumericX + BOX_TOLERANCE &&
+        numericTableRowStub(nonNumericRuns[0]))
+    return (
+      numericRuns.length >= MIN_TABULAR_ROW_ANCHORS &&
+      hasOnlyOwnedRowStub &&
+      numericRuns.length >= Math.max(1, runs.length - 1) * 0.6
+    )
+  })
+  const requiredNumericRows = Math.max(5, Math.floor(rows.length * 0.6) + 1)
+  if (numericRows.length < requiredNumericRows) return false
+  const signatures = numericRows.map((row) =>
+    cellAnchors(row.entries.flatMap((entry) => entry.line.runs)),
+  )
+  const requiredAlignedRows = Math.max(
+    5,
+    Math.floor(numericRows.length * 0.6) + 1,
+  )
+  return signatures.some(
+    (signature) =>
+      signature.length >= MIN_TABULAR_ROW_ANCHORS &&
+      signatures.filter((candidate) => alignedAnchorRows(candidate, signature))
+        .length >= requiredAlignedRows,
+  )
+}
+
+type ExtendedTabularLaneDecision = {
+  lane: DirectionalLane | null
+  truncatedAtCaptionDistance: boolean
+  crossingLineIds: string[]
+  provenLineIds: string[]
+}
+
+function extendedNumericAboveTableLane(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+  lanes: DirectionalLane[],
+): ExtendedTabularLaneDecision {
+  const standardAbove = lanes.find((lane) => lane.direction === 'above')!
+  const completeAbove = completeAboveCaptionLane(caption, pageRegions)
+  const none = {
+    lane: null,
+    truncatedAtCaptionDistance: false,
+    crossingLineIds: [],
+    provenLineIds: [],
+  } satisfies ExtendedTabularLaneDecision
+  if (completeAbove.top >= standardAbove.top - BOX_TOLERANCE) return none
+
+  const entries = pageRegions
+    .filter(
+      (region) =>
+        region.page === caption.page &&
+        region.id !== caption.id &&
+        region.kind !== 'caption' &&
+        region.lines.length > 0 &&
+        region.text.trim().length > 0 &&
+        region.nativeObjectIds.length === 0 &&
+        (eligibleTableTextRegion(region) || region.kind === 'header') &&
+        validBox(region.box),
+    )
+    .flatMap<TableLineEntry>((region) =>
+      region.lines
+        .map((line) => ({ region, line }))
+        .filter(
+          (entry) =>
+            validTableLineEntry(entry) &&
+            boxWithinLane(entry.line.box, completeAbove) &&
+            captionOwnsTableLine(caption, entry),
+        ),
+    )
+  const crossingBands = tableLineBands(tableLineRows(entries)).filter(
+    (rows) => {
+      const boxes = rows.map((row) => row.box)
+      const cropBox = unionBoxes(
+        boxes,
+        boxes.some((sourceBox) => sourceBox.method === 'ocr')
+          ? 'ocr'
+          : 'pdf-text',
+      )
+      const rowsInsideStandardLane = rows.filter(
+        (row) =>
+          row.box.y + row.box.height >= standardAbove.top - BOX_TOLERANCE,
+      )
+      return (
+        rows.some((row) => row.box.y < standardAbove.top - BOX_TOLERANCE) &&
+        tabularLineBandProof(rowsInsideStandardLane) !== null &&
+        captionGap(caption, cropBox, 'above') <=
+          MAX_LINE_BAND_CAPTION_GAP + BOX_TOLERANCE &&
+        cropBox.width >= MIN_LINE_BAND_WIDTH &&
+        cropBox.height >= MIN_LINE_BAND_HEIGHT &&
+        cropBox.width * cropBox.height <= MAX_LINE_BAND_AREA &&
+        horizontalOverlap(caption.box, cropBox) /
+          Math.min(caption.box.width, cropBox.width) >=
+          MIN_CAPTION_HORIZONTAL_COVERAGE
+      )
+    },
+  )
+  const provenBands = crossingBands.filter(stableNumericTableBandProof)
+  const lineIds = (bands: TableLineRow[][]) =>
+    [
+      ...new Set(
+        bands.flatMap((rows) =>
+          rows.flatMap((row) => row.entries.map((entry) => entry.line.id)),
+        ),
+      ),
+    ].sort()
+  return {
+    lane: provenBands.length === 1 ? completeAbove : null,
+    truncatedAtCaptionDistance: crossingBands.length > 0,
+    crossingLineIds: lineIds(crossingBands),
+    provenLineIds: provenBands.length === 1 ? lineIds(provenBands) : [],
   }
 }
 
@@ -3369,11 +3516,29 @@ export function resolvePdfTableScope({
     left.id.localeCompare(right.id),
   )
   const lanes = directionalLanes(caption, regions)
-  const textGrids = textGridCandidates(caption, regions, lanes)
-  const tabularLineBands = tabularLineBandCandidates(
+  const extendedTabularLane = extendedNumericAboveTableLane(
     caption,
     regions,
     lanes,
+  )
+  const provenExtendedLineIds = new Set(extendedTabularLane.provenLineIds)
+  const textGrids = textGridCandidates(caption, regions, lanes).filter(
+    (candidate) =>
+      !extendedTabularLane.lane ||
+      candidate.direction !== 'above' ||
+      !candidate.sourceLineIds.some((lineId) =>
+        provenExtendedLineIds.has(lineId),
+      ),
+  )
+  const tabularLanes = extendedTabularLane.lane
+    ? lanes.map((lane) =>
+        lane.direction === 'above' ? extendedTabularLane.lane! : lane,
+      )
+    : lanes
+  const tabularLineBands = tabularLineBandCandidates(
+    caption,
+    regions,
+    tabularLanes,
     textGrids,
   )
   const textSlabs = captionBoundedTextSlabCandidates(caption, regions, [
@@ -3453,13 +3618,23 @@ export function resolvePdfTableScope({
       ),
     ),
   ].sort()
-  const unprovenStartCandidates = headerCompleteCandidates.filter((candidate) =>
-    unprovenPageTopTableStart(candidate, regionsById),
+  const truncatedLineIds = new Set(extendedTabularLane.crossingLineIds)
+  const captionDistanceTruncatesCandidate = (candidate: PdfTableScope) =>
+    extendedTabularLane.truncatedAtCaptionDistance &&
+    !extendedTabularLane.lane &&
+    candidate.direction === 'above' &&
+    candidate.sourceLineIds.some((lineId) => truncatedLineIds.has(lineId))
+  const unprovenStartCandidates = headerCompleteCandidates.filter(
+    (candidate) =>
+      unprovenPageTopTableStart(candidate, regionsById) ||
+      captionDistanceTruncatesCandidate(candidate),
   )
   const sourceCompleteCandidates = headerCompleteCandidates.filter(
     (candidate) =>
       siblingTableCaptionLanesCrossed(candidate, caption, regions).length ===
-        0 && !unprovenPageTopTableStart(candidate, regionsById),
+        0 &&
+      !unprovenPageTopTableStart(candidate, regionsById) &&
+      !captionDistanceTruncatesCandidate(candidate),
   )
   const nonProseCandidates = sourceCompleteCandidates.filter(
     (candidate) => !orderedProseScope(candidate, regionsById),

@@ -812,6 +812,326 @@ describe('bounded PDF table source scoping', () => {
     })
   })
 
+  it('extends a distant caption lane over one complete numeric table with multi-tier headers', () => {
+    const headerLines = [
+      line('group-header', 0.06, [0.25, 0.34, 0.43, 0.52]),
+      line('column-header', 0.082, [0.1, 0.25, 0.43, 0.61, 0.79]),
+      line('metric-header', 0.104, [0.25, 0.34, 0.43, 0.52, 0.61]),
+    ]
+    headerLines.forEach((sourceLine) =>
+      sourceLine.runs.forEach((run) => {
+        run.bold = true
+        run.fontName = 'TableSerif-Bold'
+      }),
+    )
+    const headers = textRegion(
+      'multi-tier-headers',
+      box(0.1, 0.06, 0.765, 0.06),
+      headerLines,
+      'header',
+    )
+    const sectionLine = line('table-section', 0.126, [0.1])
+    sectionLine.runs[0].bold = true
+    sectionLine.runs[0].fontName = 'TableSerif-Bold'
+    const section = textRegion('table-section-row', sectionLine.box, [
+      sectionLine,
+    ])
+    const ys = Array.from({ length: 10 }, (_, index) => 0.15 + index * 0.026)
+    const stubLines = ys.map((y, rowIndex) => {
+      const sourceLine = line(`model-${rowIndex + 1}`, y, [0.1])
+      sourceLine.runs[0].text = `Model ${rowIndex + 1}`
+      sourceLine.text = sourceLine.runs[0].text
+      return sourceLine
+    })
+    const metricLines = ys.map((y, rowIndex) => {
+      const sourceLine = line(
+        `metrics-${rowIndex + 1}`,
+        y,
+        [0.25, 0.34, 0.43, 0.52, 0.61, 0.7, 0.79],
+      )
+      sourceLine.runs.forEach((run, columnIndex) => {
+        run.text = `${rowIndex + 1}.${columnIndex + 1} ± 0.1`
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const stubs = textRegion(
+      'table-stubs',
+      box(0.1, ys[0], 0.075, ys.at(-1)! + 0.016 - ys[0]),
+      stubLines,
+    )
+    const metrics = textRegion(
+      'table-metrics',
+      box(0.25, ys[0], 0.615, ys.at(-1)! + 0.016 - ys[0]),
+      metricLines,
+      'spanning',
+    )
+    const tableCaption = {
+      ...caption('distant-table-caption', 0.414),
+      box: box(0.08, 0.414, 0.84, 0.03),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [headers, section, stubs, metrics, tableCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'text-tabular-line-band',
+        cropBox: expect.objectContaining({ y: 0.056 }),
+        evidence: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'multi-run-tabular-line-band',
+          }),
+        ]),
+      },
+    })
+    expect(result.scope?.sourceLineIds).toHaveLength(
+      headerLines.length + 1 + stubLines.length + metricLines.length,
+    )
+    expect(result.scope?.sourceLineIds).toEqual(
+      expect.arrayContaining([
+        ...headerLines.map((sourceLine) => sourceLine.id),
+        sectionLine.id,
+        ...stubLines.map((sourceLine) => sourceLine.id),
+        ...metricLines.map((sourceLine) => sourceLine.id),
+      ]),
+    )
+  })
+
+  it('does not extend a distant caption lane over aligned prose with a styled heading', () => {
+    const heading = line('styled-prose-heading', 0.06, [0.12, 0.28, 0.44])
+    heading.runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'BodySerif-Bold'
+    })
+    const prose = Array.from({ length: 11 }, (_, index) =>
+      proseLine(`aligned-prose-${index + 1}`, 0.09 + index * 0.028),
+    )
+    const source = textRegion(
+      'aligned-prose-source',
+      box(0.12, 0.06, 0.324, 0.34),
+      [heading, ...prose],
+    )
+    const tableCaption = {
+      ...caption('distant-prose-caption', 0.414),
+      box: box(0.08, 0.414, 0.84, 0.03),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [source, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+    })
+  })
+
+  it('does not absorb aligned neighboring prose into a distant numeric table', () => {
+    const header = line('numeric-table-header', 0.06, [0.1, 0.22, 0.32, 0.42])
+    header.runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'TableSerif-Bold'
+    })
+    const ys = Array.from({ length: 10 }, (_, index) => 0.1 + index * 0.03)
+    const tableLines = ys.map((y, rowIndex) => {
+      const sourceLine = line(
+        `numeric-table-row-${rowIndex + 1}`,
+        y,
+        [0.1, 0.22, 0.32, 0.42],
+      )
+      sourceLine.runs.forEach((run, columnIndex) => {
+        run.text =
+          columnIndex === 0
+            ? `Model ${rowIndex + 1}`
+            : `${rowIndex + 1}.${columnIndex}`
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const proseLines = ys.map((y, rowIndex) => {
+      const sourceLine = line(`neighboring-prose-${rowIndex + 1}`, y, [0.58])
+      sourceLine.runs[0] = {
+        ...sourceLine.runs[0],
+        width: 0.3,
+        text: `Unrelated prose sentence ${rowIndex + 1} remains body text.`,
+        fontName: 'BodySerif',
+      }
+      sourceLine.text = sourceLine.runs[0].text
+      sourceLine.box = box(0.58, y, 0.3, 0.016)
+      return sourceLine
+    })
+    const headers = textRegion(
+      'numeric-table-headers',
+      header.box,
+      [header],
+      'header',
+    )
+    const table = textRegion(
+      'numeric-table-body',
+      box(0.1, ys[0], 0.395, ys.at(-1)! + 0.016 - ys[0]),
+      tableLines,
+    )
+    const prose = textRegion(
+      'neighboring-prose-column',
+      box(0.58, ys[0], 0.3, ys.at(-1)! + 0.016 - ys[0]),
+      proseLines,
+    )
+    const tableCaption = {
+      ...caption('numeric-table-caption', 0.414),
+      box: box(0.08, 0.414, 0.84, 0.03),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [headers, table, prose, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+      ambiguity: {
+        evidence: expect.arrayContaining([
+          'table-source-start-boundary-unproven',
+        ]),
+      },
+    })
+  })
+
+  it('does not treat aligned left-side prose as a numeric table row stub', () => {
+    const header = line('right-numeric-table-header', 0.06, [0.4, 0.5, 0.6])
+    header.runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'TableSerif-Bold'
+    })
+    const ys = Array.from({ length: 10 }, (_, index) => 0.1 + index * 0.03)
+    const tableLines = ys.map((y, rowIndex) => {
+      const sourceLine = line(
+        `right-numeric-table-row-${rowIndex + 1}`,
+        y,
+        [0.4, 0.5, 0.6],
+      )
+      sourceLine.runs.forEach((run, columnIndex) => {
+        run.text = `${rowIndex + 1}.${columnIndex + 1}`
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const proseLines = ys.map((y, rowIndex) => {
+      const sourceLine = line(
+        `left-neighboring-prose-${rowIndex + 1}`,
+        y,
+        [0.05],
+      )
+      sourceLine.runs[0] = {
+        ...sourceLine.runs[0],
+        width: 0.3,
+        text: `Unrelated prose sentence ${rowIndex + 1} remains body text.`,
+        fontName: 'BodySerif',
+      }
+      sourceLine.text = sourceLine.runs[0].text
+      sourceLine.box = box(0.05, y, 0.3, 0.016)
+      return sourceLine
+    })
+    const headers = textRegion(
+      'right-numeric-table-headers',
+      header.box,
+      [header],
+      'header',
+    )
+    const table = textRegion(
+      'right-numeric-table-body',
+      box(0.4, ys[0], 0.28, ys.at(-1)! + 0.016 - ys[0]),
+      tableLines,
+    )
+    const prose = textRegion(
+      'left-neighboring-prose-column',
+      box(0.05, ys[0], 0.3, ys.at(-1)! + 0.016 - ys[0]),
+      proseLines,
+    )
+    const tableCaption = {
+      ...caption('right-numeric-table-caption', 0.414),
+      box: box(0.03, 0.414, 0.89, 0.03),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [headers, table, prose, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+      ambiguity: {
+        evidence: expect.arrayContaining([
+          'table-source-start-boundary-unproven',
+        ]),
+      },
+    })
+  })
+
+  it('does not extend a distant caption lane when numeric rows have two competing column signatures', () => {
+    const header = line('competing-grid-header', 0.06, [0.1, 0.25, 0.4, 0.55])
+    header.runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'TableSerif-Bold'
+    })
+    const rows = Array.from({ length: 10 }, (_, rowIndex) => {
+      const anchors =
+        rowIndex % 2 === 0 ? [0.1, 0.25, 0.4, 0.55] : [0.1, 0.31, 0.46, 0.61]
+      const sourceLine = line(
+        `competing-grid-row-${rowIndex + 1}`,
+        0.1 + rowIndex * 0.03,
+        anchors,
+      )
+      sourceLine.runs.forEach((run, columnIndex) => {
+        run.text =
+          columnIndex === 0
+            ? `Model ${rowIndex + 1}`
+            : `${rowIndex + 1}.${columnIndex}`
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const source = textRegion(
+      'competing-numeric-grids',
+      box(0.1, 0.06, 0.585, 0.326),
+      [header, ...rows],
+    )
+    const tableCaption = {
+      ...caption('competing-grid-caption', 0.414),
+      box: box(0.08, 0.414, 0.84, 0.03),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [source, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+      ambiguity: {
+        evidence: expect.arrayContaining([
+          'table-source-start-boundary-unproven',
+        ]),
+      },
+    })
+  })
+
   it('accepts a normal body-measure wrapped table only when its symbolic header is inside the scope', () => {
     const header = line('symbolic-header', 0.2, [0.17647, 0.27, 0.39, 0.56])
     header.text =
@@ -944,9 +1264,11 @@ describe('bounded PDF table source scoping', () => {
   })
 
   it('retains an explicit source header with distinct typography', () => {
-    const headerLine = line('distinct-font-header-line', 0.2, [
-      0.17647, 0.39, 0.56,
-    ])
+    const headerLine = line(
+      'distinct-font-header-line',
+      0.2,
+      [0.17647, 0.39, 0.56],
+    )
     headerLine.runs.forEach((run) => {
       run.fontName = 'HeaderSans'
       run.bold = false

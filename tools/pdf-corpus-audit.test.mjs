@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -27,6 +28,13 @@ function sourceBox(overrides = {}) {
 }
 
 describe('local PDF corpus audit', () => {
+  it('keeps the frozen v1.5 audit schema byte-identical', async () => {
+    const bytes = await readFile('docs/schemas/pdf-corpus-audit.schema.json')
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      '6d6a6b12745ec075c1658208ed389d5420c2e091f0f95e24bd3c04f1a1c3ba73',
+    )
+  })
+
   it('creates only allowlisted basename-only audit failure rows', () => {
     expect(
       createSafeAuditFailureDocument(

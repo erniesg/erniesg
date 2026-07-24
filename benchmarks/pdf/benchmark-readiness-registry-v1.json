@@ -1,0 +1,289 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "scholarly-pdf-reconstruction-benchmark-readiness-2026-07-v1",
+  "privacy": "public-identities-hashes-governance-no-source-content-private-labels-or-local-paths",
+  "protocol": {
+    "targetTraceCount": 100,
+    "requiredFinalNoNewClassWindow": 20,
+    "minimumDistinctDocuments": 25,
+    "minimumBlindDocuments": 10,
+    "requiredIndependentReviewers": 2,
+    "minimumJudgePositiveExamples": 50,
+    "minimumJudgeNegativeExamples": 50,
+    "minimumJudgeTruePositiveRate": 0.8,
+    "minimumJudgeTrueNegativeRate": 0.8,
+    "splitUnit": "document-and-template-family",
+    "candidateInputs": ["document-id", "hash-pinned-source-pdf-bytes"],
+    "forbiddenCandidateInputs": [
+      "gold-label",
+      "stratum",
+      "target-id",
+      "target-box",
+      "target-page",
+      "reviewer-annotation"
+    ],
+    "freezePolicy": "candidate-provider-model-adapter-prompt-config-seed-and-runtime-digests-committed-before-private-label-reveal"
+  },
+  "tracks": {
+    "localizedDiagnostic": {
+      "status": "available",
+      "labelVisibility": "public",
+      "oracleLocalized": true,
+      "promotionAuthority": false,
+      "networkIsolation": "none",
+      "filesystemIsolation": "none",
+      "isolationEvidence": null
+    },
+    "endToEndBlind": {
+      "status": "available",
+      "labelVisibility": "private",
+      "oracleLocalized": false,
+      "promotionAuthority": false,
+      "networkIsolation": "cooperative-offline-flags",
+      "filesystemIsolation": "minimized-environment-not-sandboxed",
+      "isolationEvidence": null
+    }
+  },
+  "sources": [
+    {
+      "id": "public-calibration-v1",
+      "evalSet": {
+        "path": "benchmarks/pdf/fidelity-eval-v1.json",
+        "fileSha256": "35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002"
+      },
+      "observations": {
+        "path": "benchmarks/pdf/fidelity-eval-observations-v1.json",
+        "fileSha256": "65c147dfd19b6a62bd1b33c176e505e0f47e1fb963c5a0ad609296ca18dd9ce8",
+        "schema": {
+          "path": "docs/schemas/pdf-fidelity-eval-observations.schema.json",
+          "fileSha256": "5cb63bc182712075da5bc4218d26cbc654beec20756eaeabdb46721bef9328a6"
+        }
+      },
+      "labelVisibility": "public",
+      "oracleLocalized": true,
+      "selectionStatus": "source-only-candidate-output-not-consulted"
+    },
+    {
+      "id": "public-calibration-v2",
+      "evalSet": {
+        "path": "benchmarks/pdf/fidelity-eval-v2.json",
+        "fileSha256": "7420fc497895a058d24592b7c5164ded261846a5da4fed2f014c8a52cbafccf9"
+      },
+      "observations": {
+        "path": "benchmarks/pdf/fidelity-eval-observations-v2.json",
+        "fileSha256": "01f0a8022c06b18c79c8b7ab7258d72deff28b5dfeef9574425135a25ff1ed64",
+        "schema": {
+          "path": "docs/schemas/pdf-fidelity-eval-observations-v2.schema.json",
+          "fileSha256": "842a1c4d5e314a1649da9436370eb934e525d9775b2e5b03c6aa60d7ef6b7e6a"
+        }
+      },
+      "labelVisibility": "public",
+      "oracleLocalized": true,
+      "selectionStatus": "complaint-driven-candidate-output-consulted"
+    }
+  ],
+  "documentBindings": [
+    {
+      "documentId": "2210.06774v3",
+      "sourcePdfSha256": "dd8ce0000a217f31ae55e107f66fab4608a1972319c9d7999609a9fdc1ccdcb4",
+      "templateFamilyId": null,
+      "templateFamilyEvidence": null
+    },
+    {
+      "documentId": "2408.10903v5",
+      "sourcePdfSha256": "f5c8f963c4d17409b6ab163e0be914db139f9bc83cca0274a88863098e865a80",
+      "templateFamilyId": null,
+      "templateFamilyEvidence": null
+    },
+    {
+      "documentId": "2412.13575v1",
+      "sourcePdfSha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+      "templateFamilyId": null,
+      "templateFamilyEvidence": null
+    },
+    {
+      "documentId": "2502.00873v1",
+      "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+      "templateFamilyId": null,
+      "templateFamilyEvidence": null
+    }
+  ],
+  "splits": [
+    {
+      "id": "public-calibration",
+      "role": "public-calibration",
+      "status": "draft",
+      "labelVisibility": "public",
+      "documentIds": [
+        "2210.06774v3",
+        "2408.10903v5",
+        "2412.13575v1",
+        "2502.00873v1"
+      ],
+      "templateFamilyIds": [],
+      "frozenIdentitySha256": null
+    },
+    {
+      "id": "train",
+      "role": "train",
+      "status": "not-built",
+      "labelVisibility": "private",
+      "documentIds": [],
+      "templateFamilyIds": [],
+      "frozenIdentitySha256": null
+    },
+    {
+      "id": "development",
+      "role": "development",
+      "status": "not-built",
+      "labelVisibility": "private",
+      "documentIds": [],
+      "templateFamilyIds": [],
+      "frozenIdentitySha256": null
+    },
+    {
+      "id": "blind-test",
+      "role": "blind-test",
+      "status": "not-built",
+      "labelVisibility": "private",
+      "documentIds": [],
+      "templateFamilyIds": [],
+      "frozenIdentitySha256": null
+    }
+  ],
+  "candidateCommitment": {
+    "status": "not-built",
+    "components": [],
+    "authorityEvidence": null,
+    "commitmentReceipt": null,
+    "blindSplitIdentitySha256": null,
+    "committedBeforePrivateLabelReveal": false
+  },
+  "discoveryOrder": {
+    "status": "not-recorded",
+    "caseIds": []
+  },
+  "reviewBundles": [],
+  "metricImplementations": [
+    {
+      "id": "prose-transcript",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "inline-semantics",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "caption-completeness-and-ownership",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "table-content-and-header-topology",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "formula-content-and-layout",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "bibliography-cardinality-and-content",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "note-anchor-body-placement-and-content",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "whole-document-reading-order",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "profile-clipping-and-legibility",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "abstention-risk-coverage",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "review-gate-precision-recall",
+      "status": "not-built",
+      "kind": "code",
+      "implementation": null,
+      "implementationSha256": null,
+      "test": null,
+      "testSha256": null,
+      "calibration": null
+    },
+    {
+      "id": "package-integrity",
+      "status": "available",
+      "kind": "code",
+      "implementation": "tools/pdf-private-fidelity.mjs",
+      "implementationSha256": "e7ed5a31a0ca28b6f7c725b17d4ad95ddaa95f1c37711cd9c9e66c476d649ccb",
+      "test": "tools/pdf-private-fidelity.test.mjs",
+      "testSha256": "b7a8414599f128ba243d5cf9b5f7ddc95efa7a60e2aa1524c525d29b4fca16bd",
+      "calibration": null
+    }
+  ]
+}

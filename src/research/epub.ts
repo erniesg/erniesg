@@ -2020,6 +2020,22 @@ function renderNode(
         caption &&
         /^Display equation p\d{3}-\d{3}$/u.test(caption.text.trim()),
       )
+      const parsedEquationCaption =
+        visual.kind === 'equation' &&
+        visual.altTextSource === 'caption' &&
+        caption
+          ? parsePdfScholarlyVisualLabel(caption.text, {
+              context: 'caption',
+            })
+          : null
+      const generatedEquationLabel =
+        parsedEquationCaption?.status === 'parsed' &&
+        parsedEquationCaption.kind === 'equation' &&
+        /^[.]?$/u.test(
+          caption!.text.slice(parsedEquationCaption.consumedEnd).trim(),
+        )
+          ? parsedEquationCaption.label
+          : null
       const unresolvedEquationTranscript =
         syntheticEquationCaption &&
         visual.evidence.includes('source-text-transcript-unresolved') &&
@@ -2028,7 +2044,7 @@ function renderNode(
         ? 'Equation image; semantic transcript unresolved.'
         : visual.equationTranscriptAdjudication
           ? 'Equation image; owner-reviewed source transcript available.'
-          : visual.altText
+          : (generatedEquationLabel ?? visual.altText)
       const renderedAltTextSource = unresolvedEquationTranscript
         ? 'unresolved'
         : visual.equationTranscriptAdjudication
@@ -2104,7 +2120,7 @@ function renderNode(
       const renderedCaption = caption
         ? syntheticEquationCaption
           ? `<figcaption id="${captionId}" data-canonical-id="${captionId}" class="synthetic-equation-caption" aria-hidden="true"></figcaption>`
-          : `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceAlgorithm ? ' class="algorithm-source-caption visually-hidden"' : sourceCode && visual.evidence.includes('fallback-source-line-caption') ? ' class="code-source-caption visually-hidden"' : sourceEquationCaption ? ' class="equation-source-text"' : ''}>${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>`
+          : `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceAlgorithm ? ' class="algorithm-source-caption visually-hidden"' : sourceCode && visual.evidence.includes('fallback-source-line-caption') ? ' class="code-source-caption visually-hidden"' : sourceEquationCaption ? ' class="equation-source-text"' : ''}>${generatedEquationLabel ? text(generatedEquationLabel) : renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>`
         : ''
       return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visualObjectType}" role="group"${figureClass}>${renderedAssets}${sourceTranscript}${renderedCaption}</figure>`
     }

@@ -313,19 +313,43 @@ bounded candidate score to be at least its baseline score.
 calibration: its labels are exposed, v2 was complaint-driven, and the receipt
 explicitly records `blindHoldout: false`.
 
-For future parser/model comparisons, that separate sidecar has a strict schema:
-`docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json`. It requires the
-provider ID and version, model ID/version and optional artifact hash, adapter
-ID/version/source hash, input identity, repeat/warmup counts, network-isolation
-status, latency scope plus sample count/p50/p95/mean/total, and USD cost with an
-explicit attribution basis and nullable token counts. It also binds the
-deterministic accuracy-receipt SHA-256.
+For future parser/model comparisons, the original schema-1 sidecar and frozen
+v1/v2 governance contracts remain byte-for-byte available. New runs use the
+additive governance artifact
+`benchmarks/pdf/fidelity-comparator-contract-v2.json` and strict schema
+`docs/schemas/pdf-fidelity-comparator-run-receipt-v2.schema.json`. The new
+contract binds both unchanged evaluation contracts instead of rewriting their
+published hashes. It requires path-safe provider/model identities, explicit
+identity authority, adapter ID/version/source hash, and prompt/config/seed
+SHA-256 digests. The runner receives the exact prompt, config, and seed
+artifacts and verifies their bytes against those digests. Runtime tool/model
+identity is copied from the validated predictions rather than accepted from the
+run specification. The adapter source digest is still supplied by those
+predictions, so it is explicitly labeled `predictions-self-reported`.
+
+Provider, model, and network claims are either visibly
+`run-spec-self-asserted` or
+`caller-bound-unverified-artifact`. In the latter case the runner proves only
+that the exact caller-supplied bytes match the declared digest; it does not
+authenticate the bytes or infer that they prove the claim. Network status can
+therefore be only `none`, `cooperative-offline-flags`, or
+`caller-claimed-isolated-unverified`—never independently verified. Latency and
+cost use the same authority labels. Their aggregates are derived from the
+run-spec samples, but any bound evidence artifact remains unparsed and the
+reported measurements remain caller assertions. The sidecar also binds input
+identity, repeat/warmup counts, latency scope plus sample
+count/p50/p95/mean/total, USD cost with an explicit attribution basis and
+nullable token counts, and the deterministic accuracy-receipt SHA-256.
 
 The performance sidecar is intentionally never promotion-authoritative.
 Latency and cost are empirical and may vary while objective accuracy remains
 identical; they must not be folded into a semantic-fidelity score or used to
-rewrite a frozen label. Missing provider, model version, latency, or cost makes
-the sidecar schema-invalid.
+rewrite a frozen label. Missing provenance digests, provider/model identity,
+runtime identity, required prompt/config/seed bytes, latency, or cost makes the
+schema-2 sidecar invalid. A hash without its corresponding caller-supplied
+artifact is rejected. Establishing authenticated provider/model identity,
+independently enforced isolation, or independently measured latency/cost would
+require a separate signed verifier protocol and a future schema version.
 
 ## Local-Mac-first runner
 

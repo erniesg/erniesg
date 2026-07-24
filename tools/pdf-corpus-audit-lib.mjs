@@ -4,8 +4,18 @@ import { tmpdir } from 'node:os'
 import { basename, extname, join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
+import {
+  createNodeOcrOptions,
+  DEFAULT_HEADLESS_OCR_ENGINE,
+  normalizeHeadlessOcrEngine,
+} from './pdf-ocr-node.mjs'
 
 export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.5.0'
+export const PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION = '1.6.0'
+export const PDF_CORPUS_REPORT_SCHEMA_PATH =
+  'docs/schemas/pdf-corpus-audit.schema.json'
+export const PDF_CORPUS_REPORT_OCR_SCHEMA_PATH =
+  'docs/schemas/pdf-corpus-audit-v1.6.schema.json'
 export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.4.0'
 
 const MAX_DIAGNOSTIC_SAMPLES = 64
@@ -143,6 +153,28 @@ export function summarizeAuditDiagnostics(diagnostics) {
     ),
     diagnostics: samples,
   }
+}
+
+function safeOcrProvenance(pages) {
+  return pages
+    .flatMap((page) =>
+      page.ocr
+        ? [
+            {
+              page: page.page,
+              engine: page.ocr.engine,
+              engineVersion: page.ocr.engineVersion,
+              model: page.ocr.model,
+              modelVersion: page.ocr.modelVersion,
+              languages: [...page.ocr.languages],
+              languageMode: page.ocr.languageMode,
+              rasterSha256: page.ocr.rasterSha256,
+              confidence: page.ocr.confidence,
+            },
+          ]
+        : [],
+    )
+    .sort((left, right) => left.page - right.page)
 }
 
 function normalizedAssetManifest(assets) {
@@ -589,7 +621,11 @@ export function createPdfStructuralReceipt(reconstruction) {
   }
 }
 
-export async function createPdfPipeline({ temporaryRoot = tmpdir() } = {}) {
+export async function createPdfPipeline({
+  temporaryRoot = tmpdir(),
+  ocrEngine = DEFAULT_HEADLESS_OCR_ENGINE,
+} = {}) {
+  const resolvedOcrEngine = normalizeHeadlessOcrEngine(ocrEngine)
   const cacheDir = await mkdtemp(join(temporaryRoot, 'srt-pdf-vite-'))
   const vite = await createServer({
     appType: 'custom',
@@ -616,6 +652,8 @@ export async function createPdfPipeline({ temporaryRoot = tmpdir() } = {}) {
     policy: quality.DEFAULT_PDF_COMPLETENESS_POLICY,
     maximumBytes: importTypes.MAX_LOCAL_PDF_BYTES,
     standardFontDataUrl,
+    ocrEngine: resolvedOcrEngine,
+    ocr: resolvedOcrEngine === 'tesseract' ? createNodeOcrOptions() : undefined,
     async loadExportModules() {
       exportModules ??= Promise.all([
         vite.ssrLoadModule('/src/research/epub.ts'),
@@ -716,8 +754,12 @@ export async function auditPdfPath(
         lastModified: 0,
       }),
       undefined,
-      { standardFontDataUrl: pipeline.standardFontDataUrl },
+      {
+        standardFontDataUrl: pipeline.standardFontDataUrl,
+        ocr: pipeline.ocr,
+      },
     )
+    const ocr = safeOcrProvenance(reconstruction.pages)
     return {
       reconstruction,
       document: {
@@ -728,6 +770,7 @@ export async function auditPdfPath(
         completeness: reconstruction.completeness,
         readiness: reconstruction.readiness,
         structure: createPdfStructuralReceipt(reconstruction),
+        ...(ocr.length > 0 ? { ocr } : {}),
         ...summarizeAuditDiagnostics(reconstruction.diagnostics),
       },
     }
@@ -810,6 +853,9 @@ export function createCorpusReport(
   policy,
   { corpusContract = null } = {},
 ) {
+  const hasOcrProvenance = documents.some(
+    (document) => Array.isArray(document.ocr) && document.ocr.length > 0,
+  )
   const summary = {
     documents: documents.length,
     ready: documents.filter((document) => document.readiness?.ready).length,
@@ -819,8 +865,12 @@ export function createCorpusReport(
     failed: documents.filter((document) => !document.readiness).length,
   }
   return {
-    schemaVersion: PDF_CORPUS_REPORT_SCHEMA_VERSION,
-    reportSchema: 'docs/schemas/pdf-corpus-audit.schema.json',
+    schemaVersion: hasOcrProvenance
+      ? PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION
+      : PDF_CORPUS_REPORT_SCHEMA_VERSION,
+    reportSchema: hasOcrProvenance
+      ? PDF_CORPUS_REPORT_OCR_SCHEMA_PATH
+      : PDF_CORPUS_REPORT_SCHEMA_PATH,
     privacy: 'basenames-hashes-metrics-diagnostics-only',
     policy,
     ...(corpusContract ? { corpusContract } : {}),

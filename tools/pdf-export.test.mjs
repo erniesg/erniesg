@@ -98,6 +98,16 @@ describe('headless PDF export', () => {
     expect(parseArguments(base).documentTimeoutSeconds).toBe(
       DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     )
+    expect(parseArguments(base).ocrEngine).toBe('none')
+    expect(
+      parseArguments([...base, '--ocr-engine', 'tesseract']).ocrEngine,
+    ).toBe('tesseract')
+    expect(parseArguments([...base, '--ocr-engine=none']).ocrEngine).toBe(
+      'none',
+    )
+    for (const value of ['', 'remote', 'auto']) {
+      expect(() => parseArguments([...base, `--ocr-engine=${value}`])).toThrow()
+    }
     expect(
       parseArguments([...base, '--document-timeout-seconds', '42'])
         .documentTimeoutSeconds,
@@ -629,6 +639,30 @@ describe('headless PDF export', () => {
       },
     },
     {
+      name: 'legacy export-manifest schema with valid recomputed checksums',
+      tamper: async ({ document, stagingDirectory }) => {
+        const manifestPath = join(stagingDirectory, 'export-manifest.json')
+        const original = await readFile(manifestPath, 'utf8')
+        const substituted = Buffer.from(
+          original.replace(
+            '"schemaVersion": "1.1.0"',
+            '"schemaVersion": "1.0.0"',
+          ),
+        )
+        expect(substituted.toString('utf8')).not.toBe(original)
+        await writeFile(manifestPath, substituted)
+        await writeFile(
+          join(stagingDirectory, 'checksums.sha256'),
+          `${[
+            ...document.exports.map(
+              (artifact) => `${artifact.sha256}  ${artifact.basename}`,
+            ),
+            `${digest(substituted)}  export-manifest.json`,
+          ].join('\n')}\n`,
+        )
+      },
+    },
+    {
       name: 'checksum bytes',
       tamper: async ({ stagingDirectory }) => {
         await writeFile(
@@ -869,6 +903,10 @@ describe('headless PDF export', () => {
         )
       }
 
+      const manifest = JSON.parse(
+        await readFile(join(first, 'export-manifest.json'), 'utf8'),
+      )
+      expect(manifest.schemaVersion).toBe('1.1.0')
       const checksums = await readFile(join(first, 'checksums.sha256'), 'utf8')
       for (const file of [...artifactNames, 'export-manifest.json']) {
         expect(checksums).toContain(
@@ -1002,6 +1040,8 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(result.status, result.stderr).toBe(1)
       const report = JSON.parse(result.stdout)
       expect(report).toMatchObject({
+        schemaVersion: '1.5.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit.schema.json',
         summary: {
           documents: 1,
           ready: 0,
@@ -1027,6 +1067,70 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  it('threads explicit local OCR through the isolated export worker without bypassing review', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-ocr-'))
+    const output = join(directory, 'output')
+    try {
+      const result = runExport([
+        'tests/fixtures/pdf/scanned-page.pdf',
+        '--ocr-engine',
+        'tesseract',
+        '--target',
+        'paperPro',
+        '--out',
+        output,
+      ])
+
+      expect(result.status, result.stderr).toBe(1)
+      const report = JSON.parse(result.stdout)
+      expect(report).toMatchObject({
+        schemaVersion: '1.6.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+        summary: {
+          documents: 1,
+          ready: 0,
+          reviewRequired: 1,
+          failed: 0,
+          failureReasons: {
+            LOW_CONFIDENCE_OCR: 1,
+            OCR_REQUIRED: 1,
+          },
+        },
+        documents: [
+          {
+            basename: 'scanned-page.pdf',
+            ocr: [
+              {
+                page: 1,
+                engine: 'tesseract.js',
+                engineVersion: '6.0.1',
+                model: 'tessdata_best_int',
+                modelVersion: '4.0.0',
+              },
+            ],
+            completeness: {
+              sourceTextCharacters: expect.any(Number),
+            },
+            readiness: {
+              ready: false,
+              blockingDiagnosticCodes: expect.arrayContaining([
+                'LOW_CONFIDENCE_OCR',
+                'OCR_REQUIRED',
+              ]),
+            },
+          },
+        ],
+      })
+      expect(
+        report.documents[0].completeness.sourceTextCharacters,
+      ).toBeGreaterThan(0)
+      expect(result.stdout).not.toContain('NO_RECONSTRUCTABLE_TEXT')
+      expect(await readdir(output)).toEqual(['corpus-audit.json'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   it('exports an explicitly requested readable fallback with comparator-compatible artifact modes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-readable-'))

@@ -21,6 +21,48 @@ existing empty directory. On Windows it must be absent because replacing an
 existing directory is not an atomic operation there. A rejected output is not
 modified.
 
+Headless OCR is disabled by default so existing born-digital corpus receipts do
+not change implicitly. Select the pinned local English Tesseract engine
+explicitly for scanned inputs:
+
+```bash
+npm run pdf:corpus-audit -- --report-only \
+  --ocr-engine tesseract \
+  scanned-paper.pdf
+```
+
+The worker, WebAssembly core, English `tessdata_best_int` model, page rasterizer,
+and PDF parser all resolve from lockfile-pinned local packages. The command does
+not contain a remote OCR fallback and does not download a model at runtime.
+Missing assets fail closed. OCR confidence and source boxes enter the same
+provenance and completeness gates as browser OCR; recognition can therefore
+replace `NO_RECONSTRUCTABLE_TEXT` while still retaining `LOW_CONFIDENCE_OCR` and
+`OCR_REQUIRED` review blockers when the recovered evidence is not substantive.
+The frozen non-OCR corpus envelope remains schema `1.5.0` at
+`docs/schemas/pdf-corpus-audit.schema.json`; its bytes and validation contract
+do not change. A report that contains per-page OCR provenance instead emits
+schema `1.6.0` and names
+`docs/schemas/pdf-corpus-audit-v1.6.schema.json`. Export manifests are schema
+`1.1.0`, which makes the optional OCR field an explicit contract change rather
+than silently adding it to the former `1.0.0` envelope. The v1.6 schema reuses
+the frozen v1.5 definitions by their schema id; the exporter registers both
+local files before compilation and performs no network schema resolution.
+
+Before a local batch, verify the Mac lane without downloading or installing
+anything:
+
+```bash
+npm run pdf:local:doctor -- --require-ocr --require-epubcheck
+```
+
+The content-addressed receipt reports compatible Node/macOS architecture,
+lockfile-pinned OCR package and asset identities, native rasterization, Java,
+EPUBCheck, and optional owner-configured MinerU evidence. It omits local paths,
+usernames, and raw version output. Browser reconstruction, headless
+reconstruction, OCR, EPUB validation, and optional cached-model inference can
+therefore stay on the owner's Mac; the VM is reserved for reproducible
+exact-head verification and never receives an accepted baseline by default.
+
 Corpus export reconstructs and exports exactly one document in each fresh local
 worker process. Resolved per-document and staging paths travel to that worker
 over private process IPC and are not added to the worker's command line; the

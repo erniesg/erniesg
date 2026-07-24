@@ -23,11 +23,19 @@ import {
   createSafeAuditFailureDocument,
   createCorpusReport,
   createPdfPipeline,
+  PDF_CORPUS_REPORT_OCR_SCHEMA_PATH,
+  PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION,
+  PDF_CORPUS_REPORT_SCHEMA_PATH,
+  PDF_CORPUS_REPORT_SCHEMA_VERSION,
   pdfPaths,
   serializeCorpusReport,
 } from './pdf-corpus-audit-lib.mjs'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 import { bindCorpusContractPaths } from './pdf-corpus-contract.mjs'
+import {
+  DEFAULT_HEADLESS_OCR_ENGINE,
+  normalizeHeadlessOcrEngine,
+} from './pdf-ocr-node.mjs'
 
 const DEFAULT_TARGETS = ['paperPro', 'paperProMove']
 export const DEFAULT_DOCUMENT_TIMEOUT_SECONDS = 900
@@ -123,7 +131,7 @@ function recordDocumentExportFailure(document, error) {
 }
 
 function usage() {
-  return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--readable-fallback] [--require-epubcheck] [--document-timeout-seconds <1-86400>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] --out <directory>\n'
+  return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--ocr-engine <none|tesseract>] [--readable-fallback] [--require-epubcheck] [--document-timeout-seconds <1-86400>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] --out <directory>\n'
 }
 
 function parsePositiveInteger(value, maximum) {
@@ -144,6 +152,7 @@ export function parseArguments(arguments_) {
   let documentTimeoutSeconds = null
   let corpusContractPath = null
   let corpusSet = null
+  let ocrEngine = null
 
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
@@ -175,6 +184,19 @@ export function parseArguments(arguments_) {
     }
     if (argument === '--require-epubcheck') {
       requireEpubCheck = true
+      continue
+    }
+    if (argument === '--ocr-engine') {
+      if (ocrEngine !== null) throw new Error('INVALID_USAGE')
+      const value = arguments_[index + 1]
+      if (!value || value.startsWith('--')) throw new Error('INVALID_USAGE')
+      ocrEngine = value
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--ocr-engine=')) {
+      if (ocrEngine !== null) throw new Error('INVALID_USAGE')
+      ocrEngine = argument.slice('--ocr-engine='.length)
       continue
     }
     if (argument === '--document-timeout-seconds') {
@@ -242,6 +264,9 @@ export function parseArguments(arguments_) {
       documentTimeoutSeconds ?? DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     corpusContractPath,
     corpusSet,
+    ocrEngine: normalizeHeadlessOcrEngine(
+      ocrEngine ?? DEFAULT_HEADLESS_OCR_ENGINE,
+    ),
     targets: [...new Set(targets.length > 0 ? targets : DEFAULT_TARGETS)],
   }
 }
@@ -354,13 +379,37 @@ async function writeAtomically(path, bytes) {
 }
 
 export async function createPdfCorpusReportValidator() {
-  const schema = JSON.parse(
-    await readFile(
-      new URL('../docs/schemas/pdf-corpus-audit.schema.json', import.meta.url),
-      'utf8',
+  const [legacySchema, ocrSchema] = await Promise.all(
+    [PDF_CORPUS_REPORT_SCHEMA_PATH, PDF_CORPUS_REPORT_OCR_SCHEMA_PATH].map(
+      async (path) =>
+        JSON.parse(
+          await readFile(new URL(`../${path}`, import.meta.url), 'utf8'),
+        ),
     ),
   )
-  return new Ajv2020({ strict: false }).compile(schema)
+  const ajv = new Ajv2020({ strict: false })
+  const legacyValidator = ajv.compile(legacySchema)
+  const ocrValidator = ajv.compile(ocrSchema)
+  const validators = new Map([
+    [
+      `${PDF_CORPUS_REPORT_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_SCHEMA_PATH}`,
+      legacyValidator,
+    ],
+    [
+      `${PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_OCR_SCHEMA_PATH}`,
+      ocrValidator,
+    ],
+  ])
+  const validate = (report) => {
+    const validator = validators.get(
+      `${String(report?.schemaVersion)}\0${String(report?.reportSchema)}`,
+    )
+    const valid = validator ? validator(report) : false
+    validate.errors = validator?.errors ?? null
+    return valid
+  }
+  validate.errors = null
+  return validate
 }
 
 function assertValidCorpusReport(report, reportValidator) {
@@ -621,7 +670,7 @@ async function exportDocument({
   }
 
   const manifest = {
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     privacy: 'basename-hash-metrics-only',
     source: {
       basename: record.document.basename,
@@ -631,6 +680,7 @@ async function exportDocument({
     },
     completeness: record.document.completeness,
     readiness: record.document.readiness,
+    ...(record.document.ocr ? { ocr: record.document.ocr } : {}),
     exports: artifacts.map(({ epub, metadata }) => ({
       ...metadata,
       profile: epub.profile,
@@ -677,6 +727,7 @@ function validWorkerJob(job) {
     job.targets.length > 0 &&
     job.targets.every((target) => typeof target === 'string') &&
     typeof job.readableFallback === 'boolean' &&
+    ['none', 'tesseract'].includes(job.ocrEngine) &&
     job.validator !== null &&
     typeof job.validator === 'object' &&
     typeof job.stagingDirectory === 'string' &&
@@ -689,6 +740,7 @@ export async function runPdfExportWorkerJob(job) {
   failureStage = 'pipeline-initialization'
   const pipeline = await createPdfPipeline({
     temporaryRoot: job.stagingDirectory,
+    ocrEngine: job.ocrEngine,
   })
   try {
     failureStage = 'pdf-audit'
@@ -805,7 +857,7 @@ function expectedExportManifestBytes(document, profilesById) {
   }))
   if (exports.some((artifact) => artifact.profile === undefined)) return null
   return jsonBytes({
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     privacy: 'basename-hash-metrics-only',
     source: {
       basename: document.basename,
@@ -815,6 +867,7 @@ function expectedExportManifestBytes(document, profilesById) {
     },
     completeness: document.completeness,
     readiness: document.readiness,
+    ...(document.ocr ? { ocr: document.ocr } : {}),
     exports,
     determinism: {
       volatileFields: [],
@@ -1137,6 +1190,7 @@ export async function processExportDocuments({
   policy,
   reportValidator,
   targetProfiles,
+  ocrEngine = DEFAULT_HEADLESS_OCR_ENGINE,
   readableFallback,
   validator,
   outputDirectory,
@@ -1190,6 +1244,7 @@ export async function processExportDocuments({
           path,
           expectedSource,
           targets: targetProfiles.map((profile) => profile.id),
+          ocrEngine,
           readableFallback,
           validator,
           stagingDirectory,
@@ -1405,6 +1460,7 @@ async function main() {
     policy,
     reportValidator,
     targetProfiles,
+    ocrEngine: parsed.ocrEngine,
     readableFallback: parsed.readableFallback,
     validator,
     outputDirectory: parsed.outputDirectory,

@@ -8,6 +8,14 @@ import {
 } from './pdf-corpus-audit-lib.mjs'
 
 export const PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION = '1.5.0'
+export const PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION = '1.6.0'
+
+const CORPUS_REPORT_SCHEMA_POLICY_V15 = 'v1.5-only'
+const CORPUS_REPORT_SCHEMA_POLICY_V15_V16 = 'v1.5-v1.6-compatible'
+const CORPUS_REPORT_SCHEMAS = Object.freeze({
+  '1.5.0': 'docs/schemas/pdf-corpus-audit.schema.json',
+  '1.6.0': 'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+})
 
 const METRICS = Object.freeze(
   [
@@ -212,6 +220,62 @@ function isUnitInterval(value) {
     value >= 0 &&
     value <= 1
   )
+}
+
+function validateCorpusReportSchemaPolicy(value) {
+  if (
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V15 &&
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V15_V16
+  ) {
+    throw new Error('INVALID_CORPUS_REPORT_SCHEMA_POLICY')
+  }
+  return value
+}
+
+function validateOcrProvenance(value) {
+  if (!Array.isArray(value) || value.length === 0) invalidReport()
+  const pages = new Set()
+  for (const page of value) {
+    if (
+      !hasExactKeys(page, [
+        'page',
+        'engine',
+        'engineVersion',
+        'model',
+        'modelVersion',
+        'languages',
+        'languageMode',
+        'rasterSha256',
+        'confidence',
+      ]) ||
+      !Number.isSafeInteger(page.page) ||
+      page.page < 1 ||
+      pages.has(page.page) ||
+      typeof page.engine !== 'string' ||
+      !SAFE_IDENTIFIER_PATTERN.test(page.engine) ||
+      typeof page.engineVersion !== 'string' ||
+      !SAFE_IDENTIFIER_PATTERN.test(page.engineVersion) ||
+      typeof page.model !== 'string' ||
+      !SAFE_IDENTIFIER_PATTERN.test(page.model) ||
+      typeof page.modelVersion !== 'string' ||
+      !SAFE_IDENTIFIER_PATTERN.test(page.modelVersion) ||
+      !Array.isArray(page.languages) ||
+      page.languages.length === 0 ||
+      new Set(page.languages).size !== page.languages.length ||
+      page.languages.some(
+        (language) =>
+          typeof language !== 'string' ||
+          !SAFE_IDENTIFIER_PATTERN.test(language),
+      ) ||
+      !['explicit', 'automatic-fallback'].includes(page.languageMode) ||
+      typeof page.rasterSha256 !== 'string' ||
+      !SHA256_PATTERN.test(page.rasterSha256) ||
+      !isUnitInterval(page.confidence)
+    ) {
+      invalidReport()
+    }
+    pages.add(page.page)
+  }
 }
 
 function validCountMap(value) {
@@ -949,7 +1013,7 @@ function validateCorpusContractDocuments(binding, documents) {
   if (seenIds.size !== expectedById.size) invalidReport()
 }
 
-function validateReport(report) {
+function validateReport(report, corpusReportSchemaPolicy) {
   const requiredKeys = [
     'schemaVersion',
     'reportSchema',
@@ -958,14 +1022,20 @@ function validateReport(report) {
     'summary',
     'documents',
   ]
+  const expectedReportSchema = CORPUS_REPORT_SCHEMAS[report?.schemaVersion]
+  const compatibleSchema =
+    isRecord(report) &&
+    expectedReportSchema === report.reportSchema &&
+    (report.schemaVersion === '1.5.0' ||
+      (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15_V16 &&
+        report.schemaVersion === '1.6.0'))
   if (
     !hasOnlyAndRequiredKeys(
       report,
       [...requiredKeys, 'corpusContract'],
       requiredKeys,
     ) ||
-    report.schemaVersion !== '1.5.0' ||
-    report.reportSchema !== 'docs/schemas/pdf-corpus-audit.schema.json' ||
+    !compatibleSchema ||
     report.privacy !== 'basenames-hashes-metrics-diagnostics-only' ||
     !Array.isArray(report.documents)
   ) {
@@ -976,6 +1046,7 @@ function validateReport(report) {
   }
   validatePolicy(report.policy)
   const keys = new Set()
+  let hasOcrProvenance = false
   for (const document of report.documents) {
     if (
       !isRecord(document) ||
@@ -1016,10 +1087,14 @@ function validateReport(report) {
       'diagnosticSamplesTruncated',
       'diagnostics',
     ]
+    const optionalAuditedKeys = [
+      'exports',
+      ...(report.schemaVersion === '1.6.0' ? ['ocr'] : []),
+    ]
     if (
       !hasOnlyAndRequiredKeys(
         document,
-        [...auditedKeys, 'exports'],
+        [...auditedKeys, ...optionalAuditedKeys],
         auditedKeys,
       ) ||
       !SHA256_PATTERN.test(String(document.sha256 ?? '')) ||
@@ -1038,6 +1113,10 @@ function validateReport(report) {
         countMapTotal(document.diagnosticCounts)
     ) {
       invalidReport()
+    }
+    if (Object.hasOwn(document, 'ocr')) {
+      validateOcrProvenance(document.ocr)
+      hasOcrProvenance = true
     }
 
     const sampleCounts = new Map()
@@ -1076,6 +1155,9 @@ function validateReport(report) {
       invalidReport()
     }
     validateExports(document.exports)
+  }
+  if (report.schemaVersion === '1.6.0' && !hasOcrProvenance) {
+    invalidReport()
   }
   if (Object.hasOwn(report, 'corpusContract')) {
     validateCorpusContractDocuments(report.corpusContract, report.documents)
@@ -1326,13 +1408,17 @@ export function comparePdfBenchmarkReports(
   baseline,
   candidate,
   {
+    corpusReportSchemaPolicy = CORPUS_REPORT_SCHEMA_POLICY_V15,
     requireIdenticalArtifacts = false,
     requireIdenticalStructure = false,
     tolerances = {},
   } = {},
 ) {
-  validateReport(baseline)
-  validateReport(candidate)
+  const validatedCorpusReportSchemaPolicy = validateCorpusReportSchemaPolicy(
+    corpusReportSchemaPolicy,
+  )
+  validateReport(baseline, validatedCorpusReportSchemaPolicy)
+  validateReport(candidate, validatedCorpusReportSchemaPolicy)
   const baselineCorpusContract = baseline.corpusContract ?? null
   const candidateCorpusContract = candidate.corpusContract ?? null
   if (
@@ -1511,7 +1597,10 @@ export function comparePdfBenchmarkReports(
       documents.every((document) => document.verdict !== 'regressed'),
   }
   return {
-    schemaVersion: PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
+    schemaVersion:
+      validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15_V16
+        ? PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION
+        : PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
     privacy: 'basenames-hashes-metrics-artifact-invariants-only',
     ...(baselineCorpusContract
       ? { corpusContract: baselineCorpusContract }
@@ -1520,6 +1609,22 @@ export function comparePdfBenchmarkReports(
       metrics: METRICS.map((metric) => ({ ...metric })),
       tolerances: validatedTolerances,
       auditPolicy,
+      ...(validatedCorpusReportSchemaPolicy ===
+      CORPUS_REPORT_SCHEMA_POLICY_V15_V16
+        ? {
+            corpusReportSchemaCompatibility: {
+              policy: validatedCorpusReportSchemaPolicy,
+              baseline: {
+                schemaVersion: baseline.schemaVersion,
+                reportSchema: baseline.reportSchema,
+              },
+              candidate: {
+                schemaVersion: candidate.schemaVersion,
+                reportSchema: candidate.reportSchema,
+              },
+            },
+          }
+        : {}),
       requireIdenticalArtifacts,
       requireIdenticalStructure,
       artifactMode: { publicationToFallback: 'regression' },
@@ -1539,13 +1644,15 @@ export function comparePdfBenchmarkReports(
 }
 
 function usage() {
-  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--require-identical-artifacts] [--require-identical-structure]\n'
+  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--corpus-report-schema-policy <v1.5-only|v1.5-v1.6-compatible>] [--require-identical-artifacts] [--require-identical-structure]\n'
 }
 
 function parseArguments(arguments_) {
   const inputs = []
   const tolerances = {}
   let output
+  let corpusReportSchemaPolicy = CORPUS_REPORT_SCHEMA_POLICY_V15
+  let corpusReportSchemaPolicySet = false
   let requireIdenticalArtifacts = false
   let requireIdenticalStructure = false
   for (let index = 0; index < arguments_.length; index += 1) {
@@ -1567,6 +1674,12 @@ function parseArguments(arguments_) {
         throw new Error('INVALID_TOLERANCE')
       }
       tolerances[key] = value
+    } else if (argument === '--corpus-report-schema-policy') {
+      if (corpusReportSchemaPolicySet) throw new Error('INVALID_USAGE')
+      corpusReportSchemaPolicy = validateCorpusReportSchemaPolicy(
+        arguments_[++index],
+      )
+      corpusReportSchemaPolicySet = true
     } else if (argument === '--require-identical-artifacts') {
       requireIdenticalArtifacts = true
     } else if (argument === '--require-identical-structure') {
@@ -1584,6 +1697,7 @@ function parseArguments(arguments_) {
     inputs,
     output,
     tolerances,
+    corpusReportSchemaPolicy,
     requireIdenticalArtifacts,
     requireIdenticalStructure,
   }

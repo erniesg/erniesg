@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "scholarly-pdf-fidelity-comparator-governance-2026-07-v2",
+  "privacy": "public-identities-hashes-governance-no-source-content-or-local-paths",
+  "receiptSchema": {
+    "path": "docs/schemas/pdf-fidelity-comparator-run-receipt-v2.schema.json",
+    "fileSha256": "d436c093fa55e3beae9a986b18b3ef056b59b90dc55cc398c1096e3608d4ef54"
+  },
+  "runSpecificationSchemaVersion": "2.0.0",
+  "evaluationBindings": [
+    {
+      "id": "public-calibration-v1",
+      "governance": {
+        "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1",
+        "schemaVersion": "1.0.0",
+        "path": "benchmarks/pdf/reconstruction-eval-contract-v1.json",
+        "fileSha256": "a9710abfd82f9ae9e301ed04752e877b3425d98a3f6e8a02649bc0a150068e3f"
+      },
+      "evalSet": {
+        "id": "scholarly-pdf-fidelity-seed-2026-07-v1",
+        "path": "benchmarks/pdf/fidelity-eval-v1.json",
+        "fileSha256": "35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002",
+        "evalSetSha256": "e7072984f8afb438086780b1544eb38ce8be42b10f8f87e7659ed9bd3d6cb2aa",
+        "documentIdentitySha256": "54c3246cfdf14b6700bdb44d7f551496ad223a3426d1f8ab0248cbe624d7802e",
+        "caseIdentitySha256": "d08141d7a90070798e0e735e1c5ccc6afb8b5d7cf7a32dee903872568699bb47",
+        "documentCount": 4,
+        "caseCount": 29,
+        "stratumCount": 15
+      }
+    },
+    {
+      "id": "public-calibration-v2-additions",
+      "governance": {
+        "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v2",
+        "schemaVersion": "2.0.0",
+        "path": "benchmarks/pdf/reconstruction-eval-contract-v2.json",
+        "fileSha256": "0ee0826873f0b7349a5f4187746f9cc35a9acc1556fd7aa35e004b1a51a9a2dd"
+      },
+      "evalSet": {
+        "id": "scholarly-pdf-fidelity-additions-2026-07-v2",
+        "path": "benchmarks/pdf/fidelity-eval-v2.json",
+        "fileSha256": "7420fc497895a058d24592b7c5164ded261846a5da4fed2f014c8a52cbafccf9",
+        "evalSetSha256": "9671fdc99e78f027ac8547bd30628c6f7186f40ca12024edb173d9c0c9ed15f1",
+        "documentIdentitySha256": "c87dc2adcb180f49135a2e3c41e7ad528060d0c93eb2fcb35161e382a146b781",
+        "caseIdentitySha256": "098450e4aba41009c012460c0f13d67c0e89bf9561325ae7a74a45ee17922903",
+        "documentCount": 2,
+        "caseCount": 3,
+        "stratumCount": 3
+      }
+    }
+  ],
+  "authority": "performance-provenance-sidecar-never-promotion-authority"
+}

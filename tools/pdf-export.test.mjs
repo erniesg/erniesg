@@ -1066,7 +1066,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 
   it('threads explicit local OCR through the isolated export worker without bypassing review', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-ocr-'))

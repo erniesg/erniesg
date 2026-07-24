@@ -117,11 +117,7 @@ function tableLine(id: string, y: number): PdfRegionLine {
   return tabularLine(id, y, [0.12, 0.4, 0.67])
 }
 
-function equationTableCellLine(
-  id: string,
-  y: number,
-  x = 0.32,
-): PdfRegionLine {
+function equationTableCellLine(id: string, y: number, x = 0.32): PdfRegionLine {
   const sourceBox = box(x, y, 0.28, 0.014, 'pdf-text')
   return {
     id,
@@ -681,7 +677,7 @@ describe('bounded table-scope visual fallback', () => {
     expect(result.canonicalTablesByAssetId.size).toBe(0)
   })
 
-  it('fails closed when a table-like header band sits just above the proved body scope', async () => {
+  it('crops a proved body scope with its unique adjacent table header', async () => {
     const headerLine = tabularLine('omitted-header', 0.49, [0.12, 0.4, 0.67])
     const header = {
       ...mixedParent(
@@ -714,15 +710,24 @@ describe('bounded table-scope visual fallback', () => {
       rasterizeFigure,
     })
 
-    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
     expect(result.relationships[0]).toMatchObject({
       kind: 'table',
-      status: 'unresolved',
-      sourceRegionIds: [],
-      evidence: expect.arrayContaining(['table-header-outside-source-scope']),
+      status: 'matched',
+      sourceRegionIds: [header.id, body.id],
+      sourceLineIds: [headerLine.id, ...bodyLines.map((line) => line.id)],
+      evidence: expect.arrayContaining([
+        'bounded-table-scope',
+        'caption-lane-source-completion',
+        'non-semantic-source-scope',
+        'source-page-crop',
+      ]),
     })
-    expect(result.consumedRegionIds.size).toBe(0)
-    expect(result.consumedLineIds.size).toBe(0)
+    expect(result.consumedRegionIds).toEqual(new Set([header.id, body.id]))
+    expect(result.consumedLineIds).toEqual(
+      new Set([headerLine.id, ...bodyLines.map((line) => line.id)]),
+    )
+    expect(result.canonicalTablesByAssetId.size).toBe(0)
   })
 
   it('promotes a complete rectangular table when source header regions close the proved body scope', async () => {
@@ -776,9 +781,11 @@ describe('bounded table-scope visual fallback', () => {
   })
 
   it('promotes a complete left-aligned table only after its equation cell shard is independently scoped', async () => {
-    const headerLine = tabularLine('table-header-left-middle', 0.22, [
-      0.2, 0.32,
-    ])
+    const headerLine = tabularLine(
+      'table-header-left-middle',
+      0.22,
+      [0.2, 0.32],
+    )
     headerLine.runs.forEach((run) => {
       run.bold = true
       run.fontName = 'TableSerif-Medium'

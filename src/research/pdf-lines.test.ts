@@ -1094,6 +1094,206 @@ describe('PDF line joining', () => {
 })
 
 describe('PDF run grouping', () => {
+  it('honors explicit PDF text-item whitespace across a sub-threshold run gap', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      width: number,
+      sourceSequenceIndex: number,
+      sourceWhitespacePredecessorIndex?: number,
+    ): PdfSourceRun => {
+      const base = {
+        page: 34,
+        text,
+        x,
+        y: 0.2,
+        width,
+        height: 0.0044,
+        fontSize: 3.5,
+        fontName: 'Body',
+        rotation: 0,
+        method: 'pdf-text' as const,
+        confidence: 1,
+        sourceSequenceIndex,
+      }
+      return sourceWhitespacePredecessorIndex === undefined
+        ? base
+        : {
+            ...base,
+            sourceWhitespaceBefore: 'pdf-text-item' as const,
+            sourceWhitespacePredecessorIndex,
+          }
+    }
+    const page: PdfPageAnalysis = {
+      page: 34,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: 17,
+      imageCount: 0,
+      runs: [
+        sourceRun('And', 0.1, 0.01, 0),
+        sourceRun('Seraphi', 0.111, 0.02, 1, 0),
+        sourceRun('held', 0.132, 0.012, 2, 1),
+      ],
+    }
+
+    expect(groupRunsIntoLines(page)[0].text).toBe('And Seraphi held')
+  })
+
+  it('retains repeated lexical and numeric word boundaries from PDF text items', () => {
+    const tokens = ['happiness', '3', 'sadness', '7', 'disgust', '0']
+    const runs = tokens.map<PdfSourceRun>((text, index) => {
+      const base = {
+        page: 34,
+        text,
+        x: 0.1 + index * 0.012,
+        y: 0.2,
+        width: 0.011,
+        height: 0.0044,
+        fontSize: 3.5,
+        fontName: 'Body',
+        rotation: 0,
+        method: 'pdf-text' as const,
+        confidence: 1,
+        sourceSequenceIndex: index,
+      }
+      return index > 0
+        ? {
+            ...base,
+            sourceWhitespaceBefore: 'pdf-text-item' as const,
+            sourceWhitespacePredecessorIndex: index - 1,
+          }
+        : base
+    })
+    const page: PdfPageAnalysis = {
+      page: 34,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: tokens.join('').length,
+      imageCount: 0,
+      runs,
+    }
+
+    expect(groupRunsIntoLines(page)[0].text).toBe(
+      'happiness 3 sadness 7 disgust 0',
+    )
+  })
+
+  it('ignores whitespace transferred from a nonadjacent PDF source item after spatial sorting', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      sourceSequenceIndex: number,
+      sourceWhitespacePredecessorIndex?: number,
+    ): PdfSourceRun => {
+      const base = {
+        page: 1,
+        text,
+        x,
+        y: 0.2,
+        width: 0.01,
+        height: 0.01,
+        fontSize: 8,
+        fontName: 'Body',
+        rotation: 0,
+        method: 'pdf-text' as const,
+        confidence: 1,
+        sourceSequenceIndex,
+      }
+      return sourceWhitespacePredecessorIndex === undefined
+        ? base
+        : {
+            ...base,
+            sourceWhitespaceBefore: 'pdf-text-item' as const,
+            sourceWhitespacePredecessorIndex,
+          }
+    }
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: 3,
+      imageCount: 0,
+      // Content-stream order says A, whitespace, B, C. Geometry says CBA.
+      // The A→B boundary must not become a false C→B boundary after x-sort.
+      runs: [
+        sourceRun('A', 0.12, 0),
+        sourceRun('B', 0.11, 1, 0),
+        sourceRun('C', 0.1, 2),
+      ],
+    }
+
+    expect(groupRunsIntoLines(page)[0].text).toBe('CBA')
+  })
+
+  it('does not let explicit whitespace override punctuation attachment', () => {
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: 14,
+      imageCount: 0,
+      runs: [
+        {
+          page: 1,
+          text: 'Result',
+          x: 0.1,
+          y: 0.2,
+          width: 0.05,
+          height: 0.01,
+          fontSize: 8,
+          fontName: 'Body',
+          rotation: 0,
+          method: 'pdf-text',
+          confidence: 1,
+          sourceSequenceIndex: 0,
+        },
+        {
+          page: 1,
+          text: ',',
+          x: 0.151,
+          y: 0.2,
+          width: 0.004,
+          height: 0.01,
+          fontSize: 8,
+          fontName: 'Body',
+          rotation: 0,
+          method: 'pdf-text',
+          confidence: 1,
+          sourceSequenceIndex: 1,
+          sourceWhitespaceBefore: 'pdf-text-item',
+          sourceWhitespacePredecessorIndex: 0,
+        },
+        {
+          page: 1,
+          text: 'confirmed',
+          x: 0.156,
+          y: 0.2,
+          width: 0.06,
+          height: 0.01,
+          fontSize: 8,
+          fontName: 'Body',
+          rotation: 0,
+          method: 'pdf-text',
+          confidence: 1,
+          sourceSequenceIndex: 2,
+          sourceWhitespaceBefore: 'pdf-text-item',
+          sourceWhitespacePredecessorIndex: 1,
+        },
+      ],
+    }
+
+    expect(groupRunsIntoLines(page)[0].text).toBe('Result, confirmed')
+  })
+
   it('restores a missing sentence space after a single-letter source token', () => {
     const sourceRun = (
       text: string,

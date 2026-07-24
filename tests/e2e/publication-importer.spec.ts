@@ -619,10 +619,12 @@ test('retries a failed readable profile build without discarding review state', 
           input instanceof ArrayBuffer
             ? new Uint8Array(input)
             : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
-        const isEpubCanonicalPayload =
-          new TextDecoder().decode(bytes.subarray(0, 11)) === '{"id":"pdf-'
+        const isEpubCanonicalPayload = new TextDecoder()
+          .decode(bytes)
+          .includes('"id":"pdf-')
         if (isEpubCanonicalPayload && !rejectedReadableEpub) {
           rejectedReadableEpub = true
+          document.documentElement.dataset.readableEpubDigestRejected = 'true'
           throw new Error('Synthetic readable EPUB build failure')
         }
         return digest(...args)
@@ -632,6 +634,10 @@ test('retries a failed readable profile build without discarding review state', 
 
   await uploadFixture(page, 'adjudication-required.pdf')
 
+  await page.waitForFunction(
+    () =>
+      document.documentElement.dataset.readableEpubDigestRejected === 'true',
+  )
   await expect(page.getByText('Review required', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Blocking issue groups')).toBeVisible()
   await expect(
@@ -708,7 +714,7 @@ test('adjudicates an unresolved line join with three explicit choices and replay
   const decisionBytes = await downloadedBytes(page, 'Export decisions JSON')
   const decisionFile = JSON.parse(new TextDecoder().decode(decisionBytes))
   expect(decisionFile).toMatchObject({
-    schemaVersion: '1.1.0',
+    schemaVersion: '1.2.0',
     decisions: [
       {
         diagnosticCode: 'UNRESOLVED_CORRUPTING_JOIN',

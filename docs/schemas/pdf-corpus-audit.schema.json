@@ -442,6 +442,9 @@
         "expectedRelationshipCount": { "type": "integer", "minimum": 0 },
         "resolvedRelationshipCount": { "type": "integer", "minimum": 0 },
         "relationshipCoverage": { "$ref": "#/$defs/ratio" },
+        "expectedSemanticTableCount": { "type": "integer", "minimum": 0 },
+        "resolvedSemanticTableCount": { "type": "integer", "minimum": 0 },
+        "semanticTableCoverage": { "$ref": "#/$defs/ratio" },
         "unresolvedObjectCount": { "type": "integer", "minimum": 0 },
         "unresolvedObjects": {
           "type": "object",
@@ -473,6 +476,20 @@
         "readingOrderEvaluation": {
           "$ref": "#/$defs/readingOrderEvaluation"
         }
+      },
+      "dependentRequired": {
+        "expectedSemanticTableCount": [
+          "resolvedSemanticTableCount",
+          "semanticTableCoverage"
+        ],
+        "resolvedSemanticTableCount": [
+          "expectedSemanticTableCount",
+          "semanticTableCoverage"
+        ],
+        "semanticTableCoverage": [
+          "expectedSemanticTableCount",
+          "resolvedSemanticTableCount"
+        ]
       }
     },
     "readingOrderEvaluation": {

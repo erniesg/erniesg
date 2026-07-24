@@ -9,7 +9,11 @@ import {
 } from 'react'
 import {
   applyHumanDecisionFile,
+  createEquationTranscriptDecision,
   createHumanDecisionFile,
+  equationTranscriptDecisionBinding,
+  humanDecisionFileSha256,
+  MAX_EQUATION_TRANSCRIPT_LENGTH,
   MAX_HUMAN_DECISION_FILE_BYTES,
   parseHumanDecisionFile,
   readingOrderCandidates,
@@ -201,6 +205,33 @@ function AdjudicationControls({
       resolution,
     })
 
+  if (diagnostic.code === 'UNRESOLVED_EQUATION_TRANSCRIPT') {
+    const relationship = result.visualRelationships.find(
+      (candidate) =>
+        candidate.id === target.markerId &&
+        candidate.id === diagnostic.relationshipId,
+    )
+    const binding = relationship
+      ? equationTranscriptDecisionBinding(result, relationship.id)
+      : null
+    if (!relationship || !binding) return null
+    return (
+      <EquationTranscriptAdjudicationCard
+        relationshipId={relationship.id}
+        label={relationship.label}
+        onDecision={(transcript) =>
+          onDecision(
+            createEquationTranscriptDecision(
+              result,
+              relationship.id,
+              transcript,
+            ),
+          )
+        }
+      />
+    )
+  }
+
   if (
     diagnostic.code === 'AMBIGUOUS_NOTE_MATCH' ||
     diagnostic.code === 'UNRESOLVED_NOTE_REFERENCE'
@@ -290,6 +321,60 @@ function AdjudicationControls({
     )
   }
   return null
+}
+
+export function EquationTranscriptAdjudicationCard({
+  relationshipId,
+  label,
+  onDecision,
+}: {
+  relationshipId: string
+  label: string
+  onDecision: (transcript: string) => void
+}) {
+  const [transcript, setTranscript] = useState('')
+  const fieldId = `equation-transcript-${relationshipId.replaceAll(
+    /[^A-Za-z0-9_-]/gu,
+    '-',
+  )}`
+  const descriptionId = `${fieldId}-description`
+
+  return (
+    <form
+      className="pdf-diagnostic-selection equation-transcript-adjudication"
+      aria-label={`Equation transcript review for ${label}`}
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (transcript.trim().length > 0) onDecision(transcript)
+      }}
+    >
+      <h4>{label} · equation transcript review</h4>
+      <p id={descriptionId}>
+        Transcribe the highlighted, exact source crop as LaTeX. The text stays
+        on this device and is stored only in the local decisions JSON and EPUB.
+        It is never inferred or selected automatically.
+      </p>
+      <label htmlFor={fieldId}>LaTeX transcript</label>
+      <textarea
+        id={fieldId}
+        aria-describedby={descriptionId}
+        autoCapitalize="off"
+        autoComplete="off"
+        maxLength={MAX_EQUATION_TRANSCRIPT_LENGTH}
+        rows={5}
+        spellCheck={false}
+        value={transcript}
+        onChange={(event) => setTranscript(event.target.value)}
+      />
+      <small>
+        {transcript.length}/{MAX_EQUATION_TRANSCRIPT_LENGTH} characters · bound
+        to this relationship, source crop, and source lineage
+      </small>
+      <button type="submit" disabled={transcript.trim().length === 0}>
+        Accept exact LaTeX transcript
+      </button>
+    </form>
+  )
 }
 
 type LineJoinChoice = Extract<
@@ -627,8 +712,10 @@ function isStaleApplicationModuleError(error: unknown) {
 
 function staleApplicationModuleSignature(error: unknown) {
   if (!isStaleApplicationModuleError(error)) return undefined
-  const message =
-    errorMessage(error).trim().replaceAll(/\s+/gu, ' ').toLocaleLowerCase()
+  const message = errorMessage(error)
+    .trim()
+    .replaceAll(/\s+/gu, ' ')
+    .toLocaleLowerCase()
   return message || undefined
 }
 
@@ -699,6 +786,7 @@ export default function PublicationImporter({
   const decisionInput = useRef<HTMLInputElement>(null)
   const activeImport = useRef<AbortController>()
   const activeProfileBuilds = useRef(new Set<ActiveProfileBuild>())
+  const activeProfileBuildIssues = useRef<ProfileBuildIssues>({})
 
   const reloadForStaleApplicationModule = (error: unknown) => {
     if (typeof window === 'undefined') return false
@@ -711,9 +799,7 @@ export default function PublicationImporter({
     } catch {
       previousReloadSignature = undefined
     }
-    if (
-      !shouldReloadStaleApplicationModule(error, previousReloadSignature)
-    ) {
+    if (!shouldReloadStaleApplicationModule(error, previousReloadSignature)) {
       return false
     }
     try {
@@ -738,6 +824,7 @@ export default function PublicationImporter({
       active = false
       activeImport.current?.abort()
       activeProfileBuilds.current.clear()
+      activeProfileBuildIssues.current = {}
     }
   }, [])
 
@@ -755,6 +842,7 @@ export default function PublicationImporter({
       activeProfileBuilds.current.delete(build)
     }
     setProfileBuilds([])
+    activeProfileBuildIssues.current = {}
     setProfileBuildIssues({})
     const controller = new AbortController()
     activeImport.current = controller
@@ -894,6 +982,7 @@ export default function PublicationImporter({
     setSelectedProfileId('mobile')
     setPreviewReadyArtifactKey(undefined)
     setProfileBuilds([])
+    activeProfileBuildIssues.current = {}
     setProfileBuildIssues({})
     setState({ status: 'idle' })
   }
@@ -977,7 +1066,11 @@ export default function PublicationImporter({
     ) {
       return
     }
-    if (profileBuildIssues[selectedProfileId]?.controller === controller) {
+    if (
+      activeProfileBuildIssues.current[selectedProfileId]?.controller ===
+        controller ||
+      profileBuildIssues[selectedProfileId]?.controller === controller
+    ) {
       return
     }
     if (!state.result.readiness.ready && !isPdfReconstruction(state.result)) {
@@ -1024,18 +1117,20 @@ export default function PublicationImporter({
         })
       } catch (error) {
         if (!isCurrent()) return
+        const issue = {
+          controller,
+          profileId,
+          message:
+            error instanceof Error
+              ? error.message
+              : result.readiness.ready
+                ? 'The local EPUB build failed unexpectedly.'
+                : 'The readable EPUB is unavailable until review is complete.',
+        }
+        activeProfileBuildIssues.current[profileId] = issue
         setProfileBuildIssues((current) => ({
           ...current,
-          [profileId]: {
-            controller,
-            profileId,
-            message:
-              error instanceof Error
-                ? error.message
-                : result.readiness.ready
-                  ? 'The local EPUB build failed unexpectedly.'
-                  : 'The readable EPUB is unavailable until review is complete.',
-          },
+          [profileId]: issue,
         }))
       } finally {
         if (activeProfileBuilds.current.delete(activeBuild)) {
@@ -1071,6 +1166,16 @@ export default function PublicationImporter({
     selectedIssue?.controller === activeImport.current
       ? selectedIssue
       : undefined
+  const retrySelectedProfileBuild = () => {
+    const issue = activeProfileBuildIssues.current[selectedProfileId]
+    if (!issue || issue.controller !== activeImport.current) return
+    delete activeProfileBuildIssues.current[selectedProfileId]
+    setProfileBuildIssues((current) => {
+      const next = { ...current }
+      delete next[selectedProfileId]
+      return next
+    })
+  }
 
   return (
     <section
@@ -1103,7 +1208,8 @@ export default function PublicationImporter({
         {pendingDecisionFile && (
           <small>
             Loaded for {pendingDecisionFile.documentSha256.slice(0, 12)}… ·{' '}
-            {pendingDecisionFile.decisions.length} decisions
+            {pendingDecisionFile.decisions.length} decisions · approval SHA-256{' '}
+            <code>{humanDecisionFileSha256(pendingDecisionFile)}</code>
           </small>
         )}
         {decisionError && <p role="alert">{decisionError}</p>}
@@ -1267,20 +1373,7 @@ export default function PublicationImporter({
                   <button
                     className="secondary"
                     type="button"
-                    onClick={() =>
-                      setProfileBuildIssues((current) => {
-                        const issue = current[selectedProfileId]
-                        if (
-                          !issue ||
-                          issue.controller !== activeImport.current
-                        ) {
-                          return current
-                        }
-                        const next = { ...current }
-                        delete next[selectedProfileId]
-                        return next
-                      })
-                    }
+                    onClick={retrySelectedProfileBuild}
                   >
                     Retry {getTargetProfile(selectedProfileId).label} EPUB
                   </button>

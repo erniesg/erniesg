@@ -1,22 +1,40 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyHumanDecisionFile,
+  createEquationTranscriptDecision,
   createHumanDecisionFile,
+  equationTranscriptDecisionBinding,
+  humanDecisionFileSha256,
+  MAX_EQUATION_TRANSCRIPT_LENGTH,
   MAX_HUMAN_DECISION_FILE_BYTES,
   parseHumanDecisionFile,
   readingOrderCandidates,
   serializeHumanDecisionFile,
   upsertHumanDecision,
 } from './decision-record'
-import { buildEpub } from './epub'
+import { verifyEquationTranscriptAdjudication } from './equation-transcript-adjudication'
+import {
+  buildEpub,
+  buildReadableEpub,
+  inspectEpub,
+  renderPublicationXhtml,
+} from './epub'
 import type {
   HumanAdjudicationRecord,
   PdfPageAnalysis,
+  PdfPageRegion,
+  PdfReadingOrderGraph,
+  PdfReconstruction,
   PdfSourceRun,
+  PdfVisualRelationship,
   ReconstructionDiagnostic,
 } from './import-types'
 import { reconstructPageAnalyses } from './pdf-layout'
 import { reconstructPdf } from './pdf'
+import { assessPdfCompleteness } from './pdf-quality'
+import { internalReferenceIntegrityIssues } from './publication-integrity'
+import { createSourcePageCropAsset } from './visual-assets'
+import type { ResearchPaper } from './schema'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 
 function run(
@@ -92,9 +110,7 @@ async function unresolvedLineJoinReconstruction() {
 function lineJoinDecision(
   base: Awaited<ReturnType<typeof unresolvedLineJoinReconstruction>>,
   outcome:
-    | 'remove-wrap-hyphen'
-    | 'preserve-authored-hyphen'
-    | 'leave-unresolved',
+    'remove-wrap-hyphen' | 'preserve-authored-hyphen' | 'leave-unresolved',
 ) {
   const transition = base.lineBoundaryDecisions.find(
     (candidate) => candidate.outcome === 'unresolved',
@@ -120,6 +136,300 @@ function lineJoinDecision(
   } as unknown as HumanAdjudicationRecord
 }
 
+const SYNTHETIC_LATEX_TRANSCRIPT = String.raw`\operatorname{demo}(x^{2})<y \& z`
+
+async function unresolvedEquationTranscriptReconstruction() {
+  const base = await unresolvedLineJoinReconstruction()
+  const captionRun = run(
+    'Equation A. Synthetic adjudication fixture.',
+    0.18,
+    0.2,
+    0.52,
+  )
+  const baseline = {
+    ...run('x', 0.28, 0.3, 0.03, 14),
+    fontName: 'Synthetic-Math-Regular',
+  }
+  const superscript = {
+    ...run('2', 0.31, 0.288, 0.014, 8),
+    height: 0.011,
+    fontName: 'Synthetic-Math-Regular',
+  }
+  const remainder = {
+    ...run(' = y', 0.33, 0.3, 0.08, 14),
+    fontName: 'Synthetic-Math-Regular',
+  }
+  const captionRegion = {
+    id: 'synthetic-equation-caption-region',
+    page: 1,
+    kind: 'caption',
+    column: 'single',
+    text: captionRun.text,
+    confidence: 1,
+    box: { ...captionRun },
+    lines: [
+      {
+        id: 'synthetic-equation-caption-line',
+        text: captionRun.text,
+        fontSize: captionRun.fontSize,
+        box: { ...captionRun },
+        runs: [{ ...captionRun }],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  } satisfies PdfPageRegion
+  const equationBox = {
+    page: 1,
+    x: 0.25,
+    y: 0.275,
+    width: 0.22,
+    height: 0.075,
+    rotation: 0,
+    method: 'pdf-object' as const,
+  }
+  const syntheticEquationSourceObjectId = 'equation-source-p001-001'
+  const equationRegion = {
+    id: 'synthetic-equation-source-region',
+    page: 1,
+    kind: 'equation',
+    column: 'single',
+    text: 'x2 = y',
+    confidence: 1,
+    box: {
+      page: 1,
+      x: baseline.x,
+      y: superscript.y,
+      width: remainder.x + remainder.width - baseline.x,
+      height: baseline.y + baseline.height - superscript.y,
+      rotation: 0,
+      method: 'pdf-text' as const,
+    },
+    lines: [
+      {
+        id: 'synthetic-equation-source-line',
+        text: 'x2 = y',
+        fontSize: baseline.fontSize,
+        box: {
+          page: 1,
+          x: baseline.x,
+          y: superscript.y,
+          width: remainder.x + remainder.width - baseline.x,
+          height: baseline.y + baseline.height - superscript.y,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [baseline, superscript, remainder],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  } satisfies PdfPageRegion
+  const cropBox = {
+    page: 1,
+    x: 0.2,
+    y: 0.25,
+    width: 0.36,
+    height: 0.14,
+    rotation: 0,
+    method: 'pdf-object' as const,
+  }
+  const width = 32
+  const height = 16
+  const pixels = new Uint8Array(width * height * 4).fill(255)
+  for (let y = 5; y < 11; y += 1) {
+    for (let x = 7; x < 25; x += 1) {
+      const index = (y * width + x) * 4
+      pixels[index] = 0
+      pixels[index + 1] = 0
+      pixels[index + 2] = 0
+    }
+  }
+  const asset = await createSourcePageCropAsset({
+    kind: 'equation',
+    cropBox,
+    sourceObjectIds: [syntheticEquationSourceObjectId],
+    sourceBoxes: [{ ...equationBox }],
+    width,
+    height,
+    pixels,
+  })
+  const relationship = {
+    id: 'synthetic-equation-relationship',
+    kind: 'equation',
+    label: 'Equation A',
+    captionRegionId: captionRegion.id,
+    sourceRegionIds: [equationRegion.id],
+    sourceLineIds: equationRegion.lines.map((line) => line.id),
+    sourceObjectIds: [syntheticEquationSourceObjectId],
+    assetIds: [asset.id],
+    status: 'matched',
+    confidence: 1,
+    evidence: [
+      'bounded-source-geometry',
+      'source-page-crop-neighbor-bounded',
+      'source-page-crop',
+      'source-text-transcript-unresolved',
+    ],
+    candidates: [],
+    sourceBoxes: [{ ...captionRegion.box }, { ...equationBox }],
+    sourceText: '',
+    altText: captionRegion.text,
+    altTextSource: 'caption',
+    canonicalNodeId: 'synthetic-equation-node',
+    captionNodeId: 'synthetic-equation-caption-node',
+  } satisfies PdfVisualRelationship
+  const paper: ResearchPaper = {
+    ...base.paper,
+    id: 'synthetic-equation-paper',
+    title: 'Synthetic equation decision fixture',
+    subtitle: 'Owner-local adjudication test',
+    abstract: 'Synthetic test content.',
+    nodes: [
+      {
+        id: relationship.canonicalNodeId,
+        type: 'figure',
+        objectType: 'equation',
+        title: relationship.label,
+        relationships: {
+          caption: relationship.captionNodeId,
+          assets: [asset.id],
+        },
+        source: 'synthetic-equation-fixture',
+      },
+      {
+        id: relationship.captionNodeId,
+        type: 'caption',
+        text: captionRegion.text,
+        source: 'synthetic-equation-fixture',
+      },
+    ],
+  }
+  const page = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters:
+      captionRun.text.length +
+      baseline.text.length +
+      superscript.text.length +
+      remainder.text.length,
+    imageCount: 0,
+    objects: [],
+    assets: [asset],
+    runs: [captionRun, baseline, superscript, remainder],
+  } satisfies PdfPageAnalysis
+  const regions = [captionRegion, equationRegion]
+  const readingOrder = {
+    schemaVersion: '1.0.0',
+    regionIds: regions.map((region) => region.id),
+    order: regions.map((region) => region.id),
+    edges: [],
+    resolutions: [],
+    acyclic: true,
+    evaluation: {
+      schemaVersion: '1.0.0',
+      algorithm: 'deterministic-geometry-v1',
+      mode: 'deterministic-only',
+      regionCount: regions.length,
+      acceptedEdgeCount: 0,
+      unresolvedEdgeCount: 0,
+      cycleRate: 0,
+      orderAccuracy: null,
+      provider: null,
+      modelVersion: null,
+      latencyMs: 0,
+      costUsd: 0,
+      reviewRequired: false,
+    },
+  } satisfies PdfReadingOrderGraph
+  const provenance = {
+    [relationship.canonicalNodeId]: {
+      confidence: 1,
+      pages: [1],
+      regionIds: [...relationship.sourceRegionIds],
+      boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
+      links: [],
+    },
+    [relationship.captionNodeId]: {
+      confidence: 1,
+      pages: [1],
+      regionIds: [captionRegion.id],
+      boxes: [{ ...captionRegion.box }],
+      links: [],
+    },
+  }
+  const assessment = assessPdfCompleteness({
+    pages: [page],
+    sourceSha256: base.source.sha256,
+    paper,
+    diagnostics: [],
+    readingOrder,
+    regions,
+    visualRelationships: [relationship],
+    assets: [asset],
+    citationRelationships: [],
+    noteRelationships: [],
+    provenance,
+    lineBoundaryDecisions: [],
+    unresolvedCorruptingJoinCount: 0,
+    structurallyConsumedLineBoundaryCount: 0,
+    policy: base.readiness.policy,
+  })
+  const diagnostics = assessment.diagnostics.map((diagnostic) =>
+    diagnostic.code === 'UNRESOLVED_EQUATION_TRANSCRIPT' &&
+    diagnostic.relationshipId === relationship.id
+      ? {
+          ...diagnostic,
+          target: {
+            regionIds: [...relationship.sourceRegionIds],
+            markerId: relationship.id,
+          },
+        }
+      : diagnostic,
+  )
+  return {
+    ...base,
+    paper,
+    pages: [page],
+    regions,
+    lineBoundaryDecisions: [],
+    unresolvedCorruptingJoinCount: 0,
+    structurallyConsumedLineBoundaryCount: 0,
+    readingOrder,
+    noteRelationships: [],
+    citationRelationships: [],
+    crossReferenceRelationships: [],
+    visualRelationships: [relationship],
+    assets: [asset],
+    provenance,
+    diagnostics,
+    semanticSignals: assessment.semanticSignals,
+    completeness: assessment.completeness,
+    readiness: assessment.readiness,
+  }
+}
+
+function equationTranscriptDecision(
+  reconstruction: Awaited<
+    ReturnType<typeof unresolvedEquationTranscriptReconstruction>
+  >,
+) {
+  const relationship = reconstruction.visualRelationships[0]
+  const binding = equationTranscriptDecisionBinding(
+    reconstruction,
+    relationship.id,
+  )
+  if (!binding) throw new Error('Expected an exact synthetic equation binding')
+  return createEquationTranscriptDecision(
+    reconstruction,
+    relationship.id,
+    SYNTHETIC_LATEX_TRANSCRIPT,
+  )
+}
+
 function targeted(
   diagnostic: ReconstructionDiagnostic,
 ): asserts diagnostic is ReconstructionDiagnostic & {
@@ -128,8 +438,31 @@ function targeted(
   expect(diagnostic.target).toBeDefined()
 }
 
+const COMPLETENESS_DERIVED_DIAGNOSTIC_CODES = [
+  'OCR_REQUIRED',
+  'UNRESOLVED_EQUATION_TRANSCRIPT',
+  'UNRESOLVED_ALGORITHM_TRANSCRIPT',
+  'UNRESOLVED_PREFORMATTED_TRANSCRIPT',
+  'EPUB_TEXT_SANITIZATION_LOSS',
+  'DANGLING_EPUB_INTERNAL_REFERENCE',
+  'INCOMPLETE_TEXT_COVERAGE',
+  'DUPLICATE_CANONICAL_SPAN',
+  'DUPLICATE_CANONICAL_ROLE',
+  'CANONICAL_FLOW_ORDER_VIOLATION',
+  'CANONICAL_VISUAL_ORDER_VIOLATION',
+  'MISSING_SOURCE_REGION',
+  'UNPROVENANCED_RENDERED_UNIT',
+  'INCOMPLETE_INLINE_STYLE_COVERAGE',
+  'UNRESOLVED_HYPERLINK',
+  'INVALID_LINE_BOUNDARY_LEDGER',
+  'UNRESOLVED_CORRUPTING_JOIN',
+  'INCOMPLETE_ASSET_COVERAGE',
+  'INCOMPLETE_RELATIONSHIP_COVERAGE',
+  'UNRESOLVED_SEMANTIC_OBJECTS',
+] as const satisfies readonly ReconstructionDiagnostic['code'][]
+
 describe('human adjudication decision records', () => {
-  it('emits v1.1 line-join decisions without serializing source text', async () => {
+  it('emits current line-join decisions without serializing source text', async () => {
     const base = await unresolvedLineJoinReconstruction()
     const file = upsertHumanDecision(
       createHumanDecisionFile(base.source.sha256),
@@ -139,7 +472,7 @@ describe('human adjudication decision records', () => {
     const parsed = JSON.parse(json)
 
     expect(parsed).toMatchObject({
-      schemaVersion: '1.1.0',
+      schemaVersion: '1.2.0',
       documentSha256: base.source.sha256,
       decisions: [
         {
@@ -155,6 +488,30 @@ describe('human adjudication decision records', () => {
     })
     expect(json).not.toContain('This source contains')
     expect(json).not.toContain('continuous prose')
+  })
+
+  it('continues to parse and replay v1.1 line-join decision files', async () => {
+    const base = await unresolvedLineJoinReconstruction()
+    const parsed = parseHumanDecisionFile({
+      schemaVersion: '1.1.0',
+      documentSha256: base.source.sha256,
+      decisions: [lineJoinDecision(base, 'remove-wrap-hyphen')],
+    })
+    const result = applyHumanDecisionFile(base, parsed)
+
+    expect(parsed.schemaVersion).toBe('1.1.0')
+    expect(result.humanAdjudications).toMatchObject({
+      schemaVersion: '1.1.0',
+      applied: [
+        expect.objectContaining({
+          resolution: expect.objectContaining({
+            outcome: 'remove-wrap-hyphen',
+          }),
+        }),
+      ],
+      stale: [],
+    })
+    expect(result.regions[0].text).toContain('a scenario that')
   })
 
   it('continues to parse and replay v1.0 decision files', async () => {
@@ -186,6 +543,372 @@ describe('human adjudication decision records', () => {
       schemaVersion: '1.0.0',
       countsByDiagnosticCode: { AMBIGUOUS_READING_ORDER: 1 },
     })
+  })
+
+  it('keeps an unresolved two-dimensional equation blocked without an owner decision', async () => {
+    const base = await unresolvedEquationTranscriptReconstruction()
+    const result = applyHumanDecisionFile(
+      base,
+      createHumanDecisionFile(base.source.sha256),
+    )
+
+    expect(base.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_EQUATION_TRANSCRIPT',
+    )
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_EQUATION_TRANSCRIPT',
+    )
+    expect(result.humanAdjudications.applied).toEqual([])
+    expect(result.visualRelationships[0]).not.toHaveProperty(
+      'equationTranscriptAdjudication',
+    )
+  })
+
+  it('applies a hash-bound owner-local LaTeX transcript without inventing MathML', async () => {
+    const base = await unresolvedEquationTranscriptReconstruction()
+    const decision = equationTranscriptDecision(base)
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      decision,
+    )
+    const serialized = serializeHumanDecisionFile(file)
+    const decisionSetSha256 = humanDecisionFileSha256(file)
+    const result = applyHumanDecisionFile(base, file)
+    const relationship = result.visualRelationships[0]
+    const canonicalNode = result.paper.nodes.find(
+      (node) => node.id === relationship.canonicalNodeId,
+    )
+
+    expect(JSON.parse(serialized)).toMatchObject({
+      schemaVersion: '1.2.0',
+      decisions: [
+        {
+          diagnosticCode: 'UNRESOLVED_EQUATION_TRANSCRIPT',
+          target: {
+            markerId: relationship.id,
+            regionIds: relationship.sourceRegionIds,
+          },
+          resolution: {
+            type: 'accept-equation-transcript',
+            format: 'latex',
+            confidence: 1,
+          },
+        },
+      ],
+    })
+    expect(serialized).not.toContain('sourceCropBox')
+    expect(serialized).not.toContain('pixels')
+    expect(decisionSetSha256).toMatch(/^[a-f0-9]{64}$/u)
+    expect(humanDecisionFileSha256(parseHumanDecisionFile(serialized))).toBe(
+      decisionSetSha256,
+    )
+    expect(result.humanAdjudications).toMatchObject({
+      schemaVersion: '1.2.0',
+      applied: [
+        expect.objectContaining({
+          diagnosticCode: 'UNRESOLVED_EQUATION_TRANSCRIPT',
+        }),
+      ],
+      stale: [],
+    })
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_EQUATION_TRANSCRIPT',
+          relationshipId: relationship.id,
+        }),
+      ]),
+    )
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'UNRESOLVED_EQUATION_TRANSCRIPT',
+    )
+    expect(result.completeness).toMatchObject({
+      resolvedRelationshipCount: 1,
+      unresolvedObjects: { equations: 0 },
+    })
+    expect(relationship).toMatchObject({
+      sourceText: SYNTHETIC_LATEX_TRANSCRIPT,
+      altText: 'Equation A. Synthetic adjudication fixture.',
+      altTextSource: 'caption',
+      equationTranscriptAdjudication: {
+        schemaVersion: '1.0.0',
+        format: 'latex',
+        source: 'owner-local-adjudication',
+        relationshipFingerprintSha256:
+          decision.resolution.relationshipFingerprintSha256,
+        sourceCropAssetId: decision.resolution.sourceCropAssetId,
+        sourceCropAssetSha256: decision.resolution.sourceCropAssetSha256,
+      },
+      evidence: expect.arrayContaining([
+        'owner-adjudicated-equation-transcript-v1',
+        'equation-transcript-format-latex',
+        'exact-source-page-crop',
+        'owner-local-adjudication',
+      ]),
+    })
+    expect(relationship.evidence).toContain('source-text-transcript-unresolved')
+    expect(canonicalNode).toMatchObject({
+      type: 'figure',
+      sourceText: SYNTHETIC_LATEX_TRANSCRIPT,
+    })
+    expect(relationship).not.toHaveProperty('mathml')
+    expect(relationship).not.toHaveProperty('mathMl')
+    expect(verifyEquationTranscriptAdjudication(result, relationship.id)).toBe(
+      true,
+    )
+
+    const xhtml = renderPublicationXhtml(result.paper, {
+      reconstruction: result,
+    })
+    expect(xhtml).toContain(
+      'alt="Equation image; owner-reviewed source transcript available." data-alt-source="owner-local-adjudication"',
+    )
+    const escapedTranscript = String.raw`\operatorname{demo}(x^{2})&lt;y \&amp; z`
+    expect(xhtml.split(escapedTranscript)).toHaveLength(2)
+    expect(xhtml).not.toContain(SYNTHETIC_LATEX_TRANSCRIPT)
+
+    const epub = await buildReadableEpub(result.paper, result)
+    const inspection = inspectEpub(epub.bytes)
+    const packagedXhtml = new TextDecoder().decode(
+      inspection.files['EPUB/content.xhtml'],
+    )
+    const adjudicationReceipt = JSON.stringify(
+      inspection.manifest.humanAdjudications,
+    )
+    expect(packagedXhtml).toContain(
+      'alt="Equation image; owner-reviewed source transcript available." data-alt-source="owner-local-adjudication"',
+    )
+    expect(packagedXhtml.split(escapedTranscript)).toHaveLength(2)
+    expect(adjudicationReceipt).not.toContain(SYNTHETIC_LATEX_TRANSCRIPT)
+    expect(adjudicationReceipt).toContain(
+      relationship.equationTranscriptAdjudication!.transcriptSha256,
+    )
+  })
+
+  it('makes the equation binding byte-stable and sensitive to exact lineage boxes', async () => {
+    const first = await unresolvedEquationTranscriptReconstruction()
+    const second = await unresolvedEquationTranscriptReconstruction()
+    const firstBinding = equationTranscriptDecisionBinding(
+      first,
+      first.visualRelationships[0].id,
+    )
+    const secondBinding = equationTranscriptDecisionBinding(
+      second,
+      second.visualRelationships[0].id,
+    )
+    expect(firstBinding).toEqual(secondBinding)
+    expect(firstBinding?.relationshipFingerprintSha256).toMatch(
+      /^[a-f0-9]{64}$/u,
+    )
+
+    second.regions[1].lines[0].box.x += Number.EPSILON
+    const drifted = equationTranscriptDecisionBinding(
+      second,
+      second.visualRelationships[0].id,
+    )
+    expect(drifted?.relationshipFingerprintSha256).not.toBe(
+      firstBinding?.relationshipFingerprintSha256,
+    )
+  })
+
+  it('recomputes adjudication proof and rejects transcript, node, crop, or lineage tampering', async () => {
+    const mutations = [
+      (result: PdfReconstruction) => {
+        result.visualRelationships[0].sourceText += ' drift'
+      },
+      (result: PdfReconstruction) => {
+        const node = result.paper.nodes.find(
+          (candidate) =>
+            candidate.id === result.visualRelationships[0].canonicalNodeId,
+        )
+        if (node?.type !== 'figure') throw new Error('Expected equation node')
+        node.sourceText = `${node.sourceText ?? ''} drift`
+      },
+      (result: PdfReconstruction) => {
+        result.assets[0].bytes[0] ^= 0xff
+      },
+      (result: PdfReconstruction) => {
+        result.regions[1].lines[0].box.x += Number.EPSILON
+      },
+    ]
+
+    for (const mutate of mutations) {
+      const base = await unresolvedEquationTranscriptReconstruction()
+      const result = applyHumanDecisionFile(
+        base,
+        upsertHumanDecision(
+          createHumanDecisionFile(base.source.sha256),
+          equationTranscriptDecision(base),
+        ),
+      )
+      mutate(result)
+      expect(
+        verifyEquationTranscriptAdjudication(
+          result,
+          result.visualRelationships[0].id,
+        ),
+      ).toBe(false)
+    }
+  })
+
+  it('fails equation replay closed on document, relationship, crop, or lineage drift', async () => {
+    const cases = [
+      {
+        label: 'document',
+        mutate: (
+          reconstruction: Awaited<
+            ReturnType<typeof unresolvedEquationTranscriptReconstruction>
+          >,
+          file: ReturnType<typeof createHumanDecisionFile>,
+        ) => {
+          void reconstruction
+          file.documentSha256 = 'f'.repeat(64)
+        },
+        reason: 'document-sha256-mismatch',
+      },
+      {
+        label: 'relationship',
+        mutate: (
+          reconstruction: Awaited<
+            ReturnType<typeof unresolvedEquationTranscriptReconstruction>
+          >,
+          file: ReturnType<typeof createHumanDecisionFile>,
+        ) => {
+          void reconstruction
+          const decision = file.decisions[0]
+          if (decision.resolution.type !== 'accept-equation-transcript') {
+            throw new Error('Expected equation resolution')
+          }
+          decision.resolution.relationshipId = 'missing-relationship'
+          decision.target.markerId = 'missing-relationship'
+        },
+        reason: 'diagnostic-target-missing',
+      },
+      {
+        label: 'crop',
+        mutate: (
+          reconstruction: Awaited<
+            ReturnType<typeof unresolvedEquationTranscriptReconstruction>
+          >,
+          file: ReturnType<typeof createHumanDecisionFile>,
+        ) => {
+          void reconstruction
+          const decision = file.decisions[0]
+          if (decision.resolution.type !== 'accept-equation-transcript') {
+            throw new Error('Expected equation resolution')
+          }
+          decision.resolution.sourceCropAssetSha256 = 'f'.repeat(64)
+        },
+        reason: 'resolution-no-longer-legal',
+      },
+      {
+        label: 'lineage',
+        mutate: (
+          reconstruction: Awaited<
+            ReturnType<typeof unresolvedEquationTranscriptReconstruction>
+          >,
+          file: ReturnType<typeof createHumanDecisionFile>,
+        ) => {
+          void file
+          reconstruction.regions[1].lines[0].id = 'drifted-source-line'
+        },
+        reason: 'resolution-no-longer-legal',
+      },
+    ] as const
+
+    for (const scenario of cases) {
+      const reconstruction = await unresolvedEquationTranscriptReconstruction()
+      const file = upsertHumanDecision(
+        createHumanDecisionFile(reconstruction.source.sha256),
+        equationTranscriptDecision(reconstruction),
+      )
+      scenario.mutate(reconstruction, file)
+      const result = applyHumanDecisionFile(reconstruction, file)
+      expect(result.humanAdjudications.stale, scenario.label).toEqual([
+        expect.objectContaining({
+          reason: scenario.reason,
+        }),
+      ])
+      expect(
+        result.readiness.blockingDiagnosticCodes,
+        scenario.label,
+      ).toContain('UNRESOLVED_EQUATION_TRANSCRIPT')
+    }
+  })
+
+  it('does not let arbitrary pre-seeded transcript evidence bypass replay binding', async () => {
+    const base = await unresolvedEquationTranscriptReconstruction()
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      equationTranscriptDecision(base),
+    )
+    const relationship = base.visualRelationships[0]
+    relationship.sourceText = SYNTHETIC_LATEX_TRANSCRIPT
+    relationship.evidence.push('owner-adjudicated-equation-transcript-v1')
+    const node = base.paper.nodes.find(
+      (candidate) => candidate.id === relationship.canonicalNodeId,
+    )
+    if (node?.type !== 'figure') throw new Error('Expected equation node')
+    node.sourceText = SYNTHETIC_LATEX_TRANSCRIPT
+
+    const result = applyHumanDecisionFile(base, file)
+
+    expect(result.humanAdjudications.applied).toEqual([])
+    expect(result.humanAdjudications.stale).toEqual([
+      expect.objectContaining({ reason: 'resolution-no-longer-legal' }),
+    ])
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_EQUATION_TRANSCRIPT',
+    )
+    expect(result.visualRelationships[0]).not.toHaveProperty(
+      'equationTranscriptAdjudication',
+    )
+    expect(
+      verifyEquationTranscriptAdjudication(
+        result,
+        result.visualRelationships[0].id,
+      ),
+    ).toBe(false)
+  })
+
+  it('requires schema v1.2, exact target identity, and bounded equation text', async () => {
+    const base = await unresolvedEquationTranscriptReconstruction()
+    const decision = equationTranscriptDecision(base)
+
+    expect(() =>
+      parseHumanDecisionFile({
+        schemaVersion: '1.1.0',
+        documentSha256: base.source.sha256,
+        decisions: [decision],
+      }),
+    ).toThrow(/v1\.2\.0/u)
+    expect(() =>
+      parseHumanDecisionFile({
+        schemaVersion: '1.2.0',
+        documentSha256: base.source.sha256,
+        decisions: [
+          {
+            ...decision,
+            target: { ...decision.target, markerId: 'wrong-relationship' },
+          },
+        ],
+      }),
+    ).toThrow(/exact visual relationship/u)
+    expect(() =>
+      parseHumanDecisionFile({
+        schemaVersion: '1.2.0',
+        documentSha256: base.source.sha256,
+        decisions: [
+          {
+            ...decision,
+            resolution: {
+              ...decision.resolution,
+              transcript: 'x'.repeat(MAX_EQUATION_TRANSCRIPT_LENGTH + 1),
+            },
+          },
+        ],
+      }),
+    ).toThrow()
   })
 
   it.each([
@@ -319,6 +1042,123 @@ describe('human adjudication decision records', () => {
       stale: [],
     })
     expect(result.unresolvedCorruptingJoinCount).toBe(1)
+  })
+
+  it('shifts canonical note anchors and citation offsets after removing a wrap hyphen', async () => {
+    const base = await unresolvedLineJoinReconstruction()
+    const region = base.regions[0]
+    const paragraph = base.paper.nodes[0]
+    if (paragraph.type !== 'paragraph') {
+      throw new Error('Expected a paragraph fixture')
+    }
+    const noteStart = paragraph.text.indexOf('continuous')
+    const citationStart = paragraph.text.indexOf('remains')
+    expect(noteStart).toBeGreaterThan(0)
+    expect(citationStart).toBeGreaterThan(0)
+
+    paragraph.noteReferences = [
+      {
+        id: 'shifted-note-reference',
+        label: '1',
+        target: 'shifted-note',
+        start: noteStart,
+        end: noteStart + 1,
+        confidence: 1,
+      },
+    ]
+    base.paper.nodes.push({
+      id: 'shifted-note',
+      type: 'footnote',
+      kind: 'footnote',
+      label: '1',
+      text: 'A source-backed note.',
+      relationships: { backlinks: ['shifted-note-reference'] },
+      source: 'synthetic-line-join-note',
+    })
+    base.noteRelationships = [
+      {
+        id: 'shifted-note-reference',
+        label: '1',
+        referenceRegionId: region.id,
+        referenceStart: noteStart,
+        referenceEnd: noteStart + 1,
+        targetNoteId: 'shifted-note',
+        status: 'matched',
+        canonicalAnchor: {
+          kind: 'node',
+          nodeId: paragraph.id,
+          start: noteStart,
+          end: noteStart + 1,
+        },
+        confidence: 1,
+        threshold: 0.72,
+        evidence: ['synthetic-line-join-note'],
+        candidates: [],
+        sourceBoxes: [],
+      },
+    ]
+    base.citationRelationships = [
+      {
+        id: 'shifted-citation',
+        label: '[1]',
+        labels: ['1'],
+        referenceRegionId: region.id,
+        referenceStart: citationStart,
+        referenceEnd: citationStart + 1,
+        taxonomy: 'bracketed-bibliography-citation',
+        targetNodeIds: [],
+        status: 'unresolved',
+        canonicalAnchor: {
+          nodeId: paragraph.id,
+          start: citationStart,
+          end: citationStart + 1,
+        },
+        confidence: 1,
+        evidence: ['synthetic-line-join-citation'],
+        sourceBoxes: [],
+      },
+    ]
+
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      lineJoinDecision(base, 'remove-wrap-hyphen'),
+    )
+    const result = applyHumanDecisionFile(base, file)
+    const shiftedParagraph = result.paper.nodes.find(
+      (node) => node.id === paragraph.id,
+    )
+
+    expect(result.noteRelationships[0]).toMatchObject({
+      referenceStart: noteStart - 1,
+      referenceEnd: noteStart,
+      canonicalAnchor: {
+        kind: 'node',
+        nodeId: paragraph.id,
+        start: noteStart - 1,
+        end: noteStart,
+      },
+    })
+    expect(result.citationRelationships[0]).toMatchObject({
+      referenceStart: citationStart - 1,
+      referenceEnd: citationStart,
+      canonicalAnchor: {
+        nodeId: paragraph.id,
+        start: citationStart - 1,
+        end: citationStart,
+      },
+    })
+    expect(shiftedParagraph).toMatchObject({
+      noteReferences: [
+        expect.objectContaining({
+          id: 'shifted-note-reference',
+          start: noteStart - 1,
+          end: noteStart,
+        }),
+      ],
+    })
+    expect(
+      internalReferenceIntegrityIssues(result.paper, result.noteRelationships),
+    ).toEqual([])
   })
 
   it('fails closed when a saved line-transition identity drifts', async () => {
@@ -498,6 +1338,39 @@ describe('human adjudication decision records', () => {
     expect(result.readiness).toEqual(base.readiness)
     expect(result.visualRelationships).toEqual(base.visualRelationships)
     expect(result.assets).toEqual(base.assets)
+  })
+
+  it('replaces completeness-derived diagnostics instead of accumulating them on reassessment', async () => {
+    const base = await unresolvedLineJoinReconstruction()
+    for (const code of COMPLETENESS_DERIVED_DIAGNOSTIC_CODES) {
+      base.diagnostics.push({
+        code,
+        severity: 'error',
+        message: `seeded-derived-diagnostic:${code}`,
+      })
+    }
+    const file = createHumanDecisionFile(base.source.sha256)
+
+    const first = applyHumanDecisionFile(base, file)
+    const second = applyHumanDecisionFile(first, file)
+    const derivedCounts = (diagnostics: ReconstructionDiagnostic[]) =>
+      Object.fromEntries(
+        COMPLETENESS_DERIVED_DIAGNOSTIC_CODES.map((code) => [
+          code,
+          diagnostics.filter((diagnostic) => diagnostic.code === code).length,
+        ]),
+      )
+
+    for (const result of [first, second]) {
+      expect(
+        result.diagnostics.filter((diagnostic) =>
+          diagnostic.message.startsWith('seeded-derived-diagnostic:'),
+        ),
+      ).toEqual([])
+    }
+    expect(derivedCounts(second.diagnostics)).toEqual(
+      derivedCounts(first.diagnostics),
+    )
   })
 
   it('replays an exact reading-order choice before the completeness gate', async () => {

@@ -597,10 +597,7 @@ export function joinPdfLineTexts(
 
 function restoreCollapsedSentenceBoundarySpacing(text: string) {
   return text
-    .replace(
-      /(^|[\s([{])(\p{Lu})\.(?=\p{Lu}\p{Ll}+(?:\s|$))/gu,
-      '$1$2. ',
-    )
+    .replace(/(^|[\s([{])(\p{Lu})\.(?=\p{Lu}\p{Ll}+(?:\s|$))/gu, '$1$2. ')
     .replace(
       /([\p{L}\p{N})\]])\.(?=(?:A|An|The|This|That|These|Those|I|We|You|He|She|It|They|Our|Their|Previous|Prior|Recent|Existing|Other|Another|However|Therefore|Thus|Moreover|Furthermore|Consequently|Meanwhile|In|On|At|For|From|By|As|Although|While|When|After|Before|Experiments|Results|Specifically|Finally)\s)/gu,
       '$1. ',
@@ -623,11 +620,16 @@ export function mergePdfRunText(runs: PdfSourceRun[]) {
       previous.fontSize <= run.fontSize * 0.85 &&
       previous.y + previous.height / 2 <
         run.y + run.height / 2 - Math.max(0.0005, run.height * 0.04)
+    const sourceWhitespaceMatchesPredecessor =
+      run.sourceWhitespaceBefore === 'pdf-text-item' &&
+      previous?.sourceSequenceIndex === run.sourceWhitespacePredecessorIndex
     const needsSpace =
       text.length > 0 &&
       !/^[,.;:!?%)}\]]/.test(word) &&
       !/[({[]$/.test(text) &&
-      (raisedLeadingMarker || gap > Math.max(0.0015, run.height * 0.08))
+      (sourceWhitespaceMatchesPredecessor ||
+        raisedLeadingMarker ||
+        gap > Math.max(0.0015, run.height * 0.08))
     text += `${needsSpace ? ' ' : ''}${word}`
     previous = run
   }

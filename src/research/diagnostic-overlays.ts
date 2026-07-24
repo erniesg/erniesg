@@ -67,6 +67,7 @@ function categoryFor(
   if (
     code === 'AMBIGUOUS_READING_ORDER' ||
     code === 'RESOLVED_READING_ORDER' ||
+    code === 'SOURCE_ORDER_FLOAT_FALLBACK' ||
     code === 'READING_ORDER_CYCLE' ||
     code === 'LOW_CONFIDENCE_BLOCK' ||
     code === 'REPEATED_MARGIN_TEXT'

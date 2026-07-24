@@ -23,6 +23,7 @@
     "pdf:corpus-audit": "node tools/pdf-corpus-audit.mjs",
     "pdf:export": "node tools/pdf-export.mjs",
     "pdf:benchmark:compare": "node tools/pdf-benchmark-compare.mjs",
+    "pdf:private-decisions:compose": "node tools/pdf-private-decision-compose.mjs",
     "pdf:private-fidelity": "node tools/pdf-private-fidelity.mjs",
     "pdf:eval": "node tools/pdf-fidelity-eval.mjs score",
     "pdf:eval:compare": "node tools/pdf-fidelity-eval.mjs compare",

@@ -6,6 +6,8 @@ const SAFE_DIAGNOSTIC_MESSAGES = Object.freeze({
   LOW_CONFIDENCE_BLOCK: 'A reconstructed block requires reading-order review.',
   RESOLVED_READING_ORDER:
     'A reading-order region was resolved from deterministic geometry.',
+  SOURCE_ORDER_FLOAT_FALLBACK:
+    'An optional float move was skipped to preserve source-proved order.',
   AMBIGUOUS_READING_ORDER:
     'The document contains an ambiguous reading-order region.',
   CANONICAL_FLOW_ORDER_VIOLATION:

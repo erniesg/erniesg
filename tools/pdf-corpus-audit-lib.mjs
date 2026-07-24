@@ -193,6 +193,21 @@ function preformattedSourceSha256(relationship) {
   })
 }
 
+function equationTranscriptSourceSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    typeof relationship.sourceText === 'string' &&
+    relationship.sourceText.length > 0
+    ? opaqueStructuralId('equation-transcript-text', relationship.sourceText)
+    : null
+}
+
+function equationTranscriptAdjudicationSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    relationship.equationTranscriptAdjudication
+    ? canonicalJsonHash(relationship.equationTranscriptAdjudication)
+    : null
+}
+
 function normalizedVisualRelationships(relationships, assets) {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
   return relationships.map((relationship) => ({
@@ -210,6 +225,17 @@ function normalizedVisualRelationships(relationships, assets) {
     sourceBoxes: relationship.sourceBoxes ?? [],
     altTextSource: relationship.altTextSource ?? null,
     preformattedSourceSha256: preformattedSourceSha256(relationship),
+    ...(relationship.kind === 'equation' &&
+    ((typeof relationship.sourceText === 'string' &&
+      relationship.sourceText.length > 0) ||
+      relationship.equationTranscriptAdjudication)
+      ? {
+          equationTranscriptSourceSha256:
+            equationTranscriptSourceSha256(relationship),
+          equationTranscriptAdjudicationSha256:
+            equationTranscriptAdjudicationSha256(relationship),
+        }
+      : {}),
     selectedCandidateSha256: selectedVisualCandidateSha256(relationship),
     selectedCropSha256: selectedVisualCropSha256(relationship, assetsById),
   }))
@@ -594,7 +620,12 @@ export async function createPdfPipeline() {
         .ssrLoadModule('/src/research/decision-record.ts')
         .then((decisions) => ({
           applyHumanDecisionFile: decisions.applyHumanDecisionFile,
+          createEquationTranscriptDecision:
+            decisions.createEquationTranscriptDecision,
+          humanDecisionFileSha256: decisions.humanDecisionFileSha256,
           parseHumanDecisionFile: decisions.parseHumanDecisionFile,
+          serializeHumanDecisionFile: decisions.serializeHumanDecisionFile,
+          upsertHumanDecision: decisions.upsertHumanDecision,
           maximumBytes: decisions.MAX_HUMAN_DECISION_FILE_BYTES,
         }))
       return decisionModules

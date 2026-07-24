@@ -147,14 +147,20 @@ describe('raw PDF source-backed table citation regression', () => {
     ).toEqual([])
     expect(reconstruction.completeness).toMatchObject({
       inlineSpanCoverage: 1,
-      unresolvedObjects: { citations: 0, tables: 1 },
+      expectedSemanticTableCount: 1,
+      resolvedSemanticTableCount: 0,
+      semanticTableCoverage: 0,
+      unresolvedObjects: { citations: 0, tables: 0 },
     })
     expect(reconstruction.readiness).toMatchObject({
       ready: false,
       blockingDiagnosticCodes: expect.arrayContaining([
-        'UNRESOLVED_SEMANTIC_OBJECTS',
+        'UNRESOLVED_FRONT_MATTER',
       ]),
     })
+    expect(reconstruction.readiness.blockingDiagnosticCodes).not.toContain(
+      'UNRESOLVED_SEMANTIC_OBJECTS',
+    )
   })
 
   it('blocks publication export while preserving the complete source crop in the readable fallback', async () => {

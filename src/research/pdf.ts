@@ -141,6 +141,15 @@ export function isFlowAlignedPdfTextTransform(transform: readonly number[]) {
   return Math.abs(transform[0] ?? 0) >= Math.abs(transform[1] ?? 0)
 }
 
+export function pdfTextItemWhitespaceEvidence(text: string) {
+  const hasVisibleText = text.trim().length > 0
+  return {
+    whitespaceOnly: !hasVisibleText && /\s/u.test(text),
+    leadingWhitespace: hasVisibleText && /^\s/u.test(text),
+    trailingWhitespace: hasVisibleText && /\s$/u.test(text),
+  }
+}
+
 export function isPdfLocalPathArtifact(
   text: string,
   fontHeight: number,
@@ -914,13 +923,24 @@ export async function reconstructPdf(
         })
         throwIfAborted(options.signal)
         const runs: PdfSourceRun[] = []
+        let pendingPdfTextItemWhitespace = false
+        let previousVisibleSourceSequenceIndex: number | null = null
 
         for (const item of textContent.items) {
           if (!('str' in item)) continue
           const font = fontMetadata.get(item.fontName)
           const sourceFontName = font?.name ?? item.fontName
           const sourceText = normalizePdfFontText(item.str, sourceFontName)
-          if (!sourceText.trim()) continue
+          const whitespaceEvidence = pdfTextItemWhitespaceEvidence(sourceText)
+          if (!sourceText.trim()) {
+            pendingPdfTextItemWhitespace ||= whitespaceEvidence.whitespaceOnly
+            continue
+          }
+          const sourceWhitespaceBefore =
+            previousVisibleSourceSequenceIndex !== null &&
+            (pendingPdfTextItemWhitespace ||
+              whitespaceEvidence.leadingWhitespace)
+          pendingPdfTextItemWhitespace = false
           const transform = pdfjs.Util.transform(
             viewport.transform,
             item.transform,
@@ -945,7 +965,8 @@ export async function reconstructPdf(
           const x = finite(transform[4])
           const y = finite(transform[5] - fontHeight)
           const width = Math.max(Math.abs(item.width * viewport.scale), 0.5)
-          runs.push({
+          const sourceSequenceIndex = runs.length
+          const sourceRunBase = {
             page: pageNumber,
             text: sourceText,
             x: clamp(x / viewport.width),
@@ -953,15 +974,27 @@ export async function reconstructPdf(
             width: clamp(width / viewport.width),
             height: clamp(fontHeight / viewport.height),
             rotation: viewport.rotation,
-            method: 'pdf-text',
+            method: 'pdf-text' as const,
             fontName: sourceFontName,
             fontSize: fontHeight,
+            sourceSequenceIndex,
             ...(typeof font?.bold === 'boolean' ? { bold: font.bold } : {}),
             ...(typeof font?.italic === 'boolean'
               ? { italic: font.italic }
               : {}),
             confidence: 1,
-          })
+          }
+          const sourceRun: PdfSourceRun = sourceWhitespaceBefore
+            ? {
+                ...sourceRunBase,
+                sourceWhitespaceBefore: 'pdf-text-item',
+                sourceWhitespacePredecessorIndex:
+                  previousVisibleSourceSequenceIndex!,
+              }
+            : sourceRunBase
+          runs.push(sourceRun)
+          previousVisibleSourceSequenceIndex = sourceSequenceIndex
+          pendingPdfTextItemWhitespace = whitespaceEvidence.trailingWhitespace
         }
 
         const textCharacters = runs.reduce(

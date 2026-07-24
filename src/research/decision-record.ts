@@ -4,17 +4,30 @@ import type {
   PdfReconstruction,
   ReconstructionDiagnostic,
 } from './import-types'
+import {
+  equationTranscriptDecisionBinding,
+  OWNER_EQUATION_TRANSCRIPT_EVIDENCE,
+} from './equation-transcript-adjudication'
 import { assessPdfCompleteness } from './pdf-quality'
 import {
   buildPdfLineJoinReviewContext,
   replayPdfRegionLineText,
 } from './pdf-lines'
+import { sha256HexSync } from './sha256-sync'
 
-export const HUMAN_DECISION_SCHEMA_VERSION = '1.1.0' as const
+export {
+  equationTranscriptDecisionBinding,
+  type EquationTranscriptDecisionBinding,
+} from './equation-transcript-adjudication'
+
+export const HUMAN_DECISION_SCHEMA_VERSION = '1.2.0' as const
 const LEGACY_HUMAN_DECISION_SCHEMA_VERSION = '1.0.0' as const
+const LINE_JOIN_HUMAN_DECISION_SCHEMA_VERSION = '1.1.0' as const
 export const MAX_HUMAN_DECISION_FILE_BYTES = 1024 * 1024
+export const MAX_EQUATION_TRANSCRIPT_LENGTH = 8192
 const MAX_HUMAN_DECISIONS = 1000
 const MAX_TARGET_REGION_IDS = 10_000
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const stableIdSchema = z
   .string()
   .min(1)
@@ -33,6 +46,7 @@ const diagnosticCodeSchema = z.enum([
   'UNRESOLVED_NOTE_REFERENCE',
   'UNREFERENCED_NOTE',
   'UNRESOLVED_CORRUPTING_JOIN',
+  'UNRESOLVED_EQUATION_TRANSCRIPT',
   'NO_RECONSTRUCTABLE_TEXT',
   'INCOMPLETE_TEXT_COVERAGE',
   'INCOMPLETE_ASSET_COVERAGE',
@@ -94,6 +108,31 @@ const resolutionSchema = z.discriminatedUnion('type', [
       ]),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('accept-equation-transcript'),
+      relationshipId: stableIdSchema,
+      relationshipFingerprintSha256: sha256Schema,
+      sourceCropAssetId: stableIdSchema,
+      sourceCropAssetSha256: sha256Schema,
+      format: z.literal('latex'),
+      transcript: z
+        .string()
+        .min(1)
+        .max(MAX_EQUATION_TRANSCRIPT_LENGTH)
+        .refine((value) => value.trim().length > 0, {
+          message: 'Equation transcripts must contain non-whitespace text.',
+        })
+        .refine((value) => !value.includes('\u0000'), {
+          message: 'Equation transcripts may not contain NUL characters.',
+        }),
+      confidence: z.literal(1),
+      evidence: z.tuple([
+        z.literal('exact-source-page-crop'),
+        z.literal('owner-local-adjudication'),
+      ]),
+    })
+    .strict(),
   z.object({ type: z.literal('dismiss') }).strict(),
 ])
 
@@ -127,12 +166,39 @@ export const humanAdjudicationRecordSchema = z
             'Line-join targets must exactly match the transition and region identity.',
         })
       }
+    } else if (decision.resolution.type === 'accept-equation-transcript') {
+      if (decision.diagnosticCode !== 'UNRESOLVED_EQUATION_TRANSCRIPT') {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['diagnosticCode'],
+          message:
+            'Equation transcript resolutions apply only to unresolved equation transcripts.',
+        })
+      }
+      if (
+        decision.target.markerId !== decision.resolution.relationshipId ||
+        decision.target.regionIds.length === 0
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['target'],
+          message:
+            'Equation transcript targets must identify the exact visual relationship and its source regions.',
+        })
+      }
     } else if (decision.diagnosticCode === 'UNRESOLVED_CORRUPTING_JOIN') {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['resolution'],
         message:
           'Unresolved line joins require an explicit line-join resolution.',
+      })
+    } else if (decision.diagnosticCode === 'UNRESOLVED_EQUATION_TRANSCRIPT') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['resolution'],
+        message:
+          'Unresolved equation transcripts require an explicit equation-transcript resolution.',
       })
     }
   })
@@ -141,6 +207,7 @@ export const humanDecisionFileSchema = z
   .object({
     schemaVersion: z.union([
       z.literal(LEGACY_HUMAN_DECISION_SCHEMA_VERSION),
+      z.literal(LINE_JOIN_HUMAN_DECISION_SCHEMA_VERSION),
       z.literal(HUMAN_DECISION_SCHEMA_VERSION),
     ]),
     documentSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -170,21 +237,50 @@ export const humanDecisionFileSchema = z
           message: 'Line-join resolutions require decision schema v1.1.0.',
         })
       }
+      if (
+        file.schemaVersion !== HUMAN_DECISION_SCHEMA_VERSION &&
+        decision.resolution.type === 'accept-equation-transcript'
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['decisions', index, 'resolution'],
+          message:
+            'Equation transcript resolutions require decision schema v1.2.0.',
+        })
+      }
     }
   })
 
 export type HumanDecisionFile = z.infer<typeof humanDecisionFileSchema>
+export type EquationTranscriptDecision = Omit<
+  HumanAdjudicationRecord,
+  'diagnosticCode' | 'resolution'
+> & {
+  diagnosticCode: 'UNRESOLVED_EQUATION_TRANSCRIPT'
+  resolution: Extract<
+    HumanAdjudicationRecord['resolution'],
+    { type: 'accept-equation-transcript' }
+  >
+}
 
 const QUALITY_DIAGNOSTIC_CODES = new Set<ReconstructionDiagnostic['code']>([
-  'DUPLICATE_CANONICAL_SPAN',
-  'MISSING_SOURCE_REGION',
-  'UNPROVENANCED_RENDERED_UNIT',
-  'INCOMPLETE_INLINE_STYLE_COVERAGE',
-  'INVALID_LINE_BOUNDARY_LEDGER',
-  'UNRESOLVED_CORRUPTING_JOIN',
+  'OCR_REQUIRED',
+  'UNRESOLVED_EQUATION_TRANSCRIPT',
+  'UNRESOLVED_ALGORITHM_TRANSCRIPT',
+  'UNRESOLVED_PREFORMATTED_TRANSCRIPT',
   'EPUB_TEXT_SANITIZATION_LOSS',
   'DANGLING_EPUB_INTERNAL_REFERENCE',
   'INCOMPLETE_TEXT_COVERAGE',
+  'DUPLICATE_CANONICAL_SPAN',
+  'DUPLICATE_CANONICAL_ROLE',
+  'CANONICAL_FLOW_ORDER_VIOLATION',
+  'CANONICAL_VISUAL_ORDER_VIOLATION',
+  'MISSING_SOURCE_REGION',
+  'UNPROVENANCED_RENDERED_UNIT',
+  'INCOMPLETE_INLINE_STYLE_COVERAGE',
+  'UNRESOLVED_HYPERLINK',
+  'INVALID_LINE_BOUNDARY_LEDGER',
+  'UNRESOLVED_CORRUPTING_JOIN',
   'INCOMPLETE_ASSET_COVERAGE',
   'INCOMPLETE_RELATIONSHIP_COVERAGE',
   'UNRESOLVED_SEMANTIC_OBJECTS',
@@ -211,6 +307,12 @@ function normalizedRecord(
       return {
         ...decision.resolution,
         transition: { ...decision.resolution.transition },
+        evidence: [...decision.resolution.evidence],
+      }
+    }
+    if (decision.resolution.type === 'accept-equation-transcript') {
+      return {
+        ...decision.resolution,
         evidence: [...decision.resolution.evidence],
       }
     }
@@ -277,7 +379,8 @@ export function upsertHumanDecision(
   return humanDecisionFileSchema.parse({
     ...file,
     schemaVersion:
-      normalized.resolution.type === 'resolve-line-join'
+      normalized.resolution.type === 'resolve-line-join' ||
+      normalized.resolution.type === 'accept-equation-transcript'
         ? HUMAN_DECISION_SCHEMA_VERSION
         : file.schemaVersion,
     decisions: [
@@ -293,6 +396,63 @@ export function upsertHumanDecision(
 
 export function serializeHumanDecisionFile(file: HumanDecisionFile) {
   return `${JSON.stringify(humanDecisionFileSchema.parse(file), null, 2)}\n`
+}
+
+export function humanDecisionFileSha256(file: HumanDecisionFile) {
+  return sha256HexSync(serializeHumanDecisionFile(file))
+}
+
+export function createEquationTranscriptDecision(
+  reconstruction: PdfReconstruction,
+  relationshipId: string,
+  transcript: string,
+): EquationTranscriptDecision {
+  const relationshipMatches = reconstruction.visualRelationships.filter(
+    (candidate) => candidate.id === relationshipId,
+  )
+  if (relationshipMatches.length !== 1) {
+    throw new Error(
+      'Equation transcript decision requires one exact visual relationship.',
+    )
+  }
+  const relationship = relationshipMatches[0]
+  const diagnosticMatches = reconstruction.diagnostics.filter(
+    (diagnostic) =>
+      diagnostic.code === 'UNRESOLVED_EQUATION_TRANSCRIPT' &&
+      diagnostic.relationshipId === relationship.id &&
+      diagnostic.target?.markerId === relationship.id &&
+      sameValues(
+        normalizedTarget(diagnostic.target).regionIds,
+        normalizedTarget({
+          markerId: relationship.id,
+          regionIds: relationship.sourceRegionIds,
+        }).regionIds,
+      ),
+  )
+  const binding = equationTranscriptDecisionBinding(
+    reconstruction,
+    relationship.id,
+  )
+  if (diagnosticMatches.length !== 1 || !binding) {
+    throw new Error(
+      'Equation transcript decision is not legal for the current reconstruction.',
+    )
+  }
+  return humanAdjudicationRecordSchema.parse({
+    diagnosticCode: 'UNRESOLVED_EQUATION_TRANSCRIPT',
+    target: {
+      markerId: relationship.id,
+      regionIds: relationship.sourceRegionIds,
+    },
+    resolution: {
+      type: 'accept-equation-transcript',
+      ...binding,
+      format: 'latex',
+      transcript,
+      confidence: 1,
+      evidence: ['exact-source-page-crop', 'owner-local-adjudication'],
+    },
+  }) as EquationTranscriptDecision
 }
 
 export function readingOrderCandidates(
@@ -776,14 +936,21 @@ function removeLineJoinHyphen(
   updateNodeRanges(canonicalMatch.node, canonicalMatch.index)
 
   for (const relationship of reconstruction.noteRelationships) {
-    if (relationship.referenceRegionId !== regionId) continue
-    const range = shiftedRange(
-      relationship.referenceStart,
-      relationship.referenceEnd,
-      sourceHyphenIndex,
-    )
-    relationship.referenceStart = range.start
-    relationship.referenceEnd = range.end
+    if (relationship.referenceRegionId === regionId) {
+      const range = shiftedRange(
+        relationship.referenceStart,
+        relationship.referenceEnd,
+        sourceHyphenIndex,
+      )
+      relationship.referenceStart = range.start
+      relationship.referenceEnd = range.end
+    }
+    const anchor = relationship.canonicalAnchor
+    if (anchor?.kind === 'node' && anchor.nodeId === canonicalMatch.node.id) {
+      const range = shiftedRange(anchor.start, anchor.end, canonicalMatch.index)
+      anchor.start = range.start
+      anchor.end = range.end
+    }
   }
   for (const relationship of reconstruction.citationRelationships) {
     if (relationship.referenceRegionId === regionId) {
@@ -896,6 +1063,72 @@ function updateLineJoin(
   return true
 }
 
+function updateEquationTranscript(
+  reconstruction: PdfReconstruction,
+  diagnostic: ReconstructionDiagnostic,
+  decision: HumanAdjudicationRecord,
+) {
+  if (
+    diagnostic.code !== 'UNRESOLVED_EQUATION_TRANSCRIPT' ||
+    decision.diagnosticCode !== 'UNRESOLVED_EQUATION_TRANSCRIPT' ||
+    decision.resolution.type !== 'accept-equation-transcript'
+  ) {
+    return false
+  }
+  const resolution = decision.resolution
+  const relationship = reconstruction.visualRelationships.find(
+    (candidate) => candidate.id === resolution.relationshipId,
+  )
+  if (
+    !relationship ||
+    diagnostic.relationshipId !== relationship.id ||
+    diagnostic.target?.markerId !== relationship.id ||
+    !sameTarget(decision.target, {
+      markerId: relationship.id,
+      regionIds: relationship.sourceRegionIds,
+    })
+  ) {
+    return false
+  }
+  const binding = equationTranscriptDecisionBinding(
+    reconstruction,
+    relationship.id,
+  )
+  if (
+    !binding ||
+    binding.relationshipFingerprintSha256 !==
+      resolution.relationshipFingerprintSha256 ||
+    binding.sourceCropAssetId !== resolution.sourceCropAssetId ||
+    binding.sourceCropAssetSha256 !== resolution.sourceCropAssetSha256
+  ) {
+    return false
+  }
+  const canonicalNodes = reconstruction.paper.nodes.filter(
+    (node) => node.id === relationship.canonicalNodeId,
+  )
+  if (canonicalNodes.length !== 1 || canonicalNodes[0].type !== 'figure') {
+    return false
+  }
+  const canonicalNode = canonicalNodes[0]
+  const transcriptSha256 = sha256HexSync(resolution.transcript)
+  relationship.sourceText = resolution.transcript
+  relationship.evidence = [
+    ...relationship.evidence,
+    ...OWNER_EQUATION_TRANSCRIPT_EVIDENCE,
+  ].filter((evidence, index, values) => values.indexOf(evidence) === index)
+  relationship.equationTranscriptAdjudication = {
+    schemaVersion: '1.0.0',
+    format: resolution.format,
+    source: 'owner-local-adjudication',
+    transcriptSha256,
+    relationshipFingerprintSha256: resolution.relationshipFingerprintSha256,
+    sourceCropAssetId: resolution.sourceCropAssetId,
+    sourceCropAssetSha256: resolution.sourceCropAssetSha256,
+  }
+  canonicalNode.sourceText = resolution.transcript
+  return true
+}
+
 function legalDismissal(diagnostic: ReconstructionDiagnostic) {
   return diagnostic.severity !== 'error'
 }
@@ -906,6 +1139,7 @@ export function applyHumanDecisionFile(
 ) {
   const file = humanDecisionFileSchema.parse(input)
   const result = structuredClone(reconstruction)
+  const decisionDiagnostics = [...result.diagnostics]
   result.diagnostics = result.diagnostics.filter(
     (diagnostic) =>
       !QUALITY_DIAGNOSTIC_CODES.has(diagnostic.code) &&
@@ -923,6 +1157,28 @@ export function applyHumanDecisionFile(
     if (decision.resolution.type === 'resolve-line-join') {
       if (!updateLineJoin(result, decision)) {
         stale.push({ ...decision, reason: 'resolution-no-longer-legal' })
+        continue
+      }
+      applied.push(decision)
+      continue
+    }
+    if (decision.resolution.type === 'accept-equation-transcript') {
+      const diagnostic = decisionDiagnostics.find(
+        (candidate) =>
+          candidate.code === decision.diagnosticCode &&
+          candidate.target &&
+          sameTarget(candidate.target, decision.target),
+      )
+      if (
+        !diagnostic ||
+        !updateEquationTranscript(result, diagnostic, decision)
+      ) {
+        stale.push({
+          ...decision,
+          reason: diagnostic
+            ? 'resolution-no-longer-legal'
+            : 'diagnostic-target-missing',
+        })
         continue
       }
       applied.push(decision)

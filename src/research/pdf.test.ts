@@ -8,6 +8,7 @@ import {
   extractPdfLinkAnnotations,
   isFlowAlignedPdfTextTransform,
   isPdfLocalPathArtifact,
+  pdfTextItemWhitespaceEvidence,
   reconstructPdf,
   resolvePdfTextFontHeight,
 } from './pdf'
@@ -336,6 +337,29 @@ describe('PDF.js browser ingestion', () => {
   it('keeps vertical marginal text out of canonical reading-order lines', () => {
     expect(isFlowAlignedPdfTextTransform([10, 0, 0, -10, 0, 0])).toBe(true)
     expect(isFlowAlignedPdfTextTransform([0, 20, -20, 0, 32, 232])).toBe(false)
+  })
+
+  it('records PDF text-item whitespace as privacy-safe boundary evidence', () => {
+    expect(pdfTextItemWhitespaceEvidence(' \t')).toEqual({
+      whitespaceOnly: true,
+      leadingWhitespace: false,
+      trailingWhitespace: false,
+    })
+    expect(pdfTextItemWhitespaceEvidence(' token ')).toEqual({
+      whitespaceOnly: false,
+      leadingWhitespace: true,
+      trailingWhitespace: true,
+    })
+    expect(pdfTextItemWhitespaceEvidence('token')).toEqual({
+      whitespaceOnly: false,
+      leadingWhitespace: false,
+      trailingWhitespace: false,
+    })
+    expect(pdfTextItemWhitespaceEvidence('')).toEqual({
+      whitespaceOnly: false,
+      leadingWhitespace: false,
+      trailingWhitespace: false,
+    })
   })
 
   it('keeps split local filesystem overlays out of canonical prose', () => {

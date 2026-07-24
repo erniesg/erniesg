@@ -50,6 +50,20 @@ describe('local PDF corpus audit', () => {
     expect(
       schema.$defs.citationRelationship.properties.taxonomy.enum,
     ).toContain('author-year-bibliography-citation')
+    expect(completeness.dependentRequired).toMatchObject({
+      expectedSemanticTableCount: [
+        'resolvedSemanticTableCount',
+        'semanticTableCoverage',
+      ],
+      resolvedSemanticTableCount: [
+        'expectedSemanticTableCount',
+        'semanticTableCoverage',
+      ],
+      semanticTableCoverage: [
+        'expectedSemanticTableCount',
+        'resolvedSemanticTableCount',
+      ],
+    })
   })
 
   it('validates the required structural line-boundary count in report and receipt schemas', async () => {
@@ -846,6 +860,20 @@ describe('local PDF corpus audit', () => {
         }),
       ),
     ).not.toContain(privateMarker)
+    expect(
+      safeAuditDiagnostic({
+        code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+        severity: 'info',
+        page: 4,
+        message: privateMarker,
+      }),
+    ).toEqual({
+      code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+      severity: 'info',
+      page: 4,
+      message:
+        'An optional float move was skipped to preserve source-proved order.',
+    })
   })
 
   it('counts every diagnostic while emitting only bounded deterministic samples', () => {

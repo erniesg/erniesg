@@ -381,4 +381,79 @@ describe('PDF scholarly cross references', () => {
       expect.objectContaining({ width: 0.42 }),
     ])
   })
+
+  it('falls back from an explicit figure-panel suffix to one exact parent figure', () => {
+    const [relationship] = resolvePdfScholarlyCrossReferences({
+      regions: [region('Figure 12b isolates the second panel.')],
+      canonicalTargets: [target('figure', 'Figure 12', 'figure-12')],
+    })
+
+    expect(relationship).toMatchObject({
+      text: 'Figure 12b',
+      labels: ['Figure 12b'],
+      status: 'matched',
+      targetNodeIds: ['figure-12'],
+      targets: [
+        expect.objectContaining({
+          label: 'Figure 12b',
+          status: 'matched',
+          targetNodeId: 'figure-12',
+          evidence: expect.arrayContaining([
+            'explicit-panel-suffix',
+            'canonical-parent-figure-fallback',
+            'canonical-parent-label-unique',
+          ]),
+        }),
+      ],
+    })
+  })
+
+  it('prefers an exact subfigure target over its parent figure', () => {
+    const [relationship] = resolvePdfScholarlyCrossReferences({
+      regions: [region('Figure 12c isolates the third panel.')],
+      canonicalTargets: [
+        target('figure', 'Figure 12', 'figure-12'),
+        target('figure', 'Figure 12c', 'figure-12c'),
+      ],
+    })
+
+    expect(relationship).toMatchObject({
+      status: 'matched',
+      targetNodeIds: ['figure-12c'],
+      targets: [
+        expect.objectContaining({
+          candidateNodeIds: ['figure-12c'],
+          targetNodeId: 'figure-12c',
+          evidence: expect.arrayContaining(['canonical-label-unique']),
+        }),
+      ],
+    })
+    expect(relationship.targets[0].evidence).not.toContain(
+      'canonical-parent-figure-fallback',
+    )
+  })
+
+  it('does not infer a panel parent from duplicate parents or non-figure labels', () => {
+    const relationships = resolvePdfScholarlyCrossReferences({
+      regions: [region('Figure 7a differs from Table 7a and Equation 7a.')],
+      canonicalTargets: [
+        target('figure', 'Figure 7', 'figure-7-first'),
+        target('figure', 'Figure 7', 'figure-7-second'),
+        target('table', 'Table 7', 'table-7'),
+        target('equation', 'Equation 7', 'equation-7'),
+      ],
+    })
+
+    expect(
+      relationships.map(({ status, targetNodeIds, targets }) => ({
+        status,
+        targetNodeIds,
+        candidateNodeIds: targets[0].candidateNodeIds,
+      })),
+    ).toEqual([
+      { status: 'unresolved', targetNodeIds: [], candidateNodeIds: [] },
+      { status: 'unresolved', targetNodeIds: [], candidateNodeIds: [] },
+      { status: 'unresolved', targetNodeIds: [], candidateNodeIds: [] },
+    ])
+  })
 })

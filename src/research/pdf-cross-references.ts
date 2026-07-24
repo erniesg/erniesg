@@ -381,6 +381,13 @@ function targetKey(kind: PdfScholarlyCrossReferenceKind, label: string) {
   return `${kind}:${label.toLocaleLowerCase()}`
 }
 
+function parentFigureLabelForPanelSuffix(label: string) {
+  const identifier = label.match(/^Figure\s+(.+)$/u)?.[1]
+  if (!identifier) return null
+  const panel = identifier.match(/^(.+\d)([A-Za-z])$/u)
+  return panel ? `Figure ${panel[1]}` : null
+}
+
 function relationshipId(reference: DetectedReference) {
   const region = reference.referenceRegionId
     .toLocaleLowerCase()
@@ -405,8 +412,23 @@ export function resolvePdfScholarlyCrossReferences({
   }
   return regions.flatMap(detectRegionReferences).map((reference) => {
     const targets = reference.targets.map((target) => {
-      const candidates =
+      const exactCandidates =
         targetsByLabel.get(targetKey(target.kind, target.label)) ?? []
+      const parentFigureLabel =
+        target.kind === 'figure' && exactCandidates.length === 0
+          ? parentFigureLabelForPanelSuffix(target.label)
+          : null
+      const parentFigureCandidates = parentFigureLabel
+        ? (targetsByLabel.get(targetKey('figure', parentFigureLabel)) ?? [])
+        : []
+      const parentFigureNodeIds = [
+        ...new Set(parentFigureCandidates.map((candidate) => candidate.nodeId)),
+      ]
+      const usedParentFigureFallback =
+        exactCandidates.length === 0 && parentFigureNodeIds.length === 1
+      const candidates = usedParentFigureFallback
+        ? parentFigureCandidates
+        : exactCandidates
       const candidateNodeIds = [
         ...new Set(candidates.map((candidate) => candidate.nodeId)),
       ]
@@ -424,8 +446,19 @@ export function resolvePdfScholarlyCrossReferences({
         evidence: [
           'explicit-scholarly-cross-reference-syntax',
           ...new Set(candidates.flatMap((candidate) => candidate.evidence)),
+          ...(usedParentFigureFallback
+            ? [
+                'explicit-panel-suffix',
+                'canonical-parent-figure-fallback',
+                'canonical-parent-label-unique',
+              ]
+            : []),
           ...(status === 'matched'
-            ? ['canonical-label-unique']
+            ? [
+                usedParentFigureFallback
+                  ? 'canonical-panel-parent-unique'
+                  : 'canonical-label-unique',
+              ]
             : status === 'ambiguous'
               ? ['canonical-label-ambiguous']
               : ['canonical-label-missing']),

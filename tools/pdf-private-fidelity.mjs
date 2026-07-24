@@ -304,13 +304,24 @@ function stableArtifactId(value) {
   return /^[A-Za-z_]/.test(cleaned) ? cleaned : `n-${cleaned}`
 }
 
-function externalHref(value) {
-  if (typeof value !== 'string') return false
+function normalizedExternalHref(value) {
+  if (typeof value !== 'string') return null
+  if (/[\u0000-\u0020\u007f\\]/u.test(value)) return null
   try {
-    return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
+    const parsed = new URL(value)
+    if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) return null
+    return parsed.href.replace(
+      /[<>"{}|^`]/gu,
+      (character) =>
+        `%${character.codePointAt(0).toString(16).toUpperCase().padStart(2, '0')}`,
+    )
   } catch {
-    return false
+    return null
   }
+}
+
+function externalHref(value) {
+  return normalizedExternalHref(value) !== null
 }
 
 function normalizedSemanticRanges(ranges) {
@@ -465,6 +476,8 @@ function canonicalInlineSemanticLedger(nodes) {
       if (run.verticalAlign === 'superscript') addRange('superscript')
       if (run.verticalAlign === 'subscript') addRange('subscript')
       if (externalHref(run.href)) {
+        const href = normalizedExternalHref(run.href)
+        if (!href) continue
         addRange('external-link')
         relationships.push(
           semanticRelationship({
@@ -472,8 +485,8 @@ function canonicalInlineSemanticLedger(nodes) {
             start: run.start,
             end: run.end,
             kind: 'external-link',
-            relationshipId: run.href,
-            targetIds: [run.href],
+            relationshipId: href,
+            targetIds: [href],
           }),
         )
       }
@@ -564,7 +577,8 @@ function renderedInlineSemanticLedger(inspection) {
         String(attributeValue(node, 'class') ?? '')
           .split(/\s+/u)
           .includes('preserved-list-marker') ||
-        attributeValue(node, 'aria-hidden') === 'true'
+        attributeValue(node, 'aria-hidden') === 'true' ||
+        attributeValue(node, 'data-semantic-ledger-ignore') === 'true'
       ) {
         return
       }
@@ -692,6 +706,21 @@ function preformattedSourceSha256(relationship) {
   })
 }
 
+function equationTranscriptSourceSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    typeof relationship.sourceText === 'string' &&
+    relationship.sourceText.length > 0
+    ? opaqueTopologyId('equation-transcript-text', relationship.sourceText)
+    : null
+}
+
+function equationTranscriptAdjudicationSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    relationship.equationTranscriptAdjudication
+    ? canonicalJsonHash(relationship.equationTranscriptAdjudication)
+    : null
+}
+
 function normalizedRelationshipParity(
   relationships,
   sourceAssetIdFor,
@@ -712,6 +741,17 @@ function normalizedRelationshipParity(
     sourceBoxes: relationship.sourceBoxes ?? [],
     altTextSource: relationship.altTextSource ?? null,
     preformattedSourceSha256: preformattedSourceSha256(relationship),
+    ...(relationship.kind === 'equation' &&
+    ((typeof relationship.sourceText === 'string' &&
+      relationship.sourceText.length > 0) ||
+      relationship.equationTranscriptAdjudication)
+      ? {
+          equationTranscriptSourceSha256:
+            equationTranscriptSourceSha256(relationship),
+          equationTranscriptAdjudicationSha256:
+            equationTranscriptAdjudicationSha256(relationship),
+        }
+      : {}),
     selectedCandidateSha256: selectedVisualCandidateSha256(relationship),
     selectedCropSha256: selectedVisualCropSha256(
       relationship,
@@ -1688,6 +1728,15 @@ function validReadingOrderEvaluation(value) {
 }
 
 function validCompleteness(value) {
+  if (!isRecord(value)) return false
+  const semanticTableKeys = [
+    'expectedSemanticTableCount',
+    'resolvedSemanticTableCount',
+    'semanticTableCoverage',
+  ]
+  const hasSemanticTableMetrics = semanticTableKeys.some((key) =>
+    Object.hasOwn(value, key),
+  )
   if (
     !hasExactKeys(value, [
       'sourceTextCharacters',
@@ -1713,6 +1762,7 @@ function validCompleteness(value) {
       'expectedRelationshipCount',
       'resolvedRelationshipCount',
       'relationshipCoverage',
+      ...(hasSemanticTableMetrics ? semanticTableKeys : []),
       'unresolvedObjectCount',
       'unresolvedObjects',
       'ocrRequiredPages',
@@ -1738,6 +1788,9 @@ function validCompleteness(value) {
       'exportedAssetCount',
       'expectedRelationshipCount',
       'resolvedRelationshipCount',
+      ...(hasSemanticTableMetrics
+        ? ['expectedSemanticTableCount', 'resolvedSemanticTableCount']
+        : []),
       'unresolvedObjectCount',
       'readingOrderDiagnostics',
     ].some((key) => !isNonNegativeInteger(value[key])) ||
@@ -1747,6 +1800,7 @@ function validCompleteness(value) {
       'hyperlinkCoverage',
       'assetCoverage',
       'relationshipCoverage',
+      ...(hasSemanticTableMetrics ? ['semanticTableCoverage'] : []),
     ].some((key) => !isUnitInterval(value[key])) ||
     value.matchedTextCharacters > value.sourceTextCharacters ||
     value.matchedTextCharacters > value.outputTextCharacters ||
@@ -1777,6 +1831,13 @@ function validCompleteness(value) {
         value.resolvedRelationshipCount,
         value.expectedRelationshipCount,
       ) ||
+    (hasSemanticTableMetrics &&
+      (value.resolvedSemanticTableCount > value.expectedSemanticTableCount ||
+        value.semanticTableCoverage !==
+          exactCoverage(
+            value.resolvedSemanticTableCount,
+            value.expectedSemanticTableCount,
+          ))) ||
     !hasExactKeys(value.unresolvedObjects, [
       'assets',
       'captions',
@@ -2544,6 +2605,14 @@ function noReadingOrderRegression(baseline, candidate) {
 }
 
 function noCompletenessRegression(baseline, candidate) {
+  const baselineHasSemanticTableMetrics = Object.hasOwn(
+    baseline,
+    'semanticTableCoverage',
+  )
+  const candidateHasSemanticTableMetrics = Object.hasOwn(
+    candidate,
+    'semanticTableCoverage',
+  )
   const exactCounts = [
     'sourceTextCharacters',
     'sourceAssetCount',
@@ -2579,6 +2648,13 @@ function noCompletenessRegression(baseline, candidate) {
     exactCounts.every((key) => candidate[key] === baseline[key]) &&
     higherIsBetter.every((key) => candidate[key] >= baseline[key]) &&
     lowerIsBetter.every((key) => candidate[key] <= baseline[key]) &&
+    (!baselineHasSemanticTableMetrics ||
+      (candidateHasSemanticTableMetrics &&
+        candidate.expectedSemanticTableCount ===
+          baseline.expectedSemanticTableCount &&
+        candidate.resolvedSemanticTableCount >=
+          baseline.resolvedSemanticTableCount &&
+        candidate.semanticTableCoverage >= baseline.semanticTableCoverage)) &&
     noCountRegression(
       baseline.unresolvedObjects,
       candidate.unresolvedObjects,

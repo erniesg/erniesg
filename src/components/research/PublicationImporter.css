@@ -97,3 +97,21 @@
 .pdf-diagnostic-selection li span {
   @apply text-muted-foreground;
 }
+.equation-transcript-adjudication {
+  @apply mt-4 grid gap-3 border-t border-foreground/20 pt-4;
+}
+.equation-transcript-adjudication label {
+  @apply font-mono text-[10px] uppercase tracking-wide text-muted-foreground;
+}
+.equation-transcript-adjudication textarea {
+  @apply min-h-28 w-full resize-y rounded border border-foreground/30 bg-background p-3 font-mono text-xs leading-relaxed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground;
+}
+.equation-transcript-adjudication small {
+  @apply break-words font-mono text-[9px] text-muted-foreground;
+}
+.equation-transcript-adjudication button {
+  @apply justify-self-start rounded-md border border-foreground/30 px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50;
+}
+.publication-decision-file small code {
+  @apply break-all font-mono text-[9px] text-foreground;
+}

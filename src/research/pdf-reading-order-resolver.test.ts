@@ -103,6 +103,12 @@ describe('evidence-scored scholarly reading-order resolution', () => {
     expect(
       result.readingOrder.edges.filter((edge) => edge.status === 'candidate'),
     ).toHaveLength(2)
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) =>
+          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
+      ),
+    ).toEqual([])
     expect(result.readiness).toMatchObject({
       ready: false,
       status: 'review-required',

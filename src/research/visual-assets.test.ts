@@ -71,10 +71,76 @@ describe('PDF visual asset primitives', () => {
       height: 1,
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
+    expect(first.sha256).toBe(
+      '5aef7d594dd6d4427308fac6871cafa2a911676ebd75e13f614edb86a397e01e',
+    )
     expect([...first.bytes.subarray(0, 8)]).toEqual([
       137, 80, 78, 71, 13, 10, 26, 10,
     ])
     expect(first.href).toBe(`assets/${first.id}.png`)
+  })
+
+  it.each([
+    {
+      colorSpace: 'rgba' as const,
+      width: 2,
+      height: 1,
+      pixels: new Uint8Array([255, 0, 0, 255, 0, 128, 255, 64]),
+      sha256:
+        '234feb93e6531bf5464f80ba77142b349766313308e70d2d569fec04f88e8496',
+    },
+    {
+      colorSpace: 'grayscale-1bpp' as const,
+      width: 8,
+      height: 1,
+      pixels: new Uint8Array([0b10100101]),
+      sha256:
+        '88f6eb641eb07d33bcb7843effa1bf50755ad1c1d0f0cefabce8603f076e279f',
+    },
+  ])(
+    'pins the deterministic $colorSpace PNG byte stream',
+    async ({ colorSpace, width, height, pixels, sha256 }) => {
+      const encoded = await createPngAsset({
+        sourceObjectId: `image-${colorSpace}`,
+        sourceBox,
+        width,
+        height,
+        colorSpace,
+        pixels,
+      })
+
+      expect(encoded.sha256).toBe(sha256)
+    },
+  )
+
+  it('preserves offset multi-row RGBA input without byte drift or mutation', async () => {
+    const content = [
+      255, 0, 0, 255, 0, 255, 0, 192, 0, 0, 255, 128, 255, 255, 255, 64,
+      0, 0, 0, 255, 127, 63, 191, 0,
+    ]
+    const backing = new Uint8Array([9, 8, 7, ...content, 6, 5])
+    const pixels = backing.subarray(3, 3 + content.length)
+    const before = backing.slice()
+    const input = {
+      sourceObjectId: 'image-offset-rgba',
+      sourceBox,
+      width: 3,
+      height: 2,
+      colorSpace: 'rgba' as const,
+    }
+
+    const fromOffset = await createPngAsset({ ...input, pixels })
+    const fromContiguous = await createPngAsset({
+      ...input,
+      pixels: pixels.slice(),
+    })
+
+    expect(pixels.byteOffset).toBeGreaterThan(0)
+    expect(fromOffset.bytes).toEqual(fromContiguous.bytes)
+    expect(fromOffset.sha256).toBe(
+      '842965e4553691c931e320a8db66fac5d92c89a2261d47b78076286cc59de2ce',
+    )
+    expect(backing).toEqual(before)
   })
 
   it('encodes a composite raster with complete fragment lineage', async () => {

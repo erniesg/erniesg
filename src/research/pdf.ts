@@ -688,6 +688,12 @@ export async function resolveNativeObjects(
       incompleteAsyncPage ? null : value,
     ]),
   )
+  const encodedSources = new Map<
+    string,
+    Awaited<ReturnType<typeof createPngAsset>>
+  >()
+  // PDF.js source identifiers are page-local. Reuse the immutable encoded
+  // payload within this page while keeping each placement's exact lineage.
   for (const draft of drafts) {
     throwIfAborted(signal)
     if (draft.vector) {
@@ -704,6 +710,17 @@ export async function resolveNativeObjects(
     try {
       if (typeof draft.source === 'string') {
         decoded = resolvedValues.get(draft.source)
+        const encoded = encodedSources.get(draft.source)
+        if (encoded) {
+          const occurrence = {
+            ...encoded,
+            sourceObjectIds: [draft.object.id],
+            sourceBoxes: [{ ...draft.object.box }],
+          }
+          draft.object.assetId = occurrence.id
+          store(occurrence)
+          continue
+        }
       }
     } catch {
       decoded = null
@@ -715,6 +732,9 @@ export async function resolveNativeObjects(
       sourceBox: draft.object.box,
       ...image,
     })
+    if (typeof draft.source === 'string') {
+      encodedSources.set(draft.source, visualAsset)
+    }
     draft.object.assetId = visualAsset.id
     store(visualAsset)
   }

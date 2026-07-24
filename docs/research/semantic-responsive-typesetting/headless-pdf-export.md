@@ -16,9 +16,26 @@ walked deterministically without following symbolic links. A single input puts
 `publication-paperpro.epub`, `publication-papermove.epub`,
 `export-manifest.json`, and `checksums.sha256` directly in the output directory.
 Corpus inputs use one basename-and-hash directory per document so equal
-basenames cannot collide.
+basenames cannot collide. On Unix, the output path must be absent or an
+existing empty directory. On Windows it must be absent because replacing an
+existing directory is not an atomic operation there. A rejected output is not
+modified.
 
-The command always writes `corpus-audit.json`. It reports ready,
+Corpus export reconstructs and exports exactly one document in each fresh local
+worker process. Resolved per-document and staging paths travel to that worker
+over private process IPC and are not added to the worker's command line; the
+original `<pdf-or-directory>` argument remains caller-supplied CLI input. The
+parent enforces a 900-second wall-clock limit by default; override it with
+`--document-timeout-seconds <1-86400>`. A timed-out worker and its local process
+tree are stopped with a Unix process-group kill or Windows
+`taskkill /T /F`, its staging directory is discarded, and the next document
+still runs. The deterministic report row uses the fixed
+`PDF_DOCUMENT_TIMEOUT` code and contains no duration, PID, signal, source path,
+stderr, or stack. The CLI also stops every active worker tree and removes its
+tracked private workspace before re-raising `SIGINT`, `SIGTERM`, or `SIGHUP`;
+an unexpected parent IPC disconnect makes the worker stop its own tree.
+
+Every completed audit/export run writes `corpus-audit.json`. It reports ready,
 review-required, and failed counts, pass rate, and gate-code failure buckets.
 It exits `1` if any document is not ready and never builds or writes an EPUB for
 that document. Reports contain basenames, hashes, metrics, redacted diagnostics,
@@ -69,6 +86,31 @@ invocation; the JAR path is also invoked with `--failonwarnings`. Common local
 system JAR locations are detected. Nothing is downloaded at runtime. EPUBCheck
 warnings and errors both abort export before any artifact for that document is
 published, so neither can be reported as externally valid.
+
+Workers write only into private per-document staging directories. After a
+worker closes successfully, the parent requires the exact expected regular-file
+set and opens each file once with no-follow semantics where the runtime
+supports them. Before reading, it checks each opened file's size against its
+independently expected exact length and fixed limits: 256 MiB per EPUB, 512 MiB
+for the complete document, 1 MiB for the manifest, and 64 KiB for checksums.
+EPUBs are copied and SHA-256 hashed from that same handle in 1 MiB chunks into
+a parent-owned private file, so the parent never retains every profile EPUB in
+memory. Manifest and checksum bytes are independently derived first, then read
+only to their exact bounded lengths and compared before the derived bytes are
+published.
+
+Vite cache files and EPUBCheck scratch EPUBs also live below that
+per-document workspace. A timeout or signal therefore removes the scratch data
+with the workspace instead of leaving private files in a global temporary
+directory.
+
+Verified bytes and `corpus-audit.json` are assembled in one private run
+directory created beside the requested output. Only after the complete report
+passes its public JSON schema does the parent atomically rename that whole
+same-filesystem directory into place. A timeout, malformed worker message,
+staging substitution, or publication error therefore cannot expose a partial
+run. Corpus-contract identity is bound before any worker starts and rechecked
+inside the worker before reconstruction.
 
 Successful artifact and corpus reports record EPUBCheck as `passed`, or as
 `skipped` with `java-unavailable` / `epubcheck-unavailable`. A skip is explicit

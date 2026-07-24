@@ -184,10 +184,22 @@ The candidate envelope records safe `id`, `version`, `format`,
 `formatVersion`, and `adapterSha256` fields. For local execution,
 `adapterSha256` is the SHA-256 of a canonical source manifest containing the
 adapter entry point and every statically imported, literal dynamic-imported,
-and local Vite-loaded transitive module. A dependency-only change therefore
-rotates the identity even when the executable entry point is unchanged. For
-example, a MinerU wrapper can
-declare `format: "mineru-content-list"` and
+and local Vite-loaded transitive module. For every traversed local module,
+identity schema `1.1.0` binds its nearest `package.json`, then walks from that
+package root to the nearest ancestor lock root and binds that root's
+`package.json` plus every adjacent supported package-manager lockfile:
+`bun.lock`, `bun.lockb`, `npm-shrinkwrap.json`, `package-lock.json`,
+`pnpm-lock.yaml`, and `yarn.lock`. This covers nested workspace roots and local
+imports that cross into sibling packages. Canonical relative names are deduped
+and ordered by package root, with `package.json` followed by the fixed lockfile
+order above. Supported metadata must be a regular non-symlink file; a symlink
+or other non-file fails closed with `INVALID_ADAPTER_PACKAGE_METADATA`.
+
+The identity does not resolve or read `node_modules`; even an explicit local
+source reference into that directory fails with
+`ADAPTER_SOURCE_NODE_MODULES_NOT_ALLOWED`. A change to an applicable lockfile
+therefore rotates the digest without hashing an installed dependency tree. For
+example, a MinerU wrapper can declare `format: "mineru-content-list"` and
 `formatVersion: "3.1-content-list-v1"` while converting native
 `page_footnote`, `equation`, `image`, and `table` objects into the common task
 shapes. Unknown native fields and raw `text`, `table_body`, image paths, and
@@ -198,8 +210,14 @@ future models.
 
 The bundled deterministic adapter reports `formatVersion: "1.1.0"`; the
 bundled MinerU adapter reports
-`formatVersion: "content-list-v1-v2-adapter-1.1.0"`. These 1.1 identities are
-the first versions that bind the complete local transitive source manifest.
+`formatVersion: "content-list-v1-v2-adapter-1.1.0"`. Those output-format
+versions are distinct from adapter source-identity schema `1.1.0`;
+`adapterSha256` supplies the source, package-manifest, and lockfile binding.
+Because the source-identity schema version and canonical `packageFiles` payload
+are themselves digest inputs, moving from schema `1.0.0` to `1.1.0` rotates
+every adapter digest even when source bytes are unchanged. Regenerate and
+review any stored baselines, predictions, and receipts; pre-`1.1.0`
+`adapterSha256` values are not reusable.
 
 Score an already normalized candidate:
 
@@ -219,7 +237,8 @@ The evaluator has two explicit modes, distinguished by `execution.lane`:
   the frozen scoring thresholds. `promotionEligible` is always `false`, even
   when the score passes and the imported candidate reports a runtime identity.
 - `local` produces a `local-mac` calibration receipt after the runner verifies
-  every hash-pinned input and records the transitive adapter source SHA-256.
+  every hash-pinned input and records the canonical adapter source/package
+  SHA-256.
   Tool and model hashes in the current adapter protocol are still supplied by
   that adapter, so the receipt records
   `runtimeIdentityAuthority: "adapter-self-reported"`. The runner cannot yet
@@ -435,7 +454,7 @@ used only inside the local process. The normalized response contains opaque
 case/target bindings, adapter-owned object IDs, native normalized bounding
 boxes, and bounded labels/edges. It rejects any request containing an
 `expected` key and verifies that the runner's adapter digest matches its own
-independently recomputed canonical transitive source manifest before emitting
+independently recomputed canonical source/package manifest before emitting
 predictions.
 
 The adapter deliberately omits tasks that MinerU does not ground in the
@@ -461,9 +480,9 @@ an external verifier.
 `docs/schemas/pdf-fidelity-eval-receipt.schema.json` receipts exclude hostnames,
 timestamps, latency, source text, formula text, paths, and raw model payloads.
 They bind the eval-set, document-set, case-set, predictions, candidate version,
-canonical transitive adapter-source manifest, execution lane, and bounded
-scores by SHA-256. Same inputs and normalized predictions therefore produce
-the same receipt.
+canonical adapter source/package manifest, execution lane, and bounded scores
+by SHA-256. Same inputs and normalized predictions therefore produce the same
+receipt.
 
 Receipt validation requires the frozen eval manifest and the exact normalized
 predictions artifact. It rescores those predictions, rederives immutable case

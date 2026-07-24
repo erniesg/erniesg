@@ -22,6 +22,10 @@ const SAFE_FAILURE_MESSAGES = Object.freeze({
   IMPORT_CANCELLED: 'The local PDF audit was cancelled.',
   INCOMPLETE_RECONSTRUCTION:
     'The PDF reconstruction did not pass the completeness gate.',
+  PDF_DOCUMENT_TIMEOUT:
+    'The PDF exceeded the local per-document processing time limit.',
+  PDF_DOCUMENT_WORKER_FAILED:
+    'The PDF worker stopped without exposing local path or document details.',
   AUDIT_FAILED:
     'The PDF could not be audited; local path and document details were suppressed.',
 })
@@ -59,6 +63,18 @@ function safeError(error) {
     ? candidate
     : 'AUDIT_FAILED'
   return { code, message: SAFE_FAILURE_MESSAGES[code] }
+}
+
+export function createSafeAuditFailureDocument(path, code = 'AUDIT_FAILED') {
+  const safeCode = Object.hasOwn(SAFE_FAILURE_MESSAGES, code)
+    ? code
+    : 'AUDIT_FAILED'
+  return {
+    basename: basename(path),
+    sha256: null,
+    code: safeCode,
+    message: SAFE_FAILURE_MESSAGES[safeCode],
+  }
 }
 
 export function canonicalJson(value) {
@@ -566,8 +582,8 @@ export function createPdfStructuralReceipt(reconstruction) {
   }
 }
 
-export async function createPdfPipeline() {
-  const cacheDir = await mkdtemp(join(tmpdir(), 'srt-pdf-vite-'))
+export async function createPdfPipeline({ temporaryRoot = tmpdir() } = {}) {
+  const cacheDir = await mkdtemp(join(temporaryRoot, 'srt-pdf-vite-'))
   const vite = await createServer({
     appType: 'custom',
     cacheDir,
@@ -599,6 +615,7 @@ export async function createPdfPipeline() {
       ]).then(([epub, targets]) => ({
         buildEpub: epub.buildEpub,
         buildReadableEpub: epub.buildReadableEpub,
+        getEpubProfileMetadata: epub.getEpubProfileMetadata,
         projectReadableFallbackReconstruction:
           epub.projectReadableFallbackReconstruction,
         inspectEpub: epub.inspectEpub,
@@ -705,11 +722,10 @@ export async function auditPdfPath(
       throw error
     }
     return {
-      document: {
-        basename: stableBasename,
-        sha256: null,
-        ...safeError(error),
-      },
+      document: createSafeAuditFailureDocument(
+        stableBasename,
+        safeError(error).code,
+      ),
     }
   }
 }

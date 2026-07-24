@@ -708,7 +708,9 @@ export type EpubInspectionExpectation = {
   sourcePdfSha256?: string
 }
 
-function profileMetadata(profile: TargetProfile): EpubProfileMetadata {
+export function getEpubProfileMetadata(
+  profile: TargetProfile,
+): EpubProfileMetadata {
   return {
     id: profile.id,
     version: profile.version,
@@ -724,7 +726,7 @@ function profileMetadata(profile: TargetProfile): EpubProfileMetadata {
 function profileManifestReceipt(profileInput: TargetProfile) {
   const profile = targetProfileSchema.parse(profileInput)
   return {
-    ...profileMetadata(profile),
+    ...getEpubProfileMetadata(profile),
     dimensions: profile.dimensions,
     ...(profile.manufacturerDisplay
       ? { manufacturerDisplay: profile.manufacturerDisplay }
@@ -4351,7 +4353,9 @@ async function buildEpubInternal(
     profile,
   )
   const modified = epubArtifactModifiedAt(renderPaper)
-  const exportProfileMetadata = profile ? profileMetadata(profile) : undefined
+  const exportProfileMetadata = profile
+    ? getEpubProfileMetadata(profile)
+    : undefined
   const exportManifest = {
     schemaVersion: EPUB_EXPORT_SCHEMA_VERSION,
     identifier,

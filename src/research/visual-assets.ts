@@ -131,18 +131,20 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, value) => {
 
 function crc32(bytes: Uint8Array) {
   let crc = 0xffffffff
-  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  for (let index = 0; index < bytes.length; index += 1) {
+    crc = CRC_TABLE[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8)
+  }
   return (crc ^ 0xffffffff) >>> 0
 }
 
 function pngChunk(name: string, data: Uint8Array) {
   const type = strToU8(name)
-  return concat(
-    uint32(data.length),
-    type,
-    data,
-    uint32(crc32(concat(type, data))),
-  )
+  const chunk = new Uint8Array(data.length + 12)
+  chunk.set(uint32(data.length), 0)
+  chunk.set(type, 4)
+  chunk.set(data, 8)
+  chunk.set(uint32(crc32(chunk.subarray(4, 8 + data.length))), 8 + data.length)
+  return chunk
 }
 
 function rgbaPixels({
@@ -156,13 +158,10 @@ function rgbaPixels({
   height: number
   colorSpace: 'grayscale-1bpp' | 'rgb' | 'rgba'
 }) {
+  if (colorSpace === 'rgba') return pixels
   const result = new Uint8Array(width * height * 4)
   for (let index = 0; index < width * height; index += 1) {
     const output = index * 4
-    if (colorSpace === 'rgba') {
-      result.set(pixels.subarray(output, output + 4), output)
-      continue
-    }
     if (colorSpace === 'rgb') {
       result.set(pixels.subarray(index * 3, index * 3 + 3), output)
       result[output + 3] = 255

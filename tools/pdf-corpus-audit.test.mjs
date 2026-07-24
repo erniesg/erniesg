@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canonicalJson,
   canonicalJsonHash,
+  createSafeAuditFailureDocument,
   createPdfStructuralReceipt,
   summarizeAuditDiagnostics,
 } from './pdf-corpus-audit-lib.mjs'
@@ -26,6 +27,32 @@ function sourceBox(overrides = {}) {
 }
 
 describe('local PDF corpus audit', () => {
+  it('creates only allowlisted basename-only audit failure rows', () => {
+    expect(
+      createSafeAuditFailureDocument(
+        '/private/source/problematic paper.pdf',
+        'PDF_DOCUMENT_TIMEOUT',
+      ),
+    ).toEqual({
+      basename: 'problematic paper.pdf',
+      sha256: null,
+      code: 'PDF_DOCUMENT_TIMEOUT',
+      message: 'The PDF exceeded the local per-document processing time limit.',
+    })
+    expect(
+      createSafeAuditFailureDocument(
+        '/private/source/problematic paper.pdf',
+        '/private/arbitrary-code',
+      ),
+    ).toEqual({
+      basename: 'problematic paper.pdf',
+      sha256: null,
+      code: 'AUDIT_FAILED',
+      message:
+        'The PDF could not be audited; local path and document details were suppressed.',
+    })
+  })
+
   it('requires exact source-provenance and inline-semantic completeness fields in the public schema', async () => {
     const schema = JSON.parse(
       await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),

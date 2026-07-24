@@ -15,7 +15,10 @@ import { buildEpub, renderPublicationXhtml } from './epub'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import { assessPdfCompleteness } from './pdf-quality'
 import { isSourceVerifiedSemanticTable } from './semantic-table'
-import type { PdfDetectedTableGrid } from './pdf-table-detection'
+import {
+  detectTableNearCaption,
+  type PdfDetectedTableGrid,
+} from './pdf-table-detection'
 import { canonicalTableFromLines, createTableAsset } from './visual-assets'
 
 function sourceBox(x: number, y: number, width = 0.12, height = 0.02) {
@@ -570,6 +573,135 @@ describe('source-verifiable semantic tables', () => {
     })
   })
 
+  it('uses detector-preserved source boxes after column normalization', () => {
+    const { header, body, region } = tableFixture()
+    const normalizedX = 0.57
+    const detectedHeader = {
+      ...header,
+      id: 'source-box-normalized-header',
+      runs: header.runs.map((run, index) => ({
+        ...run,
+        x: index === 0 ? run.x : normalizedX,
+      })),
+      sourceLineIds: [header.id],
+      sourceCellBoxes: header.runs.map((run) =>
+        sourceBox(run.x, run.y, run.width, run.height),
+      ),
+    }
+    const detectedBody = {
+      ...body,
+      id: 'source-box-normalized-body',
+      runs: body.runs.map((run, index) => ({
+        ...run,
+        x: index === 0 ? run.x : normalizedX,
+      })),
+      sourceLineIds: [body.id],
+      sourceCellBoxes: body.runs.map((run) =>
+        sourceBox(run.x, run.y, run.width, run.height),
+      ),
+    }
+
+    expect(
+      canonicalTableFromLines([detectedHeader, detectedBody], {
+        detectedRectangularGeometry: true,
+        sourceRegions: [region],
+      })?.rows[0].cells[1],
+    ).toMatchObject({
+      text: 'Score',
+      sourceRuns: [
+        expect.objectContaining({
+          regionId: region.id,
+          lineId: header.id,
+          runIndex: 1,
+          text: 'Score',
+          box: sourceBox(
+            header.runs[1].x,
+            header.runs[1].y,
+            header.runs[1].width,
+            header.runs[1].height,
+          ),
+        }),
+      ],
+    })
+  })
+
+  it('fails closed when detector-preserved source boxes have invalid cardinality', () => {
+    const { header, body, region } = tableFixture()
+    const detectedHeader = {
+      ...header,
+      id: 'invalid-source-box-cardinality-header',
+      runs: header.runs.map((run, index) => ({
+        ...run,
+        x: run.x + (index === 0 ? 0 : 0.042),
+      })),
+      sourceLineIds: [header.id],
+      sourceCellBoxes: [
+        sourceBox(
+          header.runs[0].x,
+          header.runs[0].y,
+          header.runs[0].width,
+          header.runs[0].height,
+        ),
+      ],
+    }
+    const detectedBody = {
+      ...body,
+      id: 'invalid-source-box-cardinality-body',
+      sourceLineIds: [body.id],
+      sourceCellBoxes: body.runs.map((run) =>
+        sourceBox(run.x, run.y, run.width, run.height),
+      ),
+    }
+
+    expect(
+      canonicalTableFromLines([detectedHeader, detectedBody], {
+        detectedRectangularGeometry: true,
+        sourceRegions: [region],
+      }),
+    ).toBeNull()
+  })
+
+  it('fails closed when detector-preserved source boxes contain a missing or null entry', () => {
+    const { header, body, region } = tableFixture()
+    const validHeaderBoxes = header.runs.map((run) =>
+      sourceBox(run.x, run.y, run.width, run.height),
+    )
+    const sparseHeaderBoxes = [...validHeaderBoxes]
+    delete sparseHeaderBoxes[1]
+    const nullHeaderBoxes = [
+      validHeaderBoxes[0],
+      null,
+    ] as unknown as typeof validHeaderBoxes
+    const detectedBody = {
+      ...body,
+      id: 'malformed-source-box-entry-body',
+      sourceLineIds: [body.id],
+      sourceCellBoxes: body.runs.map((run) =>
+        sourceBox(run.x, run.y, run.width, run.height),
+      ),
+    }
+
+    for (const sourceCellBoxes of [sparseHeaderBoxes, nullHeaderBoxes]) {
+      const detectedHeader = {
+        ...header,
+        id: 'malformed-source-box-entry-header',
+        runs: header.runs.map((run, index) => ({
+          ...run,
+          x: run.x + (index === 0 ? 0 : 0.042),
+        })),
+        sourceLineIds: [header.id],
+        sourceCellBoxes,
+      }
+
+      expect(
+        canonicalTableFromLines([detectedHeader, detectedBody], {
+          detectedRectangularGeometry: true,
+          sourceRegions: [region],
+        }),
+      ).toBeNull()
+    }
+  })
+
   it('fails closed when two same-text source columns fall inside the normalized anchor tolerance', () => {
     const { header, body, region } = tableFixture()
     const ambiguousHeader = {
@@ -695,6 +827,169 @@ describe('source-verifiable semantic tables', () => {
         },
       }),
     ).toBe(true)
+  })
+
+  it('verifies detector lineage for a multi-run header cell spanning multiple continuation bands', () => {
+    const headerLine = line('wrapped-header-base', 0.49, [
+      { text: 'Method', x: 0.1, height: 0.006 },
+      { text: 'Dataset', x: 0.35, height: 0.006 },
+      { text: 'Automatically', x: 0.475, height: 0.006 },
+      { text: 'Scenario', x: 0.65, height: 0.006 },
+      { text: 'Scope', x: 0.85, height: 0.006 },
+    ])
+    const continuationLines = [
+      line('wrapped-header-continuation-1', 0.497, [
+        { text: 'Constructed?', x: 0.48, height: 0.006 },
+      ]),
+      line('wrapped-header-continuation-2', 0.504, [
+        { text: 'by Authors?', x: 0.485, height: 0.006 },
+      ]),
+    ]
+    const bodyLines = [0.519, 0.545, 0.571].map((y, rowIndex) =>
+      line(`wrapped-body-${rowIndex + 1}`, y, [
+        { text: `Method ${rowIndex + 1}`, x: 0.1 },
+        { text: rowIndex % 2 === 0 ? 'Yes' : 'No', x: 0.35 },
+        { text: `Scenario ${rowIndex + 1}`, x: 0.65 },
+        { text: `Scope ${rowIndex + 1}`, x: 0.85 },
+      ]),
+    )
+    const sourceRegion = (
+      id: string,
+      kind: PdfPageRegion['kind'],
+      sourceLines: PdfRegionLine[],
+    ) => {
+      const left = Math.min(...sourceLines.map((item) => item.box.x))
+      const top = Math.min(...sourceLines.map((item) => item.box.y))
+      const right = Math.max(
+        ...sourceLines.map((item) => item.box.x + item.box.width),
+      )
+      const bottom = Math.max(
+        ...sourceLines.map((item) => item.box.y + item.box.height),
+      )
+      return {
+        id,
+        page: 1,
+        kind,
+        column: 'span',
+        text: sourceLines.map((item) => item.text).join(' '),
+        confidence: 1,
+        box: sourceBox(left, top, right - left, bottom - top),
+        lines: sourceLines,
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      } satisfies PdfPageRegion
+    }
+    const header = sourceRegion('wrapped-header-region', 'header', [
+      headerLine,
+    ])
+    const continuations = continuationLines.map((sourceLine, index) =>
+      sourceRegion(
+        `wrapped-header-continuation-region-${index + 1}`,
+        'header',
+        [sourceLine],
+      ),
+    )
+    const body = sourceRegion('wrapped-body-region', 'body', bodyLines)
+    const caption = {
+      id: 'wrapped-table-caption',
+      page: 1,
+      kind: 'caption',
+      column: 'span',
+      text: 'Table 7. Wrapped headers.',
+      confidence: 1,
+      box: sourceBox(0.1, 0.61, 0.87, 0.02),
+      lines: [],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies PdfPageRegion
+    const detected = detectTableNearCaption(caption, [
+      header,
+      ...continuations,
+      body,
+      caption,
+    ])
+    if (!detected?.headerEvidence) {
+      throw new Error('Expected a detector-closed wrapped header')
+    }
+    const table = canonicalTableFromLines(detected.lines, {
+      sourceHeaderLineIds: detected.headerEvidence.detectedHeaderLineIds,
+      detectedRectangularGeometry: true,
+      sourceRegions: detected.sourceRegions,
+    })
+    if (!table) throw new Error('Expected a source-verifiable table')
+    const relationship = {
+      id: 'wrapped-table-relationship',
+      kind: 'table',
+      label: 'Table 7',
+      captionRegionId: caption.id,
+      sourceRegionIds: detected.sourceRegions.map((region) => region.id),
+      sourceLineIds: detected.sourceLineIds,
+      sourceObjectIds: ['wrapped-table-object'],
+      assetIds: ['wrapped-table-asset'],
+      status: 'matched',
+      confidence: 1,
+      evidence: ['semantic-table'],
+      candidates: [],
+      sourceBoxes: detected.sourceRegions.map((region) => region.box),
+      sourceText: detected.lines.map((sourceLine) => sourceLine.text).join(' '),
+      altText: caption.text,
+      altTextSource: 'caption',
+      canonicalNodeId: 'wrapped-table-node',
+      captionNodeId: 'wrapped-table-caption-node',
+    } satisfies PdfVisualRelationship
+    const evidence = {
+      confidence: 1,
+      pages: [1],
+      regionIds: relationship.sourceRegionIds,
+      boxes: relationship.sourceBoxes,
+      links: [],
+    } satisfies NodeSourceEvidence
+
+    expect(table.rows[0].cells[1]).toMatchObject({
+      text: 'Dataset Automatically Constructed? by Authors?',
+      sourceRuns: [
+        expect.objectContaining({ lineId: headerLine.id, text: 'Dataset' }),
+        expect.objectContaining({
+          lineId: headerLine.id,
+          text: 'Automatically',
+        }),
+        expect.objectContaining({
+          lineId: continuationLines[0].id,
+          text: 'Constructed?',
+        }),
+        expect.objectContaining({
+          lineId: continuationLines[1].id,
+          text: 'by Authors?',
+        }),
+      ],
+    })
+    expect(
+      isSourceVerifiedSemanticTable({
+        table,
+        relationship,
+        regions: [...detected.sourceRegions, caption],
+        evidence,
+      }),
+    ).toBe(true)
+
+    const tampered = structuredClone(table)
+    const wrappedCell = tampered.rows[0].cells[1]
+    const adjacentCell = tampered.rows[0].cells[2]
+    const tamperedSource = wrappedCell.sourceRuns?.pop()
+    if (!tamperedSource || !adjacentCell.sourceRuns) {
+      throw new Error('Expected continuation lineage')
+    }
+    adjacentCell.sourceRuns.unshift(tamperedSource)
+    wrappedCell.text = 'Dataset Automatically Constructed?'
+    adjacentCell.text = 'by Authors? Scenario'
+    expect(
+      isSourceVerifiedSemanticTable({
+        table: tampered,
+        relationship,
+        regions: [...detected.sourceRegions, caption],
+        evidence,
+      }),
+    ).toBe(false)
   })
 
   it('stores the same stable associations and inline semantics in the table asset XHTML', async () => {

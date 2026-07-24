@@ -385,9 +385,17 @@ function evalCase(task, targets, overrides = {}) {
   }
 }
 
+function observationsWithRetainedVisuals(result) {
+  return observeDeterministicReconstruction(result, {
+    validatedVisualRelationships: result.visualRelationships.filter(
+      (relationship) => relationship.status === 'matched',
+    ),
+  })
+}
+
 describe('deterministic PDF fidelity adapter', () => {
   it('emits generic page observations without eval targets or gold labels', () => {
-    const observations = observeDeterministicReconstruction(reconstruction())
+    const observations = observationsWithRetainedVisuals(reconstruction())
 
     expect(observations.pages.find(({ page }) => page === 1)).toMatchObject({
       objects: [
@@ -412,7 +420,12 @@ describe('deterministic PDF fidelity adapter', () => {
 
   it('emits all source-backed page detections with no target hint and fails closed on unresolved visuals', () => {
     const item = evalCase('detection', [])
-    expect(predictDeterministicCase(item, reconstruction())).toEqual({
+    expect(
+      predictDeterministicCase(
+        item,
+        observationsWithRetainedVisuals(reconstruction()),
+      ),
+    ).toEqual({
       objects: [
         {
           id: 'caption:figure-relationship',
@@ -431,7 +444,12 @@ describe('deterministic PDF fidelity adapter', () => {
     unresolved.visualRelationships[0].status = 'unresolved'
     unresolved.visualRelationships[0].sourceRegionIds = []
     unresolved.visualRelationships[0].assetIds = []
-    expect(predictDeterministicCase(item, unresolved)).toEqual({
+    expect(
+      predictDeterministicCase(
+        item,
+        observationsWithRetainedVisuals(unresolved),
+      ),
+    ).toEqual({
       objects: [
         {
           id: 'caption:figure-relationship',
@@ -440,6 +458,45 @@ describe('deterministic PDF fidelity adapter', () => {
         },
       ],
     })
+  })
+
+  it('fails closed when a raw matched relationship is absent from the authoritative validation set', () => {
+    const result = reconstruction()
+    const relationship = result.visualRelationships.find(
+      ({ id }) => id === 'figure-relationship',
+    )
+    const tableNode = result.paper.nodes.find(
+      ({ id }) => id === 'table-node',
+    )
+    const tableBox = result.assets.find(
+      ({ id }) => id === 'figure-asset',
+    ).sourceCropBox
+    tableNode.relationships = { assets: ['semantic-table-asset'] }
+    result.assets.push({
+      id: 'semantic-table-asset',
+      kind: 'table',
+      rendition: 'semantic-table',
+      mediaType: 'application/xhtml+xml',
+      sourceBoxes: [tableBox],
+    })
+    relationship.kind = 'table'
+    relationship.canonicalNodeId = 'table-node'
+    relationship.assetIds = ['semantic-table-asset']
+
+    expect(relationship.status).toBe('matched')
+    const observations = observeDeterministicReconstruction(result, {
+      validatedVisualRelationships: [],
+    })
+    const page = observations.pages.find(({ page }) => page === 1)
+
+    expect(page.objects).not.toContainEqual(
+      expect.objectContaining({ label: 'table' }),
+    )
+    expect(page.visualOrder).toEqual([])
+    expect(page.relationships).toEqual([])
+    expect(page.entities).not.toContainEqual(
+      expect.objectContaining({ label: 'semantic-table' }),
+    )
   })
 
   it('projects canonical list and reference-scope roles plus numeric chart ticks by geometry', () => {
@@ -486,7 +543,7 @@ describe('deterministic PDF fidelity adapter', () => {
   it('uses complete canonical caption provenance for detection bounds', () => {
     const objects = predictDeterministicCase(
       evalCase('detection', []),
-      reconstruction(),
+      observationsWithRetainedVisuals(reconstruction()),
     ).objects
 
     expect(objects).toContainEqual({
@@ -527,7 +584,10 @@ describe('deterministic PDF fidelity adapter', () => {
       },
     ])
 
-    expect(predictDeterministicCase(equationNumber, result)).toEqual({
+    const retainedObservations = observationsWithRetainedVisuals(result)
+    expect(
+      predictDeterministicCase(equationNumber, retainedObservations),
+    ).toEqual({
       relationships: [
         {
           type: 'equation-number-of',
@@ -536,7 +596,9 @@ describe('deterministic PDF fidelity adapter', () => {
         },
       ],
     })
-    expect(predictDeterministicCase(figureInternalText, result)).toEqual({
+    expect(
+      predictDeterministicCase(figureInternalText, retainedObservations),
+    ).toEqual({
       relationships: [
         {
           type: 'figure-internal-text-of',
@@ -549,19 +611,38 @@ describe('deterministic PDF fidelity adapter', () => {
     result.visualRelationships[0].status = 'unresolved'
     result.visualRelationships[0].sourceRegionIds = []
     result.visualRelationships[0].assetIds = []
-    expect(predictDeterministicCase(figureInternalText, result)).toEqual({
-      relationships: [
-        {
-          type: 'figure-internal-text-of',
-          sourceId: 'opaque-internal-text',
-          targetId: 'opaque-figure',
-        },
-      ],
-    })
+    expect(
+      predictDeterministicCase(
+        figureInternalText,
+        observationsWithRetainedVisuals(result),
+      ),
+    ).toEqual({ relationships: [] })
   })
 
   it('maps semantic roles from reconstruction evidence instead of target names alone', () => {
     const result = reconstruction()
+    const tableBox = sourceBox(2, 0.19, 0.08, 0.62, 0.09)
+    const tableNode = result.paper.nodes.find(
+      ({ id }) => id === 'table-node',
+    )
+    tableNode.relationships = { assets: ['semantic-role-table-asset'] }
+    result.assets.push({
+      id: 'semantic-role-table-asset',
+      kind: 'table',
+      rendition: 'semantic-table',
+      mediaType: 'application/xhtml+xml',
+      sourceBoxes: [tableBox],
+    })
+    const tableRelationship = {
+      id: 'semantic-role-table-relationship',
+      kind: 'table',
+      status: 'matched',
+      canonicalNodeId: 'table-node',
+      assetIds: ['semantic-role-table-asset'],
+    }
+    const observations = observeDeterministicReconstruction(result, {
+      validatedVisualRelationships: [tableRelationship],
+    })
     const heading = evalCase(
       'classification',
       [{ id: 'opaque-1', kind: 'candidate', box: [0.51, 0.08, 0.35, 0.04] }],
@@ -578,13 +659,13 @@ describe('deterministic PDF fidelity adapter', () => {
       { stratum: 'semantic-type-confusion' },
     )
 
-    expect(predictDeterministicCase(heading, result)).toEqual({
+    expect(predictDeterministicCase(heading, observations)).toEqual({
       labels: [{ targetId: 'opaque-1', label: 'heading' }],
     })
-    expect(predictDeterministicCase(table, result)).toEqual({
+    expect(predictDeterministicCase(table, observations)).toEqual({
       labels: [{ targetId: 'opaque-2', label: 'semantic-table' }],
     })
-    expect(predictDeterministicCase(numericRange, result)).toEqual({
+    expect(predictDeterministicCase(numericRange, observations)).toEqual({
       labels: [{ targetId: 'opaque-3', label: 'numeric-range' }],
     })
   })
@@ -764,21 +845,23 @@ describe('deterministic PDF fidelity adapter', () => {
     result.assets.push({
       id: 'semantic-table-asset',
       kind: 'table',
-      rendition: 'source-page-crop',
+      rendition: 'semantic-table',
+      mediaType: 'application/xhtml+xml',
       sourceBoxes: [tableBox],
-      sourceCropBox: tableBox,
     })
-    result.visualRelationships.push({
+    const tableRelationship = {
       id: 'a-table-relationship',
       kind: 'table',
       status: 'matched',
+      canonicalNodeId: 'table-node',
       captionRegionId: 'table-caption-region',
       captionNodeId: 'table-caption-node',
       sourceRegionIds: [],
       sourceText: '',
       assetIds: ['semantic-table-asset'],
       candidates: [],
-    })
+    }
+    result.visualRelationships.push(tableRelationship)
     const item = evalCase(
       'classification',
       [
@@ -791,7 +874,15 @@ describe('deterministic PDF fidelity adapter', () => {
       { page: 2 },
     )
 
-    expect(predictDeterministicCase(item, result)).toEqual({
+    expect(
+      predictDeterministicCase(item, result).labels.some(
+        ({ label }) => label === 'semantic-table',
+      ),
+    ).toBe(false)
+    const observations = observeDeterministicReconstruction(result, {
+      validatedVisualRelationships: [tableRelationship],
+    })
+    expect(predictDeterministicCase(item, observations)).toEqual({
       labels: [{ targetId: 'opaque-table', label: 'semantic-table' }],
     })
   })
@@ -814,14 +905,44 @@ describe('deterministic PDF fidelity adapter', () => {
     ragged.paper.nodes
       .find(({ id }) => id === 'table-node')
       .table.rows[1].cells.pop()
+    const observationsWithClaimedValidation = (result) => {
+      const tableBox = sourceBox(2, 0.19, 0.08, 0.62, 0.09)
+      const tableNode = result.paper.nodes.find(
+        ({ id }) => id === 'table-node',
+      )
+      tableNode.relationships = { assets: ['semantic-table-asset'] }
+      result.assets.push({
+        id: 'semantic-table-asset',
+        kind: 'table',
+        rendition: 'semantic-table',
+        mediaType: 'application/xhtml+xml',
+        sourceBoxes: [tableBox],
+      })
+      const relationship = {
+        id: 'claimed-table-relationship',
+        kind: 'table',
+        status: 'matched',
+        canonicalNodeId: 'table-node',
+        assetIds: ['semantic-table-asset'],
+      }
+      return observeDeterministicReconstruction(result, {
+        validatedVisualRelationships: [relationship],
+      })
+    }
 
     expect(
-      predictDeterministicCase(item, empty).labels.some(
+      predictDeterministicCase(
+        item,
+        observationsWithClaimedValidation(empty),
+      ).labels.some(
         ({ label }) => label === 'semantic-table',
       ),
     ).toBe(false)
     expect(
-      predictDeterministicCase(item, ragged).labels.some(
+      predictDeterministicCase(
+        item,
+        observationsWithClaimedValidation(ragged),
+      ).labels.some(
         ({ label }) => label === 'semantic-table',
       ),
     ).toBe(false)
@@ -871,7 +992,8 @@ describe('deterministic PDF fidelity adapter', () => {
       { page: 2 },
     )
 
-    expect(predictDeterministicCase(note, result)).toEqual({
+    const retainedObservations = observationsWithRetainedVisuals(result)
+    expect(predictDeterministicCase(note, retainedObservations)).toEqual({
       relationships: [
         {
           type: 'note-body-of',
@@ -880,7 +1002,7 @@ describe('deterministic PDF fidelity adapter', () => {
         },
       ],
     })
-    expect(predictDeterministicCase(caption, result)).toEqual({
+    expect(predictDeterministicCase(caption, retainedObservations)).toEqual({
       relationships: [
         {
           type: 'caption-of',
@@ -889,7 +1011,7 @@ describe('deterministic PDF fidelity adapter', () => {
         },
       ],
     })
-    expect(predictDeterministicCase(order, result)).toEqual({
+    expect(predictDeterministicCase(order, retainedObservations)).toEqual({
       order: ['opaque-left', 'opaque-head', 'opaque-prose'],
     })
   })
@@ -946,7 +1068,12 @@ describe('deterministic PDF fidelity adapter', () => {
       })),
     )
 
-    expect(predictDeterministicCase(item, result)).toEqual({
+    expect(
+      predictDeterministicCase(
+        item,
+        observationsWithRetainedVisuals(result),
+      ),
+    ).toEqual({
       order: [
         'opaque-figure-15',
         'opaque-figure-16',

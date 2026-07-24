@@ -1,4 +1,5 @@
 import type {
+  NormalizedSourceBox,
   PdfPageRegion,
   PdfRegionLine,
   PdfSourceRun,
@@ -29,6 +30,7 @@ type ClusteredTableRow = PdfRegionLine & {
   sourceLineIds: string[]
   sourceRegionIds: string[]
   sourceRegionKinds: PdfPageRegion['kind'][]
+  sourceCellBoxes?: NormalizedSourceBox[]
 }
 
 export type PdfDetectedTableGrid = {
@@ -56,6 +58,18 @@ function median(values: number[]) {
   return ordered.length % 2 === 0
     ? (ordered[middle - 1] + ordered[middle]) / 2
     : ordered[middle]
+}
+
+function normalizedSourceBox(run: PdfSourceRun): NormalizedSourceBox {
+  return {
+    page: run.page,
+    x: run.x,
+    y: run.y,
+    width: run.width,
+    height: run.height,
+    rotation: run.rotation,
+    method: run.method,
+  }
 }
 
 function overlapsCaption(caption: PdfPageRegion, region: PdfPageRegion) {
@@ -128,6 +142,86 @@ function pageHeaderCandidateRow(row: ClusteredTableRow) {
   )
 }
 
+export function mergeWrappedHeaderContinuationRuns(
+  headerRuns: readonly PdfSourceRun[],
+  continuationRuns: readonly PdfSourceRun[],
+) {
+  if (
+    headerRuns.length < 2 ||
+    continuationRuns.length === 0 ||
+    continuationRuns.length >= headerRuns.length
+  ) {
+    return null
+  }
+  const anchor = headerRuns[0]
+  const headerTop = Math.min(...headerRuns.map((run) => run.y))
+  const headerBottom = Math.max(
+    ...headerRuns.map((run) => run.y + run.height),
+  )
+  const continuationTop = Math.min(...continuationRuns.map((run) => run.y))
+  const verticalGap = continuationTop - headerBottom
+  if (
+    headerRuns.some(
+      (run) =>
+        run.page !== anchor.page ||
+        run.rotation !== anchor.rotation ||
+        run.method !== anchor.method,
+    ) ||
+    continuationRuns.some(
+      (run) =>
+        run.page !== anchor.page ||
+        run.rotation !== anchor.rotation ||
+        run.method !== anchor.method,
+    ) ||
+    verticalGap < -0.003 ||
+    verticalGap > Math.max(0.004, (headerBottom - headerTop) * 0.75)
+  ) {
+    return null
+  }
+  const targetIndices: number[] = []
+  const assignedTargets = new Set<number>()
+  for (const run of continuationRuns) {
+    const center = run.x + run.width / 2
+    const selected = headerRuns
+      .map((target, index) => ({
+        index,
+        distance: Math.abs(target.x + target.width / 2 - center),
+      }))
+      .sort(
+        (left, right) =>
+          left.distance - right.distance || left.index - right.index,
+      )[0]
+    if (
+      !selected ||
+      selected.distance > COLUMN_CENTER_TOLERANCE ||
+      assignedTargets.has(selected.index)
+    ) {
+      return null
+    }
+    assignedTargets.add(selected.index)
+    targetIndices.push(selected.index)
+  }
+
+  const runs = headerRuns.map((run) => ({ ...run }))
+  continuationRuns.forEach((run, index) => {
+    const targetIndex = targetIndices[index]
+    const target = runs[targetIndex]
+    const left = Math.min(target.x, run.x)
+    const top = Math.min(target.y, run.y)
+    const right = Math.max(target.x + target.width, run.x + run.width)
+    const bottom = Math.max(target.y + target.height, run.y + run.height)
+    runs[targetIndex] = {
+      ...target,
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+      text: `${target.text} ${run.text}`.trim(),
+    }
+  })
+  return { runs, targetIndices }
+}
+
 function mergePageHeaderCandidateContinuations(rows: ClusteredTableRow[]) {
   const merged = rows.map<ClusteredTableRow>((row) => ({
     ...row,
@@ -153,38 +247,12 @@ function mergePageHeaderCandidateContinuations(rows: ClusteredTableRow[]) {
     ) {
       break
     }
-    let complete = true
-    for (const run of continuation.runs) {
-      const center = run.x + run.width / 2
-      const candidates = header.runs
-        .map((target, index) => ({
-          index,
-          distance: Math.abs(target.x + target.width / 2 - center),
-        }))
-        .sort(
-          (left, right) =>
-            left.distance - right.distance || left.index - right.index,
-        )
-      const selected = candidates[0]
-      if (!selected || selected.distance > COLUMN_CENTER_TOLERANCE) {
-        complete = false
-        break
-      }
-      const target = header.runs[selected.index]
-      const left = Math.min(target.x, run.x)
-      const top = Math.min(target.y, run.y)
-      const right = Math.max(target.x + target.width, run.x + run.width)
-      const bottom = Math.max(target.y + target.height, run.y + run.height)
-      header.runs[selected.index] = {
-        ...target,
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-        text: `${target.text} ${run.text}`.trim(),
-      }
-    }
-    if (!complete) break
+    const continuationMerge = mergeWrappedHeaderContinuationRuns(
+      header.runs,
+      continuation.runs,
+    )
+    if (!continuationMerge) break
+    header.runs = continuationMerge.runs
     const left = Math.min(header.box.x, continuation.box.x)
     const top = Math.min(header.box.y, continuation.box.y)
     const right = Math.max(
@@ -394,6 +462,7 @@ function tableShape(
     const cells = cellsByLine.get(line)!
     return {
       ...line,
+      sourceCellBoxes: cells.map(normalizedSourceBox),
       runs: leftAnchors.map((anchor, index) => ({
         ...cells[index],
         x: anchor,
@@ -442,6 +511,7 @@ function closeBodyShapeWithTableLocalHeader(
   const header: ClusteredTableRow = {
     ...sourceHeader,
     id: 'detected-table-header-row-001',
+    sourceCellBoxes: headerCells.map(normalizedSourceBox),
     runs: headerCells.map((cell, columnIndex) => ({
       ...cell,
       x: bodyShape.anchors[columnIndex],
@@ -588,16 +658,33 @@ function directionalCandidate(
     }
   }
   if (!shape) return null
-  const usedRegions = sourceRegions.filter((region) =>
-    region.lines.some((line) =>
-      shape.rows.some(
-        (row) =>
-          Math.abs(row.box.y - line.box.y) <=
-          Math.max(0.003, Math.min(row.box.height, line.box.height) * 0.85),
-      ),
-    ),
+  const usedRegionIds = new Set(
+    shape.rows.flatMap((row) => row.sourceRegionIds),
   )
-  if (usedRegions.length === 0) return null
+  const usedRegions = sourceRegions.filter((region) =>
+    usedRegionIds.has(region.id),
+  )
+  if (
+    usedRegions.length === 0 ||
+    new Set(usedRegions.map((region) => region.id)).size !== usedRegionIds.size
+  ) {
+    return null
+  }
+  const sourceLineIds = [
+    ...new Set(shape.rows.flatMap((row) => row.sourceLineIds)),
+  ]
+  if (
+    sourceLineIds.some(
+      (lineId) =>
+        usedRegions.reduce(
+          (count, region) =>
+            count + Number(region.lines.some((line) => line.id === lineId)),
+          0,
+        ) !== 1,
+    )
+  ) {
+    return null
+  }
   const orderedUsedRegions = [...usedRegions].sort(
     (left, right) =>
       left.page - right.page ||
@@ -614,7 +701,7 @@ function directionalCandidate(
   )
   return {
     sourceRegions: orderedUsedRegions,
-    sourceLineIds: [...new Set(shape.rows.flatMap((row) => row.sourceLineIds))],
+    sourceLineIds,
     lines: shape.rows,
     structure: shape.structure,
     headerEvidence,

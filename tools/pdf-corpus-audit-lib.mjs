@@ -609,6 +609,7 @@ export async function createPdfPipeline({ temporaryRoot = tmpdir() } = {}) {
   let exportModules
   let diagnosticModules
   let decisionModules
+  let validationModules
 
   return {
     reconstructPdf: pdf.reconstructPdf,
@@ -653,6 +654,15 @@ export async function createPdfPipeline({ temporaryRoot = tmpdir() } = {}) {
           maximumBytes: decisions.MAX_HUMAN_DECISION_FILE_BYTES,
         }))
       return decisionModules
+    },
+    async loadValidationModules() {
+      validationModules ??= vite
+        .ssrLoadModule('/src/research/pdf-visual-validation.ts')
+        .then((visualValidation) => ({
+          validatedPdfVisualRelationships:
+            visualValidation.validatedPdfVisualRelationships,
+        }))
+      return validationModules
     },
     async close() {
       try {

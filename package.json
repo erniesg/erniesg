@@ -28,6 +28,7 @@
     "pdf:eval": "node tools/pdf-fidelity-eval.mjs score",
     "pdf:eval:compare": "node tools/pdf-fidelity-eval.mjs compare",
     "pdf:eval:local": "node tools/pdf-fidelity-eval.mjs local",
+    "pdf:eval:suite": "node tools/pdf-fidelity-suite.mjs build",
     "pdf:eval:mineru-adapter": "node tools/pdf-fidelity-mineru-adapter.mjs",
     "srt:overlay-evidence": "node tools/pdf-diagnostic-evidence.mjs",
     "worker:build": "npm run build:production",

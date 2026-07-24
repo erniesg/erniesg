@@ -943,6 +943,191 @@ describe('bounded PDF table source scoping', () => {
     })
   })
 
+  it('retains an explicit source header with distinct typography', () => {
+    const headerLine = line('distinct-font-header-line', 0.2, [
+      0.17647, 0.39, 0.56,
+    ])
+    headerLine.runs.forEach((run) => {
+      run.fontName = 'HeaderSans'
+      run.bold = false
+    })
+    const headerRegion = textRegion(
+      'distinct-font-header-region',
+      headerLine.box,
+      [headerLine],
+      'header',
+    )
+    const bodyLines = Array.from({ length: 5 }, (_, index) =>
+      line(
+        `distinct-font-body-row-${index + 1}`,
+        0.23 + index * 0.03,
+        [0.17647, 0.39, 0.56],
+      ),
+    )
+    const body = textRegion(
+      'distinct-font-body',
+      box(0.17647, 0.23, 0.64706, 0.136),
+      bodyLines,
+    )
+    const tableCaption = {
+      ...caption('distinct-font-header-caption', 0.39),
+      box: box(0.17647, 0.39, 0.64706, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [headerRegion, body, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [body.id, headerRegion.id],
+        sourceLineIds: [headerLine.id, ...bodyLines.map((item) => item.id)],
+      },
+    })
+  })
+
+  it('atomically closes a unique wrapped header continuation', () => {
+    const headerLeadLine = line('wrapped-header-lead', 0.19, [0.17647, 0.39])
+    const headerTailLine = line('wrapped-header-tail', 0.19, [0.56, 0.72])
+    const continuationLine = line('wrapped-header-continuation', 0.207, [0.39])
+    continuationLine.runs[0] = {
+      ...continuationLine.runs[0],
+      width: 0.07,
+    }
+    continuationLine.box = box(0.39, 0.207, 0.07, 0.016)
+    const headerLead = textRegion(
+      'wrapped-header-lead-region',
+      headerLeadLine.box,
+      [headerLeadLine],
+      'header',
+    )
+    const headerTail = textRegion(
+      'wrapped-header-tail-region',
+      headerTailLine.box,
+      [headerTailLine],
+      'header',
+    )
+    const headerContinuation = textRegion(
+      'wrapped-header-continuation-region',
+      continuationLine.box,
+      [continuationLine],
+      'header',
+    )
+    const bodyLines = Array.from({ length: 5 }, (_, index) =>
+      line(
+        `wrapped-header-body-row-${index + 1}`,
+        0.235 + index * 0.03,
+        [0.17647, 0.39, 0.56, 0.72],
+      ),
+    )
+    const body = textRegion(
+      'wrapped-header-body',
+      box(0.17647, 0.235, 0.61853, 0.136),
+      bodyLines,
+    )
+    const tableCaption = {
+      ...caption('wrapped-header-caption', 0.395),
+      box: box(0.17647, 0.395, 0.64706, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [
+          headerLead,
+          headerTail,
+          headerContinuation,
+          body,
+          tableCaption,
+        ],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [
+          body.id,
+          headerContinuation.id,
+          headerLead.id,
+          headerTail.id,
+        ],
+        sourceLineIds: [
+          headerLeadLine.id,
+          headerTailLine.id,
+          continuationLine.id,
+          ...bodyLines.map((item) => item.id),
+        ],
+        evidence: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'caption-lane-source-completion',
+            headerLineIds: [
+              continuationLine.id,
+              headerLeadLine.id,
+              headerTailLine.id,
+            ].sort(),
+          }),
+        ]),
+      },
+    })
+  })
+
+  it('fails closed when a wrapped continuation matches multiple base cells', () => {
+    const baseLine = line(
+      'ambiguous-wrapped-header-base',
+      0.19,
+      [0.17647, 0.36, 0.38, 0.56, 0.72],
+    )
+    const continuationLine = line(
+      'ambiguous-wrapped-header-continuation',
+      0.207,
+      [0.37],
+    )
+    const base = textRegion(
+      'ambiguous-wrapped-header-base-region',
+      baseLine.box,
+      [baseLine],
+      'header',
+    )
+    const continuation = textRegion(
+      'ambiguous-wrapped-header-continuation-region',
+      continuationLine.box,
+      [continuationLine],
+      'header',
+    )
+    const bodyLines = Array.from({ length: 5 }, (_, index) =>
+      line(
+        `ambiguous-wrapped-header-body-row-${index + 1}`,
+        0.235 + index * 0.03,
+        [0.17647, 0.39, 0.56, 0.72],
+      ),
+    )
+    const body = textRegion(
+      'ambiguous-wrapped-header-body',
+      box(0.17647, 0.235, 0.61853, 0.136),
+      bodyLines,
+    )
+    const tableCaption = {
+      ...caption('ambiguous-wrapped-header-caption', 0.395),
+      box: box(0.17647, 0.395, 0.64706, 0.02),
+    }
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [base, continuation, body, tableCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [body.id],
+        sourceLineIds: bodyLines.map((item) => item.id),
+      },
+    })
+  })
+
   it('fails closed when one explicit header could own two disjoint table bodies', () => {
     const left = textRegion(
       'left-header-candidate',

@@ -952,6 +952,33 @@ function normalizedSourceBox(run: PdfSourceRun): NormalizedSourceBox {
   }
 }
 
+function validNormalizedSourceBox(
+  value: unknown,
+): value is NormalizedSourceBox {
+  if (value === null || typeof value !== 'object') return false
+  const sourceBox = value as Partial<NormalizedSourceBox>
+  return (
+    Number.isInteger(sourceBox.page) &&
+    sourceBox.page! >= 1 &&
+    [
+      sourceBox.x,
+      sourceBox.y,
+      sourceBox.width,
+      sourceBox.height,
+      sourceBox.rotation,
+    ].every(Number.isFinite) &&
+    sourceBox.x! >= 0 &&
+    sourceBox.y! >= 0 &&
+    sourceBox.width! > 0 &&
+    sourceBox.height! > 0 &&
+    sourceBox.x! + sourceBox.width! <= 1.000_001 &&
+    sourceBox.y! + sourceBox.height! <= 1.000_001 &&
+    ['pdf-text', 'pdf-object', 'pdf-link', 'ocr'].includes(
+      sourceBox.method ?? '',
+    )
+  )
+}
+
 function tableLineSourceIds(line: PdfRegionLine) {
   const detected = line as PdfRegionLine & { sourceLineIds?: string[] }
   return detected.sourceLineIds?.length ? detected.sourceLineIds : [line.id]
@@ -974,12 +1001,32 @@ function sameSourceRun(left: PdfSourceRun, right: PdfSourceRun) {
 function sameSourceBackedDetectedCell(
   source: PdfSourceRun,
   detected: PdfSourceRun,
+  detectedSourceBox?: NormalizedSourceBox,
 ) {
   const close = (a: number, b: number) => Math.abs(a - b) <= 0.000_001
+  const sourceGeometryMatches =
+    detectedSourceBox === undefined
+      ? Math.abs(source.x - detected.x) <= PDF_TABLE_COLUMN_CENTER_TOLERANCE
+      : source.page === detectedSourceBox.page &&
+        close(source.x, detectedSourceBox.x) &&
+        close(source.y, detectedSourceBox.y) &&
+        close(source.width, detectedSourceBox.width) &&
+        close(source.height, detectedSourceBox.height) &&
+        source.rotation === detectedSourceBox.rotation &&
+        source.method === detectedSourceBox.method
+  const normalizedCellMatchesSource =
+    detectedSourceBox === undefined ||
+    (detected.page === detectedSourceBox.page &&
+      close(detected.y, detectedSourceBox.y) &&
+      close(detected.width, detectedSourceBox.width) &&
+      close(detected.height, detectedSourceBox.height) &&
+      detected.rotation === detectedSourceBox.rotation &&
+      detected.method === detectedSourceBox.method)
   return (
     source.text === detected.text &&
     source.page === detected.page &&
-    Math.abs(source.x - detected.x) <= PDF_TABLE_COLUMN_CENTER_TOLERANCE &&
+    sourceGeometryMatches &&
+    normalizedCellMatchesSource &&
     close(source.y, detected.y) &&
     close(source.width, detected.width) &&
     close(source.height, detected.height) &&
@@ -1024,13 +1071,18 @@ function tableSourceRunLayout(runs: readonly OwnedTableSourceRun[]) {
   let text = ''
   return runs.map((source, index) => {
     if (index > 0) {
-      const previous = runs[index - 1].run
-      const gap = source.run.x - (previous.x + previous.width)
-      const noSpaceThreshold = Math.max(
-        0.0005,
-        Math.min(previous.height, source.run.height) * 0.18,
-      )
-      if (gap > noSpaceThreshold) text += ' '
+      const previousSource = runs[index - 1]
+      const previous = previousSource.run
+      if (previousSource.line.id !== source.line.id) {
+        text += ' '
+      } else {
+        const gap = source.run.x - (previous.x + previous.width)
+        const noSpaceThreshold = Math.max(
+          0.0005,
+          Math.min(previous.height, source.run.height) * 0.18,
+        )
+        if (gap > noSpaceThreshold) text += ' '
+      }
     }
     const start = text.length
     text += source.run.text
@@ -1041,6 +1093,7 @@ function tableSourceRunLayout(runs: readonly OwnedTableSourceRun[]) {
 function sourceSequenceMatchesDetectedCell(
   sourceRuns: readonly OwnedTableSourceRun[],
   cell: PdfSourceRun,
+  detectedSourceBox?: NormalizedSourceBox,
 ) {
   if (sourceRuns.length === 0) return false
   const first = sourceRuns[0].run
@@ -1056,7 +1109,7 @@ function sourceSequenceMatchesDetectedCell(
     height: bottom - first.y,
     text: tableSourceRunLayout(sourceRuns).at(-1)?.text ?? '',
   }
-  return sameSourceBackedDetectedCell(derived, cell)
+  return sameSourceBackedDetectedCell(derived, cell, detectedSourceBox)
 }
 
 function exactSourceSequenceForDetectedCell(
@@ -1071,8 +1124,29 @@ function exactSourceSequenceForDetectedCell(
     line.runs.includes(cell),
   )
   if (owningDetectedLines.length !== 1) return null
+  const owningDetectedLine = owningDetectedLines[0] as PdfRegionLine & {
+    sourceCellBoxes?: NormalizedSourceBox[]
+  }
+  const detectedCellIndex = owningDetectedLine.runs.indexOf(cell)
+  const sourceCellBoxes = owningDetectedLine.sourceCellBoxes
+  if (
+    sourceCellBoxes !== undefined &&
+    sourceCellBoxes.length !== owningDetectedLine.runs.length
+  ) {
+    return null
+  }
+  const detectedSourceBox =
+    sourceCellBoxes !== undefined && detectedCellIndex >= 0
+      ? sourceCellBoxes[detectedCellIndex]
+      : undefined
+  if (
+    sourceCellBoxes !== undefined &&
+    !validNormalizedSourceBox(detectedSourceBox)
+  ) {
+    return null
+  }
   const available = orderedOwnedTableSourceRuns(
-    tableLineSourceIds(owningDetectedLines[0]).flatMap((lineId) => {
+    tableLineSourceIds(owningDetectedLine).flatMap((lineId) => {
       const owner = sourceLineOwners.get(lineId)?.[0]
       if (!owner) return []
       return owner.line.runs.flatMap<OwnedTableSourceRun>(
@@ -1099,7 +1173,9 @@ function exactSourceSequenceForDetectedCell(
   for (let start = 0; start < available.length; start += 1) {
     for (let end = start + 1; end <= available.length; end += 1) {
       const sequence = available.slice(start, end)
-      if (sourceSequenceMatchesDetectedCell(sequence, cell)) {
+      if (
+        sourceSequenceMatchesDetectedCell(sequence, cell, detectedSourceBox)
+      ) {
         matches.push(sequence)
       }
     }

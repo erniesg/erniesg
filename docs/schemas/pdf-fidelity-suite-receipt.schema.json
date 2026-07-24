@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-suite-receipt-1.0.0.json",
+  "title": "Aggregate public-calibration receipt for scholarly PDF fidelity candidates",
+  "description": "Binds the public v1 and additive v2 calibration artifacts, their source-reviewed failure classes, and a baseline/candidate comparison. It is not blind-holdout or promotion evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "privacy",
+    "suite",
+    "baseline",
+    "candidate",
+    "cases",
+    "failureModes",
+    "accuracyPassed",
+    "nonRegressionPassed",
+    "promotionEligible",
+    "receiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "privacy": {
+      "const": "public-identities-hashes-aggregate-scores-bounded-failure-mode-results-only"
+    },
+    "suite": { "$ref": "#/$defs/suite" },
+    "baseline": { "$ref": "#/$defs/run" },
+    "candidate": { "$ref": "#/$defs/run" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/caseResult" }
+    },
+    "failureModes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/failureModeResult" }
+    },
+    "accuracyPassed": { "type": "boolean" },
+    "nonRegressionPassed": { "type": "boolean" },
+    "promotionEligible": {
+      "const": false,
+      "description": "Public calibration never authorizes promotion."
+    },
+    "receiptSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "count": { "type": "integer", "minimum": 0 },
+    "task": {
+      "enum": ["classification", "detection", "reading-order", "relationship"]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "schemaVersion", "fileSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "schemaVersion": { "$ref": "#/$defs/id" },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "evalSetIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "annotationSchemaVersion",
+        "fileSha256",
+        "sha256",
+        "documentIdentitySha256",
+        "caseIdentitySha256",
+        "caseCount"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "schemaVersion": { "enum": ["1.0.0", "2.0.0"] },
+        "annotationSchemaVersion": { "enum": ["1.0.0", "2.0.0"] },
+        "fileSha256": { "$ref": "#/$defs/sha256" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "observationIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "schemaVersion", "fileSha256", "observationCount"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "schemaVersion": { "enum": ["1.0.0", "2.0.0"] },
+        "fileSha256": { "$ref": "#/$defs/sha256" },
+        "observationCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "contract", "evalSet", "observations"],
+      "properties": {
+        "role": { "enum": ["base", "additive"] },
+        "contract": { "$ref": "#/$defs/identity" },
+        "evalSet": { "$ref": "#/$defs/evalSetIdentity" },
+        "observations": { "$ref": "#/$defs/observationIdentity" }
+      }
+    },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "split",
+        "blindHoldout",
+        "contractsSha256",
+        "aggregateIdentitySha256",
+        "caseCount",
+        "failureModeCount",
+        "parts"
+      ],
+      "properties": {
+        "id": {
+          "const": "scholarly-pdf-fidelity-public-calibration-suite-2026-07-v1"
+        },
+        "split": { "const": "public-development-calibration" },
+        "blindHoldout": { "const": false },
+        "contractsSha256": { "$ref": "#/$defs/sha256" },
+        "aggregateIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseCount": { "type": "integer", "minimum": 1 },
+        "failureModeCount": { "type": "integer", "minimum": 1 },
+        "parts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/part" }
+        }
+      }
+    },
+    "runtimeToolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "executableSha256", "versionOutputSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "executableSha256": { "$ref": "#/$defs/sha256" },
+        "versionOutputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeModelIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeIdentity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "not-applicable" },
+            "tool": { "type": "null" },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "unattested" },
+            "tool": {
+              "oneOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/runtimeToolIdentity" }
+              ]
+            },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "attested" },
+            "tool": { "$ref": "#/$defs/runtimeToolIdentity" },
+            "model": { "$ref": "#/$defs/runtimeModelIdentity" }
+          }
+        }
+      ]
+    },
+    "candidateIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "format",
+        "formatVersion",
+        "adapterSha256",
+        "runtimeIdentity"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "format": { "$ref": "#/$defs/id" },
+        "formatVersion": { "$ref": "#/$defs/id" },
+        "adapterSha256": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
+        "runtimeIdentity": { "$ref": "#/$defs/runtimeIdentity" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "platform",
+        "architecture",
+        "offlineRequested",
+        "allInputsVerified",
+        "runtimeIdentityAuthority"
+      ],
+      "properties": {
+        "lane": { "$ref": "#/$defs/id" },
+        "platform": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
+        },
+        "architecture": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
+        },
+        "offlineRequested": { "type": "boolean" },
+        "allInputsVerified": { "type": "boolean" },
+        "runtimeIdentityAuthority": {
+          "enum": ["not-applicable", "adapter-self-reported"]
+        }
+      }
+    },
+    "receiptReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evalSetId",
+        "evalSetSha256",
+        "predictionSha256",
+        "receiptSha256"
+      ],
+      "properties": {
+        "evalSetId": { "$ref": "#/$defs/id" },
+        "evalSetSha256": { "$ref": "#/$defs/sha256" },
+        "predictionSha256": { "$ref": "#/$defs/sha256" },
+        "receiptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate", "execution", "receipts"],
+      "properties": {
+        "candidate": { "$ref": "#/$defs/candidateIdentity" },
+        "execution": { "$ref": "#/$defs/execution" },
+        "receipts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/receiptReference" }
+        }
+      }
+    },
+    "caseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evalSetId",
+        "caseId",
+        "failureMode",
+        "task",
+        "stratum",
+        "critical",
+        "baselinePassed",
+        "baselineScore",
+        "passed",
+        "score",
+        "delta",
+        "change"
+      ],
+      "properties": {
+        "evalSetId": { "$ref": "#/$defs/id" },
+        "caseId": { "$ref": "#/$defs/id" },
+        "failureMode": { "$ref": "#/$defs/id" },
+        "task": { "$ref": "#/$defs/task" },
+        "stratum": { "$ref": "#/$defs/id" },
+        "critical": { "type": "boolean" },
+        "baselinePassed": { "type": "boolean" },
+        "baselineScore": { "$ref": "#/$defs/ratio" },
+        "passed": { "type": "boolean" },
+        "score": { "$ref": "#/$defs/ratio" },
+        "delta": { "type": "number", "minimum": -1, "maximum": 1 },
+        "change": { "enum": ["improved", "regressed", "unchanged"] }
+      }
+    },
+    "failureModeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "failureMode",
+        "cases",
+        "baselinePassed",
+        "baselinePassRate",
+        "passed",
+        "failed",
+        "passRate",
+        "regressions"
+      ],
+      "properties": {
+        "failureMode": { "$ref": "#/$defs/id" },
+        "cases": { "type": "integer", "minimum": 1 },
+        "baselinePassed": { "$ref": "#/$defs/count" },
+        "baselinePassRate": { "$ref": "#/$defs/ratio" },
+        "passed": { "$ref": "#/$defs/count" },
+        "failed": { "$ref": "#/$defs/count" },
+        "passRate": { "$ref": "#/$defs/ratio" },
+        "regressions": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}

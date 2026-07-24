@@ -9139,6 +9139,7 @@ export async function reconstructPageAnalyses({
     provenance,
     visualRelationships: visualResult.relationships,
     assets: visualResult.assets,
+    regions: regionResult.regions,
   })
 
   const assessment = assessPdfCompleteness({

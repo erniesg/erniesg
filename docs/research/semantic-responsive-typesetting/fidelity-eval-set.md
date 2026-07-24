@@ -281,6 +281,38 @@ The comparison reports every case delta, but its promotion result remains false
 under receipt `1.2.0`. Runtime and cost belong in a separate benchmark; they are
 deliberately excluded from the deterministic accuracy receipt.
 
+### Aggregate public-calibration suite
+
+`tools/pdf-fidelity-suite.mjs` joins the frozen v1 and additive v2 manifests,
+their observation companions, and both governance contracts without changing
+the frozen inputs. It validates the supplied baseline and candidate receipts
+against their exact normalized predictions, then emits one canonically hashed
+receipt with all 32 cases. Every case carries its source-reviewed
+`failureMode`, candidate `passed` result, baseline/candidate score, and delta;
+failure-mode aggregates report pass/fail counts and regressions.
+The strict output contract is
+`docs/schemas/pdf-fidelity-suite-receipt.schema.json`.
+
+```bash
+npm --silent run pdf:eval:suite -- \
+  --baseline-v1-receipt /private/evals/baseline-v1/eval-receipt.json \
+  --baseline-v1-predictions /private/evals/baseline-v1/predictions.json \
+  --baseline-v2-receipt /private/evals/baseline-v2/eval-receipt.json \
+  --baseline-v2-predictions /private/evals/baseline-v2/predictions.json \
+  --candidate-v1-receipt /private/evals/candidate-v1/eval-receipt.json \
+  --candidate-v1-predictions /private/evals/candidate-v1/predictions.json \
+  --candidate-v2-receipt /private/evals/candidate-v2/eval-receipt.json \
+  --candidate-v2-predictions /private/evals/candidate-v2/predictions.json \
+  --out /private/evals/baseline-vs-candidate-suite.json
+```
+
+`accuracyPassed` applies each eval manifest's objective scoring policy without
+conflating it with release authority. `nonRegressionPassed` requires every
+bounded candidate score to be at least its baseline score.
+`promotionEligible` is always `false`. The suite is public development
+calibration: its labels are exposed, v2 was complaint-driven, and the receipt
+explicitly records `blindHoldout: false`.
+
 For future parser/model comparisons, that separate sidecar has a strict schema:
 `docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json`. It requires the
 provider ID and version, model ID/version and optional artifact hash, adapter
@@ -388,12 +420,14 @@ npm --silent run pdf:eval:local -- \
 ```
 
 The adapter verifies the reconstruction source digest, byte length, and page
-count against the runner's already hash-pinned documents. Unresolved visual
-relationships emit no object or caption edge, and a table is called
-`semantic-table` only when the canonical reconstruction contains actual table
-structure. This makes the receipt an honest baseline for parser failure modes,
-with candidate labels and detection boxes coming from reconstruction evidence
-rather than being copied from target descriptors.
+count against the runner's already hash-pinned documents. Visual objects,
+reading order, and ownership edges are emitted only from relationships accepted
+by the same full provenance validator used by readable EPUB projection.
+A table is called `semantic-table` only when that validator accepts its exact
+source-run ownership, canonical cell structure, XHTML asset integrity, and
+node/relationship linkage. This prevents an in-memory rectangular table from
+scoring as semantic when export would omit it. Candidate labels and detection
+boxes still come from reconstruction evidence rather than target descriptors.
 
 This bundled adapter is deterministic and correctly reports
 `runtimeIdentity.status: "not-applicable"`; it therefore cannot produce passing

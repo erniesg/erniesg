@@ -10841,6 +10841,69 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
+  it('keeps a validated semantic-table boundary aligned with the completeness ledger', async () => {
+    const sourcePage = page(1, [
+      run(1, 'Synthetic table boundary paper', 0.1, 0.05, 0.5, 18),
+      run(1, 'Ordinary prose establishes font.', 0.1, 0.1, 0.5),
+      run(1, 'Table 1. Source backed.', 0.1, 0.25, 0.4, 8),
+      {
+        ...run(1, 'Header', 0.1, 0.3, 0.18),
+        bold: true,
+        fontName: 'Table-Bold',
+      },
+      {
+        ...run(1, 'Val-', 0.4, 0.3, 0.12),
+        bold: true,
+        fontName: 'Table-Bold',
+      },
+      run(1, 'alpha', 0.1, 0.325, 0.18),
+      run(1, '1', 0.4, 0.325, 0.04),
+      run(1, 'beta', 0.1, 0.35, 0.18),
+      run(1, '2', 0.4, 0.35, 0.04),
+    ])
+    const result = await reconstructPageAnalyses({
+      pages: [sourcePage],
+      sourceHash: 'a'.repeat(64),
+      fileName: 'semantic-table-boundary.pdf',
+      byteLength: 2048,
+    })
+    const tableRelationship = result.visualRelationships.find(
+      (relationship) => relationship.kind === 'table',
+    )
+
+    expect(tableRelationship).toBeDefined()
+    expect(
+      validatedPdfVisualRelationships({
+        paper: result.paper,
+        provenance: result.provenance,
+        relationships: result.visualRelationships,
+        assets: result.assets,
+        regions: result.regions,
+      }),
+    ).toContain(tableRelationship)
+    expect(result.lineBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcome: 'structural-boundary',
+          evidence: expect.arrayContaining(['strict-visual-only-region']),
+        }),
+      ]),
+    )
+    expect(result).toMatchObject({
+      unresolvedCorruptingJoinCount: 0,
+      structurallyConsumedLineBoundaryCount: 1,
+      completeness: {
+        unresolvedCorruptingJoinCount: 0,
+        structurallyConsumedLineBoundaryCount: 1,
+      },
+    })
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'INVALID_LINE_BOUNDARY_LEDGER' }),
+      ]),
+    )
+  })
+
   it('emits stable OCR gates instead of silently exporting partial text', async () => {
     const pages = [page(1, [], 'ocr-required')]
     const input = {

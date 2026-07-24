@@ -1835,6 +1835,44 @@ function explicitTableHeaderRow(row: TableLineRow) {
   )
 }
 
+function sparseHeaderContinuationMatchesBase(
+  continuation: TableLineRow,
+  base: TableLineRow,
+) {
+  const continuationRuns = continuation.entries.flatMap((entry) =>
+    entry.line.runs.filter((run) => run.text.trim()),
+  )
+  const baseRuns = base.entries.flatMap((entry) =>
+    entry.line.runs.filter((run) => run.text.trim()),
+  )
+  if (
+    continuationRuns.length === 0 ||
+    continuation.anchors.length >= MIN_TABULAR_ROW_ANCHORS ||
+    !continuation.entries.every((entry) => entry.region.kind === 'header') ||
+    !explicitTableHeaderRow(base)
+  ) {
+    return false
+  }
+  const claimedBaseRuns = new Set<number>()
+  return continuationRuns.every((run) => {
+    const runCenter = run.x + run.width / 2
+    const candidates = baseRuns.flatMap((baseRun, index) => {
+      const baseCenter = baseRun.x + baseRun.width / 2
+      const overlap = horizontalOverlap(run, baseRun)
+      return overlap / Math.min(run.width, baseRun.width) >= 0.8 &&
+        Math.abs(runCenter - baseCenter) <=
+          Math.max(BOX_TOLERANCE, Math.min(run.width, baseRun.width) / 2)
+        ? [index]
+        : []
+    })
+    if (candidates.length !== 1 || claimedBaseRuns.has(candidates[0])) {
+      return false
+    }
+    claimedBaseRuns.add(candidates[0])
+    return true
+  })
+}
+
 function completeTextScopeWithinCaptionLane(
   scope: PdfTableScope,
   caption: PdfPageRegion,
@@ -1975,7 +2013,7 @@ function completeTextScopeWithinCaptionLane(
         currentEntries().map((entry) => entry.line.box),
         scope.cropBox.method === 'ocr' ? 'ocr' : 'pdf-text',
       )
-      const row = remainingRows()
+      const rows = remainingRows()
         .filter(
           (candidate) =>
             candidate.box.y + candidate.box.height <= crop.y + BOX_TOLERANCE,
@@ -1983,18 +2021,53 @@ function completeTextScopeWithinCaptionLane(
         .sort(
           (left, right) =>
             right.box.y + right.box.height - (left.box.y + left.box.height),
-        )[0]
-      if (
-        !row ||
-        gapBetween(crop, row.box).vertical >
-          MAX_LINE_BAND_CAPTION_GAP + BOX_TOLERANCE ||
-        !explicitTableHeaderRow(row) ||
-        horizontalOverlap(crop, row.box) / Math.min(crop.width, row.box.width) <
+        )
+      const row = rows[0]
+      const rowWithinScope =
+        row !== undefined &&
+        gapBetween(crop, row.box).vertical <=
+          MAX_LINE_BAND_CAPTION_GAP + BOX_TOLERANCE &&
+        horizontalOverlap(crop, row.box) /
+          Math.min(crop.width, row.box.width) >=
           0.5
-      ) {
+      if (!rowWithinScope) {
         break
       }
-      for (const entry of row.entries) {
+      let headerRows = explicitTableHeaderRow(row) ? [row] : []
+      if (headerRows.length === 0) {
+        const base = rows
+          .slice(1)
+          .filter(
+            (candidate) =>
+              candidate.box.y + candidate.box.height <=
+              row.box.y + BOX_TOLERANCE,
+          )
+          .sort(
+            (left, right) =>
+              right.box.y + right.box.height - (left.box.y + left.box.height),
+          )[0]
+        if (
+          !base ||
+          gapBetween(row.box, base.box).vertical >
+            MAX_LINE_BAND_CAPTION_GAP + BOX_TOLERANCE ||
+          horizontalOverlap(crop, base.box) /
+            Math.min(crop.width, base.box.width) <
+            0.5 ||
+          !row.entries.every((entry) =>
+            lineMatchesTableTypography(entry, selectedFontNames),
+          ) ||
+          !base.entries.every((entry) =>
+            lineMatchesTableTypography(entry, selectedFontNames),
+          ) ||
+          !sparseHeaderContinuationMatchesBase(row, base)
+        ) {
+          break
+        }
+        headerRows = [base, row]
+      }
+      for (const entry of headerRows.flatMap(
+        (headerRow) => headerRow.entries,
+      )) {
         additions.set(tableLineEntryKey(entry), entry)
         headerLineIds.add(entry.line.id)
       }

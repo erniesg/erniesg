@@ -143,7 +143,7 @@ describe('local PDF corpus audit', () => {
     )
     expect(schema.properties.schemaVersion.const).toBe('1.5.0')
     expect(schema.$defs.structuralReceipt.properties.schemaVersion.const).toBe(
-      '1.3.0',
+      '1.4.0',
     )
     expect(schema.$defs.structuralReceipt.required).toContain(
       'canonicalNodeProvenanceSha256',
@@ -159,7 +159,7 @@ describe('local PDF corpus audit', () => {
     expect(schema.$defs.crossReferenceRelationship).toBeDefined()
     expect(schema.$defs.crossReferenceTarget).toBeDefined()
     expect(receipt).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       canonicalNodeProvenanceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       lineTransitionCount: 2,
       unresolvedCorruptingJoinCount: 1,
@@ -375,7 +375,7 @@ describe('local PDF corpus audit', () => {
     })
 
     expect(receipt).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraph: [
@@ -770,6 +770,50 @@ describe('local PDF corpus audit', () => {
     expect(JSON.stringify(baseline)).not.toContain('relationship-private-1')
   })
 
+  it('normalizes only the volatile PDF.js document counter in provenance font names', () => {
+    const reconstruction = {
+      paper: {
+        id: 'paper-1',
+        nodes: [{ id: 'node-private-1', type: 'paragraph', text: 'Body' }],
+      },
+      provenance: {
+        'node-private-1': {
+          confidence: 1,
+          pages: [1],
+          regionIds: ['region-private-1'],
+          boxes: [sourceBox({ fontName: 'g_d0_f17' })],
+          links: [],
+        },
+      },
+    }
+    const baseline = createPdfStructuralReceipt(reconstruction)
+    const differentDocumentCounter = createPdfStructuralReceipt({
+      ...reconstruction,
+      provenance: {
+        'node-private-1': {
+          ...reconstruction.provenance['node-private-1'],
+          boxes: [sourceBox({ fontName: 'g_d42_f17' })],
+        },
+      },
+    })
+    const differentFont = createPdfStructuralReceipt({
+      ...reconstruction,
+      provenance: {
+        'node-private-1': {
+          ...reconstruction.provenance['node-private-1'],
+          boxes: [sourceBox({ fontName: 'g_d42_f18' })],
+        },
+      },
+    })
+
+    expect(differentDocumentCounter.canonicalNodeProvenanceSha256).toBe(
+      baseline.canonicalNodeProvenanceSha256,
+    )
+    expect(differentFont.canonicalNodeProvenanceSha256).not.toBe(
+      baseline.canonicalNodeProvenanceSha256,
+    )
+  })
+
   it('binds visual caption-node, selected candidate, and selected crop identities into the visual graph hash', () => {
     const crop = sourceBox({
       x: 0.2,
@@ -977,7 +1021,7 @@ describe('local PDF corpus audit', () => {
     expect(
       report.documents.every(
         (document) =>
-          document.structure?.schemaVersion === '1.3.0' &&
+          document.structure?.schemaVersion === '1.4.0' &&
           document.structure.canonicalNodeCount > 0 &&
           /^[a-f0-9]{64}$/.test(
             document.structure.canonicalNodeSequenceSha256,

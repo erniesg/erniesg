@@ -832,14 +832,14 @@ function comparableText(value: string) {
 }
 
 function slug(value: string) {
-  return (
-    value
-      .toLocaleLowerCase()
-      .normalize('NFKD')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 80) || 'research-publication'
-  )
+  const candidate = value
+    .toLocaleLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80)
+    .replace(/-+$/g, '')
+  return candidate || 'research-publication'
 }
 
 function validNoteReferences<

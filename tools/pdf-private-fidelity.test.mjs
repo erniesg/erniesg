@@ -1664,7 +1664,7 @@ describe('private PDF fidelity runner', () => {
       [expect.stringMatching(/^[a-f0-9]{64}$/)],
     )
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraphSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -1756,7 +1756,7 @@ describe('private PDF fidelity runner', () => {
       evidence.structure.crossReferenceRelationshipGraph[0].sourceBoxes,
     ).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)])
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       crossReferenceRelationshipCount: 1,
       crossReferenceRelationshipCounts: { 'figure:matched': 1 },
       crossReferenceRelationshipGraphSha256:

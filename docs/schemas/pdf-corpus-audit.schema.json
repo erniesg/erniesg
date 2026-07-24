@@ -579,7 +579,7 @@
         "structurallyConsumedLineBoundaryCount"
       ],
       "properties": {
-        "schemaVersion": { "const": "1.3.0" },
+        "schemaVersion": { "const": "1.4.0" },
         "canonicalNodeCount": { "type": "integer", "minimum": 0 },
         "canonicalNodeSequenceSha256": { "$ref": "#/$defs/sha256" },
         "canonicalNodeTypeSequenceSha256": { "$ref": "#/$defs/sha256" },

@@ -6,7 +6,7 @@ import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
 export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.5.0'
-export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.3.0'
+export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.4.0'
 
 const MAX_DIAGNOSTIC_SAMPLES = 64
 const MAX_DIAGNOSTIC_SAMPLES_PER_CODE = 3
@@ -399,7 +399,14 @@ function normalizedNodeProvenance(nodes, provenance) {
           regionIds: (evidence.regionIds ?? []).map((regionId) =>
             opaqueStructuralId('region', regionId),
           ),
-          boxes: evidence.boxes ?? [],
+          boxes: (evidence.boxes ?? []).map((box) =>
+            typeof box.fontName === 'string'
+              ? {
+                  ...box,
+                  fontName: box.fontName.replace(/^g_d\d+_/u, 'g_d*_'),
+                }
+              : { ...box },
+          ),
           links: (evidence.links ?? []).map((link) =>
             canonicalJsonHash({ kind: 'node-source-link', link }),
           ),

@@ -525,20 +525,24 @@ describe('source-verifiable semantic tables', () => {
     ).toBe(true)
   })
 
-  it('maps a uniquely identified source cell after proven column-anchor normalization', () => {
+  it('maps a unique source cell throughout the detector column-center tolerance', () => {
     const { header, body, region } = tableFixture()
     const detectedHeader = {
       ...header,
       id: 'normalized-anchor-header',
       runs: header.runs.map((run, index) => ({
         ...run,
-        x: run.x + (index === 0 ? 0 : 0.006),
+        x: run.x + (index === 0 ? 0 : 0.042),
       })),
       sourceLineIds: [header.id],
     }
     const detectedBody = {
       ...body,
       id: 'normalized-anchor-body',
+      runs: body.runs.map((run, index) => ({
+        ...run,
+        x: run.x + (index === 0 ? 0 : 0.042),
+      })),
       sourceLineIds: [body.id],
     }
 

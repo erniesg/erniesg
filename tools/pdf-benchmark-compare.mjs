@@ -514,7 +514,7 @@ function validateStructure(structure) {
       'unresolvedCorruptingJoinCount',
       'structurallyConsumedLineBoundaryCount',
     ]) ||
-    structure.schemaVersion !== '1.3.0' ||
+    structure.schemaVersion !== '1.4.0' ||
     STRUCTURE_COUNT_FIELDS.some(
       (field) => !isNonNegativeInteger(structure[field]),
     ) ||

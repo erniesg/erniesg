@@ -190,7 +190,7 @@ function document({
       blockingDiagnosticCodes: blockingCodes,
     },
     structure: {
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       canonicalNodeCount: 4,
       canonicalNodeSequenceSha256: structureHash,
       canonicalNodeTypeSequenceSha256: structureHash,

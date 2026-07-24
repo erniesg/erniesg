@@ -8,7 +8,10 @@ import type {
   PdfVisualAsset,
 } from './import-types'
 import { isBoundedPdfPageCropBox } from './pdf-page-crop'
-import type { PdfDetectedTableGrid } from './pdf-table-detection'
+import {
+  PDF_TABLE_COLUMN_CENTER_TOLERANCE,
+  type PdfDetectedTableGrid,
+} from './pdf-table-detection'
 
 function xml(value: string) {
   return value
@@ -976,7 +979,7 @@ function sameSourceBackedDetectedCell(
   return (
     source.text === detected.text &&
     source.page === detected.page &&
-    Math.abs(source.x - detected.x) <= 0.035 &&
+    Math.abs(source.x - detected.x) <= PDF_TABLE_COLUMN_CENTER_TOLERANCE &&
     close(source.y, detected.y) &&
     close(source.width, detected.width) &&
     close(source.height, detected.height) &&

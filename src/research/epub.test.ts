@@ -3099,6 +3099,17 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('does not leave a trailing separator when a title slug is truncated', async () => {
+    const longTitlePaper = structuredClone(paper)
+    longTitlePaper.title = 'word '.repeat(30).trim()
+
+    const epub = await buildEpub(longTitlePaper, getTargetProfile('paperPro'))
+
+    expect(epub.fileName).toMatch(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*-paper-pro-[a-f0-9]{12}\.epub$/,
+    )
+  })
+
   it('derives deterministic device CSS and progression metadata from profiles', async () => {
     const paperPro = getTargetProfile('paperPro')
     const paperMove = getTargetProfile('paperProMove')

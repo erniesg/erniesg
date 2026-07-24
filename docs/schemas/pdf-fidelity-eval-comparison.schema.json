@@ -58,7 +58,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "sha256": { "$ref": "#/$defs/sha256" },
-        "annotationSchemaVersion": { "const": "1.0.0" },
+        "annotationSchemaVersion": { "enum": ["1.0.0", "2.0.0"] },
         "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
         "caseIdentitySha256": { "$ref": "#/$defs/sha256" }
       }

@@ -1,6 +1,6 @@
 import { strFromU8 } from 'fflate'
-import { describe, expect, it } from 'vitest'
-import { buildEpub, inspectEpub } from './epub'
+import { describe, expect, it, vi } from 'vitest'
+import { buildEpub, buildReadableEpub, inspectEpub } from './epub'
 import type { PdfPageAnalysis, PdfSourceRun } from './import-types'
 import { reconstructPageAnalyses } from './pdf-layout'
 import {
@@ -9,6 +9,8 @@ import {
   noteLabelFromText,
   reconstructPageRegions,
 } from './pdf-regions'
+import type { PdfFigureRasterizer } from './pdf-visuals'
+import { createSourcePageCropAsset } from './visual-assets'
 
 function run(
   page: number,
@@ -62,8 +64,129 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('classifies bounded supplementary and compound visual captions', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Figure A1. Supplementary figure.', 0.1, 0.2, 0.62, 9),
+        run(1, 'Table A.1: Appendix table.', 0.1, 0.4, 0.62, 9),
+        run(1, 'Equation B-2. Appendix equation.', 0.1, 0.6, 0.62, 9),
+      ]),
+    ])
+
+    expect(
+      result.regions.map((region) => ({
+        kind: region.kind,
+        text: region.text,
+      })),
+    ).toEqual([
+      { kind: 'caption', text: 'Figure A1. Supplementary figure.' },
+      { kind: 'caption', text: 'Table A.1: Appendix table.' },
+      { kind: 'caption', text: 'Equation B-2. Appendix equation.' },
+    ])
+  })
+
   it('recognizes an attached symbolic footnote marker', () => {
     expect(noteLabelFromText('*Work done during the internship.')).toBe('*')
+  })
+
+  it('normalizes a TeX math asterisk used as an author-note marker', () => {
+    expect(noteLabelFromText('∗daedalusrsch@gmail.com')).toBe('*')
+  })
+
+  it('keeps a numbered first-page Introduction heading out of sparse-page note detection', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Mechanistic Addition in Language Models', 0.1, 0.11, 0.72, 18),
+        run(1, 'Ada Example', 0.1, 0.15, 0.24, 11),
+        run(1, '1 Introduction', 0.1, 0.24, 0.35, 13),
+        run(
+          1,
+          'Large language models display surprising mathematical aptitude.',
+          0.1,
+          0.31,
+          0.72,
+          10,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) => region.text === '1 Introduction'),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.paper.nodes.find(
+        (node) => 'text' in node && node.text === '1 Introduction',
+      ),
+    ).toMatchObject({ type: 'heading' })
+  })
+
+  it('keeps a hierarchical later-page section heading out of sparse-page note detection', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Opening prose establishes the document.', 0.1, 0.2, 0.72, 10),
+      ]),
+      page(2, [
+        run(2, 'Experimental Analysis', 0.1, 0.11, 0.72, 18),
+        {
+          ...run(2, '3.2 Draft Module', 0.1, 0.24, 0.35, 13),
+          bold: true,
+        },
+        run(
+          2,
+          'The module composes each prompt in deterministic order.',
+          0.1,
+          0.31,
+          0.72,
+          10,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) => region.text === '3.2 Draft Module'),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.paper.nodes.find(
+        (node) => 'text' in node && node.text === '3.2 Draft Module',
+      ),
+    ).toMatchObject({ type: 'heading' })
+  })
+
+  it('keeps a small-font emphasized boundary heading out of chart-label classification', async () => {
+    const body = (text: string, y: number) =>
+      run(1, text, 0.1, y, 0.78, 10, 0.014)
+    const references = {
+      ...run(1, 'REFERENCES', 0.1, 0.48, 0.12, 8, 0.011),
+      bold: true,
+      fontName: 'LinBiolinumTB',
+    }
+    const result = await reconstruct([
+      page(1, [
+        body('The opening paragraph establishes the main body size.', 0.12),
+        body('A second ordinary line keeps that body size dominant.', 0.14),
+        body('A third ordinary line precedes the closing material.', 0.16),
+        body('Acknowledgement prose ends before the reference section.', 0.43),
+        references,
+        run(
+          1,
+          '[1] Ada Example. A source-backed bibliography entry.',
+          0.115,
+          0.51,
+          0.7,
+          8,
+          0.011,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) => region.text === 'REFERENCES'),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.paper.nodes.find(
+        (node) => 'text' in node && node.text === 'REFERENCES',
+      ),
+    ).toMatchObject({ type: 'heading' })
   })
 
   it('does not let a script-expanded line envelope erase a paragraph break', async () => {
@@ -83,6 +206,102 @@ describe('deterministic scholarly page regions', () => {
     ).toEqual([
       'First paragraph remains separate.',
       expect.stringContaining('Inline formula H'),
+    ])
+  })
+
+  it('preserves flush-left authored paragraphs separated by blank leading', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(
+          1,
+          'Humans naturally expend more mental effort solving some',
+          0.1,
+          0.2,
+          0.52,
+          10,
+          0.0126,
+        ),
+        run(
+          1,
+          'problems than others while reasoning continuously.',
+          0.1,
+          0.2151,
+          0.5,
+          10,
+          0.0126,
+        ),
+        run(
+          1,
+          'Early attempts instead scaled the model parameters.',
+          0.1,
+          0.2377,
+          0.49,
+          10,
+          0.0126,
+        ),
+        run(
+          1,
+          'More recent systems scale their test-time computation.',
+          0.1,
+          0.2528,
+          0.53,
+          10,
+          0.0126,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => region.kind === 'body')
+        .map((region) => region.text),
+    ).toEqual([
+      'Humans naturally expend more mental effort solving some problems than others while reasoning continuously.',
+      'Early attempts instead scaled the model parameters. More recent systems scale their test-time computation.',
+    ])
+  })
+
+  it('preserves a styled run-in paragraph at ordinary line leading', () => {
+    const runInLabel = run(
+      1,
+      'Fusion with abstract modalities:',
+      0.12,
+      0.24,
+      0.22,
+      10,
+      0.018,
+    )
+    runInLabel.bold = true
+    runInLabel.fontName = 'NimbusRomNo9L-Medi'
+    const result = reconstructPageRegions([
+      page(1, [
+        run(
+          1,
+          'The preceding paragraph describes raw modalities.',
+          0.1,
+          0.2,
+          0.52,
+        ),
+        run(1, 'It ends before the styled treatment begins.', 0.1, 0.22, 0.48),
+        runInLabel,
+        run(1, 'We begin with a representation.', 0.345, 0.24, 0.275),
+        run(
+          1,
+          'These operations can then be composed repeatedly.',
+          0.1,
+          0.26,
+          0.5,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => region.kind === 'body')
+        .map((region) => region.text),
+    ).toEqual([
+      'The preceding paragraph describes raw modalities. It ends before the styled treatment begins.',
+      'Fusion with abstract modalities: We begin with a representation. These operations can then be composed repeatedly.',
     ])
   })
 
@@ -115,6 +334,470 @@ describe('deterministic scholarly page regions', () => {
           node.text.includes('quadruples'),
       ),
     ).toBe(false)
+  })
+
+  it('isolates compact unsafe CMEX glyph lines as equation fragments', () => {
+    const largeOperator = run(1, 'Z', 0.36, 0.5, 0.018)
+    const delimiter = run(1, '\u0000', 0.382, 0.5, 0.01)
+    delimiter.fontName = 'Synthetic-CMEX10'
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.5),
+        run(1, 'A second ordinary prose line remains intact.', 0.1, 0.23, 0.5),
+        run(1, 'The drift is pinned down by', 0.1, 0.47, 0.24),
+        largeOperator,
+        delimiter,
+        run(1, 'μ(t, x) = a + b', 0.4, 0.53, 0.22),
+      ]),
+    ])
+
+    const fragment = result.regions.find((region) =>
+      region.text.includes('\u0000'),
+    )
+    expect(fragment).toMatchObject({
+      kind: 'equation',
+      text: '\u0000',
+    })
+    expect(fragment?.text).not.toContain('Z')
+    expect(fragment?.text).not.toContain('The drift is pinned down by')
+    expect(fragment?.text).not.toContain('μ(t, x)')
+  })
+
+  it('isolates a nonpublishable CMEX line without relying on compact math text', () => {
+    const replacement = run(1, '\ufffd', 0.312, 0.37798, 0.012, 11, 0.0142)
+    replacement.fontName = 'Synthetic-CMEX99'
+    const left = run(1, 'N(a,b)', 0.25, 0.38948, 0.06, 11, 0.0142)
+    left.fontName = 'Synthetic-CMMI10'
+    const right = run(1, 'cdefghijklmnop', 0.326, 0.38948, 0.18, 11, 0.0142)
+    right.fontName = 'Synthetic-CMMI10'
+
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.5),
+        run(1, 'A second ordinary prose line remains intact.', 0.1, 0.23, 0.5),
+        run(1, 'Preceding prose must remain accessible.', 0.12, 0.34, 0.42),
+        left,
+        replacement,
+        right,
+        run(1, 'Following prose must remain accessible.', 0.12, 0.42843, 0.42),
+      ]),
+    ])
+
+    const fragment = result.regions.find((region) =>
+      region.lines.some((line) =>
+        line.runs.some((sourceRun) => sourceRun.text.includes('\ufffd')),
+      ),
+    )
+    expect(fragment).toMatchObject({ kind: 'equation' })
+    expect(fragment?.text).toContain('\ufffd')
+    expect(fragment?.text).not.toContain(
+      'Preceding prose must remain accessible.',
+    )
+    expect(fragment?.text).not.toContain(
+      'Following prose must remain accessible.',
+    )
+    expect(result.regions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'body',
+          text: 'Preceding prose must remain accessible.',
+        }),
+        expect.objectContaining({
+          kind: 'body',
+          text: 'Following prose must remain accessible.',
+        }),
+      ]),
+    )
+  })
+
+  it('keeps prose-dominant lines with inline math and CMEX accents out of display equations', () => {
+    const accent = run(1, '\u0302', 0.302, 0.4, 0.012)
+    accent.fontName = 'Synthetic-CMEX10'
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.5),
+        run(1, 'A second ordinary prose line remains intact.', 0.1, 0.23, 0.5),
+        run(1, 'over [t, t + ∆] be ν', 0.1, 0.4, 0.2),
+        accent,
+        run(
+          1,
+          'b(t, ∆) (aggregate across positions). Hedge via an x-variance strip with safeguards.',
+          0.315,
+          0.4,
+          0.57,
+        ),
+        run(
+          1,
+          '2. Compute rx and δx via (8)–(9); produce xbid/ask and display pbid/ask = S(·) with safeguards.',
+          0.1,
+          0.48,
+          0.78,
+        ),
+        run(1, 'β = Cov(x, y) ≈ ρ.', 0.32, 0.58, 0.3),
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) => region.text.includes('Hedge via')),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.regions.find((region) => region.text.startsWith('2. Compute')),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.regions.find((region) => region.text === 'β = Cov(x, y) ≈ ρ.'),
+    ).toMatchObject({ kind: 'equation' })
+  })
+
+  it('isolates a source-stacked terminal fraction from its prose prefix without linearizing it', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.014,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Left column line one establishes its flow.', 0.1, 0.2, 0.36),
+        run(1, 'Right column line one establishes its flow.', 0.52, 0.2, 0.36),
+        run(1, 'Left column line two establishes its flow.', 0.1, 0.24, 0.36),
+        run(1, 'Right column line two establishes its flow.', 0.52, 0.24, 0.36),
+        run(1, 'Left column line three establishes its flow.', 0.1, 0.28, 0.36),
+        run(
+          1,
+          'Right column line three establishes its flow.',
+          0.52,
+          0.28,
+          0.36,
+        ),
+        sourceRun('which we quantify with', 0.1, 0.74, 0.17, 'Synthetic-Serif'),
+        sourceRun('c', 0.278, 0.74, 0.008, 'Synthetic-CMMI10'),
+        sourceRun('a,b', 0.286, 0.747, 0.018, 'Synthetic-CMMI7', 7, 0.009),
+        sourceRun('=', 0.309, 0.74, 0.012, 'Synthetic-CMR10'),
+        sourceRun('(1', 0.33, 0.74, 0.014, 'Synthetic-CMR10'),
+        sourceRun('−', 0.348, 0.74, 0.012, 'Synthetic-CMSY10'),
+        sourceRun('DE', 0.366, 0.737, 0.02, 'Synthetic-CMR7', 7, 0.009),
+        sourceRun('TE', 0.366, 0.75, 0.02, 'Synthetic-CMR7', 7, 0.009),
+        sourceRun(')', 0.389, 0.74, 0.006, 'Synthetic-CMR10'),
+        sourceRun(
+          'helix(a+b)',
+          0.402,
+          0.737,
+          0.068,
+          'Synthetic-CMR7',
+          7,
+          0.009,
+        ),
+        sourceRun(
+          'helix(a,b,a+b)',
+          0.4,
+          0.75,
+          0.085,
+          'Synthetic-CMR7',
+          7,
+          0.009,
+        ),
+        sourceRun('.', 0.49, 0.74, 0.005, 'Synthetic-Serif'),
+        run(
+          1,
+          'Following prose remains independently readable.',
+          0.1,
+          0.78,
+          0.36,
+        ),
+      ]),
+    ])
+
+    const prefix = result.regions.find(
+      (region) => region.text === 'which we quantify with',
+    )
+    const formula = result.regions.find((region) =>
+      region.lines.some(
+        (line) =>
+          line.runs.some((source) => source.text === 'DE') &&
+          line.runs.some((source) => source.text === 'TE'),
+      ),
+    )
+    const following = result.regions.find((region) =>
+      region.text.includes('Following prose remains'),
+    )
+
+    expect(prefix).toMatchObject({ kind: 'body', column: 'left' })
+    expect(formula).toMatchObject({ kind: 'equation', column: 'left' })
+    expect(formula?.text).not.toContain('which we quantify with')
+    expect(following).toMatchObject({ kind: 'body', column: 'left' })
+    expect(
+      result.regions
+        .filter((region) => region.kind === 'body')
+        .map((region) => region.text)
+        .join(' '),
+    ).not.toMatch(/DE\s*TE|DETE/u)
+    const ordered = result.readingOrder.order
+    expect(ordered.indexOf(prefix!.id)).toBeLessThan(
+      ordered.indexOf(formula!.id),
+    )
+    expect(ordered.indexOf(formula!.id)).toBeLessThan(
+      ordered.indexOf(following!.id),
+    )
+  })
+
+  it('keeps a hyphenated prose word intact around an interleaved summation crop', async () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.014,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const sourcePage = page(1, [
+      run(1, 'Left column establishes its first line.', 0.1, 0.2, 0.36),
+      run(1, 'Right column establishes its first line.', 0.52, 0.2, 0.36),
+      run(1, 'Left column establishes its second line.', 0.1, 0.24, 0.36),
+      run(1, 'Right column establishes its second line.', 0.52, 0.24, 0.36),
+      run(1, 'Left column establishes its third line.', 0.1, 0.28, 0.36),
+      run(1, 'Right column establishes its third line.', 0.52, 0.28, 0.36),
+      run(
+        1,
+        'An earlier baseline is optimal for another option.',
+        0.52,
+        0.32,
+        0.36,
+      ),
+      sourceRun(
+        'A method selects the option that opti-',
+        0.502,
+        0.5687,
+        0.385,
+        'Subset+NimbusRomNo9L-Regu',
+        9.9626,
+        0.01258,
+      ),
+      sourceRun('a', 0.6094, 0.59071, 0.00706, 'Subset+CMMI7', 6.9738, 0.00881),
+      sourceRun(
+        'l',
+        0.60985,
+        0.58303,
+        0.00412,
+        'Subset+CMMI7',
+        6.9738,
+        0.00881,
+      ),
+      sourceRun(
+        'LD',
+        0.58484,
+        0.58383,
+        0.02456,
+        'Subset+CMMI10',
+        9.9626,
+        0.01258,
+      ),
+      sourceRun(
+        '∑',
+        0.55995,
+        0.57439,
+        0.01718,
+        'Subset+CMEX10',
+        9.9626,
+        0.01258,
+      ),
+      sourceRun(
+        'mizes',
+        0.50235,
+        0.58383,
+        0.03798,
+        'Subset+NimbusRomNo9L-Regu',
+        9.9626,
+        0.01258,
+      ),
+      sourceRun(
+        'L',
+        0.54635,
+        0.59194,
+        0.00893,
+        'Subset+CMMI7',
+        6.9738,
+        0.00881,
+      ),
+      sourceRun('1', 0.54758, 0.58265, 0.00649, 'Subset+CMR7', 6.9738, 0.00881),
+      sourceRun(
+        'l',
+        0.57714,
+        0.59137,
+        0.00412,
+        'Subset+CMMI7',
+        6.9738,
+        0.00881,
+      ),
+      sourceRun(
+        'as the objective.',
+        0.6213,
+        0.5838,
+        0.14,
+        'Subset+NimbusRomNo9L-Regu',
+        9.9626,
+        0.01258,
+      ),
+      run(1, 'Following prose remains readable.', 0.502, 0.61, 0.28),
+    ])
+    const regional = reconstructPageRegions([sourcePage])
+    const formula = regional.regions.find(
+      (region) =>
+        region.kind === 'equation' &&
+        region.lines.some((line) =>
+          line.runs.some((source) => source.text === '∑'),
+        ),
+    )
+    const formulaRunTexts =
+      formula?.lines.flatMap((line) =>
+        line.runs.map((source) => source.text),
+      ) ?? []
+
+    expect(formulaRunTexts).toEqual(
+      expect.arrayContaining(['L', '1', '∑', 'l', 'LD', 'l', 'a']),
+    )
+    expect(formulaRunTexts).not.toEqual(
+      expect.arrayContaining(['mizes', 'as the objective.']),
+    )
+
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 20,
+          pixels: new Uint8Array(80 * 20 * 4).fill(72),
+        }),
+    )
+    const reconstructed = await reconstructPageAnalyses({
+      pages: [sourcePage],
+      sourceHash: '7'.repeat(64),
+      fileName: 'regions.pdf',
+      byteLength: 4096,
+      rasterizeFigure,
+    })
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(reconstructed.visualRelationships).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'equation',
+          status: 'unresolved',
+          evidence: expect.arrayContaining([
+            'overlapping-unowned-source-text',
+            'source-rendition-unavailable',
+          ]),
+        }),
+      ]),
+    )
+    const targetParagraphIndex = reconstructed.paper.nodes.findIndex(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.text.includes('A method selects the option'),
+    )
+    const formulaNodeIndex = reconstructed.paper.nodes.findIndex(
+      (node) =>
+        'text' in node &&
+        typeof node.text === 'string' &&
+        node.text.includes('∑'),
+    )
+    const targetParagraph = reconstructed.paper.nodes[targetParagraphIndex]
+    const canonicalTextSequence = reconstructed.paper.nodes
+      .flatMap((node) =>
+        'text' in node && typeof node.text === 'string' ? [node.text] : [],
+      )
+      .join('\n')
+
+    expect(targetParagraph).toMatchObject({
+      type: 'paragraph',
+      text: expect.stringContaining('option that optimizes'),
+    })
+    expect(
+      'text' in targetParagraph && typeof targetParagraph.text === 'string'
+        ? targetParagraph.text
+        : '',
+    ).not.toContain('opti-mizes')
+    expect(reconstructed.lineBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcome: 'removed-discretionary-hyphen',
+        }),
+      ]),
+    )
+    expect(formulaNodeIndex).toBe(-1)
+    expect(canonicalTextSequence).not.toContain('∑')
+    expect(canonicalTextSequence.indexOf('optimizes')).toBeLessThan(
+      canonicalTextSequence.indexOf('as the objective.'),
+    )
+  })
+
+  it('does not split an aligned prose row merely because two small source runs are stacked', () => {
+    const upper = run(1, 'DE', 0.28, 0.397, 0.02, 7, 0.009)
+    upper.fontName = 'Synthetic-CMR7'
+    const lower = run(1, 'TE', 0.28, 0.41, 0.02, 7, 0.009)
+    lower.fontName = 'Synthetic-CMR7'
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.5),
+        run(1, 'A second ordinary prose line remains intact.', 0.1, 0.23, 0.5),
+        run(1, 'The audited labels', 0.1, 0.4, 0.16),
+        upper,
+        lower,
+        run(1, 'remain ordinary prose.', 0.31, 0.4, 0.18),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'equation'),
+    ).toHaveLength(0)
+    expect(
+      result.regions.find((region) => region.text.includes('audited labels')),
+    ).toMatchObject({ kind: 'body' })
+  })
+
+  it('does not classify a full-size Computer Modern prose word as math from the literal word helix', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.014,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Body text establishes its normal size.', 0.1, 0.2, 0.4),
+        run(1, 'Another body line establishes the flow.', 0.1, 0.24, 0.4),
+        sourceRun('The measured', 0.1, 0.4, 0.12, 'Synthetic-Serif'),
+        sourceRun('=', 0.23, 0.4, 0.012, 'Synthetic-CMR10'),
+        sourceRun('DE', 0.247, 0.397, 0.02, 'Synthetic-CMR7', 7, 0.009),
+        sourceRun('TE', 0.247, 0.41, 0.02, 'Synthetic-CMR7', 7, 0.009),
+        sourceRun('helix', 0.273, 0.4, 0.04, 'Synthetic-CMR10'),
+        sourceRun('label remains prose.', 0.319, 0.4, 0.16, 'Synthetic-Serif'),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => region.kind === 'equation')
+        .map((region) => region.text)
+        .join(' '),
+    ).not.toMatch(/\bhelix\b/iu)
   })
 
   it('rejoins an emphasized section number stranded at a column gutter', async () => {
@@ -186,6 +869,242 @@ describe('deterministic scholarly page regions', () => {
     expect(result.paper.nodes.some((node) => node.type === 'footnote')).toBe(
       false,
     )
+  })
+
+  it('does not promote tiny grouped chart ticks to numbered footnotes', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body text establishes the page font.', 0.1, 0.15, 0.5, 10),
+        run(1, 'A second ordinary body line.', 0.1, 0.2, 0.5, 10),
+        run(1, 'A third ordinary body line.', 0.1, 0.25, 0.5, 10),
+        run(1, '2.50', 0.251, 0.752, 0.012, 3.3, 0.0042),
+        run(1, '100', 0.288, 0.752, 0.01, 3.3, 0.0042),
+        run(
+          1,
+          '24 22 Response Avg Projection 20 18 16 14 12 10 8',
+          0.42,
+          0.87,
+          0.13,
+          2.9,
+          0.007,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'footnote'),
+    ).toEqual([])
+    expect(
+      result.regions
+        .filter(
+          (region) =>
+            region.text.includes('2.50') ||
+            region.text.includes('Response Avg Projection'),
+        )
+        .every((region) => region.kind !== 'footnote'),
+    ).toBe(true)
+  })
+
+  it('does not promote decimal-leading table and chart cells to numbered footnotes', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body text establishes the page font.', 0.1, 0.15, 0.5, 10),
+        run(1, 'A second ordinary body line.', 0.1, 0.2, 0.5, 10),
+        run(1, 'A third ordinary body line.', 0.1, 0.25, 0.5, 10),
+        run(1, '3.5B', 0.23, 0.72, 0.04, 7),
+        run(1, '0.8T', 0.29, 0.72, 0.04, 7),
+        run(1, '18.60 65.12 84.80', 0.62, 0.72, 0.16, 7),
+        run(1, '1.0 ✓', 0.65, 0.76, 0.06, 7),
+        run(1, '2.0 ✗', 0.65, 0.79, 0.06, 7),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => /^\d+\.\d/u.test(region.text))
+        .every(
+          (region) => region.kind !== 'footnote' && region.kind !== 'endnote',
+        ),
+    ).toBe(true)
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'footnote'),
+    ).toEqual([])
+  })
+
+  it('does not promote monospaced numbered diagram content to footnotes', async () => {
+    const diagramRun = (text: string, x: number, y: number, width: number) => ({
+      ...run(1, text, x, y, width, 7),
+      fontName: 'Inconsolata-Regular',
+    })
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body text establishes the page font.', 0.1, 0.15, 0.5, 10),
+        run(1, 'A second ordinary body line.', 0.1, 0.2, 0.5, 10),
+        run(1, 'A third ordinary body line.', 0.1, 0.25, 0.5, 10),
+        diagramRun('1. Character Portrait:', 0.24, 0.76, 0.18),
+        diagramRun('2. The character enters the scene', 0.24, 0.79, 0.3),
+        diagramRun('3. The conflict escalates', 0.24, 0.82, 0.24),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => region.text.includes('Character Portrait'))
+        .every((region) => region.kind !== 'footnote'),
+    ).toBe(true)
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'footnote'),
+    ).toEqual([])
+  })
+
+  it('does not promote Nimbus monospaced data literals and their continuations to footnotes', async () => {
+    const codeRun = (text: string, x: number, y: number, width: number) => ({
+      ...run(1, text, x, y, width, 7),
+      fontName: 'NimbusMonL-Regu',
+    })
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body text establishes the page font.', 0.1, 0.15, 0.5, 10),
+        run(1, 'A second ordinary body line.', 0.1, 0.2, 0.5, 10),
+        run(1, 'A third ordinary body line.', 0.1, 0.25, 0.5, 10),
+        codeRun('0]', 0.43, 0.72, 0.02),
+        codeRun('i = [255, 254, 253, 253, 254,', 0.39, 0.74, 0.21),
+        codeRun('255, 255, 254, 251, 251, 253,', 0.42, 0.76, 0.21),
+        codeRun('7)', 0.43, 0.8, 0.02),
+        codeRun('sequence += [254, 255, 0, 0, 1,', 0.39, 0.82, 0.22),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => /(?:0\]|sequence \+=)/u.test(region.text))
+        .every(
+          (region) => region.kind !== 'footnote' && region.kind !== 'endnote',
+        ),
+    ).toBe(true)
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'footnote'),
+    ).toEqual([])
+  })
+
+  it('keeps a lower-page sequential prompt list in body flow when it has no note references', async () => {
+    const body = Array.from({ length: 12 }, (_, index) =>
+      run(
+        1,
+        `Ordinary body line ${index + 1} establishes the page prose size.`,
+        0.176,
+        0.12 + index * 0.045,
+        0.64,
+        10,
+      ),
+    )
+    const result = await reconstruct([
+      page(1, [
+        ...body,
+        run(
+          1,
+          'Positive instructions (encouraging the target behavior)',
+          0.202,
+          0.779,
+          0.38,
+          10,
+        ),
+        run(
+          1,
+          '1. Your responses should demonstrate the target behavior and remain focused through-',
+          0.202,
+          0.807,
+          0.596,
+          9,
+          0.0113,
+        ),
+        run(1, 'out the answer.', 0.202, 0.8196, 0.12, 9, 0.0113),
+        run(
+          1,
+          '2. Respond with the requested mindset and prioritize it consistently in every',
+          0.202,
+          0.8322,
+          0.596,
+          9,
+          0.0113,
+        ),
+        run(1, 'answer.', 0.202, 0.8448, 0.08, 9, 0.0113),
+        run(
+          1,
+          '3. Derive each response from the requested persona and explain the result',
+          0.202,
+          0.8574,
+          0.596,
+          9,
+          0.0113,
+        ),
+        run(1, 'clearly.', 0.202, 0.87, 0.08, 9, 0.0113),
+        run(
+          1,
+          '4. Use the requested strategy as a tool in your responses whenever it is',
+          0.202,
+          0.8826,
+          0.596,
+          9,
+          0.0113,
+        ),
+        run(1, 'appropriate.', 0.202, 0.8952, 0.1, 9, 0.0113),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => /^[1-4]\.\s/u.test(region.text))
+        .map((region) => region.kind),
+    ).toEqual(['body', 'body', 'body', 'body'])
+    expect(
+      result.paper.nodes.filter((node) => node.type === 'footnote'),
+    ).toEqual([])
+    expect(result.noteRelationships).toEqual([])
+  })
+
+  it('preserves a compact sequential numbered footnote band with raised backlink markers', async () => {
+    const raisedReference = (
+      text: string,
+      label: string,
+      y: number,
+    ): PdfSourceRun[] => [
+      run(1, text, 0.1, y, 0.38, 10),
+      run(1, label, 0.482, y - 0.005, 0.006, 6, 0.009),
+      run(1, '.', 0.49, y, 0.006, 10),
+    ]
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body line one establishes the prose size.', 0.1, 0.12, 0.64),
+        run(1, 'Body line two establishes the prose size.', 0.1, 0.15, 0.64),
+        ...raisedReference('The first claim has supporting detail', '1', 0.22),
+        ...raisedReference('The second claim has supporting detail', '2', 0.27),
+        ...raisedReference('The third claim has supporting detail', '3', 0.32),
+        run(1, '1. First compact note body.', 0.1, 0.83, 0.7, 8),
+        run(1, '2. Second compact note body.', 0.1, 0.86, 0.7, 8),
+        run(1, '3. Third compact note body.', 0.1, 0.89, 0.7, 8),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'footnote')
+        .map((node) => ({ label: node.label, text: node.text })),
+    ).toEqual([
+      { label: '1', text: 'First compact note body.' },
+      { label: '2', text: 'Second compact note body.' },
+      { label: '3', text: 'Third compact note body.' },
+    ])
+    expect(
+      result.noteRelationships.map((relationship) => ({
+        label: relationship.label,
+        status: relationship.status,
+      })),
+    ).toEqual([
+      { label: '1', status: 'matched' },
+      { label: '2', status: 'matched' },
+      { label: '3', status: 'matched' },
+    ])
   })
 
   it('checks dense reading-order graphs without overflowing the call stack', () => {
@@ -273,6 +1192,96 @@ describe('deterministic scholarly page regions', () => {
     expect(result.readingOrder.evaluation.reviewRequired).toBe(false)
   })
 
+  it('keeps tall narrow native visual fragments in their originating right column', () => {
+    const columnRuns = Array.from({ length: 3 }, (_, index) => {
+      const y = 0.14 + index * 0.06
+      return [
+        run(
+          1,
+          `Left column line ${index + 1} establishes the page flow.`,
+          0.119,
+          y,
+          0.37,
+        ),
+        run(
+          1,
+          `Right column line ${index + 1} establishes the page flow.`,
+          0.514,
+          y,
+          0.37,
+        ),
+      ]
+    }).flat()
+    const result = reconstructPageRegions([
+      page(1, columnRuns, [
+        {
+          id: 'right-column-vector-strip',
+          page: 1,
+          kind: 'vector',
+          box: {
+            page: 1,
+            x: 0.515,
+            y: 0.35,
+            width: 0.042,
+            height: 0.212,
+            rotation: 0,
+            method: 'pdf-object',
+          },
+          confidence: 1,
+          assetId: null,
+        },
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) =>
+        region.nativeObjectIds.includes('right-column-vector-strip'),
+      ),
+    ).toMatchObject({ column: 'right' })
+  })
+
+  it('starts a new region at a standalone numbered marker before its same-baseline item text', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(
+          1,
+          '3. The previous item ends with a complete sentence.',
+          0.129,
+          0.1,
+          0.34,
+          9,
+          0.011,
+        ),
+        run(1, 'Outline:', 0.129, 0.125, 0.06, 9, 0.011),
+        run(1, '1.', 0.129, 0.15, 0.015, 9, 0.011),
+        run(
+          1,
+          'The first outline item begins here.',
+          0.185,
+          0.15,
+          0.28,
+          9,
+          0.011,
+        ),
+        run(
+          1,
+          '2. The second outline item follows.',
+          0.129,
+          0.175,
+          0.3,
+          9,
+          0.011,
+        ),
+      ]),
+    ])
+
+    expect(result.regions.map((region) => region.text)).toEqual([
+      '3. The previous item ends with a complete sentence. Outline:',
+      '1. The first outline item begins here.',
+      '2. The second outline item follows.',
+    ])
+  })
+
   it('segments one-column flow without inventing a column boundary', async () => {
     const result = await reconstruct([
       page(1, [
@@ -294,6 +1303,226 @@ describe('deterministic scholarly page regions', () => {
       cycleRate: 0,
       reviewRequired: false,
     })
+  })
+
+  it('ignores a dense full-width table grid when proving genuine page columns', () => {
+    const tableRows = [
+      ['Model', 'Method', 'Score A', 'Score B'],
+      ['alpha', 'direct', '75.3', '84.1'],
+      ['beta', 'guided', '65.2', '91.3'],
+      ['gamma', 'direct', '87.0', '95.7'],
+      ['delta', 'guided', '73.9', '82.6'],
+    ]
+    const tableRuns = tableRows.flatMap((row, rowIndex) =>
+      row.map((text, columnIndex) =>
+        run(
+          1,
+          text,
+          [0.06, 0.26, 0.46, 0.75][columnIndex],
+          0.16 + rowIndex * 0.028,
+          [0.1, 0.1, 0.1, 0.15][columnIndex],
+          9,
+          0.012,
+        ),
+      ),
+    )
+
+    const tableOnly = reconstructPageRegions([page(1, tableRuns)])
+    const tableOnlyRows = tableOnly.regions.filter(
+      (region) => region.kind === 'body',
+    )
+    expect(tableOnlyRows).toHaveLength(tableRows.length)
+    expect(tableOnlyRows.every((region) => region.column === 'single')).toBe(
+      true,
+    )
+    expect(tableOnlyRows.map((region) => region.text)).toContain(
+      'Model Method Score A Score B',
+    )
+
+    const mixed = reconstructPageRegions([
+      page(1, [
+        ...tableRuns,
+        run(1, 'Left column establishes genuine prose.', 0.08, 0.48, 0.36),
+        run(1, 'Right column establishes genuine prose.', 0.56, 0.48, 0.36),
+        run(1, 'Left column continues independently.', 0.08, 0.52, 0.36),
+        run(1, 'Right column continues independently.', 0.56, 0.52, 0.36),
+        run(1, 'Left column reaches its conclusion.', 0.08, 0.56, 0.36),
+        run(1, 'Right column reaches its conclusion.', 0.56, 0.56, 0.36),
+      ]),
+    ])
+    expect(
+      mixed.regions.find((region) =>
+        region.text.includes('Left column establishes genuine prose.'),
+      ),
+    ).toMatchObject({ column: 'left' })
+    expect(
+      mixed.regions.find((region) =>
+        region.text.includes('Right column establishes genuine prose.'),
+      ),
+    ).toMatchObject({ column: 'right' })
+    expect(
+      mixed.regions.find(
+        (region) => region.text === 'Model Method Score A Score B',
+      ),
+    ).toMatchObject({ kind: 'spanning', column: 'span' })
+    expect(mixed.readingOrder.evaluation.reviewRequired).toBe(false)
+  })
+
+  it('does not collapse two wide fragmented prose columns into dense table rows', () => {
+    const fragment = (text: string, x: number, y: number, width: number) =>
+      run(1, text, x, y, width, 10, 0.013)
+    const rows = Array.from({ length: 4 }, (_, rowIndex) => {
+      const y = 0.18 + rowIndex * 0.04
+      return [
+        fragment(`Left${rowIndex + 1}`, 0.119, y, 0.07),
+        fragment('column', 0.205, y, 0.07),
+        fragment('prose', 0.291, y, 0.06),
+        fragment('continues.', 0.367, y, 0.12),
+        fragment(`Right${rowIndex + 1}`, 0.514, y, 0.08),
+        fragment('column', 0.61, y, 0.07),
+        fragment('prose', 0.696, y, 0.06),
+        fragment('continues.', 0.772, y, 0.11),
+      ]
+    }).flat()
+
+    const result = reconstructPageRegions([page(1, rows)])
+    const left = result.regions.find((region) =>
+      region.text.includes('Left1 column prose continues.'),
+    )
+    const right = result.regions.find((region) =>
+      region.text.includes('Right1 column prose continues.'),
+    )
+
+    expect(left).toMatchObject({ column: 'left', kind: 'body' })
+    expect(right).toMatchObject({ column: 'right', kind: 'body' })
+    expect(left?.text).not.toContain('Right1')
+    expect(right?.text).not.toContain('Left1')
+  })
+
+  it('does not collapse paired prompt columns when one side uses fragmented word runs', () => {
+    const word = (text: string, x: number, y: number, width: number) =>
+      run(1, text, x, y, width, 9, 0.011)
+    const rows = Array.from({ length: 4 }, (_, rowIndex) => {
+      const y = 0.2 + rowIndex * 0.035
+      return [
+        word(`Left${rowIndex + 1}`, 0.129, y, 0.055),
+        word('prompt', 0.195, y, 0.052),
+        word('prose', 0.258, y, 0.045),
+        word('continues', 0.314, y, 0.07),
+        word('independently.', 0.395, y, 0.08),
+        word(`Right prompt value ${rowIndex + 1}`, 0.524, y, 0.226),
+      ]
+    }).flat()
+
+    const result = reconstructPageRegions([page(1, rows)])
+    const left = result.regions.find((region) =>
+      region.text.includes('Left1 prompt prose continues independently.'),
+    )
+    const right = result.regions.find((region) =>
+      region.text.includes('Right prompt value 1'),
+    )
+
+    expect(left).toMatchObject({ column: 'left', kind: 'body' })
+    expect(right).toMatchObject({ column: 'right', kind: 'body' })
+    expect(left?.text).not.toContain('Right prompt value 1')
+    expect(right?.text).not.toContain('Left1')
+  })
+
+  it('keeps an inline table reference in prose when opposite-column text is vertically nearer', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Left column establishes its first line.', 0.08, 0.12, 0.36),
+        run(1, 'Right column establishes its first line.', 0.56, 0.12, 0.36),
+        run(1, 'Left column establishes its second line.', 0.08, 0.16, 0.36),
+        run(1, 'Right column establishes its second line.', 0.56, 0.16, 0.36),
+        run(
+          1,
+          'Names are generated from the descriptions shown in',
+          0.56,
+          0.2,
+          0.36,
+        ),
+        run(1, 'An interleaved left-column reference line.', 0.08, 0.218, 0.36),
+        run(1, 'Table 6. Thus a known name can be copied.', 0.56, 0.225, 0.36),
+        run(1, 'Left column establishes its final line.', 0.08, 0.26, 0.36),
+        run(1, 'Right column establishes its final line.', 0.56, 0.28, 0.36),
+        run(1, 'Table 6: A genuine complete table caption.', 0.56, 0.5, 0.36),
+      ]),
+    ])
+    const inlineReference = result.regions.find((region) =>
+      region.text.includes('known name can be copied'),
+    )
+    const genuineCaption = result.regions.find((region) =>
+      region.text.includes('genuine complete table caption'),
+    )
+
+    expect(inlineReference).toMatchObject({
+      kind: 'body',
+      column: 'right',
+      text: expect.stringContaining(
+        'descriptions shown in Table 6. Thus a known name can be copied.',
+      ),
+    })
+    expect(genuineCaption).toMatchObject({
+      kind: 'caption',
+      column: 'right',
+    })
+  })
+
+  it('prefers a proven central prose gutter over repeated gaps inside one column', () => {
+    const trueColumns = Array.from({ length: 3 }, (_, index) => {
+      const y = 0.18 + index * 0.05
+      return [
+        run(
+          1,
+          `Left column line ${index + 1} establishes the page flow.`,
+          0.09,
+          y,
+          0.385,
+        ),
+        run(
+          1,
+          `Right column line ${index + 1} establishes the page flow.`,
+          0.502,
+          y,
+          0.385,
+        ),
+      ]
+    }).flat()
+    const rightColumnFragments = Array.from({ length: 6 }, (_, index) => {
+      const y = 0.4 + index * 0.04
+      return [
+        run(1, `right${index + 1}`, 0.502, y, 0.1),
+        run(1, 'column continuation', 0.7, y, 0.18),
+      ]
+    }).flat()
+    const result = reconstructPageRegions([
+      page(1, [
+        ...trueColumns,
+        ...rightColumnFragments,
+        {
+          ...run(
+            1,
+            '4.2 Parameterizing the Structure as a Helix',
+            0.502,
+            0.72,
+            0.31,
+          ),
+          fontName: 'NimbusRomNo9L-Medi',
+        },
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('4.2 Parameterizing the Structure as a Helix'),
+      ),
+    ).toMatchObject({ column: 'right', kind: 'body' })
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('Left column line 1'),
+      ),
+    ).toMatchObject({ column: 'left', kind: 'body' })
   })
 
   it('uses an exact unhyphenated word from another region as line-join evidence', () => {
@@ -393,6 +1622,7 @@ describe('deterministic scholarly page regions', () => {
     expect(result.semanticSignals.equations).toBe(1)
     expect(result.completeness).toMatchObject({
       textCoverage: 1,
+      unprovenancedRenderedUnitCount: 0,
       sourceAssetCount: 1,
       exportedAssetCount: 0,
       expectedRelationshipCount: 1,
@@ -405,6 +1635,11 @@ describe('deterministic scholarly page regions', () => {
         expect.objectContaining({ code: 'UNRESOLVED_VISUAL_OBJECT' }),
         expect.objectContaining({ code: 'INCOMPLETE_ASSET_COVERAGE' }),
         expect.objectContaining({ code: 'INCOMPLETE_RELATIONSHIP_COVERAGE' }),
+      ]),
+    )
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'UNPROVENANCED_RENDERED_UNIT' }),
       ]),
     )
     expect(result.readiness.ready).toBe(false)
@@ -680,17 +1915,334 @@ describe('deterministic scholarly page regions', () => {
     expect(body).not.toContain('Sidebar context')
   })
 
+  it('classifies repeated source-run margins before a colliding diagram title is joined', () => {
+    const runningAuthor =
+      'Paul Pu Liang, Amir Zadeh, and Louis-Philippe Morency'
+    const runningTitle = 'Foundations & Trends in Multimodal Machine Learning'
+    const result = reconstructPageRegions([
+      page(2, [
+        run(2, '1:2', 0.094, 0.083, 0.019, 8, 0.011),
+        run(2, runningAuthor, 0.525, 0.083, 0.381, 8, 0.011),
+        run(2, 'Page-two prose remains canonical.', 0.094, 0.14, 0.72),
+      ]),
+      page(3, [
+        run(3, runningTitle, 0.094, 0.083, 0.377, 8, 0.011),
+        run(3, '1:3', 0.887, 0.083, 0.019, 8, 0.011),
+        run(3, 'Page-three prose remains canonical.', 0.094, 0.14, 0.72),
+      ]),
+      page(4, [
+        run(4, '1:4', 0.094, 0.083, 0.019, 8, 0.011),
+        run(4, runningAuthor, 0.525, 0.083, 0.381, 8, 0.011),
+        run(4, 'Dimensions of Heterogeneity', 0.176, 0.075, 0.386, 13.5, 0.019),
+        run(4, 'Page-four prose remains canonical.', 0.094, 0.14, 0.72),
+      ]),
+      page(5, [
+        run(5, runningTitle, 0.094, 0.083, 0.377, 8, 0.011),
+        run(5, '1:5', 0.887, 0.083, 0.019, 8, 0.011),
+        run(5, 'Page-five prose remains canonical.', 0.094, 0.14, 0.72),
+      ]),
+    ])
+
+    const furniture = result.regions.filter(
+      (region) =>
+        region.text === runningAuthor ||
+        region.text === runningTitle ||
+        /^1:\d+$/u.test(region.text),
+    )
+    expect(furniture).toHaveLength(8)
+    expect(
+      furniture.every(
+        (region) =>
+          ['header', 'page-number'].includes(region.kind) &&
+          region.includedInReadingOrder === false,
+      ),
+    ).toBe(true)
+    expect(
+      result.regions.find(
+        (region) => region.text === 'Dimensions of Heterogeneity',
+      ),
+    ).toMatchObject({
+      includedInReadingOrder: true,
+    })
+    expect(
+      result.regions
+        .filter((region) => region.includedInReadingOrder)
+        .map((region) => region.text),
+    ).toEqual([
+      'Page-two prose remains canonical.',
+      'Page-three prose remains canonical.',
+      'Dimensions of Heterogeneity',
+      'Page-four prose remains canonical.',
+      'Page-five prose remains canonical.',
+    ])
+  })
+
+  it('does not treat normalized numeric repetitions on one page as margins', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, '3. MLPs 14-18 fit the b token', 0.1, 0.18, 0.55),
+        run(1, 'and retain the ordinary step explanation.', 0.12, 0.205, 0.68),
+        run(1, '4. MLPs 19-27 fit the a token', 0.1, 0.34, 0.55),
+        run(
+          1,
+          'and retain the next ordinary step explanation.',
+          0.12,
+          0.365,
+          0.7,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.map((region) => ({
+        kind: region.kind,
+        includedInReadingOrder: region.includedInReadingOrder,
+        text: region.text,
+      })),
+    ).toEqual([
+      {
+        kind: 'body',
+        includedInReadingOrder: true,
+        text: '3. MLPs 14-18 fit the b token and retain the ordinary step explanation.',
+      },
+      {
+        kind: 'body',
+        includedInReadingOrder: true,
+        text: '4. MLPs 19-27 fit the a token and retain the next ordinary step explanation.',
+      },
+    ])
+  })
+
+  it('owns explicit first-page address and legal bands as source-preserved paratext', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'The introduction begins as continuous prose and reaches this',
+          0.094,
+          0.706,
+          0.81,
+          10,
+          0.014,
+        ),
+        run(
+          1,
+          'Authors’ address: Ada Example, ada@example.edu;',
+          0.094,
+          0.75,
+          0.5,
+          8,
+          0.011,
+        ),
+        run(
+          1,
+          'Example Institute, 500 Research Avenue.',
+          0.094,
+          0.764,
+          0.38,
+          8,
+          0.011,
+        ),
+        run(
+          1,
+          'Permission to make digital or hard copies of this work is granted without fee',
+          0.094,
+          0.816,
+          0.81,
+          8,
+          0.011,
+        ),
+        run(
+          1,
+          'provided that copies bear this notice and the full citation.',
+          0.094,
+          0.83,
+          0.64,
+          8,
+          0.011,
+        ),
+        run(
+          1,
+          '© 2022 Copyright held by the owner/author(s).',
+          0.094,
+          0.873,
+          0.31,
+          8,
+          0.011,
+        ),
+        run(1, '0360-0300/2022/10-ART1', 0.094, 0.887, 0.17, 8, 0.011),
+        run(1, 'https://doi.org/10.0000/example', 0.094, 0.901, 0.26, 8, 0.011),
+        run(
+          1,
+          'Preprint, Vol. 1, No. 1. Publication date: October 2022.',
+          0.48,
+          0.934,
+          0.43,
+          8,
+          0.011,
+        ),
+      ]),
+      page(2, [
+        run(
+          2,
+          'vibrant research continues without intervening page furniture.',
+          0.094,
+          0.14,
+          0.72,
+        ),
+      ]),
+    ])
+
+    const paratext = result.regions.filter((region) =>
+      /(?:Authors.? address|Permission to make|Copyright held|0360-0300|doi\.org|Preprint, Vol\.)/iu.test(
+        region.text,
+      ),
+    )
+    expect(paratext.length).toBeGreaterThanOrEqual(4)
+    expect(
+      paratext.every(
+        (region) =>
+          region.kind === 'footer' && region.includedInReadingOrder === false,
+      ),
+    ).toBe(true)
+    const canonicalText = result.paper.nodes
+      .map((node) => ('text' in node ? node.text : ''))
+      .filter(Boolean)
+    expect(canonicalText).toEqual([
+      'The introduction begins as continuous prose and reaches this vibrant research continues without intervening page furniture.',
+    ])
+  })
+
+  it('separates publication status while retaining notes, captions, and bottom prose', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        ...Array.from({ length: 5 }, (_, index) =>
+          run(
+            1,
+            `Earlier body line ${index + 1} establishes page typography.`,
+            0.176,
+            0.2 + index * 0.08,
+            0.65,
+            10,
+            0.013,
+          ),
+        ),
+        run(
+          1,
+          'Ordinary body prose remains canonical near the bottom of the page.',
+          0.176,
+          0.88,
+          0.65,
+          10,
+          0.013,
+        ),
+        run(1, '∗ Equal contribution.', 0.176, 0.905, 0.15, 8, 0.011),
+        run(
+          1,
+          'Figure 7. A genuine bottom-band caption.',
+          0.48,
+          0.923,
+          0.35,
+          8,
+          0.011,
+        ),
+        run(1, 'Preprint. Under review.', 0.176, 0.946, 0.14, 9, 0.011),
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('Ordinary body prose'),
+      ),
+    ).toMatchObject({ kind: 'body', includedInReadingOrder: true })
+    expect(
+      result.regions.find((region) => region.text === '∗ Equal contribution.'),
+    ).toMatchObject({ kind: 'footnote', includedInReadingOrder: true })
+    expect(
+      result.regions.find((region) => region.text.startsWith('Figure 7.')),
+    ).toMatchObject({ kind: 'caption', includedInReadingOrder: true })
+    expect(
+      result.regions.find(
+        (region) => region.text === 'Preprint. Under review.',
+      ),
+    ).toMatchObject({ kind: 'footer', includedInReadingOrder: false })
+  })
+
+  it('keeps repeated URL notes when dense chart labels skew page font statistics', async () => {
+    const chartLabels = Array.from({ length: 48 }, (_, index) =>
+      run(
+        1,
+        String(index),
+        0.12 + (index % 8) * 0.09,
+        0.38 + Math.floor(index / 8) * 0.045,
+        0.03,
+        3.5,
+        0.006,
+      ),
+    )
+    const note = (pageNumber: number, label: string) => {
+      const marker = run(pageNumber, label, 0.197, 0.909, 0.005, 6, 0.0075)
+      const url = run(
+        pageNumber,
+        'https://github.com/example/repeated-source',
+        0.203,
+        0.91,
+        0.42,
+        9,
+        0.0113,
+      )
+      url.fontName = 'SyntheticMono'
+      return [marker, url]
+    }
+    const prose = (pageNumber: number) => [
+      run(
+        pageNumber,
+        'Ordinary scholarly prose establishes the actual body font.',
+        0.176,
+        0.18,
+        0.64,
+      ),
+      run(
+        pageNumber,
+        'A second continuous sentence supplies stable prose evidence.',
+        0.176,
+        0.21,
+        0.64,
+      ),
+      run(
+        pageNumber,
+        'A third continuous sentence supplies stable prose evidence.',
+        0.176,
+        0.24,
+        0.64,
+      ),
+    ]
+    const result = await reconstruct([
+      page(1, [...prose(1), ...chartLabels, ...note(1, '8')]),
+      page(2, [...prose(2), ...note(2, '9')]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => region.kind === 'footnote')
+        .map((region) => region.text),
+    ).toEqual([
+      '8 https://github.com/example/repeated-source',
+      '9 https://github.com/example/repeated-source',
+    ])
+  })
+
   it('does not classify repeated table-cell symbols as page margins', async () => {
     const result = await reconstruct([
       page(1, [
-        run(1, 'Table heading', 0.1, 0.18, 0.3, 10),
-        run(1, '✓', 0.45, 0.22, 0.03, 8),
-        run(1, 'First table row', 0.1, 0.22, 0.25, 8),
+        run(1, 'Table heading', 0.1, 0.06, 0.3, 10),
+        run(1, '✓', 0.45, 0.083, 0.03, 8),
+        run(1, 'First table row', 0.1, 0.083, 0.25, 8),
       ]),
       page(2, [
-        run(2, 'Another table heading', 0.1, 0.18, 0.3, 10),
-        run(2, '✓', 0.45, 0.22, 0.03, 8),
-        run(2, 'Second table row', 0.1, 0.22, 0.25, 8),
+        run(2, 'Another table heading', 0.1, 0.06, 0.3, 10),
+        run(2, '✓', 0.45, 0.083, 0.03, 8),
+        run(2, 'Second table row', 0.1, 0.083, 0.25, 8),
       ]),
     ])
 
@@ -754,6 +2306,181 @@ describe('deterministic scholarly page regions', () => {
     ).toMatchObject({
       text: 'Following body prose remains independent. Its continuation remains in the prose flow.',
     })
+  })
+
+  it('keeps a bottom-edge caption continuation misclassified as footer when it completes a split word', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Predicted probabilities establish the body size.',
+          0.12,
+          0.2,
+          0.37,
+          11,
+        ),
+        run(
+          1,
+          'STRUCTURED-DETECT appears elsewhere in the source.',
+          0.12,
+          0.22,
+          0.37,
+          11,
+        ),
+        run(
+          1,
+          'Table 5: ROC-AUC score of predicted contradiction probabili-',
+          0.514,
+          0.88648,
+          0.37,
+          9,
+          0.01065,
+        ),
+        run(
+          1,
+          'ties for different methods on our evaluation set. STRUCTURED-',
+          0.514,
+          0.89831,
+          0.369,
+          9,
+          0.01065,
+        ),
+        run(
+          1,
+          'DETECT outperforms our two entailment-based baselines.',
+          0.515,
+          0.91014,
+          0.347,
+          9,
+          0.01065,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'caption'),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'Table 5: ROC-AUC score of predicted contradiction probabilities for different methods on our evaluation set. STRUCTURED-DETECT outperforms our two entailment-based baselines.',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            text: 'DETECT outperforms our two entailment-based baselines.',
+          }),
+        ]),
+      }),
+    ])
+    expect(
+      result.regions.some(
+        (region) =>
+          region.kind === 'footer' &&
+          region.text.includes('DETECT outperforms'),
+      ),
+    ).toBe(false)
+  })
+
+  it('keeps a quoted inline formula on the final line of a caption', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Figure I: The model tried to simplify the goal but failed.',
+          0.176,
+          0.2,
+          0.65,
+          9,
+          0.012,
+        ),
+        run(
+          1,
+          'Then it rewrote the goal from “a + b + c',
+          0.176,
+          0.214,
+          0.648,
+          9,
+          0.012,
+        ),
+        run(
+          1,
+          '= a + c + b” to “b + a + c = a + c + b”.',
+          0.176,
+          0.228,
+          0.32,
+          9,
+          0.012,
+        ),
+        run(1, 'Following body prose remains separate.', 0.176, 0.27, 0.4, 9),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'caption'),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'Figure I: The model tried to simplify the goal but failed. Then it rewrote the goal from “a + b + c = a + c + b” to “b + a + c = a + c + b”.',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            text: '= a + c + b” to “b + a + c = a + c + b”.',
+          }),
+        ]),
+      }),
+    ])
+    expect(
+      result.paper.nodes.some(
+        (node) =>
+          node.type === 'paragraph' &&
+          node.text === 'Following body prose remains separate.',
+      ),
+    ).toBe(true)
+  })
+
+  it('ignores a tall inline symbol when comparing caption continuation type size', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Figure 5. If an optimal representation exists, larger hypothesis spaces are more likely to',
+          0.09,
+          0.2,
+          0.795,
+          9,
+          0.0113,
+        ),
+        run(
+          1,
+          'cover it. LEFT: Two small models find different solutions (marked by outlined',
+          0.091,
+          0.214,
+          0.69,
+          9,
+          0.0113,
+        ),
+        run(1, '☆', 0.783, 0.211, 0.016, 11.25, 0.0142),
+        run(1, '). RIGHT: As', 0.799, 0.214, 0.086, 9, 0.0113),
+        run(
+          1,
+          'the models become larger, they converge to the same solution (marked by filled ⋆).',
+          0.091,
+          0.228,
+          0.63,
+          9,
+          0.0119,
+        ),
+        run(1, 'Following prose remains separate.', 0.09, 0.27, 0.39),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'caption'),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'Figure 5. If an optimal representation exists, larger hypothesis spaces are more likely to cover it. LEFT: Two small models find different solutions (marked by outlined ☆). RIGHT: As the models become larger, they converge to the same solution (marked by filled ⋆).',
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            text: 'cover it. LEFT: Two small models find different solutions (marked by outlined ☆). RIGHT: As',
+          }),
+        ]),
+      }),
+    ])
   })
 
   it('keeps caption continuations together when opposite-column prose interleaves by y', async () => {
@@ -825,8 +2552,24 @@ describe('deterministic scholarly page regions', () => {
   it('keeps interleaved side-by-side figure captions as separate regions', async () => {
     const result = await reconstruct([
       page(1, [
-        run(1, 'Figure 30. Left result begins here', 0.09, 0.28, 0.383, 9, 0.009),
-        run(1, 'Figure 32. Right result begins here', 0.502, 0.291, 0.383, 9, 0.009),
+        run(
+          1,
+          'Figure 30. Left result begins here',
+          0.09,
+          0.28,
+          0.383,
+          9,
+          0.009,
+        ),
+        run(
+          1,
+          'Figure 32. Right result begins here',
+          0.502,
+          0.291,
+          0.383,
+          9,
+          0.009,
+        ),
         run(1, 'and finishes in its own column.', 0.09, 0.294, 0.24, 9, 0.009),
         run(1, 'and continues on the right', 0.502, 0.305, 0.28, 9, 0.009),
         run(1, 'before ending there.', 0.502, 0.319, 0.2, 9, 0.009),
@@ -842,6 +2585,88 @@ describe('deterministic scholarly page regions', () => {
     expect(captions[1]).toMatch(/^Figure 32\./)
     expect(captions[1]).toContain('continues on the right')
     expect(captions[1]).toContain('ending there')
+  })
+
+  it('keeps interleaved multi-panel label continuations with their source panel', () => {
+    const result = reconstructPageRegions([
+      page(
+        1,
+        [
+          run(
+            1,
+            '(a) SEQCODER-1.5B accuracy as a function of',
+            0.176,
+            0.277,
+            0.291,
+            9,
+            0.011,
+          ),
+          run(
+            1,
+            '(b) SEQCODER-1.5B accuracy as a function of',
+            0.532,
+            0.277,
+            0.291,
+            9,
+            0.011,
+          ),
+          run(1, 'gold program lengths.', 0.176, 0.29, 0.129, 9, 0.011),
+          run(1, 'input sequence lengths.', 0.532, 0.29, 0.137, 9, 0.011),
+          run(
+            1,
+            'Figure 11: Accuracy as a function of program and input sequence lengths.',
+            0.182,
+            0.315,
+            0.635,
+            9,
+            0.013,
+          ),
+        ],
+        [
+          {
+            id: 'panel-a',
+            page: 1,
+            kind: 'image',
+            box: {
+              page: 1,
+              x: 0.176,
+              y: 0.103,
+              width: 0.291,
+              height: 0.169,
+              rotation: 0,
+              method: 'pdf-object',
+            },
+            confidence: 1,
+            assetId: null,
+          },
+          {
+            id: 'panel-b',
+            page: 1,
+            kind: 'image',
+            box: {
+              page: 1,
+              x: 0.532,
+              y: 0.103,
+              width: 0.291,
+              height: 0.169,
+              rotation: 0,
+              method: 'pdf-object',
+            },
+            confidence: 1,
+            assetId: null,
+          },
+        ],
+      ),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => /^\([ab]\)/u.test(region.text))
+        .map((region) => region.text),
+    ).toEqual([
+      '(a) SEQCODER-1.5B accuracy as a function of gold program lengths.',
+      '(b) SEQCODER-1.5B accuracy as a function of input sequence lengths.',
+    ])
   })
 
   it('keeps prose with inline equations in the complete caption', async () => {
@@ -886,6 +2711,111 @@ describe('deterministic scholarly page regions', () => {
           node.type === 'paragraph' && node.text === 'Following body prose.',
       ),
     ).toBeDefined()
+  })
+
+  it('keeps split caption prose while withholding unproved stacked formula semantics', async () => {
+    const mathRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontSize: number,
+      height: number,
+      fontName: string,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Figure 8. An inline formula is preserved by',
+          0.5,
+          0.2,
+          0.385,
+          9,
+          0.01132,
+        ),
+        run(
+          1,
+          'helix(x). We use evidence to show that',
+          0.5,
+          0.214,
+          0.305,
+          9,
+          0.01132,
+        ),
+        mathRun('l', 0.8197, 0.213, 0.004, 6, 0.00755, 'Synthetic+CMMI6'),
+        mathRun('=', 0.8197, 0.2208, 0.009, 6, 0.00755, 'Synthetic+CMR6'),
+        mathRun('h', 0.811, 0.214, 0.0087, 9, 0.01132, 'Synthetic+CMMI9'),
+        run(1, 'for', 0.835, 0.214, 0.02, 9, 0.01132),
+        run(
+          1,
+          'the model in every evaluated layer.',
+          0.5,
+          0.228,
+          0.24,
+          9,
+          0.01132,
+        ),
+      ]),
+    ])
+
+    const caption = result.paper.nodes.find((node) => node.type === 'caption')
+    expect(caption?.text).toContain(
+      'Figure 8. An inline formula is preserved by helix(x). We use evidence to show that',
+    )
+    expect(caption?.text).toContain('for the model in every evaluated layer.')
+    expect(caption?.text).not.toContain('hl=')
+    expect(
+      result.paper.nodes.filter(
+        (node) =>
+          node.type === 'paragraph' &&
+          /^(?:l=h|hl=)(?:\s+for)?$/u.test(node.text),
+      ),
+    ).toEqual([])
+    const captionRegion = result.regions.find(
+      (region) => region.kind === 'caption',
+    )
+    expect(
+      captionRegion?.lines.flatMap((line) =>
+        line.runs.map((sourceRun) => sourceRun.text),
+      ),
+    ).toEqual(expect.arrayContaining(['for']))
+    expect(
+      captionRegion?.lines.flatMap((line) =>
+        line.runs.map((sourceRun) => sourceRun.text),
+      ),
+    ).not.toEqual(expect.arrayContaining(['h', 'l', '=']))
+
+    expect(
+      result.visualRelationships.find(
+        (relationship) =>
+          relationship.kind === 'equation' &&
+          relationship.evidence.includes('source-text-transcript-unresolved'),
+      ),
+    ).toMatchObject({
+      status: 'unresolved',
+      sourceText: '',
+      altTextSource: 'caption',
+    })
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+      blockingDiagnosticCodes: expect.arrayContaining([
+        'UNRESOLVED_VISUAL_OBJECT',
+      ]),
+    })
+
+    const epub = await buildReadableEpub(result.paper, result)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    expect(content).not.toContain(
+      '<em>h</em><sup><em>l</em></sup><sub>=</sub>',
+    )
+    expect(content).toContain('Display equation p001-001')
+    expect(content).toContain('class="orphan-caption omitted-visual"')
   })
 
   it('keeps a short sentence-like inline equation continuation in its caption', async () => {
@@ -966,6 +2896,43 @@ describe('deterministic scholarly page regions', () => {
           node.text === 'Following body prose remains independent.',
       ),
     ).toBe(true)
+  })
+
+  it('keeps an inline abbreviated figure reference in continuous body prose', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'The comparison is continued in', 0.12, 0.2, 0.34, 10, 0.018),
+        run(
+          1,
+          'Fig. 8. Specifically, the discussion follows the same protocol',
+          0.12,
+          0.218,
+          0.52,
+          10,
+          0.018,
+        ),
+        run(
+          1,
+          'and remains part of the surrounding paragraph.',
+          0.12,
+          0.236,
+          0.4,
+          10,
+          0.018,
+        ),
+      ]),
+    ])
+
+    expect(
+      result.regions.filter((region) => region.kind === 'caption'),
+    ).toEqual([])
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'paragraph')
+        .map((node) => node.text),
+    ).toEqual([
+      'The comparison is continued in Fig. 8. Specifically, the discussion follows the same protocol and remains part of the surrounding paragraph.',
+    ])
   })
 
   it('stops after a short terminal caption even when prose follows at normal leading', async () => {
@@ -1165,6 +3132,39 @@ describe('deterministic scholarly page regions', () => {
     })
   })
 
+  it('orders same-row fragments by their top source line instead of a later union-box indent', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'First left-column line.', 0.09, 0.12, 0.37),
+        run(1, 'First right-column line.', 0.52, 0.12, 0.37),
+        run(1, 'Second left-column line.', 0.09, 0.16, 0.37),
+        run(1, 'Second right-column line.', 0.52, 0.16, 0.37),
+        run(1, 'Third left-column line.', 0.09, 0.2, 0.37),
+        run(1, 'Third right-column line.', 0.52, 0.2, 0.37),
+        run(1, 'author.', 0.502, 0.3, 0.08, 10, 0.0126),
+        run(1, 'interpreting', 0.689, 0.3, 0.077, 10, 0.0126),
+        run(1, 'GPT:', 0.797, 0.3, 0.036, 10, 0.0126),
+        run(1, 'the', 0.864, 0.3, 0.021, 10, 0.0126),
+        run(1, 'logit', 0.518, 0.315, 0.031, 10, 0.0126),
+      ]),
+    ])
+    const textByRegionId = new Map(
+      result.regions.map((region) => [region.id, region.text]),
+    )
+    const fragmentOrder = result.readingOrder.order
+      .map((regionId) => textByRegionId.get(regionId))
+      .filter((text) =>
+        ['author.', 'interpreting', 'GPT:', 'the logit'].includes(text ?? ''),
+      )
+
+    expect(fragmentOrder).toEqual([
+      'author.',
+      'interpreting',
+      'GPT:',
+      'the logit',
+    ])
+  })
+
   it('keeps every included column region when a spanning object overlaps its vertical band', async () => {
     const result = await reconstruct([
       page(
@@ -1215,19 +3215,29 @@ describe('deterministic scholarly page regions', () => {
     const result = await reconstruct(
       [
         page(1, [
-          run(1, 'Regions', 0.35, 0.08, 0.3, 18, 0.03),
-          run(1, 'Left one.', 0.08, 0.2, 0.32),
-          run(1, 'Left two.', 0.08, 0.24, 0.32),
-          run(1, 'Left marker', 0.08, 0.28, 0.24),
-          run(1, '*', 0.325, 0.283, 0.008, 6, 0.009),
-          run(1, 'Right one.', 0.56, 0.2, 0.32),
-          run(1, 'Right two.', 0.56, 0.24, 0.32),
-          run(1, 'Right three.', 0.56, 0.28, 0.32),
+          run(1, 'Page-Wide Symbolic Notes', 0.2, 0.06, 0.6, 18, 0.03),
+          run(1, 'Ada Example', 0.4, 0.13, 0.2, 11),
+          run(1, 'Abstract', 0.08, 0.22, 0.18, 14),
+          run(
+            1,
+            'This abstract establishes a source-backed scholarly document.',
+            0.08,
+            0.27,
+            0.84,
+          ),
+          run(1, '1 Regions', 0.35, 0.39, 0.3, 16, 0.03),
+          run(1, 'Left one.', 0.08, 0.5, 0.32),
+          run(1, 'Left two.', 0.08, 0.54, 0.32),
+          run(1, 'Left marker', 0.08, 0.58, 0.24),
+          run(1, '*', 0.325, 0.583, 0.008, 6, 0.009),
+          run(1, 'Right one.', 0.56, 0.5, 0.32),
+          run(1, 'Right two.', 0.56, 0.54, 0.32),
+          run(1, 'Right three.', 0.56, 0.58, 0.32),
           run(
             1,
             '*. A note spanning the full page width.',
             0.08,
-            0.82,
+            0.84,
             0.84,
             7,
           ),
@@ -1250,6 +3260,121 @@ describe('deterministic scholarly page regions', () => {
     expect(content).toContain('epub:type="noteref"')
     expect(content).toContain('epub:type="footnote"')
     expect(content).toContain('class="note-backlink"')
+  })
+
+  it('splits independently run-backed symbolic note definitions on one source line', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Run-backed author notes', 0.1, 0.08, 0.72, 18),
+        run(1, 'Ada Example', 0.2, 0.15, 0.12, 11),
+        run(1, '*', 0.321, 0.146, 0.008, 6, 0.009),
+        run(1, 'Ben Reader', 0.35, 0.15, 0.12, 11),
+        run(1, '†', 0.471, 0.146, 0.008, 6, 0.009),
+        run(1, 'Abstract', 0.1, 0.28, 0.25, 16),
+        run(1, 'The abstract remains canonical prose.', 0.1, 0.34, 0.72),
+        run(1, '*', 0.1, 0.856, 0.008, 6, 0.009),
+        run(1, 'Lead author.', 0.109, 0.86, 0.1, 8),
+        run(1, '†', 0.22, 0.854, 0.008, 6, 0.009),
+        run(1, 'Core contributor.', 0.229, 0.86, 0.14, 8),
+      ]),
+    ])
+
+    const sourceNotes = result.regions.filter(
+      (region) => region.kind === 'footnote',
+    )
+    expect(
+      sourceNotes.map((region) => ({
+        id: region.id,
+        text: region.text,
+        runs: region.lines.flatMap((line) =>
+          line.runs.map((sourceRun) => sourceRun.text),
+        ),
+      })),
+    ).toEqual([
+      {
+        id: expect.stringMatching(/page-001-region-\d{3}$/),
+        text: '* Lead author.',
+        runs: ['*', 'Lead author.'],
+      },
+      {
+        id: expect.stringMatching(/page-001-region-\d{3}-note-002$/),
+        text: '†Core contributor.',
+        runs: ['†', 'Core contributor.'],
+      },
+    ])
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'footnote')
+        .map((node) => ({
+          label: node.label,
+          text: node.text,
+          backlinkCount: node.relationships.backlinks.length,
+          sourceRuns: result.provenance[node.id].boxes.map((box) =>
+            'text' in box ? box.text : undefined,
+          ),
+        })),
+    ).toEqual([
+      {
+        label: '*',
+        text: 'Lead author.',
+        backlinkCount: 1,
+        sourceRuns: ['*', 'Lead author.'],
+      },
+      {
+        label: '†',
+        text: 'Core contributor.',
+        backlinkCount: 1,
+        sourceRuns: ['†', 'Core contributor.'],
+      },
+    ])
+    expect(
+      result.noteRelationships.map((relationship) => ({
+        label: relationship.label,
+        status: relationship.status,
+        targetRegionId: relationship.candidates[0]?.targetRegionId,
+      })),
+    ).toEqual([
+      {
+        label: '*',
+        status: 'matched',
+        targetRegionId: sourceNotes[0].id,
+      },
+      {
+        label: '†',
+        status: 'matched',
+        targetRegionId: sourceNotes[1].id,
+      },
+    ])
+  })
+
+  it('does not split a symbol embedded inside a prose run', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Body line one.', 0.1, 0.2, 0.7, 10),
+        run(1, 'Body line two.', 0.1, 0.25, 0.7, 10),
+        run(1, 'Body line three.', 0.1, 0.3, 0.7, 10),
+        run(1, '*', 0.1, 0.856, 0.008, 6, 0.009),
+        run(1, 'Lead author. †Core contributor.', 0.109, 0.86, 0.26, 8),
+      ]),
+    ])
+
+    expect(
+      result.regions
+        .filter((region) => region.kind === 'footnote')
+        .map((region) => ({
+          id: region.id,
+          text: region.text,
+          runs: region.lines.flatMap((line) =>
+            line.runs.map((sourceRun) => sourceRun.text),
+          ),
+        })),
+    ).toEqual([
+      {
+        id: expect.stringMatching(/page-001-region-\d{3}$/),
+        text: '* Lead author. †Core contributor.',
+        runs: ['*', 'Lead author. †Core contributor.'],
+      },
+    ])
   })
 
   it('retains a near-body-size symbolic bottom note as a footnote', async () => {
@@ -1348,6 +3473,107 @@ describe('deterministic scholarly page regions', () => {
     expect(
       result.paper.nodes.some(
         (node) => node.type === 'paragraph' && node.text.includes('dios.'),
+      ),
+    ).toBe(false)
+  })
+
+  it('keeps short continuation lines with page-wide numbered footnotes', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Left-column prose establishes the first column.',
+          0.08,
+          0.2,
+          0.34,
+        ),
+        run(
+          1,
+          'Right-column prose establishes the second column.',
+          0.56,
+          0.2,
+          0.34,
+        ),
+        run(1, 'More left-column prose continues below.', 0.08, 0.24, 0.34),
+        run(1, 'More right-column prose continues below.', 0.56, 0.24, 0.34),
+        run(1, 'Final left-column evidence.', 0.08, 0.28, 0.34),
+        run(1, 'Final right-column evidence.', 0.56, 0.28, 0.34),
+        run(
+          1,
+          '2 We found that response tokens yield more effective steering directions than alternative positions such as',
+          0.197,
+          0.87,
+          0.626,
+          8,
+          0.012,
+        ),
+        run(
+          1,
+          'prompt tokens (see Appendix A.3).',
+          0.176,
+          0.884,
+          0.207,
+          8,
+          0.011,
+        ),
+        run(
+          1,
+          '3 We show results for four additional traits, including positive traits such as optimism and humor, in Ap-',
+          0.197,
+          0.897,
+          0.626,
+          8,
+          0.012,
+        ),
+        run(1, 'pendix G.', 0.176, 0.911, 0.058, 8, 0.011),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'footnote')
+        .map((node) => ({ label: node.label, text: node.text })),
+    ).toEqual([
+      {
+        label: '2',
+        text: 'We found that response tokens yield more effective steering directions than alternative positions such as prompt tokens (see Appendix A.3).',
+      },
+      {
+        label: '3',
+        text: 'We show results for four additional traits, including positive traits such as optimism and humor, in Appendix G.',
+      },
+    ])
+  })
+
+  it('keeps a wrapped URL continuation in its symbolic footnote', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Body line one.', 0.08, 0.2, 0.7, 10),
+        run(1, 'Body line two.', 0.08, 0.25, 0.7, 10),
+        run(1, 'Body line three.', 0.08, 0.3, 0.7, 10),
+        run(
+          1,
+          '* The implementation is available at https://github.',
+          0.109,
+          0.862,
+          0.369,
+          9,
+          0.011,
+        ),
+        run(1, 'com/example/project', 0.088, 0.875, 0.16, 9, 0.011),
+      ]),
+    ])
+
+    expect(
+      result.paper.nodes.find((node) => node.type === 'footnote'),
+    ).toMatchObject({
+      text: 'The implementation is available at https://github.com/example/project',
+    })
+    expect(
+      result.paper.nodes.some(
+        (node) =>
+          node.type === 'paragraph' &&
+          node.text.includes('com/example/project'),
       ),
     ).toBe(false)
   })

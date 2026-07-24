@@ -348,16 +348,29 @@ test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifact
     expect(content).toContain('class="semantic-table-wrapper"')
     expect(content).toContain('<thead>')
     expect(content).toContain('<tbody>')
-    expect(content).toContain(
-      `<thead><tr>${tableContract.rows[0]
-        .map((cell) => `<th scope="col">${cell}</th>`)
-        .join('')}</tr></thead>`,
-    )
-    for (const row of tableContract.rows.slice(1)) {
-      expect(content).toContain(
-        `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`,
+    const downloadedTable = await page.evaluate((xhtml) => {
+      const document = new DOMParser().parseFromString(
+        xhtml,
+        'application/xhtml+xml',
       )
-    }
+      const parserError = document.querySelector('parsererror')
+      if (parserError) throw new Error(parserError.textContent ?? 'Invalid XML')
+      const table = document.querySelector('table')
+      if (!table) throw new Error('Downloaded EPUB has no semantic table')
+      return {
+        headers: [...table.querySelectorAll('thead th')].map((cell) => ({
+          scope: cell.getAttribute('scope'),
+          text: cell.textContent,
+        })),
+        rows: [...table.querySelectorAll('tbody tr')].map((row) =>
+          [...row.querySelectorAll('td')].map((cell) => cell.textContent),
+        ),
+      }
+    }, content)
+    expect(downloadedTable.headers).toEqual(
+      tableContract.rows[0].map((cell) => ({ scope: 'col', text: cell })),
+    )
+    expect(downloadedTable.rows).toEqual(tableContract.rows.slice(1))
     expect(content).toContain('<strong>bold</strong>')
     expect(content).toContain('<em>italic</em>')
     expect(content).toContain('<strong><em>combined</em></strong>')
@@ -543,9 +556,8 @@ test('invalidates preview receipts and object URLs before reusing a filename', a
     )
     .toEqual({
       epub: 1,
-      images:
-        contract.profiles.length *
-        contract.visuals.filter((visual) => visual.kind !== 'table').length,
+      images: contract.visuals.filter((visual) => visual.kind !== 'table')
+        .length,
     })
   const firstUrls = await page.evaluate(() =>
     (

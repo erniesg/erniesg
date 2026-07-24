@@ -148,6 +148,34 @@ function predictionsFor(
   }
 }
 
+function attestedRuntimeIdentity() {
+  return {
+    status: 'attested',
+    tool: {
+      id: 'test-tool',
+      version: '1.0.0',
+      executableSha256: 'b'.repeat(64),
+      versionOutputSha256: 'c'.repeat(64),
+    },
+    model: {
+      id: 'test-model',
+      sha256: 'd'.repeat(64),
+    },
+  }
+}
+
+function localExecution(overrides = {}) {
+  return {
+    lane: 'local-mac',
+    platform: 'darwin',
+    architecture: 'arm64',
+    offlineRequested: true,
+    allInputsVerified: true,
+    runtimeIdentityAuthority: 'adapter-self-reported',
+    ...overrides,
+  }
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories
@@ -304,10 +332,113 @@ describe('model-neutral PDF fidelity evaluation', () => {
     }
     const mineru = scorePdfFidelityPredictions(evalSet, mineruPredictions)
     expect(mineru.candidate).toEqual(mineruPredictions.candidate)
-    expect(mineru.passed).toBe(false)
+    expect(mineru).toMatchObject({
+      passed: true,
+      promotionEligible: false,
+      execution: { lane: 'external-predictions' },
+    })
     expect(
       validatePdfFidelityEvalReceipt(mineru, evalSet, mineruPredictions),
     ).toEqual({ valid: true })
+  })
+
+  it('keeps imported and adapter-reported local calibration non-promotable', () => {
+    const evalSet = smallEvalSet()
+    const importedPredictions = predictionsFor(evalSet)
+    const imported = scorePdfFidelityPredictions(evalSet, importedPredictions)
+
+    expect(imported).toMatchObject({
+      schemaVersion: '1.2.0',
+      passed: true,
+      promotionEligible: false,
+      execution: {
+        lane: 'external-predictions',
+        runtimeIdentityAuthority: 'not-applicable',
+      },
+    })
+
+    const localPredictions = predictionsFor(evalSet, {
+      adapterSha256: 'a'.repeat(64),
+    })
+    localPredictions.candidate.runtimeIdentity = attestedRuntimeIdentity()
+    const local = scorePdfFidelityPredictions(
+      evalSet,
+      localPredictions,
+      localExecution(),
+    )
+
+    expect(local).toMatchObject({
+      passed: false,
+      promotionEligible: false,
+      execution: {
+        lane: 'local-mac',
+        allInputsVerified: true,
+        runtimeIdentityAuthority: 'adapter-self-reported',
+      },
+    })
+  })
+
+  it('fails local promotion when any required provenance is absent', () => {
+    const evalSet = smallEvalSet()
+    const cases = [
+      {
+        name: 'unverified inputs',
+        execution: localExecution({ allInputsVerified: false }),
+      },
+      {
+        name: 'unknown execution lane',
+        execution: localExecution({ lane: 'local-typo' }),
+      },
+      {
+        name: 'non-Mac execution',
+        execution: localExecution({ platform: 'linux' }),
+      },
+      {
+        name: 'unsupported claimed runner verification',
+        execution: localExecution({
+          runtimeIdentityAuthority: 'runner-verified',
+        }),
+      },
+      {
+        name: 'missing adapter identity',
+        execution: localExecution(),
+        adapterSha256: null,
+      },
+      {
+        name: 'non-model runtime',
+        execution: localExecution(),
+        runtimeIdentity: {
+          status: 'not-applicable',
+          tool: null,
+          model: null,
+        },
+      },
+      {
+        name: 'unattested runtime',
+        execution: localExecution(),
+        runtimeIdentity: { status: 'unattested', tool: null, model: null },
+      },
+    ]
+
+    for (const item of cases) {
+      const predictions = predictionsFor(evalSet, {
+        adapterSha256:
+          item.adapterSha256 === undefined
+            ? 'a'.repeat(64)
+            : item.adapterSha256,
+      })
+      predictions.candidate.runtimeIdentity =
+        item.runtimeIdentity ?? attestedRuntimeIdentity()
+      const receipt = scorePdfFidelityPredictions(
+        evalSet,
+        predictions,
+        item.execution,
+      )
+      expect(receipt, item.name).toMatchObject({
+        passed: false,
+        promotionEligible: false,
+      })
+    }
   })
 
   it('keeps eval-set and prediction box schemas aligned with runtime geometry', async () => {
@@ -459,9 +590,16 @@ describe('model-neutral PDF fidelity evaluation', () => {
   it('compares candidates only on the same frozen eval identity', () => {
     const evalSet = smallEvalSet()
     const baselinePredictions = predictionsFor(evalSet, { perfect: false })
-    const candidatePredictions = predictionsFor(evalSet)
+    const candidatePredictions = predictionsFor(evalSet, {
+      adapterSha256: 'a'.repeat(64),
+    })
+    candidatePredictions.candidate.runtimeIdentity = attestedRuntimeIdentity()
     const baseline = scorePdfFidelityPredictions(evalSet, baselinePredictions)
-    const candidate = scorePdfFidelityPredictions(evalSet, candidatePredictions)
+    const candidate = scorePdfFidelityPredictions(
+      evalSet,
+      candidatePredictions,
+      localExecution(),
+    )
     const comparison = comparePdfFidelityEvalReceipts(
       baseline,
       candidate,
@@ -471,7 +609,7 @@ describe('model-neutral PDF fidelity evaluation', () => {
     )
 
     expect(comparison).toMatchObject({
-      passed: true,
+      passed: false,
       overallScoreDelta: 1,
       criticalRegressionCount: 0,
     })
@@ -495,6 +633,51 @@ describe('model-neutral PDF fidelity evaluation', () => {
         candidatePredictions,
       ),
     ).toThrow('INVALID_PDF_FIDELITY_EVAL_RECEIPT')
+  })
+
+  it('keeps imported comparison evaluation-only', () => {
+    const evalSet = smallEvalSet()
+    const baselinePredictions = predictionsFor(evalSet, { perfect: false })
+    const candidatePredictions = predictionsFor(evalSet)
+    const baseline = scorePdfFidelityPredictions(evalSet, baselinePredictions)
+    const candidate = scorePdfFidelityPredictions(evalSet, candidatePredictions)
+    const comparison = comparePdfFidelityEvalReceipts(
+      baseline,
+      candidate,
+      evalSet,
+      baselinePredictions,
+      candidatePredictions,
+    )
+
+    expect(candidate).toMatchObject({
+      passed: true,
+      promotionEligible: false,
+    })
+    expect(comparison).toMatchObject({
+      overallScoreDelta: 1,
+      criticalRegressionCount: 0,
+      passed: false,
+    })
+  })
+
+  it('rejects pre-1.2 receipts from promotion comparison with a clear upgrade error', () => {
+    const evalSet = smallEvalSet()
+    const predictions = predictionsFor(evalSet)
+    const current = scorePdfFidelityPredictions(evalSet, predictions)
+    const legacy = structuredClone(current)
+    legacy.schemaVersion = '1.0.0'
+    delete legacy.promotionEligible
+    rehashReceipt(legacy)
+
+    expect(() =>
+      comparePdfFidelityEvalReceipts(
+        current,
+        legacy,
+        evalSet,
+        predictions,
+        predictions,
+      ),
+    ).toThrow('PDF_FIDELITY_PROMOTION_RECEIPT_V1_2_REQUIRED')
   })
 
   it('rejects a self-rehashed receipt whose scores or policy result were forged', () => {
@@ -529,6 +712,13 @@ describe('model-neutral PDF fidelity evaluation', () => {
     rehashReceipt(forgedPolicy)
     expect(() =>
       validatePdfFidelityEvalReceipt(forgedPolicy, evalSet, predictions),
+    ).toThrow('INVALID_PDF_FIDELITY_EVAL_RECEIPT')
+
+    const forgedEligibility = structuredClone(receipt)
+    forgedEligibility.promotionEligible = true
+    rehashReceipt(forgedEligibility)
+    expect(() =>
+      validatePdfFidelityEvalReceipt(forgedEligibility, evalSet, predictions),
     ).toThrow('INVALID_PDF_FIDELITY_EVAL_RECEIPT')
 
     const forgedMetadata = structuredClone(receipt)
@@ -822,7 +1012,16 @@ await writeFile(args.output, JSON.stringify({
     format: 'test-adapter',
     formatVersion: '1.0.0',
     adapterSha256: request.candidate.adapterSha256,
-    runtimeIdentity: { status: 'not-applicable', tool: null, model: null },
+    runtimeIdentity: {
+      status: 'attested',
+      tool: {
+        id: 'test-tool',
+        version: '1.0.0',
+        executableSha256: 'b'.repeat(64),
+        versionOutputSha256: 'c'.repeat(64),
+      },
+      model: { id: 'test-model', sha256: 'd'.repeat(64) },
+    },
   },
   cases: [{ caseId: request.cases[0].id, output: { labels: [{ targetId, label: 'footnote' }] } }],
 }))
@@ -862,13 +1061,13 @@ await writeFile(args.output, JSON.stringify({
       )
 
     const firstRun = run(firstOutput)
-    expect(firstRun.status, firstRun.stderr).toBe(0)
+    expect(firstRun.status, firstRun.stderr).toBe(1)
     const firstReceipt = JSON.parse(
       await readFile(join(firstOutput, 'eval-receipt.json'), 'utf8'),
     )
     await writeFile(dependencyPath, "export const value = 'second'\n")
     const secondRun = run(secondOutput)
-    expect(secondRun.status, secondRun.stderr).toBe(0)
+    expect(secondRun.status, secondRun.stderr).toBe(1)
     const secondReceipt = JSON.parse(
       await readFile(join(secondOutput, 'eval-receipt.json'), 'utf8'),
     )
@@ -914,7 +1113,16 @@ const predictions = {
     format: 'test-adapter',
     formatVersion: '1.0.0',
     adapterSha256: request.candidate.adapterSha256,
-    runtimeIdentity: { status: 'not-applicable', tool: null, model: null },
+    runtimeIdentity: {
+      status: 'attested',
+      tool: {
+        id: 'test-tool',
+        version: '1.0.0',
+        executableSha256: 'b'.repeat(64),
+        versionOutputSha256: 'c'.repeat(64),
+      },
+      model: { id: 'test-model', sha256: 'd'.repeat(64) },
+    },
   },
   cases: [{ caseId: request.cases[0].id, output: { labels: [{ targetId, label: 'footnote' }] } }],
 }
@@ -954,7 +1162,7 @@ await writeFile(args.output, JSON.stringify(predictions))
       },
     )
 
-    expect(result.status, result.stderr).toBe(0)
+    expect(result.status, result.stderr).toBe(1)
     const receiptText = await readFile(
       join(output, 'eval-receipt.json'),
       'utf8',
@@ -964,17 +1172,21 @@ await writeFile(args.output, JSON.stringify(predictions))
       await readFile(join(output, 'predictions.json'), 'utf8'),
     )
     expect(receipt).toMatchObject({
-      passed: true,
+      schemaVersion: '1.2.0',
+      passed: false,
+      promotionEligible: false,
       execution: {
         lane: 'local-mac',
         platform: platform(),
         offlineRequested: true,
         allInputsVerified: true,
+        runtimeIdentityAuthority: 'adapter-self-reported',
       },
       candidate: {
         id: 'test-candidate',
         version: '1.0.0',
         format: 'test-adapter',
+        runtimeIdentity: { status: 'attested' },
       },
     })
     expect(

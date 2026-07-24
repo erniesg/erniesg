@@ -1,6 +1,5 @@
 import type {
   NormalizedSourceBox,
-  PdfEmbeddedLink,
   PdfImportProgress,
   PdfNativeObject,
   PdfPageAnalysis,
@@ -22,6 +21,11 @@ import {
   createVectorSvgAsset,
 } from './visual-assets'
 import {
+  normalizePdfFontText,
+  pdfOperatorListDependencyIds,
+  resolvePdfFontMetadata,
+} from './pdf-font-text'
+import {
   renderPdfPageCrop,
   type PdfCanvasFactory,
   type PdfPageCropSource,
@@ -30,6 +34,12 @@ import {
   applyHumanDecisionFile,
   type HumanDecisionFile,
 } from './decision-record'
+import {
+  extractPdfLinkAnnotations,
+  resolvePdfNamedDestinationEvidence,
+} from './pdf-links'
+
+export { extractPdfLinkAnnotations } from './pdf-links'
 
 type PdfImportOptions = {
   signal?: AbortSignal
@@ -138,9 +148,14 @@ export function isPdfLocalPathArtifact(
 ) {
   const value = text.trim()
   if (
-    /(?:^|[/\\])(?:users?|downloads?|documents?|desktop|library)(?:[/\\]|$)/iu.test(
-      value,
-    ) ||
+    (value.includes('/') &&
+      /(?:^|[/\\])(?:users?|downloads?|documents?|desktop|library)(?:[/\\]|$)/iu.test(
+        value,
+      )) ||
+    (value.includes('\\') &&
+      /(?:^|[/\\])(?:users?|downloads?|documents?|desktop|library)(?:[/\\]|$)/iu.test(
+        value,
+      )) ||
     /[/\\][^/\\\s]+\.html?$/iu.test(value)
   ) {
     return true
@@ -151,45 +166,31 @@ export function isPdfLocalPathArtifact(
   return fontHeight <= viewportHeight * 0.008 && /^(?:fi|1\/1)$/iu.test(value)
 }
 
-function extractEmbeddedLinks(
-  page: number,
-  rotation: number,
-  viewportWidth: number,
+export function isPdfMicroscopicTextArtifact(
+  fontHeight: number,
   viewportHeight: number,
-  annotations: unknown[],
-  convertToViewportRectangle: (rect: number[]) => number[],
-): PdfEmbeddedLink[] {
-  const links: PdfEmbeddedLink[] = []
-  for (const annotation of annotations) {
-    if (!annotation || typeof annotation !== 'object') continue
-    const value = annotation as { url?: unknown; rect?: unknown }
-    if (
-      typeof value.url !== 'string' ||
-      !Array.isArray(value.rect) ||
-      value.rect.length < 4 ||
-      !value.rect.slice(0, 4).every((item) => typeof item === 'number')
-    ) {
-      continue
-    }
-    const rectangle = convertToViewportRectangle(value.rect as number[])
-    const left = Math.min(rectangle[0], rectangle[2])
-    const right = Math.max(rectangle[0], rectangle[2])
-    const top = Math.min(rectangle[1], rectangle[3])
-    const bottom = Math.max(rectangle[1], rectangle[3])
-    links.push({
-      url: value.url,
-      box: {
-        page,
-        x: clamp(left / viewportWidth),
-        y: clamp(top / viewportHeight),
-        width: clamp(right / viewportWidth) - clamp(left / viewportWidth),
-        height: clamp(bottom / viewportHeight) - clamp(top / viewportHeight),
-        rotation,
-        method: 'pdf-link',
-      },
-    })
-  }
-  return links
+) {
+  // PDF authoring tools can place private source or accessibility payloads in
+  // effectively zero-size text runs. Keep the cutoff far below a visible
+  // glyph so ordinary small print and normal-size invisible OCR layers remain.
+  return (
+    Number.isFinite(fontHeight) &&
+    Number.isFinite(viewportHeight) &&
+    fontHeight >= 0 &&
+    viewportHeight > 0 &&
+    fontHeight <= viewportHeight / 1_000_000
+  )
+}
+
+export function resolvePdfTextFontHeight(
+  transform: readonly number[],
+  itemHeight: number,
+  viewportHeight: number,
+) {
+  const measuredHeight =
+    Math.hypot(transform[2], transform[3]) || Math.abs(itemHeight)
+  if (isPdfMicroscopicTextArtifact(measuredHeight, viewportHeight)) return null
+  return measuredHeight || 1
 }
 
 type RasterizablePage = {
@@ -723,9 +724,37 @@ function metadataValue(info: Record<string, unknown>, key: string) {
 function normalizedPdfDate(value?: string) {
   if (!value) return undefined
   const compact = value.match(/^D:(\d{4})(\d{2})(\d{2})/)
-  if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`
+  if (compact) {
+    const parsed = new Date(
+      `${compact[1]}-${compact[2]}-${compact[3]}T00:00:00.000Z`,
+    )
+    return Number.isNaN(parsed.valueOf()) ? undefined : parsed.toISOString()
+  }
   const parsed = new Date(value)
   return Number.isNaN(parsed.valueOf()) ? undefined : parsed.toISOString()
+}
+
+let browserPdfRuntimePromise: Promise<typeof import('pdfjs-dist')> | undefined
+
+async function loadBrowserPdfRuntime() {
+  browserPdfRuntimePromise ??= (async () => {
+    const pdfjs = await import('pdfjs-dist')
+    const { default: pdfWorkerUrl } =
+      await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+    return pdfjs
+  })()
+  try {
+    return await browserPdfRuntimePromise
+  } catch (error) {
+    browserPdfRuntimePromise = undefined
+    throw error
+  }
+}
+
+export async function warmBrowserPdfRuntime() {
+  if (typeof window === 'undefined') return
+  await loadBrowserPdfRuntime()
 }
 
 export async function reconstructPdf(
@@ -757,12 +786,7 @@ export async function reconstructPdf(
   const pdfjs =
     typeof window === 'undefined'
       ? await import('pdfjs-dist/legacy/build/pdf.mjs')
-      : await import('pdfjs-dist')
-  if (typeof window !== 'undefined') {
-    const { default: pdfWorkerUrl } =
-      await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
-  }
+      : await loadBrowserPdfRuntime()
   throwIfAborted(options.signal)
   const loadingTask = pdfjs.getDocument({
     data: bytes.slice(),
@@ -832,6 +856,22 @@ export async function reconstructPdf(
     pdfjs.OPS.paintImageMaskXObjectRepeat,
   ])
   const pages: PdfPageAnalysis[] = []
+  const namedDestinationEvidenceCache = new Map<
+    string,
+    ReturnType<typeof resolvePdfNamedDestinationEvidence>
+  >()
+  const namedDestinationEvidence = (destination: string) => {
+    const cached = namedDestinationEvidenceCache.get(destination)
+    if (cached) return cached
+    const pending = resolvePdfNamedDestinationEvidence({
+      destination,
+      document: document as Parameters<
+        typeof resolvePdfNamedDestinationEvidence
+      >[0]['document'],
+    })
+    namedDestinationEvidenceCache.set(destination, pending)
+    return pending
+  }
   let ocrSession: PdfOcrSession | undefined
   let ocrTermination: Promise<void> | undefined
   let activeOcrPage = 0
@@ -860,21 +900,27 @@ export async function reconstructPdf(
           page.getAnnotations({ intent: 'display' }),
         ])
         throwIfAborted(options.signal)
+        const fontMetadata = await resolvePdfFontMetadata({
+          commonObjects: page.commonObjs,
+          fontIds: textContent.items.flatMap((item) =>
+            'str' in item ? [item.fontName] : [],
+          ),
+          dependencyIds: pdfOperatorListDependencyIds({
+            fnArray: operatorList.fnArray,
+            argsArray: operatorList.argsArray,
+            dependencyOp: pdfjs.OPS.dependency,
+          }),
+          signal: options.signal,
+        })
+        throwIfAborted(options.signal)
         const runs: PdfSourceRun[] = []
 
         for (const item of textContent.items) {
-          if (!('str' in item) || !item.str.trim()) continue
-          let font:
-            { name?: unknown; bold?: unknown; italic?: unknown } | undefined
-          try {
-            font = page.commonObjs.get(item.fontName) as typeof font
-          } catch {
-            font = undefined
-          }
-          const sourceFontName =
-            typeof font?.name === 'string' && font.name.trim()
-              ? font.name
-              : item.fontName
+          if (!('str' in item)) continue
+          const font = fontMetadata.get(item.fontName)
+          const sourceFontName = font?.name ?? item.fontName
+          const sourceText = normalizePdfFontText(item.str, sourceFontName)
+          if (!sourceText.trim()) continue
           const transform = pdfjs.Util.transform(
             viewport.transform,
             item.transform,
@@ -885,9 +931,15 @@ export async function reconstructPdf(
           // `side` region. Rotated source text remains visible in any bounded
           // page crop, but it is not safe canonical reading-order prose.
           if (!isFlowAlignedPdfTextTransform(transform)) continue
-          const fontHeight =
-            Math.hypot(transform[2], transform[3]) || Math.abs(item.height) || 1
-          if (isPdfLocalPathArtifact(item.str, fontHeight, viewport.height)) {
+          const fontHeight = resolvePdfTextFontHeight(
+            transform,
+            item.height,
+            viewport.height,
+          )
+          if (
+            fontHeight === null ||
+            isPdfLocalPathArtifact(sourceText, fontHeight, viewport.height)
+          ) {
             continue
           }
           const x = finite(transform[4])
@@ -895,7 +947,7 @@ export async function reconstructPdf(
           const width = Math.max(Math.abs(item.width * viewport.scale), 0.5)
           runs.push({
             page: pageNumber,
-            text: item.str,
+            text: sourceText,
             x: clamp(x / viewport.width),
             y: clamp(y / viewport.height),
             width: clamp(width / viewport.width),
@@ -932,14 +984,42 @@ export async function reconstructPdf(
           constructPathOp: pdfjs.OPS.constructPath,
         })
         const objects = objectDrafts.map((draft) => draft.object)
-        const links = extractEmbeddedLinks(
-          pageNumber,
-          viewport.rotation,
-          viewport.width,
-          viewport.height,
-          annotations,
-          (rect) => viewport.convertToViewportRectangle(rect),
+        const resolvedInternalDestinations = new Map(
+          (
+            await Promise.all(
+              [
+                ...new Set(
+                  annotations.flatMap((annotation) =>
+                    annotation &&
+                    typeof annotation === 'object' &&
+                    typeof (annotation as { dest?: unknown }).dest === 'string'
+                      ? [(annotation as { dest: string }).dest]
+                      : [],
+                  ),
+                ),
+              ].map(
+                async (destination) =>
+                  [
+                    destination,
+                    await namedDestinationEvidence(destination),
+                  ] as const,
+              ),
+            )
+          ).flatMap(([destination, evidence]) =>
+            evidence ? [[destination, evidence] as const] : [],
+          ),
         )
+        throwIfAborted(options.signal)
+        const links = extractPdfLinkAnnotations({
+          page: pageNumber,
+          rotation: viewport.rotation,
+          viewportWidth: viewport.width,
+          viewportHeight: viewport.height,
+          annotations,
+          convertToViewportRectangle: (rect) =>
+            viewport.convertToViewportRectangle(rect),
+          resolvedInternalDestinations,
+        })
         const analysis: PdfPageAnalysis = {
           page: pageNumber,
           kind: 'born-digital',
@@ -969,7 +1049,8 @@ export async function reconstructPdf(
         }
         const classification = classifyPdfPage(analysis)
         analysis.kind =
-          classification.contentClass === 'born-digital'
+          classification.contentClass === 'born-digital' ||
+          classification.contentClass === 'scholarly-visual'
             ? 'born-digital'
             : classification.contentClass === 'mixed'
               ? 'mixed'
@@ -1070,13 +1151,13 @@ export async function reconstructPdf(
     const rawMetadata = await document.getMetadata().catch(() => undefined)
     throwIfAborted(options.signal)
     const info = (rawMetadata?.info ?? {}) as unknown as Record<string, unknown>
+    const pdfInfoModified = normalizedPdfDate(metadataValue(info, 'ModDate'))
     const metadata: PdfDocumentMetadata = {
       title: metadataValue(info, 'Title'),
       author: metadataValue(info, 'Author'),
       subject: metadataValue(info, 'Subject'),
-      modified:
-        normalizedPdfDate(metadataValue(info, 'ModDate')) ??
-        new Date(file.lastModified || 0).toISOString(),
+      modified: pdfInfoModified,
+      modifiedSource: pdfInfoModified ? 'pdf-info-mod-date' : undefined,
     }
     const reconstruction = await reconstructPageAnalyses({
       pages,
@@ -1092,6 +1173,7 @@ export async function reconstructPdf(
             canvasFactory:
               document.canvasFactory as unknown as PdfCanvasFactory,
             sourceBox: input.sourceBox,
+            ownedSourceBoxes: input.ownedSourceBoxes,
             signal: options.signal,
             tightenToSourceInk: input.kind === 'figure',
           })

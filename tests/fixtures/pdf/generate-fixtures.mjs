@@ -208,7 +208,25 @@ function createPdf(pageDefinitions) {
     (page.links ?? []).map(() => reserve()),
   )
 
-  set(catalogId, `<< /Type /Catalog /Pages ${pagesId} 0 R >>`)
+  const namedDestinations = pageDefinitions.flatMap((page, pageIndex) =>
+    (page.destinations ?? []).map((destination) => ({
+      ...destination,
+      pageId: pageIds[pageIndex],
+    })),
+  )
+  const destinationNames =
+    namedDestinations.length > 0
+      ? ` /Names << /Dests << /Names [${namedDestinations
+          .map(
+            (destination) =>
+              `(${escaped(destination.name)}) [${destination.pageId} 0 R /XYZ ${destination.x} ${destination.y} null]`,
+          )
+          .join(' ')}] >> >>`
+      : ''
+  set(
+    catalogId,
+    `<< /Type /Catalog /Pages ${pagesId} 0 R${destinationNames} >>`,
+  )
   set(
     pagesId,
     `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`,
@@ -249,7 +267,11 @@ function createPdf(pageDefinitions) {
       const annotationId = annotationIds[index][linkIndex]
       set(
         annotationId,
-        `<< /Type /Annot /Subtype /Link /Rect [${link.rect.join(' ')}] /Border [0 0 0] /A << /S /URI /URI (${escaped(link.url)}) >> >>`,
+        `<< /Type /Annot /Subtype /Link /Rect [${link.rect.join(' ')}] /Border [0 0 0] ${
+          link.destination
+            ? `/Dest (${escaped(link.destination)})`
+            : `/A << /S /URI /URI (${escaped(link.url)}) >>`
+        } >>`,
       )
     }
     const annotations =
@@ -428,15 +450,16 @@ const fixtures = {
     {
       lines: [
         { text: 'A Reconstructed Research Paper', x: 72, y: 720, size: 24 },
+        { text: 'Ada Researcher', x: 72, y: 684, size: 12 },
         {
           text: 'This paragraph contains enough embedded text to prove local PDF extraction.',
           x: 72,
-          y: 670,
+          y: 646,
         },
         {
           text: 'Bounding boxes remain source evidence while the publication becomes reflowable.',
           x: 72,
-          y: 646,
+          y: 622,
         },
       ],
     },
@@ -453,6 +476,53 @@ const fixtures = {
       ],
     },
   ],
+  'internal-named-destination.pdf': [
+    {
+      lines: [
+        {
+          text: 'Named destination extraction fixture',
+          x: 54,
+          y: 748,
+          size: 18,
+          font: 'F2',
+        },
+        {
+          text: 'See the source-key bibliography entry.',
+          x: 54,
+          y: 650,
+        },
+      ],
+      links: [
+        {
+          destination: 'cite.SourceKey',
+          rect: [54, 646, 238, 664],
+        },
+      ],
+    },
+    {
+      destinations: [
+        {
+          name: 'cite.SourceKey',
+          x: 54,
+          y: 650,
+        },
+      ],
+      lines: [
+        {
+          text: 'References',
+          x: 54,
+          y: 700,
+          size: 16,
+          font: 'F2',
+        },
+        {
+          text: '[1] A. Source. Geometry-backed bibliography evidence.',
+          x: 54,
+          y: 640,
+        },
+      ],
+    },
+  ],
   'structured-scientific.pdf': [
     {
       lines: [
@@ -461,6 +531,12 @@ const fixtures = {
           x: 54,
           y: 750,
           size: 20,
+        },
+        {
+          text: 'Ada Researcher',
+          x: 54,
+          y: 720,
+          size: 12,
         },
         {
           text: 'Left column line one introduces the experiment.',

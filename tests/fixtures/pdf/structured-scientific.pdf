@@ -16,12 +16,17 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /XObject << /Im1 7 0 R /Im2 8 0 R /Im3 9 0 R >> >> /Contents 6 0 R >>
 endobj
 6 0 obj
-<< /Length 1443 >>
+<< /Length 1489 >>
 stream
 BT
 /F1 20 Tf
 54 750 Td
 (Synthetic semantic completeness fixture) Tj
+ET
+BT
+/F1 12 Tf
+54 720 Td
+(Ada Researcher) Tj
 ET
 BT
 /F1 11 Tf
@@ -155,11 +160,11 @@ xref
 0000000222 00000 n 
 0000000297 00000 n 
 0000000482 00000 n 
-0000001977 00000 n 
-0000003861 00000 n 
-0000004916 00000 n 
+0000002023 00000 n 
+0000003907 00000 n 
+0000004962 00000 n 
 trailer
 << /Size 10 /Root 1 0 R >>
 startxref
-5763
+5809
 %%EOF

@@ -117,6 +117,29 @@ function tableLine(id: string, y: number): PdfRegionLine {
   return tabularLine(id, y, [0.12, 0.4, 0.67])
 }
 
+function equationTableCellLine(
+  id: string,
+  y: number,
+  x = 0.32,
+): PdfRegionLine {
+  const sourceBox = box(x, y, 0.28, 0.014, 'pdf-text')
+  return {
+    id,
+    text: `Output ONLY a number. {a}+{b}=`,
+    fontSize: 8,
+    box: sourceBox,
+    runs: [
+      {
+        ...sourceBox,
+        text: `Output ONLY a number. {a}+{b}=`,
+        fontName: 'TableSerif',
+        fontSize: 8,
+        confidence: 0.99,
+      },
+    ],
+  }
+}
+
 function proseLine(id: string, y: number): PdfRegionLine {
   const runs = [0.12, 0.202, 0.284, 0.366].map<PdfSourceRun>((x, index) => ({
     ...box(x, y, 0.078, 0.014, 'pdf-text'),
@@ -259,6 +282,86 @@ describe('bounded table-scope visual fallback', () => {
     expect(result.relationships[0].evidence).not.toContain('semantic-table')
     expect(result.canonicalTablesByAssetId.size).toBe(0)
     expect(result.consumedRegionIds.has(sourceRegion.id)).toBe(true)
+  })
+
+  it('leaves a table unresolved when source text separates its caption from a later figure raster', async () => {
+    const sourceBox = box(
+      0.5023529411764706,
+      0.4974699575757575,
+      0.17470802352941173,
+      0.1503330727272727,
+    )
+    const sourceObjectId = 'image-p013-002'
+    const visualAsset = await createPngAsset({
+      sourceObjectId,
+      sourceBox,
+      width: 20,
+      height: 10,
+      colorSpace: 'rgba',
+      pixels: new Uint8Array(20 * 10 * 4).fill(72),
+    })
+    const object: PdfNativeObject = {
+      id: sourceObjectId,
+      page: 1,
+      kind: 'image',
+      box: sourceBox,
+      confidence: 0.99,
+      assetId: visualAsset.id,
+    }
+    const sourceRegion = objectRegion(
+      'page-013-object-region-033',
+      object.id,
+      sourceBox,
+    )
+    const promptLine = tabularLine(
+      'page-013-prompt-row',
+      0.44611,
+      [0.20336, 0.31195, 0.70188],
+    )
+    const interveningPrompt = {
+      ...mixedParent('page-013-intervening-prompt', promptLine.box, [
+        promptLine,
+      ]),
+      kind: 'equation' as const,
+    }
+    const tableCaption = caption(
+      'page-013-table-2-caption',
+      'Table 2. The prompts used and accuracy of each model.',
+      box(0.24623, 0.37696, 0.48284, 0.01132, 'pdf-text'),
+    )
+    const figureCaption = caption(
+      'page-013-figure-13-caption',
+      'Figure 13. Periodic representations.',
+      box(0.50153, 0.66433, 0.3856, 0.02516, 'pdf-text'),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([object], [visualAsset])],
+      regions: [tableCaption, interveningPrompt, sourceRegion, figureCaption],
+    })
+
+    const table = result.relationships.find(
+      (relationship) => relationship.label === 'Table 2',
+    )
+    const figure = result.relationships.find(
+      (relationship) => relationship.label === 'Figure 13',
+    )
+    expect(table).toMatchObject({
+      kind: 'table',
+      status: 'unresolved',
+      sourceRegionIds: [],
+      sourceObjectIds: [],
+      assetIds: [],
+      evidence: expect.arrayContaining(['intervening-source-text']),
+      candidates: [],
+    })
+    expect(figure).toMatchObject({
+      kind: 'figure',
+      status: 'matched',
+      sourceRegionIds: [sourceRegion.id],
+      sourceObjectIds: [object.id],
+      assetIds: [visualAsset.id],
+    })
   })
 
   it('rasterizes one exact native ruled scope without promoting it to a semantic table', async () => {
@@ -670,6 +773,127 @@ describe('bounded table-scope visual fallback', () => {
     })
     expect(result.canonicalTablesByAssetId.size).toBe(1)
     expect(result.consumedRegionIds).toEqual(new Set([header.id, body.id]))
+  })
+
+  it('promotes a complete left-aligned table only after its equation cell shard is independently scoped', async () => {
+    const headerLine = tabularLine('table-header-left-middle', 0.22, [
+      0.2, 0.32,
+    ])
+    headerLine.runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'TableSerif-Medium'
+    })
+    const left = mixedParent(
+      'table-left-shard',
+      box(0.2, 0.22, 0.195, 0.074, 'pdf-text'),
+      [
+        headerLine,
+        tabularLine('table-row-1-left', 0.25, [0.2]),
+        tabularLine('table-row-2-left', 0.28, [0.2]),
+      ],
+    )
+    const rightHeader = tabularLine('table-row-0-right', 0.22, [0.7])
+    rightHeader.runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'TableSerif-Medium'
+    })
+    const right = mixedParent(
+      'table-right-shard',
+      box(0.7, 0.22, 0.075, 0.074, 'pdf-text'),
+      [
+        rightHeader,
+        tabularLine('table-row-1-right', 0.25, [0.7]),
+        tabularLine('table-row-2-right', 0.28, [0.7]),
+      ],
+    )
+    const equation = {
+      ...mixedParent(
+        'table-equation-shard',
+        box(0.32, 0.25, 0.28, 0.044, 'pdf-text'),
+        [
+          equationTableCellLine('table-equation-cell-1', 0.25),
+          equationTableCellLine('table-equation-cell-2', 0.28),
+        ],
+      ),
+      kind: 'equation' as const,
+    }
+    const final = {
+      ...mixedParent(
+        'table-final-row',
+        box(0.2, 0.31, 0.575, 0.014, 'pdf-text'),
+        [tabularLine('table-final-row-line', 0.31, [0.2, 0.32, 0.7])],
+      ),
+      kind: 'spanning' as const,
+    }
+    const tableCaption = caption(
+      'supplemented-table-caption',
+      'Table 2. Prompts and model accuracy.',
+      box(0.18, 0.18, 0.6, 0.02, 'pdf-text'),
+    )
+    const rasterizeFigure = cropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [tableCaption, left, right, equation, final],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(result.relationships[0]).toMatchObject({
+      kind: 'table',
+      status: 'matched',
+      sourceRegionIds: expect.arrayContaining([
+        left.id,
+        right.id,
+        equation.id,
+        final.id,
+      ]),
+      sourceLineIds: expect.arrayContaining([
+        headerLine.id,
+        'table-row-0-right',
+        'table-row-1-left',
+        'table-equation-cell-1',
+        'table-row-1-right',
+        'table-row-2-left',
+        'table-equation-cell-2',
+        'table-row-2-right',
+        'table-final-row-line',
+      ]),
+      evidence: expect.arrayContaining([
+        'detected-table-geometry',
+        'semantic-table',
+        'complete-bounded-table-scope',
+        'semantic-header-explicit-style',
+        'supplemental-equation-cell-shard',
+      ]),
+    })
+    expect(result.canonicalTablesByAssetId.size).toBe(1)
+    expect(
+      [...result.canonicalTablesByAssetId.values()][0].rows.map((row) =>
+        row.cells.map((cell) => cell.text),
+      ),
+    ).toEqual([
+      [
+        'table-header-left-middle-1',
+        'table-header-left-middle-2',
+        'table-row-0-right-1',
+      ],
+      [
+        'table-row-1-left-1',
+        'Output ONLY a number. {a}+{b}=',
+        'table-row-1-right-1',
+      ],
+      [
+        'table-row-2-left-1',
+        'Output ONLY a number. {a}+{b}=',
+        'table-row-2-right-1',
+      ],
+      [
+        'table-final-row-line-1',
+        'table-final-row-line-2',
+        'table-final-row-line-3',
+      ],
+    ])
   })
 
   it('does not crop or consume either partial parent when line bands compete', async () => {

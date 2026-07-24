@@ -258,8 +258,12 @@ describe('PDF visual asset primitives', () => {
     })
     expect(semantic).not.toBeNull()
     if (!semantic) throw new Error('Expected an aligned semantic table asset')
-    expect(strFromU8(semantic.bytes)).toContain('<th scope="col">Group</th>')
-    expect(strFromU8(semantic.bytes)).toContain('<td>10</td>')
+    expect(strFromU8(semantic.bytes)).toContain(
+      '<th id="cell-r1-c1" scope="col">Group</th>',
+    )
+    expect(strFromU8(semantic.bytes)).toContain(
+      '<td id="cell-r2-c2">10</td>',
+    )
     expect(canonicalTableFromLines(aligned)).toEqual({
       rows: [
         {

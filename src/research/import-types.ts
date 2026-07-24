@@ -80,10 +80,76 @@ export type PdfNativeObject = {
   rolePolicy?: 'ocr-scan-surface-v1'
 }
 
-export type PdfEmbeddedLink = {
+type PdfLinkAnnotationBase = {
+  id: string
+  page: number
+}
+
+export type PdfExternalLinkAnnotation = PdfLinkAnnotationBase & {
+  status: 'external'
   url: string
   box: NormalizedSourceBox
 }
+
+export type PdfInternalDestinationPoint = {
+  page: number
+  x: number | null
+  y: number | null
+  rotation: number
+  method: 'pdf-destination'
+}
+
+export type PdfInternalDestinationBox = Omit<NormalizedSourceBox, 'method'> & {
+  method: 'pdf-destination'
+}
+
+export type PdfInternalDestinationEvidence = {
+  source: 'pdfjs-named-destination'
+  destination: string
+  view: 'XYZ' | 'Fit' | 'FitB' | 'FitH' | 'FitBH' | 'FitV' | 'FitBV' | 'FitR'
+  page: number
+  point: PdfInternalDestinationPoint | null
+  box: PdfInternalDestinationBox | null
+}
+
+export type PdfInternalLinkAnnotation = PdfLinkAnnotationBase & {
+  status: 'internal'
+  url?: never
+  destination: string
+  destinationEvidence?: PdfInternalDestinationEvidence
+  box: NormalizedSourceBox
+}
+
+export type PdfUnresolvedLinkAnnotation = PdfLinkAnnotationBase & {
+  status: 'unresolved'
+  url?: never
+  target: string | null
+  reason:
+    | 'conflicting-targets'
+    | 'invalid-geometry'
+    | 'missing-target'
+    | 'unsafe-external-target'
+    | 'unsupported-action'
+  box: NormalizedSourceBox | null
+}
+
+export type PdfLinkAnnotation =
+  | PdfExternalLinkAnnotation
+  | PdfInternalLinkAnnotation
+  | PdfUnresolvedLinkAnnotation
+
+export type PdfEmbeddedLink =
+  | PdfLinkAnnotation
+  | {
+      // Transitional input compatibility for deterministic test fixtures and
+      // callers that predate the annotation-obligation ledger. Reconstruction
+      // normalizes this shape before any canonical mapping.
+      id?: never
+      page?: never
+      status?: never
+      url: string
+      box: NormalizedSourceBox
+    }
 
 export type PdfOcrWordEvidence = {
   text: string
@@ -277,6 +343,19 @@ export type PdfNoteMarkerClassification = {
   sourceBox: NormalizedSourceBox
 }
 
+export type PdfNoteCanonicalAnchor =
+  | {
+      kind: 'node'
+      nodeId: string
+      start: number
+      end: number
+    }
+  | {
+      kind: 'author'
+      author: string
+    }
+  | null
+
 export type PdfNoteRelationship = {
   id: string
   label: string
@@ -285,6 +364,7 @@ export type PdfNoteRelationship = {
   referenceEnd: number
   targetNoteId: string | null
   status: 'matched' | 'ambiguous' | 'unresolved' | 'citation' | 'plain-text'
+  canonicalAnchor: PdfNoteCanonicalAnchor
   confidence: number
   threshold: number
   evidence: string[]
@@ -319,6 +399,41 @@ export type PdfCitationRelationship = {
   sourceBoxes: NormalizedSourceBox[]
 }
 
+export type PdfScholarlyCrossReferenceKind =
+  'figure' | 'table' | 'section' | 'appendix' | 'equation'
+
+export type PdfScholarlyCrossReferenceTarget = {
+  kind: PdfScholarlyCrossReferenceKind
+  label: string
+  referenceStart: number
+  referenceEnd: number
+  status: 'matched' | 'ambiguous' | 'unresolved'
+  candidateNodeIds: string[]
+  targetNodeId: string | null
+  evidence: string[]
+}
+
+export type PdfScholarlyCrossReferenceRelationship = {
+  id: string
+  kind: PdfScholarlyCrossReferenceKind
+  text: string
+  labels: string[]
+  referenceRegionId: string
+  referenceStart: number
+  referenceEnd: number
+  targets: PdfScholarlyCrossReferenceTarget[]
+  targetNodeIds: string[]
+  status: 'matched' | 'ambiguous' | 'unresolved'
+  canonicalAnchor: {
+    nodeId: string
+    start: number
+    end: number
+  } | null
+  confidence: number
+  evidence: string[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
 export type PdfVisualMatchCandidate = {
   sourceRegionIds: string[]
   sourceObjectIds: string[]
@@ -328,9 +443,25 @@ export type PdfVisualMatchCandidate = {
   sourceBoxes: NormalizedSourceBox[]
 }
 
+export type PdfPreformattedSourceLine = {
+  text: string
+  sourceRegionId: string
+  sourceLineId: string
+  sourceBox: NormalizedSourceBox
+  sourceRunBoxes: NormalizedSourceBox[]
+}
+
+export type PdfPreformattedSource = {
+  status: 'proved' | 'unresolved'
+  lines: PdfPreformattedSourceLine[]
+  evidence: string[]
+}
+
 export type PdfVisualRelationship = {
   id: string
   kind: 'figure' | 'table' | 'equation'
+  semanticKind?: 'algorithm' | 'code'
+  preformatted?: PdfPreformattedSource
   label: string
   captionRegionId: string
   sourceRegionIds: string[]
@@ -387,6 +518,9 @@ export type ReconstructionDiagnostic = {
     | 'UNRESOLVED_NOTE_REFERENCE'
     | 'UNRESOLVED_CITATION_REFERENCE'
     | 'UNMAPPED_CITATION_ANCHOR'
+    | 'UNRESOLVED_SCHOLARLY_CROSS_REFERENCE'
+    | 'AMBIGUOUS_SCHOLARLY_CROSS_REFERENCE'
+    | 'UNMAPPED_SCHOLARLY_CROSS_REFERENCE_ANCHOR'
     | 'UNREFERENCED_NOTE'
     | 'MALFORMED_DOCX'
     | 'MISSING_DOCX_PART'
@@ -402,8 +536,12 @@ export type ReconstructionDiagnostic = {
     | 'NO_RECONSTRUCTABLE_TEXT'
     | 'ISOLATED_PROSE_GLYPH'
     | 'DUPLICATE_CANONICAL_SPAN'
+    | 'DUPLICATE_CANONICAL_ROLE'
+    | 'CANONICAL_FLOW_ORDER_VIOLATION'
+    | 'CANONICAL_VISUAL_ORDER_VIOLATION'
     | 'MISSING_SOURCE_REGION'
     | 'UNPROVENANCED_RENDERED_UNIT'
+    | 'UNRESOLVED_FRONT_MATTER'
     | 'INCOMPLETE_INLINE_STYLE_COVERAGE'
     | 'INVALID_LINE_BOUNDARY_LEDGER'
     | 'UNRESOLVED_CORRUPTING_JOIN'
@@ -412,6 +550,11 @@ export type ReconstructionDiagnostic = {
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
     | 'INCOMPLETE_RELATIONSHIP_COVERAGE'
+    | 'UNRESOLVED_EQUATION_TRANSCRIPT'
+    | 'UNRESOLVED_ALGORITHM_BLOCK'
+    | 'UNRESOLVED_ALGORITHM_TRANSCRIPT'
+    | 'UNRESOLVED_PREFORMATTED_BLOCK'
+    | 'UNRESOLVED_PREFORMATTED_TRANSCRIPT'
     | 'UNRESOLVED_SEMANTIC_OBJECTS'
     | 'STALE_HUMAN_DECISION'
   severity: 'info' | 'warning' | 'error'
@@ -449,6 +592,9 @@ export type PdfCompletenessMetrics = {
   expectedInlineSpanCount: number
   mappedInlineSpanCount: number
   inlineSpanCoverage: number
+  expectedHyperlinkCount: number
+  mappedHyperlinkCount: number
+  hyperlinkCoverage: number
   lineBoundaryCount: number
   decidedLineBoundaryCount: number
   unresolvedCorruptingJoinCount: number
@@ -558,6 +704,7 @@ export type PdfReconstruction = {
   readingOrder: PdfReadingOrderGraph
   noteRelationships: PdfNoteRelationship[]
   citationRelationships: PdfCitationRelationship[]
+  crossReferenceRelationships: PdfScholarlyCrossReferenceRelationship[]
   visualRelationships: PdfVisualRelationship[]
   assets: PdfVisualAsset[]
   provenance: Record<string, NodeSourceEvidence>

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ernie.sg/schemas/pdf-fidelity-eval-receipt-1.0.0.json",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-eval-receipt-1.2.0.json",
   "title": "Sanitized scholarly PDF fidelity evaluation receipt",
   "type": "object",
   "additionalProperties": false,
@@ -13,11 +13,12 @@
     "execution",
     "summary",
     "cases",
+    "promotionEligible",
     "passed",
     "receiptSha256"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
+    "schemaVersion": { "const": "1.2.0" },
     "privacy": {
       "const": "public-identities-hashes-aggregate-scores-bounded-case-results-only"
     },
@@ -31,6 +32,11 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/caseResult" }
+    },
+    "promotionEligible": {
+      "type": "boolean",
+      "const": false,
+      "description": "Reserved false until a trusted runner independently verifies the runtime executable, model checkpoint, and execution environment outside the adapter process."
     },
     "passed": { "type": "boolean" },
     "receiptSha256": { "$ref": "#/$defs/sha256" }
@@ -59,7 +65,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "sha256": { "$ref": "#/$defs/sha256" },
-        "annotationSchemaVersion": { "const": "1.0.0" },
+        "annotationSchemaVersion": { "enum": ["1.0.0", "2.0.0"] },
         "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
         "caseIdentitySha256": { "$ref": "#/$defs/sha256" }
       }
@@ -153,7 +159,8 @@
         "platform",
         "architecture",
         "offlineRequested",
-        "allInputsVerified"
+        "allInputsVerified",
+        "runtimeIdentityAuthority"
       ],
       "properties": {
         "lane": { "$ref": "#/$defs/id" },
@@ -164,7 +171,13 @@
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }]
         },
         "offlineRequested": { "type": "boolean" },
-        "allInputsVerified": { "type": "boolean" }
+        "allInputsVerified": { "type": "boolean" },
+        "runtimeIdentityAuthority": {
+          "enum": [
+            "not-applicable",
+            "adapter-self-reported"
+          ]
+        }
       }
     },
     "scoreGroup": {

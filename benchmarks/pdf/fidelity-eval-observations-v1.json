@@ -1,0 +1,455 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "scholarly-pdf-first-failure-observations-2026-07-v1",
+  "privacy": "public-identities-hashes-normalized-case-provenance-no-source-content",
+  "evalSet": {
+    "path": "benchmarks/pdf/fidelity-eval-v1.json",
+    "fileSha256": "35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002",
+    "evalSetSha256": "e7072984f8afb438086780b1544eb38ce8be42b10f8f87e7659ed9bd3d6cb2aa",
+    "documentIdentitySha256": "54c3246cfdf14b6700bdb44d7f551496ad223a3426d1f8ab0248cbe624d7802e",
+    "caseIdentitySha256": "d08141d7a90070798e0e735e1c5ccc6afb8b5d7cf7a32dee903872568699bb47"
+  },
+  "method": {
+    "unit": "bounded-source-to-output-case",
+    "firstFailureDefinition": "earliest-source-backed-pipeline-decision-that-can-explain-the-bounded-failure",
+    "annotationStatus": "source-verified-public-calibration-not-independent-blind-holdout",
+    "candidateOutputConsulted": false
+  },
+  "observations": [
+    {
+      "caseId": "2408.10903v5.p001.title-single-canonical-occurrence",
+      "firstFailureClass": "conservation-blind-spot",
+      "sourceArtifact": {
+        "documentId": "2408.10903v5",
+        "sourcePdfSha256": "f5c8f963c4d17409b6ab163e0be914db139f9bc83cca0274a88863098e865a80",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2412.13575v1.p001.figure-1-complete-boundary",
+      "firstFailureClass": "boundary-incompleteness",
+      "sourceArtifact": {
+        "documentId": "2412.13575v1",
+        "sourcePdfSha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2412.13575v1.p001.figure-1-caption-ownership",
+      "firstFailureClass": "ownership-and-cardinality",
+      "sourceArtifact": {
+        "documentId": "2412.13575v1",
+        "sourcePdfSha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-typed-relationship",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2210.06774v3.p002.footnote-2-ownership",
+      "firstFailureClass": "ownership-and-cardinality",
+      "sourceArtifact": {
+        "documentId": "2210.06774v3",
+        "sourcePdfSha256": "dd8ce0000a217f31ae55e107f66fab4608a1972319c9d7999609a9fdc1ccdcb4",
+        "page": 2,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-typed-relationship",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2210.06774v3.p002.column-order-left-before-right",
+      "firstFailureClass": "reading-topology",
+      "sourceArtifact": {
+        "documentId": "2210.06774v3",
+        "sourcePdfSha256": "dd8ce0000a217f31ae55e107f66fab4608a1972319c9d7999609a9fdc1ccdcb4",
+        "page": 2,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "all-pairs-reading-order",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2210.06774v3.p003.section-3-2-heading-role",
+      "firstFailureClass": "semantic-type-confusion",
+      "sourceArtifact": {
+        "documentId": "2210.06774v3",
+        "sourcePdfSha256": "dd8ce0000a217f31ae55e107f66fab4608a1972319c9d7999609a9fdc1ccdcb4",
+        "page": 3,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2210.06774v3.p006.table-1-semantic-structure",
+      "firstFailureClass": "table-data-and-header-truth",
+      "sourceArtifact": {
+        "documentId": "2210.06774v3",
+        "sourcePdfSha256": "dd8ce0000a217f31ae55e107f66fab4608a1972319c9d7999609a9fdc1ccdcb4",
+        "page": 6,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p001.affiliation-footnote-role",
+      "firstFailureClass": "front-matter-and-metadata-authority",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p001.affiliation-note-ownership",
+      "firstFailureClass": "affiliation-marker-set-compression",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-typed-relationship",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p001.figure-1-complete-boundary",
+      "firstFailureClass": "boundary-incompleteness",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p001.figure-1-caption-ownership",
+      "firstFailureClass": "ownership-and-cardinality",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-typed-relationship",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p001.numeric-range-not-citation",
+      "firstFailureClass": "semantic-type-confusion",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p002.equation-1-aligned-group",
+      "firstFailureClass": "formula-layout-flattening",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 2,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2408.10903v5.p003.table-1-header-complete-boundary",
+      "firstFailureClass": "boundary-incompleteness",
+      "sourceArtifact": {
+        "documentId": "2408.10903v5",
+        "sourcePdfSha256": "f5c8f963c4d17409b6ab163e0be914db139f9bc83cca0274a88863098e865a80",
+        "page": 3,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2408.10903v5.p003.table-1-header-complete-semantic-structure",
+      "firstFailureClass": "table-data-and-header-truth",
+      "sourceArtifact": {
+        "documentId": "2408.10903v5",
+        "sourcePdfSha256": "f5c8f963c4d17409b6ab163e0be914db139f9bc83cca0274a88863098e865a80",
+        "page": 3,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p014.figures-15-18-column-isolated-boundaries",
+      "firstFailureClass": "boundary-contamination",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 14,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p014.figure-captions-15-18-complete-boundaries",
+      "firstFailureClass": "boundary-incompleteness",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 14,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p014.figure-16-complete-caption-ownership",
+      "firstFailureClass": "ownership-and-cardinality",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 14,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-typed-relationship",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2412.13575v1.p006.equation-4-number-ownership",
+      "firstFailureClass": "ownership-and-cardinality",
+      "sourceArtifact": {
+        "documentId": "2412.13575v1",
+        "sourcePdfSha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+        "page": 6,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-typed-relationship",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2412.13575v1.p006.post-equation-prose-not-list",
+      "firstFailureClass": "semantic-type-confusion",
+      "sourceArtifact": {
+        "documentId": "2412.13575v1",
+        "sourcePdfSha256": "09cbdebb89574834bf6ce21f0b7e212677e862b2ca474a96ed8625fb0c198696",
+        "page": 6,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p013.decimal-chart-tick-not-footnote",
+      "firstFailureClass": "semantic-type-confusion",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 13,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p012.appendix-exits-reference-scope",
+      "firstFailureClass": "bibliography-item-boundary-collapse",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 12,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p005.numbered-task-list-not-equation",
+      "firstFailureClass": "semantic-type-confusion",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 5,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p001.figure-1-internal-text-ownership",
+      "firstFailureClass": "ownership-and-cardinality",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 1,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-typed-relationship",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p005.section-and-numbered-list-role",
+      "firstFailureClass": "nested-list-topology-loss",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 5,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p012.lowercase-continuation-not-heading",
+      "firstFailureClass": "semantic-type-confusion",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 12,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "exact-classification",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p014.figure-column-reading-order",
+      "firstFailureClass": "reading-topology",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 14,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "all-pairs-reading-order",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p007.equation-3-complete-group",
+      "firstFailureClass": "formula-layout-flattening",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 7,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    },
+    {
+      "caseId": "2502.00873v1.p015.figure-19-complete-caption-boundary",
+      "firstFailureClass": "boundary-incompleteness",
+      "sourceArtifact": {
+        "documentId": "2502.00873v1",
+        "sourcePdfSha256": "04af0e74ef5eb73a89c8eea721f3d2a7a8b0745a975e5d4d57ed71e3461cd254",
+        "page": 15,
+        "evidence": "hash-pinned-source-pdf-page-and-normalized-geometry"
+      },
+      "evaluator": {
+        "id": "complete-label-scoped-detection-iou",
+        "kind": "code",
+        "outcome": "binary-pass-fail"
+      }
+    }
+  ]
+}

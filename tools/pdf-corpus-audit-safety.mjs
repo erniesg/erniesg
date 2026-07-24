@@ -8,6 +8,10 @@ const SAFE_DIAGNOSTIC_MESSAGES = Object.freeze({
     'A reading-order region was resolved from deterministic geometry.',
   AMBIGUOUS_READING_ORDER:
     'The document contains an ambiguous reading-order region.',
+  CANONICAL_FLOW_ORDER_VIOLATION:
+    'Canonical content crosses, reverses, or changes source-proved flow.',
+  CANONICAL_VISUAL_ORDER_VIOLATION:
+    'Matched visual-caption pairs reverse their source-proved order.',
   NO_RECONSTRUCTABLE_TEXT: 'No reconstructable embedded text was found.',
   INCOMPLETE_TEXT_COVERAGE:
     'Recovered text is below the configured completeness threshold.',

@@ -68,6 +68,25 @@ function scanObject(coverage = 0.85) {
   }
 }
 
+function boundedFigureObject() {
+  return {
+    id: 'image-p001-figure',
+    page: 1,
+    kind: 'image' as const,
+    assetId: 'asset-figure',
+    box: {
+      page: 1,
+      x: 0.24,
+      y: 0.35,
+      width: 0.52,
+      height: 0.275,
+      rotation: 0,
+      method: 'pdf-object' as const,
+    },
+    confidence: 0.98,
+  }
+}
+
 describe('PDF OCR page classification', () => {
   it('uses text geometry, run count, and image coverage to distinguish OCR classes', () => {
     const cases = [
@@ -111,6 +130,57 @@ describe('PDF OCR page classification', () => {
         imageCoverage: expect.any(Number),
         textArea: expect.any(Number),
       },
+    })
+  })
+
+  it('keeps an inset scholarly figure with an explicit adjacent caption out of OCR', () => {
+    const figurePage = page(
+      [
+        run(
+          'Figure N: (ChatGPT-4, 2/3) A good move, rewriting the goal to “',
+          0.184,
+          0.635,
+          0.424,
+          0.0126,
+        ),
+        run('a + (c + b) = a + c + b', 0.608, 0.635, 0.197, 0.0126),
+        run('”.', 0.805, 0.635, 0.011, 0.0126),
+        run('39', 0.492, 0.934, 0.016, 0.0126),
+      ],
+      [boundedFigureObject()],
+    )
+
+    expect(classifyPdfPage(figurePage)).toMatchObject({
+      contentClass: 'scholarly-visual',
+      needsOcr: false,
+    })
+  })
+
+  it('keeps sparse image pages review-blocked without a proved inset caption relationship', () => {
+    const boundedWithoutCaption = page(
+      [run('An isolated label', 0.184, 0.635, 0.2, 0.0126)],
+      [boundedFigureObject()],
+    )
+    const distantCaption = page(
+      [run('Figure 1: A distant label.', 0.1, 0.08, 0.3, 0.0126)],
+      [boundedFigureObject()],
+    )
+    const fullPageScanWithCaptionText = page(
+      [run('Figure 1: Text recovered from a scan.', 0.1, 0.82, 0.5, 0.02)],
+      [scanObject()],
+    )
+
+    expect(classifyPdfPage(boundedWithoutCaption)).toMatchObject({
+      contentClass: 'mixed',
+      needsOcr: true,
+    })
+    expect(classifyPdfPage(distantCaption)).toMatchObject({
+      contentClass: 'mixed',
+      needsOcr: true,
+    })
+    expect(classifyPdfPage(fullPageScanWithCaptionText)).toMatchObject({
+      contentClass: 'mixed',
+      needsOcr: true,
     })
   })
 })

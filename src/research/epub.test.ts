@@ -1,11 +1,12 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import { XMLValidator } from 'fast-xml-parser'
+import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { describe, expect, it } from 'vitest'
 import rawPaper from './papers/semantic-responsive-typesetting.json'
 import {
   buildEpub,
   buildReadableEpub,
   inspectEpub,
+  profileEpubCss,
   renderPublicationXhtml,
 } from './epub'
 import type {
@@ -24,6 +25,109 @@ import { createSourcePageCropAsset } from './visual-assets'
 
 const paper = researchPaperSchema.parse(rawPaper)
 
+function numericCitationTarget(id: string, ordinal: number | null) {
+  return ordinal === null
+    ? {
+        id,
+        type: 'paragraph' as const,
+        text: 'Bibliography entry without a recoverable numeric marker.',
+        source: 'synthetic-semantic-alignment',
+      }
+    : {
+        id,
+        type: 'paragraph' as const,
+        text: `Reference ${ordinal}.`,
+        list: {
+          level: 1,
+          ordered: true,
+          numberingId: 'references',
+          markerStyle: 'decimal' as const,
+          ordinal,
+          markerText: `[${ordinal}]`,
+        },
+        source: 'synthetic-semantic-alignment',
+      }
+}
+
+function numericCitationPaper({
+  surface,
+  targetIds,
+  targets,
+}: {
+  surface: string
+  targetIds: string[]
+  targets: Array<[id: string, ordinal: number | null]>
+}) {
+  const candidate = structuredClone(paper)
+  candidate.nodes = [
+    {
+      id: 'semantic-alignment-claim',
+      type: 'paragraph',
+      text: surface,
+      inlineRuns: [
+        {
+          start: 0,
+          end: surface.length,
+          relationshipId: 'semantic-alignment-citation',
+          semanticRole: 'citation',
+          targetIds,
+        },
+      ],
+      source: 'synthetic-semantic-alignment',
+    },
+    ...targets.map(([id, ordinal]) => numericCitationTarget(id, ordinal)),
+  ]
+  return candidate
+}
+
+function equationRangePaper({
+  surface,
+  targetIds,
+  identifiers,
+}: {
+  surface: string
+  targetIds: string[]
+  identifiers: Array<[id: string, identifier: string | null]>
+}) {
+  const candidate = structuredClone(paper)
+  candidate.nodes = [
+    {
+      id: 'semantic-equation-claim',
+      type: 'paragraph',
+      text: surface,
+      inlineRuns: [
+        {
+          start: 0,
+          end: surface.length,
+          relationshipId: 'semantic-equation-range',
+          semanticRole: 'cross-reference',
+          targetIds,
+        },
+      ],
+      source: 'synthetic-semantic-alignment',
+    },
+    ...identifiers.flatMap(([id, identifier]) => [
+      {
+        id,
+        type: 'figure' as const,
+        objectType: 'equation' as const,
+        title: identifier ? `Equation ${identifier}` : 'Source equation',
+        relationships: { caption: `${id}-caption` },
+        source: 'synthetic-semantic-alignment',
+      },
+      {
+        id: `${id}-caption`,
+        type: 'caption' as const,
+        text: identifier
+          ? `Equation ${identifier}. Source equation.`
+          : 'Source equation without a recoverable identifier.',
+        source: 'synthetic-semantic-alignment',
+      },
+    ]),
+  ]
+  return candidate
+}
+
 function rezipEpub(files: Record<string, Uint8Array>) {
   return zipSync({
     mimetype: [files.mimetype, { level: 0 }],
@@ -35,11 +139,587 @@ function rezipEpub(files: Record<string, Uint8Array>) {
   })
 }
 
+function parsedXmlElements(
+  value: unknown,
+  elementName: string,
+): Array<Record<string, unknown>> {
+  const matches: Array<Record<string, unknown>> = []
+  const visit = (candidate: unknown) => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit)
+      return
+    }
+    if (!candidate || typeof candidate !== 'object') return
+    for (const [key, child] of Object.entries(candidate)) {
+      if (key === elementName) {
+        const elements = Array.isArray(child) ? child : [child]
+        for (const element of elements) {
+          if (element && typeof element === 'object') {
+            matches.push(element as Record<string, unknown>)
+          }
+        }
+      }
+      visit(child)
+    }
+  }
+  visit(value)
+  return matches
+}
+
 async function sha256Hex(bytes: Uint8Array) {
   const digest = await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes))
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
+}
+
+function staleNoteAnchorFixture() {
+  const notePaper = structuredClone(paper)
+  notePaper.nodes = [
+    {
+      id: 'stale-anchor-claim',
+      type: 'paragraph',
+      text: 'Claim 1.',
+      noteReferences: [
+        {
+          id: 'stale-anchor-reference',
+          label: '1',
+          target: 'stale-anchor-note',
+          start: 6,
+          end: 7,
+          confidence: 1,
+        },
+      ],
+      source: 'synthetic-stale-note-anchor',
+    },
+    {
+      id: 'stale-anchor-note',
+      type: 'footnote',
+      kind: 'footnote',
+      label: '1',
+      text: 'A source-backed note.',
+      relationships: { backlinks: ['stale-anchor-reference'] },
+      source: 'synthetic-stale-note-anchor',
+    },
+  ]
+  const reconstruction = {
+    source: { format: undefined },
+    paper: notePaper,
+    readiness: { ready: true },
+    noteRelationships: [
+      {
+        id: 'stale-anchor-reference',
+        label: '1',
+        referenceRegionId: 'source-claim',
+        referenceStart: 6,
+        referenceEnd: 7,
+        targetNoteId: 'stale-anchor-note',
+        status: 'matched',
+        canonicalAnchor: {
+          kind: 'node',
+          nodeId: 'stale-anchor-claim',
+          start: 0,
+          end: 1,
+        },
+        confidence: 1,
+        threshold: 0.72,
+        evidence: ['synthetic-stale-anchor'],
+        candidates: [],
+        sourceBoxes: [],
+      },
+    ],
+    visualRelationships: [],
+    assets: [],
+  } as unknown as PdfReconstruction
+  return { notePaper, reconstruction }
+}
+
+async function staleEquationTranscriptFixture() {
+  const captionRun: PdfSourceRun = {
+    page: 1,
+    text: 'Equation 1. Source-backed display.',
+    x: 0.2,
+    y: 0.4,
+    width: 0.42,
+    height: 0.02,
+    rotation: 0,
+    method: 'pdf-text',
+    fontName: 'Body',
+    fontSize: 10,
+    confidence: 1,
+  }
+  const firstRun: PdfSourceRun = {
+    ...captionRun,
+    text: 'q = r',
+    x: 0.28,
+    y: 0.3,
+    width: 0.14,
+    fontSize: 14,
+  }
+  const secondRun: PdfSourceRun = {
+    ...firstRun,
+    text: '+ s',
+    y: 0.325,
+    width: 0.08,
+  }
+  const titleRun: PdfSourceRun = {
+    ...captionRun,
+    text: 'Equation lineage',
+    x: 0.12,
+    y: 0.08,
+    width: 0.36,
+    fontSize: 18,
+  }
+  const authorRun: PdfSourceRun = {
+    ...captionRun,
+    text: 'Ada Researcher',
+    x: 0.12,
+    y: 0.14,
+    width: 0.24,
+    fontSize: 11,
+  }
+  const captionBox = { ...captionRun }
+  const sourceBox = {
+    page: 1,
+    x: 0.27,
+    y: 0.29,
+    width: 0.2,
+    height: 0.065,
+    rotation: 0,
+    method: 'pdf-object' as const,
+  }
+  const page: PdfPageAnalysis = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: [
+      titleRun,
+      authorRun,
+      captionRun,
+      firstRun,
+      secondRun,
+    ].reduce((total, run) => total + run.text.length, 0),
+    imageCount: 1,
+    objects: [
+      {
+        id: 'equation-source-object',
+        page: 1,
+        kind: 'image',
+        box: sourceBox,
+        confidence: 1,
+        assetId: null,
+      },
+    ],
+    runs: [titleRun, authorRun, firstRun, secondRun, captionRun],
+  }
+  const pixels = new Uint8Array(24 * 12 * 4).fill(255)
+  for (let y = 3; y < 9; y += 1) {
+    for (let x = 4; x < 20; x += 1) {
+      const offset = (y * 24 + x) * 4
+      pixels.set([20, 20, 20, 255], offset)
+    }
+  }
+  const asset = await createSourcePageCropAsset({
+    kind: 'equation',
+    cropBox: sourceBox,
+    sourceObjectIds: ['equation-source-object'],
+    sourceBoxes: [sourceBox],
+    width: 24,
+    height: 12,
+    pixels,
+  })
+  page.objects![0].assetId = asset.id
+  const base = await reconstructPageAnalyses({
+    pages: [page],
+    sourceHash: 'e'.repeat(64),
+    fileName: 'equation-lineage.pdf',
+    byteLength: 1024,
+  })
+  const equationRegion = {
+    id: 'equation-source-region',
+    page: 1,
+    kind: 'equation' as const,
+    column: 'single' as const,
+    text: `${firstRun.text} ${secondRun.text}`,
+    confidence: 1,
+    box: {
+      ...firstRun,
+      width: Math.max(firstRun.width, secondRun.width),
+      height: secondRun.y + secondRun.height - firstRun.y,
+    },
+    lines: [
+      {
+        id: 'equation-source-line-1',
+        text: firstRun.text,
+        fontSize: firstRun.fontSize,
+        box: { ...firstRun },
+        runs: [{ ...firstRun }],
+      },
+      {
+        id: 'equation-source-line-2',
+        text: secondRun.text,
+        fontSize: secondRun.fontSize,
+        box: { ...secondRun },
+        runs: [{ ...secondRun }],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+  const captionRegion = {
+    id: 'equation-caption-region',
+    page: 1,
+    kind: 'caption' as const,
+    column: 'single' as const,
+    text: captionRun.text,
+    confidence: 1,
+    box: { ...captionRun },
+    lines: [
+      {
+        id: 'equation-caption-line',
+        text: captionRun.text,
+        fontSize: captionRun.fontSize,
+        box: { ...captionRun },
+        runs: [{ ...captionRun }],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+  const titleRegion = {
+    id: 'equation-title-region',
+    page: 1,
+    kind: 'spanning' as const,
+    column: 'single' as const,
+    text: titleRun.text,
+    confidence: 1,
+    box: { ...titleRun },
+    lines: [
+      {
+        id: 'equation-title-line',
+        text: titleRun.text,
+        fontSize: titleRun.fontSize,
+        box: { ...titleRun },
+        runs: [{ ...titleRun }],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+  const authorRegion = {
+    id: 'equation-author-region',
+    page: 1,
+    kind: 'body' as const,
+    column: 'single' as const,
+    text: authorRun.text,
+    confidence: 1,
+    box: { ...authorRun },
+    lines: [
+      {
+        id: 'equation-author-line',
+        text: authorRun.text,
+        fontSize: authorRun.fontSize,
+        box: { ...authorRun },
+        runs: [{ ...authorRun }],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+  const equationPaper = structuredClone(paper)
+  equationPaper.title = 'Equation lineage'
+  equationPaper.authors = ['Ada Researcher']
+  equationPaper.nodes = [
+    {
+      id: 'equation-title-node',
+      type: 'heading',
+      level: 1,
+      text: titleRun.text,
+      source: 'synthetic-equation-lineage',
+    },
+    {
+      id: 'equation-author-node',
+      type: 'paragraph',
+      text: authorRun.text,
+      source: 'synthetic-equation-lineage',
+    },
+    {
+      id: 'equation-node',
+      type: 'figure',
+      objectType: 'equation',
+      title: captionRun.text,
+      relationships: {
+        caption: 'equation-caption',
+        assets: [asset.id],
+      },
+      source: 'synthetic-equation-lineage',
+    },
+    {
+      id: 'equation-caption',
+      type: 'caption',
+      text: captionRun.text,
+      source: 'synthetic-equation-lineage',
+    },
+  ]
+  const relationship: PublicationVisualRelationship = {
+    id: 'equation-lineage-relationship',
+    kind: 'equation',
+    label: 'Equation 1',
+    captionRegionId: captionRegion.id,
+    sourceRegionIds: [equationRegion.id],
+    sourceLineIds: equationRegion.lines.map((line) => line.id),
+    sourceObjectIds: ['equation-source-object'],
+    assetIds: [asset.id],
+    status: 'matched',
+    confidence: 1,
+    evidence: ['source-page-crop', 'source-text-alt'],
+    candidates: [],
+    sourceBoxes: [captionBox, sourceBox],
+    sourceText: equationRegion.text,
+    altText: captionRun.text,
+    altTextSource: 'source-text',
+    canonicalNodeId: 'equation-node',
+    captionNodeId: 'equation-caption',
+  }
+  const lineBoundaryDecisions = [
+    {
+      id: 'equation-line-boundary-1',
+      page: 1,
+      regionId: equationRegion.id,
+      fromLineId: equationRegion.lines[0].id,
+      toLineId: equationRegion.lines[1].id,
+      outcome: 'space' as const,
+      evidence: ['synthetic-source-line-order'],
+    },
+  ]
+  const readingOrder = {
+    schemaVersion: '1.0.0' as const,
+    regionIds: [
+      titleRegion.id,
+      authorRegion.id,
+      equationRegion.id,
+      captionRegion.id,
+    ],
+    order: [
+      titleRegion.id,
+      authorRegion.id,
+      equationRegion.id,
+      captionRegion.id,
+    ],
+    edges: [],
+    resolutions: [],
+    acyclic: true,
+    evaluation: {
+      schemaVersion: '1.0.0' as const,
+      algorithm: 'deterministic-geometry-v1' as const,
+      mode: 'deterministic-only' as const,
+      regionCount: 4,
+      acceptedEdgeCount: 0,
+      unresolvedEdgeCount: 0,
+      cycleRate: 0,
+      orderAccuracy: null,
+      provider: null,
+      modelVersion: null,
+      latencyMs: 0 as const,
+      costUsd: 0 as const,
+      reviewRequired: false,
+    },
+  }
+  const candidate = {
+    ...base,
+    paper: equationPaper,
+    pages: [page],
+    regions: [titleRegion, authorRegion, equationRegion, captionRegion],
+    readingOrder,
+    lineBoundaryDecisions,
+    unresolvedCorruptingJoinCount: 0,
+    structurallyConsumedLineBoundaryCount: 0,
+    noteRelationships: [],
+    citationRelationships: [],
+    crossReferenceRelationships: [],
+    visualRelationships: [relationship],
+    assets: [asset],
+    provenance: {
+      'equation-title-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [titleRegion.id],
+        boxes: [{ ...titleRun }],
+        links: [],
+      },
+      'equation-author-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [authorRegion.id],
+        boxes: [{ ...authorRun }],
+        links: [],
+      },
+      'equation-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [equationRegion.id],
+        boxes: relationship.sourceBoxes,
+        links: [],
+      },
+      'equation-caption': {
+        confidence: 1,
+        pages: [1],
+        regionIds: [captionRegion.id],
+        boxes: [captionBox],
+        links: [],
+      },
+    },
+    diagnostics: [],
+  } satisfies PdfReconstruction
+  const assessment = assessPdfCompleteness({
+    pages: candidate.pages,
+    paper: candidate.paper,
+    diagnostics: candidate.diagnostics,
+    readingOrder: candidate.readingOrder,
+    regions: candidate.regions,
+    visualRelationships: candidate.visualRelationships,
+    assets: candidate.assets,
+    citationRelationships: candidate.citationRelationships,
+    noteRelationships: candidate.noteRelationships,
+    policy: candidate.readiness.policy,
+    lineBoundaryDecisions: candidate.lineBoundaryDecisions,
+    unresolvedCorruptingJoinCount: candidate.unresolvedCorruptingJoinCount,
+    structurallyConsumedLineBoundaryCount:
+      candidate.structurallyConsumedLineBoundaryCount,
+    provenance: candidate.provenance,
+    sourceSha256: candidate.source.sha256,
+  })
+  const reconstruction = {
+    ...candidate,
+    semanticSignals: assessment.semanticSignals,
+    completeness: assessment.completeness,
+    diagnostics: assessment.diagnostics,
+    readiness: assessment.readiness,
+  } satisfies PdfReconstruction
+  expect(reconstruction.readiness.blockingDiagnosticCodes).toEqual([])
+  return { reconstruction, relationship, equationRegion }
+}
+
+function exportBoundaryRun(
+  text: string,
+  y: number,
+  fontSize = 10,
+): PdfSourceRun {
+  return {
+    page: 1,
+    text,
+    x: 0.1,
+    y,
+    width: 0.78,
+    height: 0.02,
+    rotation: 0,
+    method: 'pdf-text',
+    fontName: 'Body',
+    fontSize,
+    confidence: 1,
+  }
+}
+
+async function readyExternalHyperlinkFixture() {
+  const linkedRun = exportBoundaryRun(
+    'Open https://example.test/evidence for the source.',
+    0.38,
+  )
+  const page: PdfPageAnalysis = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: 0,
+    imageCount: 0,
+    runs: [
+      exportBoundaryRun('Export boundary study', 0.06, 20),
+      exportBoundaryRun('Ada Researcher', 0.13, 11),
+      exportBoundaryRun('Abstract', 0.2, 14),
+      exportBoundaryRun(
+        'This abstract establishes a complete source-backed export fixture.',
+        0.25,
+      ),
+      linkedRun,
+      exportBoundaryRun('1 Methods', 0.56, 16),
+      exportBoundaryRun('The methods remain canonical prose.', 0.62),
+    ],
+    links: [
+      {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'external',
+        url: 'https://example.test/evidence',
+        box: {
+          page: 1,
+          x: linkedRun.x,
+          y: linkedRun.y,
+          width: linkedRun.width,
+          height: linkedRun.height,
+          rotation: 0,
+          method: 'pdf-link',
+        },
+      },
+    ],
+  }
+  page.textCharacters = page.runs.reduce(
+    (total, sourceRun) => total + sourceRun.text.length,
+    0,
+  )
+  const reconstruction = await reconstructPageAnalyses({
+    pages: [page],
+    sourceHash: '8'.repeat(64),
+    fileName: 'export-link-boundary.pdf',
+    byteLength: 2048,
+  })
+  expect(reconstruction.readiness).toMatchObject({
+    ready: true,
+    blockingDiagnosticCodes: [],
+  })
+  return reconstruction
+}
+
+async function readyCrossReferenceFixture() {
+  const page: PdfPageAnalysis = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: 0,
+    imageCount: 0,
+    runs: [
+      exportBoundaryRun('Cross-reference export study', 0.06, 20),
+      exportBoundaryRun('Ada Researcher', 0.13, 11),
+      exportBoundaryRun('Abstract', 0.2, 14),
+      exportBoundaryRun(
+        'This abstract establishes a complete source-backed export fixture.',
+        0.25,
+      ),
+      exportBoundaryRun('See Section 4 for the source-backed method.', 0.38),
+      exportBoundaryRun('4 Methods', 0.56, 16),
+      exportBoundaryRun('The methods remain canonical prose.', 0.62),
+    ],
+  }
+  page.textCharacters = page.runs.reduce(
+    (total, sourceRun) => total + sourceRun.text.length,
+    0,
+  )
+  const reconstruction = await reconstructPageAnalyses({
+    pages: [page],
+    sourceHash: '9'.repeat(64),
+    fileName: 'export-cross-reference-boundary.pdf',
+    byteLength: 2048,
+  })
+  expect(reconstruction.readiness).toMatchObject({
+    ready: true,
+    blockingDiagnosticCodes: [],
+  })
+  expect(reconstruction.crossReferenceRelationships).toHaveLength(1)
+  return reconstruction
 }
 
 describe('EPUB 3 export', () => {
@@ -76,6 +756,65 @@ describe('EPUB 3 export', () => {
     expect(content).toContain(
       '<a href="https://example.test/evidence">https://example.test/evidence</a>',
     )
+  })
+
+  it('compacts only source-proved raised math atoms while preserving canonical text', () => {
+    const inlinePaper = structuredClone(paper)
+    const value = 'C P lot and R Inf o. while W T and see note retain spaces.'
+    const range = (expected: string) => ({
+      start: value.indexOf(expected),
+      end: value.indexOf(expected) + expected.length,
+    })
+    inlinePaper.nodes = [
+      {
+        id: 'synthetic-compact-math-node',
+        type: 'paragraph',
+        text: value,
+        inlineRuns: [
+          {
+            ...range('P lot'),
+            italic: true,
+            verticalAlign: 'superscript',
+            compactMathAtom: true,
+          },
+          {
+            ...range('Inf o.'),
+            verticalAlign: 'superscript',
+            compactMathAtom: true,
+          },
+          { ...range('W T'), italic: true },
+          { ...range('see note'), verticalAlign: 'superscript' },
+        ],
+        source: 'synthetic-compact-math-test',
+      },
+    ]
+
+    const content = renderPublicationXhtml(inlinePaper)
+
+    expect(
+      'text' in inlinePaper.nodes[0] ? inlinePaper.nodes[0].text : '',
+    ).toBe(value)
+    expect(content).toContain('C <sup><em>Plot</em></sup>')
+    expect(content).toContain('R <sup>Info.</sup>')
+    expect(content).toContain('<em>W T</em>')
+    expect(content).toContain('<sup>see note</sup>')
+    expect(content).not.toContain('<em>WT</em>')
+    expect(
+      researchPaperSchema.safeParse({
+        ...inlinePaper,
+        nodes: [
+          {
+            ...inlinePaper.nodes[0],
+            inlineRuns: [
+              {
+                ...range('P lot'),
+                compactMathAtom: true,
+              },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(false)
   })
 
   it('preserves inline mathematical styling in complete figure captions', () => {
@@ -117,6 +856,39 @@ describe('EPUB 3 export', () => {
 
     expect(content).toContain(
       '<figcaption id="styled-caption" data-canonical-id="styled-caption">Figure 1. Terms <em>h</em><sub>2</sub> and R<sup>2</sup> remain semantic.</figcaption>',
+    )
+  })
+
+  it('does not expose an invented display-equation placeholder as a visible caption or alt text', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    const placeholder = 'Display equation p005-001'
+    reconstruction.paper.nodes = reconstruction.paper.nodes.map((node) =>
+      node.id === 'equation-caption'
+        ? { ...node, text: placeholder, inlineRuns: undefined }
+        : node,
+    )
+    reconstruction.visualRelationships[0] = {
+      ...reconstruction.visualRelationships[0],
+      label: placeholder,
+      sourceText: '',
+      altText: placeholder,
+      altTextSource: 'caption',
+      evidence: [
+        ...reconstruction.visualRelationships[0].evidence,
+        'source-text-transcript-unresolved',
+      ],
+    }
+
+    const content = renderPublicationXhtml(reconstruction.paper, {
+      reconstruction,
+    })
+
+    expect(content).not.toContain(placeholder)
+    expect(content).toContain(
+      'alt="Equation image; semantic transcript unresolved." data-alt-source="unresolved"',
+    )
+    expect(content).toContain(
+      '<figcaption id="equation-caption" data-canonical-id="equation-caption" class="synthetic-equation-caption" aria-hidden="true"></figcaption>',
     )
   })
 
@@ -223,6 +995,52 @@ describe('EPUB 3 export', () => {
     expect(content).toContain(
       '<span id="bibliography-entry-1" data-semantic-role="bibliography-entry" data-relationship-id="bibliography-entry-1"><a href="https://example.test/reference">https://example.test/reference</a></span>',
     )
+  })
+
+  it('does not create a whitespace-only link where overlapping annotations split an unresolved citation', () => {
+    const inlinePaper = structuredClone(paper)
+    const value = 'Kaplan et al., 2020'
+    inlinePaper.nodes = [
+      {
+        id: 'claim-with-overlapping-citation-links',
+        type: 'paragraph',
+        text: value,
+        inlineRuns: [
+          {
+            start: 0,
+            end: 7,
+            href: '#bibliography-kaplan-2020',
+            annotationId: 'pdf-link-kaplan-left',
+          },
+          {
+            start: 6,
+            end: value.length,
+            href: '#bibliography-kaplan-2020',
+            annotationId: 'pdf-link-kaplan-right',
+          },
+          {
+            start: 0,
+            end: value.length,
+            relationshipId: 'citation-kaplan-2020-unresolved',
+            semanticRole: 'citation',
+          },
+        ],
+        source: 'synthetic-overlapping-unresolved-citation',
+      },
+      {
+        id: 'bibliography-kaplan-2020',
+        type: 'paragraph',
+        text: 'Kaplan et al. (2020).',
+        source: 'synthetic-overlapping-unresolved-citation',
+      },
+    ]
+
+    const content = renderPublicationXhtml(inlinePaper)
+
+    expect(content).toContain(
+      'data-relationship-id="citation-kaplan-2020-unresolved"',
+    )
+    expect(content).not.toMatch(/<a\b[^>]*>\s*<\/a>/u)
   })
 
   it('nests ordered and unordered list levels without changing surrounding node order', () => {
@@ -395,7 +1213,7 @@ describe('EPUB 3 export', () => {
     )
   })
 
-  it('renders every target in a citation range as a navigable biblioref', () => {
+  it('renders a citation range once without hidden canonical-text copies', () => {
     const citationPaper = structuredClone(paper)
     citationPaper.nodes = [
       {
@@ -432,11 +1250,720 @@ describe('EPUB 3 export', () => {
 
     const content = renderPublicationXhtml(citationPaper)
 
-    for (const ordinal of [1, 2, 3]) {
-      expect(content).toContain(`href="#reference-${ordinal}"`)
-    }
+    expect(content).toContain('href="#reference-1"')
+    expect(content).toContain('href="#reference-3"')
+    expect(content).toContain(
+      'data-target-ids="reference-1 reference-2 reference-3"',
+    )
     expect(content.match(/\sid="citation-range"/g)).toHaveLength(1)
-    expect(content).toContain('<em>1–3</em>')
+    expect(content).toContain(
+      '[<em><a href="#reference-1" epub:type="biblioref">1</a>–<a href="#reference-3" epub:type="biblioref">3</a></em>]',
+    )
+    expect(content.match(/>1<\/a>–<a[^>]*>3<\/a>/g)).toHaveLength(1)
+    expect(content).not.toContain('additional-biblioref')
+  })
+
+  it('maps mixed singleton and numeric-range citation labels without inventing visible text', () => {
+    const citationPaper = structuredClone(paper)
+    citationPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'Prior work [16, 38–40].',
+        inlineRuns: [
+          {
+            start: 11,
+            end: 22,
+            relationshipId: 'citation-mixed-range',
+            semanticRole: 'citation',
+            targetIds: [
+              'reference-16',
+              'reference-38',
+              'reference-39',
+              'reference-40',
+            ],
+          },
+        ],
+        source: 'synthetic-mixed-citation-range',
+      },
+      ...[16, 38, 39, 40].map((ordinal) => ({
+        id: `reference-${ordinal}`,
+        type: 'paragraph' as const,
+        text: `Reference ${ordinal}.`,
+        list: {
+          level: 1,
+          ordered: true,
+          numberingId: 'references',
+          markerStyle: 'decimal' as const,
+          ordinal,
+          markerText: `[${ordinal}]`,
+        },
+        source: 'synthetic-mixed-citation-range',
+      })),
+    ]
+
+    const content = renderPublicationXhtml(citationPaper)
+
+    expect(content).toContain('href="#reference-16"')
+    expect(content).toContain('href="#reference-38"')
+    expect(content).toContain('href="#reference-40"')
+    expect(content).not.toContain('href="#reference-39"')
+    expect(content).toContain(
+      'data-target-ids="reference-16 reference-38 reference-39 reference-40"',
+    )
+    expect(content).toContain(
+      '[<a href="#reference-16" epub:type="biblioref">16</a>, <a href="#reference-38" epub:type="biblioref">38</a>–<a href="#reference-40" epub:type="biblioref">40</a>]',
+    )
+    expect(content).not.toContain('additional-biblioref')
+  })
+
+  it('fails closed when a mixed numeric citation range cannot account for every target', () => {
+    const citationPaper = structuredClone(paper)
+    citationPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'Prior work [16, 38–40].',
+        inlineRuns: [
+          {
+            start: 11,
+            end: 22,
+            relationshipId: 'citation-mixed-range-mismatch',
+            semanticRole: 'citation',
+            targetIds: [
+              'reference-16',
+              'reference-38',
+              'reference-39',
+              'reference-40',
+              'reference-41',
+            ],
+          },
+        ],
+        source: 'synthetic-mixed-citation-range-mismatch',
+      },
+      ...[16, 38, 39, 40, 41].map((ordinal) => ({
+        id: `reference-${ordinal}`,
+        type: 'paragraph' as const,
+        text: `Reference ${ordinal}.`,
+        list: {
+          level: 1,
+          ordered: true,
+          numberingId: 'references',
+          markerStyle: 'decimal' as const,
+          ordinal,
+          markerText: `[${ordinal}]`,
+        },
+        source: 'synthetic-mixed-citation-range-mismatch',
+      })),
+    ]
+
+    expect(() => renderPublicationXhtml(citationPaper)).toThrow(
+      /EPUB_SEMANTIC_LINK_ALIGNMENT/u,
+    )
+  })
+
+  it.each([
+    {
+      name: 'omits an implicit range member',
+      surface: '[16, 38–40]',
+      targetIds: ['reference-16', 'reference-38', 'reference-40'],
+      targets: [
+        ['reference-16', 16],
+        ['reference-38', 38],
+        ['reference-40', 40],
+      ],
+    },
+    {
+      name: 'reorders canonical targets',
+      surface: '[16, 38–40]',
+      targetIds: [
+        'reference-16',
+        'reference-39',
+        'reference-38',
+        'reference-40',
+      ],
+      targets: [
+        ['reference-16', 16],
+        ['reference-38', 38],
+        ['reference-39', 39],
+        ['reference-40', 40],
+      ],
+    },
+    {
+      name: 'duplicates a canonical target',
+      surface: '[16, 38–40]',
+      targetIds: [
+        'reference-16',
+        'reference-38',
+        'reference-38',
+        'reference-40',
+      ],
+      targets: [
+        ['reference-16', 16],
+        ['reference-38', 38],
+        ['reference-40', 40],
+      ],
+    },
+    {
+      name: 'contains an unknown canonical target identity',
+      surface: '[16, 38–40]',
+      targetIds: [
+        'reference-16',
+        'reference-38',
+        'reference-unknown',
+        'reference-40',
+      ],
+      targets: [
+        ['reference-16', 16],
+        ['reference-38', 38],
+        ['reference-unknown', null],
+        ['reference-40', 40],
+      ],
+    },
+    {
+      name: 'uses whitespace instead of citation punctuation',
+      surface: '[16 38–40]',
+      targetIds: [
+        'reference-16',
+        'reference-38',
+        'reference-39',
+        'reference-40',
+      ],
+      targets: [
+        ['reference-16', 16],
+        ['reference-38', 38],
+        ['reference-39', 39],
+        ['reference-40', 40],
+      ],
+    },
+    {
+      name: 'absorbs prose between explicit identifiers',
+      surface: '[16] prose [38]',
+      targetIds: ['reference-16', 'reference-38'],
+      targets: [
+        ['reference-16', 16],
+        ['reference-38', 38],
+      ],
+    },
+  ] as const)(
+    'fails closed when a citation surface $name',
+    ({ surface, targetIds, targets }) => {
+      expect(() =>
+        renderPublicationXhtml(
+          numericCitationPaper({
+            surface,
+            targetIds: [...targetIds],
+            targets: targets.map(([id, ordinal]) => [id, ordinal]),
+          }),
+        ),
+      ).toThrow(/EPUB_SEMANTIC_LINK_ALIGNMENT/u)
+    },
+  )
+
+  it.each(['-', '–', '—'] as const)(
+    'validates every compact dotted-equation target before linking %s endpoints',
+    (connector) => {
+      const surface = `Eqs. (4.17${connector}4.19)`
+      const content = renderPublicationXhtml(
+        equationRangePaper({
+          surface,
+          targetIds: ['equation-4.17', 'equation-4.18', 'equation-4.19'],
+          identifiers: [
+            ['equation-4.17', '4.17'],
+            ['equation-4.18', '4.18'],
+            ['equation-4.19', '4.19'],
+          ],
+        }),
+      )
+
+      expect(content).toContain('href="#equation-4.17"')
+      expect(content).toContain('href="#equation-4.19"')
+      expect(content).not.toContain('href="#equation-4.18"')
+      expect(content).toContain(
+        'data-target-ids="equation-4.17 equation-4.18 equation-4.19"',
+      )
+      expect(content).toContain(
+        `Eqs. (<a href="#equation-4.17">4.17</a>${connector}<a href="#equation-4.19">4.19</a>)`,
+      )
+    },
+  )
+
+  it.each(['−', '‑', '‒'] as const)(
+    'fails closed on unsupported Unicode range connector %s',
+    (connector) => {
+      const surface = `Eqs. (4.17${connector}4.19)`
+      expect(() =>
+        renderPublicationXhtml(
+          equationRangePaper({
+            surface,
+            targetIds: ['equation-4.17', 'equation-4.18', 'equation-4.19'],
+            identifiers: [
+              ['equation-4.17', '4.17'],
+              ['equation-4.18', '4.18'],
+              ['equation-4.19', '4.19'],
+            ],
+          }),
+        ),
+      ).toThrow(/DANGLING_EPUB_INTERNAL_REFERENCE|EPUB_SEMANTIC_LINK_ALIGNMENT/u)
+    },
+  )
+
+  it.each([
+    {
+      name: 'descends',
+      surface: 'Eqs. (4.19-4.17)',
+      targetIds: ['equation-4.17', 'equation-4.18', 'equation-4.19'],
+      identifiers: [
+        ['equation-4.17', '4.17'],
+        ['equation-4.18', '4.18'],
+        ['equation-4.19', '4.19'],
+      ],
+    },
+    {
+      name: 'omits an interior target',
+      surface: 'Eqs. (4.17-4.19)',
+      targetIds: ['equation-4.17', 'equation-4.19'],
+      identifiers: [
+        ['equation-4.17', '4.17'],
+        ['equation-4.19', '4.19'],
+      ],
+    },
+    {
+      name: 'reorders targets',
+      surface: 'Eqs. (4.17-4.19)',
+      targetIds: ['equation-4.17', 'equation-4.19', 'equation-4.18'],
+      identifiers: [
+        ['equation-4.17', '4.17'],
+        ['equation-4.18', '4.18'],
+        ['equation-4.19', '4.19'],
+      ],
+    },
+    {
+      name: 'duplicates a target',
+      surface: 'Eqs. (4.17-4.19)',
+      targetIds: ['equation-4.17', 'equation-4.18', 'equation-4.18'],
+      identifiers: [
+        ['equation-4.17', '4.17'],
+        ['equation-4.18', '4.18'],
+      ],
+    },
+    {
+      name: 'contains an unknown target identity',
+      surface: 'Eqs. (4.17-4.19)',
+      targetIds: ['equation-4.17', 'equation-unknown', 'equation-4.19'],
+      identifiers: [
+        ['equation-4.17', '4.17'],
+        ['equation-unknown', null],
+        ['equation-4.19', '4.19'],
+      ],
+    },
+  ] as const)(
+    'fails closed when a compact dotted equation range $name',
+    ({ surface, targetIds, identifiers }) => {
+      expect(() =>
+        renderPublicationXhtml(
+          equationRangePaper({
+            surface,
+            targetIds: [...targetIds],
+            identifiers: identifiers.map(([id, identifier]) => [
+              id,
+              identifier,
+            ]),
+          }),
+        ),
+      ).toThrow(/EPUB_SEMANTIC_LINK_ALIGNMENT/u)
+    },
+  )
+
+  it('links every explicit citation label exactly once to its matching target', () => {
+    const citationPaper = structuredClone(paper)
+    citationPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'Prior work [62, 63, 48].',
+        inlineRuns: [
+          {
+            start: 11,
+            end: 23,
+            relationshipId: 'citation-list',
+            semanticRole: 'citation',
+            targetIds: ['reference-62', 'reference-63', 'reference-48'],
+          },
+        ],
+        source: 'synthetic-citation-list',
+      },
+      ...[62, 63, 48].map((ordinal) => ({
+        id: `reference-${ordinal}`,
+        type: 'paragraph' as const,
+        text: `Reference ${ordinal}.`,
+        list: {
+          level: 1,
+          ordered: true,
+          numberingId: 'references',
+          markerStyle: 'decimal' as const,
+          ordinal,
+          markerText: `[${ordinal}]`,
+        },
+        source: 'synthetic-citation-list',
+      })),
+    ]
+
+    const content = renderPublicationXhtml(citationPaper)
+
+    for (const ordinal of [62, 63, 48]) {
+      expect(content).toContain(
+        `<a href="#reference-${ordinal}" epub:type="biblioref">${ordinal}</a>`,
+      )
+      expect(content.match(new RegExp(`>${ordinal}<`, 'g'))).toHaveLength(1)
+    }
+    expect(content).not.toContain('additional-biblioref')
+    expect(content).not.toContain(
+      '<span class="visually-hidden">[62, 63, 48]</span>',
+    )
+  })
+
+  it('renders resolved scholarly cross references as semantic internal links', () => {
+    const crossReferencePaper = structuredClone(paper)
+    crossReferencePaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'Figures 4 and 5.',
+        inlineRuns: [
+          {
+            start: 0,
+            end: 15,
+            relationshipId: 'cross-reference-figures-4-5',
+            semanticRole: 'cross-reference',
+            targetIds: ['figure-4', 'figure-5'],
+          },
+        ],
+        source: 'synthetic-cross-reference',
+      },
+      ...[4, 5].map((ordinal) => ({
+        id: `figure-${ordinal}`,
+        type: 'figure' as const,
+        title: `Figure ${ordinal}`,
+        objectType: 'figure' as const,
+        relationships: { caption: `caption-${ordinal}` },
+        source: 'synthetic-cross-reference',
+      })),
+      ...[4, 5].map((ordinal) => ({
+        id: `caption-${ordinal}`,
+        type: 'caption' as const,
+        text: `Figure ${ordinal}.`,
+        source: 'synthetic-cross-reference',
+      })),
+    ]
+
+    const content = renderPublicationXhtml(crossReferencePaper)
+
+    expect(content).toContain('href="#figure-4"')
+    expect(content).toContain('href="#figure-5"')
+    expect(content.match(/\sid="cross-reference-figures-4-5"/gu)).toHaveLength(
+      1,
+    )
+    expect(content).toContain('data-semantic-role="cross-reference"')
+    expect(content).toContain(
+      'data-relationship-id="cross-reference-figures-4-5"',
+    )
+  })
+
+  it.each([
+    {
+      semanticRole: 'citation' as const,
+      relationshipId: 'overlapping-citation',
+      targetId: 'overlapping-reference-target',
+    },
+    {
+      semanticRole: 'cross-reference' as const,
+      relationshipId: 'overlapping-cross-reference',
+      targetId: 'overlapping-section-target',
+    },
+  ])(
+    'preserves an internal $semanticRole target when an external PDF link overlaps it',
+    ({ semanticRole, relationshipId, targetId }) => {
+      const overlapPaper = structuredClone(paper)
+      const marker = semanticRole === 'citation' ? '[1]' : 'Section 2'
+      const externalHref = 'https://example.test/source-annotation'
+      overlapPaper.nodes = [
+        {
+          id: 'overlapping-link-claim',
+          type: 'paragraph',
+          text: marker,
+          inlineRuns: [
+            {
+              start: 0,
+              end: marker.length,
+              href: externalHref,
+            },
+            {
+              start: 0,
+              end: marker.length,
+              relationshipId,
+              semanticRole,
+              targetIds: [targetId],
+            },
+          ],
+          source: 'synthetic-overlapping-pdf-link',
+        },
+        {
+          id: targetId,
+          type: 'paragraph',
+          text: 'Canonical internal target.',
+          source: 'synthetic-overlapping-pdf-link',
+        },
+      ]
+
+      const content = renderPublicationXhtml(overlapPaper)
+
+      expect(content).toContain(`href="#${targetId}"`)
+      expect(content).toContain(`data-relationship-id="${relationshipId}"`)
+      expect(content).not.toContain(externalHref)
+    },
+  )
+
+  it('narrows a broad PDF destination run to the exact scholarly marker', () => {
+    const linkedPaper = structuredClone(paper)
+    linkedPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'The drift is given by (3). Basket claims follow.',
+        inlineRuns: [
+          {
+            start: 13,
+            end: 46,
+            href: '#equation-3',
+            annotationId: 'pdf-link-equation-3',
+          },
+        ],
+        source: 'synthetic-broad-pdf-link',
+      },
+      {
+        id: 'equation-3',
+        type: 'figure',
+        objectType: 'equation',
+        title: 'Equation 3',
+        relationships: { caption: 'equation-3-caption' },
+        source: 'synthetic-broad-pdf-link',
+      },
+      {
+        id: 'equation-3-caption',
+        type: 'caption',
+        text: 'Equation 3.',
+        source: 'synthetic-broad-pdf-link',
+      },
+    ]
+
+    const content = renderPublicationXhtml(linkedPaper)
+
+    expect(content).toContain(
+      'The drift is given by <a href="#equation-3" data-source-annotation-id="pdf-link-equation-3">(3)</a>. Basket claims follow.',
+    )
+    expect(content).not.toContain(
+      '<a href="#equation-3">given by (3). Basket claims follow</a>',
+    )
+  })
+
+  it('keeps a multi-character Roman scholarly label bounded when the PDF destination and semantic run coincide', async () => {
+    const linkedPaper = structuredClone(paper)
+    linkedPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'The filters are summarized in Table II.',
+        inlineRuns: [
+          {
+            start: 30,
+            end: 38,
+            href: '#table-ii',
+            annotationId: 'pdf-link-table-ii',
+            relationshipId: 'cross-reference-table-ii',
+            semanticRole: 'cross-reference',
+            targetIds: ['table-ii'],
+          },
+        ],
+        source: 'synthetic-roman-cross-reference',
+      },
+      {
+        id: 'table-ii',
+        type: 'figure',
+        objectType: 'table',
+        title: 'Table II',
+        relationships: { caption: 'table-ii-caption' },
+        source: 'synthetic-roman-cross-reference',
+      },
+      {
+        id: 'table-ii-caption',
+        type: 'caption',
+        text: 'Table II. Phase filters.',
+        source: 'synthetic-roman-cross-reference',
+      },
+    ]
+
+    const content = renderPublicationXhtml(linkedPaper)
+
+    expect(content).toContain(
+      '<a id="cross-reference-table-ii" href="#table-ii" data-semantic-role="cross-reference" data-relationship-id="cross-reference-table-ii">Table II</a>',
+    )
+    expect(content).not.toContain(
+      'data-relationship-id="cross-reference-table-ii">II</a>',
+    )
+    await expect(buildEpub(linkedPaper)).resolves.toMatchObject({
+      mode: 'publication',
+    })
+  })
+
+  it('narrows a broad caption annotation to its exact table label', () => {
+    const linkedPaper = structuredClone(paper)
+    const caption =
+      'Table 6. Thus if e.g., a name already appears in the premise, it can be easily copied. After each name, more prose follows.'
+    linkedPaper.nodes = [
+      {
+        id: 'annotated-caption',
+        type: 'caption',
+        text: caption,
+        inlineRuns: [
+          {
+            start: 0,
+            end: caption.indexOf('more prose'),
+            href: '#table-6',
+            annotationId: 'pdf-link-table-6',
+          },
+        ],
+        source: 'synthetic-broad-caption-link',
+      },
+      {
+        id: 'table-6',
+        type: 'figure',
+        objectType: 'table',
+        title: 'Table 6',
+        relationships: { caption: 'table-6-caption' },
+        source: 'synthetic-broad-caption-link',
+      },
+      {
+        id: 'table-6-caption',
+        type: 'caption',
+        text: 'Table 6. The canonical visual caption.',
+        source: 'synthetic-broad-caption-link',
+      },
+    ]
+
+    const content = renderPublicationXhtml(linkedPaper)
+
+    expect(content).toContain(
+      '<a href="#table-6" data-source-annotation-id="pdf-link-table-6">Table 6</a>. Thus if e.g.',
+    )
+    expect(content).not.toContain(
+      '<a href="#table-6" data-source-annotation-id="pdf-link-table-6">Table 6. Thus',
+    )
+  })
+
+  it('drops a coarse PDF destination when its scholarly kind conflicts with the visible marker', () => {
+    const linkedPaper = structuredClone(paper)
+    const claim = 'The prompt is shown in Table 22.'
+    const semanticStart = claim.indexOf('Table 22')
+    const annotationStart = claim.indexOf('shown')
+    linkedPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: claim,
+        inlineRuns: [
+          {
+            start: annotationStart,
+            end: claim.length - 1,
+            href: '#figure-22',
+            annotationId: 'pdf-link-figure-22',
+          },
+          {
+            start: semanticStart,
+            end: semanticStart + 'Table 22'.length,
+            relationshipId: 'unresolved-table-22-reference',
+            semanticRole: 'cross-reference',
+            targetIds: [],
+          },
+        ],
+        source: 'synthetic-conflicting-pdf-link',
+      },
+      {
+        id: 'figure-22',
+        type: 'figure',
+        objectType: 'figure',
+        title: 'Figure 22',
+        relationships: { caption: 'figure-22-caption' },
+        source: 'synthetic-conflicting-pdf-link',
+      },
+      {
+        id: 'figure-22-caption',
+        type: 'caption',
+        text: 'Figure 22. An unrelated visual destination.',
+        source: 'synthetic-conflicting-pdf-link',
+      },
+    ]
+
+    const content = renderPublicationXhtml(linkedPaper)
+
+    expect(content).toContain(
+      'shown in <span id="unresolved-table-22-reference" data-semantic-role="cross-reference" data-relationship-id="unresolved-table-22-reference">Table 22</span>.',
+    )
+    expect(content.match(/Table 22/gu)).toHaveLength(1)
+    expect(content).not.toContain('href="#figure-22"')
+    expect(content).not.toContain('pdf-link-figure-22')
+  })
+
+  it('keeps one semantic wrapper when a PDF destination resolves one label in an unresolved scholarly group', () => {
+    const linkedPaper = structuredClone(paper)
+    const claim = 'See Tables 54, 55, 56 for the generated stories.'
+    const semanticStart = claim.indexOf('Tables 54')
+    const annotationStart = claim.indexOf('54')
+    linkedPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: claim,
+        inlineRuns: [
+          {
+            start: annotationStart,
+            end: claim.length,
+            href: '#table-55',
+            annotationId: 'pdf-link-table-55',
+          },
+          {
+            start: semanticStart,
+            end: semanticStart + 'Tables 54, 55, 56'.length,
+            relationshipId: 'partially-resolved-table-group',
+            semanticRole: 'cross-reference',
+            targetIds: [],
+          },
+        ],
+        source: 'synthetic-partially-resolved-cross-reference',
+      },
+      {
+        id: 'table-55',
+        type: 'figure',
+        objectType: 'table',
+        title: 'Table 55',
+        relationships: { caption: 'table-55-caption' },
+        source: 'synthetic-partially-resolved-cross-reference',
+      },
+      {
+        id: 'table-55-caption',
+        type: 'caption',
+        text: 'Table 55. The matched member of a partially resolved group.',
+        source: 'synthetic-partially-resolved-cross-reference',
+      },
+    ]
+
+    const content = renderPublicationXhtml(linkedPaper)
+
+    expect(content).toContain(
+      '<span id="partially-resolved-table-group" data-semantic-role="cross-reference" data-relationship-id="partially-resolved-table-group">Tables 54, <a href="#table-55" data-source-annotation-id="pdf-link-table-55">55</a>, 56</span>',
+    )
+    expect(content.match(/Tables 54, /gu)).toHaveLength(1)
+    expect(content.match(/href="#table-55"/gu)).toHaveLength(1)
   })
 
   it('emits one note-reference id when inline styling splits the marker', () => {
@@ -487,12 +2014,12 @@ describe('EPUB 3 export', () => {
       {
         id: 'claim',
         type: 'paragraph',
-        text: 'Claim 1.',
+        text: 'Claim 2.',
         noteReferences: [
           {
             id: 'rendered-note-reference',
-            label: '1',
-            target: 'note-1',
+            label: '2',
+            target: 'note-2',
             start: 6,
             end: 7,
             confidence: 1,
@@ -501,11 +2028,11 @@ describe('EPUB 3 export', () => {
         source: 'synthetic-orphan-backlink',
       },
       {
-        id: 'note-1',
+        id: 'note-2',
         type: 'footnote',
         kind: 'footnote',
-        label: '1',
-        text: 'The note remains readable.',
+        label: '2',
+        text: 'The note remains readable at https://example.test/source.',
         relationships: {
           backlinks: ['rendered-note-reference'],
         },
@@ -518,7 +2045,11 @@ describe('EPUB 3 export', () => {
     const content = strFromU8(files['EPUB/content.xhtml'])
 
     expect(content).toContain('href="#rendered-note-reference"')
-    expect(content).toContain('The note remains readable.')
+    expect(content).toContain('aria-label="Back to reference 2"')
+    expect(content).toContain('The note remains readable at')
+    expect(content).toContain(
+      '<a href="https://example.test/source">https://example.test/source</a>.',
+    )
   })
 
   it('rejects a canonical note backlink with no rendered reference anchor', async () => {
@@ -543,6 +2074,11 @@ describe('EPUB 3 export', () => {
   it('renders title-page author annotations as linked EPUB notes', () => {
     const notePaper = structuredClone(paper)
     notePaper.authors = ['Yeyong Yu', 'Runsheng Yu']
+    notePaper.authorAffiliations = [
+      { author: 'Yeyong Yu', label: '1' },
+      { author: 'Runsheng Yu', label: '2' },
+    ]
+    notePaper.affiliations = ['1 Example University,', '2 Example Laboratory']
     notePaper.authorNotes = [
       {
         id: 'author-noteref-1',
@@ -566,8 +2102,12 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(notePaper)
 
     expect(content).toContain(
-      'Yeyong Yu<a id="author-noteref-1" href="#author-note-1" epub:type="noteref">*</a>, Runsheng Yu',
+      'Yeyong Yu<sup class="author-affiliation-marker">1</sup><a id="author-noteref-1" href="#author-note-1" epub:type="noteref">*</a>, Runsheng Yu<sup class="author-affiliation-marker">2</sup>',
     )
+    expect(content).toContain(
+      '<p class="affiliations">1 Example University, 2 Example Laboratory</p>',
+    )
+    expect(content).not.toContain('University,;')
     expect(content).toContain('href="#author-noteref-1"')
   })
 
@@ -585,6 +2125,15 @@ describe('EPUB 3 export', () => {
     ]
     notePaper.nodes = [
       {
+        id: 'reconstructed-author-note-1',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '*',
+        text: 'Work done during the internship.',
+        relationships: { backlinks: ['reconstructed-author-noteref-1'] },
+        source: 'pdf:synthetic#page=1',
+      },
+      {
         id: 'canonical-title-node',
         type: 'heading',
         level: 1,
@@ -595,15 +2144,6 @@ describe('EPUB 3 export', () => {
         id: 'first-body-node',
         type: 'paragraph',
         text: 'The body follows the source byline.',
-        source: 'pdf:synthetic#page=1',
-      },
-      {
-        id: 'reconstructed-author-note-1',
-        type: 'footnote',
-        kind: 'footnote',
-        label: '*',
-        text: 'Work done during the internship.',
-        relationships: { backlinks: ['reconstructed-author-noteref-1'] },
         source: 'pdf:synthetic#page=1',
       },
     ]
@@ -623,6 +2163,9 @@ describe('EPUB 3 export', () => {
       content.indexOf('class="authors"'),
     )
     expect(content.indexOf('class="authors"')).toBeLessThan(
+      content.indexOf('id="reconstructed-author-note-1"'),
+    )
+    expect(content.indexOf('id="reconstructed-author-note-1"')).toBeLessThan(
       content.indexOf('id="first-body-node"'),
     )
     expect(XMLValidator.validate(content)).toBe(true)
@@ -671,6 +2214,49 @@ describe('EPUB 3 export', () => {
     await expect(buildEpub(danglingPaper)).rejects.toThrow(
       /dangling internal reference/i,
     )
+  })
+
+  it('rejects stale reconstruction note anchors during direct XHTML rendering', () => {
+    const { notePaper, reconstruction } = staleNoteAnchorFixture()
+
+    expect(() => renderPublicationXhtml(notePaper, { reconstruction })).toThrow(
+      /note-anchor-mismatch/u,
+    )
+  })
+
+  it('rejects stale reconstruction note anchors before EPUB packaging', async () => {
+    const { notePaper, reconstruction } = staleNoteAnchorFixture()
+    reconstruction.visualRelationships = [
+      {
+        id: 'later-invalid-visual-relationship',
+        status: 'matched',
+        canonicalNodeId: null,
+        assetIds: [],
+      },
+    ] as unknown as PdfReconstruction['visualRelationships']
+
+    await expect(buildEpub(notePaper, reconstruction)).rejects.toThrow(
+      /note-anchor-mismatch/u,
+    )
+  })
+
+  it('rejects a stale-ready equation whose export transcript no longer covers its source lines', async () => {
+    const { reconstruction, equationRegion } =
+      await staleEquationTranscriptFixture()
+
+    await expect(
+      buildEpub(reconstruction.paper, reconstruction),
+    ).resolves.toMatchObject({ mode: 'publication' })
+
+    reconstruction.visualRelationships[0] = {
+      ...reconstruction.visualRelationships[0],
+      sourceLineIds: [equationRegion.lines[0].id],
+      sourceText: equationRegion.lines[0].text,
+    }
+
+    await expect(
+      buildEpub(reconstruction.paper, reconstruction),
+    ).rejects.toThrow(/equation|visual relationship/u)
   })
 
   it.each([
@@ -789,7 +2375,7 @@ describe('EPUB 3 export', () => {
     )
   })
 
-  it('emits well-formed ordered bibliography markup without naked listitem roles', () => {
+  it('emits well-formed markerless bibliography markup when the source has no ordinals', () => {
     const referencePaper = structuredClone(paper)
     referencePaper.nodes = [
       {
@@ -811,11 +2397,9 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(referencePaper)
 
     expect(XMLValidator.validate(content)).toBe(true)
+    expect(content).not.toContain('<ol class="publication-list')
     expect(content).toContain(
-      '<ol class="publication-list" data-list-level="1" data-numbering-id="references" data-marker-style="decimal">',
-    )
-    expect(content).not.toContain(
-      '<ul class="publication-list" data-list-level="1" data-numbering-id="references" data-marker-style="decimal">',
+      '<ul class="publication-list markerless-list" data-list-level="1" data-numbering-id="references" data-marker-style="disc">',
     )
     expect(content.match(/<li\b/g)).toHaveLength(2)
     expect(content).not.toContain('role="listitem"')
@@ -1033,6 +2617,114 @@ describe('EPUB 3 export', () => {
     }
   })
 
+  it('rejects hidden duplicate canonical citation text in serialized XHTML', async () => {
+    const citationPaper = structuredClone(paper)
+    citationPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'Prior work [62, 63].',
+        inlineRuns: [
+          {
+            start: 11,
+            end: 19,
+            relationshipId: 'citation-list',
+            semanticRole: 'citation',
+            targetIds: ['reference-62', 'reference-63'],
+          },
+        ],
+        source: 'serialized-citation-audit',
+      },
+      ...[62, 63].map((ordinal) => ({
+        id: `reference-${ordinal}`,
+        type: 'paragraph' as const,
+        text: `Reference ${ordinal}.`,
+        source: 'serialized-citation-audit',
+      })),
+    ]
+    const epub = await buildEpub(citationPaper)
+    const files = unzipSync(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    const tamperedContent = content.replace(
+      '</span>.</p>',
+      '<a href="#reference-63" epub:type="biblioref" class="additional-biblioref"><span class="visually-hidden">[62, 63]</span></a></span>.</p>',
+    )
+    expect(tamperedContent).not.toBe(content)
+
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/content.xhtml': strToU8(tamperedContent),
+        }),
+      ),
+    ).toThrow(/duplicate canonical citation text|hidden semantic text/iu)
+  })
+
+  it.each([
+    {
+      label: 'unbounded scholarly destination text',
+      mutate: (content: string) =>
+        content.replace('>Eq. (3)</a>', '>Eq. (3) and the trailing clause</a>'),
+      expected: /unbounded scholarly destination text/iu,
+    },
+    {
+      label: 'overlapping nested destination anchor',
+      mutate: (content: string) =>
+        content.replace(
+          '>Eq. (3)</a>',
+          '><a href="#equation-3">Eq. (3)</a></a>',
+        ),
+      expected: /overlapping.*anchor|nested.*anchor/iu,
+    },
+  ])('rejects $label in serialized XHTML', async ({ mutate, expected }) => {
+    const linkedPaper = structuredClone(paper)
+    linkedPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'See Eq. (3).',
+        inlineRuns: [
+          {
+            start: 4,
+            end: 11,
+            href: '#equation-3',
+            annotationId: 'pdf-link-equation-3',
+          },
+        ],
+        source: 'serialized-link-audit',
+      },
+      {
+        id: 'equation-3',
+        type: 'figure',
+        objectType: 'equation',
+        title: 'Equation 3',
+        relationships: { caption: 'equation-3-caption' },
+        source: 'serialized-link-audit',
+      },
+      {
+        id: 'equation-3-caption',
+        type: 'caption',
+        text: 'Equation 3.',
+        source: 'serialized-link-audit',
+      },
+    ]
+    const epub = await buildEpub(linkedPaper)
+    const files = unzipSync(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    const tamperedContent = mutate(content)
+    expect(tamperedContent).not.toBe(content)
+
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/content.xhtml': strToU8(tamperedContent),
+        }),
+      ),
+    ).toThrow(expected)
+  })
+
   it('preserves canonical reading order and addressable node IDs in XHTML', async () => {
     const epub = await buildEpub(paper)
     const { files } = inspectEpub(epub.bytes)
@@ -1082,6 +2774,154 @@ describe('EPUB 3 export', () => {
     }
   })
 
+  it('rejects tampered export receipt identity, hash fields, and unknown fields', async () => {
+    const epub = await buildEpub(paper)
+    const files = unzipSync(epub.bytes)
+    const originalManifest = JSON.parse(
+      strFromU8(files['EPUB/export.json']),
+    ) as Record<string, unknown>
+    const expected = {
+      canonicalPaper: paper,
+      sourceCanonicalPaper: paper,
+    }
+    const cases: Array<{
+      name: string
+      mutate: (manifest: Record<string, unknown>) => void
+      expected: RegExp
+    }> = [
+      {
+        name: 'changed receipt URN',
+        mutate: (manifest) => {
+          manifest.identifier =
+            'urn:srt:substituted:000000000000000000000000:publication'
+        },
+        expected: /identifier.*OPF|OPF.*identifier/i,
+      },
+      {
+        name: 'type-confused canonical hash',
+        mutate: (manifest) => {
+          manifest.canonicalContentSha256 = 7
+        },
+        expected: /canonicalContentSha256.*SHA-256/i,
+      },
+      {
+        name: 'malformed source canonical hash',
+        mutate: (manifest) => {
+          manifest.sourceCanonicalContentSha256 = 'A'.repeat(64)
+        },
+        expected: /sourceCanonicalContentSha256.*SHA-256/i,
+      },
+      {
+        name: 'validly shaped but false canonical hash',
+        mutate: (manifest) => {
+          manifest.canonicalContentSha256 = '0'.repeat(64)
+        },
+        expected: /canonicalContentSha256.*canonical input/i,
+      },
+      {
+        name: 'validly shaped but false source canonical hash',
+        mutate: (manifest) => {
+          manifest.sourceCanonicalContentSha256 = '1'.repeat(64)
+        },
+        expected: /sourceCanonicalContentSha256.*canonical input/i,
+      },
+      {
+        name: 'unknown receipt field',
+        mutate: (manifest) => {
+          manifest.untrustedExtension = true
+        },
+        expected: /unknown export manifest field/i,
+      },
+    ]
+
+    for (const candidate of cases) {
+      const manifest = structuredClone(originalManifest)
+      candidate.mutate(manifest)
+      const tampered = {
+        ...files,
+        'EPUB/export.json': strToU8(`${JSON.stringify(manifest)}\n`),
+      }
+
+      expect(
+        () => inspectEpub(rezipEpub(tampered), undefined, expected),
+        candidate.name,
+      ).toThrow(candidate.expected)
+    }
+
+    const opfIdentifier = String(originalManifest.identifier)
+    const mismatchedOpf = {
+      ...files,
+      'EPUB/package.opf': strToU8(
+        strFromU8(files['EPUB/package.opf']).replace(
+          `>${opfIdentifier}</dc:identifier>`,
+          '>urn:srt:substituted:000000000000000000000000:publication</dc:identifier>',
+        ),
+      ),
+    }
+    expect(() =>
+      inspectEpub(rezipEpub(mismatchedOpf), undefined, expected),
+    ).toThrow(/identifier.*OPF|OPF.*identifier/i)
+  })
+
+  it('validates a source PDF hash receipt and binds an expected source hash', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    const sourcePdfSha256 = reconstruction.source.sha256
+    const sourcePaper = reconstruction.paper
+    const epub = await buildEpub(sourcePaper, reconstruction)
+    const files = unzipSync(epub.bytes)
+    const originalManifest = JSON.parse(
+      strFromU8(files['EPUB/export.json']),
+    ) as Record<string, unknown>
+    const expected = {
+      canonicalPaper: sourcePaper,
+      sourceCanonicalPaper: sourcePaper,
+      sourcePdfSha256,
+    }
+
+    expect(() => inspectEpub(epub.bytes, undefined, expected)).not.toThrow()
+
+    for (const invalid of [7, 'A'.repeat(64), 'abc']) {
+      const manifest = {
+        ...originalManifest,
+        sourcePdfSha256: invalid,
+      }
+      const tampered = {
+        ...files,
+        'EPUB/export.json': strToU8(`${JSON.stringify(manifest)}\n`),
+      }
+      expect(() =>
+        inspectEpub(rezipEpub(tampered), undefined, expected),
+      ).toThrow(/sourcePdfSha256.*SHA-256/i)
+    }
+
+    expect(() =>
+      inspectEpub(epub.bytes, undefined, {
+        ...expected,
+        sourcePdfSha256: 'b'.repeat(64),
+      }),
+    ).toThrow(/sourcePdfSha256.*expected source/i)
+  })
+
+  it('rejects a publication export when a PDF reconstruction omits reassessment evidence', async () => {
+    const partial = {
+      source: {
+        format: 'pdf',
+        sha256: 'a'.repeat(64),
+        fileName: 'partial.pdf',
+        byteLength: 1024,
+      },
+      paper,
+      readiness: { ready: true, blockingDiagnosticCodes: [] },
+      noteRelationships: [],
+      visualRelationships: [],
+      assets: [],
+    } as unknown as PdfReconstruction
+
+    await expect(buildEpub(paper, partial)).rejects.toMatchObject({
+      code: 'INCOMPLETE_RECONSTRUCTION',
+    })
+  })
+
   it('escapes publication metadata rather than emitting invalid XHTML', async () => {
     const escaped = structuredClone(paper)
     escaped.title = 'Evidence & <meaning>'
@@ -1089,26 +2929,172 @@ describe('EPUB 3 export', () => {
     const epub = await buildEpub(escaped)
     const { files } = inspectEpub(epub.bytes)
     const content = strFromU8(files['EPUB/content.xhtml'])
+    const opf = strFromU8(files['EPUB/package.opf'])
 
     expect(content).toContain('Evidence &amp; &lt;meaning&gt;')
     expect(content).not.toContain('Evidence & <meaning>')
+    expect(content).toContain('<title>Evidence &amp; &lt;meaning&gt;</title>')
+    expect(opf).toContain('<dc:title>Evidence &amp; &lt;meaning&gt;</dc:title>')
+
+    const placeholderTitle = {
+      ...files,
+      'EPUB/content.xhtml': strToU8(
+        content.replace(
+          '<title>Evidence &amp; &lt;meaning&gt;</title>',
+          '<title>Publication</title>',
+        ),
+      ),
+    }
+    expect(() => inspectEpub(rezipEpub(placeholderTitle))).toThrow(
+      /XHTML title.*OPF|OPF title.*XHTML/i,
+    )
+  })
+
+  it('propagates authoritative publication language, direction, and dates independently of the device profile', async () => {
+    const rtlPaper = {
+      ...structuredClone(paper),
+      language: 'ar',
+      baseDirection: 'rtl' as const,
+      publicationDate: '2024-08-19',
+      artifactModifiedAt: '2026-07-23T00:42:00Z',
+    }
+    const profile = getTargetProfile('paperProMove')
+    const epub = await buildEpub(rtlPaper, profile)
+    const { files } = inspectEpub(epub.bytes, profile)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    const nav = strFromU8(files['EPUB/nav.xhtml'])
+    const opf = strFromU8(files['EPUB/package.opf'])
+
+    expect(content).toContain('xml:lang="ar" lang="ar" dir="rtl"')
+    expect(nav).toContain('xml:lang="ar" lang="ar" dir="rtl"')
+    expect(opf).toContain('xml:lang="ar"')
+    expect(opf).toContain('<dc:language>ar</dc:language>')
+    expect(opf).toContain('<dc:date>2024-08-19</dc:date>')
+    expect(opf).toContain(
+      '<meta property="dcterms:modified">2026-07-23T00:42:00Z</meta>',
+    )
+    expect(opf).toContain('page-progression-direction="rtl"')
+    expect(opf).not.toContain(
+      `page-progression-direction="${profile.epub.pageProgressionDirection}"`,
+    )
+  })
+
+  it('renders third-order scholarly headings as h4 and mirrors their hierarchy in navigation', async () => {
+    const hierarchyPaper = structuredClone(paper)
+    hierarchyPaper.nodes = [
+      {
+        id: 'section-2',
+        type: 'heading',
+        level: 1,
+        text: '2 Methods',
+        source: 'synthetic-heading-hierarchy',
+      },
+      {
+        id: 'section-2-2',
+        type: 'heading',
+        level: 2,
+        text: '2.2 Patient profiles',
+        source: 'synthetic-heading-hierarchy',
+      },
+      {
+        id: 'section-2-2-1',
+        type: 'heading',
+        level: 3,
+        text: '2.2.1 Patient cohort',
+        source: 'synthetic-heading-hierarchy',
+      },
+    ]
+
+    const epub = await buildEpub(hierarchyPaper)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    const nav = strFromU8(files['EPUB/nav.xhtml'])
+
+    expect(content).toContain(
+      '<h2 id="section-2" data-canonical-id="section-2">2 Methods</h2>',
+    )
+    expect(content).toContain(
+      '<h3 id="section-2-2" data-canonical-id="section-2-2">2.2 Patient profiles</h3>',
+    )
+    expect(content).toContain(
+      '<h4 id="section-2-2-1" data-canonical-id="section-2-2-1">2.2.1 Patient cohort</h4>',
+    )
+    expect(nav).toMatch(
+      /2 Methods<\/a><ol><li><a[^>]+>2\.2 Patient profiles<\/a><ol><li><a[^>]+>2\.2\.1 Patient cohort<\/a><\/li><\/ol><\/li><\/ol><\/li>/u,
+    )
+  })
+
+  it('uses und and omits unproven publication date and direction while preserving profile geometry', async () => {
+    const unknownPaper = {
+      ...structuredClone(paper),
+      language: 'und',
+      baseDirection: 'unknown' as const,
+      publicationDate: undefined,
+      artifactModifiedAt: '2026-07-23T00:42:00Z',
+    }
+    const profile = getTargetProfile('paperPro')
+    const [unknown, baseline] = await Promise.all([
+      buildEpub(unknownPaper, profile),
+      buildEpub(paper, profile),
+    ])
+    const { files } = inspectEpub(unknown.bytes, profile)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    const nav = strFromU8(files['EPUB/nav.xhtml'])
+    const opf = strFromU8(files['EPUB/package.opf'])
+    const baselineFiles = inspectEpub(baseline.bytes, profile).files
+
+    expect(content).toContain('xml:lang="und" lang="und"')
+    expect(content).not.toMatch(/<html\b[^>]*\sdir=/)
+    expect(nav).toContain('xml:lang="und" lang="und"')
+    expect(nav).not.toMatch(/<html\b[^>]*\sdir=/)
+    expect(opf).toContain('xml:lang="und"')
+    expect(opf).toContain('<dc:language>und</dc:language>')
+    expect(opf).not.toMatch(/<dc:date\b/)
+    expect(opf).not.toContain('page-progression-direction=')
+    expect(strFromU8(files['EPUB/styles.css'])).toBe(
+      strFromU8(baselineFiles['EPUB/styles.css']),
+    )
   })
 
   it('derives deterministic device CSS and progression metadata from profiles', async () => {
     const paperPro = getTargetProfile('paperPro')
     const paperMove = getTargetProfile('paperProMove')
-    const [first, second, move] = await Promise.all([
+    const sameTitleDifferentPaper = structuredClone(paper)
+    sameTitleDifferentPaper.id = `${paper.id}-second`
+    const firstTextNode = sameTitleDifferentPaper.nodes.find(
+      (
+        node,
+      ): node is Extract<
+        (typeof sameTitleDifferentPaper.nodes)[number],
+        { text: string }
+      > => 'text' in node,
+    )
+    if (!firstTextNode) throw new Error('The EPUB identity fixture needs text.')
+    firstTextNode.text += ' Distinct canonical content.'
+    const [first, second, move, distinct] = await Promise.all([
       buildEpub(paper, paperPro),
       buildEpub(paper, undefined, paperPro),
       buildEpub(paper, paperMove),
+      buildEpub(sameTitleDifferentPaper, paperPro),
     ])
 
     expect(first.bytes).toEqual(second.bytes)
-    expect(first.fileName).toBe('publication-paperpro.epub')
-    expect(move.fileName).toBe('publication-papermove.epub')
     expect(first.bytes).not.toEqual(move.bytes)
+    expect(distinct.fileName).not.toBe(first.fileName)
 
     const { files, manifest } = inspectEpub(first.bytes, paperPro)
+    const moveManifest = inspectEpub(move.bytes, paperMove).manifest as {
+      canonicalContentSha256: string
+    }
+    expect(first.fileName).toBe(
+      `semantic-responsive-typesetting-paper-pro-${String(
+        (manifest as { canonicalContentSha256: string }).canonicalContentSha256,
+      ).slice(0, 12)}.epub`,
+    )
+    expect(move.fileName).toBe(
+      `semantic-responsive-typesetting-paper-pro-move-${moveManifest.canonicalContentSha256.slice(0, 12)}.epub`,
+    )
+    expect(first.fileName).toMatch(/^[a-z0-9-]+\.epub$/)
     const css = strFromU8(files['EPUB/styles.css'])
     const opf = strFromU8(files['EPUB/package.opf'])
     expect(css).toContain(`font-family: ${paperPro.typography.fontFamily}`)
@@ -1118,10 +3104,22 @@ describe('EPUB 3 export', () => {
     expect(css.match(/8\.951% 8\.025% 8\.951% 8\.025%/g)).toHaveLength(1)
     expect(css).toContain('@page { margin: 0; }')
     expect(css).toContain('main { max-width: none; padding:')
-    expect(css).toContain('overflow-wrap: anywhere')
     expect(css).toContain(
-      'h1, h2, h3, p, figcaption, .orphan-caption, .publication-note, .publication-list, .publication-list-item { overflow-wrap: anywhere; word-break: break-word; }',
+      'h1, h2, h3, h4, p, figcaption, .orphan-caption, .publication-note, .publication-list, .publication-list-item { overflow-wrap: break-word; word-break: normal; }',
     )
+    expect(css).toContain(
+      'a, code, pre { overflow-wrap: anywhere; word-break: break-word; }',
+    )
+    const headingSizes = ['h2', 'h3', 'h4'].map((selector) => {
+      const match = css.match(
+        new RegExp(`${selector} \\{ font-size: (\\d+)px; \\}`),
+      )
+      expect(match, `${selector} profile rule`).not.toBeNull()
+      return Number(match![1])
+    })
+    expect(headingSizes[0]).toBeGreaterThan(headingSizes[1])
+    expect(headingSizes[1]).toBeGreaterThan(headingSizes[2])
+    expect(headingSizes[2]).toBeGreaterThan(paperPro.typography.bodySizeCssPx)
     expect(css).toContain(
       '.publication-list { max-width: 100%; min-width: 0; margin: 0.8rem 0; padding-inline-start: 1.5rem; }',
     )
@@ -1129,6 +3127,12 @@ describe('EPUB 3 export', () => {
     expect(css).toContain('main { box-sizing: border-box; width: 100%;')
     expect(css).toContain(
       '.semantic-table-wrapper { max-width: 100%; overflow-x: auto; }',
+    )
+    expect(css).toContain(
+      '.omitted-table-transcript-source { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }',
+    )
+    expect(css).toContain(
+      '.omitted-visual-transcript, .omitted-table-transcript { border-top: 0.06rem solid currentColor; margin-top: 0.75rem; padding-top: 0.75rem; }',
     )
     expect(css).toContain(
       '.semantic-table-figure, .semantic-table-wrapper, .semantic-table-wrapper table { break-inside: auto; }',
@@ -1140,6 +3144,12 @@ describe('EPUB 3 export', () => {
       '.semantic-table-figure > figcaption { break-before: avoid; }',
     )
     expect(css).toContain('table-layout: fixed')
+    expect(css).toContain(
+      '.semantic-table-wrapper[data-wide-table="true"] table { min-width: 100%; table-layout: auto; width: auto; }',
+    )
+    expect(css).toContain(
+      '.semantic-table-wrapper[data-wide-table="true"] th, .semantic-table-wrapper[data-wide-table="true"] td { min-width: 3.5rem; overflow-wrap: break-word; word-break: normal; }',
+    )
     expect(opf).toContain(
       `page-progression-direction="${paperPro.epub.pageProgressionDirection}"`,
     )
@@ -1169,6 +3179,46 @@ describe('EPUB 3 export', () => {
         },
       },
     })
+  })
+
+  it('keeps heading hierarchy monotone and enables wide-figure scrolling only on compact profiles', () => {
+    for (const profileId of [
+      'mobile',
+      'paperProMove',
+      'paperPro',
+      'print',
+    ] as const) {
+      const profile = getTargetProfile(profileId)
+      const css = profileEpubCss(profile)
+      const headingSizes = ['h2', 'h3', 'h4'].map((selector) => {
+        const match = css.match(
+          new RegExp(`${selector} \\{ font-size: (\\d+)px; \\}`),
+        )
+        expect(match, `${profileId} ${selector} profile rule`).not.toBeNull()
+        return Number(match![1])
+      })
+      expect(headingSizes[0], `${profileId} h2 > h3`).toBeGreaterThan(
+        headingSizes[1],
+      )
+      expect(headingSizes[1], `${profileId} h3 > h4`).toBeGreaterThan(
+        headingSizes[2],
+      )
+      expect(headingSizes[2], `${profileId} h4 > body`).toBeGreaterThan(
+        profile.typography.bodySizeCssPx,
+      )
+      expect(
+        css.includes(
+          '.wide-source-visual-scroll[data-wide-source-visual="true"] img { max-width: none;',
+        ),
+      ).toBe(profileId === 'mobile' || profileId === 'paperProMove')
+    }
+
+    expect(profileEpubCss(getTargetProfile('mobile'))).toContain(
+      'min-width: max(100%, 443px)',
+    )
+    expect(profileEpubCss(getTargetProfile('paperProMove'))).toContain(
+      'min-width: max(100%, 1062px)',
+    )
   })
 
   it('rejects profiled EPUB styles that do not match the selected profile', async () => {
@@ -1249,7 +3299,7 @@ describe('EPUB 3 export', () => {
                 {
                   text: 'Profile & target',
                   headerScope: 'column',
-                  columnSpan: 2,
+                  columnSpan: 6,
                   rowSpan: 1,
                 },
               ],
@@ -1268,11 +3318,21 @@ describe('EPUB 3 export', () => {
                   columnSpan: 1,
                   rowSpan: 1,
                 },
+                ...['Coherent', 'Relevant', 'Humanlike', 'Misc Problems'].map(
+                  (text) => ({
+                    text,
+                    headerScope: null,
+                    columnSpan: 1,
+                    rowSpan: 1,
+                  }),
+                ),
               ],
             },
           ],
         },
         relationships: { caption: 'table-caption', assets: ['table-asset'] },
+        sourceText:
+          'Profile & target Mobile <12> Coherent Relevant Humanlike Misc Problems',
         source: 'synthetic-table-test',
       },
       {
@@ -1336,15 +3396,180 @@ describe('EPUB 3 export', () => {
     })
 
     expect(content).toContain('class="semantic-table-wrapper"')
+    expect(content).not.toContain('data-wide-source-visual="true"')
+    expect(content).toContain('data-wide-table="true" data-table-columns="6"')
     expect(content).toContain('class="semantic-table-figure"')
     expect(content).toContain('data-asset-id="table-asset"')
     expect(content).toContain('<table aria-describedby="table-caption"><thead>')
-    expect(content).toContain('<th scope="col" colspan="2">')
-    expect(content).toContain('<th scope="row">Mobile</th>')
+    expect(content).toContain(
+      '<th id="table-node-cell-r1-c1" scope="col" colspan="6">',
+    )
+    expect(content).toContain(
+      '<th id="table-node-cell-r2-c1" scope="row">Mobile</th>',
+    )
     expect(content).toContain('Profile &amp; target')
     expect(content).toContain('&lt;12&gt;')
     expect(content).toContain('<tbody>')
     expect(content).not.toContain('<object')
+
+    const document = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+    }).parse(content)
+    const sourceTranscripts = parsedXmlElements(document, 'span').filter(
+      (element) =>
+        typeof element.class === 'string' &&
+        element.class.split(/\s+/u).includes('visual-source-transcript'),
+    )
+    expect(sourceTranscripts).toEqual([
+      expect.objectContaining({
+        'aria-hidden': 'true',
+        'data-source-transcript-for': 'table-node',
+      }),
+    ])
+    expect(parsedXmlElements(document, 'table')).toHaveLength(1)
+  })
+
+  it('wraps wide source figures and raster tables in an accessible scroller while excluding equations and algorithms', () => {
+    const figurePaper = {
+      ...structuredClone(paper),
+      nodes: [
+        {
+          id: 'wide-source-figure',
+          type: 'figure' as const,
+          objectType: 'figure' as const,
+          title: 'Figure 1. A wide source diagram.',
+          relationships: {
+            caption: 'wide-source-caption',
+            assets: ['wide-source-asset'],
+          },
+          source: 'synthetic-wide-source-figure',
+        },
+        {
+          id: 'wide-source-caption',
+          type: 'caption' as const,
+          text: 'Figure 1. A wide source diagram.',
+          source: 'synthetic-wide-source-figure',
+        },
+      ],
+    }
+    const sourceBox = {
+      page: 1,
+      x: 0.1,
+      y: 0.2,
+      width: 0.8,
+      height: 0.25,
+      rotation: 0,
+      method: 'pdf-object' as const,
+    }
+    const asset = {
+      id: 'wide-source-asset',
+      href: 'assets/wide-source-asset.png',
+      mediaType: 'image/png',
+      kind: 'raster',
+      rendition: 'source-page-crop',
+      sha256: 'b'.repeat(64),
+      bytes: new Uint8Array([1]),
+      width: 1_200,
+      height: 400,
+      resolutionDpi: 220,
+      sourceObjectIds: ['wide-source-object'],
+      sourceBoxes: [sourceBox],
+    } satisfies PublicationAsset
+    const relationship = {
+      id: 'wide-source-relationship',
+      kind: 'figure',
+      label: 'Figure 1',
+      captionRegionId: 'wide-source-caption-region',
+      sourceRegionIds: ['wide-source-region'],
+      sourceObjectIds: ['wide-source-object'],
+      assetIds: [asset.id],
+      status: 'matched',
+      confidence: 1,
+      evidence: ['source-page-crop'],
+      candidates: [],
+      sourceBoxes: [sourceBox],
+      sourceText: '',
+      altText: 'Figure 1. A wide source diagram.',
+      altTextSource: 'caption',
+      canonicalNodeId: 'wide-source-figure',
+      captionNodeId: 'wide-source-caption',
+    } satisfies PublicationVisualRelationship
+    const renderWithRelationship = (
+      candidate: PublicationVisualRelationship,
+      candidateAsset: PublicationAsset = asset,
+    ) =>
+      renderPublicationXhtml(figurePaper, {
+        reconstruction: {
+          readiness: { ready: true },
+          visualRelationships: [candidate],
+          assets: [candidateAsset],
+        } as unknown as PdfReconstruction,
+        visualAssets: new Map([[candidateAsset.id, candidateAsset]]),
+      })
+
+    const content = renderWithRelationship(relationship)
+    const wrapperStart = content.indexOf(
+      '<div class="wide-source-visual-scroll" data-wide-source-visual="true" data-source-visual-kind="figure"',
+    )
+    const wrapperEnd = content.indexOf('</div>', wrapperStart)
+    const captionStart = content.indexOf('<figcaption', wrapperStart)
+
+    expect(wrapperStart).toBeGreaterThan(-1)
+    expect(content).toContain(
+      'role="region" aria-label="Scrollable figure" tabindex="0"><img',
+    )
+    expect(wrapperEnd).toBeLessThan(captionStart)
+    expect(
+      renderWithRelationship({
+        ...relationship,
+        kind: 'table',
+      }),
+    ).toContain(
+      'data-wide-source-visual="true" data-source-visual-kind="table" role="region" aria-label="Scrollable table image"',
+    )
+    expect(
+      renderWithRelationship(
+        {
+          ...relationship,
+          kind: 'table',
+        },
+        {
+          ...asset,
+          kind: 'table',
+          width: 1_378,
+          height: 1_241,
+        },
+      ),
+    ).toContain(
+      'data-wide-source-visual="true" data-source-visual-kind="table" role="region" aria-label="Scrollable table image"',
+    )
+    expect(
+      renderWithRelationship(
+        {
+          ...relationship,
+          kind: 'table',
+        },
+        {
+          ...asset,
+          kind: 'table',
+          width: 672,
+          height: 400,
+        },
+      ),
+    ).not.toContain('data-wide-source-visual="true"')
+    expect(
+      renderWithRelationship({
+        ...relationship,
+        kind: 'equation',
+      }),
+    ).not.toContain('data-wide-source-visual="true"')
+    expect(
+      renderWithRelationship({
+        ...relationship,
+        semanticKind: 'algorithm',
+      }),
+    ).not.toContain('data-wide-source-visual="true"')
   })
 
   it('builds an explicitly non-publication-grade readable fallback without weakening the strict gate', async () => {
@@ -1395,8 +3620,18 @@ describe('EPUB 3 export', () => {
     expect(fallback.mode).toBe('readable-fallback')
     expect(fallback.fileName).toMatch(/-readable\.epub$/)
     expect(content).toContain('Readable text must still flow')
-    expect(content).toContain('<title>Publication</title>')
-    expect(content.match(/Readable text must still flow/g)).toHaveLength(1)
+    expect(content).toContain(
+      '<title>Readable text must still flow when a decorative image is unresolved.</title>',
+    )
+    expect(content).not.toContain('<title>Publication</title>')
+    expect(content.match(/Readable text must still flow/g)).toHaveLength(2)
+    expect(content).toContain(
+      'This readable fallback is incomplete and is not publication-grade.',
+    )
+    expect(content).toContain(
+      'Omitted source visuals and unresolved relationships require review against the source PDF.',
+    )
+    expect(content).toContain('class="reconstruction-status" role="note"')
     expect(content).not.toContain('class="publication-header"')
     expect(content).not.toContain('class="reconstructed-header"')
     expect(content).not.toContain('class="reconstructed-header"')
@@ -1405,6 +3640,252 @@ describe('EPUB 3 export', () => {
       exportMode: 'readable-fallback',
       publicationGrade: false,
       sourceReadiness: { ready: false },
+    })
+  })
+
+  it('refuses a readable fallback for a sparse mixed raster page without OCR evidence', async () => {
+    const run: PdfSourceRun = {
+      page: 1,
+      text: 'Sparse embedded heading',
+      x: 0.1,
+      y: 0.1,
+      width: 0.35,
+      height: 0.03,
+      rotation: 0,
+      method: 'pdf-text',
+      fontName: 'Body',
+      fontSize: 12,
+      confidence: 1,
+    }
+    const reconstruction = await reconstructPageAnalyses({
+      pages: [
+        {
+          page: 1,
+          kind: 'mixed',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: run.text.length,
+          imageCount: 1,
+          objects: [],
+          runs: [run],
+        },
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'mixed-without-ocr.pdf',
+      byteLength: 1024,
+    })
+
+    expect(reconstruction.completeness.ocrRequiredPages).toEqual([1])
+    await expect(
+      buildReadableEpub(reconstruction.paper, reconstruction),
+    ).rejects.toMatchObject({
+      code: 'INCOMPLETE_RECONSTRUCTION',
+    })
+  })
+
+  it('keeps a complete bounded source-backed table image in readable fallback', async () => {
+    const run: PdfSourceRun = {
+      page: 1,
+      text: 'Readable prose around a source-backed table.',
+      x: 0.1,
+      y: 0.1,
+      width: 0.7,
+      height: 0.02,
+      rotation: 0,
+      method: 'pdf-text',
+      fontName: 'Body',
+      fontSize: 10,
+      confidence: 1,
+    }
+    const reconstruction = await reconstructPageAnalyses({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: run.text.length,
+          imageCount: 1,
+          objects: [],
+          runs: [run],
+        },
+      ],
+      sourceHash: '7'.repeat(64),
+      fileName: 'bounded-table-fallback.pdf',
+      byteLength: 1024,
+    })
+    const captionBox = {
+      page: 1,
+      x: 0.15,
+      y: 0.28,
+      width: 0.7,
+      height: 0.03,
+      rotation: 0,
+      method: 'pdf-text' as const,
+    }
+    const tableBox = {
+      page: 1,
+      x: 0.18,
+      y: 0.33,
+      width: 0.64,
+      height: 0.24,
+      rotation: 0,
+      method: 'pdf-text' as const,
+    }
+    const sourceTableWidth = 1_000
+    const sourceTableHeight = 900
+    const crop = await createSourcePageCropAsset({
+      kind: 'table',
+      cropBox: { ...tableBox, method: 'pdf-object' },
+      sourceObjectIds: ['bounded-table-source'],
+      sourceBoxes: [tableBox],
+      width: sourceTableWidth,
+      height: sourceTableHeight,
+      pixels: new Uint8Array(
+        sourceTableWidth * sourceTableHeight * 4,
+      ).fill(80),
+    })
+    const sourceText = 'Method Score Baseline 72 Proposed 81'
+    const figureNode = {
+      id: 'bounded-table-node',
+      type: 'figure' as const,
+      objectType: 'table' as const,
+      title: 'Table 1. Source-backed comparison.',
+      sourceText,
+      relationships: {
+        caption: 'bounded-table-caption',
+        assets: [crop.id],
+      },
+      source: 'synthetic-bounded-table',
+    }
+    const captionNode = {
+      id: 'bounded-table-caption',
+      type: 'caption' as const,
+      text: 'Table 1. Source-backed comparison.',
+      source: 'synthetic-bounded-table',
+    }
+    const relationship = {
+      id: 'bounded-table-relationship',
+      kind: 'table' as const,
+      label: 'Table 1',
+      captionRegionId: 'bounded-table-caption-region',
+      sourceRegionIds: ['bounded-table-source-region'],
+      sourceLineIds: ['bounded-table-header-line', 'bounded-table-body-line'],
+      sourceObjectIds: ['bounded-table-source'],
+      assetIds: [crop.id],
+      status: 'matched' as const,
+      confidence: 1,
+      evidence: [
+        'bounded-table-scope',
+        'non-semantic-source-scope',
+        'source-page-crop',
+      ],
+      candidates: [],
+      sourceBoxes: [captionBox, tableBox],
+      sourceText,
+      altText: captionNode.text,
+      altTextSource: 'caption' as const,
+      canonicalNodeId: figureNode.id,
+      captionNodeId: captionNode.id,
+    }
+    const withTable = {
+      ...reconstruction,
+      paper: {
+        ...reconstruction.paper,
+        nodes: [...reconstruction.paper.nodes, figureNode, captionNode],
+      },
+      provenance: {
+        ...reconstruction.provenance,
+        [figureNode.id]: {
+          confidence: 1,
+          pages: [1],
+          regionIds: relationship.sourceRegionIds,
+          boxes: relationship.sourceBoxes,
+          links: [],
+        },
+        [captionNode.id]: {
+          confidence: 1,
+          pages: [1],
+          regionIds: [relationship.captionRegionId],
+          boxes: [captionBox],
+          links: [],
+        },
+      },
+      assets: [crop],
+      visualRelationships: [relationship],
+    } satisfies PdfReconstruction
+
+    const fallback = await buildReadableEpub(withTable.paper, withTable)
+    const { files, manifest } = inspectEpub(fallback.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(content).toContain('data-object-type="table"')
+    expect(content).toContain(`data-asset-id="${crop.id}"`)
+    expect(content).not.toContain('loading="lazy"')
+    expect(content).toContain('loading="eager"')
+    expect(content).toContain('Table 1. Source-backed comparison.')
+    expect(content).toContain(
+      '<span class="visually-hidden visual-source-transcript"',
+    )
+    expect(content).toContain(sourceText)
+    expect(content).not.toContain('<table')
+    expect(manifest.visualRelationships).toEqual([
+      expect.objectContaining({
+        id: relationship.id,
+        kind: 'table',
+        assetIds: [crop.id],
+      }),
+    ])
+    expect(manifest.assets).toEqual([
+      expect.objectContaining({
+        id: crop.id,
+        kind: 'table',
+        rendition: 'source-page-crop',
+      }),
+    ])
+
+    const moveProfile = getTargetProfile('paperProMove')
+    const moveFallback = await buildReadableEpub(
+      withTable.paper,
+      withTable,
+      moveProfile,
+    )
+    const moveInspection = inspectEpub(moveFallback.bytes, moveProfile)
+    const moveContent = strFromU8(
+      moveInspection.files['EPUB/content.xhtml'],
+    )
+    const moveManifest = moveInspection.manifest as {
+      assets?: Array<Record<string, unknown>>
+    }
+    const moveTableAsset = moveManifest.assets?.find(
+      (candidate) => candidate.sourceAssetId === crop.id,
+    )
+
+    expect(moveContent).toContain(
+      'data-wide-source-visual="true" data-source-visual-kind="table"',
+    )
+    expect(moveContent).toContain(
+      `<img src="${crop.href}" width="${sourceTableWidth}" height="${sourceTableHeight}"`,
+    )
+    expect(moveInspection.files[`EPUB/${crop.href}`]).toEqual(crop.bytes)
+    expect(moveTableAsset).toMatchObject({
+      id: crop.id,
+      width: sourceTableWidth,
+      height: sourceTableHeight,
+      sourceAssetId: crop.id,
+      policy: {
+        id: 'preserve-scrollable-table-source',
+        action: 'preserved',
+        sourceWidth: sourceTableWidth,
+        sourceHeight: sourceTableHeight,
+        packagedWidth: sourceTableWidth,
+        packagedHeight: sourceTableHeight,
+        maximumWidth: null,
+        resampling: 'none',
+        neverUpscaled: true,
+      },
     })
   })
 
@@ -1477,6 +3958,27 @@ describe('EPUB 3 export', () => {
         source: 'pdf:synthetic#page=1',
       },
     )
+    const referenceStart = run.text.indexOf('1')
+    reconstruction.noteRelationships.push({
+      id: 'rendered-reference',
+      label: '1',
+      referenceRegionId: reconstruction.provenance[paragraph.id].regionIds[0],
+      referenceStart,
+      referenceEnd: referenceStart + 1,
+      targetNoteId: 'rendered-note',
+      status: 'matched',
+      canonicalAnchor: {
+        kind: 'node',
+        nodeId: paragraph.id,
+        start: referenceStart,
+        end: referenceStart + 1,
+      },
+      confidence: 1,
+      threshold: 0.72,
+      evidence: ['synthetic-rendered-note-reference'],
+      candidates: [],
+      sourceBoxes: reconstruction.provenance[paragraph.id].boxes,
+    })
 
     const fallback = await buildReadableEpub(
       reconstruction.paper,
@@ -1547,7 +4049,646 @@ describe('EPUB 3 export', () => {
     expect(content.match(/Step 1: embed inputs/g)).toHaveLength(1)
   })
 
-  it('excludes prose-overlap false visuals and their canonical caption nodes from readable fallbacks', async () => {
+  it('keeps owned source lines from an unresolved bounded table in readable fallback', () => {
+    const paper = {
+      id: 'unresolved-table-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Unresolved bounded table transcript',
+      subtitle: 'Source-backed fallback',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A bounded table whose row semantics remain unresolved.',
+      nodes: [
+        {
+          id: 'caption-table-1',
+          type: 'caption' as const,
+          text: 'Table 1. A bounded comparison.',
+          source: 'pdf:test#page=1',
+        },
+      ],
+    }
+    const sourceText = 'Model Accuracy Baseline 72.1 Proposed 81.4'
+    const content = renderPublicationXhtml(paper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            id: 'visual-relationship-table-1',
+            kind: 'table',
+            label: 'Table 1',
+            captionRegionId: 'page-001-caption',
+            sourceRegionIds: ['page-001-table-body'],
+            sourceLineIds: [
+              'page-001-table-header',
+              'page-001-table-row-1',
+              'page-001-table-row-2',
+            ],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: ['unresolved-bounded-table-text-owned'],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText,
+            altText: 'Table 1. A bounded comparison.',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'caption-table-1',
+          },
+        ],
+        assets: [],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('class="omitted-table-transcript"')
+    expect(content).toContain(
+      '<pre class="omitted-table-transcript-source" data-transcript-status="unresolved">',
+    )
+    expect(content).toContain(
+      'Recovered table source text; row and column semantics remain unresolved:',
+    )
+    expect(content).toContain(sourceText)
+    expect(content.match(/Model Accuracy Baseline/g)).toHaveLength(1)
+    expect(content).not.toContain('<table')
+  })
+
+  it('serializes an exact algorithm crop as an algorithm object without duplicating its printed title visibly', () => {
+    const algorithmPaper = {
+      id: 'matched-algorithm-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Matched algorithm crop',
+      subtitle: 'Source-backed algorithm',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A bounded algorithm panel.',
+      nodes: [
+        {
+          id: 'algorithm-1',
+          type: 'figure' as const,
+          objectType: 'figure' as const,
+          title: 'Algorithm 1 Deterministic Search',
+          relationships: {
+            caption: 'caption-algorithm-1',
+            assets: ['asset-algorithm-1'],
+          },
+          source: 'pdf:test#page=1',
+        },
+        {
+          id: 'caption-algorithm-1',
+          type: 'caption' as const,
+          text: 'Algorithm 1 Deterministic Search',
+          source: 'pdf:test#page=1',
+        },
+      ],
+    }
+    const relationship = {
+      id: 'visual-relationship-algorithm-1',
+      kind: 'figure',
+      semanticKind: 'algorithm',
+      label: 'Algorithm 1',
+      captionRegionId: 'page-001-algorithm-caption',
+      sourceRegionIds: ['page-001-algorithm-body'],
+      sourceLineIds: ['page-001-algorithm-line-1'],
+      sourceObjectIds: ['algorithm-source-p001-001'],
+      assetIds: ['asset-algorithm-1'],
+      status: 'matched',
+      confidence: 1,
+      evidence: [
+        'source-algorithm-block',
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ],
+      candidates: [],
+      sourceBoxes: [],
+      sourceText: '',
+      altText: 'Algorithm 1 Deterministic Search',
+      altTextSource: 'caption',
+      canonicalNodeId: 'algorithm-1',
+      captionNodeId: 'caption-algorithm-1',
+    } satisfies PublicationVisualRelationship
+    const asset = {
+      id: 'asset-algorithm-1',
+      href: 'assets/asset-algorithm-1.png',
+      mediaType: 'image/png',
+      kind: 'raster',
+      rendition: 'source-page-crop',
+      sha256: 'a'.repeat(64),
+      bytes: new Uint8Array([1]),
+      width: 320,
+      height: 220,
+      resolutionDpi: 220,
+      sourceObjectIds: ['algorithm-source-p001-001'],
+      sourceBoxes: [],
+    } satisfies PublicationAsset
+
+    const content = renderPublicationXhtml(algorithmPaper, {
+      reconstruction: {
+        visualRelationships: [relationship],
+        assets: [asset],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('data-object-type="algorithm"')
+    expect(content).toContain('class="algorithm-figure"')
+    expect(content).toContain(
+      '<figcaption id="caption-algorithm-1" data-canonical-id="caption-algorithm-1" class="algorithm-source-caption visually-hidden">Algorithm 1 Deterministic Search</figcaption>',
+    )
+    expect(content).not.toContain('class="visual-source-transcript"')
+  })
+
+  it('serializes a failed algorithm crop as an explicitly unresolved preformatted transcript rather than prose', () => {
+    const algorithmPaper = {
+      id: 'unresolved-algorithm-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Unresolved algorithm crop',
+      subtitle: 'Source-backed fallback',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A bounded unresolved algorithm.',
+      nodes: [
+        {
+          id: 'caption-algorithm-2',
+          type: 'caption' as const,
+          text: 'Algorithm 2 Deterministic Search',
+          source: 'pdf:test#page=1',
+        },
+      ],
+    }
+    const content = renderPublicationXhtml(algorithmPaper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            id: 'visual-relationship-algorithm-2',
+            kind: 'figure',
+            semanticKind: 'algorithm',
+            label: 'Algorithm 2',
+            captionRegionId: 'page-001-algorithm-caption',
+            sourceRegionIds: ['page-001-algorithm-body'],
+            sourceLineIds: [
+              'page-001-algorithm-line-1',
+              'page-001-algorithm-line-2',
+            ],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: [
+              'source-algorithm-block',
+              'source-text-transcript-unresolved',
+              'unresolved-visual-text-owned',
+              'source-rendition-unavailable',
+            ],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: '1: Initialize queue.\n2: return result.',
+            altText: 'Algorithm 2 Deterministic Search',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'caption-algorithm-2',
+          },
+        ],
+        assets: [],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('data-object-type="algorithm"')
+    expect(content).toContain(
+      'Recovered source text; semantic line order remains unresolved:',
+    )
+    expect(content).toContain(
+      '<pre class="omitted-algorithm-transcript" data-transcript-status="unresolved">1: Initialize queue.\n2: return result.</pre>',
+    )
+    expect(content).not.toContain(
+      '<p>1: Initialize queue.\n2: return result.</p>',
+    )
+  })
+
+  it('serializes proved source code lines directly as whitespace-preserving pre and code elements', () => {
+    const codePaper = {
+      id: 'matched-code-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Matched source code',
+      subtitle: 'Source-backed code',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A bounded code block.',
+      nodes: [
+        {
+          id: 'code-block-1',
+          type: 'figure' as const,
+          objectType: 'figure' as const,
+          title: 'Here is the specific prompt used:',
+          relationships: {
+            caption: 'caption-code-block-1',
+            assets: ['asset-code-page-1', 'asset-code-page-2'],
+          },
+          source: 'pdf:test#page=1',
+        },
+        {
+          id: 'caption-code-block-1',
+          type: 'caption' as const,
+          text: 'Here is the specific prompt used:',
+          source: 'pdf:test#page=1',
+        },
+      ],
+    }
+    const sourceBox = {
+      page: 1,
+      x: 0.18,
+      y: 0.6,
+      width: 0.62,
+      height: 0.02,
+      rotation: 0,
+      method: 'pdf-text' as const,
+    }
+    const relationship = {
+      id: 'visual-relationship-code-1',
+      kind: 'figure',
+      semanticKind: 'code',
+      label: 'Code block p001-001',
+      captionRegionId: 'page-001-code-caption',
+      sourceRegionIds: ['page-001-code-body', 'page-002-code-continuation'],
+      sourceLineIds: [
+        'page-001-code-line-1',
+        'page-001-code-line-2',
+        'page-002-code-line-1',
+      ],
+      sourceObjectIds: ['code-source-p001-001', 'code-source-p002-001'],
+      assetIds: ['asset-code-page-1', 'asset-code-page-2'],
+      status: 'matched',
+      confidence: 1,
+      evidence: [
+        'source-preformatted-block',
+        'deterministic-source-line-order',
+        'exact-single-run-line-text',
+        'source-page-crop',
+      ],
+      preformatted: {
+        status: 'proved',
+        evidence: [
+          'deterministic-source-line-order',
+          'exact-single-run-line-text',
+        ],
+        lines: [
+          {
+            text: 'GET /Patient?name=a&format=json',
+            sourceRegionId: 'page-001-code-body',
+            sourceLineId: 'page-001-code-line-1',
+            sourceBox,
+            sourceRunBoxes: [sourceBox],
+          },
+          {
+            text: 'POST /Patient',
+            sourceRegionId: 'page-001-code-body',
+            sourceLineId: 'page-001-code-line-2',
+            sourceBox: { ...sourceBox, y: 0.62 },
+            sourceRunBoxes: [{ ...sourceBox, y: 0.62 }],
+          },
+          {
+            text: '{functions}',
+            sourceRegionId: 'page-002-code-continuation',
+            sourceLineId: 'page-002-code-line-1',
+            sourceBox: { ...sourceBox, page: 2, y: 0.09 },
+            sourceRunBoxes: [{ ...sourceBox, page: 2, y: 0.09 }],
+          },
+        ],
+      },
+      candidates: [],
+      sourceBoxes: [],
+      sourceText: 'GET /Patient?name=a&format=json\nPOST /Patient\n{functions}',
+      altText: 'Here is the specific prompt used:',
+      altTextSource: 'caption',
+      canonicalNodeId: 'code-block-1',
+      captionNodeId: 'caption-code-block-1',
+    } as unknown as PublicationVisualRelationship
+    const assets = [
+      {
+        id: 'asset-code-page-1',
+        href: 'assets/asset-code-page-1.png',
+        mediaType: 'image/png',
+        kind: 'raster',
+        rendition: 'source-page-crop',
+        sha256: 'a'.repeat(64),
+        bytes: new Uint8Array([1]),
+        width: 320,
+        height: 220,
+        resolutionDpi: 220,
+        sourceObjectIds: ['code-source-p001-001'],
+        sourceBoxes: [sourceBox],
+      },
+      {
+        id: 'asset-code-page-2',
+        href: 'assets/asset-code-page-2.png',
+        mediaType: 'image/png',
+        kind: 'raster',
+        rendition: 'source-page-crop',
+        sha256: 'b'.repeat(64),
+        bytes: new Uint8Array([2]),
+        width: 320,
+        height: 80,
+        resolutionDpi: 220,
+        sourceObjectIds: ['code-source-p002-001'],
+        sourceBoxes: [{ ...sourceBox, page: 2, y: 0.09 }],
+      },
+    ] satisfies PublicationAsset[]
+
+    const content = renderPublicationXhtml(codePaper, {
+      reconstruction: {
+        visualRelationships: [relationship],
+        assets,
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('data-object-type="code"')
+    expect(content).toContain('class="source-code-figure"')
+    expect(content).toContain(
+      '<pre class="source-code" data-whitespace-source="source-lines"><code>GET /Patient?name=a&amp;format=json\nPOST /Patient\n{functions}</code></pre>',
+    )
+    expect(content).not.toContain('<img ')
+    expect(content).not.toContain('class="visual-source-transcript"')
+  })
+
+  it('serializes a failed code crop only as an explicitly unresolved transcript', () => {
+    const codePaper = {
+      id: 'unresolved-code-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Unresolved source code',
+      subtitle: 'Source-backed fallback',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A bounded unresolved code block.',
+      nodes: [
+        {
+          id: 'caption-code-block-2',
+          type: 'caption' as const,
+          text: 'Here is the specific prompt used:',
+          source: 'pdf:test#page=1',
+        },
+      ],
+    }
+    const content = renderPublicationXhtml(codePaper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            id: 'visual-relationship-code-2',
+            kind: 'figure',
+            semanticKind: 'code',
+            label: 'Code block p001-001',
+            captionRegionId: 'page-001-code-caption',
+            sourceRegionIds: ['page-001-code-body'],
+            sourceLineIds: ['page-001-code-line-1'],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: [
+              'source-preformatted-block',
+              'source-rendition-unavailable',
+              'unresolved-visual-text-owned',
+            ],
+            preformatted: {
+              status: 'proved',
+              evidence: [
+                'deterministic-source-line-order',
+                'exact-single-run-line-text',
+              ],
+              lines: [],
+            },
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: 'GET /Patient?name=value\nPOST /Patient',
+            altText: 'Here is the specific prompt used:',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'caption-code-block-2',
+          } as unknown as PublicationVisualRelationship,
+        ],
+        assets: [],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('data-object-type="code"')
+    expect(content).toContain(
+      'Recovered source lines; source crop unavailable:',
+    )
+    expect(content).toContain(
+      '<pre class="omitted-code-transcript" data-transcript-status="unresolved">GET /Patient?name=value\nPOST /Patient</pre>',
+    )
+    expect(content).not.toContain(
+      '<p>GET /Patient?name=value\nPOST /Patient</p>',
+    )
+  })
+
+  it('marks a caption-only unresolved table as omitted in readable output', () => {
+    const paper = {
+      id: 'unresolved-table-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Unresolved table',
+      subtitle: 'Source-backed fallback',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A table continuation remains unresolved.',
+      nodes: [
+        {
+          id: 'caption-table-1',
+          type: 'caption' as const,
+          text: 'Table 1. A multi-page source table awaiting review.',
+          source: 'pdf:test#page=2',
+        },
+      ],
+    }
+    const content = renderPublicationXhtml(paper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            id: 'visual-relationship-table-1',
+            kind: 'table',
+            label: 'Table 1',
+            captionRegionId: 'page-002-caption',
+            sourceRegionIds: [],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: ['table-source-start-boundary-unproven'],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: '',
+            altText: 'Table 1. A multi-page source table awaiting review.',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'caption-table-1',
+          },
+        ],
+        assets: [],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('class="orphan-caption omitted-visual"')
+    expect(content).toContain(
+      'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.',
+    )
+    expect(content).toContain(
+      'Table 1. A multi-page source table awaiting review.',
+    )
+  })
+
+  it('marks a canonical orphan caption as omitted when no visual relationship was exported', () => {
+    const paper = {
+      id: 'orphan-caption-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Orphan caption',
+      subtitle: 'Source-backed fallback',
+      authors: ['Test Author'],
+      updated: '2026-07-23',
+      abstract: 'A canonical caption has no bounded visual relationship.',
+      nodes: [
+        {
+          id: 'caption-figure-1',
+          type: 'caption' as const,
+          text: 'Figure 1. A source visual whose bounded rendition is unavailable.',
+          source: 'pdf:test#page=1',
+        },
+      ],
+    }
+    const content = renderPublicationXhtml(paper, {
+      reconstruction: {
+        visualRelationships: [],
+        assets: [],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain('class="orphan-caption omitted-visual"')
+    expect(content).toContain(
+      'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.',
+    )
+    expect(content).toContain(
+      'Figure 1. A source visual whose bounded rendition is unavailable.',
+    )
+  })
+
+  it('packages an unresolved visual caption and owned transcript in readable fallback', async () => {
+    const run: PdfSourceRun = {
+      page: 1,
+      text: 'Readable prose before an unresolved source diagram.',
+      x: 0.1,
+      y: 0.2,
+      width: 0.7,
+      height: 0.02,
+      rotation: 0,
+      method: 'pdf-text',
+      fontName: 'Body',
+      fontSize: 10,
+      confidence: 1,
+    }
+    const reconstruction = await reconstructPageAnalyses({
+      pages: [
+        {
+          page: 1,
+          kind: 'born-digital',
+          width: 612,
+          height: 792,
+          rotation: 0,
+          textCharacters: run.text.length,
+          imageCount: 1,
+          objects: [],
+          runs: [run],
+        },
+      ],
+      sourceHash: '4'.repeat(64),
+      fileName: 'unresolved-diagram-fallback.pdf',
+      byteLength: 1024,
+    })
+    const captionNode = {
+      id: 'unresolved-diagram-caption',
+      type: 'caption' as const,
+      text: 'Figure 1. A source diagram awaiting visual review.',
+      source: 'synthetic-unresolved-diagram',
+    }
+    const captionBox = {
+      page: 1,
+      x: 0.15,
+      y: 0.6,
+      width: 0.7,
+      height: 0.03,
+      rotation: 0,
+      method: 'pdf-text' as const,
+    }
+    const relationship = {
+      id: 'unresolved-diagram-relationship',
+      kind: 'figure' as const,
+      label: 'Figure 1',
+      captionRegionId: 'unresolved-diagram-caption-region',
+      sourceRegionIds: [],
+      sourceObjectIds: [],
+      assetIds: [],
+      status: 'unresolved' as const,
+      confidence: 1,
+      evidence: ['unresolved-visual-text-owned'],
+      candidates: [],
+      sourceBoxes: [captionBox],
+      sourceText: 'Step 1: embed inputs. Step 2: create the output.',
+      altText: captionNode.text,
+      altTextSource: 'caption' as const,
+      canonicalNodeId: null,
+      captionNodeId: captionNode.id,
+    }
+    const withUnresolvedDiagram = {
+      ...reconstruction,
+      paper: {
+        ...reconstruction.paper,
+        nodes: [...reconstruction.paper.nodes, captionNode],
+      },
+      provenance: {
+        ...reconstruction.provenance,
+        [captionNode.id]: {
+          confidence: 1,
+          pages: [1],
+          regionIds: [relationship.captionRegionId],
+          boxes: [captionBox],
+          links: [],
+        },
+      },
+      visualRelationships: [relationship],
+    } satisfies PdfReconstruction
+
+    const fallback = await buildReadableEpub(
+      withUnresolvedDiagram.paper,
+      withUnresolvedDiagram,
+    )
+    const { files, manifest } = inspectEpub(fallback.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(content).toContain('class="orphan-caption omitted-visual"')
+    expect(content).toContain(captionNode.text)
+    expect(content).toContain('Recovered text inside the unresolved visual:')
+    expect(content).toContain(relationship.sourceText)
+    expect(content).not.toContain('<img')
+    expect(manifest.canonicalNodeIds).toContain(captionNode.id)
+    expect(manifest.visualRelationships).toEqual([
+      expect.objectContaining({
+        id: relationship.id,
+        status: 'unresolved',
+        assetIds: [],
+      }),
+    ])
+  })
+
+  it('omits rejected prose-overlap pixels but preserves their canonical caption as an explicit placeholder', async () => {
     const run: PdfSourceRun = {
       page: 1,
       text: 'Canonical prose owns this source region.',
@@ -1682,6 +4823,19 @@ describe('EPUB 3 export', () => {
       }),
     ).toEqual([])
 
+    const falselyReady = {
+      ...falseMatch,
+      readiness: {
+        ...falseMatch.readiness,
+        status: 'ready',
+        ready: true,
+        blockingDiagnosticCodes: [],
+      },
+    } satisfies PdfReconstruction
+    await expect(buildEpub(falselyReady.paper, falselyReady)).rejects.toThrow(
+      /visual relationship false-visual-relationship/u,
+    )
+
     const fallback = await buildReadableEpub(falseMatch.paper, falseMatch)
     const { files, manifest } = inspectEpub(fallback.bytes)
     const content = strFromU8(files['EPUB/content.xhtml'])
@@ -1689,19 +4843,21 @@ describe('EPUB 3 export', () => {
     expect(
       content.match(/Canonical prose owns this source region\./g),
     ).toHaveLength(1)
-    expect(content).not.toContain('False visual duplicate')
-    expect(content).not.toContain('false-visual-node')
-    expect(content).not.toContain('false-visual-caption')
-    expect(content).not.toContain('omitted-visual')
+    expect(content).toContain('False visual duplicate')
+    expect(content).toContain('false-visual-node')
+    expect(content).toContain('false-visual-caption')
+    expect(content).toContain('class="omitted-visual"')
     expect(content).not.toContain('orphan-caption')
+    expect(content).not.toContain('<img')
     expect(manifest.visualRelationships).toEqual([])
     expect(manifest.assets).toEqual([])
     expect(manifest.canonicalNodeIds).toEqual(
-      reconstruction.paper.nodes.map((node) => node.id),
+      falseMatch.paper.nodes.map((node) => node.id),
     )
+    expect(manifest.excludedCanonicalNodeIds).toEqual([])
   })
 
-  it('prunes unvalidated fragment visuals without leaving fallback placeholders', async () => {
+  it('omits an unvalidated fragment bundle while retaining an in-place canonical placeholder', async () => {
     const run: PdfSourceRun = {
       page: 1,
       text: 'Readable fallback body.',
@@ -1812,19 +4968,17 @@ describe('EPUB 3 export', () => {
 
     expect(content).not.toContain('<img')
     expect(content).not.toContain('figure-placeholder')
-    expect(content).not.toContain('omitted-visual')
+    expect(content).toContain('class="omitted-visual"')
     expect(content).not.toContain('orphan-caption')
-    expect(content).not.toContain('figure-node')
-    expect(content).not.toContain('figure-caption')
+    expect(content).toContain('figure-node')
+    expect(content).toContain('figure-caption')
+    expect(content).toContain('Figure 1. Fragmented source visual.')
     expect(manifest.assets).toEqual([])
     expect(manifest.visualRelationships).toEqual([])
     expect(manifest.canonicalNodeIds).toEqual(
-      reconstruction.paper.nodes.map((node) => node.id),
+      crowded.paper.nodes.map((node) => node.id),
     )
-    expect(manifest.excludedCanonicalNodeIds).toEqual([
-      'figure-node',
-      'figure-caption',
-    ])
+    expect(manifest.excludedCanonicalNodeIds).toEqual([])
   })
 
   it('does not partially package an unvalidated visual asset bundle', async () => {
@@ -1952,14 +5106,15 @@ describe('EPUB 3 export', () => {
     expect(content).not.toContain('<img')
     expect(content).not.toContain(rasterId)
     expect(content).not.toContain(solidId)
-    expect(content).not.toContain('omitted-visual')
+    expect(content).toContain('class="omitted-visual"')
     expect(content).not.toContain('orphan-caption')
+    expect(content).toContain('Figure 1. Bounded source figure.')
     expect(manifest.assets).toEqual([])
     expect(manifest.visualRelationships).toEqual([])
-    expect(manifest.excludedCanonicalNodeIds).toEqual([
-      'figure-node',
-      'figure-caption',
-    ])
+    expect(manifest.canonicalNodeIds).toEqual(
+      withVisual.paper.nodes.map((node) => node.id),
+    )
+    expect(manifest.excludedCanonicalNodeIds).toEqual([])
   })
 
   it('packages and renders a bounded source-page crop with its provenance', async () => {
@@ -2153,6 +5308,164 @@ describe('EPUB 3 export', () => {
       rendition: 'source-page-crop',
       sourceCropBox: sourceBox,
       sourceAssetId: crop.id,
+    })
+  })
+
+  it('recomputes PDF hyperlink ownership and rejects a stale external target at publication export', async () => {
+    const reconstruction = await readyExternalHyperlinkFixture()
+    const stale = structuredClone(reconstruction)
+    const linkRun = stale.paper.nodes
+      .flatMap((node) => ('inlineRuns' in node ? (node.inlineRuns ?? []) : []))
+      .find((run) => run.annotationId === 'pdf-link-p001-a0001')
+    expect(linkRun).toBeDefined()
+    linkRun!.href = 'https://example.test/stale-target'
+
+    await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
+      /PDF hyperlink evidence.*external target/u,
+    )
+  })
+
+  it('rejects a stale ready PDF when a canonical annotation owner has no source annotation', async () => {
+    const reconstruction = await readyExternalHyperlinkFixture()
+    const stale = structuredClone(reconstruction)
+    stale.pages[0].links = []
+
+    await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
+      /PDF hyperlink evidence.*no source annotation/u,
+    )
+  })
+
+  it('rejects duplicate and unresolved source hyperlink annotations despite stale ready counts', async () => {
+    const reconstruction = await readyExternalHyperlinkFixture()
+    const duplicate = structuredClone(reconstruction)
+    duplicate.pages[0].links!.push(
+      structuredClone(duplicate.pages[0].links![0]),
+    )
+    await expect(buildEpub(duplicate.paper, duplicate)).rejects.toThrow(
+      /PDF hyperlink evidence.*duplicate source annotation/u,
+    )
+
+    const unresolved = structuredClone(reconstruction)
+    unresolved.pages[0].links![0] = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'unresolved',
+      target: 'https://example.test/evidence',
+      reason: 'missing-target',
+      box: unresolved.pages[0].links![0].box,
+    }
+    await expect(buildEpub(unresolved.paper, unresolved)).rejects.toThrow(
+      /PDF hyperlink evidence.*remains unresolved/u,
+    )
+  })
+
+  it('rejects an internal annotation whose canonical fragment target disappeared', async () => {
+    const reconstruction = await readyExternalHyperlinkFixture()
+    const stale = structuredClone(reconstruction)
+    stale.pages[0].links![0] = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'internal',
+      destination: 'section.999',
+      box: stale.pages[0].links![0].box!,
+    }
+    const linkRun = stale.paper.nodes
+      .flatMap((node) => ('inlineRuns' in node ? (node.inlineRuns ?? []) : []))
+      .find((run) => run.annotationId === 'pdf-link-p001-a0001')
+    expect(linkRun).toBeDefined()
+    linkRun!.href = '#missing-canonical-target'
+
+    await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
+      /PDF hyperlink evidence.*internal fragment/u,
+    )
+  })
+
+  it('rejects a source annotation owner whose stale canonical range cannot render', async () => {
+    const reconstruction = await readyExternalHyperlinkFixture()
+    const stale = structuredClone(reconstruction)
+    const linkRun = stale.paper.nodes
+      .flatMap((node) => ('inlineRuns' in node ? (node.inlineRuns ?? []) : []))
+      .find((run) => run.annotationId === 'pdf-link-p001-a0001')
+    expect(linkRun).toBeDefined()
+    linkRun!.end = Number.MAX_SAFE_INTEGER
+
+    await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
+      /PDF hyperlink evidence.*non-renderable canonical range/u,
+    )
+  })
+
+  it('rejects a stale scholarly cross-reference target claim at publication export', async () => {
+    const reconstruction = await readyCrossReferenceFixture()
+    const stale = structuredClone(reconstruction)
+    const relationship = stale.crossReferenceRelationships[0]
+    const wrongTarget = stale.paper.nodes.find(
+      (node) => node.id !== relationship.targetNodeIds[0],
+    )
+    expect(wrongTarget).toBeDefined()
+    relationship.targetNodeIds = [wrongTarget!.id]
+    relationship.targets[0].targetNodeId = wrongTarget!.id
+    relationship.targets[0].candidateNodeIds = [wrongTarget!.id]
+
+    await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
+      /scholarly cross-reference.*canonical inline target/u,
+    )
+  })
+
+  it('rejects a stale scholarly relationship whose canonical inline owner disappeared', async () => {
+    const reconstruction = await readyCrossReferenceFixture()
+    const stale = structuredClone(reconstruction)
+    const relationship = stale.crossReferenceRelationships[0]
+    const owner = stale.paper.nodes.find(
+      (node) => node.id === relationship.canonicalAnchor?.nodeId,
+    )
+    expect(owner && 'inlineRuns' in owner).toBe(true)
+    if (owner && 'inlineRuns' in owner) {
+      owner.inlineRuns = owner.inlineRuns?.filter(
+        (run) => run.relationshipId !== relationship.id,
+      )
+    }
+
+    await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
+      /scholarly cross-reference.*exactly one canonical inline owner/u,
+    )
+  })
+
+  it('redetects a source scholarly reference when both its stale claim and canonical run were removed', async () => {
+    const reconstruction = await readyCrossReferenceFixture()
+    const stale = structuredClone(reconstruction)
+    const relationshipId = stale.crossReferenceRelationships[0].id
+    stale.crossReferenceRelationships = []
+    for (const node of stale.paper.nodes) {
+      if ('inlineRuns' in node) {
+        node.inlineRuns = node.inlineRuns?.filter(
+          (run) => run.relationshipId !== relationshipId,
+        )
+      }
+    }
+
+    await expect(buildEpub(stale.paper, stale)).rejects.toThrow(
+      /scholarly cross-reference.*missing source-detected relationship/u,
+    )
+  })
+
+  it('embeds export-time reassessed PDF link coverage instead of stale receipt counts', async () => {
+    const reconstruction = await readyExternalHyperlinkFixture()
+    const stale = structuredClone(reconstruction)
+    stale.completeness.expectedHyperlinkCount = 91
+    stale.completeness.mappedHyperlinkCount = 91
+    stale.completeness.hyperlinkCoverage = 1
+
+    const epub = await buildEpub(stale.paper, stale)
+    const { manifest } = inspectEpub(epub.bytes)
+
+    expect(manifest.sourceCompleteness).toMatchObject({
+      expectedHyperlinkCount: 1,
+      mappedHyperlinkCount: 1,
+      hyperlinkCoverage: 1,
+    })
+    expect(manifest.sourceReadiness).toMatchObject({
+      ready: true,
+      blockingDiagnosticCodes: [],
     })
   })
 })

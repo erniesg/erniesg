@@ -399,6 +399,21 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
     ).toBe(reconstruction.paper.nodes.length)
   })
 
+  it('revalidates the exact canonical paper at export time instead of trusting stale-ready evidence', async () => {
+    const changedPaper = structuredClone(reconstruction.paper)
+    const paragraph = changedPaper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' && node.text.includes('state-of-the-art'),
+    )
+    expect(paragraph).toBeDefined()
+    if (!paragraph || paragraph.type !== 'paragraph') return
+    paragraph.text = paragraph.text.replace('state-of-the-art', 'stateoftheart')
+
+    await expect(
+      buildEpub(changedPaper, reconstruction, getTargetProfile('paperPro')),
+    ).rejects.toMatchObject({ code: 'INCOMPLETE_RECONSTRUCTION' })
+  })
+
   it('exports byte-identical Mobile, Move, and Pro artifacts from one canonical graph', () => {
     const baselineManifests: unknown[] = []
     for (const expected of contract.profiles) {
@@ -423,11 +438,12 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
       expect(first.sha256).toBe(second.sha256)
       const { files, manifest } = inspectEpub(first.bytes, profile)
       const content = strFromU8(files['EPUB/content.xhtml'])
+      const contentBody = content.match(/<body\b[^>]*>([\s\S]*)<\/body>/u)?.[1] ?? ''
       expect(manifest).toMatchObject({
         profile: { id: expected.id, version: expected.version },
         canonicalNodeIds: reconstruction.paper.nodes.map((node) => node.id),
       })
-      expect(occurrences(content, contract.title)).toBe(1)
+      expect(occurrences(contentBody, contract.title)).toBe(1)
       expect(content).not.toMatch(/figure-placeholder|placeholder only/i)
       expect(content).toContain('<strong>bold</strong>')
       expect(content).toContain('<em>italic</em>')

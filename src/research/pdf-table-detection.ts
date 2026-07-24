@@ -1,4 +1,8 @@
-import type { PdfPageRegion, PdfRegionLine } from './import-types'
+import type {
+  PdfPageRegion,
+  PdfRegionLine,
+  PdfSourceRun,
+} from './import-types'
 
 const FIXED_CELL_GAP_THRESHOLD = 0.012
 const COLUMN_ANCHOR_TOLERANCE = 0.025
@@ -24,6 +28,24 @@ type ClusteredTableRow = PdfRegionLine & {
   sourceLineIds: string[]
   sourceRegionIds: string[]
   sourceRegionKinds: PdfPageRegion['kind'][]
+}
+
+export type PdfDetectedTableGrid = {
+  sourceRegions: PdfPageRegion[]
+  sourceLineIds: string[]
+  lines: Array<
+    ClusteredTableRow & {
+      cells: Array<{
+        run: PdfSourceRun
+        columnIndex: number
+        columnSpan: number
+        rowSpan: number
+      }>
+    }
+  >
+  columnCount: number
+  headerRowCount: number
+  evidence: string[]
 }
 
 function median(values: number[]) {
@@ -293,29 +315,36 @@ function rowCells(
       group.push(run)
     }
   }
-  return groups.map((group) => {
-    const first = group[0]
-    const right = Math.max(...group.map((run) => run.x + run.width))
-    const bottom = Math.max(...group.map((run) => run.y + run.height))
-    return {
-      ...first,
-      width: right - first.x,
-      height: bottom - first.y,
-      text: group.reduce((text, run, index) => {
-        if (index === 0) return run.text
-        const previous = group[index - 1]
-        const gap = run.x - (previous.x + previous.width)
-        const noSpaceThreshold = Math.max(
-          0.0005,
-          Math.min(previous.height, run.height) * 0.18,
-        )
-        return `${text}${gap <= noSpaceThreshold ? '' : ' '}${run.text}`
-      }, ''),
-    }
-  })
+  return groups.map(mergedTableCellRuns)
 }
 
-function tableShape(lines: ClusteredTableRow[]) {
+function mergedTableCellRuns(group: PdfSourceRun[]) {
+  const first = group[0]
+  const right = Math.max(...group.map((run) => run.x + run.width))
+  const bottom = Math.max(...group.map((run) => run.y + run.height))
+  return {
+    ...first,
+    width: right - first.x,
+    height: bottom - first.y,
+    text: group.reduce((text, run, index) => {
+      if (index === 0) return run.text
+      const previous = group[index - 1]
+      const gap = run.x - (previous.x + previous.width)
+      const noSpaceThreshold = Math.max(
+        0.0005,
+        Math.min(previous.height, run.height) * 0.18,
+      )
+      return `${text}${gap <= noSpaceThreshold ? '' : ' '}${run.text}`
+    }, ''),
+  }
+}
+
+type TableColumnAlignment = 'center' | 'proven-left'
+
+function tableShape(
+  lines: ClusteredTableRow[],
+  columnAlignment: TableColumnAlignment = 'center',
+) {
   const gapThreshold = adaptiveCellGapThreshold(lines)
   const cellsByLine = new Map(
     lines.map((line) => [line, rowCells(line, gapThreshold)]),
@@ -338,6 +367,9 @@ function tableShape(lines: ClusteredTableRow[]) {
   const cellsByColumn = Array.from({ length: modalColumnCount }, (_, index) =>
     structuralRows.map((line) => cellsByLine.get(line)![index]),
   )
+  const leftAnchors = cellsByColumn.map((cells) =>
+    median(cells.map((cell) => cell.x)),
+  )
   const centerAnchors = cellsByColumn.map((cells) =>
     median(cells.map((cell) => cell.x + cell.width / 2)),
   )
@@ -347,23 +379,21 @@ function tableShape(lines: ClusteredTableRow[]) {
     structuralRows.some((line) =>
       cellsByLine
         .get(line)!
-        .some(
-          (cell, index) =>
-            Math.abs(cell.x + cell.width / 2 - centerAnchors[index]) >
-            COLUMN_CENTER_TOLERANCE,
+        .some((cell, index) =>
+          columnAlignment === 'proven-left'
+            ? Math.abs(cell.x - leftAnchors[index]) > COLUMN_ANCHOR_TOLERANCE
+            : Math.abs(cell.x + cell.width / 2 - centerAnchors[index]) >
+              COLUMN_CENTER_TOLERANCE,
         ),
     )
   ) {
     return null
   }
-  const anchors = cellsByColumn.map((cells) =>
-    median(cells.map((cell) => cell.x)),
-  )
   const populatedRows = lines.map<ClusteredTableRow>((line) => {
     const cells = cellsByLine.get(line)!
     return {
       ...line,
-      runs: anchors.map((anchor, index) => ({
+      runs: leftAnchors.map((anchor, index) => ({
         ...cells[index],
         x: anchor,
       })),
@@ -373,10 +403,10 @@ function tableShape(lines: ClusteredTableRow[]) {
     return null
   const density =
     populatedRows.reduce((total, line) => total + line.runs.length, 0) /
-    (populatedRows.length * anchors.length)
+    (populatedRows.length * leftAnchors.length)
   return density >= 0.35
     ? {
-        anchors,
+        anchors: leftAnchors,
         rows: populatedRows,
         density,
         structure: 'rectangular' as const,
@@ -405,9 +435,7 @@ function closeBodyShapeWithTableLocalHeader(
     const centerDistance = Math.abs(
       cell.x + cell.width / 2 - bodyCenterAnchors[columnIndex],
     )
-    return (
-      Math.min(leftDistance, centerDistance) <= COLUMN_ANCHOR_TOLERANCE
-    )
+    return Math.min(leftDistance, centerDistance) <= COLUMN_ANCHOR_TOLERANCE
   })
   if (!sameColumns) return null
   const header: ClusteredTableRow = {
@@ -428,6 +456,7 @@ function directionalCandidate(
   caption: PdfPageRegion,
   regions: PdfPageRegion[],
   direction: 'above' | 'below',
+  columnAlignment: TableColumnAlignment = 'center',
 ) {
   const maximumDistance = direction === 'above' ? 0.22 : 0.16
   const directionalRegions = regions.filter((region) => {
@@ -508,14 +537,12 @@ function directionalCandidate(
       region.lines.map((line) => ({ region, line })),
     ),
   )
-  const bodyShape = tableShape(bodyRows)
+  const bodyShape = tableShape(bodyRows, columnAlignment)
   if (!bodyShape) return null
   let shape = bodyShape
   let headerEvidence: PdfDetectedTableHeaderEvidence | null = null
   if (direction === 'above') {
-    const tableTop = Math.min(
-      ...sourceRegions.map((region) => region.box.y),
-    )
+    const tableTop = Math.min(...sourceRegions.map((region) => region.box.y))
     const pageHeaderCandidates = regions.filter((region) => {
       if (
         region.page !== caption.page ||
@@ -608,4 +635,358 @@ export function detectTableNearCaption(
       )
       .sort((left, right) => right.score - left.score)[0] ?? null
   )
+}
+
+// Variable-width formula cells can move their centers far from otherwise
+// stable column starts. Left-edge alignment is therefore available only after
+// the independent scope resolver has proved the exact supplemental shard and
+// every claimed non-empty source line; the ordinary detector remains stricter.
+export function detectTableWithinProvenScope(
+  caption: PdfPageRegion,
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly { code: string }[]
+  },
+) {
+  if (
+    !scope.evidence.some(
+      (item) => item.code === 'supplemental-equation-cell-shard',
+    ) ||
+    scope.sourceRegionIds.length === 0 ||
+    new Set(scope.sourceRegionIds).size !== scope.sourceRegionIds.length ||
+    scope.sourceLineIds.length === 0 ||
+    new Set(scope.sourceLineIds).size !== scope.sourceLineIds.length
+  ) {
+    return null
+  }
+
+  const sourceRegionIds = new Set(scope.sourceRegionIds)
+  const sourceLineIds = new Set(scope.sourceLineIds)
+  const sourceRegions = regions.filter((region) =>
+    sourceRegionIds.has(region.id),
+  )
+  if (sourceRegions.length !== sourceRegionIds.size) return null
+
+  const nonemptySourceLines = sourceRegions.flatMap((region) =>
+    region.lines.filter(
+      (line) =>
+        line.text.trim().length > 0 ||
+        line.runs.some((run) => run.text.trim().length > 0),
+    ),
+  )
+  if (
+    nonemptySourceLines.length !== sourceLineIds.size ||
+    nonemptySourceLines.some((line) => !sourceLineIds.has(line.id))
+  ) {
+    return null
+  }
+
+  const detected = directionalCandidate(
+    caption,
+    sourceRegions,
+    scope.direction,
+    'proven-left',
+  )
+  if (
+    !detected ||
+    detected.sourceRegions.length !== sourceRegionIds.size ||
+    detected.sourceRegions.some((region) => !sourceRegionIds.has(region.id)) ||
+    detected.sourceLineIds.length !== sourceLineIds.size ||
+    detected.sourceLineIds.some((lineId) => !sourceLineIds.has(lineId))
+  ) {
+    return null
+  }
+  return detected
+}
+
+function numericTableBodyCell(text: string) {
+  return /^[+\-−]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:%|[x×])?$/u.test(
+    text.replace(/\s+/gu, ''),
+  )
+}
+
+function tableHeaderCell(text: string) {
+  return /\p{L}/u.test(text) && !numericTableBodyCell(text)
+}
+
+function headerCellsForBodyAnchors(
+  headerRuns: PdfSourceRun[],
+  bodyCenters: number[],
+) {
+  const boundaries = bodyCenters
+    .slice(1)
+    .map((center, index) => (bodyCenters[index] + center) / 2)
+  const groups = bodyCenters.map(() => [] as PdfSourceRun[])
+  for (const run of [...headerRuns].sort((left, right) => left.x - right.x)) {
+    const center = run.x + run.width / 2
+    if (
+      boundaries.some((boundary) => Math.abs(center - boundary) < 0.002)
+    ) {
+      return null
+    }
+    const boundaryIndex = boundaries.findIndex(
+      (boundary) => center < boundary,
+    )
+    groups[boundaryIndex === -1 ? groups.length - 1 : boundaryIndex].push(run)
+  }
+  if (groups.some((group) => group.length === 0)) return null
+  const cells = groups.map(mergedTableCellRuns)
+  return cells.every(
+    (cell, index) =>
+      Math.abs(cell.x + cell.width / 2 - bodyCenters[index]) <=
+      COLUMN_CENTER_TOLERANCE,
+  )
+    ? cells
+    : null
+}
+
+function exactScopedSourceRegions(
+  regions: PdfPageRegion[],
+  scope: {
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+  },
+) {
+  if (
+    scope.sourceRegionIds.length === 0 ||
+    new Set(scope.sourceRegionIds).size !== scope.sourceRegionIds.length ||
+    scope.sourceLineIds.length === 0 ||
+    new Set(scope.sourceLineIds).size !== scope.sourceLineIds.length
+  ) {
+    return null
+  }
+  const sourceRegionIds = new Set(scope.sourceRegionIds)
+  const sourceLineIds = new Set(scope.sourceLineIds)
+  const sourceRegions = regions.filter((region) =>
+    sourceRegionIds.has(region.id),
+  )
+  if (sourceRegions.length !== sourceRegionIds.size) return null
+  const nonemptySourceLines = sourceRegions.flatMap((region) =>
+    region.lines.filter(
+      (line) =>
+        line.text.trim().length > 0 ||
+        line.runs.some((run) => run.text.trim().length > 0),
+    ),
+  )
+  if (
+    nonemptySourceLines.length !== sourceLineIds.size ||
+    nonemptySourceLines.some((line) => !sourceLineIds.has(line.id))
+  ) {
+    return null
+  }
+  return sourceRegions
+}
+
+// A multi-level header is promoted only when a proved text line-band has:
+// - exactly two header bands;
+// - at least three complete, repeated numeric body rows;
+// - one stub header spanning both header bands;
+// - two or more group headers that uniquely partition every leaf header.
+// This intentionally excludes merged PDF header runs (for example, one run
+// containing several visually separated labels) and nonuniform body grids.
+export function detectHierarchicalTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly { code: string }[]
+  },
+): PdfDetectedTableGrid | null {
+  if (
+    scope.direction !== 'above' ||
+    !scope.evidence.some(
+      (item) => item.code === 'multi-run-tabular-line-band',
+    )
+  ) {
+    return null
+  }
+  const sourceRegions = exactScopedSourceRegions(regions, scope)
+  if (!sourceRegions) return null
+  const rows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines
+        .filter((line) => scope.sourceLineIds.includes(line.id))
+        .map((line) => ({ region, line })),
+    ),
+  )
+  if (rows.length < 5) return null
+
+  const gapThreshold = adaptiveCellGapThreshold(rows)
+  const cellsByRow = rows.map((row) => rowCells(row, gapThreshold))
+  const frequency = new Map<number, number>()
+  for (const cells of cellsByRow) {
+    if (cells.length >= 4 && cells.length <= 12) {
+      frequency.set(cells.length, (frequency.get(cells.length) ?? 0) + 1)
+    }
+  }
+  const columnCount = [...frequency.entries()].sort(
+    (left, right) => right[1] - left[1] || right[0] - left[0],
+  )[0]?.[0]
+  if (!columnCount) return null
+  const bodyStart = cellsByRow.findIndex(
+    (cells, index) =>
+      index === 2 &&
+      cells.length === columnCount &&
+      cellsByRow.length - index >= 3 &&
+      cellsByRow.slice(index).every((row) => row.length === columnCount),
+  )
+  if (bodyStart !== 2) return null
+
+  const superHeader = cellsByRow[0]
+  const bodyRows = cellsByRow.slice(bodyStart)
+  if (
+    superHeader.length < 3 ||
+    superHeader.length >= columnCount ||
+    !superHeader.every((cell) => tableHeaderCell(cell.text)) ||
+    bodyRows.some(
+      (row) =>
+        !tableHeaderCell(row[0].text) ||
+        row.slice(1).some((cell) => !numericTableBodyCell(cell.text)),
+    )
+  ) {
+    return null
+  }
+
+  const bodyStubCenter = median(
+    bodyRows.map((row) => row[0].x + row[0].width / 2),
+  )
+  const bodyCenters = Array.from({ length: columnCount - 1 }, (_, index) =>
+    median(
+      bodyRows.map((row) => {
+        const cell = row[index + 1]
+        return cell.x + cell.width / 2
+      }),
+    ),
+  )
+  const leafHeader = headerCellsForBodyAnchors(rows[1].runs, bodyCenters)
+  if (
+    !leafHeader ||
+    leafHeader.length !== columnCount - 1 ||
+    !leafHeader.every((cell) => tableHeaderCell(cell.text))
+  ) {
+    return null
+  }
+  if (
+    bodyRows.some(
+      (row) =>
+        Math.abs(
+          row[0].x + row[0].width / 2 - bodyStubCenter,
+        ) > COLUMN_CENTER_TOLERANCE ||
+        row
+          .slice(1)
+          .some(
+            (cell, index) =>
+              Math.abs(
+                cell.x + cell.width / 2 - bodyCenters[index],
+              ) > COLUMN_CENTER_TOLERANCE,
+          ),
+    ) ||
+    Math.abs(
+      superHeader[0].x + superHeader[0].width / 2 - bodyStubCenter,
+    ) > COLUMN_CENTER_TOLERANCE ||
+    leafHeader.some(
+      (cell, index) =>
+        Math.abs(cell.x + cell.width / 2 - bodyCenters[index]) >
+        COLUMN_CENTER_TOLERANCE,
+    )
+  ) {
+    return null
+  }
+
+  const groupHeaders = superHeader.slice(1)
+  const groupCenters = groupHeaders.map(
+    (cell) => cell.x + cell.width / 2,
+  )
+  if (
+    groupCenters.some(
+      (center, index) =>
+        index > 0 && center - groupCenters[index - 1] <= 0.06,
+    )
+  ) {
+    return null
+  }
+  const groupBoundaries = groupCenters
+    .slice(1)
+    .map((center, index) => (groupCenters[index] + center) / 2)
+  const groupedColumns = groupHeaders.map(() => [] as number[])
+  for (const [columnIndex, center] of bodyCenters.entries()) {
+    const groupIndex = groupBoundaries.findIndex(
+      (boundary) => center < boundary,
+    )
+    groupedColumns[
+      groupIndex === -1 ? groupHeaders.length - 1 : groupIndex
+    ].push(columnIndex + 1)
+  }
+  if (
+    groupedColumns.some((columns) => columns.length === 0) ||
+    groupedColumns.some((columns, groupIndex) => {
+      const first = columns[0] - 1
+      const last = columns.at(-1)! - 1
+      const expectedCenter = median(bodyCenters.slice(first, last + 1))
+      return Math.abs(groupCenters[groupIndex] - expectedCenter) > 0.045
+    })
+  ) {
+    return null
+  }
+
+  const gridLines: PdfDetectedTableGrid['lines'] = rows.map(
+    (row, rowIndex) => {
+      const cells = rowIndex === 1 ? leafHeader : cellsByRow[rowIndex]
+      const gridCells =
+        rowIndex === 0
+          ? [
+              {
+                run: cells[0],
+                columnIndex: 0,
+                columnSpan: 1,
+                rowSpan: 2,
+              },
+              ...cells.slice(1).map((run, groupIndex) => ({
+                run,
+                columnIndex: groupedColumns[groupIndex][0],
+                columnSpan: groupedColumns[groupIndex].length,
+                rowSpan: 1,
+              })),
+            ]
+          : rowIndex === 1
+            ? cells.map((run, columnIndex) => ({
+                run,
+                columnIndex: columnIndex + 1,
+                columnSpan: 1,
+                rowSpan: 1,
+              }))
+            : cells.map((run, columnIndex) => ({
+                run,
+                columnIndex,
+                columnSpan: 1,
+                rowSpan: 1,
+              }))
+      return {
+        ...row,
+        runs: gridCells.map((cell) => cell.run),
+        cells: gridCells,
+      }
+    },
+  )
+  return {
+    sourceRegions: [...sourceRegions].sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    ),
+    sourceLineIds: [...scope.sourceLineIds],
+    lines: gridLines,
+    columnCount,
+    headerRowCount: 2,
+    evidence: [
+      'complete-bounded-table-scope',
+      'semantic-header-hierarchical-geometry',
+      'repeated-uniform-numeric-body-rows',
+    ],
+  }
 }

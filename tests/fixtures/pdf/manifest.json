@@ -4,18 +4,29 @@
   "fixtures": [
     {
       "file": "born-digital.pdf",
-      "features": ["born-digital-text"]
+      "sha256": "50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907",
+      "features": ["born-digital-text", "visible-author-byline"]
     },
     {
       "file": "sparse-embedded-text.pdf",
       "features": ["sparse-embedded-text", "duplicate-only-ocr"]
     },
     {
+      "file": "internal-named-destination.pdf",
+      "sha256": "2bf82220bb559f9b39d388aa99c5a4011b6788da85a513a6edd62a42b365c56d",
+      "features": [
+        "internal-link-annotation",
+        "pdf-named-destination",
+        "destination-target-geometry"
+      ]
+    },
+    {
       "file": "structured-scientific.pdf",
-      "sha256": "a56c4e07804958c9a6a26290d18993a974a8b771542925ffef336cea2704593a",
+      "sha256": "7a75163906224b0dbf78e28975f6e16ec0e3b7485532995f9a1226b3f1928500",
       "features": [
         "two-columns",
         "spanning-block",
+        "visible-author-byline",
         "complete-source-raster-figures",
         "semantic-table-explicit-header",
         "equation-source-glyph-raster",
@@ -47,7 +58,7 @@
     {
       "file": "pdf-to-epub-fidelity.pdf",
       "contract": "pdf-to-epub-fidelity.contract.json",
-      "contractSha256": "421a0a3d8243117f36d8817f7b299917588e975319868ea8da1821e9ed7fae62",
+      "contractSha256": "25df66ab9b2de16cec42170bd9af0e582af10768e54c4c8f1d71f89c5e777a14",
       "sha256": "23a9f2fee8dd76a20d0db6f7c2c42bcf6633cbea46a34e1cf65a65ec03dcd1d2",
       "features": [
         "unique-title-region",

@@ -1,0 +1,214 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1",
+  "privacy": "public-identities-hashes-governance-metadata-no-source-content-or-local-paths",
+  "corpus": {
+    "artifact": {
+      "path": "benchmarks/pdf/corpus-contract-v1.json",
+      "fileSha256": "6fd631614cbf7f4570a81d0f538631e2061b63ea037a50fad3c3cc9bfaef4c5d"
+    },
+    "canonicalContractSha256": "88eb68eb02bd8b49cc246ac3dda4d9c7e3e9c175ffdb90daa4a464700bfd6889",
+    "frozenSet": {
+      "id": "frozen-10-2026-07-20-v1",
+      "documentCount": 10,
+      "documentIdentitySha256": "4486bb696a8b7b9b2cc853f20510c6c006b4fdfab2883ec9d593b27c17192f67"
+    },
+    "seededRandomSet": {
+      "id": "seeded-random-10-2026-07-21-v1",
+      "documentCount": 10,
+      "documentIdentitySha256": "39a0a70b193aa407f75510b1d6bb29c6b4c9ca3340d91cce16e7db67eec18e03"
+    },
+    "runCount": 20,
+    "distinctDocumentCount": 18,
+    "overlapDocumentIds": ["2405.07987v5", "2507.21509v3"]
+  },
+  "fidelityEval": {
+    "artifact": {
+      "path": "benchmarks/pdf/fidelity-eval-v1.json",
+      "fileSha256": "35d6d3f80eb646470afccaec9fd96b7e2a4c8405d33bcd5db62fcca425989002"
+    },
+    "id": "scholarly-pdf-fidelity-seed-2026-07-v1",
+    "evalSetSha256": "e7072984f8afb438086780b1544eb38ce8be42b10f8f87e7659ed9bd3d6cb2aa",
+    "documentIdentitySha256": "54c3246cfdf14b6700bdb44d7f551496ad223a3426d1f8ab0248cbe624d7802e",
+    "caseIdentitySha256": "d08141d7a90070798e0e735e1c5ccc6afb8b5d7cf7a32dee903872568699bb47",
+    "documentCount": 4,
+    "caseCount": 29,
+    "stratumCount": 15
+  },
+  "observations": {
+    "artifact": {
+      "path": "benchmarks/pdf/fidelity-eval-observations-v1.json",
+      "fileSha256": "65c147dfd19b6a62bd1b33c176e505e0f47e1fb963c5a0ad609296ca18dd9ce8"
+    },
+    "schema": {
+      "path": "docs/schemas/pdf-fidelity-eval-observations.schema.json",
+      "fileSha256": "5cb63bc182712075da5bc4218d26cbc654beec20756eaeabdb46721bef9328a6"
+    },
+    "observationCount": 29
+  },
+  "comparatorReceipt": {
+    "schema": {
+      "path": "docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json",
+      "fileSha256": "bc84513b00cd7f3157ff700fb613ac4718ffc713413626a9a43e17e9979d48ff"
+    },
+    "authority": "performance-provenance-sidecar-never-promotion-authority"
+  },
+  "splits": {
+    "publicCalibration": {
+      "status": "available",
+      "role": "public-development-calibration",
+      "documentCount": 4,
+      "caseCount": 29,
+      "labelsExposed": true,
+      "identitySha256": "e7072984f8afb438086780b1544eb38ce8be42b10f8f87e7659ed9bd3d6cb2aa"
+    },
+    "frozenRegression": {
+      "status": "available",
+      "role": "frozen-whole-paper-regression",
+      "documentCount": 10,
+      "caseCount": 0,
+      "labelsExposed": false,
+      "identitySha256": "4486bb696a8b7b9b2cc853f20510c6c006b4fdfab2883ec9d593b27c17192f67"
+    },
+    "seededRandomDiscovery": {
+      "status": "available",
+      "role": "seeded-random-whole-paper-discovery",
+      "documentCount": 10,
+      "caseCount": 0,
+      "labelsExposed": false,
+      "identitySha256": "39a0a70b193aa407f75510b1d6bb29c6b4c9ca3340d91cce16e7db67eec18e03"
+    },
+    "blindHoldout": {
+      "status": "not-built",
+      "role": "independent-blind-holdout",
+      "documentCount": 0,
+      "caseCount": 0,
+      "reason": "candidate-independent-holdout-not-yet-collected"
+    },
+    "judgeTrain": {
+      "status": "not-built",
+      "role": "llm-judge-train",
+      "documentCount": 0,
+      "caseCount": 0,
+      "reason": "no-subjective-judge-is-authorized"
+    },
+    "judgeDev": {
+      "status": "not-built",
+      "role": "llm-judge-dev",
+      "documentCount": 0,
+      "caseCount": 0,
+      "reason": "no-subjective-judge-is-authorized"
+    },
+    "judgeTest": {
+      "status": "not-built",
+      "role": "llm-judge-test",
+      "documentCount": 0,
+      "caseCount": 0,
+      "reason": "no-subjective-judge-is-authorized"
+    }
+  },
+  "objectiveEvaluators": [
+    {
+      "id": "source-byte-identity",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "exact-byte-length-and-sha256-match",
+      "implementation": ["tools/pdf-corpus-contract.mjs"]
+    },
+    {
+      "id": "frozen-corpus-selection",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "canonical-document-list-and-seeded-selection-match",
+      "implementation": ["tools/pdf-corpus-contract.mjs"]
+    },
+    {
+      "id": "exact-classification",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "all-target-labels-exact-and-no-extra-targets",
+      "implementation": ["tools/pdf-fidelity-eval.mjs"]
+    },
+    {
+      "id": "complete-label-scoped-detection-iou",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "all-same-label-page-objects-match-at-iou-0.8",
+      "implementation": ["tools/pdf-fidelity-eval.mjs"]
+    },
+    {
+      "id": "all-pairs-reading-order",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "all-expected-order-pairs-present-and-no-extra-items",
+      "implementation": ["tools/pdf-fidelity-eval.mjs"]
+    },
+    {
+      "id": "exact-typed-relationship",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "typed-edge-precision-and-recall-both-one",
+      "implementation": ["tools/pdf-fidelity-eval.mjs"]
+    },
+    {
+      "id": "whole-paper-completeness",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "publication-readiness-gate-has-no-blocking-obligations",
+      "implementation": ["tools/pdf-corpus-audit.mjs"]
+    },
+    {
+      "id": "profile-artifact-validity",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "internal-epub-validation-and-epubcheck-both-pass",
+      "implementation": ["tools/pdf-private-fidelity.mjs"]
+    },
+    {
+      "id": "same-input-repeatability",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "canonical-graph-and-profile-artifact-identities-repeat",
+      "implementation": ["tools/pdf-benchmark-compare.mjs"]
+    }
+  ],
+  "subjectiveJudgePolicy": {
+    "status": "not-implemented",
+    "permittedScope": "subjective-authored-interpretation-only-objective-invariants-remain-code-evaluated",
+    "requiredValidationMetrics": ["TPR", "TNR"],
+    "minimumHumanPassLabels": 50,
+    "minimumHumanFailLabels": 50,
+    "splitLeakagePermitted": false
+  },
+  "dataGovernance": {
+    "publicPaperInputs": {
+      "licenseStatus": "not-asserted-by-this-benchmark",
+      "redistribution": "pdf-bytes-excluded-from-repository",
+      "storage": "owner-local-hash-verified",
+      "operatorRequirement": "obtain-and-use-each-paper-under-its-source-terms"
+    },
+    "repositoryFixtures": {
+      "manifest": "tests/fixtures/pdf/manifest.json",
+      "license": "CC0-1.0"
+    },
+    "privateInputs": {
+      "storage": "owner-local-only",
+      "excludedFromReceipts": [
+        "pdf-bytes",
+        "source-prose",
+        "local-paths",
+        "screenshots",
+        "raw-model-payloads"
+      ]
+    }
+  },
+  "taxonomySaturation": {
+    "status": "not-saturated",
+    "labeledBoundedTraceCount": 29,
+    "targetApproximateTraceCount": 100,
+    "requiredFinalNoNewClassWindow": 20,
+    "observedFinalNoNewClassWindow": 0,
+    "robustnessRunCount": 20,
+    "distinctRobustnessDocumentCount": 18
+  }
+}

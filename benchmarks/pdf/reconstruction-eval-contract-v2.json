@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "2.0.0",
+  "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v2",
+  "privacy": "public-identities-hashes-governance-metadata-no-source-content-or-local-paths",
+  "extends": {
+    "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v1",
+    "path": "benchmarks/pdf/reconstruction-eval-contract-v1.json",
+    "fileSha256": "a9710abfd82f9ae9e301ed04752e877b3425d98a3f6e8a02649bc0a150068e3f"
+  },
+  "additiveFidelityEval": {
+    "artifact": {
+      "path": "benchmarks/pdf/fidelity-eval-v2.json",
+      "fileSha256": "7420fc497895a058d24592b7c5164ded261846a5da4fed2f014c8a52cbafccf9"
+    },
+    "schema": {
+      "path": "docs/schemas/pdf-fidelity-eval-set-v2.schema.json",
+      "fileSha256": "82e9a977c71f17a622c1aa6d662e3cdcd38343a34577ba6c6af6a54edfe5e01b"
+    },
+    "id": "scholarly-pdf-fidelity-additions-2026-07-v2",
+    "evalSetSha256": "9671fdc99e78f027ac8547bd30628c6f7186f40ca12024edb173d9c0c9ed15f1",
+    "documentIdentitySha256": "c87dc2adcb180f49135a2e3c41e7ad528060d0c93eb2fcb35161e382a146b781",
+    "caseIdentitySha256": "098450e4aba41009c012460c0f13d67c0e89bf9561325ae7a74a45ee17922903",
+    "documentCount": 2,
+    "caseCount": 3,
+    "stratumCount": 3
+  },
+  "additiveObservations": {
+    "artifact": {
+      "path": "benchmarks/pdf/fidelity-eval-observations-v2.json",
+      "fileSha256": "01f0a8022c06b18c79c8b7ab7258d72deff28b5dfeef9574425135a25ff1ed64"
+    },
+    "schema": {
+      "path": "docs/schemas/pdf-fidelity-eval-observations-v2.schema.json",
+      "fileSha256": "842a1c4d5e314a1649da9436370eb934e525d9775b2e5b03c6aa60d7ef6b7e6a"
+    },
+    "observationCount": 3,
+    "selectionStatus": "complaint-driven-candidate-output-consulted-source-pdf-labelled"
+  },
+  "aggregatePublicCalibration": {
+    "baseCaseCount": 29,
+    "additiveCaseCount": 3,
+    "totalCaseCount": 32,
+    "distinctDocumentCount": 4,
+    "stratumCount": 18,
+    "labelsExposed": true,
+    "identityBasis": "ordered-v1-and-v2-eval-set-sha256s",
+    "identitySha256": "71ea4f65cebb75722097b87c56c623e85efae2d2d5db39c01cf564562953f791"
+  },
+  "robustnessEvidence": {
+    "runCount": 20,
+    "distinctDocumentCount": 18,
+    "overlapDocumentCount": 2,
+    "role": "whole-paper-discovery-and-regression-not-labelled-holdout"
+  },
+  "splitStatus": {
+    "publicCalibration": "available-labels-exposed",
+    "blindHoldout": "not-built",
+    "judgeTrain": "not-built-no-subjective-judge-authorized",
+    "judgeDev": "not-built-no-subjective-judge-authorized",
+    "judgeTest": "not-built-no-subjective-judge-authorized"
+  },
+  "objectiveEvaluators": [
+    {
+      "id": "per-target-source-location-integrity",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "every-v2-target-has-an-in-range-source-page-and-normalized-source-box",
+      "implementation": ["tools/pdf-fidelity-eval.mjs"]
+    },
+    {
+      "id": "cross-page-all-pairs-reading-order",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "all-expected-order-pairs-across-per-target-source-pages-present-with-no-extra-items",
+      "implementation": ["tools/pdf-fidelity-eval.mjs"]
+    },
+    {
+      "id": "exact-classification",
+      "kind": "code",
+      "outcome": "binary-pass-fail",
+      "criterion": "all-target-labels-exact-and-no-extra-targets",
+      "implementation": ["tools/pdf-fidelity-eval.mjs"]
+    }
+  ],
+  "comparatorReceipt": {
+    "schema": {
+      "path": "docs/schemas/pdf-fidelity-comparator-run-receipt.schema.json",
+      "fileSha256": "bc84513b00cd7f3157ff700fb613ac4718ffc713413626a9a43e17e9979d48ff"
+    },
+    "authority": "performance-provenance-sidecar-never-promotion-authority"
+  },
+  "taxonomySaturation": {
+    "status": "not-saturated",
+    "labeledBoundedTraceCount": 32,
+    "targetApproximateTraceCount": 100,
+    "requiredFinalNoNewClassWindow": 20,
+    "observedFinalNoNewClassWindow": 0,
+    "robustnessRunCount": 20,
+    "distinctRobustnessDocumentCount": 18
+  },
+  "coverageGaps": [
+    {
+      "id": "profile-wide-visual-legibility",
+      "status": "not-labelled",
+      "reason": "model-neutral-predictions-do-not-bind-an-exact-profile-render-or-layout-measurements",
+      "requiredEvidence": [
+        "exact-official-profile-version-and-viewport",
+        "rendered-artifact-sha256",
+        "scroll-width-and-client-width",
+        "minimum-cell-inline-size",
+        "clipping-and-overflow-assertion"
+      ]
+    }
+  ]
+}

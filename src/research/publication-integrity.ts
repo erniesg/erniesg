@@ -1,3 +1,4 @@
+import type { PdfNoteRelationship } from './import-types'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 export type CanonicalTextIntegrityIssue = {
@@ -15,7 +16,49 @@ export type InternalReferenceIntegrityIssue = {
   sourceId: string
   targetId: string
   relationship:
-    'figure-caption' | 'note-reference' | 'note-backlink' | 'citation-target'
+    | 'figure-caption'
+    | 'note-reference'
+    | 'note-backlink'
+    | 'note-anchor'
+    | 'note-source-anchor'
+    | 'note-orphan'
+    | 'citation-target'
+    | 'cross-reference-target'
+    | 'semantic-reference-text'
+  detail?:
+    | 'duplicate-rendered-note-reference'
+    | 'duplicate-note-backlink'
+    | 'missing-note-relationship'
+    | 'missing-rendered-note-reference'
+    | 'note-target-mismatch'
+    | 'note-anchor-mismatch'
+    | 'invalid-source-note-anchor'
+    | 'duplicate-canonical-note-anchor'
+    | 'overlapping-canonical-note-anchor'
+    | 'duplicate-source-note-anchor'
+    | 'overlapping-source-note-anchor'
+    | 'published-orphan-footnote'
+    | 'unbounded-scholarly-reference-text'
+}
+
+const SCHOLARLY_REFERENCE_PREFIX =
+  /^(?:(?:fig(?:ure)?s?|tables?|sections?|secs?|appendix|appendices|eq(?:uation)?s?)\.?\s+|§\s*)/iu
+const SCHOLARLY_REFERENCE_CONNECTOR = String.raw`(?:\s*(?:[,;]|\b(?:and|or)\b|[\u2013\u2014-])\s*)`
+const CANONICAL_UPPER_ROMAN_IDENTIFIER = String.raw`(?=[IVXLCDM])M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})`
+const SCHOLARLY_REFERENCE_ATOM = String.raw`(?:[A-Za-z]?\d+(?:\.\d+)*(?:[A-Za-z])?|${CANONICAL_UPPER_ROMAN_IDENTIFIER}|[A-Za-z](?:\.\d+)*)`
+const SCHOLARLY_REFERENCE_IDENTIFIER = String.raw`(?:\(${SCHOLARLY_REFERENCE_ATOM}(?:${SCHOLARLY_REFERENCE_CONNECTOR}${SCHOLARLY_REFERENCE_ATOM})*\)|${SCHOLARLY_REFERENCE_ATOM})`
+const BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS = new RegExp(
+  String.raw`^${SCHOLARLY_REFERENCE_IDENTIFIER}(?:${SCHOLARLY_REFERENCE_CONNECTOR}${SCHOLARLY_REFERENCE_IDENTIFIER})*$`,
+  'u',
+)
+
+export function isBoundedScholarlyReferenceText(value: string) {
+  const trimmed = value.trim()
+  const prefix = trimmed.match(SCHOLARLY_REFERENCE_PREFIX)?.[0]
+  return Boolean(
+    prefix &&
+      BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS.test(trimmed.slice(prefix.length)),
+  )
 }
 
 function isXml10Character(codePoint: number) {
@@ -112,15 +155,29 @@ export function renderableAuthorNoteReferences(paper: ResearchPaper) {
   )
 }
 
-export function internalReferenceIntegrityIssues(
-  paper: ResearchPaper,
-): InternalReferenceIntegrityIssue[] {
-  const issues: InternalReferenceIntegrityIssue[] = []
-  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
-  const renderedNoteReferences = [
+type RenderedNoteReference =
+  | {
+      kind: 'node'
+      id: string
+      target: string
+      nodeId: string
+      start: number
+      end: number
+    }
+  | {
+      kind: 'author'
+      id: string
+      target: string
+      author: string
+    }
+
+function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
+  return [
     ...renderableAuthorNoteReferences(paper).map((reference) => ({
+      kind: 'author' as const,
       id: reference.id,
       target: reference.target,
+      author: reference.author,
     })),
     ...paper.nodes.flatMap((node) =>
       'noteReferences' in node
@@ -129,15 +186,223 @@ export function internalReferenceIntegrityIssues(
               validNoteReferenceRange(node.text, reference),
             )
             .map((reference) => ({
+              kind: 'node' as const,
               id: reference.id,
               target: reference.target,
+              nodeId: node.id,
+              start: reference.start,
+              end: reference.end,
             }))
         : [],
     ),
   ]
-  const noteTargetsByReferenceId = new Map(
-    renderedNoteReferences.map((reference) => [reference.id, reference.target]),
+}
+
+function groupById<T extends { id: string }>(values: readonly T[]) {
+  const grouped = new Map<string, T[]>()
+  for (const value of values) {
+    const matches = grouped.get(value.id) ?? []
+    matches.push(value)
+    grouped.set(value.id, matches)
+  }
+  return grouped
+}
+
+type NoteAnchorSpan = {
+  id: string
+  ownerId: string
+  start: number
+  end: number
+}
+
+function noteAnchorCollisionIssues(
+  spans: readonly NoteAnchorSpan[],
+  relationship: 'note-anchor' | 'note-source-anchor',
+  duplicateDetail:
+    'duplicate-canonical-note-anchor' | 'duplicate-source-note-anchor',
+  overlapDetail:
+    'overlapping-canonical-note-anchor' | 'overlapping-source-note-anchor',
+) {
+  const issues: InternalReferenceIntegrityIssue[] = []
+  const spansByOwner = new Map<string, NoteAnchorSpan[]>()
+  for (const span of spans) {
+    const ownerSpans = spansByOwner.get(span.ownerId) ?? []
+    ownerSpans.push(span)
+    spansByOwner.set(span.ownerId, ownerSpans)
+  }
+
+  for (const ownerSpans of spansByOwner.values()) {
+    const ordered = [...ownerSpans].sort(
+      (left, right) =>
+        left.start - right.start ||
+        left.end - right.end ||
+        left.id.localeCompare(right.id),
+    )
+    for (const [index, left] of ordered.entries()) {
+      for (const right of ordered.slice(index + 1)) {
+        if (right.start >= left.end) break
+        const duplicate = left.start === right.start && left.end === right.end
+        issues.push({
+          code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+          sourceId: right.id,
+          targetId: left.id,
+          relationship,
+          detail: duplicate ? duplicateDetail : overlapDetail,
+        })
+      }
+    }
+  }
+
+  return issues
+}
+
+function semanticNoteRelationshipIntegrityIssues(
+  references: readonly RenderedNoteReference[],
+  noteRelationships: readonly PdfNoteRelationship[],
+) {
+  const issues: InternalReferenceIntegrityIssue[] = []
+  const referencesById = groupById(references)
+  const matchedRelationships = noteRelationships.filter(
+    (relationship) => relationship.status === 'matched',
   )
+  const matchedRelationshipsById = groupById(matchedRelationships)
+
+  for (const [id, relationships] of matchedRelationshipsById) {
+    const matchingReferences = referencesById.get(id) ?? []
+    if (matchingReferences.length !== 1) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: id,
+        targetId: relationships[0].targetNoteId ?? id,
+        relationship: 'note-reference',
+        detail: 'missing-rendered-note-reference',
+      })
+      continue
+    }
+    if (relationships.length !== 1) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: id,
+        targetId: matchingReferences[0].target,
+        relationship: 'note-reference',
+        detail: 'missing-note-relationship',
+      })
+      continue
+    }
+
+    const relationship = relationships[0]
+    const reference = matchingReferences[0]
+    if (relationship.targetNoteId !== reference.target) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: relationship.id,
+        targetId: relationship.targetNoteId ?? reference.target,
+        relationship: 'note-reference',
+        detail: 'note-target-mismatch',
+      })
+    }
+
+    const anchor = relationship.canonicalAnchor
+    const exactAnchor =
+      anchor?.kind === 'node' && reference.kind === 'node'
+        ? anchor.nodeId === reference.nodeId &&
+          anchor.start === reference.start &&
+          anchor.end === reference.end
+        : anchor?.kind === 'author' && reference.kind === 'author'
+          ? anchor.author === reference.author
+          : false
+    if (!exactAnchor) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: relationship.id,
+        targetId:
+          anchor?.kind === 'node'
+            ? anchor.nodeId
+            : anchor?.kind === 'author'
+              ? anchor.author
+              : reference.id,
+        relationship: 'note-anchor',
+        detail: 'note-anchor-mismatch',
+      })
+    }
+  }
+
+  for (const reference of references) {
+    if ((matchedRelationshipsById.get(reference.id) ?? []).length !== 1) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: reference.id,
+        targetId: reference.target,
+        relationship: 'note-reference',
+        detail: 'missing-note-relationship',
+      })
+    }
+  }
+
+  for (const relationship of matchedRelationships) {
+    if (
+      relationship.referenceStart < 0 ||
+      relationship.referenceStart >= relationship.referenceEnd
+    ) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: relationship.id,
+        targetId: relationship.referenceRegionId,
+        relationship: 'note-source-anchor',
+        detail: 'invalid-source-note-anchor',
+      })
+    }
+  }
+
+  issues.push(
+    ...noteAnchorCollisionIssues(
+      matchedRelationships.flatMap((relationship) =>
+        relationship.canonicalAnchor?.kind === 'node'
+          ? [
+              {
+                id: relationship.id,
+                ownerId: relationship.canonicalAnchor.nodeId,
+                start: relationship.canonicalAnchor.start,
+                end: relationship.canonicalAnchor.end,
+              },
+            ]
+          : [],
+      ),
+      'note-anchor',
+      'duplicate-canonical-note-anchor',
+      'overlapping-canonical-note-anchor',
+    ),
+    ...noteAnchorCollisionIssues(
+      matchedRelationships.flatMap((relationship) =>
+        relationship.referenceStart >= 0 &&
+        relationship.referenceStart < relationship.referenceEnd
+          ? [
+              {
+                id: relationship.id,
+                ownerId: relationship.referenceRegionId,
+                start: relationship.referenceStart,
+                end: relationship.referenceEnd,
+              },
+            ]
+          : [],
+      ),
+      'note-source-anchor',
+      'duplicate-source-note-anchor',
+      'overlapping-source-note-anchor',
+    ),
+  )
+
+  return issues
+}
+
+export function internalReferenceIntegrityIssues(
+  paper: ResearchPaper,
+  noteRelationships?: readonly PdfNoteRelationship[],
+): InternalReferenceIntegrityIssue[] {
+  const issues: InternalReferenceIntegrityIssue[] = []
+  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
+  const renderedReferences = renderedNoteReferences(paper)
+  const referencesById = groupById(renderedReferences)
 
   for (const node of paper.nodes) {
     if (node.type === 'figure') {
@@ -155,7 +420,24 @@ export function internalReferenceIntegrityIssues(
         node.type === 'figure' ? (node.sourceText ?? '') : node.text
       for (const run of node.inlineRuns ?? []) {
         if (
-          run.semanticRole !== 'citation' ||
+          run.semanticRole === 'cross-reference' &&
+          run.relationshipId &&
+          run.start >= 0 &&
+          run.start < run.end &&
+          run.end <= inlineText.length &&
+          !isBoundedScholarlyReferenceText(inlineText.slice(run.start, run.end))
+        ) {
+          issues.push({
+            code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+            sourceId: run.relationshipId,
+            targetId: run.targetIds?.[0] ?? node.id,
+            relationship: 'semantic-reference-text',
+            detail: 'unbounded-scholarly-reference-text',
+          })
+        }
+        if (
+          (run.semanticRole !== 'citation' &&
+            run.semanticRole !== 'cross-reference') ||
           !run.targetIds?.length ||
           run.start < 0 ||
           run.start >= run.end ||
@@ -169,15 +451,32 @@ export function internalReferenceIntegrityIssues(
               code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
               sourceId: run.relationshipId ?? node.id,
               targetId,
-              relationship: 'citation-target',
+              relationship:
+                run.semanticRole === 'citation'
+                  ? 'citation-target'
+                  : 'cross-reference-target',
             })
           }
         }
       }
     }
     if (node.type !== 'footnote') continue
+    const backlinkCounts = new Map<string, number>()
     for (const backlink of node.relationships.backlinks) {
-      if (noteTargetsByReferenceId.get(backlink) !== node.id) {
+      backlinkCounts.set(backlink, (backlinkCounts.get(backlink) ?? 0) + 1)
+    }
+    for (const [backlink, count] of backlinkCounts) {
+      if (count !== 1) {
+        issues.push({
+          code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+          sourceId: node.id,
+          targetId: backlink,
+          relationship: 'note-backlink',
+          detail: 'duplicate-note-backlink',
+        })
+      }
+      const references = referencesById.get(backlink) ?? []
+      if (references.length !== 1 || references[0].target !== node.id) {
         issues.push({
           code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
           sourceId: node.id,
@@ -186,14 +485,41 @@ export function internalReferenceIntegrityIssues(
         })
       }
     }
+    if (
+      paper.status === 'published' &&
+      node.relationships.backlinks.length === 0
+    ) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: node.id,
+        targetId: node.id,
+        relationship: 'note-orphan',
+        detail: 'published-orphan-footnote',
+      })
+    }
   }
 
-  for (const reference of renderedNoteReferences) {
+  for (const [id, references] of referencesById) {
+    if (references.length !== 1) {
+      issues.push({
+        code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+        sourceId: id,
+        targetId: references[0].target,
+        relationship: 'note-reference',
+        detail: 'duplicate-rendered-note-reference',
+      })
+    }
+  }
+
+  for (const reference of renderedReferences) {
     const target = nodesById.get(reference.target)
-    if (
-      target?.type !== 'footnote' ||
-      !target.relationships.backlinks.includes(reference.id)
-    ) {
+    const backlinkCount =
+      target?.type === 'footnote'
+        ? target.relationships.backlinks.filter(
+            (backlink) => backlink === reference.id,
+          ).length
+        : 0
+    if (target?.type !== 'footnote' || backlinkCount !== 1) {
       issues.push({
         code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
         sourceId: reference.id,
@@ -203,10 +529,42 @@ export function internalReferenceIntegrityIssues(
     }
   }
 
+  if (noteRelationships !== undefined) {
+    issues.push(
+      ...semanticNoteRelationshipIntegrityIssues(
+        renderedReferences,
+        noteRelationships,
+      ),
+    )
+  } else {
+    issues.push(
+      ...noteAnchorCollisionIssues(
+        renderedReferences.flatMap((reference) =>
+          reference.kind === 'node'
+            ? [
+                {
+                  id: reference.id,
+                  ownerId: reference.nodeId,
+                  start: reference.start,
+                  end: reference.end,
+                },
+              ]
+            : [],
+        ),
+        'note-anchor',
+        'duplicate-canonical-note-anchor',
+        'overlapping-canonical-note-anchor',
+      ),
+    )
+  }
+
   return issues
 }
 
-export function assertPublicationIntegrity(paper: ResearchPaper) {
+export function assertPublicationIntegrity(
+  paper: ResearchPaper,
+  noteRelationships?: readonly PdfNoteRelationship[],
+) {
   const textIssues = canonicalTextIntegrityIssues(paper)
   if (textIssues.length > 0) {
     const first = textIssues[0]
@@ -214,11 +572,14 @@ export function assertPublicationIntegrity(paper: ResearchPaper) {
       `EPUB_TEXT_SANITIZATION_LOSS: ${textIssues.length} canonical text field${textIssues.length === 1 ? '' : 's'} contain forbidden XML code points or Unicode replacement glyphs; first affected field is ${first.nodeId}.${first.field}.`,
     )
   }
-  const referenceIssues = internalReferenceIntegrityIssues(paper)
+  const referenceIssues = internalReferenceIntegrityIssues(
+    paper,
+    noteRelationships,
+  )
   if (referenceIssues.length > 0) {
     const first = referenceIssues[0]
     throw new Error(
-      `DANGLING_EPUB_INTERNAL_REFERENCE: ${referenceIssues.length} canonical dangling internal reference${referenceIssues.length === 1 ? '' : 's'} cannot resolve; first affected relationship is ${first.relationship} from ${first.sourceId} to ${first.targetId}.`,
+      `DANGLING_EPUB_INTERNAL_REFERENCE: ${referenceIssues.length} canonical dangling internal reference${referenceIssues.length === 1 ? '' : 's'} cannot resolve; first affected relationship is ${first.relationship}${first.detail ? ` (${first.detail})` : ''} from ${first.sourceId} to ${first.targetId}.`,
     )
   }
 }

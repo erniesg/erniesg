@@ -67,6 +67,19 @@ type StudioState =
     }
   | { status: 'error'; code: string; message: string }
 
+type ActiveProfileBuild = {
+  controller: AbortController
+  profileId: PreviewProfileId
+}
+
+type ProfileBuildIssue = {
+  controller: AbortController
+  profileId: PreviewProfileId
+  message: string
+}
+
+type ProfileBuildIssues = Partial<Record<PreviewProfileId, ProfileBuildIssue>>
+
 const initialProgress: DocumentImportProgress = {
   phase: 'opening',
   completed: 0,
@@ -107,20 +120,17 @@ function PdfPageRaster({ file, page }: { file: File; page: number }) {
   useEffect(() => {
     let active = true
     let loadingTask:
-      | ReturnType<(typeof import('pdfjs-dist'))['getDocument']>
-      | undefined
+      ReturnType<(typeof import('pdfjs-dist'))['getDocument']> | undefined
     let renderTask:
-      | { cancel: () => void; promise: Promise<unknown> }
-      | undefined
+      { cancel: () => void; promise: Promise<unknown> } | undefined
     setStatus('loading')
     void (async () => {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer())
         if (!active) return
         const pdfjs = await import('pdfjs-dist')
-        const { default: pdfWorkerUrl } = await import(
-          'pdfjs-dist/build/pdf.worker.min.mjs?url'
-        )
+        const { default: pdfWorkerUrl } =
+          await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
         loadingTask = pdfjs.getDocument({
           data: bytes,
@@ -596,10 +606,56 @@ function PdfDiagnosticReview({
   )
 }
 
-function importErrorCode(error: unknown) {
+const STALE_MODULE_RELOAD_KEY = 'srt:stale-module-reload-signature'
+const STALE_MODULE_MESSAGE =
+  'The converter changed while this tab was open. Reload the studio once, then choose the same paper again.'
+
+function errorMessage(error: unknown) {
+  return error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : ''
+}
+
+function isStaleApplicationModuleError(error: unknown) {
+  const message = errorMessage(error)
+  return /(?:failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed|outdated optimize dep)/iu.test(
+    message,
+  )
+}
+
+function staleApplicationModuleSignature(error: unknown) {
+  if (!isStaleApplicationModuleError(error)) return undefined
+  const message =
+    errorMessage(error).trim().replaceAll(/\s+/gu, ' ').toLocaleLowerCase()
+  return message || undefined
+}
+
+export function shouldReloadStaleApplicationModule(
+  error: unknown,
+  previousReloadSignature?: string,
+) {
+  const signature = staleApplicationModuleSignature(error)
+  const previous = previousReloadSignature
+    ?.trim()
+    .replaceAll(/\s+/gu, ' ')
+    .toLocaleLowerCase()
+  return Boolean(signature && signature !== previous)
+}
+
+export function importErrorCode(error: unknown) {
+  if (isStaleApplicationModuleError(error)) return 'STALE_APPLICATION_MODULE'
   return error instanceof PdfImportError || error instanceof DocxImportError
     ? error.code
     : 'UNEXPECTED_ERROR'
+}
+
+export function importErrorMessage(error: unknown) {
+  if (isStaleApplicationModuleError(error)) return STALE_MODULE_MESSAGE
+  return error instanceof Error
+    ? error.message
+    : 'The local conversion failed unexpectedly.'
 }
 
 function importWasCancelled(error: unknown) {
@@ -633,17 +689,55 @@ export default function PublicationImporter({
     useState<PreviewProfileId>('mobile')
   const [previewReadyArtifactKey, setPreviewReadyArtifactKey] =
     useState<string>()
+  const [profileBuilds, setProfileBuilds] = useState<ActiveProfileBuild[]>([])
+  const [profileBuildIssues, setProfileBuildIssues] =
+    useState<ProfileBuildIssues>({})
   const [pendingDecisionFile, setPendingDecisionFile] =
     useState<HumanDecisionFile>()
   const [decisionError, setDecisionError] = useState<string>()
   const input = useRef<HTMLInputElement>(null)
   const decisionInput = useRef<HTMLInputElement>(null)
   const activeImport = useRef<AbortController>()
+  const activeProfileBuilds = useRef(new Set<ActiveProfileBuild>())
+
+  const reloadForStaleApplicationModule = (error: unknown) => {
+    if (typeof window === 'undefined') return false
+    const signature = staleApplicationModuleSignature(error)
+    if (!signature) return false
+    let previousReloadSignature: string | undefined
+    try {
+      previousReloadSignature =
+        window.sessionStorage.getItem(STALE_MODULE_RELOAD_KEY) ?? undefined
+    } catch {
+      previousReloadSignature = undefined
+    }
+    if (
+      !shouldReloadStaleApplicationModule(error, previousReloadSignature)
+    ) {
+      return false
+    }
+    try {
+      window.sessionStorage.setItem(STALE_MODULE_RELOAD_KEY, signature)
+    } catch {
+      // A blocked session store must not prevent the one safe recovery reload.
+    }
+    window.location.reload()
+    return true
+  }
 
   useEffect(() => {
     setIsHydrated(true)
+    let active = true
+    void import('../../research/pdf')
+      .then(({ warmBrowserPdfRuntime }) => warmBrowserPdfRuntime())
+      .catch((error: unknown) => {
+        if (!active || reloadForStaleApplicationModule(error)) return
+        showError(error)
+      })
     return () => {
+      active = false
       activeImport.current?.abort()
+      activeProfileBuilds.current.clear()
     }
   }, [])
 
@@ -651,15 +745,17 @@ export default function PublicationImporter({
     setState({
       status: 'error',
       code: importErrorCode(error),
-      message:
-        error instanceof Error
-          ? error.message
-          : 'The local conversion failed unexpectedly.',
+      message: importErrorMessage(error),
     })
   }
 
   const nextImport = () => {
     activeImport.current?.abort()
+    for (const build of activeProfileBuilds.current) {
+      activeProfileBuilds.current.delete(build)
+    }
+    setProfileBuilds([])
+    setProfileBuildIssues({})
     const controller = new AbortController()
     activeImport.current = controller
     return controller
@@ -687,40 +783,10 @@ export default function PublicationImporter({
       ...(baseResult ? { baseResult } : {}),
       ...(decisionFile ? { decisionFile } : {}),
     }
-    if (!result.readiness.ready) {
-      setState({ status: 'review-required', ...completed })
-      if (isPdfReconstruction(result)) {
-        try {
-          const epubs = await Promise.all([
-            buildReadableEpub(result.paper, result, getTargetProfile('mobile')),
-            buildReadableEpub(
-              result.paper,
-              result,
-              getTargetProfile('paperPro'),
-            ),
-            buildReadableEpub(
-              result.paper,
-              result,
-              getTargetProfile('paperProMove'),
-            ),
-          ])
-          if (isCurrent()) {
-            setState({ status: 'review-required', ...completed, epubs })
-          }
-        } catch {
-          // Missing-page text still requires OCR before a readable fallback.
-        }
-      }
-      return
-    }
-    setState({ status: 'ready', ...completed })
-    const epubs = await Promise.all([
-      buildEpub(result.paper, result, getTargetProfile('mobile')),
-      buildEpub(result.paper, result, getTargetProfile('paperPro')),
-      buildEpub(result.paper, result, getTargetProfile('paperProMove')),
-    ])
-    if (!isCurrent()) return
-    setState({ status: 'ready', ...completed, epubs })
+    setState({
+      status: result.readiness.ready ? 'ready' : 'review-required',
+      ...completed,
+    })
   }
 
   const processFile = async (file?: File, controller = nextImport()) => {
@@ -729,6 +795,7 @@ export default function PublicationImporter({
       activeImport.current === controller && !controller.signal.aborted
     setSelectedProfileId('mobile')
     setPreviewReadyArtifactKey(undefined)
+    setProfileBuildIssues({})
     setState({
       status: 'processing',
       fileName: file.name,
@@ -761,9 +828,8 @@ export default function PublicationImporter({
             languageMode:
               ocrLanguage === 'auto' ? 'automatic-fallback' : 'explicit',
             async createSession(options) {
-              const { createBrowserOcrSession } = await import(
-                '../../research/pdf-ocr-browser'
-              )
+              const { createBrowserOcrSession } =
+                await import('../../research/pdf-ocr-browser')
               return createBrowserOcrSession(options)
             },
           },
@@ -785,6 +851,7 @@ export default function PublicationImporter({
     } catch (error) {
       if (activeImport.current !== controller) return
       if (importWasCancelled(error)) return
+      if (reloadForStaleApplicationModule(error)) return
       showError(error)
     }
   }
@@ -805,6 +872,7 @@ export default function PublicationImporter({
     } catch (error) {
       if (activeImport.current !== controller) return
       if (importWasCancelled(error)) return
+      if (reloadForStaleApplicationModule(error)) return
       showError(error)
     }
   }
@@ -825,6 +893,8 @@ export default function PublicationImporter({
     setDecisionError(undefined)
     setSelectedProfileId('mobile')
     setPreviewReadyArtifactKey(undefined)
+    setProfileBuilds([])
+    setProfileBuildIssues({})
     setState({ status: 'idle' })
   }
 
@@ -887,6 +957,96 @@ export default function PublicationImporter({
     }
   }
 
+  useEffect(() => {
+    if (state.status !== 'ready' && state.status !== 'review-required') return
+    const controller = activeImport.current
+    if (
+      !controller ||
+      controller.signal.aborted ||
+      [...activeProfileBuilds.current].some(
+        (build) =>
+          build.controller === controller &&
+          build.profileId === selectedProfileId,
+      )
+    ) {
+      return
+    }
+    if (
+      state.epubs &&
+      selectCurrentProfileEpub(state.epubs, selectedProfileId)
+    ) {
+      return
+    }
+    if (profileBuildIssues[selectedProfileId]?.controller === controller) {
+      return
+    }
+    if (!state.result.readiness.ready && !isPdfReconstruction(state.result)) {
+      return
+    }
+
+    const result = state.result
+    const profileId = selectedProfileId
+    const isCurrent = () =>
+      activeImport.current === controller && !controller.signal.aborted
+    const activeBuild: ActiveProfileBuild = {
+      controller,
+      profileId,
+    }
+    activeProfileBuilds.current.add(activeBuild)
+    setProfileBuilds((current) => [...current, activeBuild])
+    setProfileBuildIssues((current) => {
+      if (!current[profileId]) return current
+      const next = { ...current }
+      delete next[profileId]
+      return next
+    })
+    void Promise.resolve().then(async () => {
+      try {
+        const profile = getTargetProfile(profileId)
+        const epub = result.readiness.ready
+          ? await buildEpub(result.paper, result, profile)
+          : isPdfReconstruction(result)
+            ? await buildReadableEpub(result.paper, result, profile)
+            : undefined
+        if (!epub) return
+        if (!isCurrent()) return
+        setState((current) => {
+          if (
+            (current.status !== 'ready' &&
+              current.status !== 'review-required') ||
+            current.result !== result
+          ) {
+            return current
+          }
+          const epubs = current.epubs ?? []
+          if (selectCurrentProfileEpub(epubs, profileId)) return current
+          return { ...current, epubs: [...epubs, epub] }
+        })
+      } catch (error) {
+        if (!isCurrent()) return
+        setProfileBuildIssues((current) => ({
+          ...current,
+          [profileId]: {
+            controller,
+            profileId,
+            message:
+              error instanceof Error
+                ? error.message
+                : result.readiness.ready
+                  ? 'The local EPUB build failed unexpectedly.'
+                  : 'The readable EPUB is unavailable until review is complete.',
+          },
+        }))
+      } finally {
+        if (activeProfileBuilds.current.delete(activeBuild)) {
+          setProfileBuilds((current) =>
+            current.filter((build) => build !== activeBuild),
+          )
+        }
+      }
+    })
+  }, [profileBuildIssues, profileBuilds, selectedProfileId, state])
+
   const progressPercent =
     state.status === 'processing'
       ? Math.round(
@@ -901,6 +1061,16 @@ export default function PublicationImporter({
   const selectedEpubPreviewReady = selectedEpub
     ? isSelectedEpubPreviewReady(selectedEpub, previewReadyArtifactKey)
     : false
+  const buildingProfileId = profileBuilds.find(
+    (build) =>
+      build.controller === activeImport.current &&
+      build.profileId === selectedProfileId,
+  )?.profileId
+  const selectedIssue = profileBuildIssues[selectedProfileId]
+  const selectedProfileBuildIssue =
+    selectedIssue?.controller === activeImport.current
+      ? selectedIssue
+      : undefined
 
   return (
     <section
@@ -981,7 +1151,7 @@ export default function PublicationImporter({
               <label htmlFor="publication-pdf">
                 <strong>Choose a PDF or DOCX</strong>
                 <span>or drop it here</span>
-                <small>Up to 75 MB. Your file stays on this device.</small>
+                <small>Up to 50 MiB. Your file stays on this device.</small>
               </label>
             </div>
 
@@ -1086,6 +1256,35 @@ export default function PublicationImporter({
                 </EpubDownloadLink>
               ) : selectedEpub ? (
                 <span aria-live="polite">Preparing selected EPUB preview…</span>
+              ) : buildingProfileId === selectedProfileId ? (
+                <span aria-live="polite">
+                  Building {getTargetProfile(selectedProfileId).label} EPUB
+                  locally…
+                </span>
+              ) : selectedProfileBuildIssue ? (
+                <>
+                  <span role="alert">{selectedProfileBuildIssue.message}</span>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() =>
+                      setProfileBuildIssues((current) => {
+                        const issue = current[selectedProfileId]
+                        if (
+                          !issue ||
+                          issue.controller !== activeImport.current
+                        ) {
+                          return current
+                        }
+                        const next = { ...current }
+                        delete next[selectedProfileId]
+                        return next
+                      })
+                    }
+                  >
+                    Retry {getTargetProfile(selectedProfileId).label} EPUB
+                  </button>
+                </>
               ) : state.status === 'ready' ? (
                 <span aria-live="polite">Validating EPUB…</span>
               ) : null}
@@ -1130,7 +1329,12 @@ export default function PublicationImporter({
             <EpubRenditionPreview
               epubs={state.epubs}
               selectedProfileId={selectedProfileId}
-              onSelectedProfileChange={setSelectedProfileId}
+              buildingProfileId={buildingProfileId}
+              onSelectedProfileChange={(profileId) => {
+                if (profileId === selectedProfileId) return
+                setPreviewReadyArtifactKey(undefined)
+                setSelectedProfileId(profileId)
+              }}
               onPreviewReadyChange={setPreviewReadyArtifactKey}
             />
           )}

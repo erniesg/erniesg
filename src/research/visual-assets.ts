@@ -1,10 +1,14 @@
 import { strFromU8, strToU8, unzlibSync, zlibSync } from 'fflate'
 import type {
   NormalizedSourceBox,
+  PdfEmbeddedLink,
+  PdfPageRegion,
   PdfRegionLine,
+  PdfSourceRun,
   PdfVisualAsset,
 } from './import-types'
 import { isBoundedPdfPageCropBox } from './pdf-page-crop'
+import type { PdfDetectedTableGrid } from './pdf-table-detection'
 
 function xml(value: string) {
   return value
@@ -777,6 +781,61 @@ function tableRows(
   return { bands, rows }
 }
 
+function validDetectedTableGrid(grid: PdfDetectedTableGrid) {
+  if (
+    grid.columnCount < 2 ||
+    grid.columnCount > 12 ||
+    grid.headerRowCount < 1 ||
+    grid.headerRowCount >= grid.lines.length ||
+    grid.lines.length < 2 ||
+    grid.lines.some(
+      (line) =>
+        line.cells.length === 0 ||
+        line.cells.length !== line.runs.length ||
+        line.cells.some(
+          (cell, index) =>
+            cell.run !== line.runs[index] ||
+            !Number.isInteger(cell.columnIndex) ||
+            cell.columnIndex < 0 ||
+            !Number.isInteger(cell.columnSpan) ||
+            cell.columnSpan < 1 ||
+            !Number.isInteger(cell.rowSpan) ||
+            cell.rowSpan < 1,
+        ),
+    )
+  ) {
+    return false
+  }
+  const occupied = Array.from({ length: grid.lines.length }, () =>
+    Array.from({ length: grid.columnCount }, () => false),
+  )
+  for (const [rowIndex, row] of grid.lines.entries()) {
+    for (const cell of row.cells) {
+      if (
+        cell.columnIndex + cell.columnSpan > grid.columnCount ||
+        rowIndex + cell.rowSpan > grid.lines.length
+      ) {
+        return false
+      }
+      for (
+        let targetRow = rowIndex;
+        targetRow < rowIndex + cell.rowSpan;
+        targetRow += 1
+      ) {
+        for (
+          let targetColumn = cell.columnIndex;
+          targetColumn < cell.columnIndex + cell.columnSpan;
+          targetColumn += 1
+        ) {
+          if (occupied[targetRow][targetColumn]) return false
+          occupied[targetRow][targetColumn] = true
+        }
+      }
+    }
+  }
+  return occupied.every((row) => row.every(Boolean))
+}
+
 export type CanonicalTable = {
   rows: Array<{
     cells: Array<{
@@ -784,6 +843,28 @@ export type CanonicalTable = {
       headerScope: 'column' | 'row' | null
       columnSpan: number
       rowSpan: number
+      id?: string
+      headerIds?: string[]
+      sourceRuns?: Array<{
+        regionId: string
+        lineId: string
+        runIndex: number
+        text: string
+        box: NormalizedSourceBox
+      }>
+      inlineRuns?: Array<{
+        start: number
+        end: number
+        bold?: boolean
+        italic?: boolean
+        href?: string
+        annotationId?: string
+        verticalAlign?: 'superscript' | 'subscript'
+      }>
+      inlineMapping?: {
+        expected: number
+        mapped: number
+      }
     }>
   }>
 }
@@ -797,16 +878,272 @@ function hasExplicitHeaderStyle(run: PdfRegionLine['runs'][number]) {
   )
 }
 
+function fontNameIndicatesItalic(fontName: string) {
+  return /(?:italic|ital(?:ic)?|oblique|(?:^|[-_])it(?:$|[-_]))/iu.test(
+    fontName,
+  )
+}
+
+function median(values: number[]) {
+  const sorted = [...values].sort((left, right) => left - right)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle]
+}
+
+function tableRunVerticalAlign(
+  rowRuns: readonly PdfSourceRun[],
+  run: PdfSourceRun,
+) {
+  const maximumFontSize = Math.max(
+    ...rowRuns.map((candidate) => candidate.fontSize),
+  )
+  if (run.fontSize >= maximumFontSize * 0.82) return undefined
+  const baselineRuns = rowRuns.filter(
+    (candidate) => candidate.fontSize >= maximumFontSize * 0.9,
+  )
+  const baselineCenter = median(
+    baselineRuns.map((candidate) => candidate.y + candidate.height / 2),
+  )
+  const runCenter = run.y + run.height / 2
+  const threshold = Math.max(
+    0.0015,
+    median(baselineRuns.map((candidate) => candidate.height)) * 0.12,
+  )
+  if (runCenter < baselineCenter - threshold) return 'superscript' as const
+  if (runCenter > baselineCenter + threshold) return 'subscript' as const
+  return undefined
+}
+
+function boxesOverlap(
+  left: Pick<NormalizedSourceBox, 'page' | 'x' | 'y' | 'width' | 'height'>,
+  right: Pick<NormalizedSourceBox, 'page' | 'x' | 'y' | 'width' | 'height'>,
+) {
+  return (
+    left.page === right.page &&
+    Math.min(left.x + left.width, right.x + right.width) >
+      Math.max(left.x, right.x) &&
+    Math.min(left.y + left.height, right.y + right.height) >
+      Math.max(left.y, right.y)
+  )
+}
+
+function safeTableHyperlink(value: string) {
+  if (/[\u0000-\u0020\u007f\\]/u.test(value)) return false
+  try {
+    return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
+function normalizedSourceBox(run: PdfSourceRun): NormalizedSourceBox {
+  return {
+    page: run.page,
+    x: run.x,
+    y: run.y,
+    width: run.width,
+    height: run.height,
+    rotation: run.rotation,
+    method: run.method,
+  }
+}
+
+function tableLineSourceIds(line: PdfRegionLine) {
+  const detected = line as PdfRegionLine & { sourceLineIds?: string[] }
+  return detected.sourceLineIds?.length ? detected.sourceLineIds : [line.id]
+}
+
+function sameSourceRun(left: PdfSourceRun, right: PdfSourceRun) {
+  const close = (a: number, b: number) => Math.abs(a - b) <= 0.000_001
+  return (
+    left.text === right.text &&
+    left.page === right.page &&
+    close(left.x, right.x) &&
+    close(left.y, right.y) &&
+    close(left.width, right.width) &&
+    close(left.height, right.height) &&
+    left.rotation === right.rotation &&
+    left.method === right.method
+  )
+}
+
+function sameSourceBackedDetectedCell(
+  source: PdfSourceRun,
+  detected: PdfSourceRun,
+) {
+  const close = (a: number, b: number) => Math.abs(a - b) <= 0.000_001
+  return (
+    source.text === detected.text &&
+    source.page === detected.page &&
+    Math.abs(source.x - detected.x) <= 0.035 &&
+    close(source.y, detected.y) &&
+    close(source.width, detected.width) &&
+    close(source.height, detected.height) &&
+    source.rotation === detected.rotation &&
+    source.method === detected.method &&
+    source.fontName === detected.fontName &&
+    close(source.fontSize, detected.fontSize) &&
+    source.bold === detected.bold &&
+    source.italic === detected.italic
+  )
+}
+
+type OwnedTableSourceRun = {
+  key: string
+  regionId: string
+  line: PdfRegionLine
+  runIndex: number
+  run: PdfSourceRun
+}
+
+function ownedTableSourceRunKey(
+  regionId: string,
+  lineId: string,
+  runIndex: number,
+) {
+  return `${regionId}\u0000${lineId}\u0000${runIndex}`
+}
+
+function orderedOwnedTableSourceRuns(
+  runs: OwnedTableSourceRun[],
+) {
+  return [...runs].sort(
+    (left, right) =>
+      left.run.x - right.run.x ||
+      left.run.y - right.run.y ||
+      left.line.id.localeCompare(right.line.id) ||
+      left.runIndex - right.runIndex,
+  )
+}
+
+function tableSourceRunLayout(runs: readonly OwnedTableSourceRun[]) {
+  let text = ''
+  return runs.map((source, index) => {
+    if (index > 0) {
+      const previous = runs[index - 1].run
+      const gap = source.run.x - (previous.x + previous.width)
+      const noSpaceThreshold = Math.max(
+        0.0005,
+        Math.min(previous.height, source.run.height) * 0.18,
+      )
+      if (gap > noSpaceThreshold) text += ' '
+    }
+    const start = text.length
+    text += source.run.text
+    return { source, start, end: text.length, text }
+  })
+}
+
+function sourceSequenceMatchesDetectedCell(
+  sourceRuns: readonly OwnedTableSourceRun[],
+  cell: PdfSourceRun,
+) {
+  if (sourceRuns.length === 0) return false
+  const first = sourceRuns[0].run
+  const right = Math.max(
+    ...sourceRuns.map(({ run }) => run.x + run.width),
+  )
+  const bottom = Math.max(
+    ...sourceRuns.map(({ run }) => run.y + run.height),
+  )
+  const derived = {
+    ...first,
+    width: right - first.x,
+    height: bottom - first.y,
+    text: tableSourceRunLayout(sourceRuns).at(-1)?.text ?? '',
+  }
+  return sameSourceBackedDetectedCell(derived, cell)
+}
+
+function exactSourceSequenceForDetectedCell(
+  cell: PdfSourceRun,
+  detectedLines: readonly PdfRegionLine[],
+  sourceLineOwners: ReadonlyMap<
+    string,
+    Array<{ regionId: string; line: PdfRegionLine }>
+  >,
+) {
+  const owningDetectedLines = detectedLines.filter((line) =>
+    line.runs.includes(cell),
+  )
+  if (owningDetectedLines.length !== 1) return null
+  const available = orderedOwnedTableSourceRuns(
+    tableLineSourceIds(owningDetectedLines[0]).flatMap((lineId) => {
+      const owner = sourceLineOwners.get(lineId)?.[0]
+      if (!owner) return []
+      return owner.line.runs.flatMap<OwnedTableSourceRun>(
+        (run, runIndex) =>
+          run.text.trim()
+            ? [
+                {
+                  key: ownedTableSourceRunKey(
+                    owner.regionId,
+                    owner.line.id,
+                    runIndex,
+                  ),
+                  regionId: owner.regionId,
+                  line: owner.line,
+                  runIndex,
+                  run,
+                },
+              ]
+            : [],
+      )
+    }),
+  )
+  const matches: OwnedTableSourceRun[][] = []
+  for (let start = 0; start < available.length; start += 1) {
+    for (let end = start + 1; end <= available.length; end += 1) {
+      const sequence = available.slice(start, end)
+      if (sourceSequenceMatchesDetectedCell(sequence, cell)) {
+        matches.push(sequence)
+      }
+    }
+  }
+  return matches.length === 1 ? matches[0] : null
+}
+
 export function canonicalTableFromLines(
   lines: PdfRegionLine[],
   options: {
     sourceHeaderLineIds?: readonly string[]
     detectedRectangularGeometry?: boolean
+    detectedGrid?: PdfDetectedTableGrid
+    sourceRegions?: readonly PdfPageRegion[]
+    links?: readonly PdfEmbeddedLink[]
   } = {},
 ): CanonicalTable | null {
-  const table = tableRows(lines, options)
-  if (!table) return null
-  const { bands, rows } = table
+  if (options.detectedGrid && !validDetectedTableGrid(options.detectedGrid)) {
+    return null
+  }
+  const table = options.detectedGrid ? null : tableRows(lines, options)
+  if (!table && !options.detectedGrid) return null
+  const bands = options.detectedGrid
+    ? options.detectedGrid.lines.map((line) => [line])
+    : table!.bands
+  const rows = options.detectedGrid
+    ? options.detectedGrid.lines.map((line) =>
+        line.cells.map((cell) => cell.run),
+      )
+    : table!.rows
+  const placements = options.detectedGrid
+    ? options.detectedGrid.lines.map((line) =>
+        line.cells.map((cell) => ({
+          columnIndex: cell.columnIndex,
+          columnSpan: cell.columnSpan,
+          rowSpan: cell.rowSpan,
+        })),
+      )
+    : rows.map((row) =>
+        row.map((_, columnIndex) => ({
+          columnIndex,
+          columnSpan: 1,
+          rowSpan: 1,
+        })),
+      )
+  const headerRowCount = options.detectedGrid?.headerRowCount ?? 1
   const headerRuns = rows[0]
   const expectedHeaderLineIds = bands[0].map((line) => line.id).sort()
   const sourceHeaderLineIds = [
@@ -819,22 +1156,257 @@ export function canonicalTableFromLines(
       (lineId, index) => lineId === expectedHeaderLineIds[index],
     )
   const explicitHeader =
-    exactSourceHeaderRole || headerRuns.every(hasExplicitHeaderStyle)
+    Boolean(options.detectedGrid) ||
+    exactSourceHeaderRole ||
+    headerRuns.every(hasExplicitHeaderStyle)
   const bodyHasNonHeaderStyle = rows
-    .slice(1)
+    .slice(headerRowCount)
     .flat()
     .some((run) => !hasExplicitHeaderStyle(run))
   if (!explicitHeader || !bodyHasNonHeaderStyle) return null
-  return {
+  const sourceLineOwners = new Map<
+    string,
+    Array<{ regionId: string; line: PdfRegionLine }>
+  >()
+  for (const region of options.sourceRegions ?? []) {
+    for (const sourceLine of region.lines) {
+      const owners = sourceLineOwners.get(sourceLine.id) ?? []
+      owners.push({ regionId: region.id, line: sourceLine })
+      sourceLineOwners.set(sourceLine.id, owners)
+    }
+  }
+  const sourceVerified = options.sourceRegions !== undefined
+  if (
+    sourceVerified &&
+    lines.some((line) =>
+      tableLineSourceIds(line).some(
+        (lineId) => sourceLineOwners.get(lineId)?.length !== 1,
+      ),
+    )
+  ) {
+    return null
+  }
+  const sourceRowRuns = bands.map((band) =>
+    orderedOwnedTableSourceRuns(
+      [
+        ...new Map(
+          band
+            .flatMap((detectedLine) =>
+              tableLineSourceIds(detectedLine).flatMap((lineId) => {
+                const owner = sourceLineOwners.get(lineId)?.[0]
+                if (!owner) return []
+                return owner.line.runs.flatMap<OwnedTableSourceRun>(
+                  (run, runIndex) =>
+                    run.text.trim()
+                      ? [
+                          {
+                            key: ownedTableSourceRunKey(
+                              owner.regionId,
+                              owner.line.id,
+                              runIndex,
+                            ),
+                            regionId: owner.regionId,
+                            line: owner.line,
+                            runIndex,
+                            run,
+                          },
+                        ]
+                      : [],
+                )
+              }),
+            )
+            .map((source) => [source.key, source]),
+        ).values(),
+      ],
+    ),
+  )
+  const claimedSourceRunKeys = new Set<string>()
+  const claimedSourceRunKeysByRow = bands.map(() => [] as string[])
+  let unresolvedInlineEvidence = false
+  const headerIdsForCell = (
+    rowIndex: number,
+    columnIndex: number,
+    columnSpan: number,
+  ) =>
+    placements
+      .slice(0, Math.min(rowIndex, headerRowCount))
+      .flatMap((row, headerRowIndex) =>
+        row.flatMap((placement) =>
+          placement.columnIndex <= columnIndex &&
+          placement.columnIndex + placement.columnSpan >=
+            columnIndex + columnSpan
+            ? [
+                `cell-r${headerRowIndex + 1}-c${placement.columnIndex + 1}`,
+              ]
+            : [],
+        ),
+      )
+  const canonicalTable: CanonicalTable = {
     rows: rows.map((row, rowIndex) => ({
-      cells: row.map((cell) => ({
-        text: cell.text,
-        headerScope: rowIndex === 0 ? 'column' : null,
-        columnSpan: 1,
-        rowSpan: 1,
-      })),
+      cells: row.map((cell, columnIndex) => {
+        const placement = placements[rowIndex][columnIndex]
+        const id = `cell-r${rowIndex + 1}-c${placement.columnIndex + 1}`
+        const headerScope =
+          rowIndex < headerRowCount ? ('column' as const) : null
+        const headerIds =
+          headerScope === null
+            ? headerIdsForCell(
+                rowIndex,
+                placement.columnIndex,
+                placement.columnSpan,
+              )
+            : []
+        if (!sourceVerified) {
+          return {
+            text: cell.text,
+            headerScope,
+            columnSpan: placement.columnSpan,
+            rowSpan: placement.rowSpan,
+          }
+        }
+        const sourceMatches = exactSourceSequenceForDetectedCell(
+          cell,
+          bands[rowIndex],
+          sourceLineOwners,
+        )
+        if (
+          !sourceMatches ||
+          sourceMatches.some((source) =>
+            claimedSourceRunKeys.has(source.key),
+          )
+        ) {
+          unresolvedInlineEvidence = true
+          return {
+            text: cell.text,
+            headerScope,
+            columnSpan: placement.columnSpan,
+            rowSpan: placement.rowSpan,
+          }
+        }
+        sourceMatches.forEach((source) =>
+          claimedSourceRunKeys.add(source.key),
+        )
+        claimedSourceRunKeysByRow[rowIndex].push(
+          ...sourceMatches.map((source) => source.key),
+        )
+        const layout = tableSourceRunLayout(sourceMatches)
+        const rowRuns = sourceRowRuns[rowIndex].map(
+          (source) => source.run,
+        )
+        const overlappingLinks = (options.links ?? []).flatMap((link) =>
+          link.status === 'external' &&
+          boxesOverlap(link.box, cell) &&
+          safeTableHyperlink(link.url)
+            ? [link]
+            : [],
+        )
+        if (overlappingLinks.length > 1) unresolvedInlineEvidence = true
+        const hyperlink =
+          overlappingLinks.length === 1 ? overlappingLinks[0] : undefined
+        const href = hyperlink?.url
+        let expected = Number(Boolean(href))
+        const inlineRuns: NonNullable<
+          CanonicalTable['rows'][number]['cells'][number]['inlineRuns']
+        > = layout.flatMap(
+          ({ source, start, end }) => {
+            const bold =
+              source.run.bold === true ||
+              (source.run.bold === undefined &&
+                hasExplicitHeaderStyle(source.run))
+            const italic =
+              source.run.italic === true ||
+              (source.run.italic === undefined &&
+                fontNameIndicatesItalic(source.run.fontName))
+            const verticalAlign = tableRunVerticalAlign(
+              rowRuns,
+              source.run,
+            )
+            const runExpected =
+              Number(bold) +
+              Number(italic) +
+              Number(Boolean(verticalAlign))
+            expected += runExpected
+            return runExpected > 0
+              ? [
+                  {
+                    start,
+                    end,
+                    ...(bold ? { bold: true } : {}),
+                    ...(italic ? { italic: true } : {}),
+                    ...(verticalAlign ? { verticalAlign } : {}),
+                  },
+                ]
+              : []
+          },
+        )
+        if (href) {
+          const coextensive = inlineRuns.find(
+            (run) =>
+              run.start === 0 && run.end === cell.text.length,
+          )
+          if (coextensive) {
+            Object.assign(coextensive, {
+              href,
+              annotationId: hyperlink!.id,
+            })
+          } else {
+            inlineRuns.push({
+              start: 0,
+              end: cell.text.length,
+              href,
+              annotationId: hyperlink!.id,
+            })
+          }
+        }
+        return {
+          id,
+          text: cell.text,
+          headerScope,
+          headerIds,
+          columnSpan: placement.columnSpan,
+          rowSpan: placement.rowSpan,
+          sourceRuns: sourceMatches.map((source) => ({
+            regionId: source.regionId,
+            lineId: source.line.id,
+            runIndex: source.runIndex,
+            text: source.run.text,
+            box: normalizedSourceBox(source.run),
+          })),
+          ...(expected > 0
+            ? {
+                inlineRuns,
+              }
+            : {}),
+          inlineMapping: {
+            expected,
+            mapped: expected,
+          },
+        }
+      }),
     })),
   }
+  if (sourceVerified) {
+    const expectedSourceRunKeys = new Set(
+      sourceRowRuns.flatMap((row) => row.map((source) => source.key)),
+    )
+    if (
+      expectedSourceRunKeys.size !== claimedSourceRunKeys.size ||
+      [...expectedSourceRunKeys].some(
+        (key) => !claimedSourceRunKeys.has(key),
+      ) ||
+      sourceRowRuns.some((row, rowIndex) => {
+        const expected = row.map((source) => source.key)
+        const claimed = claimedSourceRunKeysByRow[rowIndex]
+        return (
+          expected.length !== claimed.length ||
+          expected.some((key, index) => key !== claimed[index])
+        )
+      })
+    ) {
+      unresolvedInlineEvidence = true
+    }
+  }
+  return unresolvedInlineEvidence ? null : canonicalTable
 }
 
 export async function createTableAsset(input: {
@@ -843,17 +1415,88 @@ export async function createTableAsset(input: {
   lines: PdfRegionLine[]
   sourceHeaderLineIds?: readonly string[]
   detectedRectangularGeometry?: boolean
+  detectedGrid?: PdfDetectedTableGrid
+  sourceRegions?: readonly PdfPageRegion[]
+  links?: readonly PdfEmbeddedLink[]
   pageWidth: number
   pageHeight: number
 }) {
   const table = canonicalTableFromLines(input.lines, {
     sourceHeaderLineIds: input.sourceHeaderLineIds,
     detectedRectangularGeometry: input.detectedRectangularGeometry,
+    detectedGrid: input.detectedGrid,
+    sourceRegions: input.sourceRegions,
+    links: input.links,
   })
   if (!table) return null
-  const [head, ...body] = table.rows
+  const inlineCellText = (
+    cell: CanonicalTable['rows'][number]['cells'][number],
+  ) => {
+    const boundaries = [
+      0,
+      cell.text.length,
+      ...(cell.inlineRuns ?? []).flatMap((run) => [run.start, run.end]),
+    ]
+    const points = [...new Set(boundaries)].sort(
+      (left, right) => left - right,
+    )
+    return points
+      .slice(0, -1)
+      .map((start, index) => {
+        const end = points[index + 1]
+        const runs = (cell.inlineRuns ?? []).filter(
+          (run) => run.start <= start && run.end >= end,
+        )
+        let content = xml(cell.text.slice(start, end))
+        if (runs.some((run) => run.bold)) {
+          content = `<strong>${content}</strong>`
+        }
+        if (runs.some((run) => run.italic)) {
+          content = `<em>${content}</em>`
+        }
+        const verticalAlign = runs.find(
+          (run) => run.verticalAlign,
+        )?.verticalAlign
+        if (verticalAlign) {
+          content =
+            verticalAlign === 'superscript'
+              ? `<sup>${content}</sup>`
+              : `<sub>${content}</sub>`
+        }
+        const href = runs.find((run) => run.href)?.href
+        return href ? `<a href="${xml(href)}">${content}</a>` : content
+      })
+      .join('')
+  }
+  const rowXhtml = (
+    row: CanonicalTable['rows'][number],
+    rowIndex: number,
+  ) =>
+    `<tr>${row.cells
+      .map((cell, columnIndex) => {
+        const tag = cell.headerScope ? 'th' : 'td'
+        const id = cell.id ?? `cell-r${rowIndex + 1}-c${columnIndex + 1}`
+        const scope = cell.headerScope
+          ? ` scope="${cell.headerScope === 'column' ? 'col' : 'row'}"`
+          : ''
+        const headers =
+          cell.headerScope === null && (cell.headerIds?.length ?? 0) > 0
+            ? ` headers="${xml(cell.headerIds!.join(' '))}"`
+            : ''
+        const columnSpan =
+          cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
+        const rowSpan = cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''
+        return `<${tag} id="${xml(id)}"${scope}${headers}${columnSpan}${rowSpan}>${inlineCellText(cell)}</${tag}>`
+      })
+      .join('')}</tr>`
+  const firstBodyRow = table.rows.findIndex(
+    (row) => !row.cells.every((cell) => cell.headerScope === 'column'),
+  )
+  const headerRows =
+    firstBodyRow === -1 ? table.rows : table.rows.slice(0, firstBodyRow)
+  const bodyRows = firstBodyRow === -1 ? [] : table.rows.slice(firstBodyRow)
   const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="UTF-8" /><title>Source table</title></head><body><table><thead><tr>${head.cells.map((cell) => `<th scope="col">${xml(cell.text)}</th>`).join('')}</tr></thead><tbody>${body.map((row) => `<tr>${row.cells.map((cell) => `<td>${xml(cell.text)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="UTF-8" /><title>Source table</title></head><body><table>${headerRows.length > 0 ? `<thead>${headerRows.map((row, index) => rowXhtml(row, index)).join('')}</thead>` : ''}${bodyRows.length > 0 ? `<tbody>${bodyRows.map((row, index) => rowXhtml(row, Math.max(firstBodyRow, 0) + index)).join('')}</tbody>` : ''}</table></body></html>
 `
   return asset({
     bytes: strToU8(xhtml),

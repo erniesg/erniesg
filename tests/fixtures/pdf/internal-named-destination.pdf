@@ -1,0 +1,70 @@
+%PDF-1.4
+% synthetic fixture owned by erniesg
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(cite.SourceKey) [6 0 R /XYZ 54 650 null]] >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Annots [9 0 R] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>  >> /Contents 7 0 R >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R >>  >> /Contents 8 0 R >>
+endobj
+7 0 obj
+<< /Length 137 >>
+stream
+BT
+/F2 18 Tf
+54 748 Td
+(Named destination extraction fixture) Tj
+ET
+BT
+/F1 11 Tf
+54 650 Td
+(See the source-key bibliography entry.) Tj
+ET
+endstream
+endobj
+8 0 obj
+<< /Length 126 >>
+stream
+BT
+/F2 16 Tf
+54 700 Td
+(References) Tj
+ET
+BT
+/F1 11 Tf
+54 640 Td
+([1] A. Source. Geometry-backed bibliography evidence.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Annot /Subtype /Link /Rect [54 646 238 664] /Border [0 0 0] /Dest (cite.SourceKey) >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000046 00000 n 
+0000000172 00000 n 
+0000000235 00000 n 
+0000000305 00000 n 
+0000000380 00000 n 
+0000000534 00000 n 
+0000000672 00000 n 
+0000000860 00000 n 
+0000001037 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1148
+%%EOF

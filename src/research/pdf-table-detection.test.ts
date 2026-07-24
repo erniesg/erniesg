@@ -5,7 +5,11 @@ import type {
   PdfRegionLine,
   PdfSourceRun,
 } from './import-types'
-import { detectTableNearCaption } from './pdf-table-detection'
+import {
+  detectHierarchicalTableWithinProvenScope,
+  detectTableNearCaption,
+  detectTableWithinProvenScope,
+} from './pdf-table-detection'
 
 function box(
   x: number,
@@ -176,6 +180,74 @@ describe('bounded table region detection', () => {
     })
     expect(detected?.lines).toHaveLength(3)
     expect(detected?.lines.every((item) => item.runs.length === 3)).toBe(true)
+  })
+
+  it('detects variable-width left-aligned cells only inside an independently proven scope', () => {
+    const caption = region('Table 2', 'caption', 0.42, [], 'span')
+    caption.box = box(0.2, 0.42, 0.6, 0.014)
+    const anchors = [0.2, 0.4, 0.72]
+    const widths = [
+      [0.08, 0.06, 0.07],
+      [0.09, 0.23, 0.05],
+      [0.1, 0.18, 0.05],
+      [0.11, 0.25, 0.05],
+    ]
+    const rows = widths.map((rowWidths, rowIndex) => {
+      const sourceLine = line(
+        `variable-width-row-${rowIndex + 1}`,
+        0.24 + rowIndex * 0.035,
+        anchors,
+      )
+      sourceLine.box = box(0.2, sourceLine.box.y, 0.57, 0.012)
+      sourceLine.runs = sourceLine.runs.map((run, columnIndex) => ({
+        ...run,
+        width: rowWidths[columnIndex],
+      }))
+      return sourceLine
+    })
+    const table = region(
+      'variable-width-left-aligned-table',
+      'body',
+      0.24,
+      rows,
+      'span',
+    )
+    table.box = box(0.2, 0.24, 0.57, 0.117)
+
+    expect(detectTableNearCaption(caption, [table, caption])).toBeNull()
+    expect(
+      detectTableWithinProvenScope(caption, [table, caption], {
+        direction: 'above',
+        sourceRegionIds: [table.id],
+        sourceLineIds: rows.map((row) => row.id),
+        evidence: [],
+      }),
+    ).toBeNull()
+
+    const detected = detectTableWithinProvenScope(caption, [table, caption], {
+      direction: 'above',
+      sourceRegionIds: [table.id],
+      sourceLineIds: rows.map((row) => row.id),
+      evidence: [{ code: 'supplemental-equation-cell-shard' }],
+    })
+
+    expect(detected).toMatchObject({
+      direction: 'above',
+      sourceRegions: [
+        expect.objectContaining({ id: 'variable-width-left-aligned-table' }),
+      ],
+    })
+    expect(detected?.lines).toHaveLength(4)
+    expect(
+      detected?.lines.every(
+        (row) =>
+          row.runs.length === anchors.length &&
+          row.runs.every(
+            (cell, columnIndex) =>
+              Math.abs(cell.x - anchors[columnIndex]) < 0.001,
+          ),
+      ),
+    ).toBe(true)
   })
 
   it('rejects one accidental compact gap without repeated row evidence', () => {
@@ -470,5 +542,120 @@ describe('bounded table region detection', () => {
     const detected = detectTableNearCaption(caption, [table, caption])
 
     expect(detected?.lines[2].runs[0].text).toBe('SYNTHETIC PROFILE')
+  })
+
+  it('proves a two-tier header only when repeated numeric body rows close every source column', () => {
+    const sourceLine = (
+      id: string,
+      y: number,
+      cells: Array<{ text: string; x: number; width?: number }>,
+    ): PdfRegionLine => {
+      const runs = cells.map<PdfSourceRun>((cell) => ({
+        ...box(cell.x, y, cell.width ?? 0.04),
+        text: cell.text,
+        fontName: 'TableSerif',
+        fontSize: 8,
+        confidence: 1,
+      }))
+      return {
+        id,
+        text: runs.map((run) => run.text).join(' '),
+        fontSize: 8,
+        box: box(
+          runs[0].x,
+          y,
+          Math.max(...runs.map((run) => run.x + run.width)) - runs[0].x,
+        ),
+        runs,
+      }
+    }
+    const lines = [
+      sourceLine('group-header', 0.2, [
+        { text: 'Methods', x: 0.1, width: 0.08 },
+        { text: 'Auto Evaluation', x: 0.37, width: 0.1 },
+        { text: 'Human Evaluation', x: 0.62, width: 0.1 },
+      ]),
+      sourceLine(
+        'leaf-header',
+        0.23,
+        ['Words', 'Conflict', 'Entropy', 'Plot', 'Coherence'].map(
+          (text, index) => ({ text, x: 0.3 + index * 0.1 }),
+        ),
+      ),
+      ...[0.26, 0.29, 0.32].map((y, rowIndex) =>
+        sourceLine(`body-${rowIndex + 1}`, y, [
+          { text: ['Baseline', 'Ablation', 'Ours'][rowIndex], x: 0.1 },
+          ...Array.from({ length: 5 }, (_, columnIndex) => ({
+            text: `${rowIndex + 1}.${columnIndex + 1}`,
+            x: 0.3 + columnIndex * 0.1,
+          })),
+        ]),
+      ),
+    ]
+    const table = region('hierarchical-table', 'body', 0.2, lines, 'span')
+    table.box = box(0.1, 0.2, 0.64, 0.13)
+    const scope = {
+      direction: 'above' as const,
+      sourceRegionIds: [table.id],
+      sourceLineIds: lines.map((sourceLine) => sourceLine.id),
+      evidence: [{ code: 'multi-run-tabular-line-band' }],
+    }
+
+    const detected = detectHierarchicalTableWithinProvenScope(
+      [table],
+      scope,
+    )
+
+    expect(detected).toMatchObject({
+      columnCount: 6,
+      headerRowCount: 2,
+      evidence: expect.arrayContaining([
+        'semantic-header-hierarchical-geometry',
+        'repeated-uniform-numeric-body-rows',
+      ]),
+    })
+    expect(detected?.lines[0].cells).toMatchObject([
+      { columnIndex: 0, columnSpan: 1, rowSpan: 2 },
+      { columnIndex: 1, columnSpan: 3, rowSpan: 1 },
+      { columnIndex: 4, columnSpan: 2, rowSpan: 1 },
+    ])
+  })
+
+  it('does not split one merged PDF run into invented hierarchical header cells', () => {
+    const mergedHeader = line('merged-header', 0.2, [0.1, 0.3])
+    mergedHeader.runs[0].text = 'LLM'
+    mergedHeader.runs[1] = {
+      ...mergedHeader.runs[1],
+      width: 0.44,
+      text: 'Nodes Relations Quadruples API calls',
+    }
+    mergedHeader.text = mergedHeader.runs.map((run) => run.text).join(' ')
+    const bodyLines = [0.23, 0.26, 0.29].map((y, rowIndex) => {
+      const body = line(`merged-body-${rowIndex + 1}`, y, [
+        0.1, 0.3, 0.4, 0.5, 0.6,
+      ])
+      body.runs[0].text = `Model ${rowIndex + 1}`
+      body.runs.slice(1).forEach((run, columnIndex) => {
+        run.text = `${rowIndex + 1}.${columnIndex + 1}`
+      })
+      body.text = body.runs.map((run) => run.text).join(' ')
+      return body
+    })
+    const table = region(
+      'merged-header-table',
+      'body',
+      0.2,
+      [mergedHeader, ...bodyLines],
+      'span',
+    )
+
+    expect(
+      detectHierarchicalTableWithinProvenScope([table], {
+        direction: 'above',
+        sourceRegionIds: [table.id],
+        sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+        evidence: [{ code: 'multi-run-tabular-line-band' }],
+      }),
+    ).toBeNull()
   })
 })

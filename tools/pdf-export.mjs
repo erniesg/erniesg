@@ -8,8 +8,10 @@ import {
   auditPdfInputs,
   createCorpusReport,
   createPdfPipeline,
+  pdfPaths,
   serializeCorpusReport,
 } from './pdf-corpus-audit-lib.mjs'
+import { bindCorpusContractPaths } from './pdf-corpus-contract.mjs'
 
 const DEFAULT_TARGETS = ['paperPro', 'paperProMove']
 const encoder = new TextEncoder()
@@ -80,7 +82,7 @@ function recordDocumentExportFailure(document, error, stage) {
 }
 
 function usage() {
-  return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--readable-fallback] [--require-epubcheck] --out <directory>\n'
+  return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--readable-fallback] [--require-epubcheck] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] --out <directory>\n'
 }
 
 function parseArguments(arguments_) {
@@ -89,6 +91,8 @@ function parseArguments(arguments_) {
   let outputDirectory
   let readableFallback = false
   let requireEpubCheck = false
+  let corpusContractPath = null
+  let corpusSet = null
 
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
@@ -122,11 +126,43 @@ function parseArguments(arguments_) {
       requireEpubCheck = true
       continue
     }
+    if (argument === '--corpus-contract') {
+      if (corpusContractPath !== null) throw new Error('INVALID_USAGE')
+      const value = arguments_[index + 1]
+      if (!value || value.startsWith('--')) throw new Error('INVALID_USAGE')
+      corpusContractPath = value
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--corpus-contract=')) {
+      if (corpusContractPath !== null) throw new Error('INVALID_USAGE')
+      corpusContractPath = argument.slice('--corpus-contract='.length)
+      continue
+    }
+    if (argument === '--corpus-set') {
+      if (corpusSet !== null) throw new Error('INVALID_USAGE')
+      const value = arguments_[index + 1]
+      if (!value || value.startsWith('--')) throw new Error('INVALID_USAGE')
+      corpusSet = value
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--corpus-set=')) {
+      if (corpusSet !== null) throw new Error('INVALID_USAGE')
+      corpusSet = argument.slice('--corpus-set='.length)
+      continue
+    }
     if (argument.startsWith('--')) throw new Error('INVALID_USAGE')
     inputs.push(argument)
   }
 
-  if (inputs.length === 0 || !outputDirectory) {
+  if (
+    inputs.length === 0 ||
+    !outputDirectory ||
+    corpusContractPath === '' ||
+    (corpusContractPath === null) !== (corpusSet === null) ||
+    (corpusSet !== null && !['frozen', 'seededRandom'].includes(corpusSet))
+  ) {
     throw new Error('INVALID_USAGE')
   }
   return {
@@ -134,6 +170,8 @@ function parseArguments(arguments_) {
     outputDirectory: resolve(outputDirectory),
     readableFallback,
     requireEpubCheck,
+    corpusContractPath,
+    corpusSet,
     targets: [...new Set(targets.length > 0 ? targets : DEFAULT_TARGETS)],
   }
 }
@@ -254,6 +292,10 @@ async function exportDocument({
   documentCount,
 }) {
   const artifacts = []
+  const canonicalPaper = record.reconstruction.readiness.ready
+    ? record.reconstruction.paper
+    : exportModules.projectReadableFallbackReconstruction(record.reconstruction)
+        .paper
   for (const profile of profiles) {
     failureStage = 'epub-build'
     const epub = record.reconstruction.readiness.ready
@@ -268,7 +310,11 @@ async function exportDocument({
           profile,
         )
     failureStage = 'epub-structural-validation'
-    exportModules.inspectEpub(epub.bytes, profile)
+    exportModules.inspectEpub(epub.bytes, profile, {
+      canonicalPaper,
+      sourceCanonicalPaper: record.reconstruction.paper,
+      sourcePdfSha256: record.reconstruction.source.sha256,
+    })
     failureStage = 'epubcheck-validation'
     artifacts.push({
       epub,
@@ -342,11 +388,31 @@ async function main() {
     return
   }
 
+  let corpusContract = null
+  let resolvedInputs = parsed.inputs
+  if (parsed.corpusContractPath) {
+    failureStage = 'corpus-contract-binding'
+    try {
+      resolvedInputs = await pdfPaths(parsed.inputs)
+      corpusContract = await bindCorpusContractPaths(
+        parsed.corpusContractPath,
+        parsed.corpusSet,
+        resolvedInputs,
+      )
+    } catch {
+      process.stderr.write('PDF corpus contract binding failed.\n')
+      process.exitCode = 2
+      return
+    }
+  }
+
   failureStage = 'pipeline-initialization'
   const pipeline = await createPdfPipeline()
   try {
     failureStage = 'pdf-audit'
-    const records = await auditPdfInputs(parsed.inputs, pipeline)
+    const records = await auditPdfInputs(resolvedInputs, pipeline, {
+      corpusContract,
+    })
     if (records.length === 0) {
       process.stderr.write('No local PDF inputs were found.\n')
       process.exitCode = 2
@@ -399,6 +465,7 @@ async function main() {
     const report = createCorpusReport(
       records.map((record) => record.document),
       pipeline.policy,
+      { corpusContract },
     )
     const serialized = serializeCorpusReport(report)
     await writeAtomically(

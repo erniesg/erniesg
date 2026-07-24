@@ -950,6 +950,7 @@ export function applyHumanDecisionFile(
 
   const assessment = assessPdfCompleteness({
     pages: result.pages,
+    sourceSha256: result.source.sha256,
     paper: result.paper,
     diagnostics: result.diagnostics,
     readingOrder: result.readingOrder,
@@ -957,6 +958,7 @@ export function applyHumanDecisionFile(
     visualRelationships: result.visualRelationships,
     assets: result.assets,
     citationRelationships: result.citationRelationships,
+    noteRelationships: result.noteRelationships,
     provenance: result.provenance,
     lineBoundaryDecisions: result.lineBoundaryDecisions,
     unresolvedCorruptingJoinCount: result.unresolvedCorruptingJoinCount,

@@ -32,6 +32,33 @@ Run the benchmark without exporting with:
 npm run pdf:corpus-audit -- ./local-pdf-corpus
 ```
 
+Those commands remain ad-hoc by default. Frozen or seeded-random evidence must
+opt into the checked-in corpus contract with both arguments:
+
+```bash
+npm run pdf:corpus-audit -- --report-only \
+  --corpus-contract benchmarks/pdf/corpus-contract-v1.json \
+  --corpus-set frozen \
+  "$SRT_PRIVATE_PDF_FROZEN_10"
+
+npm run pdf:export -- "$SRT_PRIVATE_PDF_FROZEN_10" \
+  --corpus-contract benchmarks/pdf/corpus-contract-v1.json \
+  --corpus-set frozen \
+  --target mobile \
+  --target paperProMove \
+  --target paperPro \
+  --out /tmp/srt-frozen-export
+```
+
+Use `--corpus-set seededRandom` only for the contract's distinct seeded sample.
+The option pair validates the contract itself and then requires exactly the ten
+ordered public ids with their pinned byte lengths and SHA-256 values. Missing,
+extra, renamed/wrong-version, swapped, or changed files abort before audit or
+artifact publication. A valid report adds only the contract schema, set key and
+id, whole-contract SHA-256, ordered document identities, and their canonical
+identity SHA-256. The benchmark comparator requires both reports to carry the
+same binding; it refuses one-sided or mismatched frozen/random evidence.
+
 ## Validation
 
 Every artifact passes `inspectEpub` and its canonical-node, relationship, and

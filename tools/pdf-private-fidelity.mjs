@@ -33,7 +33,7 @@ import {
   PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION,
 } from './pdf-corpus-audit-lib.mjs'
 
-export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.6.0'
+export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.7.0'
 const PDF_PRIVATE_FIDELITY_PRIVACY =
   'public-id-hash-aggregate-counters-artifact-hashes-only'
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -638,12 +638,72 @@ function sortedStrings(values) {
   return values.map((value) => String(value ?? '')).sort()
 }
 
-function normalizedRelationshipParity(relationships, sourceAssetIdFor) {
+function normalizedSelectedVisualCandidate(candidate) {
+  return {
+    sourceRegionIds: candidate.sourceRegionIds ?? [],
+    sourceObjectIds: candidate.sourceObjectIds ?? [],
+    assetIds: candidate.assetIds ?? [],
+    score: candidate.score ?? null,
+    evidence: candidate.evidence ?? [],
+    sourceBoxes: candidate.sourceBoxes ?? [],
+  }
+}
+
+function selectedVisualCandidateSha256(relationship) {
+  const selected = relationship.candidates?.[0]
+  return relationship.status === 'matched' && selected
+    ? canonicalJsonHash(normalizedSelectedVisualCandidate(selected))
+    : null
+}
+
+function selectedVisualCropSha256(
+  relationship,
+  sourceAssetIdFor,
+  sourceCropBoxFor,
+) {
+  if (relationship.status !== 'matched') return null
+  const crops = (relationship.assetIds ?? []).flatMap((assetId) => {
+    const sourceCropBox = sourceCropBoxFor(assetId)
+    return sourceCropBox
+      ? [
+          {
+            assetId: opaqueTopologyId('asset', sourceAssetIdFor(assetId)),
+            sourceCropBox,
+          },
+        ]
+      : []
+  })
+  return crops.length > 0 ? canonicalJsonHash(crops) : null
+}
+
+function preformattedSourceSha256(relationship) {
+  const source = relationship.preformatted
+  if (!source) return null
+  return canonicalJsonHash({
+    status: source.status,
+    evidence: source.evidence ?? [],
+    lines: (source.lines ?? []).map((line) => ({
+      textSha256: opaqueTopologyId('preformatted-line-text', line.text),
+      sourceRegionId: opaqueTopologyId('region', line.sourceRegionId),
+      sourceLineId: opaqueTopologyId('line', line.sourceLineId),
+      sourceBox: line.sourceBox,
+      sourceRunBoxes: line.sourceRunBoxes ?? [],
+    })),
+  })
+}
+
+function normalizedRelationshipParity(
+  relationships,
+  sourceAssetIdFor,
+  sourceCropBoxFor,
+) {
   return relationships.map((relationship) => ({
     id: relationship.id,
     kind: relationship.kind,
+    semanticKind: relationship.semanticKind ?? null,
     status: relationship.status,
     canonicalNodeId: relationship.canonicalNodeId ?? null,
+    captionNodeId: relationship.captionNodeId ?? null,
     captionRegionId: relationship.captionRegionId ?? null,
     sourceRegionIds: relationship.sourceRegionIds ?? [],
     sourceObjectIds: relationship.sourceObjectIds ?? [],
@@ -651,6 +711,13 @@ function normalizedRelationshipParity(relationships, sourceAssetIdFor) {
     assetIds: (relationship.assetIds ?? []).map(sourceAssetIdFor),
     sourceBoxes: relationship.sourceBoxes ?? [],
     altTextSource: relationship.altTextSource ?? null,
+    preformattedSourceSha256: preformattedSourceSha256(relationship),
+    selectedCandidateSha256: selectedVisualCandidateSha256(relationship),
+    selectedCropSha256: selectedVisualCropSha256(
+      relationship,
+      sourceAssetIdFor,
+      sourceCropBoxFor,
+    ),
   }))
 }
 
@@ -749,6 +816,7 @@ function artifactParityFromReconstruction(
   const nodes = projection.paper?.nodes ?? []
   const relationships = projection.visualRelationships ?? []
   const assets = projection.assets ?? []
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
   return {
     canonicalNodeCount: nodes.length,
     canonicalNodeSequenceSha256: canonicalJsonHash(
@@ -757,7 +825,11 @@ function artifactParityFromReconstruction(
     canonicalContentSha256: sha256(JSON.stringify(projection.paper)),
     relationshipCount: relationships.length,
     relationshipGraphSha256: canonicalJsonHash(
-      normalizedRelationshipParity(relationships, (assetId) => assetId),
+      normalizedRelationshipParity(
+        relationships,
+        (assetId) => assetId,
+        (assetId) => assetsById.get(assetId)?.sourceCropBox ?? null,
+      ),
     ),
     assetCount: assets.length,
     assetManifestSha256: canonicalJsonHash(
@@ -812,6 +884,8 @@ function artifactParityFromManifest(manifest, inlineSemanticLedger) {
       normalizedRelationshipParity(
         relationships,
         (assetId) => sourceAssetIds.get(String(assetId ?? '')) ?? '',
+        (assetId) =>
+          assets.find((asset) => asset?.id === assetId)?.sourceCropBox ?? null,
       ),
     ),
     assetCount: assets.length,
@@ -852,6 +926,76 @@ function sanitizedCitationRelationshipGraph(relationships) {
       : null,
     sourceBoxes: relationship.sourceBoxes.map((box) =>
       canonicalJsonHash({ kind: 'citation-source-box', box }),
+    ),
+  }))
+}
+
+function sanitizedCrossReferenceTarget(target) {
+  return {
+    kind: target.kind,
+    labelSha256: opaqueTopologyId(
+      'scholarly-cross-reference-label-digest',
+      target.labelSha256,
+    ),
+    referenceStart: target.referenceStart,
+    referenceEnd: target.referenceEnd,
+    status: target.status,
+    candidateNodeIds: target.candidateNodeIds.map((nodeId) =>
+      opaqueTopologyId('node', nodeId),
+    ),
+    targetNodeId: target.targetNodeId
+      ? opaqueTopologyId('node', target.targetNodeId)
+      : null,
+    evidenceSha256s: target.evidenceSha256s.map((evidenceSha256) =>
+      opaqueTopologyId(
+        'scholarly-cross-reference-evidence-digest',
+        evidenceSha256,
+      ),
+    ),
+  }
+}
+
+function sanitizedCrossReferenceRelationshipGraph(relationships) {
+  return relationships.map((relationship) => ({
+    id: opaqueTopologyId(
+      'scholarly-cross-reference-relationship-digest',
+      relationship.id,
+    ),
+    kind: relationship.kind,
+    status: relationship.status,
+    textSha256: opaqueTopologyId(
+      'scholarly-cross-reference-text-digest',
+      relationship.textSha256,
+    ),
+    referenceRegionId: opaqueTopologyId(
+      'region',
+      relationship.referenceRegionId,
+    ),
+    referenceStart: relationship.referenceStart,
+    referenceEnd: relationship.referenceEnd,
+    labels: relationship.labels.map((labelSha256) =>
+      opaqueTopologyId('scholarly-cross-reference-label-digest', labelSha256),
+    ),
+    targets: relationship.targets.map(sanitizedCrossReferenceTarget),
+    targetNodeIds: relationship.targetNodeIds.map((nodeId) =>
+      opaqueTopologyId('node', nodeId),
+    ),
+    canonicalAnchor: relationship.canonicalAnchor
+      ? {
+          nodeId: opaqueTopologyId('node', relationship.canonicalAnchor.nodeId),
+          start: relationship.canonicalAnchor.start,
+          end: relationship.canonicalAnchor.end,
+        }
+      : null,
+    confidence: relationship.confidence,
+    evidenceSha256s: relationship.evidenceSha256s.map((evidenceSha256) =>
+      opaqueTopologyId(
+        'scholarly-cross-reference-evidence-digest',
+        evidenceSha256,
+      ),
+    ),
+    sourceBoxes: relationship.sourceBoxes.map((box) =>
+      canonicalJsonHash({ kind: 'cross-reference-source-box', box }),
     ),
   }))
 }
@@ -900,11 +1044,19 @@ function createPrivateStructuralEvidence(reconstruction, artifactParity) {
   const citationRelationshipGraph = sanitizedCitationRelationshipGraph(
     structure.citationRelationshipGraph,
   )
+  const crossReferenceRelationshipGraph =
+    sanitizedCrossReferenceRelationshipGraph(
+      structure.crossReferenceRelationshipGraph,
+    )
   return {
     ...structure,
     citationRelationshipGraph,
     citationRelationshipGraphSha256: canonicalJsonHash(
       citationRelationshipGraph,
+    ),
+    crossReferenceRelationshipGraph,
+    crossReferenceRelationshipGraphSha256: canonicalJsonHash(
+      crossReferenceRelationshipGraph,
     ),
     artifactCanonicalContentSha256:
       artifactParity.publication.canonicalContentSha256,
@@ -987,14 +1139,24 @@ export function createPrivateReconstructionEvidence(
   const blockingDiagnosticCodes = [
     ...reconstruction.readiness.blockingDiagnosticCodes,
   ].sort()
+  const errorDiagnosticCodes = [
+    ...new Set(
+      reconstruction.diagnostics
+        .filter((diagnostic) => diagnostic.severity === 'error')
+        .map((diagnostic) => diagnostic.code),
+    ),
+  ].sort()
   blockingDiagnosticCodes.forEach(safeCounterKey)
+  errorDiagnosticCodes.forEach(safeCounterKey)
   return {
     pageCount: reconstruction.source.pageCount,
     completeness: reconstruction.completeness,
     readiness: {
       ready: reconstruction.readiness.ready === true,
       status: reconstruction.readiness.status,
+      policy: { ...reconstruction.readiness.policy },
       blockingDiagnosticCodes,
+      errorDiagnosticCodes,
     },
     nodeCounts: nodeCounts(reconstruction.paper.nodes),
     inlineSemanticLedger,
@@ -1138,7 +1300,14 @@ export function createPrivateFidelityReceipt({
     )
   const allReady =
     runSetValid &&
-    runs.every((run) => run.reconstruction.readiness.ready === true)
+    runs.every(
+      (run) =>
+        validReadiness(
+          run.reconstruction.readiness,
+          run.reconstruction.completeness,
+          run.reconstruction.diagnosticCounts,
+        ) && run.reconstruction.readiness.ready === true,
+    )
   const lineTransitionGatePassed =
     runSetValid && runs.every(validTransitionGate)
   const profileResults = profiles.map((profile) => {
@@ -1531,6 +1700,9 @@ function validCompleteness(value) {
       'expectedInlineSpanCount',
       'mappedInlineSpanCount',
       'inlineSpanCoverage',
+      'expectedHyperlinkCount',
+      'mappedHyperlinkCount',
+      'hyperlinkCoverage',
       'lineBoundaryCount',
       'decidedLineBoundaryCount',
       'unresolvedCorruptingJoinCount',
@@ -1556,6 +1728,8 @@ function validCompleteness(value) {
       'unprovenancedRenderedUnitCount',
       'expectedInlineSpanCount',
       'mappedInlineSpanCount',
+      'expectedHyperlinkCount',
+      'mappedHyperlinkCount',
       'lineBoundaryCount',
       'decidedLineBoundaryCount',
       'unresolvedCorruptingJoinCount',
@@ -1570,9 +1744,18 @@ function validCompleteness(value) {
     [
       'textCoverage',
       'inlineSpanCoverage',
+      'hyperlinkCoverage',
       'assetCoverage',
       'relationshipCoverage',
     ].some((key) => !isUnitInterval(value[key])) ||
+    value.matchedTextCharacters > value.sourceTextCharacters ||
+    value.matchedTextCharacters > value.outputTextCharacters ||
+    value.textCoverage !==
+      Math.min(
+        exactCoverage(value.matchedTextCharacters, value.sourceTextCharacters),
+        exactCoverage(value.matchedTextCharacters, value.outputTextCharacters),
+      ) ||
+    value.decidedLineBoundaryCount > value.lineBoundaryCount ||
     value.unresolvedCorruptingJoinCount +
       value.structurallyConsumedLineBoundaryCount >
       value.decidedLineBoundaryCount ||
@@ -1581,6 +1764,18 @@ function validCompleteness(value) {
       exactCoverage(
         value.mappedInlineSpanCount,
         value.expectedInlineSpanCount,
+      ) ||
+    value.mappedHyperlinkCount > value.expectedHyperlinkCount ||
+    value.hyperlinkCoverage !==
+      exactCoverage(value.mappedHyperlinkCount, value.expectedHyperlinkCount) ||
+    value.exportedAssetCount > value.sourceAssetCount ||
+    value.assetCoverage !==
+      exactCoverage(value.exportedAssetCount, value.sourceAssetCount) ||
+    value.resolvedRelationshipCount > value.expectedRelationshipCount ||
+    value.relationshipCoverage !==
+      exactCoverage(
+        value.resolvedRelationshipCount,
+        value.expectedRelationshipCount,
       ) ||
     !hasExactKeys(value.unresolvedObjects, [
       'assets',
@@ -1610,18 +1805,97 @@ function validCompleteness(value) {
   )
 }
 
-function validReadiness(value) {
+function validCompletenessPolicy(value) {
   return (
-    hasExactKeys(value, ['ready', 'status', 'blockingDiagnosticCodes']) &&
-    typeof value.ready === 'boolean' &&
-    ['ready', 'review-required'].includes(value.status) &&
-    value.ready === (value.status === 'ready') &&
-    Array.isArray(value.blockingDiagnosticCodes) &&
-    value.blockingDiagnosticCodes.every(
+    hasExactKeys(value, [
+      'minimumTextCoverage',
+      'minimumAssetCoverage',
+      'minimumRelationshipCoverage',
+      'maximumUnresolvedObjects',
+      'maximumOcrRequiredPages',
+      'maximumReadingOrderDiagnostics',
+    ]) &&
+    [
+      'minimumTextCoverage',
+      'minimumAssetCoverage',
+      'minimumRelationshipCoverage',
+    ].every((key) => isUnitInterval(value[key])) &&
+    [
+      'maximumUnresolvedObjects',
+      'maximumOcrRequiredPages',
+      'maximumReadingOrderDiagnostics',
+    ].every((key) => isNonNegativeInteger(value[key]))
+  )
+}
+
+function completenessBlocksReadiness(completeness, policy) {
+  return (
+    completeness.textCoverage < policy.minimumTextCoverage ||
+    completeness.assetCoverage < policy.minimumAssetCoverage ||
+    completeness.relationshipCoverage < policy.minimumRelationshipCoverage ||
+    completeness.unresolvedObjectCount > policy.maximumUnresolvedObjects ||
+    completeness.ocrRequiredPages.length > policy.maximumOcrRequiredPages ||
+    completeness.readingOrderDiagnostics >
+      policy.maximumReadingOrderDiagnostics ||
+    completeness.readingOrderEvaluation.reviewRequired ||
+    completeness.duplicateCanonicalSpanCount > 0 ||
+    completeness.missingSourceRegionCount > 0 ||
+    completeness.unprovenancedRenderedUnitCount > 0 ||
+    completeness.inlineSpanCoverage < 1 ||
+    completeness.hyperlinkCoverage < 1 ||
+    completeness.decidedLineBoundaryCount < completeness.lineBoundaryCount ||
+    completeness.unresolvedCorruptingJoinCount > 0
+  )
+}
+
+function validReadiness(value, completeness, diagnosticCounts) {
+  const validCodeList = (codes) =>
+    Array.isArray(codes) &&
+    codes.every(
       (code) => typeof code === 'string' && SAFE_IDENTIFIER_PATTERN.test(code),
     ) &&
-    new Set(value.blockingDiagnosticCodes).size ===
-      value.blockingDiagnosticCodes.length
+    new Set(codes).size === codes.length
+  if (
+    !hasExactKeys(value, [
+      'ready',
+      'status',
+      'policy',
+      'blockingDiagnosticCodes',
+      'errorDiagnosticCodes',
+    ]) ||
+    typeof value.ready !== 'boolean' ||
+    !['ready', 'review-required'].includes(value.status) ||
+    !validCompletenessPolicy(value.policy) ||
+    !validCodeList(value.blockingDiagnosticCodes) ||
+    !validCodeList(value.errorDiagnosticCodes)
+  ) {
+    return false
+  }
+  const blockingCodes = new Set(value.blockingDiagnosticCodes)
+  const errorCodes = new Set(value.errorDiagnosticCodes)
+  const diagnosticsAgree =
+    [...errorCodes].every(
+      (code) =>
+        blockingCodes.has(code) &&
+        isNonNegativeInteger(diagnosticCounts[`error:${code}`]) &&
+        diagnosticCounts[`error:${code}`] > 0,
+    ) &&
+    [...blockingCodes].every((code) =>
+      ['error', 'warning', 'info'].some(
+        (severity) =>
+          isNonNegativeInteger(diagnosticCounts[`${severity}:${code}`]) &&
+          diagnosticCounts[`${severity}:${code}`] > 0,
+      ),
+    )
+  const derivedReady =
+    diagnosticsAgree &&
+    blockingCodes.size === 0 &&
+    errorCodes.size === 0 &&
+    !completenessBlocksReadiness(completeness, value.policy)
+  return (
+    diagnosticsAgree &&
+    value.ready === derivedReady &&
+    value.status === (derivedReady ? 'ready' : 'review-required')
   )
 }
 
@@ -1691,6 +1965,148 @@ function privateCitationStatusCounts(graph) {
   return counts
 }
 
+const PRIVATE_CROSS_REFERENCE_KINDS = [
+  'figure',
+  'table',
+  'section',
+  'appendix',
+  'equation',
+]
+const PRIVATE_CROSS_REFERENCE_STATUSES = ['matched', 'ambiguous', 'unresolved']
+
+function validPrivateCrossReferenceTarget(target) {
+  if (
+    !hasExactKeys(target, [
+      'kind',
+      'labelSha256',
+      'referenceStart',
+      'referenceEnd',
+      'status',
+      'candidateNodeIds',
+      'targetNodeId',
+      'evidenceSha256s',
+    ]) ||
+    !PRIVATE_CROSS_REFERENCE_KINDS.includes(target.kind) ||
+    !SHA256_PATTERN.test(target.labelSha256) ||
+    !isNonNegativeInteger(target.referenceStart) ||
+    !Number.isSafeInteger(target.referenceEnd) ||
+    target.referenceEnd <= target.referenceStart ||
+    !PRIVATE_CROSS_REFERENCE_STATUSES.includes(target.status) ||
+    !validPrivateHashArray(target.candidateNodeIds) ||
+    !validPrivateHashArray(target.evidenceSha256s, true)
+  ) {
+    return false
+  }
+  if (target.status === 'matched') {
+    return (
+      target.candidateNodeIds.length === 1 &&
+      target.targetNodeId === target.candidateNodeIds[0]
+    )
+  }
+  return (
+    target.targetNodeId === null &&
+    (target.status === 'ambiguous'
+      ? target.candidateNodeIds.length > 1
+      : target.candidateNodeIds.length === 0)
+  )
+}
+
+function validPrivateCrossReferenceRelationship(relationship) {
+  if (
+    !hasExactKeys(relationship, [
+      'id',
+      'kind',
+      'status',
+      'textSha256',
+      'referenceRegionId',
+      'referenceStart',
+      'referenceEnd',
+      'labels',
+      'targets',
+      'targetNodeIds',
+      'canonicalAnchor',
+      'confidence',
+      'evidenceSha256s',
+      'sourceBoxes',
+    ]) ||
+    !SHA256_PATTERN.test(relationship.id) ||
+    !PRIVATE_CROSS_REFERENCE_KINDS.includes(relationship.kind) ||
+    !PRIVATE_CROSS_REFERENCE_STATUSES.includes(relationship.status) ||
+    !SHA256_PATTERN.test(relationship.textSha256) ||
+    !SHA256_PATTERN.test(relationship.referenceRegionId) ||
+    !isNonNegativeInteger(relationship.referenceStart) ||
+    !Number.isSafeInteger(relationship.referenceEnd) ||
+    relationship.referenceEnd <= relationship.referenceStart ||
+    !validPrivateHashArray(relationship.labels, true) ||
+    !Array.isArray(relationship.targets) ||
+    relationship.targets.length === 0 ||
+    relationship.targets.length !== relationship.labels.length ||
+    !relationship.targets.every(validPrivateCrossReferenceTarget) ||
+    relationship.targets.some(
+      (target, index) =>
+        target.kind !== relationship.kind ||
+        target.labelSha256 !== relationship.labels[index] ||
+        target.referenceStart < relationship.referenceStart ||
+        target.referenceEnd > relationship.referenceEnd ||
+        (index > 0 &&
+          target.referenceStart < relationship.targets[index - 1].referenceEnd),
+    ) ||
+    !validPrivateHashArray(relationship.targetNodeIds) ||
+    (relationship.canonicalAnchor !== null &&
+      (!hasExactKeys(relationship.canonicalAnchor, [
+        'nodeId',
+        'start',
+        'end',
+      ]) ||
+        !SHA256_PATTERN.test(relationship.canonicalAnchor.nodeId) ||
+        !isNonNegativeInteger(relationship.canonicalAnchor.start) ||
+        !Number.isSafeInteger(relationship.canonicalAnchor.end) ||
+        relationship.canonicalAnchor.end <=
+          relationship.canonicalAnchor.start)) ||
+    typeof relationship.confidence !== 'number' ||
+    !Number.isFinite(relationship.confidence) ||
+    relationship.confidence < 0 ||
+    relationship.confidence > 1 ||
+    !validPrivateHashArray(relationship.evidenceSha256s, true) ||
+    !validPrivateHashArray(relationship.sourceBoxes, true)
+  ) {
+    return false
+  }
+  const derivedStatus = relationship.targets.some(
+    (target) => target.status === 'ambiguous',
+  )
+    ? 'ambiguous'
+    : relationship.targets.some((target) => target.status === 'unresolved')
+      ? 'unresolved'
+      : 'matched'
+  const derivedTargetNodeIds =
+    derivedStatus === 'matched'
+      ? relationship.targets.map((target) => target.targetNodeId)
+      : []
+  return (
+    relationship.status === derivedStatus &&
+    canonicalJsonHash(relationship.targetNodeIds) ===
+      canonicalJsonHash(derivedTargetNodeIds)
+  )
+}
+
+function validPrivateCrossReferenceGraph(value) {
+  return (
+    Array.isArray(value) &&
+    value.every(validPrivateCrossReferenceRelationship) &&
+    new Set(value.map((relationship) => relationship.id)).size === value.length
+  )
+}
+
+function privateCrossReferenceStatusCounts(graph) {
+  const counts = {}
+  for (const relationship of graph) {
+    const key = `${relationship.kind}:${relationship.status}`
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return counts
+}
+
 function validStructure(value) {
   if (
     !hasExactKeys(value, [
@@ -1699,6 +2115,7 @@ function validStructure(value) {
       'canonicalNodeSequenceSha256',
       'canonicalNodeTypeSequenceSha256',
       'canonicalContentSha256',
+      'canonicalNodeProvenanceSha256',
       'readingOrderGraphSha256',
       'nodeCounts',
       'visualRelationshipCount',
@@ -1711,6 +2128,10 @@ function validStructure(value) {
       'citationRelationshipCounts',
       'citationRelationshipGraph',
       'citationRelationshipGraphSha256',
+      'crossReferenceRelationshipCount',
+      'crossReferenceRelationshipCounts',
+      'crossReferenceRelationshipGraph',
+      'crossReferenceRelationshipGraphSha256',
       'assetCount',
       'assetCounts',
       'assetManifestSha256',
@@ -1729,6 +2150,7 @@ function validStructure(value) {
       'visualRelationshipCount',
       'noteRelationshipCount',
       'citationRelationshipCount',
+      'crossReferenceRelationshipCount',
       'assetCount',
       'lineTransitionCount',
     ].some((key) => !isNonNegativeInteger(value[key])) ||
@@ -1736,10 +2158,12 @@ function validStructure(value) {
       'canonicalNodeSequenceSha256',
       'canonicalNodeTypeSequenceSha256',
       'canonicalContentSha256',
+      'canonicalNodeProvenanceSha256',
       'readingOrderGraphSha256',
       'visualRelationshipGraphSha256',
       'noteRelationshipGraphSha256',
       'citationRelationshipGraphSha256',
+      'crossReferenceRelationshipGraphSha256',
       'assetManifestSha256',
       'artifactCanonicalContentSha256',
       'artifactSourceAssetIdSetSha256',
@@ -1753,6 +2177,7 @@ function validStructure(value) {
       'visualRelationshipCounts',
       'noteRelationshipCounts',
       'citationRelationshipCounts',
+      'crossReferenceRelationshipCounts',
       'assetCounts',
     ].some((key) => !validCountMap(value[key])) ||
     !validPrivateCitationGraph(value.citationRelationshipGraph) ||
@@ -1763,6 +2188,17 @@ function validStructure(value) {
     canonicalJsonHash(value.citationRelationshipCounts) !==
       canonicalJsonHash(
         privateCitationStatusCounts(value.citationRelationshipGraph),
+      ) ||
+    !validPrivateCrossReferenceGraph(value.crossReferenceRelationshipGraph) ||
+    value.crossReferenceRelationshipGraph.length !==
+      value.crossReferenceRelationshipCount ||
+    canonicalJsonHash(value.crossReferenceRelationshipGraph) !==
+      value.crossReferenceRelationshipGraphSha256 ||
+    canonicalJsonHash(value.crossReferenceRelationshipCounts) !==
+      canonicalJsonHash(
+        privateCrossReferenceStatusCounts(
+          value.crossReferenceRelationshipGraph,
+        ),
       ) ||
     typeof value.lineTransitionLedgerAvailable !== 'boolean'
   ) {
@@ -1798,7 +2234,11 @@ function validReconstructionEvidence(value) {
     Number.isSafeInteger(value.pageCount) &&
     value.pageCount > 0 &&
     validCompleteness(value.completeness) &&
-    validReadiness(value.readiness) &&
+    validReadiness(
+      value.readiness,
+      value.completeness,
+      value.diagnosticCounts,
+    ) &&
     validCountMap(value.nodeCounts) &&
     validInlineSemanticLedger(value.inlineSemanticLedger) &&
     validCountMap(value.relationshipCounts) &&
@@ -2111,6 +2551,7 @@ function noCompletenessRegression(baseline, candidate) {
     'lineBoundaryCount',
     'structurallyConsumedLineBoundaryCount',
     'expectedInlineSpanCount',
+    'expectedHyperlinkCount',
   ]
   const higherIsBetter = [
     'outputTextCharacters',
@@ -2123,6 +2564,8 @@ function noCompletenessRegression(baseline, candidate) {
     'decidedLineBoundaryCount',
     'mappedInlineSpanCount',
     'inlineSpanCoverage',
+    'mappedHyperlinkCount',
+    'hyperlinkCoverage',
   ]
   const lowerIsBetter = [
     'duplicateCanonicalSpanCount',
@@ -2152,10 +2595,15 @@ function noCompletenessRegression(baseline, candidate) {
 
 function noReadinessRegression(baseline, candidate) {
   return (
+    canonicalJsonHash(candidate.policy) ===
+      canonicalJsonHash(baseline.policy) &&
     (!baseline.ready || candidate.ready) &&
     !(baseline.status === 'ready' && candidate.status !== 'ready') &&
     candidate.blockingDiagnosticCodes.every((code) =>
       baseline.blockingDiagnosticCodes.includes(code),
+    ) &&
+    candidate.errorDiagnosticCodes.every((code) =>
+      baseline.errorDiagnosticCodes.includes(code),
     )
   )
 }
@@ -2512,7 +2960,13 @@ async function main() {
               profile,
             )
         privateFailureStage = 'artifact-inspect'
-        const inspection = modules.inspectEpub(epub.bytes, profile)
+        const inspection = modules.inspectEpub(epub.bytes, profile, {
+          canonicalPaper: reconstruction.readiness.ready
+            ? reconstruction.paper
+            : artifactProjections['readable-fallback'].paper,
+          sourceCanonicalPaper: reconstruction.paper,
+          sourcePdfSha256: reconstruction.source.sha256,
+        })
         privateFailureStage = 'epubcheck-validate'
         const epubCheck = epubCheckValidator
           ? await validatePrivateEpubWithEpubCheck(

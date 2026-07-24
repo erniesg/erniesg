@@ -233,6 +233,26 @@ describe('EPUB rendition preview', () => {
     expect(markup).not.toContain('download=')
   })
 
+  it('offers unbuilt controlled profiles and marks the selected profile as building', () => {
+    const markup = renderToStaticMarkup(
+      <EpubRenditionPreview
+        epubs={[profiled('mobile')]}
+        selectedProfileId="paperPro"
+        buildingProfileId="paperPro"
+        onSelectedProfileChange={() => undefined}
+      />,
+    )
+
+    expect(markup.match(/<button/g)).toHaveLength(3)
+    expect(markup.match(/data-artifact-status="ready"/g)).toHaveLength(1)
+    expect(markup.match(/data-artifact-status="unbuilt"/g)).toHaveLength(1)
+    expect(markup.match(/data-artifact-status="building"/g)).toHaveLength(1)
+    expect(markup).toContain('Building Paper Pro EPUB locally…')
+    expect(markup).toContain('data-profile-id="paperPro"')
+    expect(markup).not.toContain('data-artifact-sha256')
+    expect(markup).not.toContain('Generated EPUB rendition on Mobile')
+  })
+
   it('renders the parent-selected profile as the exact visible artifact', () => {
     const markup = renderToStaticMarkup(
       <EpubRenditionPreview

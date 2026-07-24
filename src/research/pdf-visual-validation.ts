@@ -2,11 +2,13 @@ import type {
   NodeSourceEvidence,
   NormalizedSourceBox,
   PdfNativeObject,
+  PdfPageRegion,
   PdfVisualAsset,
   PdfVisualRelationship,
 } from './import-types'
 import type { ResearchPaper } from './schema'
-import { isStrictSemanticTable } from './semantic-table'
+import { isSourceVerifiedSemanticTable } from './semantic-table'
+import { isValidSourcePageCropPayload } from './visual-assets'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const ASSET_ID_PATTERN = /^asset-[a-f0-9]{24}$/
@@ -279,6 +281,253 @@ function validAssetShape(
   )
 }
 
+function normalizedSourceText(value: string | undefined) {
+  return value?.replace(/\s+/gu, ' ').trim() ?? ''
+}
+
+function sourceCropContainsBox(
+  crop: NormalizedSourceBox,
+  source: NormalizedSourceBox,
+) {
+  const tolerance = 0.00001
+  return (
+    crop.page === source.page &&
+    crop.rotation === source.rotation &&
+    crop.x <= source.x + tolerance &&
+    crop.y <= source.y + tolerance &&
+    crop.x + crop.width + tolerance >= source.x + source.width &&
+    crop.y + crop.height + tolerance >= source.y + source.height
+  )
+}
+
+function sourceBoxesOverlap(
+  left: NormalizedSourceBox,
+  right: NormalizedSourceBox,
+) {
+  if (left.page !== right.page || left.rotation !== right.rotation) return false
+  const tolerance = 0.00001
+  const horizontal =
+    Math.min(left.x + left.width, right.x + right.width) -
+    Math.max(left.x, right.x)
+  const vertical =
+    Math.min(left.y + left.height, right.y + right.height) -
+    Math.max(left.y, right.y)
+  return horizontal > tolerance && vertical > tolerance
+}
+
+function validSharedEquationLineScope({
+  relationship,
+  regions,
+  canonicalEvidence,
+  competingOwnerIds,
+  provenance,
+}: {
+  relationship: PdfVisualRelationship
+  regions: readonly PdfPageRegion[] | undefined
+  canonicalEvidence: NodeSourceEvidence
+  competingOwnerIds: ReadonlySet<string>
+  provenance: Record<string, NodeSourceEvidence>
+}) {
+  if (
+    relationship.kind !== 'equation' ||
+    !regions ||
+    relationship.sourceRegionIds.length === 0 ||
+    !relationship.sourceLineIds?.length ||
+    new Set(relationship.sourceRegionIds).size !==
+      relationship.sourceRegionIds.length ||
+    new Set(relationship.sourceLineIds).size !==
+      relationship.sourceLineIds.length
+  ) {
+    return false
+  }
+
+  const regionOccurrences = new Map<string, PdfPageRegion[]>()
+  const lineOccurrences = new Map<
+    string,
+    Array<{ regionId: string; line: PdfPageRegion['lines'][number] }>
+  >()
+  for (const region of regions) {
+    const matchingRegions = regionOccurrences.get(region.id) ?? []
+    matchingRegions.push(region)
+    regionOccurrences.set(region.id, matchingRegions)
+    for (const line of region.lines) {
+      const matchingLines = lineOccurrences.get(line.id) ?? []
+      matchingLines.push({ regionId: region.id, line })
+      lineOccurrences.set(line.id, matchingLines)
+    }
+  }
+
+  const sourceRegionIds = new Set(relationship.sourceRegionIds)
+  if (
+    relationship.sourceRegionIds.some(
+      (regionId) => regionOccurrences.get(regionId)?.length !== 1,
+    )
+  ) {
+    return false
+  }
+  const selectedLines = relationship.sourceLineIds.flatMap(
+    (lineId) => lineOccurrences.get(lineId) ?? [],
+  )
+  if (
+    selectedLines.length !== relationship.sourceLineIds.length ||
+    relationship.sourceLineIds.some(
+      (lineId) => lineOccurrences.get(lineId)?.length !== 1,
+    ) ||
+    selectedLines.some(({ regionId }) => !sourceRegionIds.has(regionId)) ||
+    relationship.sourceRegionIds.some(
+      (regionId) =>
+        !selectedLines.some((selected) => selected.regionId === regionId),
+    ) ||
+    selectedLines.some(({ line }) =>
+      canonicalEvidence.boxes.every(
+        (sourceBox) => !sourceCropContainsBox(sourceBox, line.box),
+      ),
+    )
+  ) {
+    return false
+  }
+
+  for (const ownerId of competingOwnerIds) {
+    const ownerEvidence = provenance[ownerId]
+    if (!ownerEvidence || ownerEvidence.boxes.length === 0) return false
+    if (
+      selectedLines.some(({ line }) =>
+        ownerEvidence.boxes.some((box) => sourceBoxesOverlap(box, line.box)),
+      )
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function hasIncompleteInlineStackedEquationScope(
+  relationship: PdfVisualRelationship,
+  regions: readonly PdfPageRegion[] | undefined,
+) {
+  if (
+    relationship.kind !== 'equation' ||
+    !regions ||
+    !relationship.sourceLineIds?.length
+  ) {
+    return false
+  }
+  const sourceLineIds = new Set(relationship.sourceLineIds)
+  const inlineFormulaBaseIds = new Set(
+    relationship.sourceLineIds.flatMap((lineId) => {
+      const match = /^(.*-inline-stacked-\d+)-formula$/u.exec(lineId)
+      return match ? [match[1]] : []
+    }),
+  )
+  const selectedLines = regions.flatMap((region) =>
+    region.lines.filter((line) => sourceLineIds.has(line.id)),
+  )
+  const hasStackedSourceGeometry = selectedLines.some((line) => {
+    const runs = line.runs.filter((run) => run.text.trim())
+    if (runs.length < 2) return false
+    const maximumFontSize = Math.max(...runs.map((run) => run.fontSize))
+    const stackedRuns = runs.filter(
+      (run) => run.fontSize <= maximumFontSize * 0.86,
+    )
+    return stackedRuns.some((left, leftIndex) =>
+      stackedRuns.slice(leftIndex + 1).some((right) => {
+        const horizontalOverlap = Math.max(
+          0,
+          Math.min(left.x + left.width, right.x + right.width) -
+            Math.max(left.x, right.x),
+        )
+        const minimumWidth = Math.min(left.width, right.width)
+        const minimumHeight = Math.min(left.height, right.height)
+        const verticalGap = Math.max(
+          left.y - (right.y + right.height),
+          right.y - (left.y + left.height),
+          0,
+        )
+        return (
+          minimumWidth > 0 &&
+          minimumHeight > 0 &&
+          horizontalOverlap >= minimumWidth * 0.7 &&
+          Math.abs(
+            left.x + left.width / 2 - (right.x + right.width / 2),
+          ) <= Math.max(0.008, Math.max(left.width, right.width) * 0.3) &&
+          Math.abs(
+            left.y + left.height / 2 - (right.y + right.height / 2),
+          ) >= Math.max(0.003, minimumHeight * 0.45) &&
+          verticalGap <= Math.max(0.006, minimumHeight * 0.7)
+        )
+      }),
+    )
+  })
+  const siblingRegions = regions.filter((region) =>
+    region.lines.some((line) => {
+      if (sourceLineIds.has(line.id)) return false
+      const match = /^(.*-inline-stacked-\d+)-(before|after)$/u.exec(line.id)
+      return Boolean(match && inlineFormulaBaseIds.has(match[1]))
+    }),
+  )
+  return (
+    inlineFormulaBaseIds.size > 0 &&
+    siblingRegions.length > 0 &&
+    (!hasStackedSourceGeometry ||
+      siblingRegions.some((region) => region.kind !== 'body'))
+  )
+}
+
+function validTableRendition({
+  canonicalNode,
+  relationship,
+  renderedAssets,
+  hasExplicitLineScope,
+  regions,
+  canonicalEvidence,
+}: {
+  canonicalNode: Extract<ResearchPaper['nodes'][number], { type: 'figure' }>
+  relationship: PdfVisualRelationship
+  renderedAssets: PdfVisualAsset[]
+  hasExplicitLineScope: boolean
+  regions: readonly PdfPageRegion[] | undefined
+  canonicalEvidence: NodeSourceEvidence
+}) {
+  if (renderedAssets.length !== 1) return false
+  const asset = renderedAssets[0]
+  if (asset.rendition === 'semantic-table') {
+    return (
+      normalizedSourceText(canonicalNode.sourceText) ===
+        normalizedSourceText(relationship.sourceText) &&
+      isSourceVerifiedSemanticTable({
+        table: canonicalNode.table,
+        relationship,
+        regions,
+        evidence: canonicalEvidence,
+      })
+    )
+  }
+  if (
+    asset.rendition !== 'source-page-crop' ||
+    canonicalNode.table !== undefined ||
+    !hasExplicitLineScope ||
+    !relationship.evidence.includes('source-page-crop') ||
+    !relationship.evidence.some((item) =>
+      [
+        'bounded-table-scope',
+        'complete-bounded-table-scope',
+        'detected-table-geometry',
+      ].includes(item),
+    ) ||
+    normalizedSourceText(relationship.sourceText).length === 0 ||
+    normalizedSourceText(canonicalNode.sourceText) !==
+      normalizedSourceText(relationship.sourceText) ||
+    !asset.sourceCropBox ||
+    !isValidSourcePageCropPayload(asset) ||
+    asset.sourceBoxes.some(
+      (sourceBox) => !sourceCropContainsBox(asset.sourceCropBox!, sourceBox),
+    )
+  ) {
+    return false
+  }
+  return true
+}
+
 function uniqueAssetsById(assets: PdfVisualAsset[]) {
   const counts = new Map<string, number>()
   for (const asset of assets)
@@ -295,11 +544,13 @@ export function validatedPdfVisualRelationships({
   provenance,
   relationships,
   assets,
+  regions,
 }: {
   paper: ResearchPaper
   provenance?: Record<string, NodeSourceEvidence>
   relationships?: PdfVisualRelationship[]
   assets?: PdfVisualAsset[]
+  regions?: readonly PdfPageRegion[]
 }) {
   if (!provenance) return []
   const assetsById = uniqueAssetsById(assets ?? [])
@@ -320,7 +571,7 @@ export function validatedPdfVisualRelationships({
     }
   }
   return (relationships ?? []).filter((relationship) => {
-    const hasExplicitLineScope = Boolean(
+    const hasExplicitTableLineScope = Boolean(
       relationship.kind === 'table' &&
       relationship.sourceLineIds?.length &&
       relationship.sourceLineIds.every((lineId) => lineId.length > 0) &&
@@ -337,6 +588,7 @@ export function validatedPdfVisualRelationships({
         relationship.sourceRegionIds.length === 0) ||
       relationship.assetIds.length === 0 ||
       relationship.sourceBoxes.length === 0 ||
+      hasIncompleteInlineStackedEquationScope(relationship, regions) ||
       new Set(relationship.sourceObjectIds).size !==
         relationship.sourceObjectIds.length ||
       new Set(relationship.assetIds).size !== relationship.assetIds.length
@@ -347,16 +599,13 @@ export function validatedPdfVisualRelationships({
       relationship.canonicalNodeId,
       relationship.captionNodeId,
     ])
-    if (
-      !hasExplicitLineScope &&
-      relationship.sourceRegionIds.some((regionId) =>
-        [...(sourceRegionOwners.get(regionId) ?? [])].some(
+    const competingOwnerIds = new Set(
+      relationship.sourceRegionIds.flatMap((regionId) =>
+        [...(sourceRegionOwners.get(regionId) ?? [])].filter(
           (owner) => !permittedRegionOwners.has(owner),
         ),
-      )
-    ) {
-      return false
-    }
+      ),
+    )
     const canonicalNode = nodesById.get(relationship.canonicalNodeId)
     const captionNode = nodesById.get(relationship.captionNodeId)
     const canonicalEvidence = provenance[relationship.canonicalNodeId]
@@ -364,8 +613,6 @@ export function validatedPdfVisualRelationships({
     if (
       canonicalNode?.type !== 'figure' ||
       (canonicalNode.objectType ?? 'figure') !== relationship.kind ||
-      (relationship.kind === 'table' &&
-        !isStrictSemanticTable(canonicalNode.table)) ||
       !sameStrings(
         canonicalNode.relationships.assets ?? [],
         relationship.assetIds,
@@ -392,8 +639,21 @@ export function validatedPdfVisualRelationships({
     ) {
       return false
     }
+    if (
+      competingOwnerIds.size > 0 &&
+      !hasExplicitTableLineScope &&
+      !validSharedEquationLineScope({
+        relationship,
+        regions,
+        canonicalEvidence,
+        competingOwnerIds,
+        provenance,
+      })
+    ) {
+      return false
+    }
     const captionSourceBox =
-      hasExplicitLineScope && relationship.kind === 'table'
+      hasExplicitTableLineScope && relationship.kind === 'table'
         ? (relationship.sourceBoxes[0] ?? null)
         : boundingSourceBox(captionEvidence.boxes)
     if (!captionSourceBox) return false
@@ -419,6 +679,19 @@ export function validatedPdfVisualRelationships({
         renderedAssets.flatMap((asset) => asset.sourceBoxes),
         visualSourceBoxes,
       )
+    ) {
+      return false
+    }
+    if (
+      relationship.kind === 'table' &&
+      !validTableRendition({
+        canonicalNode,
+        relationship,
+        renderedAssets,
+        hasExplicitLineScope: hasExplicitTableLineScope,
+        regions,
+        canonicalEvidence,
+      })
     ) {
       return false
     }

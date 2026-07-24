@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-fidelity-comparator-run-receipt-1.0.0.json",
+  "title": "Performance and provenance sidecar for a scholarly PDF fidelity comparator run",
+  "description": "A future-facing sidecar for comparing parser/model runs. Accuracy remains authoritative only in the separately validated deterministic fidelity receipt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "privacy",
+    "contract",
+    "evalSet",
+    "candidate",
+    "execution",
+    "latency",
+    "cost",
+    "accuracyReceiptSha256",
+    "promotionEligible",
+    "receiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "privacy": {
+      "const": "public-identities-hashes-performance-aggregates-no-source-content-or-local-paths"
+    },
+    "contract": { "$ref": "#/$defs/identity" },
+    "evalSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sha256",
+        "documentIdentitySha256",
+        "caseIdentitySha256"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "caseIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "latency": { "$ref": "#/$defs/latency" },
+    "cost": { "$ref": "#/$defs/cost" },
+    "accuracyReceiptSha256": { "$ref": "#/$defs/sha256" },
+    "promotionEligible": {
+      "type": "boolean",
+      "const": false,
+      "description": "This sidecar never promotes a candidate. Promotion authority remains with independently verified accuracy, integrity, and human-review gates."
+    },
+    "receiptSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,191}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nonNegativeFinite": { "type": "number", "minimum": 0 },
+    "nullableCount": {
+      "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "versionedComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "artifactSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "artifactSha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "provider", "model", "adapter"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "provider": { "$ref": "#/$defs/versionedComponent" },
+        "model": { "$ref": "#/$defs/versionedComponent" },
+        "adapter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "sourceSha256"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "version": { "$ref": "#/$defs/id" },
+            "sourceSha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "platform",
+        "architecture",
+        "accelerator",
+        "networkIsolation",
+        "inputIdentitySha256",
+        "repeatCount",
+        "warmupCount"
+      ],
+      "properties": {
+        "lane": { "$ref": "#/$defs/id" },
+        "platform": { "$ref": "#/$defs/id" },
+        "architecture": { "$ref": "#/$defs/id" },
+        "accelerator": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "networkIsolation": {
+          "enum": [
+            "none",
+            "cooperative-offline-flags",
+            "independently-enforced"
+          ]
+        },
+        "inputIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "repeatCount": { "type": "integer", "minimum": 1 },
+        "warmupCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "sampleCount",
+        "p50Ms",
+        "p95Ms",
+        "meanMs",
+        "totalMs"
+      ],
+      "properties": {
+        "scope": {
+          "enum": [
+            "adapter-end-to-end-per-document",
+            "pipeline-end-to-end-per-document"
+          ]
+        },
+        "sampleCount": { "type": "integer", "minimum": 1 },
+        "p50Ms": { "$ref": "#/$defs/nonNegativeFinite" },
+        "p95Ms": { "$ref": "#/$defs/nonNegativeFinite" },
+        "meanMs": { "$ref": "#/$defs/nonNegativeFinite" },
+        "totalMs": { "$ref": "#/$defs/nonNegativeFinite" }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currency",
+        "amount",
+        "basis",
+        "inputTokens",
+        "outputTokens"
+      ],
+      "properties": {
+        "currency": { "const": "USD" },
+        "amount": { "$ref": "#/$defs/nonNegativeFinite" },
+        "basis": {
+          "enum": [
+            "provider-reported",
+            "provider-price-estimate",
+            "local-marginal-zero-hardware-excluded"
+          ]
+        },
+        "inputTokens": { "$ref": "#/$defs/nullableCount" },
+        "outputTokens": { "$ref": "#/$defs/nullableCount" }
+      }
+    }
+  }
+}

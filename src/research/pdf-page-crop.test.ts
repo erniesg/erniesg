@@ -145,7 +145,7 @@ describe('PDF source-page crops', () => {
           x: 0.08,
           y: 0.04,
           width: 0.75,
-          height: 0.17,
+          height: 0.2,
           rotation: 0,
           method: 'pdf-object' as const,
         },

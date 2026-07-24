@@ -225,7 +225,7 @@ function validateRequest(request) {
   }
   if (
     !isRecord(request) ||
-    request.schemaVersion !== '1.1.0' ||
+    !['1.1.0', '1.2.0'].includes(request.schemaVersion) ||
     request.privacy !== REQUEST_PRIVACY ||
     !isRecord(request.evalSet) ||
     !SAFE_ID.test(request.evalSet.id ?? '') ||
@@ -283,13 +283,23 @@ function validateRequest(request) {
       !Array.isArray(item.targets) ||
       (item.task === 'detection' && item.targets.length !== 0) ||
       (item.task !== 'detection' && item.targets.length === 0) ||
-      item.targets.some(
-        (target) =>
+      item.targets.some((target) => {
+        const expectedKeys =
+          request.schemaVersion === '1.2.0'
+            ? ['id', 'kind', 'sourcePage', 'box']
+            : ['id', 'kind', 'box']
+        return (
           !isRecord(target) ||
+          !exactKeys(target, expectedKeys) ||
           !SAFE_ID.test(target.id ?? '') ||
           target.kind !== 'candidate' ||
-          (target.box !== null && !normalizedBox(target.box)),
-      )
+          (request.schemaVersion === '1.2.0' &&
+            (!Number.isSafeInteger(target.sourcePage) ||
+              target.sourcePage < 1 ||
+              target.sourcePage > document.pageCount)) ||
+          (target.box !== null && !normalizedBox(target.box))
+        )
+      })
     ) {
       invalid('INVALID_MINERU_ADAPTER_REQUEST')
     }
@@ -640,18 +650,29 @@ function relationshipOutput(item, page) {
   return relationships.length > 0 ? { relationships } : null
 }
 
-function readingOrderOutput(item, page) {
-  const used = new Set()
+function readingOrderAcrossPages(item, contentByPage, normalizedPages) {
   const matches = []
   for (const target of item.targets ?? []) {
-    const match = bestMatch(page.order, target, used)
+    const sourcePage = target.sourcePage ?? item.page
+    const key = `${item.documentId}:${sourcePage}`
+    const source = contentByPage.get(key)
+    if (!source) continue
+    if (!normalizedPages.has(key)) {
+      normalizedPages.set(key, normalizePage(source))
+    }
+    const page = normalizedPages.get(key)
+    const match = bestMatch(page.order, target)
     if (!match) continue
-    used.add(match)
-    matches.push({ targetId: target.id, nativeOrder: match.nativeOrder })
+    matches.push({
+      targetId: target.id,
+      sourcePage,
+      nativeOrder: match.nativeOrder,
+    })
   }
   if (matches.length < 2) return null
   matches.sort(
     (left, right) =>
+      left.sourcePage - right.sourcePage ||
       left.nativeOrder - right.nativeOrder ||
       left.targetId.localeCompare(right.targetId),
   )
@@ -671,6 +692,15 @@ export function normalizeMineruPredictions(
   const normalizedPages = new Map()
   const cases = []
   for (const item of request.cases) {
+    if (item.task === 'reading-order') {
+      const output = readingOrderAcrossPages(
+        item,
+        contentByPage,
+        normalizedPages,
+      )
+      if (output) cases.push({ caseId: item.id, output })
+      continue
+    }
     const key = `${item.documentId}:${item.page}`
     const source = contentByPage.get(key)
     if (!source) continue
@@ -683,7 +713,6 @@ export function normalizeMineruPredictions(
       output = classificationOutput(item, page)
     }
     if (item.task === 'relationship') output = relationshipOutput(item, page)
-    if (item.task === 'reading-order') output = readingOrderOutput(item, page)
     if (output) cases.push({ caseId: item.id, output })
   }
   return {
@@ -1060,10 +1089,18 @@ async function main() {
   }
   const requiredPages = new Map()
   for (const item of request.cases) {
-    requiredPages.set(`${item.documentId}:${item.page}`, {
-      document: documents.get(item.documentId),
-      page: item.page,
-    })
+    const pages = new Set([
+      item.page,
+      ...(item.targets ?? []).flatMap(({ sourcePage }) =>
+        Number.isSafeInteger(sourcePage) ? [sourcePage] : [],
+      ),
+    ])
+    for (const page of pages) {
+      requiredPages.set(`${item.documentId}:${page}`, {
+        document: documents.get(item.documentId),
+        page,
+      })
+    }
   }
   const contentByPage = new Map()
   for (const [key, value] of [...requiredPages].sort(([left], [right]) =>

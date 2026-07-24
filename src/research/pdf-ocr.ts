@@ -7,12 +7,14 @@ import type {
   PdfSourceRun,
   ReconstructionDiagnostic,
 } from './import-types'
+import { parsePdfScholarlyVisualLabel } from './pdf-scholarly-label'
 
 export type PdfPageContentClass =
   | 'textless'
   | 'sparse-text'
   | 'mixed'
   | 'image-only'
+  | 'scholarly-visual'
   | 'born-digital'
 
 export type PdfPageClassification = {
@@ -119,6 +121,130 @@ function coveredArea(boxes: Array<{ width: number; height: number }>) {
   )
 }
 
+type PdfPageLine = {
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function sourceTextLines(runs: PdfSourceRun[]): PdfPageLine[] {
+  const ordered = [...runs].sort(
+    (left, right) => left.y - right.y || left.x - right.x,
+  )
+  const lines: PdfSourceRun[][] = []
+  for (const run of ordered) {
+    const center = run.y + run.height / 2
+    const line = lines.find((candidate) => {
+      const candidateCenter =
+        candidate.reduce((total, item) => total + item.y + item.height / 2, 0) /
+        candidate.length
+      const tolerance = Math.max(
+        run.height,
+        ...candidate.map((item) => item.height),
+      )
+      return Math.abs(center - candidateCenter) <= tolerance * 0.65
+    })
+    if (line) line.push(run)
+    else lines.push([run])
+  }
+  return lines.map((line) => {
+    const horizontal = [...line].sort((left, right) => left.x - right.x)
+    const x = Math.min(...horizontal.map((run) => run.x))
+    const y = Math.min(...horizontal.map((run) => run.y))
+    const right = Math.max(...horizontal.map((run) => run.x + run.width))
+    const bottom = Math.max(...horizontal.map((run) => run.y + run.height))
+    return {
+      text: horizontal
+        .map((run) => run.text.trim())
+        .filter(Boolean)
+        .join(' '),
+      x,
+      y,
+      width: right - x,
+      height: bottom - y,
+    }
+  })
+}
+
+function horizontalOverlap(
+  left: Pick<PdfPageLine, 'x' | 'width'>,
+  right: Pick<PdfPageLine, 'x' | 'width'>,
+) {
+  return Math.max(
+    0,
+    Math.min(left.x + left.width, right.x + right.width) -
+      Math.max(left.x, right.x),
+  )
+}
+
+function verticalOverlap(
+  top: Pick<PdfPageLine, 'y' | 'height'>,
+  bottom: Pick<PdfPageLine, 'y' | 'height'>,
+) {
+  return Math.max(
+    0,
+    Math.min(top.y + top.height, bottom.y + bottom.height) -
+      Math.max(top.y, bottom.y),
+  )
+}
+
+function boundedInsetImage(
+  box: Pick<PdfPageLine, 'x' | 'y' | 'width' | 'height'>,
+) {
+  const area = box.width * box.height
+  return (
+    area >= 0.02 &&
+    area <= 0.6 &&
+    box.width >= 0.2 &&
+    box.height >= 0.08 &&
+    box.x >= 0.025 &&
+    box.y >= 0.025 &&
+    box.x + box.width <= 0.975 &&
+    box.y + box.height <= 0.975
+  )
+}
+
+function adjacentToCaption(
+  image: Pick<PdfPageLine, 'x' | 'y' | 'width' | 'height'>,
+  caption: PdfPageLine,
+) {
+  const imageBottom = image.y + image.height
+  const captionRight = caption.x + caption.width
+  const imageRight = image.x + image.width
+  const aboveCaption =
+    imageBottom <= caption.y + 0.01 &&
+    caption.y - imageBottom <= 0.08 &&
+    horizontalOverlap(image, caption) >=
+      Math.min(image.width, caption.width) * 0.25
+  const besideCaption =
+    (imageRight <= caption.x || captionRight <= image.x) &&
+    Math.max(caption.x - imageRight, image.x - captionRight) <= 0.05 &&
+    verticalOverlap(image, caption) >=
+      Math.min(image.height, caption.height) * 0.25
+  return aboveCaption || besideCaption
+}
+
+function hasBoundedScholarlyVisual(
+  page: PdfPageAnalysis,
+  runs: PdfSourceRun[],
+) {
+  const captions = sourceTextLines(runs).filter((line) => {
+    const label = parsePdfScholarlyVisualLabel(line.text, {
+      context: 'caption',
+    })
+    return label?.kind === 'figure' || label?.kind === 'table'
+  })
+  if (captions.length === 0) return false
+  return (page.objects ?? []).some(
+    (object) =>
+      object.kind === 'image' &&
+      boundedInsetImage(object.box) &&
+      captions.some((caption) => adjacentToCaption(object.box, caption)),
+  )
+}
+
 export function classifyPdfPage(page: PdfPageAnalysis): PdfPageClassification {
   const runs = page.runs.filter((candidate) => candidate.text.trim())
   const textCharacters = runs.reduce(
@@ -133,19 +259,24 @@ export function classifyPdfPage(page: PdfPageAnalysis): PdfPageClassification {
   const hasText = textCharacters > 0
   const sparseText =
     hasText && (textCharacters < 48 || runs.length < 2 || textArea < 0.015)
+  const scholarlyVisual =
+    sparseText && imageCoverage >= 0.1 && hasBoundedScholarlyVisual(page, runs)
   const contentClass: PdfPageContentClass = !hasText
     ? imageCoverage >= 0.1
       ? 'image-only'
       : 'textless'
-    : sparseText && imageCoverage >= 0.1
-      ? 'mixed'
-      : sparseText
-        ? 'sparse-text'
-        : 'born-digital'
+    : scholarlyVisual
+      ? 'scholarly-visual'
+      : sparseText && imageCoverage >= 0.1
+        ? 'mixed'
+        : sparseText
+          ? 'sparse-text'
+          : 'born-digital'
 
   return {
     contentClass,
-    needsOcr: contentClass !== 'born-digital',
+    needsOcr:
+      contentClass !== 'born-digital' && contentClass !== 'scholarly-visual',
     evidence: {
       textCharacters,
       runCount: runs.length,

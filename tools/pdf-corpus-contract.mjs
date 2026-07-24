@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { basename, extname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -53,6 +54,10 @@ function validDocuments(documents, count) {
 
 function invalidContract() {
   throw new Error('INVALID_PDF_CORPUS_CONTRACT')
+}
+
+function contractMismatch() {
+  throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
 }
 
 export function validateCorpusContract(contract) {
@@ -159,6 +164,58 @@ export function validateCorpusContract(contract) {
   } catch {
     invalidContract()
   }
+}
+
+export function createCorpusContractBinding(contract, setKey, documents) {
+  const validation = validateCorpusContract(contract)
+  if (!['frozen', 'seededRandom'].includes(setKey)) contractMismatch()
+  const selected = contract[setKey]
+  if (!validDocuments(documents, selected.documents.length)) {
+    contractMismatch()
+  }
+
+  const actualById = new Map(
+    documents.map((document) => [document.id, document]),
+  )
+  for (const expected of selected.documents) {
+    const actual = actualById.get(expected.id)
+    if (
+      !actual ||
+      actual.byteLength !== expected.byteLength ||
+      actual.sha256 !== expected.sha256
+    ) {
+      contractMismatch()
+    }
+  }
+
+  const exactDocuments = selected.documents.map((document) => ({ ...document }))
+  const documentIdentitySha256 = sha256(canonicalJson(exactDocuments))
+  const expectedIdentitySha256 =
+    setKey === 'frozen' ? selected.identitySha256 : selected.selectionSha256
+  if (documentIdentitySha256 !== expectedIdentitySha256) contractMismatch()
+
+  return {
+    schemaVersion: contract.schemaVersion,
+    setKey,
+    setId: selected.id,
+    contractSha256: validation.contractSha256,
+    documentIdentitySha256,
+    documents: exactDocuments,
+  }
+}
+
+export async function bindCorpusContractPaths(contractPath, setKey, paths) {
+  const contract = JSON.parse(await readFile(contractPath, 'utf8'))
+  const documents = []
+  for (const path of paths) {
+    const bytes = await readFile(path)
+    documents.push({
+      id: basename(path, extname(path)),
+      byteLength: bytes.byteLength,
+      sha256: sha256(bytes),
+    })
+  }
+  return createCorpusContractBinding(contract, setKey, documents)
 }
 
 async function main() {

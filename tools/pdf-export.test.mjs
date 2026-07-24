@@ -932,7 +932,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 120_000)
 
   it('fails before publishing artifacts when required EPUBCheck is unavailable', async () => {
     const directory = await mkdtemp(

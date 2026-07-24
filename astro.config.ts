@@ -186,6 +186,10 @@ export default defineConfig({
     // discarding that browser-local File during a cold dev/Playwright run.
     optimizeDeps: {
       include: ['pdfjs-dist'],
+      // Headless OCR loads this native Node package only when `document` is
+      // absent. Browser dependency discovery must not inspect its
+      // platform-specific optional binaries.
+      exclude: ['@napi-rs/canvas'],
     },
     server: {
       watch: {

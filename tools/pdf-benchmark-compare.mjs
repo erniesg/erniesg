@@ -26,6 +26,17 @@ const METRICS = Object.freeze(
     { key: 'hyperlinkCoverage', direction: 'higher', tolerance: 0 },
     { key: 'assetCoverage', direction: 'higher', tolerance: 0 },
     { key: 'relationshipCoverage', direction: 'higher', tolerance: 0 },
+    {
+      key: 'expectedSemanticTableCount',
+      direction: 'higher',
+      tolerance: 0,
+    },
+    {
+      key: 'resolvedSemanticTableCount',
+      direction: 'higher',
+      tolerance: 0,
+    },
+    { key: 'semanticTableCoverage', direction: 'higher', tolerance: 0 },
     { key: 'duplicateCanonicalSpanCount', direction: 'lower', tolerance: 0 },
     { key: 'unresolvedCorruptingJoinCount', direction: 'lower', tolerance: 0 },
     { key: 'unresolvedObjectCount', direction: 'lower', tolerance: 0 },
@@ -86,6 +97,14 @@ const COMPLETENESS_INTEGER_FIELDS = [
   'unresolvedObjectCount',
   'readingOrderDiagnostics',
 ]
+const SEMANTIC_TABLE_COMPLETENESS_INTEGER_FIELDS = [
+  'expectedSemanticTableCount',
+  'resolvedSemanticTableCount',
+]
+const SEMANTIC_TABLE_METRIC_KEYS = new Set([
+  ...SEMANTIC_TABLE_COMPLETENESS_INTEGER_FIELDS,
+  'semanticTableCoverage',
+])
 const UNRESOLVED_OBJECT_FIELDS = [
   'assets',
   'captions',
@@ -111,6 +130,9 @@ const NON_DIRECTIONAL_DIAGNOSTIC_CODES = new Set([
   // This is emitted once per region whose ordering was successfully resolved.
   // Its volume follows the number of affected regions, not unresolved risk.
   'RESOLVED_READING_ORDER',
+  // This records a safe no-op: an optional float move was skipped while the
+  // source-proved visual-caption order remained intact.
+  'SOURCE_ORDER_FLOAT_FALLBACK',
 ])
 
 function rounded(value) {
@@ -137,7 +159,15 @@ function metricValue(document, key) {
 function metricChange(metric, baseline, candidate, tolerances) {
   if (baseline === null && candidate === null) return 'unchanged'
   if (candidate === null) return 'regressed'
-  if (baseline === null) return 'improved'
+  if (baseline === null) {
+    // Optional evidence added after a receipt schema shipped cannot promote
+    // against an unmeasured baseline. Re-freeze an independently accepted
+    // baseline with the same denominator before comparing this metric.
+    return SEMANTIC_TABLE_METRIC_KEYS.has(metric.key) ? 'regressed' : 'improved'
+  }
+  if (metric.key === 'expectedSemanticTableCount') {
+    return candidate === baseline ? 'unchanged' : 'regressed'
+  }
   const tolerance = tolerances[metric.key] ?? metric.tolerance
   const delta = rounded(candidate - baseline)
   if (Math.abs(delta) <= tolerance) return 'unchanged'
@@ -484,7 +514,7 @@ function validateStructure(structure) {
       'unresolvedCorruptingJoinCount',
       'structurallyConsumedLineBoundaryCount',
     ]) ||
-    structure.schemaVersion !== '1.3.0' ||
+    structure.schemaVersion !== '1.4.0' ||
     STRUCTURE_COUNT_FIELDS.some(
       (field) => !isNonNegativeInteger(structure[field]),
     ) ||
@@ -550,9 +580,20 @@ function validateStructure(structure) {
 }
 
 function validateCompleteness(completeness) {
+  if (!isRecord(completeness)) invalidReport()
+  const hasSemanticTableMetrics = [
+    ...SEMANTIC_TABLE_COMPLETENESS_INTEGER_FIELDS,
+    'semanticTableCoverage',
+  ].some((field) => Object.hasOwn(completeness, field))
   if (
     !hasExactKeys(completeness, [
       ...COMPLETENESS_INTEGER_FIELDS,
+      ...(hasSemanticTableMetrics
+        ? [
+            ...SEMANTIC_TABLE_COMPLETENESS_INTEGER_FIELDS,
+            'semanticTableCoverage',
+          ]
+        : []),
       'textCoverage',
       'inlineSpanCoverage',
       'hyperlinkCoverage',
@@ -565,8 +606,13 @@ function validateCompleteness(completeness) {
     COMPLETENESS_INTEGER_FIELDS.some(
       (field) => !isNonNegativeInteger(completeness[field]),
     ) ||
+    (hasSemanticTableMetrics &&
+      SEMANTIC_TABLE_COMPLETENESS_INTEGER_FIELDS.some(
+        (field) => !isNonNegativeInteger(completeness[field]),
+      )) ||
     METRICS.filter(({ key }) => key.endsWith('Coverage')).some(
-      ({ key }) => !isUnitInterval(completeness[key]),
+      ({ key }) =>
+        Object.hasOwn(completeness, key) && !isUnitInterval(completeness[key]),
     ) ||
     !hasExactKeys(completeness.unresolvedObjects, UNRESOLVED_OBJECT_FIELDS) ||
     UNRESOLVED_OBJECT_FIELDS.some(
@@ -616,6 +662,15 @@ function validateCompleteness(completeness) {
         completeness.resolvedRelationshipCount,
         completeness.expectedRelationshipCount,
       ) ||
+    (hasSemanticTableMetrics &&
+      (completeness.resolvedSemanticTableCount >
+        completeness.expectedSemanticTableCount ||
+        !isUnitInterval(completeness.semanticTableCoverage) ||
+        completeness.semanticTableCoverage !==
+          exactCoverage(
+            completeness.resolvedSemanticTableCount,
+            completeness.expectedSemanticTableCount,
+          ))) ||
     !Array.isArray(completeness.ocrRequiredPages) ||
     completeness.ocrRequiredPages.some(
       (page) => !Number.isSafeInteger(page) || page < 1,

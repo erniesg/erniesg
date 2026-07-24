@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
+  NodeSourceEvidence,
   NormalizedSourceBox,
   PdfNativeObject,
   PdfPageAnalysis,
@@ -8,6 +9,7 @@ import type {
   PdfSourceRun,
 } from './import-types'
 import { reconstructPdfVisuals, type PdfFigureRasterizer } from './pdf-visuals'
+import { isSourceVerifiedSemanticTable } from './semantic-table'
 import { createPngAsset, createSourcePageCropAsset } from './visual-assets'
 
 function box(
@@ -117,11 +119,7 @@ function tableLine(id: string, y: number): PdfRegionLine {
   return tabularLine(id, y, [0.12, 0.4, 0.67])
 }
 
-function equationTableCellLine(
-  id: string,
-  y: number,
-  x = 0.32,
-): PdfRegionLine {
+function equationTableCellLine(id: string, y: number, x = 0.32): PdfRegionLine {
   const sourceBox = box(x, y, 0.28, 0.014, 'pdf-text')
   return {
     id,
@@ -681,7 +679,7 @@ describe('bounded table-scope visual fallback', () => {
     expect(result.canonicalTablesByAssetId.size).toBe(0)
   })
 
-  it('fails closed when a table-like header band sits just above the proved body scope', async () => {
+  it('crops a proved body scope with its unique adjacent table header', async () => {
     const headerLine = tabularLine('omitted-header', 0.49, [0.12, 0.4, 0.67])
     const header = {
       ...mixedParent(
@@ -714,15 +712,24 @@ describe('bounded table-scope visual fallback', () => {
       rasterizeFigure,
     })
 
-    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
     expect(result.relationships[0]).toMatchObject({
       kind: 'table',
-      status: 'unresolved',
-      sourceRegionIds: [],
-      evidence: expect.arrayContaining(['table-header-outside-source-scope']),
+      status: 'matched',
+      sourceRegionIds: [header.id, body.id],
+      sourceLineIds: [headerLine.id, ...bodyLines.map((line) => line.id)],
+      evidence: expect.arrayContaining([
+        'bounded-table-scope',
+        'caption-lane-source-completion',
+        'non-semantic-source-scope',
+        'source-page-crop',
+      ]),
     })
-    expect(result.consumedRegionIds.size).toBe(0)
-    expect(result.consumedLineIds.size).toBe(0)
+    expect(result.consumedRegionIds).toEqual(new Set([header.id, body.id]))
+    expect(result.consumedLineIds).toEqual(
+      new Set([headerLine.id, ...bodyLines.map((line) => line.id)]),
+    )
+    expect(result.canonicalTablesByAssetId.size).toBe(0)
   })
 
   it('promotes a complete rectangular table when source header regions close the proved body scope', async () => {
@@ -775,10 +782,156 @@ describe('bounded table-scope visual fallback', () => {
     expect(result.consumedRegionIds).toEqual(new Set([header.id, body.id]))
   })
 
-  it('promotes a complete left-aligned table only after its equation cell shard is independently scoped', async () => {
-    const headerLine = tabularLine('table-header-left-middle', 0.22, [
-      0.2, 0.32,
+  it('promotes a source-verified table with a wrapped split header and normalized columns', async () => {
+    const sourceLine = (
+      id: string,
+      y: number,
+      cells: Array<{ text: string; x: number; width: number }>,
+    ): PdfRegionLine => {
+      const runs = cells.map<PdfSourceRun>((cell) => ({
+        ...box(cell.x, y, cell.width, 0.014, 'pdf-text'),
+        text: cell.text,
+        fontName: 'TableSerif',
+        fontSize: 8,
+        confidence: 0.99,
+      }))
+      const left = Math.min(...runs.map((run) => run.x))
+      const right = Math.max(...runs.map((run) => run.x + run.width))
+      return {
+        id,
+        text: runs.map((run) => run.text).join(' '),
+        fontSize: 8,
+        box: box(left, y, right - left, 0.014, 'pdf-text'),
+        runs,
+      }
+    }
+    const headerLeadLine = sourceLine('wrapped-source-header-lead', 0.49, [
+      { text: 'Dataset', x: 0.12, width: 0.14 },
+      { text: 'Dataset Automatically', x: 0.3, width: 0.1 },
     ])
+    const headerTailLine = sourceLine('wrapped-source-header-tail', 0.49, [
+      { text: 'Scenario', x: 0.5, width: 0.08 },
+      { text: 'Evaluation Scope', x: 0.72, width: 0.12 },
+    ])
+    const continuationLine = sourceLine(
+      'wrapped-source-header-continuation',
+      0.503,
+      [{ text: 'Constructed?', x: 0.31, width: 0.08 }],
+    )
+    const headerLead = {
+      ...mixedParent('wrapped-source-header-lead-region', headerLeadLine.box, [
+        headerLeadLine,
+      ]),
+      kind: 'header' as const,
+    }
+    const headerTail = {
+      ...mixedParent('wrapped-source-header-tail-region', headerTailLine.box, [
+        headerTailLine,
+      ]),
+      kind: 'header' as const,
+    }
+    const headerContinuation = {
+      ...mixedParent(
+        'wrapped-source-header-continuation-region',
+        continuationLine.box,
+        [continuationLine],
+      ),
+      kind: 'header' as const,
+    }
+    const bodyLines = [0.525, 0.565, 0.605].map((y, rowIndex) =>
+      sourceLine(`wrapped-source-body-${rowIndex + 1}`, y, [
+        { text: `Method ${rowIndex + 1}`, x: 0.12, width: 0.14 },
+        { text: rowIndex % 2 === 0 ? '✓' : '✗', x: 0.32, width: 0.06 },
+        { text: rowIndex % 2 === 0 ? '✗' : '✓', x: 0.51, width: 0.06 },
+        { text: `Evaluation ${rowIndex + 1}`, x: 0.66, width: 0.24 },
+      ]),
+    )
+    const body = mixedParent(
+      'wrapped-source-body',
+      box(0.12, 0.525, 0.78, 0.094, 'pdf-text'),
+      bodyLines,
+    )
+    const tableCaption = caption(
+      'wrapped-source-caption',
+      'Table 11. Wrapped source header results.',
+      box(0.12, 0.64, 0.78, 0.02, 'pdf-text'),
+    )
+    const rasterizeFigure = cropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [headerLead, headerTail, headerContinuation, body, tableCaption],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(result.relationships[0]).toMatchObject({
+      kind: 'table',
+      status: 'matched',
+      sourceRegionIds: expect.arrayContaining([
+        headerLead.id,
+        headerTail.id,
+        headerContinuation.id,
+        body.id,
+      ]),
+      sourceLineIds: [
+        continuationLine.id,
+        headerLeadLine.id,
+        headerTailLine.id,
+        ...bodyLines.map((line) => line.id),
+      ],
+      evidence: expect.arrayContaining([
+        'detected-table-geometry',
+        'semantic-table',
+        'semantic-header-table-local-geometry',
+        'complete-bounded-table-scope',
+      ]),
+    })
+    const table = [...result.canonicalTablesByAssetId.values()][0]
+    expect(table.rows.map((row) => row.cells.length)).toEqual([4, 4, 4, 4])
+    expect(table.rows[0].cells[1]).toMatchObject({
+      text: 'Dataset Automatically Constructed?',
+      sourceRuns: [
+        expect.objectContaining({
+          lineId: headerLeadLine.id,
+          text: 'Dataset Automatically',
+        }),
+        expect.objectContaining({
+          lineId: continuationLine.id,
+          text: 'Constructed?',
+        }),
+      ],
+    })
+    const relationship = result.relationships[0]
+    expect(
+      isSourceVerifiedSemanticTable({
+        table,
+        relationship,
+        regions: [
+          headerLead,
+          headerTail,
+          headerContinuation,
+          body,
+          tableCaption,
+        ],
+        evidence: {
+          confidence: 1,
+          pages: [1],
+          regionIds: relationship.sourceRegionIds,
+          boxes: relationship.sourceBoxes,
+          links: [],
+          relationshipIds: [relationship.id],
+        } satisfies NodeSourceEvidence,
+      }),
+    ).toBe(true)
+  })
+
+  it('promotes a complete left-aligned table only after its equation cell shard is independently scoped', async () => {
+    const headerLine = tabularLine(
+      'table-header-left-middle',
+      0.22,
+      [0.2, 0.32],
+    )
     headerLine.runs.forEach((run) => {
       run.bold = true
       run.fontName = 'TableSerif-Medium'

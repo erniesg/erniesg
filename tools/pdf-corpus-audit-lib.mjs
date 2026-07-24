@@ -6,7 +6,7 @@ import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 
 export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.5.0'
-export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.3.0'
+export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.4.0'
 
 const MAX_DIAGNOSTIC_SAMPLES = 64
 const MAX_DIAGNOSTIC_SAMPLES_PER_CODE = 3
@@ -22,6 +22,10 @@ const SAFE_FAILURE_MESSAGES = Object.freeze({
   IMPORT_CANCELLED: 'The local PDF audit was cancelled.',
   INCOMPLETE_RECONSTRUCTION:
     'The PDF reconstruction did not pass the completeness gate.',
+  PDF_DOCUMENT_TIMEOUT:
+    'The PDF exceeded the local per-document processing time limit.',
+  PDF_DOCUMENT_WORKER_FAILED:
+    'The PDF worker stopped without exposing local path or document details.',
   AUDIT_FAILED:
     'The PDF could not be audited; local path and document details were suppressed.',
 })
@@ -59,6 +63,18 @@ function safeError(error) {
     ? candidate
     : 'AUDIT_FAILED'
   return { code, message: SAFE_FAILURE_MESSAGES[code] }
+}
+
+export function createSafeAuditFailureDocument(path, code = 'AUDIT_FAILED') {
+  const safeCode = Object.hasOwn(SAFE_FAILURE_MESSAGES, code)
+    ? code
+    : 'AUDIT_FAILED'
+  return {
+    basename: basename(path),
+    sha256: null,
+    code: safeCode,
+    message: SAFE_FAILURE_MESSAGES[safeCode],
+  }
 }
 
 export function canonicalJson(value) {
@@ -193,6 +209,21 @@ function preformattedSourceSha256(relationship) {
   })
 }
 
+function equationTranscriptSourceSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    typeof relationship.sourceText === 'string' &&
+    relationship.sourceText.length > 0
+    ? opaqueStructuralId('equation-transcript-text', relationship.sourceText)
+    : null
+}
+
+function equationTranscriptAdjudicationSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    relationship.equationTranscriptAdjudication
+    ? canonicalJsonHash(relationship.equationTranscriptAdjudication)
+    : null
+}
+
 function normalizedVisualRelationships(relationships, assets) {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
   return relationships.map((relationship) => ({
@@ -210,6 +241,17 @@ function normalizedVisualRelationships(relationships, assets) {
     sourceBoxes: relationship.sourceBoxes ?? [],
     altTextSource: relationship.altTextSource ?? null,
     preformattedSourceSha256: preformattedSourceSha256(relationship),
+    ...(relationship.kind === 'equation' &&
+    ((typeof relationship.sourceText === 'string' &&
+      relationship.sourceText.length > 0) ||
+      relationship.equationTranscriptAdjudication)
+      ? {
+          equationTranscriptSourceSha256:
+            equationTranscriptSourceSha256(relationship),
+          equationTranscriptAdjudicationSha256:
+            equationTranscriptAdjudicationSha256(relationship),
+        }
+      : {}),
     selectedCandidateSha256: selectedVisualCandidateSha256(relationship),
     selectedCropSha256: selectedVisualCropSha256(relationship, assetsById),
   }))
@@ -357,7 +399,14 @@ function normalizedNodeProvenance(nodes, provenance) {
           regionIds: (evidence.regionIds ?? []).map((regionId) =>
             opaqueStructuralId('region', regionId),
           ),
-          boxes: evidence.boxes ?? [],
+          boxes: (evidence.boxes ?? []).map((box) =>
+            typeof box.fontName === 'string'
+              ? {
+                  ...box,
+                  fontName: box.fontName.replace(/^g_d\d+_/u, 'g_d*_'),
+                }
+              : { ...box },
+          ),
           links: (evidence.links ?? []).map((link) =>
             canonicalJsonHash({ kind: 'node-source-link', link }),
           ),
@@ -540,8 +589,8 @@ export function createPdfStructuralReceipt(reconstruction) {
   }
 }
 
-export async function createPdfPipeline() {
-  const cacheDir = await mkdtemp(join(tmpdir(), 'srt-pdf-vite-'))
+export async function createPdfPipeline({ temporaryRoot = tmpdir() } = {}) {
+  const cacheDir = await mkdtemp(join(temporaryRoot, 'srt-pdf-vite-'))
   const vite = await createServer({
     appType: 'custom',
     cacheDir,
@@ -560,6 +609,7 @@ export async function createPdfPipeline() {
   let exportModules
   let diagnosticModules
   let decisionModules
+  let validationModules
 
   return {
     reconstructPdf: pdf.reconstructPdf,
@@ -573,6 +623,7 @@ export async function createPdfPipeline() {
       ]).then(([epub, targets]) => ({
         buildEpub: epub.buildEpub,
         buildReadableEpub: epub.buildReadableEpub,
+        getEpubProfileMetadata: epub.getEpubProfileMetadata,
         projectReadableFallbackReconstruction:
           epub.projectReadableFallbackReconstruction,
         inspectEpub: epub.inspectEpub,
@@ -594,10 +645,24 @@ export async function createPdfPipeline() {
         .ssrLoadModule('/src/research/decision-record.ts')
         .then((decisions) => ({
           applyHumanDecisionFile: decisions.applyHumanDecisionFile,
+          createEquationTranscriptDecision:
+            decisions.createEquationTranscriptDecision,
+          humanDecisionFileSha256: decisions.humanDecisionFileSha256,
           parseHumanDecisionFile: decisions.parseHumanDecisionFile,
+          serializeHumanDecisionFile: decisions.serializeHumanDecisionFile,
+          upsertHumanDecision: decisions.upsertHumanDecision,
           maximumBytes: decisions.MAX_HUMAN_DECISION_FILE_BYTES,
         }))
       return decisionModules
+    },
+    async loadValidationModules() {
+      validationModules ??= vite
+        .ssrLoadModule('/src/research/pdf-visual-validation.ts')
+        .then((visualValidation) => ({
+          validatedPdfVisualRelationships:
+            visualValidation.validatedPdfVisualRelationships,
+        }))
+      return validationModules
     },
     async close() {
       try {
@@ -674,11 +739,10 @@ export async function auditPdfPath(
       throw error
     }
     return {
-      document: {
-        basename: stableBasename,
-        sha256: null,
-        ...safeError(error),
-      },
+      document: createSafeAuditFailureDocument(
+        stableBasename,
+        safeError(error).code,
+      ),
     }
   }
 }

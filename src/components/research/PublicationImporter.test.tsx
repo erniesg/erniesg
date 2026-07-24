@@ -11,6 +11,7 @@ vi.mock('./ResearchStudio', () => ({ default: () => null }))
 vi.mock('./EpubDownloadLink', () => ({ default: () => null }))
 
 import PublicationImporter, {
+  EquationTranscriptAdjudicationCard,
   importErrorCode,
   importErrorMessage,
   isSelectedEpubPreviewReady,
@@ -19,6 +20,24 @@ import PublicationImporter, {
 } from './PublicationImporter'
 
 describe('publication importer OCR controls', () => {
+  it('requires an explicit owner-local LaTeX transcript with no inferred default', () => {
+    const markup = renderToStaticMarkup(
+      <EquationTranscriptAdjudicationCard
+        relationshipId="equation-relationship-001"
+        label="Equation 1"
+        onDecision={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('Equation 1 · equation transcript review')
+    expect(markup).toContain('LaTeX transcript')
+    expect(markup).toContain('It is never inferred or selected automatically.')
+    expect(markup).toContain('maxLength="8192"')
+    expect(markup).toContain('<textarea')
+    expect(markup).toContain('disabled=""')
+    expect(markup).not.toContain('value=')
+  })
+
   it('offers three explicit line-join choices with no default selection', () => {
     const markup = renderToStaticMarkup(
       <LineJoinAdjudicationCard

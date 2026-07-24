@@ -757,7 +757,7 @@ describe('PDF semantic signal detection', () => {
     )
   })
 
-  it('retains a complete bounded table crop without counting it as semantic table resolution', async () => {
+  it('resolves an exact bounded table crop while reporting that no semantic grid exists', async () => {
     const fixture = strictTableBoundaryFixture()
     const width = 12
     const height = 8
@@ -896,9 +896,14 @@ describe('PDF semantic signal detection', () => {
     })
 
     expect(assessed.completeness.assetCoverage).toBe(1)
-    expect(assessed.completeness.relationshipCoverage).toBe(0)
-    expect(assessed.completeness.unresolvedObjects.tables).toBe(1)
-    expect(assessed.readiness.blockingDiagnosticCodes).toContain(
+    expect(assessed.completeness.relationshipCoverage).toBe(1)
+    expect(assessed.completeness.unresolvedObjects.tables).toBe(0)
+    expect(assessed.completeness).toMatchObject({
+      expectedSemanticTableCount: 1,
+      resolvedSemanticTableCount: 0,
+      semanticTableCoverage: 0,
+    })
+    expect(assessed.readiness.blockingDiagnosticCodes).not.toContain(
       'UNRESOLVED_SEMANTIC_OBJECTS',
     )
   })

@@ -81,11 +81,25 @@ const MIN_REUSED_PAGE_BACKDROP_HEIGHT = 0.2
 const MAX_REUSED_PAGE_BACKDROP_EDGE_INSET = 0.02
 const MIN_REUSED_PANEL_CLIP_WIDTH = 0.4
 const MIN_REUSED_PANEL_CLIP_HEIGHT = 0.15
+const MIN_REPEATED_RECTANGLE_OVERLAP = 0.98
+const MIN_EXACT_CROP_NATIVE_OBJECT_CONTAINMENT = 0.99
 const SOURCE_CROP_CONTAINMENT_TOLERANCE = 0.00001
 const CAPTION_BOUNDED_PANEL_EDGE_RETRY_PADDING = 0.012
 const CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING = 0.018
 const CAPTION_BOUNDED_PANEL_BOTTOM_INSET = 0.008
 const MAX_CAPTION_BOUNDED_PANEL_RECOVERY_ATTEMPTS = 8
+const CAPTION_ENVELOPE_SOURCE_CROP_RETRY_PADDINGS = [
+  0.016, 0.02, 0.024, 0.028, 0.032, 0.04, 0.05,
+] as const
+const MIN_CAPTION_ENVELOPE_NATIVE_OBJECT_COUNT = 4
+const MIN_CAPTION_ENVELOPE_TEXT_LINE_COUNT = 4
+const MIN_CAPTION_ENVELOPE_WIDTH = 0.45
+const MIN_CAPTION_ENVELOPE_HEIGHT = 0.12
+const MIN_CAPTION_ENVELOPE_HORIZONTAL_RULE_COUNT = 2
+const MIN_CAPTION_ENVELOPE_VERTICAL_RULE_COUNT = 2
+const MIN_CAPTION_ENVELOPE_GRID_COLUMN_COUNT = 2
+const MIN_CAPTION_ENVELOPE_GRID_ROW_COUNT = 3
+const MAX_CAPTION_ENVELOPE_TITLE_GAP = 0.04
 const MIN_CROSS_COLUMN_FIGURE_SPAN = 0.65
 const MAX_SINGLE_COLUMN_FIGURE_WIDTH = 0.55
 const MAX_TABLE_HEADER_SCOPE_GAP = 0.025
@@ -110,6 +124,7 @@ const TABLE_SOURCE_CROP_NEIGHBOR_GAP_FRACTIONS = [0.25, 0.5, 0.75, 0.9] as const
 
 type VisualCandidate = {
   kind: VisualKind
+  captionRegionId?: string
   sourceRegionIds: string[]
   sourceLineIds?: string[]
   sourceObjectIds: string[]
@@ -197,6 +212,13 @@ function horizontalOverlapRatio(
 ) {
   const denominator = Math.min(left.width, right.width)
   return denominator > 0 ? horizontalBoxOverlap(left, right) / denominator : 0
+}
+
+function compatibleCaptionLaneColumns(
+  left: PdfPageRegion['column'],
+  right: PdfPageRegion['column'],
+) {
+  return left === right || left === 'span' || right === 'span'
 }
 
 function narrowCaptionClaimsOneColumn(
@@ -308,6 +330,124 @@ function sameRepeatedGeometry(left: PdfNativeObject, right: PdfNativeObject) {
   )
 }
 
+function singleSolidRectangleFallbackAsset(asset: PdfVisualAsset | undefined) {
+  if (
+    !asset ||
+    asset.kind !== 'vector' ||
+    asset.mediaType !== 'image/svg+xml' ||
+    asset.rendition !== 'bounded-svg-fallback'
+  ) {
+    return false
+  }
+  const svg = new TextDecoder().decode(asset.bytes)
+  const paths = [...svg.matchAll(/<path\b([^>]*)\/?>/giu)]
+  if (
+    paths.length !== 1 ||
+    /<(?:circle|ellipse|image|line|polygon|polyline|rect|text|use)\b/iu.test(
+      svg,
+    )
+  ) {
+    return false
+  }
+  const attributes = paths[0][1]
+  const fill = attributes.match(/\bfill=(["'])(.*?)\1/iu)?.[2]?.trim()
+  const stroke = attributes.match(/\bstroke=(["'])(.*?)\1/iu)?.[2]?.trim()
+  const path = attributes.match(/\bd=(["'])(.*?)\1/iu)?.[2]?.trim()
+  if (!path || !fill || fill === 'none' || stroke !== 'none') return false
+
+  const tokens =
+    path.match(/[MLZ]|[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?/giu) ?? []
+  if (tokens.join(' ').replace(/\s+/g, '') !== path.replace(/\s+/g, '')) {
+    return false
+  }
+  const points: Array<{ x: number; y: number }> = []
+  let command = ''
+  let index = 0
+  let closed = false
+  while (index < tokens.length) {
+    const token = tokens[index++]
+    if (/^[MLZ]$/iu.test(token)) {
+      command = token.toUpperCase()
+      if (command === 'Z') {
+        closed = index === tokens.length
+        continue
+      }
+    } else {
+      index -= 1
+    }
+    if (!['M', 'L'].includes(command) || index + 1 >= tokens.length) {
+      return false
+    }
+    const x = Number(tokens[index++])
+    const y = Number(tokens[index++])
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false
+    points.push({ x, y })
+  }
+  if (!closed || points.length < 4 || points.length > 5) return false
+  if (
+    points.length === 5 &&
+    points[0].x === points[4].x &&
+    points[0].y === points[4].y
+  ) {
+    points.pop()
+  }
+  if (points.length !== 4) return false
+  const xs = [...new Set(points.map((point) => point.x))].sort(
+    (left, right) => left - right,
+  )
+  const ys = [...new Set(points.map((point) => point.y))].sort(
+    (left, right) => left - right,
+  )
+  if (xs.length !== 2 || ys.length !== 2) return false
+  const corners = new Set(points.map((point) => `${point.x}:${point.y}`))
+  if (corners.size !== 4) return false
+  return points.every((point, pointIndex) => {
+    const next = points[(pointIndex + 1) % points.length]
+    return point.x === next.x || point.y === next.y
+  })
+}
+
+function repeatedRectangleFallbackObjectIds(pages: PdfPageAnalysis[]) {
+  const assets = new Map(
+    pages
+      .flatMap((page) => page.assets ?? [])
+      .map((asset) => [asset.id, asset] as const),
+  )
+  const rectangles = pages
+    .flatMap((page) => page.objects ?? [])
+    .filter(
+      (
+        object,
+      ): object is PdfNativeObject & {
+        kind: 'vector'
+        assetId: string
+      } =>
+        object.kind === 'vector' &&
+        Boolean(object.assetId) &&
+        singleSolidRectangleFallbackAsset(assets.get(object.assetId!)),
+    )
+  return new Set(
+    rectangles.flatMap((object, objectIndex) => {
+      const repeated = rectangles.some((candidate, candidateIndex) => {
+        if (candidateIndex === objectIndex) return false
+        const smallerArea = Math.min(
+          object.box.width * object.box.height,
+          candidate.box.width * candidate.box.height,
+        )
+        return (
+          candidate.assetId === object.assetId ||
+          sameRepeatedGeometry(object, candidate) ||
+          (object.page === candidate.page &&
+            smallerArea > 0 &&
+            intersectionArea(object.box, candidate.box) / smallerArea >=
+              MIN_REPEATED_RECTANGLE_OVERLAP)
+        )
+      })
+      return repeated ? [object.id] : []
+    }),
+  )
+}
+
 export function decorativeNativeObjectIds(pages: PdfPageAnalysis[]) {
   const vectors = pages
     .flatMap((page) => page.objects ?? [])
@@ -321,14 +461,11 @@ export function decorativeNativeObjectIds(pages: PdfPageAnalysis[]) {
       )
       .map((object) => object.id),
   )
-  for (const object of vectors.filter((candidate) =>
-    isLargeVectorBox(candidate.box),
-  )) {
+  const repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(pages)
+  for (const object of vectors) {
     if (
-      vectors.some(
-        (candidate) =>
-          candidate.id !== object.id && sameRepeatedGeometry(object, candidate),
-      )
+      isLargeVectorBox(object.box) &&
+      repeatedRectangleObjectIds.has(object.id)
     ) {
       decorative.add(object.id)
     }
@@ -337,18 +474,13 @@ export function decorativeNativeObjectIds(pages: PdfPageAnalysis[]) {
 }
 
 function reusedPageBackdropObjectIds(pages: PdfPageAnalysis[]) {
+  const repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(pages)
   const vectors = pages
     .flatMap((page) => page.objects ?? [])
     .filter(
       (object): object is PdfNativeObject & { assetId: string } =>
         object.kind === 'vector' && Boolean(object.assetId),
     )
-  const assetPages = new Map<string, Set<number>>()
-  for (const object of vectors) {
-    const pageNumbers = assetPages.get(object.assetId) ?? new Set<number>()
-    pageNumbers.add(object.page)
-    assetPages.set(object.assetId, pageNumbers)
-  }
   const pageBackdropAssetIds = new Set(
     vectors
       .filter((object) => {
@@ -359,7 +491,7 @@ function reusedPageBackdropObjectIds(pages: PdfPageAnalysis[]) {
           box.x + box.width >= 1 - MAX_REUSED_PAGE_BACKDROP_EDGE_INSET ||
           box.y + box.height >= 1 - MAX_REUSED_PAGE_BACKDROP_EDGE_INSET
         return (
-          (assetPages.get(object.assetId)?.size ?? 0) >= 2 &&
+          repeatedRectangleObjectIds.has(object.id) &&
           reachesPageEdge &&
           box.width >= MIN_REUSED_PAGE_BACKDROP_WIDTH &&
           box.height >= MIN_REUSED_PAGE_BACKDROP_HEIGHT
@@ -380,23 +512,18 @@ function reusedPageBackdropObjectIds(pages: PdfPageAnalysis[]) {
 }
 
 function reusedPanelClipObjectIds(pages: PdfPageAnalysis[]) {
+  const repeatedRectangleObjectIds = repeatedRectangleFallbackObjectIds(pages)
   const vectors = pages
     .flatMap((page) => page.objects ?? [])
     .filter(
       (object): object is PdfNativeObject & { assetId: string } =>
         object.kind === 'vector' && Boolean(object.assetId),
     )
-  const assetPages = new Map<string, Set<number>>()
-  for (const object of vectors) {
-    const pageNumbers = assetPages.get(object.assetId) ?? new Set<number>()
-    pageNumbers.add(object.page)
-    assetPages.set(object.assetId, pageNumbers)
-  }
   return new Set(
     vectors
       .filter(
         (object) =>
-          (assetPages.get(object.assetId)?.size ?? 0) >= 2 &&
+          repeatedRectangleObjectIds.has(object.id) &&
           (object.box.x <= MAX_REUSED_PAGE_BACKDROP_EDGE_INSET ||
             object.box.y <= MAX_REUSED_PAGE_BACKDROP_EDGE_INSET) &&
           object.box.width >= MIN_REUSED_PANEL_CLIP_WIDTH &&
@@ -669,7 +796,7 @@ function scopeContainsReadingOrderText(
       region.lines.length > 0 &&
       region.text.trim().length > 0 &&
       ['body', 'spanning'].includes(region.kind) &&
-      fullyContainsBox(scope, region.box, 0),
+      materiallyOverlappingSourceBoxes(scope, region.box),
   )
 }
 
@@ -728,20 +855,62 @@ function intersectionArea(
   return width * height
 }
 
-function coextensiveNativeLayers(group: PdfPageRegion[]) {
-  return group.some((left, leftIndex) =>
-    group.slice(leftIndex + 1).some((right) => {
-      const smallerArea = Math.min(
-        left.box.width * left.box.height,
-        right.box.width * right.box.height,
-      )
-      return (
-        smallerArea >= MIN_NATIVE_SCAFFOLD_AREA &&
-        intersectionArea(left.box, right.box) / smallerArea >=
-          MIN_COEXTENSIVE_NATIVE_LAYER_OVERLAP
-      )
-    }),
+function coextensiveNativeLayerPair(left: PdfPageRegion, right: PdfPageRegion) {
+  const smallerArea = Math.min(
+    left.box.width * left.box.height,
+    right.box.width * right.box.height,
   )
+  return (
+    smallerArea >= MIN_NATIVE_SCAFFOLD_AREA &&
+    intersectionArea(left.box, right.box) / smallerArea >=
+      MIN_COEXTENSIVE_NATIVE_LAYER_OVERLAP
+  )
+}
+
+function coextensiveNativeLayerCluster(group: PdfPageRegion[]) {
+  const remaining = new Set(group)
+  const components: PdfPageRegion[][] = []
+  while (remaining.size > 0) {
+    const seed = remaining.values().next().value as PdfPageRegion
+    remaining.delete(seed)
+    const component = [seed]
+    for (let index = 0; index < component.length; index += 1) {
+      for (const candidate of [...remaining]) {
+        if (!coextensiveNativeLayerPair(component[index], candidate)) continue
+        remaining.delete(candidate)
+        component.push(candidate)
+      }
+    }
+    if (component.length >= 2) components.push(component)
+  }
+  return (
+    components.sort(
+      (left, right) =>
+        right.length - left.length ||
+        right.reduce(
+          (total, region) => total + region.nativeObjectIds.length,
+          0,
+        ) -
+          left.reduce(
+            (total, region) => total + region.nativeObjectIds.length,
+            0,
+          ) ||
+        left
+          .map((region) => region.id)
+          .sort()
+          .join(':')
+          .localeCompare(
+            right
+              .map((region) => region.id)
+              .sort()
+              .join(':'),
+          ),
+    )[0] ?? null
+  )
+}
+
+function coextensiveNativeLayers(group: PdfPageRegion[]) {
+  return coextensiveNativeLayerCluster(group) !== null
 }
 
 function provesCaptionBoundedNativeScaffold(
@@ -1035,6 +1204,418 @@ function adjacentPanelLabelOverlays(
     : []
 }
 
+function captionBoundedSemanticEnvelopeCandidates(
+  figureRegions: PdfPageRegion[],
+  regions: PdfPageRegion[],
+  captions: PdfPageRegion[],
+  pageBackdropObjectIds: ReadonlySet<string>,
+  panelClipObjectIds: ReadonlySet<string>,
+) {
+  const orderedCaptions = [...captions].sort(
+    (left, right) =>
+      left.page - right.page ||
+      left.box.y - right.box.y ||
+      left.box.x - right.box.x ||
+      left.id.localeCompare(right.id),
+  )
+  const repeatedPageFurnitureRegionIds =
+    repeatedTopPageFurnitureRegionIds(regions)
+  return orderedCaptions.flatMap<VisualCandidate>((caption, captionIndex) => {
+    const previousCaption = orderedCaptions
+      .slice(0, captionIndex)
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.page === caption.page &&
+          compatibleCaptionLaneColumns(candidate.column, caption.column) &&
+          horizontalOverlapRatio(candidate.box, caption.box) >= 0.35,
+      )
+    const laneTop = previousCaption
+      ? previousCaption.box.y + previousCaption.box.height
+      : 0
+    const laneBottom = caption.box.y
+    if (
+      caption.box.width < MIN_CAPTION_ENVELOPE_WIDTH ||
+      laneBottom - laneTop < MIN_CAPTION_ENVELOPE_HEIGHT
+    ) {
+      return []
+    }
+
+    const pageEdgeBackdropRegions = figureRegions.filter((region) => {
+      const box = region.box
+      const reachesPageEdge =
+        box.x <= MAX_REUSED_PAGE_BACKDROP_EDGE_INSET ||
+        box.y <= MAX_REUSED_PAGE_BACKDROP_EDGE_INSET ||
+        box.x + box.width >= 1 - MAX_REUSED_PAGE_BACKDROP_EDGE_INSET ||
+        box.y + box.height >= 1 - MAX_REUSED_PAGE_BACKDROP_EDGE_INSET
+      return (
+        region.page === caption.page &&
+        reachesPageEdge &&
+        region.nativeObjectIds.length > 0 &&
+        region.nativeObjectIds.every((sourceObjectId) =>
+          pageBackdropObjectIds.has(sourceObjectId),
+        )
+      )
+    })
+    const excludedPageBackdropObjectIds = new Set(
+      pageEdgeBackdropRegions.flatMap((region) => region.nativeObjectIds),
+    )
+    const captionLaneNativeRegions = figureRegions.filter((region) => {
+      if (
+        region.page !== caption.page ||
+        region.box.y < laneTop - FIGURE_OVERLAY_BOX_TOLERANCE ||
+        region.box.y + region.box.height >
+          laneBottom + FIGURE_OVERLAY_BOX_TOLERANCE ||
+        region.nativeObjectIds.length === 0 ||
+        region.nativeObjectIds.every((sourceObjectId) =>
+          excludedPageBackdropObjectIds.has(sourceObjectId),
+        )
+      ) {
+        return false
+      }
+      return true
+    })
+    const laneNativeRegions = captionLaneNativeRegions.filter(
+      (region) => horizontalOverlapRatio(caption.box, region.box) >= 0.35,
+    )
+    const reusedBackdropLayerCluster = coextensiveNativeLayerCluster(
+      pageEdgeBackdropRegions,
+    )
+    const reusedBackdropEnvelopeBox = reusedBackdropLayerCluster
+      ? unionObjectBox(reusedBackdropLayerCluster)
+      : null
+    const backdropLaneNativeRegions = reusedBackdropEnvelopeBox
+      ? captionLaneNativeRegions.filter((region) =>
+          fullyContainsBox(
+            reusedBackdropEnvelopeBox,
+            region.box,
+            FIGURE_OVERLAY_BOX_TOLERANCE,
+          ),
+        )
+      : []
+    const laneHorizontalRules = laneNativeRegions.filter(
+      (region) => region.box.width >= 0.15 && region.box.height <= 0.012,
+    )
+    const laneVerticalRules = laneNativeRegions.filter(
+      (region) => region.box.height >= 0.08 && region.box.width <= 0.012,
+    )
+    const ruleEnvelopeBox =
+      laneHorizontalRules.length >=
+        MIN_CAPTION_ENVELOPE_HORIZONTAL_RULE_COUNT &&
+      laneVerticalRules.length >= MIN_CAPTION_ENVELOPE_VERTICAL_RULE_COUNT
+        ? unionObjectBox([...laneHorizontalRules, ...laneVerticalRules])
+        : null
+    const denseGridPool =
+      backdropLaneNativeRegions.length > 0
+        ? backdropLaneNativeRegions
+        : laneNativeRegions
+    const denseGridRegions = denseGridPool.filter((region) => {
+      const centerX = region.box.x + region.box.width / 2
+      const centerY = region.box.y + region.box.height / 2
+      const sameColumnCount = denseGridPool.filter(
+        (candidate) =>
+          candidate !== region &&
+          Math.abs(candidate.box.x + candidate.box.width / 2 - centerX) <= 0.06,
+      ).length
+      const sameRowCount = denseGridPool.filter(
+        (candidate) =>
+          candidate !== region &&
+          Math.abs(candidate.box.y + candidate.box.height / 2 - centerY) <=
+            0.035,
+      ).length
+      return (
+        sameColumnCount >= MIN_CAPTION_ENVELOPE_GRID_ROW_COUNT - 1 &&
+        sameRowCount >= MIN_CAPTION_ENVELOPE_GRID_COLUMN_COUNT - 1
+      )
+    })
+    const usesDenseGridEnvelope =
+      ruleEnvelopeBox === null &&
+      denseGridRegions.flatMap((region) => region.nativeObjectIds).length >=
+        MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+    const usesReusedBackdropGridEnvelope =
+      usesDenseGridEnvelope &&
+      reusedBackdropEnvelopeBox !== null &&
+      backdropLaneNativeRegions.length >= denseGridRegions.length
+    const laneContainsPanelClip = laneNativeRegions.some((region) =>
+      region.nativeObjectIds.some((sourceObjectId) =>
+        panelClipObjectIds.has(sourceObjectId),
+      ),
+    )
+    const coextensiveLayerCluster =
+      ruleEnvelopeBox === null &&
+      !usesDenseGridEnvelope &&
+      excludedPageBackdropObjectIds.size === 0 &&
+      !laneContainsPanelClip
+        ? coextensiveNativeLayerCluster(laneNativeRegions)
+        : null
+    const coextensiveLayerEnvelopeBox = coextensiveLayerCluster
+      ? unionObjectBox(coextensiveLayerCluster)
+      : null
+    const usesCoextensiveLayerEnvelope = coextensiveLayerEnvelopeBox !== null
+    // A caption lane is only a search bound, not an ownership claim. Once a
+    // ruled semantic panel proves a tighter envelope, unrelated native
+    // objects outside that envelope must remain orphan obligations.
+    const nativeRegions = ruleEnvelopeBox
+      ? laneNativeRegions.filter((region) =>
+          fullyContainsBox(
+            ruleEnvelopeBox,
+            region.box,
+            FIGURE_OVERLAY_BOX_TOLERANCE,
+          ),
+        )
+      : usesDenseGridEnvelope
+        ? usesReusedBackdropGridEnvelope
+          ? backdropLaneNativeRegions
+          : denseGridRegions
+        : coextensiveLayerEnvelopeBox
+          ? laneNativeRegions.filter((region) =>
+              fullyContainsBox(
+                coextensiveLayerEnvelopeBox,
+                region.box,
+                FIGURE_OVERLAY_BOX_TOLERANCE,
+              ),
+            )
+          : laneNativeRegions
+    const nativeLineage = [
+      ...new Map(
+        nativeRegions.flatMap((region) =>
+          region.nativeObjectIds
+            .filter(
+              (sourceObjectId) =>
+                !excludedPageBackdropObjectIds.has(sourceObjectId),
+            )
+            .map(
+              (sourceObjectId) =>
+                [
+                  sourceObjectId,
+                  { sourceObjectId, sourceBox: region.box },
+                ] as const,
+            ),
+        ),
+      ).values(),
+    ]
+    if (
+      nativeLineage.length <
+        (usesCoextensiveLayerEnvelope
+          ? 2
+          : MIN_CAPTION_ENVELOPE_NATIVE_OBJECT_COUNT) ||
+      nativeRegions.length === 0 ||
+      nativeLineage.some(({ sourceObjectId }) =>
+        panelClipObjectIds.has(sourceObjectId),
+      )
+    ) {
+      return []
+    }
+
+    const nativeRegionBox = unionObjectBox(nativeRegions)
+    const nativeBox =
+      usesReusedBackdropGridEnvelope && reusedBackdropEnvelopeBox
+        ? {
+            ...nativeRegionBox,
+            y: Math.max(laneTop, reusedBackdropEnvelopeBox.y),
+            height:
+              nativeRegionBox.y +
+              nativeRegionBox.height -
+              Math.max(laneTop, reusedBackdropEnvelopeBox.y),
+          }
+        : nativeRegionBox
+    if (
+      nativeBox.width <
+        (usesDenseGridEnvelope
+          ? MIN_CAPTION_ENVELOPE_WIDTH * 0.65
+          : MIN_CAPTION_ENVELOPE_WIDTH) ||
+      nativeBox.height < MIN_CAPTION_ENVELOPE_HEIGHT
+    ) {
+      return []
+    }
+    const horizontalRules = nativeRegions.filter(
+      (region) => region.box.width >= 0.15 && region.box.height <= 0.012,
+    ).length
+    const verticalRules = nativeRegions.filter(
+      (region) => region.box.height >= 0.08 && region.box.width <= 0.012,
+    ).length
+    const denseFragmentProof =
+      usesDenseGridEnvelope &&
+      nativeLineage.length >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+    const ruledPanelProof =
+      horizontalRules >= MIN_CAPTION_ENVELOPE_HORIZONTAL_RULE_COUNT &&
+      verticalRules >= MIN_CAPTION_ENVELOPE_VERTICAL_RULE_COUNT
+    const coextensiveLayerProof = coextensiveNativeLayers(nativeRegions)
+    if (!denseFragmentProof && !ruledPanelProof && !coextensiveLayerProof) {
+      return []
+    }
+
+    const titleOverlays = regions.filter(
+      (region) =>
+        region.page === caption.page &&
+        region.id !== caption.id &&
+        region.nativeObjectIds.length === 0 &&
+        region.lines.length > 0 &&
+        region.text.trim().length > 0 &&
+        !region.includedInReadingOrder &&
+        compatibleCaptionLaneColumns(region.column, caption.column) &&
+        !repeatedPageFurnitureRegionIds.has(region.id) &&
+        !strongHierarchicalSectionHeading(region.text) &&
+        ![
+          'caption',
+          'header',
+          'footer',
+          'page-number',
+          'footnote',
+          'endnote',
+        ].includes(region.kind) &&
+        region.box.y >= laneTop - FIGURE_OVERLAY_BOX_TOLERANCE &&
+        region.box.y + region.box.height <=
+          nativeBox.y + FIGURE_OVERLAY_BOX_TOLERANCE &&
+        nativeBox.y - (region.box.y + region.box.height) <=
+          MAX_CAPTION_ENVELOPE_TITLE_GAP &&
+        horizontalOverlapRatio(region.box, nativeBox) >= 0.35 &&
+        horizontalOverlapRatio(region.box, caption.box) >= 0.35,
+    )
+    const left = Math.min(nativeBox.x, caption.box.x)
+    const right = Math.max(
+      nativeBox.x + nativeBox.width,
+      caption.box.x + caption.box.width,
+    )
+    const top = Math.min(
+      nativeBox.y,
+      ...titleOverlays.map((region) => region.box.y),
+    )
+    const bottom = laneBottom - CAPTION_BOUNDED_PANEL_BOTTOM_INSET
+    if (bottom <= top) return []
+    const renderBox = {
+      ...nativeBox,
+      x: rounded(left),
+      y: rounded(top),
+      width: rounded(right - left),
+      height: rounded(bottom - top),
+    }
+    const enclosedText = regions
+      .filter(
+        (region) =>
+          region.page === caption.page &&
+          region.id !== caption.id &&
+          region.nativeObjectIds.length === 0 &&
+          region.lines.length > 0 &&
+          region.text.trim().length > 0 &&
+          !strongHierarchicalSectionHeading(region.text) &&
+          ![
+            'caption',
+            'header',
+            'footer',
+            'page-number',
+            'footnote',
+            'endnote',
+          ].includes(region.kind) &&
+          fullyContainsBox(renderBox, region.box, FIGURE_OVERLAY_BOX_TOLERANCE),
+      )
+      .sort(
+        (leftRegion, rightRegion) =>
+          leftRegion.box.y - rightRegion.box.y ||
+          leftRegion.box.x - rightRegion.box.x ||
+          leftRegion.id.localeCompare(rightRegion.id),
+      )
+    const coordinateClusterCount = (values: number[], tolerance: number) => {
+      const ordered = [...values].sort(
+        (leftValue, rightValue) => leftValue - rightValue,
+      )
+      return ordered.reduce(
+        (clusters, value) =>
+          clusters.length === 0 ||
+          value - clusters[clusters.length - 1] > tolerance
+            ? [...clusters, value]
+            : clusters,
+        [] as number[],
+      ).length
+    }
+    const denseGridProof =
+      denseFragmentProof &&
+      coordinateClusterCount(
+        nativeRegions.map((region) => region.box.x + region.box.width / 2),
+        0.06,
+      ) >= MIN_CAPTION_ENVELOPE_GRID_COLUMN_COUNT &&
+      coordinateClusterCount(
+        nativeRegions.map((region) => region.box.y + region.box.height / 2),
+        0.035,
+      ) >= MIN_CAPTION_ENVELOPE_GRID_ROW_COUNT
+    const reusedLayerGridProof =
+      denseGridProof && usesReusedBackdropGridEnvelope
+    const uniquelyOwnsReadingOrderText =
+      ruledPanelProof || reusedLayerGridProof || coextensiveLayerProof
+    const overlays = enclosedText.filter(
+      (region) =>
+        !region.includedInReadingOrder ||
+        !['body', 'spanning'].includes(region.kind) ||
+        uniquelyOwnsReadingOrderText,
+    )
+    const overlayLineCount = overlays.reduce(
+      (total, region) => total + region.lines.length,
+      0,
+    )
+    if (overlayLineCount < MIN_CAPTION_ENVELOPE_TEXT_LINE_COUNT) return []
+
+    const overlayIds = new Set(overlays.map((region) => region.id))
+    const overlapsUnclaimedFlowText = regions.some(
+      (region) =>
+        region.page === caption.page &&
+        region.id !== caption.id &&
+        !overlayIds.has(region.id) &&
+        region.includedInReadingOrder &&
+        region.nativeObjectIds.length === 0 &&
+        region.lines.length > 0 &&
+        region.text.trim().length > 0 &&
+        ['body', 'spanning'].includes(region.kind) &&
+        materiallyOverlappingSourceBoxes(renderBox, region.box),
+    )
+    if (overlapsUnclaimedFlowText) return []
+
+    const overlayLineage = overlays.map((region) => ({
+      sourceObjectId: textOverlayId(region),
+      sourceBox: region.box,
+    }))
+    const lineage = [...nativeLineage, ...overlayLineage]
+    return [
+      {
+        kind: 'figure',
+        captionRegionId: caption.id,
+        sourceRegionIds: [
+          ...new Set([
+            ...nativeRegions.map((region) => region.id),
+            ...overlays.map((region) => region.id),
+          ]),
+        ],
+        sourceObjectIds: lineage.map((item) => item.sourceObjectId),
+        assetIds: [],
+        sourceBoxes: lineage.map((item) => item.sourceBox),
+        sourceText: overlays.map((region) => region.text).join(' '),
+        page: caption.page,
+        renderBox,
+        sourcePageCropBlockedByReadingOrderText: false,
+        nativeEnvelopeIncomplete: false,
+        evidence: [
+          'source-text-overlay',
+          'caption-bounded-native-scaffold',
+          'caption-bounded-semantic-envelope',
+          ...(uniquelyOwnsReadingOrderText
+            ? ['caption-bounded-unique-text-ownership']
+            : []),
+          ...(coextensiveLayerProof
+            ? ['caption-bounded-coextensive-layer']
+            : []),
+          ...(ruledPanelProof ? ['caption-bounded-rule-scaffold'] : []),
+          ...(reusedLayerGridProof
+            ? ['caption-bounded-reused-layer-grid-scaffold']
+            : []),
+          ...(titleOverlays.length > 0
+            ? ['caption-bounded-non-flow-title']
+            : []),
+        ],
+        column: 'span',
+      },
+    ]
+  })
+}
+
 function figureCandidates(
   regions: PdfPageRegion[],
   captions: PdfPageRegion[],
@@ -1070,7 +1651,7 @@ function figureCandidates(
     }
     groups.push(group)
   }
-  return groups
+  const connectedCandidates = groups
     .map<VisualCandidate>((group) => {
       const panelLabelOverlays = adjacentPanelLabelOverlays(
         group,
@@ -1253,6 +1834,20 @@ function figureCandidates(
         Math.min(...left.sourceBoxes.map((box) => box.y)) -
           Math.min(...right.sourceBoxes.map((box) => box.y)),
     )
+  const semanticEnvelopes = captionBoundedSemanticEnvelopeCandidates(
+    figureRegions,
+    regions,
+    captions,
+    pageBackdropObjectIds,
+    panelClipObjectIds,
+  )
+  return [...connectedCandidates, ...semanticEnvelopes].sort(
+    (left, right) =>
+      left.page - right.page ||
+      Math.min(...left.sourceBoxes.map((box) => box.y)) -
+        Math.min(...right.sourceBoxes.map((box) => box.y)) ||
+      (left.captionRegionId ?? '').localeCompare(right.captionRegionId ?? ''),
+  )
 }
 
 function nextSourceRegions(
@@ -2554,27 +3149,46 @@ function captionTextBoundedFigureRetryBox(
 
 function captionBoundedPanelRecoveryBoxes(
   candidate: VisualCandidate,
-  captionBox: NormalizedSourceBox,
+  caption: PdfPageRegion,
   regions: readonly PdfPageRegion[],
+  objectKinds: ReadonlyMap<string, PdfNativeObject['kind']>,
   pageCropFailureEvidence: string | undefined,
 ) {
+  const captionBox = caption.box
   const evidence = new Set(candidate.evidence ?? [])
+  const boundedRecoveryFailure = [
+    'source-page-crop-edge-contact',
+    'source-page-crop-containment-rejected',
+    'source-page-crop-lineage-rejected',
+    'source-page-crop-lineage-geometry-rejected',
+  ].includes(pageCropFailureEvidence ?? '')
   const malformedTrimmedEnvelope =
     candidate.nativeEnvelopeIncomplete === true &&
     evidence.has('source-scaffold-trimmed-page-furniture-overlap')
   const failedReusedClipEnvelope =
     evidence.has('source-reused-page-edge-clipping-layer') &&
-    [
-      'source-page-crop-edge-contact',
-      'source-page-crop-lineage-rejected',
-      'source-page-crop-lineage-geometry-rejected',
-    ].includes(pageCropFailureEvidence ?? '')
+    boundedRecoveryFailure
+  const failedReusedGridEnvelope =
+    evidence.has('caption-bounded-reused-layer-grid-scaffold') &&
+    boundedRecoveryFailure
+  const imageObjectCount = candidate.sourceObjectIds.filter(
+    (sourceObjectId) => objectKinds.get(sourceObjectId) === 'image',
+  ).length
+  const multipartRasterEnvelope =
+    imageObjectCount >= MIN_COMPOSITE_FIGURE_FRAGMENTS &&
+    boundedRecoveryFailure &&
+    evidence.has('caption-bounded-native-scaffold') &&
+    (candidate.captionRegionId === undefined ||
+      candidate.captionRegionId === caption.id)
   if (
     candidate.kind !== 'figure' ||
     !candidate.renderBox ||
     candidate.sourcePageCropBlockedByReadingOrderText ||
     !evidence.has('caption-bounded-native-scaffold') ||
-    (!malformedTrimmedEnvelope && !failedReusedClipEnvelope)
+    (!malformedTrimmedEnvelope &&
+      !failedReusedClipEnvelope &&
+      !failedReusedGridEnvelope &&
+      !multipartRasterEnvelope)
   ) {
     return []
   }
@@ -2591,8 +3205,9 @@ function captionBoundedPanelRecoveryBoxes(
   if (
     nativeObjectCount < MIN_COMPOSITE_FIGURE_FRAGMENTS ||
     overlayBoxes.length < MIN_CAPTION_BOUNDED_FLOW_OVERLAY_LINE_COUNT ||
-    nativeObjectCount + overlayBoxes.length <
-      MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+    (!multipartRasterEnvelope &&
+      nativeObjectCount + overlayBoxes.length <
+        MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT)
   ) {
     return []
   }
@@ -2627,21 +3242,24 @@ function captionBoundedPanelRecoveryBoxes(
   )
   const topCandidates = [
     ...new Set(
-      overlayBoxes
-        .map((box) =>
+      [
+        ...(malformedTrimmedEnvelope ? [candidate.renderBox.y] : []),
+        ...overlayBoxes.map((box) =>
           rounded(
             Math.max(
               candidate.renderBox!.y,
-              box.y - CAPTION_BOUNDED_PANEL_EDGE_RETRY_PADDING,
+              box.y - CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
             ),
           ),
-        )
-        .filter(
-          (top) =>
-            top >
-              candidate.renderBox!.y + SOURCE_CROP_CONTAINMENT_TOLERANCE &&
-            top < bottom,
         ),
+      ].filter(
+        (top) =>
+          (malformedTrimmedEnvelope
+            ? top >= candidate.renderBox!.y
+            : top >
+              candidate.renderBox!.y + SOURCE_CROP_CONTAINMENT_TOLERANCE) &&
+          top < bottom,
+      ),
     ),
   ].sort((leftTop, rightTop) => leftTop - rightTop)
   const claimedRegionIds = new Set(candidate.sourceRegionIds)
@@ -2656,17 +3274,12 @@ function captionBoundedPanelRecoveryBoxes(
         height: rounded(bottom - top),
       }
       const ownedSourceBoxes = overlayBoxes.filter((box) =>
-        fullyContainsBox(
-          sourceBox,
-          box,
-          SOURCE_CROP_CONTAINMENT_TOLERANCE,
-        ),
+        fullyContainsBox(sourceBox, box, SOURCE_CROP_CONTAINMENT_TOLERANCE),
       )
       if (
         sourceBox.width <= 0 ||
         sourceBox.height <= 0 ||
-        ownedSourceBoxes.length <
-          MIN_CAPTION_BOUNDED_FLOW_OVERLAY_LINE_COUNT
+        ownedSourceBoxes.length < MIN_CAPTION_BOUNDED_FLOW_OVERLAY_LINE_COUNT
       ) {
         return []
       }
@@ -2681,9 +3294,38 @@ function captionBoundedPanelRecoveryBoxes(
           ['body', 'spanning'].includes(region.kind) &&
           materiallyOverlappingSourceBoxes(sourceBox, region.box),
       )
-      return overlapsUnclaimedFlowText
+      const competingCaption = regions.some(
+        (region) =>
+          region.kind === 'caption' &&
+          region.id !== caption.id &&
+          region.page === sourceBox.page &&
+          region.box.y >= sourceBox.y - FIGURE_OVERLAY_BOX_TOLERANCE &&
+          region.box.y <=
+            captionBox.y + captionBox.height + FIGURE_OVERLAY_BOX_TOLERANCE &&
+          horizontalOverlapRatio(sourceBox, region.box) >= 0.35,
+      )
+      const exactCaptionLane =
+        sourceBox.page === caption.page &&
+        sourceBox.y + sourceBox.height <=
+          captionBox.y + FIGURE_OVERLAY_BOX_TOLERANCE &&
+        horizontalOverlapRatio(sourceBox, captionBox) >= 0.35 &&
+        !competingCaption
+      return overlapsUnclaimedFlowText || !exactCaptionLane
         ? []
-        : [{ sourceBox, ownedSourceBoxes }]
+        : [
+            {
+              sourceBox,
+              ownedSourceBoxes,
+              evidence: [
+                ...(failedReusedGridEnvelope
+                  ? ['caption-bounded-reused-grid-recovery']
+                  : []),
+                ...(multipartRasterEnvelope
+                  ? ['caption-bounded-multipart-raster-recovery']
+                  : []),
+              ],
+            },
+          ]
     })
     .slice(0, MAX_CAPTION_BOUNDED_PANEL_RECOVERY_ATTEMPTS)
 }
@@ -2989,6 +3631,47 @@ function sourcePageCropValidationFailure(
   return exactLineage ? null : 'source-page-crop-lineage-geometry-rejected'
 }
 
+function exactCropUniquelyOwnsNativeObject({
+  sourceCropBox,
+  ownerSourceBox,
+  objectBox,
+  ownerCaption,
+  figureCaptions,
+}: {
+  sourceCropBox: NormalizedSourceBox
+  ownerSourceBox: NormalizedSourceBox
+  objectBox: NormalizedSourceBox
+  ownerCaption: PdfPageRegion
+  figureCaptions: readonly PdfPageRegion[]
+}) {
+  const objectArea = objectBox.width * objectBox.height
+  if (
+    objectArea <= 0 ||
+    objectBox.page !== sourceCropBox.page ||
+    objectBox.page !== ownerCaption.page ||
+    intersectionArea(sourceCropBox, objectBox) / objectArea <
+      MIN_EXACT_CROP_NATIVE_OBJECT_CONTAINMENT ||
+    intersectionArea(ownerSourceBox, objectBox) / objectArea <
+      MIN_EXACT_CROP_NATIVE_OBJECT_CONTAINMENT ||
+    objectBox.y + objectBox.height >
+      ownerCaption.box.y + FIGURE_OVERLAY_BOX_TOLERANCE ||
+    horizontalOverlapRatio(sourceCropBox, ownerCaption.box) < 0.35
+  ) {
+    return false
+  }
+  return !figureCaptions.some(
+    (caption) =>
+      caption.id !== ownerCaption.id &&
+      caption.page === ownerCaption.page &&
+      caption.box.y >= objectBox.y - FIGURE_OVERLAY_BOX_TOLERANCE &&
+      caption.box.y <=
+        ownerCaption.box.y +
+          ownerCaption.box.height +
+          FIGURE_OVERLAY_BOX_TOLERANCE &&
+      horizontalOverlapRatio(sourceCropBox, caption.box) >= 0.35,
+  )
+}
+
 function sourcePageCropFailureEvidence(error: unknown) {
   if (error instanceof Error && error.name === 'AbortError') {
     return 'source-page-crop-aborted'
@@ -3024,7 +3707,13 @@ function candidateScore(
   sequence: number,
   regions: PdfPageRegion[],
 ) {
-  if (candidate.page !== caption.page) return null
+  if (
+    candidate.page !== caption.page ||
+    (candidate.captionRegionId !== undefined &&
+      candidate.captionRegionId !== caption.id)
+  ) {
+    return null
+  }
   const nativeSourceBoxes = candidate.sourceObjectIds
     .map((sourceObjectId, index) =>
       sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX)
@@ -3054,7 +3743,12 @@ function candidateScore(
     caption.box.width < MIN_CROSS_COLUMN_FIGURE_SPAN &&
     (captionNativeOverlapRatio < 0.35 ||
       (hasCaptionMisalignedNativeFragment &&
-        !candidate.evidence?.includes('connected-native-scaffold')))
+        !candidate.evidence?.some((item) =>
+          [
+            'connected-native-scaffold',
+            'caption-bounded-semantic-envelope',
+          ].includes(item),
+        )))
   ) {
     return null
   }
@@ -3120,6 +3814,10 @@ function candidateScore(
     score += 0.14 * horizontalAlignment
     evidence.push('horizontal-alignment')
   }
+  if (candidate.evidence?.includes('caption-bounded-semantic-envelope')) {
+    score += 0.1
+    evidence.push('caption-bounded-envelope-proof')
+  }
   const numericSequence = Number.parseInt(label.sequence, 10)
   // The figure-candidate ordinal is only the order in which native objects
   // survived extraction. It is not a source-grounded figure number: decorative
@@ -3169,15 +3867,23 @@ function matchCandidate(
       return score ? { candidate, ...score } : null
     })
     .filter((value): value is NonNullable<typeof value> => Boolean(value))
+  const captionBoundedEnvelopes = allScored.filter((candidate) =>
+    candidate.candidate.evidence?.includes('caption-bounded-semantic-envelope'),
+  )
+  // A caption-specific semantic envelope carries stricter source ownership
+  // proof than loose child fragments in the same lane. Keeping both in the
+  // ambiguity set would let those child fragments veto the proved parent.
+  const candidatePool =
+    captionBoundedEnvelopes.length > 0 ? captionBoundedEnvelopes : allScored
   const directionScored =
     label.kind === 'figure' &&
-    allScored.some((candidate) =>
+    candidatePool.some((candidate) =>
       candidate.evidence.includes('object-above-caption'),
     )
-      ? allScored.filter((candidate) =>
+      ? candidatePool.filter((candidate) =>
           candidate.evidence.includes('object-above-caption'),
         )
-      : allScored
+      : candidatePool
   const candidateScope = (candidate: VisualCandidate) => {
     const boxes = candidate.renderBox
       ? [candidate.renderBox]
@@ -4888,6 +5594,11 @@ export async function reconstructPdfVisuals({
       .flatMap((page) => page.objects ?? [])
       .map((object) => [object.id, object.box]),
   )
+  const objectKinds = new Map(
+    pages
+      .flatMap((page) => page.objects ?? [])
+      .map((object) => [object.id, object.kind] as const),
+  )
   const lineageBoxes = new Map([
     ...objectBoxes,
     ...regions
@@ -5025,11 +5736,12 @@ export async function reconstructPdfVisuals({
         // Semantic promotion is allowed only when the detector consumes every
         // claimed source line and either agrees with that exact scope or closes
         // it using adjacent source-classified header regions.
-        tableScopeResolution = semanticTableScope || semanticTableGrid
-          ? null
-          : boundedScope.status === 'matched' || detectedTable === null
-            ? boundedScope
-            : null
+        tableScopeResolution =
+          semanticTableScope || semanticTableGrid
+            ? null
+            : boundedScope.status === 'matched' || detectedTable === null
+              ? boundedScope
+              : null
       }
       const nearbySources = nextSourceRegions(caption, regions, label.kind)
       const selectedSources =
@@ -5128,8 +5840,7 @@ export async function reconstructPdfVisuals({
             kind: label.kind,
             sourceRegionIds: sources.map((source) => source.id),
             sourceLineIds:
-              label.kind === 'table' &&
-              (semanticTableGrid || detectedTable)
+              label.kind === 'table' && (semanticTableGrid || detectedTable)
                 ? [
                     ...(semanticTableGrid?.sourceLineIds ??
                       detectedTable!.sourceLineIds),
@@ -5368,6 +6079,109 @@ export async function reconstructPdfVisuals({
       if (
         !sourceCrop &&
         cropTouchedEdge &&
+        best.kind === 'figure' &&
+        boundedCropBaseBox &&
+        result.best &&
+        !result.best.evidence.includes(
+          'source-reused-page-edge-clipping-layer',
+        ) &&
+        result.best.evidence.some((item) =>
+          [
+            'connected-native-scaffold',
+            'caption-bounded-native-scaffold',
+            'caption-bounded-semantic-envelope',
+          ].includes(item),
+        )
+      ) {
+        const claimedRegionIds = new Set(best.sourceRegionIds)
+        const selectedLineIds = new Set(
+          regions
+            .filter((region) => claimedRegionIds.has(region.id))
+            .flatMap((region) => region.lines.map((line) => line.id)),
+        )
+        const attemptedBoxes = [compositeSourceBox, boundedCropBaseBox]
+        retryFigureEnvelopeCrop: for (const padding of CAPTION_ENVELOPE_SOURCE_CROP_RETRY_PADDINGS) {
+          const retryBoxes = neighborBoundedCropBoxes(
+            boundedCropBaseBox,
+            selectedLineIds,
+            regions,
+            padding,
+            0.75,
+          )
+          for (const retryBox of retryBoxes) {
+            if (
+              attemptedBoxes.some((attempted) =>
+                sameSourceBox(attempted, retryBox),
+              )
+            ) {
+              continue
+            }
+            attemptedBoxes.push(retryBox)
+            const overlapsUnclaimedFlowText = regions.some(
+              (region) =>
+                region.page === retryBox.page &&
+                !claimedRegionIds.has(region.id) &&
+                region.includedInReadingOrder &&
+                region.nativeObjectIds.length === 0 &&
+                region.lines.length > 0 &&
+                region.text.trim().length > 0 &&
+                ['body', 'spanning'].includes(region.kind) &&
+                materiallyOverlappingSourceBoxes(retryBox, region.box),
+            )
+            if (
+              overlapsUnclaimedFlowText ||
+              !renderScopeContainsCompleteFigureLineage(best, retryBox, regions)
+            ) {
+              continue
+            }
+            const retryLineage = sourceLineageWithinRenderScope(best, retryBox)
+            if (
+              retryLineage.sourceObjectIds.length === 0 ||
+              retryLineage.sourceObjectIds.length !==
+                retryLineage.sourceBoxes.length
+            ) {
+              continue
+            }
+            let retryTouchedEdge = false
+            const retryCrop = await rasterizeFigure({
+              kind: best.kind,
+              page: best.page,
+              sourceBox: retryBox,
+              sourceObjectIds: [...retryLineage.sourceObjectIds],
+              sourceBoxes: retryLineage.sourceBoxes.map((box) => ({
+                ...box,
+              })),
+            }).catch((error: unknown) => {
+              retryTouchedEdge = sourcePageCropTouchesEdge(error)
+              pageCropFailureEvidence = sourcePageCropFailureEvidence(error)
+              return null
+            })
+            if (
+              retryCrop &&
+              completeSourcePageCropAsset(
+                retryCrop,
+                best.kind,
+                retryLineage.sourceObjectIds,
+                retryLineage.sourceBoxes,
+                retryBox,
+              )
+            ) {
+              sourceCrop = retryCrop
+              compositeSourceBox = retryBox
+              scopedSourceLineage = retryLineage
+              pageCropFailureEvidence = undefined
+              result.best.evidence.push(
+                'source-page-crop-adaptive-caption-envelope',
+              )
+              break retryFigureEnvelopeCrop
+            }
+            if (!retryTouchedEdge) break retryFigureEnvelopeCrop
+          }
+        }
+      }
+      if (
+        !sourceCrop &&
+        cropTouchedEdge &&
         best.kind === 'table' &&
         boundedCropBaseBox
       ) {
@@ -5520,8 +6334,9 @@ export async function reconstructPdfVisuals({
     ) {
       const panelRecoveryBoxes = captionBoundedPanelRecoveryBoxes(
         best,
-        caption.box,
+        caption,
         regions,
+        objectKinds,
         pageCropFailureEvidence,
       )
       const sourceObjectId = `source-panel:${caption.id}`
@@ -5556,10 +6371,7 @@ export async function reconstructPdfVisuals({
           scopedSourceLineage = {
             sourceObjectIds: [...retryCrop.sourceObjectIds],
             sourceBoxes: retryCrop.sourceBoxes.map((box) => ({ ...box })),
-            clipped: !sameSourceBox(
-              compositeSourceBox,
-              recovery.sourceBox,
-            ),
+            clipped: !sameSourceBox(compositeSourceBox, recovery.sourceBox),
           }
           best.sourceObjectIds = [...scopedSourceLineage.sourceObjectIds]
           best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
@@ -5575,6 +6387,7 @@ export async function reconstructPdfVisuals({
           result.best!.evidence.push(
             'source-page-crop-caption-bounded-panel-recovery',
             'source-panel-synthetic-crop-lineage',
+            ...recovery.evidence,
             'source-page-crop',
           )
           break
@@ -6684,9 +7497,80 @@ export async function reconstructPdfVisuals({
     relationship.id = `visual-relationship-${String(index + 1).padStart(4, '0')}`
   }
 
-  const referenced = new Set(
+  const directlyReferencedObjectIds = new Set(
     relationships.flatMap((relationship) => relationship.sourceObjectIds),
   )
+  const exactFigureCropOwners = relationships.flatMap((relationship) => {
+    if (
+      relationship.kind !== 'figure' ||
+      relationship.status !== 'matched' ||
+      !relationship.captionRegionId
+    ) {
+      return []
+    }
+    const caption = regions.find(
+      (region) => region.id === relationship.captionRegionId,
+    )
+    if (!caption) return []
+    return relationship.assetIds.flatMap((assetId) => {
+      const asset = assetStore.get(assetId)
+      const ownedSourceBoxes = relationship.sourceBoxes.slice(1)
+      return asset?.rendition === 'source-page-crop' &&
+        asset.sourceCropBox &&
+        ownedSourceBoxes.length > 0
+        ? [
+            {
+              relationship,
+              caption,
+              sourceCropBox: asset.sourceCropBox,
+              ownerSourceBox: paddedUnionBox(ownedSourceBoxes),
+            },
+          ]
+        : []
+    })
+  })
+  const exactCropCreditedNativeObjectIds = new Set<string>()
+  for (const object of pages.flatMap((page) => page.objects ?? [])) {
+    if (
+      object.role === 'scan-source' ||
+      decorativeObjectIds.has(object.id) ||
+      directlyReferencedObjectIds.has(object.id)
+    ) {
+      continue
+    }
+    const owners = exactFigureCropOwners.filter((owner) =>
+      exactCropUniquelyOwnsNativeObject({
+        sourceCropBox: owner.sourceCropBox,
+        ownerSourceBox: owner.ownerSourceBox,
+        objectBox: object.box,
+        ownerCaption: owner.caption,
+        figureCaptions,
+      }),
+    )
+    if (owners.length !== 1) continue
+    exactCropCreditedNativeObjectIds.add(object.id)
+    if (
+      !owners[0].relationship.evidence.includes(
+        'source-page-crop-native-object-credit',
+      )
+    ) {
+      owners[0].relationship.evidence.push(
+        'source-page-crop-native-object-credit',
+      )
+    }
+  }
+
+  const referenced = new Set([
+    ...exactCropCreditedNativeObjectIds,
+    ...relationships.flatMap((relationship) => [
+      ...relationship.sourceObjectIds,
+      ...(relationship.status === 'matched'
+        ? []
+        : relationship.candidates.flatMap(
+            (candidate) => candidate.sourceObjectIds,
+          )),
+    ]),
+  ])
   for (const object of pages.flatMap((page) => page.objects ?? [])) {
     if (object.role === 'scan-source') continue
     if (referenced.has(object.id)) continue

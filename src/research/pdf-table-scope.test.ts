@@ -237,9 +237,9 @@ function supplementalEquationTableFixture({
     ? textRegion(
         'neighboring-diagram-labels',
         box(0.05, ys[0], 0.075, ys[2] + 0.016 - ys[0]),
-        ys.slice(0, 3).map((y, index) =>
-          line(`diagram-label-${index + 1}`, y, [0.05]),
-        ),
+        ys
+          .slice(0, 3)
+          .map((y, index) => line(`diagram-label-${index + 1}`, y, [0.05])),
         'chart-label',
       )
     : null
@@ -247,9 +247,9 @@ function supplementalEquationTableFixture({
     ? textRegion(
         'neighboring-prose',
         box(0.82, ys[0], 0.12, ys[2] + 0.016 - ys[0]),
-        ys.slice(0, 3).map((y, index) =>
-          line(`neighboring-prose-${index + 1}`, y, [0.82]),
-        ),
+        ys
+          .slice(0, 3)
+          .map((y, index) => line(`neighboring-prose-${index + 1}`, y, [0.82])),
       )
     : null
   return {
@@ -310,8 +310,12 @@ describe('bounded PDF table source scoping', () => {
           runs,
         }
       })
-      const left = Math.min(...fragmentLines.map((sourceLine) => sourceLine.box.x))
-      const top = Math.min(...fragmentLines.map((sourceLine) => sourceLine.box.y))
+      const left = Math.min(
+        ...fragmentLines.map((sourceLine) => sourceLine.box.x),
+      )
+      const top = Math.min(
+        ...fragmentLines.map((sourceLine) => sourceLine.box.y),
+      )
       const right = Math.max(
         ...fragmentLines.map(
           (sourceLine) => sourceLine.box.x + sourceLine.box.width,
@@ -355,17 +359,10 @@ describe('bounded PDF table source scoping', () => {
       tableFragment('fragmented-final-left-pair', [
         { row: 5, columns: [0, 1] },
       ]),
-      tableFragment('fragmented-final-accuracy', [
-        { row: 5, columns: [3] },
-      ]),
+      tableFragment('fragmented-final-accuracy', [{ row: 5, columns: [3] }]),
     ]
     const proseLines = Array.from({ length: 6 }, (_, index) => {
-      const sourceBox = box(
-        0.53,
-        0.44679 + index * 0.0151,
-        0.34,
-        0.01258,
-      )
+      const sourceBox = box(0.53, 0.44679 + index * 0.0151, 0.34, 0.01258)
       return {
         id: `following-prose-line-${index + 1}`,
         text: `Ordinary prose continues after the table on line ${index + 1}.`,
@@ -886,7 +883,7 @@ describe('bounded PDF table source scoping', () => {
     })
   })
 
-  it('does not claim wrapped table rows when an adjacent symbolic header is outside the scope', () => {
+  it('closes a proved body scope over its unique adjacent symbolic header', () => {
     const omittedHeader = line(
       'omitted-symbolic-header',
       0.2,
@@ -927,12 +924,263 @@ describe('bounded PDF table source scoping', () => {
         nativeObjects: [],
       }),
     ).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [body.id, headerRegion.id],
+        sourceLineIds: [omittedHeader.id, ...bodyLines.map((item) => item.id)],
+        cropBox: expect.objectContaining({
+          x: 0.17247,
+          y: 0.196,
+        }),
+        evidence: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'caption-lane-source-completion',
+            headerLineIds: [omittedHeader.id],
+            borderInkPadding: 0.004,
+          }),
+        ]),
+      },
+    })
+  })
+
+  it('retains an explicit source header with distinct typography', () => {
+    const headerLine = line('distinct-font-header-line', 0.2, [
+      0.17647, 0.39, 0.56,
+    ])
+    headerLine.runs.forEach((run) => {
+      run.fontName = 'HeaderSans'
+      run.bold = false
+    })
+    const headerRegion = textRegion(
+      'distinct-font-header-region',
+      headerLine.box,
+      [headerLine],
+      'header',
+    )
+    const bodyLines = Array.from({ length: 5 }, (_, index) =>
+      line(
+        `distinct-font-body-row-${index + 1}`,
+        0.23 + index * 0.03,
+        [0.17647, 0.39, 0.56],
+      ),
+    )
+    const body = textRegion(
+      'distinct-font-body',
+      box(0.17647, 0.23, 0.64706, 0.136),
+      bodyLines,
+    )
+    const tableCaption = {
+      ...caption('distinct-font-header-caption', 0.39),
+      box: box(0.17647, 0.39, 0.64706, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [headerRegion, body, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [body.id, headerRegion.id],
+        sourceLineIds: [headerLine.id, ...bodyLines.map((item) => item.id)],
+      },
+    })
+  })
+
+  it('atomically closes a unique wrapped header continuation', () => {
+    const headerLeadLine = line('wrapped-header-lead', 0.19, [0.17647, 0.39])
+    const headerTailLine = line('wrapped-header-tail', 0.19, [0.56, 0.72])
+    const continuationLine = line('wrapped-header-continuation', 0.207, [0.39])
+    continuationLine.runs[0] = {
+      ...continuationLine.runs[0],
+      width: 0.07,
+    }
+    continuationLine.box = box(0.39, 0.207, 0.07, 0.016)
+    const headerLead = textRegion(
+      'wrapped-header-lead-region',
+      headerLeadLine.box,
+      [headerLeadLine],
+      'header',
+    )
+    const headerTail = textRegion(
+      'wrapped-header-tail-region',
+      headerTailLine.box,
+      [headerTailLine],
+      'header',
+    )
+    const headerContinuation = textRegion(
+      'wrapped-header-continuation-region',
+      continuationLine.box,
+      [continuationLine],
+      'header',
+    )
+    const bodyLines = Array.from({ length: 5 }, (_, index) =>
+      line(
+        `wrapped-header-body-row-${index + 1}`,
+        0.235 + index * 0.03,
+        [0.17647, 0.39, 0.56, 0.72],
+      ),
+    )
+    const body = textRegion(
+      'wrapped-header-body',
+      box(0.17647, 0.235, 0.61853, 0.136),
+      bodyLines,
+    )
+    const tableCaption = {
+      ...caption('wrapped-header-caption', 0.395),
+      box: box(0.17647, 0.395, 0.64706, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [
+          headerLead,
+          headerTail,
+          headerContinuation,
+          body,
+          tableCaption,
+        ],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [
+          body.id,
+          headerContinuation.id,
+          headerLead.id,
+          headerTail.id,
+        ],
+        sourceLineIds: [
+          headerLeadLine.id,
+          headerTailLine.id,
+          continuationLine.id,
+          ...bodyLines.map((item) => item.id),
+        ],
+        evidence: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'caption-lane-source-completion',
+            headerLineIds: [
+              continuationLine.id,
+              headerLeadLine.id,
+              headerTailLine.id,
+            ].sort(),
+          }),
+        ]),
+      },
+    })
+  })
+
+  it('fails closed when a wrapped continuation matches multiple base cells', () => {
+    const baseLine = line(
+      'ambiguous-wrapped-header-base',
+      0.19,
+      [0.17647, 0.36, 0.38, 0.56, 0.72],
+    )
+    const continuationLine = line(
+      'ambiguous-wrapped-header-continuation',
+      0.207,
+      [0.37],
+    )
+    const base = textRegion(
+      'ambiguous-wrapped-header-base-region',
+      baseLine.box,
+      [baseLine],
+      'header',
+    )
+    const continuation = textRegion(
+      'ambiguous-wrapped-header-continuation-region',
+      continuationLine.box,
+      [continuationLine],
+      'header',
+    )
+    const bodyLines = Array.from({ length: 5 }, (_, index) =>
+      line(
+        `ambiguous-wrapped-header-body-row-${index + 1}`,
+        0.235 + index * 0.03,
+        [0.17647, 0.39, 0.56, 0.72],
+      ),
+    )
+    const body = textRegion(
+      'ambiguous-wrapped-header-body',
+      box(0.17647, 0.235, 0.61853, 0.136),
+      bodyLines,
+    )
+    const tableCaption = {
+      ...caption('ambiguous-wrapped-header-caption', 0.395),
+      box: box(0.17647, 0.395, 0.64706, 0.02),
+    }
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [base, continuation, body, tableCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [body.id],
+        sourceLineIds: bodyLines.map((item) => item.id),
+      },
+    })
+  })
+
+  it('fails closed when one explicit header could own two disjoint table bodies', () => {
+    const left = textRegion(
+      'left-header-candidate',
+      box(0.1, 0.22, 0.28, 0.096),
+      [
+        line('left-row-1', 0.22, [0.1, 0.19, 0.28]),
+        line('left-row-2', 0.26, [0.1, 0.19, 0.28]),
+        line('left-row-3', 0.3, [0.1, 0.19, 0.28]),
+      ],
+    )
+    const right = textRegion(
+      'right-header-candidate',
+      box(0.58, 0.22, 0.28, 0.096),
+      [
+        line('right-row-1', 0.22, [0.58, 0.67, 0.76]),
+        line('right-row-2', 0.26, [0.58, 0.67, 0.76]),
+        line('right-row-3', 0.3, [0.58, 0.67, 0.76]),
+      ],
+    )
+    const sharedHeaderLine = line(
+      'shared-header-line',
+      0.19,
+      [0.1, 0.34, 0.58, 0.8],
+    )
+    sharedHeaderLine.runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'TableSerif-Bold'
+    })
+    const sharedHeader = textRegion(
+      'shared-header',
+      box(0.1, 0.19, 0.775, 0.016),
+      [sharedHeaderLine],
+      'header',
+    )
+    const tableCaption = {
+      ...caption('ambiguous-header-caption', 0.34),
+      column: 'span' as const,
+      box: box(0.08, 0.34, 0.84, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [sharedHeader, left, right, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
       status: 'unresolved',
       scope: null,
       candidates: [],
       ambiguity: {
         code: 'no-proven-scope',
-        evidence: expect.arrayContaining(['incomplete-table-header-scope']),
+        evidence: expect.arrayContaining(['table-header-outside-source-scope']),
       },
     })
   })
@@ -1268,22 +1516,14 @@ describe('bounded PDF table source scoping', () => {
       ),
     )
     const promptRegions = [
-      textRegion(
-        'prompt-story',
-        box(0.12, 0.086, 0.34, 0.3),
-        storyLines,
-      ),
-      textRegion(
-        'prompt-question',
-        box(0.12, 0.404, 0.34, 0.011),
-        [
-          promptLine(
-            'prompt-question-1',
-            'Question: List very brief facts about Lucy.',
-            0.404,
-          ),
-        ],
-      ),
+      textRegion('prompt-story', box(0.12, 0.086, 0.34, 0.3), storyLines),
+      textRegion('prompt-question', box(0.12, 0.404, 0.34, 0.011), [
+        promptLine(
+          'prompt-question-1',
+          'Question: List very brief facts about Lucy.',
+          0.404,
+        ),
+      ]),
       ...[1, 2, 3].map((ordinal, index) => {
         const y = 0.441 + index * 0.024
         const sourceLine = promptLine(
@@ -1291,11 +1531,9 @@ describe('bounded PDF table source scoping', () => {
           `${ordinal}. Lucy fact ${ordinal}.`,
           y,
         )
-        return textRegion(
-          `prompt-answer-region-${ordinal}`,
-          sourceLine.box,
-          [sourceLine],
-        )
+        return textRegion(`prompt-answer-region-${ordinal}`, sourceLine.box, [
+          sourceLine,
+        ])
       }),
     ]
     const promptCaption = {
@@ -1338,6 +1576,176 @@ describe('bounded PDF table source scoping', () => {
           }),
         ]),
       },
+    })
+  })
+
+  it('owns a proportional prompt slab only between exact sibling table captions', () => {
+    const proportionalPromptLine = (id: string, text: string, y: number) => {
+      const sourceBox = box(0.2, y, 0.46, 0.014)
+      return {
+        id,
+        text,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text,
+            fontName: 'SourceSans-Regular',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    }
+    const promptLines = [
+      proportionalPromptLine(
+        'prompt-question',
+        'Question: classify the record.',
+        0.17,
+      ),
+      proportionalPromptLine(
+        'prompt-detail-1',
+        'Use the supplied source fields.',
+        0.194,
+      ),
+      proportionalPromptLine(
+        'prompt-context',
+        'Context: bounded example.',
+        0.218,
+      ),
+      proportionalPromptLine(
+        'prompt-detail-2',
+        'Return one exact response.',
+        0.242,
+      ),
+      proportionalPromptLine('prompt-output', 'Output: accepted label.', 0.266),
+      proportionalPromptLine(
+        'prompt-detail-3',
+        'End of the prompt record.',
+        0.29,
+      ),
+    ]
+    const prompt = textRegion(
+      'proportional-prompt',
+      box(0.2, 0.17, 0.46, 0.134),
+      promptLines,
+    )
+    const previousCaption = {
+      ...caption(
+        'previous-table-caption',
+        0.12,
+        'Table 4. Previous bounded prompt.',
+      ),
+      box: box(0.18, 0.12, 0.5, 0.02),
+    }
+    const promptCaption = {
+      ...caption(
+        'proportional-prompt-caption',
+        0.32,
+        'Table 5. Prompt records used for evaluation.',
+      ),
+      box: box(0.18, 0.32, 0.5, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: promptCaption,
+        pageRegions: [previousCaption, prompt, promptCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        sourceRegionIds: [prompt.id],
+        sourceLineIds: promptLines.map((item) => item.id),
+        evidence: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'caption-bounded-prompt-slab',
+            rowCount: 6,
+            monospacedRowCount: 0,
+            structuredRecordCount: 3,
+          }),
+        ]),
+      },
+    })
+  })
+
+  it('rejects a proportional prompt slab with unowned flow inside its sibling-caption lane', () => {
+    const promptLine = (id: string, text: string, y: number) => {
+      const sourceBox = box(0.2, y, 0.46, 0.014)
+      return {
+        id,
+        text,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text,
+            fontName: 'SourceSans-Regular',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    }
+    const strayLine = {
+      ...promptLine(
+        'unowned-flow-line',
+        'Ordinary prose remains outside the prompt.',
+        0.16,
+      ),
+      runs: [
+        {
+          ...box(0.2, 0.16, 0.46, 0.014),
+          text: 'Ordinary prose remains outside the prompt.',
+          fontName: 'BodySerif',
+          fontSize: 10,
+          confidence: 0.99,
+        },
+      ],
+      fontSize: 10,
+    }
+    const stray = textRegion('unowned-flow', strayLine.box, [strayLine])
+    const promptLines = [
+      promptLine('bounded-question', 'Question: classify the record.', 0.22),
+      promptLine('bounded-detail-1', 'Use the supplied fields.', 0.244),
+      promptLine('bounded-context', 'Context: exact example.', 0.268),
+      promptLine('bounded-detail-2', 'Return one response.', 0.292),
+      promptLine('bounded-output', 'Output: accepted label.', 0.316),
+      promptLine('bounded-detail-3', 'End of prompt.', 0.34),
+    ]
+    const prompt = textRegion(
+      'bounded-proportional-prompt',
+      box(0.2, 0.22, 0.46, 0.134),
+      promptLines,
+    )
+    const previousCaption = {
+      ...caption('bounded-previous-caption', 0.11, 'Table 6. Previous block.'),
+      box: box(0.18, 0.11, 0.5, 0.02),
+    }
+    const promptCaption = {
+      ...caption(
+        'bounded-proportional-caption',
+        0.37,
+        'Table 7. Prompt records.',
+      ),
+      box: box(0.18, 0.37, 0.5, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: promptCaption,
+        pageRegions: [previousCaption, stray, prompt, promptCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+      ambiguity: { code: 'no-proven-scope' },
     })
   })
 
@@ -1666,6 +2074,157 @@ describe('bounded PDF table source scoping', () => {
       },
     })
     expect(result.scope?.sourceRegionIds).not.toContain(adjacentProse.id)
+  })
+
+  it('completes same-row fragments across a spanning caption lane and pads border ink', () => {
+    const core = textRegion('core-table-grid', box(0.28, 0.2, 0.295, 0.116), [
+      line('core-row-1', 0.2, [0.28, 0.5]),
+      line('core-row-2', 0.25, [0.28, 0.5]),
+      line('core-row-3', 0.3, [0.28, 0.5]),
+    ])
+    const fragments = [0.2, 0.25, 0.3].flatMap((y, index) =>
+      [
+        ['left', 0.1],
+        ['right', 0.8],
+      ].map(([side, x]) => {
+        const fragmentLine = line(`${side}-fragment-${index + 1}`, y, [
+          x as number,
+        ])
+        return textRegion(
+          `${side}-fragment-region-${index + 1}`,
+          fragmentLine.box,
+          [fragmentLine],
+          'chart-label',
+        )
+      }),
+    )
+    const tableCaption = {
+      ...caption('spanning-fragment-caption', 0.35),
+      column: 'span' as const,
+      box: box(0.08, 0.35, 0.84, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [core, ...fragments, tableCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [
+          core.id,
+          ...fragments.map((region) => region.id),
+        ].sort(),
+        sourceLineIds: expect.arrayContaining([
+          ...core.lines.map((item) => item.id),
+          ...fragments.flatMap((region) => region.lines.map((item) => item.id)),
+        ]),
+        cropBox: expect.objectContaining({
+          x: 0.096,
+          y: 0.196,
+        }),
+        evidence: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'caption-lane-source-completion',
+            rowFragmentLineIds: fragments
+              .flatMap((region) => region.lines.map((item) => item.id))
+              .sort(),
+            borderInkPadding: 0.004,
+          }),
+        ]),
+      },
+    })
+  })
+
+  it('keeps row-fragment completion inside a narrow caption column', () => {
+    const core = {
+      ...textRegion('left-column-core-grid', box(0.12, 0.2, 0.255, 0.116), [
+        line('left-core-row-1', 0.2, [0.12, 0.3]),
+        line('left-core-row-2', 0.25, [0.12, 0.3]),
+        line('left-core-row-3', 0.3, [0.12, 0.3]),
+      ]),
+      column: 'left' as const,
+    }
+    const leftFragmentLine = line('left-owned-fragment', 0.25, [0.46])
+    const leftFragment = {
+      ...textRegion(
+        'left-owned-fragment-region',
+        leftFragmentLine.box,
+        [leftFragmentLine],
+        'chart-label',
+      ),
+      column: 'left' as const,
+    }
+    const rightFragmentLine = line('right-unowned-fragment', 0.25, [0.72])
+    const rightFragment = {
+      ...textRegion(
+        'right-unowned-fragment-region',
+        rightFragmentLine.box,
+        [rightFragmentLine],
+        'chart-label',
+      ),
+      column: 'right' as const,
+    }
+    const tableCaption = {
+      ...caption('left-column-fragment-caption', 0.35),
+      column: 'left' as const,
+      box: box(0.08, 0.35, 0.45, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [core, leftFragment, rightFragment, tableCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [core.id, leftFragment.id].sort(),
+        sourceLineIds: expect.arrayContaining([
+          leftFragmentLine.id,
+          ...core.lines.map((item) => item.id),
+        ]),
+      },
+    })
+    expect(result.scope?.sourceRegionIds).not.toContain(rightFragment.id)
+    expect(result.scope?.sourceLineIds).not.toContain(rightFragmentLine.id)
+  })
+
+  it('rejects a table completion corridor interrupted by unowned prose', () => {
+    const table = textRegion(
+      'interrupted-table-grid',
+      box(0.12, 0.18, 0.455, 0.096),
+      [
+        line('interrupted-row-1', 0.18, [0.12, 0.31, 0.5]),
+        line('interrupted-row-2', 0.22, [0.12, 0.31, 0.5]),
+        line('interrupted-row-3', 0.26, [0.12, 0.31, 0.5]),
+      ],
+    )
+    const prose = textRegion(
+      'intervening-unowned-prose',
+      box(0.12, 0.292, 0.45, 0.016),
+      [proseLine('intervening-prose-line', 0.292)],
+    )
+    const tableCaption = {
+      ...caption('interrupted-table-caption', 0.32),
+      box: box(0.1, 0.32, 0.52, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [table, prose, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+      ambiguity: { code: 'no-proven-scope' },
+    })
   })
 
   it('keeps formula-bearing row labels inside an atomized caption-bounded table grid', () => {
@@ -2432,10 +2991,7 @@ describe('bounded PDF table source scoping', () => {
           expect.objectContaining({
             code: 'supplemental-equation-cell-shard',
             regionIds: ['table-equation-shard'],
-            lineIds: [
-              'table-equation-cell-1',
-              'table-equation-cell-2',
-            ],
+            lineIds: ['table-equation-cell-1', 'table-equation-cell-2'],
             columnAnchors: [0.32],
           }),
         ]),

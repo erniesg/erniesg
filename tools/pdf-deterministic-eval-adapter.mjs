@@ -330,14 +330,34 @@ function figureInternalTextGroups(relationship, page, visualBox, regions) {
   return groups
 }
 
-function semanticTableEntities(reconstruction) {
+function semanticTableEntities(
+  reconstruction,
+  validatedVisualRelationships,
+) {
   const assets = new Map(
     (reconstruction.assets ?? []).map((asset) => [asset.id, asset]),
+  )
+  const validatedNodeIds = new Set(
+    validatedVisualRelationships.flatMap((relationship) => {
+      const relatedAssets = (relationship.assetIds ?? [])
+        .map((assetId) => assets.get(assetId))
+        .filter(Boolean)
+      return relationship.kind === 'table' &&
+        relationship.status === 'matched' &&
+        typeof relationship.canonicalNodeId === 'string' &&
+        relatedAssets.length === 1 &&
+        relatedAssets[0].kind === 'table' &&
+        relatedAssets[0].rendition === 'semantic-table' &&
+        relatedAssets[0].mediaType === 'application/xhtml+xml'
+        ? [relationship.canonicalNodeId]
+        : []
+    }),
   )
   return (reconstruction.paper?.nodes ?? []).flatMap((node) => {
     if (
       node.type !== 'figure' ||
       node.objectType !== 'table' ||
+      !validatedNodeIds.has(node.id) ||
       !isStrictSemanticTable(node.table)
     ) {
       return []
@@ -480,7 +500,10 @@ function titleInvariant(reconstruction) {
   }
 }
 
-export function observeDeterministicReconstruction(reconstruction) {
+export function observeDeterministicReconstruction(
+  reconstruction,
+  { validatedVisualRelationships = [] } = {},
+) {
   const pageCount = reconstruction.source?.pageCount
   if (!Number.isSafeInteger(pageCount) || pageCount < 1) {
     invalid('INVALID_DETERMINISTIC_RECONSTRUCTION')
@@ -490,6 +513,9 @@ export function observeDeterministicReconstruction(reconstruction) {
   )
   const assets = new Map(
     (reconstruction.assets ?? []).map((asset) => [asset.id, asset]),
+  )
+  const exportValidatedRelationshipIds = new Set(
+    validatedVisualRelationships.map((relationship) => relationship.id),
   )
   const canonicalLabels = canonicalRegionLabels(reconstruction)
   const orderPosition = new Map(
@@ -516,7 +542,7 @@ export function observeDeterministicReconstruction(reconstruction) {
   }
 
   for (const entity of [
-    ...semanticTableEntities(reconstruction),
+    ...semanticTableEntities(reconstruction, validatedVisualRelationships),
     ...compactMathAtomEntities(reconstruction),
     ...numericRangeEntities(reconstruction),
   ]) {
@@ -563,6 +589,9 @@ export function observeDeterministicReconstruction(reconstruction) {
   }
 
   for (const relationship of reconstruction.visualRelationships ?? []) {
+    const exportMatched =
+      relationship.status === 'matched' &&
+      exportValidatedRelationshipIds.has(relationship.id)
     const pageNumber = visualPage(relationship, regions, assets)
     const page = pageByNumber.get(pageNumber)
     const box = page ? visualObjectBox(relationship, pageNumber, assets) : null
@@ -586,23 +615,22 @@ export function observeDeterministicReconstruction(reconstruction) {
 
     let visualEntityId = null
     if (box) {
-      visualEntityId =
-        relationship.status === 'matched'
-          ? relationship.id
-          : `visual-evidence:${relationship.id}`
+      visualEntityId = exportMatched
+        ? relationship.id
+        : `visual-evidence:${relationship.id}`
       const object = {
         id: visualEntityId,
         label: relationship.kind,
         box,
       }
       page.entities.push(object)
-      if (relationship.status === 'matched') {
+      if (exportMatched) {
         page.objects.push(object)
         page.visualOrder.push(visualEntityId)
       }
     }
     if (
-      relationship.status === 'matched' &&
+      exportMatched &&
       relationship.kind !== 'equation' &&
       captionId &&
       visualEntityId
@@ -614,7 +642,7 @@ export function observeDeterministicReconstruction(reconstruction) {
       })
     }
 
-    if (relationship.status === 'matched' && relationship.kind === 'equation') {
+    if (exportMatched && relationship.kind === 'equation') {
       const equation = regions.get(relationship.captionRegionId)
       if (equation?.page === pageNumber) {
         for (const regionId of relationship.sourceRegionIds ?? []) {
@@ -636,6 +664,7 @@ export function observeDeterministicReconstruction(reconstruction) {
     }
 
     if (
+      exportMatched &&
       relationship.kind === 'figure' &&
       relationship.sourceText?.trim() &&
       visualEntityId &&
@@ -953,7 +982,11 @@ function validateRequest(request) {
   if (!valid) invalid('INVALID_DETERMINISTIC_EVAL_REQUEST')
 }
 
-export function createDeterministicPredictions(request, reconstructions) {
+export function createDeterministicPredictions(
+  request,
+  reconstructions,
+  validatedVisualRelationshipsByDocument = new Map(),
+) {
   validateRequest(request)
   const documents = new Map(request.documents.map((item) => [item.id, item]))
   const observations = new Map()
@@ -969,7 +1002,10 @@ export function createDeterministicPredictions(request, reconstructions) {
     }
     observations.set(
       documentId,
-      observeDeterministicReconstruction(reconstruction),
+      observeDeterministicReconstruction(reconstruction, {
+        validatedVisualRelationships:
+          validatedVisualRelationshipsByDocument.get(documentId) ?? [],
+      }),
     )
   }
   return {
@@ -1020,7 +1056,10 @@ async function main() {
   const { createPdfPipeline } = await import('./pdf-corpus-audit-lib.mjs')
   const pipeline = await createPdfPipeline()
   const reconstructions = new Map()
+  const validatedVisualRelationshipsByDocument = new Map()
   try {
+    const { validatedPdfVisualRelationships } =
+      await pipeline.loadValidationModules()
     for (const document of request.documents) {
       const bytes = await readFile(document.path)
       const reconstruction = await pipeline.reconstructPdf(
@@ -1032,8 +1071,22 @@ async function main() {
         { standardFontDataUrl: pipeline.standardFontDataUrl },
       )
       reconstructions.set(document.id, reconstruction)
+      validatedVisualRelationshipsByDocument.set(
+        document.id,
+        validatedPdfVisualRelationships({
+          paper: reconstruction.paper,
+          provenance: reconstruction.provenance,
+          relationships: reconstruction.visualRelationships,
+          assets: reconstruction.assets,
+          regions: reconstruction.regions,
+        }),
+      )
     }
-    const predictions = createDeterministicPredictions(request, reconstructions)
+    const predictions = createDeterministicPredictions(
+      request,
+      reconstructions,
+      validatedVisualRelationshipsByDocument,
+    )
     await writeFile(paths.output, `${JSON.stringify(predictions)}\n`, {
       mode: 0o600,
     })

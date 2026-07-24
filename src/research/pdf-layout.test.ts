@@ -7504,6 +7504,12 @@ describe('PDF semantic reconstruction', () => {
         }),
       ]),
     )
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) =>
+          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
+      ),
+    ).toEqual([])
     expect(result.readiness).toMatchObject({
       ready: false,
       status: 'review-required',
@@ -7925,8 +7931,8 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
           relationshipId: earlierReference.id,
         }),
       ]),
@@ -8016,8 +8022,8 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
           relationshipId: laterReference.id,
         }),
       ]),
@@ -8192,7 +8198,7 @@ describe('PDF semantic reconstruction', () => {
     ).toHaveLength(3)
   })
 
-  it('retains atomic source order when conflicting reference scopes would invert a deferred float run', () => {
+  it('falls back to atomic source order when a reference-scope move would invert a deferred float run', () => {
     const figure = (ordinal: number): ResearchNode => ({
       id: `source-ordered-visual-${ordinal}`,
       type: 'figure',
@@ -8313,8 +8319,8 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
           message: expect.stringContaining(
             'reverse source-proved visual-caption pair order',
           ),
@@ -8323,7 +8329,211 @@ describe('PDF semantic reconstruction', () => {
     )
   })
 
-  it('keeps an unreferenced deferred float at the source slot bounded by proved appendix scopes', () => {
+  it('fails closed when a float fallback encounters a pre-existing reversed atomic pair order', () => {
+    const nodes: ResearchNode[] = [
+      visualOrderHeading('reversed-scope-a', 2, 'A. Earlier scope'),
+      visualOrderParagraph(
+        'reversed-scope-a-reference',
+        'Figure 21 is discussed in the earlier scope.',
+      ),
+      visualOrderHeading('reversed-scope-b', 2, 'B. Later scope'),
+      visualOrderParagraph(
+        'reversed-scope-b-reference',
+        'Figure 21 is also discussed in the later scope.',
+      ),
+      visualOrderFigure('reversed-visual-2', 'reversed-caption-2'),
+      visualOrderCaption('reversed-caption-2'),
+      visualOrderFigure('reversed-visual-1', 'reversed-caption-1'),
+      visualOrderCaption('reversed-caption-1'),
+    ]
+    const sourceOrder = nodes.map((node) => node.id)
+    const diagnostics: ReconstructionDiagnostic[] = []
+
+    orderCanonicalVisualPairs(
+      nodes,
+      [
+        {
+          page: 3,
+          column: 'single',
+          sourceBox: {
+            page: 3,
+            x: 0.1,
+            y: 0.2,
+            width: 0.8,
+            height: 0.2,
+            rotation: 0,
+            method: 'pdf-object',
+          },
+          visualNodeId: 'reversed-visual-1',
+          captionNodeId: 'reversed-caption-1',
+        },
+        {
+          page: 4,
+          column: 'single',
+          sourceBox: {
+            page: 4,
+            x: 0.1,
+            y: 0.2,
+            width: 0.8,
+            height: 0.2,
+            rotation: 0,
+            method: 'pdf-object',
+          },
+          visualNodeId: 'reversed-visual-2',
+          captionNodeId: 'reversed-caption-2',
+        },
+      ],
+      [
+        matchedVisualOrderReference({
+          id: 'reversed-scope-a-reference-relationship',
+          anchorNodeId: 'reversed-scope-a-reference',
+          referenceRegionId: 'reversed-scope-a-reference-region',
+          visualNodeId: 'reversed-visual-1',
+          page: 1,
+          y: 0.2,
+        }),
+        matchedVisualOrderReference({
+          id: 'reversed-scope-b-reference-relationship',
+          anchorNodeId: 'reversed-scope-b-reference',
+          referenceRegionId: 'reversed-scope-b-reference-region',
+          visualNodeId: 'reversed-visual-1',
+          page: 2,
+          y: 0.2,
+        }),
+      ],
+      diagnostics,
+    )
+
+    expect(nodes.map((node) => node.id)).toEqual(sourceOrder)
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'AMBIGUOUS_READING_ORDER',
+          severity: 'error',
+          message: expect.stringContaining(
+            'source-proved atomic visual-caption order is not intact',
+          ),
+        }),
+      ]),
+    )
+    expect(
+      diagnostics.filter(
+        (diagnostic) =>
+          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
+      ),
+    ).toEqual([])
+  })
+
+  it('uses physical source order rather than numeric labels for a safe float fallback', () => {
+    const firstFigure = visualOrderFigure(
+      'physical-visual-1',
+      'physical-caption-1',
+    ) as Extract<ResearchNode, { type: 'figure' }>
+    firstFigure.title = 'Figure 1. First numbered result.'
+    const firstCaption = {
+      ...visualOrderCaption('physical-caption-1'),
+      text: 'Figure 1. First numbered result.',
+    } satisfies ResearchNode
+    const secondFigure = visualOrderFigure(
+      'physical-visual-2',
+      'physical-caption-2',
+    ) as Extract<ResearchNode, { type: 'figure' }>
+    secondFigure.title = 'Figure 2. Second numbered result.'
+    const secondCaption = {
+      ...visualOrderCaption('physical-caption-2'),
+      text: 'Figure 2. Second numbered result.',
+    } satisfies ResearchNode
+    const nodes: ResearchNode[] = [
+      visualOrderHeading('physical-scope-a', 2, 'A. Earlier scope'),
+      visualOrderParagraph(
+        'physical-scope-a-reference',
+        'Figure 1 is discussed in the earlier scope.',
+      ),
+      visualOrderHeading('physical-scope-b', 2, 'B. Later scope'),
+      visualOrderParagraph(
+        'physical-scope-b-reference',
+        'Figure 1 is also discussed in the later scope.',
+      ),
+      secondFigure,
+      secondCaption,
+      firstFigure,
+      firstCaption,
+    ]
+    const sourceOrder = nodes.map((node) => node.id)
+    const diagnostics: ReconstructionDiagnostic[] = []
+
+    orderCanonicalVisualPairs(
+      nodes,
+      [
+        {
+          page: 4,
+          column: 'single',
+          sourceBox: {
+            page: 4,
+            x: 0.1,
+            y: 0.2,
+            width: 0.8,
+            height: 0.2,
+            rotation: 0,
+            method: 'pdf-object',
+          },
+          visualNodeId: firstFigure.id,
+          captionNodeId: firstCaption.id,
+        },
+        {
+          page: 3,
+          column: 'single',
+          sourceBox: {
+            page: 3,
+            x: 0.1,
+            y: 0.2,
+            width: 0.8,
+            height: 0.2,
+            rotation: 0,
+            method: 'pdf-object',
+          },
+          visualNodeId: secondFigure.id,
+          captionNodeId: secondCaption.id,
+        },
+      ],
+      [
+        matchedVisualOrderReference({
+          id: 'physical-scope-a-reference-relationship',
+          anchorNodeId: 'physical-scope-a-reference',
+          referenceRegionId: 'physical-scope-a-reference-region',
+          visualNodeId: firstFigure.id,
+          page: 1,
+          y: 0.2,
+        }),
+        matchedVisualOrderReference({
+          id: 'physical-scope-b-reference-relationship',
+          anchorNodeId: 'physical-scope-b-reference',
+          referenceRegionId: 'physical-scope-b-reference-region',
+          visualNodeId: firstFigure.id,
+          page: 2,
+          y: 0.2,
+        }),
+      ],
+      diagnostics,
+    )
+
+    expect(nodes.map((node) => node.id)).toEqual(sourceOrder)
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
+        }),
+      ]),
+    )
+    expect(
+      diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'AMBIGUOUS_READING_ORDER',
+      ),
+    ).toEqual([])
+  })
+
+  it('atomically places adjacent unreferenced deferred floats in the unique slot bounded by proved appendix scopes', () => {
     const figure = (ordinal: number): ResearchNode => ({
       id: `bounded-visual-${ordinal}`,
       type: 'figure',
@@ -8355,7 +8565,7 @@ describe('PDF semantic reconstruction', () => {
       visualOrderHeading('bounded-c', 1, 'C Human evaluation'),
       visualOrderParagraph(
         'bounded-c-reference',
-        'The interface appears in Figure 23.',
+        'The interface appears in Figure 24.',
       ),
       figure(21),
       caption(21),
@@ -8363,6 +8573,8 @@ describe('PDF semantic reconstruction', () => {
       caption(22),
       figure(23),
       caption(23),
+      figure(24),
+      caption(24),
       visualOrderHeading('bounded-g', 1, 'G Generated story'),
     ]
     const evidence = (
@@ -8400,6 +8612,8 @@ describe('PDF semantic reconstruction', () => {
       'bounded-caption-22': evidence(22, 0.1, 0.45, 0.8),
       'bounded-visual-23': evidence(23, 0.1, 0.1, 0.8),
       'bounded-caption-23': evidence(23, 0.1, 0.45, 0.8),
+      'bounded-visual-24': evidence(24, 0.1, 0.1, 0.8),
+      'bounded-caption-24': evidence(24, 0.1, 0.45, 0.8),
       'bounded-g': evidence(32, 0.1, 0.18),
     }
     const reference = (ordinal: number, anchorNodeId: string, y: number) => {
@@ -8425,7 +8639,7 @@ describe('PDF semantic reconstruction', () => {
 
     orderCanonicalVisualPairs(
       nodes,
-      [21, 22, 23].map((ordinal) => ({
+      [21, 22, 23, 24].map((ordinal) => ({
         page: ordinal,
         column: 'single' as const,
         sourceBox: provenance[`bounded-caption-${ordinal}`].boxes[0],
@@ -8434,7 +8648,7 @@ describe('PDF semantic reconstruction', () => {
       })),
       [
         reference(21, 'bounded-b-3-reference', 0.08),
-        reference(23, 'bounded-c-reference', 0.36),
+        reference(24, 'bounded-c-reference', 0.36),
       ],
       diagnostics,
       provenance,
@@ -8449,22 +8663,119 @@ describe('PDF semantic reconstruction', () => {
       'bounded-b-4-prose',
       'bounded-visual-22',
       'bounded-caption-22',
-      'bounded-c',
-      'bounded-c-reference',
       'bounded-visual-23',
       'bounded-caption-23',
+      'bounded-c',
+      'bounded-c-reference',
+      'bounded-visual-24',
+      'bounded-caption-24',
       'bounded-g',
     ])
     expect(diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
-          page: 22,
-          sourceBoxes: [provenance['bounded-caption-22'].boxes[0]],
-        }),
-      ]),
+      expect.arrayContaining(
+        [22, 23].map((pageNumber) =>
+          expect.objectContaining({
+            code: 'RESOLVED_READING_ORDER',
+            severity: 'info',
+            page: pageNumber,
+            sourceBoxes: [
+              provenance[`bounded-caption-${pageNumber}`].boxes[0],
+            ],
+          }),
+        ),
+      ),
     )
+    expect(
+      diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'AMBIGUOUS_READING_ORDER',
+      ),
+    ).toEqual([])
+
+    const rollbackNodes: ResearchNode[] = [
+      visualOrderHeading('bounded-b-3', 2, 'B.3 Analyzer prompts'),
+      visualOrderParagraph(
+        'bounded-b-3-reference',
+        'The analyzer prompt appears in Figure 21.',
+      ),
+      visualOrderHeading('bounded-b-4', 2, 'B.4 Experiment prompts'),
+      visualOrderParagraph(
+        'bounded-b-4-prose',
+        'The next source prompt is described here.',
+      ),
+      visualOrderHeading('bounded-c', 1, 'C Human evaluation'),
+      visualOrderParagraph(
+        'bounded-c-reference',
+        'The interface appears in Figure 24.',
+      ),
+      figure(21),
+      caption(21),
+      figure(23),
+      caption(23),
+      figure(22),
+      caption(22),
+      figure(24),
+      caption(24),
+      visualOrderHeading('bounded-g', 1, 'G Generated story'),
+    ]
+    const rollbackProvenance: Record<string, NodeSourceEvidence> = {
+      ...provenance,
+      'bounded-visual-22': evidence(23, 0.1, 0.1, 0.8),
+      'bounded-caption-22': evidence(23, 0.1, 0.45, 0.8),
+      'bounded-visual-23': evidence(22, 0.1, 0.1, 0.8),
+      'bounded-caption-23': evidence(22, 0.1, 0.45, 0.8),
+    }
+    const rollbackDiagnostics: ReconstructionDiagnostic[] = []
+
+    orderCanonicalVisualPairs(
+      rollbackNodes,
+      [21, 22, 23, 24].map((ordinal) => ({
+        page: rollbackProvenance[`bounded-caption-${ordinal}`].boxes[0].page,
+        column: 'single' as const,
+        sourceBox:
+          rollbackProvenance[`bounded-caption-${ordinal}`].boxes[0],
+        visualNodeId: `bounded-visual-${ordinal}`,
+        captionNodeId: `bounded-caption-${ordinal}`,
+      })),
+      [
+        reference(21, 'bounded-b-3-reference', 0.08),
+        reference(24, 'bounded-c-reference', 0.36),
+      ],
+      rollbackDiagnostics,
+      rollbackProvenance,
+    )
+
+    const rollbackOrder = rollbackNodes.map((node) => node.id)
+    expect(rollbackOrder).toEqual([
+      'bounded-b-3',
+      'bounded-b-3-reference',
+      'bounded-b-4',
+      'bounded-b-4-prose',
+      'bounded-c',
+      'bounded-c-reference',
+      'bounded-visual-21',
+      'bounded-caption-21',
+      'bounded-visual-23',
+      'bounded-caption-23',
+      'bounded-visual-22',
+      'bounded-caption-22',
+      'bounded-visual-24',
+      'bounded-caption-24',
+      'bounded-g',
+    ])
+    expect(
+      rollbackDiagnostics.filter(
+        (diagnostic) =>
+          diagnostic.code === 'RESOLVED_READING_ORDER' &&
+          (diagnostic.page === 22 || diagnostic.page === 23),
+      ),
+    ).toEqual([])
+    expect(
+      rollbackDiagnostics.filter(
+        (diagnostic) =>
+          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK' &&
+          (diagnostic.page === 22 || diagnostic.page === 23),
+      ),
+    ).toHaveLength(2)
   })
 
   it('does not relocate a physical float into a later cross-reference scope', () => {
@@ -8520,8 +8831,8 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
           relationshipId: laterReference.id,
         }),
       ]),
@@ -9077,8 +9388,8 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
           sourceBoxes: [
             crossReference.sourceBoxes[0],
             laterCrossReference.sourceBoxes[0],
@@ -9161,9 +9472,9 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
           relationshipId: laterReference.id,
-          severity: 'error',
+          severity: 'info',
         }),
       ]),
     )
@@ -9237,8 +9548,8 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
           sourceBoxes: [
             firstScopeReference.sourceBoxes[0],
             secondScopeReference.sourceBoxes[0],
@@ -9319,9 +9630,15 @@ describe('PDF semantic reconstruction', () => {
       diagnostics.filter(
         (diagnostic) => diagnostic.code === 'AMBIGUOUS_READING_ORDER',
       ),
+    ).toEqual([])
+    expect(
+      diagnostics.filter(
+        (diagnostic) =>
+          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
+      ),
     ).toEqual([
       expect.objectContaining({
-        severity: 'error',
+        severity: 'info',
         sourceBoxes: [
           rootReference.sourceBoxes[0],
           scopedReference.sourceBoxes[0],
@@ -10522,6 +10839,69 @@ describe('PDF semantic reconstruction', () => {
         'UNPROVENANCED_RENDERED_UNIT',
       ]),
     })
+  })
+
+  it('keeps a validated semantic-table boundary aligned with the completeness ledger', async () => {
+    const sourcePage = page(1, [
+      run(1, 'Synthetic table boundary paper', 0.1, 0.05, 0.5, 18),
+      run(1, 'Ordinary prose establishes font.', 0.1, 0.1, 0.5),
+      run(1, 'Table 1. Source backed.', 0.1, 0.25, 0.4, 8),
+      {
+        ...run(1, 'Header', 0.1, 0.3, 0.18),
+        bold: true,
+        fontName: 'Table-Bold',
+      },
+      {
+        ...run(1, 'Val-', 0.4, 0.3, 0.12),
+        bold: true,
+        fontName: 'Table-Bold',
+      },
+      run(1, 'alpha', 0.1, 0.325, 0.18),
+      run(1, '1', 0.4, 0.325, 0.04),
+      run(1, 'beta', 0.1, 0.35, 0.18),
+      run(1, '2', 0.4, 0.35, 0.04),
+    ])
+    const result = await reconstructPageAnalyses({
+      pages: [sourcePage],
+      sourceHash: 'a'.repeat(64),
+      fileName: 'semantic-table-boundary.pdf',
+      byteLength: 2048,
+    })
+    const tableRelationship = result.visualRelationships.find(
+      (relationship) => relationship.kind === 'table',
+    )
+
+    expect(tableRelationship).toBeDefined()
+    expect(
+      validatedPdfVisualRelationships({
+        paper: result.paper,
+        provenance: result.provenance,
+        relationships: result.visualRelationships,
+        assets: result.assets,
+        regions: result.regions,
+      }),
+    ).toContain(tableRelationship)
+    expect(result.lineBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcome: 'structural-boundary',
+          evidence: expect.arrayContaining(['strict-visual-only-region']),
+        }),
+      ]),
+    )
+    expect(result).toMatchObject({
+      unresolvedCorruptingJoinCount: 0,
+      structurallyConsumedLineBoundaryCount: 1,
+      completeness: {
+        unresolvedCorruptingJoinCount: 0,
+        structurallyConsumedLineBoundaryCount: 1,
+      },
+    })
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'INVALID_LINE_BOUNDARY_LEDGER' }),
+      ]),
+    )
   })
 
   it('emits stable OCR gates instead of silently exporting partial text', async () => {
@@ -11927,13 +12307,15 @@ describe('PDF semantic reconstruction', () => {
             0.28,
             0.68,
           ),
-          run(
-            1,
-            'We observed frequent hallucination. Addition-',
-            0.12,
-            0.82,
-            0.68,
-          ),
+          run(1, 'We observed frequent hallucination. ', 0.12, 0.82, 0.4),
+          {
+            ...run(1, 'Addition', 0.54, 0.82, 0.09),
+            fontName: 'ABCDEF+NimbusRomNo9L-Medi',
+          },
+          {
+            ...run(1, '-', 0.629, 0.82, 0.008),
+            fontName: 'ABCDEF+NimbusRomNo9L-Medi',
+          },
         ]),
         page(2, [
           run(2, 'Method', 0.12, 0.08, 0.12, 8),
@@ -11984,6 +12366,10 @@ describe('PDF semantic reconstruction', () => {
       ]),
     })
     expect(result.completeness.inlineSpanCoverage).toBe(1)
+    expect(result.completeness).toMatchObject({
+      expectedInlineSpanCount: 1,
+      mappedInlineSpanCount: 1,
+    })
     expect(
       result.diagnostics.some(
         (diagnostic) => diagnostic.code === 'CANONICAL_FLOW_ORDER_VIOLATION',
@@ -12195,6 +12581,201 @@ describe('PDF semantic reconstruction', () => {
         expect.stringContaining('page-001-region-'),
       ]),
     })
+  })
+
+  it('repairs a left-to-right wrap hyphen when the proved continuation begins midway down the right column', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Mid-column continuity', 0.1, 0.035, 0.8, 18),
+          run(1, '1 Introduction', 0.09, 0.12, 0.3, 14),
+          run(
+            1,
+            'A complete operation proves the unhyphenated token.',
+            0.09,
+            0.2,
+            0.385,
+          ),
+          run(
+            1,
+            'The left column establishes stable source geometry.',
+            0.09,
+            0.28,
+            0.385,
+          ),
+          run(
+            1,
+            'Another left row keeps the source lane explicit.',
+            0.09,
+            0.36,
+            0.385,
+          ),
+          run(
+            1,
+            'Aligned left prose begins below the upper-page content.',
+            0.09,
+            0.52,
+            0.385,
+          ),
+          run(
+            1,
+            'A second aligned left row confirms the gutter.',
+            0.09,
+            0.58,
+            0.385,
+          ),
+          run(
+            1,
+            'A third aligned left row completes the proof.',
+            0.09,
+            0.64,
+            0.385,
+          ),
+          run(
+            1,
+            'The final left-column sentence completes the oper-',
+            0.09,
+            0.82,
+            0.385,
+          ),
+          run(
+            1,
+            'ation before the right-column discussion continues.',
+            0.515,
+            0.52,
+            0.385,
+          ),
+          run(
+            1,
+            'A second aligned right row confirms the gutter.',
+            0.515,
+            0.58,
+            0.385,
+          ),
+          run(
+            1,
+            'A third aligned right row completes the proof.',
+            0.515,
+            0.64,
+            0.385,
+          ),
+        ]),
+      ],
+      sourceHash: '7'.repeat(64),
+      fileName: 'same-page-mid-column-wrap-hyphen.pdf',
+      byteLength: 4096,
+      metadata: { title: 'Mid-column continuity' },
+    })
+    const joined = result.paper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.text.includes('final left-column sentence'),
+    )
+
+    expect(joined).toMatchObject({
+      text: expect.stringContaining(
+        'completes the operation before the right-column discussion continues.',
+      ),
+    })
+    expect(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.code === 'CANONICAL_FLOW_ORDER_VIOLATION',
+      ),
+    ).toBe(false)
+  })
+
+  it('does not absorb an unattested small-font block from deep in the right column', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Mid-column fail-closed continuity', 0.1, 0.035, 0.8, 18),
+          run(1, '1 Introduction', 0.09, 0.12, 0.3, 14),
+          run(
+            1,
+            'The left column establishes stable source geometry.',
+            0.09,
+            0.28,
+            0.385,
+          ),
+          run(
+            1,
+            'Another left row keeps the source lane explicit.',
+            0.09,
+            0.36,
+            0.385,
+          ),
+          run(
+            1,
+            'Aligned left prose begins below the upper-page content.',
+            0.09,
+            0.52,
+            0.385,
+          ),
+          run(
+            1,
+            'A second aligned left row confirms the gutter.',
+            0.09,
+            0.58,
+            0.385,
+          ),
+          run(
+            1,
+            'A third aligned left row completes the proof.',
+            0.09,
+            0.64,
+            0.385,
+          ),
+          run(
+            1,
+            'The final left-column sentence ends with an unattested oper-',
+            0.09,
+            0.82,
+            0.385,
+          ),
+          run(
+            1,
+            'ation belongs to a small unrelated annotation.',
+            0.515,
+            0.52,
+            0.385,
+            7,
+          ),
+          run(
+            1,
+            'A second aligned right row confirms the gutter.',
+            0.515,
+            0.58,
+            0.385,
+          ),
+          run(
+            1,
+            'A third aligned right row completes the proof.',
+            0.515,
+            0.64,
+            0.385,
+          ),
+        ]),
+      ],
+      sourceHash: '6'.repeat(64),
+      fileName: 'same-page-mid-column-unattested-hyphen.pdf',
+      byteLength: 4096,
+      metadata: { title: 'Mid-column fail-closed continuity' },
+    })
+    const canonicalText = result.paper.nodes
+      .flatMap((node) => ('text' in node ? [node.text] : []))
+      .join('\n')
+
+    expect(canonicalText).not.toContain(
+      'unattested operation belongs to a small unrelated annotation',
+    )
+    expect(canonicalText).toContain('unattested oper-')
+    expect(
+      result.regions.some((region) =>
+        region.text.includes(
+          'ation belongs to a small unrelated annotation.',
+        ),
+      ),
+    ).toBe(true)
   })
 
   it('joins one paragraph across an owned figure at an adjacent-column boundary', async () => {
@@ -13031,9 +13612,9 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
           relationshipId: laterReference.id,
-          severity: 'error',
+          severity: 'info',
         }),
       ]),
     )
@@ -13103,8 +13684,8 @@ describe('PDF semantic reconstruction', () => {
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          severity: 'info',
           sourceBoxes: [
             earlyReference.sourceBoxes[0],
             laterReference.sourceBoxes[0],

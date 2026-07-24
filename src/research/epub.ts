@@ -12,6 +12,7 @@ import {
   PdfImportError,
   type DocumentReconstruction,
   type DocxReconstruction,
+  type HumanAdjudicationRecord,
   type NormalizedSourceBox,
   type PdfLinkAnnotation,
   type PdfReconstruction,
@@ -707,7 +708,9 @@ export type EpubInspectionExpectation = {
   sourcePdfSha256?: string
 }
 
-function profileMetadata(profile: TargetProfile): EpubProfileMetadata {
+export function getEpubProfileMetadata(
+  profile: TargetProfile,
+): EpubProfileMetadata {
   return {
     id: profile.id,
     version: profile.version,
@@ -723,7 +726,7 @@ function profileMetadata(profile: TargetProfile): EpubProfileMetadata {
 function profileManifestReceipt(profileInput: TargetProfile) {
   const profile = targetProfileSchema.parse(profileInput)
   return {
-    ...profileMetadata(profile),
+    ...getEpubProfileMetadata(profile),
     dimensions: profile.dimensions,
     ...(profile.manufacturerDisplay
       ? { manufacturerDisplay: profile.manufacturerDisplay }
@@ -829,14 +832,14 @@ function comparableText(value: string) {
 }
 
 function slug(value: string) {
-  return (
-    value
-      .toLocaleLowerCase()
-      .normalize('NFKD')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 80) || 'research-publication'
-  )
+  const candidate = value
+    .toLocaleLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80)
+    .replace(/-+$/g, '')
+  return candidate || 'research-publication'
 }
 
 function validNoteReferences<
@@ -863,8 +866,7 @@ type ScholarlyTarget = {
 }
 
 type CanonicalSemanticTarget =
-  | ScholarlyTarget
-  | { kind: 'citation'; identifier: string }
+  ScholarlyTarget | { kind: 'citation'; identifier: string }
 
 type VisibleTextRange = {
   start: number
@@ -1086,8 +1088,7 @@ function parseDelimitedSemanticExpression({
     ).start
     if (cursor >= bounds.end) return null
   }
-  return identities.length > 0 &&
-    new Set(identities).size === identities.length
+  return identities.length > 0 && new Set(identities).size === identities.length
     ? { identities, links }
     : null
 }
@@ -1130,9 +1131,11 @@ function crossReferencePrefix(value: string) {
         }
       : null
   }
-  const match = value.slice(trimmed.start).match(
-    /^(fig(?:ure)?s?|tables?|sections?|secs?|appendix|appendices|eq(?:uation)?s?)\.?\s+/iu,
-  )
+  const match = value
+    .slice(trimmed.start)
+    .match(
+      /^(fig(?:ure)?s?|tables?|sections?|secs?|appendix|appendices|eq(?:uation)?s?)\.?\s+/iu,
+    )
   if (!match) return null
   const prefix = match[1].toLocaleLowerCase()
   return {
@@ -1459,7 +1462,10 @@ function renderTextWithNoteReferences(
       | 'bibliography-entry'
     targetIds?: string[]
   }>,
-  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget> = new Map(),
+  scholarlyTargetKinds: ReadonlyMap<
+    string,
+    CanonicalSemanticTarget
+  > = new Map(),
 ) {
   if (!references?.length && !inlineRuns?.length) return text(value)
   const validReferences = validNoteReferences(value, references)
@@ -1646,7 +1652,7 @@ function renderTextWithNoteReferences(
       const targets = wrapper.targetIds.map(stableId)
       if (wrapper.semanticRole === 'citation' && targets.length > 0) {
         if (targets.length === 1) {
-          return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" epub:type="biblioref" data-relationship-id="${attribute(relationshipId)}">${html}</a>`
+          return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" epub:type="biblioref" data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets[0])}">${html}</a>`
         }
         const ranges = targetRangesForSemanticGroup(
           segmentValue,
@@ -1671,7 +1677,7 @@ function renderTextWithNoteReferences(
       }
       if (wrapper.semanticRole === 'cross-reference' && targets.length > 0) {
         if (targets.length === 1) {
-          return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" data-semantic-role="cross-reference" data-relationship-id="${attribute(relationshipId)}">${html}</a>`
+          return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" data-semantic-role="cross-reference" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets[0])}">${html}</a>`
         }
         const ranges = targetRangesForSemanticGroup(
           segmentValue,
@@ -1735,7 +1741,10 @@ function renderSemanticTable(
   canonicalNodeId: string,
   assetId?: string,
   captionId?: string,
-  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget> = new Map(),
+  scholarlyTargetKinds: ReadonlyMap<
+    string,
+    CanonicalSemanticTarget
+  > = new Map(),
 ) {
   const columnCount = Math.max(
     0,
@@ -1956,7 +1965,10 @@ function renderNode(
   omitMissingVisuals = false,
   canonicalTitleNodeId?: string,
   renderedNoteReferenceIds: ReadonlySet<string> = new Set(),
-  scholarlyTargetKinds: ReadonlyMap<string, CanonicalSemanticTarget> = new Map(),
+  scholarlyTargetKinds: ReadonlyMap<
+    string,
+    CanonicalSemanticTarget
+  > = new Map(),
 ) {
   const id = attribute(stableId(node.id))
   if (node.type === 'heading') {
@@ -1985,7 +1997,7 @@ function renderNode(
       ...(node.inlineRuns ?? []),
       ...literalExternalHyperlinkRuns(node.text),
     ]
-    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label">${text(node.markerText ?? node.label)}</span> ${renderTextWithNoteReferences(node.text, undefined, inlineRuns, scholarlyTargetKinds)}${backlinks ? ` ${backlinks}` : ''}</aside>`
+    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label" data-semantic-ledger-ignore="true">${text(node.markerText ?? node.label)} </span>${renderTextWithNoteReferences(node.text, undefined, inlineRuns, scholarlyTargetKinds)}${backlinks ? ` ${backlinks}` : ''}</aside>`
   }
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
@@ -2010,13 +2022,18 @@ function renderNode(
       )
       const unresolvedEquationTranscript =
         syntheticEquationCaption &&
-        visual.evidence.includes('source-text-transcript-unresolved')
+        visual.evidence.includes('source-text-transcript-unresolved') &&
+        !visual.equationTranscriptAdjudication
       const renderedAltText = unresolvedEquationTranscript
         ? 'Equation image; semantic transcript unresolved.'
-        : visual.altText
+        : visual.equationTranscriptAdjudication
+          ? 'Equation image; owner-reviewed source transcript available.'
+          : visual.altText
       const renderedAltTextSource = unresolvedEquationTranscript
         ? 'unresolved'
-        : visual.altTextSource
+        : visual.equationTranscriptAdjudication
+          ? 'owner-local-adjudication'
+          : visual.altTextSource
       const visualAssets = visual.assetIds
         .map((assetId) => assets.get(assetId))
         .filter((visualAsset): visualAsset is PublicationAsset =>
@@ -2059,7 +2076,7 @@ function renderNode(
                     visual.kind === 'figure' &&
                     visual.semanticKind !== 'algorithm')
                 return wideSourceVisual
-                  ? `<div class="wide-source-visual-scroll" data-wide-source-visual="true" data-source-visual-kind="${visual.kind}" role="region" aria-label="Scrollable ${visual.kind === 'table' ? 'table image' : 'figure'}" tabindex="0">${image}</div>`
+                  ? `<div class="wide-source-visual-frame" data-wide-source-visual="true" data-source-visual-kind="${visual.kind}">${image}</div>`
                   : image
               })
               .join('')
@@ -2092,7 +2109,7 @@ function renderNode(
       return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visualObjectType}" role="group"${figureClass}>${renderedAssets}${sourceTranscript}${renderedCaption}</figure>`
     }
     if (omitMissingVisuals) {
-      return `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual" role="note"><p>${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p>${caption ? `<p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</p>` : ''}</aside>`
+      return `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual" role="note"><p class="omitted-visual-message" data-semantic-ledger-ignore="true">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p>${caption ? `<p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</p>` : ''}</aside>`
     }
     return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>` : ''}</figure>`
   }
@@ -2343,7 +2360,7 @@ export function renderPublicationXhtml(
                       : `<div class="omitted-visual-transcript"><p>Recovered text inside the unresolved visual:</p><p>${text(unresolvedVisual.sourceText)}</p></div>`
                 : ''
             return unresolvedVisual || omitMissingVisuals
-              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}"${unresolvedAlgorithm ? ' data-object-type="algorithm"' : unresolvedCode ? ' data-object-type="code"' : ''} class="orphan-caption omitted-visual${unresolvedAlgorithm ? ' unresolved-algorithm' : unresolvedCode ? ' unresolved-code' : ''}" role="note"><p class="omitted-visual-message">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p><p class="omitted-visual-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</p>${unresolvedTranscript}</aside>`
+              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}"${unresolvedAlgorithm ? ' data-object-type="algorithm"' : unresolvedCode ? ' data-object-type="code"' : ''} class="orphan-caption omitted-visual${unresolvedAlgorithm ? ' unresolved-algorithm' : unresolvedCode ? ' unresolved-code' : ''}" role="note"><p class="omitted-visual-message" data-semantic-ledger-ignore="true">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p><p class="omitted-visual-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</p>${unresolvedTranscript}</aside>`
               : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
           })()
         : renderNode(
@@ -2524,7 +2541,7 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .semantic-table-wrapper th, .semantic-table-wrapper td { overflow-wrap: anywhere; word-break: break-word; }
 .semantic-table-wrapper[data-wide-table="true"] th, .semantic-table-wrapper[data-wide-table="true"] td { min-width: 3.5rem; overflow-wrap: break-word; word-break: normal; }
 .semantic-table-wrapper th { font-weight: bold; }
-.wide-source-visual-scroll { max-width: 100%; overflow-x: auto; }
+.wide-source-visual-frame { max-width: 100%; overflow: visible; }
 img, svg { display: block; height: auto; max-width: 100%; }
 object { border: 0; display: block; min-height: 8rem; width: 100%; }
 a { color: inherit; text-decoration: underline; }
@@ -2541,12 +2558,6 @@ function percentage(value: number, whole: number) {
 export function profileEpubCss(profileInput: TargetProfile) {
   const profile = targetProfileSchema.parse(profileInput)
   const width = profile.dimensions.width
-  const contentWidth = width - profile.margins.left - profile.margins.right
-  const compactProfile =
-    profile.columns.count === 1 &&
-    profile.dimensions.unit !== 'mm' &&
-    width <= 1_000
-  const wideSourceVisualMinimumWidth = Math.ceil(contentWidth * 1.35)
   const bodySize = profile.typography.bodySizeCssPx
   const fourthOrderHeadingSize = Math.max(
     bodySize + 1,
@@ -2570,7 +2581,6 @@ h2 { font-size: ${secondOrderHeadingSize}px; }
 h3 { font-size: ${thirdOrderHeadingSize}px; }
 h4 { font-size: ${fourthOrderHeadingSize}px; }
 blockquote { font-size: ${profile.typography.quoteSizeCssPx}px; }
-${compactProfile ? `.wide-source-visual-scroll[data-wide-source-visual="true"] img { max-width: none; min-width: max(100%, ${wideSourceVisualMinimumWidth}px); width: auto; }` : ''}
 @page { margin: 0; }
 `
 }
@@ -2580,8 +2590,7 @@ type PackagedAsset = {
   asset: PublicationAsset
   policy: {
     id:
-      | 'fit-device-content-width-no-upscale'
-      | 'preserve-scrollable-table-source'
+      'fit-device-content-width-no-upscale' | 'preserve-scrollable-table-source'
     version: typeof EPUB_EXPORT_POLICY_VERSION
     action: 'preserved' | 'downscaled' | 'scalable-source'
     sourceWidth: number
@@ -2607,8 +2616,7 @@ async function packageVisualAssets(
   return Promise.all(
     assets.map(async (source): Promise<PackagedAsset> => {
       const preserveScrollableTableSource =
-        profile?.id === 'paperProMove' &&
-        isCompactScrollableTableImage(source)
+        profile?.id === 'paperProMove' && isCompactScrollableTableImage(source)
       const asset =
         !preserveScrollableTableSource &&
         maximumWidth !== null &&
@@ -2861,6 +2869,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
+function manifestAdjudicationRecord(decision: HumanAdjudicationRecord) {
+  if (decision.resolution.type !== 'accept-equation-transcript') {
+    return decision
+  }
+  const { transcript, ...resolution } = decision.resolution
+  return {
+    ...decision,
+    resolution: {
+      ...resolution,
+      transcriptSha256: sha256Sync(strToU8(transcript)),
+    },
+  }
+}
+
+function manifestHumanAdjudications(reconstruction: PdfReconstruction) {
+  const applied = reconstruction.humanAdjudications.applied.map(
+    manifestAdjudicationRecord,
+  )
+  return {
+    schemaVersion: reconstruction.humanAdjudications.schemaVersion,
+    privacy: 'equation-transcripts-sha256-only',
+    appliedCount: applied.length,
+    staleCount: reconstruction.humanAdjudications.stale.length,
+    countsByDiagnosticCode:
+      reconstruction.humanAdjudications.countsByDiagnosticCode,
+    appliedReceiptSha256: sha256Sync(strToU8(JSON.stringify(applied))),
+    applied,
+  }
 }
 
 function requireSha256(value: unknown, field: string): asserts value is string {
@@ -4194,6 +4232,15 @@ async function buildEpubInternal(
                 relationship,
                 (renderReconstruction as PdfReconstruction).regions,
                 (renderReconstruction as PdfReconstruction).pages,
+                {
+                  paper: renderPaper,
+                  pages: (renderReconstruction as PdfReconstruction).pages,
+                  regions: (renderReconstruction as PdfReconstruction).regions,
+                  visualRelationships: (
+                    renderReconstruction as PdfReconstruction
+                  ).visualRelationships,
+                  assets: (renderReconstruction as PdfReconstruction).assets,
+                },
               )
             )
           }
@@ -4306,7 +4353,9 @@ async function buildEpubInternal(
     profile,
   )
   const modified = epubArtifactModifiedAt(renderPaper)
-  const exportProfileMetadata = profile ? profileMetadata(profile) : undefined
+  const exportProfileMetadata = profile
+    ? getEpubProfileMetadata(profile)
+    : undefined
   const exportManifest = {
     schemaVersion: EPUB_EXPORT_SCHEMA_VERSION,
     identifier,
@@ -4350,14 +4399,7 @@ async function buildEpubInternal(
       publicationPdfAssessment?.readiness ?? reconstruction?.readiness,
     humanAdjudications:
       reconstruction && !isDocxReconstruction(reconstruction)
-        ? {
-            schemaVersion: reconstruction.humanAdjudications.schemaVersion,
-            appliedCount: reconstruction.humanAdjudications.applied.length,
-            staleCount: reconstruction.humanAdjudications.stale.length,
-            countsByDiagnosticCode:
-              reconstruction.humanAdjudications.countsByDiagnosticCode,
-            applied: reconstruction.humanAdjudications.applied,
-          }
+        ? manifestHumanAdjudications(reconstruction)
         : undefined,
     assets: packaged.map(({ source, asset, policy }) => {
       const { bytes: _bytes, ...metadata } = asset

@@ -190,7 +190,7 @@ function document({
       blockingDiagnosticCodes: blockingCodes,
     },
     structure: {
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       canonicalNodeCount: 4,
       canonicalNodeSequenceSha256: structureHash,
       canonicalNodeTypeSequenceSha256: structureHash,
@@ -325,6 +325,102 @@ describe('deterministic PDF benchmark comparison', () => {
 
     expect(corpus.summary.passRate).toBe(0.33333)
     expect(comparePdfBenchmarkReports(corpus, corpus).summary.passed).toBe(true)
+  })
+
+  it('fails a semantic-table coverage regression while remaining backward compatible with legacy reports', () => {
+    const legacy = report([document()])
+    expect(comparePdfBenchmarkReports(legacy, legacy).summary.passed).toBe(true)
+    const unmeasuredCandidate = structuredClone(legacy)
+    Object.assign(unmeasuredCandidate.documents[0].completeness, {
+      expectedSemanticTableCount: 1,
+      resolvedSemanticTableCount: 0,
+      semanticTableCoverage: 0,
+    })
+    const unmeasuredComparison = comparePdfBenchmarkReports(
+      legacy,
+      unmeasuredCandidate,
+    )
+    expect(unmeasuredComparison.summary.passed).toBe(false)
+    expect(
+      unmeasuredComparison.documents[0].metrics.find(
+        (metric) => metric.key === 'semanticTableCoverage',
+      ),
+    ).toMatchObject({
+      baseline: null,
+      candidate: 0,
+      delta: null,
+      change: 'regressed',
+    })
+
+    const baseline = structuredClone(legacy)
+    const candidate = structuredClone(legacy)
+    Object.assign(baseline.documents[0].completeness, {
+      expectedSemanticTableCount: 2,
+      resolvedSemanticTableCount: 2,
+      semanticTableCoverage: 1,
+    })
+    Object.assign(candidate.documents[0].completeness, {
+      expectedSemanticTableCount: 2,
+      resolvedSemanticTableCount: 1,
+      semanticTableCoverage: 0.5,
+    })
+
+    const comparison = comparePdfBenchmarkReports(baseline, candidate)
+    expect(comparison.summary.passed).toBe(false)
+    expect(
+      comparison.documents[0].metrics.find(
+        (metric) => metric.key === 'semanticTableCoverage',
+      ),
+    ).toMatchObject({
+      baseline: 1,
+      candidate: 0.5,
+      delta: -0.5,
+      change: 'regressed',
+    })
+
+    const denominatorCollapse = structuredClone(baseline)
+    Object.assign(denominatorCollapse.documents[0].completeness, {
+      expectedSemanticTableCount: 1,
+      resolvedSemanticTableCount: 1,
+      semanticTableCoverage: 1,
+    })
+    const denominatorComparison = comparePdfBenchmarkReports(
+      baseline,
+      denominatorCollapse,
+    )
+    expect(denominatorComparison.summary.passed).toBe(false)
+    expect(
+      denominatorComparison.documents[0].metrics.find(
+        (metric) => metric.key === 'expectedSemanticTableCount',
+      ),
+    ).toMatchObject({
+      baseline: 2,
+      candidate: 1,
+      delta: -1,
+      change: 'regressed',
+    })
+
+    const denominatorExpansion = structuredClone(baseline)
+    Object.assign(denominatorExpansion.documents[0].completeness, {
+      expectedSemanticTableCount: 3,
+      resolvedSemanticTableCount: 3,
+      semanticTableCoverage: 1,
+    })
+    const denominatorExpansionComparison = comparePdfBenchmarkReports(
+      baseline,
+      denominatorExpansion,
+    )
+    expect(denominatorExpansionComparison.summary.passed).toBe(false)
+    expect(
+      denominatorExpansionComparison.documents[0].metrics.find(
+        (metric) => metric.key === 'expectedSemanticTableCount',
+      ),
+    ).toMatchObject({
+      baseline: 2,
+      candidate: 3,
+      delta: 1,
+      change: 'regressed',
+    })
   })
 
   it('rejects a noncanonical raw one-third pass-rate tamper', () => {
@@ -1339,7 +1435,10 @@ describe('deterministic PDF benchmark comparison', () => {
 
   it('keeps informational diagnostic volume neutral without weakening error-count regressions', () => {
     const baselineInfo = document({ ready: true })
-    baselineInfo.diagnosticCounts = { RESOLVED_READING_ORDER: 2 }
+    baselineInfo.diagnosticCounts = {
+      RESOLVED_READING_ORDER: 2,
+      SOURCE_ORDER_FLOAT_FALLBACK: 1,
+    }
     baselineInfo.diagnosticSamplesTruncated = 1
     baselineInfo.diagnostics = [
       {
@@ -1349,10 +1448,18 @@ describe('deterministic PDF benchmark comparison', () => {
         message:
           'A reading-order region was resolved from deterministic geometry.',
       },
+      {
+        code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+        severity: 'info',
+        page: 2,
+        message:
+          'An optional float move was skipped to preserve source-proved order.',
+      },
     ]
     const candidateInfo = structuredClone(baselineInfo)
     candidateInfo.diagnosticCounts.RESOLVED_READING_ORDER = 3
-    candidateInfo.diagnosticSamplesTruncated = 2
+    candidateInfo.diagnosticCounts.SOURCE_ORDER_FLOAT_FALLBACK = 2
+    candidateInfo.diagnosticSamplesTruncated = 3
 
     const informational = comparePdfBenchmarkReports(
       report([baselineInfo]),
@@ -1372,6 +1479,13 @@ describe('deterministic PDF benchmark comparison', () => {
           code: 'RESOLVED_READING_ORDER',
           baseline: 2,
           candidate: 3,
+          delta: 1,
+          change: 'unchanged',
+        },
+        {
+          code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+          baseline: 1,
+          candidate: 2,
           delta: 1,
           change: 'unchanged',
         },

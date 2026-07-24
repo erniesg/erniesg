@@ -458,6 +458,37 @@ describe('private PDF fidelity runner', () => {
     expect(receipt.execution.profileResults[0].structurallyValid).toBe(true)
   })
 
+  it('binds a single rendered scholarly cross-reference to its canonical target', () => {
+    const source = reconstruction()
+    source.paper.nodes[1] = {
+      ...source.paper.nodes[1],
+      text: 'See Table II now.',
+      inlineRuns: [
+        {
+          start: 4,
+          end: 12,
+          semanticRole: 'cross-reference',
+          relationshipId: 'cross-reference-table-ii',
+          targetIds: ['table-ii'],
+        },
+      ],
+    }
+    const artifactEvidence = inspectedArtifact(
+      source,
+      '<h1 data-canonical-id="heading-1">Synthetic paper</h1><p data-canonical-id="paragraph-1">See <a id="cross-reference-table-ii" href="#table-ii" data-semantic-role="cross-reference" data-relationship-id="cross-reference-table-ii" data-target-ids="table-ii">Table II</a> now.</p>',
+    )
+    const reconstructionEvidence = createPrivateReconstructionEvidence(source)
+
+    expect(reconstructionEvidence.inlineSemanticLedger).toMatchObject({
+      semanticRangeCount: 1,
+      relationshipCount: 1,
+      relationshipTargetCount: 1,
+    })
+    expect(artifactEvidence.inlineSemanticLedger).toEqual(
+      reconstructionEvidence.inlineSemanticLedger,
+    )
+  })
+
   it('normalizes overlapping inline markup into canonical semantic ranges', () => {
     const source = reconstruction()
     source.paper.nodes[1] = {
@@ -492,6 +523,42 @@ describe('private PDF fidelity runner', () => {
       profiles: ['mobile'],
     })
     expect(receipt.execution.profileResults[0].structurallyValid).toBe(true)
+  })
+
+  it('excludes visible noncanonical prefixes from semantic range offsets', () => {
+    const source = reconstruction()
+    source.paper.nodes[1] = {
+      ...source.paper.nodes[1],
+      text: 'Caption evidence.',
+      inlineRuns: [{ start: 0, end: 7, bold: true }],
+    }
+    const artifactEvidence = inspectedArtifact(
+      source,
+      '<h1 data-canonical-id="heading-1">Synthetic paper</h1><aside data-canonical-id="paragraph-1"><p data-semantic-ledger-ignore="true">Review required.</p><p><strong>Caption</strong> evidence.</p></aside>',
+    )
+    const reconstructionEvidence = createPrivateReconstructionEvidence(source)
+
+    expect(artifactEvidence.inlineSemanticLedger).toEqual(
+      reconstructionEvidence.inlineSemanticLedger,
+    )
+  })
+
+  it('normalizes a bare-host external link before comparing rendered semantics', () => {
+    const source = reconstruction()
+    source.paper.nodes[1] = {
+      ...source.paper.nodes[1],
+      text: 'example',
+      inlineRuns: [{ start: 0, end: 7, href: 'https://example.test' }],
+    }
+    const artifactEvidence = inspectedArtifact(
+      source,
+      '<h1 data-canonical-id="heading-1">Synthetic paper</h1><p data-canonical-id="paragraph-1"><a href="https://example.test/">example</a></p>',
+    )
+    const reconstructionEvidence = createPrivateReconstructionEvidence(source)
+
+    expect(artifactEvidence.inlineSemanticLedger).toEqual(
+      reconstructionEvidence.inlineSemanticLedger,
+    )
   })
 
   it('rejects a rendered citation target tampered without changing raw tag counts', () => {
@@ -741,6 +808,50 @@ describe('private PDF fidelity runner', () => {
     expect(
       evidenceFor().artifactParity.publication.relationshipGraphSha256,
     ).toBe(evidenceFor([]).artifactParity.publication.relationshipGraphSha256)
+  })
+
+  it('binds an equation transcript and adjudication by digest without exposing the transcript', () => {
+    const evidenceFor = (sourceText, transcriptSha256 = 'b'.repeat(64)) => {
+      const source = reconstruction()
+      source.visualRelationships = [
+        {
+          id: 'equation-relationship-1',
+          kind: 'equation',
+          status: 'matched',
+          canonicalNodeId: 'paragraph-1',
+          sourceText,
+          equationTranscriptAdjudication: {
+            schemaVersion: '1.0.0',
+            format: 'latex',
+            source: 'owner-local-adjudication',
+            transcriptSha256,
+            relationshipFingerprintSha256: 'c'.repeat(64),
+            sourceCropAssetId: 'source-asset',
+            sourceCropAssetSha256: 'd'.repeat(64),
+          },
+        },
+      ]
+      return createPrivateReconstructionEvidence(source)
+    }
+    const receipt = evidenceFor('PRIVATE synthetic equation transcript')
+    const changedText = evidenceFor('PRIVATE changed equation transcript')
+    const changedAdjudication = evidenceFor(
+      'PRIVATE synthetic equation transcript',
+      'e'.repeat(64),
+    )
+
+    expect(receipt.artifactParity.publication.relationshipGraphSha256).toBe(
+      receipt.structure.visualRelationshipGraphSha256,
+    )
+    expect(
+      changedText.artifactParity.publication.relationshipGraphSha256,
+    ).not.toBe(receipt.artifactParity.publication.relationshipGraphSha256)
+    expect(
+      changedAdjudication.artifactParity.publication.relationshipGraphSha256,
+    ).not.toBe(receipt.artifactParity.publication.relationshipGraphSha256)
+    expect(JSON.stringify(receipt)).not.toContain(
+      'PRIVATE synthetic equation transcript',
+    )
   })
 
   it('binds review-required readable fallback artifacts to their exported semantic subset', () => {
@@ -1553,7 +1664,7 @@ describe('private PDF fidelity runner', () => {
       [expect.stringMatching(/^[a-f0-9]{64}$/)],
     )
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraphSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -1645,7 +1756,7 @@ describe('private PDF fidelity runner', () => {
       evidence.structure.crossReferenceRelationshipGraph[0].sourceBoxes,
     ).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)])
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       crossReferenceRelationshipCount: 1,
       crossReferenceRelationshipCounts: { 'figure:matched': 1 },
       crossReferenceRelationshipGraphSha256:

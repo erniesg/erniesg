@@ -2893,11 +2893,45 @@ function sourceProvenSamePageParagraphBoundary(
 function sourceProvenSamePageColumnBoundary(
   target: RegionBlock,
   continuation: RegionBlock,
+  hardHyphenLexicon: ReadonlySet<string>,
+  unhyphenatedLexicon: ReadonlySet<string>,
 ) {
   const targetTailSegment = blockSourceSegments(target).at(-1)
   const continuationHeadSegment = blockSourceSegments(continuation)[0]
   const targetTailLine = targetTailSegment?.region.lines.at(-1)
   const continuationHeadLine = continuationHeadSegment?.region.lines[0]
+  const hyphenatedTokenContinuation =
+    /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) &&
+    /^\p{Ll}/u.test(continuation.text.trimStart())
+  const citationYearContinuation = detachedCitationYearContinuation(
+    target.text,
+    continuation.text,
+  )
+  const targetToken = target.text
+    .trimEnd()
+    .match(/([\p{L}\p{N}]+)[-‐‑]$/u)?.[1]
+  const continuationToken = continuation.text
+    .trimStart()
+    .match(/^([\p{L}\p{N}]+)/u)?.[1]
+  const fontRatio =
+    targetTailLine && continuationHeadLine
+      ? Math.max(targetTailLine.fontSize, continuationHeadLine.fontSize) /
+        Math.max(
+          1,
+          Math.min(targetTailLine.fontSize, continuationHeadLine.fontSize),
+        )
+      : Number.POSITIVE_INFINITY
+  const deepHyphenContinuationIsSourceAttested = Boolean(
+    targetToken &&
+    continuationToken &&
+    fontRatio <= 1.12 &&
+    (unhyphenatedLexicon.has(
+      normalizedBoundaryToken(`${targetToken}${continuationToken}`),
+    ) ||
+      hardHyphenLexicon.has(
+        normalizedBoundaryToken(`${targetToken}-${continuationToken}`),
+      )),
+  )
   if (
     !targetTailSegment ||
     !continuationHeadSegment ||
@@ -2907,15 +2941,14 @@ function sourceProvenSamePageColumnBoundary(
     targetTailSegment.region.column !== 'left' ||
     continuationHeadSegment.region.column !== 'right' ||
     targetTailLine.box.y + targetTailLine.box.height < 0.75 ||
-    continuationHeadLine.box.y > 0.35 ||
     targetTailLine.box.x >= continuationHeadLine.box.x ||
     targetTailLine.box.x + targetTailLine.box.width >
       continuationHeadLine.box.x + 0.01 ||
-    !(
-      (/[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) &&
-        /^\p{Ll}/u.test(continuation.text.trimStart())) ||
-      detachedCitationYearContinuation(target.text, continuation.text)
-    )
+    (!hyphenatedTokenContinuation && !citationYearContinuation) ||
+    (citationYearContinuation && continuationHeadLine.box.y > 0.35) ||
+    (hyphenatedTokenContinuation &&
+      continuationHeadLine.box.y > 0.35 &&
+      !deepHyphenContinuationIsSourceAttested)
   ) {
     return false
   }
@@ -3043,7 +3076,12 @@ function mergeProseContinuations(
       const sourceProvenColumnBoundary =
         continuation?.type === 'paragraph' &&
         interveningOwnedCaptions.length === 0 &&
-        sourceProvenSamePageColumnBoundary(target, continuation)
+        sourceProvenSamePageColumnBoundary(
+          target,
+          continuation,
+          hardHyphenLexicon,
+          unhyphenatedLexicon,
+        )
       const sourceProvenSamePageBoundary =
         continuation?.type === 'paragraph' &&
         interveningOwnedCaptions.length === 0 &&
@@ -6667,6 +6705,13 @@ function sourceInlineRuns(
   const mapped = new Map<string, CanonicalInlineRun>()
   const ledger: InlineMappingLedger = { expected: 0, mapped: 0 }
   const sourceAnnotationRanges: Array<{ start: number; end: number }> = []
+  const removedStandaloneDiscretionaryHyphens = new Set(
+    lineBoundaryDecisions.flatMap((decision) =>
+      decision.outcome === 'removed-discretionary-hyphen'
+        ? [`${decision.regionId}:${decision.fromLineId}`]
+        : [],
+    ),
+  )
   const store = (run: CanonicalInlineRun) => {
     const rangeKey = `${run.start}:${run.end}`
     const key = run.annotationId
@@ -6685,9 +6730,23 @@ function sourceInlineRuns(
       ),
     )
     for (const line of segment.region.lines) {
-      for (const run of line.runs) {
+      for (const [runIndex, run] of line.runs.entries()) {
         const sourceText = normalizedInlineSourceText(run.text)
         if (!sourceText) continue
+        if (
+          runIndex === line.runs.length - 1 &&
+          /^[-‐‑]$/u.test(sourceText) &&
+          /^[-‐‑]$/u.test(run.text.replace(/\s+/gu, '')) &&
+          removedStandaloneDiscretionaryHyphens.has(
+            `${segment.region.id}:${line.id}`,
+          )
+        ) {
+          // PDF producers often emit the discretionary hyphen as its own
+          // styled glyph run. Once the source-proved boundary decision removes
+          // that glyph, it has no canonical range and therefore no inline
+          // semantic obligation of its own.
+          continue
+        }
         const bold = run.bold ?? fontNameIndicatesBold(run.fontName)
         const italic = run.italic ?? fontNameIndicatesItalic(run.fontName)
         const verticalAlign = runVerticalAlign(line, run)
@@ -7048,6 +7107,9 @@ export function orderCanonicalVisualPairs(
         initialNodePositions.has(pair.captionNodeId),
     )
     .sort(comparePairScopedOrder)
+  const physicallySourceOrderedPairs = [...sourceOrderedPairs].sort(
+    comparePairSourceOrder,
+  )
   const sourceRankByVisualNodeId = new Map(
     sourceOrderedPairs.map(
       (pair, index) => [pair.visualNodeId, index] as const,
@@ -7055,6 +7117,11 @@ export function orderCanonicalVisualPairs(
   )
   const pairByVisualNodeId = new Map(
     sourceOrderedPairs.map((pair) => [pair.visualNodeId, pair] as const),
+  )
+  const physicalRankByVisualNodeId = new Map(
+    physicallySourceOrderedPairs.map(
+      (pair, index) => [pair.visualNodeId, index] as const,
+    ),
   )
   const preservesAtomicSourcePairOrder = () => {
     let previousRank = -1
@@ -7075,8 +7142,64 @@ export function orderCanonicalVisualPairs(
     }
     return encountered === sourceOrderedPairs.length
   }
+  const preservesAtomicPhysicalSourcePairOrder = () => {
+    let previousRank = -1
+    let encountered = 0
+    for (const [nodeIndex, node] of nodes.entries()) {
+      const sourceRank = physicalRankByVisualNodeId.get(node.id)
+      if (sourceRank === undefined) continue
+      const pair = pairByVisualNodeId.get(node.id)
+      if (
+        !pair ||
+        nodes[nodeIndex + 1]?.id !== pair.captionNodeId ||
+        sourceRank <= previousRank
+      ) {
+        return false
+      }
+      previousRank = sourceRank
+      encountered += 1
+    }
+    return encountered === physicallySourceOrderedPairs.length
+  }
   const restoreNodes = (snapshot: readonly ResearchNode[]) => {
     nodes.splice(0, nodes.length, ...snapshot)
+  }
+  const recordSourceOrderFloatFallback = ({
+    page,
+    visualNodeId,
+    reason,
+    relationshipId,
+    sourceBoxes = [],
+    target,
+  }: {
+    page: number
+    visualNodeId: string
+    reason: string
+    relationshipId?: string
+    sourceBoxes?: NormalizedSourceBox[]
+    target?: ReconstructionDiagnostic['target']
+  }) => {
+    if (preservesAtomicPhysicalSourcePairOrder()) {
+      diagnostics.push({
+        code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+        severity: 'info',
+        page,
+        message: `Skipped optional placement for canonical visual ${visualNodeId}; ${reason} The source-proved atomic visual-caption order remains unchanged.`,
+        ...(relationshipId ? { relationshipId } : {}),
+        sourceBoxes,
+        ...(target ? { target } : {}),
+      })
+      return
+    }
+    diagnostics.push({
+      code: 'AMBIGUOUS_READING_ORDER',
+      severity: 'error',
+      page,
+      message: `Canonical visual ${visualNodeId} cannot use the source-order float fallback because the source-proved atomic visual-caption order is not intact.`,
+      ...(relationshipId ? { relationshipId } : {}),
+      sourceBoxes,
+      ...(target ? { target } : {}),
+    })
   }
   const pairsByPage = new Map<number, typeof pairs>()
   for (const pair of pairs) {
@@ -7448,11 +7571,10 @@ export function orderCanonicalVisualPairs(
           // source-authored float queue. Its exact anchors, not the final
           // heading before that queue, prove the intended Appendix scopes.
         } else {
-          diagnostics.push({
-            code: 'AMBIGUOUS_READING_ORDER',
-            severity: 'error',
+          recordSourceOrderFloatFallback({
             page: pair.page,
-            message: `Canonical visual ${pair.visualNodeId} has exact references in ${headingScopeIds.size} distinct heading or document-root scopes; source order is retained for review.`,
+            visualNodeId: pair.visualNodeId,
+            reason: `exact references span ${headingScopeIds.size} distinct heading or document-root scopes.`,
             sourceBoxes: sourceOrderedReferences.map(
               (candidate) => candidate.referenceBox,
             ),
@@ -7487,11 +7609,11 @@ export function orderCanonicalVisualPairs(
         orderedScopeDistances.length === 1 ||
         orderedScopeDistances[0][1] < orderedScopeDistances[1][1]
       if (physicalHeadingScopeId === null && !nearestScopeIsUnique) {
-        diagnostics.push({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+        recordSourceOrderFloatFallback({
           page: pair.page,
-          message: `Canonical visual ${pair.visualNodeId} has equally near exact references in distinct heading or document-root scopes; source order is retained for review.`,
+          visualNodeId: pair.visualNodeId,
+          reason:
+            'exact references are equally near in distinct heading or document-root scopes.',
           sourceBoxes: sourceOrderedReferences.map(
             (candidate) => candidate.referenceBox,
           ),
@@ -7532,11 +7654,10 @@ export function orderCanonicalVisualPairs(
         physicalHeadingScopeId !== null &&
         physicalHeadingScopeId !== referenceHeadingScopeId
       ) {
-        diagnostics.push({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
+        recordSourceOrderFloatFallback({
           page: pair.page,
-          message: `Canonical visual ${pair.visualNodeId} is physically source-ordered in heading scope ${physicalHeadingScopeId}, while its exact reference is in ${referenceHeadingScopeId}; source order is retained for review.`,
+          visualNodeId: pair.visualNodeId,
+          reason: `the physical heading scope ${physicalHeadingScopeId} differs from exact-reference scope ${referenceHeadingScopeId}.`,
           relationshipId: firstExactReference.relationship.id,
           sourceBoxes: [
             pair.sourceBox,
@@ -7642,11 +7763,11 @@ export function orderCanonicalVisualPairs(
     )
     if (!preservesAtomicSourcePairOrder()) {
       restoreNodes(nodeSnapshot)
-      diagnostics.push({
-        code: 'AMBIGUOUS_READING_ORDER',
-        severity: 'error',
+      recordSourceOrderFloatFallback({
         page: pair.page,
-        message: `Canonical visual ${pair.visualNodeId} was retained at its source position because the proposed reference-scope placement would reverse source-proved visual-caption pair order.`,
+        visualNodeId: pair.visualNodeId,
+        reason:
+          'the proposed reference-scope placement would reverse source-proved visual-caption pair order.',
         relationshipId: pair.relationshipId,
         sourceBoxes: [
           ...(pair.sourceBox ? [pair.sourceBox] : []),
@@ -7674,6 +7795,12 @@ export function orderCanonicalVisualPairs(
   }
 
   for (const run of deferredPairRuns) {
+    const runSnapshot = [...nodes]
+    const movedPairs: Array<{
+      pair: (typeof pairs)[number]
+      precedingReferenceRegionId: string
+      followingReferenceRegionId: string
+    }> = []
     const scopedPairs = run.map((pair) => {
       const references = precedingReferenceScopes(pair).sort(
         (left, right) =>
@@ -7769,7 +7896,6 @@ export function orderCanonicalVisualPairs(
 
       const boundaryNodeId =
         originalBoundaryIndex < 0 ? null : nodes[originalBoundaryIndex].id
-      const nodeSnapshot = [...nodes]
       const pairNodes = nodes.splice(visualIndex, 2)
       const insertionBoundary =
         boundaryNodeId === null
@@ -7804,38 +7930,46 @@ export function orderCanonicalVisualPairs(
         0,
         ...pairNodes,
       )
-      if (!preservesAtomicSourcePairOrder()) {
-        restoreNodes(nodeSnapshot)
-        diagnostics.push({
-          code: 'AMBIGUOUS_READING_ORDER',
-          severity: 'error',
-          page: scopedPair.pair.page,
-          message: `Canonical visual ${scopedPair.pair.visualNodeId} was retained at its source position because the only inferred scope placement would reverse source-proved visual-caption pair order.`,
-          sourceBoxes: scopedPair.pair.sourceBox
-            ? [scopedPair.pair.sourceBox]
-            : [],
+      movedPairs.push({
+        pair: scopedPair.pair,
+        precedingReferenceRegionId:
+          precedingOwner.relationship.referenceRegionId,
+        followingReferenceRegionId:
+          followingOwner.relationship.referenceRegionId,
+      })
+    }
+    if (movedPairs.length === 0) continue
+    if (!preservesAtomicPhysicalSourcePairOrder()) {
+      restoreNodes(runSnapshot)
+      for (const moved of movedPairs) {
+        recordSourceOrderFloatFallback({
+          page: moved.pair.page,
+          visualNodeId: moved.pair.visualNodeId,
+          reason:
+            'the only bounded inferred-scope placement would reverse source-proved visual-caption pair order.',
+          sourceBoxes: moved.pair.sourceBox ? [moved.pair.sourceBox] : [],
           target: {
             regionIds: [
-              precedingOwner.relationship.referenceRegionId,
-              followingOwner.relationship.referenceRegionId,
+              moved.precedingReferenceRegionId,
+              moved.followingReferenceRegionId,
             ],
             markerId: null,
           },
         })
-        continue
       }
+      continue
+    }
+    for (const moved of movedPairs) {
       diagnostics.push({
-        code: 'AMBIGUOUS_READING_ORDER',
-        severity: 'error',
-        page: scopedPair.pair.page,
-        message: `Canonical visual ${scopedPair.pair.visualNodeId} has no exact reference; its complete visual-caption pair remains in source order at the only slot bounded by adjacent source-proved Appendix scopes.`,
-        sourceBoxes: scopedPair.pair.sourceBox
-          ? [scopedPair.pair.sourceBox]
-          : [],
+        code: 'RESOLVED_READING_ORDER',
+        severity: 'info',
+        page: moved.pair.page,
+        message: `Placed canonical visual ${moved.pair.visualNodeId} in the unique slot bounded by adjacent exact-reference scopes while preserving source-proved visual-caption pair order.`,
+        sourceBoxes: moved.pair.sourceBox ? [moved.pair.sourceBox] : [],
         target: {
           regionIds: [
-            precedingOwner.relationship.referenceRegionId,
-            followingOwner.relationship.referenceRegionId,
+            moved.precedingReferenceRegionId,
+            moved.followingReferenceRegionId,
           ],
           markerId: null,
         },
@@ -9005,6 +9139,7 @@ export async function reconstructPageAnalyses({
     provenance,
     visualRelationships: visualResult.relationships,
     assets: visualResult.assets,
+    regions: regionResult.regions,
   })
 
   const assessment = assessPdfCompleteness({

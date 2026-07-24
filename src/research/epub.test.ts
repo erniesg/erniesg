@@ -892,6 +892,49 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('describes an owner-adjudicated equation transcript as available', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    const placeholder = 'Display equation p005-001'
+    reconstruction.paper.nodes = reconstruction.paper.nodes.map((node) =>
+      node.id === 'equation-caption'
+        ? { ...node, text: placeholder, inlineRuns: undefined }
+        : node.id === 'equation-node'
+          ? { ...node, sourceText: 'x + y = z' }
+          : node,
+    )
+    reconstruction.visualRelationships[0] = {
+      ...reconstruction.visualRelationships[0],
+      label: placeholder,
+      sourceText: 'x + y = z',
+      altText: placeholder,
+      altTextSource: 'caption',
+      evidence: [
+        ...reconstruction.visualRelationships[0].evidence,
+        'source-text-transcript-unresolved',
+      ],
+      equationTranscriptAdjudication: {
+        schemaVersion: '1.0.0',
+        format: 'latex',
+        source: 'owner-local-adjudication',
+        transcriptSha256: 'a'.repeat(64),
+        relationshipFingerprintSha256: 'b'.repeat(64),
+        sourceCropAssetId: reconstruction.visualRelationships[0].assetIds[0],
+        sourceCropAssetSha256: 'c'.repeat(64),
+      },
+    }
+
+    const content = renderPublicationXhtml(reconstruction.paper, {
+      reconstruction,
+    })
+
+    expect(content).toContain(
+      'alt="Equation image; owner-reviewed source transcript available." data-alt-source="owner-local-adjudication"',
+    )
+    expect(content).not.toContain(
+      'alt="Equation image; semantic transcript unresolved."',
+    )
+  })
+
   it('percent-encodes RFC-unwise external-link characters for EPUB readers', async () => {
     const linkPaper = structuredClone(paper)
     const value = 'Open the reviewed paper.'
@@ -1209,7 +1252,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(citationPaper)
 
     expect(content).toContain(
-      '<a id="citation-1" href="#reference-1" epub:type="biblioref" data-relationship-id="citation-1">[1]</a>',
+      '<a id="citation-1" href="#reference-1" epub:type="biblioref" data-semantic-role="citation" data-relationship-id="citation-1" data-target-ids="reference-1">[1]</a>',
     )
   })
 
@@ -1806,7 +1849,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(linkedPaper)
 
     expect(content).toContain(
-      '<a id="cross-reference-table-ii" href="#table-ii" data-semantic-role="cross-reference" data-relationship-id="cross-reference-table-ii">Table II</a>',
+      '<a id="cross-reference-table-ii" href="#table-ii" data-semantic-role="cross-reference" data-relationship-id="cross-reference-table-ii" data-target-ids="table-ii">Table II</a>',
     )
     expect(content).not.toContain(
       'data-relationship-id="cross-reference-table-ii">II</a>',
@@ -2187,7 +2230,7 @@ describe('EPUB 3 export', () => {
     ]
 
     expect(renderPublicationXhtml(notePaper)).toContain(
-      '<span class="note-label">Footnote 1.</span> The exact source marker remains rendered.',
+      '<span class="note-label" data-semantic-ledger-ignore="true">Footnote 1. </span>The exact source marker remains rendered.',
     )
   })
 
@@ -3056,6 +3099,17 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('does not leave a trailing separator when a title slug is truncated', async () => {
+    const longTitlePaper = structuredClone(paper)
+    longTitlePaper.title = 'word '.repeat(30).trim()
+
+    const epub = await buildEpub(longTitlePaper, getTargetProfile('paperPro'))
+
+    expect(epub.fileName).toMatch(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*-paper-pro-[a-f0-9]{12}\.epub$/,
+    )
+  })
+
   it('derives deterministic device CSS and progression metadata from profiles', async () => {
     const paperPro = getTargetProfile('paperPro')
     const paperMove = getTargetProfile('paperProMove')
@@ -3181,7 +3235,7 @@ describe('EPUB 3 export', () => {
     })
   })
 
-  it('keeps heading hierarchy monotone and enables wide-figure scrolling only on compact profiles', () => {
+  it('keeps heading hierarchy monotone and never forces source visuals wider than the viewport', () => {
     for (const profileId of [
       'mobile',
       'paperProMove',
@@ -3206,18 +3260,19 @@ describe('EPUB 3 export', () => {
       expect(headingSizes[2], `${profileId} h4 > body`).toBeGreaterThan(
         profile.typography.bodySizeCssPx,
       )
-      expect(
-        css.includes(
-          '.wide-source-visual-scroll[data-wide-source-visual="true"] img { max-width: none;',
-        ),
-      ).toBe(profileId === 'mobile' || profileId === 'paperProMove')
+      expect(css).toContain(
+        '.wide-source-visual-frame { max-width: 100%; overflow: visible; }',
+      )
+      expect(css).not.toContain(
+        '.wide-source-visual-scroll[data-wide-source-visual="true"] img { max-width: none;',
+      )
     }
 
-    expect(profileEpubCss(getTargetProfile('mobile'))).toContain(
-      'min-width: max(100%, 443px)',
+    expect(profileEpubCss(getTargetProfile('mobile'))).not.toContain(
+      'min-width: max(100%',
     )
-    expect(profileEpubCss(getTargetProfile('paperProMove'))).toContain(
-      'min-width: max(100%, 1062px)',
+    expect(profileEpubCss(getTargetProfile('paperProMove'))).not.toContain(
+      'min-width: max(100%',
     )
   })
 
@@ -3510,14 +3565,14 @@ describe('EPUB 3 export', () => {
 
     const content = renderWithRelationship(relationship)
     const wrapperStart = content.indexOf(
-      '<div class="wide-source-visual-scroll" data-wide-source-visual="true" data-source-visual-kind="figure"',
+      '<div class="wide-source-visual-frame" data-wide-source-visual="true" data-source-visual-kind="figure"',
     )
     const wrapperEnd = content.indexOf('</div>', wrapperStart)
     const captionStart = content.indexOf('<figcaption', wrapperStart)
 
     expect(wrapperStart).toBeGreaterThan(-1)
     expect(content).toContain(
-      'role="region" aria-label="Scrollable figure" tabindex="0"><img',
+      'data-source-visual-kind="figure"><img',
     )
     expect(wrapperEnd).toBeLessThan(captionStart)
     expect(
@@ -3526,7 +3581,7 @@ describe('EPUB 3 export', () => {
         kind: 'table',
       }),
     ).toContain(
-      'data-wide-source-visual="true" data-source-visual-kind="table" role="region" aria-label="Scrollable table image"',
+      'data-wide-source-visual="true" data-source-visual-kind="table"><img',
     )
     expect(
       renderWithRelationship(
@@ -3542,7 +3597,7 @@ describe('EPUB 3 export', () => {
         },
       ),
     ).toContain(
-      'data-wide-source-visual="true" data-source-visual-kind="table" role="region" aria-label="Scrollable table image"',
+      'data-wide-source-visual="true" data-source-visual-kind="table"><img',
     )
     expect(
       renderWithRelationship(

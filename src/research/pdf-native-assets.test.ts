@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { PdfNativeObject } from './import-types'
 import { resolveNativeObjects } from './pdf'
 
 function sourceBox(index: number) {
   return {
     page: 1,
-    x: 0.02 + index * 0.03,
+    x: 0.02 + index * 0.01,
     y: 0.2,
     width: 0.02,
     height: 0.02,
@@ -120,5 +120,125 @@ describe('native PDF image payload resolution', () => {
 
     expect(result.assets).toEqual([])
     expect(result.objects.every((object) => object.assetId === null)).toBe(true)
+  })
+
+  it('keeps PDF.js source identifiers scoped to one resolution call', async () => {
+    const source = 'page-local-image-source'
+    const draftForPage = (page: number) => {
+      const [draft] = drafts(1)
+      const pageId = String(page).padStart(3, '0')
+      return [
+        {
+          ...draft,
+          object: {
+            ...draft.object,
+            id: `image-p${pageId}-001`,
+            page,
+            box: { ...draft.object.box, page },
+          },
+          source,
+        },
+      ]
+    }
+    const resolve = (page: number, data: number[]) =>
+      resolveNativeObjects(
+        {
+          objs: {
+            has: () => true,
+            get(id) {
+              expect(id).toBe(source)
+              return {
+                width: 1,
+                height: 1,
+                kind: 2,
+                data: new Uint8Array(data),
+              }
+            },
+          },
+        },
+        draftForPage(page),
+      )
+
+    const first = await resolve(1, [255, 0, 0])
+    const second = await resolve(2, [0, 0, 255])
+
+    expect(first.assets).toHaveLength(1)
+    expect(second.assets).toHaveLength(1)
+    expect(first.assets[0].sha256).not.toBe(second.assets[0].sha256)
+    expect(first.assets[0].sourceObjectIds).toEqual(['image-p001-001'])
+    expect(second.assets[0].sourceObjectIds).toEqual(['image-p002-001'])
+    expect(first.assets[0].sourceBoxes[0].page).toBe(1)
+    expect(second.assets[0].sourceBoxes[0].page).toBe(2)
+  })
+
+  it('reuses one shared source while matching the complete uncached result', async () => {
+    const count = 64
+    const decoded = {
+      width: 2,
+      height: 1,
+      kind: 2,
+      data: new Uint8Array([255, 0, 0, 0, 128, 255]),
+    }
+    const repeated = drafts(count).map((draft) => ({
+      ...draft,
+      source: 'shared-image-source',
+    }))
+    const uncached = drafts(count).map((draft) => ({
+      ...draft,
+      source: decoded,
+    }))
+    let reads = 0
+    const digest = vi.spyOn(crypto.subtle, 'digest')
+    try {
+      const result = await resolveNativeObjects(
+        {
+          objs: {
+            has: () => true,
+            get() {
+              reads += 1
+              return decoded
+            },
+          },
+        },
+        repeated,
+      )
+      const cachedDigestCalls = digest.mock.calls.length
+      const reference = await resolveNativeObjects(
+        {
+          objs: {
+            has: () => false,
+            get() {
+              throw new Error(
+                'non-string sources must not use the PDF.js object store',
+              )
+            },
+          },
+        },
+        uncached,
+      )
+      const uncachedDigestCalls = digest.mock.calls.length - cachedDigestCalls
+
+      expect(cachedDigestCalls).toBeGreaterThan(0)
+      expect(uncachedDigestCalls).toBe(count * cachedDigestCalls)
+      expect(reads).toBe(1)
+      expect(result).toEqual(reference)
+      expect(result.assets).toHaveLength(1)
+      expect(result.assets[0].sourceObjectIds).toEqual(
+        repeated.map((draft) => draft.object.id),
+      )
+      expect(result.assets[0].sourceBoxes).toEqual(
+        repeated.map((draft) => draft.object.box),
+      )
+      expect(
+        result.objects.every(
+          (object) => object.assetId === result.assets[0].id,
+        ),
+      ).toBe(true)
+      expect(result.assets[0].sha256).toBe(
+        '5aef7d594dd6d4427308fac6871cafa2a911676ebd75e13f614edb86a397e01e',
+      )
+    } finally {
+      digest.mockRestore()
+    }
   })
 })

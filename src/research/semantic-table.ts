@@ -5,6 +5,7 @@ import type {
   PdfSourceRun,
   PdfVisualRelationship,
 } from './import-types'
+import { mergeWrappedHeaderContinuationRuns } from './pdf-table-detection.ts'
 
 export type StrictSemanticTableInlineRun = {
   start: number
@@ -256,24 +257,174 @@ function sourceRunKey(
   return `${regionId}\u0000${lineId}\u0000${runIndex}`
 }
 
-function sourceRunSequenceLayout<T extends { run: PdfSourceRun }>(
+function sourceRunSequenceLayout<
+  T extends { run: PdfSourceRun; lineId?: string },
+>(
   sources: readonly T[],
 ) {
   let text = ''
   return sources.map((source, index) => {
     if (index > 0) {
-      const previous = sources[index - 1].run
-      const gap = source.run.x - (previous.x + previous.width)
-      const noSpaceThreshold = Math.max(
-        0.0005,
-        Math.min(previous.height, source.run.height) * 0.18,
-      )
-      if (gap > noSpaceThreshold) text += ' '
+      const previousSource = sources[index - 1]
+      const previous = previousSource.run
+      if (
+        previousSource.lineId !== undefined &&
+        source.lineId !== undefined &&
+        previousSource.lineId !== source.lineId
+      ) {
+        text += ' '
+      } else {
+        const gap = source.run.x - (previous.x + previous.width)
+        const noSpaceThreshold = Math.max(
+          0.0005,
+          Math.min(previous.height, source.run.height) * 0.18,
+        )
+        if (gap > noSpaceThreshold) text += ' '
+      }
     }
     const start = text.length
     text += source.run.text
     return { source, start, end: text.length, text }
   })
+}
+
+type VerifiedTableSourceRun = {
+  key: string
+  regionId: string
+  lineId: string
+  runIndex: number
+  run: PdfSourceRun
+}
+
+function alignVerifiedWrappedColumnHeaderLineage({
+  table,
+  sourceRows,
+  regionKinds,
+}: {
+  table: StrictSemanticTable
+  sourceRows: VerifiedTableSourceRun[][]
+  regionKinds: ReadonlyMap<string, PdfPageRegion['kind']>
+}) {
+  const header = table.rows[0]
+  const firstBodyRow = table.rows[1]
+  const wrappedHeaderBandCount =
+    sourceRows.length - table.rows.length + 1
+  if (
+    wrappedHeaderBandCount < 2 ||
+    !header ||
+    !firstBodyRow ||
+    !header.cells.every(
+      (cell) =>
+        cell.headerScope === 'column' &&
+        cell.columnSpan === 1 &&
+        cell.rowSpan === 1,
+    ) ||
+    firstBodyRow.cells.every((cell) => cell.headerScope === 'column') ||
+    sourceRows
+      .slice(0, wrappedHeaderBandCount)
+      .flat()
+      .some(
+        (source) => regionKinds.get(source.regionId) !== 'header',
+      )
+  ) {
+    return null
+  }
+
+  const selectedSources = sourceRows.flat()
+  const selectedByKey = new Map(
+    selectedSources.map((source) => [source.key, source]),
+  )
+  if (selectedByKey.size !== selectedSources.length) return null
+
+  const claimedKeys = new Set<string>()
+  const headerCellIndexBySourceKey = new Map<string, number>()
+  const alignedRows: VerifiedTableSourceRun[][] = []
+  for (const [rowIndex, row] of table.rows.entries()) {
+    const physicalBands =
+      rowIndex === 0
+        ? sourceRows.slice(0, wrappedHeaderBandCount)
+        : [sourceRows[wrappedHeaderBandCount + rowIndex - 1]]
+    if (physicalBands.some((band) => !band)) return null
+    const expectedSources = physicalBands.flat()
+    const expectedKeys = new Set(
+      expectedSources.map((source) => source.key),
+    )
+    const aligned: VerifiedTableSourceRun[] = []
+    for (const [cellIndex, cell] of row.cells.entries()) {
+      for (const claimed of cell.sourceRuns ?? []) {
+        const key = sourceRunKey(
+          claimed.regionId,
+          claimed.lineId,
+          claimed.runIndex,
+        )
+        const selected = selectedByKey.get(key)
+        if (
+          !selected ||
+          !expectedKeys.has(key) ||
+          claimedKeys.has(key) ||
+          claimed.text !== selected.run.text ||
+          !sameSourceBox(claimed.box, selected.run)
+        ) {
+          return null
+        }
+        claimedKeys.add(key)
+        if (rowIndex === 0) {
+          headerCellIndexBySourceKey.set(key, cellIndex)
+        }
+        aligned.push(selected)
+      }
+    }
+    if (aligned.length !== expectedSources.length) return null
+    for (const band of physicalBands) {
+      const bandKeys = new Set(band.map((source) => source.key))
+      const claimedBandOrder = aligned
+        .filter((source) => bandKeys.has(source.key))
+        .map((source) => source.key)
+      if (
+        claimedBandOrder.length !== band.length ||
+        claimedBandOrder.some((key, index) => key !== band[index].key)
+      ) {
+        return null
+      }
+    }
+    alignedRows.push(aligned)
+  }
+
+  let simulatedHeaderRuns = sourceRows[0].map(({ run }) => run)
+  for (
+    let bandIndex = 1;
+    bandIndex < wrappedHeaderBandCount;
+    bandIndex += 1
+  ) {
+    const continuationBand = sourceRows[bandIndex]
+    const merged = mergeWrappedHeaderContinuationRuns(
+      simulatedHeaderRuns,
+      continuationBand.map(({ run }) => run),
+    )
+    if (!merged) return null
+    for (const [continuationIndex, targetIndex] of
+      merged.targetIndices.entries()) {
+      const baseSource = sourceRows[0][targetIndex]
+      const continuationSource = continuationBand[continuationIndex]
+      const baseCellIndex = baseSource
+        ? headerCellIndexBySourceKey.get(baseSource.key)
+        : undefined
+      const continuationCellIndex = continuationSource
+        ? headerCellIndexBySourceKey.get(continuationSource.key)
+        : undefined
+      if (
+        !baseSource ||
+        baseCellIndex === undefined ||
+        continuationCellIndex === undefined ||
+        baseCellIndex !== continuationCellIndex
+      ) {
+        return null
+      }
+    }
+    simulatedHeaderRuns = merged.runs
+  }
+
+  return claimedKeys.size === selectedSources.length ? alignedRows : null
 }
 
 function semanticCellCenter(cell: StrictSemanticTableCell) {
@@ -622,15 +773,7 @@ export function isSourceVerifiedSemanticTable({
     }
   }
 
-  const sourceRows: Array<
-    Array<{
-      key: string
-      regionId: string
-      lineId: string
-      runIndex: number
-      run: PdfSourceRun
-    }>
-  > = []
+  let sourceRows: VerifiedTableSourceRun[][] = []
   for (const band of sourceLineBands) {
     const row = band
       .flatMap((selected) =>
@@ -660,17 +803,6 @@ export function isSourceVerifiedSemanticTable({
     )
     if (row.length > 0) sourceRows.push(row)
   }
-  const sourceCells = sourceRows.flat()
-  if (
-    exactSourceText(sourceCells.map(({ run }) => run.text).join(' ')) !==
-    exactSourceText(relationship.sourceText)
-  ) {
-    return false
-  }
-  if (sourceRows.length !== table.rows.length) return false
-
-  const grid = rectangularGrid(table.rows)
-  if (!grid) return false
   const canonicalCells = table.rows.flatMap((row) => row.cells)
   if (
     canonicalCells.some(
@@ -679,11 +811,32 @@ export function isSourceVerifiedSemanticTable({
         !Array.isArray(cell.headerIds) ||
         !Array.isArray(cell.sourceRuns) ||
         cell.sourceRuns.length === 0 ||
+        cell.sourceRuns.some((source) => !isRecord(source)) ||
         !cell.inlineMapping,
     )
   ) {
     return false
   }
+  if (sourceRows.length !== table.rows.length) {
+    const closedRows = alignVerifiedWrappedColumnHeaderLineage({
+      table,
+      sourceRows,
+      regionKinds: new Map(
+        scopedRegions.map((region) => [region.id, region.kind]),
+      ),
+    })
+    if (!closedRows) return false
+    sourceRows = closedRows
+  }
+  const sourceCells = sourceRows.flat()
+  if (
+    exactSourceText(sourceCells.map(({ run }) => run.text).join(' ')) !==
+    exactSourceText(relationship.sourceText)
+  ) {
+    return false
+  }
+  const grid = rectangularGrid(table.rows)
+  if (!grid) return false
   const firstBodyRow = table.rows.findIndex(
     (row) => !row.cells.every((cell) => cell.headerScope === 'column'),
   )

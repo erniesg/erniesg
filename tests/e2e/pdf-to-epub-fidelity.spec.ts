@@ -307,6 +307,30 @@ test('uploads once and previews the matching Mobile, Move, and Pro EPUB artifact
     ).toEqual(tableContract.rows[0].map((text) => ({ text, scope: 'col' })))
     await expect(table.locator('tbody th')).toHaveCount(0)
     await expect(frame.locator('img')).not.toHaveCount(0)
+    expect(
+      await frame.locator('img').evaluateAll((images) =>
+        images.every((image) => {
+          const imageBox = image.getBoundingClientRect()
+          const containerBox =
+            image.parentElement?.getBoundingClientRect() ??
+            image.closest('main')?.getBoundingClientRect()
+          return (
+            imageBox.width > 0 &&
+            imageBox.height > 0 &&
+            (!containerBox || imageBox.width <= containerBox.width + 1)
+          )
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      await frame
+        .locator('[data-wide-source-visual="true"]')
+        .evaluateAll((visuals) =>
+          visuals.every(
+            (visual) => visual.scrollWidth <= visual.clientWidth + 1,
+          ),
+        ),
+    ).toBe(true)
     await expect(frame.locator('main')).not.toContainText('discre-tionary')
     await expect(
       frame.locator('main p').filter({ hasText: /^\s*[A-Za-z]\s*$/ }),

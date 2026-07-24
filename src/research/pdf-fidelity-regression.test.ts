@@ -4,9 +4,16 @@ import { strFromU8 } from 'fflate'
 import { beforeAll, describe, expect, it } from 'vitest'
 import contract from '../../tests/fixtures/pdf/pdf-to-epub-fidelity.contract.json'
 import fixtureManifest from '../../tests/fixtures/pdf/manifest.json'
-import { buildEpub, inspectEpub, type EpubExport } from './epub'
+import {
+  buildEpub,
+  buildReadableEpub,
+  inspectEpub,
+  projectReadableFallbackReconstruction,
+  type EpubExport,
+} from './epub'
 import type { PdfReconstruction } from './import-types'
 import { reconstructPdf } from './pdf'
+import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import { getTargetProfile } from './targets'
 
 const fixtureUrl = new URL(
@@ -397,6 +404,93 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
     expect(
       new Set(reconstruction.paper.nodes.map((node) => node.id)).size,
     ).toBe(reconstruction.paper.nodes.length)
+  })
+
+  it('retains the exact validated semantic table through readable projection and every EPUB profile', async () => {
+    const tableRelationship = reconstruction.visualRelationships.find(
+      (relationship) =>
+        relationship.kind === 'table' &&
+        relationship.label === 'Table 1',
+    )
+    expect(tableRelationship).toBeDefined()
+    const tableAsset = reconstruction.assets.find(
+      (asset) => asset.id === tableRelationship?.assetIds[0],
+    )
+    expect(tableAsset).toMatchObject({
+      kind: 'table',
+      rendition: 'semantic-table',
+      mediaType: 'application/xhtml+xml',
+    })
+    const validated = validatedPdfVisualRelationships({
+      paper: reconstruction.paper,
+      provenance: reconstruction.provenance,
+      relationships: reconstruction.visualRelationships,
+      assets: reconstruction.assets,
+      regions: reconstruction.regions,
+    })
+    expect(validated.map((relationship) => relationship.id)).toContain(
+      tableRelationship?.id,
+    )
+    expect(reconstruction.completeness).toMatchObject({
+      expectedSemanticTableCount: 1,
+      resolvedSemanticTableCount: 1,
+      semanticTableCoverage: 1,
+    })
+
+    const readable = projectReadableFallbackReconstruction(reconstruction)
+    expect(
+      readable.visualRelationships.map((relationship) => relationship.id),
+    ).toContain(tableRelationship?.id)
+    expect(readable.assets.map((asset) => asset.id)).toContain(tableAsset?.id)
+
+    for (const [profileId, [publication]] of Object.entries(exports)) {
+      const profile = getTargetProfile(
+        profileId as 'mobile' | 'paperProMove' | 'paperPro',
+      )
+      const readable = await buildReadableEpub(
+        reconstruction.paper,
+        reconstruction,
+        profile,
+      )
+      for (const [exportMode, epub] of [
+        ['publication', publication],
+        ['readable-fallback', readable],
+      ] as const) {
+        const { files, manifest } = inspectEpub(epub.bytes, profile)
+        const content = strFromU8(files['EPUB/content.xhtml'])
+        const marker = `data-canonical-id="${tableRelationship?.canonicalNodeId}"`
+        const start = content.indexOf(marker)
+        const end = content.indexOf('</figure>', start)
+        const tableFragment = content.slice(start, end)
+        expect(start).toBeGreaterThanOrEqual(0)
+        expect(end).toBeGreaterThan(start)
+        expect(tableFragment).toContain('class="semantic-table-wrapper"')
+        expect(tableFragment).toContain('<table ')
+        expect(tableFragment).toContain('<th ')
+        expect(tableFragment).toContain('<td ')
+        expect(tableFragment).not.toContain('class="omitted-visual"')
+        expect(manifest.exportMode).toBe(exportMode)
+        expect(manifest.sourceCompleteness).toMatchObject({
+          expectedSemanticTableCount: 1,
+          resolvedSemanticTableCount: 1,
+          semanticTableCoverage: 1,
+        })
+        expect(manifest.visualRelationships).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: tableRelationship?.id }),
+          ]),
+        )
+        expect(manifest.assets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              sourceAssetId: tableAsset?.id,
+              rendition: 'semantic-table',
+              mediaType: 'application/xhtml+xml',
+            }),
+          ]),
+        )
+      }
+    }
   })
 
   it('revalidates the exact canonical paper at export time instead of trusting stale-ready evidence', async () => {

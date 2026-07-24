@@ -16,6 +16,10 @@ import type {
   ReconstructionDiagnostic,
 } from './import-types'
 import {
+  verifyEquationTranscriptAdjudication,
+  type EquationTranscriptContext,
+} from './equation-transcript-adjudication'
+import {
   groupRunsIntoLines,
   inlineHardHyphenLexicon,
   inlineUnhyphenatedLexicon,
@@ -568,8 +572,7 @@ export function canonicalVisualOrderViolationRelationshipIds(
     typeof positioned
   >()
   for (const candidate of positioned) {
-    const values =
-      positionedByKind.get(candidate.relationship.kind) ?? []
+    const values = positionedByKind.get(candidate.relationship.kind) ?? []
     values.push(candidate)
     positionedByKind.set(candidate.relationship.kind, values)
   }
@@ -1353,12 +1356,18 @@ export function hasResolvedEquationTranscript(
   relationship: PdfVisualRelationship,
   regions: readonly PdfPageRegion[] | undefined,
   pages: readonly PdfPageAnalysis[] = [],
+  adjudicationContext?: EquationTranscriptContext,
 ) {
+  const ownerAdjudicated = Boolean(
+    adjudicationContext &&
+    verifyEquationTranscriptAdjudication(adjudicationContext, relationship.id),
+  )
   if (
     relationship.kind !== 'equation' ||
     relationship.status !== 'matched' ||
     relationship.sourceText.trim().length === 0 ||
-    relationship.evidence.includes('source-text-transcript-unresolved') ||
+    (relationship.evidence.includes('source-text-transcript-unresolved') &&
+      !ownerAdjudicated) ||
     !regions ||
     relationship.sourceRegionIds.length === 0 ||
     !relationship.sourceLineIds?.length ||
@@ -1387,7 +1396,10 @@ export function hasResolvedEquationTranscript(
   ) {
     return false
   }
-  if (hasUnprovedTwoDimensionalEquationTranscript(scopedRegions)) {
+  if (
+    hasUnprovedTwoDimensionalEquationTranscript(scopedRegions) &&
+    !ownerAdjudicated
+  ) {
     return false
   }
 
@@ -1473,9 +1485,10 @@ export function hasResolvedEquationTranscript(
     .map(({ line }) => line.text)
     .join(' ')
   return (
-    normalizedEquationTranscript(completeSourceText).length > 0 &&
-    normalizedEquationTranscript(relationship.sourceText) ===
-      normalizedEquationTranscript(completeSourceText)
+    ownerAdjudicated ||
+    (normalizedEquationTranscript(completeSourceText).length > 0 &&
+      normalizedEquationTranscript(relationship.sourceText) ===
+        normalizedEquationTranscript(completeSourceText))
   )
 }
 
@@ -1488,6 +1501,7 @@ function relationshipCounts(
   provenance?: Record<string, NodeSourceEvidence>,
   assets: PdfVisualAsset[] = [],
   regions?: readonly PdfPageRegion[],
+  equationTranscriptContext?: EquationTranscriptContext,
 ) {
   const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
@@ -1510,7 +1524,7 @@ function relationshipCounts(
           )
           .map((node) => node.relationships.caption),
       ).size
-  const resolvedTables =
+  const resolvedTableRelationships =
     visualRelationships?.filter((relationship) => {
       if (
         relationship.kind !== 'table' ||
@@ -1523,21 +1537,64 @@ function relationshipCounts(
       return (
         node?.type === 'figure' &&
         node.objectType === 'table' &&
+        relationship.assetIds.some((assetId) => {
+          const asset = assetsById.get(assetId)
+          if (
+            !node.relationships.assets?.includes(assetId) ||
+            asset?.kind !== 'table'
+          ) {
+            return false
+          }
+          const semanticGrid =
+            asset.mediaType === 'application/xhtml+xml' &&
+            asset.rendition === 'semantic-table' &&
+            isStrictSemanticTable(node.table)
+          const exactSourceCrop =
+            asset.mediaType === 'image/png' &&
+            asset.rendition === 'source-page-crop' &&
+            node.table === undefined &&
+            Boolean(asset.sourceCropBox) &&
+            Boolean(relationship.sourceLineIds?.length) &&
+            relationship.sourceText.trim().length > 0 &&
+            relationship.evidence.includes('source-page-crop') &&
+            relationship.evidence.some((item) =>
+              [
+                'bounded-table-scope',
+                'complete-bounded-table-scope',
+                'detected-table-geometry',
+              ].includes(item),
+            )
+          return semanticGrid || exactSourceCrop
+        })
+      )
+    }) ?? []
+  const resolvedTables = resolvedTableRelationships.length
+  const resolvedSemanticTables = resolvedTableRelationships.filter(
+    (relationship) => {
+      const node = nodesById.get(relationship.canonicalNodeId!)
+      return (
+        node?.type === 'figure' &&
+        node.objectType === 'table' &&
         isStrictSemanticTable(node.table) &&
         relationship.assetIds.some((assetId) => {
           const asset = assetsById.get(assetId)
           return (
-            node.relationships.assets?.includes(assetId) &&
             asset?.kind === 'table' &&
             asset.mediaType === 'application/xhtml+xml' &&
             asset.rendition === 'semantic-table'
           )
         })
       )
-    }).length ?? 0
+    },
+  ).length
   const resolvedEquations =
     visualRelationships?.filter((relationship) =>
-      hasResolvedEquationTranscript(relationship, regions, pages),
+      hasResolvedEquationTranscript(
+        relationship,
+        regions,
+        pages,
+        equationTranscriptContext,
+      ),
     ).length ?? 0
   const noteIds = new Set(
     paper.nodes
@@ -1632,6 +1689,7 @@ function relationshipCounts(
       Math.min(resolvedNoteReferences.length, signals.footnoteReferences),
     resolvedCaptions: Math.min(resolvedCaptions, signals.captions),
     resolvedTables: Math.min(resolvedTables, signals.tables),
+    resolvedSemanticTables: Math.min(resolvedSemanticTables, signals.tables),
     resolvedEquations: Math.min(resolvedEquations, signals.equations),
     resolvedCitations: Math.min(resolvedCitations, signals.citations),
     resolvedNoteReferences: Math.min(
@@ -1973,11 +2031,13 @@ function mixedPageHasCompleteSemanticVisualCoverage({
   pages,
   regions,
   validatedVisualRelationships,
+  equationTranscriptContext,
 }: {
   page: PdfPageAnalysis
   pages: readonly PdfPageAnalysis[]
   regions: readonly PdfPageRegion[]
   validatedVisualRelationships: readonly PdfVisualRelationship[]
+  equationTranscriptContext: EquationTranscriptContext
 }) {
   const objects = page.objects ?? []
   const decorativeObjectIds = decorativeNativeObjectIds([...pages])
@@ -1997,7 +2057,12 @@ function mixedPageHasCompleteSemanticVisualCoverage({
       if (
         !relationship.sourceBoxes.some((box) => box.page === page.page) ||
         (relationship.kind === 'equation' &&
-          !hasResolvedEquationTranscript(relationship, regions, pages))
+          !hasResolvedEquationTranscript(
+            relationship,
+            regions,
+            pages,
+            equationTranscriptContext,
+          ))
       ) {
         return []
       }
@@ -2060,6 +2125,13 @@ export function assessPdfCompleteness({
     regions,
   })
   const allSourceRegions = regions ?? []
+  const equationTranscriptContext: EquationTranscriptContext = {
+    paper,
+    pages,
+    regions: allSourceRegions,
+    visualRelationships: visualRelationships ?? [],
+    assets: assets ?? [],
+  }
   const regionMap = new Map(
     allSourceRegions.map((region) => [region.id, region]),
   )
@@ -2148,6 +2220,7 @@ export function assessPdfCompleteness({
     provenance,
     assets,
     regions,
+    equationTranscriptContext,
   )
   const unresolvedObjects = {
     assets: Math.max(sourceAssetCount - exportedAssetCount, 0),
@@ -2242,6 +2315,7 @@ export function assessPdfCompleteness({
           pages,
           regions: allSourceRegions,
           validatedVisualRelationships,
+          equationTranscriptContext,
         })
       )
     })
@@ -2282,6 +2356,12 @@ export function assessPdfCompleteness({
     relationshipCoverage: coverage(
       relationships.resolved,
       relationships.expected,
+    ),
+    expectedSemanticTableCount: semanticSignals.tables,
+    resolvedSemanticTableCount: relationships.resolvedSemanticTables,
+    semanticTableCoverage: coverage(
+      relationships.resolvedSemanticTables,
+      semanticSignals.tables,
     ),
     unresolvedObjectCount,
     unresolvedObjects,
@@ -2325,7 +2405,12 @@ export function assessPdfCompleteness({
     (relationship) =>
       relationship.kind === 'equation' &&
       relationship.status === 'matched' &&
-      !hasResolvedEquationTranscript(relationship, regions, pages),
+      !hasResolvedEquationTranscript(
+        relationship,
+        regions,
+        pages,
+        equationTranscriptContext,
+      ),
   )
   for (const relationship of unresolvedEquationTranscripts) {
     qualityDiagnostics.push({
@@ -2337,7 +2422,7 @@ export function assessPdfCompleteness({
       relationshipId: relationship.id,
       target: {
         regionIds: relationship.sourceRegionIds,
-        markerId: null,
+        markerId: relationship.id,
       },
     })
   }

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canonicalJson,
   canonicalJsonHash,
+  createSafeAuditFailureDocument,
   createPdfStructuralReceipt,
   summarizeAuditDiagnostics,
 } from './pdf-corpus-audit-lib.mjs'
@@ -26,6 +27,32 @@ function sourceBox(overrides = {}) {
 }
 
 describe('local PDF corpus audit', () => {
+  it('creates only allowlisted basename-only audit failure rows', () => {
+    expect(
+      createSafeAuditFailureDocument(
+        '/private/source/problematic paper.pdf',
+        'PDF_DOCUMENT_TIMEOUT',
+      ),
+    ).toEqual({
+      basename: 'problematic paper.pdf',
+      sha256: null,
+      code: 'PDF_DOCUMENT_TIMEOUT',
+      message: 'The PDF exceeded the local per-document processing time limit.',
+    })
+    expect(
+      createSafeAuditFailureDocument(
+        '/private/source/problematic paper.pdf',
+        '/private/arbitrary-code',
+      ),
+    ).toEqual({
+      basename: 'problematic paper.pdf',
+      sha256: null,
+      code: 'AUDIT_FAILED',
+      message:
+        'The PDF could not be audited; local path and document details were suppressed.',
+    })
+  })
+
   it('requires exact source-provenance and inline-semantic completeness fields in the public schema', async () => {
     const schema = JSON.parse(
       await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
@@ -50,6 +77,20 @@ describe('local PDF corpus audit', () => {
     expect(
       schema.$defs.citationRelationship.properties.taxonomy.enum,
     ).toContain('author-year-bibliography-citation')
+    expect(completeness.dependentRequired).toMatchObject({
+      expectedSemanticTableCount: [
+        'resolvedSemanticTableCount',
+        'semanticTableCoverage',
+      ],
+      resolvedSemanticTableCount: [
+        'expectedSemanticTableCount',
+        'semanticTableCoverage',
+      ],
+      semanticTableCoverage: [
+        'expectedSemanticTableCount',
+        'resolvedSemanticTableCount',
+      ],
+    })
   })
 
   it('validates the required structural line-boundary count in report and receipt schemas', async () => {
@@ -102,7 +143,7 @@ describe('local PDF corpus audit', () => {
     )
     expect(schema.properties.schemaVersion.const).toBe('1.5.0')
     expect(schema.$defs.structuralReceipt.properties.schemaVersion.const).toBe(
-      '1.3.0',
+      '1.4.0',
     )
     expect(schema.$defs.structuralReceipt.required).toContain(
       'canonicalNodeProvenanceSha256',
@@ -118,7 +159,7 @@ describe('local PDF corpus audit', () => {
     expect(schema.$defs.crossReferenceRelationship).toBeDefined()
     expect(schema.$defs.crossReferenceTarget).toBeDefined()
     expect(receipt).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       canonicalNodeProvenanceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       lineTransitionCount: 2,
       unresolvedCorruptingJoinCount: 1,
@@ -334,7 +375,7 @@ describe('local PDF corpus audit', () => {
     })
 
     expect(receipt).toMatchObject({
-      schemaVersion: '1.3.0',
+      schemaVersion: '1.4.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraph: [
@@ -729,6 +770,50 @@ describe('local PDF corpus audit', () => {
     expect(JSON.stringify(baseline)).not.toContain('relationship-private-1')
   })
 
+  it('normalizes only the volatile PDF.js document counter in provenance font names', () => {
+    const reconstruction = {
+      paper: {
+        id: 'paper-1',
+        nodes: [{ id: 'node-private-1', type: 'paragraph', text: 'Body' }],
+      },
+      provenance: {
+        'node-private-1': {
+          confidence: 1,
+          pages: [1],
+          regionIds: ['region-private-1'],
+          boxes: [sourceBox({ fontName: 'g_d0_f17' })],
+          links: [],
+        },
+      },
+    }
+    const baseline = createPdfStructuralReceipt(reconstruction)
+    const differentDocumentCounter = createPdfStructuralReceipt({
+      ...reconstruction,
+      provenance: {
+        'node-private-1': {
+          ...reconstruction.provenance['node-private-1'],
+          boxes: [sourceBox({ fontName: 'g_d42_f17' })],
+        },
+      },
+    })
+    const differentFont = createPdfStructuralReceipt({
+      ...reconstruction,
+      provenance: {
+        'node-private-1': {
+          ...reconstruction.provenance['node-private-1'],
+          boxes: [sourceBox({ fontName: 'g_d42_f18' })],
+        },
+      },
+    })
+
+    expect(differentDocumentCounter.canonicalNodeProvenanceSha256).toBe(
+      baseline.canonicalNodeProvenanceSha256,
+    )
+    expect(differentFont.canonicalNodeProvenanceSha256).not.toBe(
+      baseline.canonicalNodeProvenanceSha256,
+    )
+  })
+
   it('binds visual caption-node, selected candidate, and selected crop identities into the visual graph hash', () => {
     const crop = sourceBox({
       x: 0.2,
@@ -846,6 +931,20 @@ describe('local PDF corpus audit', () => {
         }),
       ),
     ).not.toContain(privateMarker)
+    expect(
+      safeAuditDiagnostic({
+        code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+        severity: 'info',
+        page: 4,
+        message: privateMarker,
+      }),
+    ).toEqual({
+      code: 'SOURCE_ORDER_FLOAT_FALLBACK',
+      severity: 'info',
+      page: 4,
+      message:
+        'An optional float move was skipped to preserve source-proved order.',
+    })
   })
 
   it('counts every diagnostic while emitting only bounded deterministic samples', () => {
@@ -922,7 +1021,7 @@ describe('local PDF corpus audit', () => {
     expect(
       report.documents.every(
         (document) =>
-          document.structure?.schemaVersion === '1.3.0' &&
+          document.structure?.schemaVersion === '1.4.0' &&
           document.structure.canonicalNodeCount > 0 &&
           /^[a-f0-9]{64}$/.test(
             document.structure.canonicalNodeSequenceSha256,

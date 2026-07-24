@@ -21,10 +21,20 @@ export type PdfSourceRun = NormalizedSourceBox & {
   text: string
   fontName: string
   fontSize: number
+  sourceSequenceIndex?: number
   bold?: boolean
   italic?: boolean
   confidence: number
-}
+} & (
+    | {
+        sourceWhitespaceBefore?: undefined
+        sourceWhitespacePredecessorIndex?: undefined
+      }
+    | {
+        sourceWhitespaceBefore: 'pdf-text-item'
+        sourceWhitespacePredecessorIndex: number
+      }
+  )
 
 export type PdfLineBoundaryDecision = {
   id: string
@@ -457,11 +467,22 @@ export type PdfPreformattedSource = {
   evidence: string[]
 }
 
+export type PdfEquationTranscriptAdjudication = {
+  schemaVersion: '1.0.0'
+  format: 'latex'
+  source: 'owner-local-adjudication'
+  transcriptSha256: string
+  relationshipFingerprintSha256: string
+  sourceCropAssetId: string
+  sourceCropAssetSha256: string
+}
+
 export type PdfVisualRelationship = {
   id: string
   kind: 'figure' | 'table' | 'equation'
   semanticKind?: 'algorithm' | 'code'
   preformatted?: PdfPreformattedSource
+  equationTranscriptAdjudication?: PdfEquationTranscriptAdjudication
   label: string
   captionRegionId: string
   sourceRegionIds: string[]
@@ -511,6 +532,7 @@ export type ReconstructionDiagnostic = {
     | 'REPEATED_MARGIN_TEXT'
     | 'LOW_CONFIDENCE_BLOCK'
     | 'RESOLVED_READING_ORDER'
+    | 'SOURCE_ORDER_FLOAT_FALLBACK'
     | 'AMBIGUOUS_READING_ORDER'
     | 'READING_ORDER_CYCLE'
     | 'CLASSIFIED_NOTE_MARKER'
@@ -605,6 +627,9 @@ export type PdfCompletenessMetrics = {
   expectedRelationshipCount: number
   resolvedRelationshipCount: number
   relationshipCoverage: number
+  expectedSemanticTableCount?: number
+  resolvedSemanticTableCount?: number
+  semanticTableCoverage?: number
   unresolvedObjectCount: number
   unresolvedObjects: PdfSemanticSignals & { assets: number }
   ocrRequiredPages: number[]
@@ -660,6 +685,17 @@ export type HumanAdjudicationResolution =
       confidence: number
       evidence: Array<'bounded-source-context' | 'owner-local-adjudication'>
     }
+  | {
+      type: 'accept-equation-transcript'
+      relationshipId: string
+      relationshipFingerprintSha256: string
+      sourceCropAssetId: string
+      sourceCropAssetSha256: string
+      format: 'latex'
+      transcript: string
+      confidence: 1
+      evidence: Array<'exact-source-page-crop' | 'owner-local-adjudication'>
+    }
   | { type: 'dismiss' }
 
 export type HumanAdjudicationRecord = {
@@ -672,7 +708,7 @@ export type HumanAdjudicationRecord = {
 }
 
 export type HumanAdjudicationProvenance = {
-  schemaVersion: '1.0.0' | '1.1.0'
+  schemaVersion: '1.0.0' | '1.1.0' | '1.2.0'
   documentSha256: string
   applied: HumanAdjudicationRecord[]
   stale: Array<

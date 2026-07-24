@@ -64,6 +64,64 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('keeps identical two-page geometry page-local and globally unique in the reading graph', () => {
+    const twoColumnRuns = (pageNumber: number, label: string) => [
+      run(pageNumber, `${label} left row one.`, 0.08, 0.2, 0.35),
+      run(pageNumber, `${label} right row one.`, 0.56, 0.2, 0.35),
+      run(pageNumber, `${label} left row two.`, 0.08, 0.28, 0.35),
+      run(pageNumber, `${label} right row two.`, 0.56, 0.28, 0.35),
+      run(pageNumber, `${label} left row three.`, 0.08, 0.36, 0.35),
+      run(pageNumber, `${label} right row three.`, 0.56, 0.36, 0.35),
+      run(pageNumber, `${label} left row four.`, 0.08, 0.44, 0.35),
+      run(pageNumber, `${label} right row four.`, 0.56, 0.44, 0.35),
+    ]
+    const result = reconstructPageRegions([
+      page(1, twoColumnRuns(1, 'First page')),
+      page(2, twoColumnRuns(2, 'Second page')),
+    ])
+    const regionIds = result.regions.map((region) => region.id)
+    const lineIds = result.regions.flatMap((region) =>
+      region.lines.map((sourceLine) => sourceLine.id),
+    )
+    const includedIds = result.regions
+      .filter((region) => region.includedInReadingOrder)
+      .map((region) => region.id)
+
+    expect(new Set(regionIds).size).toBe(regionIds.length)
+    expect(new Set(lineIds).size).toBe(lineIds.length)
+    expect(result.regions.filter((region) => region.page === 1)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: expect.stringMatching(/^page-001-/) }),
+      ]),
+    )
+    expect(result.regions.filter((region) => region.page === 2)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: expect.stringMatching(/^page-002-/) }),
+      ]),
+    )
+    expect(new Set(result.readingOrder.order)).toEqual(new Set(includedIds))
+    expect(result.readingOrder.order).toHaveLength(includedIds.length)
+    expect(result.readingOrder.resolutions).toHaveLength(2)
+    for (const resolution of result.readingOrder.resolutions) {
+      expect(resolution.regionIds.length).toBeGreaterThan(0)
+      expect(
+        resolution.regionIds.every(
+          (regionId) =>
+            result.regions.find((region) => region.id === regionId)?.page ===
+            resolution.page,
+        ),
+      ).toBe(true)
+    }
+    for (const edge of result.readingOrder.edges) {
+      expect(regionIds.filter((regionId) => regionId === edge.from)).toHaveLength(
+        1,
+      )
+      expect(regionIds.filter((regionId) => regionId === edge.to)).toHaveLength(
+        1,
+      )
+    }
+  })
+
   it('classifies bounded supplementary and compound visual captions', () => {
     const result = reconstructPageRegions([
       page(1, [

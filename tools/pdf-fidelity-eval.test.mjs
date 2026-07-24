@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { platform, tmpdir } from 'node:os'
@@ -952,13 +953,16 @@ describe('model-neutral PDF fidelity evaluation', () => {
     const changed = await fidelityEval.createAdapterSourceIdentity(adapterPath)
 
     expect(first).toEqual(repeated)
-    expect(first.schemaVersion).toBe('1.0.0')
+    expect(first.schemaVersion).toBe('1.1.0')
     expect(first.modules.map(({ path }) => path)).toEqual([
       '../src/loaded.ts',
       '../src/nested.ts',
       'adapter.mjs',
       'direct.mjs',
       'dynamic.mjs',
+    ])
+    expect(first.packageFiles.map(({ path }) => path)).toEqual([
+      '../package.json',
     ])
     expect(changed.sha256).not.toBe(first.sha256)
     expect(
@@ -972,6 +976,272 @@ describe('model-neutral PDF fidelity evaluation', () => {
         'TEST_ADAPTER_IDENTITY_MISMATCH',
       ),
     ).rejects.toThrow('TEST_ADAPTER_IDENTITY_MISMATCH')
+  })
+
+  it('binds package and lockfile bytes without reading bare-imported node_modules', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pdf-adapter-package-test-'))
+    temporaryDirectories.push(root)
+    const toolsDirectory = join(root, 'tools')
+    const dependencyDirectory = join(root, 'node_modules', 'example-package')
+    await mkdir(toolsDirectory, { recursive: true })
+    await mkdir(dependencyDirectory, { recursive: true })
+    const packagePath = join(root, 'package.json')
+    const lockfilePath = join(root, 'package-lock.json')
+    const dependencyPath = join(dependencyDirectory, 'index.js')
+    const adapterPath = join(toolsDirectory, 'adapter.mjs')
+    await writeFile(packagePath, '{ "name": "adapter-fixture" }\n')
+    await writeFile(lockfilePath, '{ "lockfileVersion": 3 }\n')
+    await writeFile(
+      adapterPath,
+      "import 'example-package'\nexport const value = 1\n",
+    )
+    await writeFile(dependencyPath, "export const value = 'first'\n")
+
+    const first = await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    await writeFile(dependencyPath, "export const value = 'second'\n")
+    const nodeModulesChanged =
+      await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    await writeFile(lockfilePath, '{ "lockfileVersion": 3, "changed": true }\n')
+    const lockfileChanged =
+      await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    await writeFile(
+      packagePath,
+      '{ "name": "adapter-fixture", "private": true }\n',
+    )
+    const packageChanged =
+      await fidelityEval.createAdapterSourceIdentity(adapterPath)
+
+    expect(first.packageFiles.map(({ path }) => path)).toEqual([
+      '../package.json',
+      '../package-lock.json',
+    ])
+    expect(nodeModulesChanged).toEqual(first)
+    expect(lockfileChanged.sha256).not.toBe(first.sha256)
+    expect(lockfileChanged.modules).toEqual(first.modules)
+    expect(packageChanged.sha256).not.toBe(lockfileChanged.sha256)
+    expect(packageChanged.modules).toEqual(lockfileChanged.modules)
+
+    const explicitNodeModulesAdapter = join(
+      toolsDirectory,
+      'explicit-node-modules.mjs',
+    )
+    await writeFile(
+      explicitNodeModulesAdapter,
+      "import '../node_modules/example-package/index.js'\n",
+    )
+    await expect(
+      fidelityEval.createAdapterSourceIdentity(explicitNodeModulesAdapter),
+    ).rejects.toThrow('ADAPTER_SOURCE_NODE_MODULES_NOT_ALLOWED')
+  })
+
+  it('binds the nearest workspace lock root for a nested adapter package', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pdf-adapter-workspace-test-'))
+    temporaryDirectories.push(root)
+    const adapterDirectory = join(root, 'packages', 'adapter')
+    await mkdir(adapterDirectory, { recursive: true })
+    const workspacePackagePath = join(root, 'package.json')
+    const workspaceLockPath = join(root, 'package-lock.json')
+    const adapterPath = join(adapterDirectory, 'adapter.mjs')
+    await writeFile(
+      workspacePackagePath,
+      '{"private":true,"workspaces":["packages/*"]}\n',
+    )
+    await writeFile(workspaceLockPath, '{"lockfileVersion":3,"packages":{}}\n')
+    await writeFile(
+      join(adapterDirectory, 'package.json'),
+      '{"name":"nested-adapter"}\n',
+    )
+    await writeFile(adapterPath, "import 'workspace-dependency'\n")
+
+    const first = await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    await writeFile(
+      workspaceLockPath,
+      '{"lockfileVersion":3,"packages":{"changed":{}}}\n',
+    )
+    const changed = await fidelityEval.createAdapterSourceIdentity(adapterPath)
+
+    expect(first.packageFiles.map(({ path }) => path)).toEqual([
+      'package.json',
+      '../../package.json',
+      '../../package-lock.json',
+    ])
+    expect(changed.sha256).not.toBe(first.sha256)
+    expect(changed.modules).toEqual(first.modules)
+  })
+
+  it('binds package manifests and locks for imported sibling source packages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pdf-adapter-sibling-test-'))
+    temporaryDirectories.push(root)
+    const adapterDirectory = join(root, 'packages', 'adapter')
+    const siblingDirectory = join(root, 'packages', 'sibling')
+    await mkdir(adapterDirectory, { recursive: true })
+    await mkdir(siblingDirectory, { recursive: true })
+    await writeFile(
+      join(root, 'package.json'),
+      '{"private":true,"workspaces":["packages/*"]}\n',
+    )
+    await writeFile(join(root, 'package-lock.json'), '{"lockfileVersion":3}\n')
+    await writeFile(
+      join(adapterDirectory, 'package.json'),
+      '{"name":"adapter"}\n',
+    )
+    const siblingPackagePath = join(siblingDirectory, 'package.json')
+    const siblingLockPath = join(siblingDirectory, 'yarn.lock')
+    await writeFile(siblingPackagePath, '{"name":"sibling"}\n')
+    await writeFile(siblingLockPath, 'sibling-dependency@1.0.0:\n')
+    const adapterPath = join(adapterDirectory, 'adapter.mjs')
+    await writeFile(
+      adapterPath,
+      "import { value } from '../sibling/index.mjs'\nvoid value\n",
+    )
+    await writeFile(
+      join(siblingDirectory, 'index.mjs'),
+      "import 'sibling-dependency'\nexport const value = 1\n",
+    )
+
+    const first = await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    await writeFile(siblingPackagePath, '{"name":"sibling","private":true}\n')
+    const packageChanged =
+      await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    await writeFile(
+      siblingLockPath,
+      'sibling-dependency@1.0.0:\n  changed: true\n',
+    )
+    const lockChanged =
+      await fidelityEval.createAdapterSourceIdentity(adapterPath)
+
+    expect(first.packageFiles.map(({ path }) => path)).toEqual([
+      'package.json',
+      '../../package.json',
+      '../../package-lock.json',
+      '../sibling/package.json',
+      '../sibling/yarn.lock',
+    ])
+    expect(packageChanged.sha256).not.toBe(first.sha256)
+    expect(lockChanged.sha256).not.toBe(packageChanged.sha256)
+    expect(packageChanged.modules).toEqual(first.modules)
+    expect(lockChanged.modules).toEqual(first.modules)
+  })
+
+  it('fails closed for symlinked package manifests and lockfiles', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pdf-adapter-symlink-test-'))
+    temporaryDirectories.push(root)
+    const manifestDirectory = join(root, 'manifest')
+    await mkdir(manifestDirectory, { recursive: true })
+    await writeFile(join(manifestDirectory, 'actual-package.json'), '{}\n')
+    await symlink(
+      'actual-package.json',
+      join(manifestDirectory, 'package.json'),
+      'file',
+    )
+    const manifestAdapter = join(manifestDirectory, 'adapter.mjs')
+    await writeFile(manifestAdapter, 'export const value = 1\n')
+
+    await expect(
+      fidelityEval.createAdapterSourceIdentity(manifestAdapter),
+    ).rejects.toThrow('INVALID_ADAPTER_PACKAGE_METADATA')
+
+    const lockDirectory = join(root, 'lock')
+    await mkdir(lockDirectory, { recursive: true })
+    await writeFile(join(lockDirectory, 'package.json'), '{}\n')
+    await writeFile(join(lockDirectory, 'actual-lock.json'), '{}\n')
+    await symlink(
+      'actual-lock.json',
+      join(lockDirectory, 'package-lock.json'),
+      'file',
+    )
+    const lockAdapter = join(lockDirectory, 'adapter.mjs')
+    await writeFile(lockAdapter, 'export const value = 1\n')
+
+    await expect(
+      fidelityEval.createAdapterSourceIdentity(lockAdapter),
+    ).rejects.toThrow('INVALID_ADAPTER_PACKAGE_METADATA')
+  })
+
+  it('orders every supported lockfile deterministically after its package manifest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pdf-adapter-lock-order-test-'))
+    temporaryDirectories.push(root)
+    const lockfileNames = [
+      'bun.lock',
+      'bun.lockb',
+      'npm-shrinkwrap.json',
+      'package-lock.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+    ]
+    await writeFile(join(root, 'package.json'), '{}\n')
+    await Promise.all(
+      [...lockfileNames]
+        .reverse()
+        .map((name) => writeFile(join(root, name), name)),
+    )
+    const adapterPath = join(root, 'adapter.mjs')
+    await writeFile(adapterPath, 'export const value = 1\n')
+
+    const first = await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    const repeated = await fidelityEval.createAdapterSourceIdentity(adapterPath)
+
+    expect(first).toEqual(repeated)
+    expect(first.packageFiles.map(({ path }) => path)).toEqual([
+      'package.json',
+      ...lockfileNames,
+    ])
+  })
+
+  it('matches the fixed schema 1.1 adapter identity manifest and digest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pdf-adapter-golden-test-'))
+    temporaryDirectories.push(root)
+    await writeFile(
+      join(root, 'package.json'),
+      '{"name":"golden-adapter","private":true}\n',
+    )
+    await writeFile(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n")
+    const adapterPath = join(root, 'adapter.mjs')
+    await writeFile(
+      adapterPath,
+      "import { value } from './dependency.mjs'\nvoid value\n",
+    )
+    await writeFile(
+      join(root, 'dependency.mjs'),
+      "export const value = 'golden'\n",
+    )
+
+    expect(await fidelityEval.createAdapterSourceIdentity(adapterPath)).toEqual(
+      {
+        schemaVersion: '1.1.0',
+        entry: 'adapter.mjs',
+        modules: [
+          {
+            path: 'adapter.mjs',
+            byteLength: 52,
+            sha256:
+              '38a0ad8299252bac100bb47881b0f1c6241943d9fc89ab5f84a5eb777f57fc86',
+          },
+          {
+            path: 'dependency.mjs',
+            byteLength: 30,
+            sha256:
+              '2216acf6c2bc655451cbd43a854430582a7fd9c53784207b5c115a4c90fcf72d',
+          },
+        ],
+        packageFiles: [
+          {
+            path: 'package.json',
+            byteLength: 41,
+            sha256:
+              '74c4c8c02f5b4d75d240ec83353cc0012c7622f1cdb2af5cd62980d0b4d91b81',
+          },
+          {
+            path: 'pnpm-lock.yaml',
+            byteLength: 23,
+            sha256:
+              'f0bcde463fa201480015b9caa7db2017d3c1b6ca9c7e133df955038c54333d48',
+          },
+        ],
+        sha256:
+          '18cab940ee0873758193437b80f27b83d55da35faf08c2500ca2b680206987ac',
+      },
+    )
   })
 
   it('changes the receipt adapter identity when only an imported module changes', async () => {

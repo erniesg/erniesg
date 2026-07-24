@@ -353,16 +353,21 @@ describe('bounded table region detection', () => {
       'header-lead',
       'header',
       0.07,
-      [
-        line('header-main', 0.07, [0.1, 0.3]),
-        line('header-continuation', 0.081, [0.32]),
-      ],
+      [line('header-main', 0.07, [0.1, 0.3])],
       'span',
     )
-    headerLead.box = box(0.1, 0.07, 0.34, 0.021)
+    headerLead.box = box(0.1, 0.07, 0.34, 0.01)
     headerLead.lines[0].runs[0].text = 'Dataset'
     headerLead.lines[0].runs[1].text = 'Automatically'
-    headerLead.lines[1].runs[0].text = 'Constructed?'
+    const headerContinuation = region(
+      'header-continuation',
+      'header',
+      0.081,
+      [line('header-continuation-line', 0.081, [0.32])],
+      'span',
+    )
+    headerContinuation.box = box(0.32, 0.081, 0.04, 0.01)
+    headerContinuation.lines[0].runs[0].text = 'Constructed?'
     const headerTail = region(
       'header-tail',
       'header',
@@ -388,6 +393,7 @@ describe('bounded table region detection', () => {
 
     const detected = detectTableNearCaption(tableCaption, [
       headerLead,
+      headerContinuation,
       headerTail,
       body,
       tableCaption,
@@ -397,18 +403,38 @@ describe('bounded table region detection', () => {
       direction: 'above',
       sourceRegions: expect.arrayContaining([
         expect.objectContaining({ id: headerLead.id }),
+        expect.objectContaining({ id: headerContinuation.id }),
         expect.objectContaining({ id: headerTail.id }),
         expect.objectContaining({ id: body.id }),
       ]),
       headerEvidence: {
         kind: 'table-local-geometry',
-        sourceRegionIds: [headerLead.id, headerTail.id],
+        sourceRegionIds: [headerContinuation.id, headerLead.id, headerTail.id],
       },
     })
     expect(detected?.lines).toHaveLength(4)
     expect(detected?.lines[0].runs).toHaveLength(4)
     expect(detected?.lines[0].runs[1].text).toContain('Automatically')
     expect(detected?.lines[0].runs[1].text).toContain('Constructed?')
+    expect(new Set(detected?.sourceRegions.map((source) => source.id))).toEqual(
+      new Set([headerLead.id, headerContinuation.id, headerTail.id, body.id]),
+    )
+    expect(
+      detected?.sourceLineIds.every(
+        (lineId) =>
+          detected.sourceRegions.reduce(
+            (count, source) =>
+              count + Number(source.lines.some((item) => item.id === lineId)),
+            0,
+          ) === 1,
+      ),
+    ).toBe(true)
+    expect(detected?.lines[0].sourceCellBoxes?.[1]).toMatchObject({
+      x: 0.3,
+      y: 0.07,
+      width: 0.06,
+    })
+    expect(detected?.lines[0].sourceCellBoxes?.[1].height).toBeCloseTo(0.021)
   })
 
   it('reconstructs a split styled header and atomic table rows', () => {

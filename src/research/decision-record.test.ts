@@ -253,6 +253,22 @@ async function unresolvedEquationTranscriptReconstruction() {
     width,
     height,
     pixels,
+    sourceExclusionMask: {
+      algorithm: 'nearest-source-box-v1',
+      expansionPixels: 2,
+      ownedSourceBoxes: [{ ...equationBox }],
+      excludedSourceBoxes: [
+        {
+          page: 1,
+          x: 0.25,
+          y: 0.244,
+          width: 0.08,
+          height: 0.004,
+          rotation: 0,
+          method: 'pdf-text',
+        },
+      ],
+    },
   })
   const relationship = {
     id: 'synthetic-equation-relationship',
@@ -268,6 +284,7 @@ async function unresolvedEquationTranscriptReconstruction() {
     evidence: [
       'bounded-source-geometry',
       'source-page-crop-neighbor-bounded',
+      'source-page-crop-unowned-text-masked',
       'source-page-crop',
       'source-text-transcript-unresolved',
     ],
@@ -726,6 +743,10 @@ describe('human adjudication decision records', () => {
       },
       (result: PdfReconstruction) => {
         result.assets[0].bytes[0] ^= 0xff
+      },
+      (result: PdfReconstruction) => {
+        result.assets[0].sourceExclusionMask!.excludedSourceBoxes[0].x +=
+          Number.EPSILON
       },
       (result: PdfReconstruction) => {
         result.regions[1].lines[0].box.x += Number.EPSILON

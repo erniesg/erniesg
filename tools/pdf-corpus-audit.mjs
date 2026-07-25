@@ -12,26 +12,43 @@ import {
 } from 'node:path'
 import {
   auditPdfPath,
+  capturePdfCorpusExecutionProvenance,
   createCorpusReport,
   createPdfPipeline,
+  finalizePdfCorpusExecutionProvenance,
   pdfPaths,
   serializeCorpusReport,
 } from './pdf-corpus-audit-lib.mjs'
 import { bindCorpusContractPaths } from './pdf-corpus-contract.mjs'
+import {
+  DEFAULT_HEADLESS_OCR_ENGINE,
+  normalizeHeadlessOcrEngine,
+} from './pdf-ocr-node.mjs'
 
 const USAGE =
-  'Usage: npm run pdf:corpus-audit -- [--report-only] [--overlay-output <local-directory>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] <pdf-or-directory> [...]\n'
+  'Usage: npm run pdf:corpus-audit -- [--report-only] [--ocr-engine <none|tesseract>] [--overlay-output <local-directory>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] <pdf-or-directory> [...]\n'
 
 function parseArguments(args) {
   let reportOnly = false
   let overlayOutput = null
   let corpusContractPath = null
   let corpusSet = null
+  let ocrEngine = null
   const inputs = []
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
     if (argument === '--report-only') {
       reportOnly = true
+    } else if (argument === '--ocr-engine') {
+      if (ocrEngine !== null) throw new Error('duplicate OCR engine')
+      ocrEngine = args[index + 1] ?? null
+      if (!ocrEngine || ocrEngine.startsWith('--')) {
+        throw new Error('missing OCR engine')
+      }
+      index += 1
+    } else if (argument.startsWith('--ocr-engine=')) {
+      if (ocrEngine !== null) throw new Error('duplicate OCR engine')
+      ocrEngine = argument.slice('--ocr-engine='.length)
     } else if (argument === '--overlay-output') {
       overlayOutput = args[index + 1] ?? null
       index += 1
@@ -73,6 +90,9 @@ function parseArguments(args) {
   }
   return {
     reportOnly,
+    ocrEngine: normalizeHeadlessOcrEngine(
+      ocrEngine ?? DEFAULT_HEADLESS_OCR_ENGINE,
+    ),
     overlayOutput,
     corpusContractPath,
     corpusSet,
@@ -87,7 +107,14 @@ try {
   process.stderr.write(USAGE)
   process.exit(2)
 }
-const { reportOnly, overlayOutput, corpusContractPath, corpusSet, inputs } = cli
+const {
+  reportOnly,
+  ocrEngine,
+  overlayOutput,
+  corpusContractPath,
+  corpusSet,
+  inputs,
+} = cli
 
 async function privateOverlayDirectory(requested) {
   const repository = await realpath('.')
@@ -152,6 +179,8 @@ async function main() {
     }
   }
 
+  const executionProvenanceCapture =
+    await capturePdfCorpusExecutionProvenance('pdf-corpus-audit')
   let localOverlayOutput = null
   if (overlayOutput) {
     try {
@@ -165,7 +194,7 @@ async function main() {
     }
   }
 
-  const pipeline = await createPdfPipeline()
+  const pipeline = await createPdfPipeline({ ocrEngine })
   try {
     const documents = []
     const contractDocumentsById = new Map(
@@ -205,8 +234,12 @@ async function main() {
         left.basename.localeCompare(right.basename) ||
         String(left.sha256).localeCompare(String(right.sha256)),
     )
+    const executionProvenance = await finalizePdfCorpusExecutionProvenance(
+      executionProvenanceCapture,
+    )
     const report = createCorpusReport(documents, pipeline.policy, {
       corpusContract,
+      executionProvenance,
     })
     process.stdout.write(serializeCorpusReport(report))
     if (

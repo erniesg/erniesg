@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-target-free-document-observations-1.0.0.json",
+  "title": "Target-free scholarly PDF document observations",
+  "$comment": "This schema validates the structural envelope. The bridge validator additionally enforces unique object ids, an exact readingOrder/object-id set, page-count bounds, unique relationships, known relationship endpoints, and distinct source/target endpoints because JSON Schema cannot express those cross-field joins.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "objects", "readingOrder", "relationships"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "objects": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/object" }
+    },
+    "readingOrder": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "relationships": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/relationship" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "box": {
+      "type": "array",
+      "normalizedPdfBox": true,
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      ],
+      "items": false
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "page", "kind", "label", "box"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "page": { "type": "integer", "minimum": 1 },
+        "kind": { "$ref": "#/$defs/id" },
+        "label": { "$ref": "#/$defs/id" },
+        "box": { "$ref": "#/$defs/box" }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sourceId", "targetId"],
+      "properties": {
+        "type": { "$ref": "#/$defs/id" },
+        "sourceId": { "$ref": "#/$defs/id" },
+        "targetId": { "$ref": "#/$defs/id" }
+      }
+    }
+  }
+}

@@ -208,11 +208,75 @@ type RasterizablePage = {
     height: number
   }
   render(options: {
-    canvas: HTMLCanvasElement
-    canvasContext: CanvasRenderingContext2D
+    canvas: unknown
+    canvasContext: unknown
     viewport: { width: number; height: number }
     transform?: number[]
   }): { promise: Promise<unknown>; cancel?: () => void }
+}
+
+type OcrRasterCanvas = {
+  width: number
+  height: number
+}
+
+type NodeOcrRasterCanvas = OcrRasterCanvas & {
+  getContext(type: '2d'): unknown
+  encode(format: 'png'): Promise<Uint8Array>
+}
+
+async function createOcrRasterSurface(width: number, height: number) {
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d', { alpha: false })
+    if (!context) {
+      throw new PdfImportError(
+        'OCR_REQUIRED',
+        'The browser could not create a bounded local OCR raster.',
+      )
+    }
+    return {
+      canvas: canvas as OcrRasterCanvas,
+      context,
+      async encodePng() {
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (value) =>
+              value
+                ? resolve(value)
+                : reject(
+                    new Error('The browser returned an empty OCR raster.'),
+                  ),
+            'image/png',
+          )
+        })
+        return new Uint8Array(await blob.arrayBuffer())
+      },
+    }
+  }
+
+  try {
+    const canvasModule = await import(/* @vite-ignore */ '@napi-rs/canvas')
+    const canvas = canvasModule.createCanvas(
+      width,
+      height,
+    ) as NodeOcrRasterCanvas
+    const context = canvas.getContext('2d')
+    return {
+      canvas,
+      context,
+      async encodePng() {
+        return new Uint8Array(await canvas.encode('png'))
+      },
+    }
+  } catch {
+    throw new PdfImportError(
+      'OCR_REQUIRED',
+      'Headless local OCR could not create its bounded PNG raster.',
+    )
+  }
 }
 
 async function renderPageRaster(
@@ -220,12 +284,6 @@ async function renderPageRaster(
   signal?: AbortSignal,
 ): Promise<PdfOcrRaster> {
   throwIfAborted(signal)
-  if (typeof document === 'undefined') {
-    throw new PdfImportError(
-      'OCR_REQUIRED',
-      'Local OCR needs a browser rasterizer; no document bytes were uploaded.',
-    )
-  }
   const base = page.getViewport({ scale: 1 })
   const scale = Math.min(
     3,
@@ -235,16 +293,10 @@ async function renderPageRaster(
     ),
   )
   const viewport = page.getViewport({ scale })
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.floor(viewport.width))
-  canvas.height = Math.max(1, Math.floor(viewport.height))
-  const context = canvas.getContext('2d', { alpha: false })
-  if (!context) {
-    throw new PdfImportError(
-      'OCR_REQUIRED',
-      'The browser could not create a bounded local OCR raster.',
-    )
-  }
+  const { canvas, context, encodePng } = await createOcrRasterSurface(
+    Math.max(1, Math.floor(viewport.width)),
+    Math.max(1, Math.floor(viewport.height)),
+  )
   const renderTask = page.render({
     canvas,
     canvasContext: context,
@@ -264,16 +316,7 @@ async function renderPageRaster(
       }),
     ])
     throwIfAborted(signal)
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (value) =>
-          value
-            ? resolve(value)
-            : reject(new Error('The browser returned an empty OCR raster.')),
-        'image/png',
-      )
-    })
-    const bytes = new Uint8Array(await blob.arrayBuffer())
+    const bytes = await encodePng()
     throwIfAborted(signal)
     return {
       bytes,
@@ -1227,6 +1270,7 @@ export async function reconstructPdf(
               document.canvasFactory as unknown as PdfCanvasFactory,
             sourceBox: input.sourceBox,
             ownedSourceBoxes: input.ownedSourceBoxes,
+            excludedSourceBoxes: input.excludedSourceBoxes,
             signal: options.signal,
             tightenToSourceInk: input.kind === 'figure',
           })

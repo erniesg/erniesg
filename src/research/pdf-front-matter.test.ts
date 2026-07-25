@@ -705,6 +705,109 @@ describe('PDF front-matter reconstruction', () => {
     ).toBe(true)
   })
 
+  it('keeps a shared title-page affiliation footnote author-owned and out of body flow', async () => {
+    const raisedMarker = (text: string, x: number, y: number) => ({
+      ...run(text, x, y - 0.001, 0.008, 6),
+      height: 0.009,
+    })
+    const result = await reconstruct([
+      run('Canonical Affiliation Placement', 0.2, 0.08, 0.6, 18),
+      run('Ada Example', 0.3, 0.15, 0.13, 11),
+      raisedMarker('1', 0.431, 0.15),
+      run('Ben Reader', 0.47, 0.15, 0.12, 11),
+      raisedMarker('1', 0.591, 0.15),
+      run('Abstract', 0.1, 0.27, 0.16, 12),
+      run('The source abstract remains canonical.', 0.1, 0.31, 0.72),
+      run('1 Introduction', 0.1, 0.42, 0.3, 13),
+      run('Canonical introduction prose remains first.', 0.1, 0.47, 0.72),
+      run('A second ordinary body line proves the prose size.', 0.1, 0.5, 0.72),
+      run('A third ordinary body line remains canonical.', 0.1, 0.53, 0.72),
+      run('A fourth ordinary body line remains canonical.', 0.1, 0.56, 0.72),
+      run('A fifth ordinary body line remains canonical.', 0.1, 0.59, 0.72),
+      run('A sixth ordinary body line remains canonical.', 0.1, 0.62, 0.72),
+      run('A seventh ordinary body line remains canonical.', 0.1, 0.65, 0.72),
+      run('An eighth ordinary body line remains canonical.', 0.1, 0.68, 0.72),
+      run('A ninth ordinary body line remains canonical.', 0.1, 0.71, 0.72),
+      raisedMarker('1', 0.1, 0.82),
+      run(
+        'Example Institute of Technology. Correspondence to:',
+        0.11,
+        0.82,
+        0.5,
+        8,
+      ),
+      run('Ada Example <ada@example.edu>.', 0.1, 0.84, 0.29, 8),
+    ])
+
+    const note = result.paper.nodes.find(
+      (node) => node.type === 'footnote' && node.label === '1',
+    )
+    const pageOneRelationships = result.noteRelationships.filter(
+      (relationship) => relationship.sourceBoxes[0]?.page === 1,
+    )
+    expect(note).toMatchObject({
+      type: 'footnote',
+      kind: 'footnote',
+      label: '1',
+      text: 'Example Institute of Technology. Correspondence to: Ada Example <ada@example.edu>.',
+    })
+    expect(result.paper.nodes[0]?.id).toBe(note?.id)
+    expect(
+      result.paper.authorNotes?.map(({ author, label, target }) => ({
+        author,
+        label,
+        target,
+      })),
+    ).toEqual([
+      { author: 'Ada Example', label: '1', target: note?.id },
+      { author: 'Ben Reader', label: '1', target: note?.id },
+    ])
+    expect(
+      pageOneRelationships.map((relationship) => ({
+        status: relationship.status,
+        owner: relationship.canonicalAnchor,
+      })),
+    ).toEqual([
+      { status: 'matched', owner: { kind: 'author', author: 'Ada Example' } },
+      { status: 'matched', owner: { kind: 'author', author: 'Ben Reader' } },
+    ])
+    expect(
+      result.diagnostics
+        .flatMap((diagnostic) =>
+          diagnostic.noteMarkerClassification
+            ? [diagnostic.noteMarkerClassification]
+            : [],
+        )
+        .filter(
+          (classification) =>
+            classification.referenceRegionId ===
+            pageOneRelationships[0]?.referenceRegionId,
+        )
+        .map(({ taxonomy, disposition, accepted }) => ({
+          taxonomy,
+          disposition,
+          accepted,
+        })),
+    ).toEqual([
+      {
+        taxonomy: 'footnote-reference',
+        disposition: 'note-reference',
+        accepted: true,
+      },
+      {
+        taxonomy: 'footnote-reference',
+        disposition: 'note-reference',
+        accepted: true,
+      },
+    ])
+    expect(
+      result.paper.nodes
+        .filter((node) => node.type === 'paragraph')
+        .map((node) => node.text)
+        .join(' '),
+    ).not.toContain('Example Institute of Technology')
+  })
+
   it('preserves a title-page contact line separately from its numbered affiliations', async () => {
     const raisedMarker = (text: string, x: number, y: number) => ({
       ...run(text, x, y - 0.001, 0.008, 6),

@@ -192,8 +192,6 @@ function horizontallyStackedMathPair(
   maximumFontSize: number,
 ) {
   if (
-    !computerModernMathSourceRun(left, maximumFontSize) ||
-    !computerModernMathSourceRun(right, maximumFontSize) ||
     left.fontSize > maximumFontSize * 0.86 ||
     right.fontSize > maximumFontSize * 0.86
   ) {
@@ -239,7 +237,7 @@ function horizontalBoxGap(
   )
 }
 
-function stackedMathSourcePairs(
+export function sourceStackedMathPairs(
   runs: PdfTextLine['runs'],
   maximumFontSize: number,
 ) {
@@ -252,6 +250,17 @@ function stackedMathSourcePairs(
           : [],
       ),
   )
+}
+
+export function sourceInlineFractionPairs(line: PdfTextLine) {
+  const runs = line.runs.filter((run) => run.text.trim())
+  if (runs.length < 2 || runs.some(mathExtensionSourceRun)) return []
+  const maximumFontSize = Math.max(...runs.map((run) => run.fontSize))
+  // PDF placement alone cannot distinguish a stacked numerator/denominator
+  // from simultaneous super/subscripts, including mixed letter pairs such as
+  // x/y beside a coefficient. Preserve every such pair as a two-dimensional
+  // equation obligation instead of guessing canonical inline semantics.
+  return sourceStackedMathPairs(runs, maximumFontSize)
 }
 
 function verticalLineOverlap(left: PdfTextLine, right: PdfTextLine) {
@@ -303,7 +312,7 @@ function mergeInterleavedStackedFormulaLines(lines: PdfTextLine[]) {
         const maximumFontSize = Math.max(
           ...candidate.runs.map((run) => run.fontSize),
         )
-        const pairs = stackedMathSourcePairs(candidate.runs, maximumFontSize)
+        const pairs = sourceStackedMathPairs(candidate.runs, maximumFontSize)
         if (pairs.length === 0) return false
         const pairNearExtension = pairs.some((pair) =>
           pair.some((run) =>
@@ -347,29 +356,50 @@ function mergeInterleavedStackedFormulaLines(lines: PdfTextLine[]) {
 }
 
 /**
- * A PDF text line can contain a prose prefix and a visually stacked fraction.
- * Linear text merging cannot prove numerator/denominator semantics. Split only
- * the source-backed case with an aligned small-font pair plus a nearby equation
- * operator, retaining the prose runs as ordinary text and the exact 2-D run
- * envelope as an equation crop candidate.
+ * A PDF text line can contain a prose prefix and a visually stacked fraction
+ * or simultaneous super/subscripts. Linear text merging cannot distinguish
+ * those semantics. Split the source-backed two-dimensional run geometry,
+ * retaining the prose runs as ordinary text and the exact run envelope as an
+ * equation crop candidate.
  */
 function splitSourceStackedInlineFormulaLines(lines: PdfTextLine[]) {
   return mergeInterleavedStackedFormulaLines(lines).flatMap(
     (line, lineIndex) => {
       const runs = line.runs.filter((run) => run.text.trim())
-      if (runs.length < 5) return [line]
+      if (runs.length < 2) return [line]
       const maximumFontSize = Math.max(...runs.map((run) => run.fontSize))
-      const stackedPairs = stackedMathSourcePairs(runs, maximumFontSize)
+      const stackedPairs = sourceStackedMathPairs(runs, maximumFontSize)
       if (stackedPairs.length === 0) return [line]
+      const baseId = `page-${String(line.page).padStart(3, '0')}-inline-stacked-${String(lineIndex + 1).padStart(4, '0')}`
 
       const formulaRuns = new Set(stackedPairs.flat())
       let expanded = true
       while (expanded) {
         expanded = false
         for (const candidate of runs) {
+          const compactCandidateText = candidate.text.replace(/\s+/gu, '')
+          const adjacentBaselineAnchor =
+            candidate.fontSize >= maximumFontSize * 0.9 &&
+            /^[\p{L}\p{N})\]}]{1,4}$/u.test(compactCandidateText) &&
+            stackedPairs.some((pair) => {
+              const pairLeft = Math.min(...pair.map((run) => run.x))
+              const pairCenters = pair
+                .map((run) => run.y + run.height / 2)
+                .sort((left, right) => left - right)
+              const horizontalGap = pairLeft - (candidate.x + candidate.width)
+              const candidateCenter = candidate.y + candidate.height / 2
+              return (
+                !pair.includes(candidate) &&
+                horizontalGap >= -0.001 &&
+                horizontalGap <= Math.max(0.004, candidate.width * 0.45) &&
+                candidateCenter > pairCenters[0] &&
+                candidateCenter < pairCenters[1]
+              )
+            })
           if (
             formulaRuns.has(candidate) ||
-            !computerModernMathSourceRun(candidate, maximumFontSize)
+            (!computerModernMathSourceRun(candidate, maximumFontSize) &&
+              !adjacentBaselineAnchor)
           ) {
             continue
           }
@@ -383,9 +413,6 @@ function splitSourceStackedInlineFormulaLines(lines: PdfTextLine[]) {
           }
         }
       }
-      const formulaText = [...formulaRuns].map((run) => run.text).join(' ')
-      if (!/[=≤≥≈∼∈∉→←∫∑√∂∞∏⊙]/u.test(formulaText)) return [line]
-
       const formulaLeft = Math.min(...[...formulaRuns].map((run) => run.x))
       const formulaRight = Math.max(
         ...[...formulaRuns].map((run) => run.x + run.width),
@@ -420,9 +447,15 @@ function splitSourceStackedInlineFormulaLines(lines: PdfTextLine[]) {
           .map((run) => run.text)
           .join(' ')
           .match(/\p{L}{2,}/gu)?.length ?? 0
-      if (unownedRuns.length > 0 || proseWordCount < 2) return [line]
+      const hasProseSiblings = beforeRuns.length > 0 || afterRuns.length > 0
+      if (unownedRuns.length > 0 || (hasProseSiblings && proseWordCount < 2)) {
+        // The stacked source geometry is still ambiguous even when the
+        // surrounding text cannot be split conservatively. Withhold the whole
+        // line as one equation obligation rather than publishing guessed
+        // super/subscript semantics.
+        return [{ ...line, id: `${baseId}-formula` }]
+      }
 
-      const baseId = `page-${String(line.page).padStart(3, '0')}-inline-stacked-${String(lineIndex + 1).padStart(4, '0')}`
       const fragments: PdfTextLine[] = []
       if (beforeRuns.length > 0) {
         fragments.push({
@@ -3287,6 +3320,7 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         const normalized = normalizedNoteLabel(line.text)
         const endnoteHeading = /^(?:endnotes?|notes?)$/i.test(normalized)
         const label = noteLabelFromText(normalized)
+        const inlineStackedFragment = inlineStackedFragmentParts(line)
         const explicitFootnote = new RegExp(
           `^(?:footnote|note)\\s+${NOTE_LABEL}`,
           'i',
@@ -3362,6 +3396,9 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
           kind = 'footer'
           confidence = 0.78
         } else if (unresolvedMathExtensionLine(line)) {
+          kind = 'equation'
+          confidence = 0.96
+        } else if (inlineStackedFragment?.part === 'formula') {
           kind = 'equation'
           confidence = 0.96
         } else if (

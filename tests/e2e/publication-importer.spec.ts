@@ -117,22 +117,41 @@ test('reloads once when the lazy PDF runtime became stale', async ({
   await expect(page.locator('.publication-failure')).toHaveCount(0)
 })
 
-test('recognizes a scanned fixture without any cross-origin request', async ({
+test('recognizes a scanned fixture with the real local browser OCR runtime', async ({
+  baseURL,
   page,
 }) => {
-  const externalRequests: string[] = []
-  await page.goto('/research/studio')
-  await waitForImporter(page)
-  const applicationOrigin = new URL(page.url()).origin
+  if (!baseURL) throw new Error('Playwright baseURL is required')
+  const applicationOrigin = new URL(baseURL).origin
+  const blockedExternalRequests: string[] = []
+  const externalResponses: string[] = []
+  const ocrAssetRequests = new Set<string>()
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (
+      url.origin === applicationOrigin &&
+      url.pathname.startsWith('/assets/ocr/')
+    ) {
+      ocrAssetRequests.add(url.pathname)
+    }
+  })
+  page.on('response', (response) => {
+    const url = new URL(response.url())
+    if (url.protocol.startsWith('http') && url.origin !== applicationOrigin) {
+      externalResponses.push(url.href)
+    }
+  })
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
     if (url.protocol.startsWith('http') && url.origin !== applicationOrigin) {
-      externalRequests.push(url.href)
+      blockedExternalRequests.push(url.href)
       await route.abort('blockedbyclient')
       return
     }
     await route.fallback()
   })
+  await page.goto('/research/studio')
+  await waitForImporter(page)
 
   await page
     .locator('#publication-pdf')
@@ -149,11 +168,35 @@ test('recognizes a scanned fixture without any cross-origin request', async ({
   }
   await expect(page.getByText(/tesseract\.js 6\.0\.1/i)).toBeVisible()
   await expect(page.getByText('LOW_CONFIDENCE_OCR')).toBeVisible()
-  await expect(page.getByText('OCR_REQUIRED')).toBeVisible()
-  await expect(
-    page.getByText(/insufficient source-backed text recovery/i),
-  ).toBeVisible()
-  expect(externalRequests).toEqual([])
+  const pages = details.getByRole('heading', { name: 'Pages' }).locator('..')
+  await expect(pages).toContainText('ocr-complete')
+  await expect(pages).toContainText('55 chars')
+  const recoveredText = details
+    .getByRole('heading', { name: 'Recovered text' })
+    .locator('..')
+  await expect(recoveredText).toContainText(/local/iu)
+  await expect(recoveredText).toContainText(/device/iu)
+  await expect(recoveredText).toContainText(/evidence/iu)
+
+  expect([...ocrAssetRequests]).toEqual(
+    expect.arrayContaining([
+      '/assets/ocr/worker.min.js',
+      '/assets/ocr/eng.traineddata.gz',
+    ]),
+  )
+  expect(
+    [...ocrAssetRequests].some((pathname) =>
+      /^\/assets\/ocr\/tesseract-core-(?:simd-)?lstm\.wasm\.js$/u.test(
+        pathname,
+      ),
+    ),
+  ).toBe(true)
+  expect(
+    blockedExternalRequests.filter((url) =>
+      /(?:tesseract|tessdata|traineddata|\/assets\/ocr\/)/iu.test(url),
+    ),
+  ).toEqual([])
+  expect(externalResponses).toEqual([])
 })
 
 async function uploadFixture(page: Page, name: string) {

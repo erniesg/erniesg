@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-target-free-candidate-adapter-output-1.0.0.json",
+  "title": "Owner-local target-free candidate adapter output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "documentId",
+    "sourceSha256",
+    "candidate",
+    "runtimeIdentity",
+    "output"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "documentId": { "$ref": "#/$defs/id" },
+    "sourceSha256": { "$ref": "#/$defs/sha256" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "runtimeIdentity": { "$ref": "#/$defs/runtimeIdentity" },
+    "output": true
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "format",
+        "formatVersion",
+        "adapterSourceSha256"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "format": { "$ref": "#/$defs/id" },
+        "formatVersion": { "$ref": "#/$defs/id" },
+        "adapterSourceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "executableSha256", "versionOutputSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "executableSha256": { "$ref": "#/$defs/sha256" },
+        "versionOutputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeIdentity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "not-applicable" },
+            "tool": { "type": "null" },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "unattested" },
+            "tool": {
+              "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/runtimeTool" }]
+            },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "attested" },
+            "tool": { "$ref": "#/$defs/runtimeTool" },
+            "model": { "$ref": "#/$defs/runtimeModel" }
+          }
+        }
+      ]
+    }
+  }
+}

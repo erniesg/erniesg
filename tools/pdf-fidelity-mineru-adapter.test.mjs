@@ -3,9 +3,11 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,9 +19,11 @@ import {
   cachePageDirectory,
   createMineruCacheIdentity,
   createMineruCacheMetadata,
+  mineruContentToTargetFreeObservations,
   normalizeMineruPredictions,
   observeMineruExecutable,
 } from './pdf-fidelity-mineru-adapter.mjs'
+import { validateTargetFreeDocumentObservations } from './pdf-target-free-predictions.mjs'
 
 const adapterPath = fileURLToPath(
   new URL('./pdf-fidelity-mineru-adapter.mjs', import.meta.url),
@@ -171,6 +175,121 @@ afterEach(async () => {
 })
 
 describe('local MinerU fidelity adapter', () => {
+  it('emits model-neutral target-free observations without native content', () => {
+    const content = contentByPage()
+    const observations = mineruContentToTargetFreeObservations(
+      new Map([
+        [1, content.get('paper-v1:1')],
+        [2, content.get('paper-v1:2')],
+      ]),
+    )
+
+    expect(validateTargetFreeDocumentObservations(observations, 2)).toEqual({
+      valid: true,
+      objectCount: 5,
+    })
+    expect(
+      observations.objects.find(({ kind }) => kind === 'figure'),
+    ).toMatchObject({
+      page: 1,
+      kind: 'figure',
+      label: 'figure',
+      box: [0.52, 0.26, 0.34, 0.2],
+    })
+    expect(
+      observations.objects.find(({ kind }) => kind === 'table'),
+    ).toMatchObject({
+      page: 2,
+      kind: 'table',
+      label: 'semantic-table',
+      box: [0.188, 0.08, 0.618, 0.087],
+    })
+    expect(observations.readingOrder).toEqual([
+      'mineru-figure-p001-001',
+      'mineru-footnote-p001-001',
+      'mineru-prose-p001-001',
+      'mineru-table-p002-001',
+      'mineru-equation-p002-001',
+    ])
+    expect(observations.relationships).toEqual([])
+    expect(JSON.stringify(observations)).not.toContain('private')
+    expect(JSON.stringify(observations)).not.toContain('/owner-only')
+  })
+
+  it('uses one coherent native content-list order for target-free output', () => {
+    const observations = mineruContentToTargetFreeObservations(
+      new Map([
+        [
+          1,
+          {
+            v1: [
+              {
+                type: 'text',
+                text_level: 1,
+                bbox: [100, 100, 400, 150],
+                text: 'private heading',
+              },
+              {
+                type: 'text',
+                text_level: 0,
+                bbox: [100, 180, 800, 300],
+                text: 'private prose',
+              },
+              {
+                type: 'text',
+                text_level: -1,
+                bbox: [100, 320, 800, 380],
+                text: 'private negative-level prose',
+              },
+            ],
+            v2: [
+              {
+                type: 'paragraph',
+                bbox: [500, 500, 900, 700],
+                content: {
+                  paragraph_content: [
+                    { type: 'text', content: 'unrelated v2 order' },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      ]),
+    )
+
+    expect(observations.objects).toEqual([
+      {
+        id: 'mineru-heading-p001-001',
+        page: 1,
+        kind: 'heading',
+        label: 'heading',
+        box: [0.1, 0.1, 0.3, 0.05],
+      },
+      {
+        id: 'mineru-prose-p001-001',
+        page: 1,
+        kind: 'prose',
+        label: 'prose',
+        box: [0.1, 0.18, 0.7, 0.12],
+      },
+      {
+        id: 'mineru-prose-p001-002',
+        page: 1,
+        kind: 'prose',
+        label: 'prose',
+        box: [0.1, 0.32, 0.7, 0.06],
+      },
+    ])
+    expect(observations.readingOrder).toEqual([
+      'mineru-heading-p001-001',
+      'mineru-prose-p001-001',
+      'mineru-prose-p001-002',
+    ])
+    expect(JSON.stringify(observations)).not.toContain('private')
+    expect(JSON.stringify(observations)).not.toContain('unrelated')
+  })
+
   it('normalizes only bounded native decisions and preserves native page geometry', () => {
     const cases = [
       evalCase({
@@ -580,6 +699,216 @@ describe('local MinerU fidelity adapter', () => {
     expect(secondPath).toContain('mineru-content-list-cache-v3')
   })
 
+  it('runs the exact target-free acquisition request without leaking source content or paths', async () => {
+    const suppliedRoot = await mkdtemp(
+      join(tmpdir(), 'srt-mineru-target-free-test-'),
+    )
+    temporaryDirectories.push(suppliedRoot)
+    const root = await realpath(suppliedRoot)
+    const cacheRoot = join(root, 'cache')
+    const output = join(root, 'observations.json')
+    const requestPath = join(root, 'request.json')
+    const mineruBin = join(root, 'fake-mineru')
+    const modelCacheHome = join(root, 'model-cache')
+    const mineruEnvironmentCapture = join(root, 'mineru-environment.json')
+    const sourcePath = join(root, 'paper-v1.pdf')
+    const source = await readFile(
+      new URL('../tests/fixtures/pdf/born-digital.pdf', import.meta.url),
+    )
+    await writeFile(sourcePath, source, { mode: 0o600 })
+    await writeFile(
+      mineruBin,
+      `#!/usr/bin/env node
+const { basename, join } = require('node:path')
+const { mkdirSync, writeFileSync } = require('node:fs')
+if (process.argv[2] === '--version') {
+  process.stdout.write('mineru 3.1.14\\n')
+  process.exit(0)
+}
+const values = {}
+for (let index = 2; index < process.argv.length; index += 2) {
+  values[process.argv[index]] = process.argv[index + 1]
+}
+const documentId = basename(values['-p'], '.pdf')
+const nativeDirectory = join(values['-o'], documentId, 'vlm')
+mkdirSync(nativeDirectory, { recursive: true, mode: 0o700 })
+writeFileSync(
+  ${JSON.stringify(mineruEnvironmentCapture)},
+  JSON.stringify({
+    hfHome: process.env.HF_HOME ?? null,
+    hubCache: process.env.HUGGINGFACE_HUB_CACHE ?? null,
+    privateSecret: process.env.TARGET_FREE_PRIVATE_SECRET ?? null,
+    runnerExecutable:
+      process.env.SRT_PDF_RUNNER_CANDIDATE_EXECUTABLE ?? null,
+    runnerModelCacheHome:
+      process.env.SRT_PDF_RUNNER_MODEL_CACHE_HOME ?? null,
+  }),
+  { mode: 0o600 },
+)
+writeFileSync(
+  join(nativeDirectory, documentId + '_content_list.json'),
+  JSON.stringify([
+    {
+      type: 'text',
+      page_idx: 0,
+      bbox: [100, 100, 900, 200],
+      text:
+        'private source canary ' +
+        process.env.TARGET_FREE_PRIVATE_SECRET +
+        ' ' +
+        values['-p'],
+    },
+  ]),
+  { mode: 0o600 },
+)
+`,
+      { mode: 0o700 },
+    )
+    await chmod(mineruBin, 0o700)
+    await mkdir(modelCacheHome, { mode: 0o700 })
+    const adapterSha256 = (
+      await fidelityEval.createAdapterSourceIdentity(adapterPath)
+    ).sha256
+    const targetFreeRequest = {
+      documentId: 'paper-v1',
+      path: await realpath(sourcePath),
+      byteLength: source.byteLength,
+      sha256: createHash('sha256').update(source).digest('hex'),
+    }
+    await writeFile(requestPath, JSON.stringify(targetFreeRequest), {
+      mode: 0o600,
+    })
+    const environment = { ...process.env }
+    delete environment.SRT_PDF_EVAL_OFFLINE
+    delete environment.SRT_MINERU_MODEL_ID
+    delete environment.SRT_MINERU_MODEL_SHA256
+    Object.assign(environment, {
+      SRT_PDF_TARGET_FREE_OFFLINE: '1',
+      HF_HUB_OFFLINE: '1',
+      TRANSFORMERS_OFFLINE: '1',
+      SRT_PDF_CANDIDATE_ID: 'mineru-target-free',
+      SRT_PDF_CANDIDATE_VERSION: '3.1.14-local',
+      SRT_PDF_ADAPTER_SOURCE_SHA256: adapterSha256,
+      SRT_PDF_RUNNER_CANDIDATE_EXECUTABLE: await realpath(mineruBin),
+      SRT_PDF_RUNNER_MODEL_CACHE_HOME: await realpath(modelCacheHome),
+      TARGET_FREE_PRIVATE_SECRET: 'must-not-leak',
+    })
+
+    const result = spawnSync(
+      adapterPath,
+      ['--request', requestPath, '--output', output, '--cache-root', cacheRoot],
+      { encoding: 'utf8', env: environment },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    const raw = JSON.parse(await readFile(output, 'utf8'))
+    expect(raw).toMatchObject({
+      schemaVersion: '1.0.0',
+      documentId: 'paper-v1',
+      sourceSha256: targetFreeRequest.sha256,
+      candidate: {
+        id: 'mineru-target-free',
+        version: '3.1.14-local',
+        format: 'pdf-document-observations',
+        formatVersion: '1.0.0',
+        adapterSourceSha256: adapterSha256,
+      },
+      runtimeIdentity: {
+        status: 'unattested',
+        tool: {
+          id: 'mineru',
+          version: '3.1.14',
+        },
+        model: null,
+      },
+      output: {
+        schemaVersion: '1.0.0',
+        objects: [
+          {
+            id: 'mineru-prose-p001-001',
+            page: 1,
+            kind: 'prose',
+            label: 'prose',
+            box: [0.1, 0.1, 0.8, 0.1],
+          },
+        ],
+        readingOrder: ['mineru-prose-p001-001'],
+        relationships: [],
+      },
+    })
+    expect(validateTargetFreeDocumentObservations(raw.output, 1)).toMatchObject(
+      {
+        valid: true,
+        objectCount: 1,
+      },
+    )
+    const serialized = JSON.stringify(raw)
+    expect(serialized).not.toContain(root)
+    expect(serialized).not.toContain(targetFreeRequest.path)
+    expect(serialized).not.toContain('private source canary')
+    expect(serialized).not.toContain('must-not-leak')
+    expect(
+      JSON.parse(await readFile(mineruEnvironmentCapture, 'utf8')),
+    ).toEqual({
+      hfHome: await realpath(modelCacheHome),
+      hubCache: join(await realpath(modelCacheHome), 'hub'),
+      privateSecret: null,
+      runnerExecutable: null,
+      runnerModelCacheHome: null,
+    })
+
+    const rejectedRequestPath = join(root, 'request-with-gold.json')
+    const rejectedOutput = join(root, 'must-not-exist.json')
+    await writeFile(
+      rejectedRequestPath,
+      JSON.stringify({
+        ...targetFreeRequest,
+        expected: { private: 'gold-canary' },
+      }),
+      { mode: 0o600 },
+    )
+    const rejected = spawnSync(
+      adapterPath,
+      [
+        '--request',
+        rejectedRequestPath,
+        '--output',
+        rejectedOutput,
+        '--cache-root',
+        cacheRoot,
+      ],
+      { encoding: 'utf8', env: environment },
+    )
+    expect(rejected.status).toBe(2)
+    expect(JSON.parse(rejected.stderr)).toEqual({
+      status: 'failed',
+      code: 'MINERU_ADAPTER_REQUEST_CONTAINS_GOLD',
+    })
+    expect(rejected.stderr).not.toContain('gold-canary')
+    expect(rejected.stderr).not.toContain(root)
+
+    const partialEnvironment = { ...environment }
+    delete partialEnvironment.SRT_PDF_RUNNER_MODEL_CACHE_HOME
+    const partial = spawnSync(
+      adapterPath,
+      [
+        '--request',
+        requestPath,
+        '--output',
+        join(root, 'partial-runtime-output.json'),
+        '--cache-root',
+        cacheRoot,
+      ],
+      { encoding: 'utf8', env: partialEnvironment },
+    )
+    expect(partial.status).toBe(2)
+    expect(JSON.parse(partial.stderr)).toEqual({
+      status: 'failed',
+      code: 'INVALID_MINERU_RUNNER_RUNTIME_CONFIGURATION',
+    })
+    expect(partial.stderr).not.toContain(root)
+  })
+
   it('uses an attested hash-and-page-keyed cache without running model extraction', async () => {
     const root = await mkdtemp(join(tmpdir(), 'srt-mineru-adapter-test-'))
     temporaryDirectories.push(root)
@@ -668,7 +997,22 @@ describe('local MinerU fidelity adapter', () => {
     )
 
     expect(result.status, result.stderr).toBe(0)
-    expect(JSON.parse(await readFile(output, 'utf8')).cases).toEqual([
+    const legacyOutput = JSON.parse(await readFile(output, 'utf8'))
+    expect(legacyOutput).toMatchObject({
+      schemaVersion: '1.0.0',
+      evalSetId: adapterRequest.evalSet.id,
+      evalSetSha256: adapterRequest.evalSet.sha256,
+      candidate: {
+        id: adapterRequest.candidate.id,
+        version: adapterRequest.candidate.version,
+        format: 'mineru-content-list',
+        formatVersion: 'content-list-v1-v2-adapter-1.1.0',
+        adapterSha256,
+      },
+    })
+    expect(legacyOutput).not.toHaveProperty('documentId')
+    expect(legacyOutput).not.toHaveProperty('output')
+    expect(legacyOutput.cases).toEqual([
       {
         caseId: 'table-structure',
         output: {

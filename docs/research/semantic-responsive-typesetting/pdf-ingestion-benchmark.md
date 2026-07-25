@@ -12,7 +12,7 @@ The first two are automatic. The third requires frozen annotations; an existing 
 
 A benchmark version fixes the ordered source SHA-256 set, parser/model identifier, dependency and toolchain versions, reconstruction/decision schema versions, completeness policy, profile id/version, renderer, comparator policy, and annotation-schema version. When a human-decision sidecar is replayed, its full-file SHA-256 is part of the run identity too. Changing any of these creates a new candidate identity; changing the source set or order creates a new corpus version.
 
-Receipts are derived from evidence rather than trusted as user-supplied hash strings. Corpus and comparison envelopes use schema `1.5.0`, their structural receipts use schema `1.4.0`, and private-fidelity receipts use schema `1.7.0`. The exact private envelope binds the required nullable `decisionSetSha256` input identity and per-artifact EPUBCheck results. At emission and validation time the harness binds canonical node order/content, privacy-safe canonical-node provenance, and semantic type counts; front-matter, inline, and list semantics; citation anchors; scholarly cross-reference labels, candidate/selected targets, and canonical anchors; canonical note-anchor ownership and offsets; visual caption-node, selected-candidate, and selected-crop identity; source-asset manifests; the exact line-transition ledger; and `structurallyConsumedLineBoundaryCount`. Structural schema 1.4 removes only PDF.js's process-global document counter from provenance font names while retaining each document-local font identity; older structural receipts require a reviewed rebaseline. Artifact receipts bind the same graph and source asset IDs to profile id/version, mode, EPUB bytes, structural validation, and a sanitized external-validation verdict. Counts, derived hashes, and sanitized evidence must agree. Coordinated edits to copied hash fields, a changed line decision with a stale ledger hash, a missing citation, cross-reference, or note anchor, changed node provenance, or a structurally invalid or substituted visual candidate/crop fail closed.
+Receipts are derived from evidence rather than trusted as user-supplied hash strings. Historical non-OCR and OCR corpus envelopes remain frozen at schema `1.5.0` and `1.6.0`; current audit/export commands emit additive schema `1.7.0`, which binds the Git commit and commit timestamp, clean/dirty and exact-head verdicts, sanitized Node runtime, tool/package version, `package-lock.json` SHA-256, and declared/locked/resolved PDF.js identity without a local path or wall-clock run timestamp. That PDF.js identity includes a canonical manifest hash over every installed implementation, worker, font, and support file, not merely the package metadata. The command captures this state before processing and requires the same state immediately before receipt publication; drift fails closed. A dirty receipt cannot serve as exact-head evidence. Structural receipts use schema `1.4.0` and private-fidelity receipts independently use schema `1.7.0`. The v1.5 and v1.6 audit schemas remain unchanged, so historical receipts keep their original validator and digest. The exact private envelope binds the required nullable `decisionSetSha256` input identity and per-artifact EPUBCheck results. At emission and validation time the harness binds canonical node order/content, privacy-safe canonical-node provenance, and semantic type counts; front-matter, inline, and list semantics; citation anchors; scholarly cross-reference labels, candidate/selected targets, and canonical anchors; canonical note-anchor ownership and offsets; visual caption-node, selected-candidate, and selected-crop identity; source-asset manifests; the exact line-transition ledger; and `structurallyConsumedLineBoundaryCount`. Structural schema 1.4 removes only PDF.js's process-global document counter from provenance font names while retaining each document-local font identity; older structural receipts require a reviewed rebaseline. Artifact receipts bind the same graph and source asset IDs to profile id/version, mode, EPUB bytes, structural validation, and a sanitized external-validation verdict. Counts, derived hashes, and sanitized evidence must agree. Coordinated edits to copied hash fields, a changed line decision with a stale ledger hash, a missing citation, cross-reference, or note anchor, changed node provenance, or a structurally invalid or substituted visual candidate/crop fail closed.
 
 Each matched citation relationship has one exact source-backed canonical anchor `{ nodeId, start, end }`. The anchored canonical node must carry a citation inline run with the same relationship ID, range, and ordered target IDs; every target must be a canonical bibliography entry, and the anchor node's provenance must include the reference source region. The sanitized graph hashes relationship status/taxonomy, reference range, hashed labels and targets, canonical anchor, and source boxes. Citation and visual canonical IDs are globally unique and source-anchored rather than derived only from display labels, so repeated equation numbers, symbolic citation labels, and lossy slug collisions remain distinct. The observed first-failure classes and the deterministic/model/human routing boundary are maintained in [the PDF reconstruction failure taxonomy](pdf-reconstruction-failure-taxonomy.md).
 
@@ -53,6 +53,7 @@ npm run pdf:benchmark:compare -- \
   /tmp/srt-baseline/corpus-audit.json \
   /tmp/srt-candidate/corpus-audit.json \
   --out /tmp/srt-comparison.json \
+  --corpus-report-schema-policy v1.7-only \
   --require-identical-artifacts \
   --require-identical-structure
 ```
@@ -64,8 +65,11 @@ as they enter the pipeline. It rejects missing, extra, swapped,
 renamed/wrong-version, or SHA-mismatched files before publishing evidence. The
 sanitized report binds the contract schema and SHA-256, selected set id, ordered
 ten document identities, and their canonical identity SHA-256. Use
-`--corpus-set seededRandom` for the distinct contract-selected random ten; it is
-not interchangeable with `frozen`.
+`--corpus-set seededRandom` to select the random ten declared by the chosen
+contract; it is not interchangeable with `frozen`. Historical replay keeps
+`corpus-contract-v1.json`. New set-disjoint robustness runs use
+`corpus-contract-v2.json`, whose selection excludes every frozen-set identity
+before deterministic ranking.
 
 The comparison keys documents by source SHA-256 and emits only basenames,
 hashes, metrics, blocking-code deltas, artifact invariants, and—when
@@ -80,6 +84,17 @@ row exists. Headless export supplies `--failonwarnings` to either the native
 external-validation failure rather than a pass. Validator unavailability
 remains an explicit allowlisted skip, never an EPUBCheck pass.
 
+The comparator defaults to `v1.5-only`; this preserves historical comparisons.
+For two current command receipts, use
+`--corpus-report-schema-policy v1.7-only`; the comparator validates the complete
+execution-provenance shape before comparing quality evidence. For historical
+OCR comparisons, add
+`--corpus-report-schema-policy v1.5-v1.6-compatible`. That compatibility mode
+records both exact audit schema version/path pairs. OCR and execution
+provenance are validated but are not directional quality metrics; OCR effects
+remain visible through completeness, readiness, diagnostics, structure, and
+artifacts.
+
 The first frozen exploratory slice uses seed label `random-10-2026-07-20-v1` and the ordered public identifiers `2503.18265v1`, `2501.09223v1`, `2404.19482v1`, `2405.07987v5`, `2501.19393v2`, `2412.13575v1`, `2103.02228v1`, `2307.12950v3`, `2507.21509v3`, and `2501.07531v1`. Reuse that exact ordered set for before/after comparisons; choosing ten new papers is a new corpus version, not another run of the same benchmark.
 
 Corpus JSON uses exact per-code diagnostic counts plus deterministic redacted samples bounded to three per code and 64 per document, with an explicit truncation count. This keeps fragment-heavy scientific PDFs actionable without turning repeated vector debris into megabytes of near-identical receipt rows. Owner-only visual evidence may remain detailed outside the repository.
@@ -88,12 +103,13 @@ Small intentional metric tradeoffs must be explicit:
 
 ```bash
 npm run pdf:benchmark:compare -- baseline.json candidate.json \
+  --corpus-report-schema-policy v1.7-only \
   --tolerance textCoverage=0.001
 ```
 
 Use `--require-identical-artifacts --require-identical-structure` when rerunning the same engine and dependency set. The structural gate fingerprints canonical node order/content; semantic and front-matter type counts; inline/list identity; citation, visual, and note relationships; assets; and the line-transition ledger, so identical aggregate coverage cannot hide a changed document graph. Do not use either strict flag when comparing different models because a legitimate semantic improvement changes the EPUB and structural receipts; such changes require fixture/gold assertions plus human review before freezing a new accepted baseline.
 
-Strict structure requires an available, internally consistent line-transition ledger in both reports and requires its receipt to repeat exactly. The ledger enumerates exactly one unique decision for every adjacent source-line transition inside a source region, validates page/region membership, and recomputes its sanitized hash from the decisions. A `structural-boundary` decision is valid only when the transition's whole region belongs to one strictly validated visual relationship and no rendered text node; forged/stale, rejected, mixed-ownership, or prose-owned classifications revert to unresolved. Corpus/comparison schema `1.5.0` records the exact structural count separately, rejects count mismatches, and treats that count as directionally neutral while strict structure catches any changed decision. It does not require zero unresolved joins for a general review corpus: zero unresolved corrupting joins is a separate publication-fidelity acceptance rule.
+Strict structure requires an available, internally consistent line-transition ledger in both reports and requires its receipt to repeat exactly. The ledger enumerates exactly one unique decision for every adjacent source-line transition inside a source region, validates page/region membership, and recomputes its sanitized hash from the decisions. A `structural-boundary` decision is valid only when the transition's whole region belongs to one strictly validated visual relationship and no rendered text node; forged/stale, rejected, mixed-ownership, or prose-owned classifications revert to unresolved. Corpus schema `1.5.0`, its OCR-capable `1.6.0` successor, and the exact-head `1.7.0` command envelope record the exact structural count separately, reject count mismatches, and treat that count as directionally neutral while strict structure catches any changed decision. It does not require zero unresolved joins for a general review corpus: zero unresolved corrupting joins is a separate publication-fidelity acceptance rule.
 
 The opt-in private-fidelity runner performs a fresh reconstruction for every repeat and hashes only sanitized reconstruction and artifact receipts. Optional owner adjudication enters only through the paired `--decisions-env <ENV_NAME>` and `--expected-decisions-sha256 <digest>` arguments. The environment variable resolves the owner-local sidecar without exposing its path on the command line; the full-file digest is verified before parsing, and the same pinned decisions are applied after every fresh reconstruction. Private-fidelity schema `1.7.0` writes that verified digest to `decisionSetSha256`, or writes `null` when no sidecar is configured; no path or raw decision payload enters the receipt. With `--require-epubcheck`, every requested profile artifact in every repeat must pass EPUBCheck with `--failonwarnings` before any artifact is published; unavailable Java/EPUBCheck, warnings, and errors abort the run, while the sanitized receipt records one `{ "status": "passed" }` result per artifact plus an exact pass count. Missing argument partners, malformed or identity-mismatched files, stale targets or resolutions, any applied-count mismatch, a missing/malformed receipt field, or a baseline/candidate decision/EPUBCheck-identity mismatch fails closed. A private receipt from an earlier schema is not a compatible accepted baseline and must be reviewed and frozen again. The receipt's `localValidationPassed` field covers readiness, zero unresolved corrupting joins, reconstruction repeatability, profile-artifact repeatability, and—when required—complete EPUBCheck success. After independent review, record the full canonical SHA-256 of that accepted sanitized receipt outside the repository. Pass both `--baseline "$SRT_ACCEPTED_PRIVATE_FIDELITY_RECEIPT"` and `--expected-baseline-sha256 "$SRT_ACCEPTED_PRIVATE_FIDELITY_RECEIPT_SHA256"` to compare against it. The comparator requires the supplied digest to match the entire baseline receipt before it evaluates source, decision-set, profile, repeat, and validation identity; exact graph and artifact invariants; and directional completeness/readiness/diagnostic non-regression. It excludes timing, cost, local paths, and run ordinals from candidate regression comparisons, but not from the acceptance digest binding. Without both baseline arguments, `baselineComparison.status` remains `not-configured`, top-level `passed` remains false, and the command exits nonzero even when local repeatability passes. Never derive the expected digest from the candidate or the baseline file during the comparison invocation; doing so would erase the independent acceptance boundary.
 
@@ -143,6 +159,12 @@ are frozen together in
 corpus lanes are 20 executions over 18 distinct identities, not a 20-paper
 independent holdout. The contract also records that no blind holdout or
 LLM-judge train/dev/test split exists yet.
+
+The current set-disjoint robustness extension is additive:
+`benchmarks/pdf/reconstruction-eval-contract-v3.json` binds
+`benchmarks/pdf/corpus-contract-v2.json`, 20 executions over 20 distinct
+identities, zero overlap, and no promotion authority. The v1/v2 governance and
+v1 corpus artifacts retain their published bytes and hashes.
 
 Score model/parser candidates at the task level:
 

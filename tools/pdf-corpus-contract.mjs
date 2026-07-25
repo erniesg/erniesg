@@ -87,8 +87,10 @@ export function validateCorpusContract(contract) {
         'documents',
       ]) ||
       !SAFE_ID.test(contract.seededRandom.id) ||
-      contract.seededRandom.algorithm !==
-        'sha256-rank-without-replacement-v1' ||
+      ![
+        'sha256-rank-without-replacement-v1',
+        'sha256-rank-without-replacement-excluding-frozen-v1',
+      ].includes(contract.seededRandom.algorithm) ||
       !SHA256.test(contract.seededRandom.seed) ||
       !SHA256.test(contract.seededRandom.seedCommitmentSha256) ||
       sha256(contract.seededRandom.seed) !==
@@ -123,7 +125,21 @@ export function validateCorpusContract(contract) {
     ) {
       invalidContract()
     }
-    const expectedSelection = contract.seededRandom.catalog
+    const frozenIds = new Set(
+      contract.frozen.documents.map((document) => document.id),
+    )
+    const excludesFrozen =
+      contract.seededRandom.algorithm ===
+      'sha256-rank-without-replacement-excluding-frozen-v1'
+    const eligibleCatalog = excludesFrozen
+      ? contract.seededRandom.catalog.filter(
+          (document) => !frozenIds.has(document.id),
+        )
+      : contract.seededRandom.catalog
+    if (eligibleCatalog.length < contract.seededRandom.sampleSize) {
+      invalidContract()
+    }
+    const expectedSelection = eligibleCatalog
       .map((document) => ({
         document,
         score: sha256(
@@ -142,8 +158,12 @@ export function validateCorpusContract(contract) {
         canonicalJson(contract.seededRandom.documents) ||
       sha256(canonicalJson(expectedSelection)) !==
         contract.seededRandom.selectionSha256 ||
-      canonicalJson(contract.frozen.documents) ===
-        canonicalJson(contract.seededRandom.documents)
+      (excludesFrozen
+        ? contract.seededRandom.documents.some((document) =>
+            frozenIds.has(document.id),
+          )
+        : canonicalJson(contract.frozen.documents) ===
+          canonicalJson(contract.seededRandom.documents))
     ) {
       invalidContract()
     }

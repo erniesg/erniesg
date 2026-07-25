@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.6.0.json",
+  "title": "Local PDF corpus audit report with OCR provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reportSchema",
+    "privacy",
+    "policy",
+    "summary",
+    "documents"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.6.0" },
+    "reportSchema": {
+      "const": "docs/schemas/pdf-corpus-audit-v1.6.schema.json"
+    },
+    "privacy": { "const": "basenames-hashes-metrics-diagnostics-only" },
+    "policy": {
+      "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/policy"
+    },
+    "corpusContract": {
+      "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/corpusContractBinding"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documents",
+        "ready",
+        "reviewRequired",
+        "failed",
+        "passRate",
+        "failureReasons"
+      ],
+      "properties": {
+        "documents": { "type": "integer", "minimum": 0 },
+        "ready": { "type": "integer", "minimum": 0 },
+        "reviewRequired": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "passRate": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/ratio"
+        },
+        "failureReasons": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "contains": {
+        "type": "object",
+        "required": ["ocr"]
+      },
+      "minContains": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/auditedDocument" },
+          {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/failedDocument"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "ocrPageProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page",
+        "engine",
+        "engineVersion",
+        "model",
+        "modelVersion",
+        "languages",
+        "languageMode",
+        "rasterSha256",
+        "confidence"
+      ],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "engine": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/safeIdentifier"
+        },
+        "engineVersion": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/safeIdentifier"
+        },
+        "model": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/safeIdentifier"
+        },
+        "modelVersion": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/safeIdentifier"
+        },
+        "languages": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/safeIdentifier"
+          }
+        },
+        "languageMode": {
+          "enum": ["explicit", "automatic-fallback"]
+        },
+        "rasterSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "confidence": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/ratio"
+        }
+      }
+    },
+    "auditedDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "basename",
+        "sha256",
+        "byteLength",
+        "pageCount",
+        "completeness",
+        "readiness",
+        "structure",
+        "diagnosticCounts",
+        "diagnosticSampleLimit",
+        "diagnosticSamplesTruncated",
+        "diagnostics"
+      ],
+      "properties": {
+        "basename": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$"
+        },
+        "sha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "pageCount": { "type": "integer", "minimum": 1 },
+        "completeness": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/completeness"
+        },
+        "readiness": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/readiness"
+        },
+        "structure": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/structuralReceipt"
+        },
+        "ocr": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ocrPageProvenance" }
+        },
+        "diagnosticCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "diagnosticSampleLimit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "perCode"],
+          "properties": {
+            "total": { "const": 64 },
+            "perCode": { "const": 3 }
+          }
+        },
+        "diagnosticSamplesTruncated": { "type": "integer", "minimum": 0 },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/diagnostic"
+          }
+        },
+        "exports": {
+          "type": "array",
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/export"
+          }
+        }
+      }
+    }
+  }
+}

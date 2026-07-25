@@ -892,6 +892,53 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('renders generated equation labels plainly without exposing corrupt inferred inline semantics', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    reconstruction.paper.nodes = reconstruction.paper.nodes.map((node) =>
+      node.id === 'equation-caption'
+        ? {
+            ...node,
+            text: 'Equation 1.',
+            inlineRuns: [
+              { start: 0, end: 1, italic: true },
+              { start: 1, end: 2, verticalAlign: 'superscript' as const },
+              { start: 2, end: 3, verticalAlign: 'subscript' as const },
+            ],
+          }
+        : node,
+    )
+    reconstruction.visualRelationships[0] = {
+      ...reconstruction.visualRelationships[0],
+      label: 'Equation 1',
+      sourceText: '',
+      altText: 'Equation 1.',
+      altTextSource: 'caption',
+      evidence: [
+        ...reconstruction.visualRelationships[0].evidence,
+        'source-text-transcript-unresolved',
+      ],
+    }
+
+    const content = renderPublicationXhtml(reconstruction.paper, {
+      reconstruction,
+    })
+
+    expect(content).toContain('alt="Equation 1" data-alt-source="caption"')
+    expect(content).toContain(
+      'data-asset-id="' +
+        reconstruction.visualRelationships[0].assetIds[0] +
+        '"',
+    )
+    expect(content).toContain(
+      '<figcaption id="equation-caption" data-canonical-id="equation-caption">Equation 1</figcaption>',
+    )
+    expect(content).not.toContain('<em>E</em>')
+    expect(content).not.toContain('<sup>q</sup>')
+    expect(content).not.toContain('<sub>u</sub>')
+    expect(content).not.toContain('visual-source-transcript')
+    expect(content).not.toContain('<math')
+  })
+
   it('describes an owner-adjudicated equation transcript as available', async () => {
     const { reconstruction } = await staleEquationTranscriptFixture()
     const placeholder = 'Display equation p005-001'
@@ -1547,7 +1594,9 @@ describe('EPUB 3 export', () => {
             ],
           }),
         ),
-      ).toThrow(/DANGLING_EPUB_INTERNAL_REFERENCE|EPUB_SEMANTIC_LINK_ALIGNMENT/u)
+      ).toThrow(
+        /DANGLING_EPUB_INTERNAL_REFERENCE|EPUB_SEMANTIC_LINK_ALIGNMENT/u,
+      )
     },
   )
 
@@ -3571,9 +3620,7 @@ describe('EPUB 3 export', () => {
     const captionStart = content.indexOf('<figcaption', wrapperStart)
 
     expect(wrapperStart).toBeGreaterThan(-1)
-    expect(content).toContain(
-      'data-source-visual-kind="figure"><img',
-    )
+    expect(content).toContain('data-source-visual-kind="figure"><img')
     expect(wrapperEnd).toBeLessThan(captionStart)
     expect(
       renderWithRelationship({
@@ -3798,9 +3845,7 @@ describe('EPUB 3 export', () => {
       sourceBoxes: [tableBox],
       width: sourceTableWidth,
       height: sourceTableHeight,
-      pixels: new Uint8Array(
-        sourceTableWidth * sourceTableHeight * 4,
-      ).fill(80),
+      pixels: new Uint8Array(sourceTableWidth * sourceTableHeight * 4).fill(80),
     })
     const sourceText = 'Method Score Baseline 72 Proposed 81'
     const figureNode = {
@@ -3908,9 +3953,7 @@ describe('EPUB 3 export', () => {
       moveProfile,
     )
     const moveInspection = inspectEpub(moveFallback.bytes, moveProfile)
-    const moveContent = strFromU8(
-      moveInspection.files['EPUB/content.xhtml'],
-    )
+    const moveContent = strFromU8(moveInspection.files['EPUB/content.xhtml'])
     const moveManifest = moveInspection.manifest as {
       assets?: Array<Record<string, unknown>>
     }

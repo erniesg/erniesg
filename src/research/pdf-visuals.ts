@@ -32,6 +32,7 @@ import {
   createTableAsset,
   createTextSvgAsset,
   isValidSourcePageCropPayload,
+  pdfSourceExclusionMaskIdentity,
   type CanonicalTable,
 } from './visual-assets'
 import { sanitizeXmlText } from './publication-integrity'
@@ -52,6 +53,7 @@ export type PdfFigureRasterizer = (input: {
   sourceObjectIds: string[]
   sourceBoxes: NormalizedSourceBox[]
   ownedSourceBoxes?: NormalizedSourceBox[]
+  excludedSourceBoxes?: NormalizedSourceBox[]
 }) => Promise<PdfVisualAsset | null>
 
 export type PdfPartialRegionLineSelection = {
@@ -117,6 +119,12 @@ const PREFORMATTED_NEIGHBOR_GAP_FRACTION = 0.8
 const EQUATION_SOURCE_CROP_RETRY_PADDINGS = [
   0.006, 0.008, 0.01, 0.012, 0.014, 0.016, 0.02,
 ] as const
+const EQUATION_SOURCE_CROP_RETRY_NEIGHBOR_GAP_FRACTIONS = [
+  0.5, 0.75, 0.9,
+] as const
+const EQUATION_EXCLUDED_TEXT_MASK_PIXELS = 2
+const EQUATION_EXCLUDED_TEXT_MAX_RENDER_SCALE = 3
+const MAX_EQUATION_EXCLUDED_SOURCE_BOXES = 32
 const TABLE_SOURCE_CROP_RETRY_PADDINGS = [
   0.006, 0.008, 0.01, 0.012, 0.014, 0.016, 0.02, 0.024, 0.028, 0.032,
 ] as const
@@ -2007,6 +2015,39 @@ function materiallyOverlappingSourceBoxes(
   )
 }
 
+function unownedEquationSourceTextBoxes(
+  sourceLineIds: ReadonlySet<string>,
+  regions: readonly PdfPageRegion[],
+  page: number,
+) {
+  const seenLineIds = new Set<string>()
+  return regions.flatMap((region) =>
+    region.page !== page
+      ? []
+      : region.lines.flatMap((line) => {
+          if (sourceLineIds.has(line.id) || seenLineIds.has(line.id)) {
+            return []
+          }
+          seenLineIds.add(line.id)
+          return line.runs.length > 0
+            ? line.runs
+                .filter((run) => run.text.trim())
+                .map((run) => ({
+                  page: run.page,
+                  x: run.x,
+                  y: run.y,
+                  width: run.width,
+                  height: run.height,
+                  rotation: run.rotation,
+                  method: run.method,
+                }))
+            : line.text.trim()
+              ? [{ ...line.box }]
+              : []
+        }),
+  )
+}
+
 function hasOverlappingUnownedEquationText(
   ownedSourceBoxes: readonly NormalizedSourceBox[],
   sourceLineIds: ReadonlySet<string>,
@@ -2014,75 +2055,217 @@ function hasOverlappingUnownedEquationText(
 ) {
   if (ownedSourceBoxes.length === 0) return false
   const sourcePage = ownedSourceBoxes[0].page
-  const seenLineIds = new Set<string>()
-  return regions.some((region) =>
-    region.page !== sourcePage
-      ? false
-      : region.lines.some((line) => {
-          if (sourceLineIds.has(line.id) || seenLineIds.has(line.id)) {
-            return false
-          }
-          seenLineIds.add(line.id)
-          const unownedBoxes =
-            line.runs.length > 0
-              ? line.runs
-                  .filter((run) => run.text.trim())
-                  .map((run) => ({
-                    page: run.page,
-                    x: run.x,
-                    y: run.y,
-                    width: run.width,
-                    height: run.height,
-                    rotation: run.rotation,
-                    method: run.method,
-                  }))
-              : line.text.trim()
-                ? [line.box]
-                : []
-          return unownedBoxes.some((unowned) =>
-            ownedSourceBoxes.some((owned) =>
-              materiallyOverlappingSourceBoxes(owned, unowned),
-            ),
-          )
-        }),
+  return unownedEquationSourceTextBoxes(
+    sourceLineIds,
+    regions,
+    sourcePage,
+  ).some((unowned) =>
+    ownedSourceBoxes.some((owned) =>
+      materiallyOverlappingSourceBoxes(owned, unowned),
+    ),
   )
 }
 
-function hasUnownedSourceTextInEquationCrop(
+function unownedSourceTextBoxesInEquationCrop(
   sourceCropBox: NormalizedSourceBox,
   sourceLineIds: ReadonlySet<string>,
   regions: PdfPageRegion[],
 ) {
-  const seenLineIds = new Set<string>()
-  return regions.some((region) =>
+  return unownedEquationSourceTextBoxes(
+    sourceLineIds,
+    regions,
+    sourceCropBox.page,
+  ).filter((unowned) =>
+    materiallyOverlappingSourceBoxes(sourceCropBox, unowned),
+  )
+}
+
+function excludedEquationSourceBoxesForCrop(
+  sourceCropBox: NormalizedSourceBox,
+  ownedSourceBoxes: readonly NormalizedSourceBox[],
+  sourceLineIds: ReadonlySet<string>,
+  regions: readonly PdfPageRegion[],
+  pageWidth: number,
+  pageHeight: number,
+) {
+  if (ownedSourceBoxes.length === 0) return []
+  const ownedUnion = {
+    page: sourceCropBox.page,
+    x: Math.min(...ownedSourceBoxes.map((box) => box.x)),
+    y: Math.min(...ownedSourceBoxes.map((box) => box.y)),
+    width:
+      Math.max(...ownedSourceBoxes.map((box) => box.x + box.width)) -
+      Math.min(...ownedSourceBoxes.map((box) => box.x)),
+    height:
+      Math.max(...ownedSourceBoxes.map((box) => box.y + box.height)) -
+      Math.min(...ownedSourceBoxes.map((box) => box.y)),
+    rotation: sourceCropBox.rotation,
+    method: 'pdf-text' as const,
+  }
+  const inlineFormulaBaseIds = new Set(
+    [...sourceLineIds].flatMap((lineId) => {
+      const match = /^(.*-inline-stacked-\d+)-formula$/u.exec(lineId)
+      return match ? [match[1]] : []
+    }),
+  )
+  const sourceRegionIds = new Set(
+    regions
+      .filter((region) =>
+        region.lines.some((line) => sourceLineIds.has(line.id)),
+      )
+      .map((region) => region.id),
+  )
+  const sourceColumns = new Set(
+    regions
+      .filter((region) =>
+        region.lines.some((line) => sourceLineIds.has(line.id)),
+      )
+      .map((region) => region.column),
+  )
+  const tolerance = 0.00001
+  const maximumHorizontalGap =
+    EQUATION_EXCLUDED_TEXT_MASK_PIXELS /
+      (Math.max(1, pageWidth) * EQUATION_EXCLUDED_TEXT_MAX_RENDER_SCALE) +
+    tolerance
+  const maximumVerticalGap =
+    EQUATION_EXCLUDED_TEXT_MASK_PIXELS /
+      (Math.max(1, pageHeight) * EQUATION_EXCLUDED_TEXT_MAX_RENDER_SCALE) +
+    tolerance
+  const trustedLine = (
+    region: PdfPageRegion,
+    line: PdfPageRegion['lines'][number],
+  ) => {
+    if (region.kind !== 'body' && region.kind !== 'spanning') return false
+    const inlineSibling = /^(.*-inline-stacked-\d+)-(before|after)$/u.exec(
+      line.id,
+    )
+    if (inlineSibling && inlineFormulaBaseIds.has(inlineSibling[1])) {
+      return true
+    }
+    if (sourceRegionIds.has(region.id)) return true
+    const lexicalWords = line.text.match(/\p{L}{2,}/gu) ?? []
+    return (
+      lexicalWords.length >= 2 &&
+      (region.column === 'span' ||
+        sourceColumns.has('span') ||
+        sourceColumns.has(region.column))
+    )
+  }
+  const directionFor = (box: NormalizedSourceBox) => {
+    const aboveGap = ownedUnion.y - (box.y + box.height)
+    if (aboveGap >= -tolerance && aboveGap <= maximumVerticalGap) {
+      return 'top'
+    }
+    const belowGap = box.y - (ownedUnion.y + ownedUnion.height)
+    if (belowGap >= -tolerance && belowGap <= maximumVerticalGap) {
+      return 'bottom'
+    }
+    return null
+  }
+  const explicitInlineDirectionFor = (box: NormalizedSourceBox) => {
+    const leftGap = ownedUnion.x - (box.x + box.width)
+    if (leftGap >= -tolerance && leftGap <= maximumHorizontalGap) {
+      return 'left'
+    }
+    const rightGap = box.x - (ownedUnion.x + ownedUnion.width)
+    if (rightGap >= -tolerance && rightGap <= maximumHorizontalGap) {
+      return 'right'
+    }
+    return null
+  }
+  const nearCropEdge = (
+    box: NormalizedSourceBox,
+    direction: 'top' | 'bottom' | 'left' | 'right',
+  ) => {
+    if (direction === 'top') {
+      return box.y + box.height >= sourceCropBox.y - maximumVerticalGap
+    }
+    if (direction === 'bottom') {
+      return (
+        box.y <= sourceCropBox.y + sourceCropBox.height + maximumVerticalGap
+      )
+    }
+    if (direction === 'left') {
+      return box.x + box.width >= sourceCropBox.x - maximumHorizontalGap
+    }
+    return box.x <= sourceCropBox.x + sourceCropBox.width + maximumHorizontalGap
+  }
+  const excluded = regions.flatMap((region) =>
     region.page !== sourceCropBox.page
-      ? false
-      : region.lines.some((line) => {
-          if (sourceLineIds.has(line.id) || seenLineIds.has(line.id)) {
-            return false
+      ? []
+      : region.lines.flatMap((line) => {
+          if (sourceLineIds.has(line.id) || !trustedLine(region, line)) {
+            return []
           }
-          seenLineIds.add(line.id)
-          const unownedBoxes =
-            line.runs.length > 0
-              ? line.runs
-                  .filter((run) => run.text.trim())
-                  .map((run) => ({
-                    page: run.page,
-                    x: run.x,
-                    y: run.y,
-                    width: run.width,
-                    height: run.height,
-                    rotation: run.rotation,
-                    method: run.method,
-                  }))
-              : line.text.trim()
-                ? [line.box]
-                : []
-          return unownedBoxes.some((unowned) =>
-            materiallyOverlappingSourceBoxes(sourceCropBox, unowned),
-          )
+          const inlineSibling =
+            /^(.*-inline-stacked-\d+)-(before|after)$/u.exec(line.id)
+          return line.runs.flatMap((run) => {
+            if (!run.text.trim()) return []
+            const box: NormalizedSourceBox = {
+              page: run.page,
+              x: run.x,
+              y: run.y,
+              width: run.width,
+              height: run.height,
+              rotation: run.rotation,
+              method: run.method,
+            }
+            const direction =
+              directionFor(box) ??
+              (inlineSibling && inlineFormulaBaseIds.has(inlineSibling[1])
+                ? explicitInlineDirectionFor(box)
+                : null)
+            if (
+              !direction ||
+              !nearCropEdge(box, direction) ||
+              ((direction === 'top' || direction === 'bottom') &&
+                horizontalBoxOverlap(sourceCropBox, box) <= 0) ||
+              ((direction === 'left' || direction === 'right') &&
+                verticalBoxOverlap(sourceCropBox, box) <= 0)
+            ) {
+              return []
+            }
+            return [box]
+          })
         }),
   )
+  const canonical = [
+    ...new Map(
+      excluded.map(
+        (box) =>
+          [
+            [
+              box.page,
+              rounded(box.x),
+              rounded(box.y),
+              rounded(box.width),
+              rounded(box.height),
+              box.rotation,
+              box.method,
+            ].join('\u001f'),
+            {
+              ...box,
+              x: rounded(box.x),
+              y: rounded(box.y),
+              width: rounded(box.width),
+              height: rounded(box.height),
+            },
+          ] as const,
+      ),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      [
+        left.page - right.page,
+        left.y - right.y,
+        left.x - right.x,
+        left.height - right.height,
+        left.width - right.width,
+        left.rotation - right.rotation,
+        left.method.localeCompare(right.method),
+      ].find((difference) => difference !== 0) ?? 0,
+  )
+  return canonical.length <= MAX_EQUATION_EXCLUDED_SOURCE_BOXES ? canonical : []
 }
 
 function neighborBoundedCropBoxes(
@@ -3202,9 +3385,23 @@ function captionBoundedPanelRecoveryBoxes(
         ? [candidate.sourceBoxes[index]]
         : [],
   )
+  const nativeSourceBoxes = candidate.sourceObjectIds.flatMap(
+    (sourceObjectId, index) =>
+      !sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX) &&
+      objectKinds.has(sourceObjectId)
+        ? [candidate.sourceBoxes[index]]
+        : [],
+  )
+  const requiresCompleteNativeEnvelope =
+    multipartRasterEnvelope &&
+    !malformedTrimmedEnvelope &&
+    !failedReusedClipEnvelope &&
+    !failedReusedGridEnvelope
   if (
     nativeObjectCount < MIN_COMPOSITE_FIGURE_FRAGMENTS ||
     overlayBoxes.length < MIN_CAPTION_BOUNDED_FLOW_OVERLAY_LINE_COUNT ||
+    (requiresCompleteNativeEnvelope &&
+      nativeSourceBoxes.length !== nativeObjectCount) ||
     (!multipartRasterEnvelope &&
       nativeObjectCount + overlayBoxes.length <
         MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT)
@@ -3219,6 +3416,9 @@ function captionBoundedPanelRecoveryBoxes(
         captionBox.x + CAPTION_BOUNDED_PANEL_EDGE_RETRY_PADDING,
         Math.min(...overlayBoxes.map((box) => box.x)) -
           CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
+        ...(requiresCompleteNativeEnvelope
+          ? nativeSourceBoxes.map((box) => box.x)
+          : []),
       ),
     ),
   )
@@ -3231,19 +3431,36 @@ function captionBoundedPanelRecoveryBoxes(
           CAPTION_BOUNDED_PANEL_EDGE_RETRY_PADDING,
         Math.max(...overlayBoxes.map((box) => box.x + box.width)) +
           CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
+        ...(requiresCompleteNativeEnvelope
+          ? nativeSourceBoxes.map((box) => box.x + box.width)
+          : []),
       ),
     ),
   )
   const bottom = rounded(
     Math.min(
-      candidate.renderBox.y + candidate.renderBox.height,
+      requiresCompleteNativeEnvelope
+        ? Math.max(
+            candidate.renderBox.y + candidate.renderBox.height,
+            ...nativeSourceBoxes.map((box) => box.y + box.height),
+          )
+        : candidate.renderBox.y + candidate.renderBox.height,
       captionBox.y - CAPTION_BOUNDED_PANEL_BOTTOM_INSET,
     ),
   )
   const topCandidates = [
     ...new Set(
       [
-        ...(malformedTrimmedEnvelope ? [candidate.renderBox.y] : []),
+        ...(malformedTrimmedEnvelope || requiresCompleteNativeEnvelope
+          ? [
+              requiresCompleteNativeEnvelope
+                ? Math.min(
+                    candidate.renderBox.y,
+                    ...nativeSourceBoxes.map((box) => box.y),
+                  )
+                : candidate.renderBox.y,
+            ]
+          : []),
         ...overlayBoxes.map((box) =>
           rounded(
             Math.max(
@@ -3254,8 +3471,14 @@ function captionBoundedPanelRecoveryBoxes(
         ),
       ].filter(
         (top) =>
-          (malformedTrimmedEnvelope
-            ? top >= candidate.renderBox!.y
+          (malformedTrimmedEnvelope || requiresCompleteNativeEnvelope
+            ? top >=
+              (requiresCompleteNativeEnvelope
+                ? Math.min(
+                    candidate.renderBox!.y,
+                    ...nativeSourceBoxes.map((box) => box.y),
+                  )
+                : candidate.renderBox!.y)
             : top >
               candidate.renderBox!.y + SOURCE_CROP_CONTAINMENT_TOLERANCE) &&
           top < bottom,
@@ -3279,7 +3502,11 @@ function captionBoundedPanelRecoveryBoxes(
       if (
         sourceBox.width <= 0 ||
         sourceBox.height <= 0 ||
-        ownedSourceBoxes.length < MIN_CAPTION_BOUNDED_FLOW_OVERLAY_LINE_COUNT
+        ownedSourceBoxes.length < MIN_CAPTION_BOUNDED_FLOW_OVERLAY_LINE_COUNT ||
+        (requiresCompleteNativeEnvelope &&
+          !nativeSourceBoxes.every((box) =>
+            fullyContainsBox(sourceBox, box, SOURCE_CROP_CONTAINMENT_TOLERANCE),
+          ))
       ) {
         return []
       }
@@ -3529,8 +3756,30 @@ function completeSourcePageCropAsset(
   sourceObjectIds: string[],
   sourceBoxes: NormalizedSourceBox[],
   sourceCropBox: NormalizedSourceBox,
+  expectedOwnedSourceBoxes: readonly NormalizedSourceBox[] = [],
+  expectedExcludedSourceBoxes: readonly NormalizedSourceBox[] = [],
 ) {
+  const actualMaskIdentity = pdfSourceExclusionMaskIdentity(
+    visualAsset.sourceExclusionMask,
+    sourceCropBox,
+  )
+  const expectedMaskIdentity =
+    expectedOwnedSourceBoxes.length > 0 &&
+    expectedExcludedSourceBoxes.length > 0
+      ? pdfSourceExclusionMaskIdentity(
+          {
+            algorithm: 'nearest-source-box-v1',
+            expansionPixels: 2,
+            ownedSourceBoxes: [...expectedOwnedSourceBoxes],
+            excludedSourceBoxes: [...expectedExcludedSourceBoxes],
+          },
+          sourceCropBox,
+        )
+      : null
   return (
+    (!visualAsset.sourceExclusionMask || actualMaskIdentity !== null) &&
+    JSON.stringify(actualMaskIdentity) ===
+      JSON.stringify(expectedMaskIdentity) &&
     sourcePageCropValidationFailure(
       visualAsset,
       kind,
@@ -5280,6 +5529,12 @@ function completeEquationSourceScope(
   ) {
     return false
   }
+  const isOwnedInlineSiblingRegion = (region: PdfPageRegion) =>
+    region.kind === 'body' &&
+    region.lines.some((line) => {
+      const match = /^(.*-inline-stacked-\d+)-(before|after)$/u.exec(line.id)
+      return Boolean(match && inlineFormulaBaseIds.has(match[1]))
+    })
   const sourceRunOwnershipKeys = sources.flatMap((source) =>
     source.lines.flatMap((line) =>
       line.runs
@@ -5383,6 +5638,12 @@ function completeEquationSourceScope(
     ) {
       return false
     }
+    // The region splitter deliberately keeps the prose before and after a
+    // two-dimensional inline formula as body text. Those sibling fragments
+    // prove the formula's source-line position; they do not make the formula
+    // crop incomplete. Crop bounding and unowned-text checks below still keep
+    // pixels from either prose sibling out of the equation asset.
+    if (isOwnedInlineSiblingRegion(candidate)) return false
     const adjacentSameLineContinuation = sources.some((source) => {
       if (
         source.page !== candidate.page ||
@@ -7286,6 +7547,8 @@ export async function reconstructPdfVisuals({
     let cropTouchedEdge = false
     let cropVetoedUnownedText = false
     let adaptivePaddingRetry = false
+    let requestedExcludedSourceBoxes: NormalizedSourceBox[] = []
+    let retainedExcludedSourceBoxes: NormalizedSourceBox[] = []
     let neighborBoundedCrop = !sameSourceBox(
       sourceCropBox,
       unboundedInitialCropBox,
@@ -7295,32 +7558,117 @@ export async function reconstructPdfVisuals({
       sourceScopeComplete &&
       !overlappingUnownedSourceText
     ) {
-      cropVetoedUnownedText = hasUnownedSourceTextInEquationCrop(
+      const rasterizeEquationCrop = async (
+        cropBox: NormalizedSourceBox,
+        excludedSourceBoxes: readonly NormalizedSourceBox[],
+      ) => {
+        const attempt = async (
+          requestedExcludedSourceBoxes: readonly NormalizedSourceBox[],
+        ) => {
+          let touchedEdge = false
+          const asset = await rasterizeFigure({
+            kind: 'equation',
+            page: source.page,
+            sourceBox: cropBox,
+            sourceObjectIds: [sourceObjectId],
+            sourceBoxes: [sourceBox],
+            ownedSourceBoxes,
+            ...(requestedExcludedSourceBoxes.length > 0
+              ? {
+                  excludedSourceBoxes: [...requestedExcludedSourceBoxes],
+                }
+              : {}),
+          }).catch((error: unknown) => {
+            touchedEdge = sourcePageCropTouchesEdge(error)
+            return null
+          })
+          return { asset, touchedEdge }
+        }
+        const maskedAttempt = await attempt(excludedSourceBoxes)
+        if (
+          maskedAttempt.asset &&
+          excludedSourceBoxes.length > 0 &&
+          !maskedAttempt.asset.sourceExclusionMask
+        ) {
+          // A renderer may prove that no pixels needed exclusion. Re-render
+          // without the exclusion request before accepting that claim so a
+          // dropped mask record cannot silently bless modified pixels.
+          const cleanAttempt = await attempt([])
+          return {
+            crop: cleanAttempt.asset,
+            touchedEdge: cleanAttempt.touchedEdge,
+            requestedExcludedSourceBoxes: [] as NormalizedSourceBox[],
+          }
+        }
+        return {
+          crop: maskedAttempt.asset,
+          touchedEdge: maskedAttempt.touchedEdge,
+          requestedExcludedSourceBoxes: maskedAttempt.asset
+            ? [...excludedSourceBoxes]
+            : [],
+        }
+      }
+      const initialUnownedSourceBoxes = unownedSourceTextBoxesInEquationCrop(
         sourceCropBox,
         sourceEquationLineIds,
         regions,
       )
-      if (!cropVetoedUnownedText) {
-        sourceCrop = await rasterizeFigure({
-          kind: 'equation',
-          page: source.page,
-          sourceBox: sourceCropBox,
-          sourceObjectIds: [sourceObjectId],
-          sourceBoxes: [sourceBox],
-          ownedSourceBoxes,
-        }).catch((error: unknown) => {
-          cropTouchedEdge = sourcePageCropTouchesEdge(error)
-          return null
-        })
+      const initialHasUnownedText = initialUnownedSourceBoxes.length > 0
+      const initialExcludedSourceBoxes = excludedEquationSourceBoxesForCrop(
+        sourceCropBox,
+        ownedSourceBoxes,
+        sourceEquationLineIds,
+        regions,
+        page.width,
+        page.height,
+      )
+      const initialExclusionsComplete = initialUnownedSourceBoxes.every(
+        (unowned) =>
+          initialExcludedSourceBoxes.some((excluded) =>
+            sameSourceBox(unowned, excluded),
+          ),
+      )
+      cropVetoedUnownedText =
+        initialHasUnownedText && !initialExclusionsComplete
+      const initialCropResult = cropVetoedUnownedText
+        ? null
+        : await rasterizeEquationCrop(sourceCropBox, initialExcludedSourceBoxes)
+      sourceCrop = initialCropResult?.crop ?? null
+      cropTouchedEdge = initialCropResult?.touchedEdge ?? false
+      if (sourceCrop) {
+        requestedExcludedSourceBoxes =
+          initialCropResult!.requestedExcludedSourceBoxes
+        retainedExcludedSourceBoxes =
+          sourceCrop.sourceExclusionMask?.excludedSourceBoxes.map((box) => ({
+            ...box,
+          })) ?? []
+      } else if (initialHasUnownedText && !initialExclusionsComplete) {
+        cropTouchedEdge = false
       }
       const attemptedBoxes = [sourceCropBox]
-      retryEquationCrop: for (const padding of EQUATION_SOURCE_CROP_RETRY_PADDINGS) {
+      const retryCropScopes = [
+        ...EQUATION_SOURCE_CROP_RETRY_PADDINGS.map(
+          (padding) => [padding, 0.25] as const,
+        ),
+        ...EQUATION_SOURCE_CROP_RETRY_NEIGHBOR_GAP_FRACTIONS.map(
+          (neighborGapFraction) =>
+            [
+              EQUATION_SOURCE_CROP_RETRY_PADDINGS.at(-1)!,
+              neighborGapFraction,
+            ] as const,
+        ),
+      ]
+      retryEquationCrop: for (const [
+        padding,
+        neighborGapFraction,
+      ] of retryCropScopes) {
         if (sourceCrop || !cropTouchedEdge) break
         const retryBoxes = neighborBoundedCropBoxes(
           sourceBox,
           sourceEquationLineIds,
           regions,
           padding,
+          neighborGapFraction,
         )
         for (const retryBox of retryBoxes) {
           if (
@@ -7331,37 +7679,50 @@ export async function reconstructPdfVisuals({
             continue
           }
           attemptedBoxes.push(retryBox)
-          if (
-            hasUnownedSourceTextInEquationCrop(
-              retryBox,
-              sourceEquationLineIds,
-              regions,
-            )
-          ) {
+          const retryUnownedSourceBoxes = unownedSourceTextBoxesInEquationCrop(
+            retryBox,
+            sourceEquationLineIds,
+            regions,
+          )
+          const retryHasUnownedText = retryUnownedSourceBoxes.length > 0
+          const retryExcludedSourceBoxes = excludedEquationSourceBoxesForCrop(
+            retryBox,
+            ownedSourceBoxes,
+            sourceEquationLineIds,
+            regions,
+            page.width,
+            page.height,
+          )
+          const retryExclusionsComplete = retryUnownedSourceBoxes.every(
+            (unowned) =>
+              retryExcludedSourceBoxes.some((excluded) =>
+                sameSourceBox(unowned, excluded),
+              ),
+          )
+          if (retryHasUnownedText && !retryExclusionsComplete) {
             cropVetoedUnownedText = true
             continue
           }
-          let retryTouchedEdge = false
-          const retryCrop = await rasterizeFigure({
-            kind: 'equation',
-            page: source.page,
-            sourceBox: retryBox,
-            sourceObjectIds: [sourceObjectId],
-            sourceBoxes: [sourceBox],
-            ownedSourceBoxes,
-          }).catch((error: unknown) => {
-            retryTouchedEdge = sourcePageCropTouchesEdge(error)
-            return null
-          })
-          cropTouchedEdge = retryTouchedEdge
+          const retryResult = await rasterizeEquationCrop(
+            retryBox,
+            retryExcludedSourceBoxes,
+          )
+          const retryCrop = retryResult.crop
+          cropTouchedEdge = retryResult.touchedEdge
           if (retryCrop) {
             sourceCropBox = retryBox
             sourceCrop = retryCrop
+            requestedExcludedSourceBoxes =
+              retryResult.requestedExcludedSourceBoxes
+            retainedExcludedSourceBoxes =
+              retryCrop.sourceExclusionMask?.excludedSourceBoxes.map((box) => ({
+                ...box,
+              })) ?? []
             adaptivePaddingRetry = true
             neighborBoundedCrop = true
             break retryEquationCrop
           }
-          if (!retryTouchedEdge) break retryEquationCrop
+          if (!cropTouchedEdge) break retryEquationCrop
         }
       }
     }
@@ -7376,6 +7737,8 @@ export async function reconstructPdfVisuals({
         [sourceObjectId],
         [sourceBox],
         sourceCropBox,
+        ownedSourceBoxes,
+        requestedExcludedSourceBoxes,
       ),
     )
     if (sourceCrop && cropMatched) mergeAsset(assetStore, sourceCrop)
@@ -7388,6 +7751,9 @@ export async function reconstructPdfVisuals({
             ? ['source-page-crop-adaptive-padding']
             : []),
           ...(neighborBoundedCrop ? ['source-page-crop-neighbor-bounded'] : []),
+          ...(retainedExcludedSourceBoxes.length > 0
+            ? ['source-page-crop-unowned-text-masked']
+            : []),
           'source-page-crop',
         ]
       : approximationEvidence
@@ -7451,11 +7817,9 @@ export async function reconstructPdfVisuals({
           ? `${label} has readable source text but no source glyph, path, or raster rendition.`
           : overlappingUnownedSourceText
             ? `${label} has source geometry that materially overlaps unowned text, so no contaminated rectangular crop was retained.`
-            : cropVetoedUnownedText
-              ? `${label} has unowned source text inside the required rectangular crop, so no contaminated rendition was retained.`
-              : !sourceScopeComplete
-                ? `${label} has an incomplete or ambiguously owned adjacent equation source scope, so no partial glyph crop was retained.`
-                : `${label} has bounded source geometry but its extracted semantic transcript is unresolved and no source glyph raster is available.`,
+            : !sourceScopeComplete
+              ? `${label} has an incomplete or ambiguously owned adjacent equation source scope, so no partial glyph crop was retained.`
+              : `${label} has bounded source geometry but its extracted semantic transcript is unresolved and no source glyph raster is available.`,
         sourceBoxes: sources.map((region) => region.box),
         target: {
           regionIds: sources.map((region) => region.id),

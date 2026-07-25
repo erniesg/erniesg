@@ -312,6 +312,59 @@ function failedDocument(basename = 'synthetic.pdf') {
   }
 }
 
+function ocrProvenance() {
+  return [
+    {
+      page: 1,
+      engine: 'tesseract.js',
+      engineVersion: '6.0.1',
+      model: 'tessdata_best_int',
+      modelVersion: '4.0.0',
+      languages: ['eng'],
+      languageMode: 'explicit',
+      rasterSha256: 'f'.repeat(64),
+      confidence: 0.91,
+    },
+  ]
+}
+
+function executionProvenance(toolId = 'pdf-export') {
+  return {
+    schemaVersion: '1.1.0',
+    implementation: {
+      gitCommit: '1'.repeat(40),
+      gitCommitTimestamp: '2026-07-25T00:00:00+08:00',
+      worktreeState: 'clean',
+      exactHead: true,
+    },
+    runtime: {
+      name: 'node',
+      version: '24.4.1',
+      platform: 'darwin',
+      architecture: 'arm64',
+    },
+    tool: {
+      id: toolId,
+      packageName: 'astro-erudite',
+      packageVersion: '1.2.4',
+    },
+    toolchain: {
+      packageLockSha256: '2'.repeat(64),
+      pdfjsDist: {
+        declaredVersion: '5.4.624',
+        lockedVersion: '5.4.624',
+        resolvedVersion: '5.4.624',
+        resolvedPackageJsonSha256: '3'.repeat(64),
+        resolvedPackageContentsSha256: '4'.repeat(64),
+      },
+    },
+    verification: {
+      method: 'before-after-exact-match-v1',
+      stateSha256: '5'.repeat(64),
+    },
+  }
+}
+
 describe('deterministic PDF benchmark comparison', () => {
   it('round-trips the canonical five-decimal pass rate for one ready document out of three', () => {
     const corpus = createCorpusReport(
@@ -480,6 +533,165 @@ describe('deterministic PDF benchmark comparison', () => {
       expect(() => comparePdfBenchmarkReports(invalid, current)).toThrow(
         'INVALID_BENCHMARK_REPORT',
       )
+    }
+  })
+
+  it('requires an explicit compatibility policy for v1.6 OCR reports', () => {
+    const legacy = report([document()])
+    const historical = comparePdfBenchmarkReports(legacy, legacy)
+    expect(
+      comparePdfBenchmarkReports(legacy, legacy, {
+        corpusReportSchemaPolicy: 'v1.5-only',
+      }),
+    ).toEqual(historical)
+    expect(historical.policy).not.toHaveProperty(
+      'corpusReportSchemaCompatibility',
+    )
+    const ocrDocument = document()
+    ocrDocument.ocr = ocrProvenance()
+    const ocr = createCorpusReport([ocrDocument], policy)
+
+    expect(ocr).toMatchObject({
+      schemaVersion: '1.6.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+    })
+    expect(() => comparePdfBenchmarkReports(ocr, ocr)).toThrow(
+      'INVALID_BENCHMARK_REPORT',
+    )
+
+    const compatible = comparePdfBenchmarkReports(legacy, ocr, {
+      corpusReportSchemaPolicy: 'v1.5-v1.6-compatible',
+    })
+    expect(compatible.schemaVersion).toBe('1.6.0')
+    expect(compatible.summary.passed).toBe(true)
+    expect(compatible.policy.corpusReportSchemaCompatibility).toEqual({
+      policy: 'v1.5-v1.6-compatible',
+      baseline: {
+        schemaVersion: '1.5.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit.schema.json',
+      },
+      candidate: {
+        schemaVersion: '1.6.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+      },
+    })
+
+    const legacyWithOcr = structuredClone(legacy)
+    legacyWithOcr.documents[0].ocr = ocrProvenance()
+    expect(() =>
+      comparePdfBenchmarkReports(legacyWithOcr, ocr, {
+        corpusReportSchemaPolicy: 'v1.5-v1.6-compatible',
+      }),
+    ).toThrow('INVALID_BENCHMARK_REPORT')
+
+    const relabeledWithoutOcr = structuredClone(legacy)
+    relabeledWithoutOcr.schemaVersion = '1.6.0'
+    relabeledWithoutOcr.reportSchema =
+      'docs/schemas/pdf-corpus-audit-v1.6.schema.json'
+    expect(() =>
+      comparePdfBenchmarkReports(relabeledWithoutOcr, ocr, {
+        corpusReportSchemaPolicy: 'v1.5-v1.6-compatible',
+      }),
+    ).toThrow('INVALID_BENCHMARK_REPORT')
+
+    const malformedOcr = structuredClone(ocr)
+    malformedOcr.documents[0].ocr[0].rasterSha256 = '/private/raster.png'
+    const nonStringLanguage = structuredClone(ocr)
+    nonStringLanguage.documents[0].ocr[0].languages = [123]
+    for (const invalid of [malformedOcr, nonStringLanguage]) {
+      expect(() =>
+        comparePdfBenchmarkReports(invalid, ocr, {
+          corpusReportSchemaPolicy: 'v1.5-v1.6-compatible',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
+    }
+  })
+
+  it('validates exact-head v1.7 reports behind an explicit schema policy', () => {
+    const current = createCorpusReport([document()], policy, {
+      executionProvenance: executionProvenance(),
+    })
+    expect(current).toMatchObject({
+      schemaVersion: '1.7.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+    })
+    expect(() => comparePdfBenchmarkReports(current, current)).toThrow(
+      'INVALID_BENCHMARK_REPORT',
+    )
+    const exactHeadComparison = comparePdfBenchmarkReports(current, current, {
+      corpusReportSchemaPolicy: 'v1.7-only',
+    })
+    expect(exactHeadComparison).toMatchObject({
+      schemaVersion: '1.7.0',
+      summary: {
+        exactHeadEvidencePassed: true,
+        passed: true,
+      },
+      policy: {
+        corpusReportSchemaCompatibility: {
+          policy: 'v1.7-only',
+          baseline: {
+            schemaVersion: '1.7.0',
+            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+            reportSha256: canonicalJsonHash(current),
+            executionProvenance: current.executionProvenance,
+          },
+          candidate: {
+            schemaVersion: '1.7.0',
+            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+            reportSha256: canonicalJsonHash(current),
+            executionProvenance: current.executionProvenance,
+          },
+        },
+      },
+    })
+
+    const dirty = structuredClone(current)
+    dirty.executionProvenance.implementation.worktreeState = 'dirty'
+    dirty.executionProvenance.implementation.exactHead = false
+    const dirtyComparison = comparePdfBenchmarkReports(dirty, dirty, {
+      corpusReportSchemaPolicy: 'v1.7-only',
+    })
+    expect(dirtyComparison).toMatchObject({
+      schemaVersion: '1.7.0',
+      summary: {
+        exactHeadEvidencePassed: false,
+        passed: false,
+      },
+    })
+    expect(
+      dirtyComparison.policy.corpusReportSchemaCompatibility.baseline
+        .reportSha256,
+    ).toBe(canonicalJsonHash(dirty))
+
+    const inconsistent = structuredClone(current)
+    inconsistent.executionProvenance.implementation.exactHead = false
+    expect(() =>
+      comparePdfBenchmarkReports(current, inconsistent, {
+        corpusReportSchemaPolicy: 'v1.7-only',
+      }),
+    ).toThrow('INVALID_BENCHMARK_REPORT')
+    const leaking = structuredClone(current)
+    leaking.executionProvenance.runtime.localPath = '/private/source'
+    const malformedTimestamp = structuredClone(current)
+    malformedTimestamp.executionProvenance.implementation.gitCommitTimestamp =
+      '1'
+    const mismatchedPdfjs = structuredClone(current)
+    mismatchedPdfjs.executionProvenance.toolchain.pdfjsDist.resolvedVersion =
+      '5.4.625'
+    const missingFinalization = structuredClone(current)
+    delete missingFinalization.executionProvenance.verification
+    for (const invalid of [
+      leaking,
+      malformedTimestamp,
+      mismatchedPdfjs,
+      missingFinalization,
+    ]) {
+      expect(() =>
+        comparePdfBenchmarkReports(current, invalid, {
+          corpusReportSchemaPolicy: 'v1.7-only',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
     }
   })
 
@@ -1692,6 +1904,12 @@ describe('deterministic PDF benchmark comparison', () => {
         'textCoverage=Infinity',
       ],
       ['baseline.json', 'candidate.json', '--out'],
+      [
+        'baseline.json',
+        'candidate.json',
+        '--corpus-report-schema-policy',
+        'accept-anything',
+      ],
     ]) {
       const result = spawnSync(process.execPath, [executable, ...arguments_], {
         encoding: 'utf8',

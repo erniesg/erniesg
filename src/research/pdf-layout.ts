@@ -2907,9 +2907,7 @@ function sourceProvenSamePageColumnBoundary(
     target.text,
     continuation.text,
   )
-  const targetToken = target.text
-    .trimEnd()
-    .match(/([\p{L}\p{N}]+)[-‐‑]$/u)?.[1]
+  const targetToken = target.text.trimEnd().match(/([\p{L}\p{N}]+)[-‐‑]$/u)?.[1]
   const continuationToken = continuation.text
     .trimStart()
     .match(/^([\p{L}\p{N}]+)/u)?.[1]
@@ -6847,8 +6845,7 @@ function sourceInlineRuns(
             )
             const compactMathAtom = compactMathSpans.some(
               (candidate) =>
-                candidate.start <= segmentStart &&
-                candidate.end >= segmentEnd,
+                candidate.start <= segmentStart && candidate.end >= segmentEnd,
             )
             store({
               start: canonicalRange.start + segmentStart,

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "3.0.0",
+  "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v3",
+  "privacy": "public-identities-hashes-governance-metadata-no-source-content-or-local-paths",
+  "extends": {
+    "id": "scholarly-pdf-reconstruction-eval-governance-2026-07-v2",
+    "path": "benchmarks/pdf/reconstruction-eval-contract-v2.json",
+    "fileSha256": "0ee0826873f0b7349a5f4187746f9cc35a9acc1556fd7aa35e004b1a51a9a2dd"
+  },
+  "robustnessCorpus": {
+    "artifact": {
+      "path": "benchmarks/pdf/corpus-contract-v2.json",
+      "fileSha256": "91b38615b1f9b4acce960bc6ee23d41a8c7eb048714184a469677af0645bc956"
+    },
+    "canonicalContractSha256": "df8d26b2dfa64e2afe106d4ac53b630012918aeba4638b437307748ee3541814",
+    "frozenSet": {
+      "id": "frozen-10-2026-07-20-v1",
+      "documentCount": 10,
+      "documentIdentitySha256": "4486bb696a8b7b9b2cc853f20510c6c006b4fdfab2883ec9d593b27c17192f67"
+    },
+    "seededRandomSet": {
+      "id": "seeded-random-disjoint-10-2026-07-25-v2",
+      "documentCount": 10,
+      "documentIdentitySha256": "2c6c49ecf9bd4b6f48a22eeb477bcde254ca3064f0359165da4f0c482a99ebe8"
+    },
+    "selectionPolicy": "sha256-rank-without-replacement-excluding-frozen-v1",
+    "runCount": 20,
+    "distinctDocumentCount": 20,
+    "overlapDocumentIds": []
+  },
+  "authority": {
+    "role": "whole-paper-discovery-and-regression-not-labelled-holdout",
+    "promotionAuthority": "none-objective-gates-and-independent-blind-evidence-remain-required"
+  },
+  "taxonomySaturation": {
+    "status": "not-saturated",
+    "labeledBoundedTraceCount": 32,
+    "targetApproximateTraceCount": 100,
+    "requiredFinalNoNewClassWindow": 20,
+    "observedFinalNoNewClassWindow": 0,
+    "robustnessRunCount": 20,
+    "distinctRobustnessDocumentCount": 20
+  }
+}

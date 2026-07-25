@@ -7506,8 +7506,7 @@ describe('PDF semantic reconstruction', () => {
     )
     expect(
       result.diagnostics.filter(
-        (diagnostic) =>
-          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
+        (diagnostic) => diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
       ),
     ).toEqual([])
     expect(result.readiness).toMatchObject({
@@ -8418,8 +8417,7 @@ describe('PDF semantic reconstruction', () => {
     )
     expect(
       diagnostics.filter(
-        (diagnostic) =>
-          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
+        (diagnostic) => diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
       ),
     ).toEqual([])
   })
@@ -8678,9 +8676,7 @@ describe('PDF semantic reconstruction', () => {
             code: 'RESOLVED_READING_ORDER',
             severity: 'info',
             page: pageNumber,
-            sourceBoxes: [
-              provenance[`bounded-caption-${pageNumber}`].boxes[0],
-            ],
+            sourceBoxes: [provenance[`bounded-caption-${pageNumber}`].boxes[0]],
           }),
         ),
       ),
@@ -8731,8 +8727,7 @@ describe('PDF semantic reconstruction', () => {
       [21, 22, 23, 24].map((ordinal) => ({
         page: rollbackProvenance[`bounded-caption-${ordinal}`].boxes[0].page,
         column: 'single' as const,
-        sourceBox:
-          rollbackProvenance[`bounded-caption-${ordinal}`].boxes[0],
+        sourceBox: rollbackProvenance[`bounded-caption-${ordinal}`].boxes[0],
         visualNodeId: `bounded-visual-${ordinal}`,
         captionNodeId: `bounded-caption-${ordinal}`,
       })),
@@ -9633,8 +9628,7 @@ describe('PDF semantic reconstruction', () => {
     ).toEqual([])
     expect(
       diagnostics.filter(
-        (diagnostic) =>
-          diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
+        (diagnostic) => diagnostic.code === 'SOURCE_ORDER_FLOAT_FALLBACK',
       ),
     ).toEqual([
       expect.objectContaining({
@@ -10423,6 +10417,50 @@ describe('PDF semantic reconstruction', () => {
           10,
           'Synthetic-CMR10',
         ),
+      ],
+    },
+    {
+      name: 'a mixed variable fraction without a relation operator',
+      fileName: 'unresolved-mixed-variable-fraction.pdf',
+      corruptTranscript: /2xy/u,
+      runs: [
+        run(1, 'The recovered ratio is', 0.1, 0.34, 0.16),
+        mathRun('2', 0.261, 0.34, 0.012, 10, 'Synthetic-CMR10'),
+        mathRun('x', 0.274, 0.333, 0.007, 7, 'Synthetic-CMMI7'),
+        mathRun('y', 0.274, 0.348, 0.007, 7, 'Synthetic-CMMI7'),
+        run(1, 'for each observed sample.', 0.283, 0.34, 0.2),
+      ],
+    },
+    {
+      name: 'a three-run variable fraction',
+      fileName: 'unresolved-three-run-variable-fraction.pdf',
+      corruptTranscript: /2xy/u,
+      runs: [
+        mathRun('2', 0.261, 0.34, 0.012, 10, 'Synthetic-CMR10'),
+        mathRun('x', 0.274, 0.333, 0.007, 7, 'Synthetic-CMMI7'),
+        mathRun('y', 0.274, 0.348, 0.007, 7, 'Synthetic-CMMI7'),
+      ],
+    },
+    {
+      name: 'a four-run line-start variable fraction',
+      fileName: 'unresolved-line-start-variable-fraction.pdf',
+      corruptTranscript: /2xy\s*defines the observed ratio/u,
+      runs: [
+        mathRun('2', 0.1, 0.34, 0.012, 10, 'Synthetic-CMR10'),
+        mathRun('x', 0.113, 0.333, 0.007, 7, 'Synthetic-CMMI7'),
+        mathRun('y', 0.113, 0.348, 0.007, 7, 'Synthetic-CMMI7'),
+        run(1, 'defines the observed ratio.', 0.122, 0.34, 0.22),
+      ],
+    },
+    {
+      name: 'a non-Computer-Modern variable fraction',
+      fileName: 'unresolved-non-cm-variable-fraction.pdf',
+      corruptTranscript: /2xy\s*defines the observed ratio/u,
+      runs: [
+        mathRun('2', 0.1, 0.34, 0.012, 10, 'Synthetic-Math-Regular'),
+        mathRun('x', 0.113, 0.333, 0.007, 7, 'Synthetic-Math-Regular'),
+        mathRun('y', 0.113, 0.348, 0.007, 7, 'Synthetic-Math-Regular'),
+        run(1, 'defines the observed ratio.', 0.122, 0.34, 0.22),
       ],
     },
   ])(
@@ -12771,9 +12809,7 @@ describe('PDF semantic reconstruction', () => {
     expect(canonicalText).toContain('unattested oper-')
     expect(
       result.regions.some((region) =>
-        region.text.includes(
-          'ation belongs to a small unrelated annotation.',
-        ),
+        region.text.includes('ation belongs to a small unrelated annotation.'),
       ),
     ).toBe(true)
   })

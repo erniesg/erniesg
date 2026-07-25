@@ -112,13 +112,20 @@ npm run pdf:corpus-audit -- /operator/supplied/file-or-directory
 ```
 
 The command exits nonzero if any document needs review. `--report-only` emits the
-same JSON without using incompleteness as the process exit status. Reports use
-schema `1.5.0`, validated by `docs/schemas/pdf-corpus-audit.schema.json`, and
-contain only stable basenames, SHA-256 hashes, byte/page counts, completeness
-metrics, readiness, deterministic structural hashes derived from the canonical
-evidence, exact per-code diagnostic counts, and redacted samples bounded to
-three per code and 64 per document. They contain no input paths, document bytes,
-extracted prose, titles, authors, or provenance boxes.
+same JSON without using incompleteness as the process exit status. Current
+commands use schema `1.7.0`, validated by
+`docs/schemas/pdf-corpus-audit-v1.7.schema.json`; the frozen `1.5.0` non-OCR and
+`1.6.0` OCR contracts remain available for historical receipts. Reports contain
+only stable basenames, SHA-256 hashes, byte/page counts, completeness metrics,
+readiness, deterministic structural hashes derived from the canonical evidence,
+exact per-code diagnostic counts, bounded redacted samples, and sanitized Git,
+Node, tool, and lockfile provenance. The command captures that state before
+processing and requires an exact match immediately before publishing the
+receipt; a mid-run HEAD, worktree, lockfile, or resolved PDF.js identity change
+fails closed. A clean `exactHead` verdict binds the receipt to its Git commit;
+dirty runs say so explicitly. Reports contain no input paths,
+document bytes, extracted prose, titles, authors, provenance boxes, usernames,
+host names, or wall-clock run timestamps.
 
 Same-toolchain repeatability compares byte hashes plus recomputed canonical-node,
 relationship, asset-manifest, and line-ledger receipts. Cross-version or

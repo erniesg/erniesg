@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.7.0.json",
+  "title": "Local PDF corpus audit report with exact-head execution provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reportSchema",
+    "privacy",
+    "executionProvenance",
+    "policy",
+    "summary",
+    "documents"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.7.0" },
+    "reportSchema": {
+      "const": "docs/schemas/pdf-corpus-audit-v1.7.schema.json"
+    },
+    "privacy": { "const": "basenames-hashes-metrics-diagnostics-only" },
+    "executionProvenance": { "$ref": "#/$defs/executionProvenance" },
+    "policy": {
+      "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/policy"
+    },
+    "corpusContract": {
+      "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/corpusContractBinding"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documents",
+        "ready",
+        "reviewRequired",
+        "failed",
+        "passRate",
+        "failureReasons"
+      ],
+      "properties": {
+        "documents": { "type": "integer", "minimum": 0 },
+        "ready": { "type": "integer", "minimum": 0 },
+        "reviewRequired": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "passRate": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/ratio"
+        },
+        "failureReasons": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.6.0.json#/$defs/auditedDocument"
+          },
+          {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/failedDocument"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+    },
+    "semanticVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "executionProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "implementation",
+        "runtime",
+        "tool",
+        "toolchain",
+        "verification"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.1.0" },
+        "implementation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "gitCommit",
+            "gitCommitTimestamp",
+            "worktreeState",
+            "exactHead"
+          ],
+          "properties": {
+            "gitCommit": { "$ref": "#/$defs/gitObjectId" },
+            "gitCommitTimestamp": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+            },
+            "worktreeState": { "enum": ["clean", "dirty"] },
+            "exactHead": { "type": "boolean" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "worktreeState": { "const": "clean" } },
+                "required": ["worktreeState"]
+              },
+              "then": {
+                "properties": { "exactHead": { "const": true } }
+              },
+              "else": {
+                "properties": { "exactHead": { "const": false } }
+              }
+            }
+          ]
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "platform", "architecture"],
+          "properties": {
+            "name": { "const": "node" },
+            "version": { "$ref": "#/$defs/semanticVersion" },
+            "platform": {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/safeIdentifier"
+            },
+            "architecture": {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/safeIdentifier"
+            }
+          }
+        },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "packageName", "packageVersion"],
+          "properties": {
+            "id": { "enum": ["pdf-corpus-audit", "pdf-export"] },
+            "packageName": { "const": "astro-erudite" },
+            "packageVersion": { "$ref": "#/$defs/semanticVersion" }
+          }
+        },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["packageLockSha256", "pdfjsDist"],
+          "properties": {
+            "packageLockSha256": { "$ref": "#/$defs/sha256" },
+            "pdfjsDist": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "declaredVersion",
+                "lockedVersion",
+                "resolvedVersion",
+                "resolvedPackageJsonSha256",
+                "resolvedPackageContentsSha256"
+              ],
+              "properties": {
+                "declaredVersion": { "$ref": "#/$defs/semanticVersion" },
+                "lockedVersion": { "$ref": "#/$defs/semanticVersion" },
+                "resolvedVersion": { "$ref": "#/$defs/semanticVersion" },
+                "resolvedPackageJsonSha256": { "$ref": "#/$defs/sha256" },
+                "resolvedPackageContentsSha256": {
+                  "$ref": "#/$defs/sha256"
+                }
+              }
+            }
+          }
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "stateSha256"],
+          "properties": {
+            "method": { "const": "before-after-exact-match-v1" },
+            "stateSha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    }
+  }
+}

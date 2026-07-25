@@ -52,6 +52,13 @@ export type PdfLineBoundaryDecision = {
   evidence: string[]
 }
 
+export type PdfSourceExclusionMask = {
+  algorithm: 'nearest-source-box-v1'
+  expansionPixels: 2
+  ownedSourceBoxes: NormalizedSourceBox[]
+  excludedSourceBoxes: NormalizedSourceBox[]
+}
+
 export type PdfVisualAsset = {
   id: string
   href: string
@@ -77,6 +84,7 @@ export type PdfVisualAsset = {
   sourceObjectIds: string[]
   sourceBoxes: NormalizedSourceBox[]
   sourceCropBox?: NormalizedSourceBox
+  sourceExclusionMask?: PdfSourceExclusionMask
 }
 
 export type PdfNativeObject = {

@@ -14,7 +14,6 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import Ajv2020 from 'ajv/dist/2020.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createPdfPipeline } from './pdf-corpus-audit-lib.mjs'
 import {
@@ -98,6 +97,16 @@ describe('headless PDF export', () => {
     expect(parseArguments(base).documentTimeoutSeconds).toBe(
       DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     )
+    expect(parseArguments(base).ocrEngine).toBe('none')
+    expect(
+      parseArguments([...base, '--ocr-engine', 'tesseract']).ocrEngine,
+    ).toBe('tesseract')
+    expect(parseArguments([...base, '--ocr-engine=none']).ocrEngine).toBe(
+      'none',
+    )
+    for (const value of ['', 'remote', 'auto']) {
+      expect(() => parseArguments([...base, `--ocr-engine=${value}`])).toThrow()
+    }
     expect(
       parseArguments([...base, '--document-timeout-seconds', '42'])
         .documentTimeoutSeconds,
@@ -447,11 +456,7 @@ describe('headless PDF export', () => {
       ])
 
       const report = first.report
-      const schema = JSON.parse(
-        await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
-      )
-      const validate = new Ajv2020({ strict: false }).compile(schema)
-      expect(validate(report), validate.errors).toBe(true)
+      expect(reportValidator(report), reportValidator.errors).toBe(true)
       expect(report.summary).toMatchObject({
         documents: 2,
         ready: 0,
@@ -616,6 +621,30 @@ describe('headless PDF export', () => {
             `{\n  "privacy": ${JSON.stringify(privateMarker)},\n`,
           ),
         )
+        await writeFile(manifestPath, substituted)
+        await writeFile(
+          join(stagingDirectory, 'checksums.sha256'),
+          `${[
+            ...document.exports.map(
+              (artifact) => `${artifact.sha256}  ${artifact.basename}`,
+            ),
+            `${digest(substituted)}  export-manifest.json`,
+          ].join('\n')}\n`,
+        )
+      },
+    },
+    {
+      name: 'legacy export-manifest schema with valid recomputed checksums',
+      tamper: async ({ document, stagingDirectory }) => {
+        const manifestPath = join(stagingDirectory, 'export-manifest.json')
+        const original = await readFile(manifestPath, 'utf8')
+        const substituted = Buffer.from(
+          original.replace(
+            '"schemaVersion": "1.1.0"',
+            '"schemaVersion": "1.0.0"',
+          ),
+        )
+        expect(substituted.toString('utf8')).not.toBe(original)
         await writeFile(manifestPath, substituted)
         await writeFile(
           join(stagingDirectory, 'checksums.sha256'),
@@ -812,7 +841,14 @@ describe('headless PDF export', () => {
       expect(secondResult.status, secondResult.stderr).toBe(0)
       const report = JSON.parse(firstResult.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.5.0',
+        schemaVersion: '1.7.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        executionProvenance: {
+          implementation: {
+            gitCommit: expect.stringMatching(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+          },
+          tool: { id: 'pdf-export' },
+        },
         summary: {
           documents: 1,
           ready: 1,
@@ -869,6 +905,10 @@ describe('headless PDF export', () => {
         )
       }
 
+      const manifest = JSON.parse(
+        await readFile(join(first, 'export-manifest.json'), 'utf8'),
+      )
+      expect(manifest.schemaVersion).toBe('1.1.0')
       const checksums = await readFile(join(first, 'checksums.sha256'), 'utf8')
       for (const file of [...artifactNames, 'export-manifest.json']) {
         expect(checksums).toContain(
@@ -1002,6 +1042,8 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(result.status, result.stderr).toBe(1)
       const report = JSON.parse(result.stdout)
       expect(report).toMatchObject({
+        schemaVersion: '1.7.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
         summary: {
           documents: 1,
           ready: 0,
@@ -1026,7 +1068,71 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
+
+  it('threads explicit local OCR through the isolated export worker without bypassing review', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-ocr-'))
+    const output = join(directory, 'output')
+    try {
+      const result = runExport([
+        'tests/fixtures/pdf/scanned-page.pdf',
+        '--ocr-engine',
+        'tesseract',
+        '--target',
+        'paperPro',
+        '--out',
+        output,
+      ])
+
+      expect(result.status, result.stderr).toBe(1)
+      const report = JSON.parse(result.stdout)
+      expect(report).toMatchObject({
+        schemaVersion: '1.7.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        summary: {
+          documents: 1,
+          ready: 0,
+          reviewRequired: 1,
+          failed: 0,
+          failureReasons: {
+            LOW_CONFIDENCE_OCR: 1,
+            OCR_REQUIRED: 1,
+          },
+        },
+        documents: [
+          {
+            basename: 'scanned-page.pdf',
+            ocr: [
+              {
+                page: 1,
+                engine: 'tesseract.js',
+                engineVersion: '6.0.1',
+                model: 'tessdata_best_int',
+                modelVersion: '4.0.0',
+              },
+            ],
+            completeness: {
+              sourceTextCharacters: expect.any(Number),
+            },
+            readiness: {
+              ready: false,
+              blockingDiagnosticCodes: expect.arrayContaining([
+                'LOW_CONFIDENCE_OCR',
+                'OCR_REQUIRED',
+              ]),
+            },
+          },
+        ],
+      })
+      expect(
+        report.documents[0].completeness.sourceTextCharacters,
+      ).toBeGreaterThan(0)
+      expect(result.stdout).not.toContain('NO_RECONSTRUCTABLE_TEXT')
+      expect(await readdir(output)).toEqual(['corpus-audit.json'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   it('exports an explicitly requested readable fallback with comparator-compatible artifact modes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-readable-'))
@@ -1075,11 +1181,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           mode: 'readable-fallback',
         }),
       ])
-      const schema = JSON.parse(
-        await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
-      )
-      const validate = new Ajv2020({ strict: false }).compile(schema)
-      expect(validate(report), validate.errors).toBe(true)
+      expect(reportValidator(report), reportValidator.errors).toBe(true)
       expect((await readdir(output)).sort()).toEqual(
         [
           'checksums.sha256',
@@ -1098,6 +1200,9 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
     const first = join(directory, 'first')
     const second = join(directory, 'second')
     const comparison = join(directory, 'comparison.json')
+    const cleanBaseline = join(directory, 'clean-baseline.json')
+    const cleanCandidate = join(directory, 'clean-candidate.json')
+    const cleanComparison = join(directory, 'clean-comparison.json')
     try {
       for (const output of [first, second]) {
         const result = runExport([
@@ -1122,16 +1227,65 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           join(second, 'corpus-audit.json'),
           '--out',
           comparison,
+          '--corpus-report-schema-policy',
+          'v1.7-only',
           '--require-identical-artifacts',
           '--require-identical-structure',
         ],
         { encoding: 'utf8', timeout: 120_000 },
       )
 
-      expect(compared.status, compared.stderr).toBe(0)
+      const liveComparison = JSON.parse(await readFile(comparison, 'utf8'))
+      expect(compared.status, compared.stderr).toBe(
+        liveComparison.summary.exactHeadEvidencePassed ? 0 : 1,
+      )
+      expect(liveComparison.summary).toMatchObject({
+        passed: liveComparison.summary.exactHeadEvidencePassed,
+        regressed: 0,
+      })
+
+      const cleanReports = await Promise.all(
+        [first, second].map(async (output) => {
+          const report = JSON.parse(
+            await readFile(join(output, 'corpus-audit.json'), 'utf8'),
+          )
+          return report
+        }),
+      )
+      expect(liveComparison.summary.exactHeadEvidencePassed).toBe(
+        cleanReports.every(
+          (report) => report.executionProvenance.implementation.exactHead,
+        ),
+      )
+      for (const report of cleanReports) {
+        report.executionProvenance.implementation.worktreeState = 'clean'
+        report.executionProvenance.implementation.exactHead = true
+      }
+      await Promise.all([
+        writeFile(cleanBaseline, `${JSON.stringify(cleanReports[0])}\n`),
+        writeFile(cleanCandidate, `${JSON.stringify(cleanReports[1])}\n`),
+      ])
+      const cleanCompared = spawnSync(
+        process.execPath,
+        [
+          'tools/pdf-benchmark-compare.mjs',
+          cleanBaseline,
+          cleanCandidate,
+          '--out',
+          cleanComparison,
+          '--corpus-report-schema-policy',
+          'v1.7-only',
+          '--require-identical-artifacts',
+          '--require-identical-structure',
+        ],
+        { encoding: 'utf8', timeout: 120_000 },
+      )
+
+      expect(cleanCompared.status, cleanCompared.stderr).toBe(0)
       expect(
-        JSON.parse(await readFile(comparison, 'utf8')).summary,
+        JSON.parse(await readFile(cleanComparison, 'utf8')).summary,
       ).toMatchObject({
+        exactHeadEvidencePassed: true,
         passed: true,
         regressed: 0,
       })

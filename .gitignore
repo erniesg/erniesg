@@ -64,3 +64,6 @@ outputs/
 **/.agent/harness-runs/
 **/.agent/vm-runs/
 .rucksack/secrets/
+
+# Repository-relative benchmark evidence fixtures created by unit tests
+benchmarks/pdf/.readiness-evidence-*/

@@ -3,8 +3,14 @@ import { access } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute } from 'node:path'
 
-export const HEADLESS_OCR_ENGINES = Object.freeze(['none', 'tesseract'])
-export const DEFAULT_HEADLESS_OCR_ENGINE = 'none'
+// The engine list, defaults, and validation live in the registry; this module
+// stays the vendored Tesseract reference implementation of the shared contract.
+export {
+  DEFAULT_HEADLESS_OCR_ENGINE,
+  HEADLESS_OCR_ENGINES,
+  normalizeHeadlessOcrEngine,
+} from './pdf-ocr-engines.mjs'
+
 export const TESSERACT_JS_VERSION = '6.0.1'
 export const TESSDATA_MODEL_VERSION = '4.0.0'
 export const LOCAL_NODE_OCR_LANGUAGES = Object.freeze(['eng'])
@@ -23,13 +29,6 @@ function throwIfAborted(signal, stage) {
     'IMPORT_CANCELLED',
     `The local PDF reconstruction was cancelled ${stage}.`,
   )
-}
-
-export function normalizeHeadlessOcrEngine(value) {
-  if (!HEADLESS_OCR_ENGINES.includes(value)) {
-    throw new Error('INVALID_OCR_ENGINE')
-  }
-  return value
 }
 
 export function localNodeOcrAssets(resolveModule = localRequire.resolve) {

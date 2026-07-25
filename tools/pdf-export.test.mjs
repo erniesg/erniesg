@@ -118,6 +118,43 @@ describe('headless PDF export', () => {
     }
   })
 
+  it('keeps every off-host OCR engine behind explicit per-run declarations', () => {
+    const base = ['paper.pdf', '--out', '/tmp/pdf-export-ocr-engine-test']
+    expect(parseArguments(base)).toMatchObject({
+      ocrEngine: 'none',
+      ocrRemoteOptIn: false,
+      documentVisibility: 'private',
+    })
+    expect(
+      parseArguments([...base, '--ocr-engine=apple-vision']).ocrEngine,
+    ).toBe('apple-vision')
+    expect(
+      parseArguments([
+        ...base,
+        '--ocr-engine=remote-worker',
+        '--ocr-remote-opt-in',
+        '--document-visibility',
+        'public',
+      ]),
+    ).toMatchObject({
+      ocrEngine: 'remote-worker',
+      ocrRemoteOptIn: true,
+      documentVisibility: 'public',
+    })
+    for (const value of ['', 'internal', 'PUBLIC']) {
+      expect(() =>
+        parseArguments([...base, `--document-visibility=${value}`]),
+      ).toThrow()
+    }
+    expect(() =>
+      parseArguments([
+        ...base,
+        '--document-visibility=public',
+        '--document-visibility=private',
+      ]),
+    ).toThrow('INVALID_USAGE')
+  })
+
   it('uses fixed parent-owned staged artifact and document byte caps', () => {
     expect(MAX_STAGED_EPUB_BYTES).toBe(256 * 1024 * 1024)
     expect(MAX_STAGED_DOCUMENT_BYTES).toBe(512 * 1024 * 1024)

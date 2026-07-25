@@ -24,10 +24,12 @@ import { promisify } from 'node:util'
 import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 import {
-  createNodeOcrOptions,
+  createHeadlessOcrOptions,
+  DEFAULT_DOCUMENT_VISIBILITY,
   DEFAULT_HEADLESS_OCR_ENGINE,
   normalizeHeadlessOcrEngine,
-} from './pdf-ocr-node.mjs'
+  resolveHeadlessOcrEngine,
+} from './pdf-ocr-engines.mjs'
 
 export const PDF_CORPUS_REPORT_SCHEMA_VERSION = '1.5.0'
 export const PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION = '1.6.0'
@@ -1128,8 +1130,18 @@ export function createPdfStructuralReceipt(reconstruction) {
 export async function createPdfPipeline({
   temporaryRoot = tmpdir(),
   ocrEngine = DEFAULT_HEADLESS_OCR_ENGINE,
+  ocrRemoteOptIn = false,
+  documentVisibility = DEFAULT_DOCUMENT_VISIBILITY,
 } = {}) {
   const resolvedOcrEngine = normalizeHeadlessOcrEngine(ocrEngine)
+  const engineContext = { remoteOptIn: ocrRemoteOptIn, documentVisibility }
+  const ocrResolution = resolveHeadlessOcrEngine(
+    resolvedOcrEngine,
+    engineContext,
+  )
+  // Resolve the engine before the reconstruction server starts so an
+  // unavailable engine fails with its named diagnostic and no held resources.
+  const ocr = await createHeadlessOcrOptions(resolvedOcrEngine, engineContext)
   const cacheDir = await mkdtemp(join(temporaryRoot, 'srt-pdf-vite-'))
   const vite = await createServer({
     appType: 'custom',
@@ -1157,7 +1169,8 @@ export async function createPdfPipeline({
     maximumBytes: importTypes.MAX_LOCAL_PDF_BYTES,
     standardFontDataUrl,
     ocrEngine: resolvedOcrEngine,
-    ocr: resolvedOcrEngine === 'tesseract' ? createNodeOcrOptions() : undefined,
+    ocrResolution,
+    ocr,
     async loadExportModules() {
       exportModules ??= Promise.all([
         vite.ssrLoadModule('/src/research/epub.ts'),

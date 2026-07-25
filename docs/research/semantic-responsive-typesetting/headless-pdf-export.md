@@ -34,6 +34,50 @@ npm run pdf:corpus-audit -- --report-only \
 The worker, WebAssembly core, English `tessdata_best_int` model, page rasterizer,
 and PDF parser all resolve from lockfile-pinned local packages. The command does
 not contain a remote OCR fallback and does not download a model at runtime.
+
+## Pluggable OCR engines
+
+`tools/pdf-ocr-engines.mjs` is the engine registry. Every engine fulfils the
+same recognition contract: word and line boxes in raster pixels, per-token
+confidence, the page rotation carried by the caller, engine and model versions,
+and the raster and source hashes that tie a recognition to the exact bytes it
+scored. `tesseract` is the reference implementation and the only engine the
+browser studio can use; the studio is unaffected by everything below.
+
+| Engine | Where it runs | How it activates |
+|---|---|---|
+| `none` | — | default; OCR stays off |
+| `tesseract` | this host, lockfile-pinned | `--ocr-engine tesseract` |
+| `apple-vision` | macOS host, local helper per page image | `--ocr-engine apple-vision` |
+| `remote-worker` | self-hosted GPU worker | opt-in flag, public visibility, and an environment endpoint |
+
+`apple-vision` invokes `tools/ocr/apple-vision-recognize.swift` once per page
+raster inside a private temporary directory; page bytes never leave the host. On
+a non-macOS host the engine reports itself unavailable with the named
+`OCR_ENGINE_HOST_UNSUPPORTED` diagnostic instead of failing obscurely.
+
+`remote-worker` is never a default and never a silent fallback. It uploads page
+rasters only when all four gates pass: the engine is selected, `--ocr-remote-opt-in`
+is passed, the run declares `--document-visibility public`, and
+`SRT_OCR_REMOTE_ENDPOINT` names an absolute https endpoint without embedded
+credentials. A run left at the default private visibility is refused with
+`OCR_ENGINE_PRIVATE_DOCUMENT_FORBIDDEN`. `tools/pdf-ocr-remote.mjs` defines the
+request and response schema a self-hosted worker must implement; the worker must
+echo the raster hash it scored, and its recognitions are namespaced as
+`remote-worker:<worker-engine>` in provenance. Endpoint and token values are read
+from the environment only — activation records the variable *names*, never their
+values, in the export manifest's `remoteOcr` block.
+
+Compare engines on the same fixtures before choosing one:
+
+```bash
+npm run pdf:ocr:benchmark -- scanned-paper.pdf
+```
+
+The report gives one row per engine with completeness gate pass-rate, mean text
+coverage, mean OCR confidence, and per-page latency. Engines that cannot run on
+this host keep their row and carry their availability diagnostic, so a
+comparison never silently omits an engine.
 Missing assets fail closed. OCR confidence and source boxes enter the same
 provenance and completeness gates as browser OCR; recognition can therefore
 replace `NO_RECONSTRUCTABLE_TEXT` while still retaining `LOW_CONFIDENCE_OCR` and

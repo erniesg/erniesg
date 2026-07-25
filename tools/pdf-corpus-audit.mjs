@@ -21,12 +21,14 @@ import {
 } from './pdf-corpus-audit-lib.mjs'
 import { bindCorpusContractPaths } from './pdf-corpus-contract.mjs'
 import {
+  DEFAULT_DOCUMENT_VISIBILITY,
   DEFAULT_HEADLESS_OCR_ENGINE,
+  HEADLESS_OCR_ENGINES,
+  normalizeDocumentVisibility,
   normalizeHeadlessOcrEngine,
-} from './pdf-ocr-node.mjs'
+} from './pdf-ocr-engines.mjs'
 
-const USAGE =
-  'Usage: npm run pdf:corpus-audit -- [--report-only] [--ocr-engine <none|tesseract>] [--overlay-output <local-directory>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] <pdf-or-directory> [...]\n'
+const USAGE = `Usage: npm run pdf:corpus-audit -- [--report-only] [--ocr-engine <${HEADLESS_OCR_ENGINES.join('|')}>] [--ocr-remote-opt-in] [--document-visibility <private|public>] [--overlay-output <local-directory>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] <pdf-or-directory> [...]\n`
 
 function parseArguments(args) {
   let reportOnly = false
@@ -34,6 +36,8 @@ function parseArguments(args) {
   let corpusContractPath = null
   let corpusSet = null
   let ocrEngine = null
+  let ocrRemoteOptIn = false
+  let documentVisibility = null
   const inputs = []
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
@@ -49,6 +53,18 @@ function parseArguments(args) {
     } else if (argument.startsWith('--ocr-engine=')) {
       if (ocrEngine !== null) throw new Error('duplicate OCR engine')
       ocrEngine = argument.slice('--ocr-engine='.length)
+    } else if (argument === '--ocr-remote-opt-in') {
+      ocrRemoteOptIn = true
+    } else if (argument === '--document-visibility') {
+      if (documentVisibility !== null) throw new Error('duplicate visibility')
+      documentVisibility = args[index + 1] ?? null
+      if (!documentVisibility || documentVisibility.startsWith('--')) {
+        throw new Error('missing document visibility')
+      }
+      index += 1
+    } else if (argument.startsWith('--document-visibility=')) {
+      if (documentVisibility !== null) throw new Error('duplicate visibility')
+      documentVisibility = argument.slice('--document-visibility='.length)
     } else if (argument === '--overlay-output') {
       overlayOutput = args[index + 1] ?? null
       index += 1
@@ -93,6 +109,10 @@ function parseArguments(args) {
     ocrEngine: normalizeHeadlessOcrEngine(
       ocrEngine ?? DEFAULT_HEADLESS_OCR_ENGINE,
     ),
+    ocrRemoteOptIn,
+    documentVisibility: normalizeDocumentVisibility(
+      documentVisibility ?? DEFAULT_DOCUMENT_VISIBILITY,
+    ),
     overlayOutput,
     corpusContractPath,
     corpusSet,
@@ -110,6 +130,8 @@ try {
 const {
   reportOnly,
   ocrEngine,
+  ocrRemoteOptIn,
+  documentVisibility,
   overlayOutput,
   corpusContractPath,
   corpusSet,
@@ -194,7 +216,22 @@ async function main() {
     }
   }
 
-  const pipeline = await createPdfPipeline({ ocrEngine })
+  let pipeline
+  try {
+    pipeline = await createPdfPipeline({
+      ocrEngine,
+      ocrRemoteOptIn,
+      documentVisibility,
+    })
+  } catch (error) {
+    process.stderr.write(
+      error?.code === 'OCR_ENGINE_UNAVAILABLE'
+        ? `${error.message}\n`
+        : 'PDF corpus audit could not start the reconstruction pipeline.\n',
+    )
+    process.exitCode = 2
+    return
+  }
   try {
     const documents = []
     const contractDocumentsById = new Map(

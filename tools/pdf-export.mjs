@@ -37,9 +37,14 @@ import {
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 import { bindCorpusContractPaths } from './pdf-corpus-contract.mjs'
 import {
+  DEFAULT_DOCUMENT_VISIBILITY,
   DEFAULT_HEADLESS_OCR_ENGINE,
+  HEADLESS_OCR_ENGINES,
+  normalizeDocumentVisibility,
   normalizeHeadlessOcrEngine,
-} from './pdf-ocr-node.mjs'
+  remoteOcrActivationProvenance,
+  resolveHeadlessOcrEngine,
+} from './pdf-ocr-engines.mjs'
 
 const DEFAULT_TARGETS = ['paperPro', 'paperProMove']
 export const DEFAULT_DOCUMENT_TIMEOUT_SECONDS = 900
@@ -136,7 +141,7 @@ function recordDocumentExportFailure(document, error) {
 }
 
 function usage() {
-  return 'Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--ocr-engine <none|tesseract>] [--readable-fallback] [--require-epubcheck] [--document-timeout-seconds <1-86400>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] --out <directory>\n'
+  return `Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--ocr-engine <${HEADLESS_OCR_ENGINES.join('|')}>] [--ocr-remote-opt-in] [--document-visibility <private|public>] [--readable-fallback] [--require-epubcheck] [--document-timeout-seconds <1-86400>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] --out <directory>\n`
 }
 
 function parsePositiveInteger(value, maximum) {
@@ -158,6 +163,8 @@ export function parseArguments(arguments_) {
   let corpusContractPath = null
   let corpusSet = null
   let ocrEngine = null
+  let ocrRemoteOptIn = false
+  let documentVisibility = null
 
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
@@ -202,6 +209,23 @@ export function parseArguments(arguments_) {
     if (argument.startsWith('--ocr-engine=')) {
       if (ocrEngine !== null) throw new Error('INVALID_USAGE')
       ocrEngine = argument.slice('--ocr-engine='.length)
+      continue
+    }
+    if (argument === '--ocr-remote-opt-in') {
+      ocrRemoteOptIn = true
+      continue
+    }
+    if (argument === '--document-visibility') {
+      if (documentVisibility !== null) throw new Error('INVALID_USAGE')
+      const value = arguments_[index + 1]
+      if (!value || value.startsWith('--')) throw new Error('INVALID_USAGE')
+      documentVisibility = value
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--document-visibility=')) {
+      if (documentVisibility !== null) throw new Error('INVALID_USAGE')
+      documentVisibility = argument.slice('--document-visibility='.length)
       continue
     }
     if (argument === '--document-timeout-seconds') {
@@ -271,6 +295,10 @@ export function parseArguments(arguments_) {
     corpusSet,
     ocrEngine: normalizeHeadlessOcrEngine(
       ocrEngine ?? DEFAULT_HEADLESS_OCR_ENGINE,
+    ),
+    ocrRemoteOptIn,
+    documentVisibility: normalizeDocumentVisibility(
+      documentVisibility ?? DEFAULT_DOCUMENT_VISIBILITY,
     ),
     targets: [...new Set(targets.length > 0 ? targets : DEFAULT_TARGETS)],
   }
@@ -638,6 +666,7 @@ async function exportDocument({
   validator,
   outputDirectory,
   documentCount,
+  remoteOcr = null,
 }) {
   const artifacts = []
   const canonicalPaper = record.reconstruction.readiness.ready
@@ -694,6 +723,7 @@ async function exportDocument({
     completeness: record.document.completeness,
     readiness: record.document.readiness,
     ...(record.document.ocr ? { ocr: record.document.ocr } : {}),
+    ...(remoteOcr ? { remoteOcr } : {}),
     exports: artifacts.map(({ epub, metadata }) => ({
       ...metadata,
       profile: epub.profile,
@@ -740,7 +770,9 @@ function validWorkerJob(job) {
     job.targets.length > 0 &&
     job.targets.every((target) => typeof target === 'string') &&
     typeof job.readableFallback === 'boolean' &&
-    ['none', 'tesseract'].includes(job.ocrEngine) &&
+    HEADLESS_OCR_ENGINES.includes(job.ocrEngine) &&
+    typeof job.ocrRemoteOptIn === 'boolean' &&
+    ['private', 'public'].includes(job.documentVisibility) &&
     job.validator !== null &&
     typeof job.validator === 'object' &&
     typeof job.stagingDirectory === 'string' &&
@@ -754,7 +786,10 @@ export async function runPdfExportWorkerJob(job) {
   const pipeline = await createPdfPipeline({
     temporaryRoot: job.stagingDirectory,
     ocrEngine: job.ocrEngine,
+    ocrRemoteOptIn: job.ocrRemoteOptIn,
+    documentVisibility: job.documentVisibility,
   })
+  const remoteOcr = remoteOcrActivationProvenance(pipeline.ocrResolution)
   try {
     failureStage = 'pdf-audit'
     const record = await auditPdfPath(job.path, pipeline, {
@@ -793,6 +828,7 @@ export async function runPdfExportWorkerJob(job) {
         validator: job.validator,
         outputDirectory: job.stagingDirectory,
         documentCount: 1,
+        remoteOcr,
       })
     } catch (error) {
       recordDocumentExportFailure(record.document, error)
@@ -843,7 +879,7 @@ function stagedReadFlags() {
   )
 }
 
-function expectedExportManifestBytes(document, profilesById) {
+function expectedExportManifestBytes(document, profilesById, remoteOcr = null) {
   const selectedTargets = [...profilesById.keys()]
   if (
     document.exports.length !== selectedTargets.length ||
@@ -881,6 +917,7 @@ function expectedExportManifestBytes(document, profilesById) {
     completeness: document.completeness,
     readiness: document.readiness,
     ...(document.ocr ? { ocr: document.ocr } : {}),
+    ...(remoteOcr ? { remoteOcr } : {}),
     exports,
     determinism: {
       volatileFields: [],
@@ -901,7 +938,7 @@ function expectedChecksumBytes(document, manifestBytes) {
   )
 }
 
-function stagedDocumentExpectations(document, profilesById) {
+function stagedDocumentExpectations(document, profilesById, remoteOcr = null) {
   let totalBytes = 0
   for (const artifact of document.exports) {
     if (
@@ -915,7 +952,11 @@ function stagedDocumentExpectations(document, profilesById) {
     totalBytes += artifact.byteLength
   }
 
-  const manifestBytes = expectedExportManifestBytes(document, profilesById)
+  const manifestBytes = expectedExportManifestBytes(
+    document,
+    profilesById,
+    remoteOcr,
+  )
   if (
     manifestBytes === null ||
     manifestBytes.byteLength > MAX_STAGED_MANIFEST_BYTES
@@ -1088,6 +1129,7 @@ async function verifyDocumentStaging(
   stagingDirectory,
   verifiedDirectory,
   profilesById,
+  remoteOcr = null,
 ) {
   const expected = expectedArtifactNames(document)
   if (expected === null) return null
@@ -1103,7 +1145,11 @@ async function verifyDocumentStaging(
   }
   if (expected.length === 0) return []
 
-  const expectations = stagedDocumentExpectations(document, profilesById)
+  const expectations = stagedDocumentExpectations(
+    document,
+    profilesById,
+    remoteOcr,
+  )
   if (expectations === null) return null
   let verified = false
   try {
@@ -1204,6 +1250,8 @@ export async function processExportDocuments({
   reportValidator,
   targetProfiles,
   ocrEngine = DEFAULT_HEADLESS_OCR_ENGINE,
+  ocrRemoteOptIn = false,
+  documentVisibility = DEFAULT_DOCUMENT_VISIBILITY,
   readableFallback,
   validator,
   outputDirectory,
@@ -1221,6 +1269,14 @@ export async function processExportDocuments({
   )
   const profilesById = new Map(
     targetProfiles.map((profile) => [profile.id, profile]),
+  )
+  // Remote activation is a property of the run, so the parent recomputes the
+  // same provenance the worker stamps into each manifest.
+  const remoteOcr = remoteOcrActivationProvenance(
+    resolveHeadlessOcrEngine(ocrEngine, {
+      remoteOptIn: ocrRemoteOptIn,
+      documentVisibility,
+    }),
   )
   await assertPublishableOutput(outputDirectory)
   await mkdir(dirname(outputDirectory), { recursive: true })
@@ -1259,6 +1315,8 @@ export async function processExportDocuments({
           expectedSource,
           targets: targetProfiles.map((profile) => profile.id),
           ocrEngine,
+          ocrRemoteOptIn,
+          documentVisibility,
           readableFallback,
           validator,
           stagingDirectory,
@@ -1290,6 +1348,7 @@ export async function processExportDocuments({
         stagingDirectory,
         verifiedDirectory,
         profilesById,
+        remoteOcr,
       )
       if (verifiedFiles === null) {
         if (result.document.readiness) {
@@ -1409,6 +1468,17 @@ async function main() {
     return
   }
 
+  failureStage = 'ocr-engine-resolution'
+  const ocrResolution = resolveHeadlessOcrEngine(parsed.ocrEngine, {
+    remoteOptIn: parsed.ocrRemoteOptIn,
+    documentVisibility: parsed.documentVisibility,
+  })
+  if (!ocrResolution.available) {
+    process.stderr.write(`${ocrResolution.diagnostic.message}\n`)
+    process.exitCode = 2
+    return
+  }
+
   failureStage = 'pdf-discovery'
   let paths
   try {
@@ -1484,6 +1554,8 @@ async function main() {
     reportValidator,
     targetProfiles,
     ocrEngine: parsed.ocrEngine,
+    ocrRemoteOptIn: parsed.ocrRemoteOptIn,
+    documentVisibility: parsed.documentVisibility,
     readableFallback: parsed.readableFallback,
     validator,
     outputDirectory: parsed.outputDirectory,

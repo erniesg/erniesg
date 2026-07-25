@@ -1,7 +1,26 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import {
+  lstat,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  stat,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, extname, join, resolve } from 'node:path'
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { createServer } from 'vite'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 import {
@@ -16,10 +35,25 @@ export const PDF_CORPUS_REPORT_SCHEMA_PATH =
   'docs/schemas/pdf-corpus-audit.schema.json'
 export const PDF_CORPUS_REPORT_OCR_SCHEMA_PATH =
   'docs/schemas/pdf-corpus-audit-v1.6.schema.json'
+export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION = '1.7.0'
+export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH =
+  'docs/schemas/pdf-corpus-audit-v1.7.schema.json'
 export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.4.0'
 
 const MAX_DIAGNOSTIC_SAMPLES = 64
 const MAX_DIAGNOSTIC_SAMPLES_PER_CODE = 3
+const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url))
+const execFileAsync = promisify(execFile)
+const PROVENANCE_TOOL_IDS = new Set(['pdf-corpus-audit', 'pdf-export'])
+const GIT_COMMIT_TIMESTAMP_PATTERN =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$/
+const GIT_OBJECT_ID_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const SEMANTIC_VERSION_PATTERN =
+  /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+const PDF_CORPUS_EXECUTION_PROVENANCE_VERSION = '1.1.0'
+const PDF_CORPUS_EXECUTION_CAPTURE_VERSION = '1.0.0'
+const PDF_CORPUS_EXECUTION_VERIFICATION_METHOD = 'before-after-exact-match-v1'
 
 const SAFE_FAILURE_MESSAGES = Object.freeze({
   INVALID_PDF: 'The file is not a valid PDF.',
@@ -104,6 +138,442 @@ export function canonicalJsonHash(value) {
   return createHash('sha256').update(canonicalJson(value)).digest('hex')
 }
 
+export async function packageContentsIdentity(directory) {
+  const canonicalRoot = resolve(directory)
+  const rootDetails = await lstat(canonicalRoot)
+  if (!rootDetails.isDirectory() || rootDetails.isSymbolicLink()) {
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  const entries = []
+  async function visit(currentDirectory, relativeDirectory) {
+    const children = await readdir(currentDirectory, { withFileTypes: true })
+    for (const child of children.sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      const relativePath = relativeDirectory
+        ? `${relativeDirectory}/${child.name}`
+        : child.name
+      const absolutePath = join(currentDirectory, child.name)
+      if (child.isDirectory()) {
+        await visit(absolutePath, relativePath)
+        continue
+      }
+      if (!child.isFile()) {
+        throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+      }
+      const bytes = await readFile(absolutePath)
+      entries.push({
+        path: relativePath,
+        byteLength: bytes.byteLength,
+        sha256: sha256(bytes),
+      })
+    }
+  }
+  await visit(canonicalRoot, '')
+  if (entries.length === 0) {
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  return {
+    fileCount: entries.length,
+    sha256: canonicalJsonHash(entries),
+  }
+}
+
+async function gitRawOutput(arguments_, repositoryRoot = REPOSITORY_ROOT) {
+  const { stdout } = await execFileAsync(
+    'git',
+    ['-C', repositoryRoot, ...arguments_],
+    {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      windowsHide: true,
+    },
+  )
+  return stdout
+}
+
+async function gitRawBytes(arguments_, repositoryRoot = REPOSITORY_ROOT) {
+  const { stdout } = await execFileAsync(
+    'git',
+    ['-C', repositoryRoot, ...arguments_],
+    {
+      encoding: 'buffer',
+      maxBuffer: 16 * 1024 * 1024,
+      windowsHide: true,
+    },
+  )
+  if (!Buffer.isBuffer(stdout)) {
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  return stdout
+}
+
+async function gitOutput(arguments_, repositoryRoot = REPOSITORY_ROOT) {
+  return (await gitRawOutput(arguments_, repositoryRoot)).trim()
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+function pathIsWithin(root, target) {
+  const path = relative(root, target)
+  return (
+    path !== '' &&
+    path !== '..' &&
+    !path.startsWith(`..${sep}`) &&
+    !isAbsolute(path)
+  )
+}
+
+async function untrackedWorktreeEntryIdentity(repositoryRoot, path) {
+  const absolutePath = resolve(repositoryRoot, path)
+  if (!pathIsWithin(repositoryRoot, absolutePath)) {
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  let details
+  try {
+    details = await lstat(absolutePath)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+    }
+    throw error
+  }
+  if (details.isFile()) {
+    const bytes = await readFile(absolutePath)
+    return {
+      path,
+      type: 'file',
+      byteLength: bytes.byteLength,
+      sha256: sha256(bytes),
+    }
+  }
+  if (details.isSymbolicLink()) {
+    const target = await readlink(absolutePath)
+    return {
+      path,
+      type: 'symbolic-link',
+      targetByteLength: Buffer.byteLength(target),
+      targetSha256: sha256(target),
+    }
+  }
+  throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+}
+
+function gitBlobObjectId(bytes, objectFormat) {
+  return createHash(objectFormat)
+    .update(`blob ${bytes.byteLength}\0`)
+    .update(bytes)
+    .digest('hex')
+}
+
+async function trackedWorktreeState(repositoryRoot) {
+  const [treeOutput, objectFormat] = await Promise.all([
+    gitRawOutput(
+      ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'],
+      repositoryRoot,
+    ),
+    gitOutput(['rev-parse', '--show-object-format'], repositoryRoot),
+  ])
+  if (!['sha1', 'sha256'].includes(objectFormat)) {
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  const trackedEntries = []
+  for (const record of treeOutput.split('\0').filter(Boolean)) {
+    const separator = record.indexOf('\t')
+    if (separator < 0) {
+      throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+    }
+    const [expectedMode, type, expectedObjectId, ...unexpected] = record
+      .slice(0, separator)
+      .split(' ')
+    const path = record.slice(separator + 1)
+    const absolutePath = resolve(repositoryRoot, path)
+    if (
+      unexpected.length > 0 ||
+      type !== 'blob' ||
+      !['100644', '100755', '120000'].includes(expectedMode) ||
+      !GIT_OBJECT_ID_PATTERN.test(expectedObjectId ?? '') ||
+      !pathIsWithin(repositoryRoot, absolutePath)
+    ) {
+      throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+    }
+    let details
+    try {
+      details = await lstat(absolutePath)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+      trackedEntries.push({
+        path,
+        expectedMode,
+        expectedObjectId,
+        type: 'missing',
+      })
+      continue
+    }
+    let bytes
+    let actualMode
+    if (details.isSymbolicLink()) {
+      bytes = await readlink(absolutePath, { encoding: 'buffer' })
+      actualMode = '120000'
+    } else if (details.isFile()) {
+      bytes = await readFile(absolutePath)
+      actualMode = (details.mode & 0o100) === 0 ? '100644' : '100755'
+    } else {
+      throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+    }
+    trackedEntries.push({
+      path,
+      expectedMode,
+      expectedObjectId,
+      mode: actualMode,
+      byteLength: bytes.byteLength,
+      objectId: gitBlobObjectId(bytes, objectFormat),
+      rawContentSha256: sha256(bytes),
+    })
+    const entry = trackedEntries.at(-1)
+    entry.objectMatchesExpected =
+      entry.objectId === expectedObjectId ||
+      (actualMode !== '120000' &&
+        bytes.equals(
+          await gitRawBytes(
+            ['cat-file', '--filters', `--path=${path}`, expectedObjectId],
+            repositoryRoot,
+          ),
+        ))
+  }
+  const entries = trackedEntries.map((entry) => {
+    if (entry.type === 'missing') {
+      return { path: entry.path, type: entry.type }
+    }
+    return {
+      path: entry.path,
+      mode: entry.mode,
+      byteLength: entry.byteLength,
+      objectId: entry.objectId,
+      objectMatchesExpected: entry.objectMatchesExpected,
+      rawContentSha256: entry.rawContentSha256,
+    }
+  })
+  const matchesHead = trackedEntries.every((entry) => {
+    if (entry.type === 'missing') return false
+    return entry.mode === entry.expectedMode && entry.objectMatchesExpected
+  })
+  return {
+    matchesHead,
+    identitySha256: canonicalJsonHash(entries),
+  }
+}
+
+export async function pdfCorpusWorktreeStateSnapshot(
+  repositoryRoot = REPOSITORY_ROOT,
+) {
+  const canonicalRoot = resolve(repositoryRoot)
+  const [
+    worktreeStatus,
+    trackedDiff,
+    untrackedPathsOutput,
+    trackedIndexTags,
+    trackedWorktree,
+  ] = await Promise.all([
+    gitRawOutput(
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      canonicalRoot,
+    ),
+    gitRawOutput(
+      ['diff', '--binary', '--no-ext-diff', '--full-index', 'HEAD', '--'],
+      canonicalRoot,
+    ),
+    gitRawOutput(
+      ['ls-files', '--others', '--exclude-standard', '-z'],
+      canonicalRoot,
+    ),
+    gitRawOutput(['ls-files', '-v', '-z'], canonicalRoot),
+    trackedWorktreeState(canonicalRoot),
+  ])
+  if (
+    trackedIndexTags
+      .split('\0')
+      .filter(Boolean)
+      .some((entry) => /^(?:S|[a-z]) /u.test(entry))
+  ) {
+    // `git status` and `git diff` deliberately trust assume-unchanged and
+    // skip-worktree bits. Exact-head evidence must not inherit that blind
+    // spot, so repositories using either bit are ineligible until it is
+    // cleared.
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  const untrackedPaths = untrackedPathsOutput
+    .split('\0')
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right))
+  const untrackedEntries = await Promise.all(
+    untrackedPaths.map((path) =>
+      untrackedWorktreeEntryIdentity(canonicalRoot, path),
+    ),
+  )
+  const effectiveWorktreeStatus = trackedWorktree.matchesHead
+    ? worktreeStatus
+    : `${worktreeStatus}\0!! tracked-worktree-bytes-differ-from-head`
+  return {
+    worktreeStatus: effectiveWorktreeStatus,
+    contentSha256: canonicalJsonHash({
+      trackedDiffSha256: sha256(trackedDiff),
+      trackedWorktreeIdentitySha256: trackedWorktree.identitySha256,
+      untrackedEntries,
+    }),
+  }
+}
+
+async function pdfCorpusExecutionProvenanceSnapshot(toolId) {
+  if (!PROVENANCE_TOOL_IDS.has(toolId)) {
+    throw new Error('INVALID_PDF_CORPUS_PROVENANCE_TOOL')
+  }
+  const [
+    commitLine,
+    worktree,
+    packageBytes,
+    packageLockBytes,
+    resolvedPdfjsPackageBytes,
+    resolvedPdfjsPackageContents,
+  ] = await Promise.all([
+    gitOutput(['show', '-s', '--format=%H%n%cI', 'HEAD']),
+    pdfCorpusWorktreeStateSnapshot(),
+    readFile(new URL('../package.json', import.meta.url)),
+    readFile(new URL('../package-lock.json', import.meta.url)),
+    readFile(
+      new URL('../node_modules/pdfjs-dist/package.json', import.meta.url),
+    ),
+    packageContentsIdentity(
+      fileURLToPath(new URL('../node_modules/pdfjs-dist/', import.meta.url)),
+    ),
+  ])
+  const [gitCommit, gitCommitTimestamp, ...unexpectedCommitLines] =
+    commitLine.split('\n')
+  let packageMetadata
+  let packageLockMetadata
+  let resolvedPdfjsPackageMetadata
+  try {
+    packageMetadata = JSON.parse(packageBytes.toString('utf8'))
+    packageLockMetadata = JSON.parse(packageLockBytes.toString('utf8'))
+    resolvedPdfjsPackageMetadata = JSON.parse(
+      resolvedPdfjsPackageBytes.toString('utf8'),
+    )
+  } catch {
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  const declaredPdfjsVersion =
+    packageMetadata?.dependencies?.['pdfjs-dist'] ??
+    packageMetadata?.devDependencies?.['pdfjs-dist']
+  const lockedDeclaredPdfjsVersion =
+    packageLockMetadata?.packages?.['']?.dependencies?.['pdfjs-dist'] ??
+    packageLockMetadata?.packages?.['']?.devDependencies?.['pdfjs-dist']
+  const lockedPdfjsVersion =
+    packageLockMetadata?.packages?.['node_modules/pdfjs-dist']?.version
+  const resolvedPdfjsVersion = resolvedPdfjsPackageMetadata?.version
+  if (
+    unexpectedCommitLines.length > 0 ||
+    !GIT_OBJECT_ID_PATTERN.test(gitCommit ?? '') ||
+    !gitCommitTimestamp ||
+    !GIT_COMMIT_TIMESTAMP_PATTERN.test(gitCommitTimestamp) ||
+    Number.isNaN(Date.parse(gitCommitTimestamp)) ||
+    packageMetadata?.name !== 'astro-erudite' ||
+    typeof packageMetadata?.version !== 'string' ||
+    !SEMANTIC_VERSION_PATTERN.test(packageMetadata.version) ||
+    !SEMANTIC_VERSION_PATTERN.test(declaredPdfjsVersion ?? '') ||
+    lockedDeclaredPdfjsVersion !== declaredPdfjsVersion ||
+    !SEMANTIC_VERSION_PATTERN.test(lockedPdfjsVersion ?? '') ||
+    !SEMANTIC_VERSION_PATTERN.test(resolvedPdfjsVersion ?? '') ||
+    resolvedPdfjsVersion !== lockedPdfjsVersion
+  ) {
+    throw new Error('PDF_CORPUS_PROVENANCE_UNAVAILABLE')
+  }
+  const worktreeState = worktree.worktreeStatus === '' ? 'clean' : 'dirty'
+  const publicIdentity = {
+    schemaVersion: PDF_CORPUS_EXECUTION_PROVENANCE_VERSION,
+    implementation: {
+      gitCommit,
+      gitCommitTimestamp,
+      worktreeState,
+      exactHead: worktreeState === 'clean',
+    },
+    runtime: {
+      name: 'node',
+      version: process.versions.node,
+      platform: process.platform,
+      architecture: process.arch,
+    },
+    tool: {
+      id: toolId,
+      packageName: packageMetadata.name,
+      packageVersion: packageMetadata.version,
+    },
+    toolchain: {
+      packageLockSha256: sha256(packageLockBytes),
+      pdfjsDist: {
+        declaredVersion: declaredPdfjsVersion,
+        lockedVersion: lockedPdfjsVersion,
+        resolvedVersion: resolvedPdfjsVersion,
+        resolvedPackageJsonSha256: sha256(resolvedPdfjsPackageBytes),
+        resolvedPackageContentsSha256: resolvedPdfjsPackageContents.sha256,
+      },
+    },
+  }
+  const stateIdentity = {
+    publicIdentity,
+    packageJsonSha256: sha256(packageBytes),
+    worktreeStatusSha256: sha256(worktree.worktreeStatus),
+    worktreeContentSha256: worktree.contentSha256,
+  }
+  return {
+    publicIdentity,
+    stateSha256: canonicalJsonHash(stateIdentity),
+  }
+}
+
+export async function capturePdfCorpusExecutionProvenance(toolId) {
+  const snapshot = await pdfCorpusExecutionProvenanceSnapshot(toolId)
+  return {
+    schemaVersion: PDF_CORPUS_EXECUTION_CAPTURE_VERSION,
+    toolId,
+    publicIdentity: snapshot.publicIdentity,
+    stateSha256: snapshot.stateSha256,
+  }
+}
+
+export async function finalizePdfCorpusExecutionProvenance(capture) {
+  if (
+    !capture ||
+    typeof capture !== 'object' ||
+    Array.isArray(capture) ||
+    capture.schemaVersion !== PDF_CORPUS_EXECUTION_CAPTURE_VERSION ||
+    !PROVENANCE_TOOL_IDS.has(capture.toolId) ||
+    !capture.publicIdentity ||
+    typeof capture.publicIdentity !== 'object' ||
+    !SHA256_PATTERN.test(capture.stateSha256 ?? '')
+  ) {
+    throw new Error('INVALID_PDF_CORPUS_PROVENANCE_CAPTURE')
+  }
+  const finalSnapshot = await pdfCorpusExecutionProvenanceSnapshot(
+    capture.toolId,
+  )
+  if (
+    capture.stateSha256 !== finalSnapshot.stateSha256 ||
+    canonicalJson(capture.publicIdentity) !==
+      canonicalJson(finalSnapshot.publicIdentity)
+  ) {
+    throw new Error('PDF_CORPUS_PROVENANCE_CHANGED_DURING_RUN')
+  }
+  return {
+    ...finalSnapshot.publicIdentity,
+    verification: {
+      method: PDF_CORPUS_EXECUTION_VERIFICATION_METHOD,
+      stateSha256: finalSnapshot.stateSha256,
+    },
+  }
+}
+
 function countsBy(values, keyFor) {
   const counts = new Map()
   for (const value of values) {
@@ -177,6 +647,25 @@ function safeOcrProvenance(pages) {
     .sort((left, right) => left.page - right.page)
 }
 
+function normalizedSourceExclusionMask(mask) {
+  if (!mask) return null
+  const normalizedBox = (box) => ({
+    page: box.page,
+    x: box.x,
+    y: box.y,
+    width: box.width,
+    height: box.height,
+    rotation: box.rotation,
+    method: box.method,
+  })
+  return {
+    algorithm: mask.algorithm,
+    expansionPixels: mask.expansionPixels,
+    ownedSourceBoxes: (mask.ownedSourceBoxes ?? []).map(normalizedBox),
+    excludedSourceBoxes: (mask.excludedSourceBoxes ?? []).map(normalizedBox),
+  }
+}
+
 function normalizedAssetManifest(assets) {
   return assets.map((asset) => ({
     id: asset.id,
@@ -188,6 +677,13 @@ function normalizedAssetManifest(assets) {
     height: asset.height ?? null,
     sourceBoxes: asset.sourceBoxes ?? [],
     ...(asset.sourceCropBox ? { sourceCropBox: asset.sourceCropBox } : {}),
+    ...(asset.sourceExclusionMask
+      ? {
+          sourceExclusionMask: normalizedSourceExclusionMask(
+            asset.sourceExclusionMask,
+          ),
+        }
+      : {}),
   }))
 }
 
@@ -212,12 +708,20 @@ function selectedVisualCandidateSha256(relationship) {
 function selectedVisualCropSha256(relationship, assetsById) {
   if (relationship.status !== 'matched') return null
   const crops = (relationship.assetIds ?? []).flatMap((assetId) => {
-    const sourceCropBox = assetsById.get(assetId)?.sourceCropBox
+    const asset = assetsById.get(assetId)
+    const sourceCropBox = asset?.sourceCropBox
     return sourceCropBox
       ? [
           {
             assetId: opaqueStructuralId('asset', assetId),
             sourceCropBox,
+            ...(asset.sourceExclusionMask
+              ? {
+                  sourceExclusionMask: normalizedSourceExclusionMask(
+                    asset.sourceExclusionMask,
+                  ),
+                }
+              : {}),
           },
         ]
       : []
@@ -851,7 +1355,7 @@ function failureReasons(documents) {
 export function createCorpusReport(
   documents,
   policy,
-  { corpusContract = null } = {},
+  { corpusContract = null, executionProvenance = null } = {},
 ) {
   const hasOcrProvenance = documents.some(
     (document) => Array.isArray(document.ocr) && document.ocr.length > 0,
@@ -865,13 +1369,18 @@ export function createCorpusReport(
     failed: documents.filter((document) => !document.readiness).length,
   }
   return {
-    schemaVersion: hasOcrProvenance
-      ? PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION
-      : PDF_CORPUS_REPORT_SCHEMA_VERSION,
-    reportSchema: hasOcrProvenance
-      ? PDF_CORPUS_REPORT_OCR_SCHEMA_PATH
-      : PDF_CORPUS_REPORT_SCHEMA_PATH,
+    schemaVersion: executionProvenance
+      ? PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION
+      : hasOcrProvenance
+        ? PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION
+        : PDF_CORPUS_REPORT_SCHEMA_VERSION,
+    reportSchema: executionProvenance
+      ? PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH
+      : hasOcrProvenance
+        ? PDF_CORPUS_REPORT_OCR_SCHEMA_PATH
+        : PDF_CORPUS_REPORT_SCHEMA_PATH,
     privacy: 'basenames-hashes-metrics-diagnostics-only',
+    ...(executionProvenance ? { executionProvenance } : {}),
     policy,
     ...(corpusContract ? { corpusContract } : {}),
     summary: {

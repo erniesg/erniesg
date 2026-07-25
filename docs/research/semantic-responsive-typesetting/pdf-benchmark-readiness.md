@@ -70,6 +70,21 @@ locally and choose a new directory before retrying. The public receipt and
 stdout contain identities and hashes of the retained bytes, never payload
 content, source content, filenames, or local paths. The `validate` command
 replays every retained byte length and SHA-256 before accepting the receipt.
+New acquisitions hash every adapter-controlled format, tool, model, and version
+identifier before placing it in the public receipt; literal values remain only
+inside the private retained payload. This prevents a malicious adapter from
+smuggling normalized source prose or a path basename through an otherwise
+schema-valid identifier.
+Runs without an explicitly configured local executable and model/cache home
+keep emitting the frozen v1.1 receipt contract. Supplying both configured
+runtime inputs emits v1.2 instead; that schema requires the path-free runner
+executable identity and the explicit statement that the model/cache directory
+was path-validated while its contents remain unattested. Validation selects the
+exact schema named by the receipt and does not permit relabeling between them.
+Supplying `--candidate-executable-env` during validation or bridge construction
+re-observes the executable bytes and version output and requires an exact match
+with v1.2. Without that optional input, replay proves receipt cross-field and
+retained-byte integrity only; it does not independently re-observe the runner.
 This makes the blind lane runnable, but it is not frozen and has no promotion
 authority until its private split and reviewer protocol satisfy the readiness
 gate. Frozen status and promotion authority also require independently
@@ -112,6 +127,8 @@ private directory:
 SRT_PDF_TARGET_FREE_INPUT_ROOT=/private/candidate-inputs \
 SRT_PDF_TARGET_FREE_ADAPTER=/private/model-adapter \
 SRT_PDF_TARGET_FREE_RAW_OUTPUTS=/private/example-target-free-raw \
+SRT_PDF_CANDIDATE_EXECUTABLE=/private/bin/candidate \
+SRT_PDF_CANDIDATE_MODEL_CACHE_HOME=/private/model-cache \
   npm run pdf:eval:target-free -- run \
   --manifest /private/blind-manifest.json \
   --input-root-env SRT_PDF_TARGET_FREE_INPUT_ROOT \
@@ -119,20 +136,123 @@ SRT_PDF_TARGET_FREE_RAW_OUTPUTS=/private/example-target-free-raw \
   --raw-output-dir-env SRT_PDF_TARGET_FREE_RAW_OUTPUTS \
   --candidate-id example \
   --candidate-version 1 \
+  --candidate-executable-env SRT_PDF_CANDIDATE_EXECUTABLE \
+  --candidate-model-cache-home-env SRT_PDF_CANDIDATE_MODEL_CACHE_HOME \
   --out /private/example-target-free-receipt.json
 ```
+
+The adapter receives those two resolved paths only in its minimal child
+environment. It must echo the executable SHA-256 and the observed numeric
+version/version-output SHA-256 in `runtimeIdentity.tool`; the runner rejects a
+mismatch. Model-cache contents remain explicitly unattested.
 
 Replay the retained payloads before private scoring:
 
 ```bash
 SRT_PDF_TARGET_FREE_ADAPTER=/private/model-adapter \
 SRT_PDF_TARGET_FREE_RAW_OUTPUTS=/private/example-target-free-raw \
+SRT_PDF_CANDIDATE_EXECUTABLE=/private/bin/candidate \
   npm run pdf:eval:target-free -- validate \
   --manifest /private/blind-manifest.json \
   --adapter-env SRT_PDF_TARGET_FREE_ADAPTER \
   --raw-output-dir-env SRT_PDF_TARGET_FREE_RAW_OUTPUTS \
+  --candidate-executable-env SRT_PDF_CANDIDATE_EXECUTABLE \
   --receipt /private/example-target-free-receipt.json
 ```
+
+### Target-free observation bridge
+
+`tools/pdf-target-free-predictions.mjs` turns retained, target-free document
+observations into the existing model-neutral fidelity-predictions contract.
+The acquisition adapter must declare `format: "pdf-document-observations"` and
+`formatVersion: "1.0.0"`, with its `output` conforming to
+`docs/schemas/pdf-target-free-document-observations.schema.json` and the
+cross-field joins named in that schema's root `$comment`. The runtime validator
+enforces those joins: object IDs are unique, reading order contains every
+object exactly once, pages stay within the evaluated source, and relationships
+are unique, non-reflexive, and reference known objects.
+
+That document graph contains only normalized objects, a complete object
+reading order, and typed object-to-object relationships:
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "objects": [
+    {
+      "id": "candidate-object-1",
+      "page": 1,
+      "kind": "table",
+      "label": "semantic-table",
+      "box": [0.1, 0.2, 0.6, 0.2]
+    }
+  ],
+  "readingOrder": ["candidate-object-1"],
+  "relationships": []
+}
+```
+
+`kind` is the page-detection class; `label` is the candidate's semantic
+classification. The adapter decides both before receiving any eval case,
+target, page, box, stratum, or gold answer. Any candidate can emit this graph;
+the bridge contains no MinerU-, Docling-, PaddleOCR-, GROBID-, or
+deterministic-parser-specific parsing.
+
+The bundled MinerU module exports
+`mineruContentToTargetFreeObservations(...)` as a candidate-specific conversion
+helper. It strips native text, formulas, paths, and table HTML after deriving
+objects and order. It deliberately emits no ownership relationships today:
+MinerU content lists can embed caption text inside an image record without an
+independently grounded caption object or box. The bridge therefore scores such
+caption-ownership cases as missing instead of inventing geometry.
+
+After acquisition, the bridge validates the sanitized receipt and every
+retained byte hash, requires exact source identity for each eval document, and
+then applies one fixed geometry-only binding policy. Detection returns every
+candidate object on the case page. Other boxed targets are matched one-to-one
+by overlap without consulting target kinds or expected answers. The binding
+score is `0.7 × target coverage + 0.2 × IoU + 0.1 × object coverage`. A match
+must beat its next candidate by at least `0.05`, and an object may bind at most
+one target; ties, near-ties, and collisions are omitted. Classification uses
+the matched object's `label`, reading order uses the candidate's complete
+order, and relationships use only candidate-declared graph edges. Boxless
+targets, missing observations, ambiguous collisions, and dangling graph
+references fail closed instead of being inferred.
+
+Build canonical predictions from a retained run:
+
+```bash
+SRT_PDF_TARGET_FREE_RAW_OUTPUTS=/private/example-target-free-raw \
+SRT_PDF_CANDIDATE_EXECUTABLE=/private/bin/candidate \
+  npm run pdf:eval:target-free-predictions -- build \
+  --eval-manifest benchmarks/pdf/fidelity-eval-v1.json \
+  --target-free-manifest /private/blind-manifest.json \
+  --receipt /private/example-target-free-receipt.json \
+  --raw-output-dir-env SRT_PDF_TARGET_FREE_RAW_OUTPUTS \
+  --candidate-executable-env SRT_PDF_CANDIDATE_EXECUTABLE \
+  --out /private/example-target-free-predictions.json
+```
+
+Then use the unchanged scorer:
+
+```bash
+npm --silent run pdf:eval -- \
+  --manifest benchmarks/pdf/fidelity-eval-v1.json \
+  --predictions /private/example-target-free-predictions.json \
+  --out /private/example-target-free-eval-receipt.json
+```
+
+The prediction `adapterSha256` is a canonical combination of the acquisition
+adapter source identity and the bridge's own transitive source identity, so a
+change to either rotates the normalized candidate identity. Keep the
+acquisition receipt and retained outputs with the predictions: the common
+predictions schema does not embed their raw-output hashes.
+
+This closes the mechanical raw-output-to-scorer gap, not the benchmark
+governance gaps. The bridge runs after candidate output is frozen, but the
+current public manifests expose labels and the current acquisition receipt has
+no independent runtime, checkpoint, filesystem, or network attestation. Its
+results remain development calibration and are never promotion authority.
 
 Use `npm run pdf:eval:comparator -- build ...` with
 `benchmarks/pdf/fidelity-comparator-contract-v2.json`, the exact prompt/config/

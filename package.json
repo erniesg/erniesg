@@ -34,6 +34,7 @@
     "pdf:eval:suite": "node tools/pdf-fidelity-suite.mjs build",
     "pdf:eval:mineru-adapter": "node tools/pdf-fidelity-mineru-adapter.mjs",
     "pdf:eval:target-free": "node tools/pdf-target-free-candidate-run.mjs",
+    "pdf:eval:target-free-predictions": "node tools/pdf-target-free-predictions.mjs",
     "srt:overlay-evidence": "node tools/pdf-diagnostic-evidence.mjs",
     "worker:build": "npm run build:production",
     "worker:deploy:preview": "npm run build:staging && wrangler deploy --config wrangler.jsonc --message \"Deploy ernie.sg Workers preview\"",

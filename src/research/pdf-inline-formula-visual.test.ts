@@ -163,6 +163,16 @@ it('source-crops a stacked fraction separated from a sub-pixel-close prose basel
         width: 80,
         height: 20,
         pixels: new Uint8Array(80 * 20 * 4).fill(72),
+        ...(input.excludedSourceBoxes?.length
+          ? {
+              sourceExclusionMask: {
+                algorithm: 'nearest-source-box-v1',
+                expansionPixels: 2,
+                ownedSourceBoxes: input.ownedSourceBoxes!,
+                excludedSourceBoxes: input.excludedSourceBoxes,
+              } as const,
+            }
+          : {}),
       }),
   )
 
@@ -193,6 +203,14 @@ it('source-crops a stacked fraction separated from a sub-pixel-close prose basel
       sourceBox: expect.objectContaining({
         y: expect.any(Number),
       }),
+      excludedSourceBoxes: [
+        expect.objectContaining({
+          x: precedingBox.x,
+          y: precedingBox.y,
+          width: precedingBox.width,
+          height: precedingBox.height,
+        }),
+      ],
     }),
   )
   const cropBox = rasterizeFigure.mock.calls[0]![0].sourceBox
@@ -208,6 +226,7 @@ it('source-crops a stacked fraction separated from a sub-pixel-close prose basel
       altTextSource: 'caption',
       evidence: expect.arrayContaining([
         'source-page-crop',
+        'source-page-crop-unowned-text-masked',
         'source-text-transcript-unresolved',
       ]),
     }),
@@ -314,6 +333,255 @@ it('does not promote a stacked inline shard when the same prose line continues t
     }),
   ])
   expect(result.consumedRegionIds.has(continuation.id)).toBe(false)
+})
+
+it('source-crops a complete stacked inline formula between its prose siblings', async () => {
+  const rawRuns = [
+    sourceRun(
+      'Ordinary prose establishes the body font.',
+      0.1,
+      0.3,
+      0.31,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+    sourceRun(
+      'A second ordinary line stabilizes the page layout.',
+      0.1,
+      0.33,
+      0.36,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+    sourceRun(
+      'The fit best satisfies PCA(',
+      0.1,
+      0.5,
+      0.18,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+    sourceRun('AA', 0.28, 0.494, 0.02, 0.009, 'Synthetic-CMR7', 7),
+    sourceRun('BB', 0.28, 0.507, 0.02, 0.009, 'Synthetic-CMR7', 7),
+    sourceRun(') =', 0.304, 0.5, 0.023, 0.014, 'Synthetic-CMR10', 10),
+    sourceRun('C', 0.33, 0.5, 0.011, 0.014, 'Synthetic-CMMI10', 10),
+    sourceRun('PCA', 0.341, 0.507, 0.024, 0.009, 'Synthetic-CMR7', 7),
+    sourceRun('B', 0.367, 0.5, 0.011, 0.014, 'Synthetic-CMMI10', 10),
+    sourceRun('(a)', 0.378, 0.5, 0.026, 0.014, 'Synthetic-CMR10', 10),
+    sourceRun('T', 0.404, 0.494, 0.007, 0.009, 'Synthetic-CMMI7', 7),
+    sourceRun(
+      '. Finally, the inverse transform is applied.',
+      0.415,
+      0.5,
+      0.31,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+  ]
+  const page = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: rawRuns.reduce((total, run) => total + run.text.length, 0),
+    imageCount: 0,
+    runs: rawRuns,
+    objects: [],
+    assets: [],
+  } satisfies PdfPageAnalysis
+  const reconstructed = reconstructPageRegions([page])
+  const equation = reconstructed.regions.find(
+    (region) => region.kind === 'equation',
+  )!
+  const proseSiblings = reconstructed.regions.filter((region) =>
+    region.lines.some((line) =>
+      /-inline-stacked-\d+-(?:before|after)$/u.test(line.id),
+    ),
+  )
+  expect(equation.lines[0].id).toMatch(/-inline-stacked-\d+-formula$/u)
+  expect(proseSiblings).toHaveLength(2)
+  expect(proseSiblings.every((region) => region.kind === 'body')).toBe(true)
+
+  const rasterizeFigure = vi.fn(
+    async (input: Parameters<PdfFigureRasterizer>[0]) =>
+      createSourcePageCropAsset({
+        kind: 'equation',
+        cropBox: input.sourceBox,
+        sourceObjectIds: input.sourceObjectIds,
+        sourceBoxes: input.sourceBoxes,
+        width: 96,
+        height: 20,
+        pixels: new Uint8Array(96 * 20 * 4).fill(72),
+      }),
+  )
+  const result = await reconstructPdfVisuals({
+    pages: [page],
+    regions: reconstructed.regions,
+    rasterizeFigure,
+  })
+
+  expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+  expect(rasterizeFigure.mock.calls[0]![0].excludedSourceBoxes).not.toEqual([])
+  expect(rasterizeFigure.mock.calls[1]![0].excludedSourceBoxes).toBeUndefined()
+  const cropBox = rasterizeFigure.mock.calls[1]![0].sourceBox
+  const before = proseSiblings.find((region) =>
+    region.lines.some((line) => line.id.endsWith('-before')),
+  )!
+  const after = proseSiblings.find((region) =>
+    region.lines.some((line) => line.id.endsWith('-after')),
+  )!
+  expect(cropBox.x).toBeGreaterThanOrEqual(before.box.x + before.box.width)
+  expect(cropBox.x + cropBox.width).toBeLessThanOrEqual(after.box.x)
+  expect(result.relationships).toEqual([
+    expect.objectContaining({
+      kind: 'equation',
+      status: 'matched',
+      sourceRegionIds: [equation.id],
+      sourceText: '',
+      evidence: expect.arrayContaining([
+        'source-page-crop',
+        'source-text-transcript-unresolved',
+      ]),
+    }),
+  ])
+  expect(
+    proseSiblings.some((region) => result.consumedRegionIds.has(region.id)),
+  ).toBe(false)
+})
+
+it('withholds a geometrically ambiguous super/subscript pair from prose', () => {
+  const rawRuns = [
+    sourceRun(
+      'Ordinary prose establishes the body font.',
+      0.1,
+      0.3,
+      0.31,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+    sourceRun(
+      'The fit best satisfies PCA(',
+      0.1,
+      0.5,
+      0.18,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+    sourceRun('h', 0.28, 0.5, 0.01, 0.014, 'Synthetic-CMMI10', 10),
+    sourceRun('l', 0.29, 0.494, 0.006, 0.009, 'Synthetic-CMMI7', 7),
+    sourceRun('a', 0.29, 0.507, 0.006, 0.009, 'Synthetic-CMMI7', 7),
+    sourceRun(
+      ') = C B(a). Finally, the inverse transform is applied.',
+      0.297,
+      0.5,
+      0.39,
+      0.014,
+      'Synthetic-CMR10',
+      10,
+    ),
+  ]
+  const page = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: rawRuns.reduce((total, run) => total + run.text.length, 0),
+    imageCount: 0,
+    runs: rawRuns,
+    objects: [],
+    assets: [],
+  } satisfies PdfPageAnalysis
+  const reconstructed = reconstructPageRegions([page])
+
+  expect(
+    reconstructed.regions.filter((region) => region.kind === 'equation'),
+  ).toHaveLength(1)
+  expect(
+    reconstructed.regions
+      .flatMap((region) => region.lines)
+      .some((line) => /-inline-stacked-/u.test(line.id)),
+  ).toBe(true)
+  expect(
+    reconstructed.regions.some(
+      (region) =>
+        region.kind === 'body' &&
+        region.text.includes('best satisfies PCA(hla) = C B(a). Finally'),
+    ),
+  ).toBe(false)
+})
+
+it('withholds an ambiguous raised script beside a reduced relation operator', () => {
+  const rawRuns = [
+    sourceRun(
+      'Ordinary prose establishes the body font.',
+      0.1,
+      0.3,
+      0.31,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+    sourceRun(
+      'The hidden state ',
+      0.1,
+      0.5,
+      0.13,
+      0.014,
+      'Synthetic-Serif',
+      10,
+    ),
+    sourceRun('h', 0.23, 0.5, 0.01, 0.014, 'Synthetic-CMMI10', 10),
+    sourceRun('l', 0.24, 0.494, 0.006, 0.009, 'Synthetic-CMMI7', 7),
+    sourceRun('=', 0.24, 0.507, 0.01, 0.009, 'Synthetic-CMR7', 7),
+    sourceRun(
+      ' helix(a, b) remains stable.',
+      0.252,
+      0.5,
+      0.2,
+      0.014,
+      'Synthetic-CMR10',
+      10,
+    ),
+  ]
+  const page = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: rawRuns.reduce((total, run) => total + run.text.length, 0),
+    imageCount: 0,
+    runs: rawRuns,
+    objects: [],
+    assets: [],
+  } satisfies PdfPageAnalysis
+  const reconstructed = reconstructPageRegions([page])
+
+  expect(
+    reconstructed.regions.filter((region) => region.kind === 'equation'),
+  ).toHaveLength(1)
+  expect(
+    reconstructed.regions
+      .flatMap((region) => region.lines)
+      .some((line) => /-inline-stacked-/u.test(line.id)),
+  ).toBe(true)
+  expect(
+    reconstructed.regions.some(
+      (region) =>
+        region.kind === 'body' &&
+        /hidden state\s*h\s*l\s*=\s*helix\(a, b\) remains stable\./u.test(
+          region.text,
+        ),
+    ),
+  ).toBe(false)
 })
 
 it('turns two raw source-stacked formulas into two crops without consuming prose or inventing transcripts', async () => {

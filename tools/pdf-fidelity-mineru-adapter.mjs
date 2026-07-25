@@ -29,6 +29,12 @@ import { semanticTableFromHtml } from '../src/research/semantic-table.ts'
 import { assertAdapterSourceIdentity } from './adapter-source-identity.mjs'
 
 const ADAPTER_FORMAT_VERSION = 'content-list-v1-v2-adapter-1.1.0'
+const TARGET_FREE_FORMAT = 'pdf-document-observations'
+const TARGET_FREE_FORMAT_VERSION = '1.0.0'
+const TARGET_FREE_OUTPUT_SCHEMA_VERSION = '1.0.0'
+const TARGET_FREE_REQUEST_KEYS = ['documentId', 'path', 'byteLength', 'sha256']
+const RUNNER_CANDIDATE_EXECUTABLE_ENV = 'SRT_PDF_RUNNER_CANDIDATE_EXECUTABLE'
+const RUNNER_MODEL_CACHE_HOME_ENV = 'SRT_PDF_RUNNER_MODEL_CACHE_HOME'
 const REQUEST_PRIVACY = 'owner-local-paths-present-ephemeral-delete-after-run'
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SHA256 = /^[a-f0-9]{64}$/
@@ -135,6 +141,90 @@ async function resolveMineruExecutable(command, environment) {
     }
   }
   invalid('MINERU_EXECUTABLE_NOT_FOUND')
+}
+
+async function resolveRunnerModelCacheHome(path) {
+  if (typeof path !== 'string' || !isAbsolute(path) || resolve(path) !== path) {
+    invalid('INVALID_MINERU_RUNNER_RUNTIME_CONFIGURATION')
+  }
+  try {
+    const supplied = await lstat(path)
+    const canonicalPath = await realpath(path)
+    const canonical = await lstat(canonicalPath)
+    if (
+      !supplied.isDirectory() ||
+      supplied.isSymbolicLink() ||
+      !canonical.isDirectory() ||
+      canonical.isSymbolicLink() ||
+      canonicalPath !== path
+    ) {
+      invalid('INVALID_MINERU_RUNNER_RUNTIME_CONFIGURATION')
+    }
+    return canonicalPath
+  } catch (error) {
+    if (error?.message === 'INVALID_MINERU_RUNNER_RUNTIME_CONFIGURATION') {
+      throw error
+    }
+    invalid('INVALID_MINERU_RUNNER_RUNTIME_CONFIGURATION')
+  }
+}
+
+async function targetFreeRunnerRuntime(parsed, environment = process.env) {
+  const executable = environment[RUNNER_CANDIDATE_EXECUTABLE_ENV]
+  const modelCacheHome = environment[RUNNER_MODEL_CACHE_HOME_ENV]
+  if (executable === undefined && modelCacheHome === undefined) {
+    return {
+      mineruBin: parsed.mineruBin,
+      mineruEnvironment: environment,
+    }
+  }
+  if (
+    typeof executable !== 'string' ||
+    executable.length === 0 ||
+    typeof modelCacheHome !== 'string' ||
+    modelCacheHome.length === 0 ||
+    !isAbsolute(executable) ||
+    resolve(executable) !== executable
+  ) {
+    invalid('INVALID_MINERU_RUNNER_RUNTIME_CONFIGURATION')
+  }
+  const resolvedExecutable = await resolveMineruExecutable(
+    executable,
+    environment,
+  )
+  if (resolvedExecutable !== executable) {
+    invalid('INVALID_MINERU_RUNNER_RUNTIME_CONFIGURATION')
+  }
+  const resolvedModelCacheHome =
+    await resolveRunnerModelCacheHome(modelCacheHome)
+  const allowedEnvironment = {}
+  for (const key of [
+    'PATH',
+    'HOME',
+    'TMPDIR',
+    'TMP',
+    'TEMP',
+    'LANG',
+    'LC_ALL',
+    'SRT_PDF_TARGET_FREE_OFFLINE',
+    'HF_HUB_OFFLINE',
+    'TRANSFORMERS_OFFLINE',
+    'NO_PROXY',
+    'no_proxy',
+  ]) {
+    if (typeof environment[key] === 'string') {
+      allowedEnvironment[key] = environment[key]
+    }
+  }
+  return {
+    mineruBin: resolvedExecutable,
+    mineruEnvironment: {
+      ...allowedEnvironment,
+      SRT_PDF_EVAL_OFFLINE: '1',
+      HF_HOME: resolvedModelCacheHome,
+      HUGGINGFACE_HUB_CACHE: join(resolvedModelCacheHome, 'hub'),
+    },
+  }
 }
 
 function observedVersion(output) {
@@ -307,6 +397,127 @@ function validateRequest(request) {
   return documents
 }
 
+function isTargetFreeRequest(request) {
+  return exactKeys(request, TARGET_FREE_REQUEST_KEYS)
+}
+
+function validateTargetFreeRequest(request) {
+  if (
+    !isTargetFreeRequest(request) ||
+    !SAFE_ID.test(request.documentId ?? '') ||
+    typeof request.path !== 'string' ||
+    !isAbsolute(request.path) ||
+    resolve(request.path) !== request.path ||
+    !Number.isSafeInteger(request.byteLength) ||
+    request.byteLength < 1 ||
+    !SHA256.test(request.sha256 ?? '')
+  ) {
+    invalid('INVALID_MINERU_TARGET_FREE_REQUEST')
+  }
+}
+
+function targetFreeCandidate(environment = process.env) {
+  const candidate = {
+    id: environment.SRT_PDF_CANDIDATE_ID,
+    version: environment.SRT_PDF_CANDIDATE_VERSION,
+    adapterSha256: environment.SRT_PDF_ADAPTER_SOURCE_SHA256,
+  }
+  if (
+    !SAFE_ID.test(candidate.id ?? '') ||
+    !SAFE_ID.test(candidate.version ?? '') ||
+    !SHA256.test(candidate.adapterSha256 ?? '')
+  ) {
+    invalid('INVALID_MINERU_TARGET_FREE_ENVIRONMENT')
+  }
+  return candidate
+}
+
+async function pdfPageCount(bytes) {
+  let loadingTask
+  let document
+  try {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(bytes),
+      isEvalSupported: false,
+      useSystemFonts: true,
+    })
+    document = await loadingTask.promise
+    if (!Number.isSafeInteger(document.numPages) || document.numPages < 1) {
+      invalid('INVALID_MINERU_PDF_SOURCE')
+    }
+    return document.numPages
+  } catch (error) {
+    if (error?.message === 'INVALID_MINERU_PDF_SOURCE') throw error
+    invalid('INVALID_MINERU_PDF_SOURCE')
+  } finally {
+    try {
+      await document?.destroy()
+    } catch {
+      // Cleanup cannot turn a successfully validated source into a failure.
+    }
+    try {
+      await loadingTask?.destroy()
+    } catch {
+      // PDF.js versions differ on whether document.destroy also closes loading.
+    }
+  }
+}
+
+async function verifiedTargetFreeDocument(request) {
+  validateTargetFreeRequest(request)
+  try {
+    const before = await lstat(request.path)
+    const canonicalPath = await realpath(request.path)
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      canonicalPath !== request.path
+    ) {
+      invalid('MINERU_TARGET_FREE_SOURCE_IDENTITY_MISMATCH')
+    }
+    const canonicalBefore = await lstat(canonicalPath)
+    if (
+      !canonicalBefore.isFile() ||
+      canonicalBefore.isSymbolicLink() ||
+      canonicalBefore.size !== request.byteLength
+    ) {
+      invalid('MINERU_TARGET_FREE_SOURCE_IDENTITY_MISMATCH')
+    }
+    const bytes = await readFile(canonicalPath)
+    const after = await lstat(canonicalPath)
+    if (
+      !after.isFile() ||
+      after.isSymbolicLink() ||
+      after.dev !== canonicalBefore.dev ||
+      after.ino !== canonicalBefore.ino ||
+      after.size !== canonicalBefore.size ||
+      bytes.byteLength !== request.byteLength ||
+      createHash('sha256').update(bytes).digest('hex') !== request.sha256
+    ) {
+      invalid('MINERU_TARGET_FREE_SOURCE_IDENTITY_MISMATCH')
+    }
+    return {
+      id: request.documentId,
+      path: canonicalPath,
+      byteLength: request.byteLength,
+      sha256: request.sha256,
+      pageCount: await pdfPageCount(bytes),
+    }
+  } catch (error) {
+    if (
+      [
+        'INVALID_MINERU_TARGET_FREE_REQUEST',
+        'INVALID_MINERU_PDF_SOURCE',
+        'MINERU_TARGET_FREE_SOURCE_IDENTITY_MISMATCH',
+      ].includes(error?.message)
+    ) {
+      throw error
+    }
+    invalid('MINERU_TARGET_FREE_SOURCE_IDENTITY_MISMATCH')
+  }
+}
+
 function round(value) {
   return Number(value.toFixed(6))
 }
@@ -362,7 +573,13 @@ function kindForType(type) {
 function normalizeNativeItem(item, nativeOrder, sourceVersion) {
   if (!isRecord(item)) return null
   const box = nativeBox(item.bbox)
-  const kind = kindForType(item.type)
+  const kind =
+    sourceVersion === 'v1' &&
+    item.type === 'text' &&
+    Number.isSafeInteger(item.text_level) &&
+    item.text_level >= 1
+      ? 'heading'
+      : kindForType(item.type)
   if (!box || !kind) return null
   const content = sourceVersion === 'v2' ? item.content : item
   const text =
@@ -518,6 +735,55 @@ function normalizePage(source) {
     detection,
     semantic,
     order: v2.length > 0 ? v2 : v1,
+    targetFreeOrder: primary,
+  }
+}
+
+export function mineruContentToTargetFreeObservations(contentByPage) {
+  if (
+    !(contentByPage instanceof Map) ||
+    [...contentByPage].some(([page]) => !Number.isSafeInteger(page) || page < 1)
+  ) {
+    invalid('INVALID_MINERU_PAGE_CONTENT')
+  }
+  const objects = []
+  const orderedIds = []
+  for (const [page, source] of [...contentByPage].sort(
+    ([left], [right]) => left - right,
+  )) {
+    const normalized = normalizePage(source)
+    const candidates = [
+      ...normalized.detection,
+      ...normalized.targetFreeOrder.filter(
+        ({ kind }) =>
+          !['figure', 'equation', 'table', 'footnote'].includes(kind),
+      ),
+    ].sort((left, right) => left.nativeOrder - right.nativeOrder)
+    const counters = new Map()
+    for (const item of candidates) {
+      const count = (counters.get(item.kind) ?? 0) + 1
+      counters.set(item.kind, count)
+      const id = `mineru-${item.kind}-p${String(page).padStart(3, '0')}-${String(count).padStart(3, '0')}`
+      objects.push({
+        id,
+        page,
+        kind: item.kind,
+        label:
+          item.kind === 'table'
+            ? item.semanticTable
+              ? 'semantic-table'
+              : 'table-image'
+            : item.kind,
+        box: [...item.box],
+      })
+      orderedIds.push(id)
+    }
+  }
+  return {
+    schemaVersion: '1.0.0',
+    objects,
+    readingOrder: orderedIds,
+    relationships: [],
   }
 }
 
@@ -762,27 +1028,39 @@ function validMineruCacheIdentity(identity) {
   )
 }
 
-export function createMineruCacheIdentity(request, options = {}) {
-  validateRequest(request)
+function createMineruCacheIdentityForCandidate(
+  candidate,
+  adapterSha256,
+  options = {},
+) {
   const backend = options.backend ?? 'vlm-auto-engine'
   const executableIdentity = options.executableIdentity
   const modelIdentity = options.modelIdentity ?? null
   const identity = {
     schemaVersion: CACHE_SCHEMA_VERSION,
     declaredCandidate: {
-      id: request.candidate.id,
-      version: request.candidate.version,
+      id: candidate.id,
+      version: candidate.version,
     },
     tool: executableIdentity,
     model: modelIdentity,
     attestationStatus: modelIdentity === null ? 'unattested' : 'attested',
-    adapterSha256: request.candidate.adapterSha256,
+    adapterSha256,
     adapterFormatVersion: ADAPTER_FORMAT_VERSION,
     backend,
     configuration: { ...MINERU_CONFIGURATION },
   }
   if (!validMineruCacheIdentity(identity)) invalid('INVALID_MINERU_CACHE_KEY')
   return identity
+}
+
+export function createMineruCacheIdentity(request, options = {}) {
+  validateRequest(request)
+  return createMineruCacheIdentityForCandidate(
+    request.candidate,
+    request.candidate.adapterSha256,
+    options,
+  )
 }
 
 function runtimeIdentityFromCacheIdentity(identity) {
@@ -914,6 +1192,7 @@ async function loadOrRunPage({
   document,
   page,
   mineruBin,
+  mineruEnvironment = process.env,
   backend,
   cacheIdentity,
 }) {
@@ -953,7 +1232,7 @@ async function loadOrRunPage({
       ],
       {
         env: {
-          ...process.env,
+          ...mineruEnvironment,
           SRT_PDF_EVAL_OFFLINE: '1',
           HF_HUB_OFFLINE: '1',
           TRANSFORMERS_OFFLINE: '1',
@@ -1056,20 +1335,109 @@ async function writeExclusive(path, value) {
   }
 }
 
-async function main() {
+function requireOfflineMode(targetFree) {
+  const modeFlag = targetFree
+    ? process.env.SRT_PDF_TARGET_FREE_OFFLINE
+    : process.env.SRT_PDF_EVAL_OFFLINE
   if (
-    process.env.SRT_PDF_EVAL_OFFLINE !== '1' ||
+    modeFlag !== '1' ||
     process.env.HF_HUB_OFFLINE !== '1' ||
     process.env.TRANSFORMERS_OFFLINE !== '1'
   ) {
     invalid('MINERU_ADAPTER_OFFLINE_REQUIRED')
   }
+}
+
+async function canonicalCacheRoot(parsed) {
+  if (within(REPOSITORY_ROOT, parsed.cacheRoot)) {
+    invalid('MINERU_CACHE_MUST_BE_EXTERNAL')
+  }
+  await mkdir(parsed.cacheRoot, { recursive: true, mode: 0o700 })
+  const cacheRoot = await realpath(parsed.cacheRoot)
+  if (within(REPOSITORY_ROOT, cacheRoot)) {
+    invalid('MINERU_CACHE_MUST_BE_EXTERNAL')
+  }
+  return cacheRoot
+}
+
+async function runTargetFreeMode(parsed, request) {
+  const candidate = targetFreeCandidate()
+  const runnerRuntime = await targetFreeRunnerRuntime(parsed)
+  const document = await verifiedTargetFreeDocument(request)
+  await assertAdapterSourceIdentity(
+    ADAPTER_PATH,
+    candidate.adapterSha256,
+    'MINERU_ADAPTER_IDENTITY_MISMATCH',
+  )
+  const observedExecutable = await observeMineruRuntime(
+    runnerRuntime.mineruBin,
+    runnerRuntime.mineruEnvironment,
+  )
+  const modelIdentity = mineruModelIdentity()
+  const cacheIdentity = createMineruCacheIdentityForCandidate(
+    candidate,
+    candidate.adapterSha256,
+    {
+      backend: parsed.backend,
+      executableIdentity: observedExecutable.identity,
+      modelIdentity,
+    },
+  )
+  const cacheRoot = await canonicalCacheRoot(parsed)
+  const contentByPage = new Map()
+  for (let page = 1; page <= document.pageCount; page += 1) {
+    contentByPage.set(
+      page,
+      await loadOrRunPage({
+        cacheRoot,
+        document,
+        page,
+        mineruBin: observedExecutable.resolvedPath,
+        mineruEnvironment: runnerRuntime.mineruEnvironment,
+        backend: parsed.backend,
+        cacheIdentity,
+      }),
+    )
+  }
+  const observations = mineruContentToTargetFreeObservations(contentByPage)
+  const verifiedAfterRun = await verifiedTargetFreeDocument(request)
+  if (verifiedAfterRun.pageCount !== document.pageCount) {
+    invalid('MINERU_TARGET_FREE_SOURCE_IDENTITY_MISMATCH')
+  }
+  const output = {
+    schemaVersion: TARGET_FREE_OUTPUT_SCHEMA_VERSION,
+    documentId: document.id,
+    sourceSha256: document.sha256,
+    candidate: {
+      id: candidate.id,
+      version: candidate.version,
+      format: TARGET_FREE_FORMAT,
+      formatVersion: TARGET_FREE_FORMAT_VERSION,
+      adapterSourceSha256: candidate.adapterSha256,
+    },
+    runtimeIdentity: runtimeIdentityFromCacheIdentity(cacheIdentity),
+    output: observations,
+  }
+  if (JSON.stringify(output).includes(document.path)) {
+    invalid('MINERU_TARGET_FREE_OUTPUT_LEAKED_SOURCE_PATH')
+  }
+  await writeExclusive(parsed.output, `${JSON.stringify(output, null, 2)}\n`)
+}
+
+async function main() {
   const parsed = parseArguments(process.argv.slice(2))
   if (within(REPOSITORY_ROOT, parsed.cacheRoot)) {
     invalid('MINERU_CACHE_MUST_BE_EXTERNAL')
   }
   const request = await readRequest(parsed.request)
+  if (isTargetFreeRequest(request)) {
+    validateTargetFreeRequest(request)
+    requireOfflineMode(true)
+    await runTargetFreeMode(parsed, request)
+    return
+  }
   const documents = validateRequest(request)
+  requireOfflineMode(false)
   await assertAdapterSourceIdentity(
     ADAPTER_PATH,
     request.candidate.adapterSha256,
@@ -1082,11 +1450,7 @@ async function main() {
     executableIdentity: observedExecutable.identity,
     modelIdentity,
   })
-  await mkdir(parsed.cacheRoot, { recursive: true, mode: 0o700 })
-  const cacheRoot = await realpath(parsed.cacheRoot)
-  if (within(REPOSITORY_ROOT, cacheRoot)) {
-    invalid('MINERU_CACHE_MUST_BE_EXTERNAL')
-  }
+  const cacheRoot = await canonicalCacheRoot(parsed)
   const requiredPages = new Map()
   for (const item of request.cases) {
     const pages = new Set([

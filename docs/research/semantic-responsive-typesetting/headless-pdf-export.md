@@ -38,15 +38,26 @@ Missing assets fail closed. OCR confidence and source boxes enter the same
 provenance and completeness gates as browser OCR; recognition can therefore
 replace `NO_RECONSTRUCTABLE_TEXT` while still retaining `LOW_CONFIDENCE_OCR` and
 `OCR_REQUIRED` review blockers when the recovered evidence is not substantive.
-The frozen non-OCR corpus envelope remains schema `1.5.0` at
-`docs/schemas/pdf-corpus-audit.schema.json`; its bytes and validation contract
-do not change. A report that contains per-page OCR provenance instead emits
-schema `1.6.0` and names
-`docs/schemas/pdf-corpus-audit-v1.6.schema.json`. Export manifests are schema
-`1.1.0`, which makes the optional OCR field an explicit contract change rather
-than silently adding it to the former `1.0.0` envelope. The v1.6 schema reuses
-the frozen v1.5 definitions by their schema id; the exporter registers both
-local files before compilation and performs no network schema resolution.
+Historical non-OCR and OCR corpus envelopes remain schema `1.5.0` and `1.6.0`;
+their bytes and validation contracts do not change. User-facing audit and
+export commands emit schema `1.7.0` at
+`docs/schemas/pdf-corpus-audit-v1.7.schema.json`. It accepts either historical
+document row shape and adds required execution provenance: the exact Git
+commit and commit timestamp, clean/dirty worktree state, an `exactHead`
+verdict, Node platform/architecture/version, tool/package version, the
+`package-lock.json` SHA-256, and declared, locked, and locally resolved
+`pdfjs-dist` versions plus the resolved package-metadata SHA-256 and a canonical
+manifest hash of every installed PDF.js implementation, worker, font, and
+support file. The command
+captures this state before loading the reconstruction pipeline and requires an
+exact after-state immediately before it publishes the report. A changed HEAD,
+worktree, lockfile, or resolved PDF.js package identity fails closed instead of
+retaining an earlier `exactHead` claim. No absolute path, username, host name,
+OS version, or wall-clock run timestamp is recorded. A clean receipt therefore
+proves exact-head execution across that verified window; a dirty receipt remains
+useful for development but cannot be cited as exact-head evidence. Export
+manifests remain schema `1.1.0`. The exporter registers all three local corpus
+schemas before compilation and performs no network schema resolution.
 
 Before a local batch, verify the Mac lane without downloading or installing
 anything:
@@ -81,9 +92,10 @@ Every completed audit/export run writes `corpus-audit.json`. It reports ready,
 review-required, and failed counts, pass rate, and gate-code failure buckets.
 It exits `1` if any document is not ready and never builds or writes an EPUB for
 that document. Reports contain basenames, hashes, metrics, redacted diagnostics,
-and artifact metadata only—never source text or local paths. They contain no
-timestamps or other volatile fields, so identical inputs produce byte-identical
-reports and artifacts with compatible pinned runtimes.
+artifact metadata, and sanitized execution provenance only—never source text
+or local paths. The only timestamp is the Git commit timestamp, not the run
+time, so identical inputs at the same source state and runtime produce
+byte-identical reports and artifacts.
 
 Run the benchmark without exporting with:
 
@@ -109,7 +121,10 @@ npm run pdf:export -- "$SRT_PRIVATE_PDF_FROZEN_10" \
   --out /tmp/srt-frozen-export
 ```
 
-Use `--corpus-set seededRandom` only for the contract's distinct seeded sample.
+Use `--corpus-set seededRandom` only for the chosen contract's seeded sample.
+Historical replay uses `corpus-contract-v1.json`; new set-disjoint robustness
+evidence uses `corpus-contract-v2.json`, which excludes frozen IDs before
+ranking.
 The option pair validates the contract itself and then requires exactly the ten
 ordered public ids with their pinned byte lengths and SHA-256 values. Missing,
 extra, renamed/wrong-version, swapped, or changed files abort before audit or

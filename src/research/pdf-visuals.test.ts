@@ -3885,6 +3885,138 @@ describe('PDF visual association graph', () => {
     ])
   })
 
+  it.each(['added', 'dropped', 'mutated'] as const)(
+    'rejects %s exclusion-mask metadata from an inline equation crop',
+    async (maskDrift) => {
+      const fragmentBaseId = 'page-001-inline-stacked-0002'
+      const before = textRegion(
+        'mask-bound-inline-before',
+        'Before',
+        box(0.2, 0.52, 0.169, 0.018),
+      )
+      before.lines[0].id = `${fragmentBaseId}-before`
+      const formula = equationRegion(
+        'mask-bound-inline-formula',
+        'a/b = c',
+        box(0.37, 0.52, 0.05, 0.018),
+      )
+      formula.lines[0].id = `${fragmentBaseId}-formula`
+      formula.lines[0].runs = [
+        {
+          ...formula.lines[0].box,
+          text: 'a',
+          x: 0.37,
+          y: 0.518,
+          width: 0.012,
+          height: 0.008,
+          fontName: 'Synthetic-CMMI8',
+          fontSize: 8,
+          confidence: 1,
+        },
+        {
+          ...formula.lines[0].box,
+          text: 'b',
+          x: 0.37,
+          y: 0.53,
+          width: 0.012,
+          height: 0.008,
+          fontName: 'Synthetic-CMMI8',
+          fontSize: 8,
+          confidence: 1,
+        },
+        {
+          ...formula.lines[0].box,
+          text: '= c',
+          x: 0.389,
+          y: 0.523,
+          width: 0.031,
+          height: 0.012,
+          fontName: 'Synthetic-CMMI12',
+          fontSize: 12,
+          confidence: 1,
+        },
+      ]
+      const after = textRegion(
+        'mask-bound-inline-after',
+        'after',
+        box(0.421, 0.52, 0.08, 0.018),
+      )
+      after.lines[0].id = `${fragmentBaseId}-after`
+      const rasterizeFigure = vi.fn(
+        async (input: Parameters<PdfFigureRasterizer>[0]) => {
+          if (maskDrift === 'dropped' && !input.excludedSourceBoxes?.length) {
+            throw new Error('PDF page crop has source ink touching its edge')
+          }
+          expect(input.ownedSourceBoxes?.length).toBeGreaterThan(0)
+          expect(input.excludedSourceBoxes).toHaveLength(2)
+          const ownedSourceBoxes = input.ownedSourceBoxes!.map((sourceBox) => ({
+            ...sourceBox,
+          }))
+          const excludedSourceBoxes = input.excludedSourceBoxes!.map(
+            (sourceBox) => ({ ...sourceBox }),
+          )
+          if (maskDrift === 'mutated') {
+            excludedSourceBoxes[0].x += Number.EPSILON
+          } else if (maskDrift === 'added') {
+            excludedSourceBoxes.push({
+              page: 1,
+              x: 0.1,
+              y: 0.1,
+              width: 0.01,
+              height: 0.004,
+              rotation: 0,
+              method: 'pdf-text',
+            })
+          }
+          return createSourcePageCropAsset({
+            kind: 'equation',
+            cropBox: input.sourceBox,
+            sourceObjectIds: input.sourceObjectIds,
+            sourceBoxes: input.sourceBoxes,
+            width: 48,
+            height: 14,
+            pixels: new Uint8Array(48 * 14 * 4).fill(72),
+            ...(maskDrift === 'dropped'
+              ? {}
+              : {
+                  sourceExclusionMask: {
+                    algorithm: 'nearest-source-box-v1',
+                    expansionPixels: 2,
+                    ownedSourceBoxes,
+                    excludedSourceBoxes,
+                  },
+                }),
+          })
+        },
+      )
+
+      const result = await reconstructPdfVisuals({
+        pages: [page([])],
+        regions: [before, formula, after],
+        rasterizeFigure,
+      })
+
+      if (maskDrift === 'dropped') {
+        expect(rasterizeFigure.mock.calls.length).toBeGreaterThan(1)
+        expect(
+          rasterizeFigure.mock.calls.some(
+            ([input]) => !input.excludedSourceBoxes?.length,
+          ),
+        ).toBe(true)
+      } else {
+        expect(rasterizeFigure).toHaveBeenCalledOnce()
+      }
+      expect(result.relationships).toEqual([
+        expect.objectContaining({
+          kind: 'equation',
+          status: 'unresolved',
+          assetIds: [],
+          evidence: expect.arrayContaining(['source-rendition-unavailable']),
+        }),
+      ])
+    },
+  )
+
   it('does not let transitive math fragments bridge distinct numbered equations', async () => {
     const equationTwo = equationRegion(
       'transitive-equation-two',
@@ -4291,6 +4423,64 @@ describe('PDF visual association graph', () => {
     })
   })
 
+  it('uses more safe interline whitespace when a dense equation crop still touches ink', async () => {
+    const precedingProse = textRegion(
+      'dense-equation-preceding-prose',
+      'The dense line immediately above remains canonical prose.',
+      box(0.1, 0.63, 0.7, 0.018),
+    )
+    const equation = equationRegion(
+      'dense-equation-with-raised-script',
+      'cos(k/2(a + b)) to cos(k(a + b)).',
+      box(0.1, 0.65, 0.32, 0.024),
+    )
+    equation.lines[0].runs[0].fontName = 'Synthetic-CMEX10'
+    const followingProse = textRegion(
+      'dense-equation-following-prose',
+      'The dense line immediately below also remains canonical prose.',
+      box(0.1, 0.68, 0.7, 0.018),
+    )
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) => {
+        if (input.sourceBox.y > 0.649) {
+          throw new Error('PDF page crop has source ink touching its edge')
+        }
+        return createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 16,
+          pixels: new Uint8Array(96 * 16 * 4).fill(72),
+        })
+      },
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [precedingProse, equation, followingProse],
+      rasterizeFigure,
+    })
+
+    const retained = rasterizeFigure.mock.calls.at(-1)![0].sourceBox
+    expect(rasterizeFigure).toHaveBeenCalledTimes(9)
+    expect(retained.y).toBe(0.649)
+    expect(retained.y).toBeGreaterThan(
+      precedingProse.box.y + precedingProse.box.height,
+    )
+    expect(retained.y + retained.height).toBeLessThan(followingProse.box.y)
+    expect(result.relationships[0]).toMatchObject({
+      kind: 'equation',
+      status: 'matched',
+      evidence: expect.arrayContaining([
+        'source-page-crop',
+        'source-page-crop-adaptive-padding',
+        'source-page-crop-neighbor-bounded',
+      ]),
+    })
+  })
+
   it('does not clear one neighbor by crossing the opposite prose edge', async () => {
     const precedingProse = textRegion(
       'equation-shifted-preceding',
@@ -4338,7 +4528,7 @@ describe('PDF visual association graph', () => {
       assetIds: [],
       evidence: expect.arrayContaining(['source-rendition-unavailable']),
     })
-    expect(rasterizeFigure.mock.calls.length).toBeLessThanOrEqual(8)
+    expect(rasterizeFigure.mock.calls.length).toBeLessThanOrEqual(11)
     for (const [input] of rasterizeFigure.mock.calls.slice(1)) {
       expect(input.sourceBox.y).toBeGreaterThanOrEqual(
         precedingProse.box.y + precedingProse.box.height,
@@ -7407,7 +7597,7 @@ describe('PDF visual association graph', () => {
         id: 'image-p001-multipart-recovery-1',
         page: 1,
         kind: 'image' as const,
-        box: box(0.18, 0, 0.64, 0.24),
+        box: box(0.18, 0.07, 0.64, 0.17),
         confidence: 0.99,
         assetId: null,
       },
@@ -7415,7 +7605,15 @@ describe('PDF visual association graph', () => {
         id: 'image-p001-multipart-recovery-2',
         page: 1,
         kind: 'image' as const,
-        box: box(0.185, 0.005, 0.63, 0.23),
+        box: box(0.185, 0.075, 0.63, 0.16),
+        confidence: 0.99,
+        assetId: null,
+      },
+      {
+        id: 'vector-p001-multipart-recovery-whitespace-separated-top-band',
+        page: 1,
+        kind: 'vector' as const,
+        box: box(0.22, 0.035, 0.56, 0.02),
         confidence: 0.99,
         assetId: null,
       },
@@ -7470,9 +7668,21 @@ describe('PDF visual association graph', () => {
       rasterizeFigure,
     })
 
+    const recoveryInput = rasterizeFigure.mock.calls
+      .map(([input]) => input)
+      .find((input) => input.sourceObjectIds[0].startsWith('source-panel:'))
+    expect(recoveryInput).toBeDefined()
+    expect(recoveryInput?.sourceBox.y).toBe(0.035)
     expect(
-      rasterizeFigure.mock.calls.some(([input]) =>
-        input.sourceObjectIds[0].startsWith('source-panel:'),
+      nativeObjects.every(
+        (object) =>
+          recoveryInput !== undefined &&
+          recoveryInput.sourceBox.x <= object.box.x &&
+          recoveryInput.sourceBox.y <= object.box.y &&
+          recoveryInput.sourceBox.x + recoveryInput.sourceBox.width >=
+            object.box.x + object.box.width &&
+          recoveryInput.sourceBox.y + recoveryInput.sourceBox.height >=
+            object.box.y + object.box.height,
       ),
     ).toBe(true)
     expect(result.relationships[0]).toMatchObject({

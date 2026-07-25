@@ -1,6 +1,18 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import Ajv2020 from 'ajv/dist/2020.js'
@@ -8,8 +20,12 @@ import { describe, expect, it } from 'vitest'
 import {
   canonicalJson,
   canonicalJsonHash,
+  capturePdfCorpusExecutionProvenance,
   createSafeAuditFailureDocument,
   createPdfStructuralReceipt,
+  finalizePdfCorpusExecutionProvenance,
+  packageContentsIdentity,
+  pdfCorpusWorktreeStateSnapshot,
   summarizeAuditDiagnostics,
 } from './pdf-corpus-audit-lib.mjs'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
@@ -33,6 +49,459 @@ describe('local PDF corpus audit', () => {
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(
       '6d6a6b12745ec075c1658208ed389d5420c2e091f0f95e24bd3c04f1a1c3ba73',
     )
+  })
+
+  it('keeps the frozen v1.6 audit schema byte-identical', async () => {
+    const bytes = await readFile(
+      'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+    )
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      '3b50cb9fbb60bd004653f4c7831ec3cf0950cc3449e22fa44c6c0575c695eecd',
+    )
+  })
+
+  it('captures deterministic privacy-safe implementation provenance', async () => {
+    const first = await finalizePdfCorpusExecutionProvenance(
+      await capturePdfCorpusExecutionProvenance('pdf-corpus-audit'),
+    )
+    const second = await finalizePdfCorpusExecutionProvenance(
+      await capturePdfCorpusExecutionProvenance('pdf-corpus-audit'),
+    )
+    const expectedCommit = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+      encoding: 'utf8',
+    }).stdout.trim()
+    const expectedClean =
+      spawnSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+        encoding: 'utf8',
+      }).stdout.trim() === ''
+    const packageLockBytes = await readFile('package-lock.json')
+    const pdfjsPackageBytes = await readFile(
+      'node_modules/pdfjs-dist/package.json',
+    )
+    const pdfjsPackage = JSON.parse(pdfjsPackageBytes)
+
+    expect(first).toEqual(second)
+    expect(first).toMatchObject({
+      schemaVersion: '1.1.0',
+      implementation: {
+        gitCommit: expectedCommit,
+        worktreeState: expectedClean ? 'clean' : 'dirty',
+        exactHead: expectedClean,
+      },
+      runtime: {
+        name: 'node',
+        version: process.versions.node,
+        platform: process.platform,
+        architecture: process.arch,
+      },
+      tool: {
+        id: 'pdf-corpus-audit',
+        packageName: 'astro-erudite',
+        packageVersion: '1.2.4',
+      },
+      toolchain: {
+        packageLockSha256: createHash('sha256')
+          .update(packageLockBytes)
+          .digest('hex'),
+        pdfjsDist: {
+          declaredVersion: '5.4.624',
+          lockedVersion: '5.4.624',
+          resolvedVersion: pdfjsPackage.version,
+          resolvedPackageJsonSha256: createHash('sha256')
+            .update(pdfjsPackageBytes)
+            .digest('hex'),
+          resolvedPackageContentsSha256: (
+            await packageContentsIdentity(resolve('node_modules/pdfjs-dist'))
+          ).sha256,
+        },
+      },
+      verification: {
+        method: 'before-after-exact-match-v1',
+        stateSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    })
+    expect(Date.parse(first.implementation.gitCommitTimestamp)).not.toBeNaN()
+    expect(JSON.stringify(first)).not.toContain(resolve('.'))
+  })
+
+  it('fails provenance finalization closed when the captured state changed', async () => {
+    const capture =
+      await capturePdfCorpusExecutionProvenance('pdf-corpus-audit')
+    capture.stateSha256 = '0'.repeat(64)
+
+    await expect(finalizePdfCorpusExecutionProvenance(capture)).rejects.toThrow(
+      'PDF_CORPUS_PROVENANCE_CHANGED_DURING_RUN',
+    )
+  })
+
+  it('hashes the complete installed package manifest, not only package metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-package-identity-'))
+    try {
+      await mkdir(join(directory, 'legacy', 'build'), { recursive: true })
+      await writeFile(join(directory, 'package.json'), '{"version":"1.0.0"}\n')
+      const implementationPath = join(directory, 'legacy', 'build', 'pdf.mjs')
+      await writeFile(implementationPath, 'export const build = "first"\n')
+      const first = await packageContentsIdentity(directory)
+
+      await writeFile(implementationPath, 'export const build = "other"\n')
+      const second = await packageContentsIdentity(directory)
+
+      expect(second.fileCount).toBe(first.fileCount)
+      expect(second.sha256).not.toBe(first.sha256)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('changes worktree identity when the content of an already-dirty file changes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-provenance-git-'))
+    try {
+      expect(
+        spawnSync('git', ['-C', directory, 'init', '--quiet']).status,
+      ).toBe(0)
+      await writeFile(join(directory, 'tracked.txt'), 'committed\n')
+      expect(
+        spawnSync('git', ['-C', directory, 'add', 'tracked.txt']).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          '-c',
+          'user.name=PDF provenance fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          'commit',
+          '--quiet',
+          '-m',
+          'fixture',
+        ]).status,
+      ).toBe(0)
+
+      await writeFile(join(directory, 'tracked.txt'), 'first dirty state\n')
+      const before = await pdfCorpusWorktreeStateSnapshot(directory)
+      await writeFile(join(directory, 'tracked.txt'), 'second dirty state\n')
+      const after = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      expect(before.worktreeStatus).toBe(after.worktreeStatus)
+      expect(before.contentSha256).not.toBe(after.contentSha256)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['--assume-unchanged', '--skip-worktree'])(
+    'rejects tracked files hidden from exact-head verification by %s',
+    async (indexFlag) => {
+      const directory = await mkdtemp(join(tmpdir(), 'pdf-provenance-index-'))
+      try {
+        expect(
+          spawnSync('git', ['-C', directory, 'init', '--quiet']).status,
+        ).toBe(0)
+        await writeFile(join(directory, 'tracked.txt'), 'committed\n')
+        expect(
+          spawnSync('git', ['-C', directory, 'add', 'tracked.txt']).status,
+        ).toBe(0)
+        expect(
+          spawnSync('git', [
+            '-C',
+            directory,
+            '-c',
+            'user.name=PDF provenance fixture',
+            '-c',
+            'user.email=fixture@example.invalid',
+            'commit',
+            '--quiet',
+            '-m',
+            'fixture',
+          ]).status,
+        ).toBe(0)
+        expect(
+          spawnSync('git', [
+            '-C',
+            directory,
+            'update-index',
+            indexFlag,
+            'tracked.txt',
+          ]).status,
+        ).toBe(0)
+        await writeFile(join(directory, 'tracked.txt'), 'hidden dirty state\n')
+
+        await expect(pdfCorpusWorktreeStateSnapshot(directory)).rejects.toThrow(
+          'PDF_CORPUS_PROVENANCE_UNAVAILABLE',
+        )
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('compares tracked bytes with HEAD despite a reusable Git stat cache entry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-provenance-bytes-'))
+    try {
+      expect(
+        spawnSync('git', ['-C', directory, 'init', '--quiet']).status,
+      ).toBe(0)
+      const trackedPath = join(directory, 'tracked.txt')
+      await writeFile(trackedPath, 'aaaaaaaa\n')
+      expect(
+        spawnSync('git', ['-C', directory, 'add', 'tracked.txt']).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          '-c',
+          'user.name=PDF provenance fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          'commit',
+          '--quiet',
+          '-m',
+          'fixture',
+        ]).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          'config',
+          'core.trustctime',
+          'false',
+        ]).status,
+      ).toBe(0)
+      const clean = await pdfCorpusWorktreeStateSnapshot(directory)
+      const committedTimes = await stat(trackedPath)
+
+      await writeFile(trackedPath, 'bbbbbbbb\n')
+      await utimes(trackedPath, committedTimes.atime, committedTimes.mtime)
+      const changed = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      expect(clean.worktreeStatus).toBe('')
+      expect(changed.worktreeStatus).toContain(
+        'tracked-worktree-bytes-differ-from-head',
+      )
+      expect(changed.contentSha256).not.toBe(clean.contentSha256)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts clean tracked files normalized by Git input filters', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-provenance-crlf-'))
+    try {
+      expect(
+        spawnSync('git', ['-C', directory, 'init', '--quiet']).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', ['-C', directory, 'config', 'core.autocrlf', 'true'])
+          .status,
+      ).toBe(0)
+      const trackedPath = join(directory, 'tracked.txt')
+      await writeFile(trackedPath, 'first\nsecond\n')
+      expect(
+        spawnSync('git', ['-C', directory, 'add', 'tracked.txt']).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          '-c',
+          'user.name=PDF provenance fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          'commit',
+          '--quiet',
+          '-m',
+          'fixture',
+        ]).status,
+      ).toBe(0)
+
+      await unlink(trackedPath)
+      expect(
+        spawnSync('git', ['-C', directory, 'checkout', '--', 'tracked.txt'])
+          .status,
+      ).toBe(0)
+      expect(await readFile(trackedPath, 'utf8')).toBe('first\r\nsecond\r\n')
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          'status',
+          '--porcelain=v1',
+        ]).stdout.toString(),
+      ).toBe('')
+      const snapshot = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      expect(snapshot.worktreeStatus).toBe('')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects lossy clean-filter equivalence that is not the HEAD checkout representation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-provenance-filter-'))
+    try {
+      expect(
+        spawnSync('git', ['-C', directory, 'init', '--quiet']).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          'config',
+          'filter.lossy.clean',
+          "sed 's/.*/canonical/'",
+        ]).status,
+      ).toBe(0)
+      await writeFile(
+        join(directory, '.gitattributes'),
+        'tracked.txt filter=lossy\n',
+      )
+      const trackedPath = join(directory, 'tracked.txt')
+      await writeFile(trackedPath, 'original!\n')
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          'add',
+          '.gitattributes',
+          'tracked.txt',
+        ]).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          '-c',
+          'user.name=PDF provenance fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          'commit',
+          '--quiet',
+          '-m',
+          'fixture',
+        ]).status,
+      ).toBe(0)
+      await unlink(trackedPath)
+      expect(
+        spawnSync('git', ['-C', directory, 'checkout', '--', 'tracked.txt'])
+          .status,
+      ).toBe(0)
+      expect(await readFile(trackedPath, 'utf8')).toBe('canonical\n')
+      const clean = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      await writeFile(trackedPath, 'alternate\n')
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          'status',
+          '--porcelain=v1',
+        ]).stdout.toString(),
+      ).toBe('')
+      const changed = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      expect(clean.worktreeStatus).toBe('')
+      expect(changed.worktreeStatus).toContain(
+        'tracked-worktree-bytes-differ-from-head',
+      )
+      expect(changed.contentSha256).not.toBe(clean.contentSha256)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('compares dangling symbolic-link targets without dereferencing them', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-provenance-symlink-'))
+    try {
+      expect(
+        spawnSync('git', ['-C', directory, 'init', '--quiet']).status,
+      ).toBe(0)
+      const trackedPath = join(directory, 'tracked-link')
+      await symlink('first-target', trackedPath)
+      expect(
+        spawnSync('git', ['-C', directory, 'add', 'tracked-link']).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          '-c',
+          'user.name=PDF provenance fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          'commit',
+          '--quiet',
+          '-m',
+          'fixture',
+        ]).status,
+      ).toBe(0)
+      const clean = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      await unlink(trackedPath)
+      await symlink('other-target', trackedPath)
+      const changed = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      expect(clean.worktreeStatus).toBe('')
+      expect(changed.worktreeStatus).toContain(
+        'tracked-worktree-bytes-differ-from-head',
+      )
+      expect(changed.contentSha256).not.toBe(clean.contentSha256)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the owner execute bit tracked by Git for file modes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-provenance-mode-'))
+    try {
+      expect(
+        spawnSync('git', ['-C', directory, 'init', '--quiet']).status,
+      ).toBe(0)
+      const trackedPath = join(directory, 'tracked.txt')
+      await writeFile(trackedPath, 'committed\n')
+      expect(
+        spawnSync('git', ['-C', directory, 'add', 'tracked.txt']).status,
+      ).toBe(0)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          '-c',
+          'user.name=PDF provenance fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          'commit',
+          '--quiet',
+          '-m',
+          'fixture',
+        ]).status,
+      ).toBe(0)
+
+      const baseline = await pdfCorpusWorktreeStateSnapshot(directory)
+      await chmod(trackedPath, 0o645)
+      expect(
+        spawnSync('git', [
+          '-C',
+          directory,
+          'status',
+          '--porcelain=v1',
+        ]).stdout.toString(),
+      ).toBe('')
+      const snapshot = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      expect(snapshot.worktreeStatus).toBe('')
+      expect(snapshot.contentSha256).toBe(baseline.contentSha256)
+
+      await chmod(trackedPath, 0o745)
+      const ownerExecutable = await pdfCorpusWorktreeStateSnapshot(directory)
+
+      expect(ownerExecutable.worktreeStatus).not.toBe('')
+      expect(ownerExecutable.contentSha256).not.toBe(snapshot.contentSha256)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('creates only allowlisted basename-only audit failure rows', () => {
@@ -860,6 +1329,26 @@ describe('local PDF corpus audit', () => {
       sha256: 'a'.repeat(64),
       sourceBoxes: [crop],
       sourceCropBox: crop,
+      sourceExclusionMask: {
+        algorithm: 'nearest-source-box-v1',
+        expansionPixels: 2,
+        ownedSourceBoxes: [
+          sourceBox({
+            x: 0.3,
+            y: 0.35,
+            width: 0.1,
+            height: 0.05,
+          }),
+        ],
+        excludedSourceBoxes: [
+          sourceBox({
+            x: 0.3,
+            y: 0.295,
+            width: 0.1,
+            height: 0.004,
+          }),
+        ],
+      },
     }
     const reconstruction = {
       paper: {
@@ -903,11 +1392,37 @@ describe('local PDF corpus audit', () => {
         },
       ],
     })
+    const maskChanged = createPdfStructuralReceipt({
+      ...reconstruction,
+      assets: [
+        {
+          ...asset,
+          sourceExclusionMask: {
+            ...asset.sourceExclusionMask,
+            excludedSourceBoxes:
+              asset.sourceExclusionMask.excludedSourceBoxes.map((box) => ({
+                ...box,
+                x: box.x + 0.001,
+              })),
+          },
+        },
+      ],
+    })
 
-    for (const changed of [captionChanged, candidateChanged, cropChanged]) {
+    for (const changed of [
+      captionChanged,
+      candidateChanged,
+      cropChanged,
+      maskChanged,
+    ]) {
       expect(changed.visualRelationshipGraphSha256).not.toBe(
         baseline.visualRelationshipGraphSha256,
       )
+      if (changed === maskChanged) {
+        expect(changed.assetManifestSha256).not.toBe(
+          baseline.assetManifestSha256,
+        )
+      }
       expect(canonicalJsonHash(changed)).not.toBe(canonicalJsonHash(baseline))
     }
     expect(JSON.stringify(baseline)).not.toContain('caption-node-private-1')
@@ -990,14 +1505,45 @@ describe('local PDF corpus audit', () => {
 
     expect(result.status, result.stderr).toBe(0)
     const report = JSON.parse(result.stdout)
-    const schema = JSON.parse(
-      await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
+    const schemas = await Promise.all(
+      [
+        'docs/schemas/pdf-corpus-audit.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+      ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
     )
-    const reportValidator = new Ajv2020({ strict: false }).compile(schema)
+    const ajv = new Ajv2020({ strict: false })
+    for (const schema of schemas) ajv.addSchema(schema)
+    const reportValidator = ajv.getSchema(
+      'https://ernie.sg/schemas/pdf-corpus-audit-1.7.0.json',
+    )
     expect(reportValidator(report), reportValidator.errors).toBe(true)
     expect(report).toMatchObject({
-      schemaVersion: '1.5.0',
+      schemaVersion: '1.7.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
       privacy: 'basenames-hashes-metrics-diagnostics-only',
+      executionProvenance: {
+        schemaVersion: '1.1.0',
+        implementation: {
+          gitCommit: expect.stringMatching(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+        },
+        tool: { id: 'pdf-corpus-audit' },
+        toolchain: {
+          packageLockSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          pdfjsDist: {
+            declaredVersion: '5.4.624',
+            lockedVersion: '5.4.624',
+            resolvedVersion: '5.4.624',
+            resolvedPackageJsonSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            resolvedPackageContentsSha256:
+              expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
+        verification: {
+          method: 'before-after-exact-match-v1',
+          stateSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      },
       summary: {
         documents: 2,
         ready: 2,
@@ -1007,6 +1553,9 @@ describe('local PDF corpus audit', () => {
         failureReasons: {},
       },
     })
+    expect(report.executionProvenance.implementation.exactHead).toBe(
+      report.executionProvenance.implementation.worktreeState === 'clean',
+    )
     expect(report.documents.map((document) => document.basename)).toEqual([
       'born-digital.pdf',
       'structured-scientific.pdf',

@@ -3,6 +3,7 @@ import type {
   NodeSourceEvidence,
   NormalizedSourceBox,
   PdfPageRegion,
+  PdfSourceExclusionMask,
   PdfVisualRelationship,
 } from './import-types'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
@@ -80,7 +81,9 @@ function unionBox(boxes: NormalizedSourceBox[]): NormalizedSourceBox {
   return textBox(left, top, right - left, bottom - top)
 }
 
-async function partialEquationFixture() {
+async function partialEquationFixture(
+  sourceExclusionMask?: PdfSourceExclusionMask,
+) {
   const numeratorLine = line(
     'equation-numerator-line',
     'dS_t = σ dW_t (under Q),',
@@ -118,6 +121,7 @@ async function partialEquationFixture() {
     width: 32,
     height: 16,
     pixels,
+    sourceExclusionMask,
   })
   const relationship = {
     id: 'equation-relationship',
@@ -135,6 +139,7 @@ async function partialEquationFixture() {
       'bounded-source-geometry',
       'source-page-crop',
       'source-text-transcript-unresolved',
+      ...(sourceExclusionMask ? ['source-page-crop-unowned-text-masked'] : []),
     ],
     candidates: [],
     sourceBoxes: [numeratorLine.box, visualSourceBox],
@@ -217,6 +222,35 @@ async function partialEquationFixture() {
 }
 
 describe('PDF visual relationship line-scoped ownership', () => {
+  it('rejects a source crop when its exact exclusion-mask proof is mutated or dropped', async () => {
+    const ownedNumerator = textBox(0.39, 0.49, 0.23, 0.018)
+    const ownedDenominator = textBox(0.49, 0.505, 0.025, 0.014)
+    const fixture = await partialEquationFixture({
+      algorithm: 'nearest-source-box-v1',
+      expansionPixels: 2,
+      ownedSourceBoxes: [ownedNumerator, ownedDenominator],
+      excludedSourceBoxes: [textBox(0.39, 0.486, 0.05, 0.004)],
+    })
+    const validate = (asset: typeof fixture.asset) =>
+      validatedPdfVisualRelationships({
+        paper: fixture.paper,
+        provenance: fixture.provenance,
+        relationships: [fixture.relationship],
+        assets: [asset],
+        regions: fixture.regions,
+      })
+
+    expect(validate(fixture.asset)).toEqual([fixture.relationship])
+
+    const mutated = structuredClone(fixture.asset)
+    mutated.sourceExclusionMask!.excludedSourceBoxes[0].x += Number.EPSILON
+    expect(validate(mutated)).toEqual([])
+
+    const dropped = structuredClone(fixture.asset)
+    delete dropped.sourceExclusionMask
+    expect(validate(dropped)).toEqual([])
+  })
+
   it('retains an exact equation crop when only selected lines share a prose region', async () => {
     const fixture = await partialEquationFixture()
 

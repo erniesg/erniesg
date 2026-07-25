@@ -12,8 +12,10 @@ import {
 } from 'node:path'
 import {
   auditPdfPath,
+  capturePdfCorpusExecutionProvenance,
   createCorpusReport,
   createPdfPipeline,
+  finalizePdfCorpusExecutionProvenance,
   pdfPaths,
   serializeCorpusReport,
 } from './pdf-corpus-audit-lib.mjs'
@@ -177,6 +179,8 @@ async function main() {
     }
   }
 
+  const executionProvenanceCapture =
+    await capturePdfCorpusExecutionProvenance('pdf-corpus-audit')
   let localOverlayOutput = null
   if (overlayOutput) {
     try {
@@ -230,8 +234,12 @@ async function main() {
         left.basename.localeCompare(right.basename) ||
         String(left.sha256).localeCompare(String(right.sha256)),
     )
+    const executionProvenance = await finalizePdfCorpusExecutionProvenance(
+      executionProvenanceCapture,
+    )
     const report = createCorpusReport(documents, pipeline.policy, {
       corpusContract,
+      executionProvenance,
     })
     process.stdout.write(serializeCorpusReport(report))
     if (

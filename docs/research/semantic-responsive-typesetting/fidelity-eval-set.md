@@ -45,10 +45,17 @@ score:
 | Independent blind holdout | Candidate-independent final measurement      | Not built                  | N/A                    |
 | Judge train/dev/test      | Future subjective-judge calibration          | Not built                  | N/A                    |
 
-The two ten-paper lanes are 20 executions over **18 distinct paper
-identities**, not 20 unique papers: `2405.07987v5` and `2507.21509v3` appear in
-both. The overlap is frozen in the governance contract instead of being hidden
-by the aggregate run count.
+The two ten-paper lanes in the frozen v1 governance are 20 executions over
+**18 distinct paper identities**, not 20 unique papers: `2405.07987v5` and
+`2507.21509v3` appear in both. The overlap is frozen in the governance contract
+instead of being hidden by the aggregate run count.
+
+The additive `corpus-contract-v2.json` and
+`reconstruction-eval-contract-v3.json` preserve those historical bytes while
+adding a seeded-random lane selected only after frozen-set IDs are excluded.
+That lane is set-disjoint, so the current whole-paper robustness run covers 20
+distinct identities. It remains development discovery/regression evidence,
+not a blind holdout or promotion authority.
 
 This is a calibration seed, not a saturated benchmark or publication
 acceptance claim. Expand it by reviewing representative outputs until roughly

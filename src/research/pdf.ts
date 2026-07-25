@@ -1270,6 +1270,7 @@ export async function reconstructPdf(
               document.canvasFactory as unknown as PdfCanvasFactory,
             sourceBox: input.sourceBox,
             ownedSourceBoxes: input.ownedSourceBoxes,
+            excludedSourceBoxes: input.excludedSourceBoxes,
             signal: options.signal,
             tightenToSourceInk: input.kind === 'figure',
           })

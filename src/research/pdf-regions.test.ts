@@ -8,6 +8,7 @@ import {
   hasAcceptedCycle,
   noteLabelFromText,
   reconstructPageRegions,
+  sourceInlineFractionPairs,
 } from './pdf-regions'
 import type { PdfFigureRasterizer } from './pdf-visuals'
 import { createSourcePageCropAsset } from './visual-assets'
@@ -64,6 +65,72 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('does not mistake a numeric stacked fraction beside a base for paired scripts', () => {
+    const base = {
+      ...run(1, '1', 0.1, 0.5, 0.01, 10, 0.014),
+      fontName: 'Synthetic-CMR10',
+    }
+    const numerator = {
+      ...run(1, '1', 0.111, 0.494, 0.006, 7, 0.009),
+      fontName: 'Synthetic-CMR7',
+    }
+    const denominator = {
+      ...run(1, '2', 0.111, 0.507, 0.006, 7, 0.009),
+      fontName: 'Synthetic-CMR7',
+    }
+
+    expect(
+      sourceInlineFractionPairs({
+        id: 'mixed-number-fraction-line',
+        page: 1,
+        text: '112',
+        x: 0.1,
+        y: 0.494,
+        width: 0.017,
+        height: 0.022,
+        fontSize: 10,
+        column: 'single',
+        runs: [base, numerator, denominator],
+      }),
+    ).toEqual([[numerator, denominator]])
+  })
+
+  it.each([
+    { baseText: '2', numeratorText: 'x', denominatorText: 'y' },
+    { baseText: 'a', numeratorText: 'b', denominatorText: 'c' },
+  ])(
+    'keeps $baseText $numeratorText/$denominatorText as an ambiguous two-dimensional formula',
+    ({ baseText, numeratorText, denominatorText }) => {
+      const base = {
+        ...run(1, baseText, 0.1, 0.5, 0.01, 10, 0.014),
+        fontName: 'Synthetic-CMMI10',
+      }
+      const numerator = {
+        ...run(1, numeratorText, 0.111, 0.494, 0.006, 7, 0.009),
+        fontName: 'Synthetic-CMMI7',
+      }
+      const denominator = {
+        ...run(1, denominatorText, 0.111, 0.507, 0.006, 7, 0.009),
+        fontName: 'Synthetic-CMMI7',
+      }
+
+      expect(
+        sourceInlineFractionPairs({
+          id: 'mixed-variable-fraction-line',
+          page: 1,
+          text: `${baseText}${numeratorText}${denominatorText}`,
+          x: 0.1,
+          y: 0.494,
+          width: 0.017,
+          height: 0.022,
+          fontSize: 10,
+          column: 'single',
+          runs: [base, numerator, denominator],
+        }),
+      ).toEqual([[numerator, denominator]])
+    },
+  )
+
   it('keeps identical two-page geometry page-local and globally unique in the reading graph', () => {
     const twoColumnRuns = (pageNumber: number, label: string) => [
       run(pageNumber, `${label} left row one.`, 0.08, 0.2, 0.35),
@@ -113,9 +180,9 @@ describe('deterministic scholarly page regions', () => {
       ).toBe(true)
     }
     for (const edge of result.readingOrder.edges) {
-      expect(regionIds.filter((regionId) => regionId === edge.from)).toHaveLength(
-        1,
-      )
+      expect(
+        regionIds.filter((regionId) => regionId === edge.from),
+      ).toHaveLength(1)
       expect(regionIds.filter((regionId) => regionId === edge.to)).toHaveLength(
         1,
       )
@@ -800,7 +867,7 @@ describe('deterministic scholarly page regions', () => {
     )
   })
 
-  it('does not split an aligned prose row merely because two small source runs are stacked', () => {
+  it('withholds an aligned row when stacked source labels remain semantically ambiguous', () => {
     const upper = run(1, 'DE', 0.28, 0.397, 0.02, 7, 0.009)
     upper.fontName = 'Synthetic-CMR7'
     const lower = run(1, 'TE', 0.28, 0.41, 0.02, 7, 0.009)
@@ -818,10 +885,18 @@ describe('deterministic scholarly page regions', () => {
 
     expect(
       result.regions.filter((region) => region.kind === 'equation'),
-    ).toHaveLength(0)
+    ).toHaveLength(1)
     expect(
       result.regions.find((region) => region.text.includes('audited labels')),
-    ).toMatchObject({ kind: 'body' })
+    ).toMatchObject({
+      kind: 'body',
+      text: expect.not.stringContaining('DE'),
+    })
+    expect(
+      result.regions
+        .flatMap((region) => region.lines)
+        .some((line) => /-inline-stacked-\d+-formula$/u.test(line.id)),
+    ).toBe(true)
   })
 
   it('does not classify a full-size Computer Modern prose word as math from the literal word helix', () => {
@@ -2869,9 +2944,7 @@ describe('deterministic scholarly page regions', () => {
     const epub = await buildReadableEpub(result.paper, result)
     const { files } = inspectEpub(epub.bytes)
     const content = strFromU8(files['EPUB/content.xhtml'])
-    expect(content).not.toContain(
-      '<em>h</em><sup><em>l</em></sup><sub>=</sub>',
-    )
+    expect(content).not.toContain('<em>h</em><sup><em>l</em></sup><sub>=</sub>')
     expect(content).toContain('Display equation p001-001')
     expect(content).toContain('class="orphan-caption omitted-visual"')
   })

@@ -5,6 +5,7 @@ import {
   canonicalTableFromLines,
   createCompositePngAsset,
   createPngAsset,
+  createSourcePageCropAsset,
   createTableAsset,
   createTextSvgAsset,
   createVectorSvgAsset,
@@ -115,8 +116,8 @@ describe('PDF visual asset primitives', () => {
 
   it('preserves offset multi-row RGBA input without byte drift or mutation', async () => {
     const content = [
-      255, 0, 0, 255, 0, 255, 0, 192, 0, 0, 255, 128, 255, 255, 255, 64,
-      0, 0, 0, 255, 127, 63, 191, 0,
+      255, 0, 0, 255, 0, 255, 0, 192, 0, 0, 255, 128, 255, 255, 255, 64, 0, 0,
+      0, 255, 127, 63, 191, 0,
     ]
     const backing = new Uint8Array([9, 8, 7, ...content, 6, 5])
     const pixels = backing.subarray(3, 3 + content.length)
@@ -216,6 +217,86 @@ describe('PDF visual asset primitives', () => {
     })
     expect(first.sha256).not.toBe(source.sha256)
     await expect(downscalePngAsset(source, 8, 264)).resolves.toBe(source)
+  })
+
+  it('binds the exact exclusion-mask decision into crop and profile identities', async () => {
+    const cropBox = {
+      ...sourceBox,
+      x: 0.1,
+      y: 0.1,
+      width: 0.4,
+      height: 0.3,
+    }
+    const ownedSourceBox = {
+      ...sourceBox,
+      x: 0.18,
+      y: 0.16,
+      width: 0.16,
+      height: 0.08,
+      method: 'pdf-text' as const,
+    }
+    const sourceExclusionMask = {
+      algorithm: 'nearest-source-box-v1' as const,
+      expansionPixels: 2 as const,
+      ownedSourceBoxes: [{ ...ownedSourceBox }],
+      excludedSourceBoxes: [
+        {
+          ...ownedSourceBox,
+          x: 0.18,
+          y: 0.095,
+          width: 0.08,
+          height: 0.004,
+        },
+      ],
+    }
+    const common = {
+      kind: 'equation' as const,
+      cropBox,
+      sourceObjectIds: ['equation-source'],
+      sourceBoxes: [ownedSourceBox],
+      width: 8,
+      height: 8,
+      pixels: new Uint8Array(8 * 8 * 4).fill(48),
+    }
+    const first = await createSourcePageCropAsset({
+      ...common,
+      sourceExclusionMask,
+    })
+    const changed = await createSourcePageCropAsset({
+      ...common,
+      sourceExclusionMask: {
+        ...sourceExclusionMask,
+        excludedSourceBoxes: sourceExclusionMask.excludedSourceBoxes.map(
+          (box) => ({ ...box, x: box.x + 0.001 }),
+        ),
+      },
+    })
+
+    expect(changed.sha256).toBe(first.sha256)
+    expect(changed.id).not.toBe(first.id)
+    expect(first.sourceExclusionMask).toEqual(sourceExclusionMask)
+    sourceExclusionMask.excludedSourceBoxes[0].x = 0.4
+    expect(first.sourceExclusionMask?.excludedSourceBoxes[0].x).toBe(0.18)
+
+    const [firstPackaged, changedPackaged] = await Promise.all([
+      downscalePngAsset(first, 4, 264),
+      downscalePngAsset(changed, 4, 264),
+    ])
+    expect(firstPackaged.sourceExclusionMask).toEqual(first.sourceExclusionMask)
+    expect(changedPackaged.sourceExclusionMask).toEqual(
+      changed.sourceExclusionMask,
+    )
+    expect(changedPackaged.id).not.toBe(firstPackaged.id)
+
+    await expect(
+      createSourcePageCropAsset({
+        ...common,
+        sourceExclusionMask: {
+          ...sourceExclusionMask,
+          excludedSourceBoxes: [{ ...ownedSourceBox }],
+        },
+      }),
+    ).rejects.toThrow(/source region/i)
   })
 
   it('uses exact source text in an SVG equation fallback', async () => {
@@ -327,9 +408,7 @@ describe('PDF visual asset primitives', () => {
     expect(strFromU8(semantic.bytes)).toContain(
       '<th id="cell-r1-c1" scope="col">Group</th>',
     )
-    expect(strFromU8(semantic.bytes)).toContain(
-      '<td id="cell-r2-c2">10</td>',
-    )
+    expect(strFromU8(semantic.bytes)).toContain('<td id="cell-r2-c2">10</td>')
     expect(canonicalTableFromLines(aligned)).toEqual({
       rows: [
         {

@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-target-free-candidate-receipt-1.2.0.json",
+  "title": "Sanitized target-free scholarly PDF configured-runtime candidate acquisition receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "privacy",
+    "manifest",
+    "candidate",
+    "execution",
+    "documents",
+    "promotionEligible",
+    "receiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.2.0" },
+    "privacy": {
+      "const": "public-document-identities-adapter-runtime-and-raw-output-hashes-no-source-content-or-local-paths"
+    },
+    "manifest": { "$ref": "#/$defs/manifestIdentity" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "documents": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/documentResult" }
+    },
+    "promotionEligible": {
+      "type": "boolean",
+      "const": false
+    },
+    "receiptSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "publicAdapterIdentifier": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "manifestIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "fileSha256",
+        "documentIdentitySha256",
+        "documentCount"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "fileSha256": { "$ref": "#/$defs/sha256" },
+        "documentIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "documentCount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "adapterSourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "sha256",
+        "moduleCount",
+        "packageFileCount"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.1.0" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "moduleCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "packageFileCount": { "$ref": "#/$defs/count" }
+      }
+    },
+    "runtimeTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "executableSha256", "versionOutputSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/publicAdapterIdentifier" },
+        "version": { "$ref": "#/$defs/publicAdapterIdentifier" },
+        "executableSha256": { "$ref": "#/$defs/sha256" },
+        "versionOutputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runnerExecutableIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byteLength",
+        "sha256",
+        "versionAttestation",
+        "version",
+        "versionOutputSha256"
+      ],
+      "properties": {
+        "byteLength": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "versionAttestation": {
+          "enum": ["observed", "unavailable"]
+        },
+        "version": {
+          "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "versionOutputSha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "versionAttestation": { "const": "observed" },
+            "version": { "$ref": "#/$defs/id" },
+            "versionOutputSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        {
+          "properties": {
+            "versionAttestation": { "const": "unavailable" },
+            "version": { "type": "null" },
+            "versionOutputSha256": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "runtimeModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/publicAdapterIdentifier" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runtimeIdentity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "not-applicable" },
+            "tool": { "type": "null" },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "unattested" },
+            "tool": {
+              "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/runtimeTool" }]
+            },
+            "model": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tool", "model"],
+          "properties": {
+            "status": { "const": "attested" },
+            "tool": { "$ref": "#/$defs/runtimeTool" },
+            "model": { "$ref": "#/$defs/runtimeModel" }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "format",
+        "formatVersion",
+        "adapterSource",
+        "runtimeIdentity",
+        "runnerExecutableIdentity"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/id" },
+        "format": { "$ref": "#/$defs/publicAdapterIdentifier" },
+        "formatVersion": { "$ref": "#/$defs/publicAdapterIdentifier" },
+        "adapterSource": { "$ref": "#/$defs/adapterSourceIdentity" },
+        "runtimeIdentity": { "$ref": "#/$defs/runtimeIdentity" },
+        "runnerExecutableIdentity": {
+          "$ref": "#/$defs/runnerExecutableIdentity"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "platform",
+        "architecture",
+        "environmentContract",
+        "filesystemIsolation",
+        "networkIsolation",
+        "isolationAttestation",
+        "requestContract",
+        "adapterInvocationCount",
+        "allInputsVerified",
+        "runtimeIdentityAuthority",
+        "modelCacheAttestation",
+        "rawOutputRetention",
+        "rawOutputIdentitySha256"
+      ],
+      "properties": {
+        "lane": {
+          "const": "owner-local-target-free-candidate-acquisition"
+        },
+        "platform": { "$ref": "#/$defs/id" },
+        "architecture": { "$ref": "#/$defs/id" },
+        "environmentContract": {
+          "const": "minimal-env-scratch-cwd-home-temp"
+        },
+        "filesystemIsolation": {
+          "const": "not-sandboxed-host-filesystem-visible"
+        },
+        "networkIsolation": {
+          "const": "cooperative-offline-flags-not-enforced"
+        },
+        "isolationAttestation": {
+          "const": "absent"
+        },
+        "requestContract": {
+          "const": "document-id-path-byte-length-sha256-only"
+        },
+        "adapterInvocationCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "allInputsVerified": { "const": true },
+        "runtimeIdentityAuthority": {
+          "const": "adapter-self-reported"
+        },
+        "modelCacheAttestation": {
+          "const": "directory-path-validated-model-contents-unattested"
+        },
+        "rawOutputRetention": {
+          "const": "owner-local-explicit-directory-0700-files-0600-no-overwrite"
+        },
+        "rawOutputIdentitySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "documentResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "byteLength",
+        "sourceSha256",
+        "rawOutputByteLength",
+        "rawOutputSha256"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sourceSha256": { "$ref": "#/$defs/sha256" },
+        "rawOutputByteLength": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rawOutputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

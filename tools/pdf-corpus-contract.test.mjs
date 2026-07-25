@@ -14,6 +14,10 @@ const contractPath = new URL(
   '../benchmarks/pdf/corpus-contract-v1.json',
   import.meta.url,
 )
+const additiveContractPath = new URL(
+  '../benchmarks/pdf/corpus-contract-v2.json',
+  import.meta.url,
+)
 
 function canonicalJson(value) {
   if (Array.isArray(value)) {
@@ -55,7 +59,9 @@ async function writeSyntheticContractCorpus(directory) {
     }
   })
   const seed = sha256('synthetic corpus contract seed')
+  const frozenIds = new Set(frozenDocuments.map(({ id }) => id))
   const selection = catalog
+    .filter(({ id }) => !frozenIds.has(id))
     .map((document) => ({
       document,
       score: sha256(`${seed}\0${document.id}\0${document.sha256}`),
@@ -77,7 +83,7 @@ async function writeSyntheticContractCorpus(directory) {
     },
     seededRandom: {
       id: 'synthetic-seeded-ten-v1',
-      algorithm: 'sha256-rank-without-replacement-v1',
+      algorithm: 'sha256-rank-without-replacement-excluding-frozen-v1',
       seed,
       seedCommitmentSha256: sha256(seed),
       sampleSize: 10,
@@ -97,24 +103,60 @@ async function writeSyntheticContractCorpus(directory) {
 }
 
 describe('PDF corpus benchmark contract', () => {
-  it('binds a frozen ten and a distinct seeded ten selected without replacement', async () => {
-    const contract = JSON.parse(await readFile(contractPath, 'utf8'))
+  it('replays the byte-frozen v1 corpus with its historical selection algorithm', async () => {
+    const bytes = await readFile(contractPath)
+    const contract = JSON.parse(bytes)
     const receipt = validateCorpusContract(contract)
 
+    expect(sha256(bytes)).toBe(
+      '6fd631614cbf7f4570a81d0f538631e2061b63ea037a50fad3c3cc9bfaef4c5d',
+    )
     expect(receipt).toMatchObject({
       schemaVersion: '1.0.0',
       frozenCount: 10,
       seededRandomCount: 10,
       seededRandomCatalogCount: 18,
       profiles: ['mobile', 'paperProMove', 'paperPro'],
+      contractSha256:
+        '88eb68eb02bd8b49cc246ac3dda4d9c7e3e9c175ffdb90daa4a464700bfd6889',
       valid: true,
     })
     expect(
       new Set(contract.seededRandom.documents.map(({ id }) => id)).size,
     ).toBe(10)
-    expect(contract.seededRandom.documents).not.toEqual(
-      contract.frozen.documents,
+    const frozenIds = new Set(contract.frozen.documents.map(({ id }) => id))
+    expect(
+      contract.seededRandom.documents
+        .map(({ id }) => id)
+        .filter((id) => frozenIds.has(id))
+        .sort(),
+    ).toEqual(['2405.07987v5', '2507.21509v3'])
+  })
+
+  it('binds the additive v2 corpus to a set-disjoint seeded selection', async () => {
+    const bytes = await readFile(additiveContractPath)
+    const contract = JSON.parse(bytes)
+    const receipt = validateCorpusContract(contract)
+
+    expect(sha256(bytes)).toBe(
+      '91b38615b1f9b4acce960bc6ee23d41a8c7eb048714184a469677af0645bc956',
     )
+    expect(receipt).toMatchObject({
+      schemaVersion: '1.0.0',
+      frozenCount: 10,
+      seededRandomCount: 10,
+      seededRandomCatalogCount: 18,
+      contractSha256:
+        'df8d26b2dfa64e2afe106d4ac53b630012918aeba4638b437307748ee3541814',
+      valid: true,
+    })
+    expect(contract.seededRandom.algorithm).toBe(
+      'sha256-rank-without-replacement-excluding-frozen-v1',
+    )
+    const frozenIds = new Set(contract.frozen.documents.map(({ id }) => id))
+    expect(
+      contract.seededRandom.documents.every(({ id }) => !frozenIds.has(id)),
+    ).toBe(true)
   })
 
   it('rejects selection, commitment, source identity, or count tampering', async () => {
@@ -240,10 +282,20 @@ describe('PDF corpus benchmark contract', () => {
 
       expect(result.status, result.stderr).toBe(0)
       const report = JSON.parse(result.stdout)
-      const schema = JSON.parse(
-        await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
+      const schemas = await Promise.all(
+        [
+          'docs/schemas/pdf-corpus-audit.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        ].map(async (schemaPath) =>
+          JSON.parse(await readFile(schemaPath, 'utf8')),
+        ),
       )
-      const validate = new Ajv2020({ strict: false }).compile(schema)
+      const ajv = new Ajv2020({ strict: false })
+      for (const schema of schemas) ajv.addSchema(schema)
+      const validate = ajv.getSchema(
+        'https://ernie.sg/schemas/pdf-corpus-audit-1.7.0.json',
+      )
       expect(validate(report), validate.errors).toBe(true)
       expect(report.summary).toMatchObject({
         documents: 10,

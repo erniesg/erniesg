@@ -9,12 +9,15 @@ import {
 
 export const PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION = '1.5.0'
 export const PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION = '1.6.0'
+export const PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION = '1.7.0'
 
 const CORPUS_REPORT_SCHEMA_POLICY_V15 = 'v1.5-only'
 const CORPUS_REPORT_SCHEMA_POLICY_V15_V16 = 'v1.5-v1.6-compatible'
+const CORPUS_REPORT_SCHEMA_POLICY_V17 = 'v1.7-only'
 const CORPUS_REPORT_SCHEMAS = Object.freeze({
   '1.5.0': 'docs/schemas/pdf-corpus-audit.schema.json',
   '1.6.0': 'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+  '1.7.0': 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
 })
 
 const METRICS = Object.freeze(
@@ -53,6 +56,11 @@ const METRICS = Object.freeze(
 )
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const GIT_OBJECT_ID_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
+const GIT_COMMIT_TIMESTAMP_PATTERN =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$/
+const SEMANTIC_VERSION_PATTERN =
+  /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const STRUCTURE_SHA_FIELDS = [
   'canonicalNodeSequenceSha256',
@@ -225,11 +233,82 @@ function isUnitInterval(value) {
 function validateCorpusReportSchemaPolicy(value) {
   if (
     value !== CORPUS_REPORT_SCHEMA_POLICY_V15 &&
-    value !== CORPUS_REPORT_SCHEMA_POLICY_V15_V16
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V15_V16 &&
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V17
   ) {
     throw new Error('INVALID_CORPUS_REPORT_SCHEMA_POLICY')
   }
   return value
+}
+
+function validateExecutionProvenance(value) {
+  if (
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'implementation',
+      'runtime',
+      'tool',
+      'toolchain',
+      'verification',
+    ]) ||
+    value.schemaVersion !== '1.1.0' ||
+    !hasExactKeys(value.implementation, [
+      'gitCommit',
+      'gitCommitTimestamp',
+      'worktreeState',
+      'exactHead',
+    ]) ||
+    !GIT_OBJECT_ID_PATTERN.test(value.implementation.gitCommit ?? '') ||
+    typeof value.implementation.gitCommitTimestamp !== 'string' ||
+    !GIT_COMMIT_TIMESTAMP_PATTERN.test(
+      value.implementation.gitCommitTimestamp,
+    ) ||
+    Number.isNaN(Date.parse(value.implementation.gitCommitTimestamp)) ||
+    !['clean', 'dirty'].includes(value.implementation.worktreeState) ||
+    value.implementation.exactHead !==
+      (value.implementation.worktreeState === 'clean') ||
+    !hasExactKeys(value.runtime, [
+      'name',
+      'version',
+      'platform',
+      'architecture',
+    ]) ||
+    value.runtime.name !== 'node' ||
+    !SEMANTIC_VERSION_PATTERN.test(value.runtime.version ?? '') ||
+    !SAFE_IDENTIFIER_PATTERN.test(value.runtime.platform ?? '') ||
+    !SAFE_IDENTIFIER_PATTERN.test(value.runtime.architecture ?? '') ||
+    !hasExactKeys(value.tool, ['id', 'packageName', 'packageVersion']) ||
+    !['pdf-corpus-audit', 'pdf-export'].includes(value.tool.id) ||
+    value.tool.packageName !== 'astro-erudite' ||
+    !SEMANTIC_VERSION_PATTERN.test(value.tool.packageVersion ?? '') ||
+    !hasExactKeys(value.toolchain, ['packageLockSha256', 'pdfjsDist']) ||
+    !SHA256_PATTERN.test(value.toolchain.packageLockSha256 ?? '') ||
+    !hasExactKeys(value.toolchain.pdfjsDist, [
+      'declaredVersion',
+      'lockedVersion',
+      'resolvedVersion',
+      'resolvedPackageJsonSha256',
+      'resolvedPackageContentsSha256',
+    ]) ||
+    !SEMANTIC_VERSION_PATTERN.test(
+      value.toolchain.pdfjsDist.declaredVersion ?? '',
+    ) ||
+    value.toolchain.pdfjsDist.lockedVersion !==
+      value.toolchain.pdfjsDist.declaredVersion ||
+    value.toolchain.pdfjsDist.resolvedVersion !==
+      value.toolchain.pdfjsDist.lockedVersion ||
+    !SHA256_PATTERN.test(
+      value.toolchain.pdfjsDist.resolvedPackageJsonSha256 ?? '',
+    ) ||
+    !SHA256_PATTERN.test(
+      value.toolchain.pdfjsDist.resolvedPackageContentsSha256 ?? '',
+    ) ||
+    !hasExactKeys(value.verification, ['method', 'stateSha256']) ||
+    value.verification.method !== 'before-after-exact-match-v1' ||
+    !SHA256_PATTERN.test(value.verification.stateSha256 ?? '')
+  ) {
+    invalidReport()
+  }
 }
 
 function validateOcrProvenance(value) {
@@ -1026,20 +1105,28 @@ function validateReport(report, corpusReportSchemaPolicy) {
   const compatibleSchema =
     isRecord(report) &&
     expectedReportSchema === report.reportSchema &&
-    (report.schemaVersion === '1.5.0' ||
+    ((corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15 &&
+      report.schemaVersion === '1.5.0') ||
       (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15_V16 &&
-        report.schemaVersion === '1.6.0'))
+        ['1.5.0', '1.6.0'].includes(report.schemaVersion)) ||
+      (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17 &&
+        report.schemaVersion === '1.7.0'))
+  const provenanceKeys =
+    report?.schemaVersion === '1.7.0' ? ['executionProvenance'] : []
   if (
     !hasOnlyAndRequiredKeys(
       report,
-      [...requiredKeys, 'corpusContract'],
-      requiredKeys,
+      [...requiredKeys, 'corpusContract', ...provenanceKeys],
+      [...requiredKeys, ...provenanceKeys],
     ) ||
     !compatibleSchema ||
     report.privacy !== 'basenames-hashes-metrics-diagnostics-only' ||
     !Array.isArray(report.documents)
   ) {
     invalidReport()
+  }
+  if (report.schemaVersion === '1.7.0') {
+    validateExecutionProvenance(report.executionProvenance)
   }
   if (Object.hasOwn(report, 'corpusContract')) {
     validateCorpusContractBinding(report.corpusContract)
@@ -1089,7 +1176,7 @@ function validateReport(report, corpusReportSchemaPolicy) {
     ]
     const optionalAuditedKeys = [
       'exports',
-      ...(report.schemaVersion === '1.6.0' ? ['ocr'] : []),
+      ...(['1.6.0', '1.7.0'].includes(report.schemaVersion) ? ['ocr'] : []),
     ]
     if (
       !hasOnlyAndRequiredKeys(
@@ -1578,6 +1665,10 @@ export function comparePdfBenchmarkReports(
       ).length,
     0,
   )
+  const exactHeadEvidencePassed =
+    validatedCorpusReportSchemaPolicy !== CORPUS_REPORT_SCHEMA_POLICY_V17 ||
+    (baseline.executionProvenance.implementation.exactHead === true &&
+      candidate.executionProvenance.implementation.exactHead === true)
   const summary = {
     baselineDocuments: baseline.documents.length,
     candidateDocuments: candidate.documents.length,
@@ -1590,7 +1681,11 @@ export function comparePdfBenchmarkReports(
       .length,
     added: addedDocuments.length,
     failedEpubChecks,
+    ...(validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17
+      ? { exactHeadEvidencePassed }
+      : {}),
     passed:
+      exactHeadEvidencePassed &&
       auditPolicy.identical &&
       failedEpubChecks === 0 &&
       addedDocuments.every((document) => document.passed) &&
@@ -1600,7 +1695,9 @@ export function comparePdfBenchmarkReports(
     schemaVersion:
       validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15_V16
         ? PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION
-        : PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
+        : validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17
+          ? PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION
+          : PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
     privacy: 'basenames-hashes-metrics-artifact-invariants-only',
     ...(baselineCorpusContract
       ? { corpusContract: baselineCorpusContract }
@@ -1610,17 +1707,32 @@ export function comparePdfBenchmarkReports(
       tolerances: validatedTolerances,
       auditPolicy,
       ...(validatedCorpusReportSchemaPolicy ===
-      CORPUS_REPORT_SCHEMA_POLICY_V15_V16
+        CORPUS_REPORT_SCHEMA_POLICY_V15_V16 ||
+      validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V17
         ? {
             corpusReportSchemaCompatibility: {
               policy: validatedCorpusReportSchemaPolicy,
               baseline: {
                 schemaVersion: baseline.schemaVersion,
                 reportSchema: baseline.reportSchema,
+                ...(validatedCorpusReportSchemaPolicy ===
+                CORPUS_REPORT_SCHEMA_POLICY_V17
+                  ? {
+                      reportSha256: canonicalJsonHash(baseline),
+                      executionProvenance: baseline.executionProvenance,
+                    }
+                  : {}),
               },
               candidate: {
                 schemaVersion: candidate.schemaVersion,
                 reportSchema: candidate.reportSchema,
+                ...(validatedCorpusReportSchemaPolicy ===
+                CORPUS_REPORT_SCHEMA_POLICY_V17
+                  ? {
+                      reportSha256: canonicalJsonHash(candidate),
+                      executionProvenance: candidate.executionProvenance,
+                    }
+                  : {}),
               },
             },
           }
@@ -1644,7 +1756,7 @@ export function comparePdfBenchmarkReports(
 }
 
 function usage() {
-  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--corpus-report-schema-policy <v1.5-only|v1.5-v1.6-compatible>] [--require-identical-artifacts] [--require-identical-structure]\n'
+  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--corpus-report-schema-policy <v1.5-only|v1.5-v1.6-compatible|v1.7-only>] [--require-identical-artifacts] [--require-identical-structure]\n'
 }
 
 function parseArguments(arguments_) {

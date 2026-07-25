@@ -96,11 +96,15 @@ bounded traces, and additive v2 contributes three complaint-driven,
 source-verified traces, for 32 labelled traces in total. The v2 case-selection
 process consulted candidate output and is therefore public calibration rather
 than an independent blind holdout. The frozen-ten and seeded-random-ten lanes
-account for 20 robustness
-executions but only 18 distinct paper identities because `2405.07987v5` and
-`2507.21509v3` occur in both. Those whole-paper executions provide discovery
+in the frozen v1 governance account for 20 robustness executions but only 18
+distinct paper identities because `2405.07987v5` and `2507.21509v3` occur in
+both. Those whole-paper executions provide discovery
 and non-regression evidence; they do not count as 20 independently labelled
 holdout traces and do not establish the required final no-new-class window.
 The exact base and additive identities and this status are bound in
 `benchmarks/pdf/reconstruction-eval-contract-v1.json` and
 `benchmarks/pdf/reconstruction-eval-contract-v2.json`.
+For new whole-paper robustness runs,
+`benchmarks/pdf/reconstruction-eval-contract-v3.json` additively binds a
+set-disjoint seeded ten, yielding 20 distinct development identities without
+changing the frozen v1/v2 governance or claiming a blind holdout.

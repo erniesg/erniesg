@@ -20,11 +20,15 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import {
   auditPdfPath,
   canonicalJson,
+  capturePdfCorpusExecutionProvenance,
   createSafeAuditFailureDocument,
   createCorpusReport,
   createPdfPipeline,
+  finalizePdfCorpusExecutionProvenance,
   PDF_CORPUS_REPORT_OCR_SCHEMA_PATH,
   PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION,
+  PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH,
+  PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION,
   PDF_CORPUS_REPORT_SCHEMA_PATH,
   PDF_CORPUS_REPORT_SCHEMA_VERSION,
   pdfPaths,
@@ -58,6 +62,7 @@ const SAFE_SYMBOLIC_EXPORT_FAILURE_CODES = new Set([
   'OUTPUT_DIRECTORY_NOT_EMPTY',
   'OUTPUT_DIRECTORY_MUST_BE_ABSENT',
   'PDF_CORPUS_CONTRACT_MISMATCH',
+  'PDF_CORPUS_PROVENANCE_CHANGED_DURING_RUN',
   'UNKNOWN_PROFILE',
 ])
 const encoder = new TextEncoder()
@@ -379,17 +384,21 @@ async function writeAtomically(path, bytes) {
 }
 
 export async function createPdfCorpusReportValidator() {
-  const [legacySchema, ocrSchema] = await Promise.all(
-    [PDF_CORPUS_REPORT_SCHEMA_PATH, PDF_CORPUS_REPORT_OCR_SCHEMA_PATH].map(
-      async (path) =>
-        JSON.parse(
-          await readFile(new URL(`../${path}`, import.meta.url), 'utf8'),
-        ),
+  const [legacySchema, ocrSchema, provenanceSchema] = await Promise.all(
+    [
+      PDF_CORPUS_REPORT_SCHEMA_PATH,
+      PDF_CORPUS_REPORT_OCR_SCHEMA_PATH,
+      PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH,
+    ].map(async (path) =>
+      JSON.parse(
+        await readFile(new URL(`../${path}`, import.meta.url), 'utf8'),
+      ),
     ),
   )
   const ajv = new Ajv2020({ strict: false })
   const legacyValidator = ajv.compile(legacySchema)
   const ocrValidator = ajv.compile(ocrSchema)
+  const provenanceValidator = ajv.compile(provenanceSchema)
   const validators = new Map([
     [
       `${PDF_CORPUS_REPORT_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_SCHEMA_PATH}`,
@@ -398,6 +407,10 @@ export async function createPdfCorpusReportValidator() {
     [
       `${PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_OCR_SCHEMA_PATH}`,
       ocrValidator,
+    ],
+    [
+      `${PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH}`,
+      provenanceValidator,
     ],
   ])
   const validate = (report) => {
@@ -1195,6 +1208,7 @@ export async function processExportDocuments({
   validator,
   outputDirectory,
   timeoutMs,
+  executionProvenanceCapture = null,
   runWorker = runIsolatedPdfExportJob,
   workerModule,
 }) {
@@ -1310,7 +1324,13 @@ export async function processExportDocuments({
         left.basename.localeCompare(right.basename) ||
         String(left.sha256).localeCompare(String(right.sha256)),
     )
-    const report = createCorpusReport(documents, policy, { corpusContract })
+    const executionProvenance = executionProvenanceCapture
+      ? await finalizePdfCorpusExecutionProvenance(executionProvenanceCapture)
+      : null
+    const report = createCorpusReport(documents, policy, {
+      corpusContract,
+      executionProvenance,
+    })
     assertValidCorpusReport(report, reportValidator)
     const serialized = serializeCorpusReport(report)
     await writeAtomically(
@@ -1420,6 +1440,9 @@ async function main() {
     }
   }
 
+  failureStage = 'provenance-capture'
+  const executionProvenanceCapture =
+    await capturePdfCorpusExecutionProvenance('pdf-export')
   failureStage = 'pipeline-initialization'
   const pipeline = await createPdfPipeline()
   let policy
@@ -1465,6 +1488,7 @@ async function main() {
     validator,
     outputDirectory: parsed.outputDirectory,
     timeoutMs: parsed.documentTimeoutSeconds * 1000,
+    executionProvenanceCapture,
   })
 
   process.stdout.write(serialized)

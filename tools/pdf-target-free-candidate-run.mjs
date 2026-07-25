@@ -32,6 +32,7 @@ import { createAdapterSourceIdentity } from './adapter-source-identity.mjs'
 export const PDF_TARGET_FREE_MANIFEST_SCHEMA_VERSION = '1.0.0'
 export const PDF_TARGET_FREE_ADAPTER_OUTPUT_SCHEMA_VERSION = '1.0.0'
 export const PDF_TARGET_FREE_RECEIPT_SCHEMA_VERSION = '1.1.0'
+export const PDF_TARGET_FREE_CONFIGURED_RUNTIME_RECEIPT_SCHEMA_VERSION = '1.2.0'
 
 const MANIFEST_PRIVACY =
   'public-document-identities-only-no-source-content-layout-targets-or-gold'
@@ -40,14 +41,20 @@ const RECEIPT_PRIVACY =
 const MAX_JSON_BYTES = 128 * 1024 * 1024
 const RETAINED_OUTPUT_DIRECTORY_MODE = 0o700
 const RETAINED_OUTPUT_FILE_MODE = 0o600
+const CANDIDATE_VERSION_TIMEOUT_MS = 10_000
+const CANDIDATE_VERSION_MAX_BUFFER = 1024 * 1024
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const SHA256 = /^[a-f0-9]{64}$/
 const SAFE_ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+const PUBLIC_ADAPTER_HEX_DOMAIN = 'pdf-target-free-public-adapter-hex-value-v1'
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const SCHEMA_PATHS = {
   manifest: 'docs/schemas/pdf-target-free-candidate-manifest.schema.json',
   adapterOutput:
     'docs/schemas/pdf-target-free-candidate-adapter-output.schema.json',
-  receipt: 'docs/schemas/pdf-target-free-candidate-receipt.schema.json',
+  receiptV1_1: 'docs/schemas/pdf-target-free-candidate-receipt.schema.json',
+  receiptV1_2:
+    'docs/schemas/pdf-target-free-candidate-receipt-v1.2.schema.json',
 }
 const REQUEST_KEYS = ['documentId', 'path', 'byteLength', 'sha256']
 const ORACLE_KEYS = new Set([
@@ -112,6 +119,80 @@ function canonicalHash(value) {
   return sha256(canonicalJson(value))
 }
 
+export function publicAdapterIdentifier(value) {
+  if (typeof value !== 'string' || !SAFE_ID.test(value)) {
+    invalid('INVALID_PDF_TARGET_FREE_PUBLIC_ADAPTER_IDENTIFIER')
+  }
+  return `sha256:${sha256(value)}`
+}
+
+function publicAdapterHexValue(field, value) {
+  if (
+    !SAFE_ID.test(field) ||
+    typeof value !== 'string' ||
+    !SHA256.test(value)
+  ) {
+    invalid('INVALID_PDF_TARGET_FREE_PUBLIC_ADAPTER_IDENTIFIER')
+  }
+  return sha256(`${PUBLIC_ADAPTER_HEX_DOMAIN}\0${field}\0${value}`)
+}
+
+export function sanitizeAdapterRuntimeIdentity(
+  runtimeIdentity,
+  verifiedRunnerExecutableIdentity = null,
+) {
+  if (
+    !isRecord(runtimeIdentity) ||
+    !exactKeys(runtimeIdentity, ['status', 'tool', 'model']) ||
+    (runtimeIdentity.tool !== null && !isRecord(runtimeIdentity.tool)) ||
+    (runtimeIdentity.model !== null && !isRecord(runtimeIdentity.model))
+  ) {
+    invalid('INVALID_PDF_TARGET_FREE_PUBLIC_ADAPTER_IDENTIFIER')
+  }
+  const toolExecutableWasVerified =
+    runtimeIdentity.tool !== null &&
+    isRecord(verifiedRunnerExecutableIdentity) &&
+    runtimeIdentity.tool.executableSha256 ===
+      verifiedRunnerExecutableIdentity.sha256
+  const toolVersionOutputWasVerified =
+    toolExecutableWasVerified &&
+    verifiedRunnerExecutableIdentity.versionAttestation === 'observed' &&
+    runtimeIdentity.tool.versionOutputSha256 ===
+      verifiedRunnerExecutableIdentity.versionOutputSha256
+  return {
+    status: runtimeIdentity.status,
+    tool:
+      runtimeIdentity.tool === null
+        ? null
+        : {
+            id: publicAdapterIdentifier(runtimeIdentity.tool.id),
+            version: publicAdapterIdentifier(runtimeIdentity.tool.version),
+            executableSha256: toolExecutableWasVerified
+              ? runtimeIdentity.tool.executableSha256
+              : publicAdapterHexValue(
+                  'tool-executable-sha256',
+                  runtimeIdentity.tool.executableSha256,
+                ),
+            versionOutputSha256: toolVersionOutputWasVerified
+              ? runtimeIdentity.tool.versionOutputSha256
+              : publicAdapterHexValue(
+                  'tool-version-output-sha256',
+                  runtimeIdentity.tool.versionOutputSha256,
+                ),
+          },
+    model:
+      runtimeIdentity.model === null
+        ? null
+        : {
+            id: publicAdapterIdentifier(runtimeIdentity.model.id),
+            sha256: publicAdapterHexValue(
+              'model-sha256',
+              runtimeIdentity.model.sha256,
+            ),
+          },
+  }
+}
+
 function parseJsonArtifact(bytes) {
   const value =
     typeof bytes === 'string'
@@ -139,15 +220,18 @@ async function readSchema(path) {
 
 async function compileSchemas() {
   try {
-    const [manifest, adapterOutput, receipt] = await Promise.all([
-      readSchema(SCHEMA_PATHS.manifest),
-      readSchema(SCHEMA_PATHS.adapterOutput),
-      readSchema(SCHEMA_PATHS.receipt),
-    ])
+    const [manifest, adapterOutput, receiptV1_1, receiptV1_2] =
+      await Promise.all([
+        readSchema(SCHEMA_PATHS.manifest),
+        readSchema(SCHEMA_PATHS.adapterOutput),
+        readSchema(SCHEMA_PATHS.receiptV1_1),
+        readSchema(SCHEMA_PATHS.receiptV1_2),
+      ])
     return {
       manifest: new Ajv2020({ strict: false }).compile(manifest),
       adapterOutput: new Ajv2020({ strict: false }).compile(adapterOutput),
-      receipt: new Ajv2020({ strict: false }).compile(receipt),
+      receiptV1_1: new Ajv2020({ strict: false }).compile(receiptV1_1),
+      receiptV1_2: new Ajv2020({ strict: false }).compile(receiptV1_2),
     }
   } catch {
     invalid()
@@ -225,6 +309,24 @@ async function resolveInputRoot(path) {
   } catch (error) {
     if (error?.message === 'INVALID_PDF_TARGET_FREE_INPUT_ROOT') throw error
     invalid('INVALID_PDF_TARGET_FREE_INPUT_ROOT')
+  }
+}
+
+async function resolveRegularDirectory(path, code) {
+  try {
+    const suppliedDetails = await lstat(path)
+    if (!suppliedDetails.isDirectory() || suppliedDetails.isSymbolicLink()) {
+      invalid(code)
+    }
+    const canonicalPath = await realpath(path)
+    const canonicalDetails = await lstat(canonicalPath)
+    if (!canonicalDetails.isDirectory() || canonicalDetails.isSymbolicLink()) {
+      invalid(code)
+    }
+    return canonicalPath
+  } catch (error) {
+    if (error?.message === code) throw error
+    invalid(code)
   }
 }
 
@@ -353,10 +455,145 @@ function minimalAdapterPath() {
   return [...new Set(directories)].join(delimiter)
 }
 
+function candidateVersion(output) {
+  const match = output.match(
+    /(?:^|[^A-Za-z0-9])([0-9]+(?:\.[0-9]+)+(?:[-+][A-Za-z0-9._-]+)?)(?:$|[^A-Za-z0-9])/m,
+  )
+  return match && SAFE_ID.test(match[1]) ? match[1] : null
+}
+
+async function observeCandidateExecutable(path) {
+  try {
+    const supplied = await lstat(path)
+    if (!supplied.isFile() && !supplied.isSymbolicLink()) {
+      invalid('INVALID_PDF_TARGET_FREE_CANDIDATE_EXECUTABLE')
+    }
+    const canonicalPath = await realpath(path)
+    const canonical = await lstat(canonicalPath)
+    if (!canonical.isFile() || canonical.isSymbolicLink()) {
+      invalid('INVALID_PDF_TARGET_FREE_CANDIDATE_EXECUTABLE')
+    }
+    await access(canonicalPath, constants.X_OK)
+    path = canonicalPath
+  } catch (error) {
+    if (error?.message === 'INVALID_PDF_TARGET_FREE_CANDIDATE_EXECUTABLE') {
+      throw error
+    }
+    invalid('INVALID_PDF_TARGET_FREE_CANDIDATE_EXECUTABLE')
+  }
+  const bytes = await readFile(path)
+  if (bytes.byteLength < 1) {
+    invalid('INVALID_PDF_TARGET_FREE_CANDIDATE_EXECUTABLE')
+  }
+  const beforeIdentity = {
+    byteLength: bytes.byteLength,
+    sha256: sha256(bytes),
+  }
+  const versionDirectory = await mkdtemp(
+    join(tmpdir(), 'pdf-target-free-candidate-version-'),
+  )
+  try {
+    const result = spawnSync(path, ['--version'], {
+      cwd: versionDirectory,
+      encoding: 'utf8',
+      env: {
+        PATH: minimalAdapterPath(),
+        HOME: versionDirectory,
+        TMPDIR: versionDirectory,
+        TMP: versionDirectory,
+        TEMP: versionDirectory,
+        LANG: 'C',
+        LC_ALL: 'C',
+        SRT_PDF_TARGET_FREE_OFFLINE: '1',
+        HF_HUB_OFFLINE: '1',
+        TRANSFORMERS_OFFLINE: '1',
+        NO_PROXY: '*',
+        no_proxy: '*',
+      },
+      timeout: CANDIDATE_VERSION_TIMEOUT_MS,
+      maxBuffer: CANDIDATE_VERSION_MAX_BUFFER,
+      windowsHide: true,
+    })
+    const versionOutput =
+      !result.error && result.status === 0
+        ? `${result.stdout ?? ''}\0${result.stderr ?? ''}`
+        : null
+    const version =
+      versionOutput === null ? null : candidateVersion(versionOutput)
+    await assertCandidateExecutableStillVerified({
+      path,
+      identity: {
+        ...beforeIdentity,
+        versionAttestation: version === null ? 'unavailable' : 'observed',
+        version,
+        versionOutputSha256: version === null ? null : sha256(versionOutput),
+      },
+    })
+    return {
+      path,
+      identity: {
+        ...beforeIdentity,
+        versionAttestation: version === null ? 'unavailable' : 'observed',
+        version,
+        versionOutputSha256: version === null ? null : sha256(versionOutput),
+      },
+    }
+  } finally {
+    await rm(versionDirectory, { recursive: true, force: true })
+  }
+}
+
+export async function observePdfTargetFreeCandidateExecutableIdentity(path) {
+  return (await observeCandidateExecutable(path)).identity
+}
+
+async function assertCandidateExecutableStillVerified(candidateExecutable) {
+  try {
+    const current = await resolveRegularFile(
+      candidateExecutable.path,
+      'PDF_TARGET_FREE_CANDIDATE_EXECUTABLE_DRIFT',
+    )
+    await access(current.path, constants.X_OK)
+    const bytes = await readFile(current.path)
+    if (
+      current.path !== candidateExecutable.path ||
+      bytes.byteLength !== candidateExecutable.identity.byteLength ||
+      sha256(bytes) !== candidateExecutable.identity.sha256
+    ) {
+      invalid('PDF_TARGET_FREE_CANDIDATE_EXECUTABLE_DRIFT')
+    }
+  } catch (error) {
+    if (error?.message === 'PDF_TARGET_FREE_CANDIDATE_EXECUTABLE_DRIFT') {
+      throw error
+    }
+    invalid('PDF_TARGET_FREE_CANDIDATE_EXECUTABLE_DRIFT')
+  }
+}
+
+async function assertCandidateModelCacheHomeStillVerified(
+  candidateModelCacheHome,
+) {
+  try {
+    const current = await resolveRegularDirectory(
+      candidateModelCacheHome,
+      'PDF_TARGET_FREE_CANDIDATE_MODEL_CACHE_HOME_DRIFT',
+    )
+    if (current !== candidateModelCacheHome) {
+      invalid('PDF_TARGET_FREE_CANDIDATE_MODEL_CACHE_HOME_DRIFT')
+    }
+  } catch (error) {
+    if (error?.message === 'PDF_TARGET_FREE_CANDIDATE_MODEL_CACHE_HOME_DRIFT') {
+      throw error
+    }
+    invalid('PDF_TARGET_FREE_CANDIDATE_MODEL_CACHE_HOME_DRIFT')
+  }
+}
+
 function safeAdapterEnvironment(
   candidate,
   adapterSourceSha256,
   invocationDirectory,
+  configuredRuntime,
 ) {
   return {
     PATH: minimalAdapterPath(),
@@ -374,6 +611,13 @@ function safeAdapterEnvironment(
     SRT_PDF_CANDIDATE_ID: candidate.id,
     SRT_PDF_CANDIDATE_VERSION: candidate.version,
     SRT_PDF_ADAPTER_SOURCE_SHA256: adapterSourceSha256,
+    ...(configuredRuntime
+      ? {
+          SRT_PDF_RUNNER_CANDIDATE_EXECUTABLE:
+            configuredRuntime.executable.path,
+          SRT_PDF_RUNNER_MODEL_CACHE_HOME: configuredRuntime.modelCacheHome,
+        }
+      : {}),
   }
 }
 
@@ -388,6 +632,30 @@ async function resolveAdapter(path) {
     invalid('INVALID_PDF_TARGET_FREE_ADAPTER')
   }
   return adapter.path
+}
+
+async function resolveConfiguredRuntime(options, inputRoot) {
+  const executableConfigured =
+    typeof options.candidateExecutable === 'string' &&
+    options.candidateExecutable.length > 0
+  const modelCacheConfigured =
+    typeof options.candidateModelCacheHome === 'string' &&
+    options.candidateModelCacheHome.length > 0
+  if (!executableConfigured && !modelCacheConfigured) return null
+  if (!executableConfigured || !modelCacheConfigured) {
+    invalid('INVALID_PDF_TARGET_FREE_CANDIDATE_RUNTIME_CONFIGURATION')
+  }
+  const executable = await observeCandidateExecutable(
+    options.candidateExecutable,
+  )
+  const modelCacheHome = await resolveRegularDirectory(
+    options.candidateModelCacheHome,
+    'INVALID_PDF_TARGET_FREE_CANDIDATE_MODEL_CACHE_HOME',
+  )
+  if (modelCacheHome === inputRoot || within(inputRoot, modelCacheHome)) {
+    invalid('INVALID_PDF_TARGET_FREE_CANDIDATE_MODEL_CACHE_HOME')
+  }
+  return { executable, modelCacheHome }
 }
 
 async function readAdapterOutput(path) {
@@ -441,10 +709,65 @@ function receiptWithoutHash(receipt) {
   )
 }
 
+function configuredRuntimeReceiptIsValid(receipt, expectedIdentity = null) {
+  const identity = receipt?.candidate?.runnerExecutableIdentity
+  const modelCacheAttestation = receipt?.execution?.modelCacheAttestation
+  if (receipt?.schemaVersion === PDF_TARGET_FREE_RECEIPT_SCHEMA_VERSION) {
+    return (
+      identity === undefined &&
+      modelCacheAttestation === undefined &&
+      expectedIdentity === null
+    )
+  }
+  if (
+    receipt?.schemaVersion !==
+    PDF_TARGET_FREE_CONFIGURED_RUNTIME_RECEIPT_SCHEMA_VERSION
+  ) {
+    return false
+  }
+  if (
+    !isRecord(identity) ||
+    !exactKeys(identity, [
+      'byteLength',
+      'sha256',
+      'versionAttestation',
+      'version',
+      'versionOutputSha256',
+    ]) ||
+    !Number.isSafeInteger(identity.byteLength) ||
+    identity.byteLength < 1 ||
+    !/^[a-f0-9]{64}$/.test(identity.sha256) ||
+    !['observed', 'unavailable'].includes(identity.versionAttestation) ||
+    (identity.versionAttestation === 'observed'
+      ? !SAFE_ID.test(identity.version ?? '') ||
+        !/^[a-f0-9]{64}$/.test(identity.versionOutputSha256 ?? '')
+      : identity.version !== null || identity.versionOutputSha256 !== null) ||
+    modelCacheAttestation !==
+      'directory-path-validated-model-contents-unattested'
+  ) {
+    return false
+  }
+  const tool = receipt?.candidate?.runtimeIdentity?.tool
+  if (
+    !isRecord(tool) ||
+    tool.executableSha256 !== identity.sha256 ||
+    (identity.versionAttestation === 'observed' &&
+      (tool.version !== publicAdapterIdentifier(identity.version) ||
+        tool.versionOutputSha256 !== identity.versionOutputSha256))
+  ) {
+    return false
+  }
+  return (
+    expectedIdentity === null ||
+    canonicalJson(identity) === canonicalJson(expectedIdentity)
+  )
+}
+
 export async function validatePdfTargetFreeCandidateReceipt(
   receipt,
   manifestBytes,
   expectedAdapterSource = null,
+  expectedRunnerExecutableIdentity = null,
 ) {
   try {
     const schemas = await compileSchemas()
@@ -453,9 +776,16 @@ export async function validatePdfTargetFreeCandidateReceipt(
       manifestArtifact,
       schemas.manifest,
     )
+    const validateReceiptSchema =
+      receipt?.schemaVersion === PDF_TARGET_FREE_RECEIPT_SCHEMA_VERSION
+        ? schemas.receiptV1_1
+        : receipt?.schemaVersion ===
+            PDF_TARGET_FREE_CONFIGURED_RUNTIME_RECEIPT_SCHEMA_VERSION
+          ? schemas.receiptV1_2
+          : null
     if (
-      !schemas.receipt(receipt) ||
-      receipt.schemaVersion !== PDF_TARGET_FREE_RECEIPT_SCHEMA_VERSION ||
+      !validateReceiptSchema ||
+      !validateReceiptSchema(receipt) ||
       receipt.privacy !== RECEIPT_PRIVACY ||
       canonicalJson(receipt.manifest) !== canonicalJson(manifestIdentity) ||
       receipt.documents.length !== manifestIdentity.documentCount ||
@@ -473,6 +803,10 @@ export async function validatePdfTargetFreeCandidateReceipt(
       }) ||
       receipt.promotionEligible !== false ||
       receipt.receiptSha256 !== canonicalHash(receiptWithoutHash(receipt)) ||
+      !configuredRuntimeReceiptIsValid(
+        receipt,
+        expectedRunnerExecutableIdentity,
+      ) ||
       (expectedAdapterSource &&
         canonicalJson(receipt.candidate.adapterSource) !==
           canonicalJson(expectedAdapterSource))
@@ -567,6 +901,13 @@ async function assertAdapterSourceStillVerified(adapter, expectedIdentity) {
 }
 
 function assertRunOptions(options) {
+  const configuredRuntimeValues = [
+    options?.candidateExecutable,
+    options?.candidateModelCacheHome,
+  ]
+  const configuredRuntimeCount = configuredRuntimeValues.filter(
+    (value) => value !== undefined,
+  ).length
   if (
     !isRecord(options) ||
     !['manifest', 'inputRoot', 'adapter', 'output', 'rawOutputDirectory'].every(
@@ -576,7 +917,12 @@ function assertRunOptions(options) {
     !SAFE_ID.test(options.candidateVersion ?? '') ||
     !Number.isSafeInteger(options.timeoutSeconds) ||
     options.timeoutSeconds < 1 ||
-    options.timeoutSeconds > 86_400
+    options.timeoutSeconds > 86_400 ||
+    ![0, 2].includes(configuredRuntimeCount) ||
+    (configuredRuntimeCount === 2 &&
+      configuredRuntimeValues.some(
+        (value) => typeof value !== 'string' || value.length === 0,
+      ))
   ) {
     invalid('INVALID_USAGE')
   }
@@ -592,6 +938,7 @@ async function invokeAdapter({
   index,
   timeoutSeconds,
   validateOutputSchema,
+  configuredRuntime,
 }) {
   const invocationDirectory = await mkdtemp(join(scratch, `document-${index}-`))
   const requestPath = join(invocationDirectory, 'request.json')
@@ -603,6 +950,14 @@ async function invokeAdapter({
     mode: 0o600,
   })
   await assertAdapterSourceStillVerified(adapter, adapterSourceIdentity)
+  if (configuredRuntime) {
+    await Promise.all([
+      assertCandidateExecutableStillVerified(configuredRuntime.executable),
+      assertCandidateModelCacheHomeStillVerified(
+        configuredRuntime.modelCacheHome,
+      ),
+    ])
+  }
   const result = spawnSync(
     adapter,
     ['--request', requestPath, '--output', outputPath],
@@ -611,6 +966,7 @@ async function invokeAdapter({
         candidate,
         adapterSourceIdentity.sha256,
         invocationDirectory,
+        configuredRuntime,
       ),
       cwd: invocationDirectory,
       stdio: 'ignore',
@@ -622,6 +978,14 @@ async function invokeAdapter({
     invalid('PDF_TARGET_FREE_ADAPTER_FAILED')
   }
   await assertAdapterSourceStillVerified(adapter, adapterSourceIdentity)
+  if (configuredRuntime) {
+    await Promise.all([
+      assertCandidateExecutableStillVerified(configuredRuntime.executable),
+      assertCandidateModelCacheHomeStillVerified(
+        configuredRuntime.modelCacheHome,
+      ),
+    ])
+  }
   await assertDocumentStillVerified(document)
   const outputArtifact = await readAdapterOutput(outputPath)
   const output = validateAdapterOutput(
@@ -631,6 +995,20 @@ async function invokeAdapter({
     candidate,
     adapterSourceIdentity.sha256,
   )
+  if (
+    configuredRuntime &&
+    (!isRecord(output.runtimeIdentity?.tool) ||
+      output.runtimeIdentity.tool.executableSha256 !==
+        configuredRuntime.executable.identity.sha256 ||
+      (configuredRuntime.executable.identity.versionAttestation ===
+        'observed' &&
+        (output.runtimeIdentity.tool.version !==
+          configuredRuntime.executable.identity.version ||
+          output.runtimeIdentity.tool.versionOutputSha256 !==
+            configuredRuntime.executable.identity.versionOutputSha256)))
+  ) {
+    invalid('PDF_TARGET_FREE_CANDIDATE_RUNTIME_IDENTITY_MISMATCH')
+  }
   const retainedOutputPath = join(
     retainedOutputDirectory,
     retainedOutputFilename(index),
@@ -682,6 +1060,7 @@ export async function runPdfTargetFreeCandidateAcquisition(options) {
     invalid('PDF_TARGET_FREE_OUTPUT_MUST_NOT_BE_IN_INPUT_ROOT')
   }
   await assertPathAbsent(output, 'PDF_TARGET_FREE_RECEIPT_ALREADY_EXISTS')
+  const configuredRuntime = await resolveConfiguredRuntime(options, inputRoot)
   const adapter = await resolveAdapter(options.adapter)
   const adapterSourceIdentity = await createAdapterSourceIdentity(adapter)
   const safeAdapterSource = sanitizedAdapterSource(adapterSourceIdentity)
@@ -710,6 +1089,7 @@ export async function runPdfTargetFreeCandidateAcquisition(options) {
         index,
         timeoutSeconds: options.timeoutSeconds,
         validateOutputSchema: schemas.adapterOutput,
+        configuredRuntime,
       })
       if (
         candidateEvidence &&
@@ -722,16 +1102,28 @@ export async function runPdfTargetFreeCandidateAcquisition(options) {
     }
 
     const receiptBase = {
-      schemaVersion: PDF_TARGET_FREE_RECEIPT_SCHEMA_VERSION,
+      schemaVersion: configuredRuntime
+        ? PDF_TARGET_FREE_CONFIGURED_RUNTIME_RECEIPT_SCHEMA_VERSION
+        : PDF_TARGET_FREE_RECEIPT_SCHEMA_VERSION,
       privacy: RECEIPT_PRIVACY,
       manifest: manifestIdentity,
       candidate: {
         id: candidate.id,
         version: candidate.version,
-        format: candidateEvidence.format,
-        formatVersion: candidateEvidence.formatVersion,
+        format: publicAdapterIdentifier(candidateEvidence.format),
+        formatVersion: publicAdapterIdentifier(candidateEvidence.formatVersion),
         adapterSource: safeAdapterSource,
-        runtimeIdentity: candidateEvidence.runtimeIdentity,
+        runtimeIdentity: sanitizeAdapterRuntimeIdentity(
+          candidateEvidence.runtimeIdentity,
+          configuredRuntime?.executable.identity ?? null,
+        ),
+        ...(configuredRuntime
+          ? {
+              runnerExecutableIdentity: structuredClone(
+                configuredRuntime.executable.identity,
+              ),
+            }
+          : {}),
       },
       execution: {
         lane: 'owner-local-target-free-candidate-acquisition',
@@ -745,6 +1137,12 @@ export async function runPdfTargetFreeCandidateAcquisition(options) {
         adapterInvocationCount: documentResults.length,
         allInputsVerified: true,
         runtimeIdentityAuthority: 'adapter-self-reported',
+        ...(configuredRuntime
+          ? {
+              modelCacheAttestation:
+                'directory-path-validated-model-contents-unattested',
+            }
+          : {}),
         rawOutputRetention:
           'owner-local-explicit-directory-0700-files-0600-no-overwrite',
         rawOutputIdentitySha256: canonicalHash(documentResults),
@@ -760,6 +1158,7 @@ export async function runPdfTargetFreeCandidateAcquisition(options) {
       receipt,
       manifestBytes,
       safeAdapterSource,
+      configuredRuntime?.executable.identity ?? null,
     )
     await validatePdfTargetFreeCandidateRetainedOutputs(
       receipt,
@@ -833,7 +1232,11 @@ export function parseTargetFreeRunArguments(
       'candidate-version',
       'out',
     ],
-    ['timeout-seconds'],
+    [
+      'timeout-seconds',
+      'candidate-executable-env',
+      'candidate-model-cache-home-env',
+    ],
   )
   const timeoutSeconds = Number(values['timeout-seconds'] ?? 7200)
   if (
@@ -842,6 +1245,15 @@ export function parseTargetFreeRunArguments(
     !Number.isSafeInteger(timeoutSeconds) ||
     timeoutSeconds < 1 ||
     timeoutSeconds > 86_400
+  ) {
+    invalid('INVALID_USAGE')
+  }
+  const configuredRuntimeNames = [
+    values['candidate-executable-env'],
+    values['candidate-model-cache-home-env'],
+  ]
+  if (
+    configuredRuntimeNames.filter((value) => value !== undefined).length === 1
   ) {
     invalid('INVALID_USAGE')
   }
@@ -858,6 +1270,20 @@ export function parseTargetFreeRunArguments(
     candidateVersion: values['candidate-version'],
     output: resolve(values.out),
     timeoutSeconds,
+    ...(configuredRuntimeNames[0] && configuredRuntimeNames[1]
+      ? {
+          candidateExecutable: environmentPath(
+            values,
+            'candidate-executable-env',
+            environment,
+          ),
+          candidateModelCacheHome: environmentPath(
+            values,
+            'candidate-model-cache-home-env',
+            environment,
+          ),
+        }
+      : {}),
   }
 }
 
@@ -873,12 +1299,11 @@ async function runCommand(arguments_) {
 
 async function validateCommand(arguments_) {
   const values = parseNamedArguments(arguments_)
-  assertArgumentKeys(values, [
-    'manifest',
-    'adapter-env',
-    'raw-output-dir-env',
-    'receipt',
-  ])
+  assertArgumentKeys(
+    values,
+    ['manifest', 'adapter-env', 'raw-output-dir-env', 'receipt'],
+    ['candidate-executable-env'],
+  )
   const adapter = await resolveAdapter(
     environmentPath(values, 'adapter-env', process.env),
   )
@@ -890,10 +1315,16 @@ async function validateCommand(arguments_) {
     readFile(resolve(values.receipt)),
   ])
   const receipt = parseJsonArtifact(receiptBytes).value
+  const expectedRunnerExecutableIdentity = values['candidate-executable-env']
+    ? await observePdfTargetFreeCandidateExecutableIdentity(
+        environmentPath(values, 'candidate-executable-env', process.env),
+      )
+    : null
   const result = await validatePdfTargetFreeCandidateReceipt(
     receipt,
     manifestBytes,
     adapterSource,
+    expectedRunnerExecutableIdentity,
   )
   await validatePdfTargetFreeCandidateRetainedOutputs(
     receipt,
@@ -906,8 +1337,8 @@ function usage() {
   return (
     [
       'Usage:',
-      '  node tools/pdf-target-free-candidate-run.mjs run --manifest <manifest.json> --input-root-env <ENV> --adapter-env <ENV> --raw-output-dir-env <ENV> --candidate-id <id> --candidate-version <version> --out <new-sanitized-receipt.json> [--timeout-seconds <seconds>]',
-      '  node tools/pdf-target-free-candidate-run.mjs validate --manifest <manifest.json> --adapter-env <ENV> --raw-output-dir-env <ENV> --receipt <sanitized-receipt.json>',
+      '  node tools/pdf-target-free-candidate-run.mjs run --manifest <manifest.json> --input-root-env <ENV> --adapter-env <ENV> --raw-output-dir-env <ENV> --candidate-id <id> --candidate-version <version> --out <new-sanitized-receipt.json> [--timeout-seconds <seconds>] [--candidate-executable-env <ENV> --candidate-model-cache-home-env <ENV>]',
+      '  node tools/pdf-target-free-candidate-run.mjs validate --manifest <manifest.json> --adapter-env <ENV> --raw-output-dir-env <ENV> --receipt <sanitized-receipt.json> [--candidate-executable-env <ENV>]',
     ].join('\n') + '\n'
   )
 }

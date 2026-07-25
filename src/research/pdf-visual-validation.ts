@@ -8,7 +8,11 @@ import type {
 } from './import-types'
 import type { ResearchPaper } from './schema'
 import { isSourceVerifiedSemanticTable } from './semantic-table'
-import { isValidSourcePageCropPayload } from './visual-assets'
+import {
+  isCanonicalPdfSourceExclusionMask,
+  isValidSourcePageCropPayload,
+  pdfSourceExclusionMaskIdentity,
+} from './visual-assets'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const ASSET_ID_PATTERN = /^asset-[a-f0-9]{24}$/
@@ -191,6 +195,21 @@ function mediaExtensions(mediaType: PdfVisualAsset['mediaType']) {
 
 function validAssetContent(asset: PdfVisualAsset) {
   const contentSha256 = sha256(asset.bytes)
+  const sourceExclusionMaskIdentity = asset.sourceCropBox
+    ? pdfSourceExclusionMaskIdentity(
+        asset.sourceExclusionMask,
+        asset.sourceCropBox,
+      )
+    : null
+  const validSourceExclusionMask =
+    asset.sourceExclusionMask === undefined ||
+    (Boolean(asset.sourceCropBox) &&
+      ['source-page-crop', 'profile-downscaled'].includes(asset.rendition) &&
+      isCanonicalPdfSourceExclusionMask(
+        asset.sourceExclusionMask,
+        asset.sourceCropBox,
+      ) &&
+      sourceExclusionMaskIdentity !== null)
   const identitySha256 =
     asset.rendition === 'source-page-crop' && asset.sourceCropBox
       ? sha256(
@@ -221,11 +240,15 @@ function validAssetContent(asset: PdfVisualAsset) {
                   ],
                 ]
               }),
+              ...(sourceExclusionMaskIdentity
+                ? { sourceExclusionMask: sourceExclusionMaskIdentity }
+                : {}),
             })}`,
           ),
         )
       : contentSha256
   return (
+    validSourceExclusionMask &&
     ASSET_ID_PATTERN.test(asset.id) &&
     asset.id === `asset-${identitySha256.slice(0, 24)}` &&
     mediaExtensions(asset.mediaType).some(
@@ -447,12 +470,10 @@ function hasIncompleteInlineStackedEquationScope(
           minimumWidth > 0 &&
           minimumHeight > 0 &&
           horizontalOverlap >= minimumWidth * 0.7 &&
-          Math.abs(
-            left.x + left.width / 2 - (right.x + right.width / 2),
-          ) <= Math.max(0.008, Math.max(left.width, right.width) * 0.3) &&
-          Math.abs(
-            left.y + left.height / 2 - (right.y + right.height / 2),
-          ) >= Math.max(0.003, minimumHeight * 0.45) &&
+          Math.abs(left.x + left.width / 2 - (right.x + right.width / 2)) <=
+            Math.max(0.008, Math.max(left.width, right.width) * 0.3) &&
+          Math.abs(left.y + left.height / 2 - (right.y + right.height / 2)) >=
+            Math.max(0.003, minimumHeight * 0.45) &&
           verticalGap <= Math.max(0.006, minimumHeight * 0.7)
         )
       }),
@@ -664,8 +685,15 @@ export function validatedPdfVisualRelationships({
     const renderedAssets = relationship.assetIds
       .map((assetId) => assetsById.get(assetId))
       .filter((asset): asset is PdfVisualAsset => Boolean(asset))
+    const maskedAssetCount = renderedAssets.filter(
+      (asset) => asset.sourceExclusionMask !== undefined,
+    ).length
+    const relationshipClaimsSourceExclusionMask =
+      relationship.evidence.includes('source-page-crop-unowned-text-masked')
     if (
       renderedAssets.length !== relationship.assetIds.length ||
+      (maskedAssetCount > 0 && relationship.kind !== 'equation') ||
+      relationshipClaimsSourceExclusionMask !== maskedAssetCount > 0 ||
       renderedAssets.some(
         (asset) =>
           !validAssetContent(asset) ||

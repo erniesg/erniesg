@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -37,6 +38,15 @@ const receiptSchemaPath = fileURLToPath(
     import.meta.url,
   ),
 )
+const configuredReceiptSchemaPath = fileURLToPath(
+  new URL(
+    '../docs/schemas/pdf-target-free-candidate-receipt-v1.2.schema.json',
+    import.meta.url,
+  ),
+)
+const frozenReceiptSchemaByteLength = 6870
+const frozenReceiptSchemaSha256 =
+  'ef0259bd022a509dd2a082b272979d6cf92ab8d46492690685d674c88c6b7215'
 const manifestPrivacy =
   'public-document-identities-only-no-source-content-layout-targets-or-gold'
 const adapterEnvironmentKeys = [
@@ -57,13 +67,53 @@ const adapterEnvironmentKeys = [
   'no_proxy',
   ...(process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []),
 ].sort()
+const configuredAdapterEnvironmentKeys = [
+  ...adapterEnvironmentKeys,
+  'SRT_PDF_RUNNER_CANDIDATE_EXECUTABLE',
+  'SRT_PDF_RUNNER_MODEL_CACHE_HOME',
+].sort()
 const sourceContents = [
   Buffer.from('%PDF-1.7\nowner local prose alpha\n%%EOF\n'),
   Buffer.from('%PDF-1.7\nowner local prose beta\n%%EOF\n'),
 ]
+const adapterControlledHexLeak = sourceContents[0]
+  .subarray(0, 32)
+  .toString('hex')
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+function publicId(value) {
+  return `sha256:${digest(value)}`
+}
+
+function publicHex(field, value) {
+  return digest(
+    `pdf-target-free-public-adapter-hex-value-v1\0${field}\0${value}`,
+  )
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function receiptWithRecomputedHash(receipt) {
+  const receiptBase = structuredClone(receipt)
+  delete receiptBase.receiptSha256
+  return {
+    ...receiptBase,
+    receiptSha256: digest(canonicalJson(receiptBase)),
+  }
 }
 
 function manifestFor(documents) {
@@ -75,9 +125,14 @@ function manifestFor(documents) {
   }
 }
 
-function fixtureAdapterSource(capturePath, { selfModify = false } = {}) {
+function fixtureAdapterSource(
+  capturePath,
+  { selfModify = false, mutateCandidateExecutable = false } = {},
+) {
   return `#!/usr/bin/env node
 import { appendFile, readFile, realpath, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const values = {}
@@ -86,6 +141,49 @@ for (let index = 2; index < process.argv.length; index += 2) {
 }
 const request = JSON.parse(await readFile(values.request, 'utf8'))
 const source = await readFile(request.path)
+const configuredExecutable =
+  process.env.SRT_PDF_RUNNER_CANDIDATE_EXECUTABLE ?? null
+const configuredModelCacheHome =
+  process.env.SRT_PDF_RUNNER_MODEL_CACHE_HOME ?? null
+let runtimeIdentity = {
+  status: 'attested',
+  tool: {
+    id: 'owner_local_prose_tool',
+    version: '1.2.3',
+    executableSha256: '${adapterControlledHexLeak}',
+    versionOutputSha256: '${adapterControlledHexLeak}',
+  },
+  model: {
+    id: 'owner_local_prose_model',
+    sha256: '${adapterControlledHexLeak}',
+  },
+}
+if (configuredExecutable !== null && configuredModelCacheHome !== null) {
+  const executableBytes = await readFile(configuredExecutable)
+  const observed = spawnSync(configuredExecutable, ['--version'], {
+    encoding: 'utf8',
+  })
+  const versionOutput =
+    String(observed.stdout ?? '') + '\\0' + String(observed.stderr ?? '')
+  const version = versionOutput.match(/([0-9]+(?:\\.[0-9]+)+)/)?.[1]
+  runtimeIdentity = {
+    status: 'attested',
+    tool: {
+      id: 'owner_local_prose_tool',
+      version,
+      executableSha256: createHash('sha256')
+        .update(executableBytes)
+        .digest('hex'),
+      versionOutputSha256: createHash('sha256')
+        .update(versionOutput)
+        .digest('hex'),
+    },
+    model: {
+      id: 'owner_local_prose_model',
+      sha256: '${adapterControlledHexLeak}',
+    },
+  }
+}
 const response = {
   schemaVersion: '1.0.0',
   documentId: request.documentId,
@@ -93,23 +191,11 @@ const response = {
   candidate: {
     id: process.env.SRT_PDF_CANDIDATE_ID,
     version: process.env.SRT_PDF_CANDIDATE_VERSION,
-    format: 'fixture-document-graph',
-    formatVersion: '1.0.0',
+    format: 'owner_local_prose_format',
+    formatVersion: 'private.basename.pdf',
     adapterSourceSha256: process.env.SRT_PDF_ADAPTER_SOURCE_SHA256,
   },
-  runtimeIdentity: {
-    status: 'attested',
-    tool: {
-      id: 'fixture-layout-runner',
-      version: '1.2.3',
-      executableSha256: '${'a'.repeat(64)}',
-      versionOutputSha256: '${'b'.repeat(64)}',
-    },
-    model: {
-      id: 'fixture-layout-model',
-      sha256: '${'c'.repeat(64)}',
-    },
-  },
+  runtimeIdentity,
   output: {
     observedByteLength: source.byteLength,
     sourceIdentity: request.sha256,
@@ -135,16 +221,19 @@ await appendFile(
       temp: await realpath(process.env.TEMP),
       path: process.env.PATH,
       ownerSecret: process.env.TARGET_FREE_OWNER_SECRET ?? null,
+      configuredExecutable,
+      configuredModelCacheHome,
       keys: Object.keys(process.env).sort(),
     },
   }) + '\\n',
 )
 await writeFile(values.output, rawOutput, { flag: 'wx' })
 ${selfModify ? "await appendFile(fileURLToPath(import.meta.url), '\\n// source drift\\n')" : ''}
+${mutateCandidateExecutable ? "await appendFile(configuredExecutable, '\\n# executable drift\\n')" : ''}
 `
 }
 
-async function createFixture() {
+async function createFixture(adapterOptions = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'target-free-candidate-test-'))
   const inputRoot = join(directory, 'papers')
   const capturePath = join(directory, 'captured-requests.jsonl')
@@ -171,7 +260,9 @@ async function createFixture() {
   }
   const manifest = manifestFor(documents)
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(adapter, fixtureAdapterSource(capturePath), { mode: 0o700 })
+  await writeFile(adapter, fixtureAdapterSource(capturePath, adapterOptions), {
+    mode: 0o700,
+  })
   await chmod(adapter, 0o700)
   return {
     directory,
@@ -200,7 +291,28 @@ function runOptions(fixture, overrides = {}) {
   }
 }
 
-function runCli(fixture, output, rawOutputDirectory = `${output}.raw`) {
+async function createCandidateRuntime(fixture) {
+  const executable = join(fixture.directory, 'fixture-candidate-runtime')
+  const modelCacheHome = join(fixture.directory, 'fixture-model-cache')
+  await writeFile(
+    executable,
+    '#!/usr/bin/env node\nif (process.argv[2] === "--version") process.stdout.write("fixture candidate 4.5.6\\\\n")\n',
+    { mode: 0o700 },
+  )
+  await chmod(executable, 0o700)
+  await mkdir(modelCacheHome, { mode: 0o700 })
+  return {
+    executable: await realpath(executable),
+    modelCacheHome: await realpath(modelCacheHome),
+  }
+}
+
+function runCli(
+  fixture,
+  output,
+  rawOutputDirectory = `${output}.raw`,
+  configuredRuntime = null,
+) {
   return spawnSync(
     process.execPath,
     [
@@ -222,6 +334,14 @@ function runCli(fixture, output, rawOutputDirectory = `${output}.raw`) {
       output,
       '--timeout-seconds',
       '30',
+      ...(configuredRuntime
+        ? [
+            '--candidate-executable-env',
+            'TARGET_FREE_TEST_CANDIDATE_EXECUTABLE',
+            '--candidate-model-cache-home-env',
+            'TARGET_FREE_TEST_MODEL_CACHE_HOME',
+          ]
+        : []),
     ],
     {
       encoding: 'utf8',
@@ -240,6 +360,14 @@ function runCli(fixture, output, rawOutputDirectory = `${output}.raw`) {
         TARGET_FREE_TEST_ROOT: fixture.inputRoot,
         TARGET_FREE_TEST_ADAPTER: fixture.adapter,
         TARGET_FREE_TEST_RAW_OUTPUTS: rawOutputDirectory,
+        ...(configuredRuntime
+          ? {
+              TARGET_FREE_TEST_CANDIDATE_EXECUTABLE:
+                configuredRuntime.executable,
+              TARGET_FREE_TEST_MODEL_CACHE_HOME:
+                configuredRuntime.modelCacheHome,
+            }
+          : {}),
       },
     },
   )
@@ -279,7 +407,7 @@ describe('target-free PDF candidate acquisition', () => {
     }
   })
 
-  it('runs once per document, binds provenance, and is byte-deterministic', async () => {
+  it('hashes malicious public channels while binding a byte-deterministic run', async () => {
     const fixture = await createFixture()
     try {
       const firstPath = join(fixture.directory, 'receipt-first.json')
@@ -324,6 +452,8 @@ describe('target-free PDF candidate acquisition', () => {
         expect(digest(Buffer.from(captured.rawOutput))).toBe(
           firstReceipt.documents[index].rawOutputSha256,
         )
+        expect(captured.rawOutput).toContain('owner_local_prose')
+        expect(captured.rawOutput).toContain('private.basename.pdf')
         expect(Buffer.byteLength(captured.rawOutput)).toBe(
           firstReceipt.documents[index].rawOutputByteLength,
         )
@@ -363,8 +493,8 @@ describe('target-free PDF candidate acquisition', () => {
         candidate: {
           id: 'fixture-candidate',
           version: 'exact-revision-1',
-          format: 'fixture-document-graph',
-          formatVersion: '1.0.0',
+          format: publicId('owner_local_prose_format'),
+          formatVersion: publicId('private.basename.pdf'),
           adapterSource: {
             schemaVersion: '1.1.0',
             moduleCount: 1,
@@ -373,14 +503,20 @@ describe('target-free PDF candidate acquisition', () => {
           runtimeIdentity: {
             status: 'attested',
             tool: {
-              id: 'fixture-layout-runner',
-              version: '1.2.3',
-              executableSha256: 'a'.repeat(64),
-              versionOutputSha256: 'b'.repeat(64),
+              id: publicId('owner_local_prose_tool'),
+              version: publicId('1.2.3'),
+              executableSha256: publicHex(
+                'tool-executable-sha256',
+                adapterControlledHexLeak,
+              ),
+              versionOutputSha256: publicHex(
+                'tool-version-output-sha256',
+                adapterControlledHexLeak,
+              ),
             },
             model: {
-              id: 'fixture-layout-model',
-              sha256: 'c'.repeat(64),
+              id: publicId('owner_local_prose_model'),
+              sha256: publicHex('model-sha256', adapterControlledHexLeak),
             },
           },
         },
@@ -402,6 +538,10 @@ describe('target-free PDF candidate acquisition', () => {
       expect(firstReceipt.documents).toHaveLength(
         fixture.manifest.documents.length,
       )
+      expect(firstReceipt.candidate).not.toHaveProperty(
+        'runnerExecutableIdentity',
+      )
+      expect(firstReceipt.execution).not.toHaveProperty('modelCacheAttestation')
       expect(
         firstReceipt.documents.every(
           (item) =>
@@ -414,10 +554,14 @@ describe('target-free PDF candidate acquisition', () => {
       expect(serialized).not.toContain(fixture.capturePath)
       expect(serialized).not.toContain(firstRawOutputDirectory)
       expect(serialized).not.toContain('owner local prose')
+      expect(serialized).not.toContain('owner_local_prose')
+      expect(serialized).not.toContain('private.basename.pdf')
+      expect(serialized).not.toContain(adapterControlledHexLeak)
       expect(serialized).not.toContain('must-not-cross-adapter-boundary')
       expect(firstRun.stdout).not.toContain(fixture.inputRoot)
       expect(firstRun.stdout).not.toContain(firstRawOutputDirectory)
       expect(firstRun.stdout).not.toContain('owner local prose')
+      expect(firstRun.stdout).not.toContain(adapterControlledHexLeak)
 
       const validate = spawnSync(
         process.execPath,
@@ -446,6 +590,212 @@ describe('target-free PDF candidate acquisition', () => {
       expect(JSON.parse(validate.stdout)).toEqual({
         valid: true,
         receiptSha256: firstReceipt.receiptSha256,
+      })
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('binds an explicit runner executable without exposing runtime paths', async () => {
+    const fixture = await createFixture()
+    try {
+      const configuredRuntime = await createCandidateRuntime(fixture)
+      const output = join(fixture.directory, 'configured-receipt.json')
+      const rawOutputDirectory = join(fixture.directory, 'configured-raw')
+      const run = runCli(fixture, output, rawOutputDirectory, configuredRuntime)
+
+      expect(run.status, run.stderr).toBe(0)
+      const receipt = JSON.parse(await readFile(output, 'utf8'))
+      const executableBytes = await readFile(configuredRuntime.executable)
+      expect(receipt.schemaVersion).toBe('1.2.0')
+      expect(receipt.candidate.runnerExecutableIdentity).toMatchObject({
+        byteLength: executableBytes.byteLength,
+        sha256: digest(executableBytes),
+        versionAttestation: 'observed',
+        version: '4.5.6',
+        versionOutputSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      })
+      expect(receipt.candidate.runtimeIdentity).toMatchObject({
+        status: 'attested',
+        tool: {
+          id: publicId('owner_local_prose_tool'),
+          executableSha256: digest(executableBytes),
+          version: publicId('4.5.6'),
+          versionOutputSha256:
+            receipt.candidate.runnerExecutableIdentity.versionOutputSha256,
+        },
+        model: {
+          id: publicId('owner_local_prose_model'),
+          sha256: publicHex('model-sha256', adapterControlledHexLeak),
+        },
+      })
+      expect(receipt.execution.modelCacheAttestation).toBe(
+        'directory-path-validated-model-contents-unattested',
+      )
+      const captures = await capturedRequests(fixture.capturePath)
+      expect(captures).toHaveLength(fixture.manifest.documents.length)
+      for (const captured of captures) {
+        expect(captured.environment.keys).toEqual(
+          configuredAdapterEnvironmentKeys,
+        )
+        expect(captured.environment.configuredExecutable).toBe(
+          configuredRuntime.executable,
+        )
+        expect(captured.environment.configuredModelCacheHome).toBe(
+          configuredRuntime.modelCacheHome,
+        )
+      }
+      const serialized = JSON.stringify(receipt)
+      expect(serialized).not.toContain(configuredRuntime.executable)
+      expect(serialized).not.toContain(configuredRuntime.modelCacheHome)
+      expect(serialized).not.toContain(adapterControlledHexLeak)
+      expect(run.stdout).not.toContain(configuredRuntime.executable)
+      expect(run.stdout).not.toContain(configuredRuntime.modelCacheHome)
+      expect(run.stdout).not.toContain(adapterControlledHexLeak)
+      const replay = spawnSync(
+        process.execPath,
+        [
+          cliPath,
+          'validate',
+          '--manifest',
+          fixture.manifestPath,
+          '--adapter-env',
+          'TARGET_FREE_TEST_ADAPTER',
+          '--raw-output-dir-env',
+          'TARGET_FREE_TEST_RAW_OUTPUTS',
+          '--candidate-executable-env',
+          'TARGET_FREE_TEST_EXECUTABLE',
+          '--receipt',
+          output,
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            TARGET_FREE_TEST_ADAPTER: fixture.adapter,
+            TARGET_FREE_TEST_RAW_OUTPUTS: rawOutputDirectory,
+            TARGET_FREE_TEST_EXECUTABLE: configuredRuntime.executable,
+          },
+        },
+      )
+      expect(replay.status, replay.stderr).toBe(0)
+      expect(JSON.parse(replay.stdout)).toEqual({
+        valid: true,
+        receiptSha256: receipt.receiptSha256,
+      })
+      await expect(
+        validatePdfTargetFreeCandidateReceipt(
+          receipt,
+          await readFile(fixture.manifestPath),
+        ),
+      ).resolves.toEqual({
+        valid: true,
+        receiptSha256: receipt.receiptSha256,
+      })
+      const mismatchedVersionOutput = structuredClone(receipt)
+      mismatchedVersionOutput.candidate.runtimeIdentity.tool.versionOutputSha256 =
+        'f'.repeat(64)
+      await expect(
+        validatePdfTargetFreeCandidateReceipt(
+          receiptWithRecomputedHash(mismatchedVersionOutput),
+          await readFile(fixture.manifestPath),
+        ),
+      ).rejects.toThrow('INVALID_PDF_TARGET_FREE_CANDIDATE_RECEIPT')
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('validates legacy and configured receipts only against their exact schemas', async () => {
+    const fixture = await createFixture()
+    try {
+      const legacyReceipt = await runPdfTargetFreeCandidateAcquisition(
+        runOptions(fixture, {
+          output: join(fixture.directory, 'legacy-receipt.json'),
+          rawOutputDirectory: join(fixture.directory, 'legacy-raw'),
+        }),
+      )
+      const configuredRuntime = await createCandidateRuntime(fixture)
+      const configuredReceipt = await runPdfTargetFreeCandidateAcquisition(
+        runOptions(fixture, {
+          output: join(fixture.directory, 'configured-receipt.json'),
+          rawOutputDirectory: join(fixture.directory, 'configured-raw'),
+          candidateExecutable: configuredRuntime.executable,
+          candidateModelCacheHome: configuredRuntime.modelCacheHome,
+        }),
+      )
+      const manifestBytes = await readFile(fixture.manifestPath)
+
+      await expect(
+        validatePdfTargetFreeCandidateReceipt(legacyReceipt, manifestBytes),
+      ).resolves.toMatchObject({ valid: true })
+      await expect(
+        validatePdfTargetFreeCandidateReceipt(configuredReceipt, manifestBytes),
+      ).resolves.toMatchObject({ valid: true })
+
+      const legacyRelabeledAsConfigured = receiptWithRecomputedHash({
+        ...legacyReceipt,
+        schemaVersion: '1.2.0',
+      })
+      await expect(
+        validatePdfTargetFreeCandidateReceipt(
+          legacyRelabeledAsConfigured,
+          manifestBytes,
+        ),
+      ).rejects.toThrow('INVALID_PDF_TARGET_FREE_CANDIDATE_RECEIPT')
+
+      const configuredRelabeledAsLegacy = receiptWithRecomputedHash({
+        ...configuredReceipt,
+        schemaVersion: '1.1.0',
+      })
+      await expect(
+        validatePdfTargetFreeCandidateReceipt(
+          configuredRelabeledAsLegacy,
+          manifestBytes,
+        ),
+      ).rejects.toThrow('INVALID_PDF_TARGET_FREE_CANDIDATE_RECEIPT')
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('detects configured executable mutation before retaining raw output', async () => {
+    const fixture = await createFixture({
+      mutateCandidateExecutable: true,
+    })
+    try {
+      const configuredRuntime = await createCandidateRuntime(fixture)
+      const output = join(fixture.directory, 'drifted-runtime-receipt.json')
+      const rawOutputDirectory = join(fixture.directory, 'drifted-runtime-raw')
+      const run = runCli(fixture, output, rawOutputDirectory, configuredRuntime)
+
+      expect(run.status).toBe(2)
+      expect(JSON.parse(run.stderr)).toEqual({
+        status: 'failed',
+        code: 'PDF_TARGET_FREE_CANDIDATE_EXECUTABLE_DRIFT',
+      })
+      expect(await readdir(rawOutputDirectory)).toEqual([])
+      await expect(lstat(output)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(run.stderr).not.toContain(configuredRuntime.executable)
+      expect(run.stderr).not.toContain(configuredRuntime.modelCacheHome)
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed on partial configured runtime options', async () => {
+    const fixture = await createFixture()
+    try {
+      const configuredRuntime = await createCandidateRuntime(fixture)
+      await expect(
+        runPdfTargetFreeCandidateAcquisition(
+          runOptions(fixture, {
+            candidateExecutable: configuredRuntime.executable,
+          }),
+        ),
+      ).rejects.toThrow('INVALID_USAGE')
+      await expect(lstat(fixture.capturePath)).rejects.toMatchObject({
+        code: 'ENOENT',
       })
     } finally {
       await rm(fixture.directory, { recursive: true, force: true })
@@ -691,6 +1041,31 @@ describe('target-free PDF candidate acquisition', () => {
     } finally {
       await rm(fixture.directory, { recursive: true, force: true })
     }
+  })
+
+  it('keeps the historical v1.1 receipt schema byte-frozen', async () => {
+    const frozenSchemaBytes = await readFile(receiptSchemaPath)
+    expect(frozenSchemaBytes.byteLength).toBe(frozenReceiptSchemaByteLength)
+    expect(digest(frozenSchemaBytes)).toBe(frozenReceiptSchemaSha256)
+
+    const frozenSchema = JSON.parse(frozenSchemaBytes.toString('utf8'))
+    const configuredSchema = JSON.parse(
+      await readFile(configuredReceiptSchemaPath, 'utf8'),
+    )
+    expect(frozenSchema.properties.schemaVersion.const).toBe('1.1.0')
+    expect(frozenSchema.$defs.candidate.required).not.toContain(
+      'runnerExecutableIdentity',
+    )
+    expect(frozenSchema.$defs.execution.required).not.toContain(
+      'modelCacheAttestation',
+    )
+    expect(configuredSchema.properties.schemaVersion.const).toBe('1.2.0')
+    expect(configuredSchema.$defs.candidate.required).toContain(
+      'runnerExecutableIdentity',
+    )
+    expect(configuredSchema.$defs.execution.required).toContain(
+      'modelCacheAttestation',
+    )
   })
 
   it('does not claim independent filesystem or network isolation', async () => {

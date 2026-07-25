@@ -328,6 +328,43 @@ function ocrProvenance() {
   ]
 }
 
+function executionProvenance(toolId = 'pdf-export') {
+  return {
+    schemaVersion: '1.1.0',
+    implementation: {
+      gitCommit: '1'.repeat(40),
+      gitCommitTimestamp: '2026-07-25T00:00:00+08:00',
+      worktreeState: 'clean',
+      exactHead: true,
+    },
+    runtime: {
+      name: 'node',
+      version: '24.4.1',
+      platform: 'darwin',
+      architecture: 'arm64',
+    },
+    tool: {
+      id: toolId,
+      packageName: 'astro-erudite',
+      packageVersion: '1.2.4',
+    },
+    toolchain: {
+      packageLockSha256: '2'.repeat(64),
+      pdfjsDist: {
+        declaredVersion: '5.4.624',
+        lockedVersion: '5.4.624',
+        resolvedVersion: '5.4.624',
+        resolvedPackageJsonSha256: '3'.repeat(64),
+        resolvedPackageContentsSha256: '4'.repeat(64),
+      },
+    },
+    verification: {
+      method: 'before-after-exact-match-v1',
+      stateSha256: '5'.repeat(64),
+    },
+  }
+}
+
 describe('deterministic PDF benchmark comparison', () => {
   it('round-trips the canonical five-decimal pass rate for one ready document out of three', () => {
     const corpus = createCorpusReport(
@@ -565,6 +602,94 @@ describe('deterministic PDF benchmark comparison', () => {
       expect(() =>
         comparePdfBenchmarkReports(invalid, ocr, {
           corpusReportSchemaPolicy: 'v1.5-v1.6-compatible',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
+    }
+  })
+
+  it('validates exact-head v1.7 reports behind an explicit schema policy', () => {
+    const current = createCorpusReport([document()], policy, {
+      executionProvenance: executionProvenance(),
+    })
+    expect(current).toMatchObject({
+      schemaVersion: '1.7.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+    })
+    expect(() => comparePdfBenchmarkReports(current, current)).toThrow(
+      'INVALID_BENCHMARK_REPORT',
+    )
+    const exactHeadComparison = comparePdfBenchmarkReports(current, current, {
+      corpusReportSchemaPolicy: 'v1.7-only',
+    })
+    expect(exactHeadComparison).toMatchObject({
+      schemaVersion: '1.7.0',
+      summary: {
+        exactHeadEvidencePassed: true,
+        passed: true,
+      },
+      policy: {
+        corpusReportSchemaCompatibility: {
+          policy: 'v1.7-only',
+          baseline: {
+            schemaVersion: '1.7.0',
+            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+            reportSha256: canonicalJsonHash(current),
+            executionProvenance: current.executionProvenance,
+          },
+          candidate: {
+            schemaVersion: '1.7.0',
+            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+            reportSha256: canonicalJsonHash(current),
+            executionProvenance: current.executionProvenance,
+          },
+        },
+      },
+    })
+
+    const dirty = structuredClone(current)
+    dirty.executionProvenance.implementation.worktreeState = 'dirty'
+    dirty.executionProvenance.implementation.exactHead = false
+    const dirtyComparison = comparePdfBenchmarkReports(dirty, dirty, {
+      corpusReportSchemaPolicy: 'v1.7-only',
+    })
+    expect(dirtyComparison).toMatchObject({
+      schemaVersion: '1.7.0',
+      summary: {
+        exactHeadEvidencePassed: false,
+        passed: false,
+      },
+    })
+    expect(
+      dirtyComparison.policy.corpusReportSchemaCompatibility.baseline
+        .reportSha256,
+    ).toBe(canonicalJsonHash(dirty))
+
+    const inconsistent = structuredClone(current)
+    inconsistent.executionProvenance.implementation.exactHead = false
+    expect(() =>
+      comparePdfBenchmarkReports(current, inconsistent, {
+        corpusReportSchemaPolicy: 'v1.7-only',
+      }),
+    ).toThrow('INVALID_BENCHMARK_REPORT')
+    const leaking = structuredClone(current)
+    leaking.executionProvenance.runtime.localPath = '/private/source'
+    const malformedTimestamp = structuredClone(current)
+    malformedTimestamp.executionProvenance.implementation.gitCommitTimestamp =
+      '1'
+    const mismatchedPdfjs = structuredClone(current)
+    mismatchedPdfjs.executionProvenance.toolchain.pdfjsDist.resolvedVersion =
+      '5.4.625'
+    const missingFinalization = structuredClone(current)
+    delete missingFinalization.executionProvenance.verification
+    for (const invalid of [
+      leaking,
+      malformedTimestamp,
+      mismatchedPdfjs,
+      missingFinalization,
+    ]) {
+      expect(() =>
+        comparePdfBenchmarkReports(current, invalid, {
+          corpusReportSchemaPolicy: 'v1.7-only',
         }),
       ).toThrow('INVALID_BENCHMARK_REPORT')
     }

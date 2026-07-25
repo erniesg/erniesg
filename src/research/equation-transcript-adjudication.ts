@@ -4,7 +4,12 @@ import type {
   PdfVisualRelationship,
 } from './import-types'
 import { sha256HexSync } from './sha256-sync'
-import { isValidSourcePageCropPayload } from './visual-assets'
+import {
+  canonicalPdfSourceExclusionMask,
+  isCanonicalPdfSourceExclusionMask,
+  isValidSourcePageCropPayload,
+  pdfSourceExclusionMaskIdentity,
+} from './visual-assets'
 
 export const OWNER_EQUATION_TRANSCRIPT_EVIDENCE = [
   'owner-adjudicated-equation-transcript-v1',
@@ -130,6 +135,18 @@ export function equationTranscriptDecisionBinding(
   const cropBox = cropAsset.sourceCropBox
     ? canonicalSourceBox(cropAsset.sourceCropBox)
     : null
+  const sourceExclusionMask = cropAsset.sourceCropBox
+    ? canonicalPdfSourceExclusionMask(
+        cropAsset.sourceExclusionMask,
+        cropAsset.sourceCropBox,
+      )
+    : null
+  const sourceExclusionMaskIdentity = cropAsset.sourceCropBox
+    ? pdfSourceExclusionMaskIdentity(
+        cropAsset.sourceExclusionMask,
+        cropAsset.sourceCropBox,
+      )
+    : null
   const cropBoxIdentity = (box: NormalizedSourceBox) => [
     box.page,
     box.x,
@@ -150,6 +167,9 @@ export function equationTranscriptDecisionBinding(
               ? cropBoxIdentity(cropAsset.sourceBoxes[index])
               : null,
           ]),
+          ...(sourceExclusionMaskIdentity
+            ? { sourceExclusionMask: sourceExclusionMaskIdentity }
+            : {}),
         })}`,
       )
     : null
@@ -163,6 +183,12 @@ export function equationTranscriptDecisionBinding(
     !cropIdentitySha256 ||
     cropAsset.id !== `asset-${cropIdentitySha256.slice(0, 24)}` ||
     cropAsset.href !== `assets/${cropAsset.id}.png` ||
+    (cropAsset.sourceExclusionMask !== undefined &&
+      (!sourceExclusionMask ||
+        !isCanonicalPdfSourceExclusionMask(
+          cropAsset.sourceExclusionMask,
+          cropAsset.sourceCropBox,
+        ))) ||
     !sameValues(cropAsset.sourceObjectIds, relationship.sourceObjectIds) ||
     !cropBox ||
     !cropSourceBoxes
@@ -327,6 +353,7 @@ export function equationTranscriptDecisionBinding(
         sourceObjectIds: cropAsset.sourceObjectIds,
         sourceBoxes: cropSourceBoxes,
         sourceCropBox: cropBox,
+        ...(sourceExclusionMask ? { sourceExclusionMask } : {}),
       },
     }),
   )

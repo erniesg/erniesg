@@ -8,7 +8,11 @@ import { validatePdfFidelityEvalSet } from '../tools/pdf-fidelity-eval.mjs'
 const paths = {
   contract: 'benchmarks/pdf/reconstruction-eval-contract-v1.json',
   contractSchema: 'docs/schemas/pdf-reconstruction-eval-contract.schema.json',
+  additiveContract: 'benchmarks/pdf/reconstruction-eval-contract-v3.json',
+  additiveContractSchema:
+    'docs/schemas/pdf-reconstruction-eval-contract-v3.schema.json',
   corpus: 'benchmarks/pdf/corpus-contract-v1.json',
+  additiveCorpus: 'benchmarks/pdf/corpus-contract-v2.json',
   evalSet: 'benchmarks/pdf/fidelity-eval-v1.json',
   observations: 'benchmarks/pdf/fidelity-eval-observations-v1.json',
   observationsSchema: 'docs/schemas/pdf-fidelity-eval-observations.schema.json',
@@ -144,6 +148,44 @@ describe('PDF reconstruction evaluation governance contract', () => {
     expect(contract.splits.judgeTrain.caseCount).toBe(0)
     expect(contract.splits.judgeDev.caseCount).toBe(0)
     expect(contract.splits.judgeTest.caseCount).toBe(0)
+  })
+
+  it('adds a set-disjoint robustness corpus without rewriting frozen governance', async () => {
+    const [contract, schema, corpus] = await Promise.all([
+      readJson(paths.additiveContract),
+      readJson(paths.additiveContractSchema),
+      readJson(paths.additiveCorpus),
+    ])
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+
+    expect(validate(contract), validate.errors).toBe(true)
+    expect(contract.extends.fileSha256).toBe(
+      await fileSha256(contract.extends.path),
+    )
+    expect(contract.extends.fileSha256).toBe(
+      '0ee0826873f0b7349a5f4187746f9cc35a9acc1556fd7aa35e004b1a51a9a2dd',
+    )
+    expect(contract.robustnessCorpus.artifact.fileSha256).toBe(
+      await fileSha256(contract.robustnessCorpus.artifact.path),
+    )
+
+    const corpusIdentity = validateCorpusContract(corpus)
+    expect(contract.robustnessCorpus.canonicalContractSha256).toBe(
+      corpusIdentity.contractSha256,
+    )
+    const frozenIds = new Set(corpus.frozen.documents.map(({ id }) => id))
+    const randomIds = new Set(corpus.seededRandom.documents.map(({ id }) => id))
+    expect([...randomIds].filter((id) => frozenIds.has(id))).toEqual([])
+    expect(new Set([...frozenIds, ...randomIds]).size).toBe(20)
+    expect(contract.robustnessCorpus).toMatchObject({
+      runCount: 20,
+      distinctDocumentCount: 20,
+      overlapDocumentIds: [],
+      selectionPolicy: 'sha256-rank-without-replacement-excluding-frozen-v1',
+    })
+    expect(contract.authority.promotionAuthority).toBe(
+      'none-objective-gates-and-independent-blind-evidence-remain-required',
+    )
   })
 
   it('requires provider, model version, latency, and cost in future comparator sidecars', async () => {

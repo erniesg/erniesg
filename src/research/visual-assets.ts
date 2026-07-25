@@ -4,6 +4,7 @@ import type {
   PdfEmbeddedLink,
   PdfPageRegion,
   PdfRegionLine,
+  PdfSourceExclusionMask,
   PdfSourceRun,
   PdfVisualAsset,
 } from './import-types'
@@ -49,6 +50,207 @@ function rounded(value: number) {
   return Math.round(finite(value) * 1000) / 1000
 }
 
+function sourceBoxIdentity(box: NormalizedSourceBox) {
+  return [
+    box.page,
+    box.x,
+    box.y,
+    box.width,
+    box.height,
+    box.rotation,
+    box.method,
+  ]
+}
+
+function canonicalSourceBox(box: NormalizedSourceBox): NormalizedSourceBox {
+  const normalizedNumber = (value: number) => (Object.is(value, -0) ? 0 : value)
+  return {
+    page: box.page,
+    x: normalizedNumber(box.x),
+    y: normalizedNumber(box.y),
+    width: normalizedNumber(box.width),
+    height: normalizedNumber(box.height),
+    rotation: box.rotation,
+    method: box.method,
+  }
+}
+
+function compareSourceBoxes(
+  left: NormalizedSourceBox,
+  right: NormalizedSourceBox,
+) {
+  const leftIdentity = sourceBoxIdentity(left)
+  const rightIdentity = sourceBoxIdentity(right)
+  for (let index = 0; index < leftIdentity.length; index += 1) {
+    const leftValue = leftIdentity[index]
+    const rightValue = rightIdentity[index]
+    if (leftValue === rightValue) continue
+    return typeof leftValue === 'number' && typeof rightValue === 'number'
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue))
+  }
+  return 0
+}
+
+function canonicalSourceBoxes(boxes: readonly NormalizedSourceBox[]) {
+  const unique = new Map<string, NormalizedSourceBox>()
+  for (const box of boxes) {
+    const canonical = canonicalSourceBox(box)
+    unique.set(JSON.stringify(sourceBoxIdentity(canonical)), canonical)
+  }
+  return [...unique.values()].sort(compareSourceBoxes)
+}
+
+function sourceCropContainsBox(
+  cropBox: NormalizedSourceBox,
+  sourceBox: NormalizedSourceBox,
+) {
+  const tolerance = 0.00001
+  return (
+    cropBox.page === sourceBox.page &&
+    cropBox.rotation === sourceBox.rotation &&
+    cropBox.x <= sourceBox.x + tolerance &&
+    cropBox.y <= sourceBox.y + tolerance &&
+    cropBox.x + cropBox.width + tolerance >= sourceBox.x + sourceBox.width &&
+    cropBox.y + cropBox.height + tolerance >= sourceBox.y + sourceBox.height
+  )
+}
+
+function sourceBoxesIntersect(
+  left: NormalizedSourceBox,
+  right: NormalizedSourceBox,
+) {
+  return (
+    left.page === right.page &&
+    left.rotation === right.rotation &&
+    Math.min(left.x + left.width, right.x + right.width) >
+      Math.max(left.x, right.x) &&
+    Math.min(left.y + left.height, right.y + right.height) >
+      Math.max(left.y, right.y)
+  )
+}
+
+export function canonicalPdfSourceExclusionMask(
+  mask: PdfSourceExclusionMask | undefined,
+  cropBox?: NormalizedSourceBox,
+): PdfSourceExclusionMask | null {
+  if (!mask) return null
+  if (
+    mask.algorithm !== 'nearest-source-box-v1' ||
+    mask.expansionPixels !== 2 ||
+    !Array.isArray(mask.ownedSourceBoxes) ||
+    mask.ownedSourceBoxes.length === 0 ||
+    !Array.isArray(mask.excludedSourceBoxes) ||
+    mask.excludedSourceBoxes.length === 0 ||
+    [...mask.ownedSourceBoxes, ...mask.excludedSourceBoxes].some(
+      (box) => !validNormalizedSourceBox(box),
+    )
+  ) {
+    return null
+  }
+  const ownedSourceBoxes = canonicalSourceBoxes(mask.ownedSourceBoxes)
+  const excludedSourceBoxes = canonicalSourceBoxes(mask.excludedSourceBoxes)
+  if (
+    ownedSourceBoxes.length > 256 ||
+    excludedSourceBoxes.length > 32 ||
+    [...ownedSourceBoxes, ...excludedSourceBoxes].some(
+      (box) =>
+        !validNormalizedSourceBox(box) ||
+        box.x + box.width > 1 ||
+        box.y + box.height > 1 ||
+        (cropBox &&
+          (box.page !== cropBox.page || box.rotation !== cropBox.rotation)),
+    ) ||
+    (cropBox &&
+      ownedSourceBoxes.some(
+        (ownedSourceBox) => !sourceCropContainsBox(cropBox, ownedSourceBox),
+      )) ||
+    ownedSourceBoxes.some((ownedSourceBox) =>
+      excludedSourceBoxes.some((excludedSourceBox) =>
+        sourceBoxesIntersect(ownedSourceBox, excludedSourceBox),
+      ),
+    )
+  ) {
+    return null
+  }
+  return {
+    algorithm: 'nearest-source-box-v1',
+    expansionPixels: 2,
+    ownedSourceBoxes,
+    excludedSourceBoxes,
+  }
+}
+
+function hasOnlyKeys(value: object, expected: readonly string[]) {
+  const keys = Object.keys(value).sort()
+  return (
+    keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index])
+  )
+}
+
+function sameCanonicalSourceBox(
+  left: NormalizedSourceBox,
+  right: NormalizedSourceBox,
+) {
+  return sourceBoxIdentity(left).every(
+    (value, index) => value === sourceBoxIdentity(right)[index],
+  )
+}
+
+export function isCanonicalPdfSourceExclusionMask(
+  mask: PdfSourceExclusionMask | undefined,
+  cropBox?: NormalizedSourceBox,
+) {
+  const canonical = canonicalPdfSourceExclusionMask(mask, cropBox)
+  const sourceBoxKeys = [
+    'height',
+    'method',
+    'page',
+    'rotation',
+    'width',
+    'x',
+    'y',
+  ]
+  return Boolean(
+    mask &&
+    canonical &&
+    hasOnlyKeys(mask, [
+      'algorithm',
+      'excludedSourceBoxes',
+      'expansionPixels',
+      'ownedSourceBoxes',
+    ]) &&
+    [...mask.ownedSourceBoxes, ...mask.excludedSourceBoxes].every((box) =>
+      hasOnlyKeys(box, sourceBoxKeys),
+    ) &&
+    mask.ownedSourceBoxes.length === canonical.ownedSourceBoxes.length &&
+    mask.excludedSourceBoxes.length === canonical.excludedSourceBoxes.length &&
+    mask.ownedSourceBoxes.every((box, index) =>
+      sameCanonicalSourceBox(box, canonical.ownedSourceBoxes[index]),
+    ) &&
+    mask.excludedSourceBoxes.every((box, index) =>
+      sameCanonicalSourceBox(box, canonical.excludedSourceBoxes[index]),
+    ),
+  )
+}
+
+export function pdfSourceExclusionMaskIdentity(
+  mask: PdfSourceExclusionMask | undefined,
+  cropBox?: NormalizedSourceBox,
+) {
+  const canonical = canonicalPdfSourceExclusionMask(mask, cropBox)
+  return canonical
+    ? {
+        algorithm: canonical.algorithm,
+        expansionPixels: canonical.expansionPixels,
+        ownedSourceBoxes: canonical.ownedSourceBoxes.map(sourceBoxIdentity),
+        excludedSourceBoxes:
+          canonical.excludedSourceBoxes.map(sourceBoxIdentity),
+      }
+    : null
+}
+
 async function sha256(bytes: Uint8Array) {
   const buffer = bytes.buffer.slice(
     bytes.byteOffset,
@@ -77,10 +279,17 @@ async function asset({
   sourceObjectIds,
   sourceBoxes,
   sourceCropBox,
+  sourceExclusionMask,
   identityKey,
 }: Omit<PdfVisualAsset, 'id' | 'href' | 'sha256'> & {
   identityKey?: string
 }) {
+  const canonicalSourceExclusionMask = sourceExclusionMask
+    ? canonicalPdfSourceExclusionMask(sourceExclusionMask, sourceCropBox)
+    : null
+  if (sourceExclusionMask && !canonicalSourceExclusionMask) {
+    throw new Error('Visual asset source exclusion mask is invalid')
+  }
   const hash = await sha256(bytes)
   const identityHash = identityKey
     ? await sha256(strToU8(`${hash}\n${identityKey}`))
@@ -100,6 +309,11 @@ async function asset({
     sourceObjectIds: [...sourceObjectIds],
     sourceBoxes: sourceBoxes.map((box) => ({ ...box })),
     ...(sourceCropBox ? { sourceCropBox: { ...sourceCropBox } } : {}),
+    ...(canonicalSourceExclusionMask
+      ? {
+          sourceExclusionMask: canonicalSourceExclusionMask,
+        }
+      : {}),
   } satisfies PdfVisualAsset
 }
 
@@ -362,12 +576,16 @@ export async function downscalePngAsset(
     resolutionDpi: pixelsPerInch,
     sourceObjectIds: source.sourceObjectIds,
     sourceBoxes: source.sourceBoxes,
+    sourceExclusionMask: source.sourceExclusionMask,
     ...(source.sourceCropBox
       ? {
           sourceCropBox: source.sourceCropBox,
           identityKey: JSON.stringify({
             sourceAssetId: source.id,
             sourceCropBox: source.sourceCropBox,
+            ...(source.sourceExclusionMask
+              ? { sourceExclusionMask: source.sourceExclusionMask }
+              : {}),
             maximumWidth,
             pixelsPerInch,
           }),
@@ -433,7 +651,11 @@ export async function createSourcePageCropAsset(input: {
   width: number
   height: number
   pixels: Uint8Array
+  sourceExclusionMask?: PdfSourceExclusionMask
 }) {
+  const sourceExclusionMask = input.sourceExclusionMask
+    ? canonicalPdfSourceExclusionMask(input.sourceExclusionMask, input.cropBox)
+    : null
   if (
     input.sourceObjectIds.length === 0 ||
     input.sourceObjectIds.length !== input.sourceBoxes.length ||
@@ -461,7 +683,8 @@ export async function createSourcePageCropAsset(input: {
     input.cropBox.x + input.cropBox.width > 1 ||
     input.cropBox.y + input.cropBox.height > 1 ||
     !isBoundedPdfPageCropBox(input.cropBox) ||
-    input.sourceBoxes.some((box) => box.page !== input.cropBox.page)
+    input.sourceBoxes.some((box) => box.page !== input.cropBox.page) ||
+    (input.sourceExclusionMask && !sourceExclusionMask)
   ) {
     throw new Error(
       'Source page crops require one valid bounded source region on one page',
@@ -479,22 +702,20 @@ export async function createSourcePageCropAsset(input: {
   if (!hasNontrivialSourceInk(input.pixels, input.width, input.height)) {
     throw new Error('Source page crop contains no nontrivial source ink')
   }
-  const boxIdentity = (box: NormalizedSourceBox) => [
-    box.page,
-    box.x,
-    box.y,
-    box.width,
-    box.height,
-    box.rotation,
-    box.method,
-  ]
+  const sourceExclusionMaskIdentity = pdfSourceExclusionMaskIdentity(
+    sourceExclusionMask ?? undefined,
+    input.cropBox,
+  )
   const identityKey = JSON.stringify({
     kind: input.kind,
-    cropBox: boxIdentity(input.cropBox),
+    cropBox: sourceBoxIdentity(input.cropBox),
     lineage: input.sourceObjectIds.map((sourceObjectId, index) => [
       sourceObjectId,
-      boxIdentity(input.sourceBoxes[index]),
+      sourceBoxIdentity(input.sourceBoxes[index]),
     ]),
+    ...(sourceExclusionMaskIdentity
+      ? { sourceExclusionMask: sourceExclusionMaskIdentity }
+      : {}),
   })
   return asset({
     bytes: encodePng({ ...input, colorSpace: 'rgba' }),
@@ -507,6 +728,7 @@ export async function createSourcePageCropAsset(input: {
     sourceObjectIds: input.sourceObjectIds,
     sourceBoxes: input.sourceBoxes,
     sourceCropBox: input.cropBox,
+    sourceExclusionMask: sourceExclusionMask ?? undefined,
     identityKey,
   })
 }
@@ -1055,9 +1277,7 @@ function ownedTableSourceRunKey(
   return `${regionId}\u0000${lineId}\u0000${runIndex}`
 }
 
-function orderedOwnedTableSourceRuns(
-  runs: OwnedTableSourceRun[],
-) {
+function orderedOwnedTableSourceRuns(runs: OwnedTableSourceRun[]) {
   return [...runs].sort(
     (left, right) =>
       left.run.x - right.run.x ||
@@ -1097,12 +1317,8 @@ function sourceSequenceMatchesDetectedCell(
 ) {
   if (sourceRuns.length === 0) return false
   const first = sourceRuns[0].run
-  const right = Math.max(
-    ...sourceRuns.map(({ run }) => run.x + run.width),
-  )
-  const bottom = Math.max(
-    ...sourceRuns.map(({ run }) => run.y + run.height),
-  )
+  const right = Math.max(...sourceRuns.map(({ run }) => run.x + run.width))
+  const bottom = Math.max(...sourceRuns.map(({ run }) => run.y + run.height))
   const derived = {
     ...first,
     width: right - first.x,
@@ -1149,23 +1365,22 @@ function exactSourceSequenceForDetectedCell(
     tableLineSourceIds(owningDetectedLine).flatMap((lineId) => {
       const owner = sourceLineOwners.get(lineId)?.[0]
       if (!owner) return []
-      return owner.line.runs.flatMap<OwnedTableSourceRun>(
-        (run, runIndex) =>
-          run.text.trim()
-            ? [
-                {
-                  key: ownedTableSourceRunKey(
-                    owner.regionId,
-                    owner.line.id,
-                    runIndex,
-                  ),
-                  regionId: owner.regionId,
-                  line: owner.line,
+      return owner.line.runs.flatMap<OwnedTableSourceRun>((run, runIndex) =>
+        run.text.trim()
+          ? [
+              {
+                key: ownedTableSourceRunKey(
+                  owner.regionId,
+                  owner.line.id,
                   runIndex,
-                  run,
-                },
-              ]
-            : [],
+                ),
+                regionId: owner.regionId,
+                line: owner.line,
+                runIndex,
+                run,
+              },
+            ]
+          : [],
       )
     }),
   )
@@ -1265,38 +1480,36 @@ export function canonicalTableFromLines(
     return null
   }
   const sourceRowRuns = bands.map((band) =>
-    orderedOwnedTableSourceRuns(
-      [
-        ...new Map(
-          band
-            .flatMap((detectedLine) =>
-              tableLineSourceIds(detectedLine).flatMap((lineId) => {
-                const owner = sourceLineOwners.get(lineId)?.[0]
-                if (!owner) return []
-                return owner.line.runs.flatMap<OwnedTableSourceRun>(
-                  (run, runIndex) =>
-                    run.text.trim()
-                      ? [
-                          {
-                            key: ownedTableSourceRunKey(
-                              owner.regionId,
-                              owner.line.id,
-                              runIndex,
-                            ),
-                            regionId: owner.regionId,
-                            line: owner.line,
+    orderedOwnedTableSourceRuns([
+      ...new Map(
+        band
+          .flatMap((detectedLine) =>
+            tableLineSourceIds(detectedLine).flatMap((lineId) => {
+              const owner = sourceLineOwners.get(lineId)?.[0]
+              if (!owner) return []
+              return owner.line.runs.flatMap<OwnedTableSourceRun>(
+                (run, runIndex) =>
+                  run.text.trim()
+                    ? [
+                        {
+                          key: ownedTableSourceRunKey(
+                            owner.regionId,
+                            owner.line.id,
                             runIndex,
-                            run,
-                          },
-                        ]
-                      : [],
-                )
-              }),
-            )
-            .map((source) => [source.key, source]),
-        ).values(),
-      ],
-    ),
+                          ),
+                          regionId: owner.regionId,
+                          line: owner.line,
+                          runIndex,
+                          run,
+                        },
+                      ]
+                    : [],
+              )
+            }),
+          )
+          .map((source) => [source.key, source]),
+      ).values(),
+    ]),
   )
   const claimedSourceRunKeys = new Set<string>()
   const claimedSourceRunKeysByRow = bands.map(() => [] as string[])
@@ -1313,9 +1526,7 @@ export function canonicalTableFromLines(
           placement.columnIndex <= columnIndex &&
           placement.columnIndex + placement.columnSpan >=
             columnIndex + columnSpan
-            ? [
-                `cell-r${headerRowIndex + 1}-c${placement.columnIndex + 1}`,
-              ]
+            ? [`cell-r${headerRowIndex + 1}-c${placement.columnIndex + 1}`]
             : [],
         ),
       )
@@ -1349,9 +1560,7 @@ export function canonicalTableFromLines(
         )
         if (
           !sourceMatches ||
-          sourceMatches.some((source) =>
-            claimedSourceRunKeys.has(source.key),
-          )
+          sourceMatches.some((source) => claimedSourceRunKeys.has(source.key))
         ) {
           unresolvedInlineEvidence = true
           return {
@@ -1361,16 +1570,12 @@ export function canonicalTableFromLines(
             rowSpan: placement.rowSpan,
           }
         }
-        sourceMatches.forEach((source) =>
-          claimedSourceRunKeys.add(source.key),
-        )
+        sourceMatches.forEach((source) => claimedSourceRunKeys.add(source.key))
         claimedSourceRunKeysByRow[rowIndex].push(
           ...sourceMatches.map((source) => source.key),
         )
         const layout = tableSourceRunLayout(sourceMatches)
-        const rowRuns = sourceRowRuns[rowIndex].map(
-          (source) => source.run,
-        )
+        const rowRuns = sourceRowRuns[rowIndex].map((source) => source.run)
         const overlappingLinks = (options.links ?? []).flatMap((link) =>
           link.status === 'external' &&
           boxesOverlap(link.box, cell) &&
@@ -1385,42 +1590,34 @@ export function canonicalTableFromLines(
         let expected = Number(Boolean(href))
         const inlineRuns: NonNullable<
           CanonicalTable['rows'][number]['cells'][number]['inlineRuns']
-        > = layout.flatMap(
-          ({ source, start, end }) => {
-            const bold =
-              source.run.bold === true ||
-              (source.run.bold === undefined &&
-                hasExplicitHeaderStyle(source.run))
-            const italic =
-              source.run.italic === true ||
-              (source.run.italic === undefined &&
-                fontNameIndicatesItalic(source.run.fontName))
-            const verticalAlign = tableRunVerticalAlign(
-              rowRuns,
-              source.run,
-            )
-            const runExpected =
-              Number(bold) +
-              Number(italic) +
-              Number(Boolean(verticalAlign))
-            expected += runExpected
-            return runExpected > 0
-              ? [
-                  {
-                    start,
-                    end,
-                    ...(bold ? { bold: true } : {}),
-                    ...(italic ? { italic: true } : {}),
-                    ...(verticalAlign ? { verticalAlign } : {}),
-                  },
-                ]
-              : []
-          },
-        )
+        > = layout.flatMap(({ source, start, end }) => {
+          const bold =
+            source.run.bold === true ||
+            (source.run.bold === undefined &&
+              hasExplicitHeaderStyle(source.run))
+          const italic =
+            source.run.italic === true ||
+            (source.run.italic === undefined &&
+              fontNameIndicatesItalic(source.run.fontName))
+          const verticalAlign = tableRunVerticalAlign(rowRuns, source.run)
+          const runExpected =
+            Number(bold) + Number(italic) + Number(Boolean(verticalAlign))
+          expected += runExpected
+          return runExpected > 0
+            ? [
+                {
+                  start,
+                  end,
+                  ...(bold ? { bold: true } : {}),
+                  ...(italic ? { italic: true } : {}),
+                  ...(verticalAlign ? { verticalAlign } : {}),
+                },
+              ]
+            : []
+        })
         if (href) {
           const coextensive = inlineRuns.find(
-            (run) =>
-              run.start === 0 && run.end === cell.text.length,
+            (run) => run.start === 0 && run.end === cell.text.length,
           )
           if (coextensive) {
             Object.assign(coextensive, {
@@ -1515,9 +1712,7 @@ export async function createTableAsset(input: {
       cell.text.length,
       ...(cell.inlineRuns ?? []).flatMap((run) => [run.start, run.end]),
     ]
-    const points = [...new Set(boundaries)].sort(
-      (left, right) => left - right,
-    )
+    const points = [...new Set(boundaries)].sort((left, right) => left - right)
     return points
       .slice(0, -1)
       .map((start, index) => {
@@ -1546,10 +1741,7 @@ export async function createTableAsset(input: {
       })
       .join('')
   }
-  const rowXhtml = (
-    row: CanonicalTable['rows'][number],
-    rowIndex: number,
-  ) =>
+  const rowXhtml = (row: CanonicalTable['rows'][number], rowIndex: number) =>
     `<tr>${row.cells
       .map((cell, columnIndex) => {
         const tag = cell.headerScope ? 'th' : 'td'

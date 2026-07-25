@@ -14,31 +14,31 @@ import {
   resolveTextAnchor,
   type TextAnchorResolution,
   type TextAnnotation,
-} from '@/research/annotations'
+} from '../../research/annotations'
 import {
   COMPOSITION_POLICY_VERSION,
   getCompositionPolicy,
   resolveNodeComposition,
-} from '@/research/composition'
+} from '../../research/composition'
 import {
   measureCurrentRegionStability,
   PAGINATION_POLICY_VERSION,
   paginateResearchPaper,
   type PaginationFragment,
   type PaginationResult,
-} from '@/research/pagination'
+} from '../../research/pagination'
 import type {
   DocumentReconstruction,
   PublicationAsset,
   PublicationVisualRelationship,
-} from '@/research/import-types'
-import type { ResearchNode, ResearchPaper } from '@/research/schema'
+} from '../../research/import-types'
+import type { ResearchNode, ResearchPaper } from '../../research/schema'
 import {
   getPreviewMetrics,
   getTargetProfile,
   TARGET_PROFILE_IDS,
   type TargetProfileId,
-} from '@/research/targets'
+} from '../../research/targets'
 
 type CaptionNode = Extract<ResearchNode, { type: 'caption' }>
 type TextNode = Extract<
@@ -145,6 +145,11 @@ function AnnotatedText({
 
     if (runs.some((run) => run.italic)) content = <em>{content}</em>
     if (runs.some((run) => run.bold)) content = <strong>{content}</strong>
+    if (runs.some((run) => run.verticalAlign === 'superscript')) {
+      content = <sup>{content}</sup>
+    } else if (runs.some((run) => run.verticalAlign === 'subscript')) {
+      content = <sub>{content}</sub>
+    }
     if (reference) {
       content = (
         <a
@@ -525,7 +530,11 @@ export default function ResearchStudio({
   const [fontScale, setFontScale] = useState(1)
   const [selected, setSelected] = useState(paper.nodes[0].id)
   const [annotations, setAnnotations] = useState<TextAnnotation[]>(
-    () => initialAnnotations ?? createDemoAnnotations(paper),
+    () =>
+      initialAnnotations ??
+      // An imported reconstruction is a source review, not the authored demo:
+      // it never receives fabricated highlights, notes, or a reading anchor.
+      (reconstruction ? [] : createDemoAnnotations(paper)),
   )
   const assetUrls = usePreviewAssetUrls(reconstruction)
   const viewport = useRef<HTMLDivElement>(null)

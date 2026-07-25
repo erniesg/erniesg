@@ -500,6 +500,170 @@ describe('PDF semantic reconstruction', () => {
     expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
   })
 
+  it('resolves a biblatex refsection citation destination through named-destination geometry', () => {
+    const { block, box } = canonicalHyperlinkTestBlock()
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'internal',
+      destination: 'cite.0@creativex',
+      destinationEvidence: {
+        source: 'pdfjs-named-destination',
+        destination: 'cite.0@creativex',
+        view: 'XYZ',
+        page: 11,
+        point: {
+          page: 11,
+          x: 0.11068,
+          y: 0.41442,
+          rotation: 0,
+          method: 'pdf-destination',
+        },
+        box: null,
+      },
+      box,
+    } as const
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations: [annotation],
+      canonicalTargets: [
+        {
+          kind: 'reference',
+          label: 'Reference 3',
+          nodeId: 'bibliography-creativex',
+          sourceBoxes: [
+            {
+              page: 11,
+              x: 0.11905,
+              y: 0.41561,
+              width: 0.36667,
+              height: 0.01183,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(resolution.mappings).toEqual([])
+    expect(resolution.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'UNRESOLVED_HYPERLINK',
+        severity: 'error',
+        message: expect.stringMatching(/no exact canonical inline owner/iu),
+      }),
+    ])
+    expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
+  })
+
+  it('resolves a biblatex citation destination whose entry key contains path characters', () => {
+    const { block, box } = canonicalHyperlinkTestBlock()
+    const destination =
+      'cite.0@annurev:/content/journals/10.1146/annurev-control-090523-100059'
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'internal',
+      destination,
+      destinationEvidence: {
+        source: 'pdfjs-named-destination',
+        destination,
+        view: 'XYZ',
+        page: 11,
+        point: {
+          page: 11,
+          x: 0.11068,
+          y: 0.41442,
+          rotation: 0,
+          method: 'pdf-destination',
+        },
+        box: null,
+      },
+      box,
+    } as const
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations: [annotation],
+      canonicalTargets: [
+        {
+          kind: 'reference',
+          label: 'Reference 9',
+          nodeId: 'bibliography-annurev',
+          sourceBoxes: [
+            {
+              page: 11,
+              x: 0.11905,
+              y: 0.41561,
+              width: 0.36667,
+              height: 0.01183,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(resolution.mappings).toEqual([])
+    expect(resolution.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'UNRESOLVED_HYPERLINK',
+        severity: 'error',
+        message: expect.stringMatching(/no exact canonical inline owner/iu),
+      }),
+    ])
+    expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
+  })
+
+  it('keeps a biblatex citation destination without named-destination geometry unsupported', () => {
+    const { block, box } = canonicalHyperlinkTestBlock()
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'internal',
+      destination: 'cite.0@creativex',
+      box,
+    } as const
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations: [annotation],
+      canonicalTargets: [
+        {
+          kind: 'reference',
+          label: 'Reference 3',
+          nodeId: 'bibliography-creativex',
+          sourceBoxes: [
+            {
+              page: 11,
+              x: 0.11905,
+              y: 0.41561,
+              width: 0.36667,
+              height: 0.01183,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(resolution.mappings).toEqual([])
+    expect(resolution.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'UNRESOLVED_HYPERLINK',
+        severity: 'error',
+        message: expect.stringMatching(
+          /unsupported internal PDF destination scheme/iu,
+        ),
+      }),
+    ])
+    expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
+  })
+
   it('coalesces contiguous same-target URL fragments into one canonical hyperlink range', () => {
     const text = 'https://leandojo.org.'
     const { block, annotations } = splitExternalHyperlinkTestBlock({

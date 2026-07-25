@@ -4956,6 +4956,36 @@ function numericListAssignmentFragment(region: PdfPageRegion) {
   )
 }
 
+function bareNumericMathFragment(region: PdfPageRegion) {
+  // A display-equation fraction part (for example the bare denominator
+  // `1000`) can reach line assembly as a line of the neighboring paragraph.
+  // Reclaim it for the display scope only when every glyph run uses a
+  // Computer Modern math-family font and the text is one short unparenthesized
+  // number, so prose, printed equation numbers, and operator expressions can
+  // never join an equation through this path.
+  if (!['body', 'spanning', 'equation'].includes(region.kind)) return false
+  const text = region.text.replace(/\s+/gu, ' ').trim()
+  if (
+    !text ||
+    Array.from(text).length > 16 ||
+    region.lines.length !== 1 ||
+    region.box.width > 0.28 ||
+    region.box.height > 0.04
+  ) {
+    return false
+  }
+  if (!/^[\p{N}][\p{N}.,]{0,11}$/u.test(text)) return false
+  const runs = region.lines[0].runs.filter((run) => run.text.trim())
+  return (
+    runs.length > 0 &&
+    runs.every(
+      (run) =>
+        computerModernMathFont(run.fontName) ||
+        computerModernMathGlyphFont(run.fontName),
+    )
+  )
+}
+
 function sourceMathFragment(region: PdfPageRegion) {
   const text = region.text.replace(/\s+/gu, ' ').trim()
   if (
@@ -5435,7 +5465,8 @@ function attachedEquationRegions(
           return (
             mathExtensionGlyphFragment(lineFragment) ||
             sourceMathFragment(lineFragment) ||
-            numericListAssignmentFragment(lineFragment)
+            numericListAssignmentFragment(lineFragment) ||
+            bareNumericMathFragment(lineFragment)
           )
         })
         if (selectedMathLines.length > 0) {

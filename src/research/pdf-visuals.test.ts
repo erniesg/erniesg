@@ -2642,6 +2642,129 @@ describe('PDF visual association graph', () => {
     })
   })
 
+  it('absorbs a bare Computer Modern numeric fraction part into the display crop scope', async () => {
+    const formula = equationRegion(
+      'fraction-with-detached-denominator',
+      'p t = 1.58 t (p c + p r + p g )',
+      box(0.599, 0.6137, 0.284, 0.0238),
+    )
+    formula.lines[0].runs[0].fontName = 'CJMJKD+CMMI10'
+    // The denominator reaches line assembly as the first line of the body
+    // paragraph that follows the display equation, so only line-level
+    // absorption can reclaim it for the crop scope.
+    const denominatorBox = { ...box(0.7012, 0.634, 0.0364, 0.013), method: 'pdf-text' as const }
+    const proseBox = { ...box(0.599, 0.655, 0.284, 0.013), method: 'pdf-text' as const }
+    const followingParagraph = {
+      ...textRegion(
+        'fraction-following-paragraph',
+        '1000 where p c is the average power draw',
+        box(0.599, 0.634, 0.284, 0.034),
+      ),
+      lines: [
+        {
+          id: 'fraction-following-paragraph-denominator-line',
+          text: '1000',
+          fontSize: 9,
+          box: denominatorBox,
+          runs: [
+            {
+              ...denominatorBox,
+              text: '1000',
+              fontName: 'CJMJKD+CMR10',
+              fontSize: 9,
+              confidence: 0.99,
+            },
+          ],
+        },
+        {
+          id: 'fraction-following-paragraph-prose-line',
+          text: 'where p c is the average power draw',
+          fontSize: 9,
+          box: proseBox,
+          runs: [
+            {
+              ...proseBox,
+              text: 'where p c is the average power draw',
+              fontName: 'NimbusRomanNo9L',
+              fontSize: 9,
+              confidence: 0.99,
+            },
+          ],
+        },
+      ],
+    }
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 20,
+          pixels: new Uint8Array(96 * 20 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [formula, followingParagraph],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      evidence: expect.arrayContaining(['source-page-crop']),
+    })
+    expect(result.relationships[0].sourceLineIds).toContain(
+      'fraction-following-paragraph-denominator-line',
+    )
+    expect(result.relationships[0].sourceLineIds).not.toContain(
+      'fraction-following-paragraph-prose-line',
+    )
+  })
+
+  it('never absorbs Computer Modern prose beside a display equation into its crop scope', async () => {
+    const formula = equationRegion(
+      'fraction-beside-prose',
+      'p t = 1.58 t (p c + p r + p g )',
+      box(0.599, 0.6137, 0.284, 0.0238),
+    )
+    formula.lines[0].runs[0].fontName = 'CJMJKD+CMMI10'
+    const prose = textRegion(
+      'fraction-neighboring-prose',
+      'the market makers utility function',
+      box(0.6, 0.634, 0.28, 0.013),
+    )
+    prose.lines[0].runs[0].fontName = 'CJMJKD+CMR10'
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 20,
+          pixels: new Uint8Array(96 * 20 * 4).fill(72),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [formula, prose],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0].sourceRegionIds).not.toContain(prose.id)
+    expect(result.relationships[0].sourceLineIds).not.toContain(
+      prose.lines[0].id,
+    )
+  })
+
   it('uses an aligned printed number to crop a formula whose transcript is unsafe to publish', async () => {
     const formula = equationRegion(
       'garbled-numbered-equation',

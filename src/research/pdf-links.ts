@@ -823,9 +823,16 @@ function destinationGeometryKind(
   parsed: ParsedPdfInternalDestination | null,
 ): PdfCanonicalInternalLinkTargetKind | null {
   if (parsed) return parsed.kind
-  return /^Hfootnote\.[\p{L}\p{N}._:-]{1,128}$/u.test(destination)
-    ? 'note'
-    : null
+  if (/^Hfootnote\.[\p{L}\p{N}._:-]{1,128}$/u.test(destination)) return 'note'
+  // biblatex names each bibliography anchor `cite.<refsection>@<entrykey>`,
+  // and an entry key may contain characters (`@`, `:`, `/`) that the parsed
+  // label alphabet rejects. The name still identifies a bibliography entry,
+  // so resolution may proceed on named-destination geometry alone; without
+  // geometry evidence the destination stays unsupported.
+  if (/^cite\.[^\u0000-\u0020\u007f]{1,192}$/u.test(destination)) {
+    return 'reference'
+  }
+  return null
 }
 
 function validTargetSourceBox(box: NormalizedSourceBox) {

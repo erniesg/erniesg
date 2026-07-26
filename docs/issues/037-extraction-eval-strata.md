@@ -55,3 +55,27 @@ npm run build
 ## Allowed secrets
 
 None. Source documents and rendered evidence remain owner-local.
+
+## Artifact outputs
+
+Populated table, structure, equation, figure, prose-continuity, boilerplate, and layout strata with reviewed ground truth and degenerate-answer guards.
+
+## Stop conditions
+
+Stop before letting a parser's own output become its own label, admitting a stratum without ground truth, or gating on a regex proxy that was never validated.
+
+## Human clarification protocol
+
+If reviewed ground truth is unavailable for a stratum, confirm whether it ships as reported-only rather than gating.
+
+## Recommended response
+
+Define each metric so a degenerate answer scores worse than abstaining, because two ad-hoc proxies already produced badly misleading numbers in this repository.
+
+## Trade-offs
+
+Reviewed ground truth is slow to produce, but unlabelled strata cannot distinguish a real improvement from a parser that got louder.
+
+## Free-form response
+
+Every quality claim about tables, headings, equations, and prose currently rests on throwaway scripts, so no regression in any of them would be caught.

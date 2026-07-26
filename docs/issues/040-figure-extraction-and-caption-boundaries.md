@@ -58,3 +58,27 @@ npm run build
 ## Allowed secrets
 
 None.
+
+## Artifact outputs
+
+Proved caption extents, repaired figure component assembly, column-break sentence joins, and checkpoints for each under issue 038.
+
+## Stop conditions
+
+Stop before emitting a caption whose figure is absent without a blocking diagnostic, extending a caption across a lane boundary, or joining a column break the ledger cannot prove.
+
+## Human clarification protocol
+
+If a diagram's fragments cannot form one bounded component set, confirm that review-required is preferred over a partial render.
+
+## Recommended response
+
+Prove caption extent from block geometry and typography rather than proximity, since proximity is what let a caption cross into the next column.
+
+## Trade-offs
+
+Failing closed on an unprovable figure costs an export, but silently dropping seven of seven figures while emitting their captions is worse for a reader and invisible to metrics.
+
+## Free-form response
+
+A dropped diagram plus a caption that stole the next paragraph corrupts three things at once and none of them appear in any audit counter.

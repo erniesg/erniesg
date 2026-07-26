@@ -65,3 +65,27 @@ npm run test:e2e -- tests/e2e/publication-importer.spec.ts
 ## Allowed secrets
 
 None. Source papers and rendered evidence remain owner-local.
+
+## Artifact outputs
+
+A general proven-scope-to-grid promoter, a three-way semantic/raster/unresolved audit split, and named promotion-blocker diagnostics.
+
+## Stop conditions
+
+Stop before relaxing isStrictSemanticTable, inventing MathML or LaTeX, or emitting a partially proved grid to raise a coverage number.
+
+## Human clarification protocol
+
+If a proposed grid verifies structurally but a cell's text cannot be matched to source runs, confirm that the whole table falls back rather than promoting partially.
+
+## Recommended response
+
+Add the audit split first so promotion blockers are rankable, then close the highest-ranked blocker rather than guessing which detector to widen.
+
+## Trade-offs
+
+A wrong semantic table is worse for a reader than a correct image, so the promoter must fail closed to the existing bounded raster path.
+
+## Free-form response
+
+Rasterized tables do not reflow on a six-inch page, do not scale with reader font size, and are not selectable or accessible, which defeats the purpose of a device-profile EPUB.

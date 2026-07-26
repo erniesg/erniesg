@@ -56,3 +56,27 @@ scripts/agent-evidence --all
 ## Allowed secrets
 
 None. Owner-local papers and their rasters stay outside the repository.
+
+## Artifact outputs
+
+A paired source-page and rendered-output renderer over the real export path, a declared checkpoint schema, and evidence-lane wiring with per-checkpoint pass criteria.
+
+## Stop conditions
+
+Stop before rendering a parallel approximation instead of the real export, committing rasters of non-fixture documents, or passing a checkpoint merely because an image was produced.
+
+## Human clarification protocol
+
+If a checkpoint property is subjective, confirm the exact reviewer-visible criterion before it may gate the evidence lane.
+
+## Recommended response
+
+Drive the same export path a reader receives, because the defects this catches are invisible to overlays that only show what the pipeline believes.
+
+## Trade-offs
+
+Paired renders add evidence weight and runtime, but four reader-visible defects passed every existing counter with textCoverage at 0.999.
+
+## Free-form response
+
+A pull request whose body is a sealed-bundle hash gives a reviewer no way to see that a figure never arrived or that a caption swallowed a paragraph.

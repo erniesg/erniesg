@@ -58,3 +58,27 @@ npm run test:e2e -- tests/e2e/srt-visual.spec.ts
 ## Allowed secrets
 
 None.
+
+## Artifact outputs
+
+Monospace and indentation listing detection, preformatted emission with per-line provenance, join suppression inside listings, and bounded-scroll profile assertions.
+
+## Stop conditions
+
+Stop before detecting listings from language keywords, promoting justified prose to preformatted, or letting a listing force horizontal overflow on the page body.
+
+## Human clarification protocol
+
+If a listing's indentation is ambiguous because the source uses proportional spacing, confirm whether it stays prose rather than guessing columns.
+
+## Recommended response
+
+Detect from source font family and preserved indentation rather than content, so the rule holds for any language and any listing environment.
+
+## Trade-offs
+
+Preformatted blocks do not reflow, so they need bounded scrolling at narrow profiles; that is preferable to destroying the structure that makes code readable.
+
+## Free-form response
+
+Every character of the observed pseudocode survived and none of its meaning did, which no completeness metric registered.

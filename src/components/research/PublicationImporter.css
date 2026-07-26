@@ -115,3 +115,21 @@
 .publication-decision-file small code {
   @apply break-all font-mono text-[9px] text-foreground;
 }
+.publication-visual-adjudication {
+  @apply mt-4 grid gap-3 border-t border-foreground/20 pt-4;
+}
+.publication-visual-adjudication ol {
+  @apply grid gap-4 pl-5;
+}
+.publication-visual-adjudication li {
+  @apply grid gap-2;
+}
+.publication-visual-asset-previews {
+  @apply flex flex-wrap gap-3;
+}
+.publication-visual-asset-previews figure {
+  @apply m-0 max-w-48;
+}
+.publication-visual-asset-previews img {
+  @apply block h-auto max-h-40 max-w-full bg-white;
+}

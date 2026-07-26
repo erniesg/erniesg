@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1.3.0",
+  "documentSha256": "d40a97813bfae13aaa70edb4230d830c057507634f3b474b4161f8a07ed4558a",
+  "decisions": [
+    {
+      "diagnosticCode": "AMBIGUOUS_VISUAL_MATCH",
+      "target": {
+        "regionIds": [
+          "page-001-region-005",
+          "page-001-object-region-001",
+          "page-001-object-region-002"
+        ],
+        "markerId": "visual-relationship-0001"
+      },
+      "resolution": {
+        "type": "accept-visual-match",
+        "relationshipId": "visual-relationship-0001",
+        "candidateId": "visual-candidate-f1ac5c346e0af0fae2884e848fc313044d014deebee41a79a69199e25210aee3"
+      }
+    },
+    {
+      "diagnosticCode": "UNRESOLVED_VISUAL_OBJECT",
+      "target": {
+        "regionIds": ["page-002-region-003", "page-002-object-region-001"],
+        "markerId": "visual-relationship-0002"
+      },
+      "resolution": {
+        "type": "accept-visual-fallback",
+        "relationshipId": "visual-relationship-0002",
+        "candidateId": "visual-candidate-5241fe0de3d775bcd2ad4fe91ec04ddace577f331b97d49717ceefd928f8bfa9"
+      }
+    }
+  ]
+}

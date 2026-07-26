@@ -8,6 +8,7 @@ import type {
 } from './import-types'
 import {
   isProbableDisplayEquation,
+  pdfVisualMatchCandidateId,
   reconstructPdfVisuals,
   type PdfFigureRasterizer,
 } from './pdf-visuals'
@@ -208,6 +209,24 @@ async function solidRectangleFallbackAsset(
 }
 
 describe('PDF visual association graph', () => {
+  it('derives candidate identity from stable relationship content, not UI order', () => {
+    const candidate = {
+      sourceRegionIds: ['region-b', 'region-a'],
+      sourceObjectIds: ['object-b', 'object-a'],
+      assetIds: ['asset-b', 'asset-a'],
+    }
+    const reordered = {
+      sourceRegionIds: [...candidate.sourceRegionIds].reverse(),
+      sourceObjectIds: [...candidate.sourceObjectIds].reverse(),
+      assetIds: [...candidate.assetIds].reverse(),
+    }
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0001', candidate),
+    ).toBe(pdfVisualMatchCandidateId('visual-relationship-0001', reordered))
+    expect(
+      pdfVisualMatchCandidateId('visual-relationship-0002', candidate),
+    ).not.toBe(pdfVisualMatchCandidateId('visual-relationship-0001', candidate))
+  })
   it('matches a source-backed figure with a compound scholarly label', async () => {
     const sourceBox = box(0.2, 0.08, 0.6, 0.2)
     const sourceObjectId = 'compound-label-source'
@@ -2652,8 +2671,14 @@ describe('PDF visual association graph', () => {
     // The denominator reaches line assembly as the first line of the body
     // paragraph that follows the display equation, so only line-level
     // absorption can reclaim it for the crop scope.
-    const denominatorBox = { ...box(0.7012, 0.634, 0.0364, 0.013), method: 'pdf-text' as const }
-    const proseBox = { ...box(0.599, 0.655, 0.284, 0.013), method: 'pdf-text' as const }
+    const denominatorBox = {
+      ...box(0.7012, 0.634, 0.0364, 0.013),
+      method: 'pdf-text' as const,
+    }
+    const proseBox = {
+      ...box(0.599, 0.655, 0.284, 0.013),
+      method: 'pdf-text' as const,
+    }
     const followingParagraph = {
       ...textRegion(
         'fraction-following-paragraph',

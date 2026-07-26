@@ -11,6 +11,7 @@ import {
   applyHumanDecisionFile,
   createEquationTranscriptDecision,
   createHumanDecisionFile,
+  createVisualMatchDecision,
   equationTranscriptDecisionBinding,
   humanDecisionFileSha256,
   MAX_EQUATION_TRANSCRIPT_LENGTH,
@@ -233,6 +234,119 @@ function AdjudicationControls({
   }
 
   if (
+    diagnostic.code === 'AMBIGUOUS_VISUAL_MATCH' ||
+    diagnostic.code === 'UNRESOLVED_VISUAL_OBJECT'
+  ) {
+    const relationship = result.visualRelationships.find(
+      (candidate) => candidate.id === target.markerId,
+    )
+    if (!relationship) return null
+    const caption = result.regions.find(
+      (region) => region.id === relationship.captionRegionId,
+    )
+    return (
+      <div className="publication-visual-adjudication">
+        <h4>{relationship.label} · bounded visual candidates</h4>
+        <p>{caption?.text || relationship.altText}</p>
+        <small>
+          Caption box:{' '}
+          {relationship.sourceBoxes[0]
+            ? sourceBoxLabel(relationship.sourceBoxes[0])
+            : 'unavailable'}
+        </small>
+        <ol>
+          {relationship.candidates.map((candidate) => {
+            const candidateId =
+              candidate.id ??
+              `missing-candidate-id:${candidate.sourceObjectIds.join(':')}`
+            const assets = candidate.assetIds.flatMap((assetId) => {
+              const asset = result.assets.find((item) => item.id === assetId)
+              return asset ? [asset] : []
+            })
+            const complete =
+              assets.length === candidate.assetIds.length &&
+              assets.length > 0 &&
+              assets.every((asset) => asset.bytes.byteLength > 0)
+            return (
+              <li key={candidateId}>
+                <strong>
+                  Score {candidate.score.toFixed(3)} · {candidateId}
+                </strong>
+                <span>
+                  Regions: {candidate.sourceRegionIds.join(', ') || 'none'} ·
+                  Objects: {candidate.sourceObjectIds.join(', ') || 'none'}
+                </span>
+                <span>
+                  Bounds:{' '}
+                  {candidate.sourceBoxes.map(sourceBoxLabel).join(' · ') ||
+                    'none'}
+                </span>
+                <span>{candidate.evidence.join(' · ')}</span>
+                <div className="publication-visual-asset-previews">
+                  {assets.map((asset) => (
+                    <figure key={asset.id}>
+                      <img
+                        src={visualAssetDataUrl(asset.mediaType, asset.bytes)}
+                        alt={`${relationship.label} candidate asset ${asset.id}`}
+                      />
+                      <figcaption>{asset.id}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  disabled={!complete || !candidate.id}
+                  onClick={() =>
+                    onDecision(
+                      createVisualMatchDecision(
+                        result,
+                        relationship.id,
+                        candidateId,
+                        diagnostic.code === 'AMBIGUOUS_VISUAL_MATCH'
+                          ? 'accept-visual-match'
+                          : 'accept-visual-fallback',
+                      ),
+                    )
+                  }
+                >
+                  Use this complete local asset
+                </button>
+                {candidate.sourceObjectIds.length > 0 && (
+                  <div aria-label={`Decoration choices for ${candidateId}`}>
+                    {(
+                      [
+                        'page-furniture',
+                        'separator-rule',
+                        'decorative-ornament',
+                        'background',
+                      ] as const
+                    ).map((reason) => (
+                      <button
+                        key={reason}
+                        type="button"
+                        onClick={() =>
+                          decide({
+                            type: 'classify-visual-decoration',
+                            relationshipId: relationship.id,
+                            sourceObjectIds: [...candidate.sourceObjectIds],
+                            reason,
+                          })
+                        }
+                      >
+                        Mark named objects as {reason}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </ol>
+      </div>
+    )
+  }
+
+  if (
     diagnostic.code === 'AMBIGUOUS_NOTE_MATCH' ||
     diagnostic.code === 'UNRESOLVED_NOTE_REFERENCE'
   ) {
@@ -321,6 +435,25 @@ function AdjudicationControls({
     )
   }
   return null
+}
+
+function sourceBoxLabel(box: {
+  page: number
+  x: number
+  y: number
+  width: number
+  height: number
+}) {
+  return `p${box.page} x${box.x.toFixed(3)} y${box.y.toFixed(3)} ${box.width.toFixed(3)}×${box.height.toFixed(3)}`
+}
+
+function visualAssetDataUrl(mediaType: string, bytes: Uint8Array) {
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return `data:${mediaType};base64,${btoa(binary)}`
 }
 
 export function EquationTranscriptAdjudicationCard({

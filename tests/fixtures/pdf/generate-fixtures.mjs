@@ -359,6 +359,33 @@ const multilingualScan = rasterText({
     { text: '究', x: 460, y: 470, scale: 8 },
   ],
 })
+const visualAdjudicationCandidate = rasterText({
+  width: 280,
+  height: 180,
+  scale: 4,
+  lines: [
+    { text: 'LOCAL VISUAL', x: 24, y: 28 },
+    { text: 'COMPLETE ASSET', x: 24, y: 92 },
+  ],
+})
+const visualAdjudicationCandidateB = rasterText({
+  width: 280,
+  height: 180,
+  scale: 4,
+  lines: [
+    { text: 'LOCAL VISUAL B', x: 18, y: 28 },
+    { text: 'COMPLETE ASSET', x: 24, y: 92 },
+  ],
+})
+const visualAdjudicationCandidateC = rasterText({
+  width: 280,
+  height: 180,
+  scale: 4,
+  lines: [
+    { text: 'LOCAL FALLBACK', x: 18, y: 28 },
+    { text: 'COMPLETE ASSET', x: 24, y: 92 },
+  ],
+})
 
 const structuredFigureOne = rasterText({
   width: 520,
@@ -995,6 +1022,88 @@ const fixtures = {
           x: 72,
           y: 70,
           size: 7,
+        },
+      ],
+    },
+  ],
+  'visual-adjudication-required.pdf': [
+    {
+      lines: [
+        {
+          text: 'Bounded visual adjudication study',
+          x: 54,
+          y: 748,
+          size: 20,
+          font: 'F2',
+        },
+        { text: 'Ada Fixture', x: 54, y: 716, size: 12 },
+        { text: 'Abstract', x: 54, y: 680, size: 14, font: 'F2' },
+        {
+          text: 'This local fixture proves that bounded visual choices preserve complete source assets.',
+          x: 54,
+          y: 652,
+        },
+        {
+          text: 'The replayable decision record contains identifiers and choices without document payloads.',
+          x: 54,
+          y: 630,
+        },
+        {
+          text: 'Figure 1. Two complete local candidates across the page require one bounded owner choice before publication.',
+          x: 30,
+          y: 390,
+          font: 'F3',
+        },
+      ],
+      images: [
+        {
+          x: 40,
+          y: 450,
+          width: 190,
+          height: 125,
+          raster: visualAdjudicationCandidateB,
+        },
+        {
+          x: 380,
+          y: 490,
+          width: 190,
+          height: 125,
+          raster: visualAdjudicationCandidateC,
+        },
+      ],
+    },
+    {
+      lines: [
+        { text: 'Discussion', x: 54, y: 748, size: 16, font: 'F2' },
+        {
+          text: 'The second visual remains below the deterministic confidence threshold.',
+          x: 54,
+          y: 714,
+        },
+        {
+          text: 'Its complete source-backed asset is still available for a bounded local fallback.',
+          x: 54,
+          y: 690,
+        },
+        {
+          text: 'No global matcher threshold or diagnostic category changes during adjudication.',
+          x: 54,
+          y: 666,
+        },
+        {
+          text: 'Figure 2. A distant complete local fallback requires review.',
+          x: 72,
+          y: 190,
+          font: 'F3',
+        },
+      ],
+      images: [
+        {
+          x: 200,
+          y: 360,
+          width: 210,
+          height: 135,
+          raster: visualAdjudicationCandidate,
         },
       ],
     },

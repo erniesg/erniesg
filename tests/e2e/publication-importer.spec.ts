@@ -647,6 +647,66 @@ test('adjudicates ambiguous structure while preserving independent blockers and 
   expect(replayedEpub).toEqual(directEpub)
 })
 
+test('adjudicates bounded visual candidates and replays identical EPUB bytes', async ({
+  page,
+}) => {
+  await uploadFixture(page, 'visual-adjudication-required.pdf')
+  await expect(page.getByText('Review required', { exact: true })).toBeVisible()
+  await page.locator('.publication-diagnostics summary').click()
+
+  await page.getByRole('button', { name: /AMBIGUOUS_VISUAL_MATCH/ }).click()
+  await expect(
+    page.getByRole('heading', { name: /Figure 1 · bounded visual candidates/ }),
+  ).toBeVisible()
+  await expect(
+    page.locator('.publication-visual-adjudication > ol > li'),
+  ).toHaveCount(2)
+  await expect(
+    page.locator('.publication-visual-asset-previews img'),
+  ).toHaveCount(2)
+  await page
+    .getByRole('button', { name: 'Use this complete local asset' })
+    .first()
+    .click()
+
+  await page.getByRole('button', { name: /UNRESOLVED_VISUAL_OBJECT/ }).click()
+  await expect(
+    page.getByRole('heading', { name: /Figure 2 · bounded visual candidates/ }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Use this complete local asset' })
+    .click()
+
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Human adjudications:/)).toContainText(
+    'AMBIGUOUS_VISUAL_MATCH 1',
+  )
+  await expect(page.getByText(/Human adjudications:/)).toContainText(
+    'UNRESOLVED_VISUAL_OBJECT 1',
+  )
+  const directEpub = await downloadedBytes(page, 'Download Mobile EPUB')
+  const decisionBytes = await downloadedBytes(page, 'Export decisions JSON')
+  const decisionFile = JSON.parse(new TextDecoder().decode(decisionBytes))
+  expect(decisionFile.schemaVersion).toBe('1.3.0')
+  expect(decisionFile.decisions).toHaveLength(2)
+  expect(JSON.stringify(decisionFile)).not.toMatch(
+    /(?:sourceBoxes|bytes|href|sourceText|altText)/u,
+  )
+
+  await page.getByRole('button', { name: 'New paper' }).click()
+  await page.locator('#publication-decisions').setInputFiles({
+    name: 'visual-review.decisions.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(decisionBytes),
+  })
+  await page
+    .locator('#publication-pdf')
+    .setInputFiles(fixture('visual-adjudication-required.pdf'))
+  await expect(page.getByText('EPUB ready', { exact: true })).toBeVisible()
+  const replayedEpub = await downloadedBytes(page, 'Download Mobile EPUB')
+  expect(replayedEpub).toEqual(directEpub)
+})
+
 test('retries a failed readable profile build without discarding review state', async ({
   page,
 }) => {

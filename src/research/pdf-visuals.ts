@@ -36,6 +36,7 @@ import {
   type CanonicalTable,
 } from './visual-assets'
 import { sanitizeXmlText } from './publication-integrity'
+import { sha256HexSync } from './sha256-sync'
 
 type VisualKind = PdfVisualRelationship['kind']
 type PdfNativeObject = NonNullable<PdfPageAnalysis['objects']>[number]
@@ -44,6 +45,25 @@ type DetectedPdfTable = NonNullable<ReturnType<typeof detectTableNearCaption>>
 type CompleteSemanticTableScope = {
   sourceHeaderLineIds: string[]
   evidence: string[]
+}
+
+export const VISUAL_MATCH_DECISION_SCHEMA_VERSION = '1.3.0' as const
+
+export function pdfVisualMatchCandidateId(
+  relationshipId: string,
+  candidate: Pick<
+    PdfVisualMatchCandidate,
+    'sourceRegionIds' | 'sourceObjectIds' | 'assetIds'
+  >,
+) {
+  const identity = JSON.stringify({
+    schemaVersion: VISUAL_MATCH_DECISION_SCHEMA_VERSION,
+    relationshipId,
+    sourceRegionIds: [...candidate.sourceRegionIds].sort(),
+    sourceObjectIds: [...candidate.sourceObjectIds].sort(),
+    assetIds: [...candidate.assetIds].sort(),
+  })
+  return `visual-candidate-${sha256HexSync(identity)}`
 }
 
 export type PdfFigureRasterizer = (input: {
@@ -7890,6 +7910,19 @@ export async function reconstructPdfVisuals({
   })
   for (const [index, relationship] of relationships.entries()) {
     relationship.id = `visual-relationship-${String(index + 1).padStart(4, '0')}`
+    for (const candidate of relationship.candidates) {
+      candidate.id = pdfVisualMatchCandidateId(relationship.id, candidate)
+    }
+    if (relationship.status !== 'matched') {
+      const diagnostic = diagnostics.find(
+        (candidate) =>
+          (candidate.code === 'AMBIGUOUS_VISUAL_MATCH' ||
+            candidate.code === 'UNRESOLVED_VISUAL_OBJECT') &&
+          candidate.target?.markerId === null &&
+          candidate.target.regionIds.includes(relationship.captionRegionId),
+      )
+      if (diagnostic?.target) diagnostic.target.markerId = relationship.id
+    }
   }
 
   const directlyReferencedObjectIds = new Set(

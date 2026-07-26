@@ -2907,13 +2907,15 @@ function manifestHumanAdjudications(reconstruction: PdfReconstruction) {
   )
   return {
     schemaVersion: reconstruction.humanAdjudications.schemaVersion,
-    privacy: 'equation-transcripts-sha256-only',
+    privacy: 'ids-choices-and-transcript-hashes-only',
     appliedCount: applied.length,
     staleCount: reconstruction.humanAdjudications.stale.length,
     countsByDiagnosticCode:
       reconstruction.humanAdjudications.countsByDiagnosticCode,
     appliedReceiptSha256: sha256Sync(strToU8(JSON.stringify(applied))),
     applied,
+    visualDecorationReceipts:
+      reconstruction.humanAdjudications.visualDecorationReceipts,
   }
 }
 

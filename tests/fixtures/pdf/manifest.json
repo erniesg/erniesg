@@ -95,6 +95,17 @@
       ]
     },
     {
+      "file": "visual-adjudication-required.pdf",
+      "decisionFile": "visual-adjudication-required.decisions.json",
+      "sha256": "d40a97813bfae13aaa70edb4230d830c057507634f3b474b4161f8a07ed4558a",
+      "features": [
+        "ambiguous-visual-match",
+        "unresolved-visual-object",
+        "complete-local-asset-candidates",
+        "human-visual-adjudication-replay"
+      ]
+    },
+    {
       "file": "scanned-page.pdf",
       "features": ["scanned-page"]
     },

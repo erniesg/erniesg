@@ -453,6 +453,7 @@ export type PdfScholarlyCrossReferenceRelationship = {
 }
 
 export type PdfVisualMatchCandidate = {
+  id?: string
   sourceRegionIds: string[]
   sourceObjectIds: string[]
   assetIds: string[]
@@ -704,6 +705,21 @@ export type HumanAdjudicationResolution =
       confidence: 1
       evidence: Array<'exact-source-page-crop' | 'owner-local-adjudication'>
     }
+  | {
+      type: 'accept-visual-match' | 'accept-visual-fallback'
+      relationshipId: string
+      candidateId: string
+    }
+  | {
+      type: 'classify-visual-decoration'
+      relationshipId: string
+      sourceObjectIds: string[]
+      reason:
+        | 'page-furniture'
+        | 'separator-rule'
+        | 'decorative-ornament'
+        | 'background'
+    }
   | { type: 'dismiss' }
 
 export type HumanAdjudicationRecord = {
@@ -716,7 +732,7 @@ export type HumanAdjudicationRecord = {
 }
 
 export type HumanAdjudicationProvenance = {
-  schemaVersion: '1.0.0' | '1.1.0' | '1.2.0'
+  schemaVersion: '1.0.0' | '1.1.0' | '1.2.0' | '1.3.0'
   documentSha256: string
   applied: HumanAdjudicationRecord[]
   stale: Array<
@@ -728,6 +744,15 @@ export type HumanAdjudicationProvenance = {
     }
   >
   countsByDiagnosticCode: Record<string, number>
+  visualDecorationReceipts?: Array<{
+    relationshipId: string
+    sourceObjectIds: string[]
+    reason:
+      'page-furniture' | 'separator-rule' | 'decorative-ornament' | 'background'
+    oldExpectedObjectDenominator: number
+    newExpectedObjectDenominator: number
+    resultingCoverage: number
+  }>
 }
 
 export type PdfReconstruction = {

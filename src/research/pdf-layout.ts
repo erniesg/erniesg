@@ -1644,7 +1644,7 @@ function nodeId(index: number, type: RegionBlock['type'], text: string) {
   return `${prefix}-${String(index + 1).padStart(3, '0')}-${slug(text)}`
 }
 
-function visualCanonicalNodeId(
+export function visualCanonicalNodeId(
   relationship: PdfVisualRelationship,
   page: number,
 ) {
@@ -6578,6 +6578,39 @@ export function canonicalVisualSourceTranscript(
   return exactSourceText?.trim() ? exactSourceText : undefined
 }
 
+export function materializeCanonicalVisualNode({
+  relationship,
+  id,
+  captionNodeId,
+  source,
+  table,
+  sourceText,
+  inlineRuns,
+}: {
+  relationship: PdfVisualRelationship
+  id: string
+  captionNodeId: string
+  source: string
+  table?: Extract<ResearchNode, { type: 'figure' }>['table']
+  sourceText?: string
+  inlineRuns?: Extract<ResearchNode, { type: 'figure' }>['inlineRuns']
+}) {
+  return {
+    id,
+    type: 'figure' as const,
+    objectType: relationship.kind,
+    ...(table ? { table } : {}),
+    ...(sourceText ? { sourceText } : {}),
+    ...(inlineRuns?.length ? { inlineRuns } : {}),
+    title: relationship.altText,
+    relationships: {
+      caption: captionNodeId,
+      assets: [...relationship.assetIds],
+    },
+    source,
+  } satisfies Extract<ResearchNode, { type: 'figure' }>
+}
+
 function canonicalVisualTextOwner(
   relationship: PdfVisualRelationship,
   nodeId: string,
@@ -8973,20 +9006,15 @@ export async function reconstructPageAnalyses({
             : [],
         )
       : []
-    const node: ResearchNode = {
+    const node: ResearchNode = materializeCanonicalVisualNode({
+      relationship,
       id: draft.id,
-      type: 'figure',
-      objectType: relationship.kind,
-      ...(table ? { table } : {}),
-      ...(sourceText ? { sourceText } : {}),
-      ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
-      title: relationship.altText,
-      relationships: {
-        caption: draft.captionBlock.nodeId,
-        assets: relationship.assetIds,
-      },
+      captionNodeId: draft.captionBlock.nodeId,
       source: draft.source,
-    }
+      table,
+      sourceText,
+      inlineRuns,
+    })
     provenance[draft.id] = {
       confidence: relationship.confidence,
       pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],

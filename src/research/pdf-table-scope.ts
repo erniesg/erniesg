@@ -49,6 +49,9 @@ const MIN_LABELED_RECORD_ROWS = 3
 const MIN_LABELED_RECORD_WIDTH = 0.5
 const MAX_UNPROVEN_PAGE_TOP_TABLE_START = 0.105
 const TABLE_BORDER_INK_PADDING = 0.004
+const MIN_COLUMN_GUTTER_WIDTH = 0.02
+const MIN_COLUMN_GUTTER_CENTRE = 0.25
+const MAX_COLUMN_GUTTER_CENTRE = 0.75
 
 export type PdfTableScopeProof =
   | 'text-grid'
@@ -922,6 +925,8 @@ function ordinalGridProof(rows: AtomicGridRow[]) {
   }
 }
 
+type TableColumnLane = 'left' | 'right' | 'full'
+
 type TableLineEntry = {
   region: PdfPageRegion
   line: PdfRegionLine
@@ -929,6 +934,7 @@ type TableLineEntry = {
 
 type TableLineRow = {
   y: number
+  lane: TableColumnLane
   box: NormalizedSourceBox
   entries: TableLineEntry[]
   anchors: number[]
@@ -950,9 +956,77 @@ function validTableLineEntry(entry: TableLineEntry) {
   )
 }
 
+// Row membership is a page-layout fact, not only a vertical one. On a
+// multi-column page the neighbouring column's body prose shares row
+// coordinates with a table, so grouping by `y` alone unions both columns into
+// one row and lets a band claim the whole text measure.
+//
+// The separating gutter is proved from the candidate lines themselves: a
+// vertical corridor that no candidate line crosses, wide enough and central
+// enough to be a page gutter, with the region classifier independently
+// agreeing that the two sides are opposite columns. A genuinely page-spanning
+// table has cells tiling across the gutter, so no such corridor exists and it
+// keeps banding as one lane.
+function candidateColumnGutter(entries: TableLineEntry[]) {
+  const intervals = entries
+    .map((entry) => ({
+      left: entry.line.box.x,
+      right: entry.line.box.x + entry.line.box.width,
+      column: entry.region.column,
+    }))
+    .sort((left, right) => left.left - right.left)
+  if (intervals.length === 0) return null
+
+  const corridors: Array<{ from: number; to: number }> = []
+  let covered = intervals[0].right
+  for (const interval of intervals.slice(1)) {
+    if (interval.left > covered) {
+      corridors.push({ from: covered, to: interval.left })
+    }
+    covered = Math.max(covered, interval.right)
+  }
+
+  const qualifying = corridors
+    .filter((corridor) => {
+      const width = corridor.to - corridor.from
+      const centre = (corridor.from + corridor.to) / 2
+      if (
+        width < MIN_COLUMN_GUTTER_WIDTH ||
+        centre < MIN_COLUMN_GUTTER_CENTRE ||
+        centre > MAX_COLUMN_GUTTER_CENTRE
+      ) {
+        return false
+      }
+      // The region classifier must independently read the two sides as
+      // opposite columns; an internal cell gap never satisfies this.
+      const before = intervals.filter((item) => item.right <= corridor.from)
+      const after = intervals.filter((item) => item.left >= corridor.to)
+      return (
+        before.length > 0 &&
+        after.length > 0 &&
+        before.every((item) => item.column === 'left') &&
+        after.every((item) => item.column === 'right')
+      )
+    })
+    .sort(
+      (left, right) =>
+        right.to - right.from - (left.to - left.from) || left.from - right.from,
+    )
+
+  return qualifying[0] ?? null
+}
+
 function tableLineRows(entries: TableLineEntry[]) {
+  const gutter = candidateColumnGutter(entries)
+  const columnLane = (entry: TableLineEntry): TableColumnLane =>
+    gutter === null
+      ? 'full'
+      : entry.line.box.x >= gutter.to
+        ? 'right'
+        : 'left'
   const rows: Array<{
     y: number
+    lane: TableColumnLane
     entries: TableLineEntry[]
   }> = []
   for (const entry of [...entries].sort(
@@ -962,16 +1036,20 @@ function tableLineRows(entries: TableLineEntry[]) {
       left.region.id.localeCompare(right.region.id) ||
       left.line.id.localeCompare(right.line.id),
   )) {
+    const lane = columnLane(entry)
     const row = rows.find(
-      (candidate) => Math.abs(candidate.y - entry.line.box.y) <= BOX_TOLERANCE,
+      (candidate) =>
+        candidate.lane === lane &&
+        Math.abs(candidate.y - entry.line.box.y) <= BOX_TOLERANCE,
     )
     if (row) row.entries.push(entry)
-    else rows.push({ y: entry.line.box.y, entries: [entry] })
+    else rows.push({ y: entry.line.box.y, lane, entries: [entry] })
   }
   return rows.map<TableLineRow>((row) => {
     const boxes = row.entries.map((entry) => entry.line.box)
     return {
       y: row.y,
+      lane: row.lane,
       box: unionBoxes(
         boxes,
         boxes.some((sourceBox) => sourceBox.method === 'ocr')
@@ -1086,7 +1164,11 @@ function startsSparseContinuation(
   )
 }
 
-function tableLineBands(rows: TableLineRow[]) {
+// Band each column lane independently. Interleaving two columns' rows by `y`
+// and banding the merged sequence would either union the columns into one
+// band or shatter both into single rows, so neither column could ever prove a
+// table on a multi-column page.
+function tableLineBandsWithinLane(rows: TableLineRow[]) {
   const bands: TableLineRow[][] = []
   for (const [rowIndex, row] of rows.entries()) {
     const band = bands.at(-1)
@@ -1104,6 +1186,14 @@ function tableLineBands(rows: TableLineRow[]) {
     }
   }
   return bands
+}
+
+const TABLE_COLUMN_LANE_ORDER: TableColumnLane[] = ['full', 'left', 'right']
+
+function tableLineBands(rows: TableLineRow[]) {
+  return TABLE_COLUMN_LANE_ORDER.flatMap((lane) =>
+    tableLineBandsWithinLane(rows.filter((row) => row.lane === lane)),
+  )
 }
 
 function lineHeightMatchesBand(

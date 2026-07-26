@@ -3,6 +3,7 @@ import type {
   NormalizedSourceBox,
   PdfNativeObject,
   PdfPageRegion,
+  PdfRegionColumn,
   PdfRegionLine,
   PdfSourceRun,
 } from './import-types'
@@ -3897,5 +3898,159 @@ describe('bounded PDF table source scoping', () => {
     })
 
     expect(JSON.stringify(reverse)).toBe(JSON.stringify(forward))
+  })
+
+  it('does not band a fragmented right-column table across the gutter', () => {
+    // Region and line geometry reduced from an observed two-column scholarly
+    // page. Its right-column table fragments into many single-line regions, so
+    // the grid detector cannot own it and the line-band fallback runs. Left
+    // column prose shares the same row coordinates. Text is synthetic; only
+    // the bounding geometry is faithful.
+    const lineHeight = 0.01296
+    const lineage: Array<{
+      id: string
+      column: PdfRegionColumn
+      lines: Array<[string, number, number, number]>
+    }> = [
+      { id: 'r01', column: 'right', lines: [['l01', 0.52739, 0.07296, 0.07508]] },
+      {
+        id: 'r02',
+        column: 'right',
+        lines: [
+          ['l02', 0.65486, 0.07296, 0.21736],
+          ['l05', 0.52739, 0.09191, 0.04364],
+        ],
+      },
+      {
+        id: 'r03',
+        column: 'left',
+        lines: [
+          ['l03', 0.12101, 0.07481, 0.36675],
+          ['l04', 0.12101, 0.09092, 0.36671],
+          ['l09', 0.12101, 0.10702, 0.3061],
+        ],
+      },
+      { id: 'r04', column: 'right', lines: [['l06', 0.67503, 0.09191, 0.03342]] },
+      { id: 'r05', column: 'right', lines: [['l07', 0.73795, 0.09191, 0.079]] },
+      {
+        id: 'r06',
+        column: 'right',
+        lines: [
+          ['l08', 0.84787, 0.09191, 0.02435],
+          ['l10', 0.52739, 0.10802, 0.06786],
+        ],
+      },
+      { id: 'r07', column: 'right', lines: [['l11', 0.67502, 0.10802, 0.03342]] },
+      {
+        id: 'r08',
+        column: 'right',
+        lines: [
+          ['l12', 0.73795, 0.10802, 0.13426],
+          ['l14', 0.52739, 0.12412, 0.09809],
+        ],
+      },
+      {
+        id: 'r09',
+        column: 'left',
+        lines: [
+          ['l13', 0.13936, 0.12355, 0.34836],
+          ['l16', 0.12101, 0.13966, 0.36675],
+          ['l19', 0.12101, 0.15576, 0.36655],
+          ['l22', 0.12101, 0.17172, 0.36671],
+        ],
+      },
+      {
+        id: 'r10',
+        column: 'right',
+        lines: [
+          ['l15', 0.67503, 0.12412, 0.19719],
+          ['l17', 0.52739, 0.14065, 0.1072],
+        ],
+      },
+      {
+        id: 'r11',
+        column: 'right',
+        lines: [
+          ['l18', 0.67503, 0.14065, 0.19719],
+          ['l20', 0.52739, 0.15676, 0.05372],
+        ],
+      },
+      {
+        id: 'r12',
+        column: 'right',
+        lines: [
+          ['l21', 0.67503, 0.15676, 0.19719],
+          ['l23', 0.52739, 0.17286, 0.07185],
+        ],
+      },
+      { id: 'r13', column: 'right', lines: [['l24', 0.67502, 0.17286, 0.19719]] },
+    ]
+
+    const regions = lineage.map<PdfPageRegion>((spec) => {
+      const lines = spec.lines.map<PdfRegionLine>(([id, x, y, width]) => {
+        const header = id === 'l01' || id === 'l02'
+        const text =
+          spec.column === 'left'
+            ? `Left column body text fragment ${id} continues across the measure`
+            : header
+              ? `Header ${id}`
+              : `${id.slice(1)}%`
+        const run: PdfSourceRun = {
+          ...box(x, y, width, lineHeight),
+          text,
+          fontName: spec.column === 'left' ? 'BodySerif' : 'TableSerif',
+          fontSize: spec.column === 'left' ? 10 : 8,
+          confidence: 0.99,
+          ...(header ? { bold: true } : {}),
+        }
+        return {
+          id,
+          text,
+          fontSize: run.fontSize,
+          box: box(x, y, width, lineHeight),
+          runs: [run],
+        }
+      })
+      const left = Math.min(...lines.map((item) => item.box.x))
+      const top = Math.min(...lines.map((item) => item.box.y))
+      const right = Math.max(...lines.map((item) => item.box.x + item.box.width))
+      const bottom = Math.max(
+        ...lines.map((item) => item.box.y + item.box.height),
+      )
+      return {
+        id: spec.id,
+        page: 1,
+        kind: 'body',
+        column: spec.column,
+        text: lines.map((item) => item.text).join(' '),
+        confidence: 0.98,
+        box: box(left, top, right - left, bottom - top),
+        lines,
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }
+    })
+
+    const tableCaption: PdfPageRegion = {
+      ...caption('caption-table', 0.19, 'Table 1. Synthetic column results.'),
+      column: 'right',
+      box: box(0.52739, 0.19, 0.34496, 0.024),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [...regions, tableCaption],
+      nativeObjects: [],
+    })
+
+    // The scope may fail closed, but it may never claim the other column.
+    expect(result.scope?.sourceRegionIds ?? []).not.toContain('r03')
+    expect(result.scope?.sourceRegionIds ?? []).not.toContain('r09')
+    if (result.scope) {
+      expect(result.scope.cropBox.x).toBeGreaterThanOrEqual(0.5)
+      expect(
+        result.scope.cropBox.x + result.scope.cropBox.width,
+      ).toBeLessThanOrEqual(0.9)
+    }
   })
 })

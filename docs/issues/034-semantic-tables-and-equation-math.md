@@ -12,10 +12,25 @@ Close the gap between the specified scientific-object contract and what the pipe
 
 ## Observed baseline
 
-Owner-local audits over six public scholarly papers recorded `semanticTableCoverage` of `0` on three documents that each declare multiple expected semantic tables, `0.189` on another, and `1` only where no table existed. On one paper all four expected semantic tables resolved to zero, so every table reached the reader as an image crop. Separately, no MathML emission path exists anywhere in the pipeline: the only MathML references in the codebase are tests asserting that MathML is *not* invented, and the equation path chooses between a native rendition, a text-derived SVG, and a page-crop raster.
+Owner-local audits over six public scholarly papers recorded `semanticTableCoverage` of `0` on three documents that each declare multiple expected semantic tables, `0.189` on another, and `1` only where no table existed. Across eight further papers, 3 of 31 expected semantic tables (9.7%) reached the reader as semantic markup; 19 shipped as raster crops and 9 were unresolved. Separately, no MathML emission path exists anywhere in the pipeline: the only MathML references in the codebase are tests asserting that MathML is *not* invented, and the equation path chooses between a native rendition, a text-derived SVG, and a page-crop raster. Over the same eight papers, 132 display equations shipped as raster crops and 137 carried no rendition at all.
+
+## Diagnosed cause: no general proven-scope-to-grid promoter
+
+Scope resolution is **not** the blocker. Over 27 table captions in that corpus, 23 resolved a bounded scope (17 `text-tabular-line-band`, 5 `text-nonuniform-grid`, 1 `caption-bounded-text-slab`); only 4 failed with `no-proven-scope`. Yet **20 of those 23 proven scopes produced no grid from any detector** and fell through to the raster path.
+
+The reason is that both proven-scope detectors are narrow special cases rather than a general promoter:
+
+- `detectTableWithinProvenScope` returns `null` immediately unless the scope carries the `supplemental-equation-cell-shard` evidence code. It exists for tables containing equation cells.
+- `detectHierarchicalTableWithinProvenScope` returns `null` unless the scope direction is `above` and carries `multi-run-tabular-line-band`, and additionally requires a two-tier header with the body starting at exactly row index 2, at least five rows, a header-like first cell, and every remaining body cell numeric. It matches one table shape.
+
+A proven scope already carries exactly what a grid builder needs — the exact source region lineage and the exact non-empty source line ids of the table. Nothing consumes that in the general case, so an ordinary well-formed scholarly table with a single header row and mixed body cells has no path to semantic markup at all. Closing this is the highest-ranked promotion blocker and should be the first work item.
+
+A wrong semantic table is worse for a reader than a correct image, so the promoter must fail closed to the existing raster path whenever rectangularity, header scope, or per-cell provenance cannot be proved.
 
 ## Acceptance tests
 
+- A general promoter turns any proven table scope into a grid without depending on `supplemental-equation-cell-shard` or `multi-run-tabular-line-band` evidence, without requiring a two-tier header, and without requiring a fixed body-start row index. It consumes exactly the scope's proved source region lineage and non-empty source line ids, and it claims every one of them or promotes nothing.
+- The promoter fails closed to the existing bounded raster path whenever rectangularity, header scope, or per-cell source provenance cannot be proved. A partially proved grid is never emitted. The two existing narrow detectors keep their current behaviour and are not weakened to make room for the general path.
 - The audit reports, per document, how many tables reached the reader as semantic markup, as a bounded raster fallback, and as unresolved, and the same three-way split for display equations. The counts are exact and reconcile with the packaged asset manifest.
 - A table whose aligned multi-row/multi-column structure validates is emitted as semantic HTML with typed header scope, preserved cell order, and per-cell source provenance. A structure that does not validate keeps the existing bounded raster fallback; neither path invents a cell, a header, or a span.
 - The gap between "structure detected" and "structure promoted to semantic" is itself measured. Where a detector proves a grid but promotion fails, the blocking reason is recorded as a named diagnostic rather than an unexplained fallback, so the dominant promotion blockers on real papers are visible and rankable.

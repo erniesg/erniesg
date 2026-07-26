@@ -4,7 +4,12 @@ import {
   EPUB_EXPORT_POLICY_VERSION,
   type EpubExport,
 } from '../../research/epub'
-import { TARGET_PROFILES, type TargetProfileId } from '../../research/targets'
+import {
+  resolveTargetProfile,
+  TARGET_PROFILES,
+  type TargetOrientation,
+  type TargetProfileId,
+} from '../../research/targets'
 
 const previewProfileIds = ['mobile', 'paperProMove', 'paperPro'] as const
 export type PreviewProfileId = Extract<
@@ -43,12 +48,15 @@ function isCurrentPreviewArtifact(epub: EpubExport) {
 export function selectCurrentProfileEpub(
   epubs: EpubExport[],
   selectedProfileId: PreviewProfileId,
+  selectedOrientation: TargetOrientation = 'portrait',
 ) {
   const profileVersion = TARGET_PROFILES[selectedProfileId].version
   return epubs.find(
     (candidate) =>
       candidate.profile?.id === selectedProfileId &&
       candidate.profile.version === profileVersion &&
+      (candidate.profile.orientation?.selected ?? 'portrait') ===
+        selectedOrientation &&
       candidate.profile.exportPolicy?.id === 'profile-tuned-reflowable' &&
       candidate.profile.exportPolicy.version === EPUB_EXPORT_POLICY_VERSION,
   )
@@ -222,6 +230,7 @@ export function epubPreviewArtifactKey(epub: EpubExport) {
   return [
     epub.profile?.id ?? 'unprofiled',
     epub.profile?.version ?? 'unversioned',
+    epub.profile?.orientation?.selected ?? 'portrait',
     epub.profile?.exportPolicy?.id ?? 'unidentified-policy',
     epub.profile?.exportPolicy?.version ?? 'unversioned-policy',
     epub.mode,
@@ -284,14 +293,18 @@ export function createEpubPreviewCache(
 export default function EpubRenditionPreview({
   epubs,
   selectedProfileId,
+  selectedOrientation = 'portrait',
   buildingProfileId,
   onSelectedProfileChange,
+  onSelectedOrientationChange,
   onPreviewReadyChange,
 }: {
   epubs: EpubExport[]
   selectedProfileId?: PreviewProfileId
+  selectedOrientation?: TargetOrientation
   buildingProfileId?: PreviewProfileId
   onSelectedProfileChange?: (profileId: PreviewProfileId) => void
+  onSelectedOrientationChange?: (orientation: TargetOrientation) => void
   onPreviewReadyChange?: (artifactKey?: string) => void
 }) {
   const availableScreens = previewScreens.filter((screen) =>
@@ -321,11 +334,24 @@ export default function EpubRenditionPreview({
   const [, setPreviewRevision] = useState(0)
   const cache = useRef<ReturnType<typeof createEpubPreviewCache> | null>(null)
   if (!cache.current) cache.current = createEpubPreviewCache()
-  const epub = selectCurrentProfileEpub(epubs, profileId)
-  const screen =
+  const epub = selectCurrentProfileEpub(epubs, profileId, selectedOrientation)
+  const baseScreen =
     previewScreens.find((candidate) => candidate.id === profileId) ??
     availableScreens[0] ??
     previewScreens[2]
+  const resolvedProfile = resolveTargetProfile(
+    baseScreen.id,
+    baseScreen.id === 'mobile' ? 'portrait' : selectedOrientation,
+  )
+  const screen = {
+    ...baseScreen,
+    width: resolvedProfile.dimensions.width,
+    height:
+      resolvedProfile.dimensions.height ??
+      resolvedProfile.preview.continuousWindowHeightCssPx!,
+    previewWidth: resolvedProfile.preview.widthCssPx,
+    truth: resolvedProfile.truth,
+  }
   const preview = epub ? cache.current.get(epub) : undefined
   const readyArtifactKey =
     epub && preview?.srcDoc ? epubPreviewArtifactKey(epub) : undefined
@@ -406,9 +432,15 @@ export default function EpubRenditionPreview({
           <legend>Preview screen</legend>
           <div>
             {selectableScreens.map((candidate) => {
+              const candidateOrientation = TARGET_PROFILES[
+                candidate.id
+              ].orientation.supported.includes(selectedOrientation)
+                ? selectedOrientation
+                : 'portrait'
               const artifactStatus = selectCurrentProfileEpub(
                 epubs,
                 candidate.id,
+                candidateOrientation,
               )
                 ? 'ready'
                 : buildingProfileId === candidate.id
@@ -447,6 +479,21 @@ export default function EpubRenditionPreview({
             </p>
           )}
         </fieldset>
+        {resolvedProfile.orientation.supported.length > 1 && (
+          <fieldset className="epub-device-switcher">
+            <legend>Orientation</legend>
+            {resolvedProfile.orientation.supported.map((candidate) => (
+              <button
+                aria-pressed={selectedOrientation === candidate}
+                key={candidate}
+                onClick={() => onSelectedOrientationChange?.(candidate)}
+                type="button"
+              >
+                {candidate === 'portrait' ? 'Portrait' : 'Landscape'}
+              </button>
+            ))}
+          </fieldset>
+        )}
         {epub && (
           <dl
             className="epub-preview-receipt"
@@ -466,6 +513,10 @@ export default function EpubRenditionPreview({
               <dd>
                 <code>{epub.sha256}</code>
               </dd>
+            </div>
+            <div>
+              <dt>Selected orientation</dt>
+              <dd>{selectedOrientation}</dd>
             </div>
             {(
               [

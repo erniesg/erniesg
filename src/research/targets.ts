@@ -10,9 +10,8 @@ export const TARGET_PROFILE_VERSION = '1.1.0' as const
 export type TargetProfileId = (typeof TARGET_PROFILE_IDS)[number]
 export type TargetLengthUnit = 'css-px' | 'device-px' | 'mm'
 export type TargetTruthAuthority =
-  | 'authoritative'
-  | 'advisory'
-  | 'reader-controlled'
+  'authoritative' | 'advisory' | 'reader-controlled'
+export type TargetOrientation = 'portrait' | 'landscape'
 
 export type TargetProfile = {
   id: TargetProfileId
@@ -62,6 +61,24 @@ export type TargetProfile = {
     pagination: TargetTruthAuthority
     orientation: TargetTruthAuthority
   }
+  orientation: {
+    selected: TargetOrientation
+    supported: TargetOrientation[]
+    control: 'publisher-locked' | 'reader-controlled'
+  }
+  artifact:
+    | {
+        status: 'generated'
+        format: 'epub'
+        renderer: 'local-profiled-epub'
+        pagination: 'reader-controlled'
+      }
+    | {
+        status: 'generated'
+        format: 'pdf'
+        renderer: 'local-paginated-pdf'
+        pagination: 'authoritative'
+      }
   preview: {
     widthCssPx: number
     heightCssPx: number | null
@@ -122,6 +139,17 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
       pagination: 'reader-controlled',
       orientation: 'reader-controlled',
     },
+    orientation: {
+      selected: 'portrait',
+      supported: ['portrait'],
+      control: 'reader-controlled',
+    },
+    artifact: {
+      status: 'generated',
+      format: 'epub',
+      renderer: 'local-profiled-epub',
+      pagination: 'reader-controlled',
+    },
     preview: {
       widthCssPx: 390,
       heightCssPx: null,
@@ -169,6 +197,17 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
       pagination: 'reader-controlled',
       orientation: 'reader-controlled',
     },
+    orientation: {
+      selected: 'portrait',
+      supported: ['portrait', 'landscape'],
+      control: 'reader-controlled',
+    },
+    artifact: {
+      status: 'generated',
+      format: 'epub',
+      renderer: 'local-profiled-epub',
+      pagination: 'reader-controlled',
+    },
     preview: eInkPreview(954, 1696, 264),
   },
   paperPro: {
@@ -212,6 +251,17 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
       pagination: 'reader-controlled',
       orientation: 'reader-controlled',
     },
+    orientation: {
+      selected: 'portrait',
+      supported: ['portrait', 'landscape'],
+      control: 'reader-controlled',
+    },
+    artifact: {
+      status: 'generated',
+      format: 'epub',
+      renderer: 'local-profiled-epub',
+      pagination: 'reader-controlled',
+    },
     preview: eInkPreview(1620, 2160, 229),
   },
   print: {
@@ -247,8 +297,19 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
     truth: {
       geometry: 'authoritative',
       typography: 'advisory',
-      pagination: 'reader-controlled',
-      orientation: 'reader-controlled',
+      pagination: 'authoritative',
+      orientation: 'authoritative',
+    },
+    orientation: {
+      selected: 'portrait',
+      supported: ['portrait', 'landscape'],
+      control: 'publisher-locked',
+    },
+    artifact: {
+      status: 'generated',
+      format: 'pdf',
+      renderer: 'local-paginated-pdf',
+      pagination: 'authoritative',
     },
     preview: { widthCssPx: 794, heightCssPx: 1123 },
   },
@@ -256,6 +317,48 @@ export const TARGET_PROFILES: Record<TargetProfileId, TargetProfile> = {
 
 export function getTargetProfile(id: TargetProfileId) {
   return TARGET_PROFILES[id]
+}
+
+export function resolveTargetProfile(
+  id: TargetProfileId,
+  orientation: TargetOrientation = TARGET_PROFILES[id].orientation.selected,
+): TargetProfile {
+  const profile = TARGET_PROFILES[id]
+  if (!profile.orientation.supported.includes(orientation)) {
+    throw new RangeError(
+      `${profile.label} does not support a publisher preview in ${orientation} orientation`,
+    )
+  }
+  if (orientation === profile.orientation.selected) return profile
+  if (
+    profile.dimensions.height === null ||
+    profile.preview.heightCssPx === null
+  ) {
+    throw new RangeError(
+      `${profile.label} has no finite geometry to transpose into ${orientation}`,
+    )
+  }
+  return {
+    ...profile,
+    dimensions: {
+      ...profile.dimensions,
+      width: profile.dimensions.height,
+      height: profile.dimensions.width,
+    },
+    margins: {
+      ...profile.margins,
+      top: profile.margins.left,
+      right: profile.margins.top,
+      bottom: profile.margins.right,
+      left: profile.margins.bottom,
+    },
+    orientation: { ...profile.orientation, selected: orientation },
+    preview: {
+      ...profile.preview,
+      widthCssPx: profile.preview.heightCssPx,
+      heightCssPx: profile.preview.widthCssPx,
+    },
+  }
 }
 
 export function getPreviewMetrics(profile: TargetProfile) {

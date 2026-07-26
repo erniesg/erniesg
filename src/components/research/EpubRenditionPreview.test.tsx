@@ -11,7 +11,10 @@ import EpubRenditionPreview, {
   epubPreviewArtifactKey,
   selectCurrentProfileEpub,
 } from './EpubRenditionPreview'
-import { TARGET_PROFILE_VERSION } from '../../research/targets'
+import {
+  getTargetProfile,
+  TARGET_PROFILE_VERSION,
+} from '../../research/targets'
 
 const epub: EpubExport = {
   bytes: new Uint8Array(),
@@ -24,6 +27,7 @@ const epub: EpubExport = {
 }
 
 function profiled(id: 'mobile' | 'paperProMove' | 'paperPro'): EpubExport {
+  const target = getTargetProfile(id)
   return {
     ...epub,
     identifier: `preview-${id}`,
@@ -36,6 +40,8 @@ function profiled(id: 'mobile' | 'paperProMove' | 'paperPro'): EpubExport {
     profile: {
       id,
       version: TARGET_PROFILE_VERSION,
+      orientation: target.orientation,
+      artifact: target.artifact,
       compositionPolicy: {} as NonNullable<
         EpubExport['profile']
       >['compositionPolicy'],
@@ -119,7 +125,7 @@ describe('EPUB rendition preview', () => {
     )
     expect(markup).not.toContain('1,872 × 2,480')
     expect(markup).toContain('aria-pressed="true"')
-    expect(markup.match(/aria-pressed="false"/g)).toHaveLength(2)
+    expect(markup.match(/aria-pressed="false"/g)).toHaveLength(3)
     expect(markup).toContain('data-profile-id="paperPro"')
     expect(markup).toContain(`data-profile-version="${TARGET_PROFILE_VERSION}"`)
     expect(markup).toContain(`data-artifact-sha256="${'c'.repeat(64)}"`)
@@ -227,8 +233,8 @@ describe('EPUB rendition preview', () => {
       />,
     )
 
-    expect(markup.match(/<button/g)).toHaveLength(3)
-    expect(markup.match(/type="button"/g)).toHaveLength(3)
+    expect(markup.match(/<button/g)).toHaveLength(5)
+    expect(markup.match(/type="button"/g)).toHaveLength(5)
     expect(markup).not.toContain('<a ')
     expect(markup).not.toContain('download=')
   })
@@ -243,7 +249,7 @@ describe('EPUB rendition preview', () => {
       />,
     )
 
-    expect(markup.match(/<button/g)).toHaveLength(3)
+    expect(markup.match(/<button/g)).toHaveLength(5)
     expect(markup.match(/data-artifact-status="ready"/g)).toHaveLength(1)
     expect(markup.match(/data-artifact-status="unbuilt"/g)).toHaveLength(1)
     expect(markup.match(/data-artifact-status="building"/g)).toHaveLength(1)

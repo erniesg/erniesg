@@ -579,11 +579,13 @@ test('keeps the semantic sentence and annotations through target, width, and fon
     layoutVersions.add(await expectAnchorVisibleAndCached())
   }
 
-  await page.getByRole('button', { name: 'Narrow width' }).click()
+  await page.getByRole('button', { name: 'Simulate narrow reader' }).click()
   await expect(rendition).toHaveAttribute('data-width-scale', '0.86')
   layoutVersions.add(await expectAnchorVisibleAndCached())
 
-  await page.getByRole('button', { name: 'Larger text' }).click()
+  await page
+    .getByRole('button', { name: 'Simulate larger reader text' })
+    .click()
   await expect(rendition).toHaveAttribute('data-font-scale', '1.12')
   layoutVersions.add(await expectAnchorVisibleAndCached())
 
@@ -593,4 +595,49 @@ test('keeps the semantic sentence and annotations through target, width, and fon
     fullPage: true,
     path: testInfo.outputPath('annotation-reflow.png'),
   })
+})
+
+test('recomposes every finite profile in landscape without structural or geometry loss', async ({
+  page,
+  request,
+}) => {
+  const source = await jsonFixture<{ nodes: SourceNode[] }>(
+    request,
+    `/research/${PAPER_ID}/source.json`,
+  )
+  await page.goto(`/research/${PAPER_ID}`)
+  await expectStudioHydrated(page)
+  await page.locator('html').evaluate((element) => {
+    element.classList.add('disable-transitions')
+  })
+  await page.evaluate(() => document.fonts.ready)
+
+  for (const target of ['paperProMove', 'paperPro', 'print'] as const) {
+    const portrait = getTargetProfile(target)
+    await page
+      .getByRole('button', { name: portrait.label, exact: true })
+      .click()
+    await page.getByRole('button', { name: 'Landscape', exact: true }).click()
+
+    const paper = page.locator(
+      `.srt-paper[data-target-profile="${target}"][data-orientation="landscape"]`,
+    )
+    const report = await inspectGeometry(paper, source.nodes)
+    expect(report.missingNodes, `${target}: missing nodes`).toEqual([])
+    expect(report.textLoss, `${target}: text loss`).toEqual([])
+    expect(report.clippedContent, `${target}: clipping`).toEqual([])
+    expect(report.overlaps, `${target}: overlap`).toEqual([])
+    expect(report.horizontalOverflow, `${target}: horizontal overflow`).toEqual(
+      [],
+    )
+    expect(report.orphanedCaptions, `${target}: captions`).toEqual([])
+    expect(report.paper.width, `${target}: landscape width`).toBeCloseTo(
+      portrait.preview.heightCssPx!,
+      1,
+    )
+    for (const renderedPage of report.pages) {
+      expect(renderedPage.width).toBeCloseTo(portrait.preview.heightCssPx!, 1)
+      expect(renderedPage.height).toBeCloseTo(portrait.preview.widthCssPx, 1)
+    }
+  }
 })

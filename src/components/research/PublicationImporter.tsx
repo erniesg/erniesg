@@ -45,7 +45,11 @@ import {
   type PdfLineJoinReviewContext,
 } from '../../research/pdf-lines'
 import { downloadLinkedPdf } from '../../research/pdf-url'
-import { getTargetProfile } from '../../research/targets'
+import {
+  getTargetProfile,
+  resolveTargetProfile,
+  type TargetOrientation,
+} from '../../research/targets'
 import EpubDownloadLink from './EpubDownloadLink'
 import EpubRenditionPreview, {
   epubPreviewArtifactKey,
@@ -74,11 +78,13 @@ type StudioState =
 type ActiveProfileBuild = {
   controller: AbortController
   profileId: PreviewProfileId
+  orientation: TargetOrientation
 }
 
 type ProfileBuildIssue = {
   controller: AbortController
   profileId: PreviewProfileId
+  orientation: TargetOrientation
   message: string
 }
 
@@ -774,6 +780,8 @@ export default function PublicationImporter({
   const [ocrLanguage, setOcrLanguage] = useState<'auto' | 'eng'>('auto')
   const [selectedProfileId, setSelectedProfileId] =
     useState<PreviewProfileId>('mobile')
+  const [selectedOrientation, setSelectedOrientation] =
+    useState<TargetOrientation>('portrait')
   const [previewReadyArtifactKey, setPreviewReadyArtifactKey] =
     useState<string>()
   const [profileBuilds, setProfileBuilds] = useState<ActiveProfileBuild[]>([])
@@ -882,6 +890,7 @@ export default function PublicationImporter({
     const isCurrent = () =>
       activeImport.current === controller && !controller.signal.aborted
     setSelectedProfileId('mobile')
+    setSelectedOrientation('portrait')
     setPreviewReadyArtifactKey(undefined)
     setProfileBuildIssues({})
     setState({
@@ -980,6 +989,7 @@ export default function PublicationImporter({
     setPendingDecisionFile(undefined)
     setDecisionError(undefined)
     setSelectedProfileId('mobile')
+    setSelectedOrientation('portrait')
     setPreviewReadyArtifactKey(undefined)
     setProfileBuilds([])
     activeProfileBuildIssues.current = {}
@@ -1055,21 +1065,30 @@ export default function PublicationImporter({
       [...activeProfileBuilds.current].some(
         (build) =>
           build.controller === controller &&
-          build.profileId === selectedProfileId,
+          build.profileId === selectedProfileId &&
+          build.orientation === selectedOrientation,
       )
     ) {
       return
     }
     if (
       state.epubs &&
-      selectCurrentProfileEpub(state.epubs, selectedProfileId)
+      selectCurrentProfileEpub(
+        state.epubs,
+        selectedProfileId,
+        selectedOrientation,
+      )
     ) {
       return
     }
     if (
-      activeProfileBuildIssues.current[selectedProfileId]?.controller ===
-        controller ||
-      profileBuildIssues[selectedProfileId]?.controller === controller
+      (activeProfileBuildIssues.current[selectedProfileId]?.controller ===
+        controller &&
+        activeProfileBuildIssues.current[selectedProfileId]?.orientation ===
+          selectedOrientation) ||
+      (profileBuildIssues[selectedProfileId]?.controller === controller &&
+        profileBuildIssues[selectedProfileId]?.orientation ===
+          selectedOrientation)
     ) {
       return
     }
@@ -1079,11 +1098,13 @@ export default function PublicationImporter({
 
     const result = state.result
     const profileId = selectedProfileId
+    const orientation = selectedOrientation
     const isCurrent = () =>
       activeImport.current === controller && !controller.signal.aborted
     const activeBuild: ActiveProfileBuild = {
       controller,
       profileId,
+      orientation,
     }
     activeProfileBuilds.current.add(activeBuild)
     setProfileBuilds((current) => [...current, activeBuild])
@@ -1095,7 +1116,7 @@ export default function PublicationImporter({
     })
     void Promise.resolve().then(async () => {
       try {
-        const profile = getTargetProfile(profileId)
+        const profile = resolveTargetProfile(profileId, orientation)
         const epub = result.readiness.ready
           ? await buildEpub(result.paper, result, profile)
           : isPdfReconstruction(result)
@@ -1112,7 +1133,8 @@ export default function PublicationImporter({
             return current
           }
           const epubs = current.epubs ?? []
-          if (selectCurrentProfileEpub(epubs, profileId)) return current
+          if (selectCurrentProfileEpub(epubs, profileId, orientation))
+            return current
           return { ...current, epubs: [...epubs, epub] }
         })
       } catch (error) {
@@ -1120,6 +1142,7 @@ export default function PublicationImporter({
         const issue = {
           controller,
           profileId,
+          orientation,
           message:
             error instanceof Error
               ? error.message
@@ -1140,7 +1163,13 @@ export default function PublicationImporter({
         }
       }
     })
-  }, [profileBuildIssues, profileBuilds, selectedProfileId, state])
+  }, [
+    profileBuildIssues,
+    profileBuilds,
+    selectedOrientation,
+    selectedProfileId,
+    state,
+  ])
 
   const progressPercent =
     state.status === 'processing'
@@ -1151,7 +1180,11 @@ export default function PublicationImporter({
   const selectedEpub =
     (state.status === 'ready' || state.status === 'review-required') &&
     state.epubs
-      ? selectCurrentProfileEpub(state.epubs, selectedProfileId)
+      ? selectCurrentProfileEpub(
+          state.epubs,
+          selectedProfileId,
+          selectedOrientation,
+        )
       : undefined
   const selectedEpubPreviewReady = selectedEpub
     ? isSelectedEpubPreviewReady(selectedEpub, previewReadyArtifactKey)
@@ -1159,16 +1192,23 @@ export default function PublicationImporter({
   const buildingProfileId = profileBuilds.find(
     (build) =>
       build.controller === activeImport.current &&
-      build.profileId === selectedProfileId,
+      build.profileId === selectedProfileId &&
+      build.orientation === selectedOrientation,
   )?.profileId
   const selectedIssue = profileBuildIssues[selectedProfileId]
   const selectedProfileBuildIssue =
-    selectedIssue?.controller === activeImport.current
+    selectedIssue?.controller === activeImport.current &&
+    selectedIssue?.orientation === selectedOrientation
       ? selectedIssue
       : undefined
   const retrySelectedProfileBuild = () => {
     const issue = activeProfileBuildIssues.current[selectedProfileId]
-    if (!issue || issue.controller !== activeImport.current) return
+    if (
+      !issue ||
+      issue.controller !== activeImport.current ||
+      issue.orientation !== selectedOrientation
+    )
+      return
     delete activeProfileBuildIssues.current[selectedProfileId]
     setProfileBuildIssues((current) => {
       const next = { ...current }
@@ -1422,11 +1462,24 @@ export default function PublicationImporter({
             <EpubRenditionPreview
               epubs={state.epubs}
               selectedProfileId={selectedProfileId}
+              selectedOrientation={selectedOrientation}
               buildingProfileId={buildingProfileId}
               onSelectedProfileChange={(profileId) => {
                 if (profileId === selectedProfileId) return
                 setPreviewReadyArtifactKey(undefined)
                 setSelectedProfileId(profileId)
+                if (
+                  !getTargetProfile(profileId).orientation.supported.includes(
+                    selectedOrientation,
+                  )
+                ) {
+                  setSelectedOrientation('portrait')
+                }
+              }}
+              onSelectedOrientationChange={(orientation) => {
+                if (orientation === selectedOrientation) return
+                setPreviewReadyArtifactKey(undefined)
+                setSelectedOrientation(orientation)
               }}
               onPreviewReadyChange={setPreviewReadyArtifactKey}
             />

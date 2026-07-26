@@ -20,7 +20,7 @@ import { reconstructPageAnalyses } from './pdf-layout'
 import { assessPdfCompleteness } from './pdf-quality'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import { researchPaperSchema } from './schema'
-import { getTargetProfile } from './targets'
+import { getTargetProfile, resolveTargetProfile } from './targets'
 import { createSourcePageCropAsset } from './visual-assets'
 
 const paper = researchPaperSchema.parse(rawPaper)
@@ -3279,6 +3279,32 @@ describe('EPUB 3 export', () => {
           typography: 'advisory',
           pagination: 'reader-controlled',
           orientation: 'reader-controlled',
+        },
+      },
+    })
+  })
+
+  it('binds a landscape EPUB filename, bytes, and manifest to transposed profile geometry', async () => {
+    const portrait = getTargetProfile('paperPro')
+    const landscape = resolveTargetProfile('paperPro', 'landscape')
+    const [portraitEpub, landscapeEpub] = await Promise.all([
+      buildEpub(paper, portrait),
+      buildEpub(paper, landscape),
+    ])
+    const inspected = inspectEpub(landscapeEpub.bytes, landscape)
+
+    expect(landscapeEpub.fileName).toContain('-paper-pro-landscape-')
+    expect(landscapeEpub.bytes).not.toEqual(portraitEpub.bytes)
+    expect(landscapeEpub.profile?.orientation.selected).toBe('landscape')
+    expect(inspected.manifest).toMatchObject({
+      profile: {
+        orientation: {
+          selected: 'landscape',
+          supported: ['portrait', 'landscape'],
+        },
+        dimensions: {
+          width: portrait.dimensions.height,
+          height: portrait.dimensions.width,
         },
       },
     })

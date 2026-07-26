@@ -36,7 +36,9 @@ import type { ResearchNode, ResearchPaper } from '../../research/schema'
 import {
   getPreviewMetrics,
   getTargetProfile,
+  resolveTargetProfile,
   TARGET_PROFILE_IDS,
+  type TargetOrientation,
   type TargetProfileId,
 } from '../../research/targets'
 
@@ -494,18 +496,66 @@ function PaperNode({
   )
 }
 
-function DocumentHeader({ paper }: { paper: ResearchPaper }) {
+function DocumentHeader({
+  paper,
+  compact = false,
+}: {
+  paper: ResearchPaper
+  compact?: boolean
+}) {
   return (
-    <header className="srt-document-header">
-      <small>
+    <header
+      className="srt-document-header"
+      style={compact ? { paddingBottom: 8 } : undefined}
+    >
+      <small style={compact ? { fontSize: 8, lineHeight: '9px' } : undefined}>
         {paper.status} paper · v{paper.version}
       </small>
-      <h1>{paper.title}</h1>
-      <p className="srt-subtitle">{paper.subtitle}</p>
-      <p className="srt-authors">
+      <h1
+        style={
+          compact
+            ? { fontSize: 'calc(var(--srt-title-size) * .72)', marginTop: 6 }
+            : undefined
+        }
+      >
+        {paper.title}
+      </h1>
+      <p
+        className="srt-subtitle"
+        style={
+          compact
+            ? {
+                fontSize: 'calc(var(--srt-subtitle-size) * .72)',
+                lineHeight: 1.2,
+                marginTop: 4,
+              }
+            : undefined
+        }
+      >
+        {paper.subtitle}
+      </p>
+      <p
+        className="srt-authors"
+        style={
+          compact
+            ? { fontSize: 9, lineHeight: '10px', marginTop: 6 }
+            : undefined
+        }
+      >
         {paper.authors.join(', ')} · updated {paper.updated}
       </p>
-      <p className="srt-abstract">
+      <p
+        className="srt-abstract"
+        style={
+          compact
+            ? {
+                fontSize: 'calc(var(--srt-abstract-size) * .72)',
+                lineHeight: 1.3,
+                marginTop: 8,
+              }
+            : undefined
+        }
+      >
         <b>Abstract.</b> {paper.abstract}
       </p>
     </header>
@@ -517,14 +567,32 @@ export default function ResearchStudio({
   reconstruction,
   initialAnnotations,
   initialProfileId = 'paperPro',
+  selection,
+  onSelectionChange,
 }: {
   paper: ResearchPaper
   reconstruction?: DocumentReconstruction
   initialAnnotations?: TextAnnotation[]
   initialProfileId?: TargetProfileId
+  selection?: {
+    profileId: TargetProfileId
+    orientation: TargetOrientation
+  }
+  onSelectionChange?: (selection: {
+    profileId: TargetProfileId
+    orientation: TargetOrientation
+  }) => void
 }) {
-  const [profileId, setProfileId] = useState<TargetProfileId>(() =>
-    reconstruction ? 'mobile' : initialProfileId,
+  const [internalProfileId, setInternalProfileId] = useState<TargetProfileId>(
+    () => (reconstruction ? 'mobile' : initialProfileId),
+  )
+  const [internalOrientation, setInternalOrientation] =
+    useState<TargetOrientation>('portrait')
+  const profileId = selection?.profileId ?? internalProfileId
+  const orientation = selection?.orientation ?? internalOrientation
+  const profile = useMemo(
+    () => resolveTargetProfile(profileId, orientation),
+    [orientation, profileId],
   )
   const [widthScale, setWidthScale] = useState(1)
   const [fontScale, setFontScale] = useState(1)
@@ -543,12 +611,14 @@ export default function ResearchStudio({
   const stabilityNodeId = readingAnchor?.nodeId ?? paper.nodes[0].id
   const stabilityAnchor = useRef(stabilityNodeId)
   const basePagination = useMemo(() => {
-    const preview = getPreviewMetrics(getTargetProfile(profileId))
+    const preview = getPreviewMetrics(profile)
     return paginateResearchPaper(paper, profileId, {
       widthCssPx: preview.widthCssPx * widthScale,
+      heightCssPx: preview.minHeightCssPx ?? null,
       fontScale,
+      profile,
     })
-  }, [fontScale, paper, profileId, widthScale])
+  }, [fontScale, paper, profile, profileId, widthScale])
   const pagination = useMemo(() => {
     const previous = previousPagination.current
     if (!previous) return basePagination
@@ -564,7 +634,21 @@ export default function ResearchStudio({
 
   const switchProfile = (next: TargetProfileId) => {
     stabilityAnchor.current = stabilityNodeId
-    setProfileId(next)
+    const nextProfile = getTargetProfile(next)
+    const nextOrientation = nextProfile.orientation.supported.includes(
+      orientation,
+    )
+      ? orientation
+      : nextProfile.orientation.selected
+    setInternalProfileId(next)
+    setInternalOrientation(nextOrientation)
+    onSelectionChange?.({ profileId: next, orientation: nextOrientation })
+  }
+
+  const switchOrientation = (next: TargetOrientation) => {
+    stabilityAnchor.current = stabilityNodeId
+    setInternalOrientation(next)
+    onSelectionChange?.({ profileId, orientation: next })
   }
 
   const toggleWidth = () => {
@@ -586,7 +670,6 @@ export default function ResearchStudio({
   const selectedPagination = pagination.nodes.find(
     (node) => node.canonicalId === selectedNode.id,
   )
-  const profile = getTargetProfile(profileId)
   const policy = getCompositionPolicy(profileId)
   const selectedComposition = resolveNodeComposition(profileId, selectedNode)
   const preview = getPreviewMetrics(profile)
@@ -778,20 +861,34 @@ export default function ResearchStudio({
             </button>
           ))}
         </div>
-        <div className="srt-reflow-controls" aria-label="Reflow controls">
+        {profile.orientation.supported.length > 1 && (
+          <div className="srt-profiles" aria-label="Orientation">
+            {profile.orientation.supported.map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                aria-pressed={orientation === candidate}
+                onClick={() => switchOrientation(candidate)}
+              >
+                {candidate === 'portrait' ? 'Portrait' : 'Landscape'}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="srt-reflow-controls" aria-label="Reader simulations">
           <button
             type="button"
             aria-pressed={widthScale !== 1}
             onClick={toggleWidth}
           >
-            Narrow width
+            Simulate narrow reader
           </button>
           <button
             type="button"
             aria-pressed={fontScale !== 1}
             onClick={toggleFont}
           >
-            Larger text
+            Simulate larger reader text
           </button>
         </div>
       </header>
@@ -801,6 +898,7 @@ export default function ResearchStudio({
           <div
             className="srt-paper"
             data-target-profile={profile.id}
+            data-orientation={orientation}
             data-columns={profile.columns.count}
             data-finite-height={profile.finiteHeight}
             data-flow-mode={policy.flowMode}
@@ -831,7 +929,12 @@ export default function ResearchStudio({
                   data-page={page.number}
                   data-continuous={pagination.mode === 'continuous'}
                 >
-                  {page.number === 1 && <DocumentHeader paper={paper} />}
+                  {page.number === 1 && (
+                    <DocumentHeader
+                      paper={paper}
+                      compact={orientation === 'landscape'}
+                    />
+                  )}
                   <div
                     className="srt-page-regions"
                     data-spanning={hasSpanningContent}
@@ -881,6 +984,12 @@ export default function ResearchStudio({
             <div>
               <dt>Dimensions</dt>
               <dd>{dimensions}</dd>
+            </div>
+            <div>
+              <dt>Orientation</dt>
+              <dd>
+                {orientation} · {profile.orientation.control}
+              </dd>
             </div>
             <div>
               <dt>Margins</dt>

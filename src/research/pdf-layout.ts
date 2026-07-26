@@ -278,14 +278,23 @@ function resolvePdfAuthors(
   }
 }
 
+// A section ordinal is a numeral, not a word. Papers number sections with
+// arabic digits, upper or lower roman numerals, or letters, and the numeral
+// system carries no evidence about whether a line is a heading. Matching only
+// single characters silently accepts `I.` and `X.` while rejecting `II.`
+// through `IX.`, which drops most sections of a roman-numbered paper.
+const SECTION_ORDINAL_SOURCE =
+  '(?:\\d+|[IVXLCDM]+|[ivxlcdm]+|[A-Za-z])(?:\\.\\d+){0,3}'
+
 function headingLevel(text: string, largestFont: number, bodySize: number) {
-  const numbered = text.trim().match(/^(\d+(?:\.\d+){0,2})\.?\s+\S/)
-  if (numbered) {
-    return Math.min(3, numbered[1].split('.').length) as 1 | 2 | 3
-  }
-  const lettered = text.trim().match(/^([A-Z](?:\.\d+){0,2})\.?\s+\S/u)
-  if (lettered) {
-    return Math.min(3, lettered[1].split('.').length) as 1 | 2 | 3
+  // Depth comes from the ordinal's dotted segments, whatever numeral system
+  // the paper uses. Reading depth from arabic and single-letter ordinals only
+  // put every multi-character roman section one level below its siblings.
+  const ordinal = text
+    .trim()
+    .match(new RegExp(`^(${SECTION_ORDINAL_SOURCE})\\.?\\s+\\S`, 'u'))
+  if (ordinal) {
+    return Math.min(3, ordinal[1].split('.').length) as 1 | 2 | 3
   }
   if (
     /^(?:abstract|introduction|methods?|results?|discussion|conclusion|references|acknowledg(?:e)?ments?|ethics statement|impact statement|broader impacts?|limitations?|endnotes?|notes?)\b/i.test(
@@ -1073,6 +1082,97 @@ function splitListItemTailParagraphs(
       1,
       fragment(itemLines, itemStart.start, itemEnd.end),
       fragment(tailLines, tailStart.start, tailEnd.end),
+    )
+  }
+}
+
+// A section heading and its first body line often land in one region when the
+// heading carries no size or weight contrast, so classification alone can only
+// choose between calling the whole section a heading or losing the heading. If
+// the leading line stands on its own typographic evidence, split it back out so
+// the heading keeps its own node and the paragraph starts at the next line.
+function splitLeadingOrdinalHeadings(
+  blocks: RegionBlock[],
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+  bodySize: number,
+) {
+  // Split from the end so inserting fragments cannot invalidate later indexes.
+  for (const [blockIndex, block] of [...blocks.entries()].reverse()) {
+    if (
+      block.type !== 'paragraph' ||
+      block.sourceSegments ||
+      block.region.lines.length < 2
+    ) {
+      continue
+    }
+    const headingLine = block.region.lines[0]
+    if (!sourceStyledOrdinalSmallCapsHeading(headingLine)) continue
+    const bodyLines = block.region.lines.slice(1)
+    // The heading must under-fill the measure that its own body lines fill.
+    const bodyWidth = Math.max(...bodyLines.map((line) => line.box.width))
+    if (headingLine.box.width >= bodyWidth - 0.01) continue
+
+    const replay = replayPdfRegionLineRanges(block.region, lineBoundaryDecisions)
+    const headingRange = replay?.ranges.get(headingLine.id)
+    const bodyStart = replay?.ranges.get(bodyLines[0].id)
+    const bodyEnd = replay?.ranges.get(bodyLines.at(-1)!.id)
+    if (
+      !replay ||
+      replay.text !== block.text ||
+      !headingRange ||
+      !bodyStart ||
+      !bodyEnd
+    ) {
+      continue
+    }
+
+    const sourceRegion = block.region
+    const fragment = (
+      lines: PdfPageRegion['lines'],
+      start: number,
+      end: number,
+      type: RegionBlock['type'],
+    ): RegionBlock => {
+      const text = block.text.slice(start, end)
+      const evidenceRegion: PdfPageRegion = {
+        ...sourceRegion,
+        box: boxForRegionLines(lines),
+        lines,
+        text,
+      }
+      return {
+        ...block,
+        type,
+        region: evidenceRegion,
+        text,
+        ...(type === 'heading'
+          ? {
+              headingLevel: headingLevel(
+                text,
+                Math.max(
+                  headingLine.fontSize,
+                  ...headingLine.runs.map((run) => run.fontSize),
+                ),
+                bodySize,
+              ),
+            }
+          : {}),
+        sourceSegments: [
+          {
+            region: sourceRegion,
+            evidenceRegion,
+            sourceStart: start,
+            canonicalStart: 0,
+            text,
+          },
+        ],
+      }
+    }
+    blocks.splice(
+      blockIndex,
+      1,
+      fragment([headingLine], headingRange.start, headingRange.end, 'heading'),
+      fragment(bodyLines, bodyStart.start, bodyEnd.end, 'paragraph'),
     )
   }
 }
@@ -3691,10 +3791,12 @@ function sourceSmallCapsLine(line: PdfPageRegion['lines'][number]) {
   )
 }
 
-function sourceStyledLetteredSmallCapsHeading(
+function sourceStyledOrdinalSmallCapsHeading(
   line: PdfPageRegion['lines'][number],
 ) {
-  const match = line.text.trim().match(/^[A-Z](?:\.\d+){0,3}\.?\s+(\S.*)$/u)
+  const match = line.text
+    .trim()
+    .match(new RegExp(`^${SECTION_ORDINAL_SOURCE}\\.?\\s+(\\S.*)$`, 'u'))
   if (!match || /\p{Ll}/u.test(match[1])) return false
   const letterRuns = line.runs.filter(
     (run) => run.text.trim() && /\p{L}/u.test(run.text),
@@ -3795,7 +3897,7 @@ function splitLeadingStyledHeadingRegion(
     Boolean(numberedMatch) &&
     emphasizedLineShare(firstLine) >= 0.6 &&
     emphasizedLineShare(continuationLine) < 0.5
-  const letteredSmallCaps = sourceStyledLetteredSmallCapsHeading(firstLine)
+  const letteredSmallCaps = sourceStyledOrdinalSmallCapsHeading(firstLine)
   if (!styledHeadingPrefix && !multiLevelSmallCaps && !letteredSmallCaps) {
     return [
       {
@@ -3809,7 +3911,7 @@ function splitLeadingStyledHeadingRegion(
   const headingLines = [firstLine]
   if (letteredSmallCaps) {
     for (const line of region.lines.slice(1)) {
-      if (!sourceStyledLetteredSmallCapsHeading(line)) break
+      if (!sourceStyledOrdinalSmallCapsHeading(line)) break
       headingLines.push(line)
     }
   }
@@ -4133,7 +4235,7 @@ function blocksFromRegions(
     const styledAsHeading =
       Math.max(...region.lines.map((line) => line.fontSize), bodySize) >=
         bodySize * 1.12 ||
-      sourceStyledLetteredSmallCapsHeading(region.lines[0]) ||
+      sourceStyledOrdinalSmallCapsHeading(region.lines[0]) ||
       region.lines.some((line) => emphasizedLineShare(line) >= 0.6)
     if (
       !match ||
@@ -4302,7 +4404,7 @@ function blocksFromRegions(
       })()
       const sourceStyledLetteredHeading =
         region.lines.length === 1 &&
-        sourceStyledLetteredSmallCapsHeading(region.lines[0])
+        sourceStyledOrdinalSmallCapsHeading(region.lines[0])
       const sourceStyledNamedBoundaryHeading =
         sourceStyledStandaloneBoundaryHeading(region, readingRegions)
       const appendixContentsEntry =
@@ -4449,6 +4551,7 @@ function blocksFromRegions(
     diagnostics,
   )
   splitListItemTailParagraphs(blocks, lineBoundaryDecisions)
+  splitLeadingOrdinalHeadings(blocks, lineBoundaryDecisions, bodySize)
 
   let activeList:
     | {

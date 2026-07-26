@@ -1897,6 +1897,77 @@ describe('PDF semantic reconstruction', () => {
     ).toMatchObject({ type: 'heading', level: 2 })
   })
 
+  it('recognizes source-small-caps headings under any ordinal numeral system', async () => {
+    // Faux small caps reduced from an observed IEEE-style paper: one line
+    // alternating full capitals with reduced small capitals in the same
+    // regular font, at body nominal size and never bold. Roman ordinals past
+    // one character carry no less evidence than arabic or single-letter ones.
+    // Capitals sit at body nominal size, so no size-contrast rule can fire;
+    // the only typographic evidence is the internal cap/small-cap alternation.
+    const smallCapsHeading = (text: string, y: number) => {
+      const boundary = text.indexOf(' ') + 2
+      return [
+        run(2, text.slice(0, boundary), 0.1, y, 0.04, 10),
+        run(2, text.slice(boundary), 0.14, y + 0.0025, 0.24, 8),
+      ]
+    }
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Ordinal numeral system study', 0.1, 0.08, 0.72, 20),
+          run(
+            1,
+            'Opening prose establishes ordinary body typography.',
+            0.1,
+            0.22,
+            0.72,
+          ),
+        ]),
+        page(2, [
+          ...smallCapsHeading('II. COLLECTING AN EVALUATION SET', 0.12),
+          run(
+            2,
+            'The source-backed collection method follows its roman heading.',
+            0.1,
+            0.155,
+            0.72,
+          ),
+          ...smallCapsHeading('III. AN AGENT-BASED REPAIR SYSTEM', 0.3),
+          run(
+            2,
+            'The source-backed system description follows its roman heading.',
+            0.1,
+            0.335,
+            0.72,
+          ),
+          ...smallCapsHeading('IV. EVALUATING GENERATED REPAIRS', 0.5),
+          run(
+            2,
+            'The source-backed evaluation summary follows its roman heading.',
+            0.1,
+            0.535,
+            0.72,
+          ),
+        ]),
+      ],
+      sourceHash: 'i'.repeat(64),
+      fileName: 'roman-ordinal-headings.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.flatMap((node) =>
+        node.type === 'heading' && /^(?:II|III|IV)\./u.test(node.text)
+          ? [node.text]
+          : [],
+      ),
+    ).toEqual([
+      'II. COLLECTING AN EVALUATION SET',
+      'III. AN AGENT-BASED REPAIR SYSTEM',
+      'IV. EVALUATING GENERATED REPAIRS',
+    ])
+  })
+
   it('recognizes source-small-caps named headings from standalone section geometry', async () => {
     const smallCapsHeading = (text: string, y: number) => [
       run(2, text[0], 0.1, y, 0.018, 12),

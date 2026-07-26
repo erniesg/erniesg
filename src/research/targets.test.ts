@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getTargetProfile,
   getPreviewMetrics,
+  resolveTargetProfile,
   TARGET_PROFILES,
   TARGET_PROFILE_IDS,
 } from './targets'
@@ -21,12 +23,10 @@ describe('SRT target profiles', () => {
       expect(profile.finiteHeight).toBe(profile.dimensions.height !== null)
       expect(profile.version).toBe('1.1.0')
       expect(profile.epub.fileName).toMatch(/^publication-[a-z]+\.epub$/)
-      expect(profile.truth).toEqual({
-        geometry: 'authoritative',
-        typography: 'advisory',
-        pagination: 'reader-controlled',
-        orientation: 'reader-controlled',
-      })
+      expect(profile.artifact.status).toBe('generated')
+      expect(profile.orientation.supported).toContain(
+        profile.orientation.selected,
+      )
     }
   })
 
@@ -100,6 +100,37 @@ describe('SRT target profiles', () => {
     expect(pro.preview).toEqual({ widthCssPx: 540, heightCssPx: 720 })
     expect(move.preview.widthCssPx).toBeLessThan(pro.preview.widthCssPx)
     expect(move.preview.heightCssPx!).toBeLessThan(pro.preview.heightCssPx!)
+  })
+
+  it.each(['paperProMove', 'paperPro', 'print'] as const)(
+    'transposes %s geometry, margins, and preview dimensions for landscape',
+    (id) => {
+      const portrait = getTargetProfile(id)
+      const landscape = resolveTargetProfile(id, 'landscape')
+
+      expect(targetProfileSchema.parse(landscape)).toEqual(landscape)
+      expect(landscape.dimensions).toMatchObject({
+        width: portrait.dimensions.height,
+        height: portrait.dimensions.width,
+      })
+      expect(landscape.preview).toMatchObject({
+        widthCssPx: portrait.preview.heightCssPx,
+        heightCssPx: portrait.preview.widthCssPx,
+      })
+      expect(landscape.margins).toMatchObject({
+        top: portrait.margins.left,
+        right: portrait.margins.top,
+        bottom: portrait.margins.right,
+        left: portrait.margins.bottom,
+      })
+      expect(landscape.orientation.selected).toBe('landscape')
+    },
+  )
+
+  it('rejects unsupported continuous-mobile landscape simulation', () => {
+    expect(() => resolveTargetProfile('mobile', 'landscape')).toThrow(
+      /does not support/i,
+    )
   })
 
   it('rejects manufacturer pixels that do not transpose to logical device geometry', () => {

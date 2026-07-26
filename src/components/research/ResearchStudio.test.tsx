@@ -405,7 +405,7 @@ describe('research studio imported preview', () => {
     const markup = importedMarkup()
     const profiles = markup.slice(
       markup.indexOf('aria-label="Target profile"'),
-      markup.indexOf('aria-label="Reflow controls"'),
+      markup.indexOf('aria-label="Reader simulations"'),
     )
 
     expect(profiles.match(/<button/g)).toHaveLength(1)
@@ -424,12 +424,29 @@ describe('research studio imported preview', () => {
   })
 
   it('keeps the authored demo annotated and on its full profile matrix', () => {
-    const markup = renderToStaticMarkup(<ResearchStudio paper={importedPaper} />)
+    const markup = renderToStaticMarkup(
+      <ResearchStudio paper={importedPaper} />,
+    )
 
     expect(markup).toContain('srt-annotation-highlight')
     expect(markup).toContain('data-reading-anchor="true"')
     expect(markup).toContain('>Mobile</button>')
     expect(markup).toContain('>Paper Pro</button>')
     expect(markup).toContain('Semantic composition pipeline')
+  })
+
+  it('renders a controlled landscape selection and labels reader-only simulations', () => {
+    const markup = renderToStaticMarkup(
+      <ResearchStudio
+        paper={importedPaper}
+        selection={{ profileId: 'paperPro', orientation: 'landscape' }}
+      />,
+    )
+
+    expect(markup).toContain('data-target-profile="paperPro"')
+    expect(markup).toContain('data-orientation="landscape"')
+    expect(markup).toContain('2160 × 1620 device-px')
+    expect(markup).toContain('>Simulate narrow reader</button>')
+    expect(markup).toContain('>Simulate larger reader text</button>')
   })
 })

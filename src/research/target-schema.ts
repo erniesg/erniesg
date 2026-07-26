@@ -74,6 +74,31 @@ export const targetProfileSchema = z
         orientation: z.enum(['authoritative', 'advisory', 'reader-controlled']),
       })
       .strict(),
+    orientation: z
+      .object({
+        selected: z.enum(['portrait', 'landscape']),
+        supported: z.array(z.enum(['portrait', 'landscape'])).min(1),
+        control: z.enum(['publisher-locked', 'reader-controlled']),
+      })
+      .strict(),
+    artifact: z.discriminatedUnion('format', [
+      z
+        .object({
+          status: z.literal('generated'),
+          format: z.literal('epub'),
+          renderer: z.literal('local-profiled-epub'),
+          pagination: z.literal('reader-controlled'),
+        })
+        .strict(),
+      z
+        .object({
+          status: z.literal('generated'),
+          format: z.literal('pdf'),
+          renderer: z.literal('local-paginated-pdf'),
+          pagination: z.literal('authoritative'),
+        })
+        .strict(),
+    ]),
     preview: z
       .object({
         widthCssPx: z.number().positive(),
@@ -86,6 +111,46 @@ export const targetProfileSchema = z
   .superRefine((profile, context) => {
     const hasFiniteDimensions = profile.dimensions.height !== null
     const hasFinitePreview = profile.preview.heightCssPx !== null
+
+    if (
+      new Set(profile.orientation.supported).size !==
+        profile.orientation.supported.length ||
+      !profile.orientation.supported.includes(profile.orientation.selected)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['orientation'],
+        message:
+          'Selected orientation must appear exactly once in supported orientations',
+      })
+    }
+    if (
+      profile.orientation.supported.includes('landscape') &&
+      !profile.finiteHeight
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['orientation', 'supported'],
+        message: 'Landscape publisher previews require finite target geometry',
+      })
+    }
+    if (
+      profile.orientation.control === 'publisher-locked' &&
+      profile.truth.orientation !== 'authoritative'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['truth', 'orientation'],
+        message: 'Publisher-locked orientation must be authoritative',
+      })
+    }
+    if (profile.artifact.pagination !== profile.truth.pagination) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['artifact', 'pagination'],
+        message: 'Artifact pagination must match the declared truth authority',
+      })
+    }
 
     if (profile.finiteHeight !== hasFiniteDimensions) {
       context.addIssue({
@@ -141,7 +206,7 @@ export const targetProfileSchema = z
     }
     if (profile.manufacturerDisplay) {
       if (
-        profile.manufacturerDisplay.logicalOrientation === 'portrait' &&
+        profile.orientation.selected === 'portrait' &&
         profile.dimensions.height !== null &&
         profile.dimensions.width >= profile.dimensions.height
       ) {
@@ -150,6 +215,18 @@ export const targetProfileSchema = z
           path: ['dimensions'],
           message:
             'Portrait manufacturer profiles require a portrait logical viewport',
+        })
+      }
+      if (
+        profile.orientation.selected === 'landscape' &&
+        profile.dimensions.height !== null &&
+        profile.dimensions.width <= profile.dimensions.height
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['dimensions'],
+          message:
+            'Landscape manufacturer profiles require a landscape logical viewport',
         })
       }
       const logicalPixels = [

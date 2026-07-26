@@ -4,7 +4,10 @@ import {
   EPUB_EXPORT_POLICY_VERSION,
   type EpubExport,
 } from '../../research/epub'
-import { TARGET_PROFILE_VERSION } from '../../research/targets'
+import {
+  getTargetProfile,
+  TARGET_PROFILE_VERSION,
+} from '../../research/targets'
 import { epubPreviewArtifactKey } from './EpubRenditionPreview'
 
 vi.mock('./ResearchStudio', () => ({ default: () => null }))
@@ -95,6 +98,7 @@ describe('publication importer OCR controls', () => {
   })
 
   it('withholds the selected download until that exact EPUB preview is ready', () => {
+    const target = getTargetProfile('paperPro')
     const candidate: EpubExport = {
       bytes: new Uint8Array(),
       entries: [],
@@ -106,6 +110,8 @@ describe('publication importer OCR controls', () => {
       profile: {
         id: 'paperPro',
         version: TARGET_PROFILE_VERSION,
+        orientation: target.orientation,
+        artifact: target.artifact,
         compositionPolicy: {} as NonNullable<
           EpubExport['profile']
         >['compositionPolicy'],

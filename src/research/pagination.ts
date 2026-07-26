@@ -2,6 +2,7 @@ import type { ResearchNode, ResearchPaper } from './schema'
 import {
   getPreviewMetrics,
   getTargetProfile,
+  type TargetProfile,
   type TargetProfileId,
 } from './targets'
 
@@ -54,6 +55,7 @@ export type PaginationOverrides = Partial<
   Pick<PaginationConstraints, 'widthCssPx' | 'heightCssPx'>
 > & {
   fontScale?: number
+  profile?: TargetProfile
 }
 
 export type PaginationViolation = {
@@ -308,7 +310,7 @@ export function getPaginationConstraints(
   if (!Number.isFinite(fontScale) || fontScale <= 0) {
     throw new RangeError('Pagination font scale must be a positive number')
   }
-  const profile = getTargetProfile(target)
+  const profile = overrides.profile ?? getTargetProfile(target)
   const preview = getPreviewMetrics(profile)
   const widthCssPx = overrides.widthCssPx ?? preview.widthCssPx
   const heightCssPx =
@@ -328,6 +330,12 @@ export function getPaginationConstraints(
   const columnWidthCssPx =
     (contentWidthCssPx - totalColumnGap) / profile.columns.count
 
+  const estimatedHeaderHeightCssPx = estimateHeaderHeight(
+    paper,
+    contentWidthCssPx,
+    target,
+    fontScale,
+  )
   return {
     widthCssPx,
     heightCssPx,
@@ -336,12 +344,11 @@ export function getPaginationConstraints(
     columnWidthCssPx,
     columns: profile.columns.count,
     columnGapCssPx: profile.columns.gapCssPx,
-    firstPageHeaderHeightCssPx: estimateHeaderHeight(
-      paper,
-      contentWidthCssPx,
-      target,
-      fontScale,
-    ),
+    firstPageHeaderHeightCssPx:
+      profile.orientation.selected === 'landscape' &&
+      contentHeightCssPx !== null
+        ? Math.min(estimatedHeaderHeightCssPx, contentHeightCssPx * 0.9)
+        : estimatedHeaderHeightCssPx,
   }
 }
 

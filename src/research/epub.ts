@@ -40,7 +40,7 @@ import {
 } from './pdf-scholarly-label'
 import type { ResearchNode, ResearchPaper } from './schema'
 import {
-  getTargetProfile,
+  resolveTargetProfile,
   type TargetProfile,
   type TargetProfileId,
 } from './targets'
@@ -683,6 +683,8 @@ function validatePdfCrossReferenceEvidence({
 export type EpubProfileMetadata = {
   id: TargetProfileId
   version: string
+  orientation: TargetProfile['orientation']
+  artifact: TargetProfile['artifact']
   compositionPolicy: ReturnType<typeof getCompositionPolicy>
   truth: TargetProfile['truth']
   exportPolicy: {
@@ -714,6 +716,8 @@ export function getEpubProfileMetadata(
   return {
     id: profile.id,
     version: profile.version,
+    orientation: profile.orientation,
+    artifact: profile.artifact,
     compositionPolicy: getCompositionPolicy(profile.id),
     truth: profile.truth,
     exportPolicy: {
@@ -3064,7 +3068,15 @@ function parseExportManifest(
     }
     let currentProfile: TargetProfile
     try {
-      currentProfile = getTargetProfile(parsed.profile.id as TargetProfileId)
+      const orientation =
+        isRecord(parsed.profile.orientation) &&
+        typeof parsed.profile.orientation.selected === 'string'
+          ? parsed.profile.orientation.selected
+          : undefined
+      currentProfile = resolveTargetProfile(
+        parsed.profile.id as TargetProfileId,
+        orientation as TargetProfile['orientation']['selected'],
+      )
     } catch {
       throw new Error('EPUB profiled export manifest contract is invalid')
     }
@@ -3105,9 +3117,13 @@ function exportIdentifier(
   paperId: string,
   canonicalContentSha256: string,
   mode: EpubExportMode,
-  profile?: { id: string; version: string },
+  profile?: {
+    id: string
+    version: string
+    orientation?: { selected: string }
+  },
 ) {
-  return `urn:srt:${stableId(paperId)}:${canonicalContentSha256.slice(0, 24)}:${mode}${profile ? `:${profile.id}:${profile.version}:${EPUB_EXPORT_POLICY_VERSION}` : ''}`
+  return `urn:srt:${stableId(paperId)}:${canonicalContentSha256.slice(0, 24)}:${mode}${profile ? `:${profile.id}:${profile.version}:${profile.orientation?.selected ?? 'portrait'}:${EPUB_EXPORT_POLICY_VERSION}` : ''}`
 }
 
 function requireWellFormedXml(value: string, documentName: string) {
@@ -3839,7 +3855,7 @@ export function inspectEpub(
     }
   } else {
     const profileSuffix = manifest.profile
-      ? `:${manifest.profile.id}:${manifest.profile.version}:${EPUB_EXPORT_POLICY_VERSION}`
+      ? `:${manifest.profile.id}:${manifest.profile.version}:${manifest.profile.orientation.selected}:${EPUB_EXPORT_POLICY_VERSION}`
       : ''
     const receiptPattern = new RegExp(
       `^urn:srt:[A-Za-z_][A-Za-z0-9_.:-]*:${manifest.canonicalContentSha256.slice(0, 24)}:${manifest.exportMode}${profileSuffix}$`,
@@ -4162,8 +4178,10 @@ function epubFileName(
   const profileName = slug(
     profile ? profile.id.replace(/([a-z0-9])([A-Z])/g, '$1-$2') : 'reflowable',
   )
+  const orientationSuffix =
+    profile?.orientation.selected === 'landscape' ? '-landscape' : ''
   const modeSuffix = mode === 'readable-fallback' ? '-readable' : ''
-  return `${slug(paper.title)}-${profileName}-${canonicalContentSha256.slice(0, 12)}${modeSuffix}.epub`
+  return `${slug(paper.title)}-${profileName}${orientationSuffix}-${canonicalContentSha256.slice(0, 12)}${modeSuffix}.epub`
 }
 
 async function buildEpubInternal(
@@ -4187,7 +4205,10 @@ async function buildEpubInternal(
     : undefined
   if (
     profile &&
-    JSON.stringify(profile) !== JSON.stringify(getTargetProfile(profile.id))
+    JSON.stringify(profile) !==
+      JSON.stringify(
+        resolveTargetProfile(profile.id, profile.orientation.selected),
+      )
   ) {
     throw new Error(
       `EPUB target profile ${profile.id} must come from src/research/targets.ts`,

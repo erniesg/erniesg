@@ -29,10 +29,7 @@ import {
   type TargetOverride,
 } from './overrides'
 import { canonicalContentHash } from './canonical-hash'
-import {
-  researchPaperSchema,
-  type ResearchPaper,
-} from './schema'
+import { researchPaperSchema, type ResearchPaper } from './schema'
 import {
   getTargetProfile,
   TARGET_PROFILE_IDS,
@@ -108,6 +105,17 @@ const exportManifestSchema = z
               ]),
               profileId: z.enum(['paperPro', 'paperProMove']),
               profileVersion: z.string().min(1),
+              orientation: z.enum(['portrait', 'landscape']),
+              orientationControl: z.enum([
+                'publisher-locked',
+                'reader-controlled',
+              ]),
+              artifactRenderer: z.string().min(1),
+              paginationAuthority: z.enum([
+                'authoritative',
+                'advisory',
+                'reader-controlled',
+              ]),
               compositionPolicy: z
                 .object({
                   id: z.string().min(1),
@@ -187,10 +195,13 @@ function deviceEpubMetadata(epub: EpubExport) {
   const artifact = getTargetProfile(epub.profile.id).epub.fileName
   return {
     artifact: artifact as
-      | 'publication-paperpro.epub'
-      | 'publication-papermove.epub',
+      'publication-paperpro.epub' | 'publication-papermove.epub',
     profileId: epub.profile.id as 'paperPro' | 'paperProMove',
     profileVersion: epub.profile.version,
+    orientation: epub.profile.orientation.selected,
+    orientationControl: epub.profile.orientation.control,
+    artifactRenderer: epub.profile.artifact.renderer,
+    paginationAuthority: epub.profile.truth.pagination,
     compositionPolicy: epub.profile.compositionPolicy,
     exportPolicy: epub.profile.exportPolicy,
   }
@@ -541,6 +552,10 @@ export async function verifyExportPackage(
     artifact: 'publication-paperpro.epub' | 'publication-papermove.epub'
     profileId: 'paperPro' | 'paperProMove'
     profileVersion: string
+    orientation: 'portrait' | 'landscape'
+    orientationControl: 'publisher-locked' | 'reader-controlled'
+    artifactRenderer: string
+    paginationAuthority: TargetProfile['truth']['pagination']
     compositionPolicy: unknown
     exportPolicy: unknown
   }> = []
@@ -554,8 +569,7 @@ export async function verifyExportPackage(
     { path: 'publication.epub' },
     ...DEVICE_EPUB_TARGETS.map((target) => ({
       path: getTargetProfile(target).epub.fileName as
-        | 'publication-paperpro.epub'
-        | 'publication-papermove.epub',
+        'publication-paperpro.epub' | 'publication-papermove.epub',
       profile: getTargetProfile(target),
     })),
   ]
@@ -576,6 +590,9 @@ export async function verifyExportPackage(
           profile?: {
             id: 'paperPro' | 'paperProMove'
             version: string
+            orientation: TargetProfile['orientation']
+            artifact: TargetProfile['artifact']
+            truth: TargetProfile['truth']
             compositionPolicy: unknown
             exportPolicy: unknown
           }
@@ -588,10 +605,13 @@ export async function verifyExportPackage(
         }
         deviceConfigurations.push({
           artifact: artifact.profile.epub.fileName as
-            | 'publication-paperpro.epub'
-            | 'publication-papermove.epub',
+            'publication-paperpro.epub' | 'publication-papermove.epub',
           profileId: embedded.profile.id,
           profileVersion: embedded.profile.version,
+          orientation: embedded.profile.orientation.selected,
+          orientationControl: embedded.profile.orientation.control,
+          artifactRenderer: embedded.profile.artifact.renderer,
+          paginationAuthority: embedded.profile.truth.pagination,
           compositionPolicy: embedded.profile.compositionPolicy,
           exportPolicy: embedded.profile.exportPolicy,
         })

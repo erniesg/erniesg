@@ -58,3 +58,27 @@ npm run build
 ## Allowed secrets
 
 None.
+
+## Artifact outputs
+
+Numeral-system-agnostic ordinal parsing, a typographic-contrast evaluator, a heading/paragraph split pass, and fixtures across numbering dialects and languages.
+
+## Stop conditions
+
+Stop before adding another keyword allowlist, adding a roman branch beside the existing arabic one instead of generalising, or promoting a heading from position alone.
+
+## Human clarification protocol
+
+If a heading carries no ordinal and no typographic contrast, confirm whether layout evidence alone may promote it; this issue assumes it may not.
+
+## Recommended response
+
+Route every heading rule through one ordinal parser and one contrast evaluator, then delete the keyword allowlists rather than extending them.
+
+## Trade-offs
+
+Sequence and typography evidence generalise across templates and languages; keyword lists do not and silently drop whole sections when a paper does not use the expected words.
+
+## Free-form response
+
+Losing eight of ten sections and gluing each lost heading onto its section body corrupts document structure more visibly than any single object failure.

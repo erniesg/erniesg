@@ -55,3 +55,27 @@ npm run build
 ## Allowed secrets
 
 None by default. A remote provider requires explicit owner opt-in and its credential never enters the repository, logs, or receipts.
+
+## Artifact outputs
+
+A provider-agnostic table candidate interface, a deterministic per-cell verifier, one opt-in concrete provider, and a three-way benchmark report.
+
+## Stop conditions
+
+Stop before letting provider text reach the document, promoting a partially verified grid, enabling a remote provider without explicit owner opt-in, or changing default offline behaviour.
+
+## Human clarification protocol
+
+If a provider proposes a structurally correct grid whose cell text is reformatted, confirm that source-run text is substituted rather than the proposal rejected.
+
+## Recommended response
+
+Keep the model as a candidate generator only; verification and authority stay in the deterministic layer, which is what makes a model safe to use here.
+
+## Trade-offs
+
+A provider adds a dependency and a failure mode, but the geometric path promotes roughly one table in ten, so the ceiling without a candidate source is low.
+
+## Free-form response
+
+The benchmark registry already describes candidate providers and judges; only the candidate side was never built, so no model has ever been compared against the geometric path.

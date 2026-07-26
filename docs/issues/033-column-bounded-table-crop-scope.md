@@ -49,3 +49,27 @@ npm run build
 ## Allowed secrets
 
 None. Source papers, rasters, and audit output remain owner-local.
+
+## Artifact outputs
+
+Column-lane gutter proof in the table scope resolver, lane-independent banding, and a two-column regression fixture with faithful geometry and synthetic text.
+
+## Stop conditions
+
+Stop before widening a scope proof threshold, keying lanes off region.column labels alone, or accepting an opposite-column crop to preserve an export count.
+
+## Human clarification protocol
+
+If a per-column table cannot prove a band within its own lane, confirm whether review-required is preferred over an opposite-column crop; this issue assumes it is.
+
+## Recommended response
+
+Prove the gutter geometrically from candidate lines rather than trusting classifier labels, because a spanning table's cells carry mixed left/right/span labels by x position.
+
+## Trade-offs
+
+Lane separation loses exports for tables whose own lane cannot prove a band; that is a smaller harm than shipping a raster containing a neighbouring column's prose.
+
+## Free-form response
+
+A reader seeing body prose baked into a table image, duplicated against the same prose as live text, loses trust in every other object on the page.

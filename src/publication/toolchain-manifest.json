@@ -1,0 +1,41 @@
+{
+  "version": "1.0.0",
+  "node": ">=22.12.0",
+  "vivliostyleCli": {
+    "package": "@vivliostyle/cli",
+    "version": "11.1.0"
+  },
+  "browser": {
+    "package": "@puppeteer/browsers",
+    "version": "3.0.4",
+    "name": "chromium",
+    "revision": "150.0.7871.115",
+    "browserVersion": "150.0.7871.115",
+    "compatibility": {
+      "package": "playwright",
+      "version": "1.61.1",
+      "arm64Revision": "1228",
+      "arm64BrowserVersion": "149.0.7827.55"
+    }
+  },
+  "epubcheck": {
+    "package": "epubcheck-static",
+    "packageVersion": "4.0.0-v5.3.0",
+    "version": "5.3.0",
+    "sha256": "f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65"
+  },
+  "fonts": [
+    {
+      "path": "public/fonts/Geist-Regular.ttf",
+      "sha256": "5e7c3b25da393b1619253c655f95c5d123184759a4961562add5b0f5386e63c9"
+    },
+    {
+      "path": "public/fonts/Geist-Bold.ttf",
+      "sha256": "dbe7fbf58111609860bf1b3bebdf4d39efc7e64ed65ef3b393a090680038d920"
+    },
+    {
+      "path": "public/fonts/GeistMono-Regular.ttf",
+      "sha256": "dee3e2532c8db2b36dced0b9ddf9834e4b5a83ba8afecd01be0a97d4b0c13d7f"
+    }
+  ]
+}

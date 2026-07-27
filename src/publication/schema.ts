@@ -96,6 +96,8 @@ export const publicationInlineRunSchema = z
   })
   .strict()
 
+export type PublicationInlineRun = z.infer<typeof publicationInlineRunSchema>
+
 const provenanceSchema = z
   .object({
     adapterId: idSchema,

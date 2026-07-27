@@ -1,0 +1,138 @@
+@font-face {
+  font-family: Geist;
+  src: url('Geist-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: Geist;
+  src: url('Geist-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: Geist Mono;
+  src: url('GeistMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+:root {
+  color-scheme: light;
+  font-family: Geist, sans-serif;
+  line-height: 1.55;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  margin-inline: auto;
+  max-width: 42rem;
+  padding: 1rem;
+  color: #111;
+  background: #fff;
+}
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+figure {
+  break-inside: avoid;
+  margin: 1.5em 0;
+}
+figcaption {
+  font-size: 0.875em;
+  margin-top: 0.5em;
+}
+pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: 'Geist Mono', monospace;
+}
+blockquote {
+  border-inline-start: 0.2em solid currentColor;
+  margin-inline: 0;
+  padding-inline-start: 1em;
+}
+a {
+  color: inherit;
+  text-decoration: underline;
+}
+.equation {
+  font-family: 'Geist Mono', monospace;
+  overflow-wrap: anywhere;
+}
+[role='doc-footnote'] {
+  font-size: 0.85em;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-profile='phone-webpub'] body {
+    color: #eee;
+    background: #111;
+  }
+}
+html[data-profile='eink-epub'] {
+  color-scheme: light;
+  filter: grayscale(1);
+}
+html[data-profile='eink-epub'] body {
+  font-family: serif;
+  font-size: 1rem;
+  max-width: none;
+  padding: 0;
+}
+@page a5 {
+  size: A5;
+  margin: 22mm 18mm 24mm;
+  @bottom-center {
+    content: counter(page);
+  }
+}
+html[data-profile='a5-pdf'] {
+  page: a5;
+  font-size: 11.5pt;
+  line-height: 1.55;
+}
+html[data-profile='a5-pdf'] body {
+  max-width: 112mm;
+  padding: 0;
+}
+html[data-profile='a5-pdf'] figure {
+  margin-inline: -4mm;
+  max-height: 35vh;
+}
+html[data-profile='a5-pdf'] figure img {
+  max-height: 32vh;
+  object-fit: contain;
+}
+@page a4 {
+  size: A4;
+  margin: 22mm 24mm 25mm;
+  @bottom-center {
+    content: counter(page);
+  }
+}
+html[data-profile='a4-pdf'] {
+  page: a4;
+  font-size: 10.5pt;
+  line-height: 1.5;
+}
+html[data-profile='a4-pdf'] body {
+  max-width: 162mm;
+  padding: 0;
+}
+p,
+li {
+  orphans: 3;
+  widows: 3;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  break-after: avoid;
+}

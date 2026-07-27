@@ -1272,7 +1272,8 @@ export async function reconstructPdf(
             ownedSourceBoxes: input.ownedSourceBoxes,
             excludedSourceBoxes: input.excludedSourceBoxes,
             signal: options.signal,
-            tightenToSourceInk: input.kind === 'figure',
+            tightenToSourceInk:
+              input.tightenToSourceInk ?? input.kind === 'figure',
           })
           const { sourceBox: renderedSourceBox, ...renderedRaster } = raster
           const sourceLineage = sourceLineageWithinCrop(

@@ -2664,6 +2664,18 @@ export function assessPdfCompleteness({
       message: `Resolved ${relationships.resolved} of ${relationships.expected} detected semantic relationships; required coverage is ${policy.minimumRelationshipCoverage.toFixed(3)}.`,
     })
   }
+  if (
+    completeness.expectedSemanticTableCount !== undefined &&
+    completeness.resolvedSemanticTableCount !== undefined &&
+    completeness.resolvedSemanticTableCount <
+      completeness.expectedSemanticTableCount
+  ) {
+    qualityDiagnostics.push({
+      code: 'INCOMPLETE_SEMANTIC_TABLE_COVERAGE',
+      severity: 'error',
+      message: `Reconstructed ${completeness.resolvedSemanticTableCount} of ${completeness.expectedSemanticTableCount} detected tables as semantic row-and-column structures; the remaining image fallback${completeness.expectedSemanticTableCount - completeness.resolvedSemanticTableCount === 1 ? '' : 's'} require review.`,
+    })
+  }
   if (unresolvedObjectCount > policy.maximumUnresolvedObjects) {
     qualityDiagnostics.push({
       code: 'UNRESOLVED_SEMANTIC_OBJECTS',

@@ -14,6 +14,7 @@ import {
   detectHierarchicalTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
+  detectWrappedHeaderTableWithinProvenScope,
   type PdfDetectedTableGrid,
 } from './pdf-table-detection'
 import {
@@ -74,6 +75,7 @@ export type PdfFigureRasterizer = (input: {
   sourceBoxes: NormalizedSourceBox[]
   ownedSourceBoxes?: NormalizedSourceBox[]
   excludedSourceBoxes?: NormalizedSourceBox[]
+  tightenToSourceInk?: boolean
 }) => Promise<PdfVisualAsset | null>
 
 export type PdfPartialRegionLineSelection = {
@@ -2624,11 +2626,10 @@ function monospacedSourceLine(line: PdfPageRegion['lines'][number]) {
   )
 }
 
-function exactSingleRunMonospacedLine(line: PdfPageRegion['lines'][number]) {
+function exactSingleRunSourceLine(line: PdfPageRegion['lines'][number]) {
   const runs = substantiveSourceRuns(line)
   return (
     runs.length === 1 &&
-    MONOSPACED_SOURCE_FONT.test(runs[0].fontName) &&
     runs[0].text === line.text &&
     !line.text.includes('\uFFFD')
   )
@@ -2640,9 +2641,14 @@ function sourceCodeSyntax(value: string) {
     /^(?:GET|POST|PUT|PATCH|DELETE)\s+\S/iu.test(text) ||
     /^\{[\w.-]+\}$/u.test(text) ||
     /^["']\s*[\w.-]+\s*["']\s*:/u.test(text) ||
-    /^(?:def|class|function|const|let|var|return|import|from)\b/iu.test(text) ||
+    /^(?:def|class|contract|interface|library|function|modifier|event|struct|enum|const|let|var|return|import|from)\b/iu.test(
+      text,
+    ) ||
     /^(?:#|\/|\{|\[|\}|\])/u.test(text) ||
-    /(?:=>|:=|\\n|<\/?[A-Za-z][^>]*>)/u.test(text) ||
+    /(?:=>|:=|\\n|<\/?[A-Za-z][^>]*>|\/\/|[{};])/u.test(text) ||
+    /(?:\b[A-Za-z_]\w*\s+[A-Za-z_]\w*\s*=|(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*\s*\()/u.test(
+      text,
+    ) ||
     /^\d{1,3}[.)]\s+\S/u.test(text)
   )
 }
@@ -2651,12 +2657,13 @@ function sourceCodeSyntaxCount(lines: PreformattedLineOwner[]) {
   return lines.filter(({ line }) => sourceCodeSyntax(line.text)).length
 }
 
-function sourceLineRecord({
-  region,
-  line,
-}: PreformattedLineOwner): PdfPreformattedSourceLine {
+function sourceLineRecord(
+  { region, line }: PreformattedLineOwner,
+  indentColumns = 0,
+): PdfPreformattedSourceLine {
   return {
     text: line.text,
+    indentColumns,
     sourceRegionId: region.id,
     sourceLineId: line.id,
     sourceBox: normalizedLineageBox(line.box),
@@ -2684,19 +2691,53 @@ function exactPreformattedSource(
   const proved =
     allowTranscriptProof &&
     ordered.length > 0 &&
-    stablePageIndent &&
-    ordered.every(({ line }) => exactSingleRunMonospacedLine(line))
+    ordered.every(({ line }) => exactSingleRunSourceLine(line))
+  const indentationLevelsByPage = new Map<number, number[]>()
+  for (const { line } of ordered) {
+    const levels = indentationLevelsByPage.get(line.box.page) ?? []
+    const tolerance = Math.max(line.box.height * 0.75, 0.006)
+    if (!levels.some((level) => Math.abs(level - line.box.x) <= tolerance)) {
+      levels.push(line.box.x)
+      levels.sort((left, right) => left - right)
+    }
+    indentationLevelsByPage.set(line.box.page, levels)
+  }
+  const recordedLines = ordered.map((owner) => {
+    const levels = indentationLevelsByPage.get(owner.line.box.page) ?? [
+      owner.line.box.x,
+    ]
+    const level = levels.reduce(
+      (best, candidate, index) =>
+        Math.abs(candidate - owner.line.box.x) <
+        Math.abs(levels[best] - owner.line.box.x)
+          ? index
+          : best,
+      0,
+    )
+    const indentColumns = stablePageIndent
+      ? 0
+      : Math.min(16, Math.max(0, level * 2))
+    return sourceLineRecord(owner, indentColumns)
+  })
   return {
     status: proved ? 'proved' : 'unresolved',
-    lines: proved ? ordered.map(sourceLineRecord) : [],
+    lines: allowTranscriptProof ? recordedLines : [],
     evidence: proved
       ? [
           'deterministic-source-line-order',
           'exact-single-run-line-text',
           'source-line-breaks-preserved',
-          'zero-derived-indentation',
+          stablePageIndent
+            ? 'zero-derived-indentation'
+            : 'source-geometry-indentation',
         ]
-      : ['deterministic-source-line-order', 'source-text-exactness-unresolved'],
+      : [
+          'deterministic-source-line-order',
+          'source-text-exactness-unresolved',
+          ...(allowTranscriptProof
+            ? ['unresolved-source-lines-retained-for-review']
+            : []),
+        ],
   }
 }
 
@@ -2720,7 +2761,19 @@ function preformattedSegments(
           left.id.localeCompare(right.id),
       )
     const lineBox = boxForLines(pageLines.map(({ line }) => line))
-    const sourceBoxes = [lineBox, ...pageObjects.map((object) => object.box)]
+    const sourceRegions = [
+      ...new Map(
+        pageLines.map(({ region }) => [region.id, region] as const),
+      ).values(),
+    ]
+    // Some PDF text layers report a line box that ends before its final
+    // painted glyph. The owning region is the conservative source boundary
+    // for an exact code crop; using only the line box can clip long code lines.
+    const sourceBoxes = [
+      lineBox,
+      ...sourceRegions.map((region) => region.box),
+      ...pageObjects.map((object) => object.box),
+    ]
     const left = Math.min(...sourceBoxes.map((box) => box.x))
     const top = Math.min(...sourceBoxes.map((box) => box.y))
     const right = Math.max(...sourceBoxes.map((box) => box.x + box.width))
@@ -2766,13 +2819,27 @@ function explicitPreformattedBlocks(
   const blocks: BoundedPreformattedBlock[] = []
   for (let anchorIndex = 0; anchorIndex < ordered.length; anchorIndex += 1) {
     const anchor = ordered[anchorIndex]
+    const anchorLineIndex = anchor.region.lines.findIndex(
+      (line) => line.id === anchor.line.id,
+    )
+    const anchorText = anchor.region.lines
+      .slice(0, anchorLineIndex + 1)
+      .map((line) => line.text.trim())
+      .filter(Boolean)
+      .join(' ')
+    const explicitPseudocode =
+      /\b(?:pseudo\s*code|code\s+(?:example|sample|snippet)|smart\s+contract)\b[^.!?]*:\s*$/iu.test(
+        anchorText,
+      )
     if (
       claimedLineIds.has(anchor.line.id) ||
       claimedCaptionRegionIds.has(anchor.region.id) ||
       monospacedSourceLine(anchor.line) ||
-      !/\b(?:prompt|source\s+code|code\s+block|request\s+template)\b[^.!?]*:\s*$/iu.test(
-        anchor.line.text.trim(),
-      )
+      !/:\s*$/u.test(anchor.line.text.trim()) ||
+      (!explicitPseudocode &&
+        !/\b(?:prompt|source\s+code|code\s+block|request\s+template)\b[^.!?]*:\s*$/iu.test(
+          anchorText,
+        ))
     ) {
       continue
     }
@@ -2790,19 +2857,20 @@ function explicitPreformattedBlocks(
         samePage &&
         candidate.line.box.y -
           (previous.line.box.y + previous.line.box.height) >
-          0.08
+          (explicitPseudocode ? 0.12 : 0.08)
       ) {
         break
       }
-      if (!monospacedSourceLine(candidate.line)) break
+      if (
+        !monospacedSourceLine(candidate.line) &&
+        !(explicitPseudocode && sourceCodeSyntax(candidate.line.text))
+      ) {
+        break
+      }
       sourceLines.push(candidate)
       previous = candidate
     }
-    if (
-      sourceLines.length < 3 ||
-      sourceCodeSyntaxCount(sourceLines) < 2 ||
-      sourceLines[0].region !== anchor.region
-    ) {
+    if (sourceLines.length < 3 || sourceCodeSyntaxCount(sourceLines) < 2) {
       continue
     }
     const sourceLineIds = new Set(sourceLines.map(({ line }) => line.id))
@@ -5925,9 +5993,21 @@ export async function reconstructPdfVisuals({
   // visual relationships when they occur at the start of a paragraph.
   const captionLabels = new Map(
     regions.flatMap((region) => {
-      const label = parsePdfScholarlyVisualLabel(region.text, {
-        context: 'caption',
-      })
+      const firstRun = region.lines
+        .flatMap((line) => line.runs)
+        .find((run) => run.text.trim())
+      const dedicatedLabelStyle = Boolean(
+        firstRun && dedicatedCaptionLabelStyle(firstRun),
+      )
+      const label =
+        parsePdfScholarlyVisualLabel(region.text, {
+          context: 'caption',
+        }) ??
+        (dedicatedLabelStyle
+          ? parsePdfScholarlyVisualLabel(region.text, {
+              context: 'reference',
+            })
+          : null)
       return label ? ([[region, label]] as const) : []
     }),
   )
@@ -5935,13 +6015,19 @@ export async function reconstructPdfVisuals({
   const preformattedCaptionRegionIds = new Set(
     preformattedBlocks.map((block) => block.caption.id),
   )
-  const captions = regions.filter(
-    (region) =>
-      region.kind === 'caption' &&
+  const captions = regions.filter((region) => {
+    const firstRun = region.lines
+      .flatMap((line) => line.runs)
+      .find((run) => run.text.trim())
+    return (
+      (region.kind === 'caption' ||
+        Boolean(firstRun && dedicatedCaptionLabelStyle(firstRun))) &&
       captionLabels.has(region) &&
       !preformattedCaptionRegionIds.has(region.id) &&
-      !unstyledProseTableReference(region),
-  )
+      !unstyledProseTableReference(region)
+    )
+  })
+  for (const caption of captions) caption.kind = 'caption'
   const figureCaptions = captions.filter(
     (caption) => captionLabels.get(caption)?.kind === 'figure',
   )
@@ -6037,10 +6123,15 @@ export async function reconstructPdfVisuals({
           boundedScope,
         )
         if (!semanticTableScope && boundedScope.scope) {
-          semanticTableGrid = detectHierarchicalTableWithinProvenScope(
-            availableTableRegions,
-            boundedScope.scope,
-          )
+          semanticTableGrid =
+            detectWrappedHeaderTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
+            ) ??
+            detectHierarchicalTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
+            )
         }
         // A proved bounded text/native scope outranks the legacy geometric
         // detector. The latter may join a neighbouring chart that shares row
@@ -7135,6 +7226,7 @@ export async function reconstructPdfVisuals({
           sourceBox: sourceCropBox,
           sourceObjectIds,
           sourceBoxes: sourceObjectBoxes,
+          tightenToSourceInk: false,
         }).catch((error: unknown) => {
           cropTouchedEdge = sourcePageCropTouchesEdge(error)
           return null
@@ -7173,6 +7265,7 @@ export async function reconstructPdfVisuals({
               sourceBox: retryBox,
               sourceObjectIds,
               sourceBoxes: sourceObjectBoxes,
+              tightenToSourceInk: false,
             }).catch((error: unknown) => {
               retryTouchedEdge = sourcePageCropTouchesEdge(error)
               return null

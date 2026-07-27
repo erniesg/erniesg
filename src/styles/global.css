@@ -539,11 +539,17 @@
   .publication-progress span {
     @apply truncate text-xs text-muted-foreground;
   }
+  .publication-progress small {
+    @apply text-xs leading-relaxed text-muted-foreground;
+  }
   .publication-progress strong {
     @apply text-lg font-medium;
   }
   .publication-progress progress {
     @apply h-2 w-full accent-foreground;
+  }
+  .publication-progress > button {
+    @apply min-h-11 w-fit rounded-md border px-4 py-2 text-sm font-medium;
   }
   .publication-failure,
   .publication-ocr-gate {
@@ -677,6 +683,9 @@
   }
   .epub-preview-stage:focus-visible {
     @apply outline outline-2 outline-offset-[-3px] outline-foreground;
+  }
+  .epub-preview-device-shell {
+    display: contents;
   }
   .epub-preview-device {
     width: min(100%, var(--epub-device-width));

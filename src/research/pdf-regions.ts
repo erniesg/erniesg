@@ -79,10 +79,16 @@ function normalizeMarginText(text: string) {
 }
 
 function beginsVisualCaption(text: string) {
-  return Boolean(
-    parsePdfScholarlyVisualLabel(text, {
-      context: 'caption',
-    }),
+  const normalized = text.replace(/\s+/gu, ' ').trim()
+  return (
+    Boolean(
+      parsePdfScholarlyVisualLabel(normalized, {
+        context: 'caption',
+      }),
+    ) ||
+    /^[^.!?;:]{1,72}\s+(?:fig(?:ure)?|table)\.?\s*(?:\d+|[ivxlcdm]+)\s*[.:–—-]\s*\p{Lu}/iu.test(
+      normalized,
+    )
   )
 }
 
@@ -694,40 +700,94 @@ function splitRepeatedMarginSourceRuns(
   })
 }
 
-function explicitFirstPageParatextSeed(line: PdfTextLine) {
+function explicitFirstPageParatextSeed(line: PdfTextLine, bodySize: number) {
   if (line.page !== 1 || line.y < 0.65) return false
   const text = line.text.replace(/\s+/gu, ' ').trim()
+  const geometricFooter =
+    line.x < 0.45 &&
+    line.x + line.width > 0.55 &&
+    line.width >= 0.4 &&
+    line.height <= 0.04 &&
+    medianLineFontSize(line) <= bodySize * 0.92 &&
+    (text.match(/\p{L}{2,}/gu)?.length ?? 0) >= 4 &&
+    !beginsVisualCaption(text) &&
+    noteLabelFromText(text) === null
   return (
+    geometricFooter ||
     /^authors?[’']?\s+address\s*:/iu.test(text) ||
     /^(?:permission to (?:make|copy)|(?:this )?work is licensed under|licensed under (?:the )?|creative commons\b|all rights reserved\b)/iu.test(
       text,
     ) ||
     /^(?:©\s*)?(?:\d{4}\s+)?copyright\b/iu.test(text) ||
+    /^proceedings\s+of\s+(?:the\s+)?(?:\d+\s*(?:st|nd|rd|th)?\s+)?(?:international\s+)?(?:conference|symposium|workshop)\b/iu.test(
+      text,
+    ) ||
     /^(?:preprint(?:[.,].*)?|manuscript under review|under review)\.?$/iu.test(
       text,
     )
   )
 }
 
+function medianLineFontSize(line: PdfTextLine) {
+  return (
+    median(
+      line.runs
+        .filter((run) => run.text.trim())
+        .map((run) => run.fontSize)
+        .filter((size) => size > 0),
+    ) || line.fontSize
+  )
+}
+
 function firstPageParatextLines(lines: PdfTextLine[]) {
+  const bodySize = bodyFontSize(lines)
   const ordered = [...lines].sort(
     (left, right) => left.y - right.y || left.x - right.x,
   )
   const claimed = new Set<PdfTextLine>()
   for (const [seedIndex, seed] of ordered.entries()) {
-    if (!explicitFirstPageParatextSeed(seed)) continue
+    if (!explicitFirstPageParatextSeed(seed, bodySize)) continue
     claimed.add(seed)
     let previous = seed
     for (const candidate of ordered.slice(seedIndex + 1)) {
       if (candidate.page !== 1 || candidate.y < previous.y) continue
+      const compactInlineFragment =
+        candidate.text.trim().length <= 4 &&
+        candidate.width <= 0.05 &&
+        candidate.x >= seed.x - 0.01 &&
+        candidate.x + candidate.width <= seed.x + seed.width + 0.01 &&
+        candidate.y < seed.y + seed.height &&
+        candidate.y + candidate.height > seed.y
+      if (compactInlineFragment) {
+        claimed.add(candidate)
+        continue
+      }
+      const horizontalOverlap = Math.max(
+        0,
+        Math.min(seed.x + seed.width, candidate.x + candidate.width) -
+          Math.max(seed.x, candidate.x),
+      )
+      const overlapRatio =
+        horizontalOverlap /
+        Math.max(0.001, Math.min(seed.width, candidate.width))
+      const aligned =
+        Math.abs(candidate.x - seed.x) <= 0.08 || overlapRatio >= 0.72
+      const horizontalSeparation = Math.max(
+        candidate.x - (seed.x + seed.width),
+        seed.x - (candidate.x + candidate.width),
+        0,
+      )
+      if (!aligned && horizontalSeparation >= 0.012) continue
       const gap = candidate.y - (previous.y + previous.height)
       const fontRatio =
-        Math.max(previous.fontSize, candidate.fontSize) /
-        Math.max(1, Math.min(previous.fontSize, candidate.fontSize))
-      const aligned = Math.abs(candidate.x - seed.x) <= 0.035
+        Math.max(medianLineFontSize(previous), medianLineFontSize(candidate)) /
+        Math.max(
+          1,
+          Math.min(medianLineFontSize(previous), medianLineFontSize(candidate)),
+        )
       const wrapped =
         gap >= -0.002 &&
-        gap <= Math.max(0.006, previous.height * 0.75) &&
+        gap <= Math.max(0.012, previous.height * 1.8) &&
         fontRatio <= 1.12 &&
         aligned &&
         !beginsVisualCaption(candidate.text) &&
@@ -2184,6 +2244,29 @@ function splitRunBackedCrossGutterProse(
   })
 }
 
+function lineBelongsToNativeVisual(
+  line: PdfTextLine,
+  objects: PdfPageAnalysis['objects'],
+) {
+  const centerX = line.x + line.width / 2
+  const centerY = line.y + line.height / 2
+  return (objects ?? [])
+    .filter(
+      (object) =>
+        object.role !== 'scan-source' &&
+        object.box.width * object.box.height <= 0.72,
+    )
+    .some((object) => {
+      const padding = Math.max(0.012, Math.min(0.04, line.height * 2.5))
+      return (
+        centerX >= object.box.x - padding &&
+        centerX <= object.box.x + object.box.width + padding &&
+        centerY >= object.box.y - padding &&
+        centerY <= object.box.y + object.box.height + padding
+      )
+    })
+}
+
 function lineBox(line: PdfTextLine): NormalizedSourceBox {
   return {
     page: line.page,
@@ -3409,6 +3492,14 @@ export function reconstructPageRegions(pages: PdfPageAnalysis[]) {
         ) {
           kind = 'equation'
           confidence = 0.9
+        } else if (
+          line.fontSize <= fontSize * 0.95 &&
+          normalized.length <= 120 &&
+          lineBelongsToNativeVisual(line, page.objects) &&
+          !sourceStyledBoundaryHeadingLine(pageLines, lineIndex, fontSize)
+        ) {
+          kind = 'chart-label'
+          confidence = 0.94
         } else if (
           line.fontSize <= fontSize * 0.82 &&
           normalized.length <= 32 &&

@@ -53,6 +53,16 @@ const MIN_COLUMN_GUTTER_WIDTH = 0.02
 const MIN_COLUMN_GUTTER_CENTRE = 0.25
 const MAX_COLUMN_GUTTER_CENTRE = 0.75
 
+export function compactTabularSlabMayFollowCaption({
+  tabularSlab,
+  cropWidth,
+}: {
+  tabularSlab: boolean
+  cropWidth: number
+}) {
+  return tabularSlab && cropWidth >= MIN_TEXT_SLAB_WIDTH
+}
+
 export type PdfTableScopeProof =
   | 'text-grid'
   | 'text-nonuniform-grid'
@@ -1019,11 +1029,7 @@ function candidateColumnGutter(entries: TableLineEntry[]) {
 function tableLineRows(entries: TableLineEntry[]) {
   const gutter = candidateColumnGutter(entries)
   const columnLane = (entry: TableLineEntry): TableColumnLane =>
-    gutter === null
-      ? 'full'
-      : entry.line.box.x >= gutter.to
-        ? 'right'
-        : 'left'
+    gutter === null ? 'full' : entry.line.box.x >= gutter.to ? 'right' : 'left'
   const rows: Array<{
     y: number
     lane: TableColumnLane
@@ -2781,6 +2787,10 @@ function captionBoundedTextSlabCandidates(
     const tabularSlab =
       tabularRowCount >= MIN_TABULAR_SLAB_ROWS &&
       repeatedAnchorCount >= MIN_REPEATED_TABULAR_SLAB_ANCHORS
+    const compactTabularSlab = compactTabularSlabMayFollowCaption({
+      tabularSlab,
+      cropWidth: cropBox.width,
+    })
     const labeledRecordSlab =
       lane.direction === 'below' &&
       cropBox.width >= MIN_LABELED_RECORD_WIDTH &&
@@ -2791,8 +2801,11 @@ function captionBoundedTextSlabCandidates(
       cropBox.width * cropBox.height > MAX_SCOPE_AREA ||
       horizontalOverlap(caption.box, cropBox) <= BOX_TOLERANCE ||
       (!structuredSingleAnchorSlab && !tabularSlab && !labeledRecordSlab) ||
-      (!wideLayout && !compressedTypography && !labeledRecordSlab) ||
-      (lane.direction === 'below' && !labeledRecordSlab)
+      (!wideLayout &&
+        !compressedTypography &&
+        !labeledRecordSlab &&
+        !compactTabularSlab) ||
+      (lane.direction === 'below' && !labeledRecordSlab && !compactTabularSlab)
     ) {
       continue
     }

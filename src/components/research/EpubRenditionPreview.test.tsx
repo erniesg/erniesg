@@ -6,9 +6,13 @@ import {
 } from '../../research/epub'
 import EpubRenditionPreview, {
   buildExternalLinkReceipt,
+  clampEpubPage,
   composePreviewCss,
+  composeReviewReaderCss,
   createEpubPreviewCache,
   epubPreviewArtifactKey,
+  internalPreviewTargetId,
+  resolveReviewViewport,
   selectCurrentProfileEpub,
 } from './EpubRenditionPreview'
 import {
@@ -60,6 +64,100 @@ function profiled(id: 'mobile' | 'paperProMove' | 'paperPro'): EpubExport {
 }
 
 describe('EPUB rendition preview', () => {
+  it('transposes review viewport dimensions without changing the artifact', () => {
+    expect(resolveReviewViewport('phone', 'portrait')).toMatchObject({
+      width: 390,
+      height: 844,
+    })
+    expect(resolveReviewViewport('phone', 'landscape')).toMatchObject({
+      width: 844,
+      height: 390,
+    })
+    expect(resolveReviewViewport('tablet', 'landscape')).toMatchObject({
+      width: 1024,
+      height: 768,
+    })
+  })
+
+  it('clamps reader-controlled EPUB pages', () => {
+    expect(clampEpubPage(-4, 12)).toBe(1)
+    expect(clampEpubPage(5.8, 12)).toBe(5)
+    expect(clampEpubPage(18, 12)).toBe(12)
+    expect(clampEpubPage(Number.NaN, 12)).toBe(1)
+  })
+
+  it('composes preview-only pagination and typography overrides', () => {
+    const css = composeReviewReaderCss('large', 'sans')
+
+    expect(css).toContain('--review-font-scale: 1.15')
+    expect(css).toContain('var(--review-base-font-size)')
+    expect(css).toContain(
+      'font-family: Inter, ui-sans-serif, system-ui, sans-serif !important',
+    )
+    expect(css).toContain('height: 100vh')
+    expect(css).toContain('[data-review-page-content]')
+    expect(css).not.toContain('columns:')
+    expect(css).toContain('overflow-y: auto')
+    expect(css).toContain('overflow-x: hidden')
+    expect(css).toContain('overflow-wrap: anywhere !important')
+    expect(css).toContain('white-space: normal !important')
+  })
+
+  it('exposes phone, tablet, and orientation controls in review mode', () => {
+    const markup = renderToStaticMarkup(
+      <EpubRenditionPreview
+        epubs={[profiled('mobile')]}
+        selectedProfileId="mobile"
+        reviewMode
+      />,
+    )
+
+    expect(markup).toContain('aria-label="EPUB viewport controls"')
+    expect(markup).toContain('<select aria-label="Viewport size">')
+    expect(markup).toContain('Phone')
+    expect(markup).toContain('Tablet')
+    expect(markup).toContain('reMarkable Paper Pro Move')
+    expect(markup).toContain('reMarkable Paper Pro')
+    expect(markup).toContain('<select aria-label="Orientation">')
+    expect(markup).toContain('<select aria-label="Font size">')
+    expect(markup).toContain('<select aria-label="Font family">')
+    expect(markup).toContain('Portrait')
+    expect(markup).toContain('Landscape')
+    expect(markup).toContain('Small')
+    expect(markup).toContain('Default')
+    expect(markup).toContain('Large')
+    expect(markup).toContain('XL')
+    expect(markup).toContain('Publisher')
+    expect(markup).toContain('Serif')
+    expect(markup).toContain('Sans')
+    expect(markup).toContain('aria-label="EPUB page navigation"')
+    expect(markup).toContain('← Previous page')
+    expect(markup).toContain('Next page →')
+    expect(markup).toContain('EPUB page 1 of 1')
+    expect(markup).not.toContain(
+      'Citation and cross-reference targets will be highlighted here.',
+    )
+    expect(markup).toContain('390')
+    expect(markup).toContain('844')
+    expect(markup).toContain('CSS px · scaled preview')
+    expect(markup).toContain('data-review-viewport="phone"')
+    expect(markup).toContain('data-review-orientation="portrait"')
+    expect(markup).toContain('data-review-font-size="default"')
+    expect(markup).toContain('data-review-font-family="publisher"')
+    expect(markup).toContain(
+      'class="epub-rendition-preview epub-rendition-preview--review"',
+    )
+  })
+
+  it('accepts only decodable same-document navigation targets', () => {
+    expect(internalPreviewTargetId('#bibliography-entry-2')).toBe(
+      'bibliography-entry-2',
+    )
+    expect(internalPreviewTargetId('#entry%202')).toBe('entry 2')
+    expect(internalPreviewTargetId('https://example.test/#entry-2')).toBeNull()
+    expect(internalPreviewTargetId('#%E0%A4%A')).toBeNull()
+  })
+
   it('describes an external link as an inert, focusable semantic receipt', () => {
     expect(
       buildExternalLinkReceipt('https://example.com/source', 'Source paper'),

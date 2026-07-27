@@ -267,6 +267,52 @@ describe('PDF visual association graph', () => {
     ])
   })
 
+  it('promotes a dedicated bold figure label misclassified as body text', async () => {
+    const sourceBox = box(0.2, 0.08, 0.6, 0.2)
+    const sourceObjectId = 'body-caption-source'
+    const caption: PdfPageRegion = textRegion(
+      'body-caption',
+      'Fig. 2 System Architecture for AI-Driven Risk Management',
+      box(0.2, 0.32, 0.6, 0.03),
+    )
+    caption.lines[0].runs[0].bold = true
+
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          [
+            {
+              id: sourceObjectId,
+              page: 1,
+              kind: 'image',
+              box: sourceBox,
+              confidence: 1,
+              assetId: `asset-${sourceObjectId}`,
+              role: 'semantic',
+            },
+          ],
+          1,
+          [sourcePreservedSvgAsset(sourceObjectId, sourceBox)],
+        ),
+      ],
+      regions: [
+        objectRegion('body-caption-object', sourceObjectId, sourceBox),
+        caption,
+      ],
+    })
+
+    expect(caption.kind).toBe('caption')
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        kind: 'figure',
+        label: 'Figure 2',
+        status: 'matched',
+        captionRegionId: caption.id,
+        sourceObjectIds: [sourceObjectId],
+      }),
+    ])
+  })
+
   it('surfaces an unresolved relationship for an explicit caption with an unparseable label', async () => {
     const sourceBox = box(0.2, 0.08, 0.6, 0.2)
     const sourceObjectId = 'unparseable-label-source'
@@ -9740,6 +9786,107 @@ function preformattedCropRasterizer() {
 }
 
 describe('PDF preformatted source blocks', () => {
+  it('preserves proportional-font pseudocode as an exact source crop', async () => {
+    const introducer = preformattedTestRegion('pseudocode-introducer', 1, [
+      {
+        text: "Here's a simple example of pseudocode demonstrating how a smart contract could work:",
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.28,
+      },
+    ])
+    const pseudocode = preformattedTestRegion('pseudocode', 1, [
+      {
+        text: 'contract ArbitrageAI {',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.33,
+      },
+      {
+        text: 'DataAnalyzer dataAnalyzer; // AI module for data analysis',
+        fontName: 'NimbusRomNo9L-Regu',
+        x: 0.21,
+        y: 0.35,
+      },
+      {
+        text: 'PriceFeed priceFeed; // Interface for real time price data',
+        fontName: 'NimbusRomNo9L-Regu',
+        x: 0.21,
+        y: 0.37,
+      },
+      {
+        text: 'function Arbitrage public() {',
+        fontName: 'NimbusRomNo9L-Regu',
+        x: 0.21,
+        y: 0.39,
+      },
+      {
+        text: 'MarketTrends trends = dataAnalyzer.AnalyzeMarket();',
+        fontName: 'NimbusRomNo9L-Regu',
+        x: 0.24,
+        y: 0.41,
+      },
+    ])
+    const following = preformattedTestRegion('pseudocode-following', 1, [
+      {
+        text: 'The example illustrates how the integration can operate.',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.46,
+      },
+    ])
+    const rasterizeFigure = preformattedCropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [following, pseudocode, introducer],
+      rasterizeFigure,
+    })
+    const relationship = result
+      .relationships[0] as (typeof result.relationships)[number] & {
+      semanticKind?: string
+      preformatted?: { status: string; lines: unknown[] }
+    }
+
+    expect(result.relationships).toHaveLength(1)
+    expect(relationship).toMatchObject({
+      semanticKind: 'code',
+      status: 'matched',
+      captionRegionId: introducer.id,
+      preformatted: {
+        status: 'proved',
+        lines: [
+          expect.objectContaining({
+            text: 'contract ArbitrageAI {',
+            indentColumns: 0,
+          }),
+          expect.objectContaining({
+            text: 'DataAnalyzer dataAnalyzer; // AI module for data analysis',
+            indentColumns: 2,
+          }),
+          expect.objectContaining({
+            text: 'PriceFeed priceFeed; // Interface for real time price data',
+            indentColumns: 2,
+          }),
+          expect.objectContaining({
+            text: 'function Arbitrage public() {',
+            indentColumns: 2,
+          }),
+          expect.objectContaining({
+            text: 'MarketTrends trends = dataAnalyzer.AnalyzeMarket();',
+            indentColumns: 4,
+          }),
+        ],
+      },
+      evidence: expect.arrayContaining([
+        'explicit-preformatted-introducer',
+        'exact-single-run-line-text',
+        'source-geometry-indentation',
+        'source-page-crop',
+      ]),
+    })
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    expect(result.consumedRegionIds.has(pseudocode.id)).toBe(true)
+    expect(result.consumedRegionIds.has(following.id)).toBe(false)
+  })
+
   it('preserves exact single-run monospaced source lines in deterministic page order', async () => {
     const opening = preformattedTestRegion('prompt-opening', 1, [
       {

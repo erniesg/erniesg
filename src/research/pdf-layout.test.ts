@@ -12704,6 +12704,44 @@ describe('PDF semantic reconstruction', () => {
     )
   })
 
+  it('joins a source-contiguous numeric continuation after an incomplete prose boundary', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Numeric prose continuity', 0.1, 0.04, 0.8, 18),
+          run(1, '1 Introduction', 0.1, 0.14, 0.3, 14),
+          run(
+            1,
+            'We evaluated the system on a challenge set of',
+            0.1,
+            0.28,
+            0.39,
+          ),
+          run(
+            1,
+            '178 enterprise bugs and recorded the outcomes.',
+            0.1,
+            0.315,
+            0.39,
+          ),
+        ]),
+      ],
+      sourceHash: '4'.repeat(64),
+      fileName: 'numeric-prose-continuation.pdf',
+      byteLength: 4096,
+      metadata: { title: 'Numeric prose continuity' },
+    })
+    const joined = result.paper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.text.startsWith('We evaluated the system'),
+    )
+
+    expect(joined).toMatchObject({
+      text: 'We evaluated the system on a challenge set of 178 enterprise bugs and recorded the outcomes.',
+    })
+  })
+
   it('preserves a source-proven hard hyphen without inventing cross-page whitespace', async () => {
     const result = await reconstructPageAnalyses({
       pages: [

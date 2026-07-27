@@ -2228,6 +2228,53 @@ describe('PDF run grouping', () => {
     expect(overlapping[0].text).toContain('overlapping source layer')
   })
 
+  it('keeps unrelated same-baseline runs apart when their boxes cross a central gutter', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      width: number,
+      y = 0.4,
+    ): PdfSourceRun => ({
+      page: 1,
+      text,
+      x,
+      y,
+      width,
+      height: 0.013,
+      fontSize: 10,
+      fontName: 'Synthetic-Regular',
+      rotation: 0,
+      method: 'pdf-text',
+      confidence: 1,
+    })
+    const runs = [
+      sourceRun('Horizontal axis label (n=19)', 0.08, 0.31),
+      sourceRun('continuation begins here.', 0.56, 0.34),
+      sourceRun('Small-print footer fragment.', 0.08, 0.31, 0.5),
+      sourceRun('another column begins here.', 0.56, 0.34, 0.5),
+    ]
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: runs.reduce((total, run) => total + run.text.length, 0),
+      imageCount: 0,
+      objects: [],
+      runs,
+    }
+
+    expect(groupRunsIntoLines(page).map((candidate) => candidate.text)).toEqual(
+      [
+        'Horizontal axis label (n=19)',
+        'continuation begins here.',
+        'Small-print footer fragment.',
+        'another column begins here.',
+      ],
+    )
+  })
+
   it('honors a proven page gutter when opposite-column prose aligns with a bold heading', () => {
     const sourceRun = (
       text: string,
@@ -2308,6 +2355,20 @@ describe('PDF run grouping', () => {
           'Synthetic-Regular',
         ),
         sourceRun('3.2 Draft Module', 0.514, 0.3029, 0.149, 'Synthetic-Medi'),
+        sourceRun(
+          'Percentage of tasks solved (total=19)',
+          0.119,
+          0.35,
+          0.37,
+          'Synthetic-Regular',
+        ),
+        sourceRun(
+          'they measured representational similarity.',
+          0.504,
+          0.35,
+          0.37,
+          'Synthetic-Regular',
+        ),
       ],
     }
 
@@ -2315,6 +2376,8 @@ describe('PDF run grouping', () => {
       expect.arrayContaining([
         'output in conjunction with our planning and revi-',
         '3.2 Draft Module',
+        'Percentage of tasks solved (total=19)',
+        'they measured representational similarity.',
       ]),
     )
     expect(

@@ -45,6 +45,24 @@ npm run build
 npm run preview
 ```
 
+### PDF → EPUB human-review feedback
+
+The 20-paper review queue always writes a versioned, hash-bound receipt to
+browser storage and can export it as JSON. To additionally collate criterion
+labels in a local append-only log and optionally mirror them to Langfuse:
+
+```bash
+PUBLIC_PDF_REVIEW_SINK_URL=http://127.0.0.1:4319/events \
+  npm run dev -- --host 127.0.0.1 --port 1234
+
+npm run pdf:review-sink
+```
+
+The trusted sink reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and
+optional `LANGFUSE_BASE_URL` from its process environment. Those secrets never
+enter the browser bundle. Langfuse is an analysis mirror; the exported
+hash-bound receipt remains the review authority used by Rucksack.
+
 ## Content Model
 
 Blog posts live under `src/content/blog`.

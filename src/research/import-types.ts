@@ -464,6 +464,7 @@ export type PdfVisualMatchCandidate = {
 
 export type PdfPreformattedSourceLine = {
   text: string
+  indentColumns?: number
   sourceRegionId: string
   sourceLineId: string
   sourceBox: NormalizedSourceBox
@@ -581,6 +582,7 @@ export type ReconstructionDiagnostic = {
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
     | 'INCOMPLETE_RELATIONSHIP_COVERAGE'
+    | 'INCOMPLETE_SEMANTIC_TABLE_COVERAGE'
     | 'UNRESOLVED_EQUATION_TRANSCRIPT'
     | 'UNRESOLVED_ALGORITHM_BLOCK'
     | 'UNRESOLVED_ALGORITHM_TRANSCRIPT'

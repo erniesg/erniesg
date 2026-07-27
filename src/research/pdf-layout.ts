@@ -677,6 +677,7 @@ function markedCollectiveAuthorName(
 
 function authorNamesFromBlock(block: RegionBlock) {
   const names: string[] = []
+  const authorLineTexts: string[] = []
   let peerAuthorFontSize = 0
   for (const line of block.region.lines) {
     if (
@@ -687,6 +688,7 @@ function authorNamesFromBlock(block: RegionBlock) {
       if (collective) names.push(collective)
       break
     }
+    authorLineTexts.push(line.text.trim())
     const lineNames = authorNamesFromLine(line.text)
     const runNames = line.runs.flatMap((run) => authorNamesFromLine(run.text))
     const selectedNames =
@@ -696,7 +698,14 @@ function authorNamesFromBlock(block: RegionBlock) {
       peerAuthorFontSize = Math.max(peerAuthorFontSize, line.fontSize)
     }
   }
-  return [...new Set(names)]
+  // Author lists commonly wrap a person's given name and family name across
+  // two centered PDF lines. Parsing each line independently loses that person
+  // (for example, "Pradyumna" / "Shukla³"), so also parse the visible author
+  // lines as one source-ordered string.
+  const joinedLineNames = authorNamesFromLine(
+    authorLineTexts.filter(Boolean).join(' '),
+  )
+  return [...new Set([...names, ...joinedLineNames])]
 }
 
 function inferredAuthors(blocks: RegionBlock[]) {
@@ -1112,7 +1121,10 @@ function splitLeadingOrdinalHeadings(
     const bodyWidth = Math.max(...bodyLines.map((line) => line.box.width))
     if (headingLine.box.width >= bodyWidth - 0.01) continue
 
-    const replay = replayPdfRegionLineRanges(block.region, lineBoundaryDecisions)
+    const replay = replayPdfRegionLineRanges(
+      block.region,
+      lineBoundaryDecisions,
+    )
     const headingRange = replay?.ranges.get(headingLine.id)
     const bodyStart = replay?.ranges.get(bodyLines[0].id)
     const bodyEnd = replay?.ranges.get(bodyLines.at(-1)!.id)
@@ -1227,11 +1239,91 @@ function inferredUnlabelledAbstractBlocks(
     : []
 }
 
+// Compact publisher front matter can place keywords and the publication
+// citation in one geometric region even though the labelled citation begins a
+// new source block. Preserve that explicit line boundary instead of emitting a
+// single run-on paragraph in reflowable output.
+function splitEmbeddedPublicationReference(
+  blocks: RegionBlock[],
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+) {
+  for (const [blockIndex, block] of [...blocks.entries()].reverse()) {
+    if (
+      block.type !== 'paragraph' ||
+      block.sourceSegments ||
+      block.region.page !== 1 ||
+      block.region.lines.length < 2
+    ) {
+      continue
+    }
+    const boundaryIndex = block.region.lines.findIndex(
+      (line, index) =>
+        index > 0 && /^ACM\s+Reference\s+Format\s*:/iu.test(line.text.trim()),
+    )
+    if (boundaryIndex < 1) continue
+    const leadingLines = block.region.lines.slice(0, boundaryIndex)
+    const referenceLines = block.region.lines.slice(boundaryIndex)
+    const replay = replayPdfRegionLineRanges(
+      block.region,
+      lineBoundaryDecisions,
+    )
+    const leadingStart = replay?.ranges.get(leadingLines[0].id)
+    const leadingEnd = replay?.ranges.get(leadingLines.at(-1)!.id)
+    const referenceStart = replay?.ranges.get(referenceLines[0].id)
+    const referenceEnd = replay?.ranges.get(referenceLines.at(-1)!.id)
+    if (
+      !replay ||
+      replay.text !== block.text ||
+      !leadingStart ||
+      !leadingEnd ||
+      !referenceStart ||
+      !referenceEnd
+    ) {
+      continue
+    }
+    const sourceRegion = block.region
+    const fragment = (
+      lines: PdfPageRegion['lines'],
+      start: number,
+      end: number,
+    ): RegionBlock => {
+      const text = block.text.slice(start, end)
+      const evidenceRegion: PdfPageRegion = {
+        ...sourceRegion,
+        box: boxForRegionLines(lines),
+        lines,
+        text,
+      }
+      return {
+        ...block,
+        region: evidenceRegion,
+        text,
+        sourceSegments: [
+          {
+            region: sourceRegion,
+            evidenceRegion,
+            sourceStart: start,
+            canonicalStart: 0,
+            text,
+          },
+        ],
+      }
+    }
+    blocks.splice(
+      blockIndex,
+      1,
+      fragment(leadingLines, leadingStart.start, leadingEnd.end),
+      fragment(referenceLines, referenceStart.start, referenceEnd.end),
+    )
+  }
+}
+
 function classifyFrontMatter(
   blocks: RegionBlock[],
   metadataTitle: string | undefined,
   lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
 ) {
+  splitEmbeddedPublicationReference(blocks, lineBoundaryDecisions)
   splitLeadingFrontMatterAffiliationFromProse(blocks, lineBoundaryDecisions)
   splitFrontMatterAffiliationContact(blocks, lineBoundaryDecisions)
   const firstPage = blocks.filter((block) => block.region.page === 1)
@@ -2577,7 +2669,22 @@ function likelyUnmarkedCrossPageContinuation(
     (/^\p{Ll}/u.test(continuationText) ||
       detachedScholarlyReferenceContinuation(previousText, continuationText) ||
       detachedCitationYearContinuation(previousText, continuationText) ||
+      detachedNumericProseContinuation(previousText, continuationText) ||
       detachedDashProseContinuation(previousText, continuationText)),
+  )
+}
+
+function detachedNumericProseContinuation(
+  previousText: string,
+  continuationText: string,
+) {
+  return (
+    /\b(?:a|an|the|of|for|from|with|without|among|between|over|under|by|than|approximately|about|around|nearly|roughly|exactly|includes?|including|contains?|containing|comprises?|comprising)\s*$/iu.test(
+      previousText.trimEnd(),
+    ) &&
+    /^\d+(?:[,.]\d+)*(?:\s*[%×x+-]\s*\d+(?:[,.]\d+)*)?\s+\p{L}/u.test(
+      continuationText.trimStart(),
+    )
   )
 }
 
@@ -3242,7 +3349,8 @@ function mergeProseContinuations(
       const hyphenJoin =
         sourceProvenPageBoundary ||
         sourceProvenColumnBoundary ||
-        sourceProvenFloatBoundary
+        sourceProvenFloatBoundary ||
+        sourceProvenSamePageBoundary
           ? floatInterruptedHyphenJoin(
               target,
               continuation,
@@ -4991,6 +5099,28 @@ function detectAuthorNoteReferences(
         )
         const owner = preceding.at(-1)
         if (!owner) return []
+        const ownerFamilyName = owner.author
+          .split(/\s+/u)
+          .filter(Boolean)
+          .at(-1)
+        const markerOwnedByAuthorLine = block.region.lines.some((line) => {
+          if (
+            !ownerFamilyName ||
+            !line.text.includes(ownerFamilyName) ||
+            line.box.page !== classification.sourceBox.page
+          ) {
+            return false
+          }
+          const overlap = Math.max(
+            0,
+            Math.min(
+              line.box.y + line.box.height,
+              classification.sourceBox.y + classification.sourceBox.height,
+            ) - Math.max(line.box.y, classification.sourceBox.y),
+          )
+          return overlap > 0
+        })
+        if (!markerOwnedByAuthorLine) return []
         const markerPrefix = block.text.slice(owner.end, classification.start)
         if (!/^[\s,;–—\-\d⁰¹²³⁴⁵⁶⁷⁸⁹*∗†‡§]*$/u.test(markerPrefix)) {
           return []
@@ -5057,6 +5187,28 @@ function detectAuthorAffiliationReferences(
           .filter((span) => span.end <= classification.start)
           .at(-1)
         if (!owner) return []
+        const ownerFamilyName = owner.author
+          .split(/\s+/u)
+          .filter(Boolean)
+          .at(-1)
+        const markerOwnedByAuthorLine = block.region.lines.some((line) => {
+          if (
+            !ownerFamilyName ||
+            !line.text.includes(ownerFamilyName) ||
+            line.box.page !== classification.sourceBox.page
+          ) {
+            return false
+          }
+          const overlap = Math.max(
+            0,
+            Math.min(
+              line.box.y + line.box.height,
+              classification.sourceBox.y + classification.sourceBox.height,
+            ) - Math.max(line.box.y, classification.sourceBox.y),
+          )
+          return overlap > 0
+        })
+        if (!markerOwnedByAuthorLine) return []
         const markerPrefix = block.text.slice(owner.end, classification.start)
         if (!/^[\s,;–—\-\d⁰¹²³⁴⁵⁶⁷⁸⁹*∗†‡§]*$/u.test(markerPrefix)) {
           return []
@@ -8604,10 +8756,16 @@ export async function reconstructPageAnalyses({
   const authorResolution = resolvePdfAuthors(sourceAuthors, metadata.author)
   const paperAuthors = authorResolution.authors
   const affiliationLabels = new Set(
-    frontMatter.affiliations.flatMap(
-      (affiliation) =>
-        affiliation.match(/^\s*([\d*∗†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?=\s|\p{L})/u)?.[1] ?? [],
-    ),
+    frontMatter.affiliations.flatMap((affiliation) => {
+      const label = affiliation.match(
+        /^\s*([\d*∗†‡§⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?=\s|\p{L})/u,
+      )?.[1]
+      if (!label) return []
+      const numberedLabel = label.match(/^[\d⁰¹²³⁴⁵⁶⁷⁸⁹]+/u)?.[0]
+      return numberedLabel && numberedLabel !== label
+        ? [label, numberedLabel]
+        : [label]
+    }),
   )
   const authorAffiliations = [
     ...new Map(

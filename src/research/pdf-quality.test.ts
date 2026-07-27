@@ -906,6 +906,9 @@ describe('PDF semantic signal detection', () => {
     expect(assessed.readiness.blockingDiagnosticCodes).not.toContain(
       'UNRESOLVED_SEMANTIC_OBJECTS',
     )
+    expect(assessed.readiness.blockingDiagnosticCodes).toContain(
+      'INCOMPLETE_SEMANTIC_TABLE_COVERAGE',
+    )
   })
 
   it('does not resolve empty, one-cell, or headerless semantic-table claims', () => {

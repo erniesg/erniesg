@@ -15,6 +15,8 @@ vi.mock('./EpubDownloadLink', () => ({ default: () => null }))
 
 import PublicationImporter, {
   EquationTranscriptAdjudicationCard,
+  formatImportElapsed,
+  importProgressIsIndeterminate,
   importErrorCode,
   importErrorMessage,
   isSelectedEpubPreviewReady,
@@ -23,6 +25,27 @@ import PublicationImporter, {
 } from './PublicationImporter'
 
 describe('publication importer OCR controls', () => {
+  it('does not present final structural analysis as fake 100% progress', () => {
+    expect(
+      importProgressIsIndeterminate({
+        phase: 'reconstructing',
+        completed: 231,
+        total: 231,
+        message: 'Rebuilding semantic reading order…',
+      }),
+    ).toBe(true)
+    expect(
+      importProgressIsIndeterminate({
+        phase: 'extracting',
+        completed: 115,
+        total: 231,
+        message: 'Reading page 115…',
+      }),
+    ).toBe(false)
+    expect(formatImportElapsed(4)).toBe('4s elapsed')
+    expect(formatImportElapsed(125)).toBe('2m 05s elapsed')
+  })
+
   it('requires an explicit owner-local LaTeX transcript with no inferred default', () => {
     const markup = renderToStaticMarkup(
       <EquationTranscriptAdjudicationCard
@@ -152,6 +175,14 @@ describe('publication importer OCR controls', () => {
 
     expect(markup).toContain('Up to 50 MiB')
     expect(markup).not.toContain('Up to 75 MB')
+  })
+
+  it('applies the review-mode class as a separate CSS selector', () => {
+    const markup = renderToStaticMarkup(<PublicationImporter reviewMode />)
+
+    expect(markup).toContain(
+      'class="publication-importer publication-importer--review"',
+    )
   })
 
   it('recognizes an outdated Vite dynamic import without exposing its internal URL', () => {

@@ -658,7 +658,19 @@ function crossesProbableColumnGutter(
   horizontalGap: number,
   gutterCenter: number | null,
 ) {
+  const lineCenter = line.x + line.width / 2
+  const runCenter = run.x + run.width / 2
+  const rightSideRun = lineCenter <= runCenter ? run : line.runs.at(-1)
+  const lowercaseContinuationAcrossColumn =
+    gutterCenter !== null &&
+    Math.min(lineCenter, runCenter) < gutterCenter &&
+    Math.max(lineCenter, runCenter) > gutterCenter &&
+    Boolean(rightSideRun) &&
+    probableColumnProseRun(line.runs[0]) &&
+    probableColumnProseRun(run) &&
+    /^\s*\p{Ll}/u.test(rightSideRun!.text)
   if (
+    !lowercaseContinuationAcrossColumn &&
     horizontalGap < Math.max(0.02, Math.min(line.height, run.height) * 0.65)
   ) {
     return false
@@ -685,8 +697,10 @@ function crossesProbableColumnGutter(
   const gapCenter = (leftRight + rightLeft) / 2
   const combinedWidth = Math.max(lineRight, runRight) - Math.min(line.x, run.x)
   return gutterCenter === null
-    ? gapCenter >= 0.35 && gapCenter <= 0.65 && combinedWidth >= 0.55
-    : Math.abs(gapCenter - gutterCenter) <= 0.03
+    ? lowercaseContinuationAcrossColumn ||
+        (gapCenter >= 0.35 && gapCenter <= 0.65 && combinedWidth >= 0.55)
+    : lowercaseContinuationAcrossColumn ||
+        Math.abs(gapCenter - gutterCenter) <= 0.03
 }
 
 function horizontalGap(
@@ -701,8 +715,14 @@ function horizontalGap(
 }
 
 function beginsVisualCaptionText(text: string) {
-  return /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)(?:\s*[.:–—-]|\s)|figure\s*[:.–—-])/i.test(
-    text.trim(),
+  const normalized = text.replace(/\s+/gu, ' ').trim()
+  return (
+    /^(?:(?:fig(?:ure)?|table|eq(?:uation)?)\.?\s*(?:\d+|[ivxlcdm]+)(?:\s*[.:–—-]|\s)|figure\s*[:.–—-])/i.test(
+      normalized,
+    ) ||
+    /^[^.!?;:]{1,72}\s+(?:fig(?:ure)?|table)\.?\s*(?:\d+|[ivxlcdm]+)\s*[.:–—-]\s*\p{Lu}/iu.test(
+      normalized,
+    )
   )
 }
 
@@ -1272,8 +1292,9 @@ function restoreSourceOwnedMathOperators(
 
 export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
   const lines: PdfTextLine[] = []
-  const sourceOrder = new Map(page.runs.map((run, index) => [run, index]))
-  const runs = page.runs
+  const expandedRuns = page.runs
+  const sourceOrder = new Map(expandedRuns.map((run, index) => [run, index]))
+  const runs = expandedRuns
     .filter((run) => run.text.trim())
     .sort((left, right) => left.y - right.y || left.x - right.x)
   const gutterCenter = probableColumnGutterCenter(runs)
@@ -1347,7 +1368,7 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
 
   restoreSourceOwnedMathOperators(
     lines,
-    page.runs.filter((run) => run.text.trim()),
+    expandedRuns.filter((run) => run.text.trim()),
   )
   const sourceOwnedLines = splitSourceOwnedOverprintedColumnLayers(
     lines,

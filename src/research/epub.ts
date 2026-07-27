@@ -55,12 +55,6 @@ export type EpubExportMode = 'publication' | 'readable-fallback'
 const MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL = 16
 const MAX_READABLE_FALLBACK_ASSETS_PER_BOOK = 64
 const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
-const READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE =
-  'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.'
-const READABLE_FALLBACK_INCOMPLETE_MESSAGE =
-  'This readable fallback is incomplete and is not publication-grade.'
-const READABLE_FALLBACK_REVIEW_MESSAGE =
-  'Omitted source visuals and unresolved relationships require review against the source PDF.'
 
 function isCompactScrollableTableImage({
   kind,
@@ -773,39 +767,92 @@ function text(value: string) {
 
 function renderAuthors(paper: ResearchPaper) {
   const authorNotes = renderableAuthorNoteReferences(paper)
+  const numberedAffiliations = (paper.affiliations ?? [])
+    .map((affiliation) =>
+      affiliation.match(/^\s*([\d⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?=\s|\p{L})/u),
+    )
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+  const sharedAuthorNoteTargets = [
+    ...new Set(
+      authorNotes
+        .filter((reference) => paper.authors.includes(reference.author))
+        .map((reference) => reference.target),
+    ),
+  ]
+  const sharedAuthorNote =
+    sharedAuthorNoteTargets.length === 1 &&
+    paper.authors.every((author) =>
+      authorNotes.some(
+        (reference) =>
+          reference.author === author &&
+          reference.target === sharedAuthorNoteTargets[0],
+      ),
+    )
+      ? paper.nodes.find(
+          (node) =>
+            node.type === 'footnote' && node.id === sharedAuthorNoteTargets[0],
+        )
+      : undefined
+  const embeddedAffiliationLabels = [
+    ...new Set(
+      sharedAuthorNote?.type === 'footnote'
+        ? (sharedAuthorNote.inlineRuns ?? [])
+            .filter(
+              (run) =>
+                run.verticalAlign === 'superscript' &&
+                /^\d{1,3}$/u.test(
+                  sharedAuthorNote.text.slice(run.start, run.end).trim(),
+                ),
+            )
+            .map((run) =>
+              sharedAuthorNote.text.slice(run.start, run.end).trim(),
+            )
+        : [],
+    ),
+  ]
+  const sharedAffiliationLabel =
+    numberedAffiliations.length === 1
+      ? numberedAffiliations[0][1]
+      : embeddedAffiliationLabels.length === 1
+        ? embeddedAffiliationLabels[0]
+        : undefined
   return paper.authors
     .map((author) => {
-      const affiliationMarkers = (paper.authorAffiliations ?? [])
+      const authorAffiliationMarkers = (paper.authorAffiliations ?? [])
         .filter((reference) => reference.author === author)
         .map(
           (reference) =>
             `<sup class="author-affiliation-marker">${text(reference.label)}</sup>`,
         )
-        .join('')
+      const affiliationMarkers =
+        authorAffiliationMarkers.length > 0
+          ? authorAffiliationMarkers.join('')
+          : sharedAffiliationLabel
+            ? `<sup class="author-affiliation-marker">${text(sharedAffiliationLabel)}</sup>`
+            : ''
       const references = authorNotes
         .filter((reference) => reference.author === author)
         .map(
           (reference) =>
-            `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${text(reference.label)}</a>`,
+            `<sup class="author-note-marker"><a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${text(reference.label)}</a></sup>`,
         )
         .join('')
-      return `${text(author)}${affiliationMarkers}${references}`
+      return `${text(author)}${references}${affiliationMarkers}`
     })
     .join(', ')
 }
 
 function renderAffiliations(paper: ResearchPaper) {
   return (paper.affiliations ?? [])
-    .map((affiliation, index, affiliations) => {
-      const separator =
-        index === affiliations.length - 1
-          ? ''
-          : /[,;]\s*$/u.test(affiliation)
-            ? ' '
-            : '; '
-      return `${text(affiliation)}${separator}`
+    .map((affiliation) => {
+      const match = affiliation.match(
+        /^\s*([\d⁰¹²³⁴⁵⁶⁷⁸⁹]+[*∗†‡§]?)(?=\s|\p{L})\s*(.*)$/u,
+      )
+      return match
+        ? `<span class="affiliation"><sup class="affiliation-marker">${text(match[1])}</sup>${text(match[2])}</span>`
+        : `<span class="affiliation">${text(affiliation)}</span>`
     })
-    .join('')
+    .join('<br />')
 }
 
 function renderReconstructedByline(paper: ResearchPaper) {
@@ -2064,10 +2111,49 @@ function renderNode(
           visualAsset.mediaType === 'application/xhtml+xml' &&
           visualAsset.kind === 'table',
       )
-      const renderedAssets = provedSourceCode
-        ? `<pre class="source-code" data-whitespace-source="source-lines"><code>${text(
-            visual.preformatted!.lines.map((line) => line.text).join('\n'),
-          )}</code></pre>`
+      const renderedVisualAssets = visualAssets
+        .map((visualAsset) => {
+          const href = attribute(visualAsset.href)
+          const alt = attribute(renderedAltText)
+          if (visualAsset.mediaType === 'application/xhtml+xml') {
+            return `<object data="${href}" type="application/xhtml+xml" aria-label="${alt}" data-alt-source="${renderedAltTextSource}"><p>${text(renderedAltText)}</p></object>`
+          }
+          const width = Math.max(1, Math.round(visualAsset.width))
+          const height = Math.max(1, Math.round(visualAsset.height))
+          const image = `<img src="${href}" width="${width}" height="${height}" loading="eager" decoding="async" alt="${alt}" data-alt-source="${renderedAltTextSource}" data-asset-id="${attribute(visualAsset.id)}" />`
+          const wideSourceVisual =
+            (visual.kind === 'table' &&
+              isCompactScrollableTableImage({
+                ...visualAsset,
+                kind: 'table',
+              })) ||
+            (width / height >= 2 &&
+              visual.kind === 'figure' &&
+              visual.semanticKind !== 'algorithm')
+          return wideSourceVisual
+            ? `<div class="wide-source-visual-frame" data-wide-source-visual="true" data-source-visual-kind="${visual.kind}">${image}</div>`
+            : image
+        })
+        .join('')
+      const hasSourceCodeLines =
+        sourceCode && (visual.preformatted?.lines.length ?? 0) > 0
+      const renderedSourceCode = hasSourceCodeLines
+        ? `<pre class="source-code" data-whitespace-source="source-lines" data-transcript-status="${provedSourceCode ? 'proved' : 'unresolved'}"><code>${visual
+            .preformatted!.lines.map(
+              (line) =>
+                `<span class="source-code-line source-code-indent-${Math.min(
+                  16,
+                  Math.max(0, line.indentColumns ?? 0),
+                )}">${text(line.text)}</span>`,
+            )
+            .join('\n')}</code></pre>`
+        : ''
+      const renderedAssets = hasSourceCodeLines
+        ? `${renderedSourceCode}${
+            provedSourceCode
+              ? ''
+              : `<details class="source-code-image-comparison"><summary>Compare exact source image</summary>${renderedVisualAssets}</details>`
+          }`
         : visual.kind === 'table' && node.table && semanticTableAsset
           ? renderSemanticTable(
               node.table,
@@ -2076,30 +2162,7 @@ function renderNode(
               captionId,
               scholarlyTargetKinds,
             )
-          : visualAssets
-              .map((visualAsset) => {
-                const href = attribute(visualAsset.href)
-                const alt = attribute(renderedAltText)
-                if (visualAsset.mediaType === 'application/xhtml+xml') {
-                  return `<object data="${href}" type="application/xhtml+xml" aria-label="${alt}" data-alt-source="${renderedAltTextSource}"><p>${text(renderedAltText)}</p></object>`
-                }
-                const width = Math.max(1, Math.round(visualAsset.width))
-                const height = Math.max(1, Math.round(visualAsset.height))
-                const image = `<img src="${href}" width="${width}" height="${height}" loading="eager" decoding="async" alt="${alt}" data-alt-source="${renderedAltTextSource}" data-asset-id="${attribute(visualAsset.id)}" />`
-                const wideSourceVisual =
-                  (visual.kind === 'table' &&
-                    isCompactScrollableTableImage({
-                      ...visualAsset,
-                      kind: 'table',
-                    })) ||
-                  (width / height >= 2 &&
-                    visual.kind === 'figure' &&
-                    visual.semanticKind !== 'algorithm')
-                return wideSourceVisual
-                  ? `<div class="wide-source-visual-frame" data-wide-source-visual="true" data-source-visual-kind="${visual.kind}">${image}</div>`
-                  : image
-              })
-              .join('')
+          : renderedVisualAssets
       const sourceEquationCaption =
         visual.kind === 'equation' && visual.altTextSource === 'source-text'
       const sourceTranscript =
@@ -2129,7 +2192,9 @@ function renderNode(
       return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visualObjectType}" role="group"${figureClass}>${renderedAssets}${sourceTranscript}${renderedCaption}</figure>`
     }
     if (omitMissingVisuals) {
-      return `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual" role="note"><p class="omitted-visual-message" data-semantic-ledger-ignore="true">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p>${caption ? `<p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</p>` : ''}</aside>`
+      return caption
+        ? `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual"><p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</p></aside>`
+        : ''
     }
     return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>` : ''}</figure>`
   }
@@ -2380,7 +2445,7 @@ export function renderPublicationXhtml(
                       : `<div class="omitted-visual-transcript"><p>Recovered text inside the unresolved visual:</p><p>${text(unresolvedVisual.sourceText)}</p></div>`
                 : ''
             return unresolvedVisual || omitMissingVisuals
-              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}"${unresolvedAlgorithm ? ' data-object-type="algorithm"' : unresolvedCode ? ' data-object-type="code"' : ''} class="orphan-caption omitted-visual${unresolvedAlgorithm ? ' unresolved-algorithm' : unresolvedCode ? ' unresolved-code' : ''}" role="note"><p class="omitted-visual-message" data-semantic-ledger-ignore="true">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p><p class="omitted-visual-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</p>${unresolvedTranscript}</aside>`
+              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}"${unresolvedAlgorithm ? ' data-object-type="algorithm"' : unresolvedCode ? ' data-object-type="code"' : ''} class="orphan-caption omitted-visual${unresolvedAlgorithm ? ' unresolved-algorithm' : unresolvedCode ? ' unresolved-code' : ''}"><p class="omitted-visual-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</p>${unresolvedTranscript}</aside>`
               : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
           })()
         : renderNode(
@@ -2418,14 +2483,6 @@ export function renderPublicationXhtml(
         <p>${text(paper.abstract)}</p>
       </section>
     </header>`
-  const reconstructionStatus =
-    options.reconstruction && !options.reconstruction.readiness.ready
-      ? `<aside class="reconstruction-status" role="note" aria-label="Reconstruction status">
-      <p>${READABLE_FALLBACK_INCOMPLETE_MESSAGE}</p>
-      <p>${READABLE_FALLBACK_REVIEW_MESSAGE}</p>
-    </aside>`
-      : ''
-
   const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" ${xhtmlLanguageAttributes(paper)}>
@@ -2437,7 +2494,6 @@ export function renderPublicationXhtml(
 <body>
   <main epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
     ${publicationHeader}
-    ${reconstructionStatus}
     ${body}
   </main>
 </body>
@@ -2515,6 +2571,8 @@ main { box-sizing: border-box; width: 100%; max-width: 42rem; margin: 0 auto; pa
 .reconstruction-status > p:first-child { font-weight: 700; }
 .reconstruction-status > p + p { margin-top: 0.35rem; }
 .status, .authors { font-family: sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; }
+.affiliation-marker, .author-affiliation-marker, .author-note-marker { margin-inline-start: 0.08em; line-height: 0; vertical-align: super; }
+.note-backlink ~ .note-backlink { display: none; }
 h1 { font-size: 2.2rem; line-height: 1.05; margin: 0.5rem 0 0.75rem; }
 h2 { font-size: 1.45rem; margin: 2.4rem 0 0.6rem; break-after: avoid; }
 h3 { font-size: 1.15rem; margin: 2rem 0 0.5rem; break-after: avoid; }
@@ -2538,7 +2596,17 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .omitted-table-transcript-source { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .omitted-algorithm-transcript { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
 .source-code { max-width: 100%; margin: 0; overflow-x: auto; padding: 0.8rem; border: 0.06rem solid currentColor; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; }
-.source-code code { font: inherit; white-space: inherit; }
+.source-code code { display: block; font: inherit; white-space: inherit; }
+.source-code-line { display: block; min-height: 1.45em; }
+.source-code[data-transcript-status="unresolved"] { border-style: dashed; }
+.source-code-image-comparison { margin-block-start: 0.55rem; font-size: 0.72rem; }
+.source-code-image-comparison summary { cursor: pointer; font-family: ui-sans-serif, system-ui, sans-serif; }
+.source-code-image-comparison img { margin-block-start: 0.55rem; }
+${Array.from(
+  { length: 17 },
+  (_, indent) =>
+    `.source-code-indent-${indent} { padding-inline-start: ${indent}ch; }`,
+).join('\n')}
 .omitted-code-transcript { max-width: 100%; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; }
 .publication-note { border-top: 0.06rem solid currentColor; font-size: 0.84rem; margin-top: 1rem; padding-top: 0.5rem; }
 .note-label { font-weight: bold; }
@@ -2564,7 +2632,7 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .wide-source-visual-frame { max-width: 100%; overflow: visible; }
 img, svg { display: block; height: auto; max-width: 100%; }
 object { border: 0; display: block; min-height: 8rem; width: 100%; }
-a { color: inherit; text-decoration: underline; }
+a { color: inherit; text-decoration-line: underline; text-decoration-thickness: 0.06em; text-underline-offset: 0.14em; }
 @media (max-width: 30rem) {
   main { padding: 7%; }
   h1 { font-size: 1.8rem; }

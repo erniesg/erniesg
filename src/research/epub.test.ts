@@ -2194,13 +2194,75 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(notePaper)
 
     expect(content).toContain(
-      'Yeyong Yu<sup class="author-affiliation-marker">1</sup><a id="author-noteref-1" href="#author-note-1" epub:type="noteref">*</a>, Runsheng Yu<sup class="author-affiliation-marker">2</sup>',
+      'Yeyong Yu<sup class="author-note-marker"><a id="author-noteref-1" href="#author-note-1" epub:type="noteref">*</a></sup><sup class="author-affiliation-marker">1</sup>, Runsheng Yu<sup class="author-affiliation-marker">2</sup>',
     )
     expect(content).toContain(
-      '<p class="affiliations">1 Example University, 2 Example Laboratory</p>',
+      '<p class="affiliations"><span class="affiliation"><sup class="affiliation-marker">1</sup>Example University,</span><br /><span class="affiliation"><sup class="affiliation-marker">2</sup>Example Laboratory</span></p>',
     )
     expect(content).not.toContain('University,;')
     expect(content).toContain('href="#author-noteref-1"')
+  })
+
+  it('applies one shared numbered affiliation to every author when explicit author mappings are absent', () => {
+    const sharedAffiliationPaper = structuredClone(paper)
+    sharedAffiliationPaper.authors = ['Minyoung Huh', 'Brian Cheung']
+    sharedAffiliationPaper.authorAffiliations = []
+    sharedAffiliationPaper.affiliations = [
+      '1 Massachusetts Institute of Technology',
+    ]
+
+    const content = renderPublicationXhtml(sharedAffiliationPaper)
+
+    expect(content).toContain(
+      'Minyoung Huh<sup class="author-affiliation-marker">1</sup>, Brian Cheung<sup class="author-affiliation-marker">1</sup>',
+    )
+  })
+
+  it('recovers a shared affiliation marker embedded in a common symbolic author note', () => {
+    const sharedNotePaper = structuredClone(paper)
+    sharedNotePaper.authors = ['Minyoung Huh', 'Brian Cheung']
+    sharedNotePaper.authorAffiliations = []
+    sharedNotePaper.affiliations = []
+    sharedNotePaper.authorNotes = sharedNotePaper.authors.map(
+      (author, index) => ({
+        id: `shared-note-reference-${index + 1}`,
+        author,
+        label: '*',
+        target: 'shared-author-note',
+      }),
+    )
+    const noteText = 'Equal contribution 1MIT. Correspondence to: Minyoung Huh.'
+    const markerStart = noteText.indexOf('1')
+    sharedNotePaper.nodes = [
+      {
+        id: 'shared-author-note',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '*',
+        text: noteText,
+        inlineRuns: [
+          {
+            start: markerStart,
+            end: markerStart + 1,
+            verticalAlign: 'superscript',
+          },
+        ],
+        relationships: {
+          backlinks: sharedNotePaper.authorNotes.map(
+            (reference) => reference.id,
+          ),
+        },
+        source: 'synthetic-shared-author-note',
+      },
+    ]
+
+    const content = renderPublicationXhtml(sharedNotePaper)
+
+    expect(content).toContain('Minyoung Huh<sup class="author-note-marker">')
+    expect(content).toContain(
+      '</a></sup><sup class="author-affiliation-marker">1</sup>',
+    )
+    expect(content).toContain('Brian Cheung<sup class="author-note-marker">')
   })
 
   it('renders a reconstructed byline immediately after its canonical title so author-note backlinks resolve', () => {
@@ -2248,7 +2310,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(notePaper, { reconstruction })
 
     expect(content).toContain(
-      'Yeyong Yu<a id="reconstructed-author-noteref-1" href="#reconstructed-author-note-1" epub:type="noteref">*</a>, Runsheng Yu',
+      'Yeyong Yu<sup class="author-note-marker"><a id="reconstructed-author-noteref-1" href="#reconstructed-author-note-1" epub:type="noteref">*</a></sup>, Runsheng Yu',
     )
     expect(content).toContain('href="#reconstructed-author-noteref-1"')
     expect(content.indexOf('id="canonical-title-node"')).toBeLessThan(
@@ -3753,13 +3815,13 @@ describe('EPUB 3 export', () => {
     )
     expect(content).not.toContain('<title>Publication</title>')
     expect(content.match(/Readable text must still flow/g)).toHaveLength(2)
-    expect(content).toContain(
+    expect(content).not.toContain(
       'This readable fallback is incomplete and is not publication-grade.',
     )
-    expect(content).toContain(
+    expect(content).not.toContain(
       'Omitted source visuals and unresolved relationships require review against the source PDF.',
     )
-    expect(content).toContain('class="reconstruction-status" role="note"')
+    expect(content).not.toContain('class="reconstruction-status"')
     expect(content).not.toContain('class="publication-header"')
     expect(content).not.toContain('class="reconstructed-header"')
     expect(content).not.toContain('class="reconstructed-header"')
@@ -4534,10 +4596,31 @@ describe('EPUB 3 export', () => {
     expect(content).toContain('data-object-type="code"')
     expect(content).toContain('class="source-code-figure"')
     expect(content).toContain(
-      '<pre class="source-code" data-whitespace-source="source-lines"><code>GET /Patient?name=a&amp;format=json\nPOST /Patient\n{functions}</code></pre>',
+      '<pre class="source-code" data-whitespace-source="source-lines" data-transcript-status="proved"><code><span class="source-code-line source-code-indent-0">GET /Patient?name=a&amp;format=json</span>\n<span class="source-code-line source-code-indent-0">POST /Patient</span>\n<span class="source-code-line source-code-indent-0">{functions}</span></code></pre>',
     )
     expect(content).not.toContain('<img ')
     expect(content).not.toContain('class="visual-source-transcript"')
+
+    const unresolvedContent = renderPublicationXhtml(codePaper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            ...relationship,
+            preformatted: {
+              ...relationship.preformatted!,
+              status: 'unresolved',
+            },
+          },
+        ],
+        assets,
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+    expect(unresolvedContent).toContain('data-transcript-status="unresolved"')
+    expect(unresolvedContent).toContain(
+      '<details class="source-code-image-comparison"><summary>Compare exact source image</summary>',
+    )
+    expect(unresolvedContent).toContain('<img ')
   })
 
   it('serializes a failed code crop only as an explicitly unresolved transcript', () => {
@@ -4661,7 +4744,7 @@ describe('EPUB 3 export', () => {
     })
 
     expect(content).toContain('class="orphan-caption omitted-visual"')
-    expect(content).toContain(
+    expect(content).not.toContain(
       'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.',
     )
     expect(content).toContain(
@@ -4697,7 +4780,7 @@ describe('EPUB 3 export', () => {
     })
 
     expect(content).toContain('class="orphan-caption omitted-visual"')
-    expect(content).toContain(
+    expect(content).not.toContain(
       'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.',
     )
     expect(content).toContain(

@@ -263,7 +263,16 @@ export function safePdfExternalLinkTarget(value: string) {
   // URLs. Emitting the repaired target would silently change source meaning.
   if (/[\u0000-\u0020\u007f\\]/u.test(value)) return false
   try {
-    return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
+    const target = new URL(value)
+    if (!['http:', 'https:', 'mailto:'].includes(target.protocol)) return false
+    if (target.hostname.toLocaleLowerCase() === 'doi.org') {
+      const doi = decodeURIComponent(target.pathname).replace(/^\/+/u, '')
+      const match = doi.match(/^10\.\d{4,9}\/(.+)$/u)
+      if (!match) return false
+      const suffix = match[1].replace(/[._-]/gu, '')
+      if (/^(?:n+|x+|0+)$/iu.test(suffix)) return false
+    }
+    return true
   } catch {
     return false
   }

@@ -9,6 +9,7 @@ import {
   detectHierarchicalTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
+  detectWrappedHeaderTableWithinProvenScope,
 } from './pdf-table-detection'
 
 function box(
@@ -621,16 +622,13 @@ describe('bounded table region detection', () => {
     const table = region('hierarchical-table', 'body', 0.2, lines, 'span')
     table.box = box(0.1, 0.2, 0.64, 0.13)
     const scope = {
-      direction: 'above' as const,
+      direction: 'below' as const,
       sourceRegionIds: [table.id],
       sourceLineIds: lines.map((sourceLine) => sourceLine.id),
-      evidence: [{ code: 'multi-run-tabular-line-band' }],
+      evidence: [{ code: 'contiguous-tabular-slab' }],
     }
 
-    const detected = detectHierarchicalTableWithinProvenScope(
-      [table],
-      scope,
-    )
+    const detected = detectHierarchicalTableWithinProvenScope([table], scope)
 
     expect(detected).toMatchObject({
       columnCount: 6,
@@ -647,6 +645,71 @@ describe('bounded table region detection', () => {
     ])
   })
 
+  it('keeps wrapped header continuations as exact semantic header cells', () => {
+    const header = line('header', 0.2, [0.1, 0.22, 0.34, 0.46, 0.58, 0.7])
+    ;['Split', 'Not Check-', 'Check-', 'True', 'False', 'Total'].forEach(
+      (text, index) => {
+        header.runs[index].text = text
+      },
+    )
+    header.text = header.runs.map((run) => run.text).join(' ')
+    const continuation = line(
+      'header-continuation',
+      0.23,
+      [0.22, 0.34, 0.46, 0.58],
+    )
+    ;['worthy', 'worthy', 'Claims', 'Claims'].forEach((text, index) => {
+      continuation.runs[index].text = text
+    })
+    continuation.text = continuation.runs.map((run) => run.text).join(' ')
+    const body = ['Train', 'Dev', 'Test'].map((label, rowIndex) => {
+      const sourceLine = line(
+        `body-${rowIndex + 1}`,
+        0.26 + rowIndex * 0.03,
+        [0.1, 0.22, 0.34, 0.46, 0.58, 0.7],
+      )
+      sourceLine.runs.forEach((run, columnIndex) => {
+        run.text =
+          columnIndex === 0 ? label : String((rowIndex + 1) * 10 + columnIndex)
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const table = region(
+      'wrapped-header-table',
+      'body',
+      0.2,
+      [header, continuation, ...body],
+      'span',
+    )
+    const detected = detectWrappedHeaderTableWithinProvenScope([table], {
+      direction: 'below',
+      sourceRegionIds: [table.id],
+      sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'repeated-column-anchors' },
+      ],
+    })
+
+    expect(detected).toMatchObject({
+      columnCount: 6,
+      headerRowCount: 2,
+      evidence: expect.arrayContaining(['semantic-header-wrapped-geometry']),
+    })
+    expect(detected?.lines[0].cells).toMatchObject([
+      { columnIndex: 0, rowSpan: 2 },
+      { columnIndex: 1, rowSpan: 1 },
+      { columnIndex: 2, rowSpan: 1 },
+      { columnIndex: 3, rowSpan: 1 },
+      { columnIndex: 4, rowSpan: 1 },
+      { columnIndex: 5, rowSpan: 2 },
+    ])
+    expect(detected?.lines[1].cells.map((cell) => cell.columnIndex)).toEqual([
+      1, 2, 3, 4,
+    ])
+  })
+
   it('does not split one merged PDF run into invented hierarchical header cells', () => {
     const mergedHeader = line('merged-header', 0.2, [0.1, 0.3])
     mergedHeader.runs[0].text = 'LLM'
@@ -657,9 +720,11 @@ describe('bounded table region detection', () => {
     }
     mergedHeader.text = mergedHeader.runs.map((run) => run.text).join(' ')
     const bodyLines = [0.23, 0.26, 0.29].map((y, rowIndex) => {
-      const body = line(`merged-body-${rowIndex + 1}`, y, [
-        0.1, 0.3, 0.4, 0.5, 0.6,
-      ])
+      const body = line(
+        `merged-body-${rowIndex + 1}`,
+        y,
+        [0.1, 0.3, 0.4, 0.5, 0.6],
+      )
       body.runs[0].text = `Model ${rowIndex + 1}`
       body.runs.slice(1).forEach((run, columnIndex) => {
         run.text = `${rowIndex + 1}.${columnIndex + 1}`

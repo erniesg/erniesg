@@ -210,6 +210,28 @@ describe('deterministic scholarly page regions', () => {
     ])
   })
 
+  it('classifies a visual caption that follows a short embedded diagram label', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(
+          1,
+          'UMAP of model representations Figure 2. VISION models converge as COMPETENCE increases.',
+          0.1,
+          0.2,
+          0.72,
+          9,
+        ),
+      ]),
+    ])
+
+    expect(result.regions).toEqual([
+      expect.objectContaining({
+        kind: 'caption',
+        text: 'UMAP of model representations Figure 2. VISION models converge as COMPETENCE increases.',
+      }),
+    ])
+  })
+
   it('recognizes an attached symbolic footnote marker', () => {
     expect(noteLabelFromText('*Work done during the internship.')).toBe('*')
   })
@@ -1932,19 +1954,21 @@ describe('deterministic scholarly page regions', () => {
         (node) => node.type === 'figure' && node.objectType === 'table',
       ),
     ).toBe(false)
-    expect(
-      result.paper.nodes.filter(
-        (node) =>
-          node.type === 'paragraph' && /(?:Key|Value|A|B|1|2)/.test(node.text),
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ text: 'Key' }),
-        expect.objectContaining({ text: 'Value A' }),
-        expect.objectContaining({ text: '1 B' }),
-        expect.objectContaining({ text: '2' }),
-      ]),
-    )
+    const visibleFallbackText = result.paper.nodes
+      .flatMap((node) =>
+        node.type === 'paragraph' && /(?:Key|Value|A|B|1|2)/.test(node.text)
+          ? [node.text]
+          : [],
+      )
+      .join(' ')
+    expect(visibleFallbackText.match(/\b(?:Key|Value|A|B|1|2)\b/gu)).toEqual([
+      'Key',
+      'Value',
+      'A',
+      '1',
+      'B',
+      '2',
+    ])
     expect(result.visualRelationships).toEqual([
       expect.objectContaining({
         kind: 'table',
@@ -2244,6 +2268,123 @@ describe('deterministic scholarly page regions', () => {
     expect(canonicalText).toEqual([
       'The introduction begins as continuous prose and reaches this vibrant research continues without intervening page furniture.',
     ])
+  })
+
+  it('excludes geometrically isolated first-page small print from two-column prose flow', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'systems support a large range of tasks, including robotics (Driess et al., 2023; Brohan',
+          0.08,
+          0.6,
+          0.4,
+          10,
+        ),
+        run(
+          1,
+          'et al., 2023), bioinformatics and health-care.',
+          0.54,
+          0.14,
+          0.38,
+          10,
+        ),
+        run(
+          1,
+          'Workshop publication metadata and venue details',
+          0.08,
+          0.82,
+          0.58,
+          8,
+          0.011,
+        ),
+        run(
+          1,
+          'Right-column prose continues independently.',
+          0.7,
+          0.827,
+          0.22,
+          10,
+        ),
+        run(
+          1,
+          'Volume information, publication date, and rights statement.',
+          0.16,
+          0.836,
+          0.62,
+          8,
+          0.011,
+        ),
+        run(1, 'Another right-column line follows.', 0.7, 0.845, 0.22, 10),
+      ]),
+    ])
+
+    const imprintRegions = result.regions.filter((region) =>
+      /(?:publication metadata|Volume information)/u.test(region.text),
+    )
+    expect(imprintRegions.length).toBeGreaterThan(0)
+    expect(
+      imprintRegions.every(
+        (region) =>
+          region.kind === 'footer' && region.includedInReadingOrder === false,
+      ),
+    ).toBe(true)
+    expect(
+      result.paper.nodes
+        .map((node) => ('text' in node ? node.text : ''))
+        .join(' '),
+    ).not.toContain('Workshop publication metadata')
+  })
+
+  it('keeps a complete chart-axis label out of neighboring prose', async () => {
+    const result = await reconstruct([
+      page(
+        2,
+        [
+          run(2, 'Horizontal measure (sample=19)', 0.08, 0.54, 0.34, 8),
+          run(
+            2,
+            'neighboring prose continues in the other column.',
+            0.54,
+            0.54,
+            0.38,
+            10,
+          ),
+        ],
+        [
+          {
+            id: 'vector-chart',
+            page: 2,
+            kind: 'vector',
+            box: {
+              page: 2,
+              x: 0.06,
+              y: 0.2,
+              width: 0.4,
+              height: 0.38,
+              rotation: 0,
+              method: 'pdf-object',
+            },
+            confidence: 1,
+            assetId: null,
+            role: 'semantic',
+          },
+        ],
+      ),
+    ])
+
+    expect(
+      result.regions.some(
+        (region) =>
+          region.kind === 'chart-label' &&
+          region.text === 'Horizontal measure (sample=19)',
+      ),
+    ).toBe(true)
+    expect(
+      result.paper.nodes
+        .map((node) => ('text' in node ? node.text : ''))
+        .join(' '),
+    ).toContain('neighboring prose continues in the other column.')
   })
 
   it('separates publication status while retaining notes, captions, and bottom prose', () => {

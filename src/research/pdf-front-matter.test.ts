@@ -48,6 +48,32 @@ function reconstruct(runs: PdfSourceRun[], metadata = {}) {
 }
 
 describe('PDF front-matter reconstruction', () => {
+  it('keeps an embedded ACM reference block separate from the keyword values', async () => {
+    const result = await reconstruct([
+      run('A Source-Backed Paper', 0.2, 0.08, 0.6, 18),
+      run('Ada Example', 0.42, 0.14, 0.16, 11),
+      run('Abstract', 0.1, 0.22, 0.14, 12),
+      run('The source abstract remains canonical.', 0.1, 0.25, 0.72),
+      run('KEYWORDS', 0.1, 0.31, 0.14, 12),
+      run('Multilingual; Fact-checking', 0.1, 0.34, 0.25, 9),
+      run('ACM Reference Format:', 0.1, 0.365, 0.22, 8),
+      run('Ada Example. 2026. A Source-Backed Paper.', 0.1, 0.39, 0.7, 8),
+      run('1 Introduction', 0.1, 0.46, 0.28, 13),
+      run('Canonical introduction prose.', 0.1, 0.5, 0.72),
+    ])
+
+    const paragraphs = result.paper.nodes
+      .filter((node) => node.type === 'paragraph')
+      .map((node) => node.text)
+    expect(paragraphs).toContain('Multilingual; Fact-checking')
+    expect(paragraphs).toContain(
+      'ACM Reference Format: Ada Example. 2026. A Source-Backed Paper.',
+    )
+    expect(paragraphs).not.toContain(
+      'Multilingual; Fact-checking ACM Reference Format: Ada Example. 2026. A Source-Backed Paper.',
+    )
+  })
+
   it('keeps acronym-bearing titles and recovers authors from mixed author-affiliation regions', async () => {
     const result = await reconstruct([
       run('MedAgentBench: A Realistic Virtual EHR', 0.24, 0.1, 0.52, 17),
@@ -82,6 +108,32 @@ describe('PDF front-matter reconstruction', () => {
       affiliations: expect.arrayContaining(['Stanford University']),
       abstract: 'The source abstract remains canonical.',
     })
+  })
+
+  it('recovers an author whose name wraps across centered title-page lines', async () => {
+    const result = await reconstruct([
+      run('Risk Management for Distributed Systems', 0.2, 0.08, 0.6, 18),
+      run(
+        'Akaash Vishal Hazarika1*, Mahak Shah2, Swapnil Patil3, Pradyumna',
+        0.16,
+        0.14,
+        0.68,
+        11,
+      ),
+      run('Shukla3', 0.44, 0.162, 0.12, 11),
+      run('1 North Carolina State University', 0.28, 0.2, 0.44, 9),
+      run('2 Columbia University', 0.34, 0.222, 0.32, 9),
+      run('3 IEEE Senior Member', 0.36, 0.244, 0.28, 9),
+      run('Abstract', 0.44, 0.3, 0.12, 12),
+      run('The source abstract remains canonical.', 0.2, 0.34, 0.6),
+    ])
+
+    expect(result.paper.authors).toEqual([
+      'Akaash Vishal Hazarika',
+      'Mahak Shah',
+      'Swapnil Patil',
+      'Pradyumna Shukla',
+    ])
   })
 
   it('does not select an oversized affiliation as the publication title', async () => {

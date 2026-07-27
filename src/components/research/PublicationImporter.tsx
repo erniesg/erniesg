@@ -91,11 +91,57 @@ type ProfileBuildIssue = {
 
 type ProfileBuildIssues = Partial<Record<PreviewProfileId, ProfileBuildIssue>>
 
+export type PublicationReviewSnapshot = {
+  source: {
+    fileName: string
+    sha256: string
+    byteLength: number
+    pageCount: number
+  }
+  readiness: {
+    status: 'ready' | 'review-required'
+    blockingDiagnosticCodes: string[]
+  }
+  completeness: {
+    textCoverage: number
+    assetCoverage: number
+    relationshipCoverage: number
+    unresolvedObjectCount: number
+    ocrRequiredPages: number[]
+    readingOrderDiagnostics: number
+  }
+  diagnostics: Array<{
+    code: string
+    severity: ReconstructionDiagnostic['severity']
+    page?: number
+  }>
+  epub?: {
+    sha256: string
+    mode: EpubExport['mode']
+    profileId: PreviewProfileId
+    profileVersion: string
+  }
+}
+
 const initialProgress: DocumentImportProgress = {
   phase: 'opening',
   completed: 0,
   total: 1,
   message: 'Opening locally…',
+}
+
+export function importProgressIsIndeterminate(
+  progress: DocumentImportProgress,
+) {
+  return progress.phase === 'reconstructing'
+}
+
+export function formatImportElapsed(seconds: number) {
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  return minutes > 0
+    ? `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s elapsed`
+    : `${remainingSeconds}s elapsed`
 }
 
 function formatBytes(value: number) {
@@ -903,8 +949,14 @@ function isPdfReconstruction(
 
 export default function PublicationImporter({
   showIntro = true,
+  initialPaperUrl,
+  onReviewSnapshot,
+  reviewMode = false,
 }: {
   showIntro?: boolean
+  initialPaperUrl?: string
+  onReviewSnapshot?: (snapshot: PublicationReviewSnapshot) => void
+  reviewMode?: boolean
 }) {
   const [state, setState] = useState<StudioState>({ status: 'idle' })
   const [isHydrated, setIsHydrated] = useState(false)
@@ -923,11 +975,14 @@ export default function PublicationImporter({
   const [pendingDecisionFile, setPendingDecisionFile] =
     useState<HumanDecisionFile>()
   const [decisionError, setDecisionError] = useState<string>()
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const decisionInput = useRef<HTMLInputElement>(null)
   const activeImport = useRef<AbortController>()
+  const autoImportedUrl = useRef<string>()
   const activeProfileBuilds = useRef(new Set<ActiveProfileBuild>())
   const activeProfileBuildIssues = useRef<ProfileBuildIssues>({})
+  const processingStartedAt = useRef(0)
 
   const reloadForStaleApplicationModule = (error: unknown) => {
     if (typeof window === 'undefined') return false
@@ -990,6 +1045,23 @@ export default function PublicationImporter({
     return controller
   }
 
+  useEffect(() => {
+    if (state.status !== 'processing') {
+      setElapsedSeconds(0)
+      return
+    }
+    const updateElapsed = () =>
+      setElapsedSeconds(
+        Math.max(
+          0,
+          Math.floor((Date.now() - processingStartedAt.current) / 1000),
+        ),
+      )
+    updateElapsed()
+    const timer = window.setInterval(updateElapsed, 1000)
+    return () => window.clearInterval(timer)
+  }, [state.status])
+
   const finishReconstruction = async ({
     result,
     sourceFile,
@@ -1026,6 +1098,8 @@ export default function PublicationImporter({
     setSelectedOrientation('portrait')
     setPreviewReadyArtifactKey(undefined)
     setProfileBuildIssues({})
+    if (processingStartedAt.current === 0)
+      processingStartedAt.current = Date.now()
     setState({
       status: 'processing',
       fileName: file.name,
@@ -1078,25 +1152,27 @@ export default function PublicationImporter({
         baseResult,
         decisionFile,
       })
+      processingStartedAt.current = 0
     } catch (error) {
       if (activeImport.current !== controller) return
       if (importWasCancelled(error)) return
       if (reloadForStaleApplicationModule(error)) return
       showError(error)
+      processingStartedAt.current = 0
     }
   }
 
-  const processUrl = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const processPaperUrl = async (url: string) => {
     const controller = nextImport()
+    processingStartedAt.current = Date.now()
     setState({
       status: 'processing',
-      fileName: paperUrl,
+      fileName: url,
       progress: { ...initialProgress, message: 'Downloading the linked PDF…' },
     })
     try {
       await processFile(
-        await downloadLinkedPdf(paperUrl, fetch, undefined, controller.signal),
+        await downloadLinkedPdf(url, fetch, undefined, controller.signal),
         controller,
       )
     } catch (error) {
@@ -1104,8 +1180,27 @@ export default function PublicationImporter({
       if (importWasCancelled(error)) return
       if (reloadForStaleApplicationModule(error)) return
       showError(error)
+      processingStartedAt.current = 0
     }
   }
+
+  const processUrl = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    await processPaperUrl(paperUrl)
+  }
+
+  useEffect(() => {
+    if (
+      !isHydrated ||
+      !initialPaperUrl ||
+      autoImportedUrl.current === initialPaperUrl
+    ) {
+      return
+    }
+    autoImportedUrl.current = initialPaperUrl
+    setPaperUrl(initialPaperUrl)
+    void processPaperUrl(initialPaperUrl)
+  }, [initialPaperUrl, isHydrated])
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -1116,6 +1211,7 @@ export default function PublicationImporter({
   const reset = () => {
     activeImport.current?.abort()
     activeImport.current = undefined
+    processingStartedAt.current = 0
     if (input.current) input.current.value = ''
     if (decisionInput.current) decisionInput.current.value = ''
     setPaperUrl('')
@@ -1128,6 +1224,17 @@ export default function PublicationImporter({
     activeProfileBuildIssues.current = {}
     setProfileBuildIssues({})
     setState({ status: 'idle' })
+  }
+
+  const cancelImport = () => {
+    activeImport.current?.abort()
+    activeImport.current = undefined
+    processingStartedAt.current = 0
+    setState({
+      status: 'error',
+      code: 'IMPORT_CANCELLED',
+      message: 'No output was saved. You can retry this paper when ready.',
+    })
   }
 
   const applyDecision = async (decision: HumanAdjudicationRecord) => {
@@ -1310,6 +1417,9 @@ export default function PublicationImporter({
           (state.progress.completed / Math.max(state.progress.total, 1)) * 100,
         )
       : 0
+  const progressIsIndeterminate =
+    state.status === 'processing' &&
+    importProgressIsIndeterminate(state.progress)
   const selectedEpub =
     (state.status === 'ready' || state.status === 'review-required') &&
     state.epubs
@@ -1350,9 +1460,60 @@ export default function PublicationImporter({
     })
   }
 
+  const reviewSnapshot = useMemo<PublicationReviewSnapshot | undefined>(() => {
+    if (state.status !== 'ready' && state.status !== 'review-required') {
+      return undefined
+    }
+    return {
+      source: {
+        fileName: state.result.source.fileName,
+        sha256: state.result.source.sha256,
+        byteLength: state.result.source.byteLength,
+        pageCount:
+          state.result.source.format === 'docx'
+            ? 0
+            : state.result.source.pageCount,
+      },
+      readiness: {
+        status: state.status,
+        blockingDiagnosticCodes: [
+          ...state.result.readiness.blockingDiagnosticCodes,
+        ],
+      },
+      completeness: {
+        textCoverage: state.result.completeness.textCoverage,
+        assetCoverage: state.result.completeness.assetCoverage,
+        relationshipCoverage: state.result.completeness.relationshipCoverage,
+        unresolvedObjectCount: state.result.completeness.unresolvedObjectCount,
+        ocrRequiredPages: [...state.result.completeness.ocrRequiredPages],
+        readingOrderDiagnostics:
+          state.result.completeness.readingOrderDiagnostics,
+      },
+      diagnostics: state.result.diagnostics.map(({ code, severity, page }) => ({
+        code,
+        severity,
+        ...(page === undefined ? {} : { page }),
+      })),
+      ...(selectedEpub?.profile
+        ? {
+            epub: {
+              sha256: selectedEpub.sha256,
+              mode: selectedEpub.mode,
+              profileId: selectedEpub.profile.id as PreviewProfileId,
+              profileVersion: selectedEpub.profile.version,
+            },
+          }
+        : {}),
+    }
+  }, [selectedEpub, state])
+
+  useEffect(() => {
+    if (reviewSnapshot) onReviewSnapshot?.(reviewSnapshot)
+  }, [onReviewSnapshot, reviewSnapshot])
+
   return (
     <section
-      className="publication-importer"
+      className={`publication-importer${reviewMode ? ' publication-importer--review' : ''}`}
       aria-label={showIntro ? undefined : 'PDF or DOCX to EPUB converter'}
       aria-labelledby={showIntro ? 'studio-heading' : undefined}
     >
@@ -1366,27 +1527,30 @@ export default function PublicationImporter({
         </div>
       )}
 
-      <div className="publication-decision-file">
-        <label htmlFor="publication-decisions">
-          <strong>Adjudication decisions</strong>
-          <span>Import local decision JSON to replay saved PDF review.</span>
-        </label>
-        <input
-          ref={decisionInput}
-          id="publication-decisions"
-          type="file"
-          accept="application/json,.json"
-          onChange={(event) => void importDecisionFile(event)}
-        />
-        {pendingDecisionFile && (
-          <small>
-            Loaded for {pendingDecisionFile.documentSha256.slice(0, 12)}… ·{' '}
-            {pendingDecisionFile.decisions.length} decisions · approval SHA-256{' '}
-            <code>{humanDecisionFileSha256(pendingDecisionFile)}</code>
-          </small>
-        )}
-        {decisionError && <p role="alert">{decisionError}</p>}
-      </div>
+      {!reviewMode && (
+        <div className="publication-decision-file">
+          <label htmlFor="publication-decisions">
+            <strong>Adjudication decisions</strong>
+            <span>Import local decision JSON to replay saved PDF review.</span>
+          </label>
+          <input
+            ref={decisionInput}
+            id="publication-decisions"
+            type="file"
+            accept="application/json,.json"
+            onChange={(event) => void importDecisionFile(event)}
+          />
+          {pendingDecisionFile && (
+            <small>
+              Loaded for {pendingDecisionFile.documentSha256.slice(0, 12)}… ·{' '}
+              {pendingDecisionFile.decisions.length} decisions · approval
+              SHA-256{' '}
+              <code>{humanDecisionFileSha256(pendingDecisionFile)}</code>
+            </small>
+          )}
+          {decisionError && <p role="alert">{decisionError}</p>}
+        </div>
+      )}
 
       {state.status === 'idle' && (
         <>
@@ -1470,97 +1634,134 @@ export default function PublicationImporter({
         >
           <div>
             <span>{state.fileName}</span>
-            <strong>{state.progress.message}</strong>
+            <strong>
+              {progressIsIndeterminate
+                ? 'Analyzing document structure…'
+                : state.progress.message}
+            </strong>
+            <small>
+              {progressIsIndeterminate
+                ? `All ${state.progress.total} pages are read. This final analysis has no reliable percentage.`
+                : `${progressPercent}% complete`}
+              {' · '}
+              {formatImportElapsed(elapsedSeconds)}
+            </small>
           </div>
-          <progress max={100} value={progressPercent}>
-            {progressPercent}%
-          </progress>
+          {progressIsIndeterminate ? (
+            <progress aria-label="Final document analysis in progress" />
+          ) : (
+            <progress max={100} value={progressPercent}>
+              {progressPercent}%
+            </progress>
+          )}
+          <button type="button" onClick={cancelImport}>
+            Cancel conversion
+          </button>
         </div>
       )}
 
       {state.status === 'error' && (
         <div className="publication-failure" role="alert">
           <span>{state.code.replaceAll('_', ' ')}</span>
-          <h3>I couldn't turn that paper into an EPUB.</h3>
+          <h3>
+            {state.code === 'IMPORT_CANCELLED'
+              ? 'Conversion stopped.'
+              : "I couldn't turn that paper into an EPUB."}
+          </h3>
           <p>{state.message}</p>
-          <button onClick={reset}>Choose another paper</button>
+          {reviewMode && initialPaperUrl ? (
+            <button onClick={() => void processPaperUrl(initialPaperUrl)}>
+              Retry conversion
+            </button>
+          ) : (
+            <button onClick={reset}>Choose another paper</button>
+          )}
         </div>
       )}
 
       {(state.status === 'ready' || state.status === 'review-required') && (
         <>
-          <div className="publication-result-bar">
-            <div>
-              <span className="srt-kicker">
-                {state.status === 'ready'
-                  ? state.epubs
-                    ? 'EPUB ready'
-                    : 'Validating EPUB'
-                  : 'Review required'}
-              </span>
-              <strong>{state.result.source.fileName}</strong>
-              <small>
-                {state.result.source.format === 'docx'
-                  ? `${state.result.source.packageParts.length} package parts`
-                  : `${state.result.source.pageCount} pages`}{' '}
-                · {formatBytes(state.result.source.byteLength)} · processed
-                locally
-              </small>
-              {isPdfReconstruction(state.result) &&
-                state.result.humanAdjudications.applied.length > 0 && (
-                  <small>
-                    Human adjudications:{' '}
-                    {Object.entries(
-                      state.result.humanAdjudications.countsByDiagnosticCode,
-                    )
-                      .map(([code, count]) => `${code} ${count}`)
-                      .join(', ')}
-                  </small>
-                )}
-            </div>
-            <div className="publication-actions">
-              {state.decisionFile && (
-                <a
-                  href={`data:application/json;charset=utf-8,${encodeURIComponent(
-                    serializeHumanDecisionFile(state.decisionFile),
-                  )}`}
-                  download={`${state.result.source.sha256}.decisions.json`}
-                >
-                  Export decisions JSON
-                </a>
-              )}
-              {selectedEpub && selectedEpubPreviewReady ? (
-                <EpubDownloadLink key={selectedEpub.sha256} epub={selectedEpub}>
-                  {epubDownloadLabel(selectedEpub)}
-                </EpubDownloadLink>
-              ) : selectedEpub ? (
-                <span aria-live="polite">Preparing selected EPUB preview…</span>
-              ) : buildingProfileId === selectedProfileId ? (
-                <span aria-live="polite">
-                  Building {getTargetProfile(selectedProfileId).label} EPUB
-                  locally…
+          {!reviewMode && (
+            <div className="publication-result-bar">
+              <div>
+                <span className="srt-kicker">
+                  {state.status === 'ready'
+                    ? state.epubs
+                      ? 'EPUB ready'
+                      : 'Validating EPUB'
+                    : 'Review required'}
                 </span>
-              ) : selectedProfileBuildIssue ? (
-                <>
-                  <span role="alert">{selectedProfileBuildIssue.message}</span>
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={retrySelectedProfileBuild}
+                <strong>{state.result.source.fileName}</strong>
+                <small>
+                  {state.result.source.format === 'docx'
+                    ? `${state.result.source.packageParts.length} package parts`
+                    : `${state.result.source.pageCount} pages`}{' '}
+                  · {formatBytes(state.result.source.byteLength)} · processed
+                  locally
+                </small>
+                {isPdfReconstruction(state.result) &&
+                  state.result.humanAdjudications.applied.length > 0 && (
+                    <small>
+                      Human adjudications:{' '}
+                      {Object.entries(
+                        state.result.humanAdjudications.countsByDiagnosticCode,
+                      )
+                        .map(([code, count]) => `${code} ${count}`)
+                        .join(', ')}
+                    </small>
+                  )}
+              </div>
+              <div className="publication-actions">
+                {state.decisionFile && (
+                  <a
+                    href={`data:application/json;charset=utf-8,${encodeURIComponent(
+                      serializeHumanDecisionFile(state.decisionFile),
+                    )}`}
+                    download={`${state.result.source.sha256}.decisions.json`}
                   >
-                    Retry {getTargetProfile(selectedProfileId).label} EPUB
-                  </button>
-                </>
-              ) : state.status === 'ready' ? (
-                <span aria-live="polite">Validating EPUB…</span>
-              ) : null}
-              <button className="secondary" onClick={reset}>
-                New paper
-              </button>
+                    Export decisions JSON
+                  </a>
+                )}
+                {selectedEpub && selectedEpubPreviewReady ? (
+                  <EpubDownloadLink
+                    key={selectedEpub.sha256}
+                    epub={selectedEpub}
+                  >
+                    {epubDownloadLabel(selectedEpub)}
+                  </EpubDownloadLink>
+                ) : selectedEpub ? (
+                  <span aria-live="polite">
+                    Preparing selected EPUB preview…
+                  </span>
+                ) : buildingProfileId === selectedProfileId ? (
+                  <span aria-live="polite">
+                    Building {getTargetProfile(selectedProfileId).label} EPUB
+                    locally…
+                  </span>
+                ) : selectedProfileBuildIssue ? (
+                  <>
+                    <span role="alert">
+                      {selectedProfileBuildIssue.message}
+                    </span>
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={retrySelectedProfileBuild}
+                    >
+                      Retry {getTargetProfile(selectedProfileId).label} EPUB
+                    </button>
+                  </>
+                ) : state.status === 'ready' ? (
+                  <span aria-live="polite">Validating EPUB…</span>
+                ) : null}
+                <button className="secondary" onClick={reset}>
+                  New paper
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
-          {state.status === 'review-required' && (
+          {!reviewMode && state.status === 'review-required' && (
             <div className="publication-ocr-gate" role="alert">
               <span>Completeness gate</span>
               <h3>This reconstruction is incomplete.</h3>
@@ -1615,152 +1816,160 @@ export default function PublicationImporter({
                 setSelectedOrientation(orientation)
               }}
               onPreviewReadyChange={setPreviewReadyArtifactKey}
+              reviewMode={reviewMode}
             />
           )}
 
-          <details className="publication-diagnostics">
-            <summary>
-              Conversion details · {state.result.diagnostics.length}{' '}
-              {state.result.diagnostics.length === 1 ? 'note' : 'notes'}
-            </summary>
-            <div className="publication-diagnostic-grid">
-              <div>
-                <h3>
-                  {state.result.source.format === 'docx' ? 'Package' : 'Pages'}
-                </h3>
-                <ol>
-                  {state.result.source.format === 'docx'
-                    ? state.result.source.packageParts
-                        .slice(0, 12)
-                        .map((part) => (
-                          <li key={part}>
-                            <span>{part}</span>
-                            <strong>OOXML</strong>
+          {!reviewMode && (
+            <details className="publication-diagnostics">
+              <summary>
+                Conversion details · {state.result.diagnostics.length}{' '}
+                {state.result.diagnostics.length === 1 ? 'note' : 'notes'}
+              </summary>
+              <div className="publication-diagnostic-grid">
+                <div>
+                  <h3>
+                    {state.result.source.format === 'docx'
+                      ? 'Package'
+                      : 'Pages'}
+                  </h3>
+                  <ol>
+                    {state.result.source.format === 'docx'
+                      ? state.result.source.packageParts
+                          .slice(0, 12)
+                          .map((part) => (
+                            <li key={part}>
+                              <span>{part}</span>
+                              <strong>OOXML</strong>
+                              <small>
+                                importer {importerVersion(state.result.source)}
+                              </small>
+                            </li>
+                          ))
+                      : state.result.pages.map((page) => (
+                          <li key={page.page}>
+                            <span>p. {page.page}</span>
+                            <strong>{page.kind}</strong>
                             <small>
-                              importer {importerVersion(state.result.source)}
+                              {page.textCharacters} chars · {page.imageCount}{' '}
+                              images
+                              {page.ocr
+                                ? ` · ${page.ocr.engine} ${page.ocr.engineVersion} · ${page.ocr.model} ${page.ocr.modelVersion} · ${page.ocr.languages.join('+')} · ${Math.round(page.ocr.confidence * 100)}% OCR`
+                                : ''}
                             </small>
                           </li>
-                        ))
-                    : state.result.pages.map((page) => (
-                        <li key={page.page}>
-                          <span>p. {page.page}</span>
-                          <strong>{page.kind}</strong>
+                        ))}
+                  </ol>
+                </div>
+                <div>
+                  <h3>Completeness</h3>
+                  <ol>
+                    <li>
+                      <span>Text coverage</span>
+                      <strong>
+                        {Math.round(
+                          state.result.completeness.textCoverage * 100,
+                        )}
+                        %
+                      </strong>
+                      <small>
+                        {state.result.completeness.matchedTextCharacters} of{' '}
+                        {state.result.completeness.sourceTextCharacters}{' '}
+                        normalized source characters
+                      </small>
+                    </li>
+                    <li>
+                      <span>Asset coverage</span>
+                      <strong>
+                        {Math.round(
+                          state.result.completeness.assetCoverage * 100,
+                        )}
+                        %
+                      </strong>
+                      <small>
+                        {state.result.completeness.exportedAssetCount} of{' '}
+                        {state.result.completeness.sourceAssetCount} source
+                        visual objects
+                      </small>
+                    </li>
+                    <li>
+                      <span>Relationship coverage</span>
+                      <strong>
+                        {Math.round(
+                          state.result.completeness.relationshipCoverage * 100,
+                        )}
+                        %
+                      </strong>
+                      <small>
+                        {state.result.completeness.resolvedRelationshipCount} of{' '}
+                        {state.result.completeness.expectedRelationshipCount}{' '}
+                        detected relationships
+                      </small>
+                    </li>
+                    <li>
+                      <span>Unresolved objects</span>
+                      <strong>
+                        {state.result.completeness.unresolvedObjectCount}
+                      </strong>
+                      <small>
+                        OCR pages{' '}
+                        {state.result.completeness.ocrRequiredPages.join(
+                          ', ',
+                        ) || 'none'}
+                      </small>
+                    </li>
+                  </ol>
+                </div>
+                <div>
+                  <h3>Recovered text</h3>
+                  <ol>
+                    {state.result.paper.nodes.slice(0, 12).map((node) => {
+                      const evidence = state.result.provenance[node.id]
+                      return (
+                        <li key={node.id}>
+                          <span>{node.id}</span>
+                          <strong>
+                            {Math.round((evidence?.confidence ?? 0) * 100)}%
+                          </strong>
                           <small>
-                            {page.textCharacters} chars · {page.imageCount}{' '}
-                            images
-                            {page.ocr
-                              ? ` · ${page.ocr.engine} ${page.ocr.engineVersion} · ${page.ocr.model} ${page.ocr.modelVersion} · ${page.ocr.languages.join('+')} · ${Math.round(page.ocr.confidence * 100)}% OCR`
-                              : ''}
+                            pages {evidence?.pages.join(', ') || '—'} ·{' '}
+                            {evidence?.boxes.length ?? 0} boxes
                           </small>
                         </li>
-                      ))}
-                </ol>
+                      )
+                    })}
+                  </ol>
+                </div>
               </div>
-              <div>
-                <h3>Completeness</h3>
-                <ol>
-                  <li>
-                    <span>Text coverage</span>
-                    <strong>
-                      {Math.round(state.result.completeness.textCoverage * 100)}
-                      %
-                    </strong>
-                    <small>
-                      {state.result.completeness.matchedTextCharacters} of{' '}
-                      {state.result.completeness.sourceTextCharacters}{' '}
-                      normalized source characters
-                    </small>
-                  </li>
-                  <li>
-                    <span>Asset coverage</span>
-                    <strong>
-                      {Math.round(
-                        state.result.completeness.assetCoverage * 100,
-                      )}
-                      %
-                    </strong>
-                    <small>
-                      {state.result.completeness.exportedAssetCount} of{' '}
-                      {state.result.completeness.sourceAssetCount} source visual
-                      objects
-                    </small>
-                  </li>
-                  <li>
-                    <span>Relationship coverage</span>
-                    <strong>
-                      {Math.round(
-                        state.result.completeness.relationshipCoverage * 100,
-                      )}
-                      %
-                    </strong>
-                    <small>
-                      {state.result.completeness.resolvedRelationshipCount} of{' '}
-                      {state.result.completeness.expectedRelationshipCount}{' '}
-                      detected relationships
-                    </small>
-                  </li>
-                  <li>
-                    <span>Unresolved objects</span>
-                    <strong>
-                      {state.result.completeness.unresolvedObjectCount}
-                    </strong>
-                    <small>
-                      OCR pages{' '}
-                      {state.result.completeness.ocrRequiredPages.join(', ') ||
-                        'none'}
-                    </small>
-                  </li>
-                </ol>
-              </div>
-              <div>
-                <h3>Recovered text</h3>
-                <ol>
-                  {state.result.paper.nodes.slice(0, 12).map((node) => {
-                    const evidence = state.result.provenance[node.id]
-                    return (
-                      <li key={node.id}>
-                        <span>{node.id}</span>
-                        <strong>
-                          {Math.round((evidence?.confidence ?? 0) * 100)}%
-                        </strong>
-                        <small>
-                          pages {evidence?.pages.join(', ') || '—'} ·{' '}
-                          {evidence?.boxes.length ?? 0} boxes
-                        </small>
-                      </li>
-                    )
-                  })}
-                </ol>
-              </div>
-            </div>
-            {isPdfReconstruction(state.result) && (
-              <LineJoinAdjudicationReview
-                baseResult={state.baseResult ?? state.result}
-                result={state.result}
-                onDecision={(decision) => void applyDecision(decision)}
-              />
-            )}
-            {state.result.diagnostics.length > 0 &&
-              (isPdfReconstruction(state.result) ? (
-                <PdfDiagnosticReview
-                  key={state.result.source.sha256}
+              {isPdfReconstruction(state.result) && (
+                <LineJoinAdjudicationReview
+                  baseResult={state.baseResult ?? state.result}
                   result={state.result}
-                  sourceFile={state.sourceFile}
-                  showVisual={state.status === 'review-required'}
                   onDecision={(decision) => void applyDecision(decision)}
                 />
-              ) : (
-                <ul className="publication-diagnostic-list">
-                  {state.result.diagnostics.map((diagnostic, index) => (
-                    <li
-                      key={`${diagnostic.code}-${diagnostic.page ?? 0}-${index}`}
-                    >
-                      <strong>{diagnostic.code}</strong> {diagnostic.message}
-                    </li>
-                  ))}
-                </ul>
-              ))}
-          </details>
+              )}
+              {state.result.diagnostics.length > 0 &&
+                (isPdfReconstruction(state.result) ? (
+                  <PdfDiagnosticReview
+                    key={state.result.source.sha256}
+                    result={state.result}
+                    sourceFile={state.sourceFile}
+                    showVisual={state.status === 'review-required'}
+                    onDecision={(decision) => void applyDecision(decision)}
+                  />
+                ) : (
+                  <ul className="publication-diagnostic-list">
+                    {state.result.diagnostics.map((diagnostic, index) => (
+                      <li
+                        key={`${diagnostic.code}-${diagnostic.page ?? 0}-${index}`}
+                      >
+                        <strong>{diagnostic.code}</strong> {diagnostic.message}
+                      </li>
+                    ))}
+                  </ul>
+                ))}
+            </details>
+          )}
         </>
       )}
     </section>

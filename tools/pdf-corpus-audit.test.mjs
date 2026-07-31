@@ -938,7 +938,8 @@ describe('local PDF corpus audit', () => {
     ).toThrow('Line transition decision outcome is invalid.')
   })
 
-  it('persists deterministic privacy-safe canonical hyphen deletion records and rejects incomplete or duplicate proof', async () => {
+  // Heavy structuredClone/receipt churn; the default 5s trips on cold CI runners.
+  it('persists deterministic privacy-safe canonical hyphen deletion records and rejects incomplete or duplicate proof', { timeout: 30_000 }, async () => {
     const reconstruction = canonicalHyphenDeletionReconstruction()
     const receipt = createPdfStructuralReceipt(reconstruction)
 

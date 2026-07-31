@@ -2424,10 +2424,7 @@ export function renderPublicationXhtml(
   )
   const visualRelationships = new Map(
     (options.reconstruction?.visualRelationships ?? [])
-      .filter(
-        (relationship) =>
-          relationship.status === 'matched' && relationship.canonicalNodeId,
-      )
+      .filter((relationship) => relationship.canonicalNodeId)
       .map((relationship) => [relationship.canonicalNodeId!, relationship]),
   )
   const unresolvedVisuals = new Map(
@@ -5116,6 +5113,23 @@ export function projectReadableFallbackReconstruction(
   )
   const retainedUnresolvedRelationshipIds = new Set(
     reconstruction.visualRelationships.flatMap((relationship) => {
+      const withinPerVisualGuard =
+        relationship.assetIds.length <= MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL
+      const assetsAvailable = relationship.assetIds.every((assetId) =>
+        availableAssetIds.has(assetId),
+      )
+      if (
+        relationship.status !== 'matched' &&
+        relationship.canonicalNodeId &&
+        withinPerVisualGuard &&
+        assetsAvailable &&
+        relationship.assetIds.length > 0 &&
+        reconstruction.paper.nodes.some(
+          (node) => node.id === relationship.canonicalNodeId,
+        )
+      ) {
+        return [relationship.id]
+      }
       if (
         relationship.status === 'matched' ||
         relationship.canonicalNodeId !== null ||
@@ -5138,9 +5152,25 @@ export function projectReadableFallbackReconstruction(
     (relationship) => {
       const validated = validatedRelationshipsById.get(relationship.id)
       if (!validated) {
-        return retainedUnresolvedRelationshipIds.has(relationship.id)
-          ? [relationship]
-          : []
+        if (retainedUnresolvedRelationshipIds.has(relationship.id)) {
+          const newOptionalAssetIds = relationship.assetIds.filter(
+            (assetId) => !selectedAssetIds.has(assetId),
+          )
+          if (
+            selectedOptionalAssetIds.size + newOptionalAssetIds.length >
+            MAX_READABLE_FALLBACK_OPTIONAL_ASSETS_PER_BOOK
+          ) {
+            return []
+          }
+          for (const assetId of relationship.assetIds) {
+            selectedAssetIds.add(assetId)
+          }
+          for (const assetId of newOptionalAssetIds) {
+            selectedOptionalAssetIds.add(assetId)
+          }
+          return [relationship]
+        }
+        return []
       }
       const withinPerVisualGuard =
         relationship.assetIds.length <= MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL
@@ -5350,13 +5380,20 @@ async function buildEpubInternal(
             relationship.assetIds.some((assetId) => !assetIds.has(assetId))
           )
         }
-        return !(
-          mode === 'readable-fallback' &&
+        if (mode !== 'readable-fallback') return true
+        const sourcePreservedFallback =
+          relationship.canonicalNodeId !== null &&
+          relationship.assetIds.length > 0 &&
+          relationship.assetIds.length <=
+            MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL &&
+          relationship.assetIds.every((assetId) => assetIds.has(assetId)) &&
+          renderNodeIds.has(relationship.canonicalNodeId)
+        const captionOnlyFallback =
           relationship.canonicalNodeId === null &&
           relationship.assetIds.length === 0 &&
           relationship.captionNodeId &&
           renderNodeIds.has(relationship.captionNodeId)
-        )
+        return !(sourcePreservedFallback || captionOnlyFallback)
       },
     )
     if (invalid) {

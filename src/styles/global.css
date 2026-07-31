@@ -590,13 +590,19 @@
     @apply text-background/75;
   }
   .publication-blocking-issues {
-    @apply mt-5 flex flex-wrap gap-2;
+    @apply mt-5 grid max-w-3xl gap-2;
   }
   .publication-blocking-issues li {
-    @apply flex items-center gap-2 rounded border border-background/25 px-2 py-1 font-mono text-[9px] uppercase tracking-wide;
+    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded border border-background/25 px-3 py-2 text-sm;
+  }
+  .publication-blocking-issues li strong {
+    @apply font-medium;
   }
   .publication-blocking-issues span {
-    @apply rounded bg-background px-1.5 py-0.5 text-foreground;
+    @apply rounded bg-background px-1.5 py-0.5 text-xs font-medium text-foreground;
+  }
+  .publication-blocking-issues small {
+    @apply col-span-2 text-xs leading-relaxed text-background/70;
   }
   .publication-result-bar {
     @apply mt-6 flex flex-col gap-5 rounded-lg border bg-background p-4 sm:flex-row sm:items-center sm:justify-between;

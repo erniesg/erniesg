@@ -47,6 +47,7 @@ import {
   resolveTargetProfile,
   type TargetOrientation,
 } from '../../research/targets'
+import { diagnosticCopy, recoverySummary } from '../../struct/recovery'
 import EpubDownloadLink from './EpubDownloadLink'
 import EpubRenditionPreview, {
   epubPreviewArtifactKey,
@@ -882,8 +883,13 @@ function PdfDiagnosticReview({
               aria-pressed={showVisual && item.id === selected?.id}
               onClick={() => selectDiagnostic(item)}
             >
-              <strong>{item.diagnostic.code}</strong>
-              <span>{item.diagnostic.message}</span>
+              <strong>{diagnosticCopy(item.diagnostic.code).title}</strong>
+              <span>
+                {
+                  diagnosticCopy(item.diagnostic.code, item.diagnostic.message)
+                    .message
+                }
+              </span>
               {item.pages.length > 0 && (
                 <small>page {item.pages.join(', ')}</small>
               )}
@@ -1531,6 +1537,21 @@ export default function PublicationImporter({
     }
   }, [selectedEpub, state])
 
+  const userRecovery = useMemo(() => {
+    if (state.status !== 'ready' && state.status !== 'review-required') {
+      return undefined
+    }
+    return recoverySummary({
+      ready: state.result.readiness.ready,
+      diagnostics: state.result.diagnostics,
+      blockingCodes: state.result.readiness.blockingDiagnosticCodes,
+      textCoverage: state.result.completeness.textCoverage,
+      assetCoverage: state.result.completeness.assetCoverage,
+      relationshipCoverage: state.result.completeness.relationshipCoverage,
+      unresolvedObjectCount: state.result.completeness.unresolvedObjectCount,
+    })
+  }, [state])
+
   useEffect(() => {
     if (reviewSnapshot) onReviewSnapshot?.(reviewSnapshot)
   }, [onReviewSnapshot, reviewSnapshot])
@@ -1557,7 +1578,7 @@ export default function PublicationImporter({
         </div>
       )}
 
-      {!reviewMode && (
+      {reviewMode && (
         <div className="publication-decision-file">
           <label htmlFor="publication-decisions">
             <strong>Adjudication decisions</strong>
@@ -1725,20 +1746,9 @@ export default function PublicationImporter({
                   · {formatBytes(state.result.source.byteLength)} · processed
                   locally
                 </small>
-                {isPdfReconstruction(state.result) &&
-                  state.result.humanAdjudications.applied.length > 0 && (
-                    <small>
-                      Human adjudications:{' '}
-                      {Object.entries(
-                        state.result.humanAdjudications.countsByDiagnosticCode,
-                      )
-                        .map(([code, count]) => `${code} ${count}`)
-                        .join(', ')}
-                    </small>
-                  )}
               </div>
               <div className="publication-actions">
-                {state.decisionFile && (
+                {reviewMode && state.decisionFile && (
                   <a
                     href={`data:application/json;charset=utf-8,${encodeURIComponent(
                       serializeHumanDecisionFile(state.decisionFile),
@@ -1798,32 +1808,31 @@ export default function PublicationImporter({
 
           {!reviewMode && state.status === 'review-required' && (
             <div className="publication-ocr-gate" role="alert">
-              <span>Completeness gate</span>
-              <h3>This reconstruction is incomplete.</h3>
-              <p>
-                Publication-grade export remains blocked while source images,
-                relationships, or reading order need review. When every page has
-                recoverable text, the readable EPUB downloads preserve the
-                current text flow and matched visuals without claiming those
-                unresolved details are final. Your file has not left this
-                device.
-              </p>
-              <ul
-                className="publication-blocking-issues"
-                aria-label="Blocking issue groups"
-              >
-                {state.result.readiness.blockingDiagnosticCodes.map((code) => {
-                  const count = state.result.diagnostics.filter(
-                    (diagnostic) => diagnostic.code === code,
-                  ).length
-                  return (
-                    <li key={code}>
-                      <strong>{code.replaceAll('_', ' ')}</strong>
-                      <span>{count || 1}</span>
+              <span>Review summary</span>
+              <h3>
+                {userRecovery?.title ??
+                  'Your readable EPUB is ready for review.'}
+              </h3>
+              <p>{userRecovery?.summary}</p>
+              {userRecovery && userRecovery.issues.length > 0 && (
+                <ul
+                  className="publication-blocking-issues"
+                  aria-label="Review items"
+                >
+                  {userRecovery.issues.map((issue) => (
+                    <li key={issue.category}>
+                      <strong>{issue.title}</strong>
+                      <span>{issue.count}</span>
+                      {issue.action && <small>{issue.action}</small>}
                     </li>
-                  )
-                })}
-              </ul>
+                  ))}
+                </ul>
+              )}
+              {userRecovery?.userAction && (
+                <p>
+                  <strong>What to do:</strong> {userRecovery.userAction}
+                </p>
+              )}
             </div>
           )}
 
@@ -1998,7 +2007,17 @@ export default function PublicationImporter({
                       <li
                         key={`${diagnostic.code}-${diagnostic.page ?? 0}-${index}`}
                       >
-                        <strong>{diagnostic.code}</strong> {diagnostic.message}
+                        <strong>{diagnosticCopy(diagnostic.code).title}</strong>{' '}
+                        {
+                          diagnosticCopy(diagnostic.code, diagnostic.message)
+                            .message
+                        }
+                        {diagnosticCopy(diagnostic.code).action && (
+                          <small>
+                            {' '}
+                            {diagnosticCopy(diagnostic.code).action}
+                          </small>
+                        )}
                       </li>
                     ))}
                   </ul>

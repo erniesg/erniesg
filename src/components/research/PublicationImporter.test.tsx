@@ -250,6 +250,16 @@ describe('publication importer OCR controls', () => {
     )
   })
 
+  it('keeps adjudication controls out of the normal importer', () => {
+    const normalMarkup = renderToStaticMarkup(<PublicationImporter />)
+    const reviewMarkup = renderToStaticMarkup(
+      <PublicationImporter reviewMode />,
+    )
+
+    expect(normalMarkup).not.toContain('Adjudication decisions')
+    expect(reviewMarkup).toContain('Adjudication decisions')
+  })
+
   it('recognizes an outdated Vite dynamic import without exposing its internal URL', () => {
     const staleImportA = new TypeError(
       'Failed to fetch dynamically imported module: http://127.0.0.1:4321/node_modules/.vite/deps/pdfjs-dist.js?v=bfb6b1be',

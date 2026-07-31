@@ -90,7 +90,11 @@ async function waitForJson(path) {
 }
 
 async function waitForParentWatchdogArm(setTimeoutSpy, expectedArmCount) {
-  for (let attempt = 0; attempt < 10_000; attempt += 1) {
+  // Real-time deadline: the arm depends on child-process fork and IPC, which
+  // can take seconds on a cold CI runner. Date is not faked; setImmediate
+  // keeps the event loop turning so IPC callbacks can run.
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
     const armCount = setTimeoutSpy.mock.calls.filter(
       ([, delay]) => delay === 1_000,
     ).length

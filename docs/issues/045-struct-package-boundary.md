@@ -1,6 +1,6 @@
 # Make STRUCT the only contract between extraction and rendering
 
-depends-on: 027,038
+depends-on: 027
 
 ## Provider
 
@@ -21,7 +21,7 @@ Rendering code reaches directly into the PDF reconstruction's private implementa
 - Stable STRUCT IDs are deterministic functions of source content and position, not of extractor run order; converting the same source twice yields byte-identical graphs and identical `receipt.generatedSha256`.
 - The receipt records schema version, source hash, and counts such that two receipts differing implies a real difference; a golden-receipt regression test pins the fixture corpus.
 - The package has no dependency on `ResearchPaper`, paper IDs, or Astro modules; a dependency-direction test (or lint rule) fails if one is introduced.
-- Fixture regression spans document shapes: born-digital and scanned, one- and two-column, raster and vector visuals, semantic and ambiguous tables, equations, notes, and internal/external links — each shape round-tripping source → STRUCT → EPUB with its invariants asserted.
+- Fixture regression spans document shapes: born-digital and scanned, one- and two-column, raster and vector visuals, semantic and ambiguous tables, equations, notes, and internal/external links — each shape round-tripping source → STRUCT → EPUB with its invariants asserted. When issue 038's named checkpoints land, the round-trip invariants register under them; until then vitest fixtures are the gate.
 - `skills/struct-typeset/SKILL.md` still describes the landed behavior after the change; its validation commands run green as written.
 
 ## TDD sequence

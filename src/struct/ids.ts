@@ -1,4 +1,4 @@
-import { sha256HexSync } from '../research/sha256-sync'
+import { sha256HexSync } from './sha256'
 
 /** Stable IDs are content-addressed so reflowing a page cannot rename a node. */
 export function structId(namespace: string, value: string) {

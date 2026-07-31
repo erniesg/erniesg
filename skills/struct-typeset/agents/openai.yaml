@@ -1,0 +1,4 @@
+interface:
+  display_name: 'STRUCT Typeset'
+  short_description: 'Reconstruct and typeset source-backed documents'
+  default_prompt: 'Use $struct-typeset to reconstruct and typeset this document with verified structure and faithful fallbacks.'

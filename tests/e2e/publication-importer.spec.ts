@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { unzipSync, strFromU8 } from 'fflate'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { installStaticRoutes } from './static-build'
@@ -12,10 +13,16 @@ const fixture = (name: string) =>
     name,
   )
 
+async function fixtureSha256(name: string) {
+  return createHash('sha256')
+    .update(await readFile(fixture(name)))
+    .digest('hex')
+}
+
 function unresolvedLineJoinPdf() {
   const content = [
-    'BT /F1 11 Tf 54 632 Td (This source contains a scenar-) Tj ET',
-    'BT /F1 11 Tf 54 614 Td (io that remains continuous prose.) Tj ET',
+    'BT /F1 18 Tf 54 632 Td (This source contains a scenar-) Tj ET',
+    'BT /F1 18 Tf 54 614 Td (io that remains continuous prose.) Tj ET',
   ].join('\n')
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
@@ -49,6 +56,104 @@ async function waitForImporter(page: Page) {
   })
 }
 
+type PublicationWorkerFault = {
+  profileId: 'mobile' | 'paperPro'
+  profileVersion: '1.1.0'
+  orientation: 'portrait'
+  sourceSha256: string
+  mode: 'publication' | 'readable-fallback'
+  action: 'reject' | 'stall'
+  marker: string
+  terminationMarker?: string
+  message?: string
+}
+
+async function installPublicationWorkerFault(
+  page: Page,
+  fault: PublicationWorkerFault,
+) {
+  await page.addInitScript((configuredFault) => {
+    const NativeWorker = globalThis.Worker
+    let injected = false
+
+    class FaultInjectingWorker extends NativeWorker {
+      private injectedFault = false
+
+      override postMessage(
+        message: unknown,
+        transferOrOptions?: Transferable[] | StructuredSerializeOptions,
+      ) {
+        const request = message as {
+          type?: unknown
+          jobId?: unknown
+          mode?: unknown
+          reconstruction?: {
+            source?: { sha256?: unknown }
+          }
+          profile?: {
+            id?: unknown
+            version?: unknown
+            orientation?: { selected?: unknown }
+          }
+        }
+        const isCurrentPublicationBuildRequest =
+          request.type === 'build-epub' &&
+          typeof request.jobId === 'string' &&
+          request.jobId.length > 0 &&
+          request.mode === configuredFault.mode &&
+          request.profile?.id === configuredFault.profileId &&
+          request.profile.version === configuredFault.profileVersion &&
+          request.profile.orientation?.selected ===
+            configuredFault.orientation &&
+          request.reconstruction?.source?.sha256 ===
+            configuredFault.sourceSha256
+
+        if (!injected && isCurrentPublicationBuildRequest) {
+          injected = true
+          this.injectedFault = true
+          document.documentElement.dataset[configuredFault.marker] = 'true'
+          if (configuredFault.action === 'reject') {
+            globalThis.queueMicrotask(() =>
+              this.dispatchEvent(
+                new MessageEvent('message', {
+                  data: {
+                    type: 'error',
+                    jobId: request.jobId,
+                    code: 'SYNTHETIC_EPUB_BUILD_FAILURE',
+                    message:
+                      configuredFault.message ?? 'Synthetic EPUB build failure',
+                  },
+                }),
+              ),
+            )
+          }
+          return
+        }
+
+        if (transferOrOptions === undefined) {
+          super.postMessage(message)
+        } else {
+          super.postMessage(message, transferOrOptions as Transferable[])
+        }
+      }
+
+      override terminate() {
+        if (this.injectedFault && configuredFault.terminationMarker) {
+          document.documentElement.dataset[configuredFault.terminationMarker] =
+            'true'
+        }
+        super.terminate()
+      }
+    }
+
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: FaultInjectingWorker,
+    })
+  }, fault)
+}
+
 test('offers an explicit offline OCR language choice', async ({ page }) => {
   await page.goto('/research/studio')
   await waitForImporter(page)
@@ -72,7 +177,6 @@ test('reloads once when the lazy PDF runtime became stale', async ({
 }) => {
   let failedRuntimeRequests = 0
   let failedRuntimeUrl = ''
-  let productionPdfChunkRequests = 0
   let studioNavigations = 0
   page.on('framenavigated', (frame) => {
     if (
@@ -83,17 +187,9 @@ test('reloads once when the lazy PDF runtime became stale', async ({
     }
   })
   await page.route(
-    /(?:\/_astro\/pdf\.[^/]+\.js|\/src\/research\/pdf\.ts|\/node_modules\/\.vite\/deps\/pdfjs-dist\.js)(?:\?.*)?$/u,
+    /(?:\/_astro\/publication-worker-client\.[^/]+\.js|\/src\/research\/publication-worker-client\.ts)(?:\?.*)?$/u,
     async (route) => {
-      const pathname = new URL(route.request().url()).pathname
-      const devRuntime = pathname.endsWith(
-        '/node_modules/.vite/deps/pdfjs-dist.js',
-      )
-      const productionChunk = /\/_astro\/pdf\.[^/]+\.js$/u.test(pathname)
-      if (productionChunk) productionPdfChunkRequests += 1
-      const productionRuntime =
-        productionChunk && productionPdfChunkRequests === 2
-      if (failedRuntimeRequests === 0 && (devRuntime || productionRuntime)) {
+      if (failedRuntimeRequests === 0) {
         failedRuntimeRequests += 1
         failedRuntimeUrl = route.request().url()
         await route.abort('failed')
@@ -104,6 +200,10 @@ test('reloads once when the lazy PDF runtime became stale', async ({
   )
 
   await page.goto('/research/studio')
+  await waitForImporter(page)
+  await page
+    .locator('#publication-pdf')
+    .setInputFiles(fixture('born-digital.pdf'))
   await expect.poll(() => failedRuntimeRequests, { timeout: 30_000 }).toBe(1)
   await expect
     .poll(() => studioNavigations, { timeout: 30_000 })
@@ -112,8 +212,21 @@ test('reloads once when the lazy PDF runtime became stale', async ({
 
   expect(failedRuntimeRequests).toBe(1)
   expect(failedRuntimeUrl).toMatch(
-    /(?:\/_astro\/pdf\.[^/]+\.js|\/node_modules\/\.vite\/deps\/pdfjs-dist\.js)/u,
+    /(?:\/_astro\/publication-worker-client\.[^/]+\.js|\/src\/research\/publication-worker-client\.ts)/u,
   )
+  await expect(page.locator('.publication-failure')).toHaveCount(0)
+  const recoveredNavigationCount = studioNavigations
+  await page
+    .locator('#publication-pdf')
+    .setInputFiles(fixture('born-digital.pdf'))
+  await expect(page.locator('.publication-result-bar')).toBeVisible({
+    timeout: 45_000,
+  })
+  await expect(page.locator('.publication-result-bar strong')).toHaveText(
+    'born-digital.pdf',
+  )
+  expect(failedRuntimeRequests).toBe(1)
+  expect(studioNavigations).toBe(recoveredNavigationCount)
   await expect(page.locator('.publication-failure')).toHaveCount(0)
 })
 
@@ -157,9 +270,13 @@ test('recognizes a scanned fixture with the real local browser OCR runtime', asy
     .locator('#publication-pdf')
     .setInputFiles(fixture('scanned-page.pdf'))
 
-  await expect(page.locator('.publication-result-bar')).toBeVisible({
+  await expect(
+    page.locator('.publication-result-bar, .publication-failure'),
+  ).toBeVisible({
     timeout: 90_000,
   })
+  await expect(page.locator('.publication-failure')).toHaveCount(0)
+  await expect(page.locator('.publication-result-bar')).toBeVisible()
   const details = page.locator('.publication-diagnostics')
   if (
     !(await details.evaluate((element) => (element as HTMLDetailsElement).open))
@@ -294,40 +411,24 @@ test('emits EPUB ready only after the completeness gate passes', async ({
 test('keeps ready artifacts usable and retries a failed profile build', async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    const subtle = globalThis.crypto.subtle
-    const digest = subtle.digest.bind(subtle)
-    let rejectedPaperPro = false
-    Object.defineProperty(subtle, 'digest', {
-      configurable: true,
-      value: async (...args: Parameters<SubtleCrypto['digest']>) => {
-        const input = args[1]
-        const bytes =
-          input instanceof ArrayBuffer
-            ? new Uint8Array(input)
-            : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
-        const isEpubCanonicalPayload =
-          new TextDecoder().decode(bytes.subarray(0, 11)) === '{"id":"pdf-'
-        const selectedProfile = document
-          .querySelector('.epub-rendition-preview')
-          ?.getAttribute('data-profile-id')
-        if (
-          isEpubCanonicalPayload &&
-          selectedProfile === 'paperPro' &&
-          !rejectedPaperPro
-        ) {
-          rejectedPaperPro = true
-          throw new Error('Synthetic Paper Pro EPUB build failure')
-        }
-        return digest(...args)
-      },
-    })
+  await installPublicationWorkerFault(page, {
+    profileId: 'paperPro',
+    profileVersion: '1.1.0',
+    orientation: 'portrait',
+    sourceSha256: await fixtureSha256('born-digital.pdf'),
+    mode: 'publication',
+    action: 'reject',
+    marker: 'paperProEpubBuildRejected',
+    message: 'Synthetic Paper Pro EPUB build failure',
   })
 
   await uploadFixture(page, 'born-digital.pdf')
   const switcher = page.locator('.epub-device-switcher')
   await switcher.getByText('Paper Pro', { exact: true }).locator('..').click()
 
+  await page.waitForFunction(
+    () => document.documentElement.dataset.paperProEpubBuildRejected === 'true',
+  )
   await expect(
     page.getByText('Synthetic Paper Pro EPUB build failure', { exact: true }),
   ).toBeVisible()
@@ -576,7 +677,7 @@ test('adjudicates ambiguous structure while preserving independent blockers and 
   await expect(page.getByText('Review required', { exact: true })).toBeVisible()
   await expect(
     page.getByRole('link', {
-      name: 'Download readable Mobile EPUB (review recommended)',
+      name: 'Download Mobile EPUB review artifact (not publication-ready)',
       exact: true,
     }),
   ).toBeVisible()
@@ -617,7 +718,7 @@ test('adjudicates ambiguous structure while preserving independent blockers and 
   const decisionBytes = await downloadedBytes(page, 'Export decisions JSON')
   const directEpub = await downloadedBytes(
     page,
-    'Download readable Mobile EPUB (review recommended)',
+    'Download Mobile EPUB review artifact (not publication-ready)',
   )
   const decisionFile = JSON.parse(new TextDecoder().decode(decisionBytes))
   expect(decisionFile.decisions).toHaveLength(3)
@@ -642,7 +743,7 @@ test('adjudicates ambiguous structure while preserving independent blockers and 
   )
   const replayedEpub = await downloadedBytes(
     page,
-    'Download readable Mobile EPUB (review recommended)',
+    'Download Mobile EPUB review artifact (not publication-ready)',
   )
   expect(replayedEpub).toEqual(directEpub)
 })
@@ -710,36 +811,21 @@ test('adjudicates bounded visual candidates and replays identical EPUB bytes', a
 test('retries a failed readable profile build without discarding review state', async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    const subtle = globalThis.crypto.subtle
-    const digest = subtle.digest.bind(subtle)
-    let rejectedReadableEpub = false
-    Object.defineProperty(subtle, 'digest', {
-      configurable: true,
-      value: async (...args: Parameters<SubtleCrypto['digest']>) => {
-        const input = args[1]
-        const bytes =
-          input instanceof ArrayBuffer
-            ? new Uint8Array(input)
-            : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
-        const isEpubCanonicalPayload = new TextDecoder()
-          .decode(bytes)
-          .includes('"id":"pdf-')
-        if (isEpubCanonicalPayload && !rejectedReadableEpub) {
-          rejectedReadableEpub = true
-          document.documentElement.dataset.readableEpubDigestRejected = 'true'
-          throw new Error('Synthetic readable EPUB build failure')
-        }
-        return digest(...args)
-      },
-    })
+  await installPublicationWorkerFault(page, {
+    profileId: 'mobile',
+    profileVersion: '1.1.0',
+    orientation: 'portrait',
+    sourceSha256: await fixtureSha256('adjudication-required.pdf'),
+    mode: 'readable-fallback',
+    action: 'reject',
+    marker: 'readableEpubBuildRejected',
+    message: 'Synthetic readable EPUB build failure',
   })
 
   await uploadFixture(page, 'adjudication-required.pdf')
 
   await page.waitForFunction(
-    () =>
-      document.documentElement.dataset.readableEpubDigestRejected === 'true',
+    () => document.documentElement.dataset.readableEpubBuildRejected === 'true',
   )
   await expect(page.getByText('Review required', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Blocking issue groups')).toBeVisible()
@@ -755,7 +841,7 @@ test('retries a failed readable profile build without discarding review state', 
     .click()
   await expect(
     page.getByRole('link', {
-      name: 'Download readable Mobile EPUB (review recommended)',
+      name: 'Download Mobile EPUB review artifact (not publication-ready)',
       exact: true,
     }),
   ).toBeVisible()
@@ -853,30 +939,15 @@ test('adjudicates an unresolved line join with three explicit choices and replay
 test('does not let an unresolved stale profile build block the newest import', async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    const subtle = globalThis.crypto.subtle
-    const digest = subtle.digest.bind(subtle)
-    let delayed = false
-    Object.defineProperty(subtle, 'digest', {
-      configurable: true,
-      value: async (...args: Parameters<SubtleCrypto['digest']>) => {
-        const input = args[1]
-        const bytes =
-          input instanceof ArrayBuffer
-            ? new Uint8Array(input)
-            : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
-        // buildEpub hashes JSON.stringify(paper) before assembling the archive.
-        const isEpubCanonicalPayload =
-          !delayed &&
-          new TextDecoder().decode(bytes.subarray(0, 11)) === '{"id":"pdf-'
-        if (isEpubCanonicalPayload) {
-          delayed = true
-          document.documentElement.dataset.staleEpubDigestHeld = 'true'
-          return new Promise<ArrayBuffer>(() => undefined)
-        }
-        return digest(...args)
-      },
-    })
+  await installPublicationWorkerFault(page, {
+    profileId: 'mobile',
+    profileVersion: '1.1.0',
+    orientation: 'portrait',
+    sourceSha256: await fixtureSha256('born-digital.pdf'),
+    mode: 'publication',
+    action: 'stall',
+    marker: 'staleEpubBuildHeld',
+    terminationMarker: 'staleEpubBuildTerminated',
   })
   await page.goto('/research/studio', { waitUntil: 'networkidle' })
   await waitForImporter(page)
@@ -886,10 +957,15 @@ test('does not let an unresolved stale profile build block the newest import', a
     .setInputFiles(fixture('born-digital.pdf'))
   await expect(page.getByText('Building Mobile EPUB locally…')).toBeVisible()
   await page.waitForFunction(
-    () => document.documentElement.dataset.staleEpubDigestHeld === 'true',
+    () => document.documentElement.dataset.staleEpubBuildHeld === 'true',
   )
   await expect(page.getByText('EPUB ready', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'New paper' }).click()
+  await page.waitForFunction(
+    () => document.documentElement.dataset.staleEpubBuildTerminated === 'true',
+    undefined,
+    { timeout: 5_000 },
+  )
   await page
     .locator('#publication-pdf')
     .setInputFiles(fixture('structured-scientific.pdf'))

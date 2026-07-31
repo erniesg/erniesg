@@ -11,6 +11,7 @@ import {
 import { assessPdfCompleteness } from './pdf-quality'
 import {
   buildPdfLineJoinReviewContext,
+  replayPdfRegionLineRanges,
   replayPdfRegionLineText,
 } from './pdf-lines'
 import {
@@ -63,6 +64,7 @@ const diagnosticCodeSchema = z.enum([
   'INCOMPLETE_TEXT_COVERAGE',
   'INCOMPLETE_ASSET_COVERAGE',
   'INCOMPLETE_RELATIONSHIP_COVERAGE',
+  'INCOMPLETE_SEMANTIC_TABLE_COVERAGE',
   'UNRESOLVED_SEMANTIC_OBJECTS',
   'STALE_HUMAN_DECISION',
 ])
@@ -381,9 +383,12 @@ const QUALITY_DIAGNOSTIC_CODES = new Set<ReconstructionDiagnostic['code']>([
   'INCOMPLETE_INLINE_STYLE_COVERAGE',
   'UNRESOLVED_HYPERLINK',
   'INVALID_LINE_BOUNDARY_LEDGER',
+  'INVALID_SOURCE_SEMANTIC_FLOW_BOUNDARY_LEDGER',
+  'INVALID_CANONICAL_HYPHEN_BOUNDARY_LEDGER',
   'UNRESOLVED_CORRUPTING_JOIN',
   'INCOMPLETE_ASSET_COVERAGE',
   'INCOMPLETE_RELATIONSHIP_COVERAGE',
+  'INCOMPLETE_SEMANTIC_TABLE_COVERAGE',
   'UNRESOLVED_SEMANTIC_OBJECTS',
 ])
 
@@ -959,11 +964,53 @@ function occurrenceIndexes(value: string, query: string) {
   return indexes
 }
 
-function shiftedRange(start: number, end: number, removedIndex: number) {
+function shiftedOffset(
+  offset: number,
+  removedStart: number,
+  removedCount: number,
+) {
+  if (offset <= removedStart) return offset
+  if (offset >= removedStart + removedCount) return offset - removedCount
+  return removedStart
+}
+
+function shiftedRange(
+  start: number,
+  end: number,
+  removedStart: number,
+  removedCount: number,
+) {
   return {
-    start: start > removedIndex ? start - 1 : start,
-    end: end > removedIndex ? end - 1 : end,
+    start: shiftedOffset(start, removedStart, removedCount),
+    end: shiftedOffset(end, removedStart, removedCount),
   }
+}
+
+function exactRemovalEdit(current: string, resolved: string) {
+  if (current === resolved) return { start: current.length, count: 0 }
+  if (resolved.length >= current.length) return null
+  let start = 0
+  while (start < resolved.length && current[start] === resolved[start]) {
+    start += 1
+  }
+  let currentEnd = current.length
+  let resolvedEnd = resolved.length
+  while (
+    currentEnd > start &&
+    resolvedEnd > start &&
+    current[currentEnd - 1] === resolved[resolvedEnd - 1]
+  ) {
+    currentEnd -= 1
+    resolvedEnd -= 1
+  }
+  const count = currentEnd - start
+  if (
+    count <= 0 ||
+    current.slice(0, start) + current.slice(currentEnd) !== resolved
+  ) {
+    return null
+  }
+  return { start, count }
 }
 
 type CanonicalNode = PdfReconstruction['paper']['nodes'][number]
@@ -975,27 +1022,34 @@ function hasCanonicalText(node: CanonicalNode): node is CanonicalTextNode {
 
 function updateNodeRanges(
   node: PdfReconstruction['paper']['nodes'][number],
-  removedIndex: number,
+  removedStart: number,
+  removedCount: number,
 ) {
   if ('inlineRuns' in node && node.inlineRuns) {
     node.inlineRuns = node.inlineRuns.map((run) => ({
       ...run,
-      ...shiftedRange(run.start, run.end, removedIndex),
+      ...shiftedRange(run.start, run.end, removedStart, removedCount),
     }))
   }
   if ('noteReferences' in node && node.noteReferences) {
     node.noteReferences = node.noteReferences.map((reference) => ({
       ...reference,
-      ...shiftedRange(reference.start, reference.end, removedIndex),
+      ...shiftedRange(
+        reference.start,
+        reference.end,
+        removedStart,
+        removedCount,
+      ),
     }))
   }
 }
 
-function removeLineJoinHyphen(
+function resolveLineJoinText(
   reconstruction: PdfReconstruction,
   regionId: string,
   fromLineId: string,
   toLineId: string,
+  outcome: 'removed-discretionary-hyphen' | 'preserved-lexical-hyphen',
 ) {
   const region = reconstruction.regions.find(
     (candidate) => candidate.id === regionId,
@@ -1010,8 +1064,6 @@ function removeLineJoinHyphen(
   const left = fromText.match(/([\p{L}\p{N}]+)([-‐‑])$/u)
   const right = toText.match(/^([\p{L}\p{N}]+)/u)
   if (!left || !right) return false
-  const sourceBoundary = `${left[1]}${left[2]}${right[1]}`
-  const resolvedBoundary = `${left[1]}${right[1]}`
   const transition = reconstruction.lineBoundaryDecisions.find(
     (candidate) =>
       candidate.regionId === regionId &&
@@ -1019,40 +1071,51 @@ function removeLineJoinHyphen(
       candidate.toLineId === toLineId,
   )
   if (!transition) return false
-  const currentRegionText = replayPdfRegionLineText(
+  const currentReplay = replayPdfRegionLineRanges(
     region,
     reconstruction.lineBoundaryDecisions,
   )
-  const resolvedRegionText = replayPdfRegionLineText(
+  const resolvedReplay = replayPdfRegionLineRanges(
     region,
     reconstruction.lineBoundaryDecisions.map((candidate) =>
       candidate.id === transition.id
         ? {
             ...candidate,
-            outcome: 'removed-discretionary-hyphen' as const,
+            outcome,
           }
         : candidate,
     ),
   )
+  const currentRegionText = currentReplay?.text
+  const resolvedRegionText = resolvedReplay?.text
   if (
     currentRegionText !== region.text ||
-    !resolvedRegionText ||
-    resolvedRegionText.length !== region.text.length - 1
+    !currentReplay ||
+    !resolvedReplay ||
+    !resolvedRegionText
   ) {
     return false
   }
-  const sourceHyphenIndexes: number[] = []
-  for (let index = 0; index < region.text.length; index += 1) {
-    if (
-      /[-‐‑]/u.test(region.text[index]) &&
-      `${region.text.slice(0, index)}${region.text.slice(index + 1)}` ===
-        resolvedRegionText
-    ) {
-      sourceHyphenIndexes.push(index)
-    }
+  const edit = exactRemovalEdit(currentRegionText, resolvedRegionText)
+  if (!edit) return false
+  if (edit.count === 0) return true
+  const fromRange = currentReplay.ranges.get(fromLineId)
+  const toRange = currentReplay.ranges.get(toLineId)
+  if (!fromRange || !toRange) return false
+  const boundaryStart = fromRange.end - left[0].length
+  const boundaryEnd = toRange.start + right[0].length
+  if (
+    boundaryStart < 0 ||
+    boundaryEnd > currentRegionText.length ||
+    edit.start < boundaryStart ||
+    edit.start + edit.count > boundaryEnd
+  ) {
+    return false
   }
-  if (sourceHyphenIndexes.length !== 1) return false
-  const sourceHyphenIndex = sourceHyphenIndexes[0]
+  const currentBoundary = currentRegionText.slice(boundaryStart, boundaryEnd)
+  const resolvedBoundary =
+    currentBoundary.slice(0, edit.start - boundaryStart) +
+    currentBoundary.slice(edit.start - boundaryStart + edit.count)
 
   const candidateNodes = reconstruction.paper.nodes
     .filter(hasCanonicalText)
@@ -1062,38 +1125,56 @@ function removeLineJoinHyphen(
   let canonicalMatches = candidateNodes.flatMap((node) =>
     occurrenceIndexes(node.text, region.text).map((index) => ({
       node,
-      index: index + sourceHyphenIndex,
+      index: index + edit.start,
     })),
   )
   if (canonicalMatches.length !== 1) {
     canonicalMatches = candidateNodes.flatMap((node) =>
-      occurrenceIndexes(node.text, sourceBoundary).map((index) => ({
+      occurrenceIndexes(node.text, currentBoundary).map((index) => ({
         node,
-        index: index + left[1].length,
+        index: index + edit.start - boundaryStart,
       })),
     )
   }
   if (canonicalMatches.length !== 1) return false
   const canonicalMatch = canonicalMatches[0]
+  const removedText = currentRegionText.slice(
+    edit.start,
+    edit.start + edit.count,
+  )
+  if (
+    canonicalMatch.node.text.slice(
+      canonicalMatch.index,
+      canonicalMatch.index + edit.count,
+    ) !== removedText
+  ) {
+    return false
+  }
 
   const originalRegionText = region.text
   region.text = resolvedRegionText
-  canonicalMatch.node.text = `${canonicalMatch.node.text.slice(0, canonicalMatch.index)}${canonicalMatch.node.text.slice(canonicalMatch.index + 1)}`
-  updateNodeRanges(canonicalMatch.node, canonicalMatch.index)
+  canonicalMatch.node.text = `${canonicalMatch.node.text.slice(0, canonicalMatch.index)}${canonicalMatch.node.text.slice(canonicalMatch.index + edit.count)}`
+  updateNodeRanges(canonicalMatch.node, canonicalMatch.index, edit.count)
 
   for (const relationship of reconstruction.noteRelationships) {
     if (relationship.referenceRegionId === regionId) {
       const range = shiftedRange(
         relationship.referenceStart,
         relationship.referenceEnd,
-        sourceHyphenIndex,
+        edit.start,
+        edit.count,
       )
       relationship.referenceStart = range.start
       relationship.referenceEnd = range.end
     }
     const anchor = relationship.canonicalAnchor
     if (anchor?.kind === 'node' && anchor.nodeId === canonicalMatch.node.id) {
-      const range = shiftedRange(anchor.start, anchor.end, canonicalMatch.index)
+      const range = shiftedRange(
+        anchor.start,
+        anchor.end,
+        canonicalMatch.index,
+        edit.count,
+      )
       anchor.start = range.start
       anchor.end = range.end
     }
@@ -1103,7 +1184,8 @@ function removeLineJoinHyphen(
       const range = shiftedRange(
         relationship.referenceStart,
         relationship.referenceEnd,
-        sourceHyphenIndex,
+        edit.start,
+        edit.count,
       )
       relationship.referenceStart = range.start
       relationship.referenceEnd = range.end
@@ -1113,6 +1195,42 @@ function removeLineJoinHyphen(
         relationship.canonicalAnchor.start,
         relationship.canonicalAnchor.end,
         canonicalMatch.index,
+        edit.count,
+      )
+      relationship.canonicalAnchor.start = range.start
+      relationship.canonicalAnchor.end = range.end
+    }
+  }
+  for (const relationship of reconstruction.crossReferenceRelationships) {
+    if (relationship.referenceRegionId === regionId) {
+      const range = shiftedRange(
+        relationship.referenceStart,
+        relationship.referenceEnd,
+        edit.start,
+        edit.count,
+      )
+      relationship.referenceStart = range.start
+      relationship.referenceEnd = range.end
+      relationship.targets = relationship.targets.map((target) => {
+        const targetRange = shiftedRange(
+          target.referenceStart,
+          target.referenceEnd,
+          edit.start,
+          edit.count,
+        )
+        return {
+          ...target,
+          referenceStart: targetRange.start,
+          referenceEnd: targetRange.end,
+        }
+      })
+    }
+    if (relationship.canonicalAnchor?.nodeId === canonicalMatch.node.id) {
+      const range = shiftedRange(
+        relationship.canonicalAnchor.start,
+        relationship.canonicalAnchor.end,
+        canonicalMatch.index,
+        edit.count,
       )
       relationship.canonicalAnchor.start = range.start
       relationship.canonicalAnchor.end = range.end
@@ -1124,7 +1242,8 @@ function removeLineJoinHyphen(
     const range = shiftedRange(
       classification.start,
       classification.end,
-      sourceHyphenIndex,
+      edit.start,
+      edit.count,
     )
     classification.start = range.start
     classification.end = range.end
@@ -1136,9 +1255,9 @@ function removeLineJoinHyphen(
         originalRegionText,
         resolvedRegionText,
       )
-    } else if (occurrenceIndexes(value, sourceBoundary).length === 1) {
+    } else if (occurrenceIndexes(value, currentBoundary).length === 1) {
       reconstruction.paper[key] = value.replace(
-        sourceBoundary,
+        currentBoundary,
         resolvedBoundary,
       )
     }
@@ -1162,7 +1281,8 @@ function updateLineJoin(
   )
   if (
     !transition ||
-    transition.outcome !== 'unresolved' ||
+    (transition.outcome !== 'unresolved' &&
+      transition.outcome !== 'ambiguous') ||
     transition.regionId !== resolution.transition.regionId ||
     transition.fromLineId !== resolution.transition.fromLineId ||
     transition.toLineId !== resolution.transition.toLineId ||
@@ -1178,12 +1298,15 @@ function updateLineJoin(
     return false
   }
   if (
-    resolution.outcome === 'remove-wrap-hyphen' &&
-    !removeLineJoinHyphen(
+    resolution.outcome !== 'leave-unresolved' &&
+    !resolveLineJoinText(
       reconstruction,
       transition.regionId,
       transition.fromLineId,
       transition.toLineId,
+      resolution.outcome === 'remove-wrap-hyphen'
+        ? 'removed-discretionary-hyphen'
+        : 'preserved-lexical-hyphen',
     )
   ) {
     return false
@@ -1195,12 +1318,19 @@ function updateLineJoin(
       : resolution.outcome === 'preserve-authored-hyphen'
         ? 'preserved-lexical-hyphen'
         : 'unresolved'
+  const retainedEvidence =
+    resolution.outcome === 'leave-unresolved'
+      ? transition.evidence
+      : transition.evidence.filter(
+          (evidence) => evidence !== 'source-line-separator-preserved',
+        )
   transition.evidence = [
-    ...new Set([...transition.evidence, ...resolution.evidence]),
+    ...new Set([...retainedEvidence, ...resolution.evidence]),
   ]
   reconstruction.unresolvedCorruptingJoinCount =
     reconstruction.lineBoundaryDecisions.filter(
-      (candidate) => candidate.outcome === 'unresolved',
+      (candidate) =>
+        candidate.outcome === 'unresolved' || candidate.outcome === 'ambiguous',
     ).length
   reconstruction.structurallyConsumedLineBoundaryCount =
     reconstruction.lineBoundaryDecisions.filter(
@@ -1386,6 +1516,7 @@ function updateVisualMatch(
     ...relationship,
     captionNodeId,
     sourceRegionIds: [...candidate.sourceRegionIds],
+    sourceLineIds: [...(candidate.sourceLineIds ?? [])],
     sourceObjectIds: [...candidate.sourceObjectIds],
     assetIds: [...candidate.assetIds],
     status: 'matched' as const,
@@ -1399,6 +1530,7 @@ function updateVisualMatch(
       { ...captionBox },
       ...candidate.sourceBoxes.map((box) => ({ ...box })),
     ],
+    sourceText: candidate.sourceText ?? relationship.sourceText,
   }
   const canonicalNodeId = visualCanonicalNodeId(materializedRelationship, page)
   if (
@@ -1510,8 +1642,34 @@ function legalDismissal(diagnostic: ReconstructionDiagnostic) {
 export function applyHumanDecisionFile(
   reconstruction: PdfReconstruction,
   input: HumanDecisionFile,
+  options: {
+    emptyFilePolicy?: 'reassess' | 'reuse-fresh-assessment'
+  } = {},
 ) {
   const file = humanDecisionFileSchema.parse(input)
+  const existingAdjudications = reconstruction.humanAdjudications
+  if (
+    options.emptyFilePolicy === 'reuse-fresh-assessment' &&
+    file.decisions.length === 0 &&
+    file.documentSha256 === reconstruction.source.sha256 &&
+    existingAdjudications.applied.length === 0 &&
+    existingAdjudications.stale.length === 0 &&
+    Object.keys(existingAdjudications.countsByDiagnosticCode).length === 0 &&
+    !reconstruction.diagnostics.some(
+      (diagnostic) => diagnostic.code === 'STALE_HUMAN_DECISION',
+    )
+  ) {
+    return {
+      ...reconstruction,
+      humanAdjudications: {
+        schemaVersion: file.schemaVersion,
+        documentSha256: reconstruction.source.sha256,
+        applied: [],
+        stale: [],
+        countsByDiagnosticCode: {},
+      },
+    }
+  }
   const result = structuredClone(reconstruction)
   const decisionDiagnostics = [...result.diagnostics]
   result.diagnostics = result.diagnostics.filter(
@@ -1640,6 +1798,13 @@ export function applyHumanDecisionFile(
     noteRelationships: result.noteRelationships,
     provenance: result.provenance,
     lineBoundaryDecisions: result.lineBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisions:
+      result.sourceSemanticFlowBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisionCount:
+      result.sourceSemanticFlowBoundaryDecisionCount,
+    canonicalHyphenBoundaryDecisions: result.canonicalHyphenBoundaryDecisions,
+    canonicalHyphenBoundaryDecisionCount:
+      result.canonicalHyphenBoundaryDecisionCount,
     unresolvedCorruptingJoinCount: result.unresolvedCorruptingJoinCount,
     structurallyConsumedLineBoundaryCount:
       result.structurallyConsumedLineBoundaryCount,

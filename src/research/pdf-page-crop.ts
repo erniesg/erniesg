@@ -1,7 +1,19 @@
 import type {
   NormalizedSourceBox,
   PdfSourceExclusionMask,
+  PdfResolvedTextOperationFilterRequest,
+  PdfTextOperationFilterRequest,
 } from './import-types'
+import { sha256HexSync } from './sha256-sync'
+import {
+  capturePinnedPdfjsDisplayOperatorList,
+  createPdfDisplayOperationsFilterAttestation,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION,
+  provePdfDisplayTextOperationFilter,
+} from './pdf-text-paint'
 
 export const MAX_PDF_PAGE_CROP_PIXELS = 3_200_000
 export const PDF_PAGE_CROP_TIMEOUT_MS = 15_000
@@ -46,6 +58,7 @@ export type PdfCanvasFactory = {
 
 export type PdfPageCropSource = {
   pageNumber?: number
+  _intentStates?: unknown
   getViewport(options: { scale: number }): {
     width: number
     height: number
@@ -57,6 +70,7 @@ export type PdfPageCropSource = {
     viewport: { width: number; height: number; rotation?: number }
     transform: number[]
     background: string
+    operationsFilter?: (index: number) => boolean
   }): { promise: Promise<unknown>; cancel?: () => void }
 }
 
@@ -64,9 +78,43 @@ export type PdfPageCropRaster = {
   width: number
   height: number
   pixels: Uint8Array
+  resolutionDpi: number
   sourceBox: NormalizedSourceBox
   sourceExclusionMask?: PdfSourceExclusionMask
 }
+
+const trustedTextOperationFilterRasters = new WeakMap<object, string>()
+
+function textOperationFilterRasterFingerprint(value: PdfPageCropRaster) {
+  return sha256HexSync(
+    JSON.stringify({
+      width: value.width,
+      height: value.height,
+      resolutionDpi: value.resolutionDpi,
+      sourceBox: sourceBoxIdentity(value.sourceBox),
+      sourceExclusionMask: value.sourceExclusionMask,
+      pixelsSha256: sha256HexSync(value.pixels),
+    }),
+  )
+}
+
+export function isTrustedPdfTextOperationFilterRaster(
+  value: object | null | undefined,
+) {
+  if (!value) return false
+  const expected = trustedTextOperationFilterRasters.get(value)
+  if (!expected) return false
+  try {
+    return (
+      textOperationFilterRasterFingerprint(value as PdfPageCropRaster) ===
+      expected
+    )
+  } catch {
+    return false
+  }
+}
+
+type UnscaledPdfPageCropRaster = Omit<PdfPageCropRaster, 'resolutionDpi'>
 
 function isSourceInkPixel(pixels: Uint8Array, offset: number) {
   const alpha = pixels[offset + 3] / 255
@@ -113,6 +161,14 @@ function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
 }
 
+function boundedRoundedExtent(start: number, end: number) {
+  const extent = rounded(end - start)
+  // Decimal canonicalization can round the extent one floating-point unit
+  // beyond its already-bounded endpoint. Keep the canonical extent when it
+  // fits; otherwise move it inward by the smallest safe normalized epsilon.
+  return start + extent <= end ? extent : extent - Number.EPSILON
+}
+
 function sourceInkBounds(pixels: Uint8Array, width: number, height: number) {
   let left = width
   let top = height
@@ -135,7 +191,7 @@ function tightenRasterToSourceInk(
   width: number,
   height: number,
   sourceBox: NormalizedSourceBox,
-): PdfPageCropRaster {
+): UnscaledPdfPageCropRaster {
   const ink = sourceInkBounds(pixels, width, height)
   if (!ink) return { width, height, pixels, sourceBox }
   const normalizedPixelWidth = sourceBox.width / width
@@ -605,12 +661,115 @@ function canonicalMaskSourceBoxes({
   }
 }
 
+function canonicalTextOperationFilter(
+  sourceBox: NormalizedSourceBox,
+  request: PdfTextOperationFilterRequest | undefined,
+) {
+  if (!request) return null
+  const ownedSourceBoxes = canonicalSourceBoxes(request.ownedSourceBoxes)
+  const excludedSourceBoxes = canonicalSourceBoxes(request.excludedSourceBoxes)
+  const canonicalSpans = (values: readonly { start: number; end: number }[]) =>
+    values.length > 0 &&
+    values.length <= MAX_SOURCE_EXCLUSION_OWNED_BOXES &&
+    values.every(
+      ({ start, end }) =>
+        Number.isInteger(start) &&
+        Number.isInteger(end) &&
+        start >= 0 &&
+        end > start,
+    )
+      ? values
+          .map(({ start, end }) => ({ start, end }))
+          .sort(
+            (left, right) => left.start - right.start || left.end - right.end,
+          )
+      : null
+  const ownedTextLedgerSpans = canonicalSpans(request.ownedTextLedgerSpans)
+  const excludedTextLedgerSpans = canonicalSpans(
+    request.excludedTextLedgerSpans,
+  )
+  if (
+    request.algorithm !== 'pdfjs-display-text-operation-filter-v2' ||
+    request.expansionPixels !== 0 ||
+    request.displayOperatorAdapter !== PDFJS_DISPLAY_OPERATOR_ADAPTER ||
+    request.pdfjsVersion !== PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION ||
+    request.pdfjsBuild !== PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD ||
+    request.renderIntent !== 'display' ||
+    request.annotationMode !== 'enable' ||
+    !/^[a-f0-9]{64}$/u.test(request.sourceTextLedgerSha256) ||
+    ownedSourceBoxes.length === 0 ||
+    ownedSourceBoxes.length > MAX_SOURCE_EXCLUSION_OWNED_BOXES ||
+    ownedSourceBoxes.some((box) => !validOwnedSourceBox(sourceBox, box)) ||
+    excludedSourceBoxes.length === 0 ||
+    excludedSourceBoxes.length > MAX_SOURCE_EXCLUSION_BOXES ||
+    excludedSourceBoxes.some((box) => !validPageSourceBox(sourceBox, box)) ||
+    !ownedTextLedgerSpans ||
+    !excludedTextLedgerSpans ||
+    excludedTextLedgerSpans.some((excluded) =>
+      ownedTextLedgerSpans.some(
+        (owned) =>
+          Math.min(excluded.end, owned.end) >
+          Math.max(excluded.start, owned.start),
+      ),
+    )
+  ) {
+    throw new Error('PDF page crop text operation filter is invalid')
+  }
+  return {
+    ...request,
+    ownedSourceBoxes,
+    excludedSourceBoxes,
+    ownedTextLedgerSpans,
+    excludedTextLedgerSpans,
+  }
+}
+
+export function pdfTextOperationRunPaintEnvelopes({
+  sourceBox,
+  excludedSourceBoxes,
+  width,
+  height,
+}: {
+  sourceBox: NormalizedSourceBox
+  excludedSourceBoxes: readonly NormalizedSourceBox[]
+  width: number
+  height: number
+}) {
+  const viewportWidth = width / sourceBox.width
+  const viewportHeight = height / sourceBox.height
+  return excludedSourceBoxes.map((box) => {
+    const emPixels = box.height * viewportHeight
+    const horizontalPadding = Math.max(2, emPixels * 0.15) / viewportWidth
+    const verticalPadding = Math.max(2, emPixels * 0.35) / viewportHeight
+    const left = Math.max(sourceBox.x, box.x - horizontalPadding)
+    const top = Math.max(sourceBox.y, box.y - verticalPadding)
+    const right = Math.min(
+      sourceBox.x + sourceBox.width,
+      box.x + box.width + horizontalPadding,
+    )
+    const bottom = Math.min(
+      sourceBox.y + sourceBox.height,
+      box.y + box.height + verticalPadding,
+    )
+    return {
+      page: sourceBox.page,
+      x: rounded(left),
+      y: rounded(top),
+      width: rounded(right - left),
+      height: rounded(bottom - top),
+      rotation: sourceBox.rotation,
+      method: 'pdf-text' as const,
+    }
+  })
+}
+
 export async function renderPdfPageCrop({
   page,
   canvasFactory,
-  sourceBox,
+  sourceBox: inputSourceBox,
   ownedSourceBoxes: inputOwnedSourceBoxes,
   excludedSourceBoxes: inputExcludedSourceBoxes,
+  sourceTextOperationFilter: inputSourceTextOperationFilter,
   signal,
   maximumPixels = MAX_PDF_PAGE_CROP_PIXELS,
   timeoutMs = PDF_PAGE_CROP_TIMEOUT_MS,
@@ -621,18 +780,39 @@ export async function renderPdfPageCrop({
   sourceBox: NormalizedSourceBox
   ownedSourceBoxes?: readonly NormalizedSourceBox[]
   excludedSourceBoxes?: readonly NormalizedSourceBox[]
+  sourceTextOperationFilter?: PdfTextOperationFilterRequest
   signal?: AbortSignal
   maximumPixels?: number
   timeoutMs?: number
   tightenToSourceInk?: boolean
 }): Promise<PdfPageCropRaster> {
+  const sourceBox = { ...inputSourceBox }
   validateSourceBox(page, sourceBox)
+  if (
+    inputSourceTextOperationFilter &&
+    (inputOwnedSourceBoxes || inputExcludedSourceBoxes)
+  ) {
+    throw new Error(
+      'PDF page crop cannot combine source-box masking with text operation filtering',
+    )
+  }
+  const sourceTextOperationFilter = canonicalTextOperationFilter(
+    sourceBox,
+    inputSourceTextOperationFilter,
+  )
   const { ownedSourceBoxes, excludedSourceBoxes } = canonicalMaskSourceBoxes({
     sourceBox,
-    ownedSourceBoxes: inputOwnedSourceBoxes,
-    excludedSourceBoxes: inputExcludedSourceBoxes,
+    ownedSourceBoxes: sourceTextOperationFilter
+      ? undefined
+      : inputOwnedSourceBoxes,
+    excludedSourceBoxes: sourceTextOperationFilter
+      ? undefined
+      : inputExcludedSourceBoxes,
   })
-  if (excludedSourceBoxes?.length && tightenToSourceInk) {
+  if (
+    (excludedSourceBoxes?.length || sourceTextOperationFilter) &&
+    tightenToSourceInk
+  ) {
     throw new Error(
       'PDF page crop cannot tighten source ink after excluding source boxes',
     )
@@ -661,98 +841,410 @@ export async function renderPdfPageCrop({
   }
   const width = Math.max(1, Math.ceil(viewport.width * sourceBox.width))
   const height = Math.max(1, Math.ceil(viewport.height * sourceBox.height))
-  const target = canvasFactory.create(width, height)
-  target.context.fillStyle = '#fff'
-  target.context.fillRect(0, 0, width, height)
-  const renderTask = page.render({
-    canvas: target.canvas,
-    canvasContext: target.context,
-    viewport,
-    transform: [
-      1,
-      0,
-      0,
-      1,
-      -sourceBox.x * viewport.width,
-      -sourceBox.y * viewport.height,
-    ],
-    background: '#fff',
-  })
-  const cancelRender = () => renderTask.cancel?.()
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  let rejectAbort: ((error: Error) => void) | undefined
-  const abort = new Promise<never>((_resolve, reject) => {
-    rejectAbort = reject
-  })
-  const onAbort = () => {
-    cancelRender()
-    rejectAbort?.(abortError())
-  }
-  signal?.addEventListener('abort', onAbort, { once: true })
-
-  try {
-    await Promise.race([
-      renderTask.promise,
-      abort,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => {
-          cancelRender()
-          reject(new Error('PDF page crop rasterization timed out'))
-        }, timeoutMs)
-      }),
-    ])
-    if (signal?.aborted) throw abortError()
-    const image = target.context.getImageData(0, 0, width, height)
-    const pixels = new Uint8Array(image.data.byteLength)
-    pixels.set(image.data)
-    const changedPixels =
-      excludedSourceBoxes?.length && ownedSourceBoxes?.length
-        ? maskExcludedEdgeComponents({
-            pixels,
-            width,
-            height,
-            sourceBox,
-            viewportWidth: viewport.width,
-            viewportHeight: viewport.height,
-            ownedSourceBoxes,
-            excludedSourceBoxes,
-          })
-        : 0
-    if (hasSourceInkOnCropEdge(pixels, width, height)) {
-      throw new Error('PDF page crop has source ink touching its edge')
+  const renderPixels = async (
+    operationsFilter?: (index: number) => boolean,
+  ) => {
+    const target = canvasFactory.create(width, height)
+    target.context.fillStyle = '#fff'
+    target.context.fillRect(0, 0, width, height)
+    const renderTask = page.render({
+      canvas: target.canvas,
+      canvasContext: target.context,
+      viewport,
+      transform: [
+        1,
+        0,
+        0,
+        1,
+        -sourceBox.x * viewport.width,
+        -sourceBox.y * viewport.height,
+      ],
+      background: '#fff',
+      ...(operationsFilter ? { operationsFilter } : {}),
+    })
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    let rejectAbort: ((error: Error) => void) | undefined
+    const abort = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject
+    })
+    const onAbort = () => {
+      renderTask.cancel?.()
+      rejectAbort?.(abortError())
     }
-    return tightenToSourceInk
-      ? tightenRasterToSourceInk(pixels, width, height, sourceBox)
-      : {
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      await Promise.race([
+        renderTask.promise,
+        abort,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            renderTask.cancel?.()
+            reject(new Error('PDF page crop rasterization timed out'))
+          }, timeoutMs)
+        }),
+      ])
+      if (signal?.aborted) throw abortError()
+      const image = target.context.getImageData(0, 0, width, height)
+      const pixels = new Uint8Array(image.data.byteLength)
+      pixels.set(image.data)
+      return pixels
+    } catch (error) {
+      void renderTask.promise.catch(() => undefined)
+      throw error
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
+      signal?.removeEventListener('abort', onAbort)
+      canvasFactory.destroy(target)
+    }
+  }
+
+  let resolvedTextOperationFilter:
+    PdfResolvedTextOperationFilterRequest | undefined
+  let baselinePixels: Uint8Array | undefined
+  let excludedTextOperationIndexes: number[] | undefined
+  let exactDisplayOperatorList:
+    | NonNullable<ReturnType<typeof capturePinnedPdfjsDisplayOperatorList>>
+    | undefined
+  if (sourceTextOperationFilter) {
+    if (
+      sourceTextOperationFilter.displayOperatorAdapter !==
+      PDFJS_DISPLAY_OPERATOR_ADAPTER
+    ) {
+      throw new Error('PDF display-stream adapter is not supported')
+    }
+    const proveCurrentDisplayOperatorList = () => {
+      const operatorList = capturePinnedPdfjsDisplayOperatorList({
+        page,
+        pdfjsVersion: sourceTextOperationFilter.pdfjsVersion,
+        pdfjsBuild: sourceTextOperationFilter.pdfjsBuild,
+      })
+      const proof = operatorList
+        ? provePdfDisplayTextOperationFilter({
+            operatorList,
+            sourceTextLedgerSha256:
+              sourceTextOperationFilter.sourceTextLedgerSha256,
+            ownedTextLedgerSpans:
+              sourceTextOperationFilter.ownedTextLedgerSpans,
+            excludedTextLedgerSpans:
+              sourceTextOperationFilter.excludedTextLedgerSpans,
+            showTextOperation: PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.showText,
+            textPaintOperations: new Set([
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.showText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.showSpacedText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.nextLineShowText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.nextLineSetSpacingShowText,
+            ]),
+            textStateOperations: new Set([
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.save,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.restore,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.transform,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setGState,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.beginText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.endText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setCharSpacing,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setWordSpacing,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setHScale,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setLeading,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setFont,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setTextRenderingMode,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setTextRise,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.moveText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setLeadingMoveText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setTextMatrix,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.nextLine,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.showText,
+            ]),
+            setTextRenderingModeOperation:
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setTextRenderingMode,
+            textPositionResetOperations: new Set([
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.moveText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setLeadingMoveText,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.setTextMatrix,
+              PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.nextLine,
+            ]),
+            beginTextOperation: PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.beginText,
+            endTextOperation: PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.endText,
+            saveOperation: PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.save,
+            restoreOperation: PDFJS_DISPLAY_OPERATOR_ADAPTER_OPS.restore,
+          })
+        : null
+      return { operatorList, proof }
+    }
+    // A completed DISPLAY list may already be present from a prior crop on
+    // this page. Validate its bounded operation-index proof before spending
+    // another raster pass. On first use, one baseline render is still needed
+    // to materialize the exact private DISPLAY stream.
+    let displayProof = proveCurrentDisplayOperatorList()
+    if (displayProof.operatorList && !displayProof.proof) {
+      throw new Error(
+        'PDF display-stream text operation provenance is stale or unsafe',
+      )
+    }
+    baselinePixels = await renderPixels()
+    if (!displayProof.operatorList) {
+      displayProof = proveCurrentDisplayOperatorList()
+    }
+    const { operatorList, proof } = displayProof
+    if (!operatorList || !proof) {
+      throw new Error(
+        'PDF display-stream text operation provenance is stale or unsafe',
+      )
+    }
+    resolvedTextOperationFilter = {
+      ...sourceTextOperationFilter,
+      displayTextLedgerSha256: proof.displayTextLedgerSha256,
+      operatorLedgerSha256: proof.operatorLedgerSha256,
+      ownedOperationIndexes: proof.ownedOperationIndexes,
+      excludedOperationIndexes: proof.excludedOperationIndexes,
+      ownedOnlyExcludedOperationIndexes:
+        proof.ownedOnlyExcludedOperationIndexes,
+    }
+    exactDisplayOperatorList = operatorList
+    excludedTextOperationIndexes =
+      resolvedTextOperationFilter.excludedOperationIndexes
+  }
+  const filteredRenderAttestation =
+    exactDisplayOperatorList && excludedTextOperationIndexes
+      ? createPdfDisplayOperationsFilterAttestation({
+          operatorList: exactDisplayOperatorList,
+          excludedOperationIndexes: excludedTextOperationIndexes,
+        })
+      : null
+  if (exactDisplayOperatorList && !filteredRenderAttestation) {
+    throw new Error(
+      'PDF display-stream operationsFilter callback cannot be attested',
+    )
+  }
+  const pixels = await renderPixels(filteredRenderAttestation?.operationsFilter)
+  if (
+    filteredRenderAttestation &&
+    !filteredRenderAttestation.hasCompleteExactCoverage()
+  ) {
+    throw new Error(
+      'PDF display-stream operationsFilter callback did not cover the exact DISPLAY stream',
+    )
+  }
+  let textOperationMask: PdfSourceExclusionMask | undefined
+  if (
+    sourceTextOperationFilter &&
+    resolvedTextOperationFilter &&
+    baselinePixels
+  ) {
+    const replayAttestation = createPdfDisplayOperationsFilterAttestation({
+      operatorList: exactDisplayOperatorList!,
+      excludedOperationIndexes: excludedTextOperationIndexes!,
+    })
+    if (!replayAttestation) {
+      throw new Error(
+        'PDF display-stream operationsFilter replay cannot be attested',
+      )
+    }
+    if (
+      replayAttestation.exactOperationStreamSha256 !==
+      filteredRenderAttestation!.exactOperationStreamSha256
+    ) {
+      throw new Error(
+        'PDF display-stream operationsFilter replay changed the exact DISPLAY stream',
+      )
+    }
+    const replayPixels = await renderPixels(replayAttestation.operationsFilter)
+    if (!replayAttestation.hasCompleteExactCoverage()) {
+      throw new Error(
+        'PDF display-stream operationsFilter replay did not cover the exact DISPLAY stream',
+      )
+    }
+    if (
+      replayPixels.length !== pixels.length ||
+      replayPixels.some((value, index) => value !== pixels[index])
+    ) {
+      throw new Error(
+        'PDF page crop text operation filter is not deterministic',
+      )
+    }
+    const ownedOnlyAttestation = createPdfDisplayOperationsFilterAttestation({
+      operatorList: exactDisplayOperatorList!,
+      excludedOperationIndexes:
+        resolvedTextOperationFilter.ownedOnlyExcludedOperationIndexes,
+    })
+    if (
+      !ownedOnlyAttestation ||
+      ownedOnlyAttestation.exactOperationStreamSha256 !==
+        filteredRenderAttestation!.exactOperationStreamSha256
+    ) {
+      throw new Error(
+        'PDF display-stream owned-only negative control cannot be attested',
+      )
+    }
+    const ownedOnlyPixels = await renderPixels(
+      ownedOnlyAttestation.operationsFilter,
+    )
+    if (!ownedOnlyAttestation.hasCompleteExactCoverage()) {
+      throw new Error(
+        'PDF display-stream owned-only negative control did not cover the exact DISPLAY stream',
+      )
+    }
+    if (
+      ownedOnlyPixels.length !== pixels.length ||
+      ownedOnlyPixels.some((value, index) => value !== pixels[index])
+    ) {
+      throw new Error(
+        'PDF page crop contains unowned DISPLAY text paint outside the selected exclusion filter',
+      )
+    }
+    const excludedRunPaintEnvelopes = pdfTextOperationRunPaintEnvelopes({
+      sourceBox,
+      excludedSourceBoxes: resolvedTextOperationFilter.excludedSourceBoxes,
+      width,
+      height,
+    })
+    const excludedPixelBoxes = excludedRunPaintEnvelopes.map((box) =>
+      pixelBox(box, sourceBox, viewport.width, viewport.height),
+    )
+    let changedPixelCount = 0
+    let left = width
+    let top = height
+    let right = 0
+    let bottom = 0
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const offset = (y * width + x) * 4
+        if (
+          baselinePixels[offset] === pixels[offset] &&
+          baselinePixels[offset + 1] === pixels[offset + 1] &&
+          baselinePixels[offset + 2] === pixels[offset + 2] &&
+          baselinePixels[offset + 3] === pixels[offset + 3]
+        ) {
+          continue
+        }
+        if (
+          !excludedPixelBoxes.some(
+            (box) =>
+              x + 1 >= box.left &&
+              x <= box.right &&
+              y + 1 >= box.top &&
+              y <= box.bottom,
+          )
+        ) {
+          throw new Error(
+            'PDF page crop text operation filter changed pixels outside excluded source bounds',
+          )
+        }
+        changedPixelCount += 1
+        left = Math.min(left, x)
+        top = Math.min(top, y)
+        right = Math.max(right, x + 1)
+        bottom = Math.max(bottom, y + 1)
+      }
+    }
+    if (changedPixelCount === 0) {
+      throw new Error(
+        'PDF page crop text operation filter did not change source pixels',
+      )
+    }
+    const normalizedDiffLeft = Math.max(
+      sourceBox.x,
+      sourceBox.x + left / viewport.width,
+    )
+    const normalizedDiffTop = Math.max(
+      sourceBox.y,
+      sourceBox.y + top / viewport.height,
+    )
+    const normalizedDiffRight = Math.min(
+      sourceBox.x + sourceBox.width,
+      sourceBox.x + right / viewport.width,
+    )
+    const normalizedDiffBottom = Math.min(
+      sourceBox.y + sourceBox.height,
+      sourceBox.y + bottom / viewport.height,
+    )
+    const canonicalDiffLeft = rounded(normalizedDiffLeft)
+    const canonicalDiffTop = rounded(normalizedDiffTop)
+    const canonicalDiffRight = rounded(normalizedDiffRight)
+    const canonicalDiffBottom = rounded(normalizedDiffBottom)
+    textOperationMask = {
+      ...resolvedTextOperationFilter,
+      ownedTextLedgerSpans:
+        resolvedTextOperationFilter.ownedTextLedgerSpans.map((span) => ({
+          ...span,
+        })),
+      excludedTextLedgerSpans:
+        resolvedTextOperationFilter.excludedTextLedgerSpans.map((span) => ({
+          ...span,
+        })),
+      ownedSourceBoxes: resolvedTextOperationFilter.ownedSourceBoxes.map(
+        (box) => ({ ...box }),
+      ),
+      excludedSourceBoxes: resolvedTextOperationFilter.excludedSourceBoxes.map(
+        (box) => ({
+          ...box,
+        }),
+      ),
+      baselineRgbaSha256: sha256HexSync(baselinePixels),
+      filteredRgbaSha256: sha256HexSync(pixels),
+      ownedOnlyRgbaSha256: sha256HexSync(ownedOnlyPixels),
+      changedPixelCount,
+      normalizedDiffBox: {
+        page: sourceBox.page,
+        x: canonicalDiffLeft,
+        y: canonicalDiffTop,
+        width: boundedRoundedExtent(canonicalDiffLeft, canonicalDiffRight),
+        height: boundedRoundedExtent(canonicalDiffTop, canonicalDiffBottom),
+        rotation: sourceBox.rotation,
+        method: 'pdf-text',
+      },
+      excludedRunPaintEnvelopes,
+    }
+  }
+
+  const changedPixels =
+    excludedSourceBoxes?.length && ownedSourceBoxes?.length
+      ? maskExcludedEdgeComponents({
+          pixels,
           width,
           height,
-          pixels,
           sourceBox,
-          ...(changedPixels > 0
-            ? {
-                sourceExclusionMask: {
-                  algorithm: 'nearest-source-box-v1',
-                  expansionPixels: SOURCE_EXCLUSION_EXPANSION_PIXELS,
-                  ownedSourceBoxes: ownedSourceBoxes!.map((box) => ({
-                    ...box,
-                  })),
-                  excludedSourceBoxes: excludedSourceBoxes!.map((box) => ({
-                    ...box,
-                  })),
-                } satisfies PdfSourceExclusionMask,
-              }
-            : {}),
-        }
-  } catch (error) {
-    // `cancel()` is advisory in PDF.js and custom browser renderers. Some
-    // implementations never settle their render promise after cancellation,
-    // so cleanup must not wait on it. Promise.race already observes later
-    // rejection; this catch also documents that late failures are consumed.
-    void renderTask.promise.catch(() => undefined)
-    throw error
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout)
-    signal?.removeEventListener('abort', onAbort)
-    canvasFactory.destroy(target)
+          viewportWidth: viewport.width,
+          viewportHeight: viewport.height,
+          ownedSourceBoxes,
+          excludedSourceBoxes,
+        })
+      : 0
+  if (hasSourceInkOnCropEdge(pixels, width, height)) {
+    throw new Error('PDF page crop has source ink touching its edge')
   }
+  const raster = tightenToSourceInk
+    ? tightenRasterToSourceInk(pixels, width, height, sourceBox)
+    : {
+        width,
+        height,
+        pixels,
+        sourceBox,
+        ...(changedPixels > 0
+          ? {
+              sourceExclusionMask: {
+                algorithm: 'nearest-source-box-v1',
+                expansionPixels: SOURCE_EXCLUSION_EXPANSION_PIXELS,
+                ownedSourceBoxes: ownedSourceBoxes!.map((box) => ({
+                  ...box,
+                })),
+                excludedSourceBoxes: excludedSourceBoxes!.map((box) => ({
+                  ...box,
+                })),
+              } satisfies PdfSourceExclusionMask,
+            }
+          : textOperationMask
+            ? { sourceExclusionMask: textOperationMask }
+            : {}),
+      }
+  const result = {
+    ...raster,
+    resolutionDpi: 72 * scale,
+  }
+  if (textOperationMask) {
+    trustedTextOperationFilterRasters.set(
+      result,
+      textOperationFilterRasterFingerprint(result),
+    )
+  }
+  return result
 }

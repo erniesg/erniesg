@@ -5,10 +5,23 @@ import type {
   PdfPageRegion,
   PdfRegionLine,
   PdfSourceExclusionMask,
+  PdfSourceCropAttempt,
   PdfSourceRun,
   PdfVisualAsset,
 } from './import-types'
-import { isBoundedPdfPageCropBox } from './pdf-page-crop'
+import {
+  isBoundedPdfTextOperationFilterIndexes,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD,
+  PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION,
+} from './pdf-text-paint'
+import { pdfFontStyle } from './pdf-font-text.ts'
+import {
+  isBoundedPdfPageCropBox,
+  isTrustedPdfTextOperationFilterRaster,
+  pdfTextOperationRunPaintEnvelopes,
+  type PdfPageCropRaster,
+} from './pdf-page-crop'
+import { sha256HexSync } from './sha256-sync'
 import {
   PDF_TABLE_COLUMN_CENTER_TOLERANCE,
   type PdfDetectedTableGrid,
@@ -60,6 +73,160 @@ function sourceBoxIdentity(box: NormalizedSourceBox) {
     box.rotation,
     box.method,
   ]
+}
+
+function sourceCropAttemptRequestFamilyIdentity(
+  request: PdfSourceCropAttempt['request'],
+) {
+  return {
+    kind: request.kind,
+    page: request.page,
+    sourceObjectIds: request.sourceObjectIds,
+    sourceBoxes: request.sourceBoxes.map(sourceBoxIdentity),
+    ownedSourceBoxes: (request.ownedSourceBoxes ?? []).map(sourceBoxIdentity),
+    excludedSourceBoxes: (request.excludedSourceBoxes ?? []).map(
+      sourceBoxIdentity,
+    ),
+    sourceTextOperationFilter: request.sourceTextOperationFilter ?? null,
+    tightenToSourceInk: request.tightenToSourceInk ?? true,
+  }
+}
+
+function cloneSourceCropAttempts(
+  attempts: readonly PdfSourceCropAttempt[] | undefined,
+) {
+  return attempts?.map((attempt) => ({
+    schemaVersion: attempt.schemaVersion,
+    sequence: attempt.sequence,
+    request: {
+      kind: attempt.request.kind,
+      page: attempt.request.page,
+      sourceBox: { ...attempt.request.sourceBox },
+      sourceObjectIds: [...attempt.request.sourceObjectIds],
+      sourceBoxes: attempt.request.sourceBoxes.map((box) => ({ ...box })),
+      ...(attempt.request.ownedSourceBoxes
+        ? {
+            ownedSourceBoxes: attempt.request.ownedSourceBoxes.map((box) => ({
+              ...box,
+            })),
+          }
+        : {}),
+      ...(attempt.request.excludedSourceBoxes
+        ? {
+            excludedSourceBoxes: attempt.request.excludedSourceBoxes.map(
+              (box) => ({ ...box }),
+            ),
+          }
+        : {}),
+      ...(attempt.request.sourceTextOperationFilter
+        ? {
+            sourceTextOperationFilter: {
+              ...attempt.request.sourceTextOperationFilter,
+              ownedTextLedgerSpans:
+                attempt.request.sourceTextOperationFilter.ownedTextLedgerSpans.map(
+                  (span) => ({ ...span }),
+                ),
+              excludedTextLedgerSpans:
+                attempt.request.sourceTextOperationFilter.excludedTextLedgerSpans.map(
+                  (span) => ({ ...span }),
+                ),
+              ownedSourceBoxes:
+                attempt.request.sourceTextOperationFilter.ownedSourceBoxes.map(
+                  (box) => ({ ...box }),
+                ),
+              excludedSourceBoxes:
+                attempt.request.sourceTextOperationFilter.excludedSourceBoxes.map(
+                  (box) => ({ ...box }),
+                ),
+            },
+          }
+        : {}),
+      ...(attempt.request.tightenToSourceInk === undefined
+        ? {}
+        : { tightenToSourceInk: attempt.request.tightenToSourceInk }),
+    },
+    outcome:
+      attempt.outcome.status === 'accepted'
+        ? {
+            status: 'accepted' as const,
+            assetId: attempt.outcome.assetId,
+            assetSha256: attempt.outcome.assetSha256,
+          }
+        : {
+            status: 'edge-contact' as const,
+            evidence: 'source-page-crop-edge-contact' as const,
+          },
+  }))
+}
+
+export function isCanonicalPdfSourceCropAttempts(asset: PdfVisualAsset) {
+  const attempts = asset.sourceCropAttempts
+  if (attempts === undefined) return true
+  if (
+    !Array.isArray(attempts) ||
+    attempts.length === 0 ||
+    !['source-page-crop', 'profile-downscaled'].includes(asset.rendition)
+  ) {
+    return false
+  }
+  try {
+    const finalRequest = attempts[attempts.length - 1].request
+    const expectedKind =
+      finalRequest.kind === 'figure' ? 'raster' : finalRequest.kind
+    const familyIdentity = JSON.stringify(
+      sourceCropAttemptRequestFamilyIdentity(attempts[0].request),
+    )
+    return attempts.every((attempt, index) => {
+      const request = attempt.request
+      const last = index === attempts.length - 1
+      return (
+        attempt.schemaVersion === '1.0.0' &&
+        attempt.sequence === index + 1 &&
+        Number.isInteger(request.page) &&
+        request.page > 0 &&
+        request.sourceBox.page === request.page &&
+        validNormalizedSourceBox(request.sourceBox) &&
+        request.sourceObjectIds.length > 0 &&
+        request.sourceObjectIds.length === request.sourceBoxes.length &&
+        new Set(request.sourceObjectIds).size ===
+          request.sourceObjectIds.length &&
+        request.sourceObjectIds.every((id) => id.trim().length > 0) &&
+        request.sourceBoxes.every(
+          (box) =>
+            validNormalizedSourceBox(box) &&
+            box.page === request.sourceBox.page,
+        ) &&
+        (request.ownedSourceBoxes ?? []).every(
+          (box) =>
+            validNormalizedSourceBox(box) &&
+            box.page === request.sourceBox.page,
+        ) &&
+        (request.excludedSourceBoxes ?? []).every(
+          (box) =>
+            validNormalizedSourceBox(box) &&
+            box.page === request.sourceBox.page,
+        ) &&
+        JSON.stringify(sourceCropAttemptRequestFamilyIdentity(request)) ===
+          familyIdentity &&
+        (last
+          ? attempt.outcome.status === 'accepted' &&
+            /^[a-f0-9]{64}$/u.test(attempt.outcome.assetSha256) &&
+            attempt.outcome.assetId.trim().length > 0 &&
+            Boolean(
+              asset.sourceCropBox &&
+                sourceCropContainsBox(request.sourceBox, asset.sourceCropBox),
+            ) &&
+            (asset.rendition !== 'source-page-crop' ||
+              (attempt.outcome.assetId === asset.id &&
+                attempt.outcome.assetSha256 === asset.sha256))
+          : attempt.outcome.status === 'edge-contact' &&
+            attempt.outcome.evidence === 'source-page-crop-edge-contact') &&
+        expectedKind === asset.kind
+      )
+    })
+  } catch {
+    return false
+  }
 }
 
 function canonicalSourceBox(box: NormalizedSourceBox): NormalizedSourceBox {
@@ -130,14 +297,34 @@ function sourceBoxesIntersect(
   )
 }
 
+function sourceBoxesEnvelopeContains(
+  boxes: readonly NormalizedSourceBox[],
+  candidate: NormalizedSourceBox,
+  tolerance = 0.004,
+) {
+  if (boxes.length === 0) return false
+  const left = Math.min(...boxes.map((box) => box.x)) - tolerance
+  const top = Math.min(...boxes.map((box) => box.y)) - tolerance
+  const right = Math.max(...boxes.map((box) => box.x + box.width)) + tolerance
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height)) + tolerance
+  return (
+    candidate.x >= left &&
+    candidate.y >= top &&
+    candidate.x + candidate.width <= right &&
+    candidate.y + candidate.height <= bottom
+  )
+}
+
 export function canonicalPdfSourceExclusionMask(
   mask: PdfSourceExclusionMask | undefined,
   cropBox?: NormalizedSourceBox,
 ): PdfSourceExclusionMask | null {
   if (!mask) return null
+  const textOperationFilter =
+    mask.algorithm === 'pdfjs-display-text-operation-filter-v2'
   if (
-    mask.algorithm !== 'nearest-source-box-v1' ||
-    mask.expansionPixels !== 2 ||
+    (!textOperationFilter && mask.algorithm !== 'nearest-source-box-v1') ||
+    mask.expansionPixels !== (textOperationFilter ? 0 : 2) ||
     !Array.isArray(mask.ownedSourceBoxes) ||
     mask.ownedSourceBoxes.length === 0 ||
     !Array.isArray(mask.excludedSourceBoxes) ||
@@ -150,6 +337,55 @@ export function canonicalPdfSourceExclusionMask(
   }
   const ownedSourceBoxes = canonicalSourceBoxes(mask.ownedSourceBoxes)
   const excludedSourceBoxes = canonicalSourceBoxes(mask.excludedSourceBoxes)
+  const canonicalOperationIndexes = (values: unknown) =>
+    Array.isArray(values) &&
+    values.every((value): value is number => typeof value === 'number') &&
+    isBoundedPdfTextOperationFilterIndexes(values)
+      ? [...values].sort((left, right) => Number(left) - Number(right))
+      : null
+  const ownedOperationIndexes = textOperationFilter
+    ? canonicalOperationIndexes(mask.ownedOperationIndexes)
+    : null
+  const excludedOperationIndexes = textOperationFilter
+    ? canonicalOperationIndexes(mask.excludedOperationIndexes)
+    : null
+  const ownedOnlyExcludedOperationIndexes = textOperationFilter
+    ? canonicalOperationIndexes(mask.ownedOnlyExcludedOperationIndexes)
+    : null
+  const canonicalTextLedgerSpans = (values: unknown) =>
+    Array.isArray(values) &&
+    values.length > 0 &&
+    values.length <= 256 &&
+    values.every(
+      (value) =>
+        value &&
+        typeof value === 'object' &&
+        Number.isInteger((value as { start?: unknown }).start) &&
+        Number.isInteger((value as { end?: unknown }).end) &&
+        Number((value as { start: number }).start) >= 0 &&
+        Number((value as { end: number }).end) >
+          Number((value as { start: number }).start) &&
+        hasOnlyKeys(value as object, ['end', 'start']),
+    )
+      ? (values as { start: number; end: number }[])
+          .map(({ start, end }) => ({ start, end }))
+          .sort(
+            (left, right) => left.start - right.start || left.end - right.end,
+          )
+      : null
+  const ownedTextLedgerSpans = textOperationFilter
+    ? canonicalTextLedgerSpans(mask.ownedTextLedgerSpans)
+    : null
+  const excludedTextLedgerSpans = textOperationFilter
+    ? canonicalTextLedgerSpans(mask.excludedTextLedgerSpans)
+    : null
+  const excludedRunPaintEnvelopes =
+    textOperationFilter &&
+    Array.isArray(mask.excludedRunPaintEnvelopes) &&
+    excludedOperationIndexes &&
+    mask.excludedRunPaintEnvelopes.length === excludedSourceBoxes.length
+      ? mask.excludedRunPaintEnvelopes
+      : null
   if (
     ownedSourceBoxes.length > 256 ||
     excludedSourceBoxes.length > 32 ||
@@ -165,13 +401,101 @@ export function canonicalPdfSourceExclusionMask(
       ownedSourceBoxes.some(
         (ownedSourceBox) => !sourceCropContainsBox(cropBox, ownedSourceBox),
       )) ||
-    ownedSourceBoxes.some((ownedSourceBox) =>
-      excludedSourceBoxes.some((excludedSourceBox) =>
-        sourceBoxesIntersect(ownedSourceBox, excludedSourceBox),
-      ),
-    )
+    (!textOperationFilter &&
+      ownedSourceBoxes.some((ownedSourceBox) =>
+        excludedSourceBoxes.some((excludedSourceBox) =>
+          sourceBoxesIntersect(ownedSourceBox, excludedSourceBox),
+        ),
+      )) ||
+    (textOperationFilter &&
+      (mask.pdfjsVersion !== PDFJS_DISPLAY_OPERATOR_ADAPTER_VERSION ||
+        mask.pdfjsBuild !== PDFJS_DISPLAY_OPERATOR_ADAPTER_BUILD ||
+        mask.displayOperatorAdapter !== 'pdfjs-5.4.624-display-intent-v1' ||
+        mask.renderIntent !== 'display' ||
+        mask.annotationMode !== 'enable' ||
+        !/^[a-f0-9]{64}$/u.test(mask.sourceTextLedgerSha256) ||
+        !/^[a-f0-9]{64}$/u.test(mask.displayTextLedgerSha256) ||
+        mask.sourceTextLedgerSha256 !== mask.displayTextLedgerSha256 ||
+        !/^[a-f0-9]{64}$/u.test(mask.operatorLedgerSha256) ||
+        !/^[a-f0-9]{64}$/u.test(mask.baselineRgbaSha256) ||
+        !/^[a-f0-9]{64}$/u.test(mask.filteredRgbaSha256) ||
+        !/^[a-f0-9]{64}$/u.test(mask.ownedOnlyRgbaSha256) ||
+        mask.ownedOnlyRgbaSha256 !== mask.filteredRgbaSha256 ||
+        !Number.isInteger(mask.changedPixelCount) ||
+        mask.changedPixelCount < 1 ||
+        !validNormalizedSourceBox(mask.normalizedDiffBox) ||
+        !cropBox ||
+        !sourceCropContainsBox(cropBox, mask.normalizedDiffBox) ||
+        !excludedRunPaintEnvelopes ||
+        excludedRunPaintEnvelopes.some(
+          (box) =>
+            !validNormalizedSourceBox(box) ||
+            box.method !== 'pdf-text' ||
+            !sourceCropContainsBox(cropBox, box) ||
+            !excludedSourceBoxes.some((sourceBox) =>
+              sourceBoxesIntersect(sourceBox, box),
+            ),
+        ) ||
+        !sourceBoxesEnvelopeContains(
+          excludedRunPaintEnvelopes,
+          mask.normalizedDiffBox,
+          0,
+        ) ||
+        !ownedOperationIndexes ||
+        !excludedOperationIndexes ||
+        !ownedOnlyExcludedOperationIndexes ||
+        !ownedTextLedgerSpans ||
+        !excludedTextLedgerSpans ||
+        excludedTextLedgerSpans.some((excluded) =>
+          ownedTextLedgerSpans.some(
+            (owned) =>
+              Math.min(excluded.end, owned.end) >
+              Math.max(excluded.start, owned.start),
+          ),
+        ) ||
+        [...ownedSourceBoxes, ...excludedSourceBoxes].some(
+          (box) => box.method !== 'pdf-text',
+        ) ||
+        excludedOperationIndexes.some((index) =>
+          ownedOperationIndexes.includes(index),
+        ) ||
+        excludedOperationIndexes.some(
+          (index) => !ownedOnlyExcludedOperationIndexes.includes(index),
+        ) ||
+        ownedOnlyExcludedOperationIndexes.some((index) =>
+          ownedOperationIndexes.includes(index),
+        )))
   ) {
     return null
+  }
+  if (textOperationFilter) {
+    return {
+      algorithm: 'pdfjs-display-text-operation-filter-v2',
+      expansionPixels: 0,
+      pdfjsVersion: mask.pdfjsVersion,
+      pdfjsBuild: mask.pdfjsBuild,
+      displayOperatorAdapter: mask.displayOperatorAdapter,
+      renderIntent: 'display',
+      annotationMode: 'enable',
+      sourceTextLedgerSha256: mask.sourceTextLedgerSha256,
+      displayTextLedgerSha256: mask.displayTextLedgerSha256,
+      ownedTextLedgerSpans: ownedTextLedgerSpans!,
+      excludedTextLedgerSpans: excludedTextLedgerSpans!,
+      operatorLedgerSha256: mask.operatorLedgerSha256,
+      ownedOperationIndexes: ownedOperationIndexes!,
+      excludedOperationIndexes: excludedOperationIndexes!,
+      ownedOnlyExcludedOperationIndexes: ownedOnlyExcludedOperationIndexes!,
+      ownedSourceBoxes,
+      excludedSourceBoxes,
+      baselineRgbaSha256: mask.baselineRgbaSha256,
+      filteredRgbaSha256: mask.filteredRgbaSha256,
+      ownedOnlyRgbaSha256: mask.ownedOnlyRgbaSha256,
+      changedPixelCount: mask.changedPixelCount,
+      normalizedDiffBox: { ...mask.normalizedDiffBox },
+      excludedRunPaintEnvelopes: excludedRunPaintEnvelopes!.map((box) => ({
+        ...box,
+      })),
+    }
   }
   return {
     algorithm: 'nearest-source-box-v1',
@@ -212,15 +536,43 @@ export function isCanonicalPdfSourceExclusionMask(
     'x',
     'y',
   ]
+  const expectedMaskKeys =
+    mask?.algorithm === 'pdfjs-display-text-operation-filter-v2'
+      ? [
+          'algorithm',
+          'annotationMode',
+          'baselineRgbaSha256',
+          'changedPixelCount',
+          'displayOperatorAdapter',
+          'displayTextLedgerSha256',
+          'excludedOperationIndexes',
+          'excludedRunPaintEnvelopes',
+          'excludedSourceBoxes',
+          'excludedTextLedgerSpans',
+          'expansionPixels',
+          'filteredRgbaSha256',
+          'normalizedDiffBox',
+          'operatorLedgerSha256',
+          'ownedOnlyExcludedOperationIndexes',
+          'ownedOnlyRgbaSha256',
+          'ownedOperationIndexes',
+          'ownedSourceBoxes',
+          'ownedTextLedgerSpans',
+          'pdfjsBuild',
+          'pdfjsVersion',
+          'renderIntent',
+          'sourceTextLedgerSha256',
+        ]
+      : [
+          'algorithm',
+          'excludedSourceBoxes',
+          'expansionPixels',
+          'ownedSourceBoxes',
+        ]
   return Boolean(
     mask &&
     canonical &&
-    hasOnlyKeys(mask, [
-      'algorithm',
-      'excludedSourceBoxes',
-      'expansionPixels',
-      'ownedSourceBoxes',
-    ]) &&
+    hasOnlyKeys(mask, expectedMaskKeys) &&
     [...mask.ownedSourceBoxes, ...mask.excludedSourceBoxes].every((box) =>
       hasOnlyKeys(box, sourceBoxKeys),
     ) &&
@@ -231,7 +583,32 @@ export function isCanonicalPdfSourceExclusionMask(
     ) &&
     mask.excludedSourceBoxes.every((box, index) =>
       sameCanonicalSourceBox(box, canonical.excludedSourceBoxes[index]),
-    ),
+    ) &&
+    (mask.algorithm !== 'pdfjs-display-text-operation-filter-v2' ||
+      (canonical.algorithm === 'pdfjs-display-text-operation-filter-v2' &&
+        hasOnlyKeys(mask.normalizedDiffBox, sourceBoxKeys) &&
+        sameCanonicalSourceBox(
+          mask.normalizedDiffBox,
+          canonical.normalizedDiffBox,
+        ) &&
+        JSON.stringify(mask.ownedOperationIndexes) ===
+          JSON.stringify(canonical.ownedOperationIndexes) &&
+        JSON.stringify(mask.excludedOperationIndexes) ===
+          JSON.stringify(canonical.excludedOperationIndexes) &&
+        JSON.stringify(mask.ownedOnlyExcludedOperationIndexes) ===
+          JSON.stringify(canonical.ownedOnlyExcludedOperationIndexes) &&
+        JSON.stringify(mask.ownedTextLedgerSpans) ===
+          JSON.stringify(canonical.ownedTextLedgerSpans) &&
+        JSON.stringify(mask.excludedTextLedgerSpans) ===
+          JSON.stringify(canonical.excludedTextLedgerSpans) &&
+        mask.excludedRunPaintEnvelopes.length ===
+          canonical.excludedRunPaintEnvelopes.length &&
+        mask.excludedRunPaintEnvelopes.every((box, index) =>
+          sameCanonicalSourceBox(
+            box,
+            canonical.excludedRunPaintEnvelopes[index],
+          ),
+        ))),
   )
 }
 
@@ -241,13 +618,42 @@ export function pdfSourceExclusionMaskIdentity(
 ) {
   const canonical = canonicalPdfSourceExclusionMask(mask, cropBox)
   return canonical
-    ? {
-        algorithm: canonical.algorithm,
-        expansionPixels: canonical.expansionPixels,
-        ownedSourceBoxes: canonical.ownedSourceBoxes.map(sourceBoxIdentity),
-        excludedSourceBoxes:
-          canonical.excludedSourceBoxes.map(sourceBoxIdentity),
-      }
+    ? canonical.algorithm === 'pdfjs-display-text-operation-filter-v2'
+      ? {
+          algorithm: canonical.algorithm,
+          expansionPixels: canonical.expansionPixels,
+          pdfjsVersion: canonical.pdfjsVersion,
+          pdfjsBuild: canonical.pdfjsBuild,
+          displayOperatorAdapter: canonical.displayOperatorAdapter,
+          renderIntent: canonical.renderIntent,
+          annotationMode: canonical.annotationMode,
+          sourceTextLedgerSha256: canonical.sourceTextLedgerSha256,
+          displayTextLedgerSha256: canonical.displayTextLedgerSha256,
+          ownedTextLedgerSpans: canonical.ownedTextLedgerSpans,
+          excludedTextLedgerSpans: canonical.excludedTextLedgerSpans,
+          operatorLedgerSha256: canonical.operatorLedgerSha256,
+          ownedOperationIndexes: canonical.ownedOperationIndexes,
+          excludedOperationIndexes: canonical.excludedOperationIndexes,
+          ownedOnlyExcludedOperationIndexes:
+            canonical.ownedOnlyExcludedOperationIndexes,
+          excludedRunPaintEnvelopes:
+            canonical.excludedRunPaintEnvelopes.map(sourceBoxIdentity),
+          ownedSourceBoxes: canonical.ownedSourceBoxes.map(sourceBoxIdentity),
+          excludedSourceBoxes:
+            canonical.excludedSourceBoxes.map(sourceBoxIdentity),
+          baselineRgbaSha256: canonical.baselineRgbaSha256,
+          filteredRgbaSha256: canonical.filteredRgbaSha256,
+          ownedOnlyRgbaSha256: canonical.ownedOnlyRgbaSha256,
+          changedPixelCount: canonical.changedPixelCount,
+          normalizedDiffBox: sourceBoxIdentity(canonical.normalizedDiffBox),
+        }
+      : {
+          algorithm: canonical.algorithm,
+          expansionPixels: canonical.expansionPixels,
+          ownedSourceBoxes: canonical.ownedSourceBoxes.map(sourceBoxIdentity),
+          excludedSourceBoxes:
+            canonical.excludedSourceBoxes.map(sourceBoxIdentity),
+        }
     : null
 }
 
@@ -280,17 +686,35 @@ async function asset({
   sourceBoxes,
   sourceCropBox,
   sourceExclusionMask,
+  sourceCropAttempts,
   identityKey,
 }: Omit<PdfVisualAsset, 'id' | 'href' | 'sha256'> & {
   identityKey?: string
 }) {
+  const bytesSnapshot = bytes.slice()
+  const sourceObjectIdsSnapshot = [...sourceObjectIds]
+  const sourceBoxesSnapshot = sourceBoxes.map((box) => ({ ...box }))
+  const sourceCropBoxSnapshot = sourceCropBox ? { ...sourceCropBox } : undefined
+  const sourceCropAttemptsSnapshot = cloneSourceCropAttempts(sourceCropAttempts)
   const canonicalSourceExclusionMask = sourceExclusionMask
-    ? canonicalPdfSourceExclusionMask(sourceExclusionMask, sourceCropBox)
+    ? canonicalPdfSourceExclusionMask(
+        sourceExclusionMask,
+        sourceCropBoxSnapshot,
+      )
     : null
   if (sourceExclusionMask && !canonicalSourceExclusionMask) {
     throw new Error('Visual asset source exclusion mask is invalid')
   }
-  const hash = await sha256(bytes)
+  if (
+    canonicalSourceExclusionMask?.algorithm ===
+      'pdfjs-display-text-operation-filter-v2' &&
+    rendition !== 'source-page-crop'
+  ) {
+    throw new Error(
+      'PDF display text-operation proofs are valid only for source page crops',
+    )
+  }
+  const hash = await sha256(bytesSnapshot)
   const identityHash = identityKey
     ? await sha256(strToU8(`${hash}\n${identityKey}`))
     : hash
@@ -302,17 +726,20 @@ async function asset({
     kind,
     rendition,
     sha256: hash,
-    bytes,
+    bytes: bytesSnapshot,
     width: rounded(width),
     height: rounded(height),
     resolutionDpi,
-    sourceObjectIds: [...sourceObjectIds],
-    sourceBoxes: sourceBoxes.map((box) => ({ ...box })),
-    ...(sourceCropBox ? { sourceCropBox: { ...sourceCropBox } } : {}),
+    sourceObjectIds: sourceObjectIdsSnapshot,
+    sourceBoxes: sourceBoxesSnapshot,
+    ...(sourceCropBoxSnapshot ? { sourceCropBox: sourceCropBoxSnapshot } : {}),
     ...(canonicalSourceExclusionMask
       ? {
           sourceExclusionMask: canonicalSourceExclusionMask,
         }
+      : {}),
+    ...(sourceCropAttemptsSnapshot
+      ? { sourceCropAttempts: sourceCropAttemptsSnapshot }
       : {}),
   } satisfies PdfVisualAsset
 }
@@ -438,6 +865,14 @@ function readUint32(bytes: Uint8Array, offset: number) {
   )
 }
 
+const PROFILE_DOWNSCALE_ROWS_PER_YIELD = 16
+
+function yieldToProfileAssetPackaging() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+}
+
 function decodeGeneratedPng(bytes: Uint8Array) {
   const signature = [137, 80, 78, 71, 13, 10, 26, 10]
   if (!signature.every((value, index) => bytes[index] === value)) {
@@ -527,6 +962,34 @@ export function isValidSourcePageCropPayload(asset: PdfVisualAsset) {
   }
   try {
     const decoded = decodeGeneratedPng(asset.bytes)
+    const sourceExclusionMask = asset.sourceExclusionMask
+      ? canonicalPdfSourceExclusionMask(
+          asset.sourceExclusionMask,
+          asset.sourceCropBox,
+        )
+      : null
+    const decodedRgbaSha256 =
+      sourceExclusionMask?.algorithm ===
+      'pdfjs-display-text-operation-filter-v2'
+        ? sha256HexSync(decoded.pixels)
+        : null
+    if (
+      (asset.sourceExclusionMask &&
+        (!sourceExclusionMask ||
+          !isCanonicalPdfSourceExclusionMask(
+            asset.sourceExclusionMask,
+            asset.sourceCropBox,
+          ))) ||
+      (sourceExclusionMask?.algorithm ===
+        'pdfjs-display-text-operation-filter-v2' &&
+        (decodedRgbaSha256 !== sourceExclusionMask.filteredRgbaSha256 ||
+          decodedRgbaSha256 !== sourceExclusionMask.ownedOnlyRgbaSha256 ||
+          sourceExclusionMask.changedPixelCount >
+            decoded.width * decoded.height)) ||
+      !isCanonicalPdfSourceCropAttempts(asset)
+    ) {
+      return false
+    }
     return (
       decoded.width === asset.width &&
       decoded.height === asset.height &&
@@ -542,49 +1005,100 @@ export async function downscalePngAsset(
   maximumWidth: number,
   pixelsPerInch: number,
 ) {
-  if (source.mediaType !== 'image/png' || source.width <= maximumWidth) {
+  if (
+    source.mediaType !== 'image/png' ||
+    source.width <= maximumWidth ||
+    source.sourceExclusionMask?.algorithm ===
+      'pdfjs-display-text-operation-filter-v2'
+  ) {
     return source
   }
-  const decoded = decodeGeneratedPng(source.bytes)
-  if (decoded.width !== source.width || decoded.height !== source.height) {
+  const sourceExclusionMaskSnapshot = source.sourceExclusionMask
+    ? canonicalPdfSourceExclusionMask(
+        source.sourceExclusionMask,
+        source.sourceCropBox,
+      )
+    : undefined
+  if (source.sourceExclusionMask && !sourceExclusionMaskSnapshot) {
+    throw new Error('Visual asset source exclusion mask is invalid')
+  }
+  const sourceSnapshot: PdfVisualAsset = {
+    ...source,
+    bytes: source.bytes.slice(),
+    sourceObjectIds: [...source.sourceObjectIds],
+    sourceBoxes: source.sourceBoxes.map((box) => ({ ...box })),
+    ...(source.sourceCropBox
+      ? { sourceCropBox: { ...source.sourceCropBox } }
+      : {}),
+    ...(sourceExclusionMaskSnapshot
+      ? { sourceExclusionMask: sourceExclusionMaskSnapshot }
+      : {}),
+    ...(source.sourceCropAttempts
+      ? {
+          sourceCropAttempts: cloneSourceCropAttempts(
+            source.sourceCropAttempts,
+          ),
+        }
+      : {}),
+  }
+  await yieldToProfileAssetPackaging()
+  const decoded = decodeGeneratedPng(sourceSnapshot.bytes)
+  if (
+    decoded.width !== sourceSnapshot.width ||
+    decoded.height !== sourceSnapshot.height
+  ) {
     throw new Error('PNG dimensions differ from visual-asset metadata')
   }
+  await yieldToProfileAssetPackaging()
   const width = Math.max(1, Math.floor(maximumWidth))
-  const height = Math.max(1, Math.round((source.height * width) / source.width))
+  const height = Math.max(
+    1,
+    Math.round((sourceSnapshot.height * width) / sourceSnapshot.width),
+  )
   const pixels = new Uint8Array(width * height * 4)
   for (let y = 0; y < height; y += 1) {
     const sourceY = Math.min(
-      source.height - 1,
-      Math.floor((y * source.height) / height),
+      sourceSnapshot.height - 1,
+      Math.floor((y * sourceSnapshot.height) / height),
     )
     for (let x = 0; x < width; x += 1) {
       const sourceX = Math.min(
-        source.width - 1,
-        Math.floor((x * source.width) / width),
+        sourceSnapshot.width - 1,
+        Math.floor((x * sourceSnapshot.width) / width),
       )
-      const from = (sourceY * source.width + sourceX) * 4
+      const from = (sourceY * sourceSnapshot.width + sourceX) * 4
       pixels.set(decoded.pixels.subarray(from, from + 4), (y * width + x) * 4)
     }
+    if ((y + 1) % PROFILE_DOWNSCALE_ROWS_PER_YIELD === 0 && y + 1 < height) {
+      await yieldToProfileAssetPackaging()
+    }
   }
+  await yieldToProfileAssetPackaging()
+  const bytes = encodePng({ pixels, width, height, colorSpace: 'rgba' })
+  await yieldToProfileAssetPackaging()
   return asset({
-    bytes: encodePng({ pixels, width, height, colorSpace: 'rgba' }),
-    mediaType: source.mediaType,
-    kind: source.kind,
+    bytes,
+    mediaType: sourceSnapshot.mediaType,
+    kind: sourceSnapshot.kind,
     rendition: 'profile-downscaled',
     width,
     height,
     resolutionDpi: pixelsPerInch,
-    sourceObjectIds: source.sourceObjectIds,
-    sourceBoxes: source.sourceBoxes,
-    sourceExclusionMask: source.sourceExclusionMask,
-    ...(source.sourceCropBox
+    sourceObjectIds: sourceSnapshot.sourceObjectIds,
+    sourceBoxes: sourceSnapshot.sourceBoxes,
+    sourceExclusionMask: sourceSnapshot.sourceExclusionMask,
+    sourceCropAttempts: sourceSnapshot.sourceCropAttempts,
+    ...(sourceSnapshot.sourceCropBox
       ? {
-          sourceCropBox: source.sourceCropBox,
+          sourceCropBox: sourceSnapshot.sourceCropBox,
           identityKey: JSON.stringify({
-            sourceAssetId: source.id,
-            sourceCropBox: source.sourceCropBox,
-            ...(source.sourceExclusionMask
-              ? { sourceExclusionMask: source.sourceExclusionMask }
+            sourceAssetId: sourceSnapshot.id,
+            sourceCropBox: sourceSnapshot.sourceCropBox,
+            ...(sourceSnapshot.sourceExclusionMask
+              ? { sourceExclusionMask: sourceSnapshot.sourceExclusionMask }
+              : {}),
+            ...(sourceSnapshot.sourceCropAttempts
+              ? { sourceCropAttempts: sourceSnapshot.sourceCropAttempts }
               : {}),
             maximumWidth,
             pixelsPerInch,
@@ -643,19 +1157,120 @@ export async function createCompositePngAsset(input: {
   })
 }
 
-export async function createSourcePageCropAsset(input: {
-  kind: 'raster' | 'table' | 'equation'
-  cropBox: NormalizedSourceBox
-  sourceObjectIds: string[]
-  sourceBoxes: NormalizedSourceBox[]
-  width: number
-  height: number
-  pixels: Uint8Array
-  sourceExclusionMask?: PdfSourceExclusionMask
-}) {
+const trustedTextOperationFilterAssets = new WeakMap<object, string>()
+
+function trustedTextOperationFilterAssetFingerprint(asset: PdfVisualAsset) {
+  return sha256HexSync(
+    JSON.stringify({
+      id: asset.id,
+      href: asset.href,
+      mediaType: asset.mediaType,
+      kind: asset.kind,
+      rendition: asset.rendition,
+      sha256: asset.sha256,
+      bytesSha256: sha256HexSync(asset.bytes),
+      width: asset.width,
+      height: asset.height,
+      resolutionDpi: asset.resolutionDpi,
+      sourceLineage: Array.from(
+        {
+          length: Math.max(
+            asset.sourceObjectIds.length,
+            asset.sourceBoxes.length,
+          ),
+        },
+        (_unused, index) => ({
+          sourceObjectId: asset.sourceObjectIds[index] ?? null,
+          sourceBox: asset.sourceBoxes[index]
+            ? sourceBoxIdentity(asset.sourceBoxes[index])
+            : null,
+        }),
+      ),
+      sourceCropBox: asset.sourceCropBox
+        ? sourceBoxIdentity(asset.sourceCropBox)
+        : null,
+      sourceExclusionMask: asset.sourceCropBox
+        ? pdfSourceExclusionMaskIdentity(
+            asset.sourceExclusionMask,
+            asset.sourceCropBox,
+          )
+        : null,
+    }),
+  )
+}
+
+export function isTrustedPdfTextOperationFilterAsset(
+  asset: PdfVisualAsset | null | undefined,
+) {
+  if (!asset) return false
+  const expected = trustedTextOperationFilterAssets.get(asset)
+  if (!expected) return false
+  try {
+    return trustedTextOperationFilterAssetFingerprint(asset) === expected
+  } catch {
+    return false
+  }
+}
+
+export async function createSourcePageCropAsset(
+  input: {
+    kind: 'raster' | 'table' | 'equation'
+    cropBox: NormalizedSourceBox
+    sourceObjectIds: string[]
+    sourceBoxes: NormalizedSourceBox[]
+    width: number
+    height: number
+    pixels: Uint8Array
+    resolutionDpi?: number
+    sourceExclusionMask?: PdfSourceExclusionMask
+  },
+  trustedRaster?: PdfPageCropRaster,
+) {
   const sourceExclusionMask = input.sourceExclusionMask
     ? canonicalPdfSourceExclusionMask(input.sourceExclusionMask, input.cropBox)
     : null
+  const expectedRunPaintEnvelopes =
+    sourceExclusionMask?.algorithm === 'pdfjs-display-text-operation-filter-v2'
+      ? pdfTextOperationRunPaintEnvelopes({
+          sourceBox: input.cropBox,
+          excludedSourceBoxes: sourceExclusionMask.excludedSourceBoxes,
+          width: input.width,
+          height: input.height,
+        })
+      : []
+  if (
+    sourceExclusionMask?.algorithm ===
+      'pdfjs-display-text-operation-filter-v2' &&
+    (!isTrustedPdfTextOperationFilterRaster(trustedRaster) ||
+      trustedRaster?.sourceExclusionMask?.algorithm !==
+        'pdfjs-display-text-operation-filter-v2' ||
+      trustedRaster.pixels !== input.pixels ||
+      trustedRaster.width !== input.width ||
+      trustedRaster.height !== input.height ||
+      trustedRaster.resolutionDpi !== input.resolutionDpi ||
+      !sameCanonicalSourceBox(trustedRaster.sourceBox, input.cropBox) ||
+      JSON.stringify(
+        pdfSourceExclusionMaskIdentity(
+          trustedRaster.sourceExclusionMask,
+          trustedRaster.sourceBox,
+        ),
+      ) !==
+        JSON.stringify(
+          pdfSourceExclusionMaskIdentity(sourceExclusionMask, input.cropBox),
+        ) ||
+      sourceExclusionMask.filteredRgbaSha256 !== sha256HexSync(input.pixels) ||
+      sourceExclusionMask.changedPixelCount > input.width * input.height ||
+      sourceExclusionMask.excludedRunPaintEnvelopes.length !==
+        expectedRunPaintEnvelopes.length ||
+      sourceExclusionMask.excludedRunPaintEnvelopes.some(
+        (box, index) =>
+          !sameCanonicalSourceBox(box, expectedRunPaintEnvelopes[index]),
+      ))
+  ) {
+    throw new Error(
+      'Source page crop text operation proof does not match its filtered pixels',
+    )
+  }
   if (
     input.sourceObjectIds.length === 0 ||
     input.sourceObjectIds.length !== input.sourceBoxes.length ||
@@ -684,7 +1299,12 @@ export async function createSourcePageCropAsset(input: {
     input.cropBox.y + input.cropBox.height > 1 ||
     !isBoundedPdfPageCropBox(input.cropBox) ||
     input.sourceBoxes.some((box) => box.page !== input.cropBox.page) ||
-    (input.sourceExclusionMask && !sourceExclusionMask)
+    (input.sourceExclusionMask &&
+      (!sourceExclusionMask ||
+        !isCanonicalPdfSourceExclusionMask(
+          input.sourceExclusionMask,
+          input.cropBox,
+        )))
   ) {
     throw new Error(
       'Source page crops require one valid bounded source region on one page',
@@ -695,6 +1315,8 @@ export async function createSourcePageCropAsset(input: {
     input.width < 2 ||
     !Number.isInteger(input.height) ||
     input.height < 2 ||
+    (input.resolutionDpi !== undefined &&
+      (!Number.isFinite(input.resolutionDpi) || input.resolutionDpi <= 0)) ||
     input.pixels.byteLength !== input.width * input.height * 4
   ) {
     throw new Error('Source page crops require complete RGBA source pixels')
@@ -717,20 +1339,29 @@ export async function createSourcePageCropAsset(input: {
       ? { sourceExclusionMask: sourceExclusionMaskIdentity }
       : {}),
   })
-  return asset({
+  const created = await asset({
     bytes: encodePng({ ...input, colorSpace: 'rgba' }),
     mediaType: 'image/png',
     kind: input.kind,
     rendition: 'source-page-crop',
     width: input.width,
     height: input.height,
-    resolutionDpi: null,
+    resolutionDpi: input.resolutionDpi ?? null,
     sourceObjectIds: input.sourceObjectIds,
     sourceBoxes: input.sourceBoxes,
     sourceCropBox: input.cropBox,
     sourceExclusionMask: sourceExclusionMask ?? undefined,
     identityKey,
   })
+  if (
+    sourceExclusionMask?.algorithm === 'pdfjs-display-text-operation-filter-v2'
+  ) {
+    trustedTextOperationFilterAssets.set(
+      created,
+      trustedTextOperationFilterAssetFingerprint(created),
+    )
+  }
+  return created
 }
 
 export async function createHeadlessCompositePngAsset(input: {
@@ -1094,18 +1725,7 @@ export type CanonicalTable = {
 }
 
 function hasExplicitHeaderStyle(run: PdfRegionLine['runs'][number]) {
-  return (
-    run.bold === true ||
-    /(?:bold|black|demi|semibold|(?:^|[-_])medi(?:um)?(?:$|[-_]))/i.test(
-      run.fontName,
-    )
-  )
-}
-
-function fontNameIndicatesItalic(fontName: string) {
-  return /(?:italic|ital(?:ic)?|oblique|(?:^|[-_])it(?:$|[-_]))/iu.test(
-    fontName,
-  )
+  return pdfFontStyle(run).bold
 }
 
 function median(values: number[]) {
@@ -1591,14 +2211,7 @@ export function canonicalTableFromLines(
         const inlineRuns: NonNullable<
           CanonicalTable['rows'][number]['cells'][number]['inlineRuns']
         > = layout.flatMap(({ source, start, end }) => {
-          const bold =
-            source.run.bold === true ||
-            (source.run.bold === undefined &&
-              hasExplicitHeaderStyle(source.run))
-          const italic =
-            source.run.italic === true ||
-            (source.run.italic === undefined &&
-              fontNameIndicatesItalic(source.run.fontName))
+          const { bold, italic } = pdfFontStyle(source.run)
           const verticalAlign = tableRunVerticalAlign(rowRuns, source.run)
           const runExpected =
             Number(bold) + Number(italic) + Number(Boolean(verticalAlign))

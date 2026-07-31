@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import * as deterministicAdapter from './pdf-deterministic-eval-adapter.mjs'
 import {
   createDeterministicPredictions,
   observeDeterministicReconstruction,
@@ -394,6 +395,26 @@ function observationsWithRetainedVisuals(result) {
 }
 
 describe('deterministic PDF fidelity adapter', () => {
+  it('passes the source page inventory into authoritative visual replay', () => {
+    expect(deterministicAdapter.pdfVisualValidationReplayInput).toBeTypeOf(
+      'function',
+    )
+    const result = reconstruction()
+    result.pages = [{ page: 1 }, { page: 2 }]
+
+    const input = deterministicAdapter.pdfVisualValidationReplayInput(result)
+
+    expect(input).toMatchObject({
+      paper: result.paper,
+      provenance: result.provenance,
+      relationships: result.visualRelationships,
+      assets: result.assets,
+      regions: result.regions,
+      pages: result.pages,
+    })
+    expect(input.pages).toBe(result.pages)
+  })
+
   it('emits generic page observations without eval targets or gold labels', () => {
     const observations = observationsWithRetainedVisuals(reconstruction())
 
@@ -465,9 +486,7 @@ describe('deterministic PDF fidelity adapter', () => {
     const relationship = result.visualRelationships.find(
       ({ id }) => id === 'figure-relationship',
     )
-    const tableNode = result.paper.nodes.find(
-      ({ id }) => id === 'table-node',
-    )
+    const tableNode = result.paper.nodes.find(({ id }) => id === 'table-node')
     const tableBox = result.assets.find(
       ({ id }) => id === 'figure-asset',
     ).sourceCropBox
@@ -622,9 +641,7 @@ describe('deterministic PDF fidelity adapter', () => {
   it('maps semantic roles from reconstruction evidence instead of target names alone', () => {
     const result = reconstruction()
     const tableBox = sourceBox(2, 0.19, 0.08, 0.62, 0.09)
-    const tableNode = result.paper.nodes.find(
-      ({ id }) => id === 'table-node',
-    )
+    const tableNode = result.paper.nodes.find(({ id }) => id === 'table-node')
     tableNode.relationships = { assets: ['semantic-role-table-asset'] }
     result.assets.push({
       id: 'semantic-role-table-asset',
@@ -907,9 +924,7 @@ describe('deterministic PDF fidelity adapter', () => {
       .table.rows[1].cells.pop()
     const observationsWithClaimedValidation = (result) => {
       const tableBox = sourceBox(2, 0.19, 0.08, 0.62, 0.09)
-      const tableNode = result.paper.nodes.find(
-        ({ id }) => id === 'table-node',
-      )
+      const tableNode = result.paper.nodes.find(({ id }) => id === 'table-node')
       tableNode.relationships = { assets: ['semantic-table-asset'] }
       result.assets.push({
         id: 'semantic-table-asset',
@@ -934,17 +949,13 @@ describe('deterministic PDF fidelity adapter', () => {
       predictDeterministicCase(
         item,
         observationsWithClaimedValidation(empty),
-      ).labels.some(
-        ({ label }) => label === 'semantic-table',
-      ),
+      ).labels.some(({ label }) => label === 'semantic-table'),
     ).toBe(false)
     expect(
       predictDeterministicCase(
         item,
         observationsWithClaimedValidation(ragged),
-      ).labels.some(
-        ({ label }) => label === 'semantic-table',
-      ),
+      ).labels.some(({ label }) => label === 'semantic-table'),
     ).toBe(false)
   })
 
@@ -1069,10 +1080,7 @@ describe('deterministic PDF fidelity adapter', () => {
     )
 
     expect(
-      predictDeterministicCase(
-        item,
-        observationsWithRetainedVisuals(result),
-      ),
+      predictDeterministicCase(item, observationsWithRetainedVisuals(result)),
     ).toEqual({
       order: [
         'opaque-figure-15',

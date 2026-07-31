@@ -6,9 +6,11 @@ import type {
   PdfSourceRun,
 } from './import-types'
 import {
+  detectExplicitHeaderNumericTableWithinProvenScope,
   detectHierarchicalTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
+  detectWrappedHeaderTableWithinProvenScope,
 } from './pdf-table-detection'
 
 function box(
@@ -621,16 +623,13 @@ describe('bounded table region detection', () => {
     const table = region('hierarchical-table', 'body', 0.2, lines, 'span')
     table.box = box(0.1, 0.2, 0.64, 0.13)
     const scope = {
-      direction: 'above' as const,
+      direction: 'below' as const,
       sourceRegionIds: [table.id],
       sourceLineIds: lines.map((sourceLine) => sourceLine.id),
-      evidence: [{ code: 'multi-run-tabular-line-band' }],
+      evidence: [{ code: 'contiguous-tabular-slab' }],
     }
 
-    const detected = detectHierarchicalTableWithinProvenScope(
-      [table],
-      scope,
-    )
+    const detected = detectHierarchicalTableWithinProvenScope([table], scope)
 
     expect(detected).toMatchObject({
       columnCount: 6,
@@ -647,6 +646,302 @@ describe('bounded table region detection', () => {
     ])
   })
 
+  it('proves one explicit header over a complete numeric matrix with a variable-width stub', () => {
+    const sourceLine = (
+      id: string,
+      y: number,
+      cells: Array<{ text: string; x: number; width?: number }>,
+    ): PdfRegionLine => {
+      const runs = cells.map<PdfSourceRun>((cell) => ({
+        ...box(cell.x, y, cell.width ?? 0.04),
+        text: cell.text,
+        fontName: 'PlainTableSerif',
+        fontSize: 8,
+        confidence: 1,
+      }))
+      return {
+        id,
+        text: runs.map((run) => run.text).join(' '),
+        fontSize: 8,
+        box: box(
+          runs[0].x,
+          y,
+          Math.max(...runs.map((run) => run.x + run.width)) - runs[0].x,
+        ),
+        runs,
+      }
+    }
+    const lines = [
+      sourceLine('header', 0.2, [
+        { text: 'Method', x: 0.1, width: 0.06 },
+        { text: 'Score', x: 0.4, width: 0.05 },
+        { text: 'Error', x: 0.61, width: 0.05 },
+      ]),
+      sourceLine('body-1', 0.23, [
+        { text: 'A', x: 0.1, width: 0.02 },
+        { text: '5.856', x: 0.4, width: 0.05 },
+        { text: '0.395', x: 0.61, width: 0.05 },
+      ]),
+      sourceLine('body-2', 0.26, [
+        { text: 'Long baseline name', x: 0.1, width: 0.18 },
+        { text: '5.711', x: 0.4, width: 0.05 },
+        { text: '0.402', x: 0.61, width: 0.05 },
+      ]),
+      sourceLine('body-3', 0.29, [
+        { text: 'Medium method', x: 0.1, width: 0.11 },
+        { text: '5.562', x: 0.4, width: 0.05 },
+        { text: '0.389', x: 0.61, width: 0.05 },
+      ]),
+    ]
+    const table = region('explicit-matrix', 'body', 0.2, lines, 'span')
+
+    const detected = detectExplicitHeaderNumericTableWithinProvenScope(
+      [table],
+      {
+        direction: 'below',
+        sourceRegionIds: [table.id],
+        sourceLineIds: lines.map((sourceLine) => sourceLine.id),
+        evidence: [
+          { code: 'repeated-row-bands' },
+          { code: 'multi-run-tabular-line-band' },
+        ],
+      },
+    )
+
+    expect(detected).toMatchObject({
+      columnCount: 3,
+      headerRowCount: 1,
+      evidence: expect.arrayContaining([
+        'semantic-header-explicit-matrix-geometry',
+        'repeated-uniform-numeric-body-rows',
+        'variable-width-stub-left-anchor',
+      ]),
+    })
+    expect(detected?.lines).toHaveLength(4)
+    expect(
+      detected?.lines.every((sourceRow) =>
+        sourceRow.cells.every(
+          (cell) => cell.columnSpan === 1 && cell.rowSpan === 1,
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  it('accepts compact scientific notation without altering the source cell text', () => {
+    const header = line('header', 0.2, [0.1, 0.4, 0.61])
+    ;['Model', 'MSE', 'QLIKE'].forEach((text, index) => {
+      header.runs[index].text = text
+    })
+    header.text = header.runs.map((run) => run.text).join(' ')
+    const body = [0.23, 0.26, 0.29].map((y, rowIndex) => {
+      const sourceLine = line(`body-${rowIndex + 1}`, y, [0.1, 0.4, 0.61])
+      sourceLine.runs[0] = {
+        ...sourceLine.runs[0],
+        width: 0.12 + rowIndex * 0.03,
+        text: `Method ${rowIndex + 1}`,
+      }
+      sourceLine.runs[1].text = `${rowIndex + 1}.25`
+      sourceLine.runs[2].text = `${rowIndex + 1}.7×10${rowIndex + 3}`
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const table = region(
+      'scientific-matrix',
+      'body',
+      0.2,
+      [header, ...body],
+      'span',
+    )
+
+    const detected = detectExplicitHeaderNumericTableWithinProvenScope(
+      [table],
+      {
+        direction: 'below',
+        sourceRegionIds: [table.id],
+        sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+        evidence: [
+          { code: 'repeated-row-bands' },
+          { code: 'multi-run-tabular-line-band' },
+        ],
+      },
+    )
+
+    expect(detected?.lines[1].cells[2]).toMatchObject({
+      run: expect.objectContaining({ text: '1.7×103' }),
+      columnIndex: 2,
+      columnSpan: 1,
+      rowSpan: 1,
+    })
+  })
+
+  it.each([
+    {
+      name: 'an implicit blank stub header',
+      headerXs: [0.4, 0.61],
+      headerTexts: ['Score', 'Error'],
+      bodyRows: 3,
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'multi-run-tabular-line-band' },
+      ],
+    },
+    {
+      name: 'a section row in the numeric body',
+      headerXs: [0.1, 0.4, 0.61],
+      headerTexts: ['Method', 'Score', 'Error'],
+      bodyRows: 3,
+      sectionRow: true,
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'multi-run-tabular-line-band' },
+      ],
+    },
+    {
+      name: 'a scope without text-line-band proof',
+      headerXs: [0.1, 0.4, 0.61],
+      headerTexts: ['Method', 'Score', 'Error'],
+      bodyRows: 3,
+      evidence: [{ code: 'repeated-row-bands' }],
+    },
+    {
+      name: 'fewer than three complete body rows',
+      headerXs: [0.1, 0.4, 0.61],
+      headerTexts: ['Method', 'Score', 'Error'],
+      bodyRows: 2,
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'multi-run-tabular-line-band' },
+      ],
+    },
+    {
+      name: 'a nonnumeric body value',
+      headerXs: [0.1, 0.4, 0.61],
+      headerTexts: ['Method', 'Score', 'Error'],
+      bodyRows: 3,
+      nonnumericBody: true,
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'multi-run-tabular-line-band' },
+      ],
+    },
+    {
+      name: 'a numeric-looking scientific header',
+      headerXs: [0.1, 0.4, 0.61],
+      headerTexts: ['Method', '1e3', 'Error'],
+      bodyRows: 3,
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'multi-run-tabular-line-band' },
+      ],
+    },
+  ])('rejects $name', (fixture) => {
+    const header = line('header', 0.2, fixture.headerXs)
+    fixture.headerTexts.forEach((text, index) => {
+      header.runs[index].text = text
+    })
+    header.text = header.runs.map((run) => run.text).join(' ')
+    const body = Array.from({ length: fixture.bodyRows }, (_, rowIndex) => {
+      const sourceLine = line(
+        `body-${rowIndex + 1}`,
+        0.23 + rowIndex * 0.03,
+        fixture.sectionRow && rowIndex === 1 ? [0.1] : [0.1, 0.4, 0.61],
+      )
+      sourceLine.runs.forEach((run, columnIndex) => {
+        run.text =
+          columnIndex === 0
+            ? fixture.sectionRow && rowIndex === 1
+              ? 'Held-out section'
+              : `Method ${rowIndex + 1}`
+            : fixture.nonnumericBody && rowIndex === 1 && columnIndex === 1
+              ? 'not measured'
+              : `${rowIndex + 1}.${columnIndex}`
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const table = region(
+      `rejected-${fixture.name}`,
+      'body',
+      0.2,
+      [header, ...body],
+      'span',
+    )
+
+    expect(
+      detectExplicitHeaderNumericTableWithinProvenScope([table], {
+        direction: 'below',
+        sourceRegionIds: [table.id],
+        sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+        evidence: fixture.evidence,
+      }),
+    ).toBeNull()
+  })
+
+  it('keeps wrapped header continuations as exact semantic header cells', () => {
+    const header = line('header', 0.2, [0.1, 0.22, 0.34, 0.46, 0.58, 0.7])
+    ;['Split', 'Not Check-', 'Check-', 'True', 'False', 'Total'].forEach(
+      (text, index) => {
+        header.runs[index].text = text
+      },
+    )
+    header.text = header.runs.map((run) => run.text).join(' ')
+    const continuation = line(
+      'header-continuation',
+      0.23,
+      [0.22, 0.34, 0.46, 0.58],
+    )
+    ;['worthy', 'worthy', 'Claims', 'Claims'].forEach((text, index) => {
+      continuation.runs[index].text = text
+    })
+    continuation.text = continuation.runs.map((run) => run.text).join(' ')
+    const body = ['Train', 'Dev', 'Test'].map((label, rowIndex) => {
+      const sourceLine = line(
+        `body-${rowIndex + 1}`,
+        0.26 + rowIndex * 0.03,
+        [0.1, 0.22, 0.34, 0.46, 0.58, 0.7],
+      )
+      sourceLine.runs.forEach((run, columnIndex) => {
+        run.text =
+          columnIndex === 0 ? label : String((rowIndex + 1) * 10 + columnIndex)
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    })
+    const table = region(
+      'wrapped-header-table',
+      'body',
+      0.2,
+      [header, continuation, ...body],
+      'span',
+    )
+    const detected = detectWrappedHeaderTableWithinProvenScope([table], {
+      direction: 'below',
+      sourceRegionIds: [table.id],
+      sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'repeated-column-anchors' },
+      ],
+    })
+
+    expect(detected).toMatchObject({
+      columnCount: 6,
+      headerRowCount: 2,
+      evidence: expect.arrayContaining(['semantic-header-wrapped-geometry']),
+    })
+    expect(detected?.lines[0].cells).toMatchObject([
+      { columnIndex: 0, rowSpan: 2 },
+      { columnIndex: 1, rowSpan: 1 },
+      { columnIndex: 2, rowSpan: 1 },
+      { columnIndex: 3, rowSpan: 1 },
+      { columnIndex: 4, rowSpan: 1 },
+      { columnIndex: 5, rowSpan: 2 },
+    ])
+    expect(detected?.lines[1].cells.map((cell) => cell.columnIndex)).toEqual([
+      1, 2, 3, 4,
+    ])
+  })
+
   it('does not split one merged PDF run into invented hierarchical header cells', () => {
     const mergedHeader = line('merged-header', 0.2, [0.1, 0.3])
     mergedHeader.runs[0].text = 'LLM'
@@ -657,9 +952,11 @@ describe('bounded table region detection', () => {
     }
     mergedHeader.text = mergedHeader.runs.map((run) => run.text).join(' ')
     const bodyLines = [0.23, 0.26, 0.29].map((y, rowIndex) => {
-      const body = line(`merged-body-${rowIndex + 1}`, y, [
-        0.1, 0.3, 0.4, 0.5, 0.6,
-      ])
+      const body = line(
+        `merged-body-${rowIndex + 1}`,
+        y,
+        [0.1, 0.3, 0.4, 0.5, 0.6],
+      )
       body.runs[0].text = `Model ${rowIndex + 1}`
       body.runs.slice(1).forEach((run, columnIndex) => {
         run.text = `${rowIndex + 1}.${columnIndex + 1}`

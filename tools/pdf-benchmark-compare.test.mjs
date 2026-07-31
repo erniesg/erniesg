@@ -3,9 +3,14 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { comparePdfBenchmarkReports } from './pdf-benchmark-compare.mjs'
 import {
+  canonicalHyphenEvidenceSha256,
   canonicalJsonHash,
   canonicalPassRate,
+  PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
   createCorpusReport,
+  PDF_HYPHEN_LEXICAL_MODEL_RECEIPT,
+  PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT,
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
 } from './pdf-corpus-audit-lib.mjs'
 
 const policy = {
@@ -17,6 +22,155 @@ const policy = {
   maximumReadingOrderDiagnostics: 0,
 }
 
+function canonicalHyphenDeletionRecord() {
+  const joinedWord = 'representation'
+  return {
+    id: '1'.repeat(64),
+    context: 'canonical-flow-continuation',
+    outcome: 'removed-discretionary-hyphen',
+    fromRegionId: '2'.repeat(64),
+    fromLineId: '3'.repeat(64),
+    toRegionId: '4'.repeat(64),
+    toLineId: '5'.repeat(64),
+    geometry: {
+      from: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.3,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      to: {
+        page: 1,
+        x: 0.1,
+        y: 0.22,
+        width: 0.3,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+    },
+    proof: {
+      sourceBoundaryProven: true,
+      pinnedWordSha256: canonicalJsonHash(joinedWord),
+      pinnedJoinedFormValid: true,
+      pinnedSplit: {
+        leftSha256: canonicalJsonHash('repre'),
+        rightSha256: canonicalJsonHash('sentation'),
+        index: 5,
+      },
+      splitPointValid: true,
+      exactSameDocumentJoinedFormSha256: canonicalJsonHash(joinedWord),
+      sameDocumentJoinedFormValid: true,
+      hardHyphenFormSha256: canonicalJsonHash('repre-sentation'),
+      hardHyphenCounterproof: null,
+      model: { ...PDF_HYPHEN_LEXICAL_MODEL_RECEIPT },
+      evidenceSha256s: [
+        ...PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
+        'language-scope:en-US->en-US',
+      ]
+        .map(canonicalHyphenEvidenceSha256)
+        .sort(),
+    },
+  }
+}
+
+function canonicalDerivedAffixHyphenDeletionRecord() {
+  const derivedWordSha256 = canonicalJsonHash('reparameterized')
+  const baseWordSha256 = canonicalJsonHash('parameterized')
+  const productivePrefix = {
+    ...PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT,
+  }
+  return {
+    id: '1'.repeat(64),
+    context: 'canonical-flow-continuation',
+    outcome: 'removed-discretionary-hyphen',
+    fromRegionId: '2'.repeat(64),
+    fromLineId: '3'.repeat(64),
+    toRegionId: '4'.repeat(64),
+    toLineId: '5'.repeat(64),
+    geometry: {
+      from: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.3,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      to: {
+        page: 1,
+        x: 0.1,
+        y: 0.22,
+        width: 0.3,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+    },
+    proof: {
+      tier: 'same-document-derived-affix',
+      sourceBoundaryProven: true,
+      derivedWordSha256,
+      productivePrefix,
+      baseWordSha256,
+      derivationBindingSha256: canonicalJsonHash({
+        derivedWordSha256,
+        productivePrefix,
+        baseWordSha256,
+      }),
+      pinnedBaseWordValid: true,
+      pinnedSplit: {
+        leftSha256: canonicalJsonHash('reparameter'),
+        rightSha256: canonicalJsonHash('ized'),
+        index: 11,
+      },
+      splitPointValid: true,
+      exactSameDocumentBaseWordSha256: baseWordSha256,
+      sameDocumentBaseWordValid: true,
+      hardHyphenFormSha256: canonicalJsonHash('reparameter-ized'),
+      hardHyphenCounterproof: null,
+      model: { ...PDF_HYPHEN_LEXICAL_MODEL_RECEIPT },
+      evidenceSha256s: [
+        ...PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
+        'language-scope:en-US->en-US',
+      ]
+        .map(canonicalHyphenEvidenceSha256)
+        .sort(),
+    },
+  }
+}
+
+function installCanonicalHyphenDeletionLedger(report) {
+  const record = canonicalHyphenDeletionRecord()
+  const structure = report.documents[0].structure
+  structure.canonicalHyphenDeletionLedgerAvailable = true
+  structure.canonicalHyphenDeletionCount = 1
+  structure.canonicalHyphenDeletionContextCounts = {
+    'canonical-flow-continuation': 1,
+  }
+  structure.canonicalHyphenDeletionLedger = [record]
+  structure.canonicalHyphenDeletionLedgerSha256 = canonicalJsonHash([record])
+  return report
+}
+
+function installDerivedAffixHyphenDeletionLedger(report) {
+  const record = canonicalDerivedAffixHyphenDeletionRecord()
+  const structure = report.documents[0].structure
+  structure.schemaVersion = '1.6.0'
+  structure.canonicalHyphenDeletionLedgerAvailable = true
+  structure.canonicalHyphenDeletionCount = 1
+  structure.canonicalHyphenDeletionContextCounts = {
+    'canonical-flow-continuation': 1,
+  }
+  structure.canonicalHyphenDeletionLedger = [record]
+  structure.canonicalHyphenDeletionLedgerSha256 = canonicalJsonHash([record])
+  return report
+}
+
 function document({
   basename = 'synthetic.pdf',
   hash = 'a'.repeat(64),
@@ -24,6 +178,10 @@ function document({
   text = 1,
   assets = 1,
   relationships = 1,
+  sourceAssets = 10,
+  exportedAssets,
+  expectedRelationships = 10,
+  resolvedRelationships,
   unresolved = 0,
   readingOrder = 0,
   ready = false,
@@ -40,7 +198,11 @@ function document({
   mappedInlineSpans = 1,
   expectedHyperlinks = 1,
   mappedHyperlinks = 1,
+  currentStructure = false,
 } = {}) {
+  const exportedAssetCount = exportedAssets ?? Math.round(assets * sourceAssets)
+  const resolvedRelationshipCount =
+    resolvedRelationships ?? Math.round(relationships * expectedRelationships)
   const diagnostics = blockingCodes.map((code) => ({
     code,
     severity: 'error',
@@ -149,12 +311,15 @@ function document({
       structurallyConsumedLineBoundaryCount: ledgerAvailable
         ? structurallyConsumedLineBoundaries
         : 0,
-      sourceAssetCount: 10,
-      exportedAssetCount: Math.round(assets * 10),
-      assetCoverage: assets,
-      expectedRelationshipCount: 10,
-      resolvedRelationshipCount: Math.round(relationships * 10),
-      relationshipCoverage: relationships,
+      sourceAssetCount: sourceAssets,
+      exportedAssetCount,
+      assetCoverage: sourceAssets === 0 ? 1 : exportedAssetCount / sourceAssets,
+      expectedRelationshipCount: expectedRelationships,
+      resolvedRelationshipCount,
+      relationshipCoverage:
+        expectedRelationships === 0
+          ? 1
+          : resolvedRelationshipCount / expectedRelationships,
       unresolvedObjectCount: unresolved,
       unresolvedObjects: {
         assets: unresolved,
@@ -190,7 +355,7 @@ function document({
       blockingDiagnosticCodes: blockingCodes,
     },
     structure: {
-      schemaVersion: '1.4.0',
+      schemaVersion: currentStructure ? '1.5.0' : '1.4.0',
       canonicalNodeCount: 4,
       canonicalNodeSequenceSha256: structureHash,
       canonicalNodeTypeSequenceSha256: structureHash,
@@ -226,6 +391,15 @@ function document({
       structurallyConsumedLineBoundaryCount: ledgerAvailable
         ? structurallyConsumedLineBoundaries
         : null,
+      ...(currentStructure
+        ? {
+            canonicalHyphenDeletionLedgerAvailable: true,
+            canonicalHyphenDeletionCount: 0,
+            canonicalHyphenDeletionContextCounts: {},
+            canonicalHyphenDeletionLedger: [],
+            canonicalHyphenDeletionLedgerSha256: canonicalJsonHash([]),
+          }
+        : {}),
     },
     diagnosticCounts,
     diagnosticSampleLimit: { total: 64, perCode: 3 },
@@ -363,6 +537,24 @@ function executionProvenance(toolId = 'pdf-export') {
       stateSha256: '5'.repeat(64),
     },
   }
+}
+
+function v17Report(documents) {
+  return {
+    ...report(documents),
+    schemaVersion: '1.7.0',
+    reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+    executionProvenance: executionProvenance(),
+  }
+}
+
+function v18Report(documents) {
+  const current = createCorpusReport(documents, policy, {
+    executionProvenance: executionProvenance(),
+  })
+  current.schemaVersion = '1.8.0'
+  current.reportSchema = 'docs/schemas/pdf-corpus-audit-v1.8.schema.json'
+  return current
 }
 
 describe('deterministic PDF benchmark comparison', () => {
@@ -607,38 +799,36 @@ describe('deterministic PDF benchmark comparison', () => {
     }
   })
 
-  it('validates exact-head v1.7 reports behind an explicit schema policy', () => {
-    const current = createCorpusReport([document()], policy, {
-      executionProvenance: executionProvenance(),
-    })
+  it('validates exact-head v1.8 reports behind an explicit schema policy', () => {
+    const current = v18Report([document({ currentStructure: true })])
     expect(current).toMatchObject({
-      schemaVersion: '1.7.0',
-      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+      schemaVersion: '1.8.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
     })
     expect(() => comparePdfBenchmarkReports(current, current)).toThrow(
       'INVALID_BENCHMARK_REPORT',
     )
     const exactHeadComparison = comparePdfBenchmarkReports(current, current, {
-      corpusReportSchemaPolicy: 'v1.7-only',
+      corpusReportSchemaPolicy: 'v1.8-only',
     })
     expect(exactHeadComparison).toMatchObject({
-      schemaVersion: '1.7.0',
+      schemaVersion: '1.8.0',
       summary: {
         exactHeadEvidencePassed: true,
         passed: true,
       },
       policy: {
         corpusReportSchemaCompatibility: {
-          policy: 'v1.7-only',
+          policy: 'v1.8-only',
           baseline: {
-            schemaVersion: '1.7.0',
-            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+            schemaVersion: '1.8.0',
+            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
             reportSha256: canonicalJsonHash(current),
             executionProvenance: current.executionProvenance,
           },
           candidate: {
-            schemaVersion: '1.7.0',
-            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+            schemaVersion: '1.8.0',
+            reportSchema: 'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
             reportSha256: canonicalJsonHash(current),
             executionProvenance: current.executionProvenance,
           },
@@ -650,10 +840,10 @@ describe('deterministic PDF benchmark comparison', () => {
     dirty.executionProvenance.implementation.worktreeState = 'dirty'
     dirty.executionProvenance.implementation.exactHead = false
     const dirtyComparison = comparePdfBenchmarkReports(dirty, dirty, {
-      corpusReportSchemaPolicy: 'v1.7-only',
+      corpusReportSchemaPolicy: 'v1.8-only',
     })
     expect(dirtyComparison).toMatchObject({
-      schemaVersion: '1.7.0',
+      schemaVersion: '1.8.0',
       summary: {
         exactHeadEvidencePassed: false,
         passed: false,
@@ -668,7 +858,7 @@ describe('deterministic PDF benchmark comparison', () => {
     inconsistent.executionProvenance.implementation.exactHead = false
     expect(() =>
       comparePdfBenchmarkReports(current, inconsistent, {
-        corpusReportSchemaPolicy: 'v1.7-only',
+        corpusReportSchemaPolicy: 'v1.8-only',
       }),
     ).toThrow('INVALID_BENCHMARK_REPORT')
     const leaking = structuredClone(current)
@@ -681,15 +871,211 @@ describe('deterministic PDF benchmark comparison', () => {
       '5.4.625'
     const missingFinalization = structuredClone(current)
     delete missingFinalization.executionProvenance.verification
+    const missingCanonicalLedger = structuredClone(current)
+    delete missingCanonicalLedger.documents[0].structure
+      .canonicalHyphenDeletionLedger
+    const tamperedCanonicalLedgerHash = structuredClone(current)
+    tamperedCanonicalLedgerHash.documents[0].structure.canonicalHyphenDeletionLedgerSha256 =
+      'f'.repeat(64)
+    const relabeledHistoricalStructure = structuredClone(current)
+    relabeledHistoricalStructure.documents[0].structure.schemaVersion = '1.4.0'
+    for (const field of [
+      'canonicalHyphenDeletionLedgerAvailable',
+      'canonicalHyphenDeletionCount',
+      'canonicalHyphenDeletionContextCounts',
+      'canonicalHyphenDeletionLedger',
+      'canonicalHyphenDeletionLedgerSha256',
+    ]) {
+      delete relabeledHistoricalStructure.documents[0].structure[field]
+    }
     for (const invalid of [
       leaking,
       malformedTimestamp,
       mismatchedPdfjs,
       missingFinalization,
+      missingCanonicalLedger,
+      tamperedCanonicalLedgerHash,
+      relabeledHistoricalStructure,
     ]) {
       expect(() =>
         comparePdfBenchmarkReports(current, invalid, {
-          corpusReportSchemaPolicy: 'v1.7-only',
+          corpusReportSchemaPolicy: 'v1.8-only',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
+    }
+
+    const historical = report([document()])
+    expect(() =>
+      comparePdfBenchmarkReports(historical, historical),
+    ).not.toThrow()
+  })
+
+  it('rejects coordinated v1.8 canonical-hyphen proof tampering after every outer hash is recomputed', () => {
+    const valid = installCanonicalHyphenDeletionLedger(
+      v18Report([document({ currentStructure: true })]),
+    )
+    expect(
+      comparePdfBenchmarkReports(valid, valid, {
+        corpusReportSchemaPolicy: 'v1.8-only',
+      }).summary.passed,
+    ).toBe(true)
+
+    const joinedDigestMismatch = structuredClone(valid)
+    joinedDigestMismatch.documents[0].structure.canonicalHyphenDeletionLedger[0].proof.exactSameDocumentJoinedFormSha256 =
+      'f'.repeat(64)
+    joinedDigestMismatch.documents[0].structure.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonHash(
+        joinedDigestMismatch.documents[0].structure
+          .canonicalHyphenDeletionLedger,
+      )
+
+    const missingMandatoryEvidence = structuredClone(valid)
+    missingMandatoryEvidence.documents[0].structure.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s =
+      ['a'.repeat(64)]
+    missingMandatoryEvidence.documents[0].structure.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonHash(
+        missingMandatoryEvidence.documents[0].structure
+          .canonicalHyphenDeletionLedger,
+      )
+
+    const forbiddenCounterproof = structuredClone(valid)
+    forbiddenCounterproof.documents[0].structure.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s.push(
+      canonicalHyphenEvidenceSha256('hard-hyphen-form-valid:same-document'),
+    )
+    forbiddenCounterproof.documents[0].structure.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s.sort()
+    forbiddenCounterproof.documents[0].structure.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonHash(
+        forbiddenCounterproof.documents[0].structure
+          .canonicalHyphenDeletionLedger,
+      )
+
+    for (const forged of [
+      joinedDigestMismatch,
+      missingMandatoryEvidence,
+      forbiddenCounterproof,
+    ]) {
+      expect(() =>
+        comparePdfBenchmarkReports(forged, forged, {
+          corpusReportSchemaPolicy: 'v1.8-only',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
+    }
+  })
+
+  it('validates v1.9 derived-affix receipts with unchanged v1.8 metric denominators and fails closed on tampering', () => {
+    const valid = installDerivedAffixHyphenDeletionLedger(
+      createCorpusReport([document({ currentStructure: true })], policy, {
+        executionProvenance: executionProvenance(),
+      }),
+    )
+    expect(valid).toMatchObject({
+      schemaVersion: '1.9.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+    })
+    const comparison = comparePdfBenchmarkReports(valid, valid, {
+      corpusReportSchemaPolicy: 'v1.9-only',
+    })
+    expect(comparison).toMatchObject({
+      schemaVersion: '1.9.0',
+      summary: { passed: true, exactHeadEvidencePassed: true },
+    })
+
+    const v18 = createCorpusReport(
+      [document({ currentStructure: true })],
+      policy,
+      { executionProvenance: executionProvenance() },
+    )
+    v18.schemaVersion = '1.8.0'
+    v18.reportSchema = 'docs/schemas/pdf-corpus-audit-v1.8.schema.json'
+    v18.documents[0].structure.schemaVersion = '1.5.0'
+    const v18Comparison = comparePdfBenchmarkReports(v18, v18, {
+      corpusReportSchemaPolicy: 'v1.8-only',
+    })
+    expect(comparison.policy.metrics).toEqual(v18Comparison.policy.metrics)
+
+    const forge = (mutate) => {
+      const forged = structuredClone(valid)
+      const record =
+        forged.documents[0].structure.canonicalHyphenDeletionLedger[0]
+      mutate(record)
+      forged.documents[0].structure.canonicalHyphenDeletionLedgerSha256 =
+        canonicalJsonHash(
+          forged.documents[0].structure.canonicalHyphenDeletionLedger,
+        )
+      return forged
+    }
+    const wrongPrefix = forge((record) => {
+      record.proof.productivePrefix.flag = 'Z'
+      record.proof.derivationBindingSha256 = canonicalJsonHash({
+        derivedWordSha256: record.proof.derivedWordSha256,
+        productivePrefix: record.proof.productivePrefix,
+        baseWordSha256: record.proof.baseWordSha256,
+      })
+    })
+    const wrongBase = forge((record) => {
+      record.proof.exactSameDocumentBaseWordSha256 = 'f'.repeat(64)
+    })
+    const prefixBoundary = forge((record) => {
+      record.proof.pinnedSplit.index = 2
+    })
+    const missingEvidence = forge((record) => {
+      record.proof.evidenceSha256s = ['a'.repeat(64)]
+    })
+    for (const forged of [
+      wrongPrefix,
+      wrongBase,
+      prefixBoundary,
+      missingEvidence,
+    ]) {
+      expect(() =>
+        comparePdfBenchmarkReports(forged, forged, {
+          corpusReportSchemaPolicy: 'v1.9-only',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
+    }
+  })
+
+  it('rejects v1.8 reports missing same-evaluator asset or relationship counts', () => {
+    const valid = v18Report([document({ currentStructure: true })])
+
+    for (const field of [
+      'sourceAssetCount',
+      'exportedAssetCount',
+      'expectedRelationshipCount',
+      'resolvedRelationshipCount',
+    ]) {
+      const missing = structuredClone(valid)
+      delete missing.documents[0].completeness[field]
+
+      expect(() =>
+        comparePdfBenchmarkReports(valid, missing, {
+          corpusReportSchemaPolicy: 'v1.8-only',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
+    }
+  })
+
+  it.each([
+    ['negative', -1],
+    ['fractional', 0.5],
+    ['string', '1'],
+    ['NaN', Number.NaN],
+    ['infinite', Number.POSITIVE_INFINITY],
+  ])('rejects %s v1.8 same-evaluator counts', (_description, invalidValue) => {
+    const valid = v18Report([document({ currentStructure: true })])
+
+    for (const field of [
+      'sourceAssetCount',
+      'exportedAssetCount',
+      'expectedRelationshipCount',
+      'resolvedRelationshipCount',
+    ]) {
+      const invalid = structuredClone(valid)
+      invalid.documents[0].completeness[field] = invalidValue
+
+      expect(() =>
+        comparePdfBenchmarkReports(valid, invalid, {
+          corpusReportSchemaPolicy: 'v1.8-only',
         }),
       ).toThrow('INVALID_BENCHMARK_REPORT')
     }
@@ -889,6 +1275,403 @@ describe('deterministic PDF benchmark comparison', () => {
         }),
       ]),
     )
+  })
+
+  it('fails closed when the expected relationship denominator expands or collapses', () => {
+    const baseline = v18Report([
+      document({
+        currentStructure: true,
+        expectedRelationships: 10,
+        resolvedRelationships: 4,
+      }),
+    ])
+    const cases = [
+      {
+        candidate: document({
+          currentStructure: true,
+          expectedRelationships: 12,
+          resolvedRelationships: 6,
+        }),
+        resolvedChange: 'improved',
+      },
+      {
+        candidate: document({
+          currentStructure: true,
+          expectedRelationships: 8,
+          resolvedRelationships: 4,
+        }),
+        resolvedChange: 'unchanged',
+      },
+    ]
+
+    for (const { candidate, resolvedChange } of cases) {
+      const comparison = comparePdfBenchmarkReports(
+        baseline,
+        v18Report([candidate]),
+        { corpusReportSchemaPolicy: 'v1.8-only' },
+      )
+
+      expect(comparison.summary).toMatchObject({
+        regressed: 1,
+        passed: false,
+      })
+      expect(comparison.documents[0].metrics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: 'expectedRelationshipCount',
+            baseline: 10,
+            candidate: candidate.completeness.expectedRelationshipCount,
+            change: 'regressed',
+          }),
+          expect.objectContaining({
+            key: 'resolvedRelationshipCount',
+            change: resolvedChange,
+          }),
+          expect.objectContaining({
+            key: 'relationshipCoverage',
+            change: 'improved',
+          }),
+        ]),
+      )
+    }
+  })
+
+  it('fails closed when the source asset denominator expands or collapses', () => {
+    const baseline = v18Report([
+      document({
+        currentStructure: true,
+        sourceAssets: 10,
+        exportedAssets: 4,
+      }),
+    ])
+    const cases = [
+      {
+        candidate: document({
+          currentStructure: true,
+          sourceAssets: 12,
+          exportedAssets: 6,
+        }),
+        exportedChange: 'improved',
+      },
+      {
+        candidate: document({
+          currentStructure: true,
+          sourceAssets: 8,
+          exportedAssets: 4,
+        }),
+        exportedChange: 'unchanged',
+      },
+    ]
+
+    for (const { candidate, exportedChange } of cases) {
+      const comparison = comparePdfBenchmarkReports(
+        baseline,
+        v18Report([candidate]),
+        { corpusReportSchemaPolicy: 'v1.8-only' },
+      )
+
+      expect(comparison.summary).toMatchObject({
+        regressed: 1,
+        passed: false,
+      })
+      expect(comparison.documents[0].metrics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: 'sourceAssetCount',
+            baseline: 10,
+            candidate: candidate.completeness.sourceAssetCount,
+            change: 'regressed',
+          }),
+          expect.objectContaining({
+            key: 'exportedAssetCount',
+            change: exportedChange,
+          }),
+          expect.objectContaining({
+            key: 'assetCoverage',
+            change: 'improved',
+          }),
+        ]),
+      )
+    }
+  })
+
+  it('accepts increased resolved counts when same-evaluator denominators are exact', () => {
+    const comparison = comparePdfBenchmarkReports(
+      v18Report([
+        document({
+          currentStructure: true,
+          sourceAssets: 10,
+          exportedAssets: 4,
+          expectedRelationships: 10,
+          resolvedRelationships: 4,
+        }),
+      ]),
+      v18Report([
+        document({
+          currentStructure: true,
+          sourceAssets: 10,
+          exportedAssets: 5,
+          expectedRelationships: 10,
+          resolvedRelationships: 5,
+        }),
+      ]),
+      { corpusReportSchemaPolicy: 'v1.8-only' },
+    )
+
+    expect(comparison.summary).toMatchObject({
+      improved: 1,
+      regressed: 0,
+      passed: true,
+    })
+    expect(comparison.documents[0].metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'sourceAssetCount',
+          change: 'unchanged',
+        }),
+        expect.objectContaining({
+          key: 'exportedAssetCount',
+          change: 'improved',
+        }),
+        expect.objectContaining({
+          key: 'expectedRelationshipCount',
+          change: 'unchanged',
+        }),
+        expect.objectContaining({
+          key: 'resolvedRelationshipCount',
+          change: 'improved',
+        }),
+      ]),
+    )
+  })
+
+  it('preserves legacy metric shape and ratio semantics through v1.7', () => {
+    const baselineDocument = document({
+      sourceAssets: 10,
+      exportedAssets: 4,
+      expectedRelationships: 10,
+      resolvedRelationships: 4,
+    })
+    const candidateDocument = document({
+      sourceAssets: 12,
+      exportedAssets: 6,
+      expectedRelationships: 12,
+      resolvedRelationships: 6,
+    })
+    const ocrBaselineDocument = structuredClone(baselineDocument)
+    ocrBaselineDocument.ocr = ocrProvenance()
+    const ocrCandidateDocument = structuredClone(candidateDocument)
+    ocrCandidateDocument.ocr = ocrProvenance()
+    const comparisons = [
+      comparePdfBenchmarkReports(
+        report([baselineDocument]),
+        report([candidateDocument]),
+      ),
+      comparePdfBenchmarkReports(
+        createCorpusReport([ocrBaselineDocument], policy),
+        createCorpusReport([ocrCandidateDocument], policy),
+        { corpusReportSchemaPolicy: 'v1.5-v1.6-compatible' },
+      ),
+      comparePdfBenchmarkReports(
+        v17Report([structuredClone(baselineDocument)]),
+        v17Report([structuredClone(candidateDocument)]),
+        { corpusReportSchemaPolicy: 'v1.7-only' },
+      ),
+    ]
+
+    for (const comparison of comparisons) {
+      expect(comparison.summary).toMatchObject({
+        improved: 1,
+        regressed: 0,
+        passed: true,
+      })
+      for (const key of [
+        'sourceAssetCount',
+        'exportedAssetCount',
+        'expectedRelationshipCount',
+        'resolvedRelationshipCount',
+      ]) {
+        expect(comparison.policy.metrics).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ key })]),
+        )
+        expect(comparison.documents[0].metrics).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ key })]),
+        )
+      }
+    }
+    expect(comparisons.map(({ schemaVersion }) => schemaVersion)).toEqual([
+      '1.5.0',
+      '1.6.0',
+      '1.7.0',
+    ])
+  })
+
+  it('accepts identical zero denominators under the v1.8 same-evaluator gate', () => {
+    const current = v18Report([
+      document({
+        currentStructure: true,
+        sourceAssets: 0,
+        exportedAssets: 0,
+        expectedRelationships: 0,
+        resolvedRelationships: 0,
+      }),
+    ])
+    const comparison = comparePdfBenchmarkReports(current, current, {
+      corpusReportSchemaPolicy: 'v1.8-only',
+    })
+
+    expect(comparison.summary).toMatchObject({
+      unchanged: 1,
+      regressed: 0,
+      passed: true,
+    })
+    expect(comparison.documents[0].metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'sourceAssetCount',
+          baseline: 0,
+          candidate: 0,
+          change: 'unchanged',
+        }),
+        expect.objectContaining({
+          key: 'assetCoverage',
+          baseline: 1,
+          candidate: 1,
+          change: 'unchanged',
+        }),
+        expect.objectContaining({
+          key: 'expectedRelationshipCount',
+          baseline: 0,
+          candidate: 0,
+          change: 'unchanged',
+        }),
+        expect.objectContaining({
+          key: 'relationshipCoverage',
+          baseline: 1,
+          candidate: 1,
+          change: 'unchanged',
+        }),
+      ]),
+    )
+  })
+
+  it('fails v1.8 zero-to-one denominator drift despite perfect ratios', () => {
+    const baseline = v18Report([
+      document({
+        currentStructure: true,
+        sourceAssets: 0,
+        exportedAssets: 0,
+        expectedRelationships: 0,
+        resolvedRelationships: 0,
+      }),
+    ])
+    const candidate = v18Report([
+      document({
+        currentStructure: true,
+        sourceAssets: 1,
+        exportedAssets: 1,
+        expectedRelationships: 1,
+        resolvedRelationships: 1,
+      }),
+    ])
+    const comparison = comparePdfBenchmarkReports(baseline, candidate, {
+      corpusReportSchemaPolicy: 'v1.8-only',
+    })
+
+    expect(comparison.summary).toMatchObject({
+      regressed: 1,
+      passed: false,
+    })
+    expect(comparison.documents[0].metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'sourceAssetCount',
+          change: 'regressed',
+        }),
+        expect.objectContaining({
+          key: 'assetCoverage',
+          change: 'unchanged',
+        }),
+        expect.objectContaining({
+          key: 'expectedRelationshipCount',
+          change: 'regressed',
+        }),
+        expect.objectContaining({
+          key: 'relationshipCoverage',
+          change: 'unchanged',
+        }),
+      ]),
+    )
+  })
+
+  it('fails v1.8 ratio masking when denominators and numerators scale together', () => {
+    const baseline = v18Report([
+      document({
+        currentStructure: true,
+        sourceAssets: 10,
+        exportedAssets: 4,
+        expectedRelationships: 10,
+        resolvedRelationships: 4,
+      }),
+    ])
+    const candidate = v18Report([
+      document({
+        currentStructure: true,
+        sourceAssets: 20,
+        exportedAssets: 8,
+        expectedRelationships: 20,
+        resolvedRelationships: 8,
+      }),
+    ])
+    const comparison = comparePdfBenchmarkReports(baseline, candidate, {
+      corpusReportSchemaPolicy: 'v1.8-only',
+    })
+
+    expect(comparison.summary).toMatchObject({
+      regressed: 1,
+      passed: false,
+    })
+    expect(comparison.documents[0].metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'sourceAssetCount',
+          change: 'regressed',
+        }),
+        expect.objectContaining({
+          key: 'exportedAssetCount',
+          change: 'improved',
+        }),
+        expect.objectContaining({
+          key: 'assetCoverage',
+          change: 'unchanged',
+        }),
+        expect.objectContaining({
+          key: 'expectedRelationshipCount',
+          change: 'regressed',
+        }),
+        expect.objectContaining({
+          key: 'resolvedRelationshipCount',
+          change: 'improved',
+        }),
+        expect.objectContaining({
+          key: 'relationshipCoverage',
+          change: 'unchanged',
+        }),
+      ]),
+    )
+  })
+
+  it('rejects tolerances for v1.8 exact-denominator metrics', () => {
+    const current = v18Report([document({ currentStructure: true })])
+
+    for (const key of ['sourceAssetCount', 'expectedRelationshipCount']) {
+      expect(() =>
+        comparePdfBenchmarkReports(current, current, {
+          corpusReportSchemaPolicy: 'v1.8-only',
+          tolerances: { [key]: 1 },
+        }),
+      ).toThrow('INVALID_TOLERANCE')
+    }
   })
 
   it('reports recovered hyperlink obligations and coverage as explicit metric deltas', () => {
@@ -1909,6 +2692,14 @@ describe('deterministic PDF benchmark comparison', () => {
         'candidate.json',
         '--corpus-report-schema-policy',
         'accept-anything',
+      ],
+      [
+        'baseline.json',
+        'candidate.json',
+        '--tolerance',
+        'sourceAssetCount=1',
+        '--corpus-report-schema-policy',
+        'v1.8-only',
       ],
     ]) {
       const result = spawnSync(process.execPath, [executable, ...arguments_], {

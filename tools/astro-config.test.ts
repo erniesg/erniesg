@@ -8,11 +8,16 @@ import { createLogger, createServer } from 'vite'
 import config from '../astro.config'
 
 describe('Astro dependency optimization', () => {
-  it('prebundles browser PDF.js without crawling the headless native canvas', async () => {
+  it('prebundles the complete publication worker graph without crawling the headless native canvas', async () => {
+    const publicationWorkerDependencies = [
+      'pdfjs-dist',
+      'pdfjs-dist/legacy/build/pdf.mjs',
+      'tesseract.js',
+    ]
     expect(config).toMatchObject({
       vite: {
         optimizeDeps: {
-          include: ['pdfjs-dist'],
+          include: publicationWorkerDependencies,
           exclude: ['@napi-rs/canvas'],
         },
       },
@@ -40,11 +45,12 @@ describe('Astro dependency optimization', () => {
       root,
       server: {
         middlewareMode: true,
+        watch: null,
       },
     })
 
     try {
-      await server.transformRequest('/src/research/pdf.ts')
+      await server.transformRequest('/src/research/publication.worker.ts')
       const optimizer = server.environments.client.depsOptimizer
       expect(optimizer).toBeDefined()
       const dependencies = optimizer?.metadata.depInfoList ?? []
@@ -55,6 +61,9 @@ describe('Astro dependency optimization', () => {
 
       expect(results.every((result) => result.status === 'fulfilled')).toBe(
         true,
+      )
+      expect(dependencies.map((dependency) => dependency.id)).toEqual(
+        expect.arrayContaining(publicationWorkerDependencies),
       )
       expect(dependencies.map((dependency) => dependency.id)).not.toContain(
         '@napi-rs/canvas',

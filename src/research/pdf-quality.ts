@@ -1,5 +1,6 @@
 import type {
   PdfCompletenessMetrics,
+  PdfCanonicalHyphenBoundaryDecision,
   PdfCompletenessPolicy,
   PdfCitationRelationship,
   PdfLineBoundaryDecision,
@@ -11,6 +12,8 @@ import type {
   PdfReadingOrderGraph,
   PdfReadiness,
   PdfSemanticSignals,
+  PdfSourceRun,
+  PdfSourceSemanticFlowBoundaryDecision,
   PdfVisualAsset,
   PdfVisualRelationship,
   ReconstructionDiagnostic,
@@ -19,14 +22,32 @@ import {
   verifyEquationTranscriptAdjudication,
   type EquationTranscriptContext,
 } from './equation-transcript-adjudication'
+import { verifyRelationshipSourceGeometryScriptTranscript } from './equation-geometry-transcript'
 import {
   groupRunsIntoLines,
   inlineHardHyphenLexicon,
   inlineUnhyphenatedLexicon,
 } from './pdf-lines'
+import {
+  PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
+  PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE,
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
+  PDF_HYPHEN_LEXICAL_MODEL,
+  PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE,
+  resolvePdfHyphenBoundary,
+  type PdfHyphenBoundaryProof,
+} from './pdf-hyphenation'
 import { unprovedInlineMathAtomNodeIds } from './pdf-inline-script-integrity'
 import { classifyPdfNoteMarkers } from './pdf-note-classifier'
-import { reconstructPageRegions } from './pdf-regions'
+import {
+  canonicalPdfSourceSemanticFlowEvidence,
+  PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+  PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
+  pdfSourceFragmentId,
+  pdfSourceSemanticFlowBoundaryDecisionId,
+  pdfSourceSemanticFlowRunSha256,
+  reconstructPageRegions,
+} from './pdf-regions'
 import {
   decorativeNativeObjectIds,
   hasUnprovedTwoDimensionalEquationTranscript,
@@ -71,6 +92,10 @@ type QualityInput = {
   reclassifiedNoteReferenceCount?: number
   reclassifiedCitationCount?: number
   lineBoundaryDecisions?: PdfLineBoundaryDecision[]
+  sourceSemanticFlowBoundaryDecisions?: readonly PdfSourceSemanticFlowBoundaryDecision[]
+  sourceSemanticFlowBoundaryDecisionCount?: number
+  canonicalHyphenBoundaryDecisions?: readonly PdfCanonicalHyphenBoundaryDecision[]
+  canonicalHyphenBoundaryDecisionCount?: number
   unresolvedCorruptingJoinCount?: number
   structurallyConsumedLineBoundaryCount?: number
   provenance?: Record<string, NodeSourceEvidence>
@@ -78,6 +103,453 @@ type QualityInput = {
   hyperlinkLedger?: { expected: number; mapped: number }
   sourceSha256?: string
   canonicalFloatScopes?: readonly CanonicalFloatScopeEvidence[]
+}
+
+function exactObjectKeys(value: unknown, expected: readonly string[]) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const actual = Object.keys(value).sort()
+  const sortedExpected = [...expected].sort()
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  )
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isPdfSourceSemanticFlowBoundaryEndpoint(value: unknown) {
+  return (
+    isUnknownRecord(value) &&
+    exactObjectKeys(value, [
+      'regionId',
+      'lineId',
+      'runIndex',
+      'sourceSequenceIndex',
+      'sourceRunSha256',
+      'sourceFragmentId',
+    ]) &&
+    typeof value.regionId === 'string' &&
+    value.regionId.length > 0 &&
+    typeof value.lineId === 'string' &&
+    value.lineId.length > 0 &&
+    Number.isSafeInteger(value.runIndex) &&
+    (value.runIndex as number) >= 0 &&
+    Number.isSafeInteger(value.sourceSequenceIndex) &&
+    (value.sourceSequenceIndex as number) >= 0 &&
+    typeof value.sourceRunSha256 === 'string' &&
+    /^[a-f0-9]{64}$/u.test(value.sourceRunSha256) &&
+    typeof value.sourceFragmentId === 'string' &&
+    value.sourceFragmentId.length > 0
+  )
+}
+
+function isPdfSourceSemanticFlowBoundaryDecision(
+  value: unknown,
+): value is PdfSourceSemanticFlowBoundaryDecision {
+  return (
+    isUnknownRecord(value) &&
+    exactObjectKeys(value, [
+      'id',
+      'page',
+      'rotation',
+      'method',
+      'topology',
+      'outcome',
+      'from',
+      'to',
+      'evidence',
+    ]) &&
+    typeof value.id === 'string' &&
+    /^[a-f0-9]{64}$/u.test(value.id) &&
+    Number.isSafeInteger(value.page) &&
+    (value.page as number) >= 1 &&
+    typeof value.rotation === 'number' &&
+    Number.isFinite(value.rotation) &&
+    ['pdf-text', 'ocr'].includes(value.method as string) &&
+    ['inline-stacked-fragment', 'lexical-hyphen'].includes(
+      value.topology as string,
+    ) &&
+    ['no-space', 'discretionary-hyphen-delete', 'hard-hyphen-retain'].includes(
+      value.outcome as string,
+    ) &&
+    isPdfSourceSemanticFlowBoundaryEndpoint(value.from) &&
+    isPdfSourceSemanticFlowBoundaryEndpoint(value.to) &&
+    Array.isArray(value.evidence) &&
+    value.evidence.length > 0 &&
+    value.evidence.every(
+      (entry: unknown) => typeof entry === 'string' && entry.length > 0,
+    ) &&
+    new Set(value.evidence).size === value.evidence.length &&
+    value.evidence.every(
+      (entry, index) =>
+        entry ===
+        canonicalPdfSourceSemanticFlowEvidence(value.evidence as string[])[
+          index
+        ],
+    )
+  )
+}
+
+function isNormalizedSourceBox(value: unknown): value is NormalizedSourceBox {
+  return (
+    isUnknownRecord(value) &&
+    exactObjectKeys(value, [
+      'page',
+      'x',
+      'y',
+      'width',
+      'height',
+      'rotation',
+      'method',
+    ]) &&
+    Number.isSafeInteger(value.page) &&
+    (value.page as number) >= 1 &&
+    ['x', 'y', 'width', 'height', 'rotation'].every(
+      (field) =>
+        typeof value[field] === 'number' && Number.isFinite(value[field]),
+    ) &&
+    (value.width as number) >= 0 &&
+    (value.height as number) >= 0 &&
+    ['pdf-text', 'pdf-object', 'pdf-link', 'ocr'].includes(
+      value.method as string,
+    )
+  )
+}
+
+function sameNormalizedSourceBox(left: unknown, right: NormalizedSourceBox) {
+  return (
+    isNormalizedSourceBox(left) &&
+    exactObjectKeys(right, [
+      'page',
+      'x',
+      'y',
+      'width',
+      'height',
+      'rotation',
+      'method',
+    ]) &&
+    left.page === right.page &&
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height &&
+    left.rotation === right.rotation &&
+    left.method === right.method
+  )
+}
+
+function normalizedSourceWords(regions: readonly PdfPageRegion[]) {
+  return regions.flatMap((region) =>
+    region.lines.flatMap(
+      (line) =>
+        line.text
+          .normalize('NFKC')
+          .toLocaleLowerCase('en-US')
+          .match(/[\p{L}\p{N}]+/gu) ?? [],
+    ),
+  )
+}
+
+function normalizedHardHyphenWords(regions: readonly PdfPageRegion[]) {
+  return regions.flatMap((region) =>
+    region.lines.flatMap((line) =>
+      (
+        line.text
+          .normalize('NFKC')
+          .toLocaleLowerCase('en-US')
+          .match(/[\p{L}\p{N}]+[-‐‑][\p{L}\p{N}]+/gu) ?? []
+      ).map((word) => word.replace(/[-‐‑]/gu, '-')),
+    ),
+  )
+}
+
+export function hasValidSourceSemanticFlowBoundaryLedgerCount({
+  decisions,
+  expectedCount,
+}: {
+  decisions: unknown
+  expectedCount: unknown
+}): boolean {
+  return (
+    Array.isArray(decisions) &&
+    Number.isSafeInteger(expectedCount) &&
+    (expectedCount as number) >= 0 &&
+    decisions.length === expectedCount &&
+    decisions.every(isPdfSourceSemanticFlowBoundaryDecision)
+  )
+}
+
+export function hasValidCanonicalHyphenBoundaryLedger({
+  decisions,
+  expectedCount,
+  regions,
+}: {
+  decisions: unknown
+  expectedCount: unknown
+  regions: readonly PdfPageRegion[]
+}): boolean {
+  if (
+    !Array.isArray(decisions) ||
+    !Number.isSafeInteger(expectedCount) ||
+    (expectedCount as number) < 0 ||
+    decisions.length !== expectedCount
+  ) {
+    return false
+  }
+  const regionMap = new Map<string, PdfPageRegion>()
+  const lineOwners = new Map<
+    string,
+    { region: PdfPageRegion; line: PdfPageRegion['lines'][number] }
+  >()
+  for (const region of regions) {
+    if (regionMap.has(region.id)) return false
+    regionMap.set(region.id, region)
+    for (const line of region.lines) {
+      if (lineOwners.has(line.id)) return false
+      lineOwners.set(line.id, { region, line })
+    }
+  }
+  const sourceWords = new Set(normalizedSourceWords(regions))
+  const hardHyphenWords = new Set(normalizedHardHyphenWords(regions))
+  const ids = new Set<string>()
+  const boundaries = new Set<string>()
+  for (const candidate of decisions) {
+    if (
+      !isUnknownRecord(candidate) ||
+      !exactObjectKeys(candidate, [
+        'id',
+        'context',
+        'outcome',
+        'fromRegionId',
+        'fromLineId',
+        'toRegionId',
+        'toLineId',
+        'geometry',
+        'proof',
+      ]) ||
+      typeof candidate.id !== 'string' ||
+      typeof candidate.context !== 'string' ||
+      typeof candidate.outcome !== 'string' ||
+      typeof candidate.fromRegionId !== 'string' ||
+      typeof candidate.fromLineId !== 'string' ||
+      typeof candidate.toRegionId !== 'string' ||
+      typeof candidate.toLineId !== 'string' ||
+      !['bibliography-continuation', 'canonical-flow-continuation'].includes(
+        candidate.context,
+      ) ||
+      candidate.outcome !== 'removed-discretionary-hyphen' ||
+      !isUnknownRecord(candidate.geometry) ||
+      !exactObjectKeys(candidate.geometry, ['from', 'to']) ||
+      !isUnknownRecord(candidate.proof) ||
+      !isUnknownRecord(candidate.proof.pinnedSplit) ||
+      !exactObjectKeys(candidate.proof.pinnedSplit, [
+        'left',
+        'right',
+        'index',
+      ]) ||
+      typeof candidate.proof.pinnedSplit.left !== 'string' ||
+      typeof candidate.proof.pinnedSplit.right !== 'string' ||
+      !Number.isSafeInteger(candidate.proof.pinnedSplit.index) ||
+      typeof candidate.proof.hardHyphenForm !== 'string' ||
+      !isUnknownRecord(candidate.proof.model) ||
+      !exactObjectKeys(candidate.proof.model, [
+        'id',
+        'language',
+        'dictionarySha256',
+        'affixSha256',
+        'hyphenationSha256',
+      ]) ||
+      typeof candidate.proof.model.id !== 'string' ||
+      typeof candidate.proof.model.language !== 'string' ||
+      typeof candidate.proof.model.dictionarySha256 !== 'string' ||
+      typeof candidate.proof.model.affixSha256 !== 'string' ||
+      typeof candidate.proof.model.hyphenationSha256 !== 'string' ||
+      !Array.isArray(candidate.proof.evidence) ||
+      candidate.proof.evidence.some(
+        (entry: unknown) => typeof entry !== 'string' || entry.length === 0,
+      ) ||
+      !isNormalizedSourceBox(candidate.geometry.from) ||
+      !isNormalizedSourceBox(candidate.geometry.to)
+    ) {
+      return false
+    }
+    const proofCandidate = candidate.proof
+    const exactProofShape =
+      proofCandidate.tier === 'exact-same-document' &&
+      exactObjectKeys(proofCandidate, [
+        'tier',
+        'sourceBoundaryProven',
+        'pinnedWord',
+        'pinnedJoinedFormValid',
+        'pinnedSplit',
+        'splitPointValid',
+        'exactSameDocumentJoinedForm',
+        'sameDocumentJoinedFormValid',
+        'hardHyphenForm',
+        'hardHyphenCounterproof',
+        'model',
+        'evidence',
+      ]) &&
+      typeof proofCandidate.pinnedWord === 'string' &&
+      proofCandidate.pinnedJoinedFormValid === true &&
+      typeof proofCandidate.exactSameDocumentJoinedForm === 'string' &&
+      proofCandidate.sameDocumentJoinedFormValid === true
+    const derivedProofShape =
+      proofCandidate.tier === 'same-document-derived-affix' &&
+      exactObjectKeys(proofCandidate, [
+        'tier',
+        'sourceBoundaryProven',
+        'derivedWord',
+        'productivePrefix',
+        'baseWord',
+        'pinnedBaseWordValid',
+        'pinnedSplit',
+        'splitPointValid',
+        'exactSameDocumentBaseWord',
+        'sameDocumentBaseWordValid',
+        'hardHyphenForm',
+        'hardHyphenCounterproof',
+        'model',
+        'evidence',
+      ]) &&
+      typeof proofCandidate.derivedWord === 'string' &&
+      isUnknownRecord(proofCandidate.productivePrefix) &&
+      exactObjectKeys(proofCandidate.productivePrefix, [
+        'kind',
+        'value',
+        'affixClass',
+        'flag',
+        'crossProduct',
+        'affixSha256',
+      ]) &&
+      typeof proofCandidate.baseWord === 'string' &&
+      proofCandidate.pinnedBaseWordValid === true &&
+      typeof proofCandidate.exactSameDocumentBaseWord === 'string' &&
+      proofCandidate.sameDocumentBaseWordValid === true
+    if (!exactProofShape && !derivedProofShape) return false
+    const decision = candidate as unknown as PdfCanonicalHyphenBoundaryDecision
+    const from = lineOwners.get(decision.fromLineId)
+    const to = lineOwners.get(decision.toLineId)
+    const left = decision.proof.pinnedSplit.left
+      .normalize('NFKC')
+      .toLocaleLowerCase('en-US')
+    const right = decision.proof.pinnedSplit.right
+      .normalize('NFKC')
+      .toLocaleLowerCase('en-US')
+    const joined = `${left}${right}`
+    const hardHyphen = `${left}-${right}`
+    const replayedProof = resolvePdfHyphenBoundary({
+      left,
+      right,
+      language: decision.proof.model.language,
+      sourceProven: true,
+      hardHyphenLexicon: hardHyphenWords,
+      unhyphenatedLexicon: sourceWords,
+    })
+    const exactTierValid =
+      decision.proof.tier === 'exact-same-document' &&
+      replayedProof.verdict === 'remove' &&
+      replayedProof.lexicalProof?.tier === 'exact-same-document' &&
+      decision.proof.pinnedWord.normalize('NFKC').toLocaleLowerCase('en-US') ===
+        joined &&
+      decision.proof.exactSameDocumentJoinedForm
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') === joined &&
+      sourceWords.has(joined) &&
+      PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE.every((evidence) =>
+        decision.proof.evidence.includes(evidence),
+      )
+    const derivedTierValid =
+      decision.proof.tier === 'same-document-derived-affix' &&
+      replayedProof.verdict === 'remove' &&
+      replayedProof.lexicalProof?.tier === 'same-document-derived-affix' &&
+      decision.proof.derivedWord
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') === joined &&
+      decision.proof.productivePrefix.kind ===
+        PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.kind &&
+      decision.proof.productivePrefix.value ===
+        PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.value &&
+      decision.proof.productivePrefix.affixClass ===
+        PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.affixClass &&
+      decision.proof.productivePrefix.flag ===
+        PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.flag &&
+      decision.proof.productivePrefix.crossProduct ===
+        PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.crossProduct &&
+      decision.proof.productivePrefix.affixSha256 ===
+        PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.affixSha256 &&
+      decision.proof.baseWord.normalize('NFKC').toLocaleLowerCase('en-US') ===
+        replayedProof.lexicalProof.baseWord &&
+      decision.proof.exactSameDocumentBaseWord
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') === replayedProof.lexicalProof.baseWord &&
+      left.length > PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.value.length &&
+      sourceWords.has(replayedProof.lexicalProof.baseWord) &&
+      PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE.every((evidence) =>
+        decision.proof.evidence.includes(evidence),
+      )
+    const boundary = [
+      decision.fromRegionId,
+      decision.fromLineId,
+      decision.toRegionId,
+      decision.toLineId,
+    ].join('\0')
+    if (
+      ids.has(decision.id) ||
+      boundaries.has(boundary) ||
+      !from ||
+      !to ||
+      from.region.id !== decision.fromRegionId ||
+      to.region.id !== decision.toRegionId ||
+      decision.id !==
+        `canonical-hyphen-boundary:${decision.context}:${decision.fromRegionId}:${decision.fromLineId}->${decision.toRegionId}:${decision.toLineId}` ||
+      !sameNormalizedSourceBox(decision.geometry.from, from.line.box) ||
+      !sameNormalizedSourceBox(decision.geometry.to, to.line.box) ||
+      decision.proof.sourceBoundaryProven !== true ||
+      decision.proof.splitPointValid !== true ||
+      decision.proof.hardHyphenCounterproof !== null ||
+      (!exactTierValid && !derivedTierValid) ||
+      left.length === 0 ||
+      right.length === 0 ||
+      decision.proof.pinnedSplit.index !== left.length ||
+      decision.proof.hardHyphenForm
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') !== hardHyphen ||
+      !from.line.text
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US')
+        .trimEnd()
+        .replace(/[-‐‑]$/u, '-')
+        .endsWith(`${left}-`) ||
+      !to.line.text
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US')
+        .trimStart()
+        .startsWith(right) ||
+      hardHyphenWords.has(hardHyphen) ||
+      decision.proof.model.id !== PDF_HYPHEN_LEXICAL_MODEL.id ||
+      decision.proof.model.language !== PDF_HYPHEN_LEXICAL_MODEL.language ||
+      decision.proof.model.dictionarySha256 !==
+        PDF_HYPHEN_LEXICAL_MODEL.dictionarySha256 ||
+      decision.proof.model.affixSha256 !==
+        PDF_HYPHEN_LEXICAL_MODEL.affixSha256 ||
+      decision.proof.model.hyphenationSha256 !==
+        PDF_HYPHEN_LEXICAL_MODEL.hyphenationSha256 ||
+      decision.proof.evidence.length === 0 ||
+      new Set(decision.proof.evidence).size !==
+        decision.proof.evidence.length ||
+      PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE.some((evidence) =>
+        decision.proof.evidence.includes(evidence),
+      )
+    ) {
+      return false
+    }
+    ids.add(decision.id)
+    boundaries.add(boundary)
+  }
+  return true
 }
 
 function rounded(value: number) {
@@ -98,23 +570,694 @@ function meaningPreservingText(value: string) {
     .trim()
 }
 
-function sourceProvenBoundaryTokenText(
-  value: string,
+function dominantSemanticFlowLineMetrics(line: PdfPageRegion['lines'][number]) {
+  const runs = line.runs.filter((run) => run.text.trim())
+  if (runs.length === 0) return null
+  const maximumFontSize = Math.max(...runs.map((run) => run.fontSize))
+  const dominantRuns = runs.filter(
+    (run) => run.fontSize >= maximumFontSize * 0.9,
+  )
+  const weightedBaseline =
+    dominantRuns.reduce(
+      (total, run) =>
+        total + (run.y + run.height) * Math.max(run.text.trim().length, 1),
+      0,
+    ) /
+    dominantRuns.reduce(
+      (total, run) => total + Math.max(run.text.trim().length, 1),
+      0,
+    )
+  return {
+    fontSize: maximumFontSize,
+    baseline: weightedBaseline,
+    height: Math.max(...dominantRuns.map((run) => run.height)),
+  }
+}
+
+type ResolvedSourceSemanticFlowEndpoint = {
+  region: PdfPageRegion
+  line: PdfPageRegion['lines'][number]
+  run: PdfSourceRun
+}
+
+type InlineStackedSemanticFlowFragment = {
+  baseId: string
+  part: 'before' | 'formula' | 'after'
+  region: PdfPageRegion
+  line: PdfPageRegion['lines'][number]
+}
+
+function inlineStackedSemanticFlowFragment(
+  region: PdfPageRegion,
+  line: PdfPageRegion['lines'][number],
+): InlineStackedSemanticFlowFragment | null {
+  const match = line.id?.match(
+    /^(.*-inline-stacked-\d+)-(before|formula|after)$/u,
+  )
+  if (!match) return null
+  const part = match[2] as InlineStackedSemanticFlowFragment['part']
+  const lineage = line.sourceFragmentLineage
+  if (
+    lineage?.algorithm !== 'source-run-fragment-v1' ||
+    lineage.fragment !== `inline-stacked-${part}`
+  ) {
+    return null
+  }
+  return { baseId: match[1], part, region, line }
+}
+
+function sourceProvesInlineStackedSemanticFlowBoundary(
+  left: InlineStackedSemanticFlowFragment,
+  right: InlineStackedSemanticFlowFragment,
+) {
+  const leftRuns = left.line.runs.filter((run) => run.text.trim())
+  const rightRuns = right.line.runs.filter((run) => run.text.trim())
+  if (
+    leftRuns.length === 0 ||
+    rightRuns.length === 0 ||
+    leftRuns.some((run) => run.sourceSequenceIndex === undefined) ||
+    rightRuns.some((run) => run.sourceSequenceIndex === undefined)
+  ) {
+    return false
+  }
+  const leftMaximumSequence = Math.max(
+    ...leftRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const rightMinimumSequence = Math.min(
+    ...rightRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const leftBoundaryRuns = leftRuns.filter(
+    (run) => run.sourceSequenceIndex === leftMaximumSequence,
+  )
+  const rightBoundaryRuns = rightRuns.filter(
+    (run) => run.sourceSequenceIndex === rightMinimumSequence,
+  )
+  return (
+    leftBoundaryRuns.length === 1 &&
+    rightBoundaryRuns.length === 1 &&
+    rightBoundaryRuns[0].sourceWhitespaceBefore === 'pdf-text-item' &&
+    rightBoundaryRuns[0].sourceWhitespacePredecessorIndex ===
+      leftBoundaryRuns[0].sourceSequenceIndex
+  )
+}
+
+function sourceProvesInlineStackedSemanticFlowScope(
+  fragment: InlineStackedSemanticFlowFragment,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+) {
+  const nonblankLines = fragment.region.lines.filter((line) => line.text.trim())
+  if (fragment.part !== 'after') {
+    return nonblankLines.length === 1 && nonblankLines[0] === fragment.line
+  }
+  if (nonblankLines[0] !== fragment.line) return false
+  for (let index = 1; index < nonblankLines.length; index += 1) {
+    const previous = nonblankLines[index - 1]
+    const current = nonblankLines[index]
+    const decisions = lineBoundaryDecisions.filter(
+      (decision) =>
+        decision.regionId === fragment.region.id &&
+        decision.fromLineId === previous.id &&
+        decision.toLineId === current.id,
+    )
+    if (
+      decisions.length !== 1 ||
+      ![
+        'space',
+        'no-space',
+        'preserved-lexical-hyphen',
+        'removed-discretionary-hyphen',
+      ].includes(decisions[0].outcome)
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function visualRelationshipTouchesInlineStackedSemanticFlowFormula(
+  relationship: PdfVisualRelationship,
+  formula: InlineStackedSemanticFlowFragment,
+) {
+  return (
+    relationship.sourceRegionIds.includes(formula.region.id) ||
+    relationship.sourceLineIds?.includes(formula.line.id) === true ||
+    relationship.candidates.some(
+      (candidate) =>
+        candidate.sourceRegionIds.includes(formula.region.id) ||
+        candidate.sourceLineIds?.includes(formula.line.id) === true,
+    )
+  )
+}
+
+function provesUnresolvedInlineStackedSemanticFlowRelationship(
+  relationship: PdfVisualRelationship,
+  before: InlineStackedSemanticFlowFragment,
+  formula: InlineStackedSemanticFlowFragment,
+  after: InlineStackedSemanticFlowFragment,
+) {
+  if (
+    relationship.kind !== 'equation' ||
+    relationship.status !== 'unresolved' ||
+    !relationship.evidence.includes('source-text-transcript-unresolved') ||
+    relationship.captionRegionId !== formula.region.id
+  ) {
+    return false
+  }
+  const directSource =
+    relationship.sourceRegionIds.includes(formula.region.id) &&
+    !relationship.sourceRegionIds.includes(before.region.id) &&
+    !relationship.sourceRegionIds.includes(after.region.id) &&
+    relationship.sourceLineIds?.filter((lineId) => lineId === formula.line.id)
+      .length === 1
+  if (directSource) return true
+
+  if (
+    relationship.sourceRegionIds.length !== 0 ||
+    (relationship.sourceLineIds?.length ?? 0) !== 0 ||
+    relationship.sourceObjectIds.length !== 0 ||
+    relationship.assetIds.length !== 0 ||
+    relationship.canonicalNodeId !== null ||
+    !relationship.evidence.includes('incomplete-equation-source-scope') ||
+    !relationship.evidence.includes('source-rendition-unavailable') ||
+    relationship.candidates.length !== 1 ||
+    relationship.sourceBoxes.length !== 1 ||
+    !sameSourceBox(relationship.sourceBoxes[0], formula.region.box)
+  ) {
+    return false
+  }
+  const candidate = relationship.candidates[0]
+  return (
+    candidate.sourceRegionIds.length === 1 &&
+    candidate.sourceRegionIds[0] === formula.region.id &&
+    (candidate.sourceLineIds === undefined ||
+      (candidate.sourceLineIds.length === 1 &&
+        candidate.sourceLineIds[0] === formula.line.id)) &&
+    candidate.sourceObjectIds.length === 1 &&
+    candidate.assetIds.length === 0 &&
+    candidate.sourceBoxes.length === 1 &&
+    sameSourceBox(candidate.sourceBoxes[0], formula.region.box) &&
+    candidate.evidence.includes('source-text-transcript-unresolved') &&
+    candidate.evidence.includes('incomplete-equation-source-scope') &&
+    candidate.evidence.includes('source-rendition-unavailable')
+  )
+}
+
+function sourceProvesInlineStackedSemanticFlowTopology({
+  from,
+  to,
+  allRegions,
+  visualRelationships,
+  lineBoundaryDecisions,
+}: {
+  from: ResolvedSourceSemanticFlowEndpoint
+  to: ResolvedSourceSemanticFlowEndpoint
+  allRegions: readonly PdfPageRegion[]
+  visualRelationships: readonly PdfVisualRelationship[]
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[]
+}) {
+  const fromFragment = inlineStackedSemanticFlowFragment(from.region, from.line)
+  const toFragment = inlineStackedSemanticFlowFragment(to.region, to.line)
+  if (
+    !fromFragment ||
+    !toFragment ||
+    fromFragment.baseId !== toFragment.baseId ||
+    !new Set(['before->formula', 'formula->after']).has(
+      `${fromFragment.part}->${toFragment.part}`,
+    )
+  ) {
+    return false
+  }
+  const occurrences = allRegions.flatMap((region) =>
+    region.lines.flatMap((line) => {
+      const fragment = inlineStackedSemanticFlowFragment(region, line)
+      return fragment?.baseId === fromFragment.baseId ? [fragment] : []
+    }),
+  )
+  const byPart = new Map(
+    occurrences.map((fragment) => [fragment.part, fragment]),
+  )
+  const before = byPart.get('before')
+  const formula = byPart.get('formula')
+  const after = byPart.get('after')
+  if (
+    occurrences.length !== 3 ||
+    byPart.size !== 3 ||
+    !before ||
+    !formula ||
+    !after ||
+    new Set(occurrences.map((fragment) => fragment.region.id)).size !== 3 ||
+    new Set(occurrences.map((fragment) => fragment.region.page)).size !== 1 ||
+    new Set(
+      occurrences.map(
+        (fragment) =>
+          fragment.region.kind === 'footnote' ||
+          fragment.region.kind === 'endnote',
+      ),
+    ).size !== 1 ||
+    occurrences.some(
+      (fragment) =>
+        fragment.region.lines.filter((line) =>
+          /-inline-stacked-\d+-(?:before|formula|after)$/u.test(line.id ?? ''),
+        ).length !== 1,
+    ) ||
+    !/\p{L}{2,}/u.test(before.region.text) ||
+    !/^[,.;:!?)}\]]/u.test(after.region.text.trimStart()) ||
+    !/\p{L}{2,}/u.test(after.region.text) ||
+    !occurrences.every((fragment) =>
+      sourceProvesInlineStackedSemanticFlowScope(
+        fragment,
+        lineBoundaryDecisions,
+      ),
+    ) ||
+    !sourceProvesInlineStackedSemanticFlowBoundary(before, formula) ||
+    !sourceProvesInlineStackedSemanticFlowBoundary(formula, after)
+  ) {
+    return false
+  }
+  const participatingRelationships = visualRelationships.filter(
+    (relationship) =>
+      relationship.kind === 'equation' &&
+      visualRelationshipTouchesInlineStackedSemanticFlowFormula(
+        relationship,
+        formula,
+      ),
+  )
+  return (
+    participatingRelationships.length === 1 &&
+    provesUnresolvedInlineStackedSemanticFlowRelationship(
+      participatingRelationships[0],
+      before,
+      formula,
+      after,
+    )
+  )
+}
+
+export function sourceSemanticFlowHyphenVerdict(
+  proof: PdfHyphenBoundaryProof,
+): PdfHyphenBoundaryProof['verdict'] {
+  if (proof.verdict !== 'unresolved') return proof.verdict
+  const model = proof.model
+  const pinnedSourceDeletionEvidence =
+    proof.sourceBoundaryProven &&
+    proof.pinnedJoinedFormValid &&
+    proof.splitPointValid &&
+    !proof.hardHyphenFormValid &&
+    model?.id === PDF_HYPHEN_LEXICAL_MODEL.id &&
+    model.language === PDF_HYPHEN_LEXICAL_MODEL.language &&
+    model.dictionarySha256 === PDF_HYPHEN_LEXICAL_MODEL.dictionarySha256 &&
+    model.affixSha256 === PDF_HYPHEN_LEXICAL_MODEL.affixSha256 &&
+    model.hyphenationSha256 === PDF_HYPHEN_LEXICAL_MODEL.hyphenationSha256 &&
+    [
+      'source-proven-wrapped-line-boundary',
+      `lexical-model:${PDF_HYPHEN_LEXICAL_MODEL.id}`,
+      'joined-form-valid:pinned-lexicon',
+      'split-point-valid:pinned-hyphenation-pattern',
+      'hard-hyphen-form-not-proved',
+    ].every((evidence) => proof.evidence.includes(evidence)) &&
+    !PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE.some((evidence) =>
+      proof.evidence.includes(evidence),
+    )
+  return pinnedSourceDeletionEvidence ? 'remove' : 'unresolved'
+}
+
+function validatedSourceSemanticFlowBoundaryDecision(
+  leftRegion: PdfPageRegion,
+  rightRegion: PdfPageRegion,
+  allRegions: readonly PdfPageRegion[],
+  visualRelationships: readonly PdfVisualRelationship[],
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
+  decisions: readonly PdfSourceSemanticFlowBoundaryDecision[],
   hardHyphenLexicon: ReadonlySet<string>,
   unhyphenatedLexicon: ReadonlySet<string>,
+  language: string | null,
 ) {
-  return value.replace(
-    /([\p{L}\p{N}]+)[-‐‑]\s+([\p{L}\p{N}]+)/gu,
-    (source, left: string, right: string) => {
-      const hardForm = `${left}-${right}`.normalize('NFKC').toLocaleLowerCase()
-      const unhyphenatedForm = `${left}${right}`
-        .normalize('NFKC')
-        .toLocaleLowerCase()
-      if (hardHyphenLexicon.has(hardForm)) return `${left}-${right}`
-      if (unhyphenatedLexicon.has(unhyphenatedForm)) return `${left}${right}`
-      return source
-    },
+  const candidates = decisions.filter(
+    (decision) =>
+      decision.from.regionId === leftRegion.id &&
+      decision.to.regionId === rightRegion.id,
   )
+  if (
+    candidates.length !== 1 ||
+    new Set(decisions.map((decision) => decision.id)).size !==
+      decisions.length ||
+    !isPdfSourceSemanticFlowBoundaryDecision(candidates[0])
+  ) {
+    return null
+  }
+  const decision = candidates[0]
+  const resolveEndpoint = (
+    endpoint: PdfSourceSemanticFlowBoundaryDecision['from'],
+  ) => {
+    const matchingRegions = allRegions.filter(
+      (region) => region.id === endpoint.regionId,
+    )
+    if (matchingRegions.length !== 1) return null
+    const region = matchingRegions[0]
+    const matchingLines = region.lines.filter(
+      (line) => line.id === endpoint.lineId,
+    )
+    if (matchingLines.length !== 1) return null
+    const line = matchingLines[0]
+    const run = line.runs[endpoint.runIndex]
+    if (
+      !run ||
+      !run.text.trim() ||
+      run.sourceSequenceIndex !== endpoint.sourceSequenceIndex ||
+      pdfSourceSemanticFlowRunSha256(run) !== endpoint.sourceRunSha256 ||
+      pdfSourceFragmentId(line) !== endpoint.sourceFragmentId
+    ) {
+      return null
+    }
+    const lineage = line.sourceFragmentLineage
+    const visibleSequences = line.runs.flatMap((candidate) =>
+      candidate.text.trim() && candidate.sourceSequenceIndex !== undefined
+        ? [candidate.sourceSequenceIndex]
+        : [],
+    )
+    if (
+      !lineage ||
+      visibleSequences.length !==
+        line.runs.filter((candidate) => candidate.text.trim()).length ||
+      new Set(lineage.sourceSequenceIndexes).size !==
+        lineage.sourceSequenceIndexes.length ||
+      lineage.sourceSequenceIndexes.length !== visibleSequences.length ||
+      lineage.sourceSequenceIndexes.some(
+        (sequence, index) => sequence !== visibleSequences[index],
+      )
+    ) {
+      return null
+    }
+    const sameSequenceCandidates = allRegions.flatMap((candidateRegion) =>
+      candidateRegion.page === run.page
+        ? candidateRegion.lines.flatMap((candidateLine) =>
+            candidateLine.runs.filter(
+              (candidateRun) =>
+                candidateRun.sourceSequenceIndex === run.sourceSequenceIndex,
+            ),
+          )
+        : [],
+    )
+    if (sameSequenceCandidates.length !== 1) return null
+    return { region, line, run }
+  }
+  const from = resolveEndpoint(decision.from)
+  const to = resolveEndpoint(decision.to)
+  if (!from || !to) return null
+  const fromVisibleRuns = from.line.runs.filter((run) => run.text.trim())
+  const toVisibleRuns = to.line.runs.filter((run) => run.text.trim())
+  const fromMaximumSequence = Math.max(
+    ...fromVisibleRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const toMinimumSequence = Math.min(
+    ...toVisibleRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const exactSourceAdjacency =
+    decision.to.sourceSequenceIndex === decision.from.sourceSequenceIndex + 1 ||
+    (to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
+      to.run.sourceWhitespacePredecessorIndex ===
+        decision.from.sourceSequenceIndex)
+  const fromMetrics = dominantSemanticFlowLineMetrics(from.line)
+  const toMetrics = dominantSemanticFlowLineMetrics(to.line)
+  if (
+    from.region !== leftRegion ||
+    to.region !== rightRegion ||
+    decision.page !== from.run.page ||
+    decision.page !== to.run.page ||
+    decision.rotation !== from.run.rotation ||
+    decision.rotation !== to.run.rotation ||
+    decision.method !== from.run.method ||
+    decision.method !== to.run.method ||
+    decision.from.sourceSequenceIndex !== fromMaximumSequence ||
+    decision.to.sourceSequenceIndex !== toMinimumSequence ||
+    !exactSourceAdjacency ||
+    !fromMetrics ||
+    !toMetrics
+  ) {
+    return null
+  }
+  const fontRatio =
+    Math.max(fromMetrics.fontSize, toMetrics.fontSize) /
+    Math.max(1, Math.min(fromMetrics.fontSize, toMetrics.fontSize))
+  const baselineGap = Math.abs(fromMetrics.baseline - toMetrics.baseline)
+  if (
+    fontRatio > 1.5 ||
+    baselineGap >
+      Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4)
+  ) {
+    return null
+  }
+  const exactStackedPunctuationTransition =
+    from.line.sourceFragmentLineage?.fragment === 'inline-stacked-formula' &&
+    to.line.sourceFragmentLineage?.fragment === 'inline-stacked-after' &&
+    from.line.sourceFragmentLineage.sourceLineId ===
+      to.line.sourceFragmentLineage.sourceLineId &&
+    /^[,.;:!?%)}\]]/u.test(rightRegion.text.trimStart())
+  const leftHyphenToken = leftRegion.text
+    .trimEnd()
+    .match(/([\p{L}\p{N}]+)[-‐‑]$/u)?.[1]
+  const rightHyphenToken = rightRegion.text
+    .trimStart()
+    .match(/^([\p{L}\p{N}]+)/u)?.[1]
+  let expectedOutcome: PdfSourceSemanticFlowBoundaryDecision['outcome']
+  let expectedEvidence: readonly string[]
+  if (leftHyphenToken && rightHyphenToken) {
+    const proof = resolvePdfHyphenBoundary({
+      left: leftHyphenToken,
+      right: rightHyphenToken,
+      language,
+      sourceProven: true,
+      hardHyphenLexicon,
+      unhyphenatedLexicon,
+    })
+    const semanticVerdict = sourceSemanticFlowHyphenVerdict(proof)
+    if (semanticVerdict === 'remove') {
+      expectedOutcome = 'discretionary-hyphen-delete'
+    } else if (semanticVerdict === 'preserve') {
+      expectedOutcome = 'hard-hyphen-retain'
+    } else {
+      return null
+    }
+    if (decision.topology !== 'lexical-hyphen') return null
+    expectedEvidence = PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE
+  } else if (exactStackedPunctuationTransition) {
+    if (
+      decision.topology !== 'inline-stacked-fragment' ||
+      !sourceProvesInlineStackedSemanticFlowTopology({
+        from,
+        to,
+        allRegions,
+        visualRelationships,
+        lineBoundaryDecisions,
+      })
+    ) {
+      return null
+    }
+    expectedOutcome = 'no-space'
+    expectedEvidence = PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
+  } else {
+    return null
+  }
+  const canonicalExpectedEvidence =
+    canonicalPdfSourceSemanticFlowEvidence(expectedEvidence)
+  if (
+    decision.outcome !== expectedOutcome ||
+    decision.evidence.length !== canonicalExpectedEvidence.length ||
+    decision.evidence.some(
+      (evidence, index) => evidence !== canonicalExpectedEvidence[index],
+    ) ||
+    decision.id !==
+      pdfSourceSemanticFlowBoundaryDecisionId({
+        page: decision.page,
+        rotation: decision.rotation,
+        method: decision.method,
+        topology: decision.topology,
+        outcome: expectedOutcome,
+        from: decision.from,
+        to: decision.to,
+        evidence: canonicalExpectedEvidence,
+      })
+  ) {
+    return null
+  }
+  return decision
+}
+
+function sourceSemanticFlowBoundaryKey(
+  fromRegionId: string,
+  toRegionId: string,
+) {
+  return `${fromRegionId}\0${toRegionId}`
+}
+
+type SourceSemanticFlowBoundaryLedgerAudit = {
+  valid: boolean
+  decisionsByBoundary: Map<string, PdfSourceSemanticFlowBoundaryDecision>
+  consumptionById: Map<string, number>
+}
+
+function auditSourceSemanticFlowBoundaryLedger({
+  allRegions,
+  visualRelationships,
+  lineBoundaryDecisions,
+  decisions,
+  hardHyphenLexicon,
+  unhyphenatedLexicon,
+  language,
+}: {
+  allRegions: readonly PdfPageRegion[]
+  visualRelationships: readonly PdfVisualRelationship[]
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[]
+  decisions: readonly PdfSourceSemanticFlowBoundaryDecision[]
+  hardHyphenLexicon: ReadonlySet<string>
+  unhyphenatedLexicon: ReadonlySet<string>
+  language: string | null
+}): SourceSemanticFlowBoundaryLedgerAudit {
+  const audit: SourceSemanticFlowBoundaryLedgerAudit = {
+    valid: true,
+    decisionsByBoundary: new Map(),
+    consumptionById: new Map(),
+  }
+  const regionOwners = new Map<string, PdfPageRegion[]>()
+  for (const region of allRegions) {
+    const owners = regionOwners.get(region.id) ?? []
+    owners.push(region)
+    regionOwners.set(region.id, owners)
+  }
+  const ids = new Set<string>()
+  for (const decision of decisions) {
+    if (!isPdfSourceSemanticFlowBoundaryDecision(decision)) {
+      audit.valid = false
+      continue
+    }
+    const fromOwners = regionOwners.get(decision.from.regionId) ?? []
+    const toOwners = regionOwners.get(decision.to.regionId) ?? []
+    const boundary = sourceSemanticFlowBoundaryKey(
+      decision.from.regionId,
+      decision.to.regionId,
+    )
+    if (
+      ids.has(decision.id) ||
+      audit.decisionsByBoundary.has(boundary) ||
+      fromOwners.length !== 1 ||
+      toOwners.length !== 1
+    ) {
+      audit.valid = false
+      continue
+    }
+    ids.add(decision.id)
+    const validated = validatedSourceSemanticFlowBoundaryDecision(
+      fromOwners[0],
+      toOwners[0],
+      allRegions,
+      visualRelationships,
+      lineBoundaryDecisions,
+      [decision],
+      hardHyphenLexicon,
+      unhyphenatedLexicon,
+      language,
+    )
+    if (!validated) {
+      audit.valid = false
+      continue
+    }
+    audit.decisionsByBoundary.set(boundary, validated)
+    audit.consumptionById.set(validated.id, 0)
+  }
+  return audit
+}
+
+function sourceProvenBoundaryTokenText(
+  values: readonly string[],
+  hardHyphenLexicon: ReadonlySet<string>,
+  unhyphenatedLexicon: ReadonlySet<string>,
+  language: string | null,
+  regions: readonly PdfPageRegion[] = [],
+  sourceSemanticFlowBoundaryLedger?: SourceSemanticFlowBoundaryLedgerAudit,
+) {
+  let combined = values[0] ?? ''
+  for (const [offset, value] of values.slice(1).entries()) {
+    const boundaryIndex = offset + 1
+    const semanticFlowDecision =
+      regions[boundaryIndex - 1] && regions[boundaryIndex]
+        ? sourceSemanticFlowBoundaryLedger?.decisionsByBoundary.get(
+            sourceSemanticFlowBoundaryKey(
+              regions[boundaryIndex - 1].id,
+              regions[boundaryIndex].id,
+            ),
+          )
+        : null
+    if (semanticFlowDecision && sourceSemanticFlowBoundaryLedger) {
+      const consumed =
+        (sourceSemanticFlowBoundaryLedger.consumptionById.get(
+          semanticFlowDecision.id,
+        ) ?? 0) + 1
+      sourceSemanticFlowBoundaryLedger.consumptionById.set(
+        semanticFlowDecision.id,
+        consumed,
+      )
+      if (consumed > 1) sourceSemanticFlowBoundaryLedger.valid = false
+    }
+    if (semanticFlowDecision?.outcome === 'no-space') {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+      continue
+    }
+    if (
+      semanticFlowDecision?.outcome === 'discretionary-hyphen-delete' &&
+      /[-‐‑\u00ad]$/u.test(combined.trimEnd())
+    ) {
+      combined = `${combined.trimEnd().slice(0, -1)}${value.trimStart()}`
+      continue
+    }
+    if (
+      semanticFlowDecision?.outcome === 'hard-hyphen-retain' &&
+      /[-‐‑]$/u.test(combined.trimEnd())
+    ) {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+      continue
+    }
+    const suppliedBoundaryCandidates =
+      regions[boundaryIndex - 1] && regions[boundaryIndex]
+        ? sourceSemanticFlowBoundaryLedger?.decisionsByBoundary.has(
+            sourceSemanticFlowBoundaryKey(
+              regions[boundaryIndex - 1].id,
+              regions[boundaryIndex].id,
+            ),
+          )
+        : false
+    if (suppliedBoundaryCandidates) {
+      combined = `${combined.trimEnd()} ${value.trimStart()}`
+      continue
+    }
+    const urlContinuation =
+      /(?:https?:\/\/|www\.)[^\s<>"'`]*[./?=&_%+-]$/iu.test(
+        combined.trimEnd(),
+      ) && /^[^\s<>"'`]/u.test(value.trimStart())
+    if (urlContinuation) {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+      continue
+    }
+    const left = combined.match(/([\p{L}\p{N}]+)[-‐‑]\s*$/u)
+    const right = value.match(/^\s*([\p{L}\p{N}]+)/u)
+    if (!left || !right) {
+      combined = `${combined} ${value}`
+      continue
+    }
+    const proof = resolvePdfHyphenBoundary({
+      left: left[1],
+      right: right[1],
+      language,
+      sourceProven: true,
+      hardHyphenLexicon,
+      unhyphenatedLexicon,
+    })
+    if (proof.verdict === 'remove') {
+      combined = `${combined.trimEnd().slice(0, -1)}${value.trimStart()}`
+    } else {
+      combined = `${combined.trimEnd()}${value.trimStart()}`
+    }
+  }
+  return combined
 }
 
 function characterCount(value: string) {
@@ -158,6 +1301,7 @@ function validatedVisualRepresentationByNode(
   relationships: PdfVisualRelationship[] | undefined,
   assets: PdfVisualAsset[] | undefined,
   regions?: readonly PdfPageRegion[],
+  pages?: readonly PdfPageAnalysis[],
 ) {
   const validatedRelationships = validatedPdfVisualRelationships({
     paper,
@@ -165,6 +1309,7 @@ function validatedVisualRepresentationByNode(
     relationships,
     assets,
     regions,
+    pages,
   })
   const assetsById = new Map((assets ?? []).map((asset) => [asset.id, asset]))
   const representedByNode = new Map<string, string[]>()
@@ -618,14 +1763,16 @@ export function canonicalVisualOrderViolationRelationshipIds(
   return [...implicated]
 }
 
-function provenanceTextConservation({
+export function provenanceTextConservation({
   allRegions,
   orderedRegions,
   paper,
   provenance,
   visualRelationships,
   assets,
+  pages,
   lineBoundaryDecisions,
+  sourceSemanticFlowBoundaryDecisions = [],
 }: {
   allRegions: PdfPageRegion[]
   orderedRegions: PdfPageRegion[]
@@ -633,12 +1780,23 @@ function provenanceTextConservation({
   provenance: Record<string, NodeSourceEvidence>
   visualRelationships?: PdfVisualRelationship[]
   assets?: PdfVisualAsset[]
+  pages?: readonly PdfPageAnalysis[]
   lineBoundaryDecisions: readonly PdfLineBoundaryDecision[]
+  sourceSemanticFlowBoundaryDecisions?: readonly PdfSourceSemanticFlowBoundaryDecision[]
 }) {
   const allRegionMap = new Map(allRegions.map((region) => [region.id, region]))
   const sourceLines = allRegions.flatMap((region) => region.lines)
   const hardHyphenLexicon = inlineHardHyphenLexicon(sourceLines)
   const unhyphenatedLexicon = inlineUnhyphenatedLexicon(sourceLines)
+  const semanticFlowBoundaryLedger = auditSourceSemanticFlowBoundaryLedger({
+    allRegions,
+    visualRelationships: visualRelationships ?? [],
+    lineBoundaryDecisions,
+    decisions: sourceSemanticFlowBoundaryDecisions,
+    hardHyphenLexicon,
+    unhyphenatedLexicon,
+    language: paper.language ?? null,
+  })
   const orderedRegionMap = new Map(
     orderedRegions.map((region) => [region.id, region]),
   )
@@ -649,6 +1807,30 @@ function provenanceTextConservation({
     visualRelationships,
     assets,
     allRegions,
+    pages,
+  )
+  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
+  const generatedEquationCaptionNodeIds = new Set(
+    (visualRelationships ?? []).flatMap((relationship) =>
+      relationship.kind === 'equation' &&
+      relationship.captionNodeId !== null &&
+      (() => {
+        const caption = nodesById.get(relationship.captionNodeId)
+        if (caption?.type !== 'caption') return false
+        const captionText = caption.text.trim()
+        const normalizedCaption = captionText.replace(/[.]$/u, '').trim()
+        const normalizedLabel = relationship.label
+          .trim()
+          .replace(/[.]$/u, '')
+          .trim()
+        return (
+          /^Display equation p\d{3}-\d{3}$/u.test(captionText) ||
+          normalizedCaption === normalizedLabel
+        )
+      })()
+        ? [relationship.captionNodeId]
+        : [],
+    ),
   )
   const visualSourceRegionIds = [
     ...visualRepresentation.sourceRegionIdsByNode.values(),
@@ -681,10 +1863,14 @@ function provenanceTextConservation({
   }> = []
 
   for (const [index, node] of paper.nodes.entries()) {
-    const rendered = nodeText(
-      node,
-      visualRepresentation.textByNode.get(node.id),
-    )
+    // Equation captions generated from a printed number or a stable internal
+    // identity label are not source prose. The typed equation relationship
+    // owns (or fail-closed rejects) the source glyph region; comparing that
+    // label with the glyph transcript invents a canonical-flow violation and
+    // can expose an internal label in prose-quality evidence.
+    const rendered = generatedEquationCaptionNodeIds.has(node.id)
+      ? ''
+      : nodeText(node, visualRepresentation.textByNode.get(node.id))
     const lineageConnector =
       node.type === 'figure' &&
       visualRepresentation.lineageConnectorNodeIds.has(node.id)
@@ -923,12 +2109,40 @@ function provenanceTextConservation({
     const orderedComponentOutputs = [...component.outputs].sort(
       (left, right) => left.order - right.order,
     )
-    const sourceText = orderedComponentRegionIds
-      .map((regionId) => conservedRegionMap.get(regionId)?.text ?? '')
-      .join(' ')
+    const sourceRegionTexts = orderedComponentRegionIds.map(
+      (regionId) => conservedRegionMap.get(regionId)?.text ?? '',
+    )
+    const sourceComponentRegions = orderedComponentRegionIds.flatMap(
+      (regionId) => {
+        const region = conservedRegionMap.get(regionId)
+        return region ? [region] : []
+      },
+    )
+    const rawSourceText = sourceRegionTexts.join(' ')
     const outputText = orderedComponentOutputs
       .map((unit) => unit.text)
       .join(' ')
+    const semanticOutputNodes = orderedComponentOutputs
+      .map((unit) => (unit.nodeId ? nodesById.get(unit.nodeId) : undefined))
+      .filter((node): node is ResearchNode => node !== undefined)
+    const noteOnlyComponent =
+      semanticOutputNodes.length === orderedComponentOutputs.length &&
+      semanticOutputNodes.length > 0 &&
+      semanticOutputNodes.every((node) => node.type === 'footnote') &&
+      orderedComponentRegionIds.every((regionId) =>
+        ['footnote', 'endnote'].includes(
+          conservedRegionMap.get(regionId)?.kind ?? '',
+        ),
+      )
+    const stripLeadingNoteMarker = (value: string) =>
+      value.replace(/^\s*(?:[\d⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§]+)[.)]?\s*/u, '')
+    const sourceText = rawSourceText
+    const comparableSourceText = noteOnlyComponent
+      ? stripLeadingNoteMarker(sourceText)
+      : sourceText
+    const comparableOutputText = noteOnlyComponent
+      ? stripLeadingNoteMarker(outputText)
+      : outputText
     const source = normalizedText(sourceText)
     const output = normalizedText(outputText)
     sourceCharacters += characterCount(source)
@@ -967,12 +2181,20 @@ function provenanceTextConservation({
       meaningPreservingText(
         component.regionIds.length > 1
           ? sourceProvenBoundaryTokenText(
-              sourceText,
+              noteOnlyComponent
+                ? [
+                    stripLeadingNoteMarker(sourceRegionTexts[0] ?? ''),
+                    ...sourceRegionTexts.slice(1),
+                  ]
+                : sourceRegionTexts,
               hardHyphenLexicon,
               unhyphenatedLexicon,
+              paper.language ?? null,
+              sourceComponentRegions,
+              semanticFlowBoundaryLedger,
             )
-          : sourceText,
-      ) !== meaningPreservingText(outputText)
+          : comparableSourceText,
+      ) !== meaningPreservingText(comparableOutputText)
     ) {
       for (const unit of canonicalTextOutputs) {
         semanticTextViolationNodeIds.add(unit.nodeId)
@@ -994,6 +2216,18 @@ function provenanceTextConservation({
       missingSourceRegionIds.push(...component.regionIds)
     }
   }
+  if (
+    [...semanticFlowBoundaryLedger.consumptionById.values()].some(
+      (consumptionCount) => consumptionCount !== 1,
+    )
+  ) {
+    semanticFlowBoundaryLedger.valid = false
+  }
+  if (!semanticFlowBoundaryLedger.valid) {
+    for (const nodeId of canonicalTextNodeIds) {
+      semanticTextViolationNodeIds.add(nodeId)
+    }
+  }
 
   return {
     sourceCharacters,
@@ -1002,6 +2236,7 @@ function provenanceTextConservation({
     missingSourceRegionIds: [...new Set(missingSourceRegionIds)],
     sameRegionFlowViolationNodeIds: [...sameRegionFlowViolationNodeIds],
     semanticTextViolationNodeIds: [...semanticTextViolationNodeIds],
+    semanticFlowBoundaryLedgerValid: semanticFlowBoundaryLedger.valid,
     unprovenancedRenderedUnitKeys: outputUnits
       .filter((unit) => !unit.provenanced)
       .map((unit) => unit.key),
@@ -1015,6 +2250,7 @@ export function classifyStructuralLineBoundaryDecisions({
   visualRelationships,
   assets,
   regions,
+  pages,
 }: {
   decisions: PdfLineBoundaryDecision[]
   paper: ResearchPaper
@@ -1022,6 +2258,7 @@ export function classifyStructuralLineBoundaryDecisions({
   visualRelationships?: PdfVisualRelationship[]
   assets?: PdfVisualAsset[]
   regions?: readonly PdfPageRegion[]
+  pages?: readonly PdfPageAnalysis[]
 }) {
   const validatedRelationships = validatedPdfVisualRelationships({
     paper,
@@ -1029,6 +2266,7 @@ export function classifyStructuralLineBoundaryDecisions({
     relationships: visualRelationships,
     assets,
     regions,
+    pages,
   })
   const validatedRelationshipIds = new Set(
     validatedRelationships.map((relationship) => relationship.id),
@@ -1076,6 +2314,7 @@ export function classifyStructuralLineBoundaryDecisions({
   const classified = decisions.map((decision) => {
     if (
       decision.outcome !== 'unresolved' &&
+      decision.outcome !== 'ambiguous' &&
       decision.outcome !== 'structural-boundary'
     ) {
       return decision
@@ -1099,7 +2338,9 @@ export function classifyStructuralLineBoundaryDecisions({
       ...decision,
       outcome: isStructural
         ? ('structural-boundary' as const)
-        : ('unresolved' as const),
+        : decision.outcome === 'structural-boundary'
+          ? ('unresolved' as const)
+          : decision.outcome,
       evidence: isStructural
         ? [...new Set([...retainedEvidence, structuralEvidence])]
         : retainedEvidence,
@@ -1108,7 +2349,8 @@ export function classifyStructuralLineBoundaryDecisions({
   return {
     decisions: classified,
     unresolvedCorruptingJoinCount: classified.filter(
-      (decision) => decision.outcome === 'unresolved',
+      (decision) =>
+        decision.outcome === 'unresolved' || decision.outcome === 'ambiguous',
     ).length,
     structurallyConsumedLineBoundaryCount: classified.filter(
       (decision) => decision.outcome === 'structural-boundary',
@@ -1160,7 +2402,8 @@ function validateLineBoundaryLedger(
     transitions.add(transition)
   }
   const unresolved = decisions.filter(
-    (decision) => decision.outcome === 'unresolved',
+    (decision) =>
+      decision.outcome === 'unresolved' || decision.outcome === 'ambiguous',
   ).length
   const structurallyConsumed = decisions.filter(
     (decision) => decision.outcome === 'structural-boundary',
@@ -1362,12 +2605,22 @@ export function hasResolvedEquationTranscript(
     adjudicationContext &&
     verifyEquationTranscriptAdjudication(adjudicationContext, relationship.id),
   )
+  const geometryScriptTranscript = Boolean(
+    adjudicationContext &&
+    verifyRelationshipSourceGeometryScriptTranscript({
+      relationship,
+      regions: adjudicationContext.regions,
+      assets: adjudicationContext.assets,
+    }),
+  )
   if (
     relationship.kind !== 'equation' ||
     relationship.status !== 'matched' ||
-    relationship.sourceText.trim().length === 0 ||
+    (relationship.sourceText.trim().length === 0 &&
+      !geometryScriptTranscript) ||
     (relationship.evidence.includes('source-text-transcript-unresolved') &&
-      !ownerAdjudicated) ||
+      !ownerAdjudicated &&
+      !geometryScriptTranscript) ||
     !regions ||
     relationship.sourceRegionIds.length === 0 ||
     !relationship.sourceLineIds?.length ||
@@ -1398,7 +2651,8 @@ export function hasResolvedEquationTranscript(
   }
   if (
     hasUnprovedTwoDimensionalEquationTranscript(scopedRegions) &&
-    !ownerAdjudicated
+    !ownerAdjudicated &&
+    !geometryScriptTranscript
   ) {
     return false
   }
@@ -1486,6 +2740,7 @@ export function hasResolvedEquationTranscript(
     .join(' ')
   return (
     ownerAdjudicated ||
+    geometryScriptTranscript ||
     (normalizedEquationTranscript(completeSourceText).length > 0 &&
       normalizedEquationTranscript(relationship.sourceText) ===
         normalizedEquationTranscript(completeSourceText))
@@ -1708,103 +2963,40 @@ function readingOrderDiagnosticCount(diagnostics: ReconstructionDiagnostic[]) {
   ).length
 }
 
-function boxesConnected(left: NormalizedSourceBox, right: NormalizedSourceBox) {
-  if (left.page !== right.page) return false
-  const horizontalGap = Math.max(
-    left.x - (right.x + right.width),
-    right.x - (left.x + left.width),
-    0,
-  )
-  const verticalGap = Math.max(
-    left.y - (right.y + right.height),
-    right.y - (left.y + left.height),
-    0,
-  )
-  return (
-    (verticalGap === 0 && horizontalGap <= 0.04) ||
-    (horizontalGap === 0 && verticalGap <= 0.04)
-  )
-}
-
-function connectedVisualComponentCount(boxes: NormalizedSourceBox[]) {
-  const remaining = boxes.map((box) => ({ ...box }))
-  let count = 0
-  while (remaining.length > 0) {
-    const component = [remaining.shift()!]
-    for (let index = 0; index < remaining.length;) {
-      if (
-        component.some((candidate) =>
-          boxesConnected(candidate, remaining[index]),
-        )
-      ) {
-        component.push(remaining.splice(index, 1)[0])
-        index = 0
-      } else {
-        index += 1
-      }
-    }
-    count += 1
-  }
-  return count
-}
-
 function semanticAssetCounts({
-  pages,
   semanticSignals,
   visualRelationships,
   validatedVisualRelationships,
 }: {
-  pages: PdfPageAnalysis[]
   semanticSignals: PdfSemanticSignals
   visualRelationships?: PdfVisualRelationship[]
   validatedVisualRelationships: PdfVisualRelationship[]
 }) {
   const relationships = visualRelationships ?? []
-  const claimedObjectIds = new Set(
-    relationships.flatMap((relationship) => [
-      ...relationship.sourceObjectIds,
-      ...relationship.candidates.flatMap(
-        (candidate) => candidate.sourceObjectIds,
-      ),
-    ]),
-  )
-  const decorativeObjectIds = decorativeNativeObjectIds(pages)
-  const orphanBoxes = pages.flatMap((page) =>
-    (page.objects ?? [])
-      .filter(
-        (object) =>
-          object.role !== 'scan-source' &&
-          !decorativeObjectIds.has(object.id) &&
-          !claimedObjectIds.has(object.id),
-      )
-      .map((object) => object.box),
-  )
-  const unboundedImagePages = pages.filter((page) => {
-    const extractedImageCount = (page.objects ?? []).filter(
-      (object) => object.kind === 'image',
-    ).length
-    if (page.imageCount <= extractedImageCount) return false
-    const pageSignals = detectPdfSemanticSignals([page])
-    const relationshipOnPage = relationships.some((relationship) =>
-      relationship.sourceBoxes.some((box) => box.page === page.page),
+  // A relationship is the authoritative semantic unit. Multi-asset
+  // relationships have one obligation per selected component, while raw PDF
+  // objects remain inventory evidence and never inflate this denominator.
+  const relationshipComponentCount = (
+    sourceRelationships: readonly PdfVisualRelationship[],
+  ) =>
+    sourceRelationships.reduce(
+      (total, relationship) =>
+        total + Math.max(new Set(relationship.assetIds).size, 1),
+      0,
     )
-    return (
-      !relationshipOnPage &&
-      pageSignals.captions + pageSignals.tables + pageSignals.equations === 0
-    )
-  }).length
   const detectedSemanticVisuals = Math.max(
-    relationships.length,
+    relationshipComponentCount(relationships),
     semanticSignals.captions,
     semanticSignals.tables + semanticSignals.equations,
   )
-  const sourceAssetCount =
-    detectedSemanticVisuals +
-    connectedVisualComponentCount(orphanBoxes) +
-    unboundedImagePages
   return {
-    sourceAssetCount,
-    exportedAssetCount: validatedVisualRelationships.length,
+    sourceAssetCount: detectedSemanticVisuals,
+    // Count the validated side with the same relationship-scoped component
+    // identity. A content-addressed asset may legitimately satisfy more than
+    // one independently validated relationship.
+    exportedAssetCount: relationshipComponentCount(
+      validatedVisualRelationships,
+    ),
   }
 }
 
@@ -2086,6 +3278,10 @@ export function assessPdfCompleteness({
   reclassifiedNoteReferenceCount = 0,
   reclassifiedCitationCount = 0,
   lineBoundaryDecisions,
+  sourceSemanticFlowBoundaryDecisions,
+  sourceSemanticFlowBoundaryDecisionCount,
+  canonicalHyphenBoundaryDecisions,
+  canonicalHyphenBoundaryDecisionCount,
   unresolvedCorruptingJoinCount,
   structurallyConsumedLineBoundaryCount,
   provenance,
@@ -2104,14 +3300,30 @@ export function assessPdfCompleteness({
     regions,
     lineBoundaryDecisions,
   )
-  semanticSignals.equations = Math.max(
-    semanticSignals.equations,
-    new Set(
-      (visualRelationships ?? [])
+  if (visualRelationships !== undefined) {
+    const relationshipEquationCount = new Set(
+      visualRelationships
         .filter((relationship) => relationship.kind === 'equation')
         .map((relationship) => relationship.id),
-    ).size,
-  )
+    ).size
+    const probableDisplayEquationCount = (
+      regions ?? reconstructPageRegions(pages).regions
+    ).filter(isProbableDisplayEquation).length
+    // A non-empty equation graph is the authoritative atomic denominator and
+    // avoids counting repeated prose references as separate equations, but it
+    // cannot erase source-proved display regions that the graph missed. An
+    // empty graph is likewise not proof that raw equation evidence was a false
+    // positive: production supplies [] when detection misses every equation.
+    // Preserve those obligations so reconstruction always fails closed.
+    if (relationshipEquationCount > 0) {
+      semanticSignals.equations = Math.max(
+        relationshipEquationCount,
+        probableDisplayEquationCount,
+      )
+    } else if (semanticSignals.equations === 0) {
+      semanticSignals.equations = 0
+    }
+  }
   semanticSignals.footnoteReferences = Math.max(
     semanticSignals.footnoteReferences - reclassifiedNoteReferenceCount,
     0,
@@ -2123,6 +3335,7 @@ export function assessPdfCompleteness({
     relationships: visualRelationships,
     assets,
     regions,
+    pages,
   })
   const allSourceRegions = regions ?? []
   const equationTranscriptContext: EquationTranscriptContext = {
@@ -2154,6 +3367,7 @@ export function assessPdfCompleteness({
     validatedVisualRelationships,
     assets,
     allSourceRegions,
+    pages,
   )
   const outputText = normalizedText(
     paper.nodes
@@ -2163,30 +3377,46 @@ export function assessPdfCompleteness({
       .filter(Boolean)
       .join(' '),
   )
-  const fallbackMatchedTextCharacters = orderedMatchedCharacters(
-    sourceText,
-    outputText,
-  )
-  const conservedText =
+  const provenanceBackedConservation =
     orderedSourceRegions.length > 0 && provenance
-      ? provenanceTextConservation({
-          allRegions: allSourceRegions,
-          orderedRegions: orderedSourceRegions,
-          paper,
-          provenance,
-          visualRelationships: validatedVisualRelationships,
-          assets,
-          lineBoundaryDecisions: lineBoundaryDecisions ?? [],
-        })
-      : {
-          sourceCharacters: characterCount(sourceText),
-          outputCharacters: characterCount(outputText),
-          matchedCharacters: fallbackMatchedTextCharacters,
-          missingSourceRegionIds: [],
-          sameRegionFlowViolationNodeIds: [],
-          semanticTextViolationNodeIds: [],
-          unprovenancedRenderedUnitKeys: [],
-        }
+  const semanticFlowLedgerCountValid =
+    hasValidSourceSemanticFlowBoundaryLedgerCount({
+      decisions: sourceSemanticFlowBoundaryDecisions,
+      expectedCount: sourceSemanticFlowBoundaryDecisionCount,
+    })
+  const conservedText = provenanceBackedConservation
+    ? provenanceTextConservation({
+        allRegions: allSourceRegions,
+        orderedRegions: orderedSourceRegions,
+        paper,
+        provenance,
+        visualRelationships,
+        assets,
+        pages,
+        lineBoundaryDecisions: lineBoundaryDecisions ?? [],
+        sourceSemanticFlowBoundaryDecisions: semanticFlowLedgerCountValid
+          ? (sourceSemanticFlowBoundaryDecisions ?? [])
+          : [],
+      })
+    : {
+        sourceCharacters: characterCount(sourceText),
+        outputCharacters: characterCount(outputText),
+        matchedCharacters: orderedMatchedCharacters(sourceText, outputText),
+        missingSourceRegionIds: [],
+        sameRegionFlowViolationNodeIds: [],
+        semanticTextViolationNodeIds: [],
+        semanticFlowBoundaryLedgerValid: true,
+        unprovenancedRenderedUnitKeys: [],
+      }
+  const semanticFlowLedgerValid =
+    semanticFlowLedgerCountValid &&
+    conservedText.semanticFlowBoundaryLedgerValid
+  const invalidSemanticFlowLedgerNodeIds =
+    !semanticFlowLedgerValid && provenance
+      ? paper.nodes.flatMap((node) =>
+          (provenance[node.id]?.regionIds.length ?? 0) > 1 ? [node.id] : [],
+        )
+      : []
   const matchedTextCharacters = conservedText.matchedCharacters
   const duplicateSpans = duplicateCanonicalSpanCount(sourceText, paper)
   const classifiedLineBoundaries = classifyStructuralLineBoundaryDecisions({
@@ -2196,6 +3426,7 @@ export function assessPdfCompleteness({
     visualRelationships,
     assets,
     regions: allSourceRegions,
+    pages,
   })
   const lineLedger = validateLineBoundaryLedger(
     regions,
@@ -2204,7 +3435,6 @@ export function assessPdfCompleteness({
     structurallyConsumedLineBoundaryCount,
   )
   const { sourceAssetCount, exportedAssetCount } = semanticAssetCounts({
-    pages,
     semanticSignals,
     visualRelationships,
     validatedVisualRelationships,
@@ -2260,6 +3490,7 @@ export function assessPdfCompleteness({
       ),
       ...conservedText.sameRegionFlowViolationNodeIds,
       ...conservedText.semanticTextViolationNodeIds,
+      ...invalidSemanticFlowLedgerNodeIds,
       ...unprovedInlineMathAtomNodeIds({
         paper,
         provenance,
@@ -2370,6 +3601,51 @@ export function assessPdfCompleteness({
     readingOrderEvaluation,
   }
   const qualityDiagnostics: ReconstructionDiagnostic[] = []
+  if (!semanticFlowLedgerValid) {
+    qualityDiagnostics.push({
+      code: 'INVALID_SOURCE_SEMANTIC_FLOW_BOUNDARY_LEDGER',
+      severity: 'error',
+      message:
+        'The source semantic-flow boundary ledger is missing, malformed, stale, conflicting, or not consumed exactly once by canonical text reconstruction.',
+    })
+  }
+  for (const page of pages) {
+    const extractedImageObjectCount = (page.objects ?? []).filter(
+      (object) => object.kind === 'image',
+    ).length
+    if (page.imageCount <= extractedImageObjectCount) continue
+    qualityDiagnostics.push({
+      code: 'UNREFERENCED_VISUAL_ASSET',
+      severity: 'error',
+      page: page.page,
+      message: `Page ${page.page} reports ${page.imageCount} embedded image operator${page.imageCount === 1 ? '' : 's'}, but only ${extractedImageObjectCount} have source-bounded object geometry; publication is blocked until every operator is classified or reconstructed.`,
+      sourceBoxes: [
+        {
+          page: page.page,
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+          rotation: page.rotation,
+          method: 'pdf-object',
+        },
+      ],
+    })
+  }
+  if (
+    !hasValidCanonicalHyphenBoundaryLedger({
+      decisions: canonicalHyphenBoundaryDecisions,
+      expectedCount: canonicalHyphenBoundaryDecisionCount,
+      regions: allSourceRegions,
+    })
+  ) {
+    qualityDiagnostics.push({
+      code: 'INVALID_CANONICAL_HYPHEN_BOUNDARY_LEDGER',
+      severity: 'error',
+      message:
+        'A canonical discretionary-hyphen deletion is missing complete, unique, source-bound geometry and lexical counterproof.',
+    })
+  }
   for (const page of pages.filter((candidate) =>
     ocrRequiredPages.includes(candidate.page),
   )) {
@@ -2662,6 +3938,18 @@ export function assessPdfCompleteness({
       code: 'INCOMPLETE_RELATIONSHIP_COVERAGE',
       severity: 'error',
       message: `Resolved ${relationships.resolved} of ${relationships.expected} detected semantic relationships; required coverage is ${policy.minimumRelationshipCoverage.toFixed(3)}.`,
+    })
+  }
+  if (
+    completeness.expectedSemanticTableCount !== undefined &&
+    completeness.resolvedSemanticTableCount !== undefined &&
+    completeness.resolvedSemanticTableCount <
+      completeness.expectedSemanticTableCount
+  ) {
+    qualityDiagnostics.push({
+      code: 'INCOMPLETE_SEMANTIC_TABLE_COVERAGE',
+      severity: 'error',
+      message: `Reconstructed ${completeness.resolvedSemanticTableCount} of ${completeness.expectedSemanticTableCount} detected tables as semantic row-and-column structures; the remaining image fallback${completeness.expectedSemanticTableCount - completeness.resolvedSemanticTableCount === 1 ? '' : 's'} require review.`,
     })
   }
   if (unresolvedObjectCount > policy.maximumUnresolvedObjects) {

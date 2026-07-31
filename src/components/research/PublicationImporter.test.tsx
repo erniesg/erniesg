@@ -4,6 +4,10 @@ import {
   EPUB_EXPORT_POLICY_VERSION,
   type EpubExport,
 } from '../../research/epub'
+import type {
+  PdfLineBoundaryDecision,
+  PdfPageRegion,
+} from '../../research/import-types'
 import {
   getTargetProfile,
   TARGET_PROFILE_VERSION,
@@ -15,14 +19,38 @@ vi.mock('./EpubDownloadLink', () => ({ default: () => null }))
 
 import PublicationImporter, {
   EquationTranscriptAdjudicationCard,
+  formatImportElapsed,
+  importProgressIsIndeterminate,
   importErrorCode,
   importErrorMessage,
   isSelectedEpubPreviewReady,
+  lineJoinAdjudicationItems,
   LineJoinAdjudicationCard,
   shouldReloadStaleApplicationModule,
 } from './PublicationImporter'
 
 describe('publication importer OCR controls', () => {
+  it('does not present final structural analysis as fake 100% progress', () => {
+    expect(
+      importProgressIsIndeterminate({
+        phase: 'reconstructing',
+        completed: 231,
+        total: 231,
+        message: 'Rebuilding semantic reading order…',
+      }),
+    ).toBe(true)
+    expect(
+      importProgressIsIndeterminate({
+        phase: 'extracting',
+        completed: 115,
+        total: 231,
+        message: 'Reading page 115…',
+      }),
+    ).toBe(false)
+    expect(formatImportElapsed(4)).toBe('4s elapsed')
+    expect(formatImportElapsed(125)).toBe('2m 05s elapsed')
+  })
+
   it('requires an explicit owner-local LaTeX transcript with no inferred default', () => {
     const markup = renderToStaticMarkup(
       <EquationTranscriptAdjudicationCard
@@ -97,6 +125,66 @@ describe('publication importer OCR controls', () => {
     expect(markup).not.toContain('aria-pressed="true"')
   })
 
+  it('surfaces unresolved and ambiguous line joins for owner adjudication', () => {
+    const region: PdfPageRegion = {
+      id: 'page-001-region-001',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: 'one-two-three-four',
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.08,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: ['one-', 'two-', 'three-', 'four'].map((text, index) => ({
+        id: `line-${index + 1}`,
+        text,
+        fontSize: 10,
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2 + index * 0.02,
+          width: 0.7,
+          height: 0.02,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [],
+      })),
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const outcomes = [
+      'ambiguous',
+      'unresolved',
+      'preserved-lexical-hyphen',
+    ] as const
+    const lineBoundaryDecisions: PdfLineBoundaryDecision[] = outcomes.map(
+      (outcome, index) => ({
+        id: `transition-${index + 1}`,
+        page: 1,
+        regionId: region.id,
+        fromLineId: region.lines[index].id,
+        toLineId: region.lines[index + 1].id,
+        outcome,
+        evidence: ['source-form-preserved'],
+      }),
+    )
+
+    expect(
+      lineJoinAdjudicationItems({
+        regions: [region],
+        lineBoundaryDecisions,
+      }).map(({ transition }) => transition.outcome),
+    ).toEqual(['ambiguous', 'unresolved'])
+  })
+
   it('withholds the selected download until that exact EPUB preview is ready', () => {
     const target = getTargetProfile('paperPro')
     const candidate: EpubExport = {
@@ -152,6 +240,24 @@ describe('publication importer OCR controls', () => {
 
     expect(markup).toContain('Up to 50 MiB')
     expect(markup).not.toContain('Up to 75 MB')
+  })
+
+  it('applies the review-mode class as a separate CSS selector', () => {
+    const markup = renderToStaticMarkup(<PublicationImporter reviewMode />)
+
+    expect(markup).toContain(
+      'class="publication-importer publication-importer--review"',
+    )
+  })
+
+  it('keeps adjudication controls out of the normal importer', () => {
+    const normalMarkup = renderToStaticMarkup(<PublicationImporter />)
+    const reviewMarkup = renderToStaticMarkup(
+      <PublicationImporter reviewMode />,
+    )
+
+    expect(normalMarkup).not.toContain('Adjudication decisions')
+    expect(reviewMarkup).toContain('Adjudication decisions')
   })
 
   it('recognizes an outdated Vite dynamic import without exposing its internal URL', () => {

@@ -102,8 +102,8 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
         lastModified: Date.UTC(2026, 6, 20),
       })
     ;[reconstruction, repeated] = await Promise.all([
-      reconstructPdf(file()),
-      reconstructPdf(file()),
+      reconstructPdf(file(), undefined, { language: 'en-US' }),
+      reconstructPdf(file(), undefined, { language: 'en-US' }),
     ])
     exports = Object.fromEntries(
       await Promise.all(
@@ -164,7 +164,9 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
     ).toBe(reconstruction.structurallyConsumedLineBoundaryCount)
     expect(
       reconstruction.lineBoundaryDecisions.filter((decision) =>
-        ['unresolved', 'structural-boundary'].includes(decision.outcome),
+        ['unresolved', 'ambiguous', 'structural-boundary'].includes(
+          decision.outcome,
+        ),
       ),
     ).toHaveLength(
       reconstruction.unresolvedCorruptingJoinCount +
@@ -409,8 +411,7 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
   it('retains the exact validated semantic table through readable projection and every EPUB profile', async () => {
     const tableRelationship = reconstruction.visualRelationships.find(
       (relationship) =>
-        relationship.kind === 'table' &&
-        relationship.label === 'Table 1',
+        relationship.kind === 'table' && relationship.label === 'Table 1',
     )
     expect(tableRelationship).toBeDefined()
     const tableAsset = reconstruction.assets.find(
@@ -532,7 +533,8 @@ describe('integrated PDF-to-EPUB fidelity fixture', () => {
       expect(first.sha256).toBe(second.sha256)
       const { files, manifest } = inspectEpub(first.bytes, profile)
       const content = strFromU8(files['EPUB/content.xhtml'])
-      const contentBody = content.match(/<body\b[^>]*>([\s\S]*)<\/body>/u)?.[1] ?? ''
+      const contentBody =
+        content.match(/<body\b[^>]*>([\s\S]*)<\/body>/u)?.[1] ?? ''
       expect(manifest).toMatchObject({
         profile: { id: expected.id, version: expected.version },
         canonicalNodeIds: reconstruction.paper.nodes.map((node) => node.id),

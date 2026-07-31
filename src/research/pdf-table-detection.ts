@@ -155,9 +155,7 @@ export function mergeWrappedHeaderContinuationRuns(
   }
   const anchor = headerRuns[0]
   const headerTop = Math.min(...headerRuns.map((run) => run.y))
-  const headerBottom = Math.max(
-    ...headerRuns.map((run) => run.y + run.height),
-  )
+  const headerBottom = Math.max(...headerRuns.map((run) => run.y + run.height))
   const continuationTop = Math.min(...continuationRuns.map((run) => run.y))
   const verticalGap = continuationTop - headerBottom
   if (
@@ -800,6 +798,16 @@ function tableHeaderCell(text: string) {
   return /\p{L}/u.test(text) && !numericTableBodyCell(text)
 }
 
+function scopeProvenNumericMatrixBodyCell(text: string) {
+  return /^(?:[<>≤≥~≈])?[+\-−]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:(?:[eE][+\-−]?\d+)|(?:[x×]10[+\-−]?\d+))?(?:%|[x×])?$/u.test(
+    text.replace(/\s+/gu, ''),
+  )
+}
+
+function scopeProvenNumericMatrixHeaderCell(text: string) {
+  return /\p{L}/u.test(text) && !scopeProvenNumericMatrixBodyCell(text)
+}
+
 function headerCellsForBodyAnchors(
   headerRuns: PdfSourceRun[],
   bodyCenters: number[],
@@ -810,14 +818,10 @@ function headerCellsForBodyAnchors(
   const groups = bodyCenters.map(() => [] as PdfSourceRun[])
   for (const run of [...headerRuns].sort((left, right) => left.x - right.x)) {
     const center = run.x + run.width / 2
-    if (
-      boundaries.some((boundary) => Math.abs(center - boundary) < 0.002)
-    ) {
+    if (boundaries.some((boundary) => Math.abs(center - boundary) < 0.002)) {
       return null
     }
-    const boundaryIndex = boundaries.findIndex(
-      (boundary) => center < boundary,
-    )
+    const boundaryIndex = boundaries.findIndex((boundary) => center < boundary)
     groups[boundaryIndex === -1 ? groups.length - 1 : boundaryIndex].push(run)
   }
   if (groups.some((group) => group.length === 0)) return null
@@ -868,6 +872,266 @@ function exactScopedSourceRegions(
   return sourceRegions
 }
 
+// A plain one-row header is promoted only inside an independently proved
+// repeated text line-band. The first column is a variable-width textual stub,
+// so its left edge must repeat while the numeric body columns repeat their
+// centers. Every source row must be complete; empty corner cells, spans,
+// section rows, and synthetic cells remain unsupported.
+export function detectExplicitHeaderNumericTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly { code: string }[]
+  },
+): PdfDetectedTableGrid | null {
+  if (
+    !scope.evidence.some((item) => item.code === 'repeated-row-bands') ||
+    !scope.evidence.some((item) => item.code === 'multi-run-tabular-line-band')
+  ) {
+    return null
+  }
+  const sourceRegions = exactScopedSourceRegions(regions, scope)
+  if (!sourceRegions) return null
+  const rows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines
+        .filter((line) => scope.sourceLineIds.includes(line.id))
+        .map((line) => ({ region, line })),
+    ),
+  )
+  if (rows.length < 4) return null
+
+  const gapThreshold = adaptiveCellGapThreshold(rows)
+  const cellsByRow = rows.map((row) => rowCells(row, gapThreshold))
+  const header = cellsByRow[0]
+  const bodyRows = cellsByRow.slice(1)
+  const columnCount = bodyRows[0]?.length ?? 0
+  if (
+    columnCount < 3 ||
+    columnCount > 12 ||
+    bodyRows.length < 3 ||
+    header.length !== columnCount ||
+    bodyRows.some((row) => row.length !== columnCount) ||
+    !header.every((cell) => scopeProvenNumericMatrixHeaderCell(cell.text)) ||
+    bodyRows.some(
+      (row) =>
+        !scopeProvenNumericMatrixHeaderCell(row[0].text) ||
+        row
+          .slice(1)
+          .some((cell) => !scopeProvenNumericMatrixBodyCell(cell.text)),
+    )
+  ) {
+    return null
+  }
+
+  const stubAnchor = median(bodyRows.map((row) => row[0].x))
+  const numericCenters = Array.from(
+    { length: columnCount - 1 },
+    (_, columnIndex) =>
+      median(
+        bodyRows.map((row) => {
+          const cell = row[columnIndex + 1]
+          return cell.x + cell.width / 2
+        }),
+      ),
+  )
+  const alignedRow = (row: PdfSourceRun[]) =>
+    Math.abs(row[0].x - stubAnchor) <= COLUMN_ANCHOR_TOLERANCE &&
+    row
+      .slice(1)
+      .every(
+        (cell, columnIndex) =>
+          Math.abs(cell.x + cell.width / 2 - numericCenters[columnIndex]) <=
+          COLUMN_CENTER_TOLERANCE,
+      )
+  if (!alignedRow(header) || bodyRows.some((row) => !alignedRow(row))) {
+    return null
+  }
+
+  const gridLines: PdfDetectedTableGrid['lines'] = rows.map((row, rowIndex) => {
+    const cells = cellsByRow[rowIndex].map((run, columnIndex) => ({
+      run,
+      columnIndex,
+      columnSpan: 1,
+      rowSpan: 1,
+    }))
+    return {
+      ...row,
+      runs: cells.map((cell) => cell.run),
+      cells,
+    }
+  })
+  return {
+    sourceRegions: [...sourceRegions].sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    ),
+    sourceLineIds: [...scope.sourceLineIds],
+    lines: gridLines,
+    columnCount,
+    headerRowCount: 1,
+    evidence: [
+      'complete-bounded-table-scope',
+      'semantic-header-explicit-matrix-geometry',
+      'repeated-uniform-numeric-body-rows',
+      'variable-width-stub-left-anchor',
+    ],
+  }
+}
+
+// A wrapped single-level header is promoted only when an independently proved
+// scope contains exactly two header bands followed by at least three complete,
+// repeated body rows. Header continuations remain separate cells so every
+// source run keeps exact lineage while body cells can reference both headers.
+export function detectWrappedHeaderTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly { code: string }[]
+  },
+): PdfDetectedTableGrid | null {
+  if (
+    !scope.evidence.some(
+      (item) =>
+        item.code === 'repeated-row-bands' ||
+        item.code === 'repeated-column-anchors',
+    )
+  ) {
+    return null
+  }
+  const sourceRegions = exactScopedSourceRegions(regions, scope)
+  if (!sourceRegions) return null
+  const rows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines
+        .filter((line) => scope.sourceLineIds.includes(line.id))
+        .map((line) => ({ region, line })),
+    ),
+  )
+  if (rows.length < 5) return null
+
+  const gapThreshold = adaptiveCellGapThreshold(rows)
+  const cellsByRow = rows.map((row) => rowCells(row, gapThreshold))
+  const bodyRows = cellsByRow.slice(2)
+  const columnCount = bodyRows[0]?.length ?? 0
+  const firstHeader = cellsByRow[0]
+  const continuationHeader = cellsByRow[1]
+  if (
+    columnCount < 3 ||
+    columnCount > 12 ||
+    bodyRows.length < 3 ||
+    bodyRows.some((row) => row.length !== columnCount) ||
+    firstHeader.length !== columnCount ||
+    continuationHeader.length === 0 ||
+    continuationHeader.length >= columnCount ||
+    !firstHeader.every((cell) => tableHeaderCell(cell.text)) ||
+    !continuationHeader.every((cell) => tableHeaderCell(cell.text)) ||
+    bodyRows.some(
+      (row) =>
+        !tableHeaderCell(row[0].text) ||
+        row.slice(1).some((cell) => !numericTableBodyCell(cell.text)),
+    )
+  ) {
+    return null
+  }
+
+  const bodyCenters = Array.from({ length: columnCount }, (_, index) =>
+    median(bodyRows.map((row) => row[index].x + row[index].width / 2)),
+  )
+  const columnIndexForCell = (cell: PdfSourceRun) => {
+    const center = cell.x + cell.width / 2
+    const closest = bodyCenters
+      .map((anchor, index) => ({
+        index,
+        distance: Math.abs(anchor - center),
+      }))
+      .sort(
+        (left, right) =>
+          left.distance - right.distance || left.index - right.index,
+      )[0]
+    return closest && closest.distance <= COLUMN_CENTER_TOLERANCE
+      ? closest.index
+      : null
+  }
+  const firstHeaderColumns = firstHeader.map(columnIndexForCell)
+  const continuationColumns = continuationHeader.map(columnIndexForCell)
+  if (
+    firstHeaderColumns.some((column) => column === null) ||
+    firstHeaderColumns.some((column, index) => column !== index) ||
+    continuationColumns.some((column) => column === null) ||
+    new Set(continuationColumns).size !== continuationColumns.length ||
+    continuationColumns.some(
+      (column, index) =>
+        index > 0 && column! <= continuationColumns[index - 1]!,
+    ) ||
+    bodyRows.some((row) =>
+      row.some(
+        (cell, index) =>
+          Math.abs(cell.x + cell.width / 2 - bodyCenters[index]) >
+          COLUMN_CENTER_TOLERANCE,
+      ),
+    )
+  ) {
+    return null
+  }
+
+  const continuedColumns = new Set(
+    continuationColumns.filter((column): column is number => column !== null),
+  )
+  const gridLines: PdfDetectedTableGrid['lines'] = rows.map((row, rowIndex) => {
+    const cells = cellsByRow[rowIndex]
+    const gridCells =
+      rowIndex === 0
+        ? cells.map((run, columnIndex) => ({
+            run,
+            columnIndex,
+            columnSpan: 1,
+            rowSpan: continuedColumns.has(columnIndex) ? 1 : 2,
+          }))
+        : rowIndex === 1
+          ? cells.map((run, index) => ({
+              run,
+              columnIndex: continuationColumns[index]!,
+              columnSpan: 1,
+              rowSpan: 1,
+            }))
+          : cells.map((run, columnIndex) => ({
+              run,
+              columnIndex,
+              columnSpan: 1,
+              rowSpan: 1,
+            }))
+    return {
+      ...row,
+      runs: gridCells.map((cell) => cell.run),
+      cells: gridCells,
+    }
+  })
+  return {
+    sourceRegions: [...sourceRegions].sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    ),
+    sourceLineIds: [...scope.sourceLineIds],
+    lines: gridLines,
+    columnCount,
+    headerRowCount: 2,
+    evidence: [
+      'complete-bounded-table-scope',
+      'semantic-header-wrapped-geometry',
+      'repeated-uniform-numeric-body-rows',
+    ],
+  }
+}
+
 // A multi-level header is promoted only when a proved text line-band has:
 // - exactly two header bands;
 // - at least three complete, repeated numeric body rows;
@@ -885,9 +1149,10 @@ export function detectHierarchicalTableWithinProvenScope(
   },
 ): PdfDetectedTableGrid | null {
   if (
-    scope.direction !== 'above' ||
     !scope.evidence.some(
-      (item) => item.code === 'multi-run-tabular-line-band',
+      (item) =>
+        item.code === 'multi-run-tabular-line-band' ||
+        item.code === 'contiguous-tabular-slab',
     )
   ) {
     return null
@@ -961,21 +1226,18 @@ export function detectHierarchicalTableWithinProvenScope(
   if (
     bodyRows.some(
       (row) =>
-        Math.abs(
-          row[0].x + row[0].width / 2 - bodyStubCenter,
-        ) > COLUMN_CENTER_TOLERANCE ||
+        Math.abs(row[0].x + row[0].width / 2 - bodyStubCenter) >
+          COLUMN_CENTER_TOLERANCE ||
         row
           .slice(1)
           .some(
             (cell, index) =>
-              Math.abs(
-                cell.x + cell.width / 2 - bodyCenters[index],
-              ) > COLUMN_CENTER_TOLERANCE,
+              Math.abs(cell.x + cell.width / 2 - bodyCenters[index]) >
+              COLUMN_CENTER_TOLERANCE,
           ),
     ) ||
-    Math.abs(
-      superHeader[0].x + superHeader[0].width / 2 - bodyStubCenter,
-    ) > COLUMN_CENTER_TOLERANCE ||
+    Math.abs(superHeader[0].x + superHeader[0].width / 2 - bodyStubCenter) >
+      COLUMN_CENTER_TOLERANCE ||
     leafHeader.some(
       (cell, index) =>
         Math.abs(cell.x + cell.width / 2 - bodyCenters[index]) >
@@ -986,13 +1248,10 @@ export function detectHierarchicalTableWithinProvenScope(
   }
 
   const groupHeaders = superHeader.slice(1)
-  const groupCenters = groupHeaders.map(
-    (cell) => cell.x + cell.width / 2,
-  )
+  const groupCenters = groupHeaders.map((cell) => cell.x + cell.width / 2)
   if (
     groupCenters.some(
-      (center, index) =>
-        index > 0 && center - groupCenters[index - 1] <= 0.06,
+      (center, index) => index > 0 && center - groupCenters[index - 1] <= 0.06,
     )
   ) {
     return null
@@ -1021,45 +1280,43 @@ export function detectHierarchicalTableWithinProvenScope(
     return null
   }
 
-  const gridLines: PdfDetectedTableGrid['lines'] = rows.map(
-    (row, rowIndex) => {
-      const cells = rowIndex === 1 ? leafHeader : cellsByRow[rowIndex]
-      const gridCells =
-        rowIndex === 0
-          ? [
-              {
-                run: cells[0],
-                columnIndex: 0,
-                columnSpan: 1,
-                rowSpan: 2,
-              },
-              ...cells.slice(1).map((run, groupIndex) => ({
-                run,
-                columnIndex: groupedColumns[groupIndex][0],
-                columnSpan: groupedColumns[groupIndex].length,
-                rowSpan: 1,
-              })),
-            ]
-          : rowIndex === 1
-            ? cells.map((run, columnIndex) => ({
-                run,
-                columnIndex: columnIndex + 1,
-                columnSpan: 1,
-                rowSpan: 1,
-              }))
-            : cells.map((run, columnIndex) => ({
-                run,
-                columnIndex,
-                columnSpan: 1,
-                rowSpan: 1,
-              }))
-      return {
-        ...row,
-        runs: gridCells.map((cell) => cell.run),
-        cells: gridCells,
-      }
-    },
-  )
+  const gridLines: PdfDetectedTableGrid['lines'] = rows.map((row, rowIndex) => {
+    const cells = rowIndex === 1 ? leafHeader : cellsByRow[rowIndex]
+    const gridCells =
+      rowIndex === 0
+        ? [
+            {
+              run: cells[0],
+              columnIndex: 0,
+              columnSpan: 1,
+              rowSpan: 2,
+            },
+            ...cells.slice(1).map((run, groupIndex) => ({
+              run,
+              columnIndex: groupedColumns[groupIndex][0],
+              columnSpan: groupedColumns[groupIndex].length,
+              rowSpan: 1,
+            })),
+          ]
+        : rowIndex === 1
+          ? cells.map((run, columnIndex) => ({
+              run,
+              columnIndex: columnIndex + 1,
+              columnSpan: 1,
+              rowSpan: 1,
+            }))
+          : cells.map((run, columnIndex) => ({
+              run,
+              columnIndex,
+              columnSpan: 1,
+              rowSpan: 1,
+            }))
+    return {
+      ...row,
+      runs: gridCells.map((cell) => cell.run),
+      cells: gridCells,
+    }
+  })
   return {
     sourceRegions: [...sourceRegions].sort(
       (left, right) =>

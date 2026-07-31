@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { describe, expect, it } from 'vitest'
@@ -6,9 +7,16 @@ import {
   buildEpub,
   buildReadableEpub,
   inspectEpub,
+  MAX_EPUB_ASSET_BYTES_PER_BOOK,
+  MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK,
   profileEpubCss,
+  projectReadableFallbackReconstruction,
   renderPublicationXhtml,
 } from './epub'
+import {
+  createSourceGeometryScriptTranscript,
+  SOURCE_GEOMETRY_SCRIPT_TRANSCRIPT_EVIDENCE,
+} from './equation-geometry-transcript'
 import type {
   PdfPageAnalysis,
   PdfReconstruction,
@@ -24,6 +32,32 @@ import { getTargetProfile, resolveTargetProfile } from './targets'
 import { createSourcePageCropAsset } from './visual-assets'
 
 const paper = researchPaperSchema.parse(rawPaper)
+
+function canonicalJsonForTest(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJsonForTest).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(
+        ([key, entryValue]) =>
+          `${JSON.stringify(key)}:${canonicalJsonForTest(entryValue)}`,
+      )
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'undefined'
+}
+
+function canonicalJsonSha256ForTest(value: unknown) {
+  return createHash('sha256').update(canonicalJsonForTest(value)).digest('hex')
+}
+
+function canonicalHyphenEvidenceSha256ForTest(value: string) {
+  return createHash('sha256')
+    .update(`canonical-hyphen-evidence\0${value}`)
+    .digest('hex')
+}
 
 function numericCitationTarget(id: string, ordinal: number | null) {
   return ordinal === null
@@ -585,6 +619,14 @@ async function staleEquationTranscriptFixture() {
     noteRelationships: candidate.noteRelationships,
     policy: candidate.readiness.policy,
     lineBoundaryDecisions: candidate.lineBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisions:
+      candidate.sourceSemanticFlowBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisionCount:
+      candidate.sourceSemanticFlowBoundaryDecisionCount,
+    canonicalHyphenBoundaryDecisions:
+      candidate.canonicalHyphenBoundaryDecisions,
+    canonicalHyphenBoundaryDecisionCount:
+      candidate.canonicalHyphenBoundaryDecisionCount,
     unresolvedCorruptingJoinCount: candidate.unresolvedCorruptingJoinCount,
     structurallyConsumedLineBoundaryCount:
       candidate.structurallyConsumedLineBoundaryCount,
@@ -600,6 +642,421 @@ async function staleEquationTranscriptFixture() {
   } satisfies PdfReconstruction
   expect(reconstruction.readiness.blockingDiagnosticCodes).toEqual([])
   return { reconstruction, relationship, equationRegion }
+}
+
+function readableFallbackFigure(index: number) {
+  const suffix = String(index).padStart(3, '0')
+  const bytes = new TextEncoder().encode(`SOURCE-FIGURE-${suffix}`)
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  const assetId = `asset-${sha256.slice(0, 24)}`
+  const sourceObjectId = `fallback-figure-object-${suffix}`
+  const captionRegionId = `fallback-figure-caption-region-${suffix}`
+  const nodeId = `fallback-figure-node-${suffix}`
+  const captionNodeId = `fallback-figure-caption-${suffix}`
+  const captionBox = {
+    page: 1,
+    x: 0.1,
+    y: 0.5,
+    width: 0.4,
+    height: 0.02,
+    rotation: 0,
+    method: 'pdf-text' as const,
+  }
+  const sourceBox = {
+    page: 1,
+    x: 0.1,
+    y: 0.55,
+    width: 0.2,
+    height: 0.1,
+    rotation: 0,
+    method: 'pdf-object' as const,
+  }
+  const asset = {
+    id: assetId,
+    href: `assets/${assetId}.png`,
+    mediaType: 'image/png' as const,
+    kind: 'raster' as const,
+    rendition: 'source-preserved' as const,
+    sha256,
+    bytes,
+    width: 20,
+    height: 10,
+    resolutionDpi: null,
+    sourceObjectIds: [sourceObjectId],
+    sourceBoxes: [sourceBox],
+  } satisfies PublicationAsset
+  const captionText = `Figure ${index}. Readable fallback source figure.`
+  const relationship = {
+    id: `fallback-figure-relationship-${suffix}`,
+    kind: 'figure' as const,
+    label: `Figure ${index}`,
+    captionRegionId,
+    sourceRegionIds: [],
+    sourceLineIds: [],
+    sourceObjectIds: [sourceObjectId],
+    assetIds: [asset.id],
+    status: 'matched' as const,
+    confidence: 1,
+    evidence: ['source-preserved-raster'],
+    candidates: [],
+    sourceBoxes: [captionBox, sourceBox],
+    sourceText: '',
+    altText: captionText,
+    altTextSource: 'caption' as const,
+    canonicalNodeId: nodeId,
+    captionNodeId,
+  } satisfies PublicationVisualRelationship
+  return {
+    asset,
+    relationship,
+    nodes: [
+      {
+        id: nodeId,
+        type: 'figure' as const,
+        title: captionText,
+        relationships: {
+          caption: captionNodeId,
+          assets: [asset.id],
+        },
+        source: 'synthetic-readable-fallback-figure',
+      },
+      {
+        id: captionNodeId,
+        type: 'caption' as const,
+        text: captionText,
+        source: 'synthetic-readable-fallback-figure',
+      },
+    ],
+    provenance: {
+      [nodeId]: {
+        confidence: 1,
+        pages: [1],
+        regionIds: [],
+        boxes: relationship.sourceBoxes,
+        links: [],
+      },
+      [captionNodeId]: {
+        confidence: 1,
+        pages: [1],
+        regionIds: [captionRegionId],
+        boxes: [captionBox],
+        links: [],
+      },
+    },
+  }
+}
+
+function withReadableFallbackFigures(
+  reconstruction: PdfReconstruction,
+  figures: ReturnType<typeof readableFallbackFigure>[],
+) {
+  return {
+    ...reconstruction,
+    paper: {
+      ...reconstruction.paper,
+      nodes: [
+        ...reconstruction.paper.nodes,
+        ...figures.flatMap((figure) => figure.nodes),
+      ],
+    },
+    provenance: {
+      ...reconstruction.provenance,
+      ...Object.assign({}, ...figures.map((figure) => figure.provenance)),
+    },
+    visualRelationships: [
+      ...reconstruction.visualRelationships,
+      ...figures.map((figure) => figure.relationship),
+    ],
+    assets: [
+      ...reconstruction.assets,
+      ...figures.map((figure) => figure.asset),
+    ],
+  } satisfies PdfReconstruction
+}
+
+async function readableFallbackEquation(index: number) {
+  const suffix = String(index).padStart(3, '0')
+  const sourceObjectId = `fallback-equation-object-${suffix}`
+  const sourceRegionId = `fallback-equation-region-${suffix}`
+  const sourceLineId = `fallback-equation-line-${suffix}`
+  const captionRegionId = `fallback-equation-caption-region-${suffix}`
+  const nodeId = `fallback-equation-node-${suffix}`
+  const captionNodeId = `fallback-equation-caption-${suffix}`
+  const captionBox = {
+    page: 1,
+    x: 0.2,
+    y: 0.4,
+    width: 0.42,
+    height: 0.02,
+    rotation: 0,
+    method: 'pdf-text' as const,
+  }
+  const lineBox = {
+    page: 1,
+    x: 0.28,
+    y: 0.3,
+    width: 0.14,
+    height: 0.02,
+    rotation: 0,
+    method: 'pdf-text' as const,
+  }
+  const sourceBox = {
+    ...lineBox,
+    x: 0.27,
+    y: 0.29,
+    width: 0.2,
+    height: 0.05,
+    method: 'pdf-object' as const,
+  }
+  const pixels = new Uint8Array(12 * 6 * 4).fill(255)
+  for (let y = 1; y < 5; y += 1) {
+    for (let x = 2; x < 10; x += 1) {
+      pixels.set([20, 20, 20, 255], (y * 12 + x) * 4)
+    }
+  }
+  const asset = await createSourcePageCropAsset({
+    kind: 'equation',
+    cropBox: sourceBox,
+    sourceObjectIds: [sourceObjectId],
+    sourceBoxes: [sourceBox],
+    width: 12,
+    height: 6,
+    pixels,
+  })
+  const sourceText = `q${index} = r`
+  const region = {
+    id: sourceRegionId,
+    page: 1,
+    kind: 'equation' as const,
+    column: 'single' as const,
+    text: sourceText,
+    confidence: 1,
+    box: lineBox,
+    lines: [
+      {
+        id: sourceLineId,
+        text: sourceText,
+        fontSize: 14,
+        box: lineBox,
+        runs: [
+          {
+            ...lineBox,
+            text: sourceText,
+            fontName: 'Synthetic-Math',
+            fontSize: 14,
+            confidence: 1,
+          },
+        ],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  } satisfies PdfReconstruction['regions'][number]
+  const captionText = `Equation ${index}. Readable fallback source equation.`
+  const relationship = {
+    id: `fallback-equation-relationship-${suffix}`,
+    kind: 'equation' as const,
+    label: `Equation ${index}`,
+    captionRegionId,
+    sourceRegionIds: [sourceRegionId],
+    sourceLineIds: [sourceLineId],
+    sourceObjectIds: [sourceObjectId],
+    assetIds: [asset.id],
+    status: 'matched' as const,
+    confidence: 1,
+    evidence: ['source-page-crop', 'source-text-alt'],
+    candidates: [],
+    sourceBoxes: [captionBox, sourceBox],
+    sourceText,
+    altText: captionText,
+    altTextSource: 'source-text' as const,
+    canonicalNodeId: nodeId,
+    captionNodeId,
+  } satisfies PublicationVisualRelationship
+  return {
+    asset,
+    region,
+    relationship,
+    nodes: [
+      {
+        id: nodeId,
+        type: 'figure' as const,
+        objectType: 'equation' as const,
+        title: captionText,
+        relationships: {
+          caption: captionNodeId,
+          assets: [asset.id],
+        },
+        source: 'synthetic-readable-fallback-equation',
+      },
+      {
+        id: captionNodeId,
+        type: 'caption' as const,
+        text: captionText,
+        source: 'synthetic-readable-fallback-equation',
+      },
+    ],
+    provenance: {
+      [nodeId]: {
+        confidence: 1,
+        pages: [1],
+        regionIds: [sourceRegionId],
+        boxes: relationship.sourceBoxes,
+        links: [],
+      },
+      [captionNodeId]: {
+        confidence: 1,
+        pages: [1],
+        regionIds: [captionRegionId],
+        boxes: [captionBox],
+        links: [],
+      },
+    },
+  }
+}
+
+function withReadableFallbackEquations(
+  reconstruction: PdfReconstruction,
+  equations: Awaited<ReturnType<typeof readableFallbackEquation>>[],
+) {
+  return {
+    ...reconstruction,
+    paper: {
+      ...reconstruction.paper,
+      nodes: [
+        ...reconstruction.paper.nodes,
+        ...equations.flatMap((equation) => equation.nodes),
+      ],
+    },
+    provenance: {
+      ...reconstruction.provenance,
+      ...Object.assign({}, ...equations.map((equation) => equation.provenance)),
+    },
+    regions: [
+      ...reconstruction.regions,
+      ...equations.map((equation) => equation.region),
+    ],
+    visualRelationships: [
+      ...reconstruction.visualRelationships,
+      ...equations.map((equation) => equation.relationship),
+    ],
+    assets: [
+      ...reconstruction.assets,
+      ...equations.map((equation) => equation.asset),
+    ],
+  } satisfies PdfReconstruction
+}
+
+function readableFallbackEquationSharingFigureAsset(
+  figure: ReturnType<typeof readableFallbackFigure>,
+) {
+  const sourceRegionId = 'shared-cross-kind-equation-region'
+  const sourceLineId = 'shared-cross-kind-equation-line'
+  const captionRegionId = 'shared-cross-kind-equation-caption-region'
+  const nodeId = 'shared-cross-kind-equation-node'
+  const captionNodeId = 'shared-cross-kind-equation-caption'
+  const sourceBox = figure.asset.sourceBoxes[0]
+  const lineBox = {
+    ...sourceBox,
+    method: 'pdf-text' as const,
+  }
+  const captionBox = {
+    page: 1,
+    x: 0.2,
+    y: 0.4,
+    width: 0.42,
+    height: 0.02,
+    rotation: 0,
+    method: 'pdf-text' as const,
+  }
+  const sourceText = 'q = r'
+  const region = {
+    id: sourceRegionId,
+    page: 1,
+    kind: 'equation' as const,
+    column: 'single' as const,
+    text: sourceText,
+    confidence: 1,
+    box: lineBox,
+    lines: [
+      {
+        id: sourceLineId,
+        text: sourceText,
+        fontSize: 14,
+        box: lineBox,
+        runs: [
+          {
+            ...lineBox,
+            text: sourceText,
+            fontName: 'Synthetic-Math',
+            fontSize: 14,
+            confidence: 1,
+          },
+        ],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  } satisfies PdfReconstruction['regions'][number]
+  const relationship = {
+    id: 'shared-cross-kind-equation-relationship',
+    kind: 'equation' as const,
+    label: 'Equation shared',
+    captionRegionId,
+    sourceRegionIds: [sourceRegionId],
+    sourceLineIds: [sourceLineId],
+    sourceObjectIds: [...figure.asset.sourceObjectIds],
+    assetIds: [figure.asset.id],
+    status: 'matched' as const,
+    confidence: 1,
+    evidence: ['source-preserved-raster', 'source-text-alt'],
+    candidates: [],
+    sourceBoxes: [captionBox, sourceBox],
+    sourceText,
+    altText: 'Equation shared. Source-backed display.',
+    altTextSource: 'source-text' as const,
+    canonicalNodeId: nodeId,
+    captionNodeId,
+  } satisfies PublicationVisualRelationship
+  return {
+    region,
+    relationship,
+    nodes: [
+      {
+        id: nodeId,
+        type: 'figure' as const,
+        objectType: 'equation' as const,
+        title: relationship.altText,
+        relationships: {
+          caption: captionNodeId,
+          assets: [figure.asset.id],
+        },
+        source: 'synthetic-shared-cross-kind-equation',
+      },
+      {
+        id: captionNodeId,
+        type: 'caption' as const,
+        text: relationship.altText,
+        source: 'synthetic-shared-cross-kind-equation',
+      },
+    ],
+    provenance: {
+      [nodeId]: {
+        confidence: 1,
+        pages: [1],
+        regionIds: [sourceRegionId],
+        boxes: relationship.sourceBoxes,
+        links: [],
+      },
+      [captionNodeId]: {
+        confidence: 1,
+        pages: [1],
+        regionIds: [captionRegionId],
+        boxes: [captionBox],
+        links: [],
+      },
+    },
+  }
 }
 
 function exportBoundaryRun(
@@ -719,6 +1176,171 @@ async function readyCrossReferenceFixture() {
     blockingDiagnosticCodes: [],
   })
   expect(reconstruction.crossReferenceRelationships).toHaveLength(1)
+  return reconstruction
+}
+
+async function readyCanonicalHyphenDeletionFixture(): Promise<PdfReconstruction> {
+  const reconstruction = await readyExternalHyperlinkFixture()
+  const fromRun = {
+    ...exportBoundaryRun('Repre-', 0.72),
+    page: 2,
+  }
+  const toRun = {
+    ...exportBoundaryRun('sentation, continued source text.', 0.08),
+    page: 3,
+  }
+  const proofRun = {
+    ...exportBoundaryRun('Representation appears in the same document.', 0.16),
+    page: 3,
+  }
+  const sourceBox = (sourceRun: PdfSourceRun) => ({
+    page: sourceRun.page,
+    x: sourceRun.x,
+    y: sourceRun.y,
+    width: sourceRun.width,
+    height: sourceRun.height,
+    rotation: sourceRun.rotation,
+    method: sourceRun.method,
+  })
+  const region = (id: string, sourceRun: PdfSourceRun) => ({
+    id,
+    page: sourceRun.page,
+    kind: 'body' as const,
+    column: 'single' as const,
+    text: sourceRun.text,
+    confidence: 1,
+    box: sourceBox(sourceRun),
+    lines: [
+      {
+        id: `${id}-line`,
+        text: sourceRun.text,
+        fontSize: sourceRun.fontSize,
+        box: sourceBox(sourceRun),
+        runs: [{ ...sourceRun }],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: false,
+  })
+  const fromRegion = region('canonical-hyphen-from-region', fromRun)
+  const toRegion = region('canonical-hyphen-to-region', toRun)
+  const proofRegion = region('canonical-hyphen-proof-region', proofRun)
+  const decision = {
+    id: `canonical-hyphen-boundary:canonical-flow-continuation:${fromRegion.id}:${fromRegion.lines[0].id}->${toRegion.id}:${toRegion.lines[0].id}`,
+    context: 'canonical-flow-continuation' as const,
+    outcome: 'removed-discretionary-hyphen' as const,
+    fromRegionId: fromRegion.id,
+    fromLineId: fromRegion.lines[0].id,
+    toRegionId: toRegion.id,
+    toLineId: toRegion.lines[0].id,
+    geometry: {
+      from: { ...fromRegion.lines[0].box },
+      to: { ...toRegion.lines[0].box },
+    },
+    proof: {
+      tier: 'exact-same-document' as const,
+      sourceBoundaryProven: true as const,
+      pinnedWord: 'representation',
+      pinnedJoinedFormValid: true as const,
+      pinnedSplit: {
+        left: 'repre',
+        right: 'sentation',
+        index: 5,
+      },
+      splitPointValid: true as const,
+      exactSameDocumentJoinedForm: 'Representation',
+      sameDocumentJoinedFormValid: true as const,
+      hardHyphenForm: 'repre-sentation',
+      hardHyphenCounterproof: null,
+      model: {
+        id: 'scowl-2020.12.07+ushyphmax-2005-05-30',
+        language: 'en-US',
+        dictionarySha256:
+          '829a043cf078d1e80e886289a13823454977f442a239a859d2133ea61944aa60',
+        affixSha256:
+          '70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5',
+        hyphenationSha256:
+          'f4ffcd96c5cbc886bdad23f95dcae8edc3cd3620eae62f7946eceda97c4e68f8',
+      },
+      evidence: [
+        'source-proven-wrapped-line-boundary',
+        'lexical-model:scowl-2020.12.07+ushyphmax-2005-05-30',
+        'joined-form-valid:pinned-lexicon',
+        'split-point-valid:pinned-hyphenation-pattern',
+        'same-document-unhyphenated-word',
+        'hard-hyphen-form-not-proved',
+        'language-scope:en-US->en-US',
+      ],
+    },
+  }
+  return {
+    ...reconstruction,
+    regions: [...reconstruction.regions, fromRegion, toRegion, proofRegion],
+    canonicalHyphenBoundaryDecisions: [decision],
+    canonicalHyphenBoundaryDecisionCount: 1,
+  } satisfies PdfReconstruction
+}
+
+async function readyDerivedAffixHyphenDeletionFixture() {
+  const reconstruction = await readyCanonicalHyphenDeletionFixture()
+  const fromRegion = reconstruction.regions.find(
+    (region) => region.id === 'canonical-hyphen-from-region',
+  )!
+  const toRegion = reconstruction.regions.find(
+    (region) => region.id === 'canonical-hyphen-to-region',
+  )!
+  const proofRegion = reconstruction.regions.find(
+    (region) => region.id === 'canonical-hyphen-proof-region',
+  )!
+  fromRegion.text = 'Reparameter-'
+  fromRegion.lines[0].text = fromRegion.text
+  toRegion.text = 'ized, continued source text.'
+  toRegion.lines[0].text = toRegion.text
+  proofRegion.text = 'Parameterized models appear in the same document.'
+  proofRegion.lines[0].text = proofRegion.text
+  reconstruction.canonicalHyphenBoundaryDecisions[0].proof = {
+    tier: 'same-document-derived-affix',
+    sourceBoundaryProven: true,
+    derivedWord: 'reparameterized',
+    productivePrefix: {
+      kind: 'prefix',
+      value: 're',
+      affixClass: 'PFX',
+      flag: 'A',
+      crossProduct: true,
+      affixSha256:
+        '70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5',
+    },
+    baseWord: 'parameterized',
+    pinnedBaseWordValid: true,
+    pinnedSplit: { left: 'reparameter', right: 'ized', index: 11 },
+    splitPointValid: true,
+    exactSameDocumentBaseWord: 'Parameterized',
+    sameDocumentBaseWordValid: true,
+    hardHyphenForm: 'reparameter-ized',
+    hardHyphenCounterproof: null,
+    model: {
+      id: 'scowl-2020.12.07+ushyphmax-2005-05-30',
+      language: 'en-US',
+      dictionarySha256:
+        '829a043cf078d1e80e886289a13823454977f442a239a859d2133ea61944aa60',
+      affixSha256:
+        '70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5',
+      hyphenationSha256:
+        'f4ffcd96c5cbc886bdad23f95dcae8edc3cd3620eae62f7946eceda97c4e68f8',
+    },
+    evidence: [
+      'source-proven-wrapped-line-boundary',
+      'lexical-model:scowl-2020.12.07+ushyphmax-2005-05-30',
+      'joined-form-valid:same-document-derived-affix',
+      'split-point-valid:pinned-hyphenation-pattern',
+      'productive-prefix-valid:pinned-affix-model',
+      'base-form-valid:pinned-lexicon',
+      'same-document-unhyphenated-base-word',
+      'hard-hyphen-form-not-proved',
+      'language-scope:en-US->en-US',
+    ],
+  }
   return reconstruction
 }
 
@@ -885,8 +1507,10 @@ describe('EPUB 3 export', () => {
 
     expect(content).not.toContain(placeholder)
     expect(content).toContain(
-      'alt="Equation image; semantic transcript unresolved." data-alt-source="unresolved"',
+      'alt="Equation reproduced from the source PDF." data-alt-source="source-image"',
     )
+    expect(content).not.toContain('semantic transcript unresolved')
+    expect(content).not.toContain('data-alt-source="unresolved"')
     expect(content).toContain(
       '<figcaption id="equation-caption" data-canonical-id="equation-caption" class="synthetic-equation-caption" aria-hidden="true"></figcaption>',
     )
@@ -930,7 +1554,7 @@ describe('EPUB 3 export', () => {
         '"',
     )
     expect(content).toContain(
-      '<figcaption id="equation-caption" data-canonical-id="equation-caption">Equation 1</figcaption>',
+      '<figcaption id="equation-caption" data-canonical-id="equation-caption" class="equation-number-caption visually-hidden">Equation 1</figcaption>',
     )
     expect(content).not.toContain('<em>E</em>')
     expect(content).not.toContain('<sup>q</sup>')
@@ -980,6 +1604,114 @@ describe('EPUB 3 export', () => {
     expect(content).not.toContain(
       'alt="Equation image; semantic transcript unresolved."',
     )
+  })
+
+  it('renders verified script MathML while hiding its source image from assistive technology', async () => {
+    const { reconstruction, equationRegion } =
+      await staleEquationTranscriptFixture()
+    const relationship = reconstruction.visualRelationships[0]
+    equationRegion.text = 'x2=y'
+    Object.assign(equationRegion.box, {
+      x: 0.28,
+      y: 0.305,
+      width: 0.09,
+      height: 0.026,
+    })
+    equationRegion.lines = [
+      {
+        id: 'equation-source-line-1',
+        text: equationRegion.text,
+        fontSize: 10,
+        box: { ...equationRegion.box },
+        runs: [
+          {
+            ...equationRegion.box,
+            text: 'x',
+            x: 0.29,
+            y: 0.315,
+            width: 0.01,
+            height: 0.014,
+            fontName: 'Synthetic-CMMI10',
+            fontSize: 10,
+            confidence: 1,
+          },
+          {
+            ...equationRegion.box,
+            text: '2',
+            x: 0.301,
+            y: 0.306,
+            width: 0.006,
+            height: 0.007,
+            fontName: 'Synthetic-CMMI8',
+            fontSize: 7,
+            confidence: 1,
+          },
+          {
+            ...equationRegion.box,
+            text: '=',
+            x: 0.312,
+            y: 0.315,
+            width: 0.008,
+            height: 0.014,
+            fontName: 'Synthetic-CMSY10',
+            fontSize: 10,
+            confidence: 1,
+          },
+          {
+            ...equationRegion.box,
+            text: 'y',
+            x: 0.326,
+            y: 0.315,
+            width: 0.01,
+            height: 0.014,
+            fontName: 'Synthetic-CMMI10',
+            fontSize: 10,
+            confidence: 1,
+          },
+        ],
+      },
+    ]
+    relationship.sourceRegionIds = [equationRegion.id]
+    relationship.sourceLineIds = [equationRegion.lines[0].id]
+    relationship.sourceText = ''
+    relationship.altTextSource = 'caption'
+    relationship.evidence = [
+      'source-page-crop',
+      SOURCE_GEOMETRY_SCRIPT_TRANSCRIPT_EVIDENCE,
+    ]
+    relationship.equationGeometryTranscript =
+      createSourceGeometryScriptTranscript({
+        sourceRegionIds: relationship.sourceRegionIds,
+        sourceLineIds: relationship.sourceLineIds,
+        sourceObjectIds: relationship.sourceObjectIds,
+        regions: reconstruction.regions,
+        sourceCropAsset: reconstruction.assets[0],
+      })!
+
+    const content = renderPublicationXhtml(reconstruction.paper, {
+      reconstruction,
+    })
+
+    expect(relationship.equationGeometryTranscript).not.toBeNull()
+    expect(content).toContain(
+      'alt="" aria-hidden="true" data-alt-source="source-geometry-script-transcript-v1"',
+    )
+    expect(content).not.toContain('role="img"')
+    expect(content).not.toContain('aria-describedby=')
+    expect(content).toContain(
+      '<math xmlns="http://www.w3.org/1998/Math/MathML" id="equation-node-equation-transcript" class="visually-hidden" display="block" data-equation-transcript-source="source-geometry-script-transcript-v1" data-equation-spoken-text="x superscript 2 equals y"',
+    )
+    expect(content).not.toMatch(
+      /<math\b[^>]*\s(?:hidden|aria-hidden|aria-label)=/u,
+    )
+    expect(content).toContain(
+      '<msup><mi>x</mi><mn>2</mn></msup><mo>=</mo><mi>y</mi>',
+    )
+    expect(content).toContain(
+      '<annotation encoding="text/plain">x^(2) = y</annotation>',
+    )
+    expect(content).not.toContain('visual-source-transcript')
+    expect(XMLValidator.validate(content)).toBe(true)
   })
 
   it('percent-encodes RFC-unwise external-link characters for EPUB readers', async () => {
@@ -1265,7 +1997,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(listPaper)
 
     expect(content).toContain(
-      '<li id="inline-list-item" data-canonical-id="inline-list-item" class="publication-list-item" data-list-level="1"><strong>Bold</strong> <a id="inline-note-reference" href="#inline-note" epub:type="noteref"><sup>1</sup></a> <a href="https://example.test/list">link</a></li>',
+      '<li id="inline-list-item" data-canonical-id="inline-list-item" class="publication-list-item" data-list-level="1"><strong>Bold</strong> <a id="inline-note-reference" href="#inline-note" epub:type="noteref" role="doc-noteref"><sup>1</sup></a> <a href="https://example.test/list">link</a></li>',
     )
   })
 
@@ -1299,7 +2031,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(citationPaper)
 
     expect(content).toContain(
-      '<a id="citation-1" href="#reference-1" epub:type="biblioref" data-semantic-role="citation" data-relationship-id="citation-1" data-target-ids="reference-1">[1]</a>',
+      '<a id="citation-1" href="#reference-1" epub:type="biblioref" role="doc-biblioref" data-semantic-role="citation" data-relationship-id="citation-1" data-target-ids="reference-1">[1]</a>',
     )
   })
 
@@ -1347,7 +2079,7 @@ describe('EPUB 3 export', () => {
     )
     expect(content.match(/\sid="citation-range"/g)).toHaveLength(1)
     expect(content).toContain(
-      '[<em><a href="#reference-1" epub:type="biblioref">1</a>–<a href="#reference-3" epub:type="biblioref">3</a></em>]',
+      '[<em><a href="#reference-1" epub:type="biblioref" role="doc-biblioref">1</a>–<a href="#reference-3" epub:type="biblioref" role="doc-biblioref">3</a></em>]',
     )
     expect(content.match(/>1<\/a>–<a[^>]*>3<\/a>/g)).toHaveLength(1)
     expect(content).not.toContain('additional-biblioref')
@@ -1402,7 +2134,7 @@ describe('EPUB 3 export', () => {
       'data-target-ids="reference-16 reference-38 reference-39 reference-40"',
     )
     expect(content).toContain(
-      '[<a href="#reference-16" epub:type="biblioref">16</a>, <a href="#reference-38" epub:type="biblioref">38</a>–<a href="#reference-40" epub:type="biblioref">40</a>]',
+      '[<a href="#reference-16" epub:type="biblioref" role="doc-biblioref">16</a>, <a href="#reference-38" epub:type="biblioref" role="doc-biblioref">38</a>–<a href="#reference-40" epub:type="biblioref" role="doc-biblioref">40</a>]',
     )
     expect(content).not.toContain('additional-biblioref')
   })
@@ -1705,7 +2437,7 @@ describe('EPUB 3 export', () => {
 
     for (const ordinal of [62, 63, 48]) {
       expect(content).toContain(
-        `<a href="#reference-${ordinal}" epub:type="biblioref">${ordinal}</a>`,
+        `<a href="#reference-${ordinal}" epub:type="biblioref" role="doc-biblioref">${ordinal}</a>`,
       )
       expect(content.match(new RegExp(`>${ordinal}<`, 'g'))).toHaveLength(1)
     }
@@ -2096,7 +2828,7 @@ describe('EPUB 3 export', () => {
 
     expect(content.match(/id="note-reference-12"/g)).toHaveLength(1)
     expect(content).toContain(
-      '<a id="note-reference-12" href="#note-12" epub:type="noteref"><em>1</em><strong>2</strong></a>',
+      '<a id="note-reference-12" href="#note-12" epub:type="noteref" role="doc-noteref"><em>1</em><strong>2</strong></a>',
     )
   })
 
@@ -2194,13 +2926,75 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(notePaper)
 
     expect(content).toContain(
-      'Yeyong Yu<sup class="author-affiliation-marker">1</sup><a id="author-noteref-1" href="#author-note-1" epub:type="noteref">*</a>, Runsheng Yu<sup class="author-affiliation-marker">2</sup>',
+      'Yeyong Yu<sup class="author-note-marker"><a id="author-noteref-1" href="#author-note-1" epub:type="noteref" role="doc-noteref">*</a></sup><sup class="author-affiliation-marker">1</sup>, Runsheng Yu<sup class="author-affiliation-marker">2</sup>',
     )
     expect(content).toContain(
-      '<p class="affiliations">1 Example University, 2 Example Laboratory</p>',
+      '<p class="affiliations"><span class="affiliation"><sup class="affiliation-marker">1</sup>Example University,</span><br /><span class="affiliation"><sup class="affiliation-marker">2</sup>Example Laboratory</span></p>',
     )
     expect(content).not.toContain('University,;')
     expect(content).toContain('href="#author-noteref-1"')
+  })
+
+  it('applies one shared numbered affiliation to every author when explicit author mappings are absent', () => {
+    const sharedAffiliationPaper = structuredClone(paper)
+    sharedAffiliationPaper.authors = ['Minyoung Huh', 'Brian Cheung']
+    sharedAffiliationPaper.authorAffiliations = []
+    sharedAffiliationPaper.affiliations = [
+      '1 Massachusetts Institute of Technology',
+    ]
+
+    const content = renderPublicationXhtml(sharedAffiliationPaper)
+
+    expect(content).toContain(
+      'Minyoung Huh<sup class="author-affiliation-marker">1</sup>, Brian Cheung<sup class="author-affiliation-marker">1</sup>',
+    )
+  })
+
+  it('recovers a shared affiliation marker embedded in a common symbolic author note', () => {
+    const sharedNotePaper = structuredClone(paper)
+    sharedNotePaper.authors = ['Minyoung Huh', 'Brian Cheung']
+    sharedNotePaper.authorAffiliations = []
+    sharedNotePaper.affiliations = []
+    sharedNotePaper.authorNotes = sharedNotePaper.authors.map(
+      (author, index) => ({
+        id: `shared-note-reference-${index + 1}`,
+        author,
+        label: '*',
+        target: 'shared-author-note',
+      }),
+    )
+    const noteText = 'Equal contribution 1MIT. Correspondence to: Minyoung Huh.'
+    const markerStart = noteText.indexOf('1')
+    sharedNotePaper.nodes = [
+      {
+        id: 'shared-author-note',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '*',
+        text: noteText,
+        inlineRuns: [
+          {
+            start: markerStart,
+            end: markerStart + 1,
+            verticalAlign: 'superscript',
+          },
+        ],
+        relationships: {
+          backlinks: sharedNotePaper.authorNotes.map(
+            (reference) => reference.id,
+          ),
+        },
+        source: 'synthetic-shared-author-note',
+      },
+    ]
+
+    const content = renderPublicationXhtml(sharedNotePaper)
+
+    expect(content).toContain('Minyoung Huh<sup class="author-note-marker">')
+    expect(content).toContain(
+      '</a></sup><sup class="author-affiliation-marker">1</sup>',
+    )
+    expect(content).toContain('Brian Cheung<sup class="author-note-marker">')
   })
 
   it('renders a reconstructed byline immediately after its canonical title so author-note backlinks resolve', () => {
@@ -2248,7 +3042,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(notePaper, { reconstruction })
 
     expect(content).toContain(
-      'Yeyong Yu<a id="reconstructed-author-noteref-1" href="#reconstructed-author-note-1" epub:type="noteref">*</a>, Runsheng Yu',
+      'Yeyong Yu<sup class="author-note-marker"><a id="reconstructed-author-noteref-1" href="#reconstructed-author-note-1" epub:type="noteref" role="doc-noteref">*</a></sup>, Runsheng Yu',
     )
     expect(content).toContain('href="#reconstructed-author-noteref-1"')
     expect(content.indexOf('id="canonical-title-node"')).toBeLessThan(
@@ -2510,8 +3304,22 @@ describe('EPUB 3 export', () => {
     expect(strFromU8(files['META-INF/container.xml'])).toContain(
       'EPUB/package.opf',
     )
-    expect(strFromU8(files['EPUB/package.opf'])).toContain('version="3.0"')
-    expect(strFromU8(files['EPUB/package.opf'])).toContain('properties="nav"')
+    const opf = strFromU8(files['EPUB/package.opf'])
+    const navigation = strFromU8(files['EPUB/nav.xhtml'])
+    expect(opf).toContain('version="3.0"')
+    expect(opf).toContain('properties="nav"')
+    expect(opf).toContain('<meta property="schema:accessMode">textual</meta>')
+    expect(opf).toContain(
+      '<meta property="schema:accessibilityFeature">structuralNavigation</meta>',
+    )
+    expect(opf).toContain(
+      '<meta property="schema:accessibilityHazard">none</meta>',
+    )
+    expect(opf).toContain(
+      '<meta property="schema:accessModeSufficient">textual</meta>',
+    )
+    expect(opf).toContain('<meta property="schema:accessibilitySummary">')
+    expect(navigation).toContain('<nav epub:type="toc" role="doc-toc"')
   })
 
   it('rejects malformed package graphs and asset bytes that do not match their manifest receipt', async () => {
@@ -2970,6 +3778,13 @@ describe('EPUB 3 export', () => {
       sourcePdfSha256,
     }
 
+    expect(originalManifest).toMatchObject({
+      canonicalHyphenDeletionCount: 0,
+      canonicalHyphenDeletionContextCounts: {},
+      canonicalHyphenDeletionLedger: [],
+      canonicalHyphenDeletionLedgerSha256:
+        expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
     expect(() => inspectEpub(epub.bytes, undefined, expected)).not.toThrow()
 
     for (const invalid of [7, 'A'.repeat(64), 'abc']) {
@@ -3012,6 +3827,414 @@ describe('EPUB 3 export', () => {
     await expect(buildEpub(paper, partial)).rejects.toMatchObject({
       code: 'INCOMPLETE_RECONSTRUCTION',
     })
+  })
+
+  it('fails closed when publication reassessment omits or corrupts the semantic-flow ledger receipt', async () => {
+    const complete = await readyExternalHyperlinkFixture()
+    const missingDecisions = structuredClone(
+      complete,
+    ) as Partial<PdfReconstruction>
+    delete missingDecisions.sourceSemanticFlowBoundaryDecisions
+    const missingCount = structuredClone(complete) as Partial<PdfReconstruction>
+    delete missingCount.sourceSemanticFlowBoundaryDecisionCount
+    const malformed = structuredClone(complete) as unknown as {
+      sourceSemanticFlowBoundaryDecisions: unknown[]
+      sourceSemanticFlowBoundaryDecisionCount: number
+    }
+    malformed.sourceSemanticFlowBoundaryDecisions = [null]
+    malformed.sourceSemanticFlowBoundaryDecisionCount = 1
+
+    for (const candidate of [missingDecisions, missingCount, malformed]) {
+      await expect(
+        buildEpub(complete.paper, candidate as PdfReconstruction),
+      ).rejects.toMatchObject({ code: 'INCOMPLETE_RECONSTRUCTION' })
+    }
+  })
+
+  it('persists and validates the PDF semantic-flow boundary receipt', async () => {
+    const complete = await readyExternalHyperlinkFixture()
+    const epub = await buildEpub(complete.paper, complete)
+    const files = unzipSync(epub.bytes)
+    const manifest = JSON.parse(strFromU8(files['EPUB/export.json'])) as {
+      sourceSemanticFlowBoundaryCount: number
+      sourceSemanticFlowBoundaryLedger: unknown[]
+      sourceSemanticFlowBoundaryLedgerSha256: string
+    }
+
+    expect(manifest.sourceSemanticFlowBoundaryCount).toBe(
+      complete.sourceSemanticFlowBoundaryDecisionCount,
+    )
+    expect(manifest.sourceSemanticFlowBoundaryLedger).toHaveLength(
+      complete.sourceSemanticFlowBoundaryDecisionCount,
+    )
+    expect(manifest.sourceSemanticFlowBoundaryLedgerSha256).toMatch(
+      /^[a-f0-9]{64}$/u,
+    )
+    expect(() =>
+      inspectEpub(epub.bytes, undefined, {
+        sourceSemanticFlowBoundaryLedgerSha256:
+          manifest.sourceSemanticFlowBoundaryLedgerSha256,
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects a canonically hashed default-space semantic-flow manifest record', async () => {
+    const complete = await readyExternalHyperlinkFixture()
+    const epub = await buildEpub(complete.paper, complete)
+    const files = unzipSync(epub.bytes)
+    const manifest = JSON.parse(strFromU8(files['EPUB/export.json'])) as Record<
+      string,
+      unknown
+    >
+    const endpoint = {
+      regionId: '1'.repeat(64),
+      lineId: '2'.repeat(64),
+      runIndex: 0,
+      sourceSequenceIndex: 0,
+      sourceRunSha256: '3'.repeat(64),
+      sourceFragmentId: '4'.repeat(64),
+    }
+    const to = {
+      ...endpoint,
+      regionId: '5'.repeat(64),
+      lineId: '6'.repeat(64),
+      sourceSequenceIndex: 1,
+      sourceRunSha256: '7'.repeat(64),
+      sourceFragmentId: '8'.repeat(64),
+    }
+    const evidence = [
+      'exact-source-sequence-adjacency',
+      'explicit-fragment-lineage',
+      'font-baseline-compatible',
+    ]
+    const id = createHash('sha256')
+      .update(
+        JSON.stringify([
+          'pdf-source-semantic-flow-boundary-v1',
+          1,
+          0,
+          'pdf-text',
+          'inline-stacked-fragment',
+          'space',
+          [
+            endpoint.regionId,
+            endpoint.lineId,
+            endpoint.runIndex,
+            endpoint.sourceSequenceIndex,
+            endpoint.sourceRunSha256,
+            endpoint.sourceFragmentId,
+          ],
+          [
+            to.regionId,
+            to.lineId,
+            to.runIndex,
+            to.sourceSequenceIndex,
+            to.sourceRunSha256,
+            to.sourceFragmentId,
+          ],
+          evidence,
+        ]),
+      )
+      .digest('hex')
+    const records = [
+      {
+        id,
+        page: 1,
+        rotation: 0,
+        method: 'pdf-text',
+        topology: 'inline-stacked-fragment',
+        outcome: 'space',
+        from: endpoint,
+        to,
+        evidenceSha256s: evidence.map((value) =>
+          createHash('sha256').update(value).digest('hex'),
+        ),
+      },
+    ]
+    manifest.sourceSemanticFlowBoundaryCount = 1
+    manifest.sourceSemanticFlowBoundaryLedger = records
+    manifest.sourceSemanticFlowBoundaryLedgerSha256 =
+      canonicalJsonSha256ForTest(records)
+    const tampered = {
+      ...files,
+      'EPUB/export.json': strToU8(`${JSON.stringify(manifest)}\n`),
+    }
+
+    expect(() => inspectEpub(rezipEpub(tampered))).toThrow(
+      /semantic-flow boundary ledger is invalid/iu,
+    )
+  })
+
+  it('fails closed at publication export for missing, malformed, or duplicate canonical hyphen deletion proof', async () => {
+    const complete = await readyCanonicalHyphenDeletionFixture()
+    await expect(buildEpub(complete.paper, complete)).resolves.toMatchObject({
+      mode: 'publication',
+    })
+
+    const malformed = structuredClone(complete)
+    malformed.canonicalHyphenBoundaryDecisions[0].proof.pinnedSplit.index += 1
+    const duplicate = structuredClone(complete)
+    duplicate.canonicalHyphenBoundaryDecisions.push(
+      structuredClone(duplicate.canonicalHyphenBoundaryDecisions[0]),
+    )
+    duplicate.canonicalHyphenBoundaryDecisionCount = 2
+    const missing = structuredClone(complete) as Partial<PdfReconstruction>
+    delete missing.canonicalHyphenBoundaryDecisions
+
+    for (const candidate of [
+      missing,
+      {
+        ...structuredClone(complete),
+        canonicalHyphenBoundaryDecisions: [],
+      },
+      malformed,
+      duplicate,
+    ]) {
+      await expect(
+        buildEpub(complete.paper, candidate as PdfReconstruction),
+      ).rejects.toMatchObject({ code: 'INCOMPLETE_RECONSTRUCTION' })
+    }
+    expect(
+      malformed.regions.find(
+        (region) => region.id === 'canonical-hyphen-from-region',
+      )?.text,
+    ).toBe('Repre-')
+  })
+
+  it('persists and validates the normalized PDF canonical hyphen deletion receipt', async () => {
+    const complete = await readyCanonicalHyphenDeletionFixture()
+    const epub = await buildEpub(complete.paper, complete)
+    const files = unzipSync(epub.bytes)
+    const manifest = JSON.parse(strFromU8(files['EPUB/export.json'])) as Record<
+      string,
+      unknown
+    >
+    const ledger = manifest.canonicalHyphenDeletionLedger as Array<
+      Record<string, unknown>
+    >
+    const ledgerSha256 = manifest.canonicalHyphenDeletionLedgerSha256 as string
+
+    expect(manifest).toMatchObject({
+      canonicalHyphenDeletionCount: 1,
+      canonicalHyphenDeletionContextCounts: {
+        'canonical-flow-continuation': 1,
+      },
+      canonicalHyphenDeletionLedgerSha256:
+        expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+    expect(ledger).toHaveLength(1)
+    expect(ledger[0]).toMatchObject({
+      id: expect.stringMatching(/^[a-f0-9]{64}$/),
+      proof: {
+        tier: 'exact-same-document',
+        sourceBoundaryProven: true,
+        pinnedWordSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        pinnedJoinedFormValid: true,
+        pinnedSplit: {
+          leftSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          rightSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          index: 5,
+        },
+        splitPointValid: true,
+        exactSameDocumentJoinedFormSha256:
+          expect.stringMatching(/^[a-f0-9]{64}$/),
+        sameDocumentJoinedFormValid: true,
+        hardHyphenFormSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        hardHyphenCounterproof: null,
+        model: complete.canonicalHyphenBoundaryDecisions[0].proof.model,
+        evidenceSha256s: expect.arrayContaining([
+          expect.stringMatching(/^[a-f0-9]{64}$/),
+        ]),
+      },
+    })
+    expect(JSON.stringify(ledger)).not.toContain('Representation')
+    expect(JSON.stringify(ledger)).not.toContain('language-scope:en-US->en-US')
+    expect(() =>
+      inspectEpub(epub.bytes, undefined, {
+        canonicalHyphenDeletionLedgerSha256: ledgerSha256,
+      }),
+    ).not.toThrow()
+    const legacyManifest = structuredClone(manifest)
+    legacyManifest.schemaVersion = '1.1.0'
+    const legacyRecords =
+      legacyManifest.canonicalHyphenDeletionLedger as Array<{
+        proof: Record<string, unknown>
+      }>
+    for (const record of legacyRecords) delete record.proof.tier
+    legacyManifest.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonSha256ForTest(legacyRecords)
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/export.json': strToU8(`${JSON.stringify(legacyManifest)}\n`),
+        }),
+      ),
+    ).not.toThrow()
+    expect(() =>
+      inspectEpub(epub.bytes, undefined, {
+        canonicalHyphenDeletionLedgerSha256: '0'.repeat(64),
+      }),
+    ).toThrow(/canonicalHyphenDeletionLedgerSha256.*expected PDF ledger/i)
+
+    for (const field of [
+      'canonicalHyphenDeletionCount',
+      'canonicalHyphenDeletionContextCounts',
+      'canonicalHyphenDeletionLedger',
+      'canonicalHyphenDeletionLedgerSha256',
+    ]) {
+      const missing = structuredClone(manifest)
+      delete missing[field]
+      expect(() =>
+        inspectEpub(
+          rezipEpub({
+            ...files,
+            'EPUB/export.json': strToU8(`${JSON.stringify(missing)}\n`),
+          }),
+        ),
+      ).toThrow(/missing.*canonical hyphen deletion receipt/i)
+    }
+
+    const countTampered = {
+      ...structuredClone(manifest),
+      canonicalHyphenDeletionCount: 0,
+    }
+    const duplicate = structuredClone(manifest)
+    ;(duplicate.canonicalHyphenDeletionLedger as unknown[]).push(
+      structuredClone(
+        (duplicate.canonicalHyphenDeletionLedger as unknown[])[0],
+      ),
+    )
+    duplicate.canonicalHyphenDeletionCount = 2
+    duplicate.canonicalHyphenDeletionContextCounts = {
+      'canonical-flow-continuation': 2,
+    }
+    const hashTampered = {
+      ...structuredClone(manifest),
+      canonicalHyphenDeletionLedgerSha256: '0'.repeat(64),
+    }
+    const joinedDigestMismatch = structuredClone(manifest)
+    const joinedDigestMismatchRecords =
+      joinedDigestMismatch.canonicalHyphenDeletionLedger as Array<{
+        proof: { exactSameDocumentJoinedFormSha256: string }
+      }>
+    joinedDigestMismatchRecords[0].proof.exactSameDocumentJoinedFormSha256 =
+      'f'.repeat(64)
+    joinedDigestMismatch.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonSha256ForTest(joinedDigestMismatchRecords)
+
+    const missingMandatoryEvidence = structuredClone(manifest)
+    const missingMandatoryEvidenceRecords =
+      missingMandatoryEvidence.canonicalHyphenDeletionLedger as Array<{
+        proof: { evidenceSha256s: string[] }
+      }>
+    missingMandatoryEvidenceRecords[0].proof.evidenceSha256s = ['a'.repeat(64)]
+    missingMandatoryEvidence.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonSha256ForTest(missingMandatoryEvidenceRecords)
+
+    const forbiddenCounterproof = structuredClone(manifest)
+    const forbiddenCounterproofRecords =
+      forbiddenCounterproof.canonicalHyphenDeletionLedger as Array<{
+        proof: { evidenceSha256s: string[] }
+      }>
+    forbiddenCounterproofRecords[0].proof.evidenceSha256s.push(
+      canonicalHyphenEvidenceSha256ForTest(
+        'hard-hyphen-form-valid:same-document',
+      ),
+    )
+    forbiddenCounterproofRecords[0].proof.evidenceSha256s.sort()
+    forbiddenCounterproof.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonSha256ForTest(forbiddenCounterproofRecords)
+
+    for (const tampered of [
+      countTampered,
+      duplicate,
+      hashTampered,
+      joinedDigestMismatch,
+      missingMandatoryEvidence,
+      forbiddenCounterproof,
+    ]) {
+      expect(() =>
+        inspectEpub(
+          rezipEpub({
+            ...files,
+            'EPUB/export.json': strToU8(`${JSON.stringify(tampered)}\n`),
+          }),
+        ),
+      ).toThrow(/canonical hyphen deletion/iu)
+    }
+  })
+
+  it('persists and validates a derived-affix canonical hyphen receipt without joined-surface assertions', async () => {
+    const complete = await readyDerivedAffixHyphenDeletionFixture()
+    const epub = await buildEpub(complete.paper, complete)
+    const files = unzipSync(epub.bytes)
+    const manifest = JSON.parse(strFromU8(files['EPUB/export.json'])) as Record<
+      string,
+      unknown
+    >
+    const ledger = manifest.canonicalHyphenDeletionLedger as Array<{
+      proof: Record<string, unknown>
+    }>
+
+    expect(manifest).toMatchObject({ schemaVersion: '1.2.0' })
+    expect(ledger).toEqual([
+      expect.objectContaining({
+        proof: {
+          tier: 'same-document-derived-affix',
+          sourceBoundaryProven: true,
+          derivedWordSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          productivePrefix: {
+            kind: 'prefix',
+            value: 're',
+            affixClass: 'PFX',
+            flag: 'A',
+            crossProduct: true,
+            affixSha256:
+              '70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5',
+          },
+          baseWordSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          derivationBindingSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          pinnedBaseWordValid: true,
+          pinnedSplit: {
+            leftSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            rightSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            index: 11,
+          },
+          splitPointValid: true,
+          exactSameDocumentBaseWordSha256:
+            expect.stringMatching(/^[a-f0-9]{64}$/),
+          sameDocumentBaseWordValid: true,
+          hardHyphenFormSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          hardHyphenCounterproof: null,
+          model: complete.canonicalHyphenBoundaryDecisions[0].proof.model,
+          evidenceSha256s: expect.arrayContaining([
+            expect.stringMatching(/^[a-f0-9]{64}$/),
+          ]),
+        },
+      }),
+    ])
+    expect(ledger[0].proof).not.toHaveProperty('pinnedJoinedFormValid')
+    expect(ledger[0].proof).not.toHaveProperty('sameDocumentJoinedFormValid')
+    expect(() => inspectEpub(epub.bytes)).not.toThrow()
+
+    const tampered = structuredClone(manifest)
+    const records = tampered.canonicalHyphenDeletionLedger as Array<{
+      proof: {
+        productivePrefix: { flag: string }
+      }
+    }>
+    records[0].proof.productivePrefix.flag = 'Z'
+    tampered.canonicalHyphenDeletionLedgerSha256 =
+      canonicalJsonSha256ForTest(records)
+    expect(() =>
+      inspectEpub(
+        rezipEpub({
+          ...files,
+          'EPUB/export.json': strToU8(`${JSON.stringify(tampered)}\n`),
+        }),
+      ),
+    ).toThrow(/canonical hyphen deletion/iu)
   })
 
   it('escapes publication metadata rather than emitting invalid XHTML', async () => {
@@ -3113,6 +4336,90 @@ describe('EPUB 3 export', () => {
     )
     expect(nav).toMatch(
       /2 Methods<\/a><ol><li><a[^>]+>2\.2 Patient profiles<\/a><ol><li><a[^>]+>2\.2\.1 Patient cohort<\/a><\/li><\/ol><\/li><\/ol><\/li>/u,
+    )
+  })
+
+  it('does not serialize a heading-level jump when source hierarchy starts below its proved parent', async () => {
+    const hierarchyPaper = structuredClone(paper)
+    hierarchyPaper.nodes = [
+      {
+        id: 'orphaned-third-order-heading',
+        type: 'heading',
+        level: 3,
+        text: 'A deeply numbered heading without its source ancestors',
+        source: 'synthetic-heading-jump',
+      },
+    ]
+
+    const epub = await buildEpub(hierarchyPaper)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(content).toContain(
+      '<h2 id="orphaned-third-order-heading" data-canonical-id="orphaned-third-order-heading">A deeply numbered heading without its source ancestors</h2>',
+    )
+    expect(content).not.toContain('<h4 id="orphaned-third-order-heading"')
+  })
+
+  it('pairs EPUB note and bibliography types with their matching DPUB-ARIA roles', async () => {
+    const semanticPaper = structuredClone(paper)
+    semanticPaper.nodes = [
+      {
+        id: 'claim',
+        type: 'paragraph',
+        text: 'Prior work [1]1.',
+        noteReferences: [
+          {
+            id: 'note-reference-1',
+            target: 'note-1',
+            label: '1',
+            start: 14,
+            end: 15,
+            confidence: 1,
+          },
+        ],
+        inlineRuns: [
+          {
+            start: 11,
+            end: 14,
+            relationshipId: 'citation-1',
+            semanticRole: 'citation',
+            targetIds: ['reference-1'],
+          },
+        ],
+        source: 'synthetic-dpub-aria-role-audit',
+      },
+      {
+        id: 'note-1',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '1',
+        text: 'A note.',
+        relationships: { backlinks: ['note-reference-1'] },
+        source: 'synthetic-dpub-aria-role-audit',
+      },
+      {
+        id: 'reference-1',
+        type: 'paragraph',
+        text: '[1] Reference entry.',
+        source: 'synthetic-dpub-aria-role-audit',
+      },
+    ]
+
+    const epub = await buildEpub(semanticPaper)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(content).toContain('epub:type="biblioref" role="doc-biblioref"')
+    expect(content).toContain('epub:type="noteref" role="doc-noteref"')
+    expect(content).not.toMatch(
+      /<(?!a\b)[^>]+\bepub:type="(?:biblioref|noteref)"/u,
+    )
+    expect(content).not.toMatch(
+      /<a\b(?=[^>]+\bepub:type="biblioref")(?![^>]+\brole="doc-biblioref")[^>]*>/u,
+    )
+    expect(content).not.toMatch(
+      /<a\b(?=[^>]+\bepub:type="noteref")(?![^>]+\brole="doc-noteref")[^>]*>/u,
     )
   })
 
@@ -3260,7 +4567,7 @@ describe('EPUB 3 export', () => {
       `<meta property="rendition:flow">${paperPro.epub.renditionFlow}</meta>`,
     )
     expect(manifest).toMatchObject({
-      schemaVersion: '1.1.0',
+      schemaVersion: '1.2.0',
       rendition: 'profile-tuned-reflowable-epub',
       profile: {
         id: 'paperPro',
@@ -3272,7 +4579,7 @@ describe('EPUB 3 export', () => {
         compositionPolicy: { id: 'large-eink', version: '1.1.0' },
         exportPolicy: {
           id: 'profile-tuned-reflowable',
-          version: '1.1.0',
+          version: '1.2.0',
         },
         truth: {
           geometry: 'authoritative',
@@ -3530,6 +4837,10 @@ describe('EPUB 3 export', () => {
     expect(content).toContain('data-wide-table="true" data-table-columns="6"')
     expect(content).toContain('class="semantic-table-figure"')
     expect(content).toContain('data-asset-id="table-asset"')
+    expect(content).toContain(
+      'class="semantic-table-wrapper" role="region" aria-labelledby="table-caption"',
+    )
+    expect(content).not.toContain('aria-label="Scrollable table"')
     expect(content).toContain('<table aria-describedby="table-caption"><thead>')
     expect(content).toContain(
       '<th id="table-node-cell-r1-c1" scope="col" colspan="6">',
@@ -3753,13 +5064,13 @@ describe('EPUB 3 export', () => {
     )
     expect(content).not.toContain('<title>Publication</title>')
     expect(content.match(/Readable text must still flow/g)).toHaveLength(2)
-    expect(content).toContain(
+    expect(content).not.toContain(
       'This readable fallback is incomplete and is not publication-grade.',
     )
-    expect(content).toContain(
+    expect(content).not.toContain(
       'Omitted source visuals and unresolved relationships require review against the source PDF.',
     )
-    expect(content).toContain('class="reconstruction-status" role="note"')
+    expect(content).not.toContain('class="reconstruction-status"')
     expect(content).not.toContain('class="publication-header"')
     expect(content).not.toContain('class="reconstructed-header"')
     expect(content).not.toContain('class="reconstructed-header"')
@@ -3880,6 +5191,14 @@ describe('EPUB 3 export', () => {
       objectType: 'table' as const,
       title: 'Table 1. Source-backed comparison.',
       sourceText,
+      inlineRuns: [
+        { start: 0, end: 'Method'.length, bold: true },
+        {
+          start: sourceText.indexOf('Proposed'),
+          end: sourceText.indexOf('Proposed') + 'Proposed'.length,
+          italic: true,
+        },
+      ],
       relationships: {
         caption: 'bounded-table-caption',
         assets: [crop.id],
@@ -3955,7 +5274,9 @@ describe('EPUB 3 export', () => {
     expect(content).toContain(
       '<span class="visually-hidden visual-source-transcript"',
     )
-    expect(content).toContain(sourceText)
+    expect(content).toContain(
+      '<strong>Method</strong> Score Baseline 72 <em>Proposed</em> 81',
+    )
     expect(content).not.toContain('<table')
     expect(manifest.visualRelationships).toEqual([
       expect.objectContaining({
@@ -4011,6 +5332,196 @@ describe('EPUB 3 export', () => {
         neverUpscaled: true,
       },
     })
+  })
+
+  it('retains more than 64 unique matched equation assets outside the optional cap', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    const equations = await Promise.all(
+      Array.from({ length: 65 }, (_, index) =>
+        readableFallbackEquation(index + 1),
+      ),
+    )
+    const projected = projectReadableFallbackReconstruction(
+      withReadableFallbackEquations(reconstruction, equations),
+    )
+    const equationRelationships = projected.visualRelationships.filter(
+      (relationship) => relationship.kind === 'equation',
+    )
+    const equationAssetIds = new Set(
+      equationRelationships.flatMap((relationship) => relationship.assetIds),
+    )
+
+    expect(equationRelationships).toHaveLength(66)
+    expect(equationAssetIds).toHaveLength(66)
+    expect(projected.assets).toHaveLength(66)
+    const epub = await buildReadableEpub(
+      projected.paper,
+      projected,
+      getTargetProfile('paperPro'),
+    )
+    const content = strFromU8(
+      inspectEpub(epub.bytes, getTargetProfile('paperPro')).files[
+        'EPUB/content.xhtml'
+      ],
+    )
+    expect(content.match(/data-object-type="equation"/gu)).toHaveLength(66)
+    for (const relationship of equationRelationships) {
+      expect(content).toContain(
+        `id="${relationship.canonicalNodeId}" data-canonical-id="${relationship.canonicalNodeId}"`,
+      )
+    }
+  })
+
+  it('fails closed when relationships share a canonical or caption owner', async () => {
+    const { reconstruction, relationship } =
+      await staleEquationTranscriptFixture()
+    for (const duplicate of [
+      {
+        ...relationship,
+        id: 'duplicate-equation-canonical-owner',
+        captionNodeId: 'independent-caption-owner',
+      },
+      {
+        ...relationship,
+        id: 'duplicate-equation-caption-owner',
+        canonicalNodeId: 'independent-canonical-owner',
+      },
+    ]) {
+      expect(() =>
+        projectReadableFallbackReconstruction({
+          ...reconstruction,
+          visualRelationships: [relationship, duplicate],
+        }),
+      ).toThrow(/ambiguously share/u)
+    }
+  })
+
+  it('fails before packaging an unbounded mandatory equation workset', async () => {
+    const { reconstruction, relationship } =
+      await staleEquationTranscriptFixture()
+    const excessiveRelationships = Array.from(
+      { length: MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK + 1 },
+      (_, index) => ({
+        ...relationship,
+        id: `resource-bounded-equation-${index + 1}`,
+      }),
+    )
+    expect(() =>
+      projectReadableFallbackReconstruction({
+        ...reconstruction,
+        visualRelationships: excessiveRelationships,
+      }),
+    ).toThrow(/EPUB asset resource limit exceeded/u)
+
+    expect(() =>
+      projectReadableFallbackReconstruction({
+        ...reconstruction,
+        assets: [
+          {
+            ...reconstruction.assets[0],
+            bytes: {
+              byteLength: MAX_EPUB_ASSET_BYTES_PER_BOOK + 1,
+            } as unknown as Uint8Array,
+          },
+        ],
+      }),
+    ).toThrow(/EPUB asset resource limit exceeded/u)
+  })
+
+  it('caps unique optional asset IDs without collapsing relationship ownership', async () => {
+    const { reconstruction } = await staleEquationTranscriptFixture()
+    const uniqueFigures = Array.from({ length: 65 }, (_, index) =>
+      readableFallbackFigure(index + 1),
+    )
+    const uniqueProjection = projectReadableFallbackReconstruction(
+      withReadableFallbackFigures(reconstruction, uniqueFigures),
+    )
+
+    expect(
+      uniqueProjection.visualRelationships.filter(
+        (relationship) => relationship.kind === 'equation',
+      ),
+    ).toHaveLength(1)
+    expect(
+      uniqueProjection.visualRelationships.filter(
+        (relationship) => relationship.kind === 'figure',
+      ),
+    ).toHaveLength(64)
+
+    const crossKindSharedFigure = readableFallbackFigure(1)
+    const crossKindOptionalFigures = [
+      crossKindSharedFigure,
+      ...Array.from({ length: 64 }, (_, index) =>
+        readableFallbackFigure(index + 2),
+      ),
+    ]
+    const crossKindEquation = readableFallbackEquationSharingFigureAsset(
+      crossKindSharedFigure,
+    )
+    const crossKindBase = withReadableFallbackFigures(
+      reconstruction,
+      crossKindOptionalFigures,
+    )
+    const crossKindProjection = projectReadableFallbackReconstruction({
+      ...crossKindBase,
+      paper: {
+        ...crossKindBase.paper,
+        nodes: [...crossKindBase.paper.nodes, ...crossKindEquation.nodes],
+      },
+      provenance: {
+        ...crossKindBase.provenance,
+        ...crossKindEquation.provenance,
+      },
+      regions: [...crossKindBase.regions, crossKindEquation.region],
+      visualRelationships: [
+        ...reconstruction.visualRelationships,
+        ...crossKindOptionalFigures.map((figure) => figure.relationship),
+        crossKindEquation.relationship,
+      ],
+    })
+
+    expect(
+      crossKindProjection.visualRelationships.filter(
+        (relationship) => relationship.kind === 'figure',
+      ),
+    ).toHaveLength(65)
+    expect(crossKindProjection.assets).toHaveLength(66)
+  })
+
+  it('fails readable fallback explicitly for missing or invalid matched equation assets', async () => {
+    const { reconstruction, relationship } =
+      await staleEquationTranscriptFixture()
+    const invalidReconstructions = [
+      {
+        name: 'missing',
+        reconstruction: { ...reconstruction, assets: [] },
+      },
+      {
+        name: 'invalid',
+        reconstruction: {
+          ...reconstruction,
+          assets: [
+            {
+              ...reconstruction.assets[0],
+              sha256: '0'.repeat(64),
+            },
+          ],
+        },
+      },
+    ] satisfies Array<{ name: string; reconstruction: PdfReconstruction }>
+
+    for (const fixture of invalidReconstructions) {
+      let error: unknown
+      try {
+        projectReadableFallbackReconstruction(fixture.reconstruction)
+      } catch (caught) {
+        error = caught
+      }
+      expect(error, fixture.name).toMatchObject({
+        code: 'INCOMPLETE_RECONSTRUCTION',
+      })
+      expect(String(error)).toContain(relationship.id)
+    }
   })
 
   it('projects readable-fallback note backlinks onto anchors that can actually render', async () => {
@@ -4118,7 +5629,7 @@ describe('EPUB 3 export', () => {
     expect(content).toContain('A note whose extracted marker cannot render.')
   })
 
-  it('keeps owned text from an unresolved diagram with its orphan caption', () => {
+  it('keeps unresolved diagram OCR out of reader-facing content', () => {
     const paper = {
       id: 'unresolved-diagram-paper',
       version: '1.0.0',
@@ -4165,15 +5676,17 @@ describe('EPUB 3 export', () => {
       } as unknown as PdfReconstruction,
     })
 
-    expect(content).toContain('class="orphan-caption omitted-visual"')
-    expect(content).toContain('Recovered text inside the unresolved visual:')
     expect(content).toContain(
+      'id="caption-figure-1" data-canonical-id="caption-figure-1" hidden="hidden"',
+    )
+    expect(content).not.toContain('omitted-visual')
+    expect(content).not.toContain('Recovered text')
+    expect(content).not.toContain(
       'Step 1: embed inputs. Step 2: create the output.',
     )
-    expect(content.match(/Step 1: embed inputs/g)).toHaveLength(1)
   })
 
-  it('keeps owned source lines from an unresolved bounded table in readable fallback', () => {
+  it('keeps unresolved bounded-table OCR out of reader-facing content', () => {
     const paper = {
       id: 'unresolved-table-paper',
       version: '1.0.0',
@@ -4226,15 +5739,102 @@ describe('EPUB 3 export', () => {
       } as unknown as PdfReconstruction,
     })
 
-    expect(content).toContain('class="omitted-table-transcript"')
     expect(content).toContain(
-      '<pre class="omitted-table-transcript-source" data-transcript-status="unresolved">',
+      'id="caption-table-1" data-canonical-id="caption-table-1" hidden="hidden"',
+    )
+    expect(content).not.toContain('omitted-table-transcript')
+    expect(content).not.toContain('Recovered table source text')
+    expect(content).not.toContain(sourceText)
+    expect(content).not.toContain('<table')
+  })
+
+  it('renders a source-proved unresolved partial-parent table caption as an orphan link target', () => {
+    const referenceText = 'Results appear in Table 1.'
+    const referenceStart = referenceText.indexOf('Table 1')
+    const captionNodeId = 'caption-partial-parent-table-1'
+    const relationshipId = 'partial-parent-table-reference'
+    const paper = {
+      id: 'unresolved-partial-parent-table-paper',
+      version: '1.0.0',
+      status: 'working' as const,
+      title: 'Unresolved partial-parent table',
+      subtitle: 'Source-backed fallback',
+      authors: ['Test Author'],
+      updated: '2026-07-30',
+      abstract: 'A partial-parent table whose source crop remains unresolved.',
+      nodes: [
+        {
+          id: 'partial-parent-table-reference-owner',
+          type: 'paragraph' as const,
+          text: referenceText,
+          inlineRuns: [
+            {
+              start: referenceStart,
+              end: referenceStart + 'Table 1'.length,
+              relationshipId,
+              semanticRole: 'cross-reference' as const,
+              targetIds: [captionNodeId],
+            },
+          ],
+          source: 'pdf:test#page=1',
+        },
+        {
+          id: captionNodeId,
+          type: 'caption' as const,
+          text: 'Table 1. Partial-parent results awaiting source rendition.',
+          source: 'pdf:test#page=2',
+        },
+      ],
+    }
+    const sourceText = 'Model Accuracy Baseline 72.1 Proposed 81.4'
+    const content = renderPublicationXhtml(paper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            id: 'visual-relationship-partial-parent-table-1',
+            kind: 'table',
+            label: 'Table 1',
+            captionRegionId: 'page-002-caption',
+            sourceRegionIds: ['page-002-mixed-parent'],
+            sourceLineIds: [
+              'page-002-table-header',
+              'page-002-table-row-1',
+              'page-002-table-row-2',
+            ],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: [
+              'partial-parent-line-selection',
+              'unresolved-bounded-table-text-owned',
+            ],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText,
+            altText:
+              'Table 1. Partial-parent results awaiting source rendition.',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId,
+          },
+        ],
+        assets: [],
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain(
+      `<a id="${relationshipId}" href="#${captionNodeId}" data-semantic-role="cross-reference" data-relationship-id="${relationshipId}" data-target-ids="${captionNodeId}">Table 1</a>`,
     )
     expect(content).toContain(
-      'Recovered table source text; row and column semantics remain unresolved:',
+      `<aside id="${captionNodeId}" data-canonical-id="${captionNodeId}" class="orphan-caption">Table 1. Partial-parent results awaiting source rendition.</aside>`,
     )
-    expect(content).toContain(sourceText)
-    expect(content.match(/Model Accuracy Baseline/g)).toHaveLength(1)
+    expect(content).not.toContain(
+      `id="${captionNodeId}" data-canonical-id="${captionNodeId}" hidden="hidden"`,
+    )
+    expect(content).not.toContain(sourceText)
+    expect(content).not.toContain('<figure')
     expect(content).not.toContain('<table')
   })
 
@@ -4324,7 +5924,7 @@ describe('EPUB 3 export', () => {
     expect(content).not.toContain('class="visual-source-transcript"')
   })
 
-  it('serializes a failed algorithm crop as an explicitly unresolved preformatted transcript rather than prose', () => {
+  it('does not serialize failed algorithm OCR as reader-facing content', () => {
     const algorithmPaper = {
       id: 'unresolved-algorithm-paper',
       version: '1.0.0',
@@ -4381,16 +5981,12 @@ describe('EPUB 3 export', () => {
       } as unknown as PdfReconstruction,
     })
 
-    expect(content).toContain('data-object-type="algorithm"')
     expect(content).toContain(
-      'Recovered source text; semantic line order remains unresolved:',
+      'id="caption-algorithm-2" data-canonical-id="caption-algorithm-2" hidden="hidden"',
     )
-    expect(content).toContain(
-      '<pre class="omitted-algorithm-transcript" data-transcript-status="unresolved">1: Initialize queue.\n2: return result.</pre>',
-    )
-    expect(content).not.toContain(
-      '<p>1: Initialize queue.\n2: return result.</p>',
-    )
+    expect(content).not.toContain('data-object-type="algorithm"')
+    expect(content).not.toContain('Recovered source text')
+    expect(content).not.toContain('1: Initialize queue.')
   })
 
   it('serializes proved source code lines directly as whitespace-preserving pre and code elements', () => {
@@ -4534,13 +6130,34 @@ describe('EPUB 3 export', () => {
     expect(content).toContain('data-object-type="code"')
     expect(content).toContain('class="source-code-figure"')
     expect(content).toContain(
-      '<pre class="source-code" data-whitespace-source="source-lines"><code>GET /Patient?name=a&amp;format=json\nPOST /Patient\n{functions}</code></pre>',
+      '<pre class="source-code" data-whitespace-source="source-lines" data-transcript-status="proved"><code><span class="source-code-line source-code-indent-0">GET /Patient?name=a&amp;format=json</span>\n<span class="source-code-line source-code-indent-0">POST /Patient</span>\n<span class="source-code-line source-code-indent-0">{functions}</span></code></pre>',
     )
     expect(content).not.toContain('<img ')
     expect(content).not.toContain('class="visual-source-transcript"')
+
+    const unresolvedContent = renderPublicationXhtml(codePaper, {
+      reconstruction: {
+        visualRelationships: [
+          {
+            ...relationship,
+            preformatted: {
+              ...relationship.preformatted!,
+              status: 'unresolved',
+            },
+          },
+        ],
+        assets,
+        readiness: { ready: false },
+      } as unknown as PdfReconstruction,
+    })
+    expect(unresolvedContent).not.toContain(
+      'data-transcript-status="unresolved"',
+    )
+    expect(unresolvedContent).not.toContain('source-code-image-comparison')
+    expect(unresolvedContent).toContain('<img ')
   })
 
-  it('serializes a failed code crop only as an explicitly unresolved transcript', () => {
+  it('does not serialize failed code OCR without a source crop', () => {
     const codePaper = {
       id: 'unresolved-code-paper',
       version: '1.0.0',
@@ -4601,19 +6218,15 @@ describe('EPUB 3 export', () => {
       } as unknown as PdfReconstruction,
     })
 
-    expect(content).toContain('data-object-type="code"')
     expect(content).toContain(
-      'Recovered source lines; source crop unavailable:',
+      'id="caption-code-block-2" data-canonical-id="caption-code-block-2" hidden="hidden"',
     )
-    expect(content).toContain(
-      '<pre class="omitted-code-transcript" data-transcript-status="unresolved">GET /Patient?name=value\nPOST /Patient</pre>',
-    )
-    expect(content).not.toContain(
-      '<p>GET /Patient?name=value\nPOST /Patient</p>',
-    )
+    expect(content).not.toContain('data-object-type="code"')
+    expect(content).not.toContain('Recovered source lines')
+    expect(content).not.toContain('GET /Patient?name=value')
   })
 
-  it('marks a caption-only unresolved table as omitted in readable output', () => {
+  it('keeps a caption-only unresolved table out of readable output', () => {
     const paper = {
       id: 'unresolved-table-paper',
       version: '1.0.0',
@@ -4660,16 +6273,16 @@ describe('EPUB 3 export', () => {
       } as unknown as PdfReconstruction,
     })
 
-    expect(content).toContain('class="orphan-caption omitted-visual"')
     expect(content).toContain(
-      'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.',
+      'id="caption-table-1" data-canonical-id="caption-table-1" hidden="hidden"',
     )
-    expect(content).toContain(
+    expect(content).not.toContain('omitted-visual')
+    expect(content).not.toContain(
       'Table 1. A multi-page source table awaiting review.',
     )
   })
 
-  it('marks a canonical orphan caption as omitted when no visual relationship was exported', () => {
+  it('keeps a canonical orphan caption out of readable output', () => {
     const paper = {
       id: 'orphan-caption-paper',
       version: '1.0.0',
@@ -4696,16 +6309,16 @@ describe('EPUB 3 export', () => {
       } as unknown as PdfReconstruction,
     })
 
-    expect(content).toContain('class="orphan-caption omitted-visual"')
     expect(content).toContain(
-      'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.',
+      'id="caption-figure-1" data-canonical-id="caption-figure-1" hidden="hidden"',
     )
-    expect(content).toContain(
+    expect(content).not.toContain('omitted-visual')
+    expect(content).not.toContain(
       'Figure 1. A source visual whose bounded rendition is unavailable.',
     )
   })
 
-  it('packages an unresolved visual caption and owned transcript in readable fallback', async () => {
+  it('packages unresolved visual metadata without exposing OCR in readable content', async () => {
     const run: PdfSourceRun = {
       page: 1,
       text: 'Readable prose before an unresolved source diagram.',
@@ -4797,10 +6410,13 @@ describe('EPUB 3 export', () => {
     const { files, manifest } = inspectEpub(fallback.bytes)
     const content = strFromU8(files['EPUB/content.xhtml'])
 
-    expect(content).toContain('class="orphan-caption omitted-visual"')
-    expect(content).toContain(captionNode.text)
-    expect(content).toContain('Recovered text inside the unresolved visual:')
-    expect(content).toContain(relationship.sourceText)
+    expect(content).toContain(
+      `id="${captionNode.id}" data-canonical-id="${captionNode.id}" hidden="hidden"`,
+    )
+    expect(content).not.toContain('omitted-visual')
+    expect(content).not.toContain(captionNode.text)
+    expect(content).not.toContain('Recovered text')
+    expect(content).not.toContain(relationship.sourceText)
     expect(content).not.toContain('<img')
     expect(manifest.canonicalNodeIds).toContain(captionNode.id)
     expect(manifest.visualRelationships).toEqual([
@@ -4812,7 +6428,7 @@ describe('EPUB 3 export', () => {
     ])
   })
 
-  it('omits rejected prose-overlap pixels but preserves their canonical caption as an explicit placeholder', async () => {
+  it('omits rejected prose-overlap pixels while preserving hidden canonical targets', async () => {
     const run: PdfSourceRun = {
       page: 1,
       text: 'Canonical prose owns this source region.',
@@ -4967,11 +6583,11 @@ describe('EPUB 3 export', () => {
     expect(
       content.match(/Canonical prose owns this source region\./g),
     ).toHaveLength(1)
-    expect(content).toContain('False visual duplicate')
     expect(content).toContain('false-visual-node')
     expect(content).toContain('false-visual-caption')
-    expect(content).toContain('class="omitted-visual"')
-    expect(content).not.toContain('orphan-caption')
+    expect(content).toContain('hidden="hidden"')
+    expect(content).not.toContain('False visual duplicate')
+    expect(content).not.toContain('omitted-visual')
     expect(content).not.toContain('<img')
     expect(manifest.visualRelationships).toEqual([])
     expect(manifest.assets).toEqual([])
@@ -4981,7 +6597,7 @@ describe('EPUB 3 export', () => {
     expect(manifest.excludedCanonicalNodeIds).toEqual([])
   })
 
-  it('omits an unvalidated fragment bundle while retaining an in-place canonical placeholder', async () => {
+  it('omits an unvalidated fragment bundle while retaining hidden canonical targets', async () => {
     const run: PdfSourceRun = {
       page: 1,
       text: 'Readable fallback body.',
@@ -5092,11 +6708,11 @@ describe('EPUB 3 export', () => {
 
     expect(content).not.toContain('<img')
     expect(content).not.toContain('figure-placeholder')
-    expect(content).toContain('class="omitted-visual"')
-    expect(content).not.toContain('orphan-caption')
+    expect(content).not.toContain('omitted-visual')
     expect(content).toContain('figure-node')
     expect(content).toContain('figure-caption')
-    expect(content).toContain('Figure 1. Fragmented source visual.')
+    expect(content).not.toContain('Figure 1. Fragmented source visual.')
+    expect(content).toContain('hidden="hidden"')
     expect(manifest.assets).toEqual([])
     expect(manifest.visualRelationships).toEqual([])
     expect(manifest.canonicalNodeIds).toEqual(
@@ -5230,9 +6846,9 @@ describe('EPUB 3 export', () => {
     expect(content).not.toContain('<img')
     expect(content).not.toContain(rasterId)
     expect(content).not.toContain(solidId)
-    expect(content).toContain('class="omitted-visual"')
-    expect(content).not.toContain('orphan-caption')
-    expect(content).toContain('Figure 1. Bounded source figure.')
+    expect(content).not.toContain('omitted-visual')
+    expect(content).not.toContain('Figure 1. Bounded source figure.')
+    expect(content).toContain('hidden="hidden"')
     expect(manifest.assets).toEqual([])
     expect(manifest.visualRelationships).toEqual([])
     expect(manifest.canonicalNodeIds).toEqual(

@@ -1,0 +1,603 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-seventh-producer-integration-2026-07-28-v1",
+  "generatedAt": "2026-07-28T18:46:03Z",
+  "verdict": {
+    "status": "integrated-validation-blocked-on-fidelity",
+    "publicationReady": false,
+    "downloadReady": false,
+    "summary": "The orchestrator P1 and language-scoped semantic patches are integrated without discarding the sixth-state watchdog, cancellation, or bounded telemetry work. Ten of ten frozen documents materialized 30 of 30 artifacts, and EPUBCheck, Ace, Chromium spine smoke, and the independent package scan passed every artifact. Publication remains blocked: all ten documents require review, aggregate unresolved or ambiguous corrupting joins increased from 157 to 348, semantic tables remain 3 of 87, and native reader evidence is unavailable."
+  },
+  "authoritativeBaseline": {
+    "results": "benchmarks/pdf/sixth-repair-results-v1.json",
+    "resultsSha256": "c2772cbca7c285148c5c5cca228a06ec90d31595c4390ef536a2f6c388d94d9f",
+    "receipt": "/tmp/erniesg-sixth-v2-frozen-final/run-16cbf526112e6953732a9e2ed3fc60ae/corpus-regeneration-receipt.json",
+    "receiptFileSha256": "58723fb2aedb92ba625c0621d33a833af3bdd0a4f4db78fd454e2fd7804483e1",
+    "sealedReceiptSha256": "9e12b0be8b0f233bca91301e326c2db9098f542865cf419a86719fa501cf5f3a",
+    "runIdentitySha256": "16cbf526112e6953732a9e2ed3fc60ae6177fe181e0d6f9948af293f7fb7ca5d",
+    "validatedState": {
+      "documents": {
+        "total": 10,
+        "ready": 0,
+        "reviewRequired": 10,
+        "failed": 0
+      },
+      "artifacts": {
+        "expected": 30,
+        "produced": 30,
+        "missing": 0
+      },
+      "validators": {
+        "epubcheck": {
+          "passed": 30,
+          "failed": 0
+        },
+        "ace": {
+          "passed": 30,
+          "failed": 0
+        },
+        "chromiumSpineSmoke": {
+          "passed": 30,
+          "failed": 0
+        }
+      },
+      "fullVitest": {
+        "filesPassed": 98,
+        "testsPassed": 1743,
+        "testsSkipped": 1
+      }
+    }
+  },
+  "producerInputs": {
+    "orchestrator": {
+      "results": "/tmp/erniesg-orchestrator-p1-farm-results.json",
+      "resultsSha256": "fb4f2be3a7c5a3b08913ff97c5c0e2ce68557260e09b7defae320b055c226e0a",
+      "patch": "/tmp/erniesg-orchestrator-p1-farm.diff",
+      "patchSha256": "f04f64673f31a0861cd156a757267a53f8884191f0d0fa8c6a441b31622ee25c",
+      "patchBytes": 44279
+    },
+    "semantic": {
+      "results": "/tmp/erniesg-semantic-table-farm-results.json",
+      "resultsSha256": "7c803bd3e04862072542b778d4b61ae39bb46733f52005072495b25cac16e00a",
+      "patch": "/tmp/erniesg-semantic-table-farm.diff",
+      "patchSha256": "e52776ac18a268625e8ece8da58acdf3262c9bd6b4759ca0b13a8d75e65ade19",
+      "patchBytes": 1085776
+    }
+  },
+  "integrationDecisions": {
+    "accepted": [
+      {
+        "scope": "orchestrator receipts and publication",
+        "changes": [
+          "sealed receipt SHA-256 content locators",
+          "atomic and idempotent concurrent publication",
+          "explicit failed-attempt history",
+          "passed-only current shard checkpoints",
+          "same-identity retry without downgrading an existing passed receipt"
+        ]
+      },
+      {
+        "scope": "orchestrator pipeline bounds and cleanup",
+        "changes": [
+          "pipelined conversion, validators, checkpoint verification, and publication",
+          "global conversion maximum of two with exporter document concurrency fixed at one per shard",
+          "independent external-validator and Chromium bounds",
+          "parent-owned Chromium extraction scratch with symlink and regular-directory checks",
+          "forced process-tree termination cleanup coverage"
+        ]
+      },
+      {
+        "scope": "semantic hyphen proof",
+        "changes": [
+          "pinned offline SCOWL, Hunspell affix, and US English TeX hyphenation data",
+          "en and en-US language scope only",
+          "pinned joined-word and split-point proof",
+          "exact same-document hard-hyphen and complete unhyphenated-word evidence",
+          "shared line, region, float, column, page, bibliography, and source-replay call-chain integration",
+          "fail-closed unsupported language and unproved source behavior"
+        ]
+      },
+      {
+        "scope": "licensing",
+        "changes": [
+          "redistribution license and source README retained beside the pinned lexicon assets"
+        ]
+      }
+    ],
+    "revised": [
+      {
+        "scope": "sixth-state overlap",
+        "producerBehavior": "The producer patch was relative to the earlier baseline.",
+        "revision": "Merged manually into the sixth state and retained bounded resource telemetry, 30-second progress watchdogs, cooperative yields, abort propagation, cleanup, and final source and toolchain identity checks.",
+        "reason": "Blind replacement would have discarded validated sixth-state cancellation and telemetry behavior."
+      },
+      {
+        "scope": "line-boundary ledger",
+        "producerBehavior": "A joined-word and hard-hyphen collision was recorded as generic unresolved, and downstream structural classification collapsed ambiguity back to unresolved.",
+        "revision": "Added an explicit ambiguous outcome, preserved it through structural classification, and counted ambiguous plus unresolved outcomes as publication-blocking across completeness, decision records, audit, and private-fidelity validation.",
+        "reason": "Remove, preserve, ambiguous, unresolved, and structural outcomes must remain distinguishable and replayable."
+      },
+      {
+        "scope": "same-document textual proof",
+        "producerBehavior": "Valid pinned spelling and split evidence still required narrow wrap geometry.",
+        "revision": "An exact complete lowercase occurrence elsewhere in the same document may establish source proof only under the supported language model; the pinned spelling and split point must still pass, and hard-hyphen ambiguity still preserves the source form.",
+        "reason": "This reduced the first integrated frozen result from 407 to 348 corrupting joins without authorizing geometry-only deletion."
+      },
+      {
+        "scope": "language integration fixture",
+        "producerBehavior": "The synthetic dehyphenation fixture had no PDF language metadata and therefore correctly failed closed.",
+        "revision": "Added explicit en-US catalog metadata to the repository-owned fixture and updated its source, contract, and manifest hashes.",
+        "reason": "The fixture now proves language-scoped deletion rather than depending on implicit English or geometry alone."
+      },
+      {
+        "scope": "parallel validation regressions",
+        "producerBehavior": "Heavy child-process tests used Vitest's five-second outer default, a concurrent-start assertion imposed wall-clock ordering, and a stress probe raced a disappearing progress node.",
+        "revision": "Added bounded 15-second outer allowances to the known heavy tests, asserted set equality for the two concurrently started jobs while retaining deterministic report equality, and made the terminal progress-node read fail-soft before the next required status check.",
+        "reason": "The evidence harness and stress test now measure the intended contracts without race-dependent false failures."
+      }
+    ],
+    "rejected": [
+      {
+        "change": "Baseline-relative overwrite of the sixth orchestrator and exporter state.",
+        "reason": "It would lose validated cancellation, watchdog, resource telemetry, and cleanup changes."
+      },
+      {
+        "change": "Visible-hyphen deletion from geometry, suffixes, bibliography position, implicit English, unsupported language, or paper identifiers.",
+        "reason": "The semantic integration must be language-scoped, generalized, and fail-closed."
+      },
+      {
+        "change": "Treating ambiguity as a successful removal or preservation.",
+        "reason": "The source form must remain visible and the boundary must remain publication-blocking."
+      },
+      {
+        "change": "Speculative semantic-table heuristics from aggregate receipts.",
+        "reason": "The producer supplied no line-level detector evidence for a generalized safe rule, so the table chain remains unchanged."
+      },
+      {
+        "change": "Publication-readiness or download-readiness claim.",
+        "reason": "All ten frozen documents remain review-required and multiple fidelity gates fail."
+      }
+    ]
+  },
+  "implementation": {
+    "headCommit": "119465e06d7e43679c0d19f8ed46ab4824e55699",
+    "worktreeState": "dirty",
+    "orchestrator": {
+      "path": "tools/pdf-corpus-orchestrator.mjs",
+      "sha256": "8c3823ca6704f8bc879e0a7240760731f621dfeef6e2a3854915a9f633172c63"
+    },
+    "orchestratorTests": {
+      "path": "tools/pdf-corpus-orchestrator.node-test.mjs",
+      "sha256": "bcd3472b0975d058e190f5abc48649d07971848075c43d09281ee654e790ff1e"
+    },
+    "browserReader": {
+      "path": "tools/pdf-epub-browser-reader.mjs",
+      "sha256": "f5a8068d0cf1fa7302a4f5d2a91ea3bd1f57de8300b91bdb286a9bc599cb3418"
+    },
+    "semanticResolver": {
+      "path": "src/research/pdf-hyphenation.ts",
+      "sha256": "6b76d6c401c572298232a0f2de0752039a5030437579b689b053bb24f2204e63"
+    },
+    "lineIntegration": {
+      "path": "src/research/pdf-lines.ts",
+      "sha256": "4e3e4761e4770ab554f2b807d4efc476352919647b47fc425a2e6bbf9bb31bb3"
+    },
+    "qualityIntegration": {
+      "path": "src/research/pdf-quality.ts",
+      "sha256": "49e8d5fa5266002228559861da426b8cfd28494a5cf081d0d5131333a63b2881"
+    },
+    "lexicalModel": {
+      "id": "scowl-2020.12.07+ushyphmax-2005-05-30",
+      "language": "en-US",
+      "networkDependent": false,
+      "assets": {
+        "licenseSha256": "1d7c0128f6c72d2270bf1b271b37a3a21267f759161b68c4dc6c501574c0892e",
+        "readmeSha256": "b83cda50628275688b8ffeab2dadbf57e2061503225ee29513ad2e9cce108a00",
+        "affixSha256": "70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5",
+        "dictionarySha256": "829a043cf078d1e80e886289a13823454977f442a239a859d2133ea61944aa60",
+        "hyphenationSha256": "f4ffcd96c5cbc886bdad23f95dcae8edc3cd3620eae62f7946eceda97c4e68f8"
+      }
+    },
+    "languageFixture": {
+      "pdf": "tests/fixtures/pdf/pdf-to-epub-fidelity.pdf",
+      "pdfSha256": "17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea",
+      "contractSha256": "7578b22d89f05d98b915639a85938df56cf696dd1dd9d82ea62c54ec9de1e294",
+      "catalogLanguage": "en-US"
+    },
+    "semanticTables": {
+      "implementationChanged": false,
+      "reason": "No generalized table change was supported by retained line-level evidence."
+    }
+  },
+  "environment": {
+    "node": "22.22.3",
+    "npm": "10.9.8",
+    "astro": "7.1.3",
+    "vitest": "4.1.10",
+    "playwright": "1.61.1",
+    "java": "OpenJDK 21.0.11",
+    "epubCheck": {
+      "version": "5.3.0",
+      "jarSha256": "f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65"
+    },
+    "daisyAce": {
+      "version": "1.4.6",
+      "launcherSha256": "39909ce78d85972fb694db2f485d117e051b6bb925f01c149fab303df6eef537"
+    },
+    "chromium": {
+      "version": "149.0.7827.0",
+      "binarySha256": "c1aa0fb5b6c60eb093df69d9e40dd50ab2039d3ccba8836ef21880340a77af64"
+    },
+    "webkit": {
+      "version": "26.5",
+      "miniBrowserSha256": "98384046ffbca250cfb254be6849210749f6455b0a5f18ebae022daf6bd39382"
+    }
+  },
+  "commands": {
+    "focusedOrchestrator": "/usr/bin/time -v node --test tools/pdf-corpus-orchestrator.node-test.mjs",
+    "focusedSemantic": "/usr/bin/time -v npx vitest run src/research/pdf-hyphenation.test.ts src/research/pdf-lines.test.ts src/research/pdf-regions.test.ts src/research/pdf-quality.test.ts src/research/pdf-layout.test.ts src/research/pdf-table-scope.test.ts src/research/pdf-table-scope-integration.test.ts src/research/pdf-visuals.test.ts src/research/visual-assets.test.ts src/research/pdf-fidelity-regression.test.ts src/research/pdf-front-matter.test.ts src/research/pdf-note-classifier.test.ts src/research/pdf-residual-provenance.test.ts src/research/pdf-semantic-runtime-regression.test.ts --reporter=dot --maxWorkers=1",
+    "fullVitestBounded": "/usr/bin/time -v npx vitest run --exclude 'tests/e2e/**' --maxWorkers=1 --reporter=dot",
+    "astroCheckAndBuild": "/usr/bin/time -v npm run build:astro",
+    "staticChecks": "git diff --check && node --check tools/pdf-corpus-orchestrator.mjs && node --check tools/pdf-epub-browser-reader.mjs && jq empty benchmarks/pdf/benchmark-readiness-registry-v1.json",
+    "commonCorpusEnvironment": [
+      "export PATH=\"/tmp/erniesg-fifth-validator-bin:$PATH\"",
+      "export EPUBCHECK_JAR=\"/home/ubuntu/.local/share/epubcheck-5.3.0/epubcheck.jar\"",
+      "export PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\"",
+      "export PUPPETEER_EXECUTABLE_PATH=\"$PWD/node_modules/.cache/ms-playwright/chromium-1228/chrome-linux/chrome\""
+    ],
+    "firstIntegratedFrozenAudit": "/usr/bin/time -v npm run pdf:corpus-regenerate -- --contract benchmarks/pdf/corpus-contract-v2.json --corpus-set frozen --source-root node_modules/.cache/erniesg-pdf-corpus-20260728 --out /tmp/erniesg-seventh-v2-frozen-integrated --shard-size 2 --conversion-concurrency 2 --external-validation-concurrency 2 --chromium-spine-smoke-concurrency 1 --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --document-timeout-seconds 1800 --validation-timeout-seconds 600",
+    "representativeAfterSemanticRevision": "/usr/bin/time -v node tools/pdf-export.mjs node_modules/.cache/erniesg-pdf-corpus-20260728/2501.09223v1.pdf --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --readable-fallback --concurrency 1 --document-timeout-seconds 1800 --out /tmp/erniesg-seventh-representative-proof-revision",
+    "finalIntegratedFrozenAudit": "/usr/bin/time -v npm run pdf:corpus-regenerate -- --contract benchmarks/pdf/corpus-contract-v2.json --corpus-set frozen --source-root node_modules/.cache/erniesg-pdf-corpus-20260728 --out /tmp/erniesg-seventh-v2-frozen-integrated-final --shard-size 2 --conversion-concurrency 2 --external-validation-concurrency 2 --chromium-spine-smoke-concurrency 1 --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --document-timeout-seconds 1800 --validation-timeout-seconds 600",
+    "packageScan": "node tools/pdf-epub-package-scan.mjs --receipt /tmp/erniesg-seventh-v2-frozen-integrated-final/run-462dfe16e1998ac77c31fa7d676c6c97/corpus-regeneration-receipt.json --out /tmp/erniesg-seventh-final-epub-package-scans.json",
+    "chromiumApplicationMatrix": "PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\" npx playwright test tests/e2e/pdf-review-viewer.spec.ts tests/e2e/pdf-to-epub-fidelity.spec.ts --reporter=line",
+    "webkitApplicationMatrix": "SRT_E2E_BROWSER=webkit PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\" npx playwright test tests/e2e/pdf-review-viewer.spec.ts tests/e2e/pdf-to-epub-fidelity.spec.ts --reporter=line",
+    "stressAndResponsiveness": "RUN_PDF_STRESS_E2E=1 PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\" npx playwright test tests/e2e/pdf-review-viewer.spec.ts --grep 'keeps the UI responsive' --reporter=line",
+    "agentEvidenceFullAttempts": "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR scripts/agent-evidence",
+    "agentEvidenceTestFinal": "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR scripts/agent-evidence --only=test",
+    "agentEvidenceBuildFinal": "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR scripts/agent-evidence --only=build",
+    "vmVerification": "/usr/bin/time -v infra/vm/verify.sh"
+  },
+  "validation": {
+    "focusedOrchestrator": {
+      "status": "passed",
+      "testsPassed": 11,
+      "note": "The producer's ten P1 tests plus the sixth-state bounded telemetry acceptance test all pass."
+    },
+    "focusedSemantic": {
+      "status": "passed",
+      "filesPassed": 14,
+      "testsPassed": 828,
+      "maximumRssKiB": 435868
+    },
+    "fullVitestBounded": {
+      "status": "passed",
+      "filesPassed": 99,
+      "testsPassed": 1756,
+      "testsSkipped": 1,
+      "testsTotal": 1757,
+      "durationSeconds": 333.99,
+      "wallDurationSeconds": 334.76,
+      "maximumRssKiB": 1550132
+    },
+    "astro": {
+      "status": "passed",
+      "filesChecked": 284,
+      "errors": 0,
+      "warnings": 0,
+      "hints": 10,
+      "staticPagesBuilt": 132,
+      "wallDurationSeconds": 58.5
+    },
+    "browserMatrices": {
+      "applicationFixtureOnly": true,
+      "layoutCombinationsPerEngine": 96,
+      "combinationDefinition": "4 devices x 2 orientations x 4 font sizes x 3 font families",
+      "chromium": {
+        "status": "passed",
+        "testsPassed": 3,
+        "guardedStressSkipped": 1,
+        "wallDurationSeconds": 84.12
+      },
+      "webkit": {
+        "status": "passed",
+        "testsPassed": 3,
+        "guardedStressSkipped": 1,
+        "wallDurationSeconds": 102.21
+      },
+      "scopeWarning": "These application-fixture matrices do not establish native Apple Books or target e-ink reader compatibility."
+    },
+    "stress": {
+      "status": "passed",
+      "sourceId": "2501.09223v1",
+      "pages": 231,
+      "terminalStatus": "review-required",
+      "completionMs": 97340,
+      "cancellationLatencyMs": 111,
+      "maximumMainThreadLatencyMs": 987,
+      "maximumMainHeapBytes": 76600000,
+      "workerCountObserved": 2,
+      "heartbeatAndBuildStagesObserved": true
+    },
+    "agentEvidence": {
+      "build": {
+        "status": "passed",
+        "manifest": ".agent/evidence/20260728T184507512Z/manifest.json",
+        "manifestSha256": "25a9aca061140bc4d141745e4406719a472170937c5750a090182065d632b54c",
+        "durationMs": 55615
+      },
+      "test": {
+        "status": "passed",
+        "manifest": ".agent/evidence/20260728T184038454Z/manifest.json",
+        "manifestSha256": "d37232ffc41010826a267e178f28890de5dbf2e7017451bfd5766cd3e7a63761",
+        "testsPassed": 1756,
+        "testsSkipped": 1,
+        "durationMs": 221773
+      },
+      "supersededFullAttempts": [
+        {
+          "manifest": ".agent/evidence/20260728T182842170Z/manifest.json",
+          "manifestSha256": "d3ea2c98f161f86f74d57f649787926ed897cce04dfb160207212d6daaf418a5",
+          "buildStatus": "passed",
+          "testStatus": "failed",
+          "failure": "one fixed five-second outer test timeout"
+        },
+        {
+          "manifest": ".agent/evidence/20260728T183449931Z/manifest.json",
+          "manifestSha256": "fbe2fcf1278e59c5e1f5ddde017a490c9f3079620e0c8258793d1f6dc6dfe73e",
+          "buildStatus": "passed",
+          "testStatus": "failed",
+          "failure": "two fixed five-second outer timeouts and one concurrent wall-clock start-order assertion"
+        }
+      ],
+      "scopeNote": "This results file was written after the passing evidence manifests and is intentionally outside their pre-receipt source snapshot."
+    },
+    "vmVerification": {
+      "status": "failed-environment-check",
+      "exitCode": 1,
+      "runs": 2,
+      "failure": "rucksack-app.service is inactive",
+      "warning": "HEALTHCHECK_URL is unset",
+      "passes": [
+        "ports 22, 80, and 443",
+        "free disk threshold",
+        "available memory threshold",
+        "Tailscale status"
+      ]
+    },
+    "staticChecks": {
+      "gitDiffCheck": "passed",
+      "orchestratorSyntax": "passed",
+      "browserReaderSyntax": "passed",
+      "registryJson": "passed"
+    }
+  },
+  "corpusMeasurement": {
+    "contract": {
+      "path": "benchmarks/pdf/corpus-contract-v2.json",
+      "canonicalContractSha256": "df8d26b2dfa64e2afe106d4ac53b630012918aeba4638b437307748ee3541814",
+      "set": "frozen",
+      "setId": "frozen-10-2026-07-20-v1",
+      "documentIdentitySha256": "4486bb696a8b7b9b2cc853f20510c6c006b4fdfab2883ec9d593b27c17192f67"
+    },
+    "firstIntegratedRun": {
+      "receipt": "/tmp/erniesg-seventh-v2-frozen-integrated/run-2eecb9131f30c26a96d767e085597b55/corpus-regeneration-receipt.json",
+      "receiptFileSha256": "652c1492df5263dcdd80ae73113f0b8736751f499ee8ebc7dc7d1e01ca8b878f",
+      "sealedReceiptSha256": "3cca71830597519108a0e3588467ae561ea6fdda2dd234111953c002f8aff10a",
+      "unresolvedCorruptingJoins": 407,
+      "reasonSuperseded": "The run exposed a proof interaction and an ambiguity-classification regression; both were revised before the final run."
+    },
+    "finalRun": {
+      "status": "failed",
+      "failureSemantics": "The orchestrator completed every conversion and validation but sealed status failed because the aggregate fidelity summary did not pass.",
+      "receipt": "/tmp/erniesg-seventh-v2-frozen-integrated-final/run-462dfe16e1998ac77c31fa7d676c6c97/corpus-regeneration-receipt.json",
+      "receiptFileSha256": "e95b8205dc70ad8a50271547c51d23d266c28a2311d598cd19ac083122fde0d0",
+      "sealedReceiptSha256": "76a4c3e268d102aa8bee5534d9549a3d49527cb555a8d3779280143e368f5850",
+      "sealedReceiptRecomputed": true,
+      "runIdentitySha256": "462dfe16e1998ac77c31fa7d676c6c9712c2d8a6101ac6435e2ee1df2f490ea4",
+      "toolchainSha256": "fdb280c22f37ff1f0fae7ac344f1eb218ae5e297e23358b357e8930c1f67d18d",
+      "configurationSha256": "16daef76551b298d2df74cfa5644039f2e25cf6542da3523273befb219ba836e",
+      "wallDurationSeconds": 569.64,
+      "maximumRssKiB": 1100868,
+      "concurrency": {
+        "conversionShards": 2,
+        "exporterDocumentsPerShard": 1,
+        "maximumConcurrentDocuments": 2,
+        "externalValidators": 2,
+        "chromiumSpineSmokes": 1
+      },
+      "documents": {
+        "total": 10,
+        "ready": 0,
+        "reviewRequired": 10,
+        "failed": 0
+      },
+      "artifacts": {
+        "expected": 30,
+        "produced": 30,
+        "missing": 0
+      },
+      "validators": {
+        "epubcheck": {
+          "total": 30,
+          "passed": 30,
+          "failed": 0
+        },
+        "ace": {
+          "total": 30,
+          "passed": 30,
+          "failed": 0
+        },
+        "chromiumSpineSmoke": {
+          "total": 30,
+          "passed": 30,
+          "failed": 0
+        }
+      }
+    },
+    "packageScan": {
+      "path": "/tmp/erniesg-seventh-final-epub-package-scans.json",
+      "sha256": "a48b0578056bc7fa75b45f88f39d50efc46ee5ae2c85f6b0d7a56b179a9dbe91",
+      "artifacts": 30,
+      "passed": 30,
+      "failed": 0,
+      "manifestItemsChecked": 837,
+      "assetReferencesChecked": 708,
+      "assetFailures": 0,
+      "hrefsChecked": 6597,
+      "hrefFailures": 0,
+      "readerMarkerFindings": 0,
+      "packagedJavaScriptFindings": 0
+    },
+    "beforeAfter": {
+      "sourceTextCharacters": {
+        "sixth": 1166006,
+        "seventh": 1166006,
+        "delta": 0
+      },
+      "outputTextCharacters": {
+        "sixth": 1146457,
+        "seventh": 1146457,
+        "delta": 0
+      },
+      "matchedTextCharacters": {
+        "sixth": 1146350,
+        "seventh": 1146350,
+        "delta": 0
+      },
+      "aggregateTextCoverage": {
+        "sixth": 0.983142453812416,
+        "seventh": 0.983142453812416,
+        "delta": 0
+      },
+      "unresolvedOrAmbiguousCorruptingJoins": {
+        "sixth": 157,
+        "firstIntegrated": 407,
+        "seventh": 348,
+        "deltaFromSixth": 191,
+        "deltaFromFirstIntegrated": -59
+      },
+      "semanticTables": {
+        "sixth": {
+          "resolved": 3,
+          "expected": 87,
+          "coverage": 0.034482758620689655
+        },
+        "seventh": {
+          "resolved": 3,
+          "expected": 87,
+          "coverage": 0.034482758620689655
+        },
+        "resolvedDelta": 0,
+        "expectedDelta": 0
+      }
+    },
+    "perDocumentJoinCounts": [
+      {
+        "id": "2503.18265v1",
+        "sixth": 2,
+        "firstIntegrated": 2,
+        "seventh": 2,
+        "deltaFromSixth": 0
+      },
+      {
+        "id": "2501.09223v1",
+        "sixth": 30,
+        "firstIntegrated": 131,
+        "seventh": 75,
+        "deltaFromSixth": 45
+      },
+      {
+        "id": "2404.19482v1",
+        "sixth": 10,
+        "firstIntegrated": 8,
+        "seventh": 8,
+        "deltaFromSixth": -2
+      },
+      {
+        "id": "2405.07987v5",
+        "sixth": 23,
+        "firstIntegrated": 25,
+        "seventh": 25,
+        "deltaFromSixth": 2
+      },
+      {
+        "id": "2501.19393v2",
+        "sixth": 32,
+        "firstIntegrated": 140,
+        "seventh": 140,
+        "deltaFromSixth": 108
+      },
+      {
+        "id": "2412.13575v1",
+        "sixth": 17,
+        "firstIntegrated": 22,
+        "seventh": 20,
+        "deltaFromSixth": 3
+      },
+      {
+        "id": "2103.02228v1",
+        "sixth": 6,
+        "firstIntegrated": 12,
+        "seventh": 11,
+        "deltaFromSixth": 5
+      },
+      {
+        "id": "2307.12950v3",
+        "sixth": 1,
+        "firstIntegrated": 2,
+        "seventh": 2,
+        "deltaFromSixth": 1
+      },
+      {
+        "id": "2507.21509v3",
+        "sixth": 33,
+        "firstIntegrated": 50,
+        "seventh": 50,
+        "deltaFromSixth": 17
+      },
+      {
+        "id": "2501.07531v1",
+        "sixth": 3,
+        "firstIntegrated": 15,
+        "seventh": 15,
+        "deltaFromSixth": 12
+      }
+    ]
+  },
+  "blockers": [
+    {
+      "code": "FIDELITY_GATES_NOT_MET",
+      "detail": "Zero of ten frozen documents are publication-ready; all remain review-required."
+    },
+    {
+      "code": "CORRUPTING_JOIN_REGRESSION",
+      "detail": "The explicit fail-closed semantic model reports 348 unresolved or ambiguous corrupting joins versus 157 in the sixth state. The largest per-document increase is 108."
+    },
+    {
+      "code": "INCOMPLETE_SEMANTIC_TABLE_COVERAGE",
+      "detail": "Only 3 of 87 expected semantic tables are resolved, unchanged from the sixth state."
+    },
+    {
+      "code": "OTHER_FIDELITY_GATES",
+      "detail": "Canonical flow, assets, relationships, equations, citations, notes, hyperlinks, visuals, inline styles, source regions, and reading-order diagnostics still block at least one frozen document."
+    },
+    {
+      "code": "NATIVE_READER_EVIDENCE_UNAVAILABLE",
+      "detail": "No Apple Books, native desktop EPUB reader, or target e-ink device validation was performed."
+    },
+    {
+      "code": "TRUSTED_VM_SERVICE_INACTIVE",
+      "detail": "infra/vm/verify.sh exits 1 because rucksack-app.service is inactive; HEALTHCHECK_URL is also unset."
+    }
+  ],
+  "scopeGuards": {
+    "authoritativeWorkspaceOnly": true,
+    "committed": false,
+    "pushed": false,
+    "deployed": false,
+    "published": false,
+    "issuesCreated": false,
+    "materialDeleted": false,
+    "unrelatedFilesPreserved": true
+  }
+}

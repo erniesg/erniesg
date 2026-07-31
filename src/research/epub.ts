@@ -20,12 +20,26 @@ import {
   type PublicationAsset,
   type PublicationVisualRelationship,
 } from './import-types'
+import {
+  renderSourceGeometryScriptMathMl,
+  verifyRelationshipSourceGeometryScriptTranscript,
+} from './equation-geometry-transcript'
 import { getCompositionPolicy } from './composition'
+import { parsePdfCitationSurface } from './pdf-citation-surface'
 import { resolvePdfScholarlyCrossReferences } from './pdf-cross-references'
 import {
   assessPdfCompleteness,
+  hasValidCanonicalHyphenBoundaryLedger,
+  hasValidSourceSemanticFlowBoundaryLedgerCount,
   hasResolvedEquationTranscript,
 } from './pdf-quality'
+import {
+  PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE,
+  PDF_HYPHEN_LEXICAL_MODEL,
+  PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE,
+  PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE,
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE,
+} from './pdf-hyphenation'
 import { validatedPdfVisualRelationships } from './pdf-visual-validation'
 import {
   assertPublicationIntegrity,
@@ -49,18 +63,59 @@ import { downscalePngAsset } from './visual-assets'
 
 const EPUB_MIMETYPE = 'application/epub+zip'
 const ZIP_MTIME = new Date(1980, 0, 1, 0, 0, 0)
-const EPUB_EXPORT_SCHEMA_VERSION = '1.1.0' as const
-export const EPUB_EXPORT_POLICY_VERSION = '1.1.0' as const
+const EPUB_EXPORT_LEGACY_SCHEMA_VERSION = '1.1.0' as const
+const EPUB_EXPORT_SCHEMA_VERSION = '1.2.0' as const
+export const EPUB_EXPORT_POLICY_VERSION = '1.2.0' as const
 export type EpubExportMode = 'publication' | 'readable-fallback'
 const MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL = 16
-const MAX_READABLE_FALLBACK_ASSETS_PER_BOOK = 64
+const MAX_READABLE_FALLBACK_OPTIONAL_ASSETS_PER_BOOK = 64
+export const MAX_EPUB_ASSETS_PER_BOOK = 512
+export const MAX_EPUB_ASSET_BYTES_PER_BOOK = 128 * 1024 * 1024
+export const MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK = 512
 const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
-const READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE =
-  'Visual omitted from this readable fallback because its source fragments do not form a bounded rendition.'
-const READABLE_FALLBACK_INCOMPLETE_MESSAGE =
-  'This readable fallback is incomplete and is not publication-grade.'
-const READABLE_FALLBACK_REVIEW_MESSAGE =
-  'Omitted source visuals and unresolved relationships require review against the source PDF.'
+
+function duplicateVisualRelationshipNodeOwnership(
+  relationships: readonly PublicationVisualRelationship[],
+) {
+  for (const field of ['canonicalNodeId', 'captionNodeId'] as const) {
+    const ownersByNodeId = new Map<string, string[]>()
+    for (const relationship of relationships) {
+      const nodeId = relationship[field]
+      if (!nodeId) continue
+      const owners = ownersByNodeId.get(nodeId) ?? []
+      owners.push(relationship.id)
+      ownersByNodeId.set(nodeId, owners)
+    }
+    for (const [nodeId, relationshipIds] of ownersByNodeId) {
+      if (relationshipIds.length > 1) {
+        return { field, nodeId, relationshipIds }
+      }
+    }
+  }
+  return null
+}
+
+function epubAssetResourceUsage(assets: readonly PublicationAsset[]) {
+  const bytes = assets.reduce((total, asset) => {
+    const byteLength = asset.bytes?.byteLength
+    return Number.isSafeInteger(byteLength) && byteLength >= 0
+      ? total + byteLength
+      : Number.POSITIVE_INFINITY
+  }, 0)
+  return { count: assets.length, bytes }
+}
+
+function epubAssetResourceLimitMessage({
+  equationCount,
+  assetCount,
+  assetBytes,
+}: {
+  equationCount?: number
+  assetCount: number
+  assetBytes: number
+}) {
+  return `EPUB asset resource limit exceeded: ${equationCount === undefined ? '' : `${equationCount} matched equations, `}${assetCount} assets and ${assetBytes} source bytes; bounded limits are ${MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK} matched equations, ${MAX_EPUB_ASSETS_PER_BOOK} assets and ${MAX_EPUB_ASSET_BYTES_PER_BOOK} source bytes.`
+}
 
 function isCompactScrollableTableImage({
   kind,
@@ -96,6 +151,15 @@ function hasCompletePdfAssessmentEvidence(
     Array.isArray(reconstruction.noteRelationships) &&
     Array.isArray(reconstruction.crossReferenceRelationships) &&
     Array.isArray(reconstruction.lineBoundaryDecisions) &&
+    hasValidSourceSemanticFlowBoundaryLedgerCount({
+      decisions: reconstruction.sourceSemanticFlowBoundaryDecisions,
+      expectedCount: reconstruction.sourceSemanticFlowBoundaryDecisionCount,
+    }) &&
+    hasValidCanonicalHyphenBoundaryLedger({
+      decisions: reconstruction.canonicalHyphenBoundaryDecisions,
+      expectedCount: reconstruction.canonicalHyphenBoundaryDecisionCount,
+      regions: reconstruction.regions,
+    }) &&
     reconstruction.provenance &&
     reconstruction.completeness &&
     Number.isInteger(reconstruction.completeness.expectedInlineSpanCount) &&
@@ -425,6 +489,22 @@ function canonicalHeadingCrossReferenceTargets(
   })
 }
 
+function isSourceProvedUnresolvedPartialParentTable(
+  relationship: PdfReconstruction['visualRelationships'][number],
+) {
+  return (
+    relationship.status === 'unresolved' &&
+    relationship.kind === 'table' &&
+    relationship.canonicalNodeId === null &&
+    Boolean(relationship.captionNodeId) &&
+    relationship.assetIds.length === 0 &&
+    relationship.sourceRegionIds.length > 0 &&
+    (relationship.sourceLineIds?.length ?? 0) > 0 &&
+    relationship.evidence.includes('partial-parent-line-selection') &&
+    relationship.evidence.includes('unresolved-bounded-table-text-owned')
+  )
+}
+
 function canonicalVisualCrossReferenceTargets(
   reconstruction: PdfReconstruction,
 ): ExportCrossReferenceTarget[] {
@@ -432,9 +512,16 @@ function canonicalVisualCrossReferenceTargets(
     const parsedLabel = parsePdfScholarlyVisualLabel(relationship.label, {
       context: 'reference',
     })
+    const unresolvedBoundedTableCaption =
+      isSourceProvedUnresolvedPartialParentTable(relationship)
+    const targetNodeId =
+      relationship.status === 'matched'
+        ? relationship.canonicalNodeId
+        : unresolvedBoundedTableCaption
+          ? relationship.captionNodeId
+          : null
     if (
-      relationship.status !== 'matched' ||
-      !relationship.canonicalNodeId ||
+      !targetNodeId ||
       parsedLabel?.status !== 'parsed' ||
       parsedLabel.plural ||
       parsedLabel.kind !== relationship.kind ||
@@ -446,11 +533,16 @@ function canonicalVisualCrossReferenceTargets(
       {
         kind: relationship.kind,
         label: relationship.label,
-        nodeId: relationship.canonicalNodeId,
-        evidence: [
-          'matched-canonical-visual-relationship',
-          'source-proved-visual-label',
-        ],
+        nodeId: targetNodeId,
+        evidence: unresolvedBoundedTableCaption
+          ? [
+              'unresolved-bounded-table-caption-relationship',
+              'source-proved-visual-label',
+            ]
+          : [
+              'matched-canonical-visual-relationship',
+              'source-proved-visual-label',
+            ],
       },
     ]
   })
@@ -708,6 +800,8 @@ export type EpubInspectionExpectation = {
   canonicalPaper?: ResearchPaper
   sourceCanonicalPaper?: ResearchPaper
   sourcePdfSha256?: string
+  sourceSemanticFlowBoundaryLedgerSha256?: string
+  canonicalHyphenDeletionLedgerSha256?: string
 }
 
 export function getEpubProfileMetadata(
@@ -773,39 +867,92 @@ function text(value: string) {
 
 function renderAuthors(paper: ResearchPaper) {
   const authorNotes = renderableAuthorNoteReferences(paper)
+  const numberedAffiliations = (paper.affiliations ?? [])
+    .map((affiliation) =>
+      affiliation.match(/^\s*([\d⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?=\s|\p{L})/u),
+    )
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+  const sharedAuthorNoteTargets = [
+    ...new Set(
+      authorNotes
+        .filter((reference) => paper.authors.includes(reference.author))
+        .map((reference) => reference.target),
+    ),
+  ]
+  const sharedAuthorNote =
+    sharedAuthorNoteTargets.length === 1 &&
+    paper.authors.every((author) =>
+      authorNotes.some(
+        (reference) =>
+          reference.author === author &&
+          reference.target === sharedAuthorNoteTargets[0],
+      ),
+    )
+      ? paper.nodes.find(
+          (node) =>
+            node.type === 'footnote' && node.id === sharedAuthorNoteTargets[0],
+        )
+      : undefined
+  const embeddedAffiliationLabels = [
+    ...new Set(
+      sharedAuthorNote?.type === 'footnote'
+        ? (sharedAuthorNote.inlineRuns ?? [])
+            .filter(
+              (run) =>
+                run.verticalAlign === 'superscript' &&
+                /^\d{1,3}$/u.test(
+                  sharedAuthorNote.text.slice(run.start, run.end).trim(),
+                ),
+            )
+            .map((run) =>
+              sharedAuthorNote.text.slice(run.start, run.end).trim(),
+            )
+        : [],
+    ),
+  ]
+  const sharedAffiliationLabel =
+    numberedAffiliations.length === 1
+      ? numberedAffiliations[0][1]
+      : embeddedAffiliationLabels.length === 1
+        ? embeddedAffiliationLabels[0]
+        : undefined
   return paper.authors
     .map((author) => {
-      const affiliationMarkers = (paper.authorAffiliations ?? [])
+      const authorAffiliationMarkers = (paper.authorAffiliations ?? [])
         .filter((reference) => reference.author === author)
         .map(
           (reference) =>
             `<sup class="author-affiliation-marker">${text(reference.label)}</sup>`,
         )
-        .join('')
+      const affiliationMarkers =
+        authorAffiliationMarkers.length > 0
+          ? authorAffiliationMarkers.join('')
+          : sharedAffiliationLabel
+            ? `<sup class="author-affiliation-marker">${text(sharedAffiliationLabel)}</sup>`
+            : ''
       const references = authorNotes
         .filter((reference) => reference.author === author)
         .map(
           (reference) =>
-            `<a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref">${text(reference.label)}</a>`,
+            `<sup class="author-note-marker"><a id="${attribute(stableId(reference.id))}" href="#${attribute(stableId(reference.target))}" epub:type="noteref" role="doc-noteref">${text(reference.label)}</a></sup>`,
         )
         .join('')
-      return `${text(author)}${affiliationMarkers}${references}`
+      return `${text(author)}${references}${affiliationMarkers}`
     })
     .join(', ')
 }
 
 function renderAffiliations(paper: ResearchPaper) {
   return (paper.affiliations ?? [])
-    .map((affiliation, index, affiliations) => {
-      const separator =
-        index === affiliations.length - 1
-          ? ''
-          : /[,;]\s*$/u.test(affiliation)
-            ? ' '
-            : '; '
-      return `${text(affiliation)}${separator}`
+    .map((affiliation) => {
+      const match = affiliation.match(
+        /^\s*([\d⁰¹²³⁴⁵⁶⁷⁸⁹]+[*∗†‡§]?)(?=\s|\p{L})\s*(.*)$/u,
+      )
+      return match
+        ? `<span class="affiliation"><sup class="affiliation-marker">${text(match[1])}</sup>${text(match[2])}</span>`
+        : `<span class="affiliation">${text(affiliation)}</span>`
     })
-    .join('')
+    .join('<br />')
 }
 
 function renderReconstructedByline(paper: ResearchPaper) {
@@ -975,24 +1122,6 @@ function normalizedCrossReferenceIdentity(value: string) {
     : value
 }
 
-function parsedCitationIdentifier(
-  value: string,
-  start: number,
-  end: number,
-): ParsedSurfaceIdentifier | null {
-  const match = value.slice(start, end).match(/^(\d{1,9})(?!\d)/u)
-  if (!match) return null
-  const identifier = normalizedNumericIdentity(match[1])
-  return identifier
-    ? {
-        identifier,
-        start,
-        end: start + match[1].length,
-        consumedEnd: start + match[1].length,
-      }
-    : null
-}
-
 function parsedCrossReferenceIdentifier(
   value: string,
   start: number,
@@ -1097,32 +1226,6 @@ function parseDelimitedSemanticExpression({
     : null
 }
 
-function parseCitationSurface(value: string): ParsedSemanticSurface | null {
-  let bounds = trimmedBounds(value)
-  bounds =
-    value[bounds.start] === '['
-      ? innerPairedExpression(value, bounds.start, bounds.end, '[', ']')
-      : value[bounds.start] === '('
-        ? innerPairedExpression(value, bounds.start, bounds.end, '(', ')')
-        : bounds
-  return parseDelimitedSemanticExpression({
-    value,
-    ...bounds,
-    parseIdentifier: parsedCitationIdentifier,
-    expandRange: (first, last) => {
-      const start = Number(first)
-      const finish = Number(last)
-      const count = finish - start + 1
-      return Number.isSafeInteger(start) &&
-        Number.isSafeInteger(finish) &&
-        count >= 2 &&
-        count <= MAX_SEMANTIC_RANGE_TARGETS
-        ? Array.from({ length: count }, (_, index) => String(start + index))
-        : null
-    },
-  })
-}
-
 function crossReferencePrefix(value: string) {
   const trimmed = trimmedBounds(value)
   if (value[trimmed.start] === '§') {
@@ -1203,14 +1306,15 @@ function targetRangesForSemanticGroup(
   }
   const parsed =
     semanticRole === 'citation'
-      ? parseCitationSurface(value)
+      ? parsePdfCitationSurface(value)
       : parseCrossReferenceSurface(value)
   if (!parsed) return null
   if (
     semanticRole === 'cross-reference' &&
-    evidence.some(
-      (target) => target?.kind === 'citation' || target?.kind !== parsed.kind,
-    )
+    (!('kind' in parsed) ||
+      evidence.some(
+        (target) => target?.kind === 'citation' || target?.kind !== parsed.kind,
+      ))
   ) {
     return null
   }
@@ -1305,7 +1409,9 @@ function injectInlineLinks({
     if (start === undefined || end === undefined) return null
     const attributes = [
       `href="#${attribute(stableId(range.target))}"`,
-      ...(semanticRole === 'citation' ? ['epub:type="biblioref"'] : []),
+      ...(semanticRole === 'citation'
+        ? ['epub:type="biblioref"', 'role="doc-biblioref"']
+        : []),
       ...(annotationId
         ? [`data-source-annotation-id="${attribute(stableId(annotationId))}"`]
         : []),
@@ -1618,7 +1724,7 @@ function renderTextWithNoteReferences(
     .map(({ html, value: segmentValue, wrapper }) => {
       if (!wrapper) return html
       if (wrapper.kind === 'note') {
-        return `<a${idAttribute(wrapper.id)} href="#${attribute(stableId(wrapper.target))}" epub:type="noteref">${html}</a>`
+        return `<a${idAttribute(wrapper.id)} href="#${attribute(stableId(wrapper.target))}" epub:type="noteref" role="doc-noteref">${html}</a>`
       }
       if (wrapper.kind === 'hyperlink') {
         const target = wrapper.href.match(/^#(.+)$/u)?.[1]
@@ -1656,7 +1762,7 @@ function renderTextWithNoteReferences(
       const targets = wrapper.targetIds.map(stableId)
       if (wrapper.semanticRole === 'citation' && targets.length > 0) {
         if (targets.length === 1) {
-          return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" epub:type="biblioref" data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets[0])}">${html}</a>`
+          return `<a${idAttribute(relationshipId)} href="#${attribute(targets[0])}" epub:type="biblioref" role="doc-biblioref" data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets[0])}">${html}</a>`
         }
         const ranges = targetRangesForSemanticGroup(
           segmentValue,
@@ -1677,7 +1783,7 @@ function renderTextWithNoteReferences(
             `EPUB_SEMANTIC_LINK_ALIGNMENT: Citation ${relationshipId} has ${targets.length} canonical targets but its visible labels cannot be mapped one-to-one without duplicating text.`,
           )
         }
-        return `<span${idAttribute(relationshipId)} data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}" epub:type="biblioref">${links}</span>`
+        return `<span${idAttribute(relationshipId)} data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}">${links}</span>`
       }
       if (wrapper.semanticRole === 'cross-reference' && targets.length > 0) {
         if (targets.length === 1) {
@@ -1704,7 +1810,7 @@ function renderTextWithNoteReferences(
         }
         return `<span${idAttribute(relationshipId)} data-semantic-role="cross-reference" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}">${links}</span>`
       }
-      return `<span${idAttribute(relationshipId)} data-semantic-role="${attribute(wrapper.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}${wrapper.semanticRole === 'citation' ? ' epub:type="biblioref"' : ''}>${html}</span>`
+      return `<span${idAttribute(relationshipId)} data-semantic-role="${attribute(wrapper.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}>${html}</span>`
     })
     .join('')
 }
@@ -1745,6 +1851,7 @@ function renderSemanticTable(
   canonicalNodeId: string,
   assetId?: string,
   captionId?: string,
+  accessibleLabel = 'Scrollable table',
   scholarlyTargetKinds: ReadonlyMap<
     string,
     CanonicalSemanticTarget
@@ -1797,11 +1904,14 @@ function renderSemanticTable(
   const describedBy = captionId
     ? ` aria-describedby="${attribute(captionId)}"`
     : ''
+  const wrapperAccessibility = captionId
+    ? ` role="region" aria-labelledby="${attribute(captionId)}"`
+    : ` role="group" aria-label="${attribute(accessibleLabel)}"`
   const wideTable =
     columnCount >= 6
       ? ` data-wide-table="true" data-table-columns="${columnCount}"`
       : ` data-table-columns="${columnCount}"`
-  return `<div class="semantic-table-wrapper" role="region" aria-label="Scrollable table" tabindex="0"${wideTable}${source}><table${describedBy}>${headerRows.length > 0 ? `<thead>${renderRows(headerRows, 0)}</thead>` : ''}${bodyRows.length > 0 ? `<tbody>${renderRows(bodyRows, Math.max(firstBodyRow, 0))}</tbody>` : ''}</table></div>`
+  return `<div class="semantic-table-wrapper"${wrapperAccessibility} tabindex="0"${wideTable}${source}><table${describedBy}>${headerRows.length > 0 ? `<thead>${renderRows(headerRows, 0)}</thead>` : ''}${bodyRows.length > 0 ? `<tbody>${renderRows(bodyRows, Math.max(firstBodyRow, 0))}</tbody>` : ''}</table></div>`
 }
 
 type ParagraphNode = Extract<ResearchNode, { type: 'paragraph' }>
@@ -1966,6 +2076,7 @@ function renderNode(
   captions: Map<string, Extract<ResearchNode, { type: 'caption' }>>,
   visualRelationships: Map<string, PublicationVisualRelationship>,
   assets: Map<string, PublicationAsset>,
+  verifiedEquationTranscriptIds: ReadonlySet<string>,
   omitMissingVisuals = false,
   canonicalTitleNodeId?: string,
   renderedNoteReferenceIds: ReadonlySet<string> = new Set(),
@@ -1973,13 +2084,15 @@ function renderNode(
     string,
     CanonicalSemanticTarget
   > = new Map(),
+  headingLevels: ReadonlyMap<string, number> = new Map(),
 ) {
   const id = attribute(stableId(node.id))
   if (node.type === 'heading') {
     const level =
-      node.id === canonicalTitleNodeId
+      headingLevels.get(node.id) ??
+      (node.id === canonicalTitleNodeId
         ? 1
-        : Math.min(4, Math.max(2, node.level + 1))
+        : Math.min(4, Math.max(2, node.level + 1)))
     return `<h${level} id="${id}" data-canonical-id="${id}">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns, scholarlyTargetKinds)}</h${level}>`
   }
   if (node.type === 'paragraph') {
@@ -2008,6 +2121,14 @@ function renderNode(
     const captionId = attribute(stableId(node.relationships.caption))
     const visual = visualRelationships.get(node.id)
     if (visual) {
+      const verifiedEquationGeometryTranscript =
+        visual.kind === 'equation' &&
+        verifiedEquationTranscriptIds.has(visual.id)
+          ? visual.equationGeometryTranscript
+          : undefined
+      const equationTranscriptId = attribute(
+        `${stableId(node.id)}-equation-transcript`,
+      )
       const visualObjectType = visual.semanticKind ?? visual.kind
       const sourceAlgorithm =
         visual.semanticKind === 'algorithm' &&
@@ -2045,15 +2166,19 @@ function renderNode(
         visual.evidence.includes('source-text-transcript-unresolved') &&
         !visual.equationTranscriptAdjudication
       const renderedAltText = unresolvedEquationTranscript
-        ? 'Equation image; semantic transcript unresolved.'
-        : visual.equationTranscriptAdjudication
-          ? 'Equation image; owner-reviewed source transcript available.'
-          : (generatedEquationLabel ?? visual.altText)
+        ? 'Equation reproduced from the source PDF.'
+        : verifiedEquationGeometryTranscript
+          ? ''
+          : visual.equationTranscriptAdjudication
+            ? 'Equation image; owner-reviewed source transcript available.'
+            : (generatedEquationLabel ?? visual.altText)
       const renderedAltTextSource = unresolvedEquationTranscript
-        ? 'unresolved'
-        : visual.equationTranscriptAdjudication
-          ? 'owner-local-adjudication'
-          : visual.altTextSource
+        ? 'source-image'
+        : verifiedEquationGeometryTranscript
+          ? 'source-geometry-script-transcript-v1'
+          : visual.equationTranscriptAdjudication
+            ? 'owner-local-adjudication'
+            : visual.altTextSource
       const visualAssets = visual.assetIds
         .map((assetId) => assets.get(assetId))
         .filter((visualAsset): visualAsset is PublicationAsset =>
@@ -2064,44 +2189,65 @@ function renderNode(
           visualAsset.mediaType === 'application/xhtml+xml' &&
           visualAsset.kind === 'table',
       )
-      const renderedAssets = provedSourceCode
-        ? `<pre class="source-code" data-whitespace-source="source-lines"><code>${text(
-            visual.preformatted!.lines.map((line) => line.text).join('\n'),
-          )}</code></pre>`
+      const renderedVisualAssets = visualAssets
+        .map((visualAsset) => {
+          const href = attribute(visualAsset.href)
+          const alt = attribute(renderedAltText)
+          if (visualAsset.mediaType === 'application/xhtml+xml') {
+            return `<object data="${href}" type="application/xhtml+xml" aria-label="${alt}" data-alt-source="${renderedAltTextSource}"><p>${text(renderedAltText)}</p></object>`
+          }
+          const width = Math.max(1, Math.round(visualAsset.width))
+          const height = Math.max(1, Math.round(visualAsset.height))
+          const image = `<img src="${href}" width="${width}" height="${height}" loading="eager" decoding="async" alt="${alt}"${verifiedEquationGeometryTranscript ? ' aria-hidden="true"' : ''} data-alt-source="${renderedAltTextSource}" data-asset-id="${attribute(visualAsset.id)}" />`
+          const wideSourceVisual =
+            (visual.kind === 'table' &&
+              isCompactScrollableTableImage({
+                ...visualAsset,
+                kind: 'table',
+              })) ||
+            (width / height >= 2 &&
+              visual.kind === 'figure' &&
+              visual.semanticKind !== 'algorithm')
+          return wideSourceVisual
+            ? `<div class="wide-source-visual-frame" data-wide-source-visual="true" data-source-visual-kind="${visual.kind}">${image}</div>`
+            : image
+        })
+        .join('')
+      const hasSourceCodeLines =
+        sourceCode && (visual.preformatted?.lines.length ?? 0) > 0
+      const renderedSourceCode = hasSourceCodeLines
+        ? `<pre class="source-code" data-whitespace-source="source-lines" data-transcript-status="${provedSourceCode ? 'proved' : 'unresolved'}"><code>${visual
+            .preformatted!.lines.map(
+              (line) =>
+                `<span class="source-code-line source-code-indent-${Math.min(
+                  16,
+                  Math.max(0, line.indentColumns ?? 0),
+                )}">${text(line.text)}</span>`,
+            )
+            .join('\n')}</code></pre>`
+        : ''
+      const renderedAssets = hasSourceCodeLines
+        ? provedSourceCode
+          ? renderedSourceCode
+          : renderedVisualAssets
         : visual.kind === 'table' && node.table && semanticTableAsset
           ? renderSemanticTable(
               node.table,
               node.id,
               semanticTableAsset.id,
-              captionId,
+              caption ? captionId : undefined,
+              visual.label || node.title,
               scholarlyTargetKinds,
             )
-          : visualAssets
-              .map((visualAsset) => {
-                const href = attribute(visualAsset.href)
-                const alt = attribute(renderedAltText)
-                if (visualAsset.mediaType === 'application/xhtml+xml') {
-                  return `<object data="${href}" type="application/xhtml+xml" aria-label="${alt}" data-alt-source="${renderedAltTextSource}"><p>${text(renderedAltText)}</p></object>`
-                }
-                const width = Math.max(1, Math.round(visualAsset.width))
-                const height = Math.max(1, Math.round(visualAsset.height))
-                const image = `<img src="${href}" width="${width}" height="${height}" loading="eager" decoding="async" alt="${alt}" data-alt-source="${renderedAltTextSource}" data-asset-id="${attribute(visualAsset.id)}" />`
-                const wideSourceVisual =
-                  (visual.kind === 'table' &&
-                    isCompactScrollableTableImage({
-                      ...visualAsset,
-                      kind: 'table',
-                    })) ||
-                  (width / height >= 2 &&
-                    visual.kind === 'figure' &&
-                    visual.semanticKind !== 'algorithm')
-                return wideSourceVisual
-                  ? `<div class="wide-source-visual-frame" data-wide-source-visual="true" data-source-visual-kind="${visual.kind}">${image}</div>`
-                  : image
-              })
-              .join('')
+          : renderedVisualAssets
       const sourceEquationCaption =
         visual.kind === 'equation' && visual.altTextSource === 'source-text'
+      const renderedEquationTranscript = verifiedEquationGeometryTranscript
+        ? renderSourceGeometryScriptMathMl(
+            verifiedEquationGeometryTranscript,
+            equationTranscriptId,
+          )
+        : ''
       const sourceTranscript =
         node.sourceText && !sourceCode
           ? `<span class="visually-hidden visual-source-transcript"${
@@ -2124,12 +2270,16 @@ function renderNode(
       const renderedCaption = caption
         ? syntheticEquationCaption
           ? `<figcaption id="${captionId}" data-canonical-id="${captionId}" class="synthetic-equation-caption" aria-hidden="true"></figcaption>`
-          : `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceAlgorithm ? ' class="algorithm-source-caption visually-hidden"' : sourceCode && visual.evidence.includes('fallback-source-line-caption') ? ' class="code-source-caption visually-hidden"' : sourceEquationCaption ? ' class="equation-source-text"' : ''}>${generatedEquationLabel ? text(generatedEquationLabel) : renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>`
+          : `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceAlgorithm ? ' class="algorithm-source-caption visually-hidden"' : sourceCode && visual.evidence.includes('fallback-source-line-caption') ? ' class="code-source-caption visually-hidden"' : generatedEquationLabel ? ' class="equation-number-caption visually-hidden"' : sourceEquationCaption ? ' class="equation-source-text"' : ''}>${generatedEquationLabel ? text(generatedEquationLabel) : renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>`
         : ''
-      return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visualObjectType}" role="group"${figureClass}>${renderedAssets}${sourceTranscript}${renderedCaption}</figure>`
+      return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visualObjectType}" role="group"${figureClass}>${renderedAssets}${renderedEquationTranscript}${sourceTranscript}${renderedCaption}</figure>`
     }
     if (omitMissingVisuals) {
-      return `<aside id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" class="omitted-visual" role="note"><p class="omitted-visual-message" data-semantic-ledger-ignore="true">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p>${caption ? `<p id="${captionId}" data-canonical-id="${captionId}" class="omitted-visual-caption">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</p>` : ''}</aside>`
+      return `<span id="${id}" data-canonical-id="${id}" hidden="hidden" aria-hidden="true"></span>${
+        caption
+          ? `<span id="${captionId}" data-canonical-id="${captionId}" hidden="hidden" aria-hidden="true"></span>`
+          : ''
+      }`
     }
     return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>` : ''}</figure>`
   }
@@ -2210,6 +2360,14 @@ export function renderPublicationXhtml(
   } = {},
 ) {
   assertPublicationIntegrity(paper, options.reconstruction?.noteRelationships)
+  const duplicateVisualOwner = duplicateVisualRelationshipNodeOwnership(
+    options.reconstruction?.visualRelationships ?? [],
+  )
+  if (duplicateVisualOwner) {
+    throw new Error(
+      `EPUB visual relationships ${duplicateVisualOwner.relationshipIds.join(', ')} ambiguously share ${duplicateVisualOwner.field} ${duplicateVisualOwner.nodeId}.`,
+    )
+  }
   const captions = new Map(
     paper.nodes
       .filter(
@@ -2266,10 +2424,7 @@ export function renderPublicationXhtml(
   )
   const visualRelationships = new Map(
     (options.reconstruction?.visualRelationships ?? [])
-      .filter(
-        (relationship) =>
-          relationship.status === 'matched' && relationship.canonicalNodeId,
-      )
+      .filter((relationship) => relationship.canonicalNodeId)
       .map((relationship) => [relationship.canonicalNodeId!, relationship]),
   )
   const unresolvedVisuals = new Map(
@@ -2280,6 +2435,15 @@ export function renderPublicationXhtml(
       )
       .map((relationship) => [relationship.captionNodeId!, relationship]),
   )
+  const sourceProvedUnresolvedTableCaptionIds = new Set(
+    (options.reconstruction?.visualRelationships ?? []).flatMap(
+      (relationship) =>
+        isSourceProvedUnresolvedPartialParentTable(relationship) &&
+        relationship.captionNodeId
+          ? [relationship.captionNodeId]
+          : [],
+    ),
+  )
   const assets =
     options.visualAssets ??
     new Map(
@@ -2288,6 +2452,25 @@ export function renderPublicationXhtml(
         visualAsset,
       ]),
     )
+  const transcriptReconstruction =
+    options.reconstruction &&
+    'regions' in options.reconstruction &&
+    Array.isArray(options.reconstruction.regions)
+      ? (options.reconstruction as PdfReconstruction)
+      : null
+  const verifiedEquationTranscriptIds = new Set(
+    transcriptReconstruction
+      ? transcriptReconstruction.visualRelationships.flatMap((relationship) =>
+          verifyRelationshipSourceGeometryScriptTranscript({
+            relationship,
+            regions: transcriptReconstruction.regions,
+            assets: transcriptReconstruction.assets,
+          })
+            ? [relationship.id]
+            : [],
+        )
+      : [],
+  )
   const omitMissingVisuals = Boolean(
     options.reconstruction && !options.reconstruction.readiness.ready,
   )
@@ -2333,6 +2516,23 @@ export function renderPublicationXhtml(
         : [],
     ),
   ])
+  const headingLevels = new Map<string, number>()
+  let previousHeadingLevel = 1
+  for (const node of renderableNodes) {
+    if (node.type !== 'heading') continue
+    if (node.id === canonicalTitleNode?.id) {
+      headingLevels.set(node.id, 1)
+      previousHeadingLevel = 1
+      continue
+    }
+    const sourceLevel = Math.min(4, Math.max(2, node.level + 1))
+    const accessibleLevel = Math.min(
+      sourceLevel,
+      Math.max(2, previousHeadingLevel + 1),
+    )
+    headingLevels.set(node.id, accessibleLevel)
+    previousHeadingLevel = accessibleLevel
+  }
   const renderedNodes: string[] = []
   for (let index = 0; index < renderableNodes.length; index += 1) {
     const node = renderableNodes[index]
@@ -2357,41 +2557,23 @@ export function renderPublicationXhtml(
       node.type === 'caption'
         ? (() => {
             const unresolvedVisual = unresolvedVisuals.get(node.id)
-            const unresolvedAlgorithm =
-              unresolvedVisual?.semanticKind === 'algorithm'
-            const unresolvedCode = unresolvedVisual?.semanticKind === 'code'
-            const unresolvedBoundedTable =
-              unresolvedVisual?.kind === 'table' &&
-              unresolvedVisual.evidence.includes(
-                'unresolved-bounded-table-text-owned',
-              )
-            const unresolvedTranscript =
-              unresolvedVisual?.sourceText.trim() &&
-              (unresolvedVisual.evidence.includes(
-                'unresolved-visual-text-owned',
-              ) ||
-                unresolvedBoundedTable)
-                ? unresolvedBoundedTable
-                  ? `<div class="omitted-table-transcript"><p>Recovered table source text; row and column semantics remain unresolved:</p><pre class="omitted-table-transcript-source" data-transcript-status="unresolved">${text(unresolvedVisual.sourceText)}</pre></div>`
-                  : unresolvedAlgorithm
-                    ? `<div class="omitted-visual-transcript"><p>Recovered source text; semantic line order remains unresolved:</p><pre class="omitted-algorithm-transcript" data-transcript-status="unresolved">${text(unresolvedVisual.sourceText)}</pre></div>`
-                    : unresolvedCode
-                      ? `<div class="omitted-visual-transcript"><p>Recovered source lines; source crop unavailable:</p><pre class="omitted-code-transcript" data-transcript-status="unresolved">${text(unresolvedVisual.sourceText)}</pre></div>`
-                      : `<div class="omitted-visual-transcript"><p>Recovered text inside the unresolved visual:</p><p>${text(unresolvedVisual.sourceText)}</p></div>`
-                : ''
-            return unresolvedVisual || omitMissingVisuals
-              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}"${unresolvedAlgorithm ? ' data-object-type="algorithm"' : unresolvedCode ? ' data-object-type="code"' : ''} class="orphan-caption omitted-visual${unresolvedAlgorithm ? ' unresolved-algorithm' : unresolvedCode ? ' unresolved-code' : ''}" role="note"><p class="omitted-visual-message" data-semantic-ledger-ignore="true">${READABLE_FALLBACK_OMITTED_VISUAL_MESSAGE}</p><p class="omitted-visual-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</p>${unresolvedTranscript}</aside>`
-              : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
+            return sourceProvedUnresolvedTableCaptionIds.has(node.id)
+              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
+              : unresolvedVisual || omitMissingVisuals
+                ? `<span id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" hidden="hidden" aria-hidden="true"></span>`
+                : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
           })()
         : renderNode(
             node,
             captions,
             visualRelationships,
             assets,
+            verifiedEquationTranscriptIds,
             omitMissingVisuals,
             canonicalTitleNode?.id,
             renderedNoteReferenceIds,
             scholarlyTargetKinds,
+            headingLevels,
           ),
     )
     if (node.id === canonicalTitleNode?.id) {
@@ -2418,14 +2600,6 @@ export function renderPublicationXhtml(
         <p>${text(paper.abstract)}</p>
       </section>
     </header>`
-  const reconstructionStatus =
-    options.reconstruction && !options.reconstruction.readiness.ready
-      ? `<aside class="reconstruction-status" role="note" aria-label="Reconstruction status">
-      <p>${READABLE_FALLBACK_INCOMPLETE_MESSAGE}</p>
-      <p>${READABLE_FALLBACK_REVIEW_MESSAGE}</p>
-    </aside>`
-      : ''
-
   const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" ${xhtmlLanguageAttributes(paper)}>
@@ -2437,7 +2611,6 @@ export function renderPublicationXhtml(
 <body>
   <main epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
     ${publicationHeader}
-    ${reconstructionStatus}
     ${body}
   </main>
 </body>
@@ -2493,7 +2666,7 @@ function navXhtml(paper: ResearchPaper) {
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" ${xhtmlLanguageAttributes(paper)}>
 <head><meta charset="UTF-8" /><title>Contents</title></head>
 <body>
-  <nav epub:type="toc" id="toc" aria-label="Table of contents">
+  <nav epub:type="toc" role="doc-toc" id="toc" aria-label="Table of contents">
     <h1>Contents</h1>
     <ol>${items.join('\n')}</ol>
   </nav>
@@ -2515,6 +2688,8 @@ main { box-sizing: border-box; width: 100%; max-width: 42rem; margin: 0 auto; pa
 .reconstruction-status > p:first-child { font-weight: 700; }
 .reconstruction-status > p + p { margin-top: 0.35rem; }
 .status, .authors { font-family: sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; }
+.affiliation-marker, .author-affiliation-marker, .author-note-marker { margin-inline-start: 0.08em; line-height: 0; vertical-align: super; }
+.note-backlink ~ .note-backlink { display: none; }
 h1 { font-size: 2.2rem; line-height: 1.05; margin: 0.5rem 0 0.75rem; }
 h2 { font-size: 1.45rem; margin: 2.4rem 0 0.6rem; break-after: avoid; }
 h3 { font-size: 1.15rem; margin: 2rem 0 0.5rem; break-after: avoid; }
@@ -2538,7 +2713,17 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .omitted-table-transcript-source { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .omitted-algorithm-transcript { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
 .source-code { max-width: 100%; margin: 0; overflow-x: auto; padding: 0.8rem; border: 0.06rem solid currentColor; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; }
-.source-code code { font: inherit; white-space: inherit; }
+.source-code code { display: block; font: inherit; white-space: inherit; }
+.source-code-line { display: block; min-height: 1.45em; }
+.source-code[data-transcript-status="unresolved"] { border-style: dashed; }
+.source-code-image-comparison { margin-block-start: 0.55rem; font-size: 0.72rem; }
+.source-code-image-comparison summary { cursor: pointer; font-family: ui-sans-serif, system-ui, sans-serif; }
+.source-code-image-comparison img { margin-block-start: 0.55rem; }
+${Array.from(
+  { length: 17 },
+  (_, indent) =>
+    `.source-code-indent-${indent} { padding-inline-start: ${indent}ch; }`,
+).join('\n')}
 .omitted-code-transcript { max-width: 100%; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; }
 .publication-note { border-top: 0.06rem solid currentColor; font-size: 0.84rem; margin-top: 1rem; padding-top: 0.5rem; }
 .note-label { font-weight: bold; }
@@ -2564,7 +2749,7 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .wide-source-visual-frame { max-width: 100%; overflow: visible; }
 img, svg { display: block; height: auto; max-width: 100%; }
 object { border: 0; display: block; min-height: 8rem; width: 100%; }
-a { color: inherit; text-decoration: underline; }
+a { color: inherit; text-decoration-line: underline; text-decoration-thickness: 0.06em; text-underline-offset: 0.14em; }
 @media (max-width: 30rem) {
   main { padding: 7%; }
   h1 { font-size: 1.8rem; }
@@ -2633,46 +2818,45 @@ async function packageVisualAssets(
     profile?.dimensions.unit === 'device-px'
       ? profile.dimensions.width - profile.margins.left - profile.margins.right
       : null
-  return Promise.all(
-    assets.map(async (source): Promise<PackagedAsset> => {
-      const preserveScrollableTableSource =
-        profile?.id === 'paperProMove' && isCompactScrollableTableImage(source)
-      const asset =
-        !preserveScrollableTableSource &&
-        maximumWidth !== null &&
-        profile?.pixelsPerInch !== null &&
-        profile?.pixelsPerInch !== undefined
-          ? await downscalePngAsset(source, maximumWidth, profile.pixelsPerInch)
-          : source
-      return {
-        source,
-        asset,
-        policy: {
-          id: preserveScrollableTableSource
-            ? 'preserve-scrollable-table-source'
-            : 'fit-device-content-width-no-upscale',
-          version: EPUB_EXPORT_POLICY_VERSION,
-          action:
-            source.mediaType === 'image/svg+xml'
-              ? 'scalable-source'
-              : source.mediaType !== 'image/png' ||
-                  asset.sha256 === source.sha256
-                ? 'preserved'
-                : 'downscaled',
-          sourceWidth: source.width,
-          sourceHeight: source.height,
-          packagedWidth: asset.width,
-          packagedHeight: asset.height,
-          maximumWidth: preserveScrollableTableSource ? null : maximumWidth,
-          targetPixelsPerInch: profile?.pixelsPerInch ?? null,
-          sourcePixelsPerInch: source.resolutionDpi,
-          resampling:
-            asset.sha256 === source.sha256 ? 'none' : 'nearest-neighbor-rgba',
-          neverUpscaled: true,
-        },
-      }
-    }),
-  )
+  const packaged: PackagedAsset[] = []
+  for (const source of assets) {
+    const preserveScrollableTableSource =
+      profile?.id === 'paperProMove' && isCompactScrollableTableImage(source)
+    const asset =
+      !preserveScrollableTableSource &&
+      maximumWidth !== null &&
+      profile?.pixelsPerInch !== null &&
+      profile?.pixelsPerInch !== undefined
+        ? await downscalePngAsset(source, maximumWidth, profile.pixelsPerInch)
+        : source
+    packaged.push({
+      source,
+      asset,
+      policy: {
+        id: preserveScrollableTableSource
+          ? 'preserve-scrollable-table-source'
+          : 'fit-device-content-width-no-upscale',
+        version: EPUB_EXPORT_POLICY_VERSION,
+        action:
+          source.mediaType === 'image/svg+xml'
+            ? 'scalable-source'
+            : source.mediaType !== 'image/png' || asset.sha256 === source.sha256
+              ? 'preserved'
+              : 'downscaled',
+        sourceWidth: source.width,
+        sourceHeight: source.height,
+        packagedWidth: asset.width,
+        packagedHeight: asset.height,
+        maximumWidth: preserveScrollableTableSource ? null : maximumWidth,
+        targetPixelsPerInch: profile?.pixelsPerInch ?? null,
+        sourcePixelsPerInch: source.resolutionDpi,
+        resampling:
+          asset.sha256 === source.sha256 ? 'none' : 'nearest-neighbor-rgba',
+        neverUpscaled: true,
+      },
+    })
+  }
+  return packaged
 }
 
 function uniqueAssets(packaged: readonly PackagedAsset[]) {
@@ -2705,7 +2889,7 @@ function packageOpf(
   const language = publicationLanguage(paper)
   const direction = publicationBaseDirection(paper)
   return `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="publication-id" xml:lang="${attribute(language)}">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="publication-id" xml:lang="${attribute(language)}" prefix="schema: http://schema.org/">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="publication-id">${text(identifier)}</dc:identifier>
     <dc:title>${text(paper.title)}</dc:title>
@@ -2713,6 +2897,14 @@ function packageOpf(
     ${paper.authors.map((author) => `<dc:creator>${text(author)}</dc:creator>`).join('\n    ')}
     ${paper.publicationDate ? `<dc:date>${text(paper.publicationDate)}</dc:date>` : ''}
     <meta property="dcterms:modified">${text(modified)}</meta>
+    <meta property="schema:accessMode">textual</meta>
+    ${assets.length > 0 ? '<meta property="schema:accessMode">visual</meta>' : ''}
+    <meta property="schema:accessibilityFeature">structuralNavigation</meta>
+    <meta property="schema:accessibilityFeature">tableOfContents</meta>
+    ${assets.length > 0 ? '<meta property="schema:accessibilityFeature">alternativeText</meta>' : ''}
+    <meta property="schema:accessibilityHazard">none</meta>
+    <meta property="schema:accessModeSufficient">${assets.length > 0 ? 'textual,visual' : 'textual'}</meta>
+    <meta property="schema:accessibilitySummary">This reflowable publication provides structural navigation${assets.length > 0 ? ' and text alternatives for packaged visual content' : ''}.</meta>
     ${
       profile
         ? `<meta property="rendition:layout">reflowable</meta>
@@ -2830,6 +3022,206 @@ function sha256Sync(bytes: Uint8Array) {
   return [...state].map((word) => word.toString(16).padStart(8, '0')).join('')
 }
 
+function canonicalJsonSha256(value: unknown) {
+  return sha256Sync(strToU8(canonicalJson(value)))
+}
+
+function opaqueCanonicalHyphenValue(kind: string, value: string) {
+  return sha256Sync(strToU8(`${kind}\0${value}`))
+}
+
+const PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S =
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE.map((evidence) =>
+    opaqueCanonicalHyphenValue('canonical-hyphen-evidence', evidence),
+  )
+const PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE_SHA256S =
+  PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE.map((evidence) =>
+    opaqueCanonicalHyphenValue('canonical-hyphen-evidence', evidence),
+  )
+const PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S =
+  PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE.map((evidence) =>
+    opaqueCanonicalHyphenValue('canonical-hyphen-evidence', evidence),
+  )
+
+function canonicalHyphenDeletionContextCounts(
+  records: readonly { context: string }[],
+) {
+  const counts = new Map<string, number>()
+  for (const record of records) {
+    counts.set(record.context, (counts.get(record.context) ?? 0) + 1)
+  }
+  return Object.fromEntries(
+    [...counts].sort(([left], [right]) => left.localeCompare(right)),
+  )
+}
+
+function canonicalHyphenDeletionManifestReceipt(
+  reconstruction: PdfReconstruction,
+) {
+  if (
+    !hasValidCanonicalHyphenBoundaryLedger({
+      decisions: reconstruction.canonicalHyphenBoundaryDecisions,
+      expectedCount: reconstruction.canonicalHyphenBoundaryDecisionCount,
+      regions: reconstruction.regions,
+    })
+  ) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      'EPUB export requires a complete canonical hyphen deletion ledger and count.',
+    )
+  }
+  const records = reconstruction.canonicalHyphenBoundaryDecisions
+    .map((decision) => {
+      const left = decision.proof.pinnedSplit.left
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US')
+      const right = decision.proof.pinnedSplit.right
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US')
+      const joined = `${left}${right}`
+      const hardHyphen = `${left}-${right}`
+      return {
+        id: opaqueCanonicalHyphenValue(
+          'canonical-hyphen-decision',
+          decision.id,
+        ),
+        context: decision.context,
+        outcome: decision.outcome,
+        fromRegionId: opaqueCanonicalHyphenValue(
+          'region',
+          decision.fromRegionId,
+        ),
+        fromLineId: opaqueCanonicalHyphenValue('line', decision.fromLineId),
+        toRegionId: opaqueCanonicalHyphenValue('region', decision.toRegionId),
+        toLineId: opaqueCanonicalHyphenValue('line', decision.toLineId),
+        geometry: {
+          from: { ...decision.geometry.from },
+          to: { ...decision.geometry.to },
+        },
+        proof: {
+          ...(decision.proof.tier === 'exact-same-document'
+            ? {
+                tier: 'exact-same-document' as const,
+                sourceBoundaryProven: true as const,
+                pinnedWordSha256: canonicalJsonSha256(joined),
+                pinnedJoinedFormValid: true as const,
+                pinnedSplit: {
+                  leftSha256: canonicalJsonSha256(left),
+                  rightSha256: canonicalJsonSha256(right),
+                  index: decision.proof.pinnedSplit.index,
+                },
+                splitPointValid: true as const,
+                exactSameDocumentJoinedFormSha256: canonicalJsonSha256(joined),
+                sameDocumentJoinedFormValid: true as const,
+              }
+            : (() => {
+                const derivedWordSha256 = canonicalJsonSha256(joined)
+                const baseWord = decision.proof.baseWord
+                  .normalize('NFKC')
+                  .toLocaleLowerCase('en-US')
+                const baseWordSha256 = canonicalJsonSha256(baseWord)
+                const productivePrefix = {
+                  ...PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE,
+                }
+                return {
+                  tier: 'same-document-derived-affix' as const,
+                  sourceBoundaryProven: true as const,
+                  derivedWordSha256,
+                  productivePrefix,
+                  baseWordSha256,
+                  derivationBindingSha256: canonicalJsonSha256({
+                    derivedWordSha256,
+                    productivePrefix,
+                    baseWordSha256,
+                  }),
+                  pinnedBaseWordValid: true as const,
+                  pinnedSplit: {
+                    leftSha256: canonicalJsonSha256(left),
+                    rightSha256: canonicalJsonSha256(right),
+                    index: decision.proof.pinnedSplit.index,
+                  },
+                  splitPointValid: true as const,
+                  exactSameDocumentBaseWordSha256: baseWordSha256,
+                  sameDocumentBaseWordValid: true as const,
+                }
+              })()),
+          hardHyphenFormSha256: canonicalJsonSha256(hardHyphen),
+          hardHyphenCounterproof: null,
+          model: { ...decision.proof.model },
+          evidenceSha256s: [
+            ...new Set(
+              decision.proof.evidence.map((evidence) =>
+                opaqueCanonicalHyphenValue(
+                  'canonical-hyphen-evidence',
+                  evidence,
+                ),
+              ),
+            ),
+          ].sort(),
+        },
+      }
+    })
+    .sort((left, right) => left.id.localeCompare(right.id))
+  return {
+    canonicalHyphenDeletionCount: records.length,
+    canonicalHyphenDeletionContextCounts:
+      canonicalHyphenDeletionContextCounts(records),
+    canonicalHyphenDeletionLedger: records,
+    canonicalHyphenDeletionLedgerSha256: canonicalJsonSha256(records),
+  }
+}
+
+function sourceSemanticFlowBoundaryManifestReceipt(
+  reconstruction: PdfReconstruction,
+) {
+  if (
+    !hasValidSourceSemanticFlowBoundaryLedgerCount({
+      decisions: reconstruction.sourceSemanticFlowBoundaryDecisions,
+      expectedCount: reconstruction.sourceSemanticFlowBoundaryDecisionCount,
+    })
+  ) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      'EPUB export requires a complete source semantic-flow boundary ledger and count.',
+    )
+  }
+  const endpoint = (
+    value: PdfReconstruction['sourceSemanticFlowBoundaryDecisions'][number]['from'],
+  ) => ({
+    regionId: opaqueCanonicalHyphenValue('region', value.regionId),
+    lineId: opaqueCanonicalHyphenValue('line', value.lineId),
+    runIndex: value.runIndex,
+    sourceSequenceIndex: value.sourceSequenceIndex,
+    sourceRunSha256: value.sourceRunSha256,
+    sourceFragmentId: opaqueCanonicalHyphenValue(
+      'source-fragment',
+      value.sourceFragmentId,
+    ),
+  })
+  const records = reconstruction.sourceSemanticFlowBoundaryDecisions
+    .map((decision) => ({
+      id: decision.id,
+      page: decision.page,
+      rotation: decision.rotation,
+      method: decision.method,
+      topology: decision.topology,
+      outcome: decision.outcome,
+      from: endpoint(decision.from),
+      to: endpoint(decision.to),
+      evidenceSha256s: decision.evidence
+        .map((evidence) =>
+          opaqueCanonicalHyphenValue('semantic-flow-evidence', evidence),
+        )
+        .sort(),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id))
+  return {
+    sourceSemanticFlowBoundaryCount: records.length,
+    sourceSemanticFlowBoundaryLedger: records,
+    sourceSemanticFlowBoundaryLedgerSha256: canonicalJsonSha256(records),
+  }
+}
+
 type EpubExportManifestReceipt = {
   schemaVersion: typeof EPUB_EXPORT_SCHEMA_VERSION
   identifier: string
@@ -2848,6 +3240,13 @@ type EpubExportManifestReceipt = {
   sourceCompleteness?: Record<string, unknown>
   sourceReadiness?: Record<string, unknown>
   humanAdjudications?: Record<string, unknown>
+  sourceSemanticFlowBoundaryCount?: number
+  sourceSemanticFlowBoundaryLedger?: unknown[]
+  sourceSemanticFlowBoundaryLedgerSha256?: string
+  canonicalHyphenDeletionCount?: number
+  canonicalHyphenDeletionContextCounts?: Record<string, number>
+  canonicalHyphenDeletionLedger?: unknown[]
+  canonicalHyphenDeletionLedgerSha256?: string
   assets: unknown[]
   visualRelationships?: unknown[]
   excludedUnresolvedVisualRelationshipCount: number
@@ -2876,6 +3275,13 @@ const EPUB_EXPORT_MANIFEST_FIELDS = new Set([
   'sourceCompleteness',
   'sourceReadiness',
   'humanAdjudications',
+  'sourceSemanticFlowBoundaryCount',
+  'sourceSemanticFlowBoundaryLedger',
+  'sourceSemanticFlowBoundaryLedgerSha256',
+  'canonicalHyphenDeletionCount',
+  'canonicalHyphenDeletionContextCounts',
+  'canonicalHyphenDeletionLedger',
+  'canonicalHyphenDeletionLedgerSha256',
   'assets',
   'visualRelationships',
   'excludedUnresolvedVisualRelationshipCount',
@@ -2889,6 +3295,462 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
+function exactObjectKeys(value: unknown, expected: readonly string[]) {
+  if (!isRecord(value)) return false
+  const actual = Object.keys(value).sort()
+  const sortedExpected = [...expected].sort()
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  )
+}
+
+function isCanonicalHyphenSourceBox(value: unknown) {
+  return (
+    isRecord(value) &&
+    exactObjectKeys(value, [
+      'page',
+      'x',
+      'y',
+      'width',
+      'height',
+      'rotation',
+      'method',
+    ]) &&
+    Number.isSafeInteger(value.page) &&
+    (value.page as number) >= 1 &&
+    ['x', 'y', 'width', 'height', 'rotation'].every(
+      (field) =>
+        typeof value[field] === 'number' && Number.isFinite(value[field]),
+    ) &&
+    (value.width as number) >= 0 &&
+    (value.height as number) >= 0 &&
+    ['pdf-text', 'pdf-object', 'pdf-link', 'ocr'].includes(
+      value.method as string,
+    )
+  )
+}
+
+function isSortedUniqueSha256Array(value: unknown, nonempty = false) {
+  return (
+    Array.isArray(value) &&
+    (!nonempty || value.length > 0) &&
+    value.every(isSha256) &&
+    value.every(
+      (entry, index) =>
+        index === 0 || value[index - 1].localeCompare(entry) < 0,
+    )
+  )
+}
+
+function isLegacyCanonicalHyphenDeletionManifestRecord(value: unknown) {
+  if (
+    !isRecord(value) ||
+    !exactObjectKeys(value, [
+      'id',
+      'context',
+      'outcome',
+      'fromRegionId',
+      'fromLineId',
+      'toRegionId',
+      'toLineId',
+      'geometry',
+      'proof',
+    ]) ||
+    ![
+      value.id,
+      value.fromRegionId,
+      value.fromLineId,
+      value.toRegionId,
+      value.toLineId,
+    ].every(isSha256) ||
+    !['bibliography-continuation', 'canonical-flow-continuation'].includes(
+      value.context as string,
+    ) ||
+    value.outcome !== 'removed-discretionary-hyphen' ||
+    !isRecord(value.geometry) ||
+    !exactObjectKeys(value.geometry, ['from', 'to']) ||
+    !isCanonicalHyphenSourceBox(value.geometry.from) ||
+    !isCanonicalHyphenSourceBox(value.geometry.to) ||
+    !isRecord(value.proof) ||
+    !exactObjectKeys(value.proof, [
+      'sourceBoundaryProven',
+      'pinnedWordSha256',
+      'pinnedJoinedFormValid',
+      'pinnedSplit',
+      'splitPointValid',
+      'exactSameDocumentJoinedFormSha256',
+      'sameDocumentJoinedFormValid',
+      'hardHyphenFormSha256',
+      'hardHyphenCounterproof',
+      'model',
+      'evidenceSha256s',
+    ]) ||
+    value.proof.sourceBoundaryProven !== true ||
+    !isSha256(value.proof.pinnedWordSha256) ||
+    value.proof.pinnedJoinedFormValid !== true ||
+    !isRecord(value.proof.pinnedSplit) ||
+    !exactObjectKeys(value.proof.pinnedSplit, [
+      'leftSha256',
+      'rightSha256',
+      'index',
+    ]) ||
+    !isSha256(value.proof.pinnedSplit.leftSha256) ||
+    !isSha256(value.proof.pinnedSplit.rightSha256) ||
+    !Number.isSafeInteger(value.proof.pinnedSplit.index) ||
+    (value.proof.pinnedSplit.index as number) < 1 ||
+    value.proof.splitPointValid !== true ||
+    !isSha256(value.proof.exactSameDocumentJoinedFormSha256) ||
+    value.proof.exactSameDocumentJoinedFormSha256 !==
+      value.proof.pinnedWordSha256 ||
+    value.proof.sameDocumentJoinedFormValid !== true ||
+    !isSha256(value.proof.hardHyphenFormSha256) ||
+    value.proof.hardHyphenFormSha256 === value.proof.pinnedWordSha256 ||
+    value.proof.hardHyphenCounterproof !== null ||
+    !isRecord(value.proof.model) ||
+    canonicalJson(value.proof.model) !==
+      canonicalJson(PDF_HYPHEN_LEXICAL_MODEL) ||
+    !isSortedUniqueSha256Array(value.proof.evidenceSha256s, true)
+  ) {
+    return false
+  }
+  const evidenceSha256s = value.proof.evidenceSha256s as string[]
+  return (
+    PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every((evidenceSha256) =>
+      evidenceSha256s.includes(evidenceSha256),
+    ) &&
+    PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S.every(
+      (evidenceSha256) => !evidenceSha256s.includes(evidenceSha256),
+    )
+  )
+}
+
+function isCanonicalHyphenDeletionManifestRecord(value: unknown) {
+  if (
+    !isRecord(value) ||
+    !exactObjectKeys(value, [
+      'id',
+      'context',
+      'outcome',
+      'fromRegionId',
+      'fromLineId',
+      'toRegionId',
+      'toLineId',
+      'geometry',
+      'proof',
+    ]) ||
+    ![
+      value.id,
+      value.fromRegionId,
+      value.fromLineId,
+      value.toRegionId,
+      value.toLineId,
+    ].every(isSha256) ||
+    !['bibliography-continuation', 'canonical-flow-continuation'].includes(
+      value.context as string,
+    ) ||
+    value.outcome !== 'removed-discretionary-hyphen' ||
+    !isRecord(value.geometry) ||
+    !exactObjectKeys(value.geometry, ['from', 'to']) ||
+    !isCanonicalHyphenSourceBox(value.geometry.from) ||
+    !isCanonicalHyphenSourceBox(value.geometry.to) ||
+    !isRecord(value.proof) ||
+    value.proof.sourceBoundaryProven !== true ||
+    !isRecord(value.proof.pinnedSplit) ||
+    !exactObjectKeys(value.proof.pinnedSplit, [
+      'leftSha256',
+      'rightSha256',
+      'index',
+    ]) ||
+    !isSha256(value.proof.pinnedSplit.leftSha256) ||
+    !isSha256(value.proof.pinnedSplit.rightSha256) ||
+    !Number.isSafeInteger(value.proof.pinnedSplit.index) ||
+    (value.proof.pinnedSplit.index as number) < 1 ||
+    value.proof.splitPointValid !== true ||
+    !isSha256(value.proof.hardHyphenFormSha256) ||
+    value.proof.hardHyphenCounterproof !== null ||
+    !isRecord(value.proof.model) ||
+    canonicalJson(value.proof.model) !==
+      canonicalJson(PDF_HYPHEN_LEXICAL_MODEL) ||
+    !isSortedUniqueSha256Array(value.proof.evidenceSha256s, true)
+  ) {
+    return false
+  }
+  const evidenceSha256s = value.proof.evidenceSha256s as string[]
+  const noForbiddenEvidence =
+    PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S.every(
+      (evidenceSha256) => !evidenceSha256s.includes(evidenceSha256),
+    )
+  if (!noForbiddenEvidence) return false
+  if (value.proof.tier === 'exact-same-document') {
+    return (
+      exactObjectKeys(value.proof, [
+        'tier',
+        'sourceBoundaryProven',
+        'pinnedWordSha256',
+        'pinnedJoinedFormValid',
+        'pinnedSplit',
+        'splitPointValid',
+        'exactSameDocumentJoinedFormSha256',
+        'sameDocumentJoinedFormValid',
+        'hardHyphenFormSha256',
+        'hardHyphenCounterproof',
+        'model',
+        'evidenceSha256s',
+      ]) &&
+      isSha256(value.proof.pinnedWordSha256) &&
+      value.proof.pinnedJoinedFormValid === true &&
+      isSha256(value.proof.exactSameDocumentJoinedFormSha256) &&
+      value.proof.exactSameDocumentJoinedFormSha256 ===
+        value.proof.pinnedWordSha256 &&
+      value.proof.sameDocumentJoinedFormValid === true &&
+      value.proof.hardHyphenFormSha256 !== value.proof.pinnedWordSha256 &&
+      PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every((evidenceSha256) =>
+        evidenceSha256s.includes(evidenceSha256),
+      )
+    )
+  }
+  if (value.proof.tier !== 'same-document-derived-affix') return false
+  if (
+    !exactObjectKeys(value.proof, [
+      'tier',
+      'sourceBoundaryProven',
+      'derivedWordSha256',
+      'productivePrefix',
+      'baseWordSha256',
+      'derivationBindingSha256',
+      'pinnedBaseWordValid',
+      'pinnedSplit',
+      'splitPointValid',
+      'exactSameDocumentBaseWordSha256',
+      'sameDocumentBaseWordValid',
+      'hardHyphenFormSha256',
+      'hardHyphenCounterproof',
+      'model',
+      'evidenceSha256s',
+    ]) ||
+    !isSha256(value.proof.derivedWordSha256) ||
+    !isRecord(value.proof.productivePrefix) ||
+    canonicalJson(value.proof.productivePrefix) !==
+      canonicalJson(PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE) ||
+    !isSha256(value.proof.baseWordSha256) ||
+    !isSha256(value.proof.derivationBindingSha256) ||
+    value.proof.derivationBindingSha256 !==
+      canonicalJsonSha256({
+        derivedWordSha256: value.proof.derivedWordSha256,
+        productivePrefix: value.proof.productivePrefix,
+        baseWordSha256: value.proof.baseWordSha256,
+      }) ||
+    value.proof.pinnedBaseWordValid !== true ||
+    !isSha256(value.proof.exactSameDocumentBaseWordSha256) ||
+    value.proof.exactSameDocumentBaseWordSha256 !==
+      value.proof.baseWordSha256 ||
+    value.proof.sameDocumentBaseWordValid !== true ||
+    value.proof.derivedWordSha256 === value.proof.baseWordSha256 ||
+    value.proof.hardHyphenFormSha256 === value.proof.derivedWordSha256 ||
+    (value.proof.pinnedSplit.index as number) <=
+      PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE.value.length
+  ) {
+    return false
+  }
+  return PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE_SHA256S.every(
+    (evidenceSha256) => evidenceSha256s.includes(evidenceSha256),
+  )
+}
+
+function validateCanonicalHyphenDeletionManifestReceipt(
+  parsed: Record<string, unknown>,
+) {
+  const fields = [
+    'canonicalHyphenDeletionCount',
+    'canonicalHyphenDeletionContextCounts',
+    'canonicalHyphenDeletionLedger',
+    'canonicalHyphenDeletionLedgerSha256',
+  ] as const
+  const present = fields.filter((field) => Object.hasOwn(parsed, field))
+  if (parsed.sourceFormat !== 'pdf') {
+    if (present.length > 0) {
+      throw new Error(
+        'EPUB export manifest canonical hyphen deletion receipt is only valid for PDF sources',
+      )
+    }
+    return
+  }
+  if (present.length !== fields.length) {
+    throw new Error(
+      'EPUB PDF export manifest is missing its canonical hyphen deletion receipt',
+    )
+  }
+  const records = parsed.canonicalHyphenDeletionLedger
+  if (
+    !Number.isSafeInteger(parsed.canonicalHyphenDeletionCount) ||
+    (parsed.canonicalHyphenDeletionCount as number) < 0 ||
+    !Array.isArray(records) ||
+    records.length !== parsed.canonicalHyphenDeletionCount ||
+    !records.every(
+      parsed.schemaVersion === EPUB_EXPORT_LEGACY_SCHEMA_VERSION
+        ? isLegacyCanonicalHyphenDeletionManifestRecord
+        : isCanonicalHyphenDeletionManifestRecord,
+    )
+  ) {
+    throw new Error(
+      'EPUB export manifest canonical hyphen deletion ledger is invalid',
+    )
+  }
+  const recordValues = records as Array<
+    Record<string, unknown> & {
+      id: string
+      context: string
+      fromRegionId: string
+      fromLineId: string
+      toRegionId: string
+      toLineId: string
+    }
+  >
+  if (
+    recordValues.some(
+      (record, index) =>
+        index > 0 && recordValues[index - 1].id.localeCompare(record.id) >= 0,
+    ) ||
+    new Set(recordValues.map((record) => record.id)).size !== records.length ||
+    new Set(
+      recordValues.map((record) =>
+        [
+          record.fromRegionId,
+          record.fromLineId,
+          record.toRegionId,
+          record.toLineId,
+        ].join('\0'),
+      ),
+    ).size !== records.length ||
+    !isRecord(parsed.canonicalHyphenDeletionContextCounts) ||
+    !exactObjectKeys(
+      parsed.canonicalHyphenDeletionContextCounts,
+      Object.keys(canonicalHyphenDeletionContextCounts(recordValues)),
+    ) ||
+    canonicalJson(parsed.canonicalHyphenDeletionContextCounts) !==
+      canonicalJson(canonicalHyphenDeletionContextCounts(recordValues)) ||
+    !isSha256(parsed.canonicalHyphenDeletionLedgerSha256) ||
+    parsed.canonicalHyphenDeletionLedgerSha256 !== canonicalJsonSha256(records)
+  ) {
+    throw new Error(
+      'EPUB export manifest canonical hyphen deletion receipt is inconsistent',
+    )
+  }
+}
+
+function isSourceSemanticFlowBoundaryManifestEndpoint(value: unknown) {
+  return (
+    isRecord(value) &&
+    exactObjectKeys(value, [
+      'regionId',
+      'lineId',
+      'runIndex',
+      'sourceSequenceIndex',
+      'sourceRunSha256',
+      'sourceFragmentId',
+    ]) &&
+    isSha256(value.regionId) &&
+    isSha256(value.lineId) &&
+    Number.isSafeInteger(value.runIndex) &&
+    (value.runIndex as number) >= 0 &&
+    Number.isSafeInteger(value.sourceSequenceIndex) &&
+    (value.sourceSequenceIndex as number) >= 0 &&
+    isSha256(value.sourceRunSha256) &&
+    isSha256(value.sourceFragmentId)
+  )
+}
+
+function isSourceSemanticFlowBoundaryManifestRecord(value: unknown) {
+  return (
+    isRecord(value) &&
+    exactObjectKeys(value, [
+      'id',
+      'page',
+      'rotation',
+      'method',
+      'topology',
+      'outcome',
+      'from',
+      'to',
+      'evidenceSha256s',
+    ]) &&
+    isSha256(value.id) &&
+    Number.isSafeInteger(value.page) &&
+    (value.page as number) >= 1 &&
+    typeof value.rotation === 'number' &&
+    Number.isFinite(value.rotation) &&
+    ['pdf-text', 'ocr'].includes(value.method as string) &&
+    ['inline-stacked-fragment', 'lexical-hyphen'].includes(
+      value.topology as string,
+    ) &&
+    ['no-space', 'discretionary-hyphen-delete', 'hard-hyphen-retain'].includes(
+      value.outcome as string,
+    ) &&
+    isSourceSemanticFlowBoundaryManifestEndpoint(value.from) &&
+    isSourceSemanticFlowBoundaryManifestEndpoint(value.to) &&
+    isSortedUniqueSha256Array(value.evidenceSha256s, true)
+  )
+}
+
+function validateSourceSemanticFlowBoundaryManifestReceipt(
+  parsed: Record<string, unknown>,
+) {
+  const fields = [
+    'sourceSemanticFlowBoundaryCount',
+    'sourceSemanticFlowBoundaryLedger',
+    'sourceSemanticFlowBoundaryLedgerSha256',
+  ] as const
+  const present = fields.filter((field) => Object.hasOwn(parsed, field))
+  if (parsed.sourceFormat !== 'pdf') {
+    if (present.length > 0) {
+      throw new Error(
+        'EPUB export manifest source semantic-flow receipt is only valid for PDF sources',
+      )
+    }
+    return
+  }
+  if (present.length !== fields.length) {
+    throw new Error(
+      'EPUB PDF export manifest is missing its source semantic-flow boundary receipt',
+    )
+  }
+  const records = parsed.sourceSemanticFlowBoundaryLedger
+  if (
+    !Number.isSafeInteger(parsed.sourceSemanticFlowBoundaryCount) ||
+    (parsed.sourceSemanticFlowBoundaryCount as number) < 0 ||
+    !Array.isArray(records) ||
+    records.length !== parsed.sourceSemanticFlowBoundaryCount ||
+    !records.every(isSourceSemanticFlowBoundaryManifestRecord)
+  ) {
+    throw new Error(
+      'EPUB export manifest source semantic-flow boundary ledger is invalid',
+    )
+  }
+  const recordValues = records as Array<{
+    id: string
+    from: Record<string, unknown>
+    to: Record<string, unknown>
+  }>
+  if (
+    recordValues.some(
+      (record, index) =>
+        index > 0 && recordValues[index - 1].id.localeCompare(record.id) >= 0,
+    ) ||
+    new Set(recordValues.map((record) => record.id)).size !== records.length ||
+    new Set(
+      recordValues.map((record) => canonicalJson([record.from, record.to])),
+    ).size !== records.length ||
+    !isSha256(parsed.sourceSemanticFlowBoundaryLedgerSha256) ||
+    parsed.sourceSemanticFlowBoundaryLedgerSha256 !==
+      canonicalJsonSha256(records)
+  ) {
+    throw new Error(
+      'EPUB export manifest source semantic-flow boundary receipt is inconsistent',
+    )
+  }
 }
 
 function manifestAdjudicationRecord(decision: HumanAdjudicationRecord) {
@@ -2983,7 +3845,11 @@ function parseExportManifest(
   }
 
   if (
-    parsed.schemaVersion !== EPUB_EXPORT_SCHEMA_VERSION ||
+    ![EPUB_EXPORT_LEGACY_SCHEMA_VERSION, EPUB_EXPORT_SCHEMA_VERSION].includes(
+      parsed.schemaVersion as
+        | typeof EPUB_EXPORT_LEGACY_SCHEMA_VERSION
+        | typeof EPUB_EXPORT_SCHEMA_VERSION,
+    ) ||
     (parsed.exportMode !== 'publication' &&
       parsed.exportMode !== 'readable-fallback') ||
     typeof parsed.identifier !== 'string' ||
@@ -3060,6 +3926,8 @@ function parseExportManifest(
   ) {
     throw new Error('EPUB export manifest source identity contract is invalid')
   }
+  validateSourceSemanticFlowBoundaryManifestReceipt(parsed)
+  validateCanonicalHyphenDeletionManifestReceipt(parsed)
 
   let profile: ReturnType<typeof profileManifestReceipt> | undefined
   if (parsed.profile !== undefined) {
@@ -3722,6 +4590,48 @@ function validateInternalHrefs(
   }
 }
 
+export function readerFacingDebugMarkers(xhtml: string) {
+  const visibleText = xhtml
+    .replace(/<(?:style|script)\b[\s\S]*?<\/(?:style|script)>/giu, ' ')
+    .replace(/<[^>]+>/gu, ' ')
+    .replace(/&nbsp;|&#160;/giu, ' ')
+    .replace(/&(?:amp|lt|gt|quot|apos);/giu, ' ')
+    .replace(/\s+/gu, ' ')
+  const markers: string[] = []
+  const detect = (label: string, pattern: RegExp, value = visibleText) => {
+    if (pattern.test(value)) markers.push(label)
+  }
+  detect(
+    'synthetic display-equation identifier',
+    /\bDisplay equation p\d{3}-\d{3}\b/iu,
+  )
+  detect('raw extraction identifier', /\bp\d{3}-\d{3}\b/iu)
+  detect(
+    'recovered OCR fallback notice',
+    /\bRecovered (?:table )?(?:source )?(?:text|lines)\b/iu,
+  )
+  detect(
+    'unresolved semantics notice',
+    /\b(?:semantic(?:s)? remain unresolved|semantic transcript unresolved|semantic line order remains unresolved|source crop unavailable|unresolved visual|missing equation)\b/iu,
+  )
+  detect(
+    'unresolved alt-source marker',
+    /\bdata-alt-source\s*=\s*["']unresolved["']/iu,
+    xhtml,
+  )
+  detect(
+    'unresolved transcript markup',
+    /\bdata-transcript-status\s*=\s*["']unresolved["']/iu,
+    xhtml,
+  )
+  detect(
+    'placeholder visual markup',
+    /\b(?:figure-placeholder|omitted-visual(?:-transcript|-caption)?|omitted-table-transcript)\b/iu,
+    xhtml,
+  )
+  return [...new Set(markers)]
+}
+
 /**
  * Validates EPUB structure and internal receipt consistency. Supply an
  * `expectation` to bind the artifact to trusted canonical/source inputs;
@@ -3796,6 +4706,14 @@ export function inspectEpub(
     strFromU8(files['EPUB/export.json']),
     Boolean(expectedProfile),
   )
+  if (manifest.sourceFormat === 'pdf') {
+    const readerFacingDebug = readerFacingDebugMarkers(content)
+    if (readerFacingDebug.length > 0) {
+      throw new Error(
+        `EPUB reading content contains unresolved converter output: ${readerFacingDebug.join(', ')}`,
+      )
+    }
+  }
   if (
     expectedProfile &&
     canonicalJson(manifest.profile) !==
@@ -3881,6 +4799,34 @@ export function inspectEpub(
     if (manifest.sourcePdfSha256 !== expectation.sourcePdfSha256) {
       throw new Error(
         'EPUB export manifest sourcePdfSha256 does not match the expected source',
+      )
+    }
+  }
+  if (expectation.sourceSemanticFlowBoundaryLedgerSha256 !== undefined) {
+    requireSha256(
+      expectation.sourceSemanticFlowBoundaryLedgerSha256,
+      'expected sourceSemanticFlowBoundaryLedgerSha256',
+    )
+    if (
+      manifest.sourceSemanticFlowBoundaryLedgerSha256 !==
+      expectation.sourceSemanticFlowBoundaryLedgerSha256
+    ) {
+      throw new Error(
+        'EPUB export manifest sourceSemanticFlowBoundaryLedgerSha256 does not match the expected PDF ledger',
+      )
+    }
+  }
+  if (expectation.canonicalHyphenDeletionLedgerSha256 !== undefined) {
+    requireSha256(
+      expectation.canonicalHyphenDeletionLedgerSha256,
+      'expected canonicalHyphenDeletionLedgerSha256',
+    )
+    if (
+      manifest.canonicalHyphenDeletionLedgerSha256 !==
+      expectation.canonicalHyphenDeletionLedgerSha256
+    ) {
+      throw new Error(
+        'EPUB export manifest canonicalHyphenDeletionLedgerSha256 does not match the expected PDF ledger',
       )
     }
   }
@@ -4086,18 +5032,56 @@ export function projectReadableFallbackReconstruction(
       'A readable EPUB requires recovered text for every source page; run local OCR first.',
     )
   }
+  const matchedEquationRelationships =
+    reconstruction.visualRelationships.filter(
+      (relationship) =>
+        relationship.kind === 'equation' && relationship.status === 'matched',
+    )
+  const matchedEquationAssetIds = new Set(
+    matchedEquationRelationships.flatMap(
+      (relationship) => relationship.assetIds,
+    ),
+  )
+  const matchedEquationAssets = reconstruction.assets.filter((asset) =>
+    matchedEquationAssetIds.has(asset.id),
+  )
+  const equationAssetUsage = epubAssetResourceUsage(matchedEquationAssets)
+  if (
+    matchedEquationRelationships.length >
+      MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK ||
+    equationAssetUsage.count > MAX_EPUB_ASSETS_PER_BOOK ||
+    equationAssetUsage.bytes > MAX_EPUB_ASSET_BYTES_PER_BOOK
+  ) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      epubAssetResourceLimitMessage({
+        equationCount: matchedEquationRelationships.length,
+        assetCount: equationAssetUsage.count,
+        assetBytes: equationAssetUsage.bytes,
+      }),
+    )
+  }
+  const duplicateVisualOwner = duplicateVisualRelationshipNodeOwnership(
+    reconstruction.visualRelationships,
+  )
+  if (duplicateVisualOwner) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      `Readable EPUB reconstruction cannot retain visual relationships ${duplicateVisualOwner.relationshipIds.join(', ')} because they ambiguously share ${duplicateVisualOwner.field} ${duplicateVisualOwner.nodeId}.`,
+    )
+  }
   const availableAssetIds = new Set(
     reconstruction.assets
       .filter((asset) => !isSolidFillVectorFragment(asset))
       .map((asset) => asset.id),
   )
-  let selectedAssetCount = 0
   const validatedRelationships = validatedPdfVisualRelationships({
     paper: reconstruction.paper,
     provenance: reconstruction.provenance,
     relationships: reconstruction.visualRelationships,
     assets: reconstruction.assets,
     regions: reconstruction.regions,
+    pages: reconstruction.pages,
   })
   const validatedRelationshipsById = new Map(
     validatedRelationships.map((relationship) => [
@@ -4105,6 +5089,23 @@ export function projectReadableFallbackReconstruction(
       relationship,
     ]),
   )
+  const selectedAssetIds = new Set<string>()
+  const selectedOptionalAssetIds = new Set<string>()
+  for (const relationship of matchedEquationRelationships) {
+    if (
+      !validatedRelationshipsById.has(relationship.id) ||
+      relationship.assetIds.length > MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL ||
+      relationship.assetIds.some((assetId) => !availableAssetIds.has(assetId))
+    ) {
+      throw new PdfImportError(
+        'INCOMPLETE_RECONSTRUCTION',
+        `Readable EPUB reconstruction cannot retain matched equation relationship ${relationship.id} because its relationship or asset evidence is invalid.`,
+      )
+    }
+    for (const assetId of relationship.assetIds) {
+      selectedAssetIds.add(assetId)
+    }
+  }
   const captionNodeIds = new Set(
     reconstruction.paper.nodes
       .filter((node) => node.type === 'caption')
@@ -4112,6 +5113,23 @@ export function projectReadableFallbackReconstruction(
   )
   const retainedUnresolvedRelationshipIds = new Set(
     reconstruction.visualRelationships.flatMap((relationship) => {
+      const withinPerVisualGuard =
+        relationship.assetIds.length <= MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL
+      const assetsAvailable = relationship.assetIds.every((assetId) =>
+        availableAssetIds.has(assetId),
+      )
+      if (
+        relationship.status !== 'matched' &&
+        relationship.canonicalNodeId &&
+        withinPerVisualGuard &&
+        assetsAvailable &&
+        relationship.assetIds.length > 0 &&
+        reconstruction.paper.nodes.some(
+          (node) => node.id === relationship.canonicalNodeId,
+        )
+      ) {
+        return [relationship.id]
+      }
       if (
         relationship.status === 'matched' ||
         relationship.canonicalNodeId !== null ||
@@ -4134,23 +5152,91 @@ export function projectReadableFallbackReconstruction(
     (relationship) => {
       const validated = validatedRelationshipsById.get(relationship.id)
       if (!validated) {
-        return retainedUnresolvedRelationshipIds.has(relationship.id)
-          ? [relationship]
-          : []
+        if (retainedUnresolvedRelationshipIds.has(relationship.id)) {
+          const newOptionalAssetIds = relationship.assetIds.filter(
+            (assetId) => !selectedAssetIds.has(assetId),
+          )
+          if (
+            selectedOptionalAssetIds.size + newOptionalAssetIds.length >
+            MAX_READABLE_FALLBACK_OPTIONAL_ASSETS_PER_BOOK
+          ) {
+            return []
+          }
+          for (const assetId of relationship.assetIds) {
+            selectedAssetIds.add(assetId)
+          }
+          for (const assetId of newOptionalAssetIds) {
+            selectedOptionalAssetIds.add(assetId)
+          }
+          return [relationship]
+        }
+        return []
       }
-      const nextAssetCount = selectedAssetCount + relationship.assetIds.length
+      const withinPerVisualGuard =
+        relationship.assetIds.length <= MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL
+      const assetsAvailable = relationship.assetIds.every((assetId) =>
+        availableAssetIds.has(assetId),
+      )
+      if (relationship.kind === 'equation') {
+        if (!withinPerVisualGuard || !assetsAvailable) {
+          throw new PdfImportError(
+            'INCOMPLETE_RECONSTRUCTION',
+            `Readable EPUB reconstruction cannot retain matched equation relationship ${relationship.id} with its complete validated asset set.`,
+          )
+        }
+        for (const assetId of relationship.assetIds) {
+          selectedAssetIds.add(assetId)
+        }
+        return [validated]
+      }
+      const newOptionalAssetIds = relationship.assetIds.filter(
+        (assetId) => !selectedAssetIds.has(assetId),
+      )
       const accepted =
-        relationship.assetIds.length <=
-          MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL &&
-        nextAssetCount <= MAX_READABLE_FALLBACK_ASSETS_PER_BOOK &&
-        relationship.assetIds.every((assetId) => availableAssetIds.has(assetId))
-      if (accepted) selectedAssetCount = nextAssetCount
+        withinPerVisualGuard &&
+        assetsAvailable &&
+        selectedOptionalAssetIds.size + newOptionalAssetIds.length <=
+          MAX_READABLE_FALLBACK_OPTIONAL_ASSETS_PER_BOOK
+      if (accepted) {
+        for (const assetId of relationship.assetIds) {
+          selectedAssetIds.add(assetId)
+        }
+        for (const assetId of newOptionalAssetIds) {
+          selectedOptionalAssetIds.add(assetId)
+        }
+      }
       return accepted ? [validated] : []
     },
   )
-  const selectedAssetIds = new Set(
-    relationships.flatMap((relationship) => relationship.assetIds),
+  const projectedAssets = reconstruction.assets.filter((asset) =>
+    selectedAssetIds.has(asset.id),
   )
+  const projectedAssetIds = new Set(projectedAssets.map((asset) => asset.id))
+  const incompleteEquationProjection = matchedEquationRelationships.find(
+    (sourceRelationship) => {
+      const projectedRelationships = relationships.filter(
+        (relationship) => relationship.id === sourceRelationship.id,
+      )
+      return (
+        projectedRelationships.length !== 1 ||
+        projectedRelationships[0].kind !== 'equation' ||
+        projectedRelationships[0].status !== 'matched' ||
+        projectedRelationships[0].assetIds.length !==
+          sourceRelationship.assetIds.length ||
+        projectedRelationships[0].assetIds.some(
+          (assetId, index) =>
+            assetId !== sourceRelationship.assetIds[index] ||
+            !projectedAssetIds.has(assetId),
+        )
+      )
+    },
+  )
+  if (incompleteEquationProjection) {
+    throw new PdfImportError(
+      'INCOMPLETE_RECONSTRUCTION',
+      `Readable EPUB reconstruction lost matched equation relationship ${incompleteEquationProjection.id} or one of its validated assets during projection.`,
+    )
+  }
   const paper = projectRenderableNoteRelationships(reconstruction.paper)
   if (!hasReadableText(paper)) {
     throw new PdfImportError(
@@ -4163,9 +5249,7 @@ export function projectReadableFallbackReconstruction(
     paper,
     provenance: reconstruction.provenance,
     visualRelationships: relationships,
-    assets: reconstruction.assets.filter((asset) =>
-      selectedAssetIds.has(asset.id),
-    ),
+    assets: projectedAssets,
   }
 }
 
@@ -4182,6 +5266,12 @@ function epubFileName(
     profile?.orientation.selected === 'landscape' ? '-landscape' : ''
   const modeSuffix = mode === 'readable-fallback' ? '-readable' : ''
   return `${slug(paper.title)}-${profileName}${orientationSuffix}-${canonicalContentSha256.slice(0, 12)}${modeSuffix}.epub`
+}
+
+function yieldToEpubAssembly() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
 }
 
 async function buildEpubInternal(
@@ -4253,6 +5343,7 @@ async function buildEpubInternal(
             relationships: renderReconstruction.visualRelationships,
             assets: renderReconstruction.assets,
             regions: (renderReconstruction as PdfReconstruction).regions,
+            pages: (renderReconstruction as PdfReconstruction).pages,
           }).map((relationship) => relationship.id),
         )
     const assetIds = new Set(
@@ -4289,13 +5380,20 @@ async function buildEpubInternal(
             relationship.assetIds.some((assetId) => !assetIds.has(assetId))
           )
         }
-        return !(
-          mode === 'readable-fallback' &&
+        if (mode !== 'readable-fallback') return true
+        const sourcePreservedFallback =
+          relationship.canonicalNodeId !== null &&
+          relationship.assetIds.length > 0 &&
+          relationship.assetIds.length <=
+            MAX_READABLE_FALLBACK_ASSETS_PER_VISUAL &&
+          relationship.assetIds.every((assetId) => assetIds.has(assetId)) &&
+          renderNodeIds.has(relationship.canonicalNodeId)
+        const captionOnlyFallback =
           relationship.canonicalNodeId === null &&
           relationship.assetIds.length === 0 &&
           relationship.captionNodeId &&
           renderNodeIds.has(relationship.captionNodeId)
-        )
+        return !(sourcePreservedFallback || captionOnlyFallback)
       },
     )
     if (invalid) {
@@ -4336,6 +5434,14 @@ async function buildEpubInternal(
       noteRelationships: reconstruction.noteRelationships,
       policy: reconstruction.readiness.policy,
       lineBoundaryDecisions: reconstruction.lineBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisions:
+        reconstruction.sourceSemanticFlowBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisionCount:
+        reconstruction.sourceSemanticFlowBoundaryDecisionCount,
+      canonicalHyphenBoundaryDecisions:
+        reconstruction.canonicalHyphenBoundaryDecisions,
+      canonicalHyphenBoundaryDecisionCount:
+        reconstruction.canonicalHyphenBoundaryDecisionCount,
       unresolvedCorruptingJoinCount:
         reconstruction.unresolvedCorruptingJoinCount,
       structurallyConsumedLineBoundaryCount:
@@ -4359,10 +5465,23 @@ async function buildEpubInternal(
     }
     publicationPdfAssessment = assessment
   }
-  const packaged = await packageVisualAssets(
-    renderReconstruction?.assets ?? [],
-    profile,
-  )
+  await yieldToEpubAssembly()
+  const sourceAssets = renderReconstruction?.assets ?? []
+  const sourceAssetUsage = epubAssetResourceUsage(sourceAssets)
+  if (
+    sourceAssetUsage.count > MAX_EPUB_ASSETS_PER_BOOK ||
+    sourceAssetUsage.bytes > MAX_EPUB_ASSET_BYTES_PER_BOOK
+  ) {
+    const message = epubAssetResourceLimitMessage({
+      assetCount: sourceAssetUsage.count,
+      assetBytes: sourceAssetUsage.bytes,
+    })
+    throw renderReconstruction && isDocxReconstruction(renderReconstruction)
+      ? new DocxImportError('INCOMPLETE_RECONSTRUCTION', message)
+      : new PdfImportError('INCOMPLETE_RECONSTRUCTION', message)
+  }
+  const packaged = await packageVisualAssets(sourceAssets, profile)
+  await yieldToEpubAssembly()
   const visualAssets = uniqueAssets(packaged)
   const unsafeAsset = visualAssets.find(
     (asset) => !/^assets\/[A-Za-z0-9_.-]+$/.test(asset.href),
@@ -4395,6 +5514,14 @@ async function buildEpubInternal(
   const exportProfileMetadata = profile
     ? getEpubProfileMetadata(profile)
     : undefined
+  const canonicalHyphenDeletionReceipt =
+    reconstruction && !isDocxReconstruction(reconstruction)
+      ? canonicalHyphenDeletionManifestReceipt(reconstruction)
+      : undefined
+  const sourceSemanticFlowBoundaryReceipt =
+    reconstruction && !isDocxReconstruction(reconstruction)
+      ? sourceSemanticFlowBoundaryManifestReceipt(reconstruction)
+      : undefined
   const exportManifest = {
     schemaVersion: EPUB_EXPORT_SCHEMA_VERSION,
     identifier,
@@ -4440,6 +5567,8 @@ async function buildEpubInternal(
       reconstruction && !isDocxReconstruction(reconstruction)
         ? manifestHumanAdjudications(reconstruction)
         : undefined,
+    ...sourceSemanticFlowBoundaryReceipt,
+    ...canonicalHyphenDeletionReceipt,
     assets: packaged.map(({ source, asset, policy }) => {
       const { bytes: _bytes, ...metadata } = asset
       return { ...metadata, sourceAssetId: source.id, policy }
@@ -4481,7 +5610,9 @@ async function buildEpubInternal(
       ]),
     ),
   }
+  await yieldToEpubAssembly()
   const bytes = zipSync(archive)
+  await yieldToEpubAssembly()
   const { files, entries } = inspectEpub(bytes, profile, {
     canonicalPaper: renderPaper,
     sourceCanonicalPaper: reconstruction?.paper ?? paper,
@@ -4489,7 +5620,10 @@ async function buildEpubInternal(
       reconstruction && !isDocxReconstruction(reconstruction)
         ? reconstruction.source.sha256
         : undefined,
+    canonicalHyphenDeletionLedgerSha256:
+      canonicalHyphenDeletionReceipt?.canonicalHyphenDeletionLedgerSha256,
   })
+  await yieldToEpubAssembly()
   if (renderReconstruction) {
     const content = strFromU8(files['EPUB/content.xhtml'])
     const opf = strFromU8(files['EPUB/package.opf'])

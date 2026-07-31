@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import PageNavigation from './PageNavigation'
+import PageZoomControls from './PageZoomControls'
+import {
+  fittedReviewScale,
+  steppedReviewZoom,
+  type ReviewZoomMode,
+} from './review-zoom'
 
 export function clampPdfPage(page: number, pageCount: number) {
   if (!Number.isFinite(page) || pageCount < 1) return 1
@@ -18,16 +25,20 @@ export default function SourcePdfPageViewer({
     ReturnType<(typeof import('pdfjs-dist'))['getDocument']>['promise']
   > | null>(null)
   const [page, setPage] = useState(1)
-  const [stageWidth, setStageWidth] = useState(0)
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
+  const [pageSize, setPageSize] = useState({ width: 1, height: 1 })
+  const [zoomMode, setZoomMode] = useState<ReviewZoomMode>('fit-page')
+  const [zoomPercent, setZoomPercent] = useState(100)
   const [status, setStatus] = useState('Opening source PDF…')
   const [error, setError] = useState('')
 
   useEffect(() => {
     const stage = stageRef.current
     if (!stage) return
-    const updateWidth = () => setStageWidth(stage.clientWidth)
-    updateWidth()
-    const observer = new ResizeObserver(updateWidth)
+    const updateSize = () =>
+      setStageSize({ width: stage.clientWidth, height: stage.clientHeight })
+    updateSize()
+    const observer = new ResizeObserver(updateSize)
     observer.observe(stage)
     return () => observer.disconnect()
   }, [])
@@ -73,7 +84,7 @@ export default function SourcePdfPageViewer({
   }, [sourceUrl])
 
   useEffect(() => {
-    if (!document || !canvasRef.current || stageWidth < 1) return
+    if (!document || !canvasRef.current || stageSize.width < 1) return
     let active = true
     let renderTask:
       { cancel: () => void; promise: Promise<unknown> } | undefined
@@ -83,17 +94,19 @@ export default function SourcePdfPageViewer({
         const sourcePage = await document.getPage(page)
         if (!active || !canvasRef.current) return
         const baseViewport = sourcePage.getViewport({ scale: 1 })
-        const availableWidth = Math.max(240, stageWidth - 32)
-        const cssScale = availableWidth / baseViewport.width
+        setPageSize({
+          width: baseViewport.width,
+          height: baseViewport.height,
+        })
         const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
         const viewport = sourcePage.getViewport({
-          scale: cssScale * pixelRatio,
+          scale: pixelRatio,
         })
         const canvas = canvasRef.current
         canvas.width = Math.ceil(viewport.width)
         canvas.height = Math.ceil(viewport.height)
-        canvas.style.width = `${Math.ceil(viewport.width / pixelRatio)}px`
-        canvas.style.height = `${Math.ceil(viewport.height / pixelRatio)}px`
+        canvas.style.width = `${baseViewport.width}px`
+        canvas.style.height = `${baseViewport.height}px`
         renderTask = sourcePage.render({ canvas, viewport })
         await renderTask.promise
         if (active) setStatus(`Page ${page} of ${document.numPages}`)
@@ -115,11 +128,19 @@ export default function SourcePdfPageViewer({
       active = false
       renderTask?.cancel()
     }
-  }, [document, page, stageWidth])
+  }, [document, page, stageSize.width])
 
   const pageCount = document?.numPages ?? 0
   const move = (offset: number) =>
     setPage((current) => clampPdfPage(current + offset, pageCount))
+  const zoomScale = fittedReviewScale({
+    mode: zoomMode,
+    customPercent: zoomPercent,
+    contentWidth: pageSize.width,
+    contentHeight: pageSize.height,
+    stageWidth: stageSize.width,
+    stageHeight: stageSize.height,
+  })
 
   return (
     <div
@@ -130,39 +151,78 @@ export default function SourcePdfPageViewer({
           event.preventDefault()
           event.stopPropagation()
           move(event.key === 'ArrowLeft' ? -1 : 1)
+        } else if (
+          event.key === '+' ||
+          event.key === '=' ||
+          event.key === '-'
+        ) {
+          event.preventDefault()
+          setZoomMode('custom')
+          setZoomPercent(
+            steppedReviewZoom(
+              zoomMode === 'custom' ? zoomPercent : zoomScale * 100,
+              event.key === '-' ? -1 : 1,
+            ),
+          )
+        } else if (event.key === '0') {
+          event.preventDefault()
+          setZoomMode('fit-page')
         }
       }}
     >
       <div className="pdf-source-page-toolbar">
-        <button
-          type="button"
-          disabled={!document || page <= 1}
-          onClick={() => move(-1)}
-        >
-          ← Previous page
-        </button>
-        <strong aria-live="polite">
-          {document ? `${page} / ${pageCount}` : '— / —'}
-        </strong>
-        <button
-          type="button"
-          disabled={!document || page >= pageCount}
-          onClick={() => move(1)}
-        >
-          Next page →
-        </button>
+        <PageNavigation
+          page={document ? page : 1}
+          pageCount={document ? pageCount : 1}
+          label="PDF"
+          onPageChange={(next) => setPage(clampPdfPage(next, pageCount))}
+        />
+        <PageZoomControls
+          mode={zoomMode}
+          percent={zoomPercent}
+          actualScale={zoomScale}
+          onChange={(mode, percent) => {
+            setZoomMode(mode)
+            setZoomPercent(percent)
+          }}
+        />
       </div>
       <div
         ref={stageRef}
         className="pdf-source-page-stage"
         role="region"
         aria-label="Single PDF page"
+        data-zoom-mode={zoomMode}
         tabIndex={0}
+        onWheel={(event) => {
+          if (!event.ctrlKey) return
+          event.preventDefault()
+          setZoomMode('custom')
+          setZoomPercent(
+            steppedReviewZoom(
+              zoomMode === 'custom' ? zoomPercent : zoomScale * 100,
+              event.deltaY > 0 ? -1 : 1,
+            ),
+          )
+        }}
       >
-        <canvas
-          ref={canvasRef}
-          aria-label={document ? `Source PDF page ${page}` : undefined}
-        />
+        <div
+          className="pdf-source-page-shell"
+          style={
+            {
+              width: `${pageSize.width * zoomScale}px`,
+              height: `${pageSize.height * zoomScale}px`,
+              '--pdf-review-scale': zoomScale,
+              '--pdf-page-width': `${pageSize.width}px`,
+              '--pdf-page-height': `${pageSize.height}px`,
+            } as CSSProperties
+          }
+        >
+          <canvas
+            ref={canvasRef}
+            aria-label={document ? `Source PDF page ${page}` : undefined}
+          />
+        </div>
         {!document && !error && <p aria-live="polite">{status}</p>}
         {error && (
           <p role="alert">

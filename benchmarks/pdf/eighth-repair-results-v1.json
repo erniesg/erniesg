@@ -1,0 +1,459 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-eighth-semantic-repair-2026-07-28-v1",
+  "generatedAt": "2026-07-28T22:43:22Z",
+  "status": "completed-with-fidelity-blockers",
+  "publicationReady": false,
+  "repository": {
+    "head": "119465e06d7e43679c0d19f8ed46ab4824e55699",
+    "worktreeState": "dirty",
+    "detachedHead": true,
+    "preservedExistingEdits": true,
+    "commitCreated": false,
+    "pushPerformed": false,
+    "deployPerformed": false,
+    "publicationPerformed": false,
+    "issuesCreated": false,
+    "materialDeleted": false
+  },
+  "scope": {
+    "receiptAndWholeCliP1": {
+      "status": "closed-before-this-pass",
+      "reopened": false,
+      "note": "The focused 12-of-12 receipt result and the true whole-CLI determinism result were accepted as prior evidence and were exercised only through regression suites."
+    },
+    "semanticP1": {
+      "status": "closed-before-corpus",
+      "items": [
+        "type-safe fail-closed proof validation",
+        "privacy-safe normalized v1.8 deletion ledger",
+        "durable EPUB manifest persistence and corpus binding",
+        "producer and revalidator lexical normalization parity",
+        "current missing-versus-empty fail-closed semantics",
+        "strict benchmark, private-fidelity, export, OCR, contract, and EPUB consumer fan-out"
+      ]
+    },
+    "lane": "portable-with-read-only-trusted-vm-verification"
+  },
+  "implementation": {
+    "proofValidation": {
+      "result": "passed",
+      "details": [
+        "Untrusted nested proof fields are type-checked before normalization.",
+        "Malformed proof values return false or controlled errors.",
+        "The exact production lexical model id, language, dictionary, affix, and hyphenation hashes are required.",
+        "Joined and hard-hyphen candidates and lexicons use NFKC plus toLocaleLowerCase('en-US').",
+        "Current completeness always validates the canonical deletion ledger; missing is invalid and explicit empty is valid."
+      ]
+    },
+    "privacySafeLedger": {
+      "result": "passed",
+      "schema": "docs/schemas/pdf-corpus-audit-v1.8.schema.json",
+      "details": [
+        "Raw proof evidence is not persisted.",
+        "Evidence is stored as sorted, deduplicated SHA-256 domain hashes.",
+        "The v1.8 schema requires six removal-proof hashes, forbids contradictory proof hashes, and pins the exact lexical model.",
+        "A nonempty production-vocabulary record passes full v1.8 report validation."
+      ]
+    },
+    "epubPersistence": {
+      "result": "passed",
+      "manifest": "EPUB/export.json",
+      "fields": [
+        "canonicalHyphenDeletionCount",
+        "canonicalHyphenDeletionContextCounts",
+        "canonicalHyphenDeletionLedger",
+        "canonicalHyphenDeletionLedgerSha256"
+      ],
+      "details": [
+        "All four fields are required for PDF EPUBs.",
+        "Explicit empty list, zero count, empty context counts, and the canonical empty-list hash are valid.",
+        "Missing, partial, duplicate, reordered, count-tampered, proof-tampered, and hash-tampered receipts fail closed.",
+        "PDF export binds the EPUB manifest hash to the staged corpus audit hash."
+      ]
+    },
+    "strictConsumerInvariants": {
+      "result": "passed",
+      "details": [
+        "pinnedWordSha256 must equal exactSameDocumentJoinedFormSha256.",
+        "hardHyphenFormSha256 must differ from the joined-form digest.",
+        "All mandatory removal evidence hashes must be present.",
+        "Hard-hyphen-valid and other contradictory counterproof hashes are forbidden.",
+        "Coordinated tamper tests recompute the ledger and private reconstruction receipt hashes before asserting rejection."
+      ]
+    },
+    "historicalCompatibility": {
+      "currentSchema": "1.5.0",
+      "historicalSchema": "1.4.0",
+      "result": "passed",
+      "details": [
+        "Current structures require the ledger and count even when the ledger is empty.",
+        "Historical v1.4 is accepted only in explicitly historical baseline compatibility paths.",
+        "A v1.4-labeled current candidate is rejected."
+      ]
+    },
+    "fileSha256s": {
+      "src/research/pdf-quality.ts": "bf4b6514d635b36e1d9452765fd207b50ef56addc47295eef889c3493452d39a",
+      "src/research/pdf-lines.ts": "955bdb30388e459dec0d61da1cc17e67784afb5602f586fce0d296ea588ed652",
+      "src/research/pdf-hyphenation.ts": "68209d3ebd78fdee7c40eef8f7337bf86ab0a9e8b4b336a369e7adbab904b851",
+      "src/research/epub.ts": "e1e91d9b386eb218e7c8a15d61d3eb20f13a09463c8cd14c3a46a71d9268360f",
+      "tools/pdf-corpus-audit-lib.mjs": "9b4efeec2bbe8339a3fa532d01c2a45c095d1fa941d42584fe98bfcd833ff933",
+      "tools/pdf-benchmark-compare.mjs": "e93e6c06d1b60cc14224fe4a86f0f8383b13258860920ccf2e01448c5bb7df95",
+      "tools/pdf-private-fidelity.mjs": "e318264bf5ed50b7af32c9960949d1ed1ea942db3e806875c37ab96df733387b",
+      "tools/pdf-export.mjs": "003bf782fd9d2b398d44645e5e84ed2466b09222011531bbbef71ff3eb4d8ce9",
+      "docs/schemas/pdf-corpus-audit-v1.8.schema.json": "801735a2f3c7f4a7e27155d2a1b3f8f7b016b296012302cdfedd3d0f08a11b5d"
+    }
+  },
+  "independentReview": {
+    "reviewer": "independent GPT-5.6 Sol xhigh subagent",
+    "initialCheckpoint": {
+      "verdict": "rejected",
+      "findings": [
+        "A coordinated normalized-ledger forgery could recompute the outer hash while violating joined-form and evidence invariants.",
+        "The two producer lexicon builders used the host default locale instead of explicit en-US."
+      ]
+    },
+    "remediation": [
+      "Added strict joined-digest, hard-hyphen-digest, mandatory-evidence, and forbidden-counterproof invariants to benchmark, private-fidelity, and EPUB consumers.",
+      "Added coordinated-rehash regressions in all three consumers and evidence constraints in the v1.8 schema.",
+      "Pinned both producer lexicon builders to NFKC plus toLocaleLowerCase('en-US')."
+    ],
+    "finalCheckpoint": {
+      "verdict": "accepted-for-corpus",
+      "p1Findings": 0,
+      "filesEditedByReviewer": 0,
+      "corpusRunByReviewer": false,
+      "note": "The reviewer independently rechecked both prior exploits and the complete six-P1 fan-out before explicitly accepting corpus execution."
+    }
+  },
+  "commands": {
+    "typescript": "npx tsc --noEmit --pretty false",
+    "focusedAffected": "/usr/bin/time -v npx vitest run src/research/pdf-lines.test.ts src/research/pdf-quality.test.ts src/research/epub.test.ts tools/pdf-corpus-audit.test.mjs tools/pdf-benchmark-compare.test.mjs tools/pdf-private-fidelity.test.mjs --maxWorkers=1 --reporter=dot",
+    "fullVitestBounded": "/usr/bin/time -v npx vitest run --exclude 'tests/e2e/**' --maxWorkers=1 --reporter=dot",
+    "astroCheckAndBuild": "/usr/bin/time -v npm run build:astro",
+    "commonCorpusEnvironment": [
+      "PATH=/tmp/erniesg-fifth-validator-bin:$PATH",
+      "EPUBCHECK_JAR=/home/ubuntu/.local/share/epubcheck-5.3.0/epubcheck.jar",
+      "PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.cache/ms-playwright",
+      "PUPPETEER_EXECUTABLE_PATH=$PWD/node_modules/.cache/ms-playwright/chromium-1228/chrome-linux/chrome"
+    ],
+    "frozenCorpus": "/usr/bin/time -v npm run pdf:corpus-regenerate -- --contract benchmarks/pdf/corpus-contract-v2.json --corpus-set frozen --source-root node_modules/.cache/erniesg-pdf-corpus-20260728 --out /dev/shm/erniesg-eighth-v2-frozen --shard-size 2 --conversion-concurrency 2 --external-validation-concurrency 2 --chromium-spine-smoke-concurrency 1 --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --document-timeout-seconds 1800 --validation-timeout-seconds 600",
+    "heldoutCorpus": "/usr/bin/time -v npm run pdf:corpus-regenerate -- --contract benchmarks/pdf/corpus-contract-v2.json --corpus-set seededRandom --source-root node_modules/.cache/erniesg-pdf-corpus-20260728 --out /dev/shm/erniesg-eighth-v2-heldout --shard-size 2 --conversion-concurrency 2 --external-validation-concurrency 2 --chromium-spine-smoke-concurrency 1 --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --document-timeout-seconds 1800 --validation-timeout-seconds 600",
+    "frozenPackageScan": "node tools/pdf-epub-package-scan.mjs --receipt /dev/shm/erniesg-eighth-v2-frozen/run-13b58f67489c23f88680f3f6d0b15b22/corpus-regeneration-receipt.json --out /dev/shm/erniesg-eighth-frozen-package-scan.json",
+    "heldoutPackageScan": "node tools/pdf-epub-package-scan.mjs --receipt /dev/shm/erniesg-eighth-v2-heldout/run-9ac15cb56ebd2a2d6241595d07714ba0/corpus-regeneration-receipt.json --out /dev/shm/erniesg-eighth-heldout-package-scan.json",
+    "ledgerBinding": "deterministic Node archive validation over both receipts, comparing every staged audit count/hash to EPUB/export.json",
+    "chromiumApplicationMatrix": "PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.cache/ms-playwright npx playwright test tests/e2e/pdf-review-viewer.spec.ts tests/e2e/pdf-to-epub-fidelity.spec.ts --reporter=line",
+    "webkitApplicationMatrix": "SRT_E2E_BROWSER=webkit PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.cache/ms-playwright npx playwright test tests/e2e/pdf-review-viewer.spec.ts tests/e2e/pdf-to-epub-fidelity.spec.ts --reporter=line",
+    "stress": "RUN_PDF_STRESS_E2E=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.cache/ms-playwright npx playwright test tests/e2e/pdf-review-viewer.spec.ts --grep 'keeps the UI responsive' --reporter=line",
+    "screenshots": "PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.cache/ms-playwright npx playwright test tests/e2e/srt-visual.spec.ts --reporter=line",
+    "vmVerification": "/usr/bin/time -v infra/vm/verify.sh",
+    "agentEvidence": "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR scripts/agent-evidence",
+    "staticChecks": "git diff --check; node --check on changed Node consumers; jq empty on v1.8 schema and readiness registry"
+  },
+  "validation": {
+    "typescript": {
+      "status": "passed"
+    },
+    "focusedPreReview": {
+      "status": "passed",
+      "filesPassed": 24,
+      "testsPassed": 1165,
+      "maximumRssKiB": 1269412
+    },
+    "focusedAfterIndependentRejection": {
+      "status": "passed-after-correcting-one-test-assertion-shape",
+      "files": 6,
+      "testsPassed": 393,
+      "semanticImplementationFailures": 0,
+      "note": "The first run had one new test expectation omit an expected receiptSha256 field; changing to a partial-object assertion produced 52-of-52 private-fidelity tests."
+    },
+    "readinessRegistry": {
+      "status": "passed",
+      "testsPassed": 18
+    },
+    "fullVitestBounded": {
+      "status": "passed",
+      "filesPassed": 99,
+      "testsPassed": 1772,
+      "testsSkipped": 1,
+      "testsTotal": 1773,
+      "durationSeconds": 354.42,
+      "wallDurationSeconds": 355.16,
+      "maximumRssKiB": 1292864,
+      "swaps": 0
+    },
+    "astro": {
+      "status": "passed",
+      "filesChecked": 285,
+      "errors": 0,
+      "warnings": 0,
+      "hints": 10,
+      "pagesBuilt": 132,
+      "wallDurationSeconds": 55.78
+    },
+    "corpus": {
+      "frozen": {
+        "setId": "frozen-10-2026-07-20-v1",
+        "status": "completed-but-not-passing",
+        "commandExitCode": 1,
+        "runIdentitySha256": "13b58f67489c23f88680f3f6d0b15b22b4d952112fa74ad404d3902ce7f5f6a9",
+        "receipt": "/dev/shm/erniesg-eighth-v2-frozen/run-13b58f67489c23f88680f3f6d0b15b22/corpus-regeneration-receipt.json",
+        "receiptContentSha256": "cee5209ec71bcde3a05e2414c61cd4d1acebf48a13185903d9b355a589ae0ba0",
+        "receiptFileSha256": "2f699116fe28bd9c01d48db5fc0be8b04c84e81f66a6c3189c2b0778e0974d3a",
+        "documents": {
+          "total": 10,
+          "ready": 0,
+          "reviewRequired": 10,
+          "failed": 0
+        },
+        "artifacts": {
+          "expected": 30,
+          "produced": 30,
+          "missing": 0
+        },
+        "validators": {
+          "epubCheck530": {
+            "passed": 30,
+            "failed": 0
+          },
+          "daisyAce": {
+            "passed": 30,
+            "failed": 0
+          },
+          "chromiumSpineSmoke": {
+            "passed": 30,
+            "failed": 0
+          }
+        },
+        "metrics": {
+          "expectedSemanticTables": 87,
+          "resolvedSemanticTables": 3,
+          "citationRelationships": 664,
+          "unresolvedCitationRelationships": 55,
+          "crossReferenceRelationships": 508,
+          "canonicalHyphenDeletionDecisions": 11,
+          "unresolvedCorruptingJoins": 524
+        },
+        "wallDurationSeconds": 575.22,
+        "maximumRssKiB": 1030700
+      },
+      "heldout": {
+        "setId": "seeded-random-disjoint-10-2026-07-25-v2",
+        "status": "completed-but-not-passing",
+        "commandExitCode": 1,
+        "runIdentitySha256": "9ac15cb56ebd2a2d6241595d07714ba00f8b11d8ba9956fed7f4130708daceea",
+        "receipt": "/dev/shm/erniesg-eighth-v2-heldout/run-9ac15cb56ebd2a2d6241595d07714ba0/corpus-regeneration-receipt.json",
+        "receiptContentSha256": "169702061e7f5f738b609ca4eb29b4e9e6e1e0dbab10b1572583b4749cad6a90",
+        "receiptFileSha256": "588ace452e1cb1e5a49e18adce444b47e5a5b959792850cc6dd540cdd82043b2",
+        "documents": {
+          "total": 10,
+          "ready": 0,
+          "reviewRequired": 10,
+          "failed": 0
+        },
+        "artifacts": {
+          "expected": 30,
+          "produced": 30,
+          "missing": 0
+        },
+        "validators": {
+          "epubCheck530": {
+            "passed": 30,
+            "failed": 0
+          },
+          "daisyAce": {
+            "passed": 30,
+            "failed": 0
+          },
+          "chromiumSpineSmoke": {
+            "passed": 30,
+            "failed": 0
+          }
+        },
+        "metrics": {
+          "expectedSemanticTables": 62,
+          "resolvedSemanticTables": 0,
+          "citationRelationships": 967,
+          "unresolvedCitationRelationships": 25,
+          "crossReferenceRelationships": 254,
+          "canonicalHyphenDeletionDecisions": 11,
+          "unresolvedCorruptingJoins": 378
+        },
+        "wallDurationSeconds": 477.95,
+        "maximumRssKiB": 1003876
+      },
+      "packageScans": {
+        "frozen": {
+          "path": "/dev/shm/erniesg-eighth-frozen-package-scan.json",
+          "fileSha256": "535de3ab4731846512a704eac0b9446a52d26329842f3fd4c862fbf55993a6f6",
+          "artifacts": 30,
+          "passed": 30,
+          "manifestItemsChecked": 837,
+          "assetReferencesChecked": 708,
+          "hrefsChecked": 6618,
+          "failures": 0,
+          "readerMarkerFindings": 0,
+          "packagedJavaScriptFindings": 0
+        },
+        "heldout": {
+          "path": "/dev/shm/erniesg-eighth-heldout-package-scan.json",
+          "fileSha256": "735f74bb2fbe9d6a6bc6e1bac04bef51b56ee8014403f20c77063290fef350bc",
+          "artifacts": 30,
+          "passed": 30,
+          "manifestItemsChecked": 588,
+          "assetReferencesChecked": 462,
+          "hrefsChecked": 6966,
+          "failures": 0,
+          "readerMarkerFindings": 0,
+          "packagedJavaScriptFindings": 0
+        }
+      },
+      "ledgerBinding": {
+        "status": "passed",
+        "documents": 20,
+        "artifacts": 60,
+        "nonemptyLedgerDocuments": 11,
+        "nonemptyLedgerArtifacts": 33,
+        "countMismatches": 0,
+        "hashMismatches": 0
+      }
+    },
+    "citationRegression": {
+      "exactRegressionSuites": "passed within the final 99-file Vitest and agent-evidence runs",
+      "seventhFrozenComparison": {
+        "priorReceipt": "/tmp/erniesg-seventh-v2-frozen-integrated-final/run-462dfe16e1998ac77c31fa7d676c6c97/corpus-regeneration-receipt.json",
+        "priorCitationRelationshipCount": 661,
+        "currentCitationRelationshipCount": 664,
+        "citationGraphHashEqualDocuments": 2,
+        "documentsCompared": 10,
+        "crossReferenceCountEqual": true,
+        "note": "The eighth dirty-checkout corpus is not claimed byte-identical to the seventh result. Existing citation-focused regression tests pass, but unresolved citation blockers remain and the corpus difference is recorded rather than promoted."
+      }
+    },
+    "browserMatrices": {
+      "applicationFixtureOnly": true,
+      "layoutCombinationsPerEngine": 96,
+      "combinationDefinition": "4 devices x 2 orientations x 4 font sizes x 3 font families",
+      "chromium": {
+        "status": "passed",
+        "testsPassed": 3,
+        "guardedStressSkipped": 1,
+        "wallDurationSeconds": 85.04,
+        "maximumRssKiB": 307968
+      },
+      "webkit": {
+        "status": "passed",
+        "testsPassed": 3,
+        "guardedStressSkipped": 1,
+        "wallDurationSeconds": 100.77,
+        "maximumRssKiB": 1006500
+      },
+      "scopeWarning": "These application-fixture matrices do not establish Apple Books or native target e-ink reader compatibility."
+    },
+    "stress": {
+      "status": "passed",
+      "sourceId": "2501.09223v1",
+      "pages": 231,
+      "terminalStatus": "review-required",
+      "completionMs": 98010,
+      "cancellationLatencyMs": 118,
+      "maximumMainThreadLatencyMs": 36,
+      "maximumMainHeapBytes": 64000000,
+      "workerCountObserved": 2,
+      "heartbeatAndBuildStagesObserved": true
+    },
+    "screenshots": {
+      "status": "passed",
+      "testsPassed": 3,
+      "wallDurationSeconds": 22.25,
+      "maximumRssKiB": 280252,
+      "captured": [
+        ".agent/evidence/playwright/srt-visual-captures-every--03ddf-nd-rejects-invalid-geometry/mobile-rendition.png",
+        ".agent/evidence/playwright/srt-visual-captures-every--03ddf-nd-rejects-invalid-geometry/paperProMove-rendition.png",
+        ".agent/evidence/playwright/srt-visual-captures-every--03ddf-nd-rejects-invalid-geometry/paperPro-rendition.png",
+        ".agent/evidence/playwright/srt-visual-captures-every--03ddf-nd-rejects-invalid-geometry/print-rendition.png",
+        ".agent/evidence/playwright/srt-visual-keeps-the-seman-007e3-arget-width-and-font-reflow/annotation-reflow.png"
+      ],
+      "geometryReport": ".agent/evidence/playwright/srt-visual-captures-every--03ddf-nd-rejects-invalid-geometry/geometry-report.json"
+    },
+    "agentEvidence": {
+      "status": "passed",
+      "manifest": ".agent/evidence/20260728T223640531Z/manifest.json",
+      "manifestSha256": "df34d8fed4182bc09b16eb83f98c86bd31cbb158b0c13db758326d5dee1176e9",
+      "wallDurationSeconds": 283.46,
+      "maximumRssKiB": 1722788,
+      "caveats": [],
+      "lanes": {
+        "build": {
+          "status": "passed",
+          "durationMs": 55958,
+          "filesChecked": 285,
+          "pagesBuilt": 132
+        },
+        "test": {
+          "status": "passed",
+          "durationMs": 227445,
+          "filesPassed": 99,
+          "testsPassed": 1772,
+          "testsSkipped": 1
+        }
+      },
+      "scopeNote": "This results receipt was written after the passing evidence manifest and is intentionally outside that source snapshot."
+    },
+    "vmVerification": {
+      "status": "failed-environment-check",
+      "exitCode": 1,
+      "failure": "rucksack-app.service is inactive",
+      "warning": "HEALTHCHECK_URL is unset",
+      "passes": [
+        "ports 22, 80, and 443",
+        "free disk threshold",
+        "available memory threshold",
+        "Tailscale status"
+      ],
+      "serviceStateChanged": false
+    },
+    "staticChecks": {
+      "typescript": "passed",
+      "gitDiffCheck": "passed",
+      "nodeSyntax": "passed",
+      "schemaJson": "passed",
+      "readinessRegistryJson": "passed"
+    }
+  },
+  "blockers": [
+    {
+      "code": "FIDELITY_GATES_NOT_MET",
+      "detail": "Zero of twenty frozen plus disjoint heldout documents are publication-ready; all twenty remain review-required."
+    },
+    {
+      "code": "CORRUPTING_JOIN_BLOCKERS_REMAIN",
+      "detail": "The frozen set contains 524 unresolved corrupting joins and the heldout set contains 378. The frozen total is 176 higher than the seventh final frozen receipt's 348."
+    },
+    {
+      "code": "INCOMPLETE_SEMANTIC_TABLE_COVERAGE",
+      "detail": "Only 3 of 87 expected frozen semantic tables and 0 of 62 heldout tables are resolved."
+    },
+    {
+      "code": "CITATION_AND_REFERENCE_BLOCKERS_REMAIN",
+      "detail": "The exact citation regression suites pass, but current corpus citation graphs are not byte-identical to the seventh result and unresolved citation, cross-reference, and hyperlink diagnostics remain."
+    },
+    {
+      "code": "OTHER_FIDELITY_GATES",
+      "detail": "Canonical flow, reading order, assets, relationships, equations, notes, visuals, inline styles, source regions, hyperlinks, and semantic objects block at least one corpus document."
+    },
+    {
+      "code": "NATIVE_READER_EVIDENCE_UNAVAILABLE",
+      "detail": "No Apple Books, native desktop EPUB reader, or target e-ink device validation was performed."
+    },
+    {
+      "code": "TRUSTED_VM_SERVICE_INACTIVE",
+      "detail": "infra/vm/verify.sh exits 1 because rucksack-app.service is inactive; HEALTHCHECK_URL is also unset."
+    }
+  ],
+  "publicationReadiness": {
+    "established": false,
+    "claim": "not publication-ready",
+    "reason": "Semantic P1 repairs and artifact validators pass, but corpus fidelity blockers, native-reader evidence gaps, and the trusted-VM service failure remain."
+  }
+}

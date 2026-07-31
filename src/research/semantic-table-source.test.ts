@@ -307,9 +307,7 @@ describe('source-verifiable semantic tables', () => {
     expect(xhtml).toContain(
       '<th id="cell-r1-c2" scope="col" colspan="3">Auto Evaluation</th>',
     )
-    expect(xhtml).toContain(
-      'headers="cell-r1-c2 cell-r2-c2"',
-    )
+    expect(xhtml).toContain('headers="cell-r1-c2 cell-r2-c2"')
   })
 
   it('records stable cell identities, explicit headers, exact source-run lineage, and cell-local inline evidence', () => {
@@ -467,13 +465,10 @@ describe('source-verifiable semantic tables', () => {
       includedInReadingOrder: true,
     } satisfies PdfPageRegion
 
-    const table = canonicalTableFromLines(
-      [detectedHeader, detectedBody],
-      {
-        detectedRectangularGeometry: true,
-        sourceRegions: [region],
-      },
-    )
+    const table = canonicalTableFromLines([detectedHeader, detectedBody], {
+      detectedRectangularGeometry: true,
+      sourceRegions: [region],
+    })
 
     expect(table?.rows[0].cells[0]).toMatchObject({
       text: 'a//5 =',
@@ -768,12 +763,8 @@ describe('source-verifiable semantic tables', () => {
     const headerRight = line('header-right', 0.2, [
       { text: 'Score', x: 0.5, bold: true },
     ])
-    const bodyLeft = line('body-left', 0.25, [
-      { text: 'Baseline', x: 0.1 },
-    ])
-    const bodyRight = line('body-right', 0.25, [
-      { text: '−8.0', x: 0.5 },
-    ])
+    const bodyLeft = line('body-left', 0.25, [{ text: 'Baseline', x: 0.1 }])
+    const bodyRight = line('body-right', 0.25, [{ text: '−8.0', x: 0.5 }])
     const lines = [headerLeft, headerRight, bodyLeft, bodyRight]
     const region = {
       id: 'fragmented-table-region',
@@ -879,9 +870,7 @@ describe('source-verifiable semantic tables', () => {
         includedInReadingOrder: true,
       } satisfies PdfPageRegion
     }
-    const header = sourceRegion('wrapped-header-region', 'header', [
-      headerLine,
-    ])
+    const header = sourceRegion('wrapped-header-region', 'header', [headerLine])
     const continuations = continuationLines.map((sourceLine, index) =>
       sourceRegion(
         `wrapped-header-continuation-region-${index + 1}`,
@@ -1015,6 +1004,71 @@ describe('source-verifiable semantic tables', () => {
     )
     expect(xhtml).toContain(
       '<td id="cell-r2-c2" headers="cell-r1-c2"><sup>−4.2</sup></td>',
+    )
+  })
+
+  it('serializes subset-prefixed Computer Modern table emphasis', async () => {
+    const header = line('tex-table-header', 0.2, [
+      { text: 'Model', x: 0.1, fontName: 'ABCDEF+CMBX12' },
+      { text: 'Score', x: 0.5, fontName: 'ABCDEF+CMBX12' },
+    ])
+    const body = line('tex-table-body', 0.25, [
+      { text: 's', x: 0.1, fontName: 'ABCDEF+CMMI10' },
+      { text: '70.281', x: 0.5, fontName: 'ABCDEF+CMBX12' },
+    ])
+    const region = {
+      id: 'tex-table-region',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: 'Model Score s 70.281',
+      confidence: 1,
+      box: sourceBox(0.1, 0.2, 0.52, 0.07),
+      lines: [header, body],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies PdfPageRegion
+
+    const table = canonicalTableFromLines([header, body], {
+      sourceRegions: [region],
+    })
+    expect(table?.rows[0].cells[0]).toMatchObject({
+      text: 'Model',
+      headerScope: 'column',
+      inlineRuns: [{ start: 0, end: 5, bold: true }],
+      inlineMapping: { expected: 1, mapped: 1 },
+    })
+    expect(table?.rows[1].cells).toEqual([
+      expect.objectContaining({
+        text: 's',
+        inlineRuns: [{ start: 0, end: 1, italic: true }],
+        inlineMapping: { expected: 1, mapped: 1 },
+      }),
+      expect.objectContaining({
+        text: '70.281',
+        inlineRuns: [{ start: 0, end: 6, bold: true }],
+        inlineMapping: { expected: 1, mapped: 1 },
+      }),
+    ])
+
+    const asset = await createTableAsset({
+      sourceObjectId: 'tex-table-source-object',
+      sourceBox: region.box,
+      lines: [header, body],
+      sourceRegions: [region],
+      pageWidth: 612,
+      pageHeight: 792,
+    })
+    if (!asset) throw new Error('Expected Computer Modern semantic table')
+    const xhtml = strFromU8(asset.bytes)
+    expect(xhtml).toContain(
+      '<th id="cell-r1-c1" scope="col"><strong>Model</strong></th>',
+    )
+    expect(xhtml).toContain(
+      '<td id="cell-r2-c1" headers="cell-r1-c1"><em>s</em></td>',
+    )
+    expect(xhtml).toContain(
+      '<td id="cell-r2-c2" headers="cell-r1-c2"><strong>70.281</strong></td>',
     )
   })
 
@@ -1184,9 +1238,7 @@ describe('source-verifiable semantic tables', () => {
     ]
     for (const mutate of mutations) {
       const tampered = structuredClone(paper) as ResearchPaper
-      const tableNode = tampered.nodes.find(
-        (node) => node.id === 'table-node',
-      )
+      const tableNode = tampered.nodes.find((node) => node.id === 'table-node')
       if (tableNode?.type !== 'figure' || !tableNode.table) {
         throw new Error('Missing cloned table')
       }
@@ -1245,18 +1297,8 @@ describe('source-verifiable semantic tables', () => {
       structurallyConsumedLineBoundaryCount: 0,
       readingOrder: {
         schemaVersion: '1.0.0',
-        regionIds: [
-          titleRegion.id,
-          authorRegion.id,
-          region.id,
-          caption.id,
-        ],
-        order: [
-          titleRegion.id,
-          authorRegion.id,
-          region.id,
-          caption.id,
-        ],
+        regionIds: [titleRegion.id, authorRegion.id, region.id, caption.id],
+        order: [titleRegion.id, authorRegion.id, region.id, caption.id],
         edges: [],
         resolutions: [],
         acyclic: true,
@@ -1317,6 +1359,10 @@ describe('source-verifiable semantic tables', () => {
         blockingDiagnosticCodes: [],
       },
       noteRelationships: [],
+      sourceSemanticFlowBoundaryDecisions: [],
+      sourceSemanticFlowBoundaryDecisionCount: 0,
+      canonicalHyphenBoundaryDecisions: [],
+      canonicalHyphenBoundaryDecisionCount: 0,
     } as unknown as PdfReconstruction
     const assessment = assessPdfCompleteness({
       pages: candidateReconstruction.pages,
@@ -1330,6 +1376,14 @@ describe('source-verifiable semantic tables', () => {
       noteRelationships: candidateReconstruction.noteRelationships,
       policy: candidateReconstruction.readiness.policy,
       lineBoundaryDecisions: candidateReconstruction.lineBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisions:
+        candidateReconstruction.sourceSemanticFlowBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisionCount:
+        candidateReconstruction.sourceSemanticFlowBoundaryDecisionCount,
+      canonicalHyphenBoundaryDecisions:
+        candidateReconstruction.canonicalHyphenBoundaryDecisions,
+      canonicalHyphenBoundaryDecisionCount:
+        candidateReconstruction.canonicalHyphenBoundaryDecisionCount,
       unresolvedCorruptingJoinCount:
         candidateReconstruction.unresolvedCorruptingJoinCount,
       structurallyConsumedLineBoundaryCount:

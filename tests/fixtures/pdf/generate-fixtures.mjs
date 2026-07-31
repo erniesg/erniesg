@@ -178,7 +178,7 @@ function imageObject(raster) {
   return `<< /Type /XObject /Subtype /Image /Width ${raster.width} /Height ${raster.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length ${encoded.length} >>\nstream\n${encoded}\nendstream`
 }
 
-function createPdf(pageDefinitions) {
+function createPdf(pageDefinitions, { language } = {}) {
   const objects = []
   const reserve = () => {
     objects.push('')
@@ -225,7 +225,7 @@ function createPdf(pageDefinitions) {
       : ''
   set(
     catalogId,
-    `<< /Type /Catalog /Pages ${pagesId} 0 R${destinationNames} >>`,
+    `<< /Type /Catalog /Pages ${pagesId} 0 R${language ? ` /Lang (${escaped(language)})` : ''}${destinationNames} >>`,
   )
   set(
     pagesId,
@@ -1157,7 +1157,13 @@ const fixtures = {
 }
 
 const selectedFixtures = new Set(process.argv.slice(2))
+const fixtureOptions = {
+  'pdf-to-epub-fidelity.pdf': { language: 'en-US' },
+}
 for (const [name, pages] of Object.entries(fixtures)) {
   if (selectedFixtures.size > 0 && !selectedFixtures.has(name)) continue
-  writeFileSync(new URL(name, import.meta.url), createPdf(pages))
+  writeFileSync(
+    new URL(name, import.meta.url),
+    createPdf(pages, fixtureOptions[name]),
+  )
 }

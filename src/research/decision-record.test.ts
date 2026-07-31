@@ -90,7 +90,7 @@ function ambiguousReconstruction() {
 
 async function unresolvedLineJoinReconstruction() {
   const runs = [
-    run('This source contains a scenar-', 0.1, 0.2, 0.42),
+    run('This source contains a scenar-', 0.1, 0.2, 0.24),
     run('io that remains continuous prose.', 0.1, 0.225, 0.48),
   ]
   const page: PdfPageAnalysis = {
@@ -395,6 +395,10 @@ async function unresolvedEquationTranscriptReconstruction() {
     noteRelationships: [],
     provenance,
     lineBoundaryDecisions: [],
+    sourceSemanticFlowBoundaryDecisions: [],
+    sourceSemanticFlowBoundaryDecisionCount: 0,
+    canonicalHyphenBoundaryDecisions: [],
+    canonicalHyphenBoundaryDecisionCount: 0,
     unresolvedCorruptingJoinCount: 0,
     structurallyConsumedLineBoundaryCount: 0,
     policy: base.readiness.policy,
@@ -530,6 +534,28 @@ const COMPLETENESS_DERIVED_DIAGNOSTIC_CODES = [
 ] as const satisfies readonly ReconstructionDiagnostic['code'][]
 
 describe('human adjudication decision records', () => {
+  it('does not clone and reassess large unchanged graphs for an empty matching decision file', async () => {
+    const base = await ambiguousReconstruction()
+    const result = applyHumanDecisionFile(
+      base,
+      createHumanDecisionFile(base.source.sha256),
+      { emptyFilePolicy: 'reuse-fresh-assessment' },
+    )
+
+    expect(result).not.toBe(base)
+    expect(result.pages).toBe(base.pages)
+    expect(result.paper).toBe(base.paper)
+    expect(result.assets).toBe(base.assets)
+    expect(result.diagnostics).toBe(base.diagnostics)
+    expect(result.humanAdjudications).toEqual({
+      schemaVersion: '1.2.0',
+      documentSha256: base.source.sha256,
+      applied: [],
+      stale: [],
+      countsByDiagnosticCode: {},
+    })
+  })
+
   it('emits current line-join decisions without serializing source text', async () => {
     const base = await unresolvedLineJoinReconstruction()
     const file = upsertHumanDecision(
@@ -1046,11 +1072,11 @@ describe('human adjudication decision records', () => {
     expect(result.humanAdjudications.applied).toHaveLength(1)
   })
 
-  it('removes the transition-selected occurrence when a boundary word repeats', async () => {
+  it('adjudicates one ambiguous repeated boundary without clearing the other obligation', async () => {
     const runs = [
-      run('First dupli-', 0.1, 0.2, 0.2),
-      run('cate token and second dupli-', 0.1, 0.225, 0.42),
-      run('cate token.', 0.1, 0.25, 0.2),
+      run('First dupli-', 0.1, 0.2, 0.12),
+      run('cate token and second dupli-', 0.1, 0.225, 0.28),
+      run('cate token.', 0.1, 0.25, 0.46),
     ]
     const base = await reconstructPageAnalyses({
       pages: [
@@ -1077,6 +1103,7 @@ describe('human adjudication decision records', () => {
     )
     expect(transitions).toHaveLength(2)
     const transition = transitions[1]
+    transition.outcome = 'ambiguous'
     const file = upsertHumanDecision(
       createHumanDecisionFile(base.source.sha256),
       {
@@ -1103,7 +1130,7 @@ describe('human adjudication decision records', () => {
     const result = applyHumanDecisionFile(base, file)
 
     expect(result.regions[0].text).toBe(
-      'First dupli-cate token and second duplicate token.',
+      'First dupli- cate token and second duplicate token.',
     )
     expect(result.humanAdjudications).toMatchObject({
       applied: [
@@ -1113,10 +1140,31 @@ describe('human adjudication decision records', () => {
       ],
       stale: [],
     })
+    expect(
+      result.lineBoundaryDecisions.find(
+        (candidate) => candidate.id === transition.id,
+      ),
+    ).toMatchObject({ outcome: 'removed-discretionary-hyphen' })
+    expect(
+      result.lineBoundaryDecisions.filter(
+        (candidate) =>
+          candidate.outcome === 'unresolved' ||
+          candidate.outcome === 'ambiguous',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        id: transitions[0].id,
+        outcome: 'unresolved',
+      }),
+    ])
     expect(result.unresolvedCorruptingJoinCount).toBe(1)
+    expect(result.completeness.unresolvedCorruptingJoinCount).toBe(1)
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'UNRESOLVED_CORRUPTING_JOIN',
+    )
   })
 
-  it('shifts canonical note anchors and citation offsets after removing a wrap hyphen', async () => {
+  it('shifts canonical note, citation, and scholarly-reference offsets after removing a wrap hyphen', async () => {
     const base = await unresolvedLineJoinReconstruction()
     const region = base.regions[0]
     const paragraph = base.paper.nodes[0]
@@ -1190,6 +1238,39 @@ describe('human adjudication decision records', () => {
         sourceBoxes: [],
       },
     ]
+    base.crossReferenceRelationships = [
+      {
+        id: 'shifted-cross-reference',
+        kind: 'section',
+        text: 'remains',
+        labels: ['remains'],
+        referenceRegionId: region.id,
+        referenceStart: citationStart,
+        referenceEnd: citationStart + 'remains'.length,
+        targets: [
+          {
+            kind: 'section',
+            label: 'remains',
+            referenceStart: citationStart,
+            referenceEnd: citationStart + 'remains'.length,
+            status: 'matched',
+            candidateNodeIds: ['synthetic-section-target'],
+            targetNodeId: 'synthetic-section-target',
+            evidence: ['synthetic-line-join-cross-reference-target'],
+          },
+        ],
+        targetNodeIds: ['synthetic-section-target'],
+        status: 'matched',
+        canonicalAnchor: {
+          nodeId: paragraph.id,
+          start: citationStart,
+          end: citationStart + 'remains'.length,
+        },
+        confidence: 1,
+        evidence: ['synthetic-line-join-cross-reference'],
+        sourceBoxes: [],
+      },
+    ]
 
     const file = upsertHumanDecision(
       createHumanDecisionFile(base.source.sha256),
@@ -1201,30 +1282,46 @@ describe('human adjudication decision records', () => {
     )
 
     expect(result.noteRelationships[0]).toMatchObject({
-      referenceStart: noteStart - 1,
-      referenceEnd: noteStart,
+      referenceStart: noteStart - 2,
+      referenceEnd: noteStart - 1,
       canonicalAnchor: {
         kind: 'node',
         nodeId: paragraph.id,
-        start: noteStart - 1,
-        end: noteStart,
+        start: noteStart - 2,
+        end: noteStart - 1,
       },
     })
     expect(result.citationRelationships[0]).toMatchObject({
-      referenceStart: citationStart - 1,
-      referenceEnd: citationStart,
+      referenceStart: citationStart - 2,
+      referenceEnd: citationStart - 1,
       canonicalAnchor: {
         nodeId: paragraph.id,
-        start: citationStart - 1,
-        end: citationStart,
+        start: citationStart - 2,
+        end: citationStart - 1,
+      },
+    })
+    expect(result.crossReferenceRelationships[0]).toMatchObject({
+      referenceStart: citationStart - 2,
+      referenceEnd: citationStart + 'remains'.length - 2,
+      targets: [
+        expect.objectContaining({
+          referenceStart: citationStart - 2,
+          referenceEnd: citationStart + 'remains'.length - 2,
+          status: 'matched',
+        }),
+      ],
+      canonicalAnchor: {
+        nodeId: paragraph.id,
+        start: citationStart - 2,
+        end: citationStart + 'remains'.length - 2,
       },
     })
     expect(shiftedParagraph).toMatchObject({
       noteReferences: [
         expect.objectContaining({
           id: 'shifted-note-reference',
-          start: noteStart - 1,
-          end: noteStart,
+          start: noteStart - 2,
+          end: noteStart - 1,
         }),
       ],
     })
@@ -1445,6 +1542,24 @@ describe('human adjudication decision records', () => {
     )
   })
 
+  it('replays the identical semantic-flow ledger receipt through reassessment', async () => {
+    const base = await unresolvedLineJoinReconstruction()
+    const result = applyHumanDecisionFile(
+      base,
+      createHumanDecisionFile(base.source.sha256),
+    )
+
+    expect(result.sourceSemanticFlowBoundaryDecisions).toEqual(
+      base.sourceSemanticFlowBoundaryDecisions,
+    )
+    expect(result.sourceSemanticFlowBoundaryDecisionCount).toBe(
+      base.sourceSemanticFlowBoundaryDecisionCount,
+    )
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'INVALID_SOURCE_SEMANTIC_FLOW_BOUNDARY_LEDGER',
+    )
+  })
+
   it('replays an exact reading-order choice before the completeness gate', async () => {
     const base = await ambiguousReconstruction()
     const diagnostic = base.diagnostics.find(
@@ -1518,6 +1633,9 @@ describe('human adjudication decision records', () => {
     const base = await ambiguousVisualReconstruction()
     const relationship = base.visualRelationships[0]
     const candidate = relationship.candidates[0]
+    candidate.sourceLineIds = ['human-selected-source-line']
+    candidate.sourceText = 'human selected exact source text'
+    candidate.id = pdfVisualMatchCandidateId(relationship.id, candidate)
     const decision = createVisualMatchDecision(
       base,
       relationship.id,
@@ -1556,8 +1674,10 @@ describe('human adjudication decision records', () => {
     expect(resolved).toMatchObject({
       status: 'matched',
       sourceRegionIds: candidate.sourceRegionIds,
+      sourceLineIds: candidate.sourceLineIds,
       sourceObjectIds: candidate.sourceObjectIds,
       assetIds: candidate.assetIds,
+      sourceText: candidate.sourceText,
       evidence: expect.arrayContaining(['human-adjudicated-visual-match']),
     })
     expect(resolved.canonicalNodeId).not.toBeNull()
@@ -1668,6 +1788,40 @@ describe('human adjudication decision records', () => {
       }),
     )
     expect(missing.humanAdjudications.stale[0].reason).toBe(
+      'resolution-no-longer-legal',
+    )
+
+    const exactExtentBase = structuredClone(base)
+    const exactExtentCandidate =
+      exactExtentBase.visualRelationships[0].candidates[0]
+    exactExtentCandidate.sourceLineIds = ['exact-extent-line-a']
+    exactExtentCandidate.sourceText = 'exact extent alpha'
+    exactExtentCandidate.id = pdfVisualMatchCandidateId(
+      relationship.id,
+      exactExtentCandidate,
+    )
+    const exactExtentDecision = createVisualMatchDecision(
+      exactExtentBase,
+      relationship.id,
+      exactExtentCandidate.id,
+    )
+    const changedExtentBase = structuredClone(exactExtentBase)
+    const changedExtentCandidate =
+      changedExtentBase.visualRelationships[0].candidates[0]
+    changedExtentCandidate.sourceLineIds = ['exact-extent-line-b']
+    changedExtentCandidate.sourceText = 'exact extent beta'
+    changedExtentCandidate.id = pdfVisualMatchCandidateId(
+      relationship.id,
+      changedExtentCandidate,
+    )
+    const changedExtent = applyHumanDecisionFile(
+      changedExtentBase,
+      upsertHumanDecision(
+        createHumanDecisionFile(changedExtentBase.source.sha256),
+        exactExtentDecision,
+      ),
+    )
+    expect(changedExtent.humanAdjudications.stale[0].reason).toBe(
       'resolution-no-longer-legal',
     )
 

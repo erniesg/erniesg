@@ -2,7 +2,7 @@
   "schemaVersion": "1.0.0",
   "fixture": "pdf-to-epub-fidelity.pdf",
   "license": "CC0-1.0",
-  "sourceSha256": "23a9f2fee8dd76a20d0db6f7c2c42bcf6633cbea46a34e1cf65a65ec03dcd1d2",
+  "sourceSha256": "17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea",
   "title": "A Deterministic Reflow Fidelity Benchmark",
   "authors": ["Ada Fixture", "Lin Test"],
   "canonicalSpans": [

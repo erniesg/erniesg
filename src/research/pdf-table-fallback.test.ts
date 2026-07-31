@@ -75,7 +75,7 @@ function page(): PdfPageAnalysis {
 }
 
 describe('fail-closed non-semantic PDF table fallback', () => {
-  it('adaptively pads an atomized source-proved table', async () => {
+  it('reconstructs an atomized source-proved table semantically before raster fallback', async () => {
     const atomicLine = (
       id: string,
       y: number,
@@ -224,20 +224,26 @@ describe('fail-closed non-semantic PDF table fallback', () => {
       rasterizeFigure,
     })
 
-    expect(
-      rasterizeFigure.mock.calls.map(([input]) =>
-        Math.round((detectedTableBox.x - input.sourceBox.x) * 1_000),
-      ),
-    ).toEqual([4, 0, 6, 8, 10, 12])
+    expect(rasterizeFigure).not.toHaveBeenCalled()
     expect(result.relationships[0]).toMatchObject({
       kind: 'table',
       status: 'matched',
       evidence: expect.arrayContaining([
-        'bounded-table-scope',
-        'source-page-crop',
-        'source-page-crop-neighbor-bounded',
+        'detected-table-geometry',
+        'semantic-table',
+        'complete-bounded-table-scope',
+        'semantic-header-explicit-matrix-geometry',
+        'repeated-uniform-numeric-body-rows',
       ]),
     })
+    expect(result.assets).toEqual([
+      expect.objectContaining({
+        kind: 'table',
+        mediaType: 'application/xhtml+xml',
+        rendition: 'semantic-table',
+        sourceBoxes: [detectedTableBox],
+      }),
+    ])
   })
 
   it('expands an edge-touching proved table crop within neighboring source text', async () => {

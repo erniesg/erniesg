@@ -798,6 +798,16 @@ function tableHeaderCell(text: string) {
   return /\p{L}/u.test(text) && !numericTableBodyCell(text)
 }
 
+function scopeProvenNumericMatrixBodyCell(text: string) {
+  return /^(?:[<>≤≥~≈])?[+\-−]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:(?:[eE][+\-−]?\d+)|(?:[x×]10[+\-−]?\d+))?(?:%|[x×])?$/u.test(
+    text.replace(/\s+/gu, ''),
+  )
+}
+
+function scopeProvenNumericMatrixHeaderCell(text: string) {
+  return /\p{L}/u.test(text) && !scopeProvenNumericMatrixBodyCell(text)
+}
+
 function headerCellsForBodyAnchors(
   headerRuns: PdfSourceRun[],
   bodyCenters: number[],
@@ -860,6 +870,117 @@ function exactScopedSourceRegions(
     return null
   }
   return sourceRegions
+}
+
+// A plain one-row header is promoted only inside an independently proved
+// repeated text line-band. The first column is a variable-width textual stub,
+// so its left edge must repeat while the numeric body columns repeat their
+// centers. Every source row must be complete; empty corner cells, spans,
+// section rows, and synthetic cells remain unsupported.
+export function detectExplicitHeaderNumericTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly { code: string }[]
+  },
+): PdfDetectedTableGrid | null {
+  if (
+    !scope.evidence.some((item) => item.code === 'repeated-row-bands') ||
+    !scope.evidence.some((item) => item.code === 'multi-run-tabular-line-band')
+  ) {
+    return null
+  }
+  const sourceRegions = exactScopedSourceRegions(regions, scope)
+  if (!sourceRegions) return null
+  const rows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines
+        .filter((line) => scope.sourceLineIds.includes(line.id))
+        .map((line) => ({ region, line })),
+    ),
+  )
+  if (rows.length < 4) return null
+
+  const gapThreshold = adaptiveCellGapThreshold(rows)
+  const cellsByRow = rows.map((row) => rowCells(row, gapThreshold))
+  const header = cellsByRow[0]
+  const bodyRows = cellsByRow.slice(1)
+  const columnCount = bodyRows[0]?.length ?? 0
+  if (
+    columnCount < 3 ||
+    columnCount > 12 ||
+    bodyRows.length < 3 ||
+    header.length !== columnCount ||
+    bodyRows.some((row) => row.length !== columnCount) ||
+    !header.every((cell) => scopeProvenNumericMatrixHeaderCell(cell.text)) ||
+    bodyRows.some(
+      (row) =>
+        !scopeProvenNumericMatrixHeaderCell(row[0].text) ||
+        row
+          .slice(1)
+          .some((cell) => !scopeProvenNumericMatrixBodyCell(cell.text)),
+    )
+  ) {
+    return null
+  }
+
+  const stubAnchor = median(bodyRows.map((row) => row[0].x))
+  const numericCenters = Array.from(
+    { length: columnCount - 1 },
+    (_, columnIndex) =>
+      median(
+        bodyRows.map((row) => {
+          const cell = row[columnIndex + 1]
+          return cell.x + cell.width / 2
+        }),
+      ),
+  )
+  const alignedRow = (row: PdfSourceRun[]) =>
+    Math.abs(row[0].x - stubAnchor) <= COLUMN_ANCHOR_TOLERANCE &&
+    row
+      .slice(1)
+      .every(
+        (cell, columnIndex) =>
+          Math.abs(cell.x + cell.width / 2 - numericCenters[columnIndex]) <=
+          COLUMN_CENTER_TOLERANCE,
+      )
+  if (!alignedRow(header) || bodyRows.some((row) => !alignedRow(row))) {
+    return null
+  }
+
+  const gridLines: PdfDetectedTableGrid['lines'] = rows.map((row, rowIndex) => {
+    const cells = cellsByRow[rowIndex].map((run, columnIndex) => ({
+      run,
+      columnIndex,
+      columnSpan: 1,
+      rowSpan: 1,
+    }))
+    return {
+      ...row,
+      runs: cells.map((cell) => cell.run),
+      cells,
+    }
+  })
+  return {
+    sourceRegions: [...sourceRegions].sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    ),
+    sourceLineIds: [...scope.sourceLineIds],
+    lines: gridLines,
+    columnCount,
+    headerRowCount: 1,
+    evidence: [
+      'complete-bounded-table-scope',
+      'semantic-header-explicit-matrix-geometry',
+      'repeated-uniform-numeric-body-rows',
+      'variable-width-stub-left-anchor',
+    ],
+  }
 }
 
 // A wrapped single-level header is promoted only when an independently proved

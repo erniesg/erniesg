@@ -1,6 +1,7 @@
 import { fork, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
+import { appendFileSync } from 'node:fs'
 import {
   access,
   chmod,
@@ -14,11 +15,18 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createPdfPipeline } from './pdf-corpus-audit-lib.mjs'
+import { strFromU8, unzipSync } from 'fflate'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import {
+  auditPdfPath,
+  capturePdfCorpusExecutionProvenance,
+  createPdfPipeline,
+} from './pdf-corpus-audit-lib.mjs'
 import {
   createPdfCorpusReportValidator,
+  DEFAULT_DOCUMENT_CONCURRENCY,
   DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
+  MAX_DOCUMENT_CONCURRENCY,
   MAX_STAGED_DOCUMENT_BYTES,
   MAX_STAGED_EPUB_BYTES,
   MAX_STAGED_MANIFEST_BYTES,
@@ -81,6 +89,20 @@ async function waitForJson(path) {
   return value
 }
 
+async function waitForParentWatchdogArm(setTimeoutSpy, expectedArmCount) {
+  for (let attempt = 0; attempt < 10_000; attempt += 1) {
+    const armCount = setTimeoutSpy.mock.calls.filter(
+      ([, delay]) => delay === 1_000,
+    ).length
+    if (armCount === expectedArmCount) return
+    if (armCount > expectedArmCount) {
+      throw new Error('Heartbeat watchdog rearmed unexpectedly')
+    }
+    await new Promise((resolveImmediate) => setImmediate(resolveImmediate))
+  }
+  throw new Error(`Heartbeat watchdog arm ${expectedArmCount} was not observed`)
+}
+
 describe('headless PDF export', () => {
   beforeAll(async () => {
     pipeline = await createPdfPipeline()
@@ -92,8 +114,11 @@ describe('headless PDF export', () => {
     await pipeline?.close()
   })
 
-  it('defaults to a bounded 900-second document timeout and rejects unsafe values', () => {
+  it('defaults to globally bounded document concurrency and timeout values and rejects unsafe values', () => {
     const base = ['paper.pdf', '--out', '/tmp/pdf-export-timeout-test']
+    expect(parseArguments(base).concurrency).toBe(DEFAULT_DOCUMENT_CONCURRENCY)
+    expect(DEFAULT_DOCUMENT_CONCURRENCY).toBe(2)
+    expect(MAX_DOCUMENT_CONCURRENCY).toBe(2)
     expect(parseArguments(base).documentTimeoutSeconds).toBe(
       DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     )
@@ -116,6 +141,19 @@ describe('headless PDF export', () => {
         parseArguments([...base, `--document-timeout-seconds=${value}`]),
       ).toThrow('INVALID_USAGE')
     }
+    expect(parseArguments([...base, '--concurrency', '1']).concurrency).toBe(1)
+    expect(
+      parseArguments([...base, `--concurrency=${MAX_DOCUMENT_CONCURRENCY}`])
+        .concurrency,
+    ).toBe(MAX_DOCUMENT_CONCURRENCY)
+    for (const value of ['0', '1.5', '3', 'nope']) {
+      expect(() => parseArguments([...base, `--concurrency=${value}`])).toThrow(
+        'INVALID_USAGE',
+      )
+    }
+    expect(() =>
+      parseArguments([...base, '--concurrency=1', '--concurrency=2']),
+    ).toThrow('INVALID_USAGE')
   })
 
   it('keeps every off-host OCR engine behind explicit per-run declarations', () => {
@@ -225,6 +263,315 @@ describe('headless PDF export', () => {
         })
         .toBe(false)
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('hard-kills an aborted worker tree before settling cancellation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-abort-'))
+    const stagingDirectory = join(directory, 'stage')
+    const observationPath = join(directory, 'observation.json')
+    const controller = new AbortController()
+    let observation = null
+    try {
+      const pending = runIsolatedPdfExportJob(
+        {
+          path: join(directory, 'private paper title.pdf'),
+          stagingDirectory,
+          observationPath,
+        },
+        {
+          timeoutMs: 5_000,
+          signal: controller.signal,
+          workerModule: resolve('tests/fixtures/pdf-export-hanging-worker.mjs'),
+        },
+      )
+      observation = await waitForJson(observationPath)
+      controller.abort()
+
+      await expect(pending).resolves.toEqual({ status: 'cancelled' })
+      await expect
+        .poll(() => processExists(observation.workerPid), { timeout: 2_000 })
+        .toBe(false)
+      await expect
+        .poll(() => processExists(observation.grandchildPid), {
+          timeout: 2_000,
+        })
+        .toBe(false)
+    } finally {
+      controller.abort()
+      if (
+        observation?.grandchildPid &&
+        processExists(observation.grandchildPid)
+      ) {
+        process.kill(observation.grandchildPid, 'SIGKILL')
+      }
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('collects bounded stage and resource heartbeats without adding them to the document receipt', async () => {
+    const result = await runIsolatedPdfExportJob(
+      { path: '/private/not-forwarded.pdf', stagingDirectory: '/unused' },
+      {
+        timeoutMs: 2_000,
+        heartbeatTimeoutMs: 500,
+        workerModule: resolve('tests/fixtures/pdf-export-heartbeat-worker.mjs'),
+      },
+    )
+
+    expect(result).toEqual({
+      status: 'completed',
+      document: { fixture: 'bounded-worker' },
+      telemetry: {
+        heartbeatCount: 2,
+        maximumRssBytes: 2048,
+        maximumHeapUsedBytes: 768,
+        lastStage: 'validating',
+        lastCheckpoint: 'quality-complete',
+        elapsedMs: 20,
+        userCpuMicros: 200,
+        systemCpuMicros: 20,
+        stages: [
+          {
+            stage: 'extracting',
+            checkpoint: 'page-extraction',
+            heartbeatCount: 1,
+            firstElapsedMs: 10,
+            lastElapsedMs: 10,
+            firstCompleted: 1,
+            lastCompleted: 1,
+            total: 2,
+          },
+          {
+            stage: 'validating',
+            checkpoint: 'quality-complete',
+            heartbeatCount: 1,
+            firstElapsedMs: 20,
+            lastElapsedMs: 20,
+            firstCompleted: 2,
+            lastCompleted: 2,
+            total: 2,
+          },
+        ],
+      },
+    })
+    expect(JSON.stringify(result.document)).not.toContain('heartbeat')
+  })
+
+  it('hard-kills a worker whose heartbeat stalls before the document deadline', async () => {
+    const result = await runIsolatedPdfExportJob(
+      { path: '/private/not-forwarded.pdf', stagingDirectory: '/unused' },
+      {
+        timeoutMs: 2_000,
+        heartbeatTimeoutMs: 100,
+        workerModule: resolve('tests/fixtures/pdf-export-stalled-worker.mjs'),
+      },
+    )
+
+    expect(result).toMatchObject({
+      status: 'stalled',
+      telemetry: {
+        heartbeatCount: 1,
+        maximumRssBytes: 4096,
+        maximumHeapUsedBytes: 2048,
+        lastStage: 'semantic-promotion',
+        lastCheckpoint: 'figure-grouping',
+      },
+    })
+  })
+
+  it('reports exact boundaries around each completed EPUB profile', async () => {
+    const stagingDirectory = await mkdtemp(
+      join(tmpdir(), 'pdf-export-profile-progress-'),
+    )
+    const stageLogPath = join(stagingDirectory, 'stages.log')
+    const targets = ['target-0', 'target-1', 'target-2']
+    const recordStage = (stage) => {
+      appendFileSync(stageLogPath, `${stage}\n`)
+    }
+    const exportModulesStub = {
+      targetProfileIds: targets,
+      getTargetProfile: (id) => ({
+        id,
+        index: targets.indexOf(id),
+      }),
+      buildEpub: async (_paper, _reconstruction, profile) => {
+        recordStage(`build-${profile.index}-start`)
+        recordStage(`build-${profile.index}-end`)
+        return {
+          bytes: new Uint8Array([profile.index]),
+          fileName: `${profile.id}.epub`,
+          sha256: String(profile.index).repeat(64),
+          mode: 'publication',
+          profile: { id: profile.id },
+        }
+      },
+      inspectEpub: (_bytes, profile) => {
+        recordStage(`inspect-${profile.index}-end`)
+      },
+    }
+    const record = {
+      document: {
+        basename: 'synthetic.pdf',
+        sha256: 'a'.repeat(64),
+        byteLength: 1,
+        pageCount: 1,
+        completeness: {},
+        readiness: { ready: true },
+        structure: {
+          canonicalHyphenDeletionLedgerSha256: 'b'.repeat(64),
+        },
+      },
+      reconstruction: {
+        readiness: { ready: true },
+        paper: { id: 'synthetic-paper' },
+        source: { sha256: 'a'.repeat(64) },
+      },
+    }
+    vi.doMock('./pdf-corpus-audit-lib.mjs', async (importOriginal) => {
+      const actual = await importOriginal()
+      return {
+        ...actual,
+        auditPdfPath: async () => record,
+        createPdfPipeline: async () => ({
+          ocrResolution: null,
+          loadExportModules: async () => exportModulesStub,
+          close: async () => {},
+        }),
+      }
+    })
+    vi.resetModules()
+    try {
+      const { runPdfExportWorkerJob: runIsolatedWorkerJob } =
+        await import('./pdf-export.mjs')
+      const validatorScript = `
+const fs = require('node:fs')
+const path = ${JSON.stringify(stageLogPath)}
+const completed = fs.existsSync(path)
+  ? fs.readFileSync(path, 'utf8').split('\\n').filter((line) => line.startsWith('epubcheck-')).length
+  : 0
+fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
+`
+      const result = await runIsolatedWorkerJob(
+        {
+          path: '/synthetic.pdf',
+          targets,
+          ocrEngine: 'none',
+          ocrRemoteOptIn: false,
+          documentVisibility: 'private',
+          readableFallback: false,
+          validator: {
+            kind: 'command',
+            command: process.execPath,
+            arguments: ['-e', validatorScript],
+          },
+          stagingDirectory,
+        },
+        {
+          onProgress: ({ checkpoint, completed, total }) => {
+            if (checkpoint === 'epub-profile') {
+              recordStage(`boundary-${completed}/${total}`)
+            }
+          },
+        },
+      )
+
+      expect(result.document.exports.map(({ target }) => target)).toEqual([
+        'target-0',
+        'target-1',
+        'target-2',
+      ])
+      expect((await readFile(stageLogPath, 'utf8')).trim().split('\n')).toEqual(
+        [
+          'boundary-0/3',
+          'build-0-start',
+          'build-0-end',
+          'inspect-0-end',
+          'epubcheck-0-end',
+          'boundary-1/3',
+          'boundary-1/3',
+          'build-1-start',
+          'build-1-end',
+          'inspect-1-end',
+          'epubcheck-1-end',
+          'boundary-2/3',
+          'boundary-2/3',
+          'build-2-start',
+          'build-2-end',
+          'inspect-2-end',
+          'epubcheck-2-end',
+          'boundary-3/3',
+        ],
+      )
+    } finally {
+      vi.doUnmock('./pdf-corpus-audit-lib.mjs')
+      vi.resetModules()
+      await rm(stagingDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a synthetic slow EPUB assembly alive on repeated heartbeats', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-slow-assembly-'))
+    const acknowledgmentPath = join(directory, 'acknowledgment')
+    const controller = new AbortController()
+    let pending
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      pending = runIsolatedPdfExportJob(
+        {
+          path: '/private/not-forwarded.pdf',
+          stagingDirectory: '/unused',
+          acknowledgmentPath,
+        },
+        {
+          timeoutMs: 10_000,
+          heartbeatTimeoutMs: 1_000,
+          signal: controller.signal,
+          workerModule: resolve(
+            'tests/fixtures/pdf-export-slow-assembly-worker.mjs',
+          ),
+        },
+      )
+
+      for (let completed = 0; completed <= 3; completed += 1) {
+        await waitForParentWatchdogArm(setTimeoutSpy, completed + 2)
+        await vi.advanceTimersByTimeAsync(900)
+        await writeFile(acknowledgmentPath, String(completed + 1))
+      }
+
+      await expect(pending).resolves.toEqual({
+        status: 'completed',
+        document: { fixture: 'slow-assembly' },
+        telemetry: {
+          heartbeatCount: 4,
+          maximumRssBytes: 4096,
+          maximumHeapUsedBytes: 2048,
+          lastStage: 'epub-assembly',
+          lastCheckpoint: 'epub-profile',
+          elapsedMs: 2700,
+          userCpuMicros: 300,
+          systemCpuMicros: 30,
+          stages: [
+            {
+              stage: 'epub-assembly',
+              checkpoint: 'epub-profile',
+              heartbeatCount: 4,
+              firstElapsedMs: 0,
+              lastElapsedMs: 2700,
+              firstCompleted: 0,
+              lastCompleted: 3,
+              total: 3,
+            },
+          ],
+        },
+      })
+    } finally {
+      controller.abort()
+      await pending
+      setTimeoutSpy.mockRestore()
+      vi.useRealTimers()
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -403,51 +750,85 @@ describe('headless PDF export', () => {
     }
   })
 
-  it('continues sequentially after timeout and emits deterministic private failure rows', async () => {
-    const run = async () => {
+  it('bounds in-flight documents and emits reports in contract order after scrambled completion', async () => {
+    const contractOrder = [
+      'z-timeout',
+      'a-parser-failure',
+      'd-parser-failure',
+      'b-parser-failure',
+      'c-parser-failure',
+    ]
+    const run = async (concurrency) => {
       const directory = await mkdtemp(join(tmpdir(), 'pdf-export-continue-'))
       const paths = [
-        join(directory, 'z-timeout.pdf'),
+        join(directory, 'd-parser-failure.pdf'),
+        join(directory, 'b-parser-failure.pdf'),
         join(directory, 'a-parser-failure.pdf'),
+        join(directory, 'c-parser-failure.pdf'),
+        join(directory, 'z-timeout.pdf'),
       ]
+      const corpusContract = {
+        documents: contractOrder.map((id) => ({
+          id,
+          byteLength: 1,
+          sha256: 'a'.repeat(64),
+        })),
+      }
+      const delays = new Map([
+        ['z-timeout.pdf', 40],
+        ['a-parser-failure.pdf', 1],
+        ['d-parser-failure.pdf', 5],
+        ['b-parser-failure.pdf', 30],
+        ['c-parser-failure.pdf', 10],
+      ])
       const stagingDirectories = []
       const calls = []
+      const completions = []
       let active = 0
       let maximumActive = 0
       try {
         const outputDirectory = join(directory, 'output')
         const result = await processExportDocuments({
           paths,
-          corpusContract: null,
+          corpusContract,
           policy: pipeline.policy,
-          reportValidator,
+          reportValidator: () => true,
           targetProfiles: [exportProfile('paperPro')],
           readableFallback: false,
           validator: { kind: 'skipped', reason: 'java-unavailable' },
           outputDirectory,
           timeoutMs: 1,
+          ...(concurrency === undefined ? {} : { concurrency }),
           runWorker: async (job) => {
             active += 1
             maximumActive = Math.max(maximumActive, active)
             calls.push(job.path)
             stagingDirectories.push(job.stagingDirectory)
-            active -= 1
-            if (job.path.endsWith('z-timeout.pdf')) {
-              await writeFile(
-                join(job.stagingDirectory, 'partial.epub'),
-                'never publish',
+            const name = basename(job.path)
+            try {
+              await new Promise((resolveDelay) =>
+                setTimeout(resolveDelay, delays.get(name)),
               )
-              return { status: 'timeout' }
-            }
-            return {
-              status: 'completed',
-              document: {
-                basename: 'a-parser-failure.pdf',
-                sha256: null,
-                code: 'PDF_PARSE_FAILED',
-                message:
-                  'The PDF parser could not open the document; local path and document details were suppressed.',
-              },
+              completions.push(name)
+              if (name === 'z-timeout.pdf') {
+                await writeFile(
+                  join(job.stagingDirectory, 'partial.epub'),
+                  'never publish',
+                )
+                return { status: 'timeout' }
+              }
+              return {
+                status: 'completed',
+                document: {
+                  basename: name,
+                  sha256: null,
+                  code: 'PDF_PARSE_FAILED',
+                  message:
+                    'The PDF parser could not open the document; local path and document details were suppressed.',
+                },
+              }
+            } finally {
+              active -= 1
             }
           },
         })
@@ -455,6 +836,7 @@ describe('headless PDF export', () => {
           ...result,
           documents: result.report.documents,
           calls: calls.map((path) => basename(path)),
+          completions,
           maximumActive,
           stagingDirectories,
           directory,
@@ -468,14 +850,25 @@ describe('headless PDF export', () => {
 
     const first = await run()
     const second = await run()
+    const serial = await run(1)
     try {
-      expect(first.calls).toEqual(['z-timeout.pdf', 'a-parser-failure.pdf'])
-      expect(first.maximumActive).toBe(1)
-      expect(first.documents.map(({ basename }) => basename)).toEqual([
-        'a-parser-failure.pdf',
-        'z-timeout.pdf',
-      ])
-      expect(first.documents[1]).toEqual({
+      const orderedBasenames = contractOrder.map((id) => `${id}.pdf`)
+      expect(first.calls).toHaveLength(5)
+      expect(new Set(first.calls.slice(0, 2))).toEqual(
+        new Set(['z-timeout.pdf', 'a-parser-failure.pdf']),
+      )
+      expect(first.maximumActive).toBe(DEFAULT_DOCUMENT_CONCURRENCY)
+      expect(second.maximumActive).toBe(DEFAULT_DOCUMENT_CONCURRENCY)
+      expect(serial.maximumActive).toBe(1)
+      expect(first.completions).not.toEqual(first.calls)
+      expect(first.completions).not.toEqual(orderedBasenames)
+      expect([...first.completions].sort()).toEqual(
+        [...orderedBasenames].sort(),
+      )
+      expect(first.documents.map(({ basename }) => basename)).toEqual(
+        orderedBasenames,
+      )
+      expect(first.documents[0]).toEqual({
         basename: 'z-timeout.pdf',
         sha256: null,
         code: 'PDF_DOCUMENT_TIMEOUT',
@@ -483,31 +876,44 @@ describe('headless PDF export', () => {
           'The PDF exceeded the local per-document processing time limit.',
       })
       expect(first.documents).toEqual(second.documents)
-      for (const stagingDirectory of first.stagingDirectories) {
+      expect(first.documents).toEqual(serial.documents)
+      expect(first.serialized).toBe(second.serialized)
+      expect(first.serialized).toBe(serial.serialized)
+      expect(first.performanceEvidence.map(({ basename }) => basename)).toEqual(
+        orderedBasenames,
+      )
+      for (const stagingDirectory of [
+        ...first.stagingDirectories,
+        ...second.stagingDirectories,
+        ...serial.stagingDirectories,
+      ]) {
         await expect(access(stagingDirectory)).rejects.toMatchObject({
           code: 'ENOENT',
         })
       }
-      expect(await readdir(first.outputDirectory)).toEqual([
-        'corpus-audit.json',
-      ])
+      for (const outputDirectory of [
+        first.outputDirectory,
+        second.outputDirectory,
+        serial.outputDirectory,
+      ]) {
+        expect(await readdir(outputDirectory)).toEqual(['corpus-audit.json'])
+      }
 
       const report = first.report
-      expect(reportValidator(report), reportValidator.errors).toBe(true)
       expect(report.summary).toMatchObject({
-        documents: 2,
+        documents: 5,
         ready: 0,
         reviewRequired: 0,
-        failed: 2,
+        failed: 5,
         failureReasons: {
           PDF_DOCUMENT_TIMEOUT: 1,
-          PDF_PARSE_FAILED: 1,
+          PDF_PARSE_FAILED: 4,
         },
       })
       expect(JSON.stringify(report)).not.toContain(first.directory)
     } finally {
       await Promise.all(
-        [first.directory, second.directory].map((directory) =>
+        [first.directory, second.directory, serial.directory].map((directory) =>
           rm(directory, { recursive: true, force: true }),
         ),
       )
@@ -582,6 +988,13 @@ describe('headless PDF export', () => {
       })
       expect(report.documents).toEqual([
         {
+          basename: 'failed.pdf',
+          sha256: null,
+          code: 'PDF_DOCUMENT_WORKER_FAILED',
+          message:
+            'The PDF worker stopped without exposing local path or document details.',
+        },
+        {
           basename: 'born-digital.pdf',
           sha256: null,
           code: 'PDF_DOCUMENT_WORKER_FAILED',
@@ -595,13 +1008,6 @@ describe('headless PDF export', () => {
           message:
             'The PDF worker stopped without exposing local path or document details.',
         },
-        {
-          basename: 'failed.pdf',
-          sha256: null,
-          code: 'PDF_DOCUMENT_WORKER_FAILED',
-          message:
-            'The PDF worker stopped without exposing local path or document details.',
-        },
       ])
       expect(serialized).not.toContain(privateMarker)
       expect(serialized).not.toContain(directory)
@@ -610,6 +1016,98 @@ describe('headless PDF export', () => {
         await readFile(join(outputDirectory, 'corpus-audit.json'), 'utf8'),
       ).toBe(serialized)
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('retains an allowlisted typed worker error without serializing its private details', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-typed-error-'))
+    const outputDirectory = join(directory, 'output')
+    const inputPath = resolve('tests/fixtures/pdf/born-digital.pdf')
+    const privateMessageMarker = 'private-export-error-message'
+    const privatePathMarker = join(directory, 'private-source.pdf')
+    const privateRelationshipMarker = 'private-visual-relationship-17'
+    const record = await auditPdfPath(inputPath, pipeline)
+    vi.doMock('./pdf-corpus-audit-lib.mjs', async (importOriginal) => {
+      const actual = await importOriginal()
+      return {
+        ...actual,
+        auditPdfPath: async () => record,
+        createPdfPipeline: async () => ({
+          ocrResolution: null,
+          loadExportModules: async () => ({
+            ...exportModules,
+            buildEpub: async () => {
+              const error = new Error(
+                `${privateMessageMarker}: ${privatePathMarker}; relationship ${privateRelationshipMarker}`,
+              )
+              error.code = 'INCOMPLETE_RECONSTRUCTION'
+              throw error
+            },
+          }),
+          close: async () => {},
+        }),
+      }
+    })
+    vi.resetModules()
+    try {
+      const {
+        processExportDocuments: processWithTypedError,
+        runPdfExportWorkerJob: runWorkerWithTypedError,
+      } = await import('./pdf-export.mjs')
+      const { report, serialized } = await processWithTypedError({
+        paths: [inputPath],
+        corpusContract: null,
+        policy: pipeline.policy,
+        reportValidator,
+        targetProfiles: [exportProfile('paperPro')],
+        readableFallback: false,
+        validator: { kind: 'skipped', reason: 'java-unavailable' },
+        outputDirectory,
+        timeoutMs: 30_000,
+        executionProvenanceCapture:
+          await capturePdfCorpusExecutionProvenance('pdf-export'),
+        runWorker: async (job) => {
+          const workerMessage = await runWorkerWithTypedError(job)
+          return {
+            status: 'completed',
+            document: workerMessage.document,
+          }
+        },
+      })
+
+      expect(report.summary.failureReasons).toEqual({
+        INCOMPLETE_RECONSTRUCTION: 1,
+      })
+      expect(report.documents[0]).toMatchObject({
+        diagnosticCounts: { INCOMPLETE_RECONSTRUCTION: 1 },
+        diagnostics: [
+          expect.objectContaining({
+            code: 'INCOMPLETE_RECONSTRUCTION',
+            severity: 'error',
+          }),
+        ],
+        readiness: {
+          ready: false,
+          status: 'review-required',
+          blockingDiagnosticCodes: expect.arrayContaining([
+            'INCOMPLETE_RECONSTRUCTION',
+          ]),
+        },
+      })
+      for (const privateMarker of [
+        privateMessageMarker,
+        privatePathMarker,
+        privateRelationshipMarker,
+      ]) {
+        expect(serialized).not.toContain(privateMarker)
+      }
+      expect(
+        await readFile(join(outputDirectory, 'corpus-audit.json'), 'utf8'),
+      ).toBe(serialized)
+    } finally {
+      vi.doUnmock('./pdf-corpus-audit-lib.mjs')
+      vi.resetModules()
       await rm(directory, { recursive: true, force: true })
     }
   }, 120_000)
@@ -720,6 +1218,8 @@ describe('headless PDF export', () => {
           validator: { kind: 'skipped', reason: 'java-unavailable' },
           outputDirectory,
           timeoutMs: 30_000,
+          executionProvenanceCapture:
+            await capturePdfCorpusExecutionProvenance('pdf-export'),
           runWorker: async (job) => {
             const workerMessage = await runPdfExportWorkerJob(job)
             await tamper({
@@ -797,7 +1297,7 @@ describe('headless PDF export', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it('requires an absent Windows output instead of a non-atomic empty-directory replacement', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-windows-out-'))
@@ -818,7 +1318,7 @@ describe('headless PDF export', () => {
     }
   })
 
-  it('preserves absent and existing-empty outputs when a run fails', async () => {
+  it('aborts outstanding workers and cleans every namespace before an atomic fatal failure', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-rollback-'))
     try {
       for (const existing of [false, true]) {
@@ -827,10 +1327,22 @@ describe('headless PDF export', () => {
           existing ? 'existing-empty' : 'absent',
         )
         if (existing) await mkdir(outputDirectory)
+        const paths = [
+          join(directory, 'fatal.pdf'),
+          join(directory, 'outstanding.pdf'),
+          join(directory, 'must-not-start.pdf'),
+        ]
+        const stagingDirectories = []
+        const started = []
+        let outstandingStarted
+        const outstandingReady = new Promise((resolveStarted) => {
+          outstandingStarted = resolveStarted
+        })
+        let cancelledWorkers = 0
 
         await expect(
           processExportDocuments({
-            paths: [join(directory, `${existing ? 'one' : 'two'}.pdf`)],
+            paths,
             corpusContract: null,
             policy: pipeline.policy,
             reportValidator,
@@ -839,13 +1351,43 @@ describe('headless PDF export', () => {
             validator: { kind: 'skipped', reason: 'java-unavailable' },
             outputDirectory,
             timeoutMs: 1,
-            runWorker: async () => ({
-              status: 'fatal',
-              code: 'PDF_CORPUS_CONTRACT_MISMATCH',
-            }),
+            runWorker: async (job, { signal }) => {
+              const name = basename(job.path)
+              started.push(name)
+              stagingDirectories.push(job.stagingDirectory)
+              await writeFile(
+                join(job.stagingDirectory, 'partial.epub'),
+                'never publish',
+              )
+              if (name === 'fatal.pdf') {
+                await outstandingReady
+                return {
+                  status: 'fatal',
+                  code: 'PDF_CORPUS_CONTRACT_MISMATCH',
+                }
+              }
+              outstandingStarted()
+              await new Promise((resolveAbort) => {
+                if (signal.aborted) resolveAbort()
+                else {
+                  signal.addEventListener('abort', resolveAbort, {
+                    once: true,
+                  })
+                }
+              })
+              cancelledWorkers += 1
+              return { status: 'cancelled' }
+            },
           }),
         ).rejects.toThrow('PDF_CORPUS_CONTRACT_MISMATCH')
 
+        expect(started.sort()).toEqual(['fatal.pdf', 'outstanding.pdf'])
+        expect(cancelledWorkers).toBe(1)
+        for (const stagingDirectory of stagingDirectories) {
+          await expect(access(stagingDirectory)).rejects.toMatchObject({
+            code: 'ENOENT',
+          })
+        }
         if (existing) {
           expect(await readdir(outputDirectory)).toEqual([])
         } else {
@@ -855,6 +1397,70 @@ describe('headless PDF export', () => {
         }
       }
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels active workers without starting queued documents or publishing output', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pdf-export-cancel-'))
+    const outputDirectory = join(directory, 'output')
+    const controller = new AbortController()
+    const stagingDirectories = []
+    const started = []
+    let cancelledWorkers = 0
+    try {
+      await expect(
+        processExportDocuments({
+          paths: [
+            join(directory, 'one.pdf'),
+            join(directory, 'two.pdf'),
+            join(directory, 'must-not-start.pdf'),
+          ],
+          corpusContract: null,
+          policy: pipeline.policy,
+          reportValidator,
+          targetProfiles: [exportProfile('paperPro')],
+          readableFallback: false,
+          validator: { kind: 'skipped', reason: 'java-unavailable' },
+          outputDirectory,
+          timeoutMs: 1,
+          signal: controller.signal,
+          runWorker: async (job, { signal }) => {
+            started.push(basename(job.path))
+            stagingDirectories.push(job.stagingDirectory)
+            await writeFile(
+              join(job.stagingDirectory, 'partial.epub'),
+              'never publish',
+            )
+            if (started.length === DEFAULT_DOCUMENT_CONCURRENCY) {
+              controller.abort()
+            }
+            await new Promise((resolveAbort) => {
+              if (signal.aborted) resolveAbort()
+              else {
+                signal.addEventListener('abort', resolveAbort, {
+                  once: true,
+                })
+              }
+            })
+            cancelledWorkers += 1
+            return { status: 'cancelled' }
+          },
+        }),
+      ).rejects.toThrow('PDF_EXPORT_CANCELLED')
+
+      expect(started.sort()).toEqual(['one.pdf', 'two.pdf'])
+      expect(cancelledWorkers).toBe(DEFAULT_DOCUMENT_CONCURRENCY)
+      for (const stagingDirectory of stagingDirectories) {
+        await expect(access(stagingDirectory)).rejects.toMatchObject({
+          code: 'ENOENT',
+        })
+      }
+      await expect(access(outputDirectory)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      controller.abort()
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -878,8 +1484,8 @@ describe('headless PDF export', () => {
       expect(secondResult.status, secondResult.stderr).toBe(0)
       const report = JSON.parse(firstResult.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.7.0',
-        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        schemaVersion: '1.9.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
         executionProvenance: {
           implementation: {
             gitCommit: expect.stringMatching(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
@@ -1079,8 +1685,8 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(result.status, result.stderr).toBe(1)
       const report = JSON.parse(result.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.7.0',
-        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        schemaVersion: '1.9.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
         summary: {
           documents: 1,
           ready: 0,
@@ -1124,8 +1730,8 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(result.status, result.stderr).toBe(1)
       const report = JSON.parse(result.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.7.0',
-        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        schemaVersion: '1.9.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
         summary: {
           documents: 1,
           ready: 0,
@@ -1219,6 +1825,14 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
         }),
       ])
       expect(reportValidator(report), reportValidator.errors).toBe(true)
+      const frozenV18Report = structuredClone(report)
+      frozenV18Report.schemaVersion = '1.8.0'
+      frozenV18Report.reportSchema =
+        'docs/schemas/pdf-corpus-audit-v1.8.schema.json'
+      frozenV18Report.documents[0].structure.schemaVersion = '1.5.0'
+      expect(reportValidator(frozenV18Report), reportValidator.errors).toBe(
+        true,
+      )
       expect((await readdir(output)).sort()).toEqual(
         [
           'checksums.sha256',
@@ -1265,7 +1879,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           '--out',
           comparison,
           '--corpus-report-schema-policy',
-          'v1.7-only',
+          'v1.9-only',
           '--require-identical-artifacts',
           '--require-identical-structure',
         ],
@@ -1311,7 +1925,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           '--out',
           cleanComparison,
           '--corpus-report-schema-policy',
-          'v1.7-only',
+          'v1.9-only',
           '--require-identical-artifacts',
           '--require-identical-structure',
         ],
@@ -1357,6 +1971,12 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           await readFile(join(output, metadata.basename)),
         )
         expect(() => exportModules.inspectEpub(bytes, profile)).not.toThrow()
+        const epubManifest = JSON.parse(
+          strFromU8(unzipSync(bytes)['EPUB/export.json']),
+        )
+        expect(epubManifest.canonicalHyphenDeletionLedgerSha256).toBe(
+          report.documents[0].structure.canonicalHyphenDeletionLedgerSha256,
+        )
       }
     } finally {
       await rm(directory, { recursive: true, force: true })

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPdfReviewReceipt,
+  automatedReviewLabel,
   criterionReviewComplete,
+  humanReviewLabel,
   humanizeBlockingDiagnostics,
   paperHumanReviewComplete,
   parsePdfReviewStore,
@@ -9,6 +11,7 @@ import {
   PDF_REVIEW_CRITERIA,
   randomReviewSampleIndex,
   reviewSampleGroupLabel,
+  reviewWorkloadLabel,
   type PdfReviewSample,
   type PdfReviewStore,
 } from './PdfEpubReviewQueue'
@@ -75,13 +78,39 @@ function completeCriteria() {
 
 describe('PDF EPUB review queue receipt', () => {
   it('labels frozen and seeded-random evidence without calling it a holdout', () => {
-    expect(reviewSampleGroupLabel(sample)).toBe('Frozen regression')
+    expect(reviewSampleGroupLabel(sample)).toBe('Regression set')
     expect(
       reviewSampleGroupLabel({
         ...sample,
         corpusGroup: 'seeded-random',
       }),
-    ).toBe('Seeded-random discovery')
+    ).toBe('Random discovery set')
+    expect(reviewWorkloadLabel(sample)).toBe('Standard')
+    expect(reviewWorkloadLabel({ ...sample, reviewTier: 'stress' })).toBe(
+      'Large-document performance test',
+    )
+  })
+
+  it('keeps provenance, workload, automated status, and human progress separate', () => {
+    expect(automatedReviewLabel()).toBe('Not run')
+    expect(automatedReviewLabel({ snapshot, criteria: {} })).toBe('Blocked')
+    expect(humanReviewLabel()).toBe('Not started')
+    expect(
+      humanReviewLabel({
+        criteria: {
+          'content-flow': {
+            verdict: 'pass',
+            location: '',
+            notes: '',
+          },
+        },
+      }),
+    ).toBe('1 of 7 checks completed')
+    expect(
+      humanReviewLabel({
+        criteria: completeCriteria(),
+      }),
+    ).toBe('Failed')
   })
 
   it('selects reproducible random papers by corpus group and skips stress tests', () => {
@@ -233,7 +262,7 @@ describe('PDF EPUB review queue receipt', () => {
       summary: {
         total: 1,
         machineFail: 1,
-        humanFail: 0,
+        humanFail: 1,
         incomplete: 0,
         sourceIdentityVerified: 1,
         outputIdentityRecorded: 1,
@@ -274,7 +303,12 @@ describe('PDF EPUB review queue receipt', () => {
         schemaVersion: 2,
         corpusId: 'corpus-v1',
         reviewer: '',
-        annotations: {},
+        annotations: {
+          [sample.id]: {
+            criteria: {},
+            snapshot,
+          },
+        },
       },
       samples: [sample],
       generatedAt: '2026-07-27T00:00:00.000Z',
@@ -283,7 +317,7 @@ describe('PDF EPUB review queue receipt', () => {
     expect(receipt).toMatchObject({
       status: 'draft',
       reviewer: null,
-      summary: { incomplete: 1 },
+      summary: { machineFail: 1, incomplete: 1, pass: 0 },
     })
   })
 })

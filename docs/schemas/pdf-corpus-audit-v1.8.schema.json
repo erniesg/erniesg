@@ -1,0 +1,503 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-corpus-audit-1.8.0.json",
+  "title": "Local PDF corpus audit report with canonical hyphen deletion evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reportSchema",
+    "privacy",
+    "executionProvenance",
+    "policy",
+    "summary",
+    "documents"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.8.0" },
+    "reportSchema": {
+      "const": "docs/schemas/pdf-corpus-audit-v1.8.schema.json"
+    },
+    "privacy": { "const": "basenames-hashes-metrics-diagnostics-only" },
+    "executionProvenance": {
+      "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.7.0.json#/$defs/executionProvenance"
+    },
+    "policy": {
+      "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/policy"
+    },
+    "corpusContract": {
+      "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/corpusContractBinding"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documents",
+        "ready",
+        "reviewRequired",
+        "failed",
+        "passRate",
+        "failureReasons"
+      ],
+      "properties": {
+        "documents": { "type": "integer", "minimum": 0 },
+        "ready": { "type": "integer", "minimum": 0 },
+        "reviewRequired": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "passRate": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/ratio"
+        },
+        "failureReasons": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/auditedDocument" },
+          {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/failedDocument"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "canonicalHyphenDeletionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "context",
+        "outcome",
+        "fromRegionId",
+        "fromLineId",
+        "toRegionId",
+        "toLineId",
+        "geometry",
+        "proof"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "context": {
+          "enum": ["bibliography-continuation", "canonical-flow-continuation"]
+        },
+        "outcome": { "const": "removed-discretionary-hyphen" },
+        "fromRegionId": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "fromLineId": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "toRegionId": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "toLineId": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "geometry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": {
+            "from": {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sourceBox"
+            },
+            "to": {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sourceBox"
+            }
+          }
+        },
+        "proof": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sourceBoundaryProven",
+            "pinnedWordSha256",
+            "pinnedJoinedFormValid",
+            "pinnedSplit",
+            "splitPointValid",
+            "exactSameDocumentJoinedFormSha256",
+            "sameDocumentJoinedFormValid",
+            "hardHyphenFormSha256",
+            "hardHyphenCounterproof",
+            "model",
+            "evidenceSha256s"
+          ],
+          "properties": {
+            "sourceBoundaryProven": { "const": true },
+            "pinnedWordSha256": {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+            },
+            "pinnedJoinedFormValid": { "const": true },
+            "pinnedSplit": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["leftSha256", "rightSha256", "index"],
+              "properties": {
+                "leftSha256": {
+                  "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+                },
+                "rightSha256": {
+                  "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+                },
+                "index": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "splitPointValid": { "const": true },
+            "exactSameDocumentJoinedFormSha256": {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+            },
+            "sameDocumentJoinedFormValid": { "const": true },
+            "hardHyphenFormSha256": {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+            },
+            "hardHyphenCounterproof": { "type": "null" },
+            "model": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "language",
+                "dictionarySha256",
+                "affixSha256",
+                "hyphenationSha256"
+              ],
+              "properties": {
+                "id": {
+                  "const": "scowl-2020.12.07+ushyphmax-2005-05-30"
+                },
+                "language": { "const": "en-US" },
+                "dictionarySha256": {
+                  "const": "829a043cf078d1e80e886289a13823454977f442a239a859d2133ea61944aa60"
+                },
+                "affixSha256": {
+                  "const": "70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5"
+                },
+                "hyphenationSha256": {
+                  "const": "f4ffcd96c5cbc886bdad23f95dcae8edc3cd3620eae62f7946eceda97c4e68f8"
+                }
+              }
+            },
+            "evidenceSha256s": {
+              "type": "array",
+              "minItems": 6,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+              },
+              "allOf": [
+                {
+                  "contains": {
+                    "const": "81c224fb15b73b9ce5ca2db72ea0f83086fab50b350d95355183d2505bdfff57"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "e16276d9d9e34e635bde4d934d9b35183c3c1eeda3919fddd662464e2e5e5375"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "7b9398edefeb1d6a2b6dc0b42f58ef254b85d9a3e77729b2f933a3eb416ff397"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "be247a91293e50ac5b4325efb0ad14195c80a83e4d984d0063ea9cfd67135a11"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "b3ee5df973a7412e20bfb58eda821122a3b2a96aac27ee19997f207dc2ab85c0"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "8635a25b9e8855d1e867d5e05aaab032c5dfc79551352e24977a5fe9d446f266"
+                  }
+                },
+                {
+                  "not": {
+                    "contains": {
+                      "enum": [
+                        "b2670a8bd9aae68e2da38cb2684bbab2874261f31b1bc60a2176bce84a209e59",
+                        "8fe41055ee2eed78916dff9939911d759e12c9a043815b5966e1a7742f6907ed",
+                        "aeb62ae71b1939c46608e70ed511e2d4e26e472df7cc66178901761c93da914c",
+                        "e4af8cf0346c6f5015e0d76bb468bdc9f5244e91edc1d82c9114b9702ae3da1b",
+                        "1efce0bcebb61f051546be980c90dca580c89b13cf16cfdb9562e994cd887710"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "structuralReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "canonicalNodeCount",
+        "canonicalNodeSequenceSha256",
+        "canonicalNodeTypeSequenceSha256",
+        "canonicalContentSha256",
+        "canonicalNodeProvenanceSha256",
+        "readingOrderGraphSha256",
+        "nodeCounts",
+        "visualRelationshipCount",
+        "visualRelationshipCounts",
+        "visualRelationshipGraphSha256",
+        "noteRelationshipCount",
+        "noteRelationshipCounts",
+        "noteRelationshipGraphSha256",
+        "citationRelationshipCount",
+        "citationRelationshipCounts",
+        "citationRelationshipGraph",
+        "citationRelationshipGraphSha256",
+        "crossReferenceRelationshipCount",
+        "crossReferenceRelationshipCounts",
+        "crossReferenceRelationshipGraph",
+        "crossReferenceRelationshipGraphSha256",
+        "assetCount",
+        "assetCounts",
+        "assetManifestSha256",
+        "lineTransitionLedgerAvailable",
+        "lineTransitionCount",
+        "lineTransitionLedgerSha256",
+        "unresolvedCorruptingJoinCount",
+        "structurallyConsumedLineBoundaryCount",
+        "canonicalHyphenDeletionLedgerAvailable",
+        "canonicalHyphenDeletionCount",
+        "canonicalHyphenDeletionContextCounts",
+        "canonicalHyphenDeletionLedger",
+        "canonicalHyphenDeletionLedgerSha256"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.5.0" },
+        "canonicalNodeCount": { "type": "integer", "minimum": 0 },
+        "canonicalNodeSequenceSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "canonicalNodeTypeSequenceSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "canonicalContentSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "canonicalNodeProvenanceSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "readingOrderGraphSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "nodeCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "visualRelationshipCount": { "type": "integer", "minimum": 0 },
+        "visualRelationshipCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "visualRelationshipGraphSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "noteRelationshipCount": { "type": "integer", "minimum": 0 },
+        "noteRelationshipCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "noteRelationshipGraphSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "citationRelationshipCount": { "type": "integer", "minimum": 0 },
+        "citationRelationshipCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "citationRelationshipGraph": {
+          "type": "array",
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/citationRelationship"
+          }
+        },
+        "citationRelationshipGraphSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "crossReferenceRelationshipCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "crossReferenceRelationshipCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "crossReferenceRelationshipGraph": {
+          "type": "array",
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/crossReferenceRelationship"
+          }
+        },
+        "crossReferenceRelationshipGraphSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "assetCount": { "type": "integer", "minimum": 0 },
+        "assetCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "assetManifestSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "lineTransitionLedgerAvailable": { "type": "boolean" },
+        "lineTransitionCount": { "type": "integer", "minimum": 0 },
+        "lineTransitionLedgerSha256": {
+          "oneOf": [
+            {
+              "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+            },
+            { "type": "null" }
+          ]
+        },
+        "unresolvedCorruptingJoinCount": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "structurallyConsumedLineBoundaryCount": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "canonicalHyphenDeletionLedgerAvailable": { "const": true },
+        "canonicalHyphenDeletionCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "canonicalHyphenDeletionContextCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bibliography-continuation": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "canonical-flow-continuation": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "canonicalHyphenDeletionLedger": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/canonicalHyphenDeletionRecord" }
+        },
+        "canonicalHyphenDeletionLedgerSha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lineTransitionLedgerAvailable": { "const": true }
+            },
+            "required": ["lineTransitionLedgerAvailable"]
+          },
+          "then": {
+            "properties": {
+              "lineTransitionLedgerSha256": {
+                "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+              },
+              "unresolvedCorruptingJoinCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "structurallyConsumedLineBoundaryCount": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "lineTransitionCount": { "const": 0 },
+              "lineTransitionLedgerSha256": { "type": "null" },
+              "unresolvedCorruptingJoinCount": { "type": "null" },
+              "structurallyConsumedLineBoundaryCount": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "auditedDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "basename",
+        "sha256",
+        "byteLength",
+        "pageCount",
+        "completeness",
+        "readiness",
+        "structure",
+        "diagnosticCounts",
+        "diagnosticSampleLimit",
+        "diagnosticSamplesTruncated",
+        "diagnostics"
+      ],
+      "properties": {
+        "basename": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$"
+        },
+        "sha256": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/sha256"
+        },
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "pageCount": { "type": "integer", "minimum": 1 },
+        "completeness": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/completeness"
+        },
+        "readiness": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/readiness"
+        },
+        "structure": { "$ref": "#/$defs/structuralReceipt" },
+        "ocr": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.6.0.json#/$defs/ocrPageProvenance"
+          }
+        },
+        "diagnosticCounts": {
+          "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/countMap"
+        },
+        "diagnosticSampleLimit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "perCode"],
+          "properties": {
+            "total": { "const": 64 },
+            "perCode": { "const": 3 }
+          }
+        },
+        "diagnosticSamplesTruncated": { "type": "integer", "minimum": 0 },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/diagnostic"
+          }
+        },
+        "exports": {
+          "type": "array",
+          "items": {
+            "$ref": "https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json#/$defs/export"
+          }
+        }
+      }
+    }
+  }
+}

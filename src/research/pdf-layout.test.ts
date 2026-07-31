@@ -9,9 +9,11 @@ import {
 import type {
   NodeSourceEvidence,
   NormalizedSourceBox,
+  PdfCanonicalHyphenBoundaryDecision,
   PdfPageAnalysis,
   PdfPageRegion,
   PdfScholarlyCrossReferenceRelationship,
+  PdfSourceSemanticFlowBoundaryDecision,
   PdfSourceRun,
   ReconstructionDiagnostic,
 } from './import-types'
@@ -20,13 +22,18 @@ import {
   canonicalHyperlinkOccurrencesForTable,
   canonicalTableWithApprovedHyperlinks,
   canonicalVisualSourceTranscript,
+  mergeProseContinuations,
   orderCanonicalVisualPairs,
   reconstructPageAnalyses,
+  retainUniqueMonotoneSourceRunAssignment,
+  retainUniqueSourceRunAssignmentWithAliases,
   resolveCanonicalHyperlinkObligations,
   residualPdfRegionAfterLineConsumption,
   residualPdfRegionFragmentsAfterLineConsumption,
+  sourceProvenRunFragmentToSpanBoundary,
   synthesizeRecoveredBibliographyClassifications,
 } from './pdf-layout'
+import { PDF_HYPHEN_LEXICAL_MODEL } from './pdf-hyphenation'
 import { assessPdfCompleteness } from './pdf-quality'
 import {
   canonicalTextIntegrityIssues,
@@ -183,6 +190,85 @@ function mathRun(
   }
 }
 
+function splitInlineProseEquationRuns({
+  afterText = '). The first term records the local drift [42].',
+  extraRuns = [],
+}: {
+  afterText?: string
+  extraRuns?: PdfSourceRun[]
+} = {}) {
+  const before = run(1, 'where', 0.1, 0.34, 0.05)
+  const firstBase = mathRun('S', 0.16, 0.34, 0.012, 10, 'Synthetic-CMMI10')
+  const firstSubscript = mathRun('k', 0.172, 0.347, 0.007, 7, 'Synthetic-CMMI7')
+  const firstSuperscript = mathRun(
+    '′',
+    0.173,
+    0.333,
+    0.007,
+    7,
+    'Synthetic-CMSY7',
+  )
+  const relationAndSecondBase = mathRun(
+    ' = S′(',
+    0.184,
+    0.34,
+    0.052,
+    10,
+    'Synthetic-CMR10',
+  )
+  const argumentBase = mathRun('x', 0.236, 0.34, 0.012, 10, 'Synthetic-CMMI10')
+  const argumentSuperscript = mathRun(
+    'k',
+    0.248,
+    0.333,
+    0.007,
+    7,
+    'Synthetic-CMMI7',
+  )
+  const argumentSubscript = mathRun(
+    't',
+    0.248,
+    0.347,
+    0.007,
+    7,
+    'Synthetic-CMMI7',
+  )
+  const after = run(1, afterText, 0.266, 0.34, 0.39)
+  before.sourceSequenceIndex = 0
+  Object.assign(firstBase, {
+    sourceSequenceIndex: 2,
+    sourceWhitespaceBefore: 'pdf-text-item' as const,
+    sourceWhitespacePredecessorIndex: 0,
+  })
+  ;[
+    firstSubscript,
+    firstSuperscript,
+    relationAndSecondBase,
+    argumentBase,
+    argumentSuperscript,
+    argumentSubscript,
+  ].forEach((sourceRun, index) => {
+    sourceRun.sourceSequenceIndex = index + 3
+  })
+  Object.assign(after, {
+    sourceSequenceIndex: 9,
+    sourceWhitespaceBefore: 'pdf-text-item' as const,
+    sourceWhitespacePredecessorIndex: 8,
+  })
+  return [
+    before,
+    firstBase,
+    firstSubscript,
+    firstSuperscript,
+    relationAndSecondBase,
+    argumentBase,
+    argumentSuperscript,
+    argumentSubscript,
+    after,
+    ...extraRuns,
+  ]
+}
+
 function page(
   number: number,
   runs: PdfSourceRun[],
@@ -197,6 +283,25 @@ function page(
     textCharacters: runs.reduce((total, item) => total + item.text.length, 0),
     imageCount: kind === 'born-digital' ? 0 : 1,
     runs,
+  }
+}
+
+function withExplicitEnglishLanguage(page: PdfPageAnalysis): PdfPageAnalysis {
+  return {
+    ...page,
+    ocr: {
+      engine: 'test-language-authority',
+      engineVersion: '1',
+      model: 'test-en',
+      modelVersion: '1',
+      languages: ['eng'],
+      languageMode: 'explicit',
+      sourceSha256: '1'.repeat(64),
+      rasterSha256: '2'.repeat(64),
+      confidence: 1,
+      words: [],
+      lines: [],
+    },
   }
 }
 
@@ -239,6 +344,23 @@ function canonicalHyperlinkTestBlock(text = 'Open target') {
       rotation: 0,
       method: 'pdf-link' as const,
     },
+  }
+}
+
+function sourceSubstringBox(
+  sourceRun: PdfSourceRun,
+  start: number,
+  end: number,
+  method: NormalizedSourceBox['method'] = 'pdf-link',
+): NormalizedSourceBox {
+  return {
+    page: sourceRun.page,
+    x: sourceRun.x + sourceRun.width * (start / sourceRun.text.length),
+    y: sourceRun.y,
+    width: sourceRun.width * ((end - start) / sourceRun.text.length),
+    height: sourceRun.height,
+    rotation: sourceRun.rotation,
+    method,
   }
 }
 
@@ -341,6 +463,420 @@ function ocrPage(
 }
 
 describe('PDF semantic reconstruction', () => {
+  it('proves a run-backed cross-gutter right fragment continuing into the next span', () => {
+    const rightRun = {
+      ...run(1, 'the right fragment continues', 0.54, 0.4, 0.34),
+      sourceSequenceIndex: 70,
+    }
+    const spanRun = {
+      ...run(1, 'on the next spanning source line.', 0.1, 0.43, 0.8),
+      sourceSequenceIndex: 71,
+      sourceWhitespaceBefore: 'pdf-text-item' as const,
+      sourceWhitespacePredecessorIndex: 70,
+    }
+    const region = (
+      id: string,
+      column: PdfPageRegion['column'],
+      sourceRun: PdfSourceRun,
+      lineage: NonNullable<
+        PdfPageRegion['lines'][number]['sourceFragmentLineage']
+      >,
+    ): PdfPageRegion => ({
+      id,
+      page: 1,
+      kind: column === 'span' ? 'spanning' : 'body',
+      column,
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `${id}-line`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [{ ...sourceRun }],
+          sourceFragmentLineage: lineage,
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+    const right = region('cross-gutter-right-region', 'right', rightRun, {
+      algorithm: 'source-run-fragment-v1',
+      sourceLineId: 'cross-gutter-source-line',
+      fragment: 'cross-gutter-right',
+      sourceSequenceIndexes: [70],
+    })
+    const span = region('cross-gutter-span-region', 'span', spanRun, {
+      algorithm: 'source-run-fragment-v1',
+      sourceLineId: 'next-span-source-line',
+      fragment: 'whole',
+      sourceSequenceIndexes: [71],
+    })
+
+    expect(sourceProvenRunFragmentToSpanBoundary(right, span)).toBe(true)
+  })
+
+  it('does not treat an unrelated right-column block as lineage for a following span', () => {
+    const rightRun = {
+      ...run(1, 'An unrelated right-column paragraph.', 0.54, 0.4, 0.34),
+      sourceSequenceIndex: 80,
+    }
+    const spanRun = {
+      ...run(1, 'A separate spanning paragraph.', 0.1, 0.43, 0.8),
+      sourceSequenceIndex: 81,
+    }
+    const makeRegion = (
+      id: string,
+      column: PdfPageRegion['column'],
+      sourceRun: PdfSourceRun,
+    ): PdfPageRegion => ({
+      id,
+      page: 1,
+      kind: column === 'span' ? 'spanning' : 'body',
+      column,
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `${id}-line`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [{ ...sourceRun }],
+          sourceFragmentLineage: {
+            algorithm: 'source-run-fragment-v1',
+            sourceLineId: `${id}-line`,
+            fragment: 'whole',
+            sourceSequenceIndexes: [sourceRun.sourceSequenceIndex!],
+          },
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+
+    expect(
+      sourceProvenRunFragmentToSpanBoundary(
+        makeRegion('unrelated-right-region', 'right', rightRun),
+        makeRegion('unrelated-span-region', 'span', spanRun),
+      ),
+    ).toBe(false)
+  })
+
+  it.each([
+    {
+      name: 'whole-line sequence adjacency',
+      targetFragment: 'whole' as const,
+      targetSourceLineId: 'legal-heading-source-line',
+    },
+    {
+      name: 'one-sided inline-stacked lineage',
+      targetFragment: 'inline-stacked-after' as const,
+      targetSourceLineId: 'formula-source-line',
+    },
+    {
+      name: 'one-sided cross-gutter lineage',
+      targetFragment: 'cross-gutter-right' as const,
+      targetSourceLineId: 'cross-gutter-source-line',
+    },
+  ])(
+    'does not rejoin intentional paragraphs from $name alone',
+    async ({ targetFragment, targetSourceLineId }) => {
+      const makeRegion = (
+        id: string,
+        text: string,
+        y: number,
+        sourceSequenceIndex: number,
+        fragment: 'whole' | 'inline-stacked-after' | 'cross-gutter-right',
+        sourceLineId: string,
+      ): PdfPageRegion => {
+        const sourceRun: PdfSourceRun = {
+          ...run(1, text, 0.1, y, 0.7),
+          height: 0.018,
+          sourceSequenceIndex,
+        }
+        return {
+          id,
+          page: 1,
+          kind: 'body',
+          column: 'single',
+          text,
+          confidence: 1,
+          box: { ...sourceRun },
+          lines: [
+            {
+              id: `${id}-line`,
+              text,
+              fontSize: sourceRun.fontSize,
+              box: { ...sourceRun },
+              runs: [{ ...sourceRun }],
+              sourceFragmentLineage: {
+                algorithm: 'source-run-fragment-v1',
+                sourceLineId,
+                fragment,
+                sourceSequenceIndexes: [sourceSequenceIndex],
+              },
+            },
+          ],
+          nativeObjectIds: [],
+          includedInReadingOrder: true,
+        }
+      }
+      const regions = [
+        makeRegion(
+          'legal-heading-region',
+          'copyright 2026',
+          0.2,
+          0,
+          targetFragment,
+          targetSourceLineId,
+        ),
+        makeRegion(
+          'legal-body-region',
+          'this paragraph starts a distinct legal notice.',
+          0.244,
+          1,
+          'whole',
+          'independent-legal-body-source-line',
+        ),
+      ]
+      const blocks = regions.map((region) => ({
+        type: 'paragraph' as const,
+        region,
+        text: region.text,
+        confidence: 1,
+      }))
+      const semanticFlowDecisions: PdfSourceSemanticFlowBoundaryDecision[] = []
+
+      await mergeProseContinuations(blocks, {
+        sourceSemanticFlowBoundaryDecisions: semanticFlowDecisions,
+      })
+
+      expect(blocks).toHaveLength(2)
+      expect(semanticFlowDecisions).toEqual([])
+    },
+  )
+
+  it.each([
+    {
+      name: 'dominant baseline under a stacked envelope',
+      targetText: 'The news arrives simulta-',
+      continuationText: 'neous with both events.',
+      expectedText: 'The news arrives simultaneous with both events.',
+      targetColumn: 'span' as const,
+      continuationColumn: 'span' as const,
+      targetX: 0.12,
+      continuationX: 0.12,
+      targetLineBox: {
+        x: 0.12,
+        y: 0.7,
+        width: 0.76,
+        height: 0.02,
+      },
+      continuationLineBox: {
+        x: 0.12,
+        y: 0.713,
+        width: 0.76,
+        height: 0.03,
+      },
+      targetRunBox: {
+        x: 0.12,
+        y: 0.703,
+        width: 0.76,
+        height: 0.014,
+      },
+      continuationRunBox: {
+        x: 0.12,
+        y: 0.72,
+        width: 0.76,
+        height: 0.014,
+      },
+      targetFragment: 'whole' as const,
+      continuationFragment: 'inline-stacked-after' as const,
+    },
+    {
+      name: 'cross-gutter right fragment into a span',
+      targetText: 'Residuals should be serially uncorre-',
+      continuationText: 'lated under the null.',
+      expectedText: 'Residuals should be serially uncorrelated under the null.',
+      targetColumn: 'right' as const,
+      continuationColumn: 'span' as const,
+      targetX: 0.52,
+      continuationX: 0.12,
+      targetLineBox: {
+        x: 0.52,
+        y: 0.5,
+        width: 0.36,
+        height: 0.014,
+      },
+      continuationLineBox: {
+        x: 0.12,
+        y: 0.517,
+        width: 0.76,
+        height: 0.014,
+      },
+      targetRunBox: {
+        x: 0.52,
+        y: 0.5,
+        width: 0.36,
+        height: 0.014,
+      },
+      continuationRunBox: {
+        x: 0.12,
+        y: 0.517,
+        width: 0.76,
+        height: 0.014,
+      },
+      targetFragment: 'cross-gutter-right' as const,
+      continuationFragment: 'whole' as const,
+    },
+  ])(
+    'joins a source-proved discretionary hyphen across a $name',
+    async ({
+      targetText,
+      continuationText,
+      expectedText,
+      targetColumn,
+      continuationColumn,
+      targetLineBox,
+      continuationLineBox,
+      targetRunBox,
+      continuationRunBox,
+      targetFragment,
+      continuationFragment,
+    }) => {
+      const semanticFlowDecisions: PdfSourceSemanticFlowBoundaryDecision[] = []
+      const canonicalHyphenDecisions: PdfCanonicalHyphenBoundaryDecision[] = []
+      const makeRegion = ({
+        id,
+        text,
+        column,
+        lineBox,
+        runBox,
+        sequence,
+        fragment,
+      }: {
+        id: string
+        text: string
+        column: PdfPageRegion['column']
+        lineBox: { x: number; y: number; width: number; height: number }
+        runBox: { x: number; y: number; width: number; height: number }
+        sequence: number
+        fragment:
+          | 'whole'
+          | 'inline-stacked-formula'
+          | 'inline-stacked-after'
+          | 'cross-gutter-right'
+          | 'cross-gutter-left'
+      }): PdfPageRegion => {
+        const sourceRunBase = {
+          ...run(1, text, runBox.x, runBox.y, runBox.width),
+          ...runBox,
+          sourceSequenceIndex: sequence,
+        }
+        const sourceRun: PdfSourceRun =
+          sequence === 901
+            ? {
+                ...sourceRunBase,
+                sourceWhitespaceBefore: 'pdf-text-item',
+                sourceWhitespacePredecessorIndex: 900,
+              }
+            : sourceRunBase
+        return {
+          id,
+          page: 1,
+          kind: column === 'span' ? 'spanning' : 'body',
+          column,
+          text,
+          confidence: 1,
+          box: {
+            ...sourceRun,
+            ...lineBox,
+          },
+          lines: [
+            {
+              id: `${id}-line`,
+              text,
+              fontSize: sourceRun.fontSize,
+              box: {
+                ...sourceRun,
+                ...lineBox,
+              },
+              runs: [sourceRun],
+              sourceFragmentLineage: {
+                algorithm: 'source-run-fragment-v1',
+                sourceLineId: fragment.startsWith('inline-stacked-')
+                  ? 'semantic-hyphen-stacked-source-line'
+                  : `${id}-source-line`,
+                fragment,
+                sourceSequenceIndexes: [sequence],
+              },
+            },
+          ],
+          nativeObjectIds: [],
+          includedInReadingOrder: true,
+        }
+      }
+      const target = makeRegion({
+        id: 'semantic-hyphen-target',
+        text: targetText,
+        column: targetColumn,
+        lineBox: targetLineBox,
+        runBox: targetRunBox,
+        sequence: 900,
+        fragment: targetFragment,
+      })
+      const continuation = makeRegion({
+        id: 'semantic-hyphen-continuation',
+        text: continuationText,
+        column: continuationColumn,
+        lineBox: continuationLineBox,
+        runBox: continuationRunBox,
+        sequence: 901,
+        fragment: continuationFragment,
+      })
+      const blocks = [target, continuation].map((region) => ({
+        type: 'paragraph' as const,
+        region,
+        text: region.text,
+        confidence: 1,
+      }))
+
+      await mergeProseContinuations(blocks, {
+        language: 'en',
+        canonicalHyphenBoundaryDecisions: canonicalHyphenDecisions,
+        sourceSemanticFlowBoundaryDecisions: semanticFlowDecisions,
+      })
+
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].text).toBe(expectedText)
+      expect(canonicalHyphenDecisions).toEqual([])
+      expect(semanticFlowDecisions).toHaveLength(1)
+      expect(semanticFlowDecisions[0]).toMatchObject({
+        outcome: 'discretionary-hyphen-delete',
+        from: {
+          sourceSequenceIndex: 900,
+          sourceFragmentId: `${
+            targetFragment.startsWith('inline-stacked-')
+              ? 'semantic-hyphen-stacked-source-line'
+              : 'semantic-hyphen-target-source-line'
+          }:${targetFragment}`,
+        },
+        to: {
+          sourceSequenceIndex: 901,
+          sourceFragmentId: `${
+            continuationFragment.startsWith('inline-stacked-')
+              ? 'semantic-hyphen-stacked-source-line'
+              : 'semantic-hyphen-continuation-source-line'
+          }:${continuationFragment}`,
+        },
+      })
+    },
+  )
+
   it('proves English publication language from sufficiently long born-digital source text', async () => {
     const sentence =
       'In this paper, we show that the model is stable and that our method can be used for the analysis of data with a source-backed result.'
@@ -391,6 +927,62 @@ describe('PDF semantic reconstruction', () => {
           status: 'proven',
           source: 'publication-language',
           evidence: ['language:ar'],
+        },
+      },
+    })
+  })
+
+  it('scopes a short born-digital document with an explicit publication language', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(
+            1,
+            'Short source text remains below automatic inference thresholds.',
+            0.1,
+            0.2,
+            0.75,
+          ),
+        ]),
+      ],
+      sourceHash: '1'.repeat(64),
+      fileName: 'explicit-language.pdf',
+      byteLength: 2048,
+      metadata: { language: 'en-US' },
+    })
+
+    expect(result.paper).toMatchObject({
+      language: 'en-US',
+      baseDirection: 'ltr',
+      metadataLineage: {
+        language: {
+          status: 'proven',
+          source: 'publication-language',
+          evidence: ['publication-language:en-US->en-US'],
+        },
+      },
+    })
+  })
+
+  it('treats compatible explicit publication and OCR language tags as one scope', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [ocrPage('Short English source text.', ['eng'])],
+      sourceHash: '1'.repeat(64),
+      fileName: 'compatible-language-authorities.pdf',
+      byteLength: 2048,
+      metadata: { language: 'en-US' },
+    })
+
+    expect(result.paper).toMatchObject({
+      language: 'en-US',
+      metadataLineage: {
+        language: {
+          status: 'proven',
+          source: 'publication-language',
+          evidence: [
+            'publication-language:en-US->en-US',
+            'ocr-language:eng->en',
+          ],
         },
       },
     })
@@ -618,6 +1210,144 @@ describe('PDF semantic reconstruction', () => {
     expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
   })
 
+  it.each([
+    {
+      rotation: 0,
+      point: { x: 0.1, y: 0.4 },
+      previous: { x: 0.1, y: 0.37, width: 0.8, height: 0.03 },
+      intended: { x: 0.1, y: 0.4025, width: 0.8, height: 0.03 },
+    },
+    {
+      rotation: 90,
+      point: { x: 0.4, y: 0.1 },
+      previous: { x: 0.4, y: 0.1, width: 0.03, height: 0.8 },
+      intended: { x: 0.3675, y: 0.1, width: 0.03, height: 0.8 },
+    },
+    {
+      rotation: 180,
+      point: { x: 0.1, y: 0.4 },
+      previous: { x: 0.1, y: 0.4, width: 0.8, height: 0.03 },
+      intended: { x: 0.1, y: 0.3675, width: 0.8, height: 0.03 },
+    },
+    {
+      rotation: 270,
+      point: { x: 0.4, y: 0.1 },
+      previous: { x: 0.37, y: 0.1, width: 0.03, height: 0.8 },
+      intended: { x: 0.4025, y: 0.1, width: 0.03, height: 0.8 },
+    },
+  ])(
+    'treats a $rotation° XYZ destination point as a target anchor instead of the preceding block edge',
+    ({ rotation, point, previous, intended }) => {
+      const text = '[37, 222]'
+      const { block, box } = canonicalHyperlinkTestBlock(text)
+      const firstLabelStart = text.indexOf('37')
+      const firstLabelEnd = firstLabelStart + '37'.length
+      const secondLabelStart = text.indexOf('222')
+      const secondLabelEnd = secondLabelStart + '222'.length
+      const inlineBox = (start: number, end: number) => ({
+        ...box,
+        x: box.x + box.width * (start / text.length),
+        width: box.width * ((end - start) / text.length),
+      })
+      const annotation = {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'internal',
+        destination: 'cite.sourceBackedEntry',
+        destinationEvidence: {
+          source: 'pdfjs-named-destination',
+          destination: 'cite.sourceBackedEntry',
+          view: 'XYZ',
+          page: 11,
+          point: {
+            page: 11,
+            ...point,
+            rotation,
+            method: 'pdf-destination',
+          },
+          box: null,
+        },
+        box: inlineBox(firstLabelStart, firstLabelEnd),
+      } as const
+      const resolution = resolveCanonicalHyperlinkObligations({
+        blocks: [block],
+        annotations: [annotation],
+        canonicalTargets: [
+          {
+            kind: 'reference',
+            label: 'Reference 36',
+            nodeId: 'bibliography-previous',
+            sourceBoxes: [
+              {
+                page: 11,
+                ...previous,
+                rotation,
+                method: 'pdf-text',
+              },
+            ],
+          },
+          {
+            kind: 'reference',
+            label: 'Reference 37',
+            nodeId: 'bibliography-intended',
+            sourceBoxes: [
+              {
+                page: 11,
+                ...intended,
+                rotation,
+                method: 'pdf-text',
+              },
+            ],
+          },
+          {
+            kind: 'reference',
+            label: 'Reference 222',
+            nodeId: 'bibliography-other',
+            sourceBoxes: [
+              {
+                page: 11,
+                x: 0.1,
+                y: 0.7,
+                width: 0.8,
+                height: 0.03,
+                rotation,
+                method: 'pdf-text',
+              },
+            ],
+          },
+        ],
+        canonicalInternalSurfaces: [
+          {
+            targetNodeId: 'bibliography-intended',
+            blockNodeId: block.nodeId,
+            start: firstLabelStart,
+            end: firstLabelEnd,
+            sourceBoxes: [inlineBox(firstLabelStart, firstLabelEnd)],
+          },
+          {
+            targetNodeId: 'bibliography-other',
+            blockNodeId: block.nodeId,
+            start: secondLabelStart,
+            end: secondLabelEnd,
+            sourceBoxes: [inlineBox(secondLabelStart, secondLabelEnd)],
+          },
+        ],
+      })
+
+      expect(resolution.mappings).toEqual([
+        {
+          annotationId: annotation.id,
+          blockNodeId: block.nodeId,
+          start: firstLabelStart,
+          end: firstLabelEnd,
+          href: '#bibliography-intended',
+        },
+      ])
+      expect(resolution.diagnostics).toEqual([])
+      expect(resolution.ledger).toEqual({ expected: 1, mapped: 1 })
+    },
+  )
+
   it('keeps a biblatex citation destination without named-destination geometry unsupported', () => {
     const { block, box } = canonicalHyperlinkTestBlock()
     const annotation = {
@@ -664,6 +1394,86 @@ describe('PDF semantic reconstruction', () => {
     expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
   })
 
+  it('maps an exact arXiv target surface without retaining an overlapping neighboring bibliography owner', () => {
+    const text =
+      'Detection and Editing for Language Models. arXiv:2401.06855 [cs]'
+    const arxivId = '2401.06855'
+    const start = text.indexOf(arxivId)
+    const end = start + arxivId.length
+    const { block, box } = canonicalHyperlinkTestBlock(text)
+    const sourceRun = block.region.lines[0].runs[0]
+    const adjacentText =
+      'Neighboring bibliography entry without the linked identifier.'
+    const adjacentRun = {
+      ...sourceRun,
+      text: adjacentText,
+      sourceSequenceIndex: (sourceRun.sourceSequenceIndex ?? 0) + 1,
+    }
+    const adjacentRegion = {
+      ...block.region,
+      id: 'adjacent-reference-region',
+      text: adjacentText,
+      lines: [
+        {
+          ...block.region.lines[0],
+          id: 'adjacent-reference-line',
+          text: adjacentText,
+          runs: [adjacentRun],
+        },
+      ],
+    }
+    const adjacentBlock = {
+      ...block,
+      region: adjacentRegion,
+      text: adjacentText,
+      nodeId: 'adjacent-reference-node',
+    }
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'external' as const,
+      url: `https://arxiv.org/abs/${arxivId}`,
+      box: {
+        ...box,
+        x: sourceRun.x + sourceRun.width * 0.7675984032567996,
+        y: sourceRun.y + sourceRun.height * 0.15165043943943362,
+        width: sourceRun.width * 0.17274752104265478,
+        height: sourceRun.height * 1.227670266599994,
+      },
+    }
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block, adjacentBlock],
+      annotations: [annotation],
+    })
+
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotation.id,
+        blockNodeId: block.nodeId,
+        start,
+        end,
+        href: annotation.url,
+      },
+    ])
+    expect(resolution.sourceAnchorLedger).toEqual([
+      expect.objectContaining({
+        annotationId: annotation.id,
+        fragments: [
+          expect.objectContaining({
+            regionId: block.region.id,
+            sourceStart: start,
+            sourceEnd: end,
+            text: arxivId,
+            ownershipEvidence: 'external-target-alias-character-interval-v1',
+          }),
+        ],
+      }),
+    ])
+    expect(resolution.diagnostics).toEqual([])
+    expect(resolution.ledger).toEqual({ expected: 1, mapped: 1 })
+  })
+
   it('coalesces contiguous same-target URL fragments into one canonical hyperlink range', () => {
     const text = 'https://leandojo.org.'
     const { block, annotations } = splitExternalHyperlinkTestBlock({
@@ -689,8 +1499,254 @@ describe('PDF semantic reconstruction', () => {
     expect(resolution.approvedAnnotationIds).toEqual(
       new Set(annotations.map((annotation) => annotation.id)),
     )
+    expect(
+      resolution.sourceAnchorLedger.map((anchor) =>
+        anchor.fragments.map((fragment) => ({
+          regionId: fragment.regionId,
+          lineId: fragment.lineId,
+          text: fragment.text,
+        })),
+      ),
+    ).toEqual([
+      [
+        {
+          regionId: 'split-external-link-region',
+          lineId: 'split-external-link-line-1',
+          text: 'https:',
+        },
+      ],
+      [
+        {
+          regionId: 'split-external-link-region',
+          lineId: 'split-external-link-line-2',
+          text: '//leandojo.org',
+        },
+      ],
+    ])
     expect(resolution.diagnostics).toEqual([])
     expect(resolution.ledger).toEqual({ expected: 2, mapped: 2 })
+  })
+
+  it('maps a source anchor through joined region segments without rescanning same-page columns', () => {
+    const prefixRun = run(1, 'Read', 0.1, 0.2, 0.08)
+    const linkedRun = run(1, 'project page', 0.2, 0.2, 0.2)
+    const decoyRun = run(1, 'project page', 0.62, 0.2, 0.2)
+    const sourceRegion = (
+      id: string,
+      text: string,
+      sourceRun: PdfSourceRun,
+      column: 'left' | 'right',
+    ) =>
+      ({
+        id,
+        page: 1,
+        kind: 'body',
+        column,
+        text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `${id}-line`,
+            text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }) satisfies PdfPageRegion
+    const prefixRegion = sourceRegion(
+      'joined-prefix-region',
+      prefixRun.text,
+      prefixRun,
+      'left',
+    )
+    const linkedRegion = sourceRegion(
+      'joined-link-region',
+      linkedRun.text,
+      linkedRun,
+      'left',
+    )
+    const decoyRegion = sourceRegion(
+      'same-page-decoy-region',
+      decoyRun.text,
+      decoyRun,
+      'right',
+    )
+    const block = {
+      type: 'paragraph' as const,
+      region: prefixRegion,
+      text: 'Read project page',
+      confidence: 1,
+      nodeId: 'joined-source-node',
+      sourceSegments: [
+        {
+          region: prefixRegion,
+          sourceStart: 0,
+          canonicalStart: 0,
+          text: prefixRun.text,
+        },
+        {
+          region: linkedRegion,
+          sourceStart: 0,
+          canonicalStart: 5,
+          text: linkedRun.text,
+        },
+      ],
+    }
+    const decoyBlock = {
+      type: 'paragraph' as const,
+      region: decoyRegion,
+      text: decoyRun.text,
+      confidence: 1,
+      nodeId: 'same-page-decoy-node',
+    }
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'external' as const,
+      url: 'https://example.test/project',
+      box: { ...linkedRun, method: 'pdf-link' as const },
+    }
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block, decoyBlock],
+      annotations: [annotation],
+    })
+
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotation.id,
+        blockNodeId: block.nodeId,
+        start: 5,
+        end: block.text.length,
+        href: annotation.url,
+      },
+    ])
+    expect(resolution.sourceAnchorLedger).toEqual([
+      expect.objectContaining({
+        annotationId: annotation.id,
+        status: 'anchored',
+        fragments: [
+          expect.objectContaining({
+            regionId: linkedRegion.id,
+            lineId: `${linkedRegion.id}-line`,
+            sourceStart: 0,
+            sourceEnd: linkedRun.text.length,
+            text: linkedRun.text,
+          }),
+        ],
+      }),
+    ])
+    expect(resolution.diagnostics).toEqual([])
+  })
+
+  it('preserves source intervals when a canonical join removes a discretionary hyphen', () => {
+    const leftRun = run(1, 'hyper-', 0.1, 0.2, 0.12)
+    const rightRun = run(1, 'link', 0.1, 0.23, 0.08)
+    const sourceRegion = (
+      id: string,
+      sourceRun: PdfSourceRun,
+    ): PdfPageRegion => ({
+      id,
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `${id}-line`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [sourceRun],
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    })
+    const leftRegion = sourceRegion('hyphen-left-region', leftRun)
+    const rightRegion = sourceRegion('hyphen-right-region', rightRun)
+    const block = {
+      type: 'paragraph' as const,
+      region: leftRegion,
+      text: 'hyperlink',
+      confidence: 1,
+      nodeId: 'hyphen-joined-node',
+      sourceSegments: [
+        {
+          region: leftRegion,
+          sourceStart: 0,
+          canonicalStart: 0,
+          text: 'hyper',
+        },
+        {
+          region: rightRegion,
+          sourceStart: 0,
+          canonicalStart: 5,
+          text: rightRun.text,
+        },
+      ],
+    }
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'external' as const,
+      url: 'https://example.test/hyperlink',
+      box: {
+        page: 1,
+        x: 0.09,
+        y: 0.19,
+        width: 0.15,
+        height: 0.06,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+    }
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations: [annotation],
+    })
+
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotation.id,
+        blockNodeId: block.nodeId,
+        start: 0,
+        end: block.text.length,
+        href: annotation.url,
+      },
+    ])
+    expect(
+      resolution.sourceAnchorLedger[0].fragments.map((fragment) => ({
+        regionId: fragment.regionId,
+        sourceStart: fragment.sourceStart,
+        sourceEnd: fragment.sourceEnd,
+        text: fragment.text,
+      })),
+    ).toEqual([
+      {
+        regionId: leftRegion.id,
+        sourceStart: 0,
+        sourceEnd: 5,
+        text: 'hyper',
+      },
+      {
+        regionId: rightRegion.id,
+        sourceStart: 0,
+        sourceEnd: 4,
+        text: 'link',
+      },
+    ])
+    expect(
+      Object.keys(resolution.sourceAnchorLedger[0].fragments[0].sourceBox),
+    ).toEqual(['page', 'x', 'y', 'width', 'height', 'rotation', 'method'])
+    expect(resolution.diagnostics).toEqual([])
   })
 
   it('coalesces overlapping same-target annotations onto one punctuation-bounded visible URL', () => {
@@ -836,6 +1892,149 @@ describe('PDF semantic reconstruction', () => {
         start: 0,
         end: block.text.length,
         href: annotation.url,
+      },
+    ])
+    expect(resolution.diagnostics).toEqual([])
+    expect(resolution.ledger).toEqual({ expected: 1, mapped: 1 })
+  })
+
+  it.each([0, 90, 180, 270])(
+    'fails a narrow annotation over a multi-token source run closed at %i° rotation',
+    (rotation) => {
+      const { block, box } = canonicalHyperlinkTestBlock(
+        'Read the project homepage for details',
+      )
+      const sourceRun = block.region.lines[0].runs[0]
+      sourceRun.rotation = rotation
+      block.region.box.rotation = rotation
+      block.region.lines[0].box.rotation = rotation
+      const annotation = {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'external' as const,
+        url: 'https://example.test/project',
+        box: {
+          ...box,
+          rotation,
+          x: box.x + box.width * 0.28,
+          width: box.width * 0.22,
+        },
+      }
+
+      const resolution = resolveCanonicalHyperlinkObligations({
+        blocks: [block],
+        annotations: [annotation],
+      })
+
+      expect(resolution.sourceAnchorLedger).toEqual([
+        expect.objectContaining({
+          status: 'anchored',
+          fragments: [
+            expect.objectContaining({
+              sourceStart: 0,
+              sourceEnd: block.text.length,
+              text: block.text,
+            }),
+          ],
+        }),
+      ])
+      expect(resolution.mappings).toEqual([])
+      expect(resolution.approvedAnnotationIds).toEqual(new Set())
+      expect(resolution.diagnostics).toEqual([
+        expect.objectContaining({
+          code: 'UNRESOLVED_HYPERLINK',
+          relationshipId: annotation.id,
+          message: expect.stringMatching(/no exact canonical inline owner/iu),
+        }),
+      ])
+      expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
+    },
+  )
+
+  it.each([0, 90, 180, 270])(
+    'maps one exact source-backed external-link sub-run without claiming its surrounding prose at %i° rotation',
+    (rotation) => {
+      const text = 'Read the project homepage for details'
+      const { block } = canonicalHyperlinkTestBlock(text)
+      const sourceRun = block.region.lines[0].runs[0]
+      sourceRun.rotation = rotation
+      block.region.box.rotation = rotation
+      block.region.lines[0].box.rotation = rotation
+      const start = text.indexOf('project homepage')
+      const end = start + 'project homepage'.length
+      const annotation = {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'external' as const,
+        url: 'https://example.test/project',
+        box: sourceSubstringBox(sourceRun, start, end),
+      }
+
+      const resolution = resolveCanonicalHyperlinkObligations({
+        blocks: [block],
+        annotations: [annotation],
+      })
+
+      expect(resolution.sourceAnchorLedger).toEqual([
+        expect.objectContaining({
+          status: 'anchored',
+          fragments: [
+            expect.objectContaining({
+              sourceStart: start,
+              sourceEnd: end,
+              text: 'project homepage',
+              ownershipEvidence: 'single-pdf-text-run-character-interval-v1',
+              sourceBox: {
+                ...annotation.box,
+                method: 'pdf-text',
+              },
+            }),
+          ],
+        }),
+      ])
+      expect(resolution.mappings).toEqual([
+        {
+          annotationId: annotation.id,
+          blockNodeId: block.nodeId,
+          start,
+          end,
+          href: annotation.url,
+        },
+      ])
+      expect(resolution.approvedAnnotationIds).toEqual(new Set([annotation.id]))
+      expect(resolution.diagnostics).toEqual([])
+      expect(resolution.ledger).toEqual({ expected: 1, mapped: 1 })
+    },
+  )
+
+  it('narrows a partial-run annotation only when one literal URL proves the range', () => {
+    const url = 'https://example.test/project'
+    const text = `Read ${url} for details`
+    const { block, box } = canonicalHyperlinkTestBlock(text)
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'external' as const,
+      url,
+      box: {
+        ...box,
+        x: box.x + box.width * 0.12,
+        width: box.width * 0.62,
+      },
+    }
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations: [annotation],
+    })
+
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotation.id,
+        blockNodeId: block.nodeId,
+        start: text.indexOf(url),
+        end: text.indexOf(url) + url.length,
+        href: url,
       },
     ])
     expect(resolution.diagnostics).toEqual([])
@@ -1055,6 +2254,181 @@ describe('PDF semantic reconstruction', () => {
       },
     ])
     expect(resolution.diagnostics).toEqual([])
+  })
+
+  it('maps a named footnote destination to one exact semantic note-reference surface', () => {
+    const text = 'The mechanism directly boosts the answer logit.1'
+    const { block } = canonicalHyperlinkTestBlock(text)
+    const markerStart = text.length - 1
+    const markerBox = {
+      page: 1,
+      x: 0.388,
+      y: 0.196,
+      width: 0.012,
+      height: 0.01,
+      rotation: 0,
+      method: 'pdf-text' as const,
+    }
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'internal',
+      destination: 'Hfootnote.1',
+      destinationEvidence: {
+        source: 'pdfjs-named-destination',
+        destination: 'Hfootnote.1',
+        view: 'XYZ',
+        page: 1,
+        point: {
+          page: 1,
+          x: 0.1,
+          y: 0.86,
+          rotation: 0,
+          method: 'pdf-destination',
+        },
+        box: null,
+      },
+      box: {
+        ...markerBox,
+        method: 'pdf-link' as const,
+      },
+    } as const
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations: [annotation],
+      canonicalTargets: [
+        {
+          kind: 'note',
+          label: 'Footnote 1',
+          nodeId: 'fn-p001-1',
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.1,
+              y: 0.86,
+              width: 0.7,
+              height: 0.02,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+          ],
+        },
+      ],
+      canonicalInternalSurfaces: [
+        {
+          targetNodeId: 'fn-p001-1',
+          blockNodeId: block.nodeId,
+          start: markerStart,
+          end: markerStart + 1,
+          sourceBoxes: [markerBox],
+        },
+      ],
+    })
+
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotation.id,
+        blockNodeId: block.nodeId,
+        start: markerStart,
+        end: markerStart + 1,
+        href: '#fn-p001-1',
+      },
+    ])
+    expect(resolution.diagnostics).toEqual([])
+    expect(resolution.ledger).toEqual({ expected: 1, mapped: 1 })
+  })
+
+  it('emits one internal href for an exact superscript note reference without linking its surrounding prose', async () => {
+    const body = run(
+      1,
+      'The mechanism directly boosts the answer logit.',
+      0.1,
+      0.34,
+      0.46,
+    )
+    const marker = {
+      ...run(1, '1', 0.562, 0.337, 0.008, 6),
+      height: 0.009,
+    }
+    const linked = page(1, [
+      run(1, 'Semantic note hyperlink study', 0.18, 0.07, 0.64, 18),
+      run(1, 'Ada Example', 0.4, 0.14, 0.2, 11),
+      run(1, 'Abstract', 0.1, 0.23, 0.25, 16),
+      body,
+      marker,
+      run(1, '1 Source-backed implementation detail.', 0.1, 0.86, 0.7, 7),
+    ])
+    linked.links = [
+      {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'internal',
+        destination: 'Hfootnote.1',
+        destinationEvidence: {
+          source: 'pdfjs-named-destination',
+          destination: 'Hfootnote.1',
+          view: 'XYZ',
+          page: 1,
+          point: {
+            page: 1,
+            x: 0.1,
+            y: 0.86,
+            rotation: 0,
+            method: 'pdf-destination',
+          },
+          box: null,
+        },
+        box: {
+          ...marker,
+          method: 'pdf-link',
+        },
+      },
+    ]
+
+    const result = await reconstructPageAnalyses({
+      pages: [linked],
+      sourceHash: '1'.repeat(64),
+      fileName: 'semantic-note-hyperlink.pdf',
+      byteLength: 4096,
+    })
+    const target = result.paper.nodes.find(
+      (node) => node.type === 'footnote' && node.label === '1',
+    )
+    const owner = result.paper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.text.includes('directly boosts the answer logit'),
+    )
+    const annotationRuns =
+      owner && 'inlineRuns' in owner
+        ? (owner.inlineRuns ?? []).filter(
+            (run) => run.annotationId === 'pdf-link-p001-a0001',
+          )
+        : []
+
+    expect(target).toBeDefined()
+    expect(annotationRuns).toEqual([
+      expect.objectContaining({
+        href: `#${target!.id}`,
+        annotationId: 'pdf-link-p001-a0001',
+      }),
+    ])
+    expect(
+      annotationRuns.map((run) =>
+        owner && 'text' in owner ? owner.text.slice(run.start, run.end) : '',
+      ),
+    ).toEqual(['1'])
+    expect(result.completeness).toMatchObject({
+      expectedHyperlinkCount: 1,
+      mappedHyperlinkCount: 1,
+      hyperlinkCoverage: 1,
+    })
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'UNRESOLVED_HYPERLINK',
+      ),
+    ).toEqual([])
   })
 
   it('does not let a narrow footnote annotation claim its surrounding prose run', () => {
@@ -2993,6 +4367,11 @@ describe('PDF semantic reconstruction', () => {
       '5 UC Berkeley',
       '6 Anthropic',
     ])
+    expect(result.completeness.inlineSpanCoverage).toBe(1)
+    expect(result.completeness).toMatchObject({
+      expectedInlineSpanCount: 0,
+      mappedInlineSpanCount: 0,
+    })
   })
 
   it('does not append a company affiliation to the title', async () => {
@@ -3638,7 +5017,10 @@ describe('PDF semantic reconstruction', () => {
     expect(result.lineBoundaryDecisions).toContainEqual(
       expect.objectContaining({
         outcome: 'preserved-lexical-hyphen',
-        evidence: ['same-document-lexical-hyphen'],
+        evidence: expect.arrayContaining([
+          'source-proven-wrapped-line-boundary',
+          'hard-hyphen-form-valid:same-document',
+        ]),
       }),
     )
   })
@@ -4306,17 +5688,19 @@ describe('PDF semantic reconstruction', () => {
     })
     const result = await reconstructPageAnalyses({
       pages: [
-        page(1, [
-          run(1, 'Hyphenated heading study', 0.1, 0.08, 0.72, 20),
-          run(1, 'Abstract', 0.1, 0.18, 0.3, 16),
-          run(
-            1,
-            'Opening prose establishes body typography for corridor and belief instruments.',
-            0.1,
-            0.3,
-            0.72,
-          ),
-        ]),
+        withExplicitEnglishLanguage(
+          page(1, [
+            run(1, 'Hyphenated heading study', 0.1, 0.08, 0.72, 20),
+            run(1, 'Abstract', 0.1, 0.18, 0.3, 16),
+            run(
+              1,
+              'Opening prose establishes body typography for corridor and belief instruments.',
+              0.1,
+              0.3,
+              0.72,
+            ),
+          ]),
+        ),
         page(2, [
           headingRun(
             '3.4 Prototype Derivatives (Belief–Variance, Correlation, Cor-',
@@ -5500,6 +6884,270 @@ describe('PDF semantic reconstruction', () => {
     ])
   })
 
+  it('fails closed on an unproved proper-name hyphen across bibliography pages', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Citation Study', 0.1, 0.05, 0.7, 22),
+          run(1, 'Rajeev introduced the cited method.', 0.1, 0.12, 0.7),
+          run(1, 'References', 0.1, 0.7, 0.3, 16),
+          run(1, '[1] A. Example and Ra-', 0.1, 0.84, 0.7),
+        ]),
+        page(2, [
+          run(2, 'jeev Nayak. Complete venue details, 2025.', 0.13, 0.12, 0.67),
+        ]),
+      ],
+      sourceHash: 'r'.repeat(64),
+      fileName: 'cross-page-discretionary-reference.pdf',
+      byteLength: 4096,
+    })
+
+    const references = result.paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' && node.list?.numberingId === 'references'
+        ? [node]
+        : [],
+    )
+    expect(references).toEqual([
+      expect.objectContaining({
+        text: 'A. Example and Ra-jeev Nayak. Complete venue details, 2025.',
+      }),
+    ])
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'CANONICAL_FLOW_ORDER_VIOLATION',
+    )
+    expect(result.canonicalHyphenBoundaryDecisions).toEqual([])
+  })
+
+  it('persists complete lexical proof for a bibliography continuation deletion', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        withExplicitEnglishLanguage(
+          page(1, [
+            run(1, 'A Citation Study', 0.1, 0.05, 0.7, 22),
+            run(
+              1,
+              'Additionally, this sentence supplies the exact joined form.',
+              0.1,
+              0.12,
+              0.7,
+            ),
+            run(1, 'References', 0.1, 0.7, 0.3, 16),
+            run(1, '[1] A. Example. Addition-', 0.1, 0.84, 0.7),
+          ]),
+        ),
+        page(2, [
+          run(
+            2,
+            'ally, complete venue details follow, 2025.',
+            0.13,
+            0.12,
+            0.67,
+          ),
+        ]),
+      ],
+      sourceHash: 'y'.repeat(64),
+      fileName: 'proved-cross-page-reference-hyphen.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          node.type === 'paragraph' && node.list?.numberingId === 'references',
+      ),
+    ).toMatchObject({
+      text: 'A. Example. Additionally, complete venue details follow, 2025.',
+    })
+    expect(result.canonicalHyphenBoundaryDecisions).toEqual([
+      expect.objectContaining({
+        id: expect.stringContaining('canonical-hyphen-boundary:'),
+        context: 'bibliography-continuation',
+        outcome: 'removed-discretionary-hyphen',
+        fromRegionId: expect.stringContaining('page-001-region-'),
+        fromLineId: expect.stringContaining('page-001-line-'),
+        toRegionId: expect.stringContaining('page-002-region-'),
+        toLineId: expect.stringContaining('page-002-line-'),
+        geometry: {
+          from: expect.objectContaining({ page: 1, y: 0.84 }),
+          to: expect.objectContaining({ page: 2, y: 0.12 }),
+        },
+        proof: expect.objectContaining({
+          sourceBoundaryProven: true,
+          pinnedWord: 'Additionally',
+          pinnedJoinedFormValid: true,
+          pinnedSplit: {
+            left: 'Addition',
+            right: 'ally',
+            index: 8,
+          },
+          splitPointValid: true,
+          exactSameDocumentJoinedForm: 'Additionally',
+          sameDocumentJoinedFormValid: true,
+          hardHyphenForm: 'Addition-ally',
+          hardHyphenCounterproof: null,
+          model: expect.objectContaining({
+            id: 'scowl-2020.12.07+ushyphmax-2005-05-30',
+          }),
+          evidence: expect.arrayContaining([
+            'source-proven-wrapped-line-boundary',
+            'joined-form-valid:pinned-lexicon',
+            'split-point-valid:pinned-hyphenation-pattern',
+            'same-document-unhyphenated-word',
+            'hard-hyphen-form-not-proved',
+          ]),
+        }),
+      }),
+    ])
+    expect(result.canonicalHyphenBoundaryDecisionCount).toBe(1)
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'INVALID_CANONICAL_HYPHEN_BOUNDARY_LEDGER',
+    )
+
+    const reassess = (decisions: unknown, expectedCount: number) =>
+      assessPdfCompleteness({
+        pages: result.pages,
+        paper: result.paper,
+        diagnostics: result.diagnostics.filter(
+          (diagnostic) =>
+            diagnostic.code !== 'INVALID_CANONICAL_HYPHEN_BOUNDARY_LEDGER',
+        ),
+        readingOrder: result.readingOrder,
+        regions: result.regions,
+        visualRelationships: result.visualRelationships,
+        assets: result.assets,
+        citationRelationships: result.citationRelationships,
+        noteRelationships: result.noteRelationships,
+        policy: result.readiness.policy,
+        lineBoundaryDecisions: result.lineBoundaryDecisions,
+        canonicalHyphenBoundaryDecisions:
+          decisions as typeof result.canonicalHyphenBoundaryDecisions,
+        canonicalHyphenBoundaryDecisionCount: expectedCount,
+        unresolvedCorruptingJoinCount: result.unresolvedCorruptingJoinCount,
+        structurallyConsumedLineBoundaryCount:
+          result.structurallyConsumedLineBoundaryCount,
+        provenance: result.provenance,
+        inlineSpanLedger: {
+          expected: result.completeness.expectedInlineSpanCount,
+          mapped: result.completeness.mappedInlineSpanCount,
+        },
+        hyperlinkLedger: {
+          expected: result.completeness.expectedHyperlinkCount,
+          mapped: result.completeness.mappedHyperlinkCount,
+        },
+        sourceSha256: result.source.sha256,
+      })
+    const malformed = structuredClone(result.canonicalHyphenBoundaryDecisions)
+    malformed[0].proof.pinnedSplit.index += 1
+    for (const [decisions, expectedCount] of [
+      [undefined, 1],
+      [[], 1],
+      [malformed, 1],
+      [
+        [
+          result.canonicalHyphenBoundaryDecisions[0],
+          structuredClone(result.canonicalHyphenBoundaryDecisions[0]),
+        ],
+        2,
+      ],
+    ] as const) {
+      expect(reassess(decisions, expectedCount).readiness).toMatchObject({
+        ready: false,
+        blockingDiagnosticCodes: expect.arrayContaining([
+          'INVALID_CANONICAL_HYPHEN_BOUNDARY_LEDGER',
+        ]),
+      })
+    }
+    expect(
+      result.lineBoundaryDecisions.some((decision) =>
+        decision.id.startsWith('canonical-hyphen-boundary:'),
+      ),
+    ).toBe(false)
+  })
+
+  it('persists a distinct derived-affix proof for a same-document base word', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        withExplicitEnglishLanguage(
+          page(1, [
+            run(1, 'A Derived Word Study', 0.1, 0.05, 0.7, 22),
+            run(
+              1,
+              'Parameterized models supply the exact same-document base word.',
+              0.1,
+              0.12,
+              0.7,
+            ),
+            run(1, 'References', 0.1, 0.7, 0.3, 16),
+            run(1, '[1] A. Example. Reparameter-', 0.1, 0.84, 0.7),
+          ]),
+        ),
+        page(2, [
+          run(
+            2,
+            'ized models are discussed in complete venue details, 2025.',
+            0.13,
+            0.12,
+            0.67,
+          ),
+        ]),
+      ],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'proved-derived-prefix-reference-hyphen.pdf',
+      byteLength: 4096,
+    })
+
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          node.type === 'paragraph' && node.list?.numberingId === 'references',
+      ),
+    ).toMatchObject({
+      text: 'A. Example. Reparameterized models are discussed in complete venue details, 2025.',
+    })
+    expect(result.canonicalHyphenBoundaryDecisions).toEqual([
+      expect.objectContaining({
+        context: 'bibliography-continuation',
+        proof: {
+          tier: 'same-document-derived-affix',
+          sourceBoundaryProven: true,
+          derivedWord: 'Reparameterized',
+          productivePrefix: {
+            kind: 'prefix',
+            value: 're',
+            affixClass: 'PFX',
+            flag: 'A',
+            crossProduct: true,
+            affixSha256: PDF_HYPHEN_LEXICAL_MODEL.affixSha256,
+          },
+          baseWord: 'parameterized',
+          pinnedBaseWordValid: true,
+          pinnedSplit: {
+            left: 'Reparameter',
+            right: 'ized',
+            index: 11,
+          },
+          splitPointValid: true,
+          exactSameDocumentBaseWord: 'parameterized',
+          sameDocumentBaseWordValid: true,
+          hardHyphenForm: 'Reparameter-ized',
+          hardHyphenCounterproof: null,
+          model: PDF_HYPHEN_LEXICAL_MODEL,
+          evidence: expect.arrayContaining([
+            'joined-form-valid:same-document-derived-affix',
+            'productive-prefix-valid:pinned-affix-model',
+            'base-form-valid:pinned-lexicon',
+            'same-document-unhyphenated-base-word',
+            'hard-hyphen-form-not-proved',
+          ]),
+        },
+      }),
+    ])
+    expect(result.canonicalHyphenBoundaryDecisionCount).toBe(1)
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'INVALID_CANONICAL_HYPHEN_BOUNDARY_LEDGER',
+    )
+  })
+
   it('does not merge an adjacent-page bibliography block from a horizontally incompatible flow', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
@@ -6558,6 +8206,293 @@ describe('PDF semantic reconstruction', () => {
     ])
   })
 
+  it('retains exact citation boxes across a whitespace-only wrapped source gap', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Wrapped Citation Study', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+          run(1, 'Prior work (Ahn et al.,', 0.1, 0.24, 0.31),
+          run(1, '2024) establishes the baseline.', 0.43, 0.24, 0.4),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, 'Ahn, J., Verma, R., and Yin,', 0.1, 0.2, 0.55),
+          run(
+            2,
+            'W. Large language models for reasoning, 2024.',
+            0.12,
+            0.22,
+            0.6,
+          ),
+          run(2, 'Biderman, S., and Example, A.', 0.1, 0.25, 0.55),
+          run(2, 'Pythia at scale, 2023.', 0.12, 0.27, 0.5),
+        ]),
+      ],
+      sourceHash: 'e'.repeat(64),
+      fileName: 'whitespace-wrapped-citation.pdf',
+      byteLength: 4096,
+    })
+    const relationship = result.citationRelationships.find(
+      ({ label }) => label === 'ahn:2024',
+    )
+
+    expect(relationship).toMatchObject({
+      status: 'matched',
+      targets: [
+        expect.objectContaining({
+          label: 'ahn:2024',
+          sourceBoxes: [
+            expect.objectContaining({
+              page: 1,
+              x: expect.closeTo(0.262, 3),
+              y: 0.24,
+              method: 'pdf-text',
+            }),
+            expect.objectContaining({
+              page: 1,
+              x: 0.43,
+              y: 0.24,
+              method: 'pdf-text',
+            }),
+          ],
+        }),
+      ],
+    })
+  })
+
+  it('resolves a replayed Lam-ple citation against a Lample entry recovered from mid-region', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        withExplicitEnglishLanguage(
+          page(1, [
+            run(
+              1,
+              'Recovered bibliography citation topology',
+              0.1,
+              0.08,
+              0.72,
+              22,
+            ),
+            run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+            run(1, 'Prior work (Lam-', 0.1, 0.24, 0.72),
+            run(
+              1,
+              'ple et al., 2018) establishes the baseline.',
+              0.1,
+              0.262,
+              0.72,
+            ),
+          ]),
+        ),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, 'Prior, A. Earlier reference entry.', 0.1, 0.2, 0.65),
+          run(2, 'The prior-entry tail ends here, 2017.', 0.12, 0.222, 0.63),
+          run(
+            2,
+            'Lample, G., Ott, M., Conneau, A., Denoyer, L., and Ranzato, M.',
+            0.1,
+            0.244,
+            0.72,
+          ),
+          run(
+            2,
+            'Phrase-based neural unsupervised machine translation, 2018.',
+            0.12,
+            0.266,
+            0.68,
+          ),
+        ]),
+      ],
+      sourceHash: '6'.repeat(64),
+      fileName: 'mid-region-lample-reference.pdf',
+      byteLength: 4096,
+    })
+    const references = result.paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' && node.list?.numberingId === 'references'
+        ? [node]
+        : [],
+    )
+    const lampleTarget = references.find((node) =>
+      node.text.startsWith('Lample, G.'),
+    )
+    const relationship = result.citationRelationships.find(
+      ({ label }) => label === 'lam-ple:2018',
+    )
+    const classification = result.diagnostics
+      .flatMap((diagnostic) =>
+        diagnostic.noteMarkerClassification
+          ? [diagnostic.noteMarkerClassification]
+          : [],
+      )
+      .find(
+        (candidate) =>
+          candidate.taxonomy === 'author-year-bibliography-citation' &&
+          candidate.label === 'lam-ple:2018',
+      )
+    const sourceRegion = classification
+      ? result.regions.find(({ id }) => id === classification.referenceRegionId)
+      : undefined
+    const anchorOwner = relationship?.canonicalAnchor
+      ? result.paper.nodes.find(
+          ({ id }) => id === relationship.canonicalAnchor?.nodeId,
+        )
+      : undefined
+
+    expect(references.map(({ text }) => text)).toEqual([
+      'Prior, A. Earlier reference entry. The prior-entry tail ends here, 2017.',
+      'Lample, G., Ott, M., Conneau, A., Denoyer, L., and Ranzato, M. Phrase-based neural unsupervised machine translation, 2018.',
+    ])
+    expect(lampleTarget).toBeDefined()
+    expect(relationship).toMatchObject({
+      labels: ['lam-ple:2018'],
+      status: 'matched',
+      targetNodeIds: [lampleTarget?.id],
+      evidence: expect.arrayContaining([
+        'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+        'bibliography-author-year-key-unique',
+      ]),
+      canonicalAnchor: {
+        nodeId: expect.any(String),
+        start: expect.any(Number),
+        end: expect.any(Number),
+      },
+    })
+    expect(classification).toMatchObject({
+      label: 'lam-ple:2018',
+      start: 'Prior work ('.length,
+      end: 'Prior work ('.length + 'Lam-ple et al., 2018'.length,
+      evidence: expect.not.arrayContaining([
+        'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+      ]),
+    })
+    expect(
+      sourceRegion && classification
+        ? sourceRegion.text.slice(classification.start, classification.end)
+        : null,
+    ).toBe('Lam-ple et al., 2018')
+    expect(
+      anchorOwner && 'text' in anchorOwner && relationship?.canonicalAnchor
+        ? anchorOwner.text.slice(
+            relationship.canonicalAnchor.start,
+            relationship.canonicalAnchor.end,
+          )
+        : null,
+    ).toBe('Lam-ple et al., 2018')
+    expect(
+      result.lineBoundaryDecisions.filter(
+        (decision) =>
+          decision.outcome === 'unresolved' &&
+          decision.regionId === classification?.referenceRegionId,
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('keeps missing, duplicate, and preserved Lam-ple alternates unresolved', async () => {
+    const reconstructVariant = (
+      variant: 'missing' | 'duplicate' | 'preserved',
+      hashCharacter: string,
+    ) =>
+      reconstructPageAnalyses({
+        pages: [
+          withExplicitEnglishLanguage(
+            page(1, [
+              run(
+                1,
+                'Fail-closed citation alternate topology',
+                0.1,
+                0.08,
+                0.72,
+                22,
+              ),
+              run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+              ...(variant === 'preserved'
+                ? [
+                    run(
+                      1,
+                      'The Lam-ple benchmark retains its authored compound.',
+                      0.1,
+                      0.2,
+                      0.72,
+                    ),
+                  ]
+                : []),
+              run(1, 'Prior work (Lam-', 0.1, 0.24, 0.72),
+              run(
+                1,
+                'ple et al., 2018) establishes the baseline.',
+                0.1,
+                0.262,
+                0.72,
+              ),
+            ]),
+          ),
+          page(2, [
+            run(2, 'References', 0.1, 0.1, 0.3, 16),
+            run(2, 'Prior, A. Earlier reference entry.', 0.1, 0.2, 0.65),
+            run(2, 'The prior-entry tail ends here, 2017.', 0.12, 0.222, 0.63),
+            ...(variant === 'missing'
+              ? []
+              : [
+                  run(
+                    2,
+                    'Lample, G. Canonical reference entry, 2018.',
+                    0.1,
+                    0.244,
+                    0.7,
+                  ),
+                  ...(variant === 'duplicate'
+                    ? [
+                        run(
+                          2,
+                          'Lample, M. Competing canonical entry, 2018.',
+                          0.1,
+                          0.288,
+                          0.7,
+                        ),
+                      ]
+                    : []),
+                ]),
+          ]),
+        ],
+        sourceHash: hashCharacter.repeat(64),
+        fileName: `${variant}-lample-alternate.pdf`,
+        byteLength: 4096,
+      })
+
+    for (const [variant, hashCharacter] of [
+      ['missing', '7'],
+      ['duplicate', '8'],
+      ['preserved', '9'],
+    ] as const) {
+      const result = await reconstructVariant(variant, hashCharacter)
+      const relationship = result.citationRelationships.find(
+        ({ label }) => label === 'lam-ple:2018',
+      )
+      expect(relationship).toMatchObject({
+        labels: ['lam-ple:2018'],
+        status: 'unresolved',
+        targetNodeIds: [],
+        evidence: expect.not.arrayContaining([
+          'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+        ]),
+      })
+      if (variant === 'preserved') {
+        expect(result.lineBoundaryDecisions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              outcome: 'preserved-lexical-hyphen',
+              evidence: expect.arrayContaining([
+                'hard-hyphen-form-valid:same-document',
+              ]),
+            }),
+          ]),
+        )
+      }
+    }
+  })
+
   it('keeps one markerless bibliography entry when justified fragments share source baselines', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
@@ -7075,7 +9010,7 @@ describe('PDF semantic reconstruction', () => {
           page: 1,
           x: 0.1,
           y: 0.2,
-          width: 0.3,
+          width: 0.7,
           height: 0.018,
           rotation: 0,
           method: 'pdf-link',
@@ -7114,45 +9049,47 @@ describe('PDF semantic reconstruction', () => {
   })
 
   it('maps styles and internal links from exact line ranges after a cross-run accent repair', async () => {
-    const source = page(1, [
-      run(1, 'Uncomputable Lineage', 0.1, 0.05, 0.34, 18),
-      {
-        ...run(1, 'Earlier Vit´', 0.1, 0.2, 0.08),
-        height: 0.0125,
-      },
-      {
-        ...run(
-          1,
-          'anyi text (see §2 for a detailed background). Complexity is',
-          0.18,
-          0.2,
-          0.48,
-        ),
-        height: 0.0125,
-      },
-      {
-        ...run(1, 'un-', 0.665, 0.2, 0.03),
-        height: 0.0125,
-        fontName: 'Body-Italic',
-        italic: true,
-      },
-      {
-        ...run(1, 'computable', 0.1, 0.214, 0.08),
-        height: 0.0125,
-        fontName: 'Body-Italic',
-        italic: true,
-      },
-      {
-        ...run(
-          1,
-          'as it reduces to a finite source-backed proof.',
-          0.185,
-          0.214,
-          0.5,
-        ),
-        height: 0.0125,
-      },
-    ])
+    const source = withExplicitEnglishLanguage(
+      page(1, [
+        run(1, 'Uncomputable Lineage', 0.1, 0.05, 0.34, 18),
+        {
+          ...run(1, 'Earlier Vit´', 0.1, 0.2, 0.08),
+          height: 0.0125,
+        },
+        {
+          ...run(
+            1,
+            'anyi text (see §2 for a detailed background). Complexity is',
+            0.18,
+            0.2,
+            0.48,
+          ),
+          height: 0.0125,
+        },
+        {
+          ...run(1, 'un-', 0.665, 0.2, 0.03),
+          height: 0.0125,
+          fontName: 'Body-Italic',
+          italic: true,
+        },
+        {
+          ...run(1, 'computable', 0.1, 0.214, 0.08),
+          height: 0.0125,
+          fontName: 'Body-Italic',
+          italic: true,
+        },
+        {
+          ...run(
+            1,
+            'as it reduces to a finite source-backed proof.',
+            0.185,
+            0.214,
+            0.5,
+          ),
+          height: 0.0125,
+        },
+      ]),
+    )
     source.links = [
       {
         id: 'pdf-link-p001-a0001',
@@ -7212,17 +9149,28 @@ describe('PDF semantic reconstruction', () => {
         (_value, index) => candidate.start + index,
       ),
     )
-    const uncomputableStart = paragraph.text.indexOf('uncomputable')
+    const uncomputableStart = paragraph.text.indexOf('un-computable')
     const sectionLink = (paragraph.inlineRuns ?? []).find(
       (candidate) => candidate.annotationId === 'pdf-link-p001-a0001',
     )
 
-    expect(italicText).toBe('uncomputable')
+    expect(italicText).toBe('un-computable')
     expect(italicCharacterIndexes).toEqual(
       Array.from(
-        { length: 'uncomputable'.length },
+        { length: 'un-computable'.length },
         (_value, index) => uncomputableStart + index,
       ),
+    )
+    expect(result.lineBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcome: 'unresolved',
+          evidence: expect.arrayContaining([
+            'source-proven-wrapped-line-boundary',
+            'same-document-unhyphenated-word',
+          ]),
+        }),
+      ]),
     )
     expect(sectionLink).toMatchObject({
       href: expect.stringMatching(/^#sec-/u),
@@ -7241,7 +9189,7 @@ describe('PDF semantic reconstruction', () => {
     expect(content).toContain(
       `<a href="${sectionLink!.href}" data-source-annotation-id="pdf-link-p001-a0001">§2</a>`,
     )
-    expect(content).toContain('<em>uncomputable</em>')
+    expect(content).toContain('<em>un-computable</em>')
   })
 
   it('keeps positioned-accent provenance and exact inline mapping through EPUB reconstruction', async () => {
@@ -7457,7 +9405,7 @@ describe('PDF semantic reconstruction', () => {
           page: 1,
           x: 0.1,
           y: 0.2,
-          width: 0.3,
+          width: 0.7,
           height: 0.018,
           rotation: 0,
           method: 'pdf-link',
@@ -7855,6 +9803,8 @@ describe('PDF semantic reconstruction', () => {
         provenance: result.provenance,
         relationships: result.visualRelationships,
         assets: result.assets,
+        regions: result.regions,
+        pages: result.pages,
       }),
     ).toEqual([relationship])
   })
@@ -8104,6 +10054,125 @@ describe('PDF semantic reconstruction', () => {
       'left-caption-1',
       'left-visual-2',
       'left-caption-2',
+      'right-visual',
+      'right-caption',
+    ])
+  })
+
+  it('keeps mixed span and column visual pairs at their caption anchors when a later column pair is materialized', () => {
+    const pair = (
+      id: string,
+      captionId: string,
+      label: string,
+    ): [ResearchNode, ResearchNode] => [
+      {
+        id,
+        type: 'figure',
+        objectType: 'equation',
+        title: label,
+        relationships: { caption: captionId, assets: [`asset-${id}`] },
+        source: 'pdf:test#page=1',
+      },
+      {
+        id: captionId,
+        type: 'caption',
+        text: label,
+        source: 'pdf:test#page=1',
+      },
+    ]
+    const nodes: ResearchNode[] = [
+      visualOrderParagraph('opening-prose', 'Opening source prose.'),
+      ...pair('span-visual-early', 'span-caption-early', 'Equation 2'),
+      visualOrderParagraph('bridge-prose', 'The source continues.'),
+      ...pair('left-visual', 'left-caption', 'Equation 3'),
+      visualOrderParagraph('equation-discussion', 'Equation discussion.'),
+      visualOrderHeading('later-scope', 3, 'Later source scope'),
+      visualOrderParagraph('later-introduction', 'Later source prose.'),
+      ...pair(
+        'span-visual-late',
+        'span-caption-late',
+        'Display equation p001-003',
+      ),
+      visualOrderParagraph('following-prose', 'Following source prose.'),
+      ...pair('right-visual', 'right-caption', 'Equation 4'),
+    ]
+
+    orderCanonicalVisualPairs(nodes, [
+      {
+        page: 1,
+        column: 'span',
+        sourceBox: {
+          page: 1,
+          x: 0.45,
+          y: 0.2,
+          width: 0.1,
+          height: 0.04,
+          rotation: 0,
+          method: 'pdf-text',
+        },
+        visualNodeId: 'span-visual-early',
+        captionNodeId: 'span-caption-early',
+      },
+      {
+        page: 1,
+        column: 'left',
+        sourceBox: {
+          page: 1,
+          x: 0.3,
+          y: 0.3,
+          width: 0.18,
+          height: 0.04,
+          rotation: 0,
+          method: 'pdf-text',
+        },
+        visualNodeId: 'left-visual',
+        captionNodeId: 'left-caption',
+      },
+      {
+        page: 1,
+        column: 'span',
+        sourceBox: {
+          page: 1,
+          x: 0.35,
+          y: 0.68,
+          width: 0.3,
+          height: 0.04,
+          rotation: 0,
+          method: 'pdf-text',
+        },
+        visualNodeId: 'span-visual-late',
+        captionNodeId: 'span-caption-late',
+      },
+      {
+        page: 1,
+        column: 'right',
+        sourceBox: {
+          page: 1,
+          x: 0.56,
+          y: 0.77,
+          width: 0.1,
+          height: 0.04,
+          rotation: 0,
+          method: 'pdf-text',
+        },
+        visualNodeId: 'right-visual',
+        captionNodeId: 'right-caption',
+      },
+    ])
+
+    expect(nodes.map((node) => node.id)).toEqual([
+      'opening-prose',
+      'span-visual-early',
+      'span-caption-early',
+      'bridge-prose',
+      'left-visual',
+      'left-caption',
+      'equation-discussion',
+      'later-scope',
+      'later-introduction',
+      'span-visual-late',
+      'span-caption-late',
+      'following-prose',
       'right-visual',
       'right-caption',
     ])
@@ -10383,6 +12452,8 @@ describe('PDF semantic reconstruction', () => {
         provenance: result.provenance,
         relationships: result.visualRelationships,
         assets: result.assets,
+        regions: result.regions,
+        pages: result.pages,
       }),
     ).toEqual([relationship])
   })
@@ -10446,7 +12517,7 @@ describe('PDF semantic reconstruction', () => {
       inspectEpub(epub.bytes).files['EPUB/content.xhtml'],
     )
     expect(content).toContain(
-      `<figcaption id="${relationship.captionNodeId}" data-canonical-id="${relationship.captionNodeId}">Equation 2</figcaption>`,
+      `<figcaption id="${relationship.captionNodeId}" data-canonical-id="${relationship.captionNodeId}" class="equation-number-caption visually-hidden">Equation 2</figcaption>`,
     )
   })
 
@@ -10587,6 +12658,374 @@ describe('PDF semantic reconstruction', () => {
     ).toBe(false)
   })
 
+  it('keeps a proved split inline formula inside one prose paragraph without resolving its two-dimensional obligation', async () => {
+    const continuedAfter = run(
+      1,
+      'and cites the source-backed reference [42].',
+      0.266,
+      0.365,
+      0.34,
+    )
+    Object.assign(continuedAfter, {
+      sourceSequenceIndex: 10,
+      sourceWhitespaceBefore: 'pdf-text-item' as const,
+      sourceWhitespacePredecessorIndex: 9,
+    })
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.42),
+          run(
+            1,
+            'A second ordinary prose line remains intact.',
+            0.1,
+            0.23,
+            0.44,
+          ),
+          ...splitInlineProseEquationRuns({
+            afterText: '). The first term records the local drift',
+            extraRuns: [continuedAfter],
+          }),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[42] Source-backed reference.', 0.1, 0.72, 0.72, 7),
+        ]),
+      ],
+      sourceHash: '7'.repeat(64),
+      fileName: 'split-inline-prose-equation.pdf',
+      byteLength: 4096,
+      rasterizeFigure: async () => {
+        throw new Error('source crop unavailable')
+      },
+    })
+
+    const relationship = result.visualRelationships.find(
+      (candidate) =>
+        candidate.kind === 'equation' &&
+        candidate.status === 'unresolved' &&
+        candidate.evidence.includes('source-text-transcript-unresolved'),
+    )
+    expect(relationship).toBeDefined()
+    const formulaLineIds =
+      relationship?.sourceLineIds?.filter((lineId) =>
+        lineId.endsWith('-formula'),
+      ) ?? []
+    expect(formulaLineIds).toHaveLength(1)
+    const ownedParagraphs = result.paper.nodes.filter(
+      (
+        node,
+      ): node is Extract<
+        (typeof result.paper.nodes)[number],
+        { type: 'paragraph' }
+      > =>
+        node.type === 'paragraph' &&
+        (node.text === 'where' ||
+          node.text.includes(
+            'The first term records the local drift and cites the source-backed reference [42].',
+          ) ||
+          result.provenance[node.id]?.regionIds.some((regionId) =>
+            relationship!.sourceRegionIds.includes(regionId),
+          )),
+    )
+    expect(ownedParagraphs).toHaveLength(1)
+    expect(ownedParagraphs[0].text).toBe(
+      'where Sk′ = S′(xkt). The first term records the local drift and cites the source-backed reference [42].',
+    )
+    expect(result.provenance[ownedParagraphs[0].id]?.regionIds).toHaveLength(3)
+    expect(
+      ownedParagraphs[0].inlineRuns?.map((inline) => ({
+        text: ownedParagraphs[0].text.slice(inline.start, inline.end),
+        verticalAlign: inline.verticalAlign,
+        semanticRole: inline.semanticRole,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'k', verticalAlign: 'subscript' }),
+        expect.objectContaining({ text: '′', verticalAlign: 'superscript' }),
+        expect.objectContaining({ text: 'k', verticalAlign: 'superscript' }),
+        expect.objectContaining({ text: 't', verticalAlign: 'subscript' }),
+        expect.objectContaining({
+          text: '[42]',
+          semanticRole: 'citation',
+        }),
+      ]),
+    )
+    expect(result.visualRelationships).toContain(relationship)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_VISUAL_OBJECT',
+          target: expect.objectContaining({
+            markerId: relationship?.id,
+          }),
+        }),
+      ]),
+    )
+    expect(result.completeness.unresolvedObjects.equations).toBeGreaterThan(0)
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      blockingDiagnosticCodes: expect.arrayContaining([
+        'UNRESOLVED_VISUAL_OBJECT',
+      ]),
+    })
+    expect(
+      result.sourceSemanticFlowBoundaryDecisions.map(
+        (decision) => decision.outcome,
+      ),
+    ).toEqual(['no-space'])
+    expect(result.sourceSemanticFlowBoundaryDecisionCount).toBe(1)
+    expect(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.code === 'CANONICAL_FLOW_ORDER_VIOLATION',
+      ),
+    ).toBe(false)
+  })
+
+  it('uses one exact unresolved candidate lineage when a prose suffix is held by a spanning container', async () => {
+    const columnEvidence = [0.12, 0.15, 0.18].flatMap((y, index) => [
+      run(
+        1,
+        `Left column evidence ${index + 1} remains readable.`,
+        0.1,
+        y,
+        0.34,
+      ),
+      run(
+        1,
+        `Right column evidence ${index + 1} remains readable.`,
+        0.55,
+        y,
+        0.34,
+      ),
+    ])
+    const inlineRuns = splitInlineProseEquationRuns()
+    const after = inlineRuns.find((sourceRun) =>
+      sourceRun.text.startsWith('). The first term'),
+    )!
+    after.width = 0.61
+
+    const result = await reconstructPageAnalyses({
+      pages: [page(1, [...columnEvidence, ...inlineRuns])],
+      sourceHash: '9'.repeat(64),
+      fileName: 'split-inline-spanning-candidate.pdf',
+      byteLength: 4096,
+      rasterizeFigure: async () => {
+        throw new Error('source crop unavailable')
+      },
+    })
+    const relationship = result.visualRelationships.find(
+      (candidate) =>
+        candidate.kind === 'equation' &&
+        candidate.status === 'unresolved' &&
+        candidate.candidates.some((match) =>
+          match.sourceRegionIds.some((regionId) =>
+            result.regions
+              .find((region) => region.id === regionId)
+              ?.lines.some((line) => line.id.endsWith('-formula')),
+          ),
+        ),
+    )
+    expect(relationship).toBeDefined()
+    expect(relationship).toMatchObject({
+      sourceRegionIds: [],
+      sourceLineIds: [],
+      evidence: expect.arrayContaining([
+        'source-text-transcript-unresolved',
+        'incomplete-equation-source-scope',
+      ]),
+    })
+    const formulaRegionId = relationship!.candidates[0].sourceRegionIds[0]
+    const formulaRegion = result.regions.find(
+      (region) => region.id === formulaRegionId,
+    )!
+    const afterBaseId = formulaRegion.lines[0].id.replace(/-formula$/u, '')
+    expect(
+      result.regions.find((region) =>
+        region.lines.some((line) => line.id === `${afterBaseId}-after`),
+      ),
+    ).toMatchObject({ kind: 'spanning' })
+    expect(
+      result.paper.nodes.filter(
+        (node) =>
+          node.type === 'paragraph' &&
+          (node.text === 'where' ||
+            result.provenance[node.id]?.regionIds.includes(formulaRegionId) ||
+            node.text.startsWith('). The first term')),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        text: 'where Sk′ = S′(xkt). The first term records the local drift [42].',
+      }),
+    ])
+    expect(result.visualRelationships).toContain(relationship)
+    expect(result.readiness.ready).toBe(false)
+  })
+
+  it('does not coalesce a split inline formula through an unresolved extra-line boundary', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.42),
+          run(
+            1,
+            'A second ordinary prose line remains intact.',
+            0.1,
+            0.23,
+            0.44,
+          ),
+          ...splitInlineProseEquationRuns({
+            afterText: '). The first term preserves quux-',
+            extraRuns: [run(1, 'blorp remains separate.', 0.266, 0.365, 0.2)],
+          }),
+        ]),
+      ],
+      sourceHash: '8'.repeat(64),
+      fileName: 'split-inline-unresolved-extra-line.pdf',
+      byteLength: 4096,
+      rasterizeFigure: async () => {
+        throw new Error('source crop unavailable')
+      },
+    })
+
+    const relationship = result.visualRelationships.find(
+      (candidate) =>
+        candidate.kind === 'equation' &&
+        candidate.status === 'unresolved' &&
+        candidate.sourceLineIds?.some((lineId) => lineId.endsWith('-formula')),
+    )
+    expect(relationship).toBeDefined()
+    expect(
+      result.paper.nodes.some(
+        (node) =>
+          node.type === 'paragraph' &&
+          node.text.startsWith('where ') &&
+          node.text.includes('blorp remains separate.'),
+      ),
+    ).toBe(false)
+  })
+
+  it.each([
+    {
+      name: 'the source whitespace predecessor is missing',
+      runs: () => {
+        const runs = splitInlineProseEquationRuns()
+        const formulaStart = runs.find((sourceRun) => sourceRun.text === 'S')!
+        Object.assign(formulaStart, {
+          sourceWhitespaceBefore: undefined,
+          sourceWhitespacePredecessorIndex: undefined,
+        })
+        return runs
+      },
+    },
+    {
+      name: 'the prose suffix has no leading closing punctuation',
+      runs: () =>
+        splitInlineProseEquationRuns({
+          afterText: 'The first term records the local drift [42].',
+        }),
+    },
+  ])('fails closed when $name', async ({ runs }) => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.42),
+          run(
+            1,
+            'A second ordinary prose line remains intact.',
+            0.1,
+            0.23,
+            0.44,
+          ),
+          ...runs(),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[42] Source-backed reference.', 0.1, 0.72, 0.72, 7),
+        ]),
+      ],
+      sourceHash: '6'.repeat(64),
+      fileName: 'split-inline-fail-closed.pdf',
+      byteLength: 4096,
+      rasterizeFigure: async () => {
+        throw new Error('source crop unavailable')
+      },
+    })
+    const relationship = result.visualRelationships.find(
+      (candidate) =>
+        candidate.kind === 'equation' &&
+        candidate.status === 'unresolved' &&
+        candidate.sourceLineIds?.some((lineId) => lineId.endsWith('-formula')),
+    )
+    expect(relationship).toBeDefined()
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          node.type === 'paragraph' &&
+          result.provenance[node.id]?.regionIds.includes(
+            relationship!.sourceRegionIds[0],
+          ),
+      ),
+    ).toSatisfy(
+      (owner: Extract<ResearchNode, { type: 'paragraph' }> | undefined) =>
+        Boolean(owner) && result.provenance[owner!.id].regionIds.length < 3,
+    )
+    expect(result.completeness.unresolvedObjects.equations).toBeGreaterThan(0)
+    expect(result.readiness.ready).toBe(false)
+  })
+
+  it('does not coalesce a split inline formula that is owned by a matched equation relationship', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.42),
+          run(
+            1,
+            'A second ordinary prose line remains intact.',
+            0.1,
+            0.23,
+            0.44,
+          ),
+          ...splitInlineProseEquationRuns(),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[42] Source-backed reference.', 0.1, 0.72, 0.72, 7),
+        ]),
+      ],
+      sourceHash: '5'.repeat(64),
+      fileName: 'split-inline-matched-equation.pdf',
+      byteLength: 4096,
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind: input.kind === 'figure' ? 'raster' : input.kind,
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 20,
+          height: 8,
+          pixels: new Uint8Array(20 * 8 * 4).fill(96),
+        }),
+    })
+    const relationship = result.visualRelationships.find(
+      (candidate) =>
+        candidate.kind === 'equation' &&
+        candidate.sourceLineIds?.some((lineId) => lineId.endsWith('-formula')),
+    )
+    expect(relationship).toMatchObject({
+      status: 'matched',
+      canonicalNodeId: expect.any(String),
+    })
+    expect(
+      result.paper.nodes.some(
+        (node) =>
+          node.type === 'paragraph' &&
+          node.text ===
+            'where Sk′ = S′(xkt). The first term records the local drift [42].',
+      ),
+    ).toBe(false)
+  })
+
   it.each([
     {
       name: 'a superscript-before-base formula',
@@ -10699,8 +13138,8 @@ describe('PDF semantic reconstruction', () => {
       ],
     },
   ])(
-    'withholds $name when its two-dimensional semantics remain unresolved',
-    async ({ fileName, corruptTranscript, runs }) => {
+    'preserves $name and blocks publication when its two-dimensional semantics remain unresolved',
+    async ({ fileName, runs }) => {
       const result = await reconstructPageAnalyses({
         pages: [
           page(1, [
@@ -10734,20 +13173,42 @@ describe('PDF semantic reconstruction', () => {
         status: 'unresolved',
         sourceText: '',
         altTextSource: 'caption',
-        captionNodeId: expect.any(String),
+        evidence: expect.arrayContaining([
+          'source-proved-atomic-equation-component',
+          'source-rendition-unavailable',
+        ]),
       })
-      const fallback = result.paper.nodes.find(
-        (node) => node.id === relationship?.captionNodeId,
+      expect(relationship!.sourceRegionIds).toContain(
+        relationship!.captionRegionId,
       )
-      expect(fallback).toMatchObject({
-        type: 'caption',
-        text: relationship?.altText,
-      })
-      expect(fallback).not.toHaveProperty('inlineRuns')
-      const paragraphText = result.paper.nodes
-        .flatMap((node) => (node.type === 'paragraph' ? [node.text] : []))
-        .join(' ')
-      expect(paragraphText).not.toMatch(corruptTranscript)
+      const sourceNodes = result.paper.nodes.filter(
+        (
+          node,
+        ): node is Extract<
+          (typeof result.paper.nodes)[number],
+          { text: string }
+        > => 'text' in node,
+      )
+      const canonicalText = sourceNodes.map((node) => node.text).join(' ')
+      const preservedEquationNodes = sourceNodes.filter((node) =>
+        result.provenance[node.id]?.regionIds.some((regionId) =>
+          relationship!.sourceRegionIds.includes(regionId),
+        ),
+      )
+      expect(preservedEquationNodes.length).toBeGreaterThan(0)
+      expect(preservedEquationNodes).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ text: relationship!.altText }),
+        ]),
+      )
+      expect(
+        preservedEquationNodes.every(
+          (node) => result.provenance[node.id]?.boxes.length > 0,
+        ),
+      ).toBe(true)
+      if (fileName === 'unresolved-split-inline-formula.pdf') {
+        expect(canonicalText).toContain('where the mapping remains stable.')
+      }
       expect(result.diagnostics).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -10757,6 +13218,7 @@ describe('PDF semantic reconstruction', () => {
         ]),
       )
       expect(result.completeness.unresolvedObjects.equations).toBeGreaterThan(0)
+      expect(result.completeness.expectedInlineSpanCount).toBeGreaterThan(0)
       expect(result.readiness).toMatchObject({
         ready: false,
         status: 'review-required',
@@ -10769,9 +13231,11 @@ describe('PDF semantic reconstruction', () => {
       const content = strFromU8(
         inspectEpub(epub.bytes).files['EPUB/content.xhtml'],
       )
-      expect(content).not.toMatch(corruptTranscript)
-      expect(content).toContain('class="orphan-caption omitted-visual"')
-      expect(content).toContain(relationship!.altText)
+      for (const node of preservedEquationNodes) {
+        expect(content).toContain(`data-canonical-id="${node.id}"`)
+      }
+      expect(content).not.toContain('orphan-caption omitted-visual')
+      expect(content).not.toContain(`>${relationship!.altText}<`)
     },
   )
 
@@ -10854,7 +13318,12 @@ describe('PDF semantic reconstruction', () => {
         evidence: expect.arrayContaining(['source-rendition-unavailable']),
       }),
     ])
-    expect(canonicalTextIntegrityIssues(unresolved.paper)).toHaveLength(1)
+    expect(canonicalTextIntegrityIssues(unresolved.paper)).toEqual([
+      expect.objectContaining({
+        code: 'EPUB_TEXT_SANITIZATION_LOSS',
+        replacementGlyphCount: 1,
+      }),
+    ])
     expect(unresolved.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: 'EPUB_TEXT_SANITIZATION_LOSS' }),
@@ -10915,6 +13384,8 @@ describe('PDF semantic reconstruction', () => {
         provenance: result.provenance,
         relationships: result.visualRelationships,
         assets: result.assets,
+        regions: result.regions,
+        pages: result.pages,
       }),
     ).toEqual(relationships)
   })
@@ -11098,7 +13569,9 @@ describe('PDF semantic reconstruction', () => {
     })
     expect(
       result.lineBoundaryDecisions.filter((decision) =>
-        ['unresolved', 'structural-boundary'].includes(decision.outcome),
+        ['unresolved', 'ambiguous', 'structural-boundary'].includes(
+          decision.outcome,
+        ),
       ),
     ).toHaveLength(
       result.unresolvedCorruptingJoinCount +
@@ -11443,6 +13916,165 @@ describe('PDF semantic reconstruction', () => {
       mappedInlineSpanCount: 5,
       inlineSpanCoverage: 1,
     })
+  })
+
+  it('maps repeated styled source atoms only through their unique monotone line order', async () => {
+    const repeatedAtoms = [
+      {
+        ...run(1, 'x', 0.2, 0.4, 0.02),
+        fontName: 'ABCDEF+CMMI10',
+      },
+      run(1, ' + ', 0.221, 0.4, 0.03),
+      {
+        ...run(1, 'x', 0.252, 0.4, 0.02),
+        fontName: 'ABCDEF+CMMI10',
+      },
+      run(1, ' = ', 0.273, 0.4, 0.03),
+      {
+        ...run(1, 'x', 0.304, 0.4, 0.02),
+        fontName: 'ABCDEF+CMMI10',
+      },
+    ]
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Repeated source atom study', 0.2, 0.08, 0.5, 18),
+          run(
+            1,
+            'Ordinary prose establishes the document body typography.',
+            0.1,
+            0.24,
+            0.72,
+          ),
+          ...repeatedAtoms,
+        ]),
+      ],
+      sourceHash: '1'.repeat(64),
+      fileName: 'repeated-styled-source-atoms.pdf',
+      byteLength: 2048,
+    })
+    const node = result.paper.nodes.find(
+      (candidate) => 'text' in candidate && candidate.text === 'x+x=x',
+    )
+    if (!node || !('text' in node) || !('inlineRuns' in node)) {
+      throw new Error('missing canonical repeated-atom node')
+    }
+    const italicTexts = (node.inlineRuns ?? [])
+      .filter((candidate) => candidate.italic)
+      .map((candidate) => node.text.slice(candidate.start, candidate.end))
+
+    expect(italicTexts).toEqual(['x', 'x', 'x'])
+    expect(result.completeness).toMatchObject({
+      expectedInlineSpanCount: 3,
+      mappedInlineSpanCount: 3,
+      inlineSpanCoverage: 1,
+    })
+  })
+
+  it('keeps a whole repeated-run sequence fail-closed when two complete monotone assignments exist', () => {
+    const firstRun = run(1, 'x', 0.1, 0.2, 0.02)
+    const fixedRun = run(1, 'y', 0.2, 0.2, 0.02)
+    const candidates = [
+      {
+        run: firstRun,
+        text: 'x',
+        occurrences: [
+          { start: 0, end: 1 },
+          { start: 2, end: 3 },
+        ],
+      },
+      {
+        run: fixedRun,
+        text: 'y',
+        occurrences: [{ start: 4, end: 5 }],
+      },
+    ]
+
+    expect(retainUniqueMonotoneSourceRunAssignment(candidates)).toBe(false)
+    expect(candidates.map((candidate) => candidate.occurrences)).toEqual([
+      [],
+      [],
+    ])
+  })
+
+  it('keeps an accent alias and its whole line fail-closed when repeated assignments remain', () => {
+    const accent = run(1, '´', 0.1, 0.2, 0.01)
+    const target = run(1, 'a', 0.11, 0.2, 0.02)
+    const fixed = run(1, 'y', 0.2, 0.2, 0.02)
+    const repeatedAccentOccurrences = [
+      { start: 0, end: 1 },
+      { start: 2, end: 3 },
+    ]
+    const candidates = [
+      {
+        run: accent,
+        text: 'á',
+        occurrences: [...repeatedAccentOccurrences],
+      },
+      {
+        run: target,
+        text: 'á',
+        occurrences: [...repeatedAccentOccurrences],
+      },
+      {
+        run: fixed,
+        text: 'y',
+        occurrences: [{ start: 4, end: 5 }],
+      },
+    ]
+
+    expect(
+      retainUniqueSourceRunAssignmentWithAliases(
+        candidates,
+        new Map([
+          [accent, target],
+          [target, accent],
+        ]),
+      ),
+    ).toBe(false)
+    expect(candidates.map((candidate) => candidate.occurrences)).toEqual([
+      [],
+      [],
+      [],
+    ])
+  })
+
+  it('keeps overlapping singleton accent and prose intervals fail-closed', () => {
+    const accent = run(1, '´', 0.1, 0.2, 0.01)
+    const target = run(1, 'ar method', 0.11, 0.2, 0.08)
+    const overlapping = run(1, 'method', 0.2, 0.2, 0.05)
+    const candidates = [
+      {
+        run: accent,
+        text: 'ár method',
+        occurrences: [{ start: 0, end: 9 }],
+      },
+      {
+        run: target,
+        text: 'ár method',
+        occurrences: [{ start: 0, end: 9 }],
+      },
+      {
+        run: overlapping,
+        text: 'method',
+        occurrences: [{ start: 3, end: 9 }],
+      },
+    ]
+
+    expect(
+      retainUniqueSourceRunAssignmentWithAliases(
+        candidates,
+        new Map([
+          [accent, target],
+          [target, accent],
+        ]),
+      ),
+    ).toBe(false)
+    expect(candidates.map((candidate) => candidate.occurrences)).toEqual([
+      [],
+      [],
+      [],
+    ])
   })
 
   it('marks only source-atomic academic math runs for lexical compaction', async () => {
@@ -12289,6 +14921,938 @@ describe('PDF semantic reconstruction', () => {
     expect(content).not.toMatch(/<a[^>]*>Prior work/u)
   })
 
+  it('coalesces duplicate internal annotation fragments for one canonical range and target', () => {
+    const { block } = canonicalHyperlinkTestBlock('[1]')
+    const annotations = [
+      {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'internal' as const,
+        destination: 'cite.1',
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2,
+          width: 0.14,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-link' as const,
+        },
+      },
+      {
+        id: 'pdf-link-p001-a0002',
+        page: 1,
+        status: 'internal' as const,
+        destination: 'cite.1',
+        box: {
+          page: 1,
+          x: 0.25,
+          y: 0.2,
+          width: 0.15,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-link' as const,
+        },
+      },
+    ]
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations,
+      canonicalTargets: [
+        {
+          kind: 'reference',
+          label: 'Reference 1',
+          nodeId: 'reference-one',
+        },
+      ],
+      canonicalInternalSurfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: block.nodeId,
+          start: 0,
+          end: 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.1,
+              y: 0.2,
+              width: 0.3,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotations[0].id,
+        blockNodeId: block.nodeId,
+        start: 0,
+        end: 3,
+        href: '#reference-one',
+      },
+    ])
+    expect(resolution.approvedAnnotationIds).toEqual(
+      new Set(annotations.map((annotation) => annotation.id)),
+    )
+    expect(resolution.ledger).toEqual({ expected: 2, mapped: 2 })
+    expect(resolution.diagnostics).toEqual([])
+  })
+
+  it('rejects every conflicting internal target claimed by one canonical range independent of input order', () => {
+    const { block } = canonicalHyperlinkTestBlock('[1]')
+    const annotations = [
+      {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'internal' as const,
+        destination: 'cite.1',
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2,
+          width: 0.14,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-link' as const,
+        },
+      },
+      {
+        id: 'pdf-link-p001-a0002',
+        page: 1,
+        status: 'internal' as const,
+        destination: 'cite.2',
+        box: {
+          page: 1,
+          x: 0.25,
+          y: 0.2,
+          width: 0.15,
+          height: 0.018,
+          rotation: 0,
+          method: 'pdf-link' as const,
+        },
+      },
+    ]
+    const resolve = (orderedAnnotations: typeof annotations) =>
+      resolveCanonicalHyperlinkObligations({
+        blocks: [block],
+        annotations: orderedAnnotations,
+        canonicalTargets: [
+          {
+            kind: 'reference',
+            label: 'Reference 1',
+            nodeId: 'reference-one',
+          },
+          {
+            kind: 'reference',
+            label: 'Reference 2',
+            nodeId: 'reference-two',
+          },
+        ],
+        canonicalInternalSurfaces: [
+          {
+            targetNodeId: 'reference-one',
+            blockNodeId: block.nodeId,
+            start: 0,
+            end: 3,
+            sourceBoxes: [
+              {
+                page: 1,
+                x: 0.1,
+                y: 0.2,
+                width: 0.14,
+                height: 0.018,
+                rotation: 0,
+                method: 'pdf-text',
+              },
+            ],
+          },
+          {
+            targetNodeId: 'reference-two',
+            blockNodeId: block.nodeId,
+            start: 0,
+            end: 3,
+            sourceBoxes: [
+              {
+                page: 1,
+                x: 0.25,
+                y: 0.2,
+                width: 0.15,
+                height: 0.018,
+                rotation: 0,
+                method: 'pdf-text',
+              },
+            ],
+          },
+        ],
+      })
+
+    const forward = resolve(annotations)
+    const reversed = resolve([...annotations].reverse())
+
+    for (const resolution of [forward, reversed]) {
+      expect(resolution.mappings).toEqual([])
+      expect(resolution.approvedAnnotationIds).toEqual(new Set())
+      expect(resolution.ledger).toEqual({ expected: 2, mapped: 0 })
+      expect(resolution.diagnostics).toEqual([
+        expect.objectContaining({
+          code: 'UNRESOLVED_HYPERLINK',
+          relationshipId: annotations[0].id,
+          message: expect.stringMatching(
+            /canonical inline owner.*conflicting internal targets/iu,
+          ),
+        }),
+        expect.objectContaining({
+          code: 'UNRESOLVED_HYPERLINK',
+          relationshipId: annotations[1].id,
+          message: expect.stringMatching(
+            /canonical inline owner.*conflicting internal targets/iu,
+          ),
+        }),
+      ])
+    }
+    expect(reversed.mappings).toEqual(forward.mappings)
+    expect(reversed.diagnostics).toEqual(forward.diagnostics)
+  })
+
+  it('maps three ordered citation labels to three exact annotation-owned targets', async () => {
+    const citationText =
+      'Although interpretation requires care [62, 63, 48], the evidence remains useful.'
+    const citationRun = run(1, citationText, 0.1, 0.24, 0.78)
+    const labels = ['62', '63', '48']
+    const linked = page(1, [
+      run(1, 'Ordered Citation Study', 0.1, 0.08, 0.7, 22),
+      run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+      citationRun,
+    ])
+    linked.links = labels.map((label, index) => {
+      const start = citationText.indexOf(label, index === 0 ? 0 : undefined)
+      return {
+        id: `pdf-link-p001-a${String(index + 1).padStart(4, '0')}`,
+        page: 1,
+        status: 'internal' as const,
+        destination: `cite.${label}`,
+        box: sourceSubstringBox(citationRun, start, start + label.length),
+      }
+    })
+    const result = await reconstructPageAnalyses({
+      pages: [
+        linked,
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[62] First source-backed reference.', 0.1, 0.7, 0.72, 7),
+          run(2, '[63] Second source-backed reference.', 0.1, 0.73, 0.72, 7),
+          run(2, '[48] Third source-backed reference.', 0.1, 0.76, 0.72, 7),
+        ]),
+      ],
+      sourceHash: 'a'.repeat(64),
+      fileName: 'ordered-multi-citation-links.pdf',
+      byteLength: 4096,
+    })
+    const references = new Map(
+      result.paper.nodes.flatMap((node) =>
+        node.type === 'paragraph' &&
+        node.list?.numberingId === 'references' &&
+        node.list.ordinal !== undefined
+          ? [[String(node.list.ordinal), node.id] as const]
+          : [],
+      ),
+    )
+    const relationship = result.citationRelationships.find(
+      (candidate) => candidate.labels.join(',') === labels.join(','),
+    )
+    const annotationRuns = result.paper.nodes
+      .flatMap((node) =>
+        'inlineRuns' in node
+          ? (node.inlineRuns ?? []).flatMap((inline) =>
+              inline.annotationId
+                ? [{ nodeText: 'text' in node ? node.text : '', inline }]
+                : [],
+            )
+          : [],
+      )
+      .sort((left, right) => left.inline.start - right.inline.start)
+
+    expect(relationship).toMatchObject({
+      status: 'matched',
+      targetNodeIds: labels.map((label) => references.get(label)),
+      targets: labels.map((label) =>
+        expect.objectContaining({
+          label,
+          targetNodeId: references.get(label),
+          referenceStart: expect.any(Number),
+          referenceEnd: expect.any(Number),
+          sourceBoxes: [expect.objectContaining({ method: 'pdf-text' })],
+        }),
+      ),
+    })
+    expect(
+      annotationRuns.map(({ nodeText, inline }) => ({
+        text: nodeText.slice(inline.start, inline.end),
+        href: inline.href,
+      })),
+    ).toEqual(
+      labels.map((label) => ({
+        text: label,
+        href: `#${references.get(label)}`,
+      })),
+    )
+    expect(result.completeness).toMatchObject({
+      expectedHyperlinkCount: 3,
+      mappedHyperlinkCount: 3,
+      hyperlinkCoverage: 1,
+    })
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'UNRESOLVED_HYPERLINK',
+      ),
+    ).toEqual([])
+  })
+
+  it('preserves exact citation-link ownership when its paragraph continues on the next page', async () => {
+    const citationText =
+      'Source-backed systems combine distinct inputs [37, 222] before producing a result.'
+    const citationRun = run(1, citationText, 0.1, 0.78, 0.78)
+    const labels = ['37', '222']
+    const linked = page(1, [
+      run(1, 'Cross-page Citation Link Study', 0.1, 0.04, 0.72, 22),
+      run(1, '1 Introduction', 0.1, 0.14, 0.3, 16),
+      run(
+        1,
+        'The opening sentence establishes ordinary body typography.',
+        0.1,
+        0.72,
+        0.78,
+      ),
+      run(
+        1,
+        'The next sentence provides enough adjacent source flow.',
+        0.1,
+        0.75,
+        0.78,
+      ),
+      citationRun,
+      run(1, 'This', 0.1, 0.81, 0.78),
+    ])
+    linked.links = labels.map((label, index) => {
+      const start = citationText.indexOf(label)
+      return {
+        id: `pdf-link-p001-a${String(index + 1).padStart(4, '0')}`,
+        page: 1,
+        status: 'internal' as const,
+        destination: `cite.${label}`,
+        box: sourceSubstringBox(citationRun, start, start + label.length),
+      }
+    })
+    const result = await reconstructPageAnalyses({
+      pages: [
+        linked,
+        page(2, [
+          run(
+            2,
+            'continuation completes the paragraph with source-proven geometry.',
+            0.1,
+            0.08,
+            0.78,
+          ),
+        ]),
+        page(3, [
+          run(3, 'References', 0.1, 0.1, 0.3, 16),
+          run(3, '[37] First source-backed reference.', 0.1, 0.7, 0.72, 7),
+          run(3, '[222] Second source-backed reference.', 0.1, 0.73, 0.72, 7),
+        ]),
+      ],
+      sourceHash: 'd'.repeat(64),
+      fileName: 'cross-page-citation-links.pdf',
+      byteLength: 4096,
+    })
+    const linkedRuns = result.paper.nodes.flatMap((node) =>
+      'inlineRuns' in node && 'text' in node
+        ? (node.inlineRuns ?? []).flatMap((inline) =>
+            inline.annotationId
+              ? [
+                  {
+                    text: node.text.slice(inline.start, inline.end),
+                    href: inline.href,
+                    ownerText: node.text,
+                  },
+                ]
+              : [],
+          )
+        : [],
+    )
+
+    expect(linkedRuns).toHaveLength(2)
+    expect(linkedRuns.map(({ text }) => text)).toEqual(labels)
+    expect(
+      linkedRuns.every(({ ownerText }) =>
+        ownerText.endsWith(
+          'This continuation completes the paragraph with source-proven geometry.',
+        ),
+      ),
+    ).toBe(true)
+    expect(new Set(linkedRuns.map(({ href }) => href)).size).toBe(2)
+    expect(result.completeness).toMatchObject({
+      expectedHyperlinkCount: 2,
+      mappedHyperlinkCount: 2,
+      hyperlinkCoverage: 1,
+    })
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'UNRESOLVED_HYPERLINK',
+      ),
+    ).toEqual([])
+  })
+
+  it('does not let adjacent citation annotations steal a neighboring singleton', async () => {
+    const citationText =
+      'Recent advances [37, 222] differ from the separate baseline [295].'
+    const citationRun = run(1, citationText, 0.1, 0.24, 0.78)
+    const labels = ['37', '222', '295']
+    const linked = page(1, [
+      run(1, 'Adjacent Citation Study', 0.1, 0.08, 0.7, 22),
+      run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+      citationRun,
+    ])
+    linked.links = labels.map((label, index) => {
+      const start = citationText.indexOf(label)
+      return {
+        id: `pdf-link-p001-a${String(index + 1).padStart(4, '0')}`,
+        page: 1,
+        status: 'internal' as const,
+        destination: `cite.${label}`,
+        box: sourceSubstringBox(citationRun, start, start + label.length),
+      }
+    })
+    const result = await reconstructPageAnalyses({
+      pages: [
+        linked,
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[37] First source-backed reference.', 0.1, 0.7, 0.72, 7),
+          run(2, '[222] Second source-backed reference.', 0.1, 0.73, 0.72, 7),
+          run(2, '[295] Separate source-backed reference.', 0.1, 0.76, 0.72, 7),
+        ]),
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'adjacent-multi-singleton-citations.pdf',
+      byteLength: 4096,
+    })
+    const linkedTexts = result.paper.nodes.flatMap((node) =>
+      'inlineRuns' in node && 'text' in node
+        ? (node.inlineRuns ?? []).flatMap((inline) =>
+            inline.annotationId
+              ? [
+                  {
+                    text: node.text.slice(inline.start, inline.end),
+                    href: inline.href,
+                  },
+                ]
+              : [],
+          )
+        : [],
+    )
+
+    expect(linkedTexts.map(({ text }) => text)).toEqual(['37', '222', '[295]'])
+    expect(new Set(linkedTexts.map(({ href }) => href)).size).toBe(3)
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'UNRESOLVED_HYPERLINK',
+      ),
+    ).toEqual([])
+  })
+
+  it('uses source offsets to distinguish repeated citations to one target', async () => {
+    const citationText =
+      'Prior work [1] establishes the baseline, while later work [1] confirms it.'
+    const citationRun = run(1, citationText, 0.1, 0.24, 0.78)
+    const first = citationText.indexOf('[1]')
+    const second = citationText.indexOf('[1]', first + 1)
+    const linked = page(1, [
+      run(1, 'Repeated Citation Study', 0.1, 0.08, 0.7, 22),
+      run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+      citationRun,
+    ])
+    linked.links = [first, second].map((start, index) => ({
+      id: `pdf-link-p001-a${String(index + 1).padStart(4, '0')}`,
+      page: 1,
+      status: 'internal' as const,
+      destination: 'cite.1',
+      box: sourceSubstringBox(citationRun, start, start + 3),
+    }))
+    const result = await reconstructPageAnalyses({
+      pages: [
+        linked,
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[1] Shared source-backed reference.', 0.1, 0.82, 0.72, 7),
+        ]),
+      ],
+      sourceHash: 'c'.repeat(64),
+      fileName: 'repeated-citation-target.pdf',
+      byteLength: 4096,
+    })
+    const annotationRanges = result.paper.nodes
+      .flatMap((node) =>
+        'inlineRuns' in node
+          ? (node.inlineRuns ?? []).flatMap((inline) =>
+              inline.annotationId
+                ? [{ start: inline.start, end: inline.end, href: inline.href }]
+                : [],
+            )
+          : [],
+      )
+      .sort((left, right) => left.start - right.start)
+
+    expect(annotationRanges).toEqual([
+      expect.objectContaining({ start: first, end: first + 3 }),
+      expect.objectContaining({ start: second, end: second + 3 }),
+    ])
+    expect(annotationRanges[0].href).toBe(annotationRanges[1].href)
+    expect(result.completeness.mappedHyperlinkCount).toBe(2)
+  })
+
+  it('maps a bounded shifted link rectangle only to its substantially overlapping citation surface', () => {
+    const text = '[190, 228]'
+    const { block } = canonicalHyperlinkTestBlock(text)
+    const firstStart = text.indexOf('190')
+    const secondStart = text.indexOf('228')
+    const annotation = {
+      id: 'pdf-link-p001-a0001',
+      page: 1,
+      status: 'internal' as const,
+      destination: 'cite.190',
+      box: {
+        page: 1,
+        x: 0.355,
+        y: 0.204,
+        width: 0.1,
+        height: 0.014,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+    }
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [block],
+      annotations: [annotation],
+      canonicalTargets: [
+        {
+          kind: 'reference',
+          label: 'Reference 190',
+          nodeId: 'reference-190',
+        },
+        {
+          kind: 'reference',
+          label: 'Reference 228',
+          nodeId: 'reference-228',
+        },
+      ],
+      canonicalInternalSurfaces: [
+        {
+          targetNodeId: 'reference-190',
+          blockNodeId: block.nodeId,
+          start: firstStart,
+          end: firstStart + 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.3,
+              y: 0.2,
+              width: 0.1,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+          ],
+        },
+        {
+          targetNodeId: 'reference-228',
+          blockNodeId: block.nodeId,
+          start: secondStart,
+          end: secondStart + 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.445,
+              y: 0.2,
+              width: 0.1,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotation.id,
+        blockNodeId: block.nodeId,
+        start: firstStart,
+        end: firstStart + 3,
+        href: '#reference-190',
+      },
+    ])
+    expect(resolution.diagnostics).toEqual([])
+  })
+
+  it.each([
+    {
+      label: 'tiny edge contact',
+      annotationBox: {
+        page: 1,
+        x: 0.1999,
+        y: 0.2,
+        width: 0.02,
+        height: 0.018,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+      surfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: 'internal-link-source-node',
+          start: 0,
+          end: 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.14,
+              y: 0.2,
+              width: 0.06,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text' as const,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'substantial area with insufficient horizontal coverage',
+      annotationBox: {
+        page: 1,
+        x: 0.17,
+        y: 0.2,
+        width: 0.1,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+      surfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: 'internal-link-source-node',
+          start: 0,
+          end: 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.1,
+              y: 0.2,
+              width: 0.1,
+              height: 0.02,
+              rotation: 0,
+              method: 'pdf-text' as const,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'substantial area with insufficient vertical coverage',
+      annotationBox: {
+        page: 1,
+        x: 0.13,
+        y: 0.211,
+        width: 0.1,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+      surfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: 'internal-link-source-node',
+          start: 0,
+          end: 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.1,
+              y: 0.2,
+              width: 0.1,
+              height: 0.02,
+              rotation: 0,
+              method: 'pdf-text' as const,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'axis coverage with insufficient smaller-area overlap',
+      annotationBox: {
+        page: 1,
+        x: 0.16,
+        y: 0.209,
+        width: 0.1,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+      surfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: 'internal-link-source-node',
+          start: 0,
+          end: 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.1,
+              y: 0.2,
+              width: 0.1,
+              height: 0.02,
+              rotation: 0,
+              method: 'pdf-text' as const,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'rotation-mismatched geometry',
+      annotationBox: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.1,
+        height: 0.02,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+      surfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: 'internal-link-source-node',
+          start: 0,
+          end: 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.1,
+              y: 0.2,
+              width: 0.1,
+              height: 0.02,
+              rotation: 90,
+              method: 'pdf-text' as const,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'ambiguous broad ownership',
+      annotationBox: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.3,
+        height: 0.018,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+      surfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: 'internal-link-source-node',
+          start: 0,
+          end: 3,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.1,
+              y: 0.2,
+              width: 0.08,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text' as const,
+            },
+          ],
+        },
+        {
+          targetNodeId: 'reference-two',
+          blockNodeId: 'internal-link-source-node',
+          start: 4,
+          end: 7,
+          sourceBoxes: [
+            {
+              page: 1,
+              x: 0.22,
+              y: 0.2,
+              width: 0.08,
+              height: 0.018,
+              rotation: 0,
+              method: 'pdf-text' as const,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'missing source geometry',
+      annotationBox: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.08,
+        height: 0.018,
+        rotation: 0,
+        method: 'pdf-link' as const,
+      },
+      surfaces: [
+        {
+          targetNodeId: 'reference-one',
+          blockNodeId: 'internal-link-source-node',
+          start: 0,
+          end: 3,
+          sourceBoxes: [],
+        },
+      ],
+    },
+  ])(
+    'keeps $label citation ownership unresolved',
+    ({ annotationBox, surfaces }) => {
+      const { block } = canonicalHyperlinkTestBlock('[1] [2]')
+      const annotation = {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'internal' as const,
+        destination: 'cite.1',
+        box: annotationBox,
+      }
+      const resolution = resolveCanonicalHyperlinkObligations({
+        blocks: [block],
+        annotations: [annotation],
+        canonicalTargets: [
+          {
+            kind: 'reference',
+            label: 'Reference 1',
+            nodeId: 'reference-one',
+          },
+          {
+            kind: 'reference',
+            label: 'Reference 2',
+            nodeId: 'reference-two',
+          },
+        ],
+        canonicalInternalSurfaces: surfaces,
+      })
+
+      expect(resolution.mappings).toEqual([])
+      expect(resolution.ledger).toEqual({ expected: 1, mapped: 0 })
+      expect(resolution.diagnostics).toEqual([
+        expect.objectContaining({
+          code: 'UNRESOLVED_HYPERLINK',
+          message: expect.stringMatching(/no exact canonical inline owner/iu),
+        }),
+      ])
+    },
+  )
+
+  it('maps vertically overlapping link rectangles when exact source anchors are on disjoint lines', () => {
+    const firstText = 'https://example.test/first'
+    const secondText = 'https://example.test/second'
+    const firstRun = run(1, firstText, 0.1, 0.2, 0.34)
+    const secondRun = run(1, secondText, 0.1, 0.212, 0.35)
+    const blockFor = (id: string, text: string, sourceRun: PdfSourceRun) => ({
+      type: 'paragraph' as const,
+      region: {
+        id: `${id}-region`,
+        page: 1,
+        kind: 'body' as const,
+        column: 'single' as const,
+        text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `${id}-line`,
+            text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      },
+      text,
+      confidence: 1,
+      nodeId: `${id}-node`,
+    })
+    const annotations = [
+      {
+        id: 'pdf-link-p001-a0001',
+        page: 1,
+        status: 'external' as const,
+        url: firstText,
+        box: {
+          ...firstRun,
+          height: 0.014,
+          method: 'pdf-link' as const,
+        },
+      },
+      {
+        id: 'pdf-link-p001-a0002',
+        page: 1,
+        status: 'external' as const,
+        url: secondText,
+        box: {
+          ...secondRun,
+          y: 0.211,
+          height: 0.014,
+          method: 'pdf-link' as const,
+        },
+      },
+    ]
+
+    const resolution = resolveCanonicalHyperlinkObligations({
+      blocks: [
+        blockFor('first', firstText, firstRun),
+        blockFor('second', secondText, secondRun),
+      ],
+      annotations,
+    })
+
+    expect(resolution.diagnostics).toEqual([])
+    expect(resolution.mappings).toEqual([
+      {
+        annotationId: annotations[0].id,
+        blockNodeId: 'first-node',
+        start: 0,
+        end: firstText.length,
+        href: firstText,
+      },
+      {
+        annotationId: annotations[1].id,
+        blockNodeId: 'second-node',
+        start: 0,
+        end: secondText.length,
+        href: secondText,
+      },
+    ])
+    expect(resolution.approvedAnnotationIds).toEqual(
+      new Set(annotations.map((annotation) => annotation.id)),
+    )
+    expect(resolution.ledger).toEqual({ expected: 2, mapped: 2 })
+  })
+
   it('fails overlapping external annotations closed instead of choosing one target', async () => {
     const linked = page(1, [
       run(1, 'Ambiguous linked text remains readable.', 0.1, 0.2, 0.7),
@@ -12567,29 +16131,31 @@ describe('PDF semantic reconstruction', () => {
     )
   })
 
-  it('removes a float-interrupted discretionary hyphen only with same-document token proof', async () => {
+  it('removes a float-interrupted discretionary hyphen only with lexical and language proof', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
-        page(1, [
-          run(1, 'Float-interrupted lexical prose', 0.12, 0.06, 0.68, 18),
-          run(1, '1 Introduction', 0.12, 0.18, 0.3, 14),
-          run(
-            1,
-            'Additionally, a separate sentence proves the unhyphenated token.',
-            0.12,
-            0.28,
-            0.68,
-          ),
-          run(1, 'We observed frequent hallucination. ', 0.12, 0.82, 0.4),
-          {
-            ...run(1, 'Addition', 0.54, 0.82, 0.09),
-            fontName: 'ABCDEF+NimbusRomNo9L-Medi',
-          },
-          {
-            ...run(1, '-', 0.629, 0.82, 0.008),
-            fontName: 'ABCDEF+NimbusRomNo9L-Medi',
-          },
-        ]),
+        withExplicitEnglishLanguage(
+          page(1, [
+            run(1, 'Float-interrupted lexical prose', 0.12, 0.06, 0.68, 18),
+            run(1, '1 Introduction', 0.12, 0.18, 0.3, 14),
+            run(
+              1,
+              'Additionally, a separate sentence proves the unhyphenated token.',
+              0.12,
+              0.28,
+              0.68,
+            ),
+            run(1, 'We observed frequent hallucination. ', 0.12, 0.82, 0.4),
+            {
+              ...run(1, 'Addition', 0.54, 0.82, 0.09),
+              fontName: 'ABCDEF+NimbusRomNo9L-Medi',
+            },
+            {
+              ...run(1, '-', 0.629, 0.82, 0.008),
+              fontName: 'ABCDEF+NimbusRomNo9L-Medi',
+            },
+          ]),
+        ),
         page(2, [
           run(2, 'Method', 0.12, 0.08, 0.12, 8),
           run(2, 'Score', 0.45, 0.08, 0.1, 8),
@@ -12648,6 +16214,34 @@ describe('PDF semantic reconstruction', () => {
         (diagnostic) => diagnostic.code === 'CANONICAL_FLOW_ORDER_VIOLATION',
       ),
     ).toBe(false)
+    expect(result.canonicalHyphenBoundaryDecisions).toEqual([
+      expect.objectContaining({
+        context: 'canonical-flow-continuation',
+        outcome: 'removed-discretionary-hyphen',
+        geometry: {
+          from: expect.objectContaining({ page: 1, y: 0.82 }),
+          to: expect.objectContaining({ page: 2, y: 0.25 }),
+        },
+        proof: expect.objectContaining({
+          sourceBoundaryProven: true,
+          pinnedWord: 'Additionally',
+          pinnedJoinedFormValid: true,
+          pinnedSplit: {
+            left: 'Addition',
+            right: 'ally',
+            index: 8,
+          },
+          splitPointValid: true,
+          exactSameDocumentJoinedForm: 'Additionally',
+          sameDocumentJoinedFormValid: true,
+          hardHyphenCounterproof: null,
+          evidence: expect.arrayContaining([
+            'same-document-unhyphenated-word',
+            'hard-hyphen-form-not-proved',
+          ]),
+        }),
+      }),
+    ])
   })
 
   it('does not jump lowercase prose across an unowned caption-shaped interruption', async () => {
@@ -12742,6 +16336,87 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
+  it('fails closed on a lowercase hyphen continuation without source-boundary proof', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Unproved hyphen continuity', 0.12, 0.06, 0.68, 18),
+          run(1, '1 Introduction', 0.12, 0.18, 0.3, 14),
+          run(1, 'This paragraph contains an unproved frag-', 0.12, 0.4, 0.68),
+        ]),
+        page(2, [
+          run(2, 'ment that begins a separate source block.', 0.12, 0.08, 0.68),
+        ]),
+      ],
+      sourceHash: '8'.repeat(64),
+      fileName: 'unproved-hyphen-continuation.pdf',
+      byteLength: 4096,
+      metadata: { title: 'Unproved hyphen continuity' },
+    })
+    const paragraphs = result.paper.nodes.filter(
+      (node) => node.type === 'paragraph',
+    )
+
+    expect(paragraphs.some((node) => node.text.includes('frag- ment'))).toBe(
+      false,
+    )
+    expect(paragraphs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: 'This paragraph contains an unproved frag-',
+        }),
+        expect.objectContaining({
+          text: 'ment that begins a separate source block.',
+        }),
+      ]),
+    )
+    expect(result.canonicalHyphenBoundaryDecisions).toEqual([])
+  })
+
+  it('fails closed when source geometry exists but the hyphen form is unresolved', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Unresolved hyphen continuity', 0.12, 0.06, 0.68, 18),
+          run(1, '1 Introduction', 0.12, 0.18, 0.3, 14),
+          run(
+            1,
+            'Opening prose establishes the document body.',
+            0.12,
+            0.28,
+            0.68,
+          ),
+          run(1, 'The source ends with an unresolved frag-', 0.12, 0.82, 0.68),
+        ]),
+        page(2, [
+          run(2, 'ment that has no same-document proof.', 0.12, 0.08, 0.68),
+        ]),
+      ],
+      sourceHash: '9'.repeat(64),
+      fileName: 'unresolved-hyphen-continuation.pdf',
+      byteLength: 4096,
+      metadata: { title: 'Unresolved hyphen continuity' },
+    })
+    const paragraphs = result.paper.nodes.filter(
+      (node) => node.type === 'paragraph',
+    )
+
+    expect(paragraphs.some((node) => node.text.includes('frag-ment'))).toBe(
+      false,
+    )
+    expect(paragraphs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: 'The source ends with an unresolved frag-',
+        }),
+        expect.objectContaining({
+          text: 'ment that has no same-document proof.',
+        }),
+      ]),
+    )
+    expect(result.canonicalHyphenBoundaryDecisions).toEqual([])
+  })
+
   it('preserves a source-proven hard hyphen without inventing cross-page whitespace', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
@@ -12774,6 +16449,10 @@ describe('PDF semantic reconstruction', () => {
     expect(joined).toMatchObject({
       text: 'The source uses long-form examples throughout the evaluation.',
     })
+    expect(result.provenance[joined!.id]).toMatchObject({
+      pages: [1, 2],
+    })
+    expect(result.canonicalHyphenBoundaryDecisions).toEqual([])
     expect(
       result.diagnostics.some(
         (diagnostic) => diagnostic.code === 'CANONICAL_FLOW_ORDER_VIOLATION',
@@ -12784,87 +16463,89 @@ describe('PDF semantic reconstruction', () => {
   it('removes a source-proven wrap hyphen across adjacent same-page columns', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
-        page(1, [
-          run(1, 'Column-boundary continuity', 0.1, 0.035, 0.8, 18),
-          run(1, '1 Introduction', 0.09, 0.12, 0.3, 14),
-          run(
-            1,
-            'A separate sentence proves interpretation as a complete token.',
-            0.09,
-            0.2,
-            0.385,
-          ),
-          run(
-            1,
-            'Left-column body establishes the source reading geometry.',
-            0.09,
-            0.23,
-            0.385,
-          ),
-          run(
-            1,
-            'A second left-column row confirms the stable gutter.',
-            0.09,
-            0.26,
-            0.385,
-          ),
-          run(
-            1,
-            'A third left-column row completes the layout evidence.',
-            0.09,
-            0.29,
-            0.385,
-          ),
-          run(
-            1,
-            'The final left-column sentence continues with inter-',
-            0.09,
-            0.8537,
-            0.385,
-          ),
-          run(
-            1,
-            'pretation across the adjacent column boundary.',
-            0.502,
-            0.0847,
-            0.385,
-          ),
-          run(
-            1,
-            'Right-column body continues after the repaired token.',
-            0.502,
-            0.1147,
-            0.385,
-          ),
-          run(
-            1,
-            'A final right-column sentence closes the section.',
-            0.502,
-            0.1447,
-            0.385,
-          ),
-          run(
-            1,
-            'An aligned right-column row confirms the stable gutter.',
-            0.502,
-            0.2,
-            0.385,
-          ),
-          run(
-            1,
-            'Another right-column row keeps the source flow explicit.',
-            0.502,
-            0.23,
-            0.385,
-          ),
-          run(
-            1,
-            'The last aligned right-column row completes the evidence.',
-            0.502,
-            0.26,
-            0.385,
-          ),
-        ]),
+        withExplicitEnglishLanguage(
+          page(1, [
+            run(1, 'Column-boundary continuity', 0.1, 0.035, 0.8, 18),
+            run(1, '1 Introduction', 0.09, 0.12, 0.3, 14),
+            run(
+              1,
+              'A separate sentence proves interpretation as a complete token.',
+              0.09,
+              0.2,
+              0.385,
+            ),
+            run(
+              1,
+              'Left-column body establishes the source reading geometry.',
+              0.09,
+              0.23,
+              0.385,
+            ),
+            run(
+              1,
+              'A second left-column row confirms the stable gutter.',
+              0.09,
+              0.26,
+              0.385,
+            ),
+            run(
+              1,
+              'A third left-column row completes the layout evidence.',
+              0.09,
+              0.29,
+              0.385,
+            ),
+            run(
+              1,
+              'The final left-column sentence continues with inter-',
+              0.09,
+              0.8537,
+              0.385,
+            ),
+            run(
+              1,
+              'pretation across the adjacent column boundary.',
+              0.502,
+              0.0847,
+              0.385,
+            ),
+            run(
+              1,
+              'Right-column body continues after the repaired token.',
+              0.502,
+              0.1147,
+              0.385,
+            ),
+            run(
+              1,
+              'A final right-column sentence closes the section.',
+              0.502,
+              0.1447,
+              0.385,
+            ),
+            run(
+              1,
+              'An aligned right-column row confirms the stable gutter.',
+              0.502,
+              0.2,
+              0.385,
+            ),
+            run(
+              1,
+              'Another right-column row keeps the source flow explicit.',
+              0.502,
+              0.23,
+              0.385,
+            ),
+            run(
+              1,
+              'The last aligned right-column row completes the evidence.',
+              0.502,
+              0.26,
+              0.385,
+            ),
+          ]),
+        ),
       ],
       sourceHash: 'f'.repeat(64),
       fileName: 'same-page-column-wrap-hyphen.pdf',
@@ -12897,80 +16578,82 @@ describe('PDF semantic reconstruction', () => {
   it('repairs a left-to-right wrap hyphen when the proved continuation begins midway down the right column', async () => {
     const result = await reconstructPageAnalyses({
       pages: [
-        page(1, [
-          run(1, 'Mid-column continuity', 0.1, 0.035, 0.8, 18),
-          run(1, '1 Introduction', 0.09, 0.12, 0.3, 14),
-          run(
-            1,
-            'A complete operation proves the unhyphenated token.',
-            0.09,
-            0.2,
-            0.385,
-          ),
-          run(
-            1,
-            'The left column establishes stable source geometry.',
-            0.09,
-            0.28,
-            0.385,
-          ),
-          run(
-            1,
-            'Another left row keeps the source lane explicit.',
-            0.09,
-            0.36,
-            0.385,
-          ),
-          run(
-            1,
-            'Aligned left prose begins below the upper-page content.',
-            0.09,
-            0.52,
-            0.385,
-          ),
-          run(
-            1,
-            'A second aligned left row confirms the gutter.',
-            0.09,
-            0.58,
-            0.385,
-          ),
-          run(
-            1,
-            'A third aligned left row completes the proof.',
-            0.09,
-            0.64,
-            0.385,
-          ),
-          run(
-            1,
-            'The final left-column sentence completes the oper-',
-            0.09,
-            0.82,
-            0.385,
-          ),
-          run(
-            1,
-            'ation before the right-column discussion continues.',
-            0.515,
-            0.52,
-            0.385,
-          ),
-          run(
-            1,
-            'A second aligned right row confirms the gutter.',
-            0.515,
-            0.58,
-            0.385,
-          ),
-          run(
-            1,
-            'A third aligned right row completes the proof.',
-            0.515,
-            0.64,
-            0.385,
-          ),
-        ]),
+        withExplicitEnglishLanguage(
+          page(1, [
+            run(1, 'Mid-column continuity', 0.1, 0.035, 0.8, 18),
+            run(1, '1 Introduction', 0.09, 0.12, 0.3, 14),
+            run(
+              1,
+              'A complete operation proves the unhyphenated token.',
+              0.09,
+              0.2,
+              0.385,
+            ),
+            run(
+              1,
+              'The left column establishes stable source geometry.',
+              0.09,
+              0.28,
+              0.385,
+            ),
+            run(
+              1,
+              'Another left row keeps the source lane explicit.',
+              0.09,
+              0.36,
+              0.385,
+            ),
+            run(
+              1,
+              'Aligned left prose begins below the upper-page content.',
+              0.09,
+              0.52,
+              0.385,
+            ),
+            run(
+              1,
+              'A second aligned left row confirms the gutter.',
+              0.09,
+              0.58,
+              0.385,
+            ),
+            run(
+              1,
+              'A third aligned left row completes the proof.',
+              0.09,
+              0.64,
+              0.385,
+            ),
+            run(
+              1,
+              'The final left-column sentence completes the oper-',
+              0.09,
+              0.82,
+              0.385,
+            ),
+            run(
+              1,
+              'ation before the right-column discussion continues.',
+              0.515,
+              0.52,
+              0.385,
+            ),
+            run(
+              1,
+              'A second aligned right row confirms the gutter.',
+              0.515,
+              0.58,
+              0.385,
+            ),
+            run(
+              1,
+              'A third aligned right row completes the proof.',
+              0.515,
+              0.64,
+              0.385,
+            ),
+          ]),
+        ),
       ],
       sourceHash: '7'.repeat(64),
       fileName: 'same-page-mid-column-wrap-hyphen.pdf',
@@ -13606,20 +17289,28 @@ describe('PDF semantic reconstruction', () => {
             0.2,
             0.72,
           ),
-          run(
-            1,
-            'Prior datasets include WritingPrompts (Fan et al.,',
-            0.125,
-            0.3,
-            0.68,
-          ),
-          run(
-            1,
-            '2018) and STORIUM for longer-form generation.',
-            0.1,
-            0.322,
-            0.7,
-          ),
+          {
+            ...run(
+              1,
+              'Prior datasets include WritingPrompts (Fan et al.,',
+              0.125,
+              0.3,
+              0.68,
+            ),
+            sourceSequenceIndex: 500,
+          },
+          {
+            ...run(
+              1,
+              '2018) and STORIUM for longer-form generation.',
+              0.1,
+              0.322,
+              0.7,
+            ),
+            sourceSequenceIndex: 501,
+            sourceWhitespaceBefore: 'pdf-text-item',
+            sourceWhitespacePredecessorIndex: 500,
+          },
           run(
             1,
             'A following complete paragraph remains separate.',

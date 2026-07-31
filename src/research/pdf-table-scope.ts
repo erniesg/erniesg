@@ -52,6 +52,8 @@ const TABLE_BORDER_INK_PADDING = 0.004
 const MIN_COLUMN_GUTTER_WIDTH = 0.02
 const MIN_COLUMN_GUTTER_CENTRE = 0.25
 const MAX_COLUMN_GUTTER_CENTRE = 0.75
+const MIN_DOMINANT_GUTTER_SIDE_ENTRIES = 3
+const MIN_DOMINANT_GUTTER_COLUMN_AGREEMENT = 0.7
 
 export function compactTabularSlabMayFollowCaption({
   tabularSlab,
@@ -1026,6 +1028,89 @@ function candidateColumnGutter(entries: TableLineEntry[]) {
   return qualifying[0] ?? null
 }
 
+function dominantCandidateColumnGutter(
+  entries: TableLineEntry[],
+  caption: PdfPageRegion,
+  direction: DirectionalLane['direction'],
+) {
+  const captionTop = caption.box.y
+  const captionBottom = caption.box.y + caption.box.height
+  const intervals = entries
+    .map((entry) => ({
+      left: entry.line.box.x,
+      right: entry.line.box.x + entry.line.box.width,
+      column: entry.region.column,
+      captionGap:
+        direction === 'below'
+          ? Math.max(0, entry.line.box.y - captionBottom)
+          : Math.max(
+              0,
+              captionTop - (entry.line.box.y + entry.line.box.height),
+            ),
+    }))
+    .sort((left, right) => left.left - right.left)
+  if (intervals.length === 0) return null
+
+  const corridors: Array<{ from: number; to: number }> = []
+  let covered = intervals[0].right
+  for (const interval of intervals.slice(1)) {
+    if (interval.left > covered) {
+      corridors.push({ from: covered, to: interval.left })
+    }
+    covered = Math.max(covered, interval.right)
+  }
+  const adjacentGap =
+    MAX_TEXT_SLAB_CAPTION_GAP + MAX_LINE_BAND_CAPTION_GAP + BOX_TOLERANCE
+  const qualifying = corridors
+    .filter((corridor) => {
+      const width = corridor.to - corridor.from
+      const centre = (corridor.from + corridor.to) / 2
+      if (
+        width < MIN_COLUMN_GUTTER_WIDTH ||
+        centre < MIN_COLUMN_GUTTER_CENTRE ||
+        centre > MAX_COLUMN_GUTTER_CENTRE
+      ) {
+        return false
+      }
+      const before = intervals.filter((item) => item.right <= corridor.from)
+      const after = intervals.filter((item) => item.left >= corridor.to)
+      const explicitBefore = before.filter(
+        (item) => item.column === 'left' || item.column === 'right',
+      )
+      const explicitAfter = after.filter(
+        (item) => item.column === 'left' || item.column === 'right',
+      )
+      const leftAgreement =
+        explicitBefore.filter((item) => item.column === 'left').length /
+        Math.max(1, explicitBefore.length)
+      const rightAgreement =
+        explicitAfter.filter((item) => item.column === 'right').length /
+        Math.max(1, explicitAfter.length)
+      return (
+        explicitBefore.length >= MIN_DOMINANT_GUTTER_SIDE_ENTRIES &&
+        explicitAfter.length >= MIN_DOMINANT_GUTTER_SIDE_ENTRIES &&
+        leftAgreement >= MIN_DOMINANT_GUTTER_COLUMN_AGREEMENT &&
+        rightAgreement >= MIN_DOMINANT_GUTTER_COLUMN_AGREEMENT &&
+        before.some((item) => item.captionGap <= adjacentGap) &&
+        after.some((item) => item.captionGap <= adjacentGap)
+      )
+    })
+    .sort(
+      (left, right) =>
+        right.to - right.from - (left.to - left.from) || left.from - right.from,
+    )
+  if (
+    qualifying.length > 1 &&
+    qualifying[0].to -
+      qualifying[0].from -
+      (qualifying[1].to - qualifying[1].from) <=
+      BOX_TOLERANCE
+  ) {
+    return null
+  }
+  return qualifying[0] ?? null
+}
+
 function tableLineRows(entries: TableLineEntry[]) {
   const gutter = candidateColumnGutter(entries)
   const columnLane = (entry: TableLineEntry): TableColumnLane =>
@@ -1066,6 +1151,80 @@ function tableLineRows(entries: TableLineEntry[]) {
       anchors: cellAnchors(row.entries.flatMap((entry) => entry.line.runs)),
     }
   })
+}
+
+function captionOwnedTableRows(
+  captionRows: TableLineRow[],
+  candidateRows: TableLineRow[],
+): TableLineRow[] | null {
+  const captionEntryKeys = new Set(
+    captionRows.flatMap((row) =>
+      row.entries.map((entry) => tableLineEntryKey(entry)),
+    ),
+  )
+  const recoveredCaptionEntryKeys = new Set<string>()
+  const ownerLanes = new Set<TableColumnLane>()
+  for (const row of candidateRows) {
+    let ownsCaptionEntry = false
+    for (const entry of row.entries) {
+      const key = tableLineEntryKey(entry)
+      if (!captionEntryKeys.has(key)) continue
+      recoveredCaptionEntryKeys.add(key)
+      ownsCaptionEntry = true
+    }
+    if (ownsCaptionEntry) ownerLanes.add(row.lane)
+  }
+  if (
+    captionEntryKeys.size === 0 ||
+    recoveredCaptionEntryKeys.size !== captionEntryKeys.size ||
+    ownerLanes.size !== 1
+  ) {
+    return candidateRows.some((row) => row.lane !== 'full')
+      ? null
+      : candidateRows
+  }
+  const [ownerLane] = ownerLanes
+  return candidateRows.filter((row) => row.lane === ownerLane)
+}
+
+function captionOwnedTableEntries(
+  caption: PdfPageRegion,
+  captionRows: TableLineRow[],
+  candidateEntries: TableLineEntry[],
+  supplementalEntries: TableLineEntry[],
+) {
+  if (
+    caption.sourceCaptionLane ||
+    caption.column === 'left' ||
+    caption.column === 'right'
+  ) {
+    const supplementalEntryKeys = new Set(
+      supplementalEntries.map((entry) => tableLineEntryKey(entry)),
+    )
+    return candidateEntries.filter(
+      (entry) =>
+        captionOwnsTableLine(caption, entry) ||
+        supplementalEntryKeys.has(tableLineEntryKey(entry)),
+    )
+  }
+  const seedEntries = captionRows.flatMap((row) => row.entries)
+  const seedColumn =
+    seedEntries.length > 0 &&
+    seedEntries.every((entry) => entry.region.column === 'left')
+      ? 'left'
+      : seedEntries.length > 0 &&
+          seedEntries.every((entry) => entry.region.column === 'right')
+        ? 'right'
+        : null
+  if (seedColumn === null) return candidateEntries
+  const supplementalEntryKeys = new Set(
+    supplementalEntries.map((entry) => tableLineEntryKey(entry)),
+  )
+  return candidateEntries.filter(
+    (entry) =>
+      entry.region.column === seedColumn ||
+      supplementalEntryKeys.has(tableLineEntryKey(entry)),
+  )
 }
 
 function repeatedTabularAnchorCount(rows: TableLineRow[]) {
@@ -1215,6 +1374,130 @@ function lineHeightMatchesBand(
   )
 }
 
+function rowHeightMatchesBand(
+  row: TableLineRow,
+  referenceRows: TableLineRow[],
+) {
+  const referenceHeight = median(
+    referenceRows.flatMap((candidate) =>
+      candidate.entries.map((entry) => entry.line.box.height),
+    ),
+  )
+  const rowHeight = median(row.entries.map((entry) => entry.line.box.height))
+  if (referenceHeight <= 0 || rowHeight <= 0) return false
+  const ratio = rowHeight / referenceHeight
+  return (
+    ratio >= MIN_ROW_BAND_LINE_HEIGHT_RATIO &&
+    ratio <= MAX_ROW_BAND_LINE_HEIGHT_RATIO
+  )
+}
+
+function rowTypographyMatchesBand(
+  row: TableLineRow,
+  referenceRows: TableLineRow[],
+) {
+  const referenceFontNames = new Set(
+    referenceRows.flatMap((candidate) =>
+      candidate.entries.flatMap((entry) =>
+        entry.line.runs
+          .filter((run) => run.text.trim())
+          .map((run) => normalizedTableFontName(run.fontName)),
+      ),
+    ),
+  )
+  const rowFontNames = new Set(
+    row.entries.flatMap((entry) =>
+      entry.line.runs
+        .filter((run) => run.text.trim())
+        .map((run) => normalizedTableFontName(run.fontName)),
+    ),
+  )
+  return (
+    referenceFontNames.size > 0 &&
+    rowFontNames.size > 0 &&
+    [...rowFontNames].every((fontName) => referenceFontNames.has(fontName))
+  )
+}
+
+function explicitlyStyledTableRow(row: TableLineRow) {
+  const visibleRuns = row.entries.flatMap((entry) =>
+    entry.line.runs.filter((run) => run.text.trim()),
+  )
+  return visibleRuns.length > 0 && visibleRuns.every(explicitTableStyle)
+}
+
+function provedTableHeaderBodyTransition(
+  row: TableLineRow,
+  header: TableLineRow,
+) {
+  if (
+    !explicitTableHeaderRow(header) ||
+    row.anchors.length < MIN_TABULAR_ROW_ANCHORS
+  ) {
+    return false
+  }
+  const claimedHeaderAnchors = new Set<number>()
+  return row.anchors.every((anchor) => {
+    const candidates = header.anchors
+      .map((headerAnchor, index) => ({
+        index,
+        distance: Math.abs(headerAnchor - anchor),
+      }))
+      .filter(
+        (candidate) =>
+          candidate.distance <= COLUMN_ANCHOR_TOLERANCE &&
+          !claimedHeaderAnchors.has(candidate.index),
+      )
+      .sort(
+        (left, right) =>
+          left.distance - right.distance || left.index - right.index,
+      )
+    const selected = candidates[0]
+    if (!selected) return false
+    claimedHeaderAnchors.add(selected.index)
+    return true
+  })
+}
+
+function weakSlabTypographyBoundaryMatches(
+  row: TableLineRow,
+  referenceRows: TableLineRow[],
+  allowLeadingSourceHeading: boolean,
+) {
+  const labeledRecordAnchors = (candidate: TableLineRow) =>
+    candidate.entries.flatMap((entry) => {
+      if (!labeledRecordLine(entry.line)) return []
+      const labelRun = entry.line.runs.find((run) => run.text.trim())
+      return labelRun
+        ? [
+            {
+              fontName: normalizedTableFontName(labelRun.fontName),
+              x: labelRun.x,
+            },
+          ]
+        : []
+    })
+  const incomingRecordAnchors = labeledRecordAnchors(row)
+  const establishedRecordAnchors = referenceRows.flatMap(labeledRecordAnchors)
+  const crossesLabeledRecordBoundary =
+    incomingRecordAnchors.length > 0 && establishedRecordAnchors.length > 0
+  const labeledRecordTransition = incomingRecordAnchors.some((incoming) =>
+    establishedRecordAnchors.some(
+      (established) =>
+        incoming.fontName === established.fontName &&
+        Math.abs(incoming.x - established.x) <= COLUMN_ANCHOR_TOLERANCE,
+    ),
+  )
+  return (
+    (rowTypographyMatchesBand(row, referenceRows) &&
+      !crossesLabeledRecordBoundary) ||
+    labeledRecordTransition ||
+    (allowLeadingSourceHeading && explicitlyStyledTableRow(row)) ||
+    (referenceRows.length === 1 &&
+      provedTableHeaderBodyTransition(row, referenceRows[0]))
+  )
+}
+
 function captionGap(
   caption: PdfPageRegion,
   cropBox: NormalizedSourceBox,
@@ -1302,6 +1585,207 @@ function stableNumericTableBandProof(rows: TableLineRow[]) {
   )
 }
 
+function lexicalTableHeaderRow(row: TableLineRow) {
+  const runs = row.entries.flatMap((entry) =>
+    entry.line.runs.filter((run) => run.text.trim()),
+  )
+  return (
+    row.anchors.length >= MIN_TABULAR_ROW_ANCHORS &&
+    runs.length >= MIN_TABULAR_ROW_ANCHORS &&
+    runs.every((run) => /\p{L}/u.test(run.text) && !numericMetricRun(run))
+  )
+}
+
+function strongSparseExtensionBoundary(
+  row: TableLineRow,
+  precedingRows: TableLineRow[],
+) {
+  if (
+    precedingRows.length < MIN_GRID_ROWS ||
+    row.anchors.length >= MIN_TABULAR_ROW_ANCHORS
+  ) {
+    return false
+  }
+  const previous = precedingRows.at(-1)!
+  const boundaryGap = gapBetween(previous.box, row.box).vertical
+  const establishedGaps = precedingRows
+    .slice(1)
+    .map(
+      (candidate, index) =>
+        gapBetween(precedingRows[index].box, candidate.box).vertical,
+    )
+  const visibleRuns = row.entries.flatMap((entry) =>
+    entry.line.runs.filter((run) => run.text.trim()),
+  )
+  const emphasizedCharacters = visibleRuns.reduce(
+    (total, run) =>
+      total + (explicitTableStyle(run) ? run.text.trim().length : 0),
+    0,
+  )
+  const visibleCharacters = visibleRuns.reduce(
+    (total, run) => total + run.text.trim().length,
+    0,
+  )
+  return (
+    visibleCharacters > 0 &&
+    (row.entries.every((entry) => entry.region.kind === 'header') ||
+      emphasizedCharacters >= visibleCharacters * 0.6) &&
+    boundaryGap >= 0.018 &&
+    boundaryGap >= Math.max(median(establishedGaps), 0.001) * 2.5
+  )
+}
+
+function styledSparseRowSpansProvenColumns(
+  row: TableLineRow,
+  columns: Array<{ anchor: number }>,
+) {
+  const visibleRuns = row.entries.flatMap((entry) =>
+    entry.line.runs.filter((run) => run.text.trim()),
+  )
+  return (
+    visibleRuns.length > 0 &&
+    visibleRuns.every(explicitTableStyle) &&
+    visibleRuns.every((run) =>
+      columns.some(
+        (column) =>
+          column.anchor >= run.x - COLUMN_ANCHOR_TOLERANCE &&
+          column.anchor <= run.x + run.width + COLUMN_ANCHOR_TOLERANCE,
+      ),
+    )
+  )
+}
+
+// Long tables below their captions may legitimately cross the conservative
+// ordinary caption-distance cap. Extend only one continuous band whose
+// caption-adjacent header and body independently establish at least three
+// dominant columns. A competing column family or a second table after a
+// section boundary remains ambiguous.
+function stableRepeatedTableBandRows(rows: TableLineRow[]) {
+  const boundaryIndex = rows.findIndex((row, index) =>
+    strongSparseExtensionBoundary(row, rows.slice(0, index)),
+  )
+  const provenRows = boundaryIndex >= 0 ? rows.slice(0, boundaryIndex) : rows
+  const remainder = boundaryIndex >= 0 ? rows.slice(boundaryIndex + 1) : []
+  if (provenRows.length < 10) return null
+  if (
+    !explicitTableHeaderRow(provenRows[0]) &&
+    !lexicalTableHeaderRow(provenRows[0])
+  ) {
+    return null
+  }
+  if (
+    remainder.some(
+      (_row, index) => tabularLineBandProof(remainder.slice(index)) !== null,
+    )
+  ) {
+    return null
+  }
+
+  const qualifyingRows = provenRows.filter(
+    (row) => row.anchors.length >= MIN_TABULAR_ROW_ANCHORS,
+  )
+  const requiredQualifyingRows = Math.max(
+    10,
+    Math.floor(provenRows.length * 0.35) + 1,
+  )
+  if (qualifyingRows.length < requiredQualifyingRows) return null
+
+  const numericRows = qualifyingRows
+    .slice(1)
+    .filter((row) =>
+      row.entries.some((entry) => entry.line.runs.some(numericMetricRun)),
+    )
+  const requiredNumericRows = Math.max(
+    6,
+    Math.floor((qualifyingRows.length - 1) * 0.6) + 1,
+  )
+  if (numericRows.length < requiredNumericRows) return null
+
+  const columns: Array<{
+    anchor: number
+    values: number[]
+    rowIndexes: Set<number>
+  }> = []
+  for (const [rowIndex, row] of qualifyingRows.entries()) {
+    for (const anchor of row.anchors) {
+      const column = columns
+        .map((candidate) => ({
+          candidate,
+          distance: Math.abs(candidate.anchor - anchor),
+        }))
+        .filter(({ distance }) => distance <= COLUMN_ANCHOR_TOLERANCE)
+        .sort(
+          (left, right) =>
+            left.distance - right.distance ||
+            left.candidate.anchor - right.candidate.anchor,
+        )[0]?.candidate
+      if (column) {
+        column.values.push(anchor)
+        column.anchor = median(column.values)
+        column.rowIndexes.add(rowIndex)
+      } else {
+        columns.push({
+          anchor,
+          values: [anchor],
+          rowIndexes: new Set([rowIndex]),
+        })
+      }
+    }
+  }
+  const requiredColumnRows = Math.max(
+    8,
+    Math.floor(qualifyingRows.length * 0.7) + 1,
+  )
+  const dominantColumns = columns.filter(
+    (column) => column.rowIndexes.size >= requiredColumnRows,
+  )
+  if (dominantColumns.length < MIN_TABULAR_ROW_ANCHORS) return null
+  const alignedRows = qualifyingRows.filter((row) => {
+    const claimedColumns = new Set<number>()
+    const alignedAnchors = row.anchors.filter((anchor) => {
+      const match = dominantColumns
+        .map((column, index) => ({
+          index,
+          distance: Math.abs(column.anchor - anchor),
+        }))
+        .filter(
+          (candidate) =>
+            candidate.distance <= COLUMN_ANCHOR_TOLERANCE &&
+            !claimedColumns.has(candidate.index),
+        )
+        .sort(
+          (left, right) =>
+            left.distance - right.distance || left.index - right.index,
+        )[0]
+      if (!match) return false
+      claimedColumns.add(match.index)
+      return true
+    })
+    return alignedAnchors.length >= MIN_TABULAR_ROW_ANCHORS
+  })
+  const requiredAlignedRows = Math.max(
+    8,
+    Math.floor(qualifyingRows.length * 0.7) + 1,
+  )
+  if (alignedRows.length < requiredAlignedRows) return null
+  const sparseRows = provenRows.filter(
+    (row) =>
+      row.anchors.length > 0 && row.anchors.length < MIN_TABULAR_ROW_ANCHORS,
+  )
+  const ownedSparseRows = sparseRows.filter(
+    (row) =>
+      row.anchors.every((anchor) =>
+        dominantColumns.some(
+          (column) =>
+            Math.abs(column.anchor - anchor) <= COLUMN_ANCHOR_TOLERANCE,
+        ),
+      ) || styledSparseRowSpansProvenColumns(row, dominantColumns),
+  )
+  const requiredOwnedSparseRows =
+    sparseRows.length === 0 ? 0 : Math.floor(sparseRows.length * 0.8) + 1
+  return ownedSparseRows.length >= requiredOwnedSparseRows ? provenRows : null
+}
+
 type ExtendedTabularLaneDecision = {
   lane: DirectionalLane | null
   truncatedAtCaptionDistance: boolean
@@ -1387,6 +1871,108 @@ function extendedNumericAboveTableLane(
     truncatedAtCaptionDistance: crossingBands.length > 0,
     crossingLineIds: lineIds(crossingBands),
     provenLineIds: provenBands.length === 1 ? lineIds(provenBands) : [],
+  }
+}
+
+function extendedRepeatedBelowTableLane(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+  lanes: DirectionalLane[],
+): ExtendedTabularLaneDecision {
+  const standardBelow = lanes.find((lane) => lane.direction === 'below')!
+  const completeBelow = completeBelowCaptionLane(caption, pageRegions)
+  const none = {
+    lane: null,
+    truncatedAtCaptionDistance: false,
+    crossingLineIds: [],
+    provenLineIds: [],
+  } satisfies ExtendedTabularLaneDecision
+  if (completeBelow.bottom <= standardBelow.bottom + BOX_TOLERANCE) return none
+
+  const entries = pageRegions
+    .filter(
+      (region) =>
+        region.page === caption.page &&
+        region.id !== caption.id &&
+        region.kind !== 'caption' &&
+        region.kind !== 'page-number' &&
+        region.includedInReadingOrder !== false &&
+        region.lines.length > 0 &&
+        region.text.trim().length > 0 &&
+        region.nativeObjectIds.length === 0 &&
+        (eligibleTableTextRegion(region) || region.kind === 'header') &&
+        validBox(region.box),
+    )
+    .flatMap<TableLineEntry>((region) =>
+      region.lines
+        .map((line) => ({ region, line }))
+        .filter(
+          (entry) =>
+            validTableLineEntry(entry) &&
+            boxWithinLane(entry.line.box, completeBelow) &&
+            captionOwnsTableLine(caption, entry),
+        ),
+    )
+  const crossingBands = tableLineBands(tableLineRows(entries)).filter(
+    (rows) => {
+      const boxes = rows.map((row) => row.box)
+      const cropBox = unionBoxes(
+        boxes,
+        boxes.some((sourceBox) => sourceBox.method === 'ocr')
+          ? 'ocr'
+          : 'pdf-text',
+      )
+      const rowsInsideStandardLane = rows.filter(
+        (row) => row.box.y <= standardBelow.bottom + BOX_TOLERANCE,
+      )
+      const denseRowsInsideStandardLane = rowsInsideStandardLane.filter(
+        (row) => row.anchors.length >= MIN_TABULAR_ROW_ANCHORS,
+      )
+      return (
+        rows.some(
+          (row) =>
+            row.box.y + row.box.height > standardBelow.bottom + BOX_TOLERANCE,
+        ) &&
+        (tabularLineBandProof(rowsInsideStandardLane) !== null ||
+          tabularLineBandProof(denseRowsInsideStandardLane) !== null) &&
+        captionGap(caption, cropBox, 'below') <=
+          MAX_LINE_BAND_CAPTION_GAP + BOX_TOLERANCE &&
+        cropBox.width >= MIN_LINE_BAND_WIDTH &&
+        cropBox.height >= MIN_LINE_BAND_HEIGHT &&
+        cropBox.width * cropBox.height <= MAX_LINE_BAND_AREA &&
+        horizontalOverlap(caption.box, cropBox) /
+          Math.min(caption.box.width, cropBox.width) >=
+          MIN_CAPTION_HORIZONTAL_COVERAGE
+      )
+    },
+  )
+  const provenBands = crossingBands.flatMap((rows) => {
+    const provenRows = stableRepeatedTableBandRows(rows)
+    return provenRows ? [provenRows] : []
+  })
+  const lineIds = (bands: TableLineRow[][]) =>
+    [
+      ...new Set(
+        bands.flatMap((rows) =>
+          rows.flatMap((row) => row.entries.map((entry) => entry.line.id)),
+        ),
+      ),
+    ].sort()
+  const provenRows = provenBands.length === 1 ? provenBands[0] : null
+  const provenBottom = provenRows
+    ? Math.max(...provenRows.map((row) => row.box.y + row.box.height))
+    : null
+  return {
+    lane:
+      provenBottom === null
+        ? null
+        : {
+            ...completeBelow,
+            bottom: rounded(provenBottom),
+          },
+    truncatedAtCaptionDistance: crossingBands.length > 0,
+    crossingLineIds: lineIds(crossingBands),
+    provenLineIds: provenRows ? lineIds([provenRows]) : [],
   }
 }
 
@@ -1831,7 +2417,15 @@ function textGridCandidates(
         eligibleTableTextRegion(region) &&
         validBox(region.box) &&
         boxWithinLane(region.box, lane) &&
-        overlapsCaption(caption, region.box),
+        overlapsCaption(caption, region.box) &&
+        (!(
+          caption.sourceCaptionLane ||
+          caption.column === 'left' ||
+          caption.column === 'right'
+        ) ||
+          region.lines.every((line) =>
+            captionOwnsTableLine(caption, { region, line }),
+          )),
     )
     const independentlyProven = eligible.filter(
       (region) => gridProof([region]) !== null,
@@ -1955,7 +2549,14 @@ function closeProvenTableLineBand(
         .map((line) => ({ region, line }))
         .filter(
           (entry) =>
-            validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+            validTableLineEntry(entry) &&
+            boxWithinLane(entry.line.box, lane) &&
+            (!(
+              caption.sourceCaptionLane ||
+              caption.column === 'left' ||
+              caption.column === 'right'
+            ) ||
+              captionOwnsTableLine(caption, entry)),
         ),
     )
   let changed = true
@@ -2038,7 +2639,126 @@ function normalizedTableFontName(value: string) {
     )
 }
 
+function sourceCaptionLaneOwnsBox(
+  caption: PdfPageRegion,
+  sourceBox: NormalizedSourceBox,
+) {
+  const lane = caption.sourceCaptionLane
+  if (!lane) return null
+  const left = sourceBox.x
+  const right = sourceBox.x + sourceBox.width
+  if (
+    left < lane.boundary - BOX_TOLERANCE &&
+    right > lane.boundary + BOX_TOLERANCE
+  ) {
+    return false
+  }
+  const center = left + sourceBox.width / 2
+  return lane.side === 'left'
+    ? center <= lane.boundary + BOX_TOLERANCE
+    : center >= lane.boundary - BOX_TOLERANCE
+}
+
+function inferredLocalCaptionLane(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+) {
+  if (
+    caption.sourceCaptionLane ||
+    !['single', 'span'].includes(caption.column)
+  ) {
+    return null
+  }
+  const regionOwnsPageLane = (
+    region: PdfPageRegion,
+    column: 'left' | 'right',
+  ) =>
+    region.id !== caption.id &&
+    region.page === caption.page &&
+    region.column === column &&
+    region.lines.length > 0 &&
+    validBox(region.box)
+  const leftEdges = pageRegions
+    .filter((region) => regionOwnsPageLane(region, 'left'))
+    .map((region) => region.box.x + region.box.width)
+  const rightEdges = pageRegions
+    .filter((region) => regionOwnsPageLane(region, 'right'))
+    .map((region) => region.box.x)
+  const exactBoundary =
+    leftEdges.length > 0 && rightEdges.length > 0
+      ? {
+          left: Math.max(...leftEdges),
+          right: Math.min(...rightEdges),
+        }
+      : null
+  const exactProvesGutter =
+    exactBoundary !== null &&
+    exactBoundary.left <= exactBoundary.right + BOX_TOLERANCE
+  const captionLaneAtBoundary = (boundary: number) => {
+    const captionLeft = caption.box.x
+    const captionRight = caption.box.x + caption.box.width
+    if (captionRight <= boundary + BOX_TOLERANCE) {
+      return { boundary, side: 'left' as const }
+    }
+    if (captionLeft >= boundary - BOX_TOLERANCE) {
+      return { boundary, side: 'right' as const }
+    }
+    return null
+  }
+  const exactLane = exactProvesGutter
+    ? captionLaneAtBoundary(
+        rounded((exactBoundary!.left + exactBoundary!.right) / 2),
+      )
+    : null
+  if (exactLane) return exactLane
+
+  // Region extrema can prove an internal table-column gap instead of the page
+  // gutter when the first table column inherits the neighbouring prose
+  // column's label. If that boundary cuts through the caption, fall back to
+  // exact source-line corridors. Page furniture is not content geometry and
+  // cannot witness a scholarly caption lane.
+  const directionalGutterCenters = [
+    completeAboveCaptionLane(caption, pageRegions),
+    completeBelowCaptionLane(caption, pageRegions),
+  ].flatMap((lane) => {
+    const entries = pageRegions
+      .filter(
+        (region) =>
+          region.id !== caption.id &&
+          region.page === caption.page &&
+          region.kind !== 'caption' &&
+          region.includedInReadingOrder !== false &&
+          region.lines.length > 0,
+      )
+      .flatMap<TableLineEntry>((region) =>
+        region.lines
+          .map((line) => ({ region, line }))
+          .filter(
+            (entry) =>
+              validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+          ),
+      )
+    const gutter = dominantCandidateColumnGutter(
+      entries,
+      caption,
+      lane.direction,
+    )
+    return gutter ? [(gutter.from + gutter.to) / 2] : []
+  })
+  if (
+    directionalGutterCenters.length === 0 ||
+    Math.max(...directionalGutterCenters) -
+      Math.min(...directionalGutterCenters) >
+      BOX_TOLERANCE
+  ) {
+    return null
+  }
+  return captionLaneAtBoundary(rounded(median(directionalGutterCenters)))
+}
+
 function captionOwnsTableLine(caption: PdfPageRegion, entry: TableLineEntry) {
+  const localLaneOwnership = sourceCaptionLaneOwnsBox(caption, entry.line.box)
+  if (localLaneOwnership !== null) return localLaneOwnership
   if (caption.column === 'left' || caption.column === 'right') {
     return entry.region.column === caption.column
   }
@@ -2047,6 +2767,30 @@ function captionOwnsTableLine(caption: PdfPageRegion, entry: TableLineEntry) {
     center >= caption.box.x - MAX_LINE_BAND_CAPTION_GAP &&
     center <= caption.box.x + caption.box.width + MAX_LINE_BAND_CAPTION_GAP
   )
+}
+
+function captionOwnsTextSlabLine(
+  caption: PdfPageRegion,
+  entry: TableLineEntry,
+) {
+  const localLaneOwnership = sourceCaptionLaneOwnsBox(caption, entry.line.box)
+  if (localLaneOwnership !== null) return localLaneOwnership
+  if (
+    (caption.column === 'left' && entry.region.column === 'right') ||
+    (caption.column === 'right' && entry.region.column === 'left')
+  ) {
+    return false
+  }
+  if (caption.column === 'span') return true
+  if (caption.column === 'single') {
+    return entry.region.column === 'single' || entry.region.column === 'span'
+  }
+  const center = entry.line.box.x + entry.line.box.width / 2
+  const laneTolerance =
+    MAX_LINE_BAND_CAPTION_GAP + MAX_TEXT_SLAB_CAPTION_GAP + BOX_TOLERANCE
+  return caption.column === 'left'
+    ? center <= caption.box.x + caption.box.width + laneTolerance
+    : center >= caption.box.x - laneTolerance
 }
 
 function lineMatchesTableTypography(
@@ -2151,6 +2895,10 @@ function completeTextScopeWithinCaptionLane(
     scope.direction === 'above'
       ? completeAboveCaptionLane(caption, pageRegions)
       : completeBelowCaptionLane(caption, pageRegions)
+  const captionOwnsCandidateLine = (entry: TableLineEntry) =>
+    scope.proof === 'caption-bounded-text-slab' && scope.direction === 'below'
+      ? captionOwnsTextSlabLine(caption, entry)
+      : captionOwnsTableLine(caption, entry)
   const candidates = pageRegions
     .filter(
       (region) =>
@@ -2171,7 +2919,7 @@ function completeTextScopeWithinCaptionLane(
             !selected.has(tableLineEntryKey(entry)) &&
             validTableLineEntry(entry) &&
             boxWithinLane(entry.line.box, lane) &&
-            captionOwnsTableLine(caption, entry),
+            captionOwnsCandidateLine(entry),
         ),
     )
   if (candidates.length === 0) return none
@@ -2207,7 +2955,10 @@ function completeTextScopeWithinCaptionLane(
 
   // Complete contiguous tabular rows between the proved body and its caption.
   // Encountering non-tabular source flow in that corridor invalidates this
-  // candidate instead of silently cropping through the prose.
+  // candidate instead of silently cropping through the prose. Cross-type
+  // figure ownership is removed from the available source-line set before
+  // this completion pass; font-family changes within a real table are not
+  // reliable ownership boundaries.
   let unsafe = false
   while (true) {
     const crop = unionBoxes(
@@ -2230,6 +2981,18 @@ function completeTextScopeWithinCaptionLane(
           )[0]
     if (!next) break
     if (gapBetween(crop, next.box).vertical > MAX_ATOMIC_ROW_GAP) break
+    if (
+      scope.proof === 'caption-bounded-text-slab' &&
+      scope.direction === 'below' &&
+      (!rowHeightMatchesBand(next, tableLineRows(currentEntries())) ||
+        !weakSlabTypographyBoundaryMatches(
+          next,
+          tableLineRows(currentEntries()),
+          false,
+        ))
+    ) {
+      break
+    }
     const tableTypography = next.entries.every((entry) =>
       lineMatchesTableTypography(entry, selectedFontNames),
     )
@@ -2536,15 +3299,30 @@ function tabularLineBandCandidates(
       // overlapping lines, then close only that already-proven vertical span
       // across the page. This recovers atomized left/right cells without
       // extending into adjacent prose rows or another caption lane.
-      const rows = tableLineRows(
-        scopedLaneEntries.filter(
-          (entry) =>
-            entry.line.box.y >= bandTop - BOX_TOLERANCE &&
-            entry.line.box.y + entry.line.box.height <=
-              bandBottom + BOX_TOLERANCE &&
-            lineHeightMatchesBand(entry.line, captionLineHeights),
+      const boundedBandEntries = scopedLaneEntries.filter(
+        (entry) =>
+          entry.line.box.y >= bandTop - BOX_TOLERANCE &&
+          entry.line.box.y + entry.line.box.height <=
+            bandBottom + BOX_TOLERANCE &&
+          lineHeightMatchesBand(entry.line, captionLineHeights),
+      )
+      const candidateRows = tableLineRows(
+        captionOwnedTableEntries(
+          caption,
+          captionRows,
+          boundedBandEntries,
+          supplementalEquationCells.entries,
         ),
       )
+      // Re-evaluate the page gutter after collecting the full vertical band.
+      // The caption-overlapping seed may contain only one column and therefore
+      // cannot prove a gutter by itself. Once the complete band proves two
+      // lanes, retain only the lane containing every exact seed entry. This
+      // prevents an adjacent figure or prose column at the same y coordinates
+      // from becoming table source while preserving full-width tables when no
+      // source-backed gutter exists.
+      const rows = captionOwnedTableRows(captionRows, candidateRows)
+      if (!rows) continue
       const proof = tabularLineBandProof(rows)
       if (!proof) continue
       const selectedEntries = closeProvenTableLineBand(
@@ -2707,7 +3485,10 @@ function captionBoundedTextSlabCandidates(
           .map((line) => ({ region, line }))
           .filter(
             (entry) =>
-              validTableLineEntry(entry) && boxWithinLane(entry.line.box, lane),
+              validTableLineEntry(entry) &&
+              boxWithinLane(entry.line.box, lane) &&
+              (lane.direction === 'above' ||
+                captionOwnsTextSlabLine(caption, entry)),
           ),
       )
     const rows = tableLineRows(entries)
@@ -2730,7 +3511,11 @@ function captionBoundedTextSlabCandidates(
       const current =
         lane.direction === 'above' ? selectedRows[0] : selectedRows.at(-1)!
       if (
-        gapBetween(candidate.box, current.box).vertical > MAX_TEXT_SLAB_ROW_GAP
+        gapBetween(candidate.box, current.box).vertical >
+          MAX_TEXT_SLAB_ROW_GAP ||
+        (lane.direction === 'below' &&
+          (!rowHeightMatchesBand(candidate, selectedRows) ||
+            !weakSlabTypographyBoundaryMatches(candidate, selectedRows, false)))
       ) {
         break
       }
@@ -3596,7 +4381,7 @@ function unscopedAdjacentTableHeaderLineIds(
  * grid. Semantic table validation intentionally remains a separate operation.
  */
 export function resolvePdfTableScope({
-  caption,
+  caption: inputCaption,
   pageRegions,
   nativeObjects,
 }: {
@@ -3604,14 +4389,18 @@ export function resolvePdfTableScope({
   pageRegions: PdfPageRegion[]
   nativeObjects: PdfNativeObject[]
 }): PdfTableScopeResolution {
-  if (!isTableCaption(caption) || !validBox(caption.box)) {
+  if (!isTableCaption(inputCaption) || !validBox(inputCaption.box)) {
     return unresolved(
-      caption,
+      inputCaption,
       'invalid-caption',
       [],
       ['table-caption-region-required'],
     )
   }
+  const localCaptionLane = inferredLocalCaptionLane(inputCaption, pageRegions)
+  const caption = localCaptionLane
+    ? { ...inputCaption, sourceCaptionLane: localCaptionLane }
+    : inputCaption
   const regions = [...pageRegions].sort((left, right) =>
     left.id.localeCompare(right.id),
   )
@@ -3619,25 +4408,42 @@ export function resolvePdfTableScope({
     left.id.localeCompare(right.id),
   )
   const lanes = directionalLanes(caption, regions)
-  const extendedTabularLane = extendedNumericAboveTableLane(
+  const extendedAboveTabularLane = extendedNumericAboveTableLane(
     caption,
     regions,
     lanes,
   )
-  const provenExtendedLineIds = new Set(extendedTabularLane.provenLineIds)
-  const textGrids = textGridCandidates(caption, regions, lanes).filter(
-    (candidate) =>
-      !extendedTabularLane.lane ||
-      candidate.direction !== 'above' ||
-      !candidate.sourceLineIds.some((lineId) =>
-        provenExtendedLineIds.has(lineId),
-      ),
+  const extendedBelowTabularLane = extendedRepeatedBelowTableLane(
+    caption,
+    regions,
+    lanes,
   )
-  const tabularLanes = extendedTabularLane.lane
-    ? lanes.map((lane) =>
-        lane.direction === 'above' ? extendedTabularLane.lane! : lane,
+  const extendedTabularLanes = [
+    extendedAboveTabularLane,
+    extendedBelowTabularLane,
+  ]
+  const provenExtendedLineIds = new Set(
+    extendedTabularLanes.flatMap((decision) => decision.provenLineIds),
+  )
+  const textGrids = textGridCandidates(caption, regions, lanes).filter(
+    (candidate) => {
+      const extended = extendedTabularLanes.find(
+        (decision) => decision.lane?.direction === candidate.direction,
       )
-    : lanes
+      return (
+        !extended?.lane ||
+        !candidate.sourceLineIds.some((lineId) =>
+          provenExtendedLineIds.has(lineId),
+        )
+      )
+    },
+  )
+  const tabularLanes = lanes.map(
+    (lane) =>
+      extendedTabularLanes.find(
+        (decision) => decision.lane?.direction === lane.direction,
+      )?.lane ?? lane,
+  )
   const tabularLineBands = tabularLineBandCandidates(
     caption,
     regions,
@@ -3721,12 +4527,20 @@ export function resolvePdfTableScope({
       ),
     ),
   ].sort()
-  const truncatedLineIds = new Set(extendedTabularLane.crossingLineIds)
-  const captionDistanceTruncatesCandidate = (candidate: PdfTableScope) =>
-    extendedTabularLane.truncatedAtCaptionDistance &&
-    !extendedTabularLane.lane &&
-    candidate.direction === 'above' &&
-    candidate.sourceLineIds.some((lineId) => truncatedLineIds.has(lineId))
+  const captionDistanceTruncatesCandidate = (candidate: PdfTableScope) => {
+    const extended = extendedTabularLanes.find(
+      (decision) =>
+        decision.truncatedAtCaptionDistance &&
+        !decision.lane &&
+        candidate.direction ===
+          (decision === extendedAboveTabularLane ? 'above' : 'below'),
+    )
+    if (!extended) return false
+    const truncatedLineIds = new Set(extended.crossingLineIds)
+    return candidate.sourceLineIds.some((lineId) =>
+      truncatedLineIds.has(lineId),
+    )
+  }
   const unprovenStartCandidates = headerCompleteCandidates.filter(
     (candidate) =>
       unprovenPageTopTableStart(candidate, regionsById) ||

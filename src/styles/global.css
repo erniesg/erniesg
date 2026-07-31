@@ -338,8 +338,18 @@
     min-height: 0;
     min-width: 0;
   }
-  .srt-paper [data-pagination-scale] {
-    zoom: var(--srt-pagination-scale);
+  .srt-pagination-fallback-frame {
+    position: relative;
+    height: var(--srt-pagination-frame-height);
+    overflow: clip;
+  }
+  .srt-pagination-fallback-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: calc(100% / var(--srt-pagination-scale));
+    transform: scale(var(--srt-pagination-scale));
+    transform-origin: top left;
   }
   .srt-paper h2 {
     @apply font-normal;

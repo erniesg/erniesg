@@ -4,6 +4,10 @@ import {
   EPUB_EXPORT_POLICY_VERSION,
   type EpubExport,
 } from '../../research/epub'
+import type {
+  PdfLineBoundaryDecision,
+  PdfPageRegion,
+} from '../../research/import-types'
 import {
   getTargetProfile,
   TARGET_PROFILE_VERSION,
@@ -20,6 +24,7 @@ import PublicationImporter, {
   importErrorCode,
   importErrorMessage,
   isSelectedEpubPreviewReady,
+  lineJoinAdjudicationItems,
   LineJoinAdjudicationCard,
   shouldReloadStaleApplicationModule,
 } from './PublicationImporter'
@@ -118,6 +123,66 @@ describe('publication importer OCR controls', () => {
     expect(markup).toContain('Preserve authored hyphen')
     expect(markup).toContain('Leave unresolved')
     expect(markup).not.toContain('aria-pressed="true"')
+  })
+
+  it('surfaces unresolved and ambiguous line joins for owner adjudication', () => {
+    const region: PdfPageRegion = {
+      id: 'page-001-region-001',
+      page: 1,
+      kind: 'body',
+      column: 'single',
+      text: 'one-two-three-four',
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.7,
+        height: 0.08,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines: ['one-', 'two-', 'three-', 'four'].map((text, index) => ({
+        id: `line-${index + 1}`,
+        text,
+        fontSize: 10,
+        box: {
+          page: 1,
+          x: 0.1,
+          y: 0.2 + index * 0.02,
+          width: 0.7,
+          height: 0.02,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [],
+      })),
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const outcomes = [
+      'ambiguous',
+      'unresolved',
+      'preserved-lexical-hyphen',
+    ] as const
+    const lineBoundaryDecisions: PdfLineBoundaryDecision[] = outcomes.map(
+      (outcome, index) => ({
+        id: `transition-${index + 1}`,
+        page: 1,
+        regionId: region.id,
+        fromLineId: region.lines[index].id,
+        toLineId: region.lines[index + 1].id,
+        outcome,
+        evidence: ['source-form-preserved'],
+      }),
+    )
+
+    expect(
+      lineJoinAdjudicationItems({
+        regions: [region],
+        lineBoundaryDecisions,
+      }).map(({ transition }) => transition.outcome),
+    ).toEqual(['ambiguous', 'unresolved'])
   })
 
   it('withholds the selected download until that exact EPUB preview is ready', () => {

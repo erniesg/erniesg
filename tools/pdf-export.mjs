@@ -47,6 +47,8 @@ import {
 } from './pdf-ocr-engines.mjs'
 
 const DEFAULT_TARGETS = ['paperPro', 'paperProMove']
+export const DEFAULT_DOCUMENT_CONCURRENCY = 2
+export const MAX_DOCUMENT_CONCURRENCY = 2
 export const DEFAULT_DOCUMENT_TIMEOUT_SECONDS = 900
 export const MAX_STAGED_EPUB_BYTES = 256 * 1024 * 1024
 export const MAX_STAGED_DOCUMENT_BYTES = 512 * 1024 * 1024
@@ -57,16 +59,22 @@ const MAX_DOCUMENT_TIMEOUT_SECONDS = 86_400
 const DOCUMENT_WORKER_ARGUMENT = '--internal-pdf-export-document-worker'
 const DOCUMENT_WORKER_RESULT = 'pdf-export-document-result-v1'
 const DOCUMENT_WORKER_FATAL = 'pdf-export-document-fatal-v1'
+const DOCUMENT_WORKER_HEARTBEAT = 'pdf-export-document-heartbeat-v1'
+const MAX_DOCUMENT_TELEMETRY_STAGES = 64
+const SAFE_TELEMETRY_LABEL = /^[a-z0-9][a-z0-9-]{0,63}$/u
 const PDF_DOCUMENT_TIMEOUT = 'PDF_DOCUMENT_TIMEOUT'
+const PDF_DOCUMENT_STALLED = 'PDF_DOCUMENT_STALLED'
 const PDF_DOCUMENT_WORKER_FAILED = 'PDF_DOCUMENT_WORKER_FAILED'
 const SAFE_SYMBOLIC_EXPORT_FAILURE_CODES = new Set([
   'EPUBCHECK_FAILED',
   'EPUBCHECK_REQUIRED',
   'EXPORT_STAGING_INVALID',
+  'INCOMPLETE_RECONSTRUCTION',
   'INVALID_PDF_CORPUS_REPORT',
   'OUTPUT_DIRECTORY_NOT_EMPTY',
   'OUTPUT_DIRECTORY_MUST_BE_ABSENT',
   'PDF_CORPUS_CONTRACT_MISMATCH',
+  'PDF_EXPORT_CANCELLED',
   'PDF_CORPUS_PROVENANCE_CHANGED_DURING_RUN',
   'UNKNOWN_PROFILE',
 ])
@@ -77,6 +85,8 @@ let temporaryFileSequence = 0
 let failureStage = 'startup'
 
 function safeFailureCode(error) {
+  const typedCode = error instanceof Error ? error.code : undefined
+  if (SAFE_SYMBOLIC_EXPORT_FAILURE_CODES.has(typedCode)) return typedCode
   const message = error instanceof Error ? error.message : ''
   const symbolicCode = message.match(/^([A-Z][A-Z0-9_]+)(?::|$)/)?.[1]
   if (symbolicCode && SAFE_SYMBOLIC_EXPORT_FAILURE_CODES.has(symbolicCode)) {
@@ -141,7 +151,7 @@ function recordDocumentExportFailure(document, error) {
 }
 
 function usage() {
-  return `Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--ocr-engine <${HEADLESS_OCR_ENGINES.join('|')}>] [--ocr-remote-opt-in] [--document-visibility <private|public>] [--readable-fallback] [--require-epubcheck] [--document-timeout-seconds <1-86400>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] --out <directory>\n`
+  return `Usage: npm run pdf:export -- <pdf-or-directory> [--target <profile>]... [--concurrency <1-${MAX_DOCUMENT_CONCURRENCY}>] [--ocr-engine <${HEADLESS_OCR_ENGINES.join('|')}>] [--ocr-remote-opt-in] [--document-visibility <private|public>] [--readable-fallback] [--require-epubcheck] [--document-timeout-seconds <1-86400>] [--corpus-contract <contract.json> --corpus-set <frozen|seededRandom>] --out <directory>\n`
 }
 
 function parsePositiveInteger(value, maximum) {
@@ -160,6 +170,7 @@ export function parseArguments(arguments_) {
   let readableFallback = false
   let requireEpubCheck = false
   let documentTimeoutSeconds = null
+  let concurrency = null
   let corpusContractPath = null
   let corpusSet = null
   let ocrEngine = null
@@ -196,6 +207,23 @@ export function parseArguments(arguments_) {
     }
     if (argument === '--require-epubcheck') {
       requireEpubCheck = true
+      continue
+    }
+    if (argument === '--concurrency') {
+      if (concurrency !== null) throw new Error('INVALID_USAGE')
+      concurrency = parsePositiveInteger(
+        arguments_[index + 1],
+        MAX_DOCUMENT_CONCURRENCY,
+      )
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--concurrency=')) {
+      if (concurrency !== null) throw new Error('INVALID_USAGE')
+      concurrency = parsePositiveInteger(
+        argument.slice('--concurrency='.length),
+        MAX_DOCUMENT_CONCURRENCY,
+      )
       continue
     }
     if (argument === '--ocr-engine') {
@@ -289,6 +317,7 @@ export function parseArguments(arguments_) {
     outputDirectory: resolve(outputDirectory),
     readableFallback,
     requireEpubCheck,
+    concurrency: concurrency ?? DEFAULT_DOCUMENT_CONCURRENCY,
     documentTimeoutSeconds:
       documentTimeoutSeconds ?? DEFAULT_DOCUMENT_TIMEOUT_SECONDS,
     corpusContractPath,
@@ -412,10 +441,18 @@ async function writeAtomically(path, bytes) {
 }
 
 export async function createPdfCorpusReportValidator() {
-  const [legacySchema, ocrSchema, provenanceSchema] = await Promise.all(
+  const [
+    legacySchema,
+    ocrSchema,
+    previousProvenanceSchema,
+    previousExactHeadSchema,
+    provenanceSchema,
+  ] = await Promise.all(
     [
       PDF_CORPUS_REPORT_SCHEMA_PATH,
       PDF_CORPUS_REPORT_OCR_SCHEMA_PATH,
+      'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+      'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
       PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH,
     ].map(async (path) =>
       JSON.parse(
@@ -426,7 +463,14 @@ export async function createPdfCorpusReportValidator() {
   const ajv = new Ajv2020({ strict: false })
   const legacyValidator = ajv.compile(legacySchema)
   const ocrValidator = ajv.compile(ocrSchema)
+  ajv.addSchema(previousProvenanceSchema)
+  const previousExactHeadValidator = ajv.compile(previousExactHeadSchema)
   const provenanceValidator = ajv.compile(provenanceSchema)
+  const documentValidator = ajv.compile({
+    $schema: provenanceSchema.$schema,
+    $defs: provenanceSchema.$defs,
+    ...provenanceSchema.$defs.auditedDocument,
+  })
   const validators = new Map([
     [
       `${PDF_CORPUS_REPORT_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_SCHEMA_PATH}`,
@@ -435,6 +479,10 @@ export async function createPdfCorpusReportValidator() {
     [
       `${PDF_CORPUS_REPORT_OCR_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_OCR_SCHEMA_PATH}`,
       ocrValidator,
+    ],
+    [
+      '1.8.0\0docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+      previousExactHeadValidator,
     ],
     [
       `${PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH}`,
@@ -450,6 +498,7 @@ export async function createPdfCorpusReportValidator() {
     return valid
   }
   validate.errors = null
+  validate.document = (document) => documentValidator(document)
   return validate
 }
 
@@ -485,11 +534,7 @@ function validWorkerDocument(document, path, policy, reportValidator) {
     ) {
       return false
     }
-    assertValidCorpusReport(
-      createCorpusReport([document], policy),
-      reportValidator,
-    )
-    return true
+    return reportValidator.document(document)
   } catch {
     return false
   }
@@ -582,6 +627,33 @@ function validWorkerMessage(message) {
       !Array.isArray(message.document)
     )
   }
+  if (message.type === DOCUMENT_WORKER_HEARTBEAT) {
+    return (
+      hasExactKeys(message, [
+        'type',
+        'stage',
+        'checkpoint',
+        'completed',
+        'total',
+        'elapsedMs',
+        'rssBytes',
+        'heapUsedBytes',
+        'userCpuMicros',
+        'systemCpuMicros',
+      ]) &&
+      SAFE_TELEMETRY_LABEL.test(message.stage) &&
+      SAFE_TELEMETRY_LABEL.test(message.checkpoint) &&
+      [message.completed, message.total, message.elapsedMs].every(
+        (value) => Number.isSafeInteger(value) && value >= 0,
+      ) &&
+      [
+        message.rssBytes,
+        message.heapUsedBytes,
+        message.userCpuMicros,
+        message.systemCpuMicros,
+      ].every((value) => Number.isSafeInteger(value) && value >= 0)
+    )
+  }
   return (
     hasExactKeys(message, ['type', 'code']) &&
     message.type === DOCUMENT_WORKER_FATAL &&
@@ -591,11 +663,23 @@ function validWorkerMessage(message) {
 
 export function runIsolatedPdfExportJob(
   job,
-  { timeoutMs, workerModule = fileURLToPath(import.meta.url) } = {},
+  {
+    timeoutMs,
+    heartbeatTimeoutMs = timeoutMs > 30_000 ? 30_000 : null,
+    signal,
+    workerModule = fileURLToPath(import.meta.url),
+  } = {},
 ) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
     throw new Error('INVALID_DOCUMENT_TIMEOUT')
   }
+  if (
+    heartbeatTimeoutMs !== null &&
+    (!Number.isSafeInteger(heartbeatTimeoutMs) || heartbeatTimeoutMs < 1)
+  ) {
+    throw new Error('INVALID_HEARTBEAT_TIMEOUT')
+  }
+  if (signal?.aborted) return Promise.resolve({ status: 'cancelled' })
 
   return new Promise((resolveResult) => {
     const detached = process.platform !== 'win32'
@@ -610,22 +694,114 @@ export function runIsolatedPdfExportJob(
     let protocolFailed = false
     let spawnFailed = false
     let timedOut = false
+    let stalled = false
+    let cancelled = false
     let settled = false
+    let heartbeatTimer = null
+    let heartbeatCount = 0
+    let maximumRssBytes = 0
+    let maximumHeapUsedBytes = 0
+    let lastHeartbeat = null
+    const stages = new Map()
 
     const timeout = setTimeout(() => {
       timedOut = true
       killWorkerProcessTree(child)
     }, timeoutMs)
+    const armHeartbeatWatchdog = () => {
+      if (heartbeatTimeoutMs === null) return
+      clearTimeout(heartbeatTimer)
+      heartbeatTimer = setTimeout(() => {
+        stalled = true
+        killWorkerProcessTree(child)
+      }, heartbeatTimeoutMs)
+    }
+    armHeartbeatWatchdog()
+    const cancel = () => {
+      if (cancelled || settled) return
+      cancelled = true
+      clearTimeout(timeout)
+      clearTimeout(heartbeatTimer)
+      killWorkerProcessTree(child)
+    }
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted) cancel()
 
     const settle = (result) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
-      resolveResult(result)
+      clearTimeout(heartbeatTimer)
+      signal?.removeEventListener('abort', cancel)
+      resolveResult({
+        ...result,
+        ...(heartbeatCount > 0 || stalled
+          ? {
+              telemetry: {
+                heartbeatCount,
+                maximumRssBytes,
+                maximumHeapUsedBytes,
+                lastStage: lastHeartbeat?.stage ?? 'startup',
+                lastCheckpoint: lastHeartbeat?.checkpoint ?? 'startup',
+                elapsedMs: lastHeartbeat?.elapsedMs ?? 0,
+                userCpuMicros: lastHeartbeat?.userCpuMicros ?? 0,
+                systemCpuMicros: lastHeartbeat?.systemCpuMicros ?? 0,
+                stages: [...stages.values()].map((timing) => ({
+                  stage: timing.stage,
+                  checkpoint: timing.checkpoint,
+                  heartbeatCount: timing.heartbeatCount,
+                  firstElapsedMs: timing.firstElapsedMs,
+                  lastElapsedMs: timing.lastElapsedMs,
+                  firstCompleted: timing.firstCompleted,
+                  lastCompleted: timing.lastCompleted,
+                  total: timing.total,
+                })),
+              },
+            }
+          : {}),
+      })
     }
 
     child.on('message', (message) => {
-      if (response !== null || !validWorkerMessage(message)) {
+      if (!validWorkerMessage(message)) {
+        protocolFailed = true
+        killWorkerProcessTree(child)
+        return
+      }
+      if (message.type === DOCUMENT_WORKER_HEARTBEAT) {
+        if (response !== null) {
+          protocolFailed = true
+          killWorkerProcessTree(child)
+          return
+        }
+        heartbeatCount += 1
+        maximumRssBytes = Math.max(maximumRssBytes, message.rssBytes)
+        maximumHeapUsedBytes = Math.max(
+          maximumHeapUsedBytes,
+          message.heapUsedBytes,
+        )
+        lastHeartbeat = message
+        const stageKey = `${message.stage}\u0000${message.checkpoint}`
+        const timing = stages.get(stageKey)
+        if (!timing && stages.size >= MAX_DOCUMENT_TELEMETRY_STAGES) {
+          protocolFailed = true
+          killWorkerProcessTree(child)
+          return
+        }
+        stages.set(stageKey, {
+          stage: message.stage,
+          checkpoint: message.checkpoint,
+          heartbeatCount: (timing?.heartbeatCount ?? 0) + 1,
+          firstElapsedMs: timing?.firstElapsedMs ?? message.elapsedMs,
+          lastElapsedMs: message.elapsedMs,
+          firstCompleted: timing?.firstCompleted ?? message.completed,
+          lastCompleted: message.completed,
+          total: message.total,
+        })
+        armHeartbeatWatchdog()
+        return
+      }
+      if (response !== null) {
         protocolFailed = true
         killWorkerProcessTree(child)
         return
@@ -639,6 +815,14 @@ export function runIsolatedPdfExportJob(
       activeWorkerProcesses.delete(child)
       if (timedOut) {
         settle({ status: 'timeout' })
+        return
+      }
+      if (stalled) {
+        settle({ status: 'stalled' })
+        return
+      }
+      if (cancelled) {
+        settle({ status: 'cancelled' })
         return
       }
       if (spawnFailed || protocolFailed || code !== 0 || response === null) {
@@ -667,13 +851,25 @@ async function exportDocument({
   outputDirectory,
   documentCount,
   remoteOcr = null,
+  onProgress,
 }) {
   const artifacts = []
   const canonicalPaper = record.reconstruction.readiness.ready
     ? record.reconstruction.paper
     : exportModules.projectReadableFallbackReconstruction(record.reconstruction)
         .paper
-  for (const profile of profiles) {
+  for (
+    let profileIndex = 0;
+    profileIndex < profiles.length;
+    profileIndex += 1
+  ) {
+    const profile = profiles[profileIndex]
+    onProgress?.({
+      phase: 'epub-assembly',
+      checkpoint: 'epub-profile',
+      completed: profileIndex,
+      total: profiles.length,
+    })
     failureStage = 'epub-build'
     const epub = record.reconstruction.readiness.ready
       ? await exportModules.buildEpub(
@@ -691,6 +887,8 @@ async function exportDocument({
       canonicalPaper,
       sourceCanonicalPaper: record.reconstruction.paper,
       sourcePdfSha256: record.reconstruction.source.sha256,
+      canonicalHyphenDeletionLedgerSha256:
+        record.document.structure.canonicalHyphenDeletionLedgerSha256,
     })
     failureStage = 'epubcheck-validation'
     artifacts.push({
@@ -708,6 +906,12 @@ async function exportDocument({
           outputDirectory,
         ),
       },
+    })
+    onProgress?.({
+      phase: 'epub-assembly',
+      checkpoint: 'epub-profile',
+      completed: profileIndex + 1,
+      total: profiles.length,
     })
   }
 
@@ -780,9 +984,14 @@ function validWorkerJob(job) {
   )
 }
 
-export async function runPdfExportWorkerJob(job) {
+export async function runPdfExportWorkerJob(job, { onProgress } = {}) {
   if (!validWorkerJob(job)) throw new Error('INVALID_DOCUMENT_WORKER_JOB')
   failureStage = 'pipeline-initialization'
+  onProgress?.({
+    phase: failureStage,
+    completed: 0,
+    total: 0,
+  })
   const pipeline = await createPdfPipeline({
     temporaryRoot: job.stagingDirectory,
     ocrEngine: job.ocrEngine,
@@ -794,12 +1003,18 @@ export async function runPdfExportWorkerJob(job) {
     failureStage = 'pdf-audit'
     const record = await auditPdfPath(job.path, pipeline, {
       expectedSource: job.expectedSource,
+      onProgress,
     })
     if (!record.reconstruction) {
       return { type: DOCUMENT_WORKER_RESULT, document: record.document }
     }
 
     failureStage = 'export-module-load'
+    onProgress?.({
+      phase: failureStage,
+      completed: 0,
+      total: 0,
+    })
     const exportModules = await pipeline.loadExportModules()
     if (
       job.targets.some(
@@ -821,6 +1036,11 @@ export async function runPdfExportWorkerJob(job) {
     }
 
     try {
+      onProgress?.({
+        phase: 'epub-assembly',
+        completed: 0,
+        total: job.targets.length,
+      })
       record.document.exports = await exportDocument({
         record,
         profiles: job.targets.map(exportModules.getTargetProfile),
@@ -829,6 +1049,12 @@ export async function runPdfExportWorkerJob(job) {
         outputDirectory: job.stagingDirectory,
         documentCount: 1,
         remoteOcr,
+        onProgress,
+      })
+      onProgress?.({
+        phase: 'epub-assembly',
+        completed: job.targets.length,
+        total: job.targets.length,
       })
     } catch (error) {
       recordDocumentExportFailure(record.document, error)
@@ -1238,8 +1464,9 @@ export async function assertPublishableOutput(
   }
 }
 
-async function publishRunDirectory(runDirectory, outputDirectory) {
+async function publishRunDirectory(runDirectory, outputDirectory, signal) {
   await assertPublishableOutput(outputDirectory)
+  if (signal?.aborted) throw new Error('PDF_EXPORT_CANCELLED')
   await rename(runDirectory, outputDirectory)
 }
 
@@ -1256,17 +1483,54 @@ export async function processExportDocuments({
   validator,
   outputDirectory,
   timeoutMs,
+  concurrency = DEFAULT_DOCUMENT_CONCURRENCY,
+  signal,
   executionProvenanceCapture = null,
   runWorker = runIsolatedPdfExportJob,
   workerModule,
 }) {
-  const documents = []
+  if (
+    !Number.isSafeInteger(concurrency) ||
+    concurrency < 1 ||
+    concurrency > MAX_DOCUMENT_CONCURRENCY
+  ) {
+    throw new Error('INVALID_DOCUMENT_CONCURRENCY')
+  }
   const expectedById = new Map(
     (corpusContract?.documents ?? []).map((document) => [
       document.id,
       document,
     ]),
   )
+  const pathById = new Map(
+    paths.map((path) => [basename(path, extname(path)), path]),
+  )
+  if (pathById.size !== paths.length) {
+    throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+  }
+  const orderedPaths = corpusContract
+    ? corpusContract.documents.map((document) => {
+        const path = pathById.get(document.id)
+        if (!path) throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+        return path
+      })
+    : paths
+  if (orderedPaths.length !== paths.length) {
+    throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+  }
+  const jobs = orderedPaths.map((path, index) => {
+    const expectedSource =
+      expectedById.get(basename(path, extname(path))) ?? null
+    if (corpusContract && !expectedSource) {
+      throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
+    }
+    return {
+      index,
+      namespace: String(index + 1).padStart(6, '0'),
+      path,
+      expectedSource,
+    }
+  })
   const profilesById = new Map(
     targetProfiles.map((profile) => [profile.id, profile]),
   )
@@ -1287,105 +1551,199 @@ export async function processExportDocuments({
   const runDirectory = join(workspace, 'publication')
   const workerDirectory = join(workspace, 'workers')
   const verificationDirectory = join(workspace, 'verified')
+  const documentOutputDirectoryRoot = join(workspace, 'outputs')
+  let poolController = null
+  let cancelPool = null
 
   try {
     await Promise.all([
       mkdir(runDirectory, { mode: 0o700 }),
       mkdir(workerDirectory, { mode: 0o700 }),
       mkdir(verificationDirectory, { mode: 0o700 }),
+      mkdir(documentOutputDirectoryRoot, { mode: 0o700 }),
     ])
-    for (const [index, path] of paths.entries()) {
-      const expectedSource =
-        expectedById.get(basename(path, extname(path))) ?? null
-      if (corpusContract && !expectedSource) {
-        throw new Error('PDF_CORPUS_CONTRACT_MISMATCH')
-      }
-      const stagingDirectory = join(
-        workerDirectory,
-        String(index + 1).padStart(6, '0'),
-      )
-      const verifiedDirectory = join(
-        verificationDirectory,
-        String(index + 1).padStart(6, '0'),
+    const results = new Array(jobs.length)
+    poolController = new AbortController()
+    const poolErrors = []
+    let nextJobIndex = 0
+    cancelPool = () => poolController.abort()
+    if (signal?.aborted) cancelPool()
+    else signal?.addEventListener('abort', cancelPool, { once: true })
+
+    const processJob = async (job) => {
+      const stagingDirectory = join(workerDirectory, job.namespace)
+      const verifiedDirectory = join(verificationDirectory, job.namespace)
+      const isolatedOutputDirectory = join(
+        documentOutputDirectoryRoot,
+        job.namespace,
       )
       await mkdir(stagingDirectory, { mode: 0o700 })
-      const result = await runWorker(
-        {
-          path,
-          expectedSource,
-          targets: targetProfiles.map((profile) => profile.id),
-          ocrEngine,
-          ocrRemoteOptIn,
-          documentVisibility,
-          readableFallback,
-          validator,
-          stagingDirectory,
-        },
-        { timeoutMs, workerModule },
-      )
-
-      if (result.status === 'fatal') throw new Error(result.code)
-      if (result.status === 'timeout') {
-        documents.push(
-          createSafeAuditFailureDocument(path, PDF_DOCUMENT_TIMEOUT),
+      try {
+        const result = await runWorker(
+          {
+            path: job.path,
+            expectedSource: job.expectedSource,
+            targets: targetProfiles.map((profile) => profile.id),
+            ocrEngine,
+            ocrRemoteOptIn,
+            documentVisibility,
+            readableFallback,
+            validator,
+            stagingDirectory,
+          },
+          {
+            timeoutMs,
+            workerModule,
+            signal: poolController.signal,
+          },
         )
-        await rm(stagingDirectory, { recursive: true, force: true })
-        continue
-      }
-      if (
-        result.status !== 'completed' ||
-        !validWorkerDocument(result.document, path, policy, reportValidator)
-      ) {
-        documents.push(
-          createSafeAuditFailureDocument(path, PDF_DOCUMENT_WORKER_FAILED),
-        )
-        await rm(stagingDirectory, { recursive: true, force: true })
-        continue
-      }
-
-      const verifiedFiles = await verifyDocumentStaging(
-        result.document,
-        stagingDirectory,
-        verifiedDirectory,
-        profilesById,
-        remoteOcr,
-      )
-      if (verifiedFiles === null) {
-        if (result.document.readiness) {
-          recordDocumentExportFailure(
+        const performanceEvidence = {
+          basename: basename(job.path),
+          status: result.status,
+          ...(result.telemetry ? { telemetry: result.telemetry } : {}),
+        }
+        if (result.status === 'fatal') throw new Error(result.code)
+        if (result.status === 'cancelled' || poolController.signal.aborted) {
+          throw new Error('PDF_EXPORT_CANCELLED')
+        }
+        if (result.status === 'timeout') {
+          return {
+            document: createSafeAuditFailureDocument(
+              job.path,
+              PDF_DOCUMENT_TIMEOUT,
+            ),
+            isolatedOutputDirectory: null,
+            verifiedFiles: [],
+            performanceEvidence,
+          }
+        }
+        if (result.status === 'stalled') {
+          return {
+            document: createSafeAuditFailureDocument(
+              job.path,
+              PDF_DOCUMENT_STALLED,
+            ),
+            isolatedOutputDirectory: null,
+            verifiedFiles: [],
+            performanceEvidence,
+          }
+        }
+        if (
+          result.status !== 'completed' ||
+          !validWorkerDocument(
             result.document,
-            new Error('EXPORT_STAGING_INVALID'),
+            job.path,
+            policy,
+            reportValidator,
           )
-        } else {
-          result.document = createSafeAuditFailureDocument(
-            path,
-            PDF_DOCUMENT_WORKER_FAILED,
+        ) {
+          return {
+            document: createSafeAuditFailureDocument(
+              job.path,
+              PDF_DOCUMENT_WORKER_FAILED,
+            ),
+            isolatedOutputDirectory: null,
+            verifiedFiles: [],
+            performanceEvidence,
+          }
+        }
+
+        const verifiedFiles = await verifyDocumentStaging(
+          result.document,
+          stagingDirectory,
+          verifiedDirectory,
+          profilesById,
+          remoteOcr,
+        )
+        if (poolController.signal.aborted) {
+          throw new Error('PDF_EXPORT_CANCELLED')
+        }
+        if (verifiedFiles === null) {
+          if (result.document.readiness) {
+            recordDocumentExportFailure(
+              result.document,
+              new Error('EXPORT_STAGING_INVALID'),
+            )
+          } else {
+            result.document = createSafeAuditFailureDocument(
+              job.path,
+              PDF_DOCUMENT_WORKER_FAILED,
+            )
+          }
+        } else if (verifiedFiles.length > 0) {
+          await promoteVerifiedFiles(
+            verifiedDirectory,
+            isolatedOutputDirectory,
+            verifiedFiles,
           )
         }
-      } else if (verifiedFiles.length > 0) {
-        const destination = documentOutputDirectory(
-          runDirectory,
-          result.document,
-          paths.length,
-        )
-        await promoteVerifiedFiles(
-          verifiedDirectory,
-          destination,
-          verifiedFiles,
-        )
+        return {
+          document: result.document,
+          isolatedOutputDirectory:
+            verifiedFiles?.length > 0 ? isolatedOutputDirectory : null,
+          verifiedFiles: verifiedFiles ?? [],
+          performanceEvidence,
+        }
+      } finally {
+        await Promise.all([
+          rm(stagingDirectory, { recursive: true, force: true }),
+          rm(verifiedDirectory, { recursive: true, force: true }),
+        ])
       }
-      await rm(stagingDirectory, { recursive: true, force: true })
-      documents.push(result.document)
     }
 
-    documents.sort(
-      (left, right) =>
-        left.basename.localeCompare(right.basename) ||
-        String(left.sha256).localeCompare(String(right.sha256)),
+    const runPoolWorker = async () => {
+      while (!poolController.signal.aborted) {
+        const jobIndex = nextJobIndex
+        if (jobIndex >= jobs.length) return
+        nextJobIndex += 1
+        const job = jobs[jobIndex]
+        try {
+          results[job.index] = await processJob(job)
+        } catch (error) {
+          if (!poolController.signal.aborted) {
+            poolErrors.push({ index: job.index, error })
+            poolController.abort(error)
+          }
+          return
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, jobs.length) }, runPoolWorker),
+    )
+    if (signal?.aborted) throw new Error('PDF_EXPORT_CANCELLED')
+    if (poolErrors.length > 0) {
+      poolErrors.sort((left, right) => left.index - right.index)
+      throw poolErrors[0].error
+    }
+    if (results.some((result) => !result)) {
+      throw new Error('PDF_EXPORT_CANCELLED')
+    }
+
+    for (const result of results) {
+      if (signal?.aborted) throw new Error('PDF_EXPORT_CANCELLED')
+      if (result.isolatedOutputDirectory === null) continue
+      await promoteVerifiedFiles(
+        result.isolatedOutputDirectory,
+        documentOutputDirectory(
+          runDirectory,
+          result.document,
+          orderedPaths.length,
+        ),
+        result.verifiedFiles,
+      )
+    }
+
+    const documents = results.map((result) => result.document)
+    const performanceEvidence = results.map(
+      (result) => result.performanceEvidence,
     )
     const executionProvenance = executionProvenanceCapture
       ? await finalizePdfCorpusExecutionProvenance(executionProvenanceCapture)
       : null
+    if (signal?.aborted) throw new Error('PDF_EXPORT_CANCELLED')
     const report = createCorpusReport(documents, policy, {
       corpusContract,
       executionProvenance,
@@ -1396,9 +1754,11 @@ export async function processExportDocuments({
       join(runDirectory, 'corpus-audit.json'),
       encoder.encode(serialized),
     )
-    await publishRunDirectory(runDirectory, outputDirectory)
-    return { report, serialized }
+    await publishRunDirectory(runDirectory, outputDirectory, signal)
+    return { report, serialized, performanceEvidence }
   } finally {
+    poolController?.abort()
+    if (cancelPool) signal?.removeEventListener('abort', cancelPool)
     await rm(workspace, { recursive: true, force: true })
     activeWorkspaces.delete(workspace)
   }
@@ -1434,12 +1794,70 @@ async function sendWorkerMessage(message, disarmDisconnectGuard) {
 async function documentWorkerMain() {
   const disarmDisconnectGuard = installPdfExportWorkerDisconnectGuard()
   const job = await receiveWorkerJob()
+  const started = performance.now()
+  let stage = 'startup'
+  let checkpoint = 'startup'
+  let completed = 0
+  let total = 0
+  let lastSentAt = -Infinity
+  const emitHeartbeat = (force = false) => {
+    const elapsedMs = Math.max(0, Math.round(performance.now() - started))
+    if (!force && elapsedMs - lastSentAt < 1_000) {
+      return
+    }
+    if (typeof process.send !== 'function' || !process.connected) return
+    const memory = process.memoryUsage()
+    const usage = process.resourceUsage()
+    lastSentAt = elapsedMs
+    process.send({
+      type: DOCUMENT_WORKER_HEARTBEAT,
+      stage,
+      checkpoint,
+      completed,
+      total,
+      elapsedMs,
+      rssBytes: memory.rss,
+      heapUsedBytes: memory.heapUsed,
+      userCpuMicros: usage.userCPUTime,
+      systemCpuMicros: usage.systemCPUTime,
+    })
+  }
+  const heartbeat = setInterval(() => emitHeartbeat(true), 2_000)
+  heartbeat.unref()
+  const reportProgress = (progress) => {
+    const nextCheckpoint =
+      typeof progress.checkpoint === 'string' &&
+      SAFE_TELEMETRY_LABEL.test(progress.checkpoint)
+        ? progress.checkpoint
+        : progress.phase
+    const changedStage =
+      stage !== progress.phase || checkpoint !== nextCheckpoint
+    stage = progress.phase
+    checkpoint = nextCheckpoint
+    completed =
+      Number.isSafeInteger(progress.completed) && progress.completed >= 0
+        ? progress.completed
+        : 0
+    total =
+      Number.isSafeInteger(progress.total) && progress.total >= 0
+        ? progress.total
+        : 0
+    emitHeartbeat(changedStage || completed === total)
+  }
+  emitHeartbeat(true)
   try {
-    await sendWorkerMessage(
-      await runPdfExportWorkerJob(job),
-      disarmDisconnectGuard,
-    )
+    const result = await runPdfExportWorkerJob(job, {
+      onProgress: reportProgress,
+    })
+    clearInterval(heartbeat)
+    stage = 'completed'
+    checkpoint = 'completed'
+    completed = 1
+    total = 1
+    emitHeartbeat(true)
+    await sendWorkerMessage(result, disarmDisconnectGuard)
   } catch (error) {
+    clearInterval(heartbeat)
     if (
       error instanceof Error &&
       error.message === 'PDF_CORPUS_CONTRACT_MISMATCH'
@@ -1547,23 +1965,31 @@ async function main() {
   failureStage = 'report-schema-load'
   const reportValidator = await createPdfCorpusReportValidator()
   failureStage = 'document-processing'
-  const { report, serialized } = await processExportDocuments({
-    paths,
-    corpusContract,
-    policy,
-    reportValidator,
-    targetProfiles,
-    ocrEngine: parsed.ocrEngine,
-    ocrRemoteOptIn: parsed.ocrRemoteOptIn,
-    documentVisibility: parsed.documentVisibility,
-    readableFallback: parsed.readableFallback,
-    validator,
-    outputDirectory: parsed.outputDirectory,
-    timeoutMs: parsed.documentTimeoutSeconds * 1000,
-    executionProvenanceCapture,
-  })
+  const { report, serialized, performanceEvidence } =
+    await processExportDocuments({
+      paths,
+      corpusContract,
+      policy,
+      reportValidator,
+      targetProfiles,
+      ocrEngine: parsed.ocrEngine,
+      ocrRemoteOptIn: parsed.ocrRemoteOptIn,
+      documentVisibility: parsed.documentVisibility,
+      readableFallback: parsed.readableFallback,
+      validator,
+      outputDirectory: parsed.outputDirectory,
+      timeoutMs: parsed.documentTimeoutSeconds * 1000,
+      concurrency: parsed.concurrency,
+      executionProvenanceCapture,
+    })
 
   process.stdout.write(serialized)
+  process.stderr.write(
+    `PDF_EXPORT_PERFORMANCE_EVIDENCE ${JSON.stringify({
+      schemaVersion: '1.1.0',
+      documents: performanceEvidence,
+    })}\n`,
+  )
   if (report.summary.reviewRequired > 0 || report.summary.failed > 0) {
     process.exitCode = 1
   }

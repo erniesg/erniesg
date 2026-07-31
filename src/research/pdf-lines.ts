@@ -6,10 +6,12 @@ import type {
   PdfSourceRun,
 } from './import-types'
 import { normalizePdfTextSequence } from './pdf-font-text'
+import { resolvePdfHyphenBoundary } from './pdf-hyphenation'
 import {
   registerPdfLinkedTokenSourceAnnotations,
   resolveRegisteredPdfLinkedTokenContinuity,
 } from './pdf-links'
+import { parsePdfScholarlyVisualLabel } from './pdf-scholarly-label'
 
 export type PdfTextLine = {
   id?: string
@@ -23,11 +25,15 @@ export type PdfTextLine = {
   runs: PdfSourceRun[]
   column: 'single' | 'left' | 'right' | 'span'
   sourceOwnedColumn?: 'left' | 'right'
+  sourceCaptionLaneBoundary?: number
+  sourceCaptionLaneSide?: 'left' | 'right'
+  headingContinuationSeedId?: string
 }
 
 type PdfLineJoinOptions = {
   hardHyphenLexicon?: ReadonlySet<string>
   unhyphenatedLexicon?: ReadonlySet<string>
+  language?: string | null
   regionId?: string
   decisions?: PdfLineBoundaryDecision[]
 }
@@ -78,7 +84,7 @@ export function buildPdfLineJoinReviewContext(
   if (
     region.id !== decision.regionId ||
     region.page !== decision.page ||
-    decision.outcome !== 'unresolved'
+    (decision.outcome !== 'unresolved' && decision.outcome !== 'ambiguous')
   ) {
     return null
   }
@@ -113,6 +119,9 @@ export type PdfRegionLineReplay = {
   text: string
   ranges: Map<string, { start: number; end: number }>
 }
+
+const SOURCE_LINE_SEPARATOR_PRESERVED =
+  'source-line-separator-preserved' as const
 
 export function replayPdfRegionLineRanges(
   region: PdfPageRegion,
@@ -166,9 +175,23 @@ export function replayPdfRegionLineRanges(
       text = `${text.slice(0, -1)}${next}`
       previousRange.end -= 1
       start -= 1
-    } else {
+    } else if (decision.outcome === 'preserved-lexical-hyphen') {
       if (!/[-‐‑]$/u.test(text)) return null
       text += next
+    } else if (
+      decision.outcome === 'unresolved' ||
+      decision.outcome === 'ambiguous' ||
+      decision.outcome === 'structural-boundary'
+    ) {
+      if (!/[-‐‑]$/u.test(text)) return null
+      if (decision.evidence.includes(SOURCE_LINE_SEPARATOR_PRESERVED)) {
+        start += 1
+        text += ` ${next}`
+      } else {
+        text += next
+      }
+    } else {
+      return null
     }
     ranges.set(current.id, { start, end: start + next.length })
   }
@@ -183,7 +206,10 @@ export function replayPdfRegionLineText(
 }
 
 function normalizedHyphenatedWord(value: string) {
-  return value.normalize('NFKC').replace(/[‐‑]/g, '-').toLocaleLowerCase()
+  return value
+    .normalize('NFKC')
+    .replace(/[‐‑]/g, '-')
+    .toLocaleLowerCase('en-US')
 }
 
 export function inlineHardHyphenLexicon(
@@ -204,9 +230,24 @@ export function inlineUnhyphenatedLexicon(
   lines: readonly Pick<PdfTextLine, 'text'>[],
 ) {
   const words = new Set<string>()
-  for (const line of lines) {
-    for (const match of line.text.matchAll(/[\p{L}\p{N}]+/gu)) {
-      words.add(match[0].normalize('NFKC').toLocaleLowerCase())
+  for (const [lineIndex, line] of lines.entries()) {
+    const previousEndsWithBoundaryHyphen =
+      lineIndex > 0 && /[\p{L}\p{N}][-‐‑]\s*$/u.test(lines[lineIndex - 1].text)
+    const currentEndsWithBoundaryHyphen = /[\p{L}\p{N}][-‐‑]\s*$/u.test(
+      line.text,
+    )
+    const matches = [...line.text.matchAll(/[\p{L}\p{N}]+/gu)]
+    for (const [matchIndex, match] of matches.entries()) {
+      // A fragment created by a printed line-end hyphen is not independent
+      // same-document lexical evidence for itself. It may still enter the
+      // lexicon from any complete occurrence elsewhere in the document.
+      if (
+        (previousEndsWithBoundaryHyphen && matchIndex === 0) ||
+        (currentEndsWithBoundaryHyphen && matchIndex === matches.length - 1)
+      ) {
+        continue
+      }
+      words.add(match[0].normalize('NFKC').toLocaleLowerCase('en-US'))
     }
   }
   return words
@@ -218,107 +259,6 @@ function boundaryFragments(lines: PdfTextLine[], index: number) {
   const left = previous.text.trim().match(/([\p{L}\p{N}]+)[-‐‑]$/u)?.[1]
   const right = next.text.trim().match(/^([\p{L}\p{N}]+)/u)?.[1]
   return left && right ? { left, right } : null
-}
-
-function hyphenatedBoundaryWord(lines: PdfTextLine[], index: number) {
-  const fragments = boundaryFragments(lines, index)
-  return fragments
-    ? normalizedHyphenatedWord(`${fragments.left}-${fragments.right}`)
-    : null
-}
-
-function unhyphenatedBoundaryWord(lines: PdfTextLine[], index: number) {
-  const fragments = boundaryFragments(lines, index)
-  return fragments
-    ? `${fragments.left}${fragments.right}`
-        .normalize('NFKC')
-        .toLocaleLowerCase()
-    : null
-}
-
-function inflectionalFamily(word: string) {
-  const stems = new Set([word])
-  if (word.endsWith('s') && word.length > 4) stems.add(word.slice(0, -1))
-  if (word.endsWith('es') && word.length > 5) stems.add(word.slice(0, -2))
-  if (word.endsWith('ed') && word.length > 5) {
-    stems.add(word.slice(0, -2))
-    stems.add(word.slice(0, -1))
-  }
-  if (word.endsWith('ing') && word.length > 6) {
-    stems.add(word.slice(0, -3))
-    stems.add(`${word.slice(0, -3)}e`)
-  }
-  if (word.endsWith('ies') && word.length > 5) {
-    stems.add(`${word.slice(0, -3)}y`)
-  }
-  if (word.endsWith('ied') && word.length > 5) {
-    stems.add(`${word.slice(0, -3)}y`)
-  }
-  if (word.endsWith('tion') && word.length > 7) {
-    stems.add(word.slice(0, -3))
-  }
-  const family = new Set<string>()
-  for (const stem of stems) {
-    family.add(stem)
-    for (const suffix of ['s', 'es', 'ed', 'ing']) {
-      family.add(`${stem}${suffix}`)
-    }
-    if (stem.endsWith('e')) {
-      family.add(`${stem}d`)
-      family.add(`${stem.slice(0, -1)}ing`)
-    }
-    if (stem.endsWith('y')) {
-      family.add(`${stem.slice(0, -1)}ied`)
-      family.add(`${stem.slice(0, -1)}ies`)
-    }
-  }
-  if (word.endsWith('ive') && word.length > 6) {
-    family.add(`${word.slice(0, -1)}ity`)
-  }
-  if (word.endsWith('ivity') && word.length > 8) {
-    family.add(`${word.slice(0, -3)}e`)
-  }
-  family.delete(word)
-  return family
-}
-
-function hasSameDocumentInflection(
-  word: string | null,
-  lexicon: ReadonlySet<string>,
-) {
-  return Boolean(
-    word && [...inflectionalFamily(word)].some((form) => lexicon.has(form)),
-  )
-}
-
-function derivationalFamily(word: string) {
-  const suffixes = [
-    'izations',
-    'ization',
-    'izing',
-    'ized',
-    'izes',
-    'ize',
-    'ally',
-    'al',
-  ] as const
-  const root = suffixes
-    .filter((suffix) => word.endsWith(suffix))
-    .map((suffix) => word.slice(0, -suffix.length))
-    .find((candidate) => candidate.length >= 5)
-  if (!root) return new Set<string>()
-  const family = new Set(suffixes.map((suffix) => `${root}${suffix}`))
-  family.delete(word)
-  return family
-}
-
-function hasSameDocumentDerivation(
-  word: string | null,
-  lexicon: ReadonlySet<string>,
-) {
-  return Boolean(
-    word && [...derivationalFamily(word)].some((form) => lexicon.has(form)),
-  )
 }
 
 function sourcePreservationEvidence(lines: PdfTextLine[], index: number) {
@@ -342,6 +282,257 @@ function urlLiteralHyphenBoundary(lines: PdfTextLine[], index: number) {
     previous.page === next.page &&
     /(?:https?:\/\/|www\.)\S+[-‐‑]$/iu.test(previous.text.trim()) &&
     /^[^\s<>"'`]+/u.test(next.text.trim()),
+  )
+}
+
+function sourceProvenInlineStackedSuffixContinuation(
+  previous: PdfTextLine | undefined,
+  next: PdfTextLine | undefined,
+  index: number,
+) {
+  if (
+    index !== 1 ||
+    !previous ||
+    !next ||
+    !/-inline-stacked-\d+-after$/u.test(previous.id ?? '') ||
+    !/^[,.;:!?)}\]]/u.test(previous.text.trimStart()) ||
+    previous.x <= next.x + 0.045 ||
+    previous.x - next.x > 0.25 ||
+    next.width < previous.width
+  ) {
+    return false
+  }
+  const rightEdgeTolerance = Math.max(
+    0.002,
+    Math.min(previous.height, next.height) * 0.25,
+  )
+  if (
+    Math.abs(previous.x + previous.width - (next.x + next.width)) >
+    rightEdgeTolerance
+  ) {
+    return false
+  }
+  const previousRuns = previous.runs.filter((run) => run.text.trim())
+  const nextRuns = next.runs.filter((run) => run.text.trim())
+  if (
+    previousRuns.length === 0 ||
+    nextRuns.length === 0 ||
+    previousRuns.some((run) => run.sourceSequenceIndex === undefined) ||
+    nextRuns.some((run) => run.sourceSequenceIndex === undefined)
+  ) {
+    return false
+  }
+  const previousMaximumSequence = Math.max(
+    ...previousRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const nextMinimumSequence = Math.min(
+    ...nextRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const previousBoundaryRuns = previousRuns.filter(
+    (run) => run.sourceSequenceIndex === previousMaximumSequence,
+  )
+  const nextBoundaryRuns = nextRuns.filter(
+    (run) => run.sourceSequenceIndex === nextMinimumSequence,
+  )
+  if (
+    previousBoundaryRuns.length !== 1 ||
+    nextBoundaryRuns.length !== 1 ||
+    nextMinimumSequence !== previousMaximumSequence + 1
+  ) {
+    return false
+  }
+  const left = previousBoundaryRuns[0]
+  const right = nextBoundaryRuns[0]
+  const leftPaint = left.sourceTextPaint
+  const rightPaint = right.sourceTextPaint
+  return Boolean(
+    left.page === right.page &&
+    left.rotation === right.rotation &&
+    left.method === right.method &&
+    leftPaint &&
+    rightPaint &&
+    leftPaint.textLedgerSha256 === rightPaint.textLedgerSha256 &&
+    leftPaint.operatorLedgerSha256 === rightPaint.operatorLedgerSha256 &&
+    leftPaint.normalizedTextEnd === rightPaint.normalizedTextStart,
+  )
+}
+
+function sourceProvenWrappedLineHyphen(lines: PdfTextLine[], index: number) {
+  const previous = lines[index - 1]
+  const next = lines[index]
+  const alignedIndentedContinuation =
+    next !== undefined &&
+    next.x >= (previous?.x ?? 0) &&
+    next.x - (previous?.x ?? 0) <= 0.045
+  const alignedFirstLineDedentedContinuation =
+    index === 1 &&
+    previous !== undefined &&
+    next !== undefined &&
+    previous.x >= next.x &&
+    previous.x - next.x <= 0.045
+  const sourceProvenInlineSuffixContinuation =
+    sourceProvenInlineStackedSuffixContinuation(previous, next, index)
+  if (
+    !previous ||
+    !next ||
+    previous.page !== next.page ||
+    previous.column !== next.column ||
+    previous.width <= 0 ||
+    next.width <= 0 ||
+    previous.height <= 0 ||
+    next.height <= 0 ||
+    (Math.abs(previous.x - next.x) > 0.025 &&
+      !alignedIndentedContinuation &&
+      !alignedFirstLineDedentedContinuation &&
+      !sourceProvenInlineSuffixContinuation) ||
+    previous.width < next.width * 0.72
+  ) {
+    return false
+  }
+  const verticalGap = next.y - (previous.y + previous.height)
+  return (
+    verticalGap >= -Math.max(previous.height, next.height) * 0.35 &&
+    verticalGap <= Math.max(previous.height, next.height) * 1.75
+  )
+}
+
+function sourceSequenceProvenWrappedLineHyphen(
+  lines: PdfTextLine[],
+  index: number,
+) {
+  if (!sourceProvenWrappedLineHyphen(lines, index)) return false
+  const previousRuns = lines[index - 1]?.runs.filter((run) => run.text.trim())
+  const nextRuns = lines[index]?.runs.filter((run) => run.text.trim())
+  if (
+    !previousRuns ||
+    !nextRuns ||
+    previousRuns.length === 0 ||
+    nextRuns.length === 0 ||
+    previousRuns.some(
+      (run) => !Number.isSafeInteger(run.sourceSequenceIndex),
+    ) ||
+    nextRuns.some((run) => !Number.isSafeInteger(run.sourceSequenceIndex))
+  ) {
+    return false
+  }
+  const previousMaximum = Math.max(
+    ...previousRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const nextMinimum = Math.min(
+    ...nextRuns.map((run) => run.sourceSequenceIndex!),
+  )
+  const previousBoundaryRuns = previousRuns.filter(
+    (run) => run.sourceSequenceIndex === previousMaximum,
+  )
+  const nextBoundaryRuns = nextRuns.filter(
+    (run) => run.sourceSequenceIndex === nextMinimum,
+  )
+  if (
+    previousBoundaryRuns.length !== 1 ||
+    nextBoundaryRuns.length !== 1 ||
+    nextMinimum <= previousMaximum ||
+    nextMinimum - previousMaximum > 2
+  ) {
+    return false
+  }
+  const previousBoundary = previousBoundaryRuns[0]
+  const nextBoundary = nextBoundaryRuns[0]
+  const fontRatio =
+    Math.max(previousBoundary.fontSize, nextBoundary.fontSize) /
+    Math.max(0.001, Math.min(previousBoundary.fontSize, nextBoundary.fontSize))
+  return (
+    previousBoundary.page === nextBoundary.page &&
+    previousBoundary.rotation === nextBoundary.rotation &&
+    previousBoundary.method === nextBoundary.method &&
+    previousBoundary.fontName === nextBoundary.fontName &&
+    fontRatio <= 1.1 &&
+    /[\p{L}\p{N}][-‐‑]\s*$/u.test(previousBoundary.text) &&
+    /^\s*[\p{L}\p{N}]/u.test(nextBoundary.text)
+  )
+}
+
+function sourceProvenBibliographySurnameContext(
+  lines: PdfTextLine[],
+  index: number,
+  sourceSequenceProven: boolean,
+) {
+  if (!sourceSequenceProven) return false
+  const previous = lines[index - 1]
+  const next = lines[index]
+  const fragments = boundaryFragments(lines, index)
+  if (
+    !previous ||
+    !next ||
+    !fragments ||
+    !/^\p{Lu}\p{Ll}+$/u.test(fragments.left) ||
+    !/^\p{Ll}+$/u.test(fragments.right)
+  ) {
+    return false
+  }
+  const precedingLines = lines
+    .slice(0, index)
+    .filter((line) => line.text.trim())
+  const referenceMarkerLines = precedingLines.filter((line) =>
+    /^\s*\[\d{1,4}\]\s+/u.test(line.text),
+  )
+  if (
+    precedingLines.length === 0 ||
+    referenceMarkerLines.length !== 1 ||
+    referenceMarkerLines[0] !== precedingLines[0]
+  ) {
+    return false
+  }
+  const previousText = previous.text.trimEnd()
+  const boundarySuffix = `${fragments.left}-`
+  if (!previousText.endsWith(boundarySuffix)) return false
+  const beforeFragment = previousText.slice(0, -boundarySuffix.length).trimEnd()
+  const givenName = /(?:^|\s)(\p{Lu}\p{Ll}[\p{L}\p{M}'’.-]*)$/u.exec(
+    beforeFragment,
+  )
+  if (!givenName) return false
+  const beforeGivenName = beforeFragment.slice(0, givenName.index).trimEnd()
+  if (!/(?:,|\band)$/u.test(beforeGivenName)) return false
+  const nextText = next.text.trimStart()
+  if (!nextText.startsWith(fragments.right)) return false
+  const afterSurname = nextText.slice(fragments.right.length)
+  return (
+    afterSurname.startsWith(',') ||
+    /^\.\s*\(?\d{4}[a-z]?\)?(?:[.,]|\s|$)/u.test(afterSurname)
+  )
+}
+
+function sourceProvenHeadingContinuation(lines: PdfTextLine[], index: number) {
+  const previous = lines[index - 1]
+  const next = lines[index]
+  const seedId = previous?.headingContinuationSeedId ?? previous?.id
+  return Boolean(
+    seedId &&
+    next?.headingContinuationSeedId &&
+    next.headingContinuationSeedId === seedId,
+  )
+}
+
+function boundaryTokenHasIndependentHyphenEvidence(
+  lines: PdfTextLine[],
+  index: number,
+) {
+  const previousToken = lines[index - 1]?.text.trim().match(/(\S+)[-‐‑]$/u)?.[1]
+  const nextToken = lines[index]?.text.trim().match(/^(\S+)/u)?.[1]
+  return Boolean(
+    previousToken &&
+    nextToken &&
+    (/[-‐‑]/u.test(previousToken) ||
+      /\p{N}/u.test(previousToken) ||
+      /^\p{N}/u.test(nextToken)),
+  )
+}
+
+function boundaryContinuesHyphenChain(lines: PdfTextLine[], index: number) {
+  const nextToken = lines[index]?.text.trim().match(/^(\S+)/u)?.[1]
+  return Boolean(
+    nextToken &&
+    (nextToken.match(/[-‐‑]/gu)?.length ?? 0) >= 2 &&
+    /^[\p{L}\p{N}]+(?:[-‐‑][\p{L}\p{N}]+){2,}/u.test(nextToken),
   )
 }
 
@@ -462,19 +653,43 @@ export function joinPdfLineTexts(
       continue
     }
     if (/[-‐‑]$/u.test(joined)) {
-      const candidate = hyphenatedBoundaryWord(lines, index)
       const sourcePreservation = sourcePreservationEvidence(lines, index)
-      const unhyphenatedCandidate = unhyphenatedBoundaryWord(lines, index)
-      if (candidate && hardHyphenLexicon.has(candidate)) {
-        boundaryDecision(
+      const fragments = boundaryFragments(lines, index)
+      const headingContinuationProven = sourceProvenHeadingContinuation(
+        lines,
+        index,
+      )
+      const sourceSequenceProven = sourceSequenceProvenWrappedLineHyphen(
+        lines,
+        index,
+      )
+      const bibliographySurnameContextProven =
+        sourceProvenBibliographySurnameContext(
           lines,
           index,
-          'preserved-lexical-hyphen',
-          ['same-document-lexical-hyphen'],
-          options,
+          sourceSequenceProven,
         )
-        joined += next
-      } else if (urlLiteralHyphenBoundary(lines, index)) {
+      const proof = fragments
+        ? resolvePdfHyphenBoundary({
+            ...fragments,
+            language: options.language,
+            sourceProven:
+              sourceProvenWrappedLineHyphen(lines, index) ||
+              headingContinuationProven,
+            sourceSequenceProven,
+            bibliographySurnameContextProven,
+            hardHyphenLexicon,
+            unhyphenatedLexicon,
+          })
+        : null
+      if (
+        proof &&
+        headingContinuationProven &&
+        !proof.evidence.includes('source-proven-heading-continuation')
+      ) {
+        proof.evidence.push('source-proven-heading-continuation')
+      }
+      if (urlLiteralHyphenBoundary(lines, index)) {
         boundaryDecision(
           lines,
           index,
@@ -492,49 +707,73 @@ export function joinPdfLineTexts(
           options,
         )
         joined += next
-      } else if (
-        unhyphenatedCandidate &&
-        unhyphenatedLexicon.has(unhyphenatedCandidate)
-      ) {
+      } else if (proof?.verdict === 'remove') {
         boundaryDecision(
           lines,
           index,
           'removed-discretionary-hyphen',
-          ['same-document-unhyphenated-word'],
+          proof.evidence,
           options,
         )
         joined = `${joined.slice(0, -1)}${next}`
-      } else if (
-        hasSameDocumentInflection(unhyphenatedCandidate, unhyphenatedLexicon)
-      ) {
+      } else if (proof?.verdict === 'preserve') {
         boundaryDecision(
           lines,
           index,
-          'removed-discretionary-hyphen',
-          ['same-document-inflectional-word'],
+          'preserved-lexical-hyphen',
+          proof.evidence,
           options,
         )
-        joined = `${joined.slice(0, -1)}${next}`
-      } else if (
-        hasSameDocumentDerivation(unhyphenatedCandidate, unhyphenatedLexicon)
-      ) {
+        joined += next
+      } else if (proof?.verdict === 'ambiguous') {
         boundaryDecision(
           lines,
           index,
-          'removed-discretionary-hyphen',
-          ['same-document-derivational-word'],
+          'ambiguous',
+          [
+            ...proof.evidence,
+            'ambiguous-joined-and-hard-hyphen-forms',
+            'source-form-preserved',
+          ],
           options,
         )
-        joined = `${joined.slice(0, -1)}${next}`
-      } else {
+        joined += next
+      } else if (
+        boundaryTokenHasIndependentHyphenEvidence(lines, index) ||
+        boundaryContinuesHyphenChain(lines, index)
+      ) {
+        const preserveSourceLineSeparator = proof?.sourceBoundaryProven !== true
         boundaryDecision(
           lines,
           index,
           'unresolved',
-          ['insufficient-hyphen-evidence', 'source-form-preserved'],
+          [
+            ...(proof?.evidence ?? []),
+            'compound-token-boundary',
+            ...(preserveSourceLineSeparator
+              ? [SOURCE_LINE_SEPARATOR_PRESERVED]
+              : []),
+            'source-form-preserved',
+          ],
           options,
         )
-        joined += next
+        joined += preserveSourceLineSeparator ? ` ${next}` : next
+      } else {
+        const preserveSourceLineSeparator = proof?.sourceBoundaryProven !== true
+        boundaryDecision(
+          lines,
+          index,
+          'unresolved',
+          [
+            ...(proof?.evidence ?? ['insufficient-hyphen-evidence']),
+            ...(preserveSourceLineSeparator
+              ? [SOURCE_LINE_SEPARATOR_PRESERVED]
+              : []),
+            'source-form-preserved',
+          ],
+          options,
+        )
+        joined += preserveSourceLineSeparator ? ` ${next}` : next
       }
       continue
     }
@@ -604,10 +843,40 @@ function restoreCollapsedSentenceBoundarySpacing(text: string) {
     )
 }
 
+function hasBalancedOpeningDelimiterContinuation(
+  runs: readonly PdfSourceRun[],
+  openingRunIndex: number,
+  openingDelimiter: string,
+) {
+  const closingDelimiter =
+    openingDelimiter === '('
+      ? ')'
+      : openingDelimiter === '['
+        ? ']'
+        : openingDelimiter === '{'
+          ? '}'
+          : null
+  if (!closingDelimiter) return false
+
+  let depth = 0
+  for (let index = openingRunIndex; index < runs.length; index += 1) {
+    for (const character of runs[index].text.trim()) {
+      if (character === openingDelimiter) {
+        depth += 1
+      } else if (character === closingDelimiter) {
+        depth -= 1
+        if (depth === 0) return true
+        if (depth < 0) return false
+      }
+    }
+  }
+  return false
+}
+
 export function mergePdfRunText(runs: PdfSourceRun[]) {
   let text = ''
   let previous: PdfSourceRun | undefined
-  for (const run of runs) {
+  for (const [runIndex, run] of runs.entries()) {
     const word = run.text.trim()
     if (!word) continue
     const gap = previous
@@ -623,10 +892,16 @@ export function mergePdfRunText(runs: PdfSourceRun[]) {
     const sourceWhitespaceMatchesPredecessor =
       run.sourceWhitespaceBefore === 'pdf-text-item' &&
       previous?.sourceSequenceIndex === run.sourceWhitespacePredecessorIndex
+    const inferredRadicalOpeningDelimiterAttachment =
+      !sourceWhitespaceMatchesPredecessor &&
+      /^[([{]/u.test(word) &&
+      /[√∛∜]$/u.test(text) &&
+      hasBalancedOpeningDelimiterContinuation(runs, runIndex, word[0])
     const needsSpace =
       text.length > 0 &&
       !/^[,.;:!?%)}\]]/.test(word) &&
       !/[({[]$/.test(text) &&
+      !inferredRadicalOpeningDelimiterAttachment &&
       (sourceWhitespaceMatchesPredecessor ||
         raisedLeadingMarker ||
         gap > Math.max(0.0015, run.height * 0.08))
@@ -1077,6 +1352,72 @@ function splitSourceOwnedOverprintedColumnLayers(
   })
 }
 
+function splitDistinctScholarlyCaptionsIntoSourceLanes(
+  lines: readonly PdfTextLine[],
+) {
+  return lines.flatMap((line) => {
+    if (line.runs.length < 2) return [line]
+    const runs = [...line.runs].sort(
+      (left, right) => left.x - right.x || left.y - right.y,
+    )
+    const boundaries = runs.flatMap((rightRun, index) => {
+      if (index === 0) return []
+      const leftRun = runs[index - 1]
+      const leftEdge = leftRun.x + leftRun.width
+      const gap = rightRun.x - leftEdge
+      const center = (leftEdge + rightRun.x) / 2
+      if (
+        gap <
+          Math.max(0.002, Math.min(leftRun.height, rightRun.height) * 0.2) ||
+        center < 0.2 ||
+        center > 0.8
+      ) {
+        return []
+      }
+      const leftRuns = runs.slice(0, index)
+      const rightRuns = runs.slice(index)
+      const leftLabel = parsePdfScholarlyVisualLabel(
+        mergePdfRunText(leftRuns),
+        { context: 'caption' },
+      )
+      const rightLabel = parsePdfScholarlyVisualLabel(
+        mergePdfRunText(rightRuns),
+        { context: 'caption' },
+      )
+      return leftLabel?.status === 'parsed' &&
+        rightLabel?.status === 'parsed' &&
+        (leftLabel.kind !== rightLabel.kind ||
+          leftLabel.identifier !== rightLabel.identifier)
+        ? [
+            {
+              center,
+              leftRuns,
+              rightRuns,
+            },
+          ]
+        : []
+    })
+    if (boundaries.length !== 1) return [line]
+    const [boundary] = boundaries
+    return boundary
+      ? [
+          {
+            ...lineFromSourceRuns(line, boundary.leftRuns, 'left'),
+            sourceOwnedColumn: undefined,
+            sourceCaptionLaneBoundary: boundary.center,
+            sourceCaptionLaneSide: 'left' as const,
+          },
+          {
+            ...lineFromSourceRuns(line, boundary.rightRuns, 'right'),
+            sourceOwnedColumn: undefined,
+            sourceCaptionLaneBoundary: boundary.center,
+            sourceCaptionLaneSide: 'right' as const,
+          },
+        ]
+      : [line]
+  })
+}
+
 function runFitsLine(
   line: PdfTextLine,
   run: PdfSourceRun,
@@ -1290,6 +1631,316 @@ function restoreSourceOwnedMathOperators(
   }
 }
 
+function delimiterOrScriptOwnershipAtom(
+  run: PdfSourceRun,
+  provisionalOwner: PdfTextLine,
+) {
+  const text = run.text.trim()
+  const delimiter = mathExtensionRun(run) && /^[()[\]{}|⌈⌉⌊⌋]+$/u.test(text)
+  const compactMathScript =
+    /(?:CMMI|CMSY|MSBM)\d*/iu.test(run.fontName) &&
+    text.length > 0 &&
+    text.length <= 4 &&
+    run.fontSize <= provisionalOwner.fontSize * 0.85 &&
+    run.height <= provisionalOwner.height * 0.9
+  return delimiter || compactMathScript
+}
+
+function sourcePaintLedgerIdentity(run: PdfSourceRun) {
+  const paint = run.sourceTextPaint
+  return paint
+    ? `${paint.textLedgerSha256}\u0000${paint.operatorLedgerSha256}`
+    : null
+}
+
+function sourceOwnershipWindowSharesLayerAndPaint(
+  runs: readonly PdfSourceRun[],
+) {
+  if (runs.length < 3) return false
+  const first = runs[0]
+  if (
+    runs.some(
+      (run) =>
+        run.page !== first.page ||
+        run.rotation !== first.rotation ||
+        run.method !== first.method,
+    )
+  ) {
+    return false
+  }
+  const identities = runs.map(sourcePaintLedgerIdentity)
+  const provedIdentities = new Set(
+    identities.filter((identity): identity is string => identity !== null),
+  )
+  if (provedIdentities.size !== 1) return false
+  const missing = identities.flatMap((identity, index) =>
+    identity === null ? [index] : [],
+  )
+  if (missing.length === 0) return true
+  if (missing.length !== 1) return false
+  const missingIndex = missing[0]
+  return (
+    missingIndex > 0 &&
+    missingIndex < runs.length - 1 &&
+    identities[missingIndex - 1] !== null &&
+    identities[missingIndex - 1] === identities[missingIndex + 1]
+  )
+}
+
+function lineSourceIntervalForeignRunCount(
+  line: PdfTextLine,
+  sourceRuns: readonly PdfSourceRun[],
+  ownerForRun: (run: PdfSourceRun) => PdfTextLine | undefined,
+) {
+  const ownedIndexes = sourceRuns.flatMap((run, index) =>
+    ownerForRun(run) === line ? [index] : [],
+  )
+  if (ownedIndexes.length === 0) return Number.POSITIVE_INFINITY
+  const first = ownedIndexes[0]
+  const last = ownedIndexes.at(-1)!
+  let foreign = 0
+  for (let index = first; index <= last; index += 1) {
+    if (ownerForRun(sourceRuns[index]) !== line) foreign += 1
+  }
+  return foreign
+}
+
+function formulaBearingOwnershipHost(line: PdfTextLine) {
+  return line.runs.filter(probableFormulaRun).length >= 2
+}
+
+function sourceOwnershipClusterGeometryIsTight({
+  cluster,
+  previous,
+  next,
+  current,
+  target,
+  lines,
+}: {
+  cluster: readonly PdfSourceRun[]
+  previous: PdfSourceRun
+  next: PdfSourceRun
+  current: PdfTextLine
+  target: PdfTextLine
+  lines: readonly PdfTextLine[]
+}) {
+  const left = Math.min(...cluster.map((run) => run.x))
+  const right = Math.max(...cluster.map((run) => run.x + run.width))
+  const top = Math.min(...cluster.map((run) => run.y))
+  const bottom = Math.max(...cluster.map((run) => run.y + run.height))
+  const clusterHeight = bottom - top
+  const tolerance = Math.max(
+    0.004,
+    clusterHeight * 0.75,
+    Math.min(previous.height, next.height) * 0.5,
+  )
+  if (
+    horizontalGap(previous, cluster[0]) > tolerance ||
+    horizontalGap(cluster.at(-1)!, next) > tolerance ||
+    previous.x > right + tolerance ||
+    next.x + next.width < left - tolerance
+  ) {
+    return false
+  }
+  const targetCenter = target.y + target.height / 2
+  const currentCenter = current.y + current.height / 2
+  const clusterCenter = (top + bottom) / 2
+  if (
+    Math.abs(targetCenter - currentCenter) >
+      Math.max(0.03, target.height * 1.5, current.height * 1.5) ||
+    Math.abs(targetCenter - clusterCenter) >
+      Math.max(0.025, target.height * 1.75, clusterHeight * 1.75)
+  ) {
+    return false
+  }
+  const overlapsCluster = (line: PdfTextLine) =>
+    Math.min(line.x + line.width, right) - Math.max(line.x, left) > 0
+  const intervalTop = Math.min(targetCenter, currentCenter)
+  const intervalBottom = Math.max(targetCenter, currentCenter)
+  if (
+    lines.some((line) => {
+      if (line === current || line === target || !overlapsCluster(line)) {
+        return false
+      }
+      const center = line.y + line.height / 2
+      return center > intervalTop && center < intervalBottom
+    })
+  ) {
+    return false
+  }
+  const targetDistance = Math.abs(targetCenter - clusterCenter)
+  if (
+    lines.some((line) => {
+      if (
+        line === current ||
+        line === target ||
+        !overlapsCluster(line) ||
+        !formulaBearingOwnershipHost(line)
+      ) {
+        return false
+      }
+      return (
+        Math.abs(line.y + line.height / 2 - clusterCenter) <=
+        targetDistance + 0.004
+      )
+    })
+  ) {
+    return false
+  }
+  return current.runs.some(
+    (run) =>
+      !cluster.includes(run) &&
+      probableColumnProseRun(run) &&
+      Math.min(run.x + run.width, right) - Math.max(run.x, left) > 0,
+  )
+}
+
+// A provisional visual-baseline grouping can attach raised delimiters and
+// small scripts to overlapping prose even when their content-stream position
+// belongs to the immediately adjacent formula-bearing line. Repair only an
+// atomic, source-proved pair of intervals: every stolen cluster is tightly
+// bracketed by the same host, all proved paint shares one layer and ledger,
+// and moving all clusters restores contiguous source intervals for both lines.
+function restoreSourceOwnedDelimiterScriptClusters(
+  lines: PdfTextLine[],
+  sourceRuns: readonly PdfSourceRun[],
+) {
+  const ownerByRun = new Map<PdfSourceRun, PdfTextLine>()
+  for (const line of lines) {
+    for (const run of line.runs) ownerByRun.set(run, line)
+  }
+  const clusters: Array<{
+    current: PdfTextLine
+    target: PdfTextLine
+    runs: PdfSourceRun[]
+  }> = []
+  for (let index = 1; index < sourceRuns.length - 1; index += 1) {
+    const current = ownerByRun.get(sourceRuns[index])
+    if (
+      !current ||
+      !delimiterOrScriptOwnershipAtom(sourceRuns[index], current)
+    ) {
+      continue
+    }
+    const start = index
+    while (
+      index + 1 < sourceRuns.length - 1 &&
+      ownerByRun.get(sourceRuns[index + 1]) === current &&
+      delimiterOrScriptOwnershipAtom(sourceRuns[index + 1], current)
+    ) {
+      index += 1
+    }
+    const end = index
+    const previous = sourceRuns[start - 1]
+    const next = sourceRuns[end + 1]
+    const target = ownerByRun.get(previous)
+    const cluster = sourceRuns.slice(start, end + 1)
+    if (
+      !target ||
+      target === current ||
+      ownerByRun.get(next) !== target ||
+      !formulaBearingOwnershipHost(target) ||
+      (!probableFormulaRun(previous) && !probableFormulaRun(next)) ||
+      !sourceOwnershipWindowSharesLayerAndPaint([previous, ...cluster, next]) ||
+      !sourceOwnershipClusterGeometryIsTight({
+        cluster,
+        previous,
+        next,
+        current,
+        target,
+        lines,
+      })
+    ) {
+      continue
+    }
+    clusters.push({ current, target, runs: cluster })
+  }
+
+  const proposals: Array<{
+    current: PdfTextLine
+    target: PdfTextLine
+    runs: PdfSourceRun[]
+  }> = []
+  const seenPairs = new Set<string>()
+  for (const seed of clusters) {
+    const currentIndex = lines.indexOf(seed.current)
+    const targetIndex = lines.indexOf(seed.target)
+    const key = `${currentIndex}:${targetIndex}`
+    if (seenPairs.has(key)) continue
+    seenPairs.add(key)
+    proposals.push({
+      current: seed.current,
+      target: seed.target,
+      runs: clusters
+        .filter(
+          (cluster) =>
+            cluster.current === seed.current && cluster.target === seed.target,
+        )
+        .flatMap((cluster) => cluster.runs),
+    })
+  }
+  const lineProposalCount = new Map<PdfTextLine, number>()
+  for (const proposal of proposals) {
+    lineProposalCount.set(
+      proposal.current,
+      (lineProposalCount.get(proposal.current) ?? 0) + 1,
+    )
+    lineProposalCount.set(
+      proposal.target,
+      (lineProposalCount.get(proposal.target) ?? 0) + 1,
+    )
+  }
+  for (const proposal of proposals) {
+    if (
+      lineProposalCount.get(proposal.current) !== 1 ||
+      lineProposalCount.get(proposal.target) !== 1
+    ) {
+      continue
+    }
+    const moved = new Set(proposal.runs)
+    const proposedOwner = (run: PdfSourceRun) =>
+      moved.has(run) ? proposal.target : ownerByRun.get(run)
+    const currentBefore = lineSourceIntervalForeignRunCount(
+      proposal.current,
+      sourceRuns,
+      (run) => ownerByRun.get(run),
+    )
+    const targetBefore = lineSourceIntervalForeignRunCount(
+      proposal.target,
+      sourceRuns,
+      (run) => ownerByRun.get(run),
+    )
+    const currentAfter = lineSourceIntervalForeignRunCount(
+      proposal.current,
+      sourceRuns,
+      proposedOwner,
+    )
+    const targetAfter = lineSourceIntervalForeignRunCount(
+      proposal.target,
+      sourceRuns,
+      proposedOwner,
+    )
+    if (
+      currentAfter !== 0 ||
+      targetAfter !== 0 ||
+      currentAfter >= currentBefore ||
+      targetAfter >= targetBefore
+    ) {
+      continue
+    }
+    proposal.current.runs = proposal.current.runs.filter(
+      (run) => !moved.has(run),
+    )
+    proposal.target.runs.push(...proposal.runs)
+    for (const run of proposal.runs) ownerByRun.set(run, proposal.target)
+    resetLineBounds(proposal.current)
+    resetLineBounds(proposal.target)
+  }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].runs.length === 0) lines.splice(index, 1)
+  }
+}
+
 export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
   const lines: PdfTextLine[] = []
   const expandedRuns = page.runs
@@ -1370,13 +2021,28 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
     lines,
     expandedRuns.filter((run) => run.text.trim()),
   )
+  restoreSourceOwnedDelimiterScriptClusters(
+    lines,
+    expandedRuns.filter((run) => run.text.trim()),
+  )
   const sourceOwnedLines = splitSourceOwnedOverprintedColumnLayers(
     lines,
     gutterCenter,
     sourceOrder,
   )
-  for (const line of sourceOwnedLines) {
-    line.runs.sort((left, right) => left.x - right.x)
+  const captionOwnedLines =
+    splitDistinctScholarlyCaptionsIntoSourceLanes(sourceOwnedLines)
+  for (const line of captionOwnedLines) {
+    line.runs.sort((left, right) => {
+      const horizontalDelta = left.x - right.x
+      if (Math.abs(horizontalDelta) > 0.000_001) return horizontalDelta
+      const verticalDelta = left.y - right.y
+      if (Math.abs(verticalDelta) > 0.000_001) return verticalDelta
+      return (
+        horizontalDelta ||
+        sourceRunOrder(left, sourceOrder) - sourceRunOrder(right, sourceOrder)
+      )
+    })
     for (const accent of [...line.runs]) {
       const accentOrder = sourceRunOrder(accent, sourceOrder)
       if (!Number.isFinite(accentOrder)) continue
@@ -1394,7 +2060,7 @@ export function groupRunsIntoLines(page: PdfPageAnalysis): PdfTextLine[] {
     }
     line.text = mergePdfRunText(line.runs)
   }
-  const nonEmptyLines = sourceOwnedLines.filter((line) => line.text)
+  const nonEmptyLines = captionOwnedLines.filter((line) => line.text)
   for (const line of nonEmptyLines) {
     registerPdfLinkedTokenSourceAnnotations(line, page.links ?? [])
   }

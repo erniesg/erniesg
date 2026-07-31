@@ -37,10 +37,74 @@ export const PDF_CORPUS_REPORT_SCHEMA_PATH =
   'docs/schemas/pdf-corpus-audit.schema.json'
 export const PDF_CORPUS_REPORT_OCR_SCHEMA_PATH =
   'docs/schemas/pdf-corpus-audit-v1.6.schema.json'
-export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION = '1.7.0'
+export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION = '1.9.0'
 export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH =
-  'docs/schemas/pdf-corpus-audit-v1.7.schema.json'
-export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.4.0'
+  'docs/schemas/pdf-corpus-audit-v1.9.schema.json'
+export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.6.0'
+export const PDF_HYPHEN_LEXICAL_MODEL_RECEIPT = Object.freeze({
+  id: 'scowl-2020.12.07+ushyphmax-2005-05-30',
+  language: 'en-US',
+  dictionarySha256:
+    '829a043cf078d1e80e886289a13823454977f442a239a859d2133ea61944aa60',
+  affixSha256:
+    '70fe5778717d097ce2f3326baaa5c1e4d2206d81a5a81d3ea8e11c4770806dd5',
+  hyphenationSha256:
+    'f4ffcd96c5cbc886bdad23f95dcae8edc3cd3620eae62f7946eceda97c4e68f8',
+})
+export const PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT = Object.freeze({
+  kind: 'prefix',
+  value: 're',
+  affixClass: 'PFX',
+  flag: 'A',
+  crossProduct: true,
+  affixSha256: PDF_HYPHEN_LEXICAL_MODEL_RECEIPT.affixSha256,
+})
+export const PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE = Object.freeze([
+  'source-proven-wrapped-line-boundary',
+  `lexical-model:${PDF_HYPHEN_LEXICAL_MODEL_RECEIPT.id}`,
+  'joined-form-valid:pinned-lexicon',
+  'split-point-valid:pinned-hyphenation-pattern',
+  'same-document-unhyphenated-word',
+  'hard-hyphen-form-not-proved',
+])
+export const PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE = Object.freeze(
+  [
+    'source-proven-wrapped-line-boundary',
+    `lexical-model:${PDF_HYPHEN_LEXICAL_MODEL_RECEIPT.id}`,
+    'joined-form-valid:same-document-derived-affix',
+    'split-point-valid:pinned-hyphenation-pattern',
+    'productive-prefix-valid:pinned-affix-model',
+    'base-form-valid:pinned-lexicon',
+    'same-document-unhyphenated-base-word',
+    'hard-hyphen-form-not-proved',
+  ],
+)
+export const PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE = Object.freeze([
+  'unproven-wrapped-line-boundary',
+  'unsupported-or-unproven-hyphenation-language',
+  'joined-form-not-proved',
+  'split-point-not-proved',
+  'hard-hyphen-form-valid:same-document',
+])
+
+export function canonicalHyphenEvidenceSha256(value) {
+  return createHash('sha256')
+    .update(`canonical-hyphen-evidence\0${String(value ?? '')}`)
+    .digest('hex')
+}
+
+export const PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S = Object.freeze(
+  PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE.map(canonicalHyphenEvidenceSha256),
+)
+export const PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE_SHA256S =
+  Object.freeze(
+    PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE.map(
+      canonicalHyphenEvidenceSha256,
+    ),
+  )
+export const PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S = Object.freeze(
+  PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE.map(canonicalHyphenEvidenceSha256),
+)
 
 const MAX_DIAGNOSTIC_SAMPLES = 64
 const MAX_DIAGNOSTIC_SAMPLES_PER_CODE = 3
@@ -56,6 +120,15 @@ const SEMANTIC_VERSION_PATTERN =
 const PDF_CORPUS_EXECUTION_PROVENANCE_VERSION = '1.1.0'
 const PDF_CORPUS_EXECUTION_CAPTURE_VERSION = '1.0.0'
 const PDF_CORPUS_EXECUTION_VERIFICATION_METHOD = 'before-after-exact-match-v1'
+const REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_DIR',
+  'GIT_INDEX_FILE',
+  'GIT_NAMESPACE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_WORK_TREE',
+]
 
 const SAFE_FAILURE_MESSAGES = Object.freeze({
   INVALID_PDF: 'The file is not a valid PDF.',
@@ -70,6 +143,8 @@ const SAFE_FAILURE_MESSAGES = Object.freeze({
     'The PDF reconstruction did not pass the completeness gate.',
   PDF_DOCUMENT_TIMEOUT:
     'The PDF exceeded the local per-document processing time limit.',
+  PDF_DOCUMENT_STALLED:
+    'The PDF worker stopped producing bounded heartbeat evidence.',
   PDF_DOCUMENT_WORKER_FAILED:
     'The PDF worker stopped without exposing local path or document details.',
   AUDIT_FAILED:
@@ -182,11 +257,18 @@ export async function packageContentsIdentity(directory) {
 }
 
 async function gitRawOutput(arguments_, repositoryRoot = REPOSITORY_ROOT) {
+  const environment = { ...process.env }
+  if (resolve(repositoryRoot) !== resolve(REPOSITORY_ROOT)) {
+    for (const key of REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS) {
+      delete environment[key]
+    }
+  }
   const { stdout } = await execFileAsync(
     'git',
     ['-C', repositoryRoot, ...arguments_],
     {
       encoding: 'utf8',
+      env: environment,
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
     },
@@ -195,11 +277,18 @@ async function gitRawOutput(arguments_, repositoryRoot = REPOSITORY_ROOT) {
 }
 
 async function gitRawBytes(arguments_, repositoryRoot = REPOSITORY_ROOT) {
+  const environment = { ...process.env }
+  if (resolve(repositoryRoot) !== resolve(REPOSITORY_ROOT)) {
+    for (const key of REPOSITORY_SCOPED_GIT_ENVIRONMENT_KEYS) {
+      delete environment[key]
+    }
+  }
   const { stdout } = await execFileAsync(
     'git',
     ['-C', repositoryRoot, ...arguments_],
     {
       encoding: 'buffer',
+      env: environment,
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
     },
@@ -649,9 +738,8 @@ function safeOcrProvenance(pages) {
     .sort((left, right) => left.page - right.page)
 }
 
-function normalizedSourceExclusionMask(mask) {
-  if (!mask) return null
-  const normalizedBox = (box) => ({
+function normalizedSourceBox(box) {
+  return {
     page: box.page,
     x: box.x,
     y: box.y,
@@ -659,13 +747,55 @@ function normalizedSourceExclusionMask(mask) {
     height: box.height,
     rotation: box.rotation,
     method: box.method,
-  })
+  }
+}
+
+function normalizedSourceExclusionMask(mask) {
+  if (!mask) return null
   return {
     algorithm: mask.algorithm,
     expansionPixels: mask.expansionPixels,
-    ownedSourceBoxes: (mask.ownedSourceBoxes ?? []).map(normalizedBox),
-    excludedSourceBoxes: (mask.excludedSourceBoxes ?? []).map(normalizedBox),
+    ownedSourceBoxes: (mask.ownedSourceBoxes ?? []).map(normalizedSourceBox),
+    excludedSourceBoxes: (mask.excludedSourceBoxes ?? []).map(
+      normalizedSourceBox,
+    ),
   }
+}
+
+function normalizedSourceCropAttempts(attempts) {
+  return (attempts ?? []).map((attempt) => ({
+    schemaVersion: attempt.schemaVersion,
+    sequence: attempt.sequence,
+    request: {
+      kind: attempt.request.kind,
+      page: attempt.request.page,
+      sourceBox: normalizedSourceBox(attempt.request.sourceBox),
+      sourceObjectIds: [...attempt.request.sourceObjectIds],
+      sourceBoxes: attempt.request.sourceBoxes.map(normalizedSourceBox),
+      ...(attempt.request.ownedSourceBoxes
+        ? {
+            ownedSourceBoxes:
+              attempt.request.ownedSourceBoxes.map(normalizedSourceBox),
+          }
+        : {}),
+      ...(attempt.request.excludedSourceBoxes
+        ? {
+            excludedSourceBoxes:
+              attempt.request.excludedSourceBoxes.map(normalizedSourceBox),
+          }
+        : {}),
+      ...(attempt.request.sourceTextOperationFilter
+        ? {
+            sourceTextOperationFilter:
+              attempt.request.sourceTextOperationFilter,
+          }
+        : {}),
+      ...(attempt.request.tightenToSourceInk === undefined
+        ? {}
+        : { tightenToSourceInk: attempt.request.tightenToSourceInk }),
+    },
+    outcome: { ...attempt.outcome },
+  }))
 }
 
 function normalizedAssetManifest(assets) {
@@ -683,6 +813,13 @@ function normalizedAssetManifest(assets) {
       ? {
           sourceExclusionMask: normalizedSourceExclusionMask(
             asset.sourceExclusionMask,
+          ),
+        }
+      : {}),
+    ...(asset.sourceCropAttempts
+      ? {
+          sourceCropAttempts: normalizedSourceCropAttempts(
+            asset.sourceCropAttempts,
           ),
         }
       : {}),
@@ -724,6 +861,13 @@ function selectedVisualCropSha256(relationship, assetsById) {
                   ),
                 }
               : {}),
+            ...(asset.sourceCropAttempts
+              ? {
+                  sourceCropAttempts: normalizedSourceCropAttempts(
+                    asset.sourceCropAttempts,
+                  ),
+                }
+              : {}),
           },
         ]
       : []
@@ -762,6 +906,13 @@ function equationTranscriptAdjudicationSha256(relationship) {
     : null
 }
 
+function equationGeometryTranscriptSha256(relationship) {
+  return relationship.kind === 'equation' &&
+    relationship.equationGeometryTranscript
+    ? canonicalJsonHash(relationship.equationGeometryTranscript)
+    : null
+}
+
 function normalizedVisualRelationships(relationships, assets) {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
   return relationships.map((relationship) => ({
@@ -782,12 +933,15 @@ function normalizedVisualRelationships(relationships, assets) {
     ...(relationship.kind === 'equation' &&
     ((typeof relationship.sourceText === 'string' &&
       relationship.sourceText.length > 0) ||
-      relationship.equationTranscriptAdjudication)
+      relationship.equationTranscriptAdjudication ||
+      relationship.equationGeometryTranscript)
       ? {
           equationTranscriptSourceSha256:
             equationTranscriptSourceSha256(relationship),
           equationTranscriptAdjudicationSha256:
             equationTranscriptAdjudicationSha256(relationship),
+          equationGeometryTranscriptSha256:
+            equationGeometryTranscriptSha256(relationship),
         }
       : {}),
     selectedCandidateSha256: selectedVisualCandidateSha256(relationship),
@@ -937,14 +1091,33 @@ function normalizedNodeProvenance(nodes, provenance) {
           regionIds: (evidence.regionIds ?? []).map((regionId) =>
             opaqueStructuralId('region', regionId),
           ),
-          boxes: (evidence.boxes ?? []).map((box) =>
-            typeof box.fontName === 'string'
-              ? {
-                  ...box,
-                  fontName: box.fontName.replace(/^g_d\d+_/u, 'g_d*_'),
-                }
-              : { ...box },
-          ),
+          boxes: (evidence.boxes ?? []).map((box) => {
+            const normalized = {
+              ...box,
+              ...(typeof box.fontName === 'string'
+                ? {
+                    fontName: box.fontName.replace(/^g_d\d+_/u, 'g_d*_'),
+                  }
+                : {}),
+            }
+            if (
+              box.sourceTextPaint &&
+              typeof box.sourceTextPaint === 'object' &&
+              !Array.isArray(box.sourceTextPaint)
+            ) {
+              // This digest covers the entire page's PDF.js operator stream
+              // and can vary with render-order state even when this node's
+              // text span, operations, geometry, and lineage are identical.
+              // Keep it in raw provenance/crop attestations, but exclude it
+              // from the node-local deterministic structural projection.
+              normalized.sourceTextPaint = Object.fromEntries(
+                Object.entries(box.sourceTextPaint).filter(
+                  ([key]) => key !== 'operatorLedgerSha256',
+                ),
+              )
+            }
+            return normalized
+          }),
           links: (evidence.links ?? []).map((link) =>
             canonicalJsonHash({ kind: 'node-source-link', link }),
           ),
@@ -963,6 +1136,356 @@ function normalizedNodeProvenance(nodes, provenance) {
       provenanceSha256,
     }
   })
+}
+
+function exactObjectKeys(value, expected) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const actual = Object.keys(value).sort()
+  const sortedExpected = [...expected].sort()
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  )
+}
+
+const CANONICAL_HYPHEN_CONTEXTS = new Set([
+  'bibliography-continuation',
+  'canonical-flow-continuation',
+])
+
+function sameSourceBox(left, right) {
+  const keys = ['page', 'x', 'y', 'width', 'height', 'rotation', 'method']
+  return (
+    exactObjectKeys(left, keys) &&
+    exactObjectKeys(right, keys) &&
+    keys.every((key) => left[key] === right[key])
+  )
+}
+
+function normalizedCanonicalHyphenDeletionLedger(reconstruction) {
+  const decisions = reconstruction.canonicalHyphenBoundaryDecisions
+  const expectedCount = reconstruction.canonicalHyphenBoundaryDecisionCount
+  if (!Array.isArray(decisions)) {
+    throw new Error(
+      'Canonical hyphen deletion ledger and count are required for current structural receipts.',
+    )
+  }
+  if (
+    !Number.isSafeInteger(expectedCount) ||
+    expectedCount < 0 ||
+    decisions.length !== expectedCount
+  ) {
+    throw new Error(
+      'Canonical hyphen deletion count does not match the decision ledger.',
+    )
+  }
+  if (decisions.length === 0) {
+    return { available: true, records: [] }
+  }
+  const lineOwners = new Map()
+  for (const region of reconstruction.regions ?? []) {
+    for (const line of region.lines ?? []) {
+      if (lineOwners.has(line.id)) {
+        throw new Error('Canonical hyphen deletion line ids are not unique.')
+      }
+      lineOwners.set(line.id, { region, line })
+    }
+  }
+  const sourceWords = new Set(
+    (reconstruction.regions ?? []).flatMap((region) =>
+      (region.lines ?? []).flatMap(
+        (line) =>
+          line.text
+            .normalize('NFKC')
+            .toLocaleLowerCase('en-US')
+            .match(/[\p{L}\p{N}]+/gu) ?? [],
+      ),
+    ),
+  )
+  const hardHyphenWords = new Set(
+    (reconstruction.regions ?? []).flatMap((region) =>
+      (region.lines ?? []).flatMap((line) =>
+        (
+          line.text
+            .normalize('NFKC')
+            .toLocaleLowerCase('en-US')
+            .match(/[\p{L}\p{N}]+[-‐‑][\p{L}\p{N}]+/gu) ?? []
+        ).map((word) => word.replace(/[-‐‑]/gu, '-')),
+      ),
+    ),
+  )
+  const ids = new Set()
+  const boundaries = new Set()
+  const records = decisions.map((decision) => {
+    if (
+      !exactObjectKeys(decision, [
+        'id',
+        'context',
+        'outcome',
+        'fromRegionId',
+        'fromLineId',
+        'toRegionId',
+        'toLineId',
+        'geometry',
+        'proof',
+      ]) ||
+      !CANONICAL_HYPHEN_CONTEXTS.has(decision.context) ||
+      decision.outcome !== 'removed-discretionary-hyphen' ||
+      !exactObjectKeys(decision.geometry, ['from', 'to']) ||
+      !decision.proof ||
+      typeof decision.proof !== 'object' ||
+      Array.isArray(decision.proof) ||
+      !exactObjectKeys(decision.proof.pinnedSplit, [
+        'left',
+        'right',
+        'index',
+      ]) ||
+      !exactObjectKeys(decision.proof.model, [
+        'id',
+        'language',
+        'dictionarySha256',
+        'affixSha256',
+        'hyphenationSha256',
+      ]) ||
+      typeof decision.id !== 'string' ||
+      typeof decision.context !== 'string' ||
+      typeof decision.outcome !== 'string' ||
+      typeof decision.fromRegionId !== 'string' ||
+      typeof decision.fromLineId !== 'string' ||
+      typeof decision.toRegionId !== 'string' ||
+      typeof decision.toLineId !== 'string' ||
+      typeof decision.proof.hardHyphenForm !== 'string' ||
+      typeof decision.proof.pinnedSplit.left !== 'string' ||
+      typeof decision.proof.pinnedSplit.right !== 'string' ||
+      !Number.isSafeInteger(decision.proof.pinnedSplit.index) ||
+      !Array.isArray(decision.proof.evidence) ||
+      decision.proof.evidence.some(
+        (entry) => typeof entry !== 'string' || entry.length === 0,
+      )
+    ) {
+      throw new Error('Canonical hyphen deletion decision is malformed.')
+    }
+    const exactProofShape =
+      decision.proof.tier === 'exact-same-document' &&
+      exactObjectKeys(decision.proof, [
+        'tier',
+        'sourceBoundaryProven',
+        'pinnedWord',
+        'pinnedJoinedFormValid',
+        'pinnedSplit',
+        'splitPointValid',
+        'exactSameDocumentJoinedForm',
+        'sameDocumentJoinedFormValid',
+        'hardHyphenForm',
+        'hardHyphenCounterproof',
+        'model',
+        'evidence',
+      ]) &&
+      typeof decision.proof.pinnedWord === 'string' &&
+      decision.proof.pinnedJoinedFormValid === true &&
+      typeof decision.proof.exactSameDocumentJoinedForm === 'string' &&
+      decision.proof.sameDocumentJoinedFormValid === true
+    const derivedProofShape =
+      decision.proof.tier === 'same-document-derived-affix' &&
+      exactObjectKeys(decision.proof, [
+        'tier',
+        'sourceBoundaryProven',
+        'derivedWord',
+        'productivePrefix',
+        'baseWord',
+        'pinnedBaseWordValid',
+        'pinnedSplit',
+        'splitPointValid',
+        'exactSameDocumentBaseWord',
+        'sameDocumentBaseWordValid',
+        'hardHyphenForm',
+        'hardHyphenCounterproof',
+        'model',
+        'evidence',
+      ]) &&
+      typeof decision.proof.derivedWord === 'string' &&
+      exactObjectKeys(decision.proof.productivePrefix, [
+        'kind',
+        'value',
+        'affixClass',
+        'flag',
+        'crossProduct',
+        'affixSha256',
+      ]) &&
+      canonicalJson(decision.proof.productivePrefix) ===
+        canonicalJson(PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT) &&
+      typeof decision.proof.baseWord === 'string' &&
+      decision.proof.pinnedBaseWordValid === true &&
+      typeof decision.proof.exactSameDocumentBaseWord === 'string' &&
+      decision.proof.sameDocumentBaseWordValid === true
+    if (!exactProofShape && !derivedProofShape) {
+      throw new Error('Canonical hyphen deletion decision is malformed.')
+    }
+    const from = lineOwners.get(decision.fromLineId)
+    const to = lineOwners.get(decision.toLineId)
+    const left = decision.proof.pinnedSplit.left
+      .normalize('NFKC')
+      .toLocaleLowerCase('en-US')
+    const right = decision.proof.pinnedSplit.right
+      .normalize('NFKC')
+      .toLocaleLowerCase('en-US')
+    const joined = `${left}${right}`
+    const hardHyphen = `${left}-${right}`
+    const exactTierValid =
+      decision.proof.tier === 'exact-same-document' &&
+      decision.proof.pinnedWord.normalize('NFKC').toLocaleLowerCase('en-US') ===
+        joined &&
+      decision.proof.exactSameDocumentJoinedForm
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') === joined &&
+      sourceWords.has(joined) &&
+      PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE.every((evidence) =>
+        decision.proof.evidence.includes(evidence),
+      )
+    const derivedBase =
+      decision.proof.tier === 'same-document-derived-affix'
+        ? decision.proof.baseWord.normalize('NFKC').toLocaleLowerCase('en-US')
+        : null
+    const derivedTierValid =
+      decision.proof.tier === 'same-document-derived-affix' &&
+      decision.proof.derivedWord
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') === joined &&
+      decision.proof.exactSameDocumentBaseWord
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') === derivedBase &&
+      joined ===
+        `${PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT.value}${derivedBase}` &&
+      left.length > PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT.value.length &&
+      sourceWords.has(derivedBase) &&
+      PDF_HYPHEN_DERIVED_AFFIX_REMOVAL_REQUIRED_EVIDENCE.every((evidence) =>
+        decision.proof.evidence.includes(evidence),
+      )
+    const boundary = [
+      decision.fromRegionId,
+      decision.fromLineId,
+      decision.toRegionId,
+      decision.toLineId,
+    ].join('\0')
+    if (
+      ids.has(decision.id) ||
+      boundaries.has(boundary) ||
+      !from ||
+      !to ||
+      from.region.id !== decision.fromRegionId ||
+      to.region.id !== decision.toRegionId ||
+      decision.id !==
+        `canonical-hyphen-boundary:${decision.context}:${decision.fromRegionId}:${decision.fromLineId}->${decision.toRegionId}:${decision.toLineId}` ||
+      !sameSourceBox(decision.geometry.from, from.line.box) ||
+      !sameSourceBox(decision.geometry.to, to.line.box) ||
+      decision.proof.sourceBoundaryProven !== true ||
+      decision.proof.splitPointValid !== true ||
+      decision.proof.hardHyphenCounterproof !== null ||
+      (!exactTierValid && !derivedTierValid) ||
+      left.length === 0 ||
+      right.length === 0 ||
+      decision.proof.pinnedSplit.index !== left.length ||
+      decision.proof.hardHyphenForm
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US') !== hardHyphen ||
+      !from.line.text
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US')
+        .trimEnd()
+        .replace(/[-‐‑]$/u, '-')
+        .endsWith(`${left}-`) ||
+      !to.line.text
+        .normalize('NFKC')
+        .toLocaleLowerCase('en-US')
+        .trimStart()
+        .startsWith(right) ||
+      hardHyphenWords.has(hardHyphen) ||
+      canonicalJson(decision.proof.model) !==
+        canonicalJson(PDF_HYPHEN_LEXICAL_MODEL_RECEIPT) ||
+      decision.proof.evidence.length === 0 ||
+      new Set(decision.proof.evidence).size !==
+        decision.proof.evidence.length ||
+      PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE.some((evidence) =>
+        decision.proof.evidence.includes(evidence),
+      )
+    ) {
+      throw new Error(
+        'Canonical hyphen deletion decision is not source-proven.',
+      )
+    }
+    ids.add(decision.id)
+    boundaries.add(boundary)
+    return {
+      id: opaqueStructuralId('canonical-hyphen-decision', decision.id),
+      context: decision.context,
+      outcome: decision.outcome,
+      fromRegionId: opaqueStructuralId('region', decision.fromRegionId),
+      fromLineId: opaqueStructuralId('line', decision.fromLineId),
+      toRegionId: opaqueStructuralId('region', decision.toRegionId),
+      toLineId: opaqueStructuralId('line', decision.toLineId),
+      geometry: {
+        from: { ...decision.geometry.from },
+        to: { ...decision.geometry.to },
+      },
+      proof: {
+        ...(decision.proof.tier === 'exact-same-document'
+          ? {
+              tier: 'exact-same-document',
+              sourceBoundaryProven: true,
+              pinnedWordSha256: canonicalJsonHash(joined),
+              pinnedJoinedFormValid: true,
+              pinnedSplit: {
+                leftSha256: canonicalJsonHash(left),
+                rightSha256: canonicalJsonHash(right),
+                index: decision.proof.pinnedSplit.index,
+              },
+              splitPointValid: true,
+              exactSameDocumentJoinedFormSha256: canonicalJsonHash(joined),
+              sameDocumentJoinedFormValid: true,
+            }
+          : (() => {
+              const derivedWordSha256 = canonicalJsonHash(joined)
+              const baseWordSha256 = canonicalJsonHash(derivedBase)
+              const productivePrefix = {
+                ...PDF_HYPHEN_PRODUCTIVE_PREFIX_RULE_RECEIPT,
+              }
+              return {
+                tier: 'same-document-derived-affix',
+                sourceBoundaryProven: true,
+                derivedWordSha256,
+                productivePrefix,
+                baseWordSha256,
+                derivationBindingSha256: canonicalJsonHash({
+                  derivedWordSha256,
+                  productivePrefix,
+                  baseWordSha256,
+                }),
+                pinnedBaseWordValid: true,
+                pinnedSplit: {
+                  leftSha256: canonicalJsonHash(left),
+                  rightSha256: canonicalJsonHash(right),
+                  index: decision.proof.pinnedSplit.index,
+                },
+                splitPointValid: true,
+                exactSameDocumentBaseWordSha256: baseWordSha256,
+                sameDocumentBaseWordValid: true,
+              }
+            })()),
+        hardHyphenFormSha256: canonicalJsonHash(hardHyphen),
+        hardHyphenCounterproof: null,
+        model: { ...decision.proof.model },
+        evidenceSha256s: [
+          ...new Set(
+            decision.proof.evidence.map((evidence) =>
+              canonicalHyphenEvidenceSha256(evidence),
+            ),
+          ),
+        ].sort(),
+      },
+    }
+  })
+  records.sort((left, right) => left.id.localeCompare(right.id))
+  return { available: true, records }
 }
 
 function lineTransitionLedger(reconstruction) {
@@ -984,6 +1507,7 @@ const LINE_TRANSITION_OUTCOMES = new Set([
   'no-space',
   'preserved-lexical-hyphen',
   'removed-discretionary-hyphen',
+  'ambiguous',
   'structural-boundary',
   'unresolved',
   'unresolved-corrupting-join',
@@ -1013,6 +1537,7 @@ function lineTransitionCounts(reconstruction, ledger) {
     if (outcome === 'structural-boundary') {
       structurallyConsumedLineBoundaryCount += 1
     } else if (
+      outcome === 'ambiguous' ||
       outcome === 'unresolved' ||
       outcome === 'unresolved-corrupting-join'
     ) {
@@ -1070,6 +1595,9 @@ export function createPdfStructuralReceipt(reconstruction) {
     reconstruction,
     transitionLedger,
   )
+  const canonicalHyphenDeletionLedger =
+    normalizedCanonicalHyphenDeletionLedger(reconstruction)
+  const canonicalHyphenDeletionRecords = canonicalHyphenDeletionLedger.records
   return {
     schemaVersion: PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION,
     canonicalNodeCount: nodes.length,
@@ -1124,6 +1652,17 @@ export function createPdfStructuralReceipt(reconstruction) {
       ? canonicalJsonHash(transitions)
       : null,
     ...transitionCounts,
+    canonicalHyphenDeletionLedgerAvailable:
+      canonicalHyphenDeletionLedger.available,
+    canonicalHyphenDeletionCount: canonicalHyphenDeletionRecords.length,
+    canonicalHyphenDeletionContextCounts: countsBy(
+      canonicalHyphenDeletionRecords,
+      (record) => record.context,
+    ),
+    canonicalHyphenDeletionLedger: canonicalHyphenDeletionRecords,
+    canonicalHyphenDeletionLedgerSha256: canonicalHyphenDeletionLedger.available
+      ? canonicalJsonHash(canonicalHyphenDeletionRecords)
+      : null,
   }
 }
 
@@ -1143,21 +1682,49 @@ export async function createPdfPipeline({
   // unavailable engine fails with its named diagnostic and no held resources.
   const ocr = await createHeadlessOcrOptions(resolvedOcrEngine, engineContext)
   const cacheDir = await mkdtemp(join(temporaryRoot, 'srt-pdf-vite-'))
-  const vite = await createServer({
-    appType: 'custom',
-    cacheDir,
-    logLevel: 'silent',
-    server: { middlewareMode: true },
-  })
   const standardFontDataUrl = new URL(
     '../node_modules/pdfjs-dist/standard_fonts/',
     import.meta.url,
   ).href
-  const [pdf, quality, importTypes] = await Promise.all([
-    vite.ssrLoadModule('/src/research/pdf.ts'),
-    vite.ssrLoadModule('/src/research/pdf-quality.ts'),
-    vite.ssrLoadModule('/src/research/import-types.ts'),
-  ])
+  let vite
+  let pdf
+  let quality
+  let importTypes
+  try {
+    vite = await createServer({
+      appType: 'custom',
+      cacheDir,
+      logLevel: 'silent',
+      // Module ids below are repository-root-relative. Pin Vite to the module's
+      // repository instead of inheriting whichever CWD invoked the audit tool.
+      root: REPOSITORY_ROOT,
+      // This pipeline loads a fixed module graph once and never serves a
+      // development session. Watching the repository is unnecessary and can
+      // exhaust inotify limits by traversing package-manager symlink targets.
+      server: { middlewareMode: true, watch: null },
+    })
+    // pdf.ts already traverses much of the quality graph. Loading the three
+    // roots concurrently can ask Vite to transform the same dependency while
+    // the first graph is still being instantiated. Keep this one-shot startup
+    // deterministic and release the server if any root fails to load.
+    pdf = await vite.ssrLoadModule('/src/research/pdf.ts')
+    quality = await vite.ssrLoadModule('/src/research/pdf-quality.ts')
+    importTypes = await vite.ssrLoadModule('/src/research/import-types.ts')
+  } catch (error) {
+    if (vite) {
+      try {
+        await vite.close()
+      } catch {
+        // Preserve the startup failure that made pipeline creation fail.
+      }
+    }
+    try {
+      await rm(cacheDir, { recursive: true, force: true })
+    } catch {
+      // Preserve the startup failure that made pipeline creation fail.
+    }
+    throw error
+  }
   let exportModules
   let diagnosticModules
   let decisionModules
@@ -1232,7 +1799,7 @@ export async function createPdfPipeline({
 export async function auditPdfPath(
   path,
   pipeline,
-  { expectedSource = null } = {},
+  { expectedSource = null, onProgress } = {},
 ) {
   const stableBasename = basename(path)
   try {
@@ -1270,7 +1837,7 @@ export async function auditPdfPath(
         type: 'application/pdf',
         lastModified: 0,
       }),
-      undefined,
+      onProgress,
       {
         standardFontDataUrl: pipeline.standardFontDataUrl,
         ocr: pipeline.ocr,

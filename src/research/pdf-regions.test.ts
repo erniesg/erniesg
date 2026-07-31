@@ -7,7 +7,10 @@ import {
   evaluateReadingOrder,
   hasAcceptedCycle,
   noteLabelFromText,
+  proseDominantPdfMathSource,
   reconstructPageRegions,
+  splitRunBackedCrossGutterProse,
+  sourceProvenDominantBaselineSequentialWrap,
   sourceInlineFractionPairs,
 } from './pdf-regions'
 import type { PdfFigureRasterizer } from './pdf-visuals'
@@ -55,6 +58,454 @@ function page(
   }
 }
 
+function detachedDisplayFractionAtomPage({
+  atomText = 'h',
+  atomFontName = 'Synthetic-LMRoman10-Bold',
+  includeEquation = true,
+  competingDenominator = false,
+}: {
+  atomText?: string
+  atomFontName?: string
+  includeEquation?: boolean
+  competingDenominator?: boolean
+} = {}) {
+  const sourceRun = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    sourceSequenceIndex: number,
+    fontSize = 10.9091,
+    height = 0.0129561758,
+  ) => ({
+    ...run(1, text, x, y, width, fontSize, height),
+    fontName,
+    sourceSequenceIndex,
+  })
+  const prose = [
+    sourceRun(
+      'Ordinary prose establishes the body font and page geometry.',
+      0.14097,
+      0.72,
+      0.58,
+      'Synthetic-NimbusRoman-Regular',
+      120,
+    ),
+    sourceRun(
+      'A second ordinary source line keeps the lower page band substantive.',
+      0.14097,
+      0.74,
+      0.62,
+      'Synthetic-NimbusRoman-Regular',
+      122,
+    ),
+    sourceRun(
+      'normalization function is given by',
+      0.14097,
+      0.7907965558,
+      0.2515880752,
+      'Synthetic-NimbusRoman-Regular',
+      133,
+    ),
+  ]
+  const atom = sourceRun(
+    atomText,
+    0.5526047731,
+    0.8174477197,
+    atomText === 'h' ? 0.0117158234 : 0.22,
+    atomFontName,
+    145,
+  )
+  if (!includeEquation) return page(1, [...prose, atom])
+
+  const baseline = [
+    sourceRun(
+      'LNorm(',
+      0.3686722689,
+      0.8261412114,
+      0.0640062118,
+      'Synthetic-LMRoman10-Regular',
+      135,
+    ),
+    sourceRun(
+      'h',
+      0.4326047059,
+      0.8261412114,
+      0.0117158234,
+      'Synthetic-LMRoman10-Bold',
+      136,
+    ),
+    sourceRun(
+      ')',
+      0.4443024538,
+      0.8261412114,
+      0.0071321679,
+      'Synthetic-LMRoman10-Regular',
+      137,
+    ),
+    sourceRun(
+      '=',
+      0.4683046739,
+      0.8261412114,
+      0.0142643358,
+      'Synthetic-LMRoman10-Regular',
+      139,
+    ),
+    sourceRun(
+      'α',
+      0.4993616134,
+      0.8261412114,
+      0.011734158,
+      'Synthetic-LMMathItalic10-Regular',
+      141,
+    ),
+    sourceRun(
+      '·',
+      0.515294521,
+      0.8261412114,
+      0.0050970249,
+      'Synthetic-LMMathSymbols10-Regular',
+      143,
+    ),
+  ]
+  const denominator = [
+    sourceRun(
+      'σ',
+      0.5263865546,
+      0.8351198337,
+      0.0104690691,
+      'Synthetic-LMMathItalic10-Regular',
+      147,
+    ),
+    sourceRun(
+      'rms',
+      0.5368736807,
+      0.8406052019,
+      0.0231522001,
+      'Synthetic-LMRoman8-Regular',
+      148,
+      7.97011,
+      0.0094656888,
+    ),
+    sourceRun(
+      '+',
+      0.5649074622,
+      0.8351198337,
+      0.0142643358,
+      'Synthetic-LMRoman10-Regular',
+      150,
+    ),
+    sourceRun(
+      'ǫ',
+      0.5832602353,
+      0.8351198337,
+      0.0074438565,
+      'Synthetic-LMMathItalic10-Regular',
+      152,
+    ),
+  ]
+  const equationTail = [
+    sourceRun(
+      '+',
+      0.5967732269,
+      0.8261410214,
+      0.0142643358,
+      'Synthetic-LMRoman10-Regular',
+      154,
+    ),
+    sourceRun(
+      'β',
+      0.615126,
+      0.8261410214,
+      0.010377396,
+      'Synthetic-LMMathItalic10-Regular',
+      156,
+    ),
+    sourceRun(
+      '(2.24)',
+      0.8099495294,
+      0.8261410214,
+      0.0440214271,
+      'Synthetic-NimbusRoman-Regular',
+      158,
+    ),
+  ]
+  const competing = competingDenominator
+    ? [
+        sourceRun(
+          'τ',
+          0.5263865546,
+          0.847,
+          0.0104690691,
+          'Synthetic-LMMathItalic10-Regular',
+          149,
+        ),
+        sourceRun(
+          '+ δ',
+          0.541,
+          0.847,
+          0.0497,
+          'Synthetic-LMMathItalic10-Regular',
+          151,
+        ),
+      ]
+    : []
+  return page(1, [
+    ...prose,
+    ...baseline,
+    atom,
+    ...denominator,
+    ...competing,
+    ...equationTail,
+  ])
+}
+
+function multiComponentUnderbracedDisplayPage({
+  includeEquationNumber = true,
+  competingEquationNumber = false,
+  includeStackedStructure = true,
+}: {
+  includeEquationNumber?: boolean
+  competingEquationNumber?: boolean
+  includeStackedStructure?: boolean
+} = {}) {
+  const sourceRun = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    sourceSequenceIndex: number,
+    fontSize = 10.9,
+    height = 0.013,
+  ) => ({
+    ...run(1, text, x, y, width, fontSize, height),
+    fontName,
+    sourceSequenceIndex,
+  })
+  const bodyFont = 'Synthetic-Serif-Regular'
+  const romanFont = 'Synthetic-LMRoman10-Regular'
+  const smallRomanFont = 'Synthetic-LMRoman8-Regular'
+  const mathFont = 'Synthetic-LMMathItalic10-Regular'
+  const extensionFont = 'Synthetic-LMMathExtension10-Regular'
+  const prose = [
+    sourceRun(
+      'Ordinary prose establishes the page body font and geometry.',
+      0.14,
+      0.7,
+      0.58,
+      bodyFont,
+      10,
+    ),
+    sourceRun(
+      'A second ordinary line keeps the lower page band substantive.',
+      0.14,
+      0.72,
+      0.58,
+      bodyFont,
+      12,
+    ),
+    sourceRun(
+      'The bounded multi-part expression is',
+      0.14,
+      0.761,
+      0.31,
+      bodyFont,
+      30,
+    ),
+  ]
+  const anchor = [
+    sourceRun('F', 0.282, 0.796, 0.012, mathFont, 40),
+    sourceRun('(a, b)', 0.295, 0.796, 0.05, mathFont, 42),
+    sourceRun('=', 0.365, 0.796, 0.014, romanFont, 44),
+  ]
+  const firstNumerator = [
+    sourceRun('17', 0.417, 0.787, 0.018, romanFont, 46),
+    sourceRun('.', 0.435, 0.787, 0.005, mathFont, 47),
+    sourceRun('5', 0.44, 0.787, 0.009, romanFont, 48),
+  ]
+  const firstDenominator = [
+    sourceRun('a', 0.417, 0.805, 0.014, mathFont, 50),
+    sourceRun('0.31', 0.433, 0.805, 0.027, smallRomanFont, 52, 8, 0.0095),
+    sourceRun('+', 0.483, 0.796, 0.014, romanFont, 64),
+  ]
+  const firstBrace = [
+    sourceRun('︸', 0.415, 0.811, 0.008, extensionFont, 56, 10, 0.012),
+    sourceRun('︷︷', 0.431, 0.811, 0.015, extensionFont, 58, 10, 0.012),
+    sourceRun('︸', 0.454, 0.811, 0.008, extensionFont, 60, 10, 0.012),
+  ]
+  const firstLabel = sourceRun(
+    'capacity term',
+    0.396,
+    0.825,
+    0.084,
+    smallRomanFont,
+    62,
+    8,
+    0.0095,
+  )
+  const secondNumerator = [
+    sourceRun('23', 0.526, 0.787, 0.018, romanFont, 66),
+    sourceRun('.', 0.544, 0.787, 0.005, mathFont, 67),
+    sourceRun('8', 0.549, 0.787, 0.009, romanFont, 68),
+  ]
+  const secondDenominator = [
+    sourceRun('b', 0.526, 0.805, 0.014, mathFont, 70),
+    sourceRun('0.27', 0.542, 0.805, 0.027, smallRomanFont, 72, 8, 0.0095),
+  ]
+  const secondBrace = [
+    sourceRun('︸', 0.524, 0.811, 0.008, extensionFont, 75, 10, 0.012),
+    sourceRun('︷︷', 0.539, 0.811, 0.015, extensionFont, 77, 10, 0.012),
+    sourceRun('︸', 0.562, 0.811, 0.008, extensionFont, 79, 10, 0.012),
+  ]
+  const secondLabel = sourceRun(
+    'data term',
+    0.501,
+    0.825,
+    0.073,
+    smallRomanFont,
+    81,
+    8,
+    0.0095,
+  )
+  const tail = [
+    sourceRun('+', 0.596, 0.796, 0.014, romanFont, 83),
+    sourceRun('0', 0.647, 0.796, 0.009, romanFont, 85),
+    sourceRun('.', 0.656, 0.796, 0.005, mathFont, 86),
+    sourceRun('91', 0.661, 0.796, 0.018, romanFont, 87),
+    sourceRun('︸', 0.647, 0.802, 0.008, extensionFont, 88, 10, 0.012),
+    sourceRun('︷︷', 0.656, 0.802, 0.015, extensionFont, 89, 10, 0.012),
+    sourceRun('︸', 0.672, 0.802, 0.008, extensionFont, 90, 10, 0.012),
+    sourceRun('floor term', 0.613, 0.816, 0.08, smallRomanFont, 92, 8, 0.0095),
+  ]
+  const equationNumbers = [
+    ...(includeEquationNumber
+      ? [sourceRun('(7.4)', 0.81, 0.796, 0.044, bodyFont, 94)]
+      : []),
+    ...(competingEquationNumber
+      ? [sourceRun('(7.5)', 0.81, 0.818, 0.044, bodyFont, 93)]
+      : []),
+  ]
+  const nextProse = sourceRun(
+    'The next paragraph must remain ordinary prose.',
+    0.17,
+    0.855,
+    0.41,
+    bodyFont,
+    95,
+  )
+
+  return page(1, [
+    ...prose,
+    ...anchor,
+    ...firstNumerator,
+    ...(includeStackedStructure
+      ? [
+          ...firstDenominator,
+          ...firstBrace,
+          firstLabel,
+          ...secondNumerator,
+          ...secondDenominator,
+          ...secondBrace,
+          secondLabel,
+          ...tail,
+        ]
+      : [
+          sourceRun(
+            'This decimal belongs to ordinary nearby prose.',
+            0.417,
+            0.787,
+            0.29,
+            bodyFont,
+            46,
+          ),
+        ]),
+    ...equationNumbers,
+    nextProse,
+  ])
+}
+
+function resolvedCrossColumnDisplayDecoyPage() {
+  const sourceRun = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    sourceSequenceIndex: number,
+    fontSize = 10,
+    height = 0.013,
+  ) => ({
+    ...run(1, text, x, y, width, fontSize, height),
+    fontName,
+    sourceSequenceIndex,
+  })
+  const bodyFont = 'Synthetic-Serif-Regular'
+  const mathFont = 'Synthetic-LMMathItalic10-Regular'
+  const romanFont = 'Synthetic-LMRoman10-Regular'
+  const smallRomanFont = 'Synthetic-LMRoman8-Regular'
+  const extensionFont = 'Synthetic-LMMathExtension10-Regular'
+  const twoColumnProse = Array.from({ length: 10 }, (_, index) => {
+    const y = 0.18 + index * 0.048
+    return [
+      sourceRun(
+        `Left column sentence ${index + 1} remains independent.`,
+        0.1,
+        y,
+        0.33,
+        bodyFont,
+        index * 4 + 1,
+      ),
+      sourceRun(
+        `Right column sentence ${index + 1} remains independent.`,
+        0.57,
+        y,
+        0.33,
+        bodyFont,
+        index * 4 + 3,
+      ),
+    ]
+  }).flat()
+  const leftColumnAnchor = sourceRun('G(x) =', 0.12, 0.796, 0.08, mathFont, 100)
+  const rightColumnDisplay = [
+    sourceRun('17.5', 0.62, 0.787, 0.04, romanFont, 102),
+    sourceRun('a', 0.63, 0.805, 0.014, mathFont, 104),
+    sourceRun('︸︷︷︸', 0.615, 0.811, 0.05, extensionFont, 106),
+    sourceRun('capacity', 0.61, 0.825, 0.06, smallRomanFont, 108, 8, 0.0095),
+    sourceRun('+', 0.68, 0.796, 0.014, romanFont, 110),
+    sourceRun('23.8', 0.74, 0.787, 0.04, romanFont, 112),
+    sourceRun('b', 0.75, 0.805, 0.014, mathFont, 114),
+    sourceRun('︸︷︷︸', 0.735, 0.811, 0.05, extensionFont, 116),
+    sourceRun('data', 0.74, 0.825, 0.04, smallRomanFont, 118, 8, 0.0095),
+    sourceRun('+', 0.8, 0.796, 0.014, romanFont, 120),
+    sourceRun('0.91', 0.83, 0.796, 0.04, romanFont, 122),
+    sourceRun('︸︷︷︸', 0.825, 0.802, 0.05, extensionFont, 124),
+    sourceRun('floor', 0.82, 0.816, 0.04, smallRomanFont, 126, 8, 0.0095),
+    sourceRun('(7.4)', 0.91, 0.796, 0.04, bodyFont, 128),
+  ]
+  return page(1, [...twoColumnProse, leftColumnAnchor, ...rightColumnDisplay])
+}
+
+function withExplicitEnglishLanguage(page: PdfPageAnalysis): PdfPageAnalysis {
+  return {
+    ...page,
+    ocr: {
+      engine: 'test-language-authority',
+      engineVersion: '1',
+      model: 'test-en',
+      modelVersion: '1',
+      languages: ['eng'],
+      languageMode: 'explicit',
+      sourceSha256: '1'.repeat(64),
+      rasterSha256: '2'.repeat(64),
+      confidence: 1,
+      words: [],
+      lines: [],
+    },
+  }
+}
+
 async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
   return reconstructPageAnalyses({
     pages,
@@ -65,6 +516,364 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('keeps a source-bracketed bold fraction atom out of its preceding prose region', () => {
+    const sourcePage = detachedDisplayFractionAtomPage()
+    const result = reconstructPageRegions([sourcePage])
+    const replay = reconstructPageRegions([
+      { ...sourcePage, runs: [...sourcePage.runs].reverse() },
+    ])
+    const atomRegion = result.regions.find((region) =>
+      region.lines.some((line) =>
+        line.runs.some((candidate) => candidate.sourceSequenceIndex === 145),
+      ),
+    )
+    const cueRegion = result.regions.find((region) =>
+      region.text.includes('normalization function is given by'),
+    )
+
+    expect(atomRegion).toMatchObject({ kind: 'equation' })
+    expect(atomRegion?.text).toContain('h')
+    expect(
+      atomRegion?.lines.some((line) =>
+        line.runs.some((candidate) => candidate.sourceSequenceIndex === 147),
+      ),
+    ).toBe(true)
+    expect(atomRegion?.id).not.toBe(cueRegion?.id)
+    expect(cueRegion?.text).toBe('normalization function is given by')
+    expect(
+      replay.regions.find((region) =>
+        region.lines.some((line) =>
+          line.runs.some((candidate) => candidate.sourceSequenceIndex === 145),
+        ),
+      ),
+    ).toMatchObject({ kind: 'equation' })
+  })
+
+  it.each([
+    {
+      name: 'ordinary final letter',
+      sourcePage: detachedDisplayFractionAtomPage({
+        atomFontName: 'Synthetic-LMRoman10-Regular',
+      }),
+      expectedContinuation: 'h',
+    },
+    {
+      name: 'true prose continuation',
+      sourcePage: detachedDisplayFractionAtomPage({
+        atomText: 'a valid ordinary continuation.',
+        atomFontName: 'Synthetic-LMRoman10-Bold',
+      }),
+      expectedContinuation: 'a valid ordinary continuation.',
+    },
+    {
+      name: 'no nearby equation',
+      sourcePage: detachedDisplayFractionAtomPage({
+        includeEquation: false,
+      }),
+      expectedContinuation: 'h',
+    },
+    {
+      name: 'ambiguous competing equations',
+      sourcePage: detachedDisplayFractionAtomPage({
+        competingDenominator: true,
+      }),
+      expectedContinuation: 'h',
+    },
+  ])(
+    'does not infer a detached display atom for a $name',
+    ({ sourcePage, expectedContinuation }) => {
+      const result = reconstructPageRegions([sourcePage])
+      const cueRegion = result.regions.find((region) =>
+        region.text.includes('normalization function is given by'),
+      )
+
+      expect(cueRegion?.text).toContain(expectedContinuation)
+      expect(
+        cueRegion?.lines.some((line) =>
+          line.runs.some((candidate) => candidate.sourceSequenceIndex === 145),
+        ),
+      ).toBe(true)
+    },
+  )
+
+  it('owns a source-bounded multi-fraction underbraced display as one equation region', () => {
+    const sourcePage = multiComponentUnderbracedDisplayPage()
+    const result = reconstructPageRegions([sourcePage])
+    const replay = reconstructPageRegions([
+      { ...sourcePage, runs: [...sourcePage.runs].reverse() },
+    ])
+    const expectedSourceSequenceIndexes = [
+      40, 42, 44, 46, 47, 48, 50, 52, 56, 58, 60, 62, 64, 66, 67, 68, 70, 72,
+      75, 77, 79, 81, 83, 85, 86, 87, 88, 89, 90, 92, 94,
+    ]
+    const regionForSourceSequence = (
+      regions: typeof result.regions,
+      sourceSequenceIndex: number,
+    ) =>
+      regions.find((region) =>
+        region.lines.some((line) =>
+          line.runs.some(
+            (candidate) =>
+              candidate.sourceSequenceIndex === sourceSequenceIndex,
+          ),
+        ),
+      )
+    const owners = expectedSourceSequenceIndexes.map((sourceSequenceIndex) =>
+      regionForSourceSequence(result.regions, sourceSequenceIndex),
+    )
+    const replayOwners = expectedSourceSequenceIndexes.map(
+      (sourceSequenceIndex) =>
+        regionForSourceSequence(replay.regions, sourceSequenceIndex),
+    )
+    const cueRegion = regionForSourceSequence(result.regions, 30)
+    const nextProseRegion = regionForSourceSequence(result.regions, 95)
+
+    expect(owners.every((owner) => owner?.kind === 'equation')).toBe(true)
+    expect(new Set(owners.map((owner) => owner?.id))).toHaveLength(1)
+    expect(replayOwners.every((owner) => owner?.kind === 'equation')).toBe(true)
+    expect(new Set(replayOwners.map((owner) => owner?.id))).toHaveLength(1)
+    expect(cueRegion?.text).toBe('The bounded multi-part expression is')
+    expect(cueRegion?.kind).not.toBe('equation')
+    expect(nextProseRegion?.text).toBe(
+      'The next paragraph must remain ordinary prose.',
+    )
+    expect(nextProseRegion?.kind).not.toBe('equation')
+  })
+
+  it.each([
+    {
+      name: 'missing right-edge equation number',
+      sourcePage: multiComponentUnderbracedDisplayPage({
+        includeEquationNumber: false,
+      }),
+      sourceSequenceIndex: 46,
+    },
+    {
+      name: 'ambiguous competing equation numbers',
+      sourcePage: multiComponentUnderbracedDisplayPage({
+        competingEquationNumber: true,
+      }),
+      sourceSequenceIndex: 46,
+    },
+    {
+      name: 'ordinary nearby decimal without stacked structure',
+      sourcePage: multiComponentUnderbracedDisplayPage({
+        includeStackedStructure: false,
+      }),
+      sourceSequenceIndex: 46,
+    },
+  ])(
+    'does not infer a multi-component display cluster for $name',
+    ({ sourcePage, sourceSequenceIndex }) => {
+      const result = reconstructPageRegions([sourcePage])
+      const candidateRegion = result.regions.find((region) =>
+        region.lines.some((line) =>
+          line.runs.some(
+            (candidate) =>
+              candidate.sourceSequenceIndex === sourceSequenceIndex,
+          ),
+        ),
+      )
+
+      expect(candidateRegion?.kind).not.toBe('equation')
+    },
+  )
+
+  it('does not bridge a resolved column gutter from an unnumbered equation anchor to a numbered display', () => {
+    const result = reconstructPageRegions([
+      resolvedCrossColumnDisplayDecoyPage(),
+    ])
+    const regionForSourceSequence = (sourceSequenceIndex: number) =>
+      result.regions.find((region) =>
+        region.lines.some((line) =>
+          line.runs.some(
+            (candidate) =>
+              candidate.sourceSequenceIndex === sourceSequenceIndex,
+          ),
+        ),
+      )
+    const anchorRegion = regionForSourceSequence(100)
+    const numberedDisplayRegion = regionForSourceSequence(128)
+
+    expect(result.readingOrder.resolutions).toContainEqual(
+      expect.objectContaining({
+        page: 1,
+        status: 'resolved',
+        ambiguityClass: 'sparse-column-gutter',
+      }),
+    )
+    expect(anchorRegion).toMatchObject({
+      kind: 'equation',
+      column: 'left',
+    })
+    expect(numberedDisplayRegion?.column).toBe('right')
+    expect(numberedDisplayRegion?.id).not.toBe(anchorRegion?.id)
+  })
+
+  it('uses the dominant prose baseline to prove a sequential wrap hidden by a stacked-math envelope', () => {
+    const previousRuns = [
+      {
+        ...run(1, 'The aggregate formula', 0.1, 0.3, 0.22),
+        sourceSequenceIndex: 10,
+      },
+      {
+        ...run(1, 'x', 0.33, 0.3, 0.012),
+        fontName: 'Synthetic-Math',
+        sourceSequenceIndex: 11,
+      },
+      {
+        ...run(1, 'i', 0.342, 0.282, 0.007, 7, 0.01),
+        fontName: 'Synthetic-Math',
+        sourceSequenceIndex: 12,
+      },
+      {
+        ...run(1, 'j', 0.342, 0.323, 0.007, 7, 0.01),
+        fontName: 'Synthetic-Math',
+        sourceSequenceIndex: 13,
+      },
+    ]
+    const nextRun = {
+      ...run(1, 'continues on the next ordinary baseline.', 0.1, 0.325, 0.48),
+      sourceSequenceIndex: 14,
+      sourceWhitespaceBefore: 'pdf-text-item' as const,
+      sourceWhitespacePredecessorIndex: 13,
+    }
+
+    expect(
+      sourceProvenDominantBaselineSequentialWrap(
+        {
+          page: 1,
+          text: 'The aggregate formula xij',
+          x: 0.1,
+          y: 0.282,
+          width: 0.249,
+          height: 0.051,
+          fontSize: 10,
+          runs: previousRuns,
+          column: 'single',
+        },
+        {
+          page: 1,
+          text: nextRun.text,
+          x: nextRun.x,
+          y: nextRun.y,
+          width: nextRun.width,
+          height: nextRun.height,
+          fontSize: nextRun.fontSize,
+          runs: [nextRun],
+          column: 'single',
+        },
+      ),
+    ).toBe(true)
+  })
+
+  it('does not infer a dominant-baseline wrap from an ambiguous source sequence boundary', () => {
+    const duplicateTail = [
+      {
+        ...run(1, 'Aggregate formula', 0.1, 0.3, 0.2),
+        sourceSequenceIndex: 20,
+      },
+      {
+        ...run(1, 'x', 0.31, 0.3, 0.012),
+        fontName: 'Synthetic-Math',
+        sourceSequenceIndex: 21,
+      },
+      {
+        ...run(1, 'y', 0.323, 0.323, 0.007, 7, 0.01),
+        fontName: 'Synthetic-Math',
+        sourceSequenceIndex: 21,
+      },
+    ]
+    const nextRun = {
+      ...run(1, 'continues ambiguously.', 0.1, 0.325, 0.35),
+      sourceSequenceIndex: 22,
+      sourceWhitespaceBefore: 'pdf-text-item' as const,
+      sourceWhitespacePredecessorIndex: 21,
+    }
+
+    expect(
+      sourceProvenDominantBaselineSequentialWrap(
+        {
+          page: 1,
+          text: 'Aggregate formula xy',
+          x: 0.1,
+          y: 0.3,
+          width: 0.23,
+          height: 0.033,
+          fontSize: 10,
+          runs: duplicateTail,
+          column: 'single',
+        },
+        {
+          page: 1,
+          text: nextRun.text,
+          x: nextRun.x,
+          y: nextRun.y,
+          width: nextRun.width,
+          height: nextRun.height,
+          fontSize: nextRun.fontSize,
+          runs: [nextRun],
+          column: 'single',
+        },
+      ),
+    ).toBe(false)
+  })
+
+  it('records exact left and right fragment lineage when splitting a run-backed gutter line', () => {
+    const leftRun = {
+      ...run(1, 'Left fragment remains readable', 0.08, 0.4, 0.34),
+      sourceSequenceIndex: 30,
+    }
+    const rightRun = {
+      ...run(1, 'Right fragment continues onward', 0.56, 0.4, 0.34),
+      sourceSequenceIndex: 31,
+    }
+    const fragments = splitRunBackedCrossGutterProse(
+      [
+        {
+          id: 'run-backed-cross-gutter-line',
+          page: 1,
+          text: `${leftRun.text} ${rightRun.text}`,
+          x: leftRun.x,
+          y: leftRun.y,
+          width: rightRun.x + rightRun.width - leftRun.x,
+          height: leftRun.height,
+          fontSize: leftRun.fontSize,
+          runs: [leftRun, rightRun],
+          column: 'single',
+          kind: 'body',
+          confidence: 1,
+          noteLabel: null,
+        },
+      ],
+      {
+        split: 0.5,
+        accepted: true,
+        ambiguous: false,
+        resolution: null,
+      },
+    ).sort((left, right) => left.id.localeCompare(right.id))
+
+    expect(fragments).toHaveLength(2)
+    expect(fragments.map((line) => line.sourceFragmentLineage)).toEqual([
+      {
+        algorithm: 'source-run-fragment-v1',
+        sourceLineId: expect.any(String),
+        fragment: 'cross-gutter-left',
+        sourceSequenceIndexes: [30],
+      },
+      {
+        algorithm: 'source-run-fragment-v1',
+        sourceLineId: expect.any(String),
+        fragment: 'cross-gutter-right',
+        sourceSequenceIndexes: [31],
+      },
+    ])
+    expect(fragments[0].sourceFragmentLineage?.sourceLineId).toBe(
+      fragments[1].sourceFragmentLineage?.sourceLineId,
+    )
+  })
+
   it('does not mistake a numeric stacked fraction beside a base for paired scripts', () => {
     const base = {
       ...run(1, '1', 0.1, 0.5, 0.01, 10, 0.014),
@@ -189,6 +998,222 @@ describe('deterministic scholarly page regions', () => {
     }
   })
 
+  it('keeps a proved inline before-formula-after source unit atomic across column and span lanes', () => {
+    let sourceSequenceIndex = 0
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 12,
+      height = 0.014,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+      sourceSequenceIndex: sourceSequenceIndex++,
+    })
+    const sourceRuns = [
+      sourceRun('Left layout row one.', 0.08, 0.1, 0.36, 'Synthetic-CMR12'),
+      sourceRun('Right layout row one.', 0.56, 0.1, 0.36, 'Synthetic-CMR12'),
+      sourceRun('Left layout row two.', 0.08, 0.16, 0.36, 'Synthetic-CMR12'),
+      sourceRun('Right layout row two.', 0.56, 0.16, 0.36, 'Synthetic-CMR12'),
+      sourceRun('Left layout row three.', 0.08, 0.22, 0.36, 'Synthetic-CMR12'),
+      sourceRun('Right layout row three.', 0.56, 0.22, 0.36, 'Synthetic-CMR12'),
+      sourceRun('where', 0.1, 0.7, 0.05, 'Synthetic-CMR12'),
+      sourceRun('S', 0.16, 0.7, 0.012, 'Synthetic-CMMI12'),
+      sourceRun('′', 0.173, 0.6996, 0.004, 'Synthetic-CMSY8', 8, 0.009),
+      sourceRun('k', 0.172, 0.7084, 0.007, 'Synthetic-CMMI8', 8, 0.009),
+      sourceRun('=', 0.186, 0.7, 0.015, 'Synthetic-CMR12'),
+      sourceRun('S', 0.207, 0.7, 0.012, 'Synthetic-CMMI12'),
+      sourceRun('′', 0.22, 0.6996, 0.004, 'Synthetic-CMSY8', 8, 0.009),
+      sourceRun('(', 0.225, 0.7, 0.008, 'Synthetic-CMR12'),
+      sourceRun('x', 0.233, 0.7, 0.011, 'Synthetic-CMMI12'),
+      sourceRun('k', 0.245, 0.6996, 0.007, 'Synthetic-CMMI8', 8, 0.009),
+      sourceRun('t', 0.245, 0.7084, 0.005, 'Synthetic-CMMI8', 8, 0.009),
+      sourceRun(
+        '). The first term follows.',
+        0.255,
+        0.7,
+        0.64,
+        'Synthetic-CMR12',
+      ),
+      sourceRun(
+        'The explanation continues across the page.',
+        0.1,
+        0.72,
+        0.795,
+        'Synthetic-CMR12',
+      ),
+      sourceRun('methods [42].', 0.1, 0.74, 0.12, 'Synthetic-CMR12'),
+    ]
+    const reconstructFragments = (runs: PdfSourceRun[]) => {
+      const result = reconstructPageRegions([page(1, runs)])
+      const fragmentRegions = result.regions.filter((region) =>
+        region.lines.some((line) => /-inline-stacked-\d+-/u.test(line.id)),
+      )
+      const orderedFragmentParts = result.readingOrder.order.flatMap(
+        (regionId) => {
+          const region = fragmentRegions.find(
+            (candidate) => candidate.id === regionId,
+          )
+          return (
+            region?.lines.flatMap(
+              (line) =>
+                /-inline-stacked-\d+-(before|formula|after)$/u.exec(
+                  line.id,
+                )?.[1] ?? [],
+            ) ?? []
+          )
+        },
+      )
+      return { result, fragmentRegions, orderedFragmentParts }
+    }
+
+    const first = reconstructFragments(sourceRuns)
+    const replay = reconstructFragments([...sourceRuns].reverse())
+    const fragmentColumnByPart = Object.fromEntries(
+      first.fragmentRegions.flatMap((region) =>
+        region.lines.flatMap((line) => {
+          const part = /-inline-stacked-\d+-(before|formula|after)$/u.exec(
+            line.id,
+          )?.[1]
+          return part ? [[part, region.column]] : []
+        }),
+      ),
+    )
+    expect(fragmentColumnByPart).toEqual({
+      before: 'left',
+      formula: 'left',
+      after: 'span',
+    })
+    expect(first.orderedFragmentParts).toEqual(['before', 'formula', 'after'])
+    expect(replay.orderedFragmentParts).toEqual(first.orderedFragmentParts)
+    const orderedFragmentRegionIds = first.result.readingOrder.order.filter(
+      (regionId) =>
+        first.fragmentRegions.some((region) => region.id === regionId),
+    )
+    const orderedIndexes = orderedFragmentRegionIds.map((regionId) =>
+      first.result.readingOrder.order.indexOf(regionId),
+    )
+    expect(orderedIndexes).toEqual([
+      orderedIndexes[0],
+      orderedIndexes[0] + 1,
+      orderedIndexes[0] + 2,
+    ])
+    const outputSourceSequenceIndexes = first.result.regions.flatMap((region) =>
+      region.lines.flatMap((line) =>
+        line.runs.flatMap((source) =>
+          source.sourceSequenceIndex === undefined
+            ? []
+            : [source.sourceSequenceIndex],
+        ),
+      ),
+    )
+    expect(
+      outputSourceSequenceIndexes.sort((left, right) => left - right),
+    ).toEqual(sourceRuns.map((source) => source.sourceSequenceIndex))
+  })
+
+  it('rejects a mixed note and flow inline unit so notes remain after body', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.014,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const result = reconstructPageRegions([
+      page(1, [
+        sourceRun(
+          'Ordinary body line one establishes font size.',
+          0.1,
+          0.2,
+          0.6,
+          'Synthetic-CMR14',
+          14,
+          0.018,
+        ),
+        sourceRun(
+          'Ordinary body line two remains before the note.',
+          0.1,
+          0.25,
+          0.6,
+          'Synthetic-CMR14',
+          14,
+          0.018,
+        ),
+        sourceRun('1 This note explains', 0.1, 0.8, 0.12, 'Synthetic-CMR10'),
+        sourceRun('S', 0.23, 0.8, 0.012, 'Synthetic-CMMI10'),
+        sourceRun('′', 0.243, 0.7996, 0.004, 'Synthetic-CMSY7', 7, 0.009),
+        sourceRun('k', 0.242, 0.8084, 0.007, 'Synthetic-CMMI7', 7, 0.009),
+        sourceRun('=', 0.256, 0.8, 0.015, 'Synthetic-CMR10'),
+        sourceRun('S', 0.277, 0.8, 0.012, 'Synthetic-CMMI10'),
+        sourceRun('′', 0.29, 0.7996, 0.004, 'Synthetic-CMSY7', 7, 0.009),
+        sourceRun('(', 0.295, 0.8, 0.008, 'Synthetic-CMR10'),
+        sourceRun('x', 0.303, 0.8, 0.011, 'Synthetic-CMMI10'),
+        sourceRun('k', 0.315, 0.7996, 0.007, 'Synthetic-CMMI7', 7, 0.009),
+        sourceRun('t', 0.315, 0.8084, 0.005, 'Synthetic-CMMI7', 7, 0.009),
+        sourceRun(
+          '). and continues after math.',
+          0.325,
+          0.8,
+          0.3,
+          'Synthetic-CMR10',
+        ),
+        sourceRun(
+          'A final body paragraph lies geometrically below the note.',
+          0.1,
+          0.86,
+          0.6,
+          'Synthetic-CMR14',
+          14,
+          0.018,
+        ),
+      ]),
+    ])
+    const fragmentKinds = Object.fromEntries(
+      result.regions.flatMap((region) =>
+        region.lines.flatMap((line) => {
+          const part = /-inline-stacked-\d+-(before|formula|after)$/u.exec(
+            line.id,
+          )?.[1]
+          return part ? [[part, region.kind]] : []
+        }),
+      ),
+    )
+    expect(fragmentKinds).toEqual({
+      before: 'footnote',
+      formula: 'equation',
+      after: 'body',
+    })
+
+    const orderedRegions = result.readingOrder.order.map((regionId) =>
+      result.regions.find((region) => region.id === regionId)!,
+    )
+    const firstNoteIndex = orderedRegions.findIndex(
+      (region) => region.kind === 'footnote' || region.kind === 'endnote',
+    )
+    expect(firstNoteIndex).toBeGreaterThan(-1)
+    expect(
+      orderedRegions
+        .slice(firstNoteIndex)
+        .every(
+          (region) => region.kind === 'footnote' || region.kind === 'endnote',
+        ),
+    ).toBe(true)
+    expect(
+      orderedRegions.findIndex((region) =>
+        region.text.includes('A final body paragraph'),
+      ),
+    ).toBeLessThan(firstNoteIndex)
+  })
+
   it('classifies bounded supplementary and compound visual captions', () => {
     const result = reconstructPageRegions([
       page(1, [
@@ -230,6 +1255,40 @@ describe('deterministic scholarly page regions', () => {
         text: 'UMAP of model representations Figure 2. VISION models converge as COMPETENCE increases.',
       }),
     ])
+  })
+
+  it('classifies a typography-delimited caption without printed punctuation', () => {
+    const labelPrefix = {
+      ...run(1, 'Fig.', 0.2, 0.3, 0.026, 8),
+      fontName: 'Georgia-Bold',
+    }
+    const labelOrdinal = {
+      ...run(1, '1', 0.232, 0.3, 0.008, 8),
+      fontName: 'Georgia-Bold',
+    }
+    const caption = {
+      ...run(
+        1,
+        'Core risk mitigation strategies in distributed systems.',
+        0.25,
+        0.3,
+        0.42,
+        8,
+      ),
+      fontName: 'BookmanOldStyle',
+    }
+    const result = reconstructPageRegions([
+      page(1, [labelPrefix, labelOrdinal, caption]),
+    ])
+
+    expect(result.regions).toEqual([
+      expect.objectContaining({
+        kind: 'caption',
+        includedInReadingOrder: true,
+        text: 'Fig. 1 Core risk mitigation strategies in distributed systems.',
+      }),
+    ])
+    expect(result.readingOrder.order).toEqual([result.regions[0].id])
   })
 
   it('recognizes an attached symbolic footnote marker', () => {
@@ -355,6 +1414,135 @@ describe('deterministic scholarly page regions', () => {
       expect.stringContaining('Inline formula H'),
     ])
   })
+
+  const spanningInlineMathWrapPage = ({
+    continuationText = 'correlation remains bounded.',
+    predecessorTerminal = false,
+    leading = 0.003,
+    continuationSequence = 303,
+    duplicateBoundarySequence = false,
+    continuationMethod = 'pdf-text' as PdfSourceRun['method'],
+    continuationRotation = 0,
+  } = {}) => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      sourceSequenceIndex: number,
+    ) => ({
+      ...run(1, text, x, y, width, 10, 0.014),
+      sourceSequenceIndex,
+    })
+    const spanningY = 0.4
+    const continuation = {
+      ...sourceRun(
+        continuationText,
+        0.1,
+        spanningY + 0.014 + leading,
+        0.2,
+        continuationSequence,
+      ),
+      method: continuationMethod,
+      rotation: continuationRotation,
+    }
+    return page(1, [
+      run(1, 'Left column establishes the layout.', 0.1, 0.12, 0.34),
+      run(1, 'Right column establishes the layout.', 0.56, 0.12, 0.34),
+      run(1, 'Left column continues independently.', 0.1, 0.16, 0.34),
+      run(1, 'Right column continues independently.', 0.56, 0.16, 0.34),
+      run(1, 'Left column supplies a third row.', 0.1, 0.2, 0.34),
+      run(1, 'Right column supplies a third row.', 0.56, 0.2, 0.34),
+      sourceRun(
+        'A coupled stochastic process',
+        0.1,
+        spanningY,
+        0.2,
+        duplicateBoundarySequence ? 302 : 300,
+      ),
+      {
+        ...sourceRun('θ = x + y', 0.302, spanningY, 0.1, 301),
+        fontName: 'Synthetic-Math-Italic',
+        italic: true,
+      },
+      sourceRun(
+        `, and remains stable under measured drift${predecessorTerminal ? '.' : ''}`,
+        0.404,
+        spanningY,
+        0.476,
+        302,
+      ),
+      continuation,
+    ])
+  }
+
+  it('reclassifies a uniquely source-adjacent short lowercase wrap as its spanning inline-math continuation', async () => {
+    const result = await reconstruct([spanningInlineMathWrapPage()])
+    const expected =
+      'A coupled stochastic process θ = x + y, and remains stable under measured drift correlation remains bounded.'
+    const sourceParagraph = result.regions.find((region) =>
+      region.lines.some((line) =>
+        line.runs.some((sourceRun) => sourceRun.sourceSequenceIndex === 300),
+      ),
+    )
+
+    expect(sourceParagraph).toMatchObject({
+      kind: 'spanning',
+      column: 'span',
+      text: expected,
+    })
+    expect(sourceParagraph?.lines).toHaveLength(2)
+    expect(
+      result.paper.nodes.filter(
+        (node) => node.type === 'paragraph' && node.text === expected,
+      ),
+    ).toHaveLength(1)
+  })
+
+  it.each([
+    ['blank leading', { leading: 0.02 }],
+    ['excessive leading', { leading: 0.06 }],
+    ['sentence-terminal predecessor', { predecessorTerminal: true }],
+    ['duplicate boundary sequence', { duplicateBoundarySequence: true }],
+    ['nonadjacent source sequence', { continuationSequence: 305 }],
+    ['extraction-method mismatch', { continuationMethod: 'ocr' as const }],
+    ['rotation mismatch', { continuationRotation: 90 }],
+    [
+      'uppercase structural continuation',
+      { continuationText: 'Correlation Overview' },
+    ],
+  ])(
+    'does not reclassify a spanning inline-math wrap with %s',
+    async (_label, options) => {
+      const result = await reconstruct([spanningInlineMathWrapPage(options)])
+      const sourceParagraph = result.regions.find((region) =>
+        region.lines.some((line) =>
+          line.runs.some((sourceRun) => sourceRun.sourceSequenceIndex === 301),
+        ),
+      )
+      const continuation = result.regions.find((region) =>
+        region.lines.some((line) =>
+          line.runs.some((sourceRun) => {
+            const continuationText =
+              'continuationText' in options
+                ? options.continuationText
+                : 'correlation remains bounded.'
+            return sourceRun.text === continuationText
+          }),
+        ),
+      )
+
+      expect(sourceParagraph).toMatchObject({
+        kind: 'spanning',
+        column: 'span',
+      })
+      expect(continuation?.id).not.toBe(sourceParagraph?.id)
+      expect(continuation).toMatchObject({
+        kind: 'body',
+        column: 'left',
+      })
+    },
+  )
 
   it('preserves flush-left authored paragraphs separated by blank leading', () => {
     const result = reconstructPageRegions([
@@ -595,6 +1783,157 @@ describe('deterministic scholarly page regions', () => {
     ).toMatchObject({ kind: 'equation' })
   })
 
+  it('keeps held-out prose with one unresolved CMEX glyph out of display equations', () => {
+    const unresolvedGlyph = run(1, '\ufffd', 0.525, 0.4, 0.012)
+    unresolvedGlyph.fontName = 'Synthetic-CMEX99'
+    const shortPrefix = run(1, 'Ask us if x is in y', 0.1, 0.48, 0.22)
+    shortPrefix.fontName = 'Synthetic-CMMI10'
+    const shortGlyph = run(1, '\ufffd', 0.322, 0.48, 0.012)
+    shortGlyph.fontName = 'Synthetic-CMEX99'
+    const shortSuffix = run(1, 'now.', 0.338, 0.48, 0.05)
+    shortSuffix.fontName = 'Synthetic-CMMI10'
+    const punctuatedPrefix = run(1, 'Go, do; it.', 0.1, 0.56, 0.12)
+    punctuatedPrefix.fontName = 'Synthetic-CMMI10'
+    const punctuatedGlyph = run(1, '\ufffd', 0.222, 0.56, 0.012)
+    punctuatedGlyph.fontName = 'Synthetic-CMEX99'
+    const bracketedPrefix = run(
+      1,
+      '（Read1） （this1） （now1）',
+      0.1,
+      0.64,
+      0.24,
+    )
+    bracketedPrefix.fontName = 'Synthetic-CMMI10'
+    const bracketedGlyph = run(1, '\ufffd', 0.342, 0.64, 0.012)
+    bracketedGlyph.fontName = 'Synthetic-CMEX99'
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.5),
+        run(1, 'A second ordinary prose line remains intact.', 0.1, 0.23, 0.5),
+        run(1, 'Sensitivity analysis demonstrates robustness', 0.1, 0.4, 0.415),
+        unresolvedGlyph,
+        run(1, 'across conditions.', 0.55, 0.4, 0.16),
+        shortPrefix,
+        shortGlyph,
+        shortSuffix,
+        punctuatedPrefix,
+        punctuatedGlyph,
+        bracketedPrefix,
+        bracketedGlyph,
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('Sensitivity analysis'),
+      ),
+    ).toMatchObject({
+      kind: 'body',
+    })
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('across conditions.'),
+      ),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.regions.find((region) => region.text.includes('Ask us if')),
+    ).toMatchObject({
+      kind: 'body',
+      text: expect.stringContaining('now.'),
+    })
+    expect(
+      result.regions.find((region) => region.text.includes('Go, do; it.')),
+    ).toMatchObject({
+      kind: 'body',
+    })
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('（Read1） （this1） （now1）'),
+      ),
+    ).toMatchObject({
+      kind: 'body',
+    })
+    expect(
+      result.regions
+        .filter((region) => region.kind === 'equation')
+        .some((region) => /\p{L}{3,}/u.test(region.text)),
+    ).toBe(false)
+  })
+
+  it('keeps narrow Type3 prose sentences with one relation out of display equations', () => {
+    const firstCount = run(
+      1,
+      "* First letter: 'r' - This is an 'r', count = 1.",
+      0.12,
+      0.4,
+      0.27,
+    )
+    firstCount.fontName = 'Synthetic-Type3'
+    const seventhCount = run(
+      1,
+      "* Seventh letter: 'r' - This is an 'r', count = 2.",
+      0.12,
+      0.44,
+      0.28,
+    )
+    seventhCount.fontName = 'Synthetic-Type3'
+    const lexicalEquation = run(
+      1,
+      'The expected token count = total sequence length.',
+      0.34,
+      0.52,
+      0.27,
+    )
+    const mathFontEquation = run(
+      1,
+      'This value is the expected token count = total sequence length.',
+      0.33,
+      0.58,
+      0.29,
+    )
+    mathFontEquation.fontName = 'Synthetic-CMMI10'
+    const multipleRelationEquation = run(
+      1,
+      'This value is token count = sequence length ≈ budget size.',
+      0.33,
+      0.64,
+      0.29,
+    )
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Ordinary prose establishes the body font.', 0.1, 0.2, 0.5),
+        run(1, 'A second ordinary prose line remains intact.', 0.1, 0.23, 0.5),
+        firstCount,
+        seventhCount,
+        lexicalEquation,
+        mathFontEquation,
+        multipleRelationEquation,
+      ]),
+    ])
+
+    expect(
+      result.regions.find((region) => region.text.includes('First letter')),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.regions.find((region) => region.text.includes('Seventh letter')),
+    ).toMatchObject({ kind: 'body' })
+    expect(
+      result.regions.find((region) =>
+        region.text.startsWith('The expected token count'),
+      ),
+    ).toMatchObject({ kind: 'equation' })
+    expect(
+      result.regions.find((region) =>
+        region.text.startsWith('This value is the expected token count'),
+      ),
+    ).toMatchObject({ kind: 'equation' })
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('sequence length ≈ budget size'),
+      ),
+    ).toMatchObject({ kind: 'equation' })
+  })
+
   it('isolates a source-stacked terminal fraction from its prose prefix without linearizing it', () => {
     const sourceRun = (
       text: string,
@@ -691,6 +2030,818 @@ describe('deterministic scholarly page regions', () => {
     expect(ordered.indexOf(formula!.id)).toBeLessThan(
       ordered.indexOf(following!.id),
     )
+  })
+
+  it('keeps an indivisible prose-heavy stacked line between display equations in reading order', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.014,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const sourcePage = page(1, [
+      run(1, 'Ordinary prose establishes the body font.', 0.1, 0.18, 0.5),
+      run(1, 'A second ordinary prose line remains intact.', 0.1, 0.21, 0.5),
+      sourceRun('u = 1506 W/m3', 0.36, 0.3, 0.24, 'Synthetic-CMMI10'),
+      sourceRun(
+        'The volume of the object is four thirds pi R cubed, so its new power is found below.',
+        0.1,
+        0.35,
+        0.68,
+        'Synthetic-Serif',
+      ),
+      sourceRun('n', 0.5, 0.343, 0.01, 'Synthetic-CMMI7', 7, 0.009),
+      sourceRun('d', 0.5, 0.358, 0.01, 'Synthetic-CMMI7', 7, 0.009),
+      sourceRun(
+        'P = sigma A T4 = four pi sigma R2 T4',
+        0.3,
+        0.4,
+        0.4,
+        'Synthetic-CMMI10',
+      ),
+      run(1, 'Solving for temperature gives the next result.', 0.1, 0.46, 0.5),
+    ])
+
+    const first = reconstructPageRegions([sourcePage])
+    const second = reconstructPageRegions([sourcePage])
+    const prose = first.regions.find((region) =>
+      region.text.includes('The volume of the object'),
+    )
+    const equations = first.regions.filter(
+      (region) => region.kind === 'equation',
+    )
+
+    expect(prose).toMatchObject({ kind: 'body' })
+    expect(
+      prose?.lines.some((line) =>
+        /-inline-stacked-\d+-formula$/u.test(line.id),
+      ),
+    ).toBe(true)
+    expect(equations.map((region) => region.text)).toEqual([
+      expect.stringContaining('u = 1506'),
+      expect.stringContaining('P = sigma'),
+    ])
+    expect(equations.every((region) => !region.text.includes('volume'))).toBe(
+      true,
+    )
+    expect(first.regions.map((region) => region.id)).toEqual(
+      second.regions.map((region) => region.id),
+    )
+    expect(first.readingOrder.order.indexOf(equations[0].id)).toBeLessThan(
+      first.readingOrder.order.indexOf(prose!.id),
+    )
+    expect(first.readingOrder.order.indexOf(prose!.id)).toBeLessThan(
+      first.readingOrder.order.indexOf(equations[1].id),
+    )
+  })
+
+  it('keeps narrow derivation lead-ins separate from source-cropped EPUB equations', async () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.014,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    expect(
+      proseDominantPdfMathSource({
+        text: 'Case A: x = y',
+        width: 0.2,
+        runs: [sourceRun('Case A: x = y', 0.1, 0.1, 0.2, 'Synthetic-Serif')],
+      }),
+    ).toBe(false)
+    expect(
+      proseDominantPdfMathSource({
+        text: 'Multiply by 2:',
+        width: 0.1,
+        runs: [sourceRun('Multiply by 2:', 0.1, 0.1, 0.1, 'Synthetic-CMMI10')],
+      }),
+    ).toBe(false)
+    const sourcePage = page(1, [
+      run(1, 'Ordinary prose establishes the body font.', 0.1, 0.18, 0.5),
+      run(1, 'A second ordinary prose line remains intact.', 0.1, 0.21, 0.5),
+      run(1, 'Plugging in the coordinates of C:', 0.1, 0.27, 0.22),
+      sourceRun('sqrt', 0.315, 0.27, 0.02, 'Synthetic-CMEX10'),
+      sourceRun(
+        '(1-t)/(2 cos θ) + √3t/(2 sin θ) = 1',
+        0.18,
+        0.31,
+        0.48,
+        'Synthetic-CMMI10',
+      ),
+      sourceRun('Multiply by 2:', 0.1, 0.36, 0.1, 'Synthetic-Serif'),
+      sourceRun('n', 0.19, 0.353, 0.01, 'Synthetic-CMMI7', 7, 0.009),
+      sourceRun('d', 0.19, 0.368, 0.01, 'Synthetic-CMMI7', 7, 0.009),
+      sourceRun(
+        '(1-t) sin θ + √3t cos θ = 2 sin θ cos θ',
+        0.12,
+        0.41,
+        0.62,
+        'Synthetic-CMMI10',
+      ),
+      sourceRun(
+        'sin θ - t sin θ + √3t cos θ = sin(2θ)',
+        0.14,
+        0.45,
+        0.58,
+        'Synthetic-CMMI10',
+      ),
+    ])
+
+    const result = reconstructPageRegions([sourcePage])
+    const coordinateLeadIn = result.regions.find((region) =>
+      region.text.includes('Plugging in the coordinates'),
+    )
+    const multiplyLeadIn = result.regions.find((region) =>
+      region.text.includes('Multiply by 2:'),
+    )
+    const equations = result.regions.filter(
+      (region) => region.kind === 'equation',
+    )
+
+    expect(coordinateLeadIn).toMatchObject({ kind: 'body' })
+    expect(multiplyLeadIn).toMatchObject({ kind: 'body' })
+    expect(
+      multiplyLeadIn?.lines.some((line) =>
+        /-inline-stacked-\d+-formula$/u.test(line.id),
+      ),
+    ).toBe(true)
+    expect(
+      equations.every(
+        (region) =>
+          !region.text.includes('Plugging') &&
+          !region.text.includes('Multiply by'),
+      ),
+    ).toBe(true)
+    expect(equations.length).toBeGreaterThanOrEqual(2)
+    expect(
+      result.readingOrder.order.indexOf(coordinateLeadIn!.id),
+    ).toBeLessThan(result.readingOrder.order.indexOf(equations[0].id))
+    expect(result.readingOrder.order.indexOf(equations[0].id)).toBeLessThan(
+      result.readingOrder.order.indexOf(multiplyLeadIn!.id),
+    )
+    expect(result.readingOrder.order.indexOf(multiplyLeadIn!.id)).toBeLessThan(
+      result.readingOrder.order.indexOf(equations.at(-1)!.id),
+    )
+
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 96,
+          height: 24,
+          pixels: new Uint8Array(96 * 24 * 4).fill(72),
+        }),
+    )
+    const reconstructed = await reconstructPageAnalyses({
+      pages: [withExplicitEnglishLanguage(sourcePage)],
+      sourceHash: '7'.repeat(64),
+      fileName: 'derivation-regression.pdf',
+      byteLength: 4096,
+      rasterizeFigure,
+    })
+    const matchedEquations = reconstructed.visualRelationships.filter(
+      (relationship) =>
+        relationship.kind === 'equation' && relationship.status === 'matched',
+    )
+    const proseLineIds = new Set([
+      ...coordinateLeadIn!.lines.map((line) => line.id),
+      ...multiplyLeadIn!.lines.map((line) => line.id),
+    ])
+
+    expect(matchedEquations.length).toBeGreaterThanOrEqual(2)
+    expect(
+      matchedEquations.every((relationship) =>
+        (relationship.sourceLineIds ?? []).every(
+          (lineId) => !proseLineIds.has(lineId),
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      new Set(
+        matchedEquations.map((relationship) => relationship.captionRegionId),
+      ).size,
+    ).toBe(matchedEquations.length)
+    const canonicalText = reconstructed.paper.nodes
+      .flatMap((node) =>
+        'text' in node && typeof node.text === 'string' ? [node.text] : [],
+      )
+      .join('\n')
+    expect(
+      canonicalText.match(/Plugging in the coordinates of C:/gu),
+    ).toHaveLength(1)
+    expect(canonicalText.match(/Multiply by 2:/gu)).toHaveLength(1)
+
+    const epub = await buildReadableEpub(reconstructed.paper, reconstructed)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+    expect(content.match(/Plugging in the coordinates of C:/gu)).toHaveLength(1)
+    expect(content.match(/Multiply by 2:/gu)).toHaveLength(1)
+    expect(content).not.toContain('>Display equation p001-')
+  })
+
+  it('conserves a uniquely hosted detached math-extension run outside its prose cue', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.0126,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const cue = sourceRun(
+      'Multiply by 2:',
+      0.1,
+      0.35,
+      0.1,
+      'Synthetic-STIXGeneral-Regular',
+    )
+    const detachedRoot = sourceRun(
+      '√',
+      0.15,
+      0.3584,
+      0.011,
+      'Synthetic-STIXMathExtensions-Regular',
+      7.5,
+      0.0094,
+    )
+    const hostNumerator = sourceRun(
+      '1',
+      0.1,
+      0.3675,
+      0.008,
+      'Synthetic-STIXMath-Regular',
+      7,
+      0.008,
+    )
+    const hostDenominator = sourceRun(
+      '2',
+      0.1,
+      0.3795,
+      0.008,
+      'Synthetic-STIXMath-Regular',
+      7,
+      0.008,
+    )
+    const hostBaseline = sourceRun(
+      '+ x = 1',
+      0.115,
+      0.372,
+      0.12,
+      'Synthetic-STIXMath-Regular',
+    )
+    const secondCue = sourceRun(
+      'Plugging in values:',
+      0.1,
+      0.5,
+      0.13,
+      'Synthetic-STIXGeneral-Regular',
+    )
+    const secondDetachedRoot = sourceRun(
+      '√',
+      0.15,
+      0.5084,
+      0.011,
+      'Synthetic-STIXMathExtensions-Regular',
+      7.5,
+      0.0094,
+    )
+    const secondHostNumerator = sourceRun(
+      '3',
+      0.1,
+      0.5175,
+      0.008,
+      'Synthetic-STIXMath-Regular',
+      7,
+      0.008,
+    )
+    const secondHostDenominator = sourceRun(
+      '4',
+      0.1,
+      0.5295,
+      0.008,
+      'Synthetic-STIXMath-Regular',
+      7,
+      0.008,
+    )
+    const secondHostBaseline = sourceRun(
+      '+ y = 2',
+      0.115,
+      0.522,
+      0.12,
+      'Synthetic-STIXMath-Regular',
+    )
+    const sourcePage = page(1, [
+      run(1, 'Ordinary prose establishes the body font.', 0.1, 0.18, 0.5),
+      run(1, 'A second ordinary prose line remains intact.', 0.1, 0.21, 0.5),
+      cue,
+      detachedRoot,
+      hostNumerator,
+      hostDenominator,
+      hostBaseline,
+      secondCue,
+      secondDetachedRoot,
+      secondHostNumerator,
+      secondHostDenominator,
+      secondHostBaseline,
+    ])
+
+    const result = reconstructPageRegions([sourcePage])
+    const replay = reconstructPageRegions([sourcePage])
+    const shuffled = reconstructPageRegions([
+      { ...sourcePage, runs: [...sourcePage.runs].reverse() },
+    ])
+    const cueRegion = result.regions.find((region) =>
+      region.text.includes('Multiply by 2:'),
+    )
+    const detachedLines = result.regions
+      .flatMap((region) => region.lines)
+      .filter((line) => /-detached-math-\d+-host-/u.test(line.id))
+    const detachedLine = detachedLines[0]
+    const sourceRunKey = (candidate: PdfSourceRun) =>
+      [
+        candidate.text,
+        candidate.x,
+        candidate.y,
+        candidate.width,
+        candidate.height,
+        candidate.fontName,
+        candidate.fontSize,
+      ].join('\u001f')
+    const expectedRunLedger = [
+      cue,
+      detachedRoot,
+      hostNumerator,
+      hostDenominator,
+      hostBaseline,
+      secondCue,
+      secondDetachedRoot,
+      secondHostNumerator,
+      secondHostDenominator,
+      secondHostBaseline,
+    ]
+      .map(sourceRunKey)
+      .sort()
+    const actualRunLedger = result.regions
+      .flatMap((region) => region.lines)
+      .flatMap((line) => line.runs)
+      .filter((candidate) =>
+        [
+          cue,
+          detachedRoot,
+          hostNumerator,
+          hostDenominator,
+          hostBaseline,
+          secondCue,
+          secondDetachedRoot,
+          secondHostNumerator,
+          secondHostDenominator,
+          secondHostBaseline,
+        ]
+          .map(sourceRunKey)
+          .includes(sourceRunKey(candidate)),
+      )
+      .map(sourceRunKey)
+      .sort()
+
+    expect(cueRegion).toMatchObject({
+      kind: 'body',
+      text: 'Multiply by 2:',
+    })
+    expect(cueRegion?.text).not.toContain('√')
+    expect(detachedLines).toHaveLength(2)
+    expect(new Set(detachedLines.map((line) => line.id)).size).toBe(2)
+    expect(detachedLines.every((line) => !line.id.includes('undefined'))).toBe(
+      true,
+    )
+    expect(detachedLine).toMatchObject({ text: '√' })
+    expect(
+      result.regions.find((region) =>
+        region.lines.some((line) => line.id === detachedLine?.id),
+      ),
+    ).toMatchObject({ kind: 'equation' })
+    expect(actualRunLedger).toEqual(expectedRunLedger)
+    expect(new Set(actualRunLedger).size).toBe(expectedRunLedger.length)
+    expect(result.regions.map((region) => region.id)).toEqual(
+      replay.regions.map((region) => region.id),
+    )
+    expect(
+      result.regions.map(({ id, kind, text }) => ({ id, kind, text })),
+    ).toEqual(
+      shuffled.regions.map(({ id, kind, text }) => ({ id, kind, text })),
+    )
+    expect(result.readingOrder.order.indexOf(cueRegion!.id)).toBeLessThan(
+      result.readingOrder.order.indexOf(
+        result.regions.find((region) =>
+          region.lines.some((line) => line.id === detachedLine?.id),
+        )!.id,
+      ),
+    )
+  })
+
+  it('links an extension-only radical to its exact next-sequence radicand on a different source line', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      sourceSequenceIndex: number,
+      fontSize = 7.47,
+      height = 0.009434,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+      sourceSequenceIndex,
+    })
+    const root = sourceRun(
+      '√',
+      0.2,
+      0.3,
+      0.01133,
+      'Synthetic-STIXMathExtensions-Regular',
+      100,
+    )
+    const radicand = sourceRun(
+      '3',
+      0.2113308,
+      0.3091086,
+      0.0061,
+      'Synthetic-STIXMath-Regular',
+      101,
+    )
+    const hostProse = sourceRun(
+      'is the exact radicand on its prose-dominant source line.',
+      0.225,
+      0.3091086,
+      0.55,
+      'Synthetic-STIXGeneral-Regular',
+      102,
+      10,
+      0.0126,
+    )
+    const sourcePage = page(1, [
+      run(1, 'Ordinary prose establishes the body font.', 0.1, 0.18, 0.5),
+      run(1, 'A second ordinary prose line remains intact.', 0.1, 0.21, 0.5),
+      root,
+      radicand,
+      hostProse,
+    ])
+
+    const result = reconstructPageRegions([sourcePage])
+    const replay = reconstructPageRegions([
+      { ...sourcePage, runs: [...sourcePage.runs].reverse() },
+    ])
+    const allLines = result.regions.flatMap((region) => region.lines)
+    const hostLine = allLines.find((line) =>
+      line.runs.some((candidate) => candidate.sourceSequenceIndex === 101),
+    )
+    const detachedRootLine = allLines.find((line) =>
+      line.runs.some((candidate) => candidate.sourceSequenceIndex === 100),
+    )
+
+    expect(hostLine?.text).toContain('exact radicand')
+    expect(detachedRootLine).toMatchObject({ text: '√' })
+    expect(detachedRootLine?.id).toMatch(
+      new RegExp(
+        `^page-001-source-line-\\d+-detached-math-001-host-${encodeURIComponent(
+          hostLine!.id,
+        )}$`,
+        'u',
+      ),
+    )
+    expect(detachedRootLine?.id).not.toContain('host-ambiguous')
+    expect(
+      allLines
+        .flatMap((line) => line.runs)
+        .filter((candidate) => candidate.sourceSequenceIndex === 100),
+    ).toHaveLength(1)
+    expect(
+      result.regions.find((region) =>
+        region.lines.some((line) => line.id === detachedRootLine?.id),
+      ),
+    ).toMatchObject({ kind: 'equation' })
+    expect(
+      replay.regions
+        .flatMap((region) => region.lines)
+        .find((line) =>
+          line.runs.some((candidate) => candidate.sourceSequenceIndex === 100),
+        )?.id,
+    ).toBe(detachedRootLine?.id)
+  })
+
+  it('links an exact next-sequence radical even when its prose-line font size and baseline are not detached', () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      sourceSequenceIndex: number,
+      fontSize = 10,
+      height = 0.0126,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+      sourceSequenceIndex,
+    })
+    const cue = sourceRun(
+      'Therefore:',
+      0.1,
+      0.35,
+      0.09,
+      'Synthetic-STIXGeneral-Regular',
+      200,
+    )
+    const root = sourceRun(
+      '√',
+      0.19,
+      0.35,
+      0.011,
+      'Synthetic-STIXMathExtensions-Regular',
+      201,
+    )
+    const radicand = sourceRun(
+      '3',
+      0.2010008,
+      0.3622,
+      0.006,
+      'Synthetic-STIXMath-Regular',
+      202,
+      10,
+      0.0126,
+    )
+    const hostProse = sourceRun(
+      'continues on the proved host line.',
+      0.215,
+      0.3622,
+      0.36,
+      'Synthetic-STIXGeneral-Regular',
+      203,
+    )
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Ordinary prose establishes the body font.', 0.1, 0.18, 0.5),
+        run(1, 'A second ordinary prose line remains intact.', 0.1, 0.21, 0.5),
+        cue,
+        root,
+        radicand,
+        hostProse,
+      ]),
+    ])
+    const allLines = result.regions.flatMap((region) => region.lines)
+    const cueLine = allLines.find((line) =>
+      line.runs.some((candidate) => candidate.sourceSequenceIndex === 200),
+    )
+    const hostLine = allLines.find((line) =>
+      line.runs.some((candidate) => candidate.sourceSequenceIndex === 202),
+    )
+    const rootLine = allLines.find((line) =>
+      line.runs.some((candidate) => candidate.sourceSequenceIndex === 201),
+    )
+
+    expect(cueLine).toMatchObject({ text: 'Therefore:' })
+    expect(cueLine?.runs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sourceSequenceIndex: 201 }),
+      ]),
+    )
+    expect(rootLine).toMatchObject({ text: '√' })
+    expect(rootLine?.id).toContain(`-host-${encodeURIComponent(hostLine!.id)}`)
+  })
+
+  it.each([
+    {
+      name: 'nonconsecutive source sequence',
+      candidateSequenceIndex: 12,
+      candidateX: 0.2113308,
+      candidateY: 0.3091086,
+      candidateFont: 'Synthetic-STIXMath-Regular',
+      duplicate: false,
+    },
+    {
+      name: 'material horizontal gap',
+      candidateSequenceIndex: 11,
+      candidateX: 0.21333,
+      candidateY: 0.3091086,
+      candidateFont: 'Synthetic-STIXMath-Regular',
+      duplicate: false,
+    },
+    {
+      name: 'prose-font neighbor',
+      candidateSequenceIndex: 11,
+      candidateX: 0.2113308,
+      candidateY: 0.3091086,
+      candidateFont: 'Synthetic-STIXGeneral-Regular',
+      duplicate: false,
+    },
+    {
+      name: 'duplicate next-sequence candidates',
+      candidateSequenceIndex: 11,
+      candidateX: 0.2113308,
+      candidateY: 0.3091086,
+      candidateFont: 'Synthetic-STIXMath-Regular',
+      duplicate: true,
+    },
+    {
+      name: 'same-line ordinary radical',
+      candidateSequenceIndex: 11,
+      candidateX: 0.2113308,
+      candidateY: 0.3,
+      candidateFont: 'Synthetic-STIXMath-Regular',
+      duplicate: false,
+    },
+  ])(
+    'does not link an extension-only radical for a $name',
+    ({
+      candidateSequenceIndex,
+      candidateX,
+      candidateY,
+      candidateFont,
+      duplicate,
+    }) => {
+      const sourceRun = (
+        text: string,
+        x: number,
+        y: number,
+        width: number,
+        fontName: string,
+        sourceSequenceIndex: number,
+      ) => ({
+        ...run(1, text, x, y, width, 7.47, 0.009434),
+        fontName,
+        sourceSequenceIndex,
+      })
+      const root = sourceRun(
+        '√',
+        0.2,
+        0.3,
+        0.01133,
+        'Synthetic-STIXMathExtensions-Regular',
+        10,
+      )
+      const candidate = sourceRun(
+        '3',
+        candidateX,
+        candidateY,
+        0.0061,
+        candidateFont,
+        candidateSequenceIndex,
+      )
+      const candidates = duplicate
+        ? [
+            candidate,
+            sourceRun(
+              '5',
+              candidateX,
+              candidateY,
+              0.0061,
+              candidateFont,
+              candidateSequenceIndex,
+            ),
+          ]
+        : [candidate]
+      const result = reconstructPageRegions([
+        page(1, [
+          run(1, 'Ordinary prose establishes the body font.', 0.1, 0.18, 0.5),
+          run(
+            1,
+            'A second ordinary prose line remains intact.',
+            0.1,
+            0.21,
+            0.5,
+          ),
+          root,
+          ...candidates,
+        ]),
+      ])
+      const rootLine = result.regions
+        .flatMap((region) => region.lines)
+        .find((line) =>
+          line.runs.some(
+            (runCandidate) => runCandidate.sourceSequenceIndex === 10,
+          ),
+        )
+
+      expect(rootLine).toBeDefined()
+      expect(rootLine!.id).not.toMatch(/-detached-math-\d+-host-(?!ambiguous)/u)
+      expect(
+        result.regions
+          .flatMap((region) => region.lines)
+          .flatMap((line) => line.runs)
+          .filter((runCandidate) => runCandidate.sourceSequenceIndex === 10),
+      ).toHaveLength(1)
+    },
+  )
+
+  it('does not guess ownership for an equal-distance detached math-extension run', async () => {
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      fontSize = 10,
+      height = 0.012,
+    ) => ({
+      ...run(1, text, x, y, width, fontSize, height),
+      fontName,
+    })
+    const sourcePage = page(1, [
+      run(1, 'Ordinary prose establishes the body font.', 0.1, 0.18, 0.5),
+      run(1, 'A second ordinary prose line remains intact.', 0.1, 0.21, 0.5),
+      sourceRun('1', 0.1, 0.368, 0.008, 'Synthetic-STIXMath-Regular', 7, 0.008),
+      sourceRun('2', 0.1, 0.38, 0.008, 'Synthetic-STIXMath-Regular', 7, 0.008),
+      sourceRun('+ a = c', 0.115, 0.374, 0.12, 'Synthetic-STIXMath-Regular'),
+      sourceRun('Hence:', 0.1, 0.392, 0.06, 'Synthetic-STIXGeneral-Regular'),
+      sourceRun(
+        '√',
+        0.13,
+        0.4,
+        0.01,
+        'Synthetic-STIXMathExtensions-Regular',
+        7.5,
+        0.008,
+      ),
+      sourceRun('3', 0.1, 0.42, 0.008, 'Synthetic-STIXMath-Regular', 7, 0.008),
+      sourceRun('4', 0.1, 0.432, 0.008, 'Synthetic-STIXMath-Regular', 7, 0.008),
+      sourceRun('+ d = f', 0.115, 0.426, 0.12, 'Synthetic-STIXMath-Regular'),
+    ])
+
+    const result = reconstructPageRegions([sourcePage])
+    const cueRegion = result.regions.find((region) =>
+      region.text.includes('Hence:'),
+    )
+
+    expect(cueRegion).toMatchObject({ kind: 'body' })
+    expect(cueRegion?.text).toBe('Hence:')
+    const ambiguousRootRegion = result.regions.find((region) =>
+      region.lines.some((line) =>
+        /-detached-math-\d+-host-ambiguous$/u.test(line.id),
+      ),
+    )
+    expect(ambiguousRootRegion).toMatchObject({
+      kind: 'equation',
+      text: '√',
+    })
+    expect(
+      result.regions
+        .flatMap((region) => region.lines)
+        .flatMap((line) => line.runs)
+        .filter((candidate) => candidate.text === '√'),
+    ).toHaveLength(1)
+
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 20,
+          pixels: new Uint8Array(80 * 20 * 4).fill(72),
+        }),
+    )
+    const reconstructed = await reconstructPageAnalyses({
+      pages: [sourcePage],
+      sourceHash: '8'.repeat(64),
+      fileName: 'ambiguous-detached-host.pdf',
+      byteLength: 2048,
+      rasterizeFigure,
+    })
+    const ambiguousRelationship = reconstructed.visualRelationships.find(
+      (relationship) =>
+        relationship.kind === 'equation' &&
+        (relationship.sourceLineIds ?? []).some((lineId) =>
+          /-detached-math-\d+-host-ambiguous$/u.test(lineId),
+        ),
+    )
+    expect(ambiguousRelationship).toMatchObject({
+      status: 'unresolved',
+    })
+    expect(ambiguousRelationship?.evidence).toContain(
+      'unresolved-detached-math-host',
+    )
+    expect(ambiguousRelationship?.assetIds).toEqual([])
   })
 
   it('keeps a hyphenated prose word intact around an interleaved summation crop', async () => {
@@ -829,7 +2980,7 @@ describe('deterministic scholarly page regions', () => {
         }),
     )
     const reconstructed = await reconstructPageAnalyses({
-      pages: [sourcePage],
+      pages: [withExplicitEnglishLanguage(sourcePage)],
       sourceHash: '7'.repeat(64),
       fileName: 'regions.pdf',
       byteLength: 4096,
@@ -868,23 +3019,35 @@ describe('deterministic scholarly page regions', () => {
 
     expect(targetParagraph).toMatchObject({
       type: 'paragraph',
-      text: expect.stringContaining('option that optimizes'),
+      text: expect.stringContaining('option that opti-mizes'),
     })
     expect(
       'text' in targetParagraph && typeof targetParagraph.text === 'string'
         ? targetParagraph.text
         : '',
-    ).not.toContain('opti-mizes')
+    ).not.toContain('opti- mizes')
     expect(reconstructed.lineBoundaryDecisions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          outcome: 'removed-discretionary-hyphen',
+          outcome: 'unresolved',
+          evidence: expect.arrayContaining([
+            'source-proven-wrapped-line-boundary',
+            'joined-form-valid:pinned-lexicon',
+            'split-point-valid:pinned-hyphenation-pattern',
+          ]),
         }),
       ]),
     )
-    expect(formulaNodeIndex).toBe(-1)
-    expect(canonicalTextSequence).not.toContain('∑')
-    expect(canonicalTextSequence.indexOf('optimizes')).toBeLessThan(
+    expect(formulaNodeIndex).toBeGreaterThan(targetParagraphIndex)
+    expect(canonicalTextSequence).toContain('∑')
+    expect(
+      reconstructed.provenance[reconstructed.paper.nodes[formulaNodeIndex].id]
+        ?.boxes.length,
+    ).toBeGreaterThan(0)
+    expect(canonicalTextSequence.indexOf('opti-mizes')).toBeLessThan(
+      canonicalTextSequence.indexOf('∑'),
+    )
+    expect(canonicalTextSequence.indexOf('∑')).toBeLessThan(
       canonicalTextSequence.indexOf('as the objective.'),
     )
   })
@@ -1523,6 +3686,296 @@ describe('deterministic scholarly page regions', () => {
     expect(mixed.readingOrder.evaluation.reviewRequired).toBe(false)
   })
 
+  it('keeps a dense one-column table row separate from parallel prose using exact source runs', () => {
+    const prose = Array.from({ length: 4 }, (_, rowIndex) =>
+      run(
+        1,
+        `Left prose row ${rowIndex + 1} remains outside the table.`,
+        0.088,
+        0.3 + rowIndex * 0.028,
+        0.394,
+        9,
+        0.011,
+      ),
+    )
+    const tableRows = Array.from({ length: 4 }, (_, rowIndex) => {
+      const y = 0.3 + rowIndex * 0.028
+      return [
+        run(1, `Model-${rowIndex + 1}`, 0.528, y, 0.112, 9, 0.011),
+        run(1, `0.${rowIndex + 1}01`, 0.688, y, 0.031, 9, 0.011),
+        run(1, `0.${rowIndex + 1}02`, 0.751, y, 0.031, 9, 0.011),
+        run(1, `0.${rowIndex + 1}03`, 0.813, y, 0.031, 9, 0.011),
+        run(1, `0.${rowIndex + 1}04`, 0.875, y, 0.031, 9, 0.011),
+      ]
+    }).flat()
+    const result = reconstructPageRegions([
+      page(1, [
+        ...prose,
+        ...tableRows,
+        run(1, 'Left column continues after the table.', 0.088, 0.48, 0.394),
+        run(1, 'Right column continues after the table.', 0.528, 0.48, 0.378),
+        run(1, 'Left column reaches its conclusion.', 0.088, 0.52, 0.394),
+        run(1, 'Right column reaches its conclusion.', 0.528, 0.52, 0.378),
+      ]),
+    ])
+
+    for (let rowIndex = 0; rowIndex < 4; rowIndex += 1) {
+      const expectedTexts = [
+        `Model-${rowIndex + 1}`,
+        `0.${rowIndex + 1}01`,
+        `0.${rowIndex + 1}02`,
+        `0.${rowIndex + 1}03`,
+        `0.${rowIndex + 1}04`,
+      ]
+      const tableRegion = result.regions.find(
+        (region) => region.text === expectedTexts.join(' '),
+      )
+      expect(tableRegion).toMatchObject({
+        kind: 'body',
+        column: 'right',
+      })
+      expect(
+        tableRegion?.lines.flatMap((line) =>
+          line.runs.map((sourceRun) => sourceRun.text),
+        ),
+      ).toEqual(expectedTexts)
+      expect(tableRegion?.text).not.toContain(`Left prose row ${rowIndex + 1}`)
+    }
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('Left prose row 1 remains outside the table.'),
+      ),
+    ).toMatchObject({ kind: 'body', column: 'left' })
+    const leftIds = result.regions
+      .filter(
+        (region) => region.includedInReadingOrder && region.column === 'left',
+      )
+      .map((region) => region.id)
+    const rightIds = result.regions
+      .filter(
+        (region) => region.includedInReadingOrder && region.column === 'right',
+      )
+      .map((region) => region.id)
+    expect(
+      Math.max(
+        ...leftIds.map((regionId) =>
+          result.readingOrder.order.indexOf(regionId),
+        ),
+      ),
+    ).toBeLessThan(
+      Math.min(
+        ...rightIds.map((regionId) =>
+          result.readingOrder.order.indexOf(regionId),
+        ),
+      ),
+    )
+    expect(
+      result.readingOrder.edges.some((edge) =>
+        edge.evidence.some((evidence) => evidence.code === 'column-flow'),
+      ),
+    ).toBe(true)
+    expect(result.readingOrder.evaluation.reviewRequired).toBe(false)
+  })
+
+  it('retains a proved table lane when no prose establishes a global column split', () => {
+    const tableRows = Array.from({ length: 4 }, (_, rowIndex) => {
+      const y = 0.3 + rowIndex * 0.028
+      return [
+        run(1, `Model-${rowIndex + 1}`, 0.528, y, 0.112, 9, 0.011),
+        run(1, `0.${rowIndex + 1}01`, 0.688, y, 0.031, 9, 0.011),
+        run(1, `0.${rowIndex + 1}02`, 0.751, y, 0.031, 9, 0.011),
+        run(1, `0.${rowIndex + 1}03`, 0.813, y, 0.031, 9, 0.011),
+        run(1, `0.${rowIndex + 1}04`, 0.875, y, 0.031, 9, 0.011),
+      ]
+    }).flat()
+    const result = reconstructPageRegions([
+      page(1, [
+        run(
+          1,
+          'Figure 1. Independent chart in the opposite lane.',
+          0.09,
+          0.3,
+          0.37,
+          8,
+          0.011,
+        ),
+        ...tableRows,
+      ]),
+    ])
+
+    for (let rowIndex = 0; rowIndex < 4; rowIndex += 1) {
+      const tableRegion = result.regions.find((region) =>
+        region.text.startsWith(`Model-${rowIndex + 1} `),
+      )
+      expect(tableRegion).toMatchObject({
+        kind: 'body',
+        column: 'right',
+      })
+      expect(tableRegion?.text).not.toContain('Independent chart')
+    }
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('Independent chart in the opposite lane.'),
+      ),
+    ).toMatchObject({ kind: 'caption', column: 'single' })
+  })
+
+  it('keeps a mirrored dense left-column numeric matrix separate from right prose', () => {
+    const tableRows = Array.from({ length: 4 }, (_, rowIndex) => {
+      const y = 0.3 + rowIndex * 0.028
+      return [
+        run(1, `Method-${rowIndex + 1}`, 0.09, y, 0.1, 9, 0.011),
+        run(1, `${rowIndex + 1}.01`, 0.23, y, 0.03, 9, 0.011),
+        run(1, `${rowIndex + 1}.02`, 0.3, y, 0.03, 9, 0.011),
+        run(1, `${rowIndex + 1}.03`, 0.37, y, 0.03, 9, 0.011),
+        run(1, `${rowIndex + 1}.04`, 0.44, y, 0.03, 9, 0.011),
+      ]
+    }).flat()
+    const prose = Array.from({ length: 4 }, (_, rowIndex) =>
+      run(
+        1,
+        `Right prose row ${rowIndex + 1} remains outside the table.`,
+        0.53,
+        0.3 + rowIndex * 0.028,
+        0.38,
+        9,
+        0.011,
+      ),
+    )
+    const result = reconstructPageRegions([
+      page(1, [
+        ...tableRows,
+        ...prose,
+        run(1, 'Left column continues after the table.', 0.09, 0.48, 0.38),
+        run(1, 'Right column continues after the table.', 0.53, 0.48, 0.38),
+        run(1, 'Left column reaches its conclusion.', 0.09, 0.52, 0.38),
+        run(1, 'Right column reaches its conclusion.', 0.53, 0.52, 0.38),
+      ]),
+    ])
+
+    for (let rowIndex = 0; rowIndex < 4; rowIndex += 1) {
+      const expectedTexts = [
+        `Method-${rowIndex + 1}`,
+        `${rowIndex + 1}.01`,
+        `${rowIndex + 1}.02`,
+        `${rowIndex + 1}.03`,
+        `${rowIndex + 1}.04`,
+      ]
+      const tableRegion = result.regions.find(
+        (region) => region.text === expectedTexts.join(' '),
+      )
+      expect(tableRegion).toMatchObject({
+        kind: 'body',
+        column: 'left',
+      })
+      expect(
+        tableRegion?.lines.flatMap((line) =>
+          line.runs.map((sourceRun) => sourceRun.text),
+        ),
+      ).toEqual(expectedTexts)
+      expect(tableRegion?.text).not.toContain(`Right prose row ${rowIndex + 1}`)
+    }
+    expect(
+      result.regions.find((region) =>
+        region.text.includes('Right prose row 1 remains outside the table.'),
+      ),
+    ).toMatchObject({ kind: 'body', column: 'right' })
+
+    const leftIds = result.regions
+      .filter(
+        (region) => region.includedInReadingOrder && region.column === 'left',
+      )
+      .map((region) => region.id)
+    const rightIds = result.regions
+      .filter(
+        (region) => region.includedInReadingOrder && region.column === 'right',
+      )
+      .map((region) => region.id)
+    expect(
+      Math.max(
+        ...leftIds.map((regionId) =>
+          result.readingOrder.order.indexOf(regionId),
+        ),
+      ),
+    ).toBeLessThan(
+      Math.min(
+        ...rightIds.map((regionId) =>
+          result.readingOrder.order.indexOf(regionId),
+        ),
+      ),
+    )
+    expect(
+      result.readingOrder.edges.some((edge) =>
+        edge.evidence.some((evidence) => evidence.code === 'column-flow'),
+      ),
+    ).toBe(true)
+    expect(result.readingOrder.evaluation.reviewRequired).toBe(false)
+  })
+
+  it('does not treat fragmented numeric prose as a one-column numeric matrix', () => {
+    const rows = Array.from({ length: 4 }, (_, rowIndex) => {
+      const y = 0.2 + rowIndex * 0.04
+      return [
+        run(
+          1,
+          `Left column row ${rowIndex + 1} preserves independent prose.`,
+          0.088,
+          y,
+          0.394,
+          9,
+          0.011,
+        ),
+        run(1, '2024', 0.528, y, 0.035, 9, 0.011),
+        run(1, 'survey readers report', 0.58, y, 0.14, 9, 0.011),
+        run(1, '88', 0.738, y, 0.018, 9, 0.011),
+        run(1, 'percent agreement.', 0.774, y, 0.132, 9, 0.011),
+      ]
+    }).flat()
+    const result = reconstructPageRegions([page(1, rows)])
+    const left = result.regions.find((region) =>
+      region.text.includes('Left column row 1 preserves independent prose.'),
+    )
+    const right = result.regions.find((region) =>
+      region.text.includes('2024 survey readers report 88 percent agreement.'),
+    )
+
+    expect(left).toMatchObject({ kind: 'body', column: 'left' })
+    expect(right).toMatchObject({ kind: 'body', column: 'right' })
+    expect(left?.text).not.toContain('survey readers')
+    expect(right?.text).not.toContain('Left column')
+    const orderedColumns = result.readingOrder.order
+      .map((regionId) =>
+        result.regions.find((region) => region.id === regionId),
+      )
+      .filter(
+        (region) => region?.column === 'left' || region?.column === 'right',
+      )
+      .map((region) => region!.column)
+    const firstRightIndex = orderedColumns.indexOf('right')
+    expect(firstRightIndex).toBeGreaterThan(0)
+    expect(
+      orderedColumns
+        .slice(0, firstRightIndex)
+        .every((column) => column === 'left'),
+    ).toBe(true)
+    expect(
+      orderedColumns
+        .slice(firstRightIndex)
+        .every((column) => column === 'right'),
+    ).toBe(true)
+    expect(result.readingOrder.resolutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ page: 1, status: 'resolved' }),
+      ]),
+    )
+    expect(
+      result.readingOrder.edges.some((edge) =>
+        edge.evidence.some((evidence) => evidence.code === 'column-flow'),
+      ),
+    ).toBe(true)
+    expect(result.readingOrder.evaluation.reviewRequired).toBe(false)
+  })
+
   it('does not collapse two wide fragmented prose columns into dense table rows', () => {
     const fragment = (text: string, x: number, y: number, width: number) =>
       run(1, text, x, y, width, 10, 0.013)
@@ -1680,7 +4133,7 @@ describe('deterministic scholarly page regions', () => {
     ).toMatchObject({ column: 'left', kind: 'body' })
   })
 
-  it('uses an exact unhyphenated word from another region as line-join evidence', () => {
+  it('does not use an unmodeled acronym occurrence as line-join proof', () => {
     const result = reconstructPageRegions([
       page(1, [
         run(1, 'Synthetic Parser Study', 0.1, 0.1, 0.72, 18),
@@ -1691,13 +4144,16 @@ describe('deterministic scholarly page regions', () => {
     ])
 
     expect(result.regions.map((region) => region.text)).toContain(
-      'Compare ZXALPHA controls.',
+      'Compare ZX-ALPHA controls.',
     )
     expect(result.lineBoundaryDecisions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          outcome: 'removed-discretionary-hyphen',
-          evidence: ['same-document-unhyphenated-word'],
+          outcome: 'unresolved',
+          evidence: expect.arrayContaining([
+            'joined-form-not-proved',
+            'source-form-preserved',
+          ]),
         }),
       ]),
     )
@@ -1725,15 +4181,21 @@ describe('deterministic scholarly page regions', () => {
           kind: 'equation',
           status: 'unresolved',
           captionRegionId: equationRegion.id,
-          sourceRegionIds: [],
+          sourceRegionIds: [equationRegion.id],
+          sourceLineIds: ['page-001-line-0002'],
           sourceObjectIds: [],
           assetIds: [],
+          canonicalNodeId: null,
           sourceText: 'x + y = z',
           altText: 'x + y = z',
           altTextSource: 'source-text',
+          evidence: expect.not.arrayContaining(['source-page-crop']),
           candidates: expect.arrayContaining([
             expect.objectContaining({
+              id: expect.stringMatching(/^visual-candidate-[a-f0-9]{64}$/u),
               sourceRegionIds: [equationRegion.id],
+              sourceLineIds: ['page-001-line-0002'],
+              sourceText: 'x + y = z',
               sourceObjectIds: ['equation-source-p001-001'],
               assetIds: [expect.stringMatching(/^asset-/)],
               evidence: expect.arrayContaining([
@@ -1752,6 +4214,12 @@ describe('deterministic scholarly page regions', () => {
     )
     expect(equationNodeIndex).toBe(-1)
     expect(equationTextIndex).toBeGreaterThan(-1)
+    expect(result.regions.map((region) => region.id)).toContain(
+      equationRegion.id,
+    )
+    expect(result.regions.map((region) => region.text)).toContain(
+      'Following body text.',
+    )
     expect(
       result.paper.nodes.some(
         (node) => node.type === 'paragraph' && node.text === 'x + y = z',
@@ -2270,6 +4738,71 @@ describe('deterministic scholarly page regions', () => {
     ])
   })
 
+  it('keeps near-bottom first-page body text in canonical prose', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(
+          1,
+          'Earlier body prose establishes the primary type size.',
+          0.18,
+          0.5,
+          0.64,
+          11,
+        ),
+        run(
+          1,
+          'A second ordinary body line continues the discussion.',
+          0.18,
+          0.53,
+          0.64,
+          11,
+        ),
+        run(
+          1,
+          'The paragraph reaches the lower page while producing',
+          0.18,
+          0.755,
+          0.64,
+          10,
+        ),
+        run(
+          1,
+          'the complete result and retains all enumerated benefits,',
+          0.18,
+          0.772,
+          0.64,
+          10,
+        ),
+        run(
+          1,
+          'including the final source-backed contribution.',
+          0.18,
+          0.789,
+          0.64,
+          10,
+        ),
+      ]),
+    ])
+
+    const lowerBody = result.regions.filter((region) =>
+      /(?:lower page|enumerated benefits|final source-backed)/u.test(
+        region.text,
+      ),
+    )
+    expect(lowerBody.length).toBeGreaterThan(0)
+    expect(
+      lowerBody.every(
+        (region) =>
+          region.kind === 'body' && region.includedInReadingOrder === true,
+      ),
+    ).toBe(true)
+    expect(
+      result.paper.nodes
+        .map((node) => ('text' in node ? node.text : ''))
+        .join(' '),
+    ).toContain('retains all enumerated benefits')
+  })
+
   it('excludes geometrically isolated first-page small print from two-column prose flow', async () => {
     const result = await reconstruct([
       page(1, [
@@ -2584,51 +5117,53 @@ describe('deterministic scholarly page regions', () => {
 
   it('keeps a bottom-edge caption continuation misclassified as footer when it completes a split word', async () => {
     const result = await reconstruct([
-      page(1, [
-        run(
-          1,
-          'Predicted probabilities establish the body size.',
-          0.12,
-          0.2,
-          0.37,
-          11,
-        ),
-        run(
-          1,
-          'STRUCTURED-DETECT appears elsewhere in the source.',
-          0.12,
-          0.22,
-          0.37,
-          11,
-        ),
-        run(
-          1,
-          'Table 5: ROC-AUC score of predicted contradiction probabili-',
-          0.514,
-          0.88648,
-          0.37,
-          9,
-          0.01065,
-        ),
-        run(
-          1,
-          'ties for different methods on our evaluation set. STRUCTURED-',
-          0.514,
-          0.89831,
-          0.369,
-          9,
-          0.01065,
-        ),
-        run(
-          1,
-          'DETECT outperforms our two entailment-based baselines.',
-          0.515,
-          0.91014,
-          0.347,
-          9,
-          0.01065,
-        ),
-      ]),
+      withExplicitEnglishLanguage(
+        page(1, [
+          run(
+            1,
+            'Predicted probabilities establish the body size.',
+            0.12,
+            0.2,
+            0.37,
+            11,
+          ),
+          run(
+            1,
+            'STRUCTURED-DETECT appears elsewhere in the source.',
+            0.12,
+            0.22,
+            0.37,
+            11,
+          ),
+          run(
+            1,
+            'Table 5: ROC-AUC score of predicted contradiction probabili-',
+            0.514,
+            0.88648,
+            0.37,
+            9,
+            0.01065,
+          ),
+          run(
+            1,
+            'ties for different methods on our evaluation set. STRUCTURED-',
+            0.514,
+            0.89831,
+            0.369,
+            9,
+            0.01065,
+          ),
+          run(
+            1,
+            'DETECT outperforms our two entailment-based baselines.',
+            0.515,
+            0.91014,
+            0.347,
+            9,
+            0.01065,
+          ),
+        ]),
+      ),
     ])
 
     expect(
@@ -2861,6 +5396,141 @@ describe('deterministic scholarly page regions', () => {
     expect(captions[1]).toContain('ending there')
   })
 
+  it('classifies same-baseline gutter-partitioned table captions as separate regions', async () => {
+    const layoutRuns = [
+      run(1, 'Left column establishes the layout.', 0.09, 0.1, 0.37),
+      run(1, 'Right column establishes the layout.', 0.54, 0.1, 0.37),
+      run(1, 'Left column remains independent.', 0.09, 0.14, 0.37),
+      run(1, 'Right column remains independent.', 0.54, 0.14, 0.37),
+      run(1, 'Left column has a third row.', 0.09, 0.18, 0.37),
+      run(1, 'Right column has a third row.', 0.54, 0.18, 0.37),
+    ]
+    const captionRuns = [
+      run(1, 'Table', 0.09, 0.4, 0.04, 9, 0.009),
+      run(1, '2.', 0.135, 0.4, 0.018, 9, 0.009),
+      run(1, 'Left benchmark results.', 0.158, 0.4, 0.395, 9, 0.009),
+      run(1, 'Table', 0.562, 0.4, 0.04, 9, 0.009),
+      run(1, '3.', 0.607, 0.4, 0.018, 9, 0.009),
+      run(1, 'Right ablation results.', 0.63, 0.4, 0.251, 9, 0.009),
+      run(1, 'Left caption continuation.', 0.09, 0.4113, 0.463, 9, 0.009),
+      run(1, 'Right caption continuation.', 0.562, 0.4113, 0.319, 9, 0.009),
+    ]
+    const result = await reconstruct([page(1, [...layoutRuns, ...captionRuns])])
+
+    const captions = result.regions.filter(
+      (region) => region.kind === 'caption',
+    )
+    expect(
+      captions.map(({ text, column, sourceCaptionLane }) => ({
+        text,
+        column,
+        sourceCaptionLane,
+      })),
+    ).toEqual([
+      {
+        text: 'Table 2. Left benchmark results. Left caption continuation.',
+        column: 'span',
+        sourceCaptionLane: {
+          boundary: expect.closeTo(0.5575, 4),
+          side: 'left',
+        },
+      },
+      {
+        text: 'Table 3. Right ablation results. Right caption continuation.',
+        column: 'right',
+        sourceCaptionLane: {
+          boundary: expect.closeTo(0.5575, 4),
+          side: 'right',
+        },
+      },
+    ])
+    expect(captions[0].box.x + captions[0].box.width).toBeLessThan(
+      captions[1].box.x,
+    )
+    expect(captions[0].text).not.toContain('Right caption')
+    expect(captions[1].text).not.toContain('Left caption')
+    const sourceRunKey = (sourceRun: PdfSourceRun) =>
+      [
+        sourceRun.text,
+        sourceRun.x,
+        sourceRun.y,
+        sourceRun.width,
+        sourceRun.height,
+      ].join('|')
+    const captionOutputRuns = captions.flatMap((caption) =>
+      caption.lines.flatMap((line) => line.runs),
+    )
+    for (const sourceRun of captionRuns) {
+      expect(
+        captionOutputRuns.filter(
+          (candidate) => sourceRunKey(candidate) === sourceRunKey(sourceRun),
+        ),
+      ).toHaveLength(1)
+    }
+    const leftLineIds = new Set(captions[0].lines.map((line) => line.id))
+    expect(captions[1].lines.some((line) => leftLineIds.has(line.id))).toBe(
+      false,
+    )
+    for (const caption of captions) {
+      const [seed, ...continuations] = caption.lines
+      expect(continuations).not.toHaveLength(0)
+      expect(
+        continuations.every(
+          (line) => line.captionContinuationSeedId === seed.id,
+        ),
+      ).toBe(true)
+    }
+    expect(
+      result.visualRelationships
+        .filter((relationship) => relationship.kind === 'table')
+        .map(({ label, captionRegionId }) => ({ label, captionRegionId })),
+    ).toEqual([
+      {
+        label: 'Table 2',
+        captionRegionId: expect.stringMatching(/region/u),
+      },
+      {
+        label: 'Table 3',
+        captionRegionId: expect.stringMatching(/region/u),
+      },
+    ])
+  })
+
+  it('fails closed when two source partitions claim the same local-caption continuation band', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Left column layout row one.', 0.09, 0.1, 0.37),
+        run(1, 'Right column layout row one.', 0.54, 0.1, 0.37),
+        run(1, 'Left column layout row two.', 0.09, 0.14, 0.37),
+        run(1, 'Right column layout row two.', 0.54, 0.14, 0.37),
+        run(1, 'Left column layout row three.', 0.09, 0.18, 0.37),
+        run(1, 'Right column layout row three.', 0.54, 0.18, 0.37),
+        run(1, 'Table 2. Left benchmark results', 0.09, 0.4, 0.463, 9, 0.009),
+        run(1, 'Table 3. Right ablation results', 0.562, 0.4, 0.319, 9, 0.009),
+        run(1, 'Left continuation candidate.', 0.09, 0.4113, 0.453, 9, 0.009),
+        run(1, 'ambiguous', 0.547, 0.4113, 0.008, 9, 0.009),
+        run(1, 'Right continuation candidate.', 0.562, 0.4113, 0.319, 9, 0.009),
+      ]),
+    ])
+
+    const captions = result.regions.filter(
+      (region) => region.kind === 'caption',
+    )
+    expect(captions.map((caption) => caption.text)).toEqual([
+      'Table 2. Left benchmark results',
+      'Table 3. Right ablation results',
+    ])
+    expect(
+      captions.some((caption) => /continuation candidate/iu.test(caption.text)),
+    ).toBe(false)
+    expect(
+      result.regions
+        .filter((region) => region.kind !== 'caption')
+        .map((region) => region.text)
+        .join(' '),
+    ).toContain('continuation candidate')
+  })
+
   it('keeps interleaved multi-panel label continuations with their source panel', () => {
     const result = reconstructPageRegions([
       page(
@@ -2987,7 +5657,7 @@ describe('deterministic scholarly page regions', () => {
     ).toBeDefined()
   })
 
-  it('keeps split caption prose while withholding unproved stacked formula semantics', async () => {
+  it('keeps split caption prose and source-backed stacked formula obligations', async () => {
     const mathRun = (
       text: string,
       x: number,
@@ -3042,13 +5712,24 @@ describe('deterministic scholarly page regions', () => {
     )
     expect(caption?.text).toContain('for the model in every evaluated layer.')
     expect(caption?.text).not.toContain('hl=')
-    expect(
-      result.paper.nodes.filter(
-        (node) =>
-          node.type === 'paragraph' &&
-          /^(?:l=h|hl=)(?:\s+for)?$/u.test(node.text),
-      ),
-    ).toEqual([])
+    const formulaNodes = result.paper.nodes.filter(
+      (node) =>
+        node.type === 'paragraph' &&
+        /^(?:l=h|hl=)(?:\s+for)?$/u.test(node.text),
+    )
+    expect(formulaNodes).toEqual([
+      expect.objectContaining({
+        type: 'paragraph',
+        text: 'hl=',
+        inlineRuns: expect.arrayContaining([
+          expect.objectContaining({ verticalAlign: 'superscript' }),
+          expect.objectContaining({ verticalAlign: 'subscript' }),
+        ]),
+      }),
+    ])
+    expect(result.provenance[formulaNodes[0].id]?.boxes.length).toBeGreaterThan(
+      0,
+    )
     const captionRegion = result.regions.find(
       (region) => region.kind === 'caption',
     )
@@ -3081,13 +5762,14 @@ describe('deterministic scholarly page regions', () => {
         'UNRESOLVED_VISUAL_OBJECT',
       ]),
     })
+    expect(result.completeness.expectedInlineSpanCount).toBeGreaterThan(0)
 
     const epub = await buildReadableEpub(result.paper, result)
     const { files } = inspectEpub(epub.bytes)
     const content = strFromU8(files['EPUB/content.xhtml'])
-    expect(content).not.toContain('<em>h</em><sup><em>l</em></sup><sub>=</sub>')
-    expect(content).toContain('Display equation p001-001')
-    expect(content).toContain('class="orphan-caption omitted-visual"')
+    expect(content).toContain('<em>h</em><sup><em>l</em></sup><sub>=</sub>')
+    expect(content).not.toContain('>Display equation p001-001<')
+    expect(content).not.toContain('orphan-caption omitted-visual')
   })
 
   it('keeps a short sentence-like inline equation continuation in its caption', async () => {
@@ -3719,22 +6401,24 @@ describe('deterministic scholarly page regions', () => {
 
   it('keeps a wrapped symbolic note continuation in the note', async () => {
     const result = await reconstruct([
-      page(1, [
-        run(1, 'LightSpeed Studios, Tencent', 0.2, 0.1, 0.5, 9),
-        run(1, 'Body line one.', 0.08, 0.2, 0.7, 10),
-        run(1, 'Body line two.', 0.08, 0.25, 0.7, 10),
-        run(1, 'Body line three.', 0.08, 0.3, 0.7, 10),
-        run(
-          1,
-          '*Work done during the internship at Tencent Lightspeed stu-',
-          0.109,
-          0.862,
-          0.369,
-          9,
-          0.011,
-        ),
-        run(1, 'dios.', 0.088, 0.875, 0.028, 9, 0.011),
-      ]),
+      withExplicitEnglishLanguage(
+        page(1, [
+          run(1, 'LightSpeed Studios, Tencent', 0.2, 0.1, 0.5, 9),
+          run(1, 'Body line one.', 0.08, 0.2, 0.7, 10),
+          run(1, 'Body line two.', 0.08, 0.25, 0.7, 10),
+          run(1, 'Body line three.', 0.08, 0.3, 0.7, 10),
+          run(
+            1,
+            '*Work done during the internship at Tencent Lightspeed stu-',
+            0.109,
+            0.862,
+            0.369,
+            9,
+            0.011,
+          ),
+          run(1, 'dios.', 0.088, 0.875, 0.028, 9, 0.011),
+        ]),
+      ),
     ])
 
     expect(
@@ -3751,54 +6435,56 @@ describe('deterministic scholarly page regions', () => {
 
   it('keeps short continuation lines with page-wide numbered footnotes', async () => {
     const result = await reconstruct([
-      page(1, [
-        run(
-          1,
-          'Left-column prose establishes the first column.',
-          0.08,
-          0.2,
-          0.34,
-        ),
-        run(
-          1,
-          'Right-column prose establishes the second column.',
-          0.56,
-          0.2,
-          0.34,
-        ),
-        run(1, 'More left-column prose continues below.', 0.08, 0.24, 0.34),
-        run(1, 'More right-column prose continues below.', 0.56, 0.24, 0.34),
-        run(1, 'Final left-column evidence.', 0.08, 0.28, 0.34),
-        run(1, 'Final right-column evidence.', 0.56, 0.28, 0.34),
-        run(
-          1,
-          '2 We found that response tokens yield more effective steering directions than alternative positions such as',
-          0.197,
-          0.87,
-          0.626,
-          8,
-          0.012,
-        ),
-        run(
-          1,
-          'prompt tokens (see Appendix A.3).',
-          0.176,
-          0.884,
-          0.207,
-          8,
-          0.011,
-        ),
-        run(
-          1,
-          '3 We show results for four additional traits, including positive traits such as optimism and humor, in Ap-',
-          0.197,
-          0.897,
-          0.626,
-          8,
-          0.012,
-        ),
-        run(1, 'pendix G.', 0.176, 0.911, 0.058, 8, 0.011),
-      ]),
+      withExplicitEnglishLanguage(
+        page(1, [
+          run(
+            1,
+            'Left-column prose establishes the first column.',
+            0.08,
+            0.2,
+            0.34,
+          ),
+          run(
+            1,
+            'Right-column prose establishes the second column.',
+            0.56,
+            0.2,
+            0.34,
+          ),
+          run(1, 'More left-column prose continues below.', 0.08, 0.24, 0.34),
+          run(1, 'More right-column prose continues below.', 0.56, 0.24, 0.34),
+          run(1, 'Final left-column evidence.', 0.08, 0.28, 0.34),
+          run(1, 'Final right-column evidence.', 0.56, 0.28, 0.34),
+          run(
+            1,
+            '2 We found that response tokens yield more effective steering directions than alternative positions such as',
+            0.197,
+            0.87,
+            0.626,
+            8,
+            0.012,
+          ),
+          run(
+            1,
+            'prompt tokens (see Appendix A.3).',
+            0.176,
+            0.884,
+            0.207,
+            8,
+            0.011,
+          ),
+          run(
+            1,
+            '3 We show results for four additional traits, including positive traits such as optimism and humor, in Ap-',
+            0.197,
+            0.897,
+            0.626,
+            8,
+            0.012,
+          ),
+          run(1, 'pendix G.', 0.176, 0.911, 0.058, 8, 0.011),
+        ]),
+      ),
     ])
 
     expect(

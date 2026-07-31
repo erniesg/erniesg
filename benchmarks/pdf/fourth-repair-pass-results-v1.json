@@ -1,0 +1,273 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-fourth-generalized-repair-2026-07-28-v1",
+  "generatedAt": "2026-07-28T13:35:44Z",
+  "verdict": {
+    "status": "blocked",
+    "publicationReady": false,
+    "verifiedPublicationReady": 0,
+    "denominator": 23,
+    "summary": "Both former terminal-processing papers now complete and produce atomic review artifacts, and representative corrupting-join and flow-order incidence fell sharply. No paper is promoted: semantic-object, asset, relationship, table, equation, citation, note, and independent-reader gates remain."
+  },
+  "implementation": {
+    "headCommit": "119465e06d7e43679c0d19f8ed46ab4824e55699",
+    "worktreeState": "dirty",
+    "productionPaperIdBranchesFound": 0,
+    "baselineReceipt": "benchmarks/pdf/final-audit-results-v1.json",
+    "baselineReceiptSha256": "c904c9baca9323a5f899d3fcb5552f61e0a6d93974e7d2e940f2dd34432a354d"
+  },
+  "terminalProcessing": {
+    "declaredDocumentDeadlineMs": 1800000,
+    "before": {
+      "terminalFailures": 2,
+      "fixedRegression": "PDF_DOCUMENT_TIMEOUT",
+      "seededRandomDiscovery": "PDF_DOCUMENT_WORKER_FAILED"
+    },
+    "after": {
+      "terminalFailures": 0,
+      "artifactsAreReviewOnly": true,
+      "receiptsWrittenAfterComplete": true,
+      "watchdogFailureCode": "PDF_DOCUMENT_STALLED",
+      "heartbeatAndCancellationTests": "passed"
+    },
+    "documents": [
+      {
+        "id": "2103.02228v1",
+        "sourceSha256": "4ea8f6f0b42cbaacb054d7d961a82eedc2017a98d4a64108c30c46378532c46b",
+        "pages": 18,
+        "status": "review-required",
+        "elapsedMs": 59654,
+        "heartbeatCount": 46,
+        "maximumRssBytes": 695549952,
+        "unresolvedCorruptingJoinCount": 0,
+        "epub": {
+          "byteLength": 1441048,
+          "sha256": "51e048715cd90651f96891dccb0a19052d24cbfcd01756e34331eb4843516bbe",
+          "mode": "readable-fallback",
+          "structuralValidation": "passed",
+          "epubCheck530": "passed"
+        },
+        "reportSha256": "ae18f670ed2e1f373c34bf4d6e49c1dd2be9461dbba33068900cbf498ecd5b95",
+        "stages": [
+          ["startup", 0, 0],
+          ["pipeline-initialization", 1, 1],
+          ["opening", 1442, 1442],
+          ["extracting", 1583, 17052],
+          ["segmenting", 17053, 17056],
+          ["semantic-promotion", 18862, 47296],
+          ["asset-packaging", 47713, 49122],
+          ["reading-order", 47714, 49111],
+          ["validating", 49228, 49228],
+          ["export-module-load", 53235, 53237],
+          ["epub-assembly", 53419, 59643],
+          ["completed", 59654, 59654]
+        ]
+      },
+      {
+        "id": "2310.03304v5",
+        "sourceSha256": "57901f562d8b7e1455b714129a4eefde5695eb5a382cd53c35780d66a964cd6a",
+        "pages": 19,
+        "status": "review-required",
+        "elapsedMs": 25432,
+        "heartbeatCount": 35,
+        "maximumRssBytes": 568459264,
+        "unresolvedCorruptingJoinCount": 0,
+        "epub": {
+          "byteLength": 2404254,
+          "sha256": "2245db0745a462d43c347187c3dda42a58649f4d171955623639f4f97f4b0c30",
+          "mode": "readable-fallback",
+          "structuralValidation": "passed",
+          "epubCheck530": "passed"
+        },
+        "reportSha256": "22ad9eb966e892b791cb95785eeed03489e577e0f81cda86d0611f262c08976e",
+        "stages": [
+          ["startup", 0, 0],
+          ["pipeline-initialization", 1, 1],
+          ["opening", 1460, 1460],
+          ["extracting", 1597, 3018],
+          ["segmenting", 3544, 3547],
+          ["semantic-promotion", 4318, 15628],
+          ["asset-packaging", 16052, 16849],
+          ["reading-order", 16052, 16836],
+          ["validating", 16982, 16982],
+          ["export-module-load", 19101, 19102],
+          ["epub-assembly", 19258, 25421],
+          ["completed", 25432, 25432]
+        ]
+      }
+    ],
+    "stress": {
+      "id": "2501.09223v1",
+      "sourceSha256": "8b8f659beda18f55ab82191bde2d0d8090ae73925b2c7ea3e8d9171857cc506a",
+      "pages": 231,
+      "status": "review-required",
+      "completionMs": 131370,
+      "cancellationLatencyMs": 117,
+      "maximumMainThreadLatencyMs": 38,
+      "maximumMainHeapBytes": 53500000,
+      "workerCountObserved": 2,
+      "fullReconstructionAndEpubAssembly": "passed"
+    }
+  },
+  "representativeDiagnosticDelta": {
+    "selectionProcedure": "The two mandatory terminal papers, the fixed 231-page stress paper, one fixed typed-asset case, two seeded discovery continuation/structure cases, and all three previously declared final-heldout papers; every source was verified against its existing contract hash.",
+    "sourceSets": {
+      "fixedRegression": ["2103.02228v1", "2501.09223v1", "2503.18265v1"],
+      "seededRandomDiscovery": ["2310.03304v5", "2503.13992v1", "2510.15205v1"],
+      "previousFinalHeldout": ["2305.05176v1", "2506.03099v1", "2506.21416v1"]
+    },
+    "documents": 9,
+    "reportSha256": "2e4c2e69d869bd7e17b2b9ce27ce8a6d4ed45b4893b1f0b44e21b27e0f2a5d5f",
+    "before": {
+      "terminalFailures": 2,
+      "unresolvedCorruptingJoins": 161,
+      "documentsWithUnresolvedCorruptingJoins": 9,
+      "documentsWithCanonicalFlowOrderViolation": 9,
+      "documentsWithIncompleteAssetCoverage": 9
+    },
+    "after": {
+      "terminalFailures": 0,
+      "ready": 0,
+      "reviewRequired": 9,
+      "failed": 0,
+      "unresolvedCorruptingJoins": 2,
+      "documentsWithUnresolvedCorruptingJoins": 1,
+      "documentsWithCanonicalFlowOrderViolation": 2,
+      "documentsWithIncompleteAssetCoverage": 8
+    },
+    "affectedDocumentCountsByRemainingDiagnostic": {
+      "AMBIGUOUS_NOTE_MATCH": 1,
+      "AMBIGUOUS_READING_ORDER": 5,
+      "AMBIGUOUS_SCHOLARLY_CROSS_REFERENCE": 1,
+      "AMBIGUOUS_VISUAL_MATCH": 5,
+      "CANONICAL_FLOW_ORDER_VIOLATION": 2,
+      "CANONICAL_VISUAL_ORDER_VIOLATION": 3,
+      "DUPLICATE_CANONICAL_ROLE": 1,
+      "INCOMPLETE_ASSET_COVERAGE": 8,
+      "INCOMPLETE_INLINE_STYLE_COVERAGE": 7,
+      "INCOMPLETE_RELATIONSHIP_COVERAGE": 8,
+      "INCOMPLETE_SEMANTIC_TABLE_COVERAGE": 7,
+      "INCOMPLETE_TEXT_COVERAGE": 2,
+      "ISOLATED_PROSE_GLYPH": 3,
+      "LOW_CONFIDENCE_BLOCK": 5,
+      "MISSING_SOURCE_REGION": 8,
+      "UNMAPPED_CITATION_ANCHOR": 1,
+      "UNREFERENCED_NOTE": 3,
+      "UNREFERENCED_VISUAL_ASSET": 6,
+      "UNRESOLVED_CITATION_REFERENCE": 3,
+      "UNRESOLVED_CORRUPTING_JOIN": 1,
+      "UNRESOLVED_EQUATION_TRANSCRIPT": 8,
+      "UNRESOLVED_FRONT_MATTER": 4,
+      "UNRESOLVED_HYPERLINK": 8,
+      "UNRESOLVED_NOTE_REFERENCE": 3,
+      "UNRESOLVED_PREFORMATTED_TRANSCRIPT": 2,
+      "UNRESOLVED_SCHOLARLY_CROSS_REFERENCE": 6,
+      "UNRESOLVED_SEMANTIC_OBJECTS": 8,
+      "UNRESOLVED_VISUAL_OBJECT": 8
+    }
+  },
+  "typedObjectDelta": {
+    "case": {
+      "id": "2503.18265v1",
+      "sourceSha256": "bc0879d88774c7070b214bceca4837e51942d1dcba09c9f27dd75e4bcf64390f",
+      "before": {
+        "assetCoverage": 0.5,
+        "exportedAssets": 2,
+        "sourceAssets": 4,
+        "unresolvedObjectCount": 2
+      },
+      "after": {
+        "assetCoverage": 1,
+        "exportedAssets": 4,
+        "sourceAssets": 4,
+        "unresolvedObjectCount": 0,
+        "captionNodes": 4,
+        "figureNodes": 4,
+        "remainingBlockers": ["UNRESOLVED_PREFORMATTED_TRANSCRIPT"]
+      }
+    },
+    "policy": "Typography-delimited figure labels are restored only when geometry and styled label identity prove a complete typed caption; low-confidence code remains a source crop and review blocker."
+  },
+  "validation": {
+    "targetedVitest": {
+      "status": "passed",
+      "files": 7,
+      "testsPassed": 673
+    },
+    "fullVitest": {
+      "status": "passed",
+      "files": 98,
+      "testsPassed": 1741,
+      "testsSkipped": 1,
+      "testsTotal": 1742
+    },
+    "astro": {
+      "status": "passed",
+      "diagnosticFiles": 278,
+      "errors": 0,
+      "warnings": 0,
+      "hints": 10,
+      "staticPagesBuilt": 132
+    },
+    "agentEvidence": {
+      "status": "passed",
+      "manifest": ".agent/evidence/20260728T134243013Z/manifest.json",
+      "manifestSha256": "6a0fb7adcc2472ac556dd38514f9334838ccd7e6215e7f57c1bd505f27db8aca",
+      "durationMs": 250011,
+      "requiredLanes": {
+        "build": "passed",
+        "test": "passed"
+      }
+    },
+    "viewer": {
+      "chromium149": {
+        "selectedE2ePassed": 3,
+        "guardedStressPassedSeparately": 1,
+        "layoutCombinations": 96
+      },
+      "webkit265": {
+        "selectedE2ePassed": 3,
+        "guardedStressSkipped": 1,
+        "layoutCombinations": 96
+      },
+      "invariants": [
+        "one materialized page",
+        "Fit Page no overflow or clipping",
+        "bottom footnotes",
+        "first-middle-last navigation",
+        "equal PDF and EPUB controls",
+        "visual zoom without repagination"
+      ]
+    },
+    "preservedPriorExactArtifactGates": {
+      "receipt": "benchmarks/pdf/final-audit-results-v1.json",
+      "artifacts": 21,
+      "epubCheck530Passed": 21,
+      "daisyAce146Passed": 21,
+      "internalHrefsChecked": 3512,
+      "internalHrefFailures": 0,
+      "readerMarkerFindings": 0,
+      "applicationJavaScriptInPackagedEpubs": 0,
+      "exactArtifactViewerChecksPassed": 4032,
+      "exactArtifactViewerChecksFailed": 0
+    }
+  },
+  "holdout": {
+    "newUntouchedPoolAvailable": false,
+    "eligibleDocuments": 0,
+    "reason": "All 26 catalog papers had already appeared in the fixed, seeded-random, prior round, or final-heldout contracts before this pass. The nine-paper aggregate is representative regression evidence, not a newly independent holdout."
+  },
+  "externalCompatibilityBlockers": [
+    "native desktop EPUB reader unavailable",
+    "Apple Books unavailable",
+    "target e-ink reader or device unavailable"
+  ],
+  "remainingPublicationBlockers": [
+    "The representative corpus is 0 of 9 ready and verified global publication readiness remains 0 of 23.",
+    "The 231-page stress paper retains two unresolved corrupting joins and a canonical-flow-order violation.",
+    "Two representative papers retain canonical-flow-order violations.",
+    "Eight representative papers retain incomplete asset, relationship, or semantic-object coverage.",
+    "Equation, table, citation, note, hyperlink, visual, inline-style, and source-region blockers remain exactly as counted above.",
+    "Chromium and WebKit are not substitutes for required native desktop, Apple Books, or target e-ink validation."
+  ]
+}

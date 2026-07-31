@@ -1,0 +1,260 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-final-fail-closed-audit-2026-07-28-v1",
+  "generatedAt": "2026-07-28T05:10:32Z",
+  "verdict": {
+    "status": "blocked",
+    "publicationReady": false,
+    "downloadReady": false,
+    "summary": "The viewer, package-structure, accessibility-tool, link, asset, and responsiveness checks pass for every materialized artifact, but corpus semantic-fidelity gates remain 0% ready and required native desktop/e-ink readers were unavailable."
+  },
+  "implementation": {
+    "headCommit": "119465e06d7e43679c0d19f8ed46ab4824e55699",
+    "worktreeState": "dirty",
+    "taskFileInventoryBeforeThisReceipt": {
+      "fileCount": 40,
+      "sha256": "248d51a052dd9dca002f7b3ec2eb0560a1f08eedcef1dcc1b9ad7347a99471ab"
+    },
+    "artifactBuildStateSha256": "a4cf5106609c975de1a4f51b7838dc95889e4948e58500824d118838384d8e5e",
+    "artifactInventory": {
+      "count": 21,
+      "sha256": "af7a6de6b0d257852bc94f8110febfb52e384fcbb82a8f127ca06fff6e72c441",
+      "mode": "readable-fallback"
+    }
+  },
+  "holdout": {
+    "contract": "benchmarks/pdf/final-audit-heldout-contract-v1.json",
+    "contractSha256": "cf9c9d85c399495d23e47c08ee490e3cf337f5cd7315c43e4e2be2e3ef9b2022",
+    "lockedAt": "2026-07-28T01:05:13.938Z",
+    "selectionAlgorithm": "sha256-rank-without-replacement-from-round2-untouched-complement-v1",
+    "seed": "a1089674557c6c76740d0689b4075130be833647c2fb8744cbc9b4bfd650277e",
+    "seedCommitmentSha256": "38836bf0a82a9bb650a17d764699c2c69dece2686a166f1fc98a58ef0b541f06",
+    "selectionSha256": "e931a36cd422f5818f5f399e14b866c117e9c8f78759c9884cb21d7e337112be",
+    "predeclaredStrata": [
+      "multi-column-prose-and-page-continuation",
+      "figures-diagrams-and-multi-panel-visuals",
+      "simple-and-complex-tables",
+      "simple-and-compound-equations",
+      "code-and-preformatted-blocks",
+      "citations-and-cross-references",
+      "bottom-footnotes-and-return-links",
+      "headings-and-run-in-headings"
+    ],
+    "documents": [
+      {
+        "id": "2305.05176v1",
+        "byteLength": 1171365,
+        "sourceSha256": "035ae8b90333dad8b7817fc8f55e7c4cbca435368c5c1a4dbf7bba9e5db87473",
+        "epubSha256": "8e0e63fd801648e6351499333ec3cd8a13e9d50a6046f82fb804ca9b58d246cf",
+        "result": "review-required"
+      },
+      {
+        "id": "2506.21416v1",
+        "byteLength": 17713351,
+        "sourceSha256": "c31e837dbfe8bbf5eea230f925094f19782327567d65e5c59295661295420fce",
+        "epubSha256": "d0ddbc133a9f913a72ed35e91f0702861b64fbb7cc8d6c119971ee4ffcc0b649",
+        "result": "review-required"
+      },
+      {
+        "id": "2506.03099v1",
+        "byteLength": 3861832,
+        "sourceSha256": "e3d8cc39df2e6d87c11d30b68433db4467d0b5b3f70de94ea74d97a4f87b552e",
+        "epubSha256": "e13130d16b7f3cb9e867e3f35c9d756101319ed0898c95ae6b1e8d059b56b7ed",
+        "result": "review-required"
+      }
+    ]
+  },
+  "corpora": {
+    "fixedRegression": {
+      "documents": 10,
+      "ready": 0,
+      "reviewRequired": 9,
+      "failed": 1,
+      "passRate": 0,
+      "reportSha256": "c6d4145876c28eca77e62bceebcc85d8045542d859c5cadda36a4b9d72194567",
+      "contractSha256": "df8d26b2dfa64e2afe106d4ac53b630012918aeba4638b437307748ee3541814",
+      "documentIdentitySha256": "4486bb696a8b7b9b2cc853f20510c6c006b4fdfab2883ec9d593b27c17192f67",
+      "terminalFailure": {
+        "id": "2103.02228v1",
+        "code": "PDF_DOCUMENT_TIMEOUT",
+        "note": "The 30-minute document deadline was reproduced twice; the paper remains in the denominator and has no EPUB."
+      }
+    },
+    "seededRandomDiscovery": {
+      "documents": 10,
+      "ready": 0,
+      "reviewRequired": 9,
+      "failed": 1,
+      "passRate": 0,
+      "reportSha256": "9a4c166605118021987382cb87411fe63828a80ee1220a8e90fa1b08cdfb6a96",
+      "contractSha256": "df8d26b2dfa64e2afe106d4ac53b630012918aeba4638b437307748ee3541814",
+      "documentIdentitySha256": "2c6c49ecf9bd4b6f48a22eeb477bcde254ca3064f0359165da4f0c482a99ebe8",
+      "terminalFailure": {
+        "id": "2310.03304v5",
+        "code": "PDF_DOCUMENT_WORKER_FAILED",
+        "note": "The paper remains in the denominator and has no EPUB."
+      }
+    },
+    "finalUntouchedHoldout": {
+      "documents": 3,
+      "ready": 0,
+      "reviewRequired": 3,
+      "failed": 0,
+      "passRate": 0,
+      "reportSha256": "c3685fdae36a727154562edc3776983c73b9b4e1753d3eee65eccfec1fb7ae24"
+    },
+    "combinedFixedAndDiscovery": {
+      "documents": 20,
+      "ready": 0,
+      "notReady": 20,
+      "passRate": 0
+    }
+  },
+  "validation": {
+    "targetedUnitTests": {
+      "status": "passed",
+      "tests": 208
+    },
+    "fullUnitTests": {
+      "status": "passed",
+      "files": 98,
+      "testsPassed": 1723,
+      "testsSkipped": 1,
+      "testsTotal": 1724
+    },
+    "astro": {
+      "status": "passed",
+      "diagnosticFiles": 276,
+      "errors": 0,
+      "warnings": 0,
+      "hints": 10,
+      "staticPagesBuilt": 132
+    },
+    "agentEvidence": {
+      "status": "passed",
+      "manifest": ".agent/evidence/20260728T050550138Z/manifest.json",
+      "manifestSha256": "6f298e88e446836b7f822925e4e0e55521f2c1ab4d3b7610f3e5f91743893f58",
+      "durationMs": 246369,
+      "preservedPriorFailedManifest": ".agent/evidence/20260728T050050003Z/manifest.json"
+    },
+    "packagedArtifacts": {
+      "artifacts": 21,
+      "structuralValidationPassed": 21,
+      "epubCheck530": {
+        "passed": 21,
+        "failed": 0,
+        "receiptSha256": "8a6442eeb292643c1a1cee33c3a385fb4f134824cbce2cec16d0bf75273080e6"
+      },
+      "daisyAce146": {
+        "passed": 21,
+        "failed": 0,
+        "receiptSha256": "0d50833cac2fb5e6f07f16e8c72a0a91e42095baa73847bb408820c728b7dd89"
+      },
+      "internalHrefResolution": {
+        "artifactsPassed": 21,
+        "hrefsChecked": 3512,
+        "failures": 0,
+        "receiptSha256": "2833fed39f5d15521988d820764926c2ec7c962a7d864afdc63041135e6cc1cf"
+      },
+      "readerFacingMarkerScan": {
+        "artifactsPassed": 21,
+        "findings": 0,
+        "receiptSha256": "70325620445be747727d7a210b417f3ed932b275aaf8b9543b07a51c9b7d917b"
+      }
+    },
+    "viewerLayout": {
+      "applicationFixture": {
+        "engines": ["Chromium 149", "WebKit 26.5"],
+        "layoutCombinationsPerEngine": 96,
+        "devices": 4,
+        "orientations": 2,
+        "fontSizes": 4,
+        "fontFamilies": 3,
+        "status": "passed",
+        "assertions": [
+          "exactly one complete materialized page",
+          "zero page/body/footnote horizontal or vertical clipping at Fit Page",
+          "page 1, middle, and last navigation",
+          "matched PDF/EPUB controls and aligned pasteboards",
+          "independent visual zoom without repagination",
+          "bottom-footnote containment and return navigation"
+        ]
+      },
+      "exactArtifacts": {
+        "artifacts": 21,
+        "engines": ["Chromium 149", "WebKit 26.5"],
+        "layoutCombinationsPerArtifactPerEngine": 96,
+        "checks": 4032,
+        "passed": 4032,
+        "failed": 0,
+        "receiptSha256": "86eae6835bb8f71d87998438c8c8f6ed888cdae1662e55c07362d37c7fb5c4f2"
+      }
+    },
+    "stress": {
+      "sourceId": "2501.09223v1",
+      "pages": 231,
+      "terminalStatus": "review-required",
+      "completionMs": 129708,
+      "cancellationLatencyMs": 116,
+      "maximumMainThreadLatencyMs": 53,
+      "maximumMainHeapBytes": 68000000,
+      "heartbeatStagesTruthful": true,
+      "watchdogAndCancellationAssertions": "passed"
+    }
+  },
+  "compatibility": [
+    {
+      "engine": "EPUBCheck 5.3.0",
+      "scope": "exact packaged bytes",
+      "status": "passed"
+    },
+    {
+      "engine": "DAISY Ace 1.4.6",
+      "scope": "exact packaged bytes",
+      "status": "passed"
+    },
+    {
+      "engine": "Chromium 149",
+      "scope": "unpacked exact packaged XHTML/CSS/assets; not a native EPUB reader",
+      "status": "passed"
+    },
+    {
+      "engine": "WebKit 26.5",
+      "scope": "unpacked exact packaged XHTML/CSS/assets; not Apple Books",
+      "status": "passed"
+    },
+    {
+      "engine": "native desktop EPUB reader",
+      "scope": "exact packaged bytes",
+      "status": "unavailable-blocker"
+    },
+    {
+      "engine": "Apple Books",
+      "scope": "exact packaged bytes",
+      "status": "unavailable-blocker"
+    },
+    {
+      "engine": "target e-ink reader/device",
+      "scope": "exact packaged bytes",
+      "status": "unavailable-blocker"
+    }
+  ],
+  "blockingInvariants": [
+    "Continuous body prose and canonical flow remain blocked by unresolved corrupting joins and canonical-flow-order violations in every evaluated corpus.",
+    "Typed-object containment and complete semantic-object inventory remain blocked by unresolved visual, equation, citation, note, table, asset, and relationship diagnostics.",
+    "Validated semantic tables or complete accessible equation/table fallbacks do not meet the fail-closed readiness policy on the corpus.",
+    "The fixed timeout and seeded worker failure prevent materialized EPUB validation for 2 of the 23 papers.",
+    "No required native desktop, Apple Books, or target e-ink reader was available; Chromium/WebKit XHTML rendering is not an honest substitute."
+  ],
+  "repairsFromFinalAudit": [
+    "Removed unresolved equation-transcript/debug wording from reader-facing image alternatives and hardened generic marker detection; the repaired 21-artifact scan is clean.",
+    "Made WebKit review pagination schedule from the parent realm and enabled only app-installed preview navigation while packaged scripts remain stripped and CSP-blocked.",
+    "Serialized repagination, retained an inert document-owned source snapshot, bounded font readiness and pagination operations, and ignored no-op setting changes so reflow cannot hang or paginate pages inside pages.",
+    "Expanded layout coverage from one font family to all three supported families and retained deterministic first/middle/last checks.",
+    "Gave the corpus CLI integration test an explicit bounded subprocess-test timeout after reproducing a 5-second harness-only timeout."
+  ],
+  "environmentCaveats": [
+    "infra/vm/verify.sh was run before and after work and failed because this container is not booted with systemd and rucksack-app.service is inactive; ports 22/80/443, disk, and memory checks passed, while HEALTHCHECK_URL was unset and Tailscale was disconnected.",
+    "Disposable corpus, browser, validator, and accessibility bulk outputs were retained only under memory-backed /tmp; this receipt preserves hashes and counts rather than copying bulk artifacts into the worktree."
+  ]
+}

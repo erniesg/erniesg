@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-final-fail-closed-heldout-2026-07-28-v1",
+  "lockedAt": "2026-07-28T01:05:13.938Z",
+  "purpose": "Final independent release-gate evaluation of the three catalog papers left untouched by the fixed 20-paper corpus and the round-2 seeded discovery draw",
+  "sourceContracts": {
+    "fixedCorpus": "benchmarks/pdf/corpus-contract-v2.json",
+    "fixedCorpusFileSha256": "91b38615b1f9b4acce960bc6ee23d41a8c7eb048714184a469677af0645bc956",
+    "round2Draw": "benchmarks/pdf/overnight-heldout-contract-v1.json",
+    "round2DrawFileSha256": "14464f161149dae09e4f811f426a978217d8ff8c57832c1bcb9a399e3ca4a52d"
+  },
+  "selection": {
+    "algorithm": "sha256-rank-without-replacement-from-round2-untouched-complement-v1",
+    "seedDerivation": "sha256(erniesg-pdf-epub-final-fail-closed-audit-2026-07-28)",
+    "seed": "a1089674557c6c76740d0689b4075130be833647c2fb8744cbc9b4bfd650277e",
+    "seedCommitmentSha256": "38836bf0a82a9bb650a17d764699c2c69dece2686a166f1fc98a58ef0b541f06",
+    "eligibleCatalogCount": 3,
+    "eligibleCatalogSha256": "55a4881b7893a11133fe489f1d4b79c55a7c571ad9efa7cf98c4c902308751b2",
+    "sampleSize": 3,
+    "selectionSha256": "e931a36cd422f5818f5f399e14b866c117e9c8f78759c9884cb21d7e337112be",
+    "documents": [
+      {
+        "id": "2305.05176v1",
+        "byteLength": 1171365,
+        "sha256": "035ae8b90333dad8b7817fc8f55e7c4cbca435368c5c1a4dbf7bba9e5db87473",
+        "rankSha256": "0c0ed572f3bd24279d1f4fd29d94ab0b35833c11c7b817b175e133e89b696db4"
+      },
+      {
+        "id": "2506.21416v1",
+        "byteLength": 17713351,
+        "sha256": "c31e837dbfe8bbf5eea230f925094f19782327567d65e5c59295661295420fce",
+        "rankSha256": "4f7490974cdfcd8fb20a931c7035ac53b97f97880469b9b701da39de6f7a6512"
+      },
+      {
+        "id": "2506.03099v1",
+        "byteLength": 3861832,
+        "sha256": "e3d8cc39df2e6d87c11d30b68433db4467d0b5b3f70de94ea74d97a4f87b552e",
+        "rankSha256": "f93ddcf5a403e5149a2051b6c4347b8c609f1a6d6b0bf78873904ddfe4652fd6"
+      }
+    ]
+  },
+  "predeclaredStrata": [
+    "multi-column-prose-and-page-continuation",
+    "figures-diagrams-and-multi-panel-visuals",
+    "simple-and-complex-tables",
+    "simple-and-compound-equations",
+    "code-and-preformatted-blocks",
+    "citations-and-cross-references",
+    "bottom-footnotes-and-return-links",
+    "headings-and-run-in-headings"
+  ],
+  "requiredResults": [
+    "source-hash-and-byte-length-verification",
+    "conversion-disposition-with-blockers-in-denominator",
+    "typed-object-and-continuous-prose-invariants",
+    "asset-manifest-and-fragment-integrity",
+    "exact-epubcheck-and-ace-results",
+    "chromium-and-webkit-layout-matrix",
+    "independent-reader-compatibility"
+  ],
+  "noTuningPolicy": {
+    "implementationLockedBeforeFirstInspection": true,
+    "paperSpecificChangesAfterObservationForbidden": true,
+    "failuresRemainFailures": true,
+    "promotionAuthority": "none"
+  }
+}

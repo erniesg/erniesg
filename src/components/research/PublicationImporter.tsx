@@ -22,11 +22,7 @@ import {
   upsertHumanDecision,
   type HumanDecisionFile,
 } from '../../research/decision-record'
-import {
-  buildEpub,
-  buildReadableEpub,
-  type EpubExport,
-} from '../../research/epub'
+import type { EpubExport } from '../../research/epub'
 import {
   buildDiagnosticOverlayDocument,
   DIAGNOSTIC_OVERLAY_PALETTE,
@@ -133,7 +129,19 @@ const initialProgress: DocumentImportProgress = {
 export function importProgressIsIndeterminate(
   progress: DocumentImportProgress,
 ) {
-  return progress.phase === 'reconstructing'
+  return (
+    progress.total <= 0 ||
+    [
+      'segmenting',
+      'reading-order',
+      'semantic-promotion',
+      'asset-packaging',
+      'reconstructing',
+      'assembling',
+      'paginating',
+      'validating',
+    ].includes(progress.phase)
+  )
 }
 
 export function formatImportElapsed(seconds: number) {
@@ -159,7 +167,7 @@ function epubDownloadLabel(epub: EpubExport) {
           ? 'Mobile EPUB'
           : 'EPUB'
   return epub.mode === 'readable-fallback'
-    ? `Download readable ${target} (review recommended)`
+    ? `Download ${target} review artifact (not publication-ready)`
     : `Download ${target}`
 }
 
@@ -629,16 +637,7 @@ function LineJoinAdjudicationReview({
   result: PdfReconstruction
   onDecision: (decision: HumanAdjudicationRecord) => void
 }) {
-  const contexts = baseResult.lineBoundaryDecisions.flatMap((transition) => {
-    if (transition.outcome !== 'unresolved') return []
-    const region = baseResult.regions.find(
-      (candidate) => candidate.id === transition.regionId,
-    )
-    const context = region
-      ? buildPdfLineJoinReviewContext(region, transition)
-      : null
-    return context ? [{ context, transition }] : []
-  })
+  const contexts = lineJoinAdjudicationItems(baseResult)
   if (contexts.length === 0) return null
 
   return (
@@ -704,6 +703,26 @@ function LineJoinAdjudicationReview({
       </ol>
     </section>
   )
+}
+
+export function lineJoinAdjudicationItems(
+  result: Pick<PdfReconstruction, 'lineBoundaryDecisions' | 'regions'>,
+) {
+  return result.lineBoundaryDecisions.flatMap((transition) => {
+    if (
+      transition.outcome !== 'unresolved' &&
+      transition.outcome !== 'ambiguous'
+    ) {
+      return []
+    }
+    const region = result.regions.find(
+      (candidate) => candidate.id === transition.regionId,
+    )
+    const context = region
+      ? buildPdfLineJoinReviewContext(region, transition)
+      : null
+    return context ? [{ context, transition }] : []
+  })
 }
 
 function DiagnosticDetails({
@@ -972,6 +991,10 @@ export default function PublicationImporter({
   const [profileBuilds, setProfileBuilds] = useState<ActiveProfileBuild[]>([])
   const [profileBuildIssues, setProfileBuildIssues] =
     useState<ProfileBuildIssues>({})
+  const [profileBuildMessage, setProfileBuildMessage] = useState('')
+  const [profileBuildStageHistory, setProfileBuildStageHistory] = useState<
+    string[]
+  >([])
   const [pendingDecisionFile, setPendingDecisionFile] =
     useState<HumanDecisionFile>()
   const [decisionError, setDecisionError] = useState<string>()
@@ -1009,15 +1032,7 @@ export default function PublicationImporter({
 
   useEffect(() => {
     setIsHydrated(true)
-    let active = true
-    void import('../../research/pdf')
-      .then(({ warmBrowserPdfRuntime }) => warmBrowserPdfRuntime())
-      .catch((error: unknown) => {
-        if (!active || reloadForStaleApplicationModule(error)) return
-        showError(error)
-      })
     return () => {
-      active = false
       activeImport.current?.abort()
       activeProfileBuilds.current.clear()
       activeProfileBuildIssues.current = {}
@@ -1038,6 +1053,8 @@ export default function PublicationImporter({
       activeProfileBuilds.current.delete(build)
     }
     setProfileBuilds([])
+    setProfileBuildMessage('')
+    setProfileBuildStageHistory([])
     activeProfileBuildIssues.current = {}
     setProfileBuildIssues({})
     const controller = new AbortController()
@@ -1124,25 +1141,18 @@ export default function PublicationImporter({
         ).reconstructDocx(file, onProgress, { signal: controller.signal })
       } else {
         baseResult = await (
-          await import('../../research/pdf')
-        ).reconstructPdf(file, onProgress, {
+          await import('../../research/publication-worker-client')
+        ).reconstructPdfInWorker(file, onProgress, {
           signal: controller.signal,
-          ocr: {
-            languages: ['eng'],
-            languageMode:
-              ocrLanguage === 'auto' ? 'automatic-fallback' : 'explicit',
-            async createSession(options) {
-              const { createBrowserOcrSession } =
-                await import('../../research/pdf-ocr-browser')
-              return createBrowserOcrSession(options)
-            },
-          },
+          ocrLanguage,
         })
         decisionFile =
           pendingDecisionFile ??
           createHumanDecisionFile(baseResult.source.sha256)
         setPendingDecisionFile(decisionFile)
-        result = applyHumanDecisionFile(baseResult, decisionFile)
+        result = applyHumanDecisionFile(baseResult, decisionFile, {
+          emptyFilePolicy: 'reuse-fresh-assessment',
+        })
       }
       if (!isCurrent()) return
       await finishReconstruction({
@@ -1302,12 +1312,7 @@ export default function PublicationImporter({
     if (
       !controller ||
       controller.signal.aborted ||
-      [...activeProfileBuilds.current].some(
-        (build) =>
-          build.controller === controller &&
-          build.profileId === selectedProfileId &&
-          build.orientation === selectedOrientation,
-      )
+      activeProfileBuilds.current.size > 0
     ) {
       return
     }
@@ -1348,6 +1353,7 @@ export default function PublicationImporter({
     }
     activeProfileBuilds.current.add(activeBuild)
     setProfileBuilds((current) => [...current, activeBuild])
+    setProfileBuildStageHistory([])
     setProfileBuildIssues((current) => {
       if (!current[profileId]) return current
       const next = { ...current }
@@ -1357,10 +1363,27 @@ export default function PublicationImporter({
     void Promise.resolve().then(async () => {
       try {
         const profile = resolveTargetProfile(profileId, orientation)
-        const epub = result.readiness.ready
-          ? await buildEpub(result.paper, result, profile)
-          : isPdfReconstruction(result)
-            ? await buildReadableEpub(result.paper, result, profile)
+        const epub =
+          result.readiness.ready || isPdfReconstruction(result)
+            ? await (
+                await import('../../research/publication-worker-client')
+              ).buildEpubInWorker(
+                result,
+                profile,
+                result.readiness.ready ? 'publication' : 'readable-fallback',
+                {
+                  signal: controller.signal,
+                  onProgress: (progress) => {
+                    if (!isCurrent()) return
+                    setProfileBuildMessage(progress.message)
+                    setProfileBuildStageHistory((current) =>
+                      current.at(-1) === progress.message
+                        ? current
+                        : [...current, progress.message],
+                    )
+                  },
+                },
+              )
             : undefined
         if (!epub) return
         if (!isCurrent()) return
@@ -1401,6 +1424,7 @@ export default function PublicationImporter({
             current.filter((build) => build !== activeBuild),
           )
         }
+        if (isCurrent()) setProfileBuildMessage('')
       }
     })
   }, [
@@ -1513,7 +1537,13 @@ export default function PublicationImporter({
 
   return (
     <section
-      className={`publication-importer${reviewMode ? ' publication-importer--review' : ''}`}
+      className={[
+        'publication-importer',
+        reviewMode ? 'publication-importer--review' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      data-conversion-status={state.status}
       aria-label={showIntro ? undefined : 'PDF or DOCX to EPUB converter'}
       aria-labelledby={showIntro ? 'studio-heading' : undefined}
     >
@@ -1634,21 +1664,17 @@ export default function PublicationImporter({
         >
           <div>
             <span>{state.fileName}</span>
-            <strong>
-              {progressIsIndeterminate
-                ? 'Analyzing document structure…'
-                : state.progress.message}
-            </strong>
+            <strong>{state.progress.message}</strong>
             <small>
               {progressIsIndeterminate
-                ? `All ${state.progress.total} pages are read. This final analysis has no reliable percentage.`
+                ? 'This stage has no reliable percentage.'
                 : `${progressPercent}% complete`}
               {' · '}
               {formatImportElapsed(elapsedSeconds)}
             </small>
           </div>
           {progressIsIndeterminate ? (
-            <progress aria-label="Final document analysis in progress" />
+            <progress aria-label={state.progress.message} />
           ) : (
             <progress max={100} value={progressPercent}>
               {progressPercent}%
@@ -1735,8 +1761,8 @@ export default function PublicationImporter({
                   </span>
                 ) : buildingProfileId === selectedProfileId ? (
                   <span aria-live="polite">
-                    Building {getTargetProfile(selectedProfileId).label} EPUB
-                    locally…
+                    {profileBuildMessage ||
+                      `Building ${getTargetProfile(selectedProfileId).label} EPUB locally…`}
                   </span>
                 ) : selectedProfileBuildIssue ? (
                   <>
@@ -1759,6 +1785,15 @@ export default function PublicationImporter({
                 </button>
               </div>
             </div>
+          )}
+
+          {profileBuildStageHistory.length > 0 && (
+            <output
+              className="publication-build-stage-history sr-only"
+              aria-label="Completed EPUB build stages"
+            >
+              EPUB build stages: {profileBuildStageHistory.join(' · ')}
+            </output>
           )}
 
           {!reviewMode && state.status === 'review-required' && (

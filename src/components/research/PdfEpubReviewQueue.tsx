@@ -112,8 +112,33 @@ export const PDF_REVIEW_SCHEMA_VERSION = 2
 
 export function reviewSampleGroupLabel(sample: PdfReviewSample) {
   return sample.corpusGroup === 'seeded-random'
-    ? 'Seeded-random discovery'
-    : 'Frozen regression'
+    ? 'Random discovery set'
+    : 'Regression set'
+}
+
+export function reviewWorkloadLabel(sample: PdfReviewSample) {
+  return sample.reviewTier === 'stress'
+    ? 'Large-document performance test'
+    : 'Standard'
+}
+
+export function automatedReviewLabel(annotation?: PdfReviewAnnotation) {
+  if (!annotation?.snapshot) return 'Not run'
+  return annotation.snapshot.readiness.status === 'review-required' &&
+    annotation.snapshot.readiness.blockingDiagnosticCodes.length > 0
+    ? 'Blocked'
+    : 'Passed'
+}
+
+export function humanReviewLabel(annotation?: PdfReviewAnnotation) {
+  const reviews = PDF_REVIEW_CRITERIA.map(({ id }) => annotation?.criteria[id])
+  if (reviews.some((review) => review?.verdict === 'fail')) return 'Failed'
+  if (reviews.some((review) => review?.verdict === 'defer')) return 'Deferred'
+  const completed = reviews.filter(criterionReviewComplete).length
+  if (completed === PDF_REVIEW_CRITERIA.length) return 'Passed'
+  return completed === 0
+    ? 'Not started'
+    : `${completed} of ${PDF_REVIEW_CRITERIA.length} checks completed`
 }
 
 export function randomReviewSampleIndex({
@@ -336,11 +361,17 @@ export function buildPdfReviewReceipt({
       sample: {
         id: sample.id,
         setId: sample.setId,
+        sampleSet: reviewSampleGroupLabel(sample),
+        workload: reviewWorkloadLabel(sample),
         sourceUrl: sample.sourceUrl,
         expectedSha256: sample.sha256,
         expectedByteLength: sample.byteLength,
       },
       disposition: paperDisposition(annotation),
+      status: {
+        automatedConversionCheck: automatedReviewLabel(annotation),
+        humanReview: humanReviewLabel(annotation),
+      },
       humanReview: { criteria },
       machineReview: annotation?.snapshot
         ? {
@@ -383,17 +414,26 @@ export function buildPdfReviewReceipt({
         : 'draft',
     summary: {
       total: samples.length,
-      complete: items.filter(({ disposition }) => disposition !== 'incomplete')
-        .length,
+      complete: items.filter((item) =>
+        PDF_REVIEW_CRITERIA.every(({ id }) =>
+          criterionReviewComplete(
+            (item.humanReview.criteria[id] as PdfCriterionReview | null) ??
+              undefined,
+          ),
+        ),
+      ).length,
       pass: items.filter(({ disposition }) => disposition === 'pass').length,
       machineFail: items.filter(
-        ({ disposition }) => disposition === 'machine-fail',
+        ({ status }) => status.automatedConversionCheck === 'Blocked',
       ).length,
-      humanFail: items.filter(({ disposition }) => disposition === 'human-fail')
+      humanFail: items.filter(({ status }) => status.humanReview === 'Failed')
         .length,
-      defer: items.filter(({ disposition }) => disposition === 'defer').length,
-      incomplete: items.filter(
-        ({ disposition }) => disposition === 'incomplete',
+      defer: items.filter(({ status }) => status.humanReview === 'Deferred')
+        .length,
+      incomplete: items.filter(({ status }) =>
+        /^(?:Not started|\d+ of \d+ checks completed)$/u.test(
+          status.humanReview,
+        ),
       ).length,
       sourceIdentityVerified: items.filter(
         ({ sourceIdentityVerified }) => sourceIdentityVerified,
@@ -813,7 +853,15 @@ export default function PdfEpubReviewQueue({
           </label>
           <label>
             Paper
+            <span
+              id="pdf-review-selector-model"
+              className="pdf-review-selector-model"
+            >
+              Each paper shows sample set, automated conversion check, and human
+              review separately.
+            </span>
             <select
+              aria-describedby="pdf-review-selector-model"
               value={index}
               onChange={(event) => {
                 setIndex(Number(event.target.value))
@@ -825,11 +873,11 @@ export default function PdfEpubReviewQueue({
                 <option key={candidate.id} value={candidateIndex}>
                   {candidateIndex + 1}. {candidate.id}
                   {' · '}
-                  {candidate.corpusGroup === 'seeded-random'
-                    ? 'seeded random'
-                    : 'frozen'}
-                  {candidate.reviewTier === 'stress' ? ' · stress test' : ''} ·{' '}
-                  {paperDisposition(store.annotations[candidate.id])}
+                  {reviewSampleGroupLabel(candidate)}
+                  {' · Automated: '}
+                  {automatedReviewLabel(store.annotations[candidate.id])}
+                  {' · Human: '}
+                  {humanReviewLabel(store.annotations[candidate.id])}
                 </option>
               ))}
             </select>
@@ -861,9 +909,24 @@ export default function PdfEpubReviewQueue({
       </header>
 
       <div className="pdf-review-identity">
-        <strong className="pdf-review-corpus-group">
-          {reviewSampleGroupLabel(sample)}
-        </strong>
+        <dl className="pdf-review-status-fields">
+          <div>
+            <dt>Sample set</dt>
+            <dd>{reviewSampleGroupLabel(sample)}</dd>
+          </div>
+          <div>
+            <dt>Workload</dt>
+            <dd>{reviewWorkloadLabel(sample)}</dd>
+          </div>
+          <div>
+            <dt>Automated conversion check</dt>
+            <dd>{automatedReviewLabel(annotation)}</dd>
+          </div>
+          <div>
+            <dt>Human review</dt>
+            <dd>{humanReviewLabel(annotation)}</dd>
+          </div>
+        </dl>
         <span>{sample.setId}</span>
         <code>{sample.sha256}</code>
         <a href={sample.sourceUrl} target="_blank" rel="noreferrer">

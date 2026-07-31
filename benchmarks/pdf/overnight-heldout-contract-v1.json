@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-second-pass-heldout-discovery-2026-07-28-v1",
+  "lockedAt": "2026-07-27T21:47:00Z",
+  "purpose": "Second-pass seeded discovery sample of three, leaving three catalog candidates untouched for the final audit",
+  "fixedCorpus": {
+    "sourceContract": "benchmarks/pdf/corpus-contract-v2.json",
+    "sourceContractFileSha256": "91b38615b1f9b4acce960bc6ee23d41a8c7eb048714184a469677af0645bc956",
+    "documentCount": 20,
+    "identitySha256": "b71db5f247d2d134eb60557a22d2c3c286f50457204063253f03175f47fd7db8"
+  },
+  "selection": {
+    "algorithm": "sha256-rank-without-replacement-excluding-fixed-20-v1",
+    "seedDerivation": "sha256(erniesg-pdf-epub-second-adversarial-pass-2026-07-28)",
+    "seed": "8e42b41ab42d098c8d4a51882ea6aaf96999373f5e2b4f968a14b1bc38d70c2e",
+    "seedCommitmentSha256": "688c151ea318be1c87ff66408e9dea2c26f0d52b2169033c755a66f0e1639ff1",
+    "eligibleCatalogCount": 6,
+    "eligibleCatalogSha256": "a28cacd73e9ccafabff7b981996deaefe6f14611972fb585ef211a5dbdea860b",
+    "sampleSize": 3,
+    "untouchedFinalAuditCount": 3,
+    "selectionSha256": "f1f735902e0ad0373eefe6f6b77dede695af6dd1f53fe3316a97e8924c34b22f",
+    "documents": [
+      {
+        "id": "2511.12884v1",
+        "byteLength": 1867596,
+        "sha256": "84a7ede7b21cd8dd003ae5ab892049354b78c8b91e1f8b0ae7e4097478d8aaca",
+        "rankSha256": "6a21e693af62c7b323be83cceef9ae05330184452162979f89aca979c9cbf7ce"
+      },
+      {
+        "id": "2406.18665v4",
+        "byteLength": 809166,
+        "sha256": "c9bc9c8171cab95bb3832cde8767c6b5e0925cd62930e51ddbd60d7cb2616741",
+        "rankSha256": "7970ae2efb13419ae95df568cc9ee1f821fe830d9ff0df793d5f8d2fb7178ae0"
+      },
+      {
+        "id": "2505.23941v1",
+        "byteLength": 32831947,
+        "sha256": "69e630759cad615b69025c0b95d2256742026b223db7603d83b0507b2ad92e53",
+        "rankSha256": "8a204654cd2a32ca57a4f4f67faf9378068843a89c68a97a1fd5a08e207503e2"
+      }
+    ]
+  },
+  "noTuningPolicy": {
+    "implementationLockedBeforeRun": true,
+    "paperSpecificChangesAfterObservationForbidden": true,
+    "failuresRemainFailures": true,
+    "promotionAuthority": "none"
+  },
+  "requiredStructuralStrata": [
+    "multi-column-prose-and-page-continuation",
+    "figures-diagrams-and-multi-panel-visuals",
+    "simple-and-complex-tables",
+    "simple-and-compound-equations",
+    "code-and-preformatted-blocks",
+    "citations-and-cross-references",
+    "bottom-footnotes-and-return-links",
+    "headings-and-run-in-headings"
+  ],
+  "requiredLayoutMatrix": {
+    "devices": ["phone", "tablet", "paper-pro-move", "paper-pro"],
+    "orientations": ["portrait", "landscape"],
+    "fontSizes": ["small", "default", "large", "x-large"],
+    "gates": [
+      "zero-page-level-horizontal-overflow",
+      "complete-discrete-page-visible-at-fit-page",
+      "page-1-middle-last-navigation",
+      "deterministic-repagination",
+      "no-footnote-clipping"
+    ]
+  }
+}

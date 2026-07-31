@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type {
   NormalizedSourceBox,
   PdfNativeObject,
+  PdfPageAnalysis,
   PdfPageRegion,
   PdfRegionColumn,
   PdfRegionLine,
   PdfSourceRun,
 } from './import-types'
+import { reconstructPageRegions } from './pdf-regions'
 import {
   compactTabularSlabMayFollowCaption,
   resolvePdfTableScope,
@@ -637,6 +639,101 @@ describe('bounded PDF table source scoping', () => {
     })
   })
 
+  it('keeps two local table lanes disjoint inside one global page column', () => {
+    const laneLine = (
+      id: string,
+      y: number,
+      anchors: number[],
+    ): PdfRegionLine => {
+      const runs = anchors.map<PdfSourceRun>((x, index) => ({
+        ...box(x, y, 0.035, 0.016),
+        text: `${id}-${index + 1}`,
+        fontName: 'TableSerif',
+        fontSize: 8,
+        confidence: 0.99,
+      }))
+      return {
+        id,
+        text: runs.map((sourceRun) => sourceRun.text).join(' '),
+        fontSize: 8,
+        box: box(anchors[0], y, anchors.at(-1)! + 0.035 - anchors[0], 0.016),
+        runs,
+      }
+    }
+    const localTable = (id: string, anchors: number[]): PdfPageRegion => {
+      const lines = [0.2, 0.23, 0.26].map((y, index) =>
+        laneLine(`${id}-row-${index + 1}`, y, anchors),
+      )
+      return {
+        ...textRegion(
+          id,
+          box(anchors[0], 0.2, anchors.at(-1)! + 0.035 - anchors[0], 0.076),
+          lines,
+        ),
+        column: 'right',
+      }
+    }
+    const leftTable = localTable('local-left-table', [0.53, 0.59, 0.65])
+    const rightTable = localTable('local-right-table', [0.75, 0.81, 0.87])
+    const leftCaption = {
+      ...caption('local-left-caption', 0.3, 'Table 2. Left mini-table.'),
+      column: 'right' as const,
+      box: box(0.52, 0.3, 0.18, 0.02),
+      sourceCaptionLane: {
+        boundary: 0.72,
+        side: 'left' as const,
+      },
+    }
+    const rightCaption = {
+      ...caption('local-right-caption', 0.3, 'Table 3. Right mini-table.'),
+      column: 'right' as const,
+      box: box(0.74, 0.3, 0.18, 0.02),
+      sourceCaptionLane: {
+        boundary: 0.72,
+        side: 'right' as const,
+      },
+    }
+    const pageRegions = [leftTable, rightTable, leftCaption, rightCaption]
+
+    const leftResult = resolvePdfTableScope({
+      caption: leftCaption,
+      pageRegions,
+      nativeObjects: [],
+    })
+    const rightResult = resolvePdfTableScope({
+      caption: rightCaption,
+      pageRegions,
+      nativeObjects: [],
+    })
+    expect(leftResult).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [leftTable.id],
+        sourceLineIds: leftTable.lines.map((sourceLine) => sourceLine.id),
+        cropBox: expect.objectContaining({
+          x: expect.closeTo(0.53, 4),
+          width: expect.closeTo(0.155, 4),
+        }),
+      },
+    })
+    expect(rightResult).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: [rightTable.id],
+        sourceLineIds: rightTable.lines.map((sourceLine) => sourceLine.id),
+        cropBox: expect.objectContaining({
+          x: expect.closeTo(0.75, 4),
+          width: expect.closeTo(0.155, 4),
+        }),
+      },
+    })
+    expect(
+      leftResult.scope?.sourceLineIds.some((lineId) =>
+        rightResult.scope?.sourceLineIds.includes(lineId),
+      ),
+    ).toBe(false)
+  })
+
   it('rejects an unheaded page-top prose slab because its multi-page start boundary is unproven', () => {
     const pageTwoBox = (
       x: number,
@@ -1134,6 +1231,381 @@ describe('bounded PDF table source scoping', () => {
         ]),
       },
     })
+  })
+
+  function longCaptionBelowTableFixture({
+    competingSignatures = false,
+    reverseInput = false,
+  }: {
+    competingSignatures?: boolean
+    reverseInput?: boolean
+  } = {}) {
+    const anchors = [0.18129, 0.36295, 0.45178, 0.58543]
+    const competingAnchors = [0.18129, 0.397, 0.505, 0.647]
+    const tableLine = (
+      id: string,
+      y: number,
+      values: string[],
+      rowAnchors = anchors,
+    ) => {
+      const runs = values.map<PdfSourceRun>((text, index) => ({
+        ...box(
+          rowAnchors[index],
+          y,
+          index === 0 ? 0.14 : index === values.length - 1 ? 0.16 : 0.065,
+          0.01258,
+        ),
+        text,
+        fontName: 'CompactTableSerif',
+        fontSize: 9.9626,
+        confidence: 0.99,
+      }))
+      return {
+        id,
+        text: values.join(' '),
+        fontSize: 9.9626,
+        box: box(
+          rowAnchors[0],
+          y,
+          rowAnchors.at(-1)! + 0.16 - rowAnchors[0],
+          0.01258,
+        ),
+        runs,
+      } satisfies PdfRegionLine
+    }
+    const header = tableLine('long-below-header', 0.44882, [
+      'Category',
+      'Count',
+      'Total measure',
+      'Descriptor',
+    ])
+    const body = Array.from({ length: 26 }, (_, index) =>
+      tableLine(
+        `long-below-row-${index + 1}`,
+        0.47023 + index * 0.015095,
+        [
+          `Record family ${index + 1}`,
+          String(109 - index),
+          `${560 - index}.2K`,
+          `Descriptor group ${index + 1}`,
+        ],
+        competingSignatures && index % 2 === 1 ? competingAnchors : anchors,
+      ),
+    )
+    const tableRegions = [header, ...body].map((sourceLine, index) => ({
+      ...textRegion(
+        `long-below-region-${index + 1}`,
+        sourceLine.box,
+        [sourceLine],
+        'spanning',
+      ),
+      column: 'span' as const,
+    }))
+    const followingHeadingLine = {
+      ...tableLine(
+        'following-section-heading-line',
+        0.88325,
+        ['C.2. Following section'],
+        [0.09059],
+      ),
+      runs: [
+        {
+          ...box(0.09059, 0.88325, 0.32561, 0.01258),
+          text: 'C.2. Following section',
+          fontName: 'CompactTableSerif-Bold',
+          fontSize: 9.9626,
+          confidence: 0.99,
+          bold: true,
+        },
+      ],
+      box: box(0.09059, 0.88325, 0.32561, 0.01258),
+    } satisfies PdfRegionLine
+    const followingHeading = textRegion(
+      'following-section-heading',
+      followingHeadingLine.box,
+      [followingHeadingLine],
+    )
+    const tableCaption = {
+      ...caption(
+        'long-below-caption',
+        0.41619,
+        'Table 12. Summary of the source records.',
+      ),
+      column: 'span' as const,
+      box: box(0.08977, 0.41619, 0.79494, 0.02641),
+    }
+    const pageRegions = [tableCaption, ...tableRegions, followingHeading]
+    return {
+      tableCaption,
+      tableRegions,
+      followingHeading,
+      pageRegions: reverseInput ? [...pageRegions].reverse() : pageRegions,
+    }
+  }
+
+  it('extends one repeated caption-below table past the ordinary distance cap and stops at the following section', () => {
+    const fixture = longCaptionBelowTableFixture()
+
+    const result = resolvePdfTableScope({
+      caption: fixture.tableCaption,
+      pageRegions: fixture.pageRegions,
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'text-tabular-line-band',
+        direction: 'below',
+        sourceRegionIds: fixture.tableRegions.map((region) => region.id).sort(),
+      },
+    })
+    expect(result.scope?.sourceLineIds).toHaveLength(
+      fixture.tableRegions.length,
+    )
+    expect(result.scope?.sourceRegionIds).not.toContain(
+      fixture.followingHeading.id,
+    )
+    expect(result.scope?.cropBox.y).toBe(0.44882)
+    expect(
+      result.scope!.cropBox.y + result.scope!.cropBox.height,
+    ).toBeGreaterThan(0.85)
+  })
+
+  it('extends a wrapped caption-below table when sparse continuations stay on its dominant columns', () => {
+    const tableCaption = {
+      ...caption(
+        'wrapped-long-below-caption',
+        0.19382,
+        'Table 13. Composition of the source collection.',
+      ),
+      column: 'span' as const,
+      box: box(0.08977, 0.19382, 0.79494, 0.0415),
+    }
+    const ys = [
+      0.24156, 0.25666, 0.27176, 0.29317, 0.30826, 0.32336, 0.33845, 0.35355,
+      0.36864, 0.38374, 0.39883, 0.41392, 0.42902, 0.44412, 0.45921, 0.4743,
+      0.4894, 0.50449, 0.51959, 0.53468, 0.54978, 0.56487, 0.57997, 0.59506,
+      0.61016, 0.62525, 0.64035, 0.65544, 0.67054, 0.68563, 0.70073, 0.71582,
+      0.73092, 0.74601, 0.76742, 0.78252,
+    ]
+    const denseIndexes = new Set([
+      0, 3, 4, 5, 8, 9, 13, 14, 15, 17, 20, 22, 26, 27, 29, 30, 32, 34,
+    ])
+    const dominantAnchors = [0.16683, 0.40405, 0.6737, 0.74882]
+    const tableRegions = ys.map((y, index) => {
+      const rowAnchors = denseIndexes.has(index)
+        ? dominantAnchors
+        : [index < 3 ? 0.74882 : 0.40405]
+      const runs = rowAnchors.map<PdfSourceRun>((x, columnIndex) => ({
+        ...box(x, y, columnIndex < 2 ? 0.18 : 0.055, 0.01258),
+        text:
+          index === 0
+            ? ['Source', 'Description', 'Samples', 'Average length'][
+                columnIndex
+              ]
+            : denseIndexes.has(index)
+              ? columnIndex < 2
+                ? `Record text ${index + 1}-${columnIndex + 1}`
+                : `${1000 - index * 7 + columnIndex}`
+              : `wrapped continuation ${index + 1}`,
+        fontName: 'CompactTableSerif',
+        fontSize: 9.9626,
+        confidence: 0.99,
+      }))
+      const sourceLine = {
+        id: `wrapped-long-below-line-${index + 1}`,
+        text: runs.map((run) => run.text).join(' '),
+        fontSize: 9.9626,
+        box: box(
+          rowAnchors[0],
+          y,
+          rowAnchors.at(-1)! + runs.at(-1)!.width - rowAnchors[0],
+          0.01258,
+        ),
+        runs,
+      } satisfies PdfRegionLine
+      return {
+        ...textRegion(
+          `wrapped-long-below-region-${index + 1}`,
+          sourceLine.box,
+          [sourceLine],
+          'spanning',
+        ),
+        column: 'span' as const,
+      }
+    })
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, ...tableRegions],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        direction: 'below',
+        sourceRegionIds: tableRegions.map((region) => region.id).sort(),
+      },
+    })
+    expect(result.scope?.sourceLineIds).toHaveLength(tableRegions.length)
+    expect(
+      result.scope!.cropBox.y + result.scope!.cropBox.height,
+    ).toBeGreaterThan(0.79)
+  })
+
+  it('keeps styled group headers that span proven columns inside one long repeated table', () => {
+    const fixture = longCaptionBelowTableFixture()
+    const groupIndexes = new Set([7, 18])
+    const tableRegions = fixture.tableRegions.map((region, index) => {
+      if (!groupIndexes.has(index)) return region
+      const y = region.lines[0].box.y
+      const sourceBox = box(0.31, y, 0.25, 0.01258)
+      const sourceLine = {
+        id: `spanning-group-header-line-${index}`,
+        text: `Published group ${index}`,
+        fontSize: 9.9626,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Published group ${index}`,
+            fontName: 'CompactTableSerif-Bold',
+            fontSize: 9.9626,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+      return {
+        ...textRegion(
+          `spanning-group-header-region-${index}`,
+          sourceBox,
+          [sourceLine],
+          'spanning',
+        ),
+        column: 'span' as const,
+      }
+    })
+
+    const result = resolvePdfTableScope({
+      caption: fixture.tableCaption,
+      pageRegions: [
+        fixture.tableCaption,
+        ...tableRegions,
+        fixture.followingHeading,
+      ],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        direction: 'below',
+        sourceRegionIds: tableRegions.map((region) => region.id).sort(),
+      },
+    })
+    expect(result.scope?.sourceLineIds).toEqual(
+      expect.arrayContaining(
+        [...groupIndexes].map((index) => `spanning-group-header-line-${index}`),
+      ),
+    )
+  })
+
+  it('does not treat styled side prose outside every proven table column as a spanning group header', () => {
+    const fixture = longCaptionBelowTableFixture()
+    const replacementIndex = 12
+    const tableRegions = fixture.tableRegions.map((region, index) => {
+      if (index !== replacementIndex) return region
+      const y = region.lines[0].box.y
+      const sourceBox = box(0.82, y, 0.1, 0.01258)
+      const sourceLine = {
+        id: 'styled-side-prose-line',
+        text: 'Unrelated styled prose',
+        fontSize: 9.9626,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: 'Unrelated styled prose',
+            fontName: 'CompactTableSerif-Bold',
+            fontSize: 9.9626,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+      return {
+        ...textRegion(
+          'styled-side-prose-region',
+          sourceBox,
+          [sourceLine],
+          'spanning',
+        ),
+        column: 'span' as const,
+      }
+    })
+
+    expect(
+      resolvePdfTableScope({
+        caption: fixture.tableCaption,
+        pageRegions: [
+          fixture.tableCaption,
+          ...tableRegions,
+          fixture.followingHeading,
+        ],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      ambiguity: {
+        evidence: expect.arrayContaining([
+          'table-source-start-boundary-unproven',
+        ]),
+      },
+    })
+  })
+
+  it('fails closed when a distant caption-below lane contains two competing repeated column signatures', () => {
+    const fixture = longCaptionBelowTableFixture({
+      competingSignatures: true,
+    })
+
+    expect(
+      resolvePdfTableScope({
+        caption: fixture.tableCaption,
+        pageRegions: fixture.pageRegions,
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      ambiguity: {
+        evidence: expect.arrayContaining([
+          'table-source-start-boundary-unproven',
+        ]),
+      },
+    })
+  })
+
+  it('resolves the extended caption-below table deterministically under reversed region input', () => {
+    const forward = longCaptionBelowTableFixture()
+    const reversed = longCaptionBelowTableFixture({ reverseInput: true })
+
+    const forwardResult = resolvePdfTableScope({
+      caption: forward.tableCaption,
+      pageRegions: forward.pageRegions,
+      nativeObjects: [],
+    })
+    const reversedResult = resolvePdfTableScope({
+      caption: reversed.tableCaption,
+      pageRegions: reversed.pageRegions,
+      nativeObjects: [],
+    })
+
+    expect(reversedResult).toEqual(forwardResult)
   })
 
   it('accepts a normal body-measure wrapped table only when its symbolic header is inside the scope', () => {
@@ -4075,6 +4547,274 @@ describe('bounded PDF table source scoping', () => {
     }
   })
 
+  it('keeps a caption-owned tabular line band in its proved column lane', () => {
+    const cellLine = (
+      id: string,
+      text: string,
+      x: number,
+      y: number,
+      width = 0.052,
+    ): PdfRegionLine => {
+      const sourceBox = box(x, y, width, 0.012)
+      const sourceRun: PdfSourceRun = {
+        ...sourceBox,
+        text,
+        fontName: 'TableSerif',
+        fontSize: 8,
+        confidence: 0.99,
+      }
+      return {
+        id,
+        text,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [sourceRun],
+      }
+    }
+    const rowRegion = (rowIndex: number, y: number): PdfPageRegion => {
+      const lines = [0.557, 0.681, 0.739, 0.792].map((x, cellIndex) =>
+        cellLine(
+          `table-row-${rowIndex}-cell-${cellIndex + 1}`,
+          cellIndex === 0 ? `Model-${rowIndex}` : `${rowIndex}.${cellIndex}`,
+          x,
+          y,
+          cellIndex === 0 ? 0.086 : 0.028,
+        ),
+      )
+      return {
+        ...textRegion(
+          `table-row-${rowIndex}`,
+          box(0.557, y, 0.263, 0.012),
+          lines,
+        ),
+        column: 'right',
+      }
+    }
+    const tableRows = Array.from({ length: 6 }, (_, index) =>
+      rowRegion(index + 1, 0.52 + index * 0.019),
+    )
+    const chartLabels = [0.523, 0.561, 0.599].map((y, index) => {
+      const sourceLine = cellLine(
+        `chart-label-${index + 1}`,
+        `${30 - index * 5}`,
+        0.11,
+        y,
+        0.012,
+      )
+      return {
+        ...textRegion(
+          `chart-label-region-${index + 1}`,
+          sourceLine.box,
+          [sourceLine],
+          'chart-label',
+        ),
+        column: 'left' as const,
+      }
+    })
+    const tableCaption: PdfPageRegion = {
+      ...caption(
+        'caption-column-table',
+        0.645,
+        'Table 1. Caption-owned column results.',
+      ),
+      column: 'right',
+      box: box(0.557, 0.645, 0.263, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, ...chartLabels, ...tableRows],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        sourceRegionIds: tableRows.map((region) => region.id).sort(),
+      },
+    })
+    expect(result.scope?.sourceRegionIds).not.toEqual(
+      expect.arrayContaining(chartLabels.map((region) => region.id)),
+    )
+    expect(result.scope?.cropBox.x).toBeGreaterThanOrEqual(0.5)
+    expect(
+      result.scope!.cropBox.x + result.scope!.cropBox.width,
+    ).toBeLessThanOrEqual(0.9)
+  })
+
+  it('uses a proved table seed column when neighboring chart labels have no global column assignment', () => {
+    let sourceSequenceIndex = 0
+    const sourceRun = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontSize = 8,
+      height = 0.012,
+      fontName = 'TableSerif',
+      bold = false,
+    ): PdfSourceRun => ({
+      ...box(x, y, width, height),
+      text,
+      fontName,
+      fontSize,
+      confidence: 0.99,
+      sourceSequenceIndex: sourceSequenceIndex++,
+      ...(bold ? { bold: true } : {}),
+    })
+    const runs: PdfSourceRun[] = []
+    for (let rowIndex = 0; rowIndex < 6; rowIndex += 1) {
+      const y = 0.52 + rowIndex * 0.019
+      if (rowIndex % 2 === 0) {
+        runs.push(
+          sourceRun(
+            `${30 - rowIndex * 2}`,
+            0.11,
+            y,
+            0.012,
+            7,
+            0.012,
+            'ChartSans',
+          ),
+        )
+      }
+      for (const [cellIndex, x, width] of [
+        [0, 0.557, 0.086],
+        [1, 0.681, 0.028],
+        [2, 0.739, 0.028],
+        [3, 0.792, 0.028],
+      ] as const) {
+        runs.push(
+          sourceRun(
+            cellIndex === 0
+              ? `Model-${rowIndex + 1}`
+              : `${rowIndex + 1}.${cellIndex}`,
+            x,
+            y,
+            width,
+          ),
+        )
+      }
+    }
+    runs.push(
+      sourceRun(
+        'Figure 1. Independent chart panel.',
+        0.09,
+        0.49,
+        0.31,
+        8,
+        0.011,
+        'Body-Bold',
+        true,
+      ),
+      sourceRun(
+        'Table 1. Caption-owned results.',
+        0.557,
+        0.645,
+        0.263,
+        8,
+        0.014,
+        'Body-Bold',
+        true,
+      ),
+    )
+    const chartBox = box(0.07, 0.505, 0.4, 0.13, 'pdf-object')
+    const chartObject: PdfNativeObject = {
+      id: 'source-chart',
+      page: 1,
+      kind: 'vector',
+      box: chartBox,
+      confidence: 0.99,
+      assetId: 'source-chart-asset',
+    }
+    const sourcePage: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: runs.reduce(
+        (total, source) => total + source.text.length,
+        0,
+      ),
+      imageCount: 0,
+      objects: [chartObject],
+      runs,
+    }
+    const reconstructed = reconstructPageRegions([sourcePage])
+    const tableCaption = reconstructed.regions.find((region) =>
+      region.text.startsWith('Table 1.'),
+    )
+    const tableRows = reconstructed.regions.filter((region) =>
+      region.text.startsWith('Model-'),
+    )
+    const chartLabels = reconstructed.regions.filter(
+      (region) => region.kind === 'chart-label',
+    )
+
+    expect(tableCaption).toBeDefined()
+    expect(tableCaption?.column).toBe('single')
+    expect(chartLabels).toHaveLength(3)
+    expect(chartLabels.map((region) => region.column)).toEqual([
+      'single',
+      'single',
+      'single',
+    ])
+    expect(tableRows).toHaveLength(6)
+    expect(
+      tableRows.every(
+        (region) => region.column === 'right' && region.lines.length === 4,
+      ),
+    ).toBe(true)
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption!,
+      pageRegions: reconstructed.regions,
+      nativeObjects: [chartObject],
+    })
+    const expectedSourceSequenceIndexes = [
+      1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22,
+      23, 24, 25, 26,
+    ]
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'text-tabular-line-band',
+        sourceRegionIds: tableRows.map((region) => region.id).sort(),
+        cropBox: box(0.557, 0.52, 0.263, 0.107),
+      },
+    })
+    expect(result.scope?.sourceRegionIds).not.toEqual(
+      expect.arrayContaining(chartLabels.map((region) => region.id)),
+    )
+    expect(result.scope?.sourceLineIds).toHaveLength(24)
+
+    const selectedSourceRuns = result.scope!.lineLineage.flatMap(
+      (lineage) =>
+        reconstructed.regions
+          .find((region) => region.id === lineage.regionId)!
+          .lines.find((sourceLine) => sourceLine.id === lineage.lineId)!.runs,
+    )
+    expect(
+      selectedSourceRuns.map((source) => source.sourceSequenceIndex),
+    ).toEqual(expectedSourceSequenceIndexes)
+    for (const selectedSourceRun of selectedSourceRuns) {
+      const original = runs.find(
+        (source) =>
+          source.sourceSequenceIndex === selectedSourceRun.sourceSequenceIndex,
+      )
+      expect(original).toBeDefined()
+      expect(selectedSourceRun).toMatchObject({
+        text: original!.text,
+        x: original!.x,
+        y: original!.y,
+        width: original!.width,
+        height: original!.height,
+      })
+    }
+  })
+
   it('recovers a compact caption-above metric table without claiming following prose', () => {
     expect(
       compactTabularSlabMayFollowCaption({
@@ -4158,5 +4898,2027 @@ describe('bounded PDF table source scoping', () => {
       },
     })
     expect(result.scope?.sourceRegionIds).not.toContain(followingProse.id)
+  })
+
+  it('keeps opposite-column child lines out of a weak caption-bounded slab', () => {
+    const ownedLines = Array.from({ length: 7 }, (_, index) => {
+      const sourceBox = box(0.48, 0.15 + index * 0.024, 0.5, 0.012)
+      return {
+        id: `owned-record-${index + 1}`,
+        text: `Metric ${index + 1}: source bounded value`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Metric ${index + 1}: source bounded value`,
+            fontName: 'TableSerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const oppositeColumnLines = Array.from({ length: 7 }, (_, index) => {
+      const sourceBox = box(0.02, 0.161 + index * 0.024, 0.4, 0.012)
+      return {
+        id: `opposite-prose-${index + 1}`,
+        text: `Unrelated prose remains in the other column ${index + 1}.`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Unrelated prose remains in the other column ${index + 1}.`,
+            fontName: 'BodySerif',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const compositeRegion = {
+      ...textRegion(
+        'composite-column-region',
+        box(0.02, 0.15, 0.96, 0.167),
+        ownedLines.flatMap((sourceLine, index) => [
+          oppositeColumnLines[index],
+          sourceLine,
+        ]),
+      ),
+      // A region-level classifier can assign a composite extraction block to
+      // the caption column even when individual child lines remain elsewhere.
+      column: 'right' as const,
+    }
+    const tableCaption = {
+      ...caption(
+        'right-column-record-caption',
+        0.11,
+        'Table 2. Bounded records.',
+      ),
+      column: 'right' as const,
+      box: box(0.47, 0.11, 0.51, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, compositeRegion],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'below',
+        sourceRegionIds: [compositeRegion.id],
+        sourceLineIds: ownedLines.map((sourceLine) => sourceLine.id),
+        cropBox: box(0.48, 0.15, 0.5, 0.156),
+        regionLineage: [
+          expect.objectContaining({
+            regionId: compositeRegion.id,
+            selection: 'partial',
+            lineIds: ownedLines.map((sourceLine) => sourceLine.id),
+            retainedLineIds: oppositeColumnLines.map(
+              (sourceLine) => sourceLine.id,
+            ),
+          }),
+        ],
+      },
+    })
+  })
+
+  it('stops a weak table slab at a strong typography discontinuity before a figure', () => {
+    const recordLines = Array.from({ length: 7 }, (_, index) => {
+      const sourceBox = box(0.12, 0.15 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `table-record-${index + 1}`,
+        text: `Measure ${index + 1}: source bounded result`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Measure ${index + 1}: source bounded result`,
+            fontName: 'TableSerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const chartLines = Array.from({ length: 6 }, (_, index) => {
+      const sourceBox = box(0.12, 0.284 + index * 0.012, 0.68, 0.007)
+      return {
+        id: `chart-overlay-${index + 1}`,
+        text: `${index * 10} ${index * 20} ${index * 30}`,
+        fontSize: 6,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `${index * 10} ${index * 20} ${index * 30}`,
+            fontName: 'ChartSans',
+            fontSize: 6,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const records = textRegion(
+      'bounded-table-records',
+      box(0.12, 0.15, 0.68, 0.12),
+      recordLines,
+    )
+    const chartOverlays = textRegion(
+      'following-chart-overlays',
+      box(0.12, 0.284, 0.68, 0.067),
+      chartLines,
+      'chart-label',
+    )
+    const tableCaption = caption(
+      'caption-before-record-table',
+      0.11,
+      'Table 3. Bounded results.',
+    )
+    const figureCaption = {
+      ...caption('caption-after-chart', 0.365, 'Figure 4. Following chart.'),
+      box: box(0.12, 0.365, 0.68, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, records, chartOverlays, figureCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'below',
+        sourceRegionIds: [records.id],
+        sourceLineIds: recordLines.map((sourceLine) => sourceLine.id),
+        cropBox: box(0.12, 0.15, 0.68, 0.12),
+      },
+    })
+    expect(result.scope?.sourceRegionIds).not.toContain(chartOverlays.id)
+    expect(result.scope?.sourceLineIds).not.toEqual(
+      expect.arrayContaining(chartLines.map((sourceLine) => sourceLine.id)),
+    )
+  })
+
+  it('stops a weak table slab when equal-height rows switch font families', () => {
+    const recordLines = Array.from({ length: 7 }, (_, index) => {
+      const sourceBox = box(0.12, 0.15 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `equal-height-table-record-${index + 1}`,
+        text: `Measure ${index + 1}: source bounded result`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Measure ${index + 1}: source bounded result`,
+            fontName: 'TableSerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const chartLines = Array.from({ length: 6 }, (_, index) => {
+      const sourceBox = box(0.12, 0.276 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `equal-height-chart-overlay-${index + 1}`,
+        text: `${index * 10} ${index * 20} ${index * 30}`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `${index * 10} ${index * 20} ${index * 30}`,
+            fontName: 'ChartSans',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const records = textRegion(
+      'equal-height-bounded-table-records',
+      box(0.12, 0.15, 0.68, 0.12),
+      recordLines,
+    )
+    const chartOverlays = textRegion(
+      'equal-height-following-chart-overlays',
+      box(0.12, 0.276, 0.68, 0.102),
+      chartLines,
+      'chart-label',
+    )
+    const tableCaption = caption(
+      'equal-height-record-table-caption',
+      0.11,
+      'Table 3. Bounded results.',
+    )
+    const figureCaption = {
+      ...caption(
+        'equal-height-following-chart-caption',
+        0.396,
+        'Figure 4. Following chart.',
+      ),
+      box: box(0.12, 0.396, 0.68, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, records, chartOverlays, figureCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'below',
+        sourceRegionIds: [records.id],
+        sourceLineIds: recordLines.map((sourceLine) => sourceLine.id),
+        cropBox: box(0.12, 0.15, 0.68, 0.12),
+      },
+    })
+    expect(result.scope?.sourceRegionIds).not.toContain(chartOverlays.id)
+    expect(result.scope?.sourceLineIds).not.toEqual(
+      expect.arrayContaining(chartLines.map((sourceLine) => sourceLine.id)),
+    )
+  })
+
+  it('does not treat bold styling as font-family continuity for a weak slab', () => {
+    const recordLines = Array.from({ length: 7 }, (_, index) => {
+      const sourceBox = box(0.12, 0.15 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `bold-family-table-record-${index + 1}`,
+        text: `Measure ${index + 1}: source bounded result`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Measure ${index + 1}: source bounded result`,
+            fontName: 'TableSerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const chartLines = Array.from({ length: 6 }, (_, index) => {
+      const sourceBox = box(0.12, 0.276 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `bold-family-chart-overlay-${index + 1}`,
+        text: `${index * 10} ${index * 20} ${index * 30}`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `${index * 10} ${index * 20} ${index * 30}`,
+            fontName: 'ChartSans-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const records = textRegion(
+      'bold-family-bounded-table-records',
+      box(0.12, 0.15, 0.68, 0.12),
+      recordLines,
+    )
+    const chartOverlays = textRegion(
+      'bold-family-following-chart-overlays',
+      box(0.12, 0.276, 0.68, 0.102),
+      chartLines,
+      'chart-label',
+    )
+    const tableCaption = caption(
+      'bold-family-record-table-caption',
+      0.11,
+      'Table 3. Bounded results.',
+    )
+    const figureCaption = {
+      ...caption(
+        'bold-family-following-chart-caption',
+        0.396,
+        'Figure 4. Following chart.',
+      ),
+      box: box(0.12, 0.396, 0.68, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, records, chartOverlays, figureCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'below',
+        sourceRegionIds: [records.id],
+        sourceLineIds: recordLines.map((sourceLine) => sourceLine.id),
+        cropBox: box(0.12, 0.15, 0.68, 0.12),
+      },
+    })
+    expect(result.scope?.sourceRegionIds).not.toContain(chartOverlays.id)
+    expect(result.scope?.sourceLineIds).not.toEqual(
+      expect.arrayContaining(chartLines.map((sourceLine) => sourceLine.id)),
+    )
+  })
+
+  it('rejects a foreign font family even when one visible family is shared', () => {
+    const recordLines = Array.from({ length: 7 }, (_, index) => {
+      const sourceBox = box(0.12, 0.15 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `mixed-family-table-record-${index + 1}`,
+        text: `Measure ${index + 1}: source bounded result`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...box(0.12, sourceBox.y, 0.62, 0.012),
+            text: `Measure ${index + 1}: source bounded result`,
+            fontName: 'TableSerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+          {
+            ...box(0.12, sourceBox.y, 0.01, 0.012),
+            text: '◆',
+            fontName: 'SharedSymbol',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const chartLines = Array.from({ length: 6 }, (_, index) => {
+      const sourceBox = box(0.12, 0.276 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `mixed-family-chart-overlay-${index + 1}`,
+        text: `${index * 10} ${index * 20} ${index * 30}`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...box(0.12, sourceBox.y, 0.62, 0.012),
+            text: `${index * 10} ${index * 20} ${index * 30}`,
+            fontName: 'ChartSans-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+          {
+            ...box(0.12, sourceBox.y, 0.01, 0.012),
+            text: '◆',
+            fontName: 'SharedSymbol',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const records = textRegion(
+      'mixed-family-bounded-table-records',
+      box(0.12, 0.15, 0.68, 0.12),
+      recordLines,
+    )
+    const chartOverlays = textRegion(
+      'mixed-family-following-chart-overlays',
+      box(0.12, 0.276, 0.68, 0.102),
+      chartLines,
+      'chart-label',
+    )
+    const tableCaption = caption(
+      'mixed-family-record-table-caption',
+      0.11,
+      'Table 3. Bounded results.',
+    )
+    const figureCaption = {
+      ...caption(
+        'mixed-family-following-chart-caption',
+        0.396,
+        'Figure 4. Following chart.',
+      ),
+      box: box(0.12, 0.396, 0.68, 0.02),
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, records, chartOverlays, figureCaption],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        sourceRegionIds: [records.id],
+        sourceLineIds: recordLines.map((sourceLine) => sourceLine.id),
+      },
+    })
+    expect(result.scope?.sourceLineIds).not.toEqual(
+      expect.arrayContaining(chartLines.map((sourceLine) => sourceLine.id)),
+    )
+  })
+
+  it('admits a body font introduced by a second labeled record row', () => {
+    const recordLine = (
+      id: string,
+      y: number,
+      label: string | null,
+      value: string,
+    ) => {
+      const sourceBox = box(0.12, y, 0.68, 0.012)
+      const labelWidth = label ? 0.14 : 0
+      return {
+        id,
+        text: label ? `${label} ${value}` : value,
+        fontSize: 8,
+        box: sourceBox,
+        runs: label
+          ? [
+              {
+                ...box(0.12, y, labelWidth, 0.012),
+                text: label,
+                fontName: 'RecordLabelFace',
+                fontSize: 8,
+                confidence: 0.99,
+                bold: true,
+              },
+              {
+                ...box(0.265, y, 0.535, 0.012),
+                text: value,
+                fontName: 'RecordBodyFace',
+                fontSize: 8,
+                confidence: 0.99,
+              },
+            ]
+          : [
+              {
+                ...sourceBox,
+                text: value,
+                fontName: 'RecordBodyFace',
+                fontSize: 8,
+                confidence: 0.99,
+              },
+            ],
+      } satisfies PdfRegionLine
+    }
+    const sourceLines: PdfRegionLine[] = [
+      {
+        ...recordLine(
+          'record-question',
+          0.15,
+          null,
+          'Question: Which evidence supports this source result?',
+        ),
+        runs: [
+          {
+            ...box(0.12, 0.15, 0.68, 0.012),
+            text: 'Question: Which evidence supports this source result?',
+            fontName: 'RecordLabelFace',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      },
+      recordLine(
+        'record-original-output',
+        0.168,
+        'Original Output:',
+        'The source provides a complete bounded response.',
+      ),
+      recordLine(
+        'record-original-continuation',
+        0.186,
+        null,
+        'Its explanation continues in the regular body face.',
+      ),
+      recordLine(
+        'record-steering-one',
+        0.204,
+        'Steering against drift:',
+        'The first controlled response remains source owned.',
+      ),
+      recordLine(
+        'record-steering-one-continuation',
+        0.222,
+        null,
+        'This continuation retains the established body typography.',
+      ),
+      recordLine(
+        'record-steering-two',
+        0.24,
+        'Steering towards control:',
+        'The second controlled response remains source owned.',
+      ),
+      recordLine(
+        'record-steering-two-continuation',
+        0.258,
+        null,
+        'The final continuation closes the bounded record slab.',
+      ),
+    ]
+    const table = textRegion(
+      'mixed-font-labeled-record-table',
+      box(0.12, 0.15, 0.68, 0.12),
+      sourceLines,
+    )
+    const tableCaption = caption(
+      'mixed-font-labeled-record-caption',
+      0.11,
+      'Table 4. Source-authored labeled records.',
+    )
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [tableCaption, table],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'below',
+        sourceRegionIds: [table.id],
+        sourceLineIds: sourceLines.map((sourceLine) => sourceLine.id),
+        cropBox: box(0.12, 0.15, 0.68, 0.12),
+      },
+    })
+  })
+
+  it('keeps short left-aligned continuations owned by a centered single-column caption', () => {
+    const recordLine = (
+      id: string,
+      y: number,
+      label: string | null,
+      value: string,
+      width = 0.68,
+    ) => {
+      const sourceBox = box(0.12, y, width, 0.012)
+      const labelWidth = label ? 0.14 : 0
+      return {
+        id,
+        text: label ? `${label} ${value}` : value,
+        fontSize: 8,
+        box: sourceBox,
+        runs: label
+          ? [
+              {
+                ...box(0.12, y, labelWidth, 0.012),
+                text: label,
+                fontName: 'RecordLabelFace',
+                fontSize: 8,
+                confidence: 0.99,
+                bold: true,
+              },
+              {
+                ...box(0.265, y, width - 0.145, 0.012),
+                text: value,
+                fontName: 'RecordBodyFace',
+                fontSize: 8,
+                confidence: 0.99,
+              },
+            ]
+          : [
+              {
+                ...sourceBox,
+                text: value,
+                fontName: 'RecordBodyFace',
+                fontSize: 8,
+                confidence: 0.99,
+              },
+            ],
+      } satisfies PdfRegionLine
+    }
+    const sourceLines: PdfRegionLine[] = [
+      {
+        ...recordLine(
+          'single-column-question',
+          0.15,
+          null,
+          'Question: Which source record should remain complete?',
+        ),
+        runs: [
+          {
+            ...box(0.12, 0.15, 0.68, 0.012),
+            text: 'Question: Which source record should remain complete?',
+            fontName: 'RecordLabelFace',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      },
+      recordLine(
+        'single-column-original',
+        0.168,
+        'Original Output:',
+        'The source record starts with a regular body.',
+      ),
+      recordLine(
+        'single-column-original-continuation',
+        0.186,
+        null,
+        'Its final sentence wraps onto a short terminal line.',
+      ),
+      recordLine('single-column-short-continuation', 0.204, null, 'to.', 0.02),
+      recordLine(
+        'single-column-steering-one',
+        0.222,
+        'Steering against drift:',
+        'The next labeled record stays in the same table.',
+      ),
+      recordLine(
+        'single-column-steering-one-continuation',
+        0.24,
+        null,
+        'Its continuation keeps the established body typography.',
+      ),
+      recordLine(
+        'single-column-steering-two',
+        0.258,
+        'Steering towards control:',
+        'The final labeled record remains source owned.',
+      ),
+      recordLine(
+        'single-column-steering-two-continuation',
+        0.276,
+        null,
+        'The bounded slab closes after this continuation.',
+      ),
+    ]
+    const table = textRegion(
+      'single-column-short-continuation-table',
+      box(0.12, 0.15, 0.68, 0.138),
+      sourceLines,
+    )
+    const tableCaption = {
+      ...caption(
+        'single-column-centered-caption',
+        0.11,
+        'Table 5. Centered source-authored records.',
+      ),
+      box: box(0.34, 0.11, 0.32, 0.02),
+    }
+    const foreignLine = recordLine(
+      'explicit-right-lane-foreign-record',
+      0.213,
+      'Foreign panel:',
+      'A neighboring lane must remain outside the single-column table.',
+      0.24,
+    )
+    const foreign = {
+      ...textRegion(
+        'explicit-right-lane-foreign-region',
+        box(0.56, 0.213, 0.24, 0.012),
+        [
+          {
+            ...foreignLine,
+            box: box(0.56, 0.213, 0.24, 0.012),
+            runs: foreignLine.runs.map((run, index) => ({
+              ...run,
+              x: index === 0 ? 0.56 : 0.665,
+              width: index === 0 ? 0.1 : 0.135,
+            })),
+          },
+        ],
+      ),
+      column: 'right' as const,
+    }
+
+    const result = resolvePdfTableScope({
+      caption: tableCaption,
+      pageRegions: [tableCaption, table, foreign],
+      nativeObjects: [],
+    })
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'below',
+        sourceRegionIds: [table.id],
+        sourceLineIds: sourceLines.map((sourceLine) => sourceLine.id),
+        cropBox: box(0.12, 0.15, 0.68, 0.138),
+      },
+    })
+    expect(result.scope?.sourceLineIds).not.toContain(foreignLine.id)
+  })
+
+  it.each([
+    ['different label typography', 0.12, 'ForeignChartFace-Bold'],
+    ['a different label anchor', 0.16, 'RecordLabelFace'],
+  ])(
+    'does not admit a foreign labeled family with %s after labeled records',
+    (_case, foreignX, foreignFontName) => {
+      const ownedLines = Array.from({ length: 7 }, (_, index) => {
+        const sourceBox = box(0.12, 0.15 + index * 0.018, 0.68, 0.012)
+        return {
+          id: `bounded-labeled-record-${index + 1}`,
+          text: `Measure ${index + 1}: source bounded result`,
+          fontSize: 8,
+          box: sourceBox,
+          runs: [
+            {
+              ...sourceBox,
+              text: `Measure ${index + 1}: source bounded result`,
+              fontName: 'RecordLabelFace',
+              fontSize: 8,
+              confidence: 0.99,
+              bold: true,
+            },
+          ],
+        } satisfies PdfRegionLine
+      })
+      const foreignBox = box(foreignX, 0.276, 0.8 - foreignX, 0.012)
+      const foreignLine = {
+        id: 'foreign-labeled-row',
+        text: 'Foreign panel: Following chart overlay remains outside the record table',
+        fontSize: 8,
+        box: foreignBox,
+        runs: [
+          {
+            ...foreignBox,
+            text: 'Foreign panel: Following chart overlay remains outside the record table',
+            fontName: foreignFontName,
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+      const table = textRegion(
+        'bounded-labeled-records',
+        box(0.12, 0.15, 0.68, 0.12),
+        ownedLines,
+      )
+      const foreign = textRegion(
+        'foreign-labeled-overlay',
+        foreignBox,
+        [foreignLine],
+        'chart-label',
+      )
+      const tableCaption = caption(
+        'bounded-labeled-record-caption',
+        0.11,
+        'Table 4. Source-authored labeled records.',
+      )
+
+      const result = resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [tableCaption, table, foreign],
+        nativeObjects: [],
+      })
+
+      expect(result).toMatchObject({
+        status: 'matched',
+        scope: {
+          proof: 'caption-bounded-text-slab',
+          sourceRegionIds: [table.id],
+          sourceLineIds: ownedLines.map((sourceLine) => sourceLine.id),
+        },
+      })
+      expect(result.scope?.sourceLineIds).not.toContain(foreignLine.id)
+    },
+  )
+
+  it('does not bridge a foreign single-anchor body from a styled header', () => {
+    const header = line('foreign-body-header', 0.15, [0.12, 0.44])
+    for (const run of header.runs) {
+      run.fontName = 'HeaderSans-Bold'
+      run.bold = true
+    }
+    const bodyLines = Array.from({ length: 6 }, (_, index) => {
+      const sourceBox = box(0.12, 0.168 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `foreign-single-anchor-body-${index + 1}`,
+        text: `Measure ${index + 1}: source bounded result`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Measure ${index + 1}: source bounded result`,
+            fontName: 'BodySerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const table = textRegion(
+      'foreign-header-body-table',
+      box(0.12, 0.15, 0.68, 0.12),
+      [header, ...bodyLines],
+    )
+    const tableCaption = caption(
+      'foreign-header-body-caption',
+      0.11,
+      'Table 3. Bounded results.',
+    )
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [tableCaption, table],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+    })
+  })
+
+  it('does not bridge clustered body anchors through one styled header anchor', () => {
+    const header = line('clustered-body-header', 0.15, [0.12, 0.44, 0.68])
+    for (const run of header.runs) {
+      run.fontName = 'HeaderSans-Bold'
+      run.bold = true
+    }
+    const firstBodyBox = box(0.12, 0.168, 0.68, 0.016)
+    const clusteredBody = {
+      id: 'clustered-body-row-1',
+      text: 'Measure 1: source bounded result 10 20',
+      fontSize: 8,
+      box: firstBodyBox,
+      runs: [
+        {
+          ...box(0.12, firstBodyBox.y, 0.001, 0.016),
+          text: 'Measure 1: source bounded result',
+          fontName: 'BodySerif-Bold',
+          fontSize: 8,
+          confidence: 0.99,
+          bold: true,
+        },
+        {
+          ...box(0.127, firstBodyBox.y, 0.001, 0.016),
+          text: '10',
+          fontName: 'BodySerif-Bold',
+          fontSize: 8,
+          confidence: 0.99,
+          bold: true,
+        },
+        {
+          ...box(0.134, firstBodyBox.y, 0.001, 0.016),
+          text: '20',
+          fontName: 'BodySerif-Bold',
+          fontSize: 8,
+          confidence: 0.99,
+          bold: true,
+        },
+      ],
+    } satisfies PdfRegionLine
+    const remainingBody = Array.from({ length: 5 }, (_, index) => {
+      const sourceBox = box(0.12, 0.186 + index * 0.018, 0.68, 0.016)
+      return {
+        id: `clustered-body-row-${index + 2}`,
+        text: `Measure ${index + 2}: source bounded result`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Measure ${index + 2}: source bounded result`,
+            fontName: 'BodySerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const table = textRegion(
+      'clustered-header-body-table',
+      box(0.12, 0.15, 0.68, 0.124),
+      [header, clusteredBody, ...remainingBody],
+    )
+    const tableCaption = caption(
+      'clustered-header-body-caption',
+      0.11,
+      'Table 3. Bounded results.',
+    )
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [tableCaption, table],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'unresolved',
+      scope: null,
+      candidates: [],
+    })
+  })
+
+  it('bridges distinctly aligned body anchors from a styled header', () => {
+    const header = line('aligned-body-header', 0.15, [0.12, 0.44, 0.68])
+    for (const run of header.runs) {
+      run.fontName = 'HeaderSans-Bold'
+      run.bold = true
+    }
+    const firstBodyBox = box(0.12, 0.168, 0.68, 0.016)
+    const alignedBody = {
+      id: 'aligned-body-row-1',
+      text: 'Measure 1: source bounded result 10 20',
+      fontSize: 8,
+      box: firstBodyBox,
+      runs: [0.12, 0.44, 0.68].map<PdfSourceRun>((x, index) => ({
+        ...box(x, firstBodyBox.y, 0.075, 0.016),
+        text:
+          index === 0 ? 'Measure 1: source bounded result' : String(index * 10),
+        fontName: 'BodySerif-Bold',
+        fontSize: 8,
+        confidence: 0.99,
+        bold: true,
+      })),
+    } satisfies PdfRegionLine
+    const remainingBody = Array.from({ length: 5 }, (_, index) => {
+      const sourceBox = box(0.12, 0.186 + index * 0.018, 0.68, 0.016)
+      return {
+        id: `aligned-body-row-${index + 2}`,
+        text: `Measure ${index + 2}: source bounded result`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Measure ${index + 2}: source bounded result`,
+            fontName: 'BodySerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const bodyLines = [alignedBody, ...remainingBody]
+    const table = textRegion(
+      'aligned-header-body-table',
+      box(0.12, 0.15, 0.68, 0.124),
+      [header, ...bodyLines],
+    )
+    const tableCaption = caption(
+      'aligned-header-body-caption',
+      0.11,
+      'Table 3. Bounded results.',
+    )
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [tableCaption, table],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        sourceRegionIds: [table.id],
+        sourceLineIds: [
+          header.id,
+          ...bodyLines.map((sourceLine) => sourceLine.id),
+        ],
+      },
+    })
+  })
+
+  it('keeps a proved above-caption table across an internal font-family transition', () => {
+    const sourceLines = Array.from({ length: 7 }, (_, index) => {
+      const sourceBox = box(0.12, 0.15 + index * 0.018, 0.68, 0.012)
+      return {
+        id: `above-caption-mixed-font-row-${index + 1}`,
+        text: `Metric ${index + 1}: source bounded value`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Metric ${index + 1}: source bounded value`,
+            fontName: index < 4 ? 'TableHeaderSans' : 'TableBodySerif',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: index < 4,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const table = textRegion(
+      'above-caption-mixed-font-table',
+      box(0.12, 0.15, 0.68, 0.12),
+      sourceLines,
+    )
+    const tableCaption = caption(
+      'above-caption-mixed-font-caption',
+      0.29,
+      'Table 4. Bounded records with styled row groups.',
+    )
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [table, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'above',
+        sourceRegionIds: [table.id],
+        sourceLineIds: sourceLines.map((sourceLine) => sourceLine.id),
+      },
+    })
+  })
+
+  it('keeps a proved above-caption table across both sides of a composite source region', () => {
+    const sourceLines = Array.from({ length: 8 }, (_, index) => {
+      const sourceBox = box(
+        index % 2 === 0 ? 0.08 : 0.52,
+        0.15 + index * 0.02,
+        0.36,
+        0.012,
+      )
+      return {
+        id: `above-caption-composite-row-${index + 1}`,
+        text: `Metric ${index + 1}: source bounded value`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Metric ${index + 1}: source bounded value`,
+            fontName: 'TableSerif-Bold',
+            fontSize: 8,
+            confidence: 0.99,
+            bold: true,
+          },
+        ],
+      } satisfies PdfRegionLine
+    })
+    const table = {
+      ...textRegion(
+        'above-caption-composite-table',
+        box(0.08, 0.15, 0.8, 0.152),
+        sourceLines,
+      ),
+      column: 'left' as const,
+    }
+    const tableCaption = {
+      ...caption(
+        'above-caption-composite-caption',
+        0.315,
+        'Table 5. Full-width bounded records.',
+      ),
+      column: 'left' as const,
+      box: box(0.08, 0.315, 0.38, 0.02),
+    }
+
+    expect(
+      resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [table, tableCaption],
+        nativeObjects: [],
+      }),
+    ).toMatchObject({
+      status: 'matched',
+      scope: {
+        proof: 'caption-bounded-text-slab',
+        direction: 'above',
+        sourceRegionIds: [table.id],
+        sourceLineIds: sourceLines.map((sourceLine) => sourceLine.id),
+      },
+    })
+  })
+
+  describe('geometry-local ownership for span-classified captions', () => {
+    const laneWitness = (
+      id: string,
+      column: 'left' | 'right',
+      x: number,
+      width: number,
+      y = 0.03,
+    ): PdfPageRegion => {
+      const sourceLine = {
+        id: `${id}-line`,
+        text: `${column} lane witness`,
+        fontSize: 10,
+        box: box(x, y, width, 0.014),
+        runs: [
+          {
+            ...box(x, y, width, 0.014),
+            text: `${column} lane witness`,
+            fontName: 'BodySerif',
+            fontSize: 10,
+            confidence: 0.99,
+          },
+        ],
+      } satisfies PdfRegionLine
+      return {
+        ...textRegion(id, sourceLine.box, [sourceLine], 'header'),
+        column,
+      }
+    }
+
+    const tabularLine = (
+      id: string,
+      y: number,
+      anchors: number[],
+    ): PdfRegionLine => {
+      const runs = anchors.map<PdfSourceRun>((x, index) => ({
+        ...box(x, y, index === 0 ? 0.085 : 0.035, 0.012),
+        text: index === 0 ? `${id}-model` : `${index}.${id.at(-1)}`,
+        fontName: 'CompactTableSerif',
+        fontSize: 8,
+        confidence: 0.99,
+      }))
+      return {
+        id,
+        text: runs.map((run) => run.text).join(' '),
+        fontSize: 8,
+        box: box(
+          anchors[0],
+          y,
+          anchors.at(-1)! + runs.at(-1)!.width - anchors[0],
+          0.012,
+        ),
+        runs,
+      }
+    }
+
+    const proseLine = (id: string, y: number): PdfRegionLine => {
+      const sourceBox = box(0.09, y, 0.382, 0.012)
+      return {
+        id,
+        text: `Unrelated prose in the opposite lane ${id}.`,
+        fontSize: 8,
+        box: sourceBox,
+        runs: [
+          {
+            ...sourceBox,
+            text: `Unrelated prose in the opposite lane ${id}.`,
+            fontName: 'CompactTableSerif',
+            fontSize: 8,
+            confidence: 0.99,
+          },
+        ],
+      }
+    }
+
+    it.each(['span', 'single'] as const)(
+      'keeps opposite-lane prose out when a local caption is classified as %s',
+      (captionColumn) => {
+        const tableLines = Array.from({ length: 7 }, (_, index) =>
+          tabularLine(
+            `right-table-row-${index + 1}`,
+            0.15 + index * 0.036,
+            [0.512, 0.64, 0.72, 0.81],
+          ),
+        )
+        const oppositeLines = Array.from({ length: 7 }, (_, index) =>
+          proseLine(`left-prose-${index + 1}`, 0.168 + index * 0.036),
+        )
+        const compositeRegion = {
+          ...textRegion(
+            'interleaved-two-column-parent',
+            box(0.09, 0.15, 0.755, 0.24),
+            tableLines.flatMap((line, index) => [line, oppositeLines[index]]),
+          ),
+          column: 'span' as const,
+        }
+        const tableCaption = {
+          ...caption(
+            `local-${captionColumn}-caption`,
+            0.11,
+            'Table 1. Right-column benchmark results.',
+          ),
+          column: captionColumn,
+          box: box(0.505, 0.11, 0.38, 0.02),
+        }
+        const witnesses = [
+          laneWitness('left-lane-witness', 'left', 0.09, 0.382),
+          laneWitness('left-lane-witness-2', 'left', 0.09, 0.382, 0.05),
+          laneWitness('left-lane-witness-3', 'left', 0.09, 0.382, 0.07),
+          laneWitness('right-lane-witness', 'right', 0.512, 0.373),
+          laneWitness('right-lane-witness-2', 'right', 0.512, 0.373, 0.05),
+          laneWitness('right-lane-witness-3', 'right', 0.512, 0.373, 0.07),
+          // The source classifier is independent but not infallible. These
+          // exact line boxes emulate a first table column classified as left
+          // and a short right-owned overlay inside the left measure. Extrema
+          // overlap, while the central source-line corridor remains exact.
+          laneWitness('left-label-outlier', 'left', 0.512, 0.085, 0.085),
+          laneWitness('right-label-outlier', 'right', 0.4, 0.05, 0.085),
+        ]
+        const resolve = (pageRegions: PdfPageRegion[]) =>
+          resolvePdfTableScope({
+            caption: tableCaption,
+            pageRegions,
+            nativeObjects: [],
+          })
+        const forward = resolve([
+          tableCaption,
+          ...witnesses.slice(0, 4),
+          compositeRegion,
+          ...witnesses.slice(4),
+        ])
+        const reverse = resolve([
+          ...witnesses.slice(4).reverse(),
+          compositeRegion,
+          ...witnesses.slice(0, 4).reverse(),
+          tableCaption,
+        ])
+        const expectedLineIds = tableLines.map((line) => line.id)
+
+        expect(forward).toMatchObject({
+          status: 'matched',
+          scope: {
+            proof: 'text-tabular-line-band',
+            sourceRegionIds: [compositeRegion.id],
+            sourceLineIds: expectedLineIds,
+          },
+        })
+        expect(forward.scope?.sourceLineIds).not.toEqual(
+          expect.arrayContaining(oppositeLines.map((line) => line.id)),
+        )
+        expect(forward.scope?.cropBox.x).toBeGreaterThanOrEqual(0.5)
+        expect(
+          forward.scope!.cropBox.x + forward.scope!.cropBox.width,
+        ).toBeLessThanOrEqual(0.89)
+        expect(reverse.scope).toEqual(forward.scope)
+      },
+    )
+
+    it('keeps opposite-lane prose out of a spanning parent when the caption has an explicit page column', () => {
+      const tableLines = Array.from({ length: 7 }, (_, index) =>
+        tabularLine(
+          `left-table-row-${index + 1}`,
+          0.15 + index * 0.03,
+          [0.116, 0.262, 0.326, 0.399],
+        ),
+      )
+      const oppositeLines = Array.from({ length: 7 }, (_, index) => {
+        const sourceBox = box(0.502, 0.1515 + index * 0.03, 0.385, 0.012)
+        return {
+          id: `right-prose-row-${index + 1}`,
+          text: `Unrelated prose in the right page column ${index + 1}.`,
+          fontSize: 8,
+          box: sourceBox,
+          runs: [
+            {
+              ...sourceBox,
+              text: `Unrelated prose in the right page column ${index + 1}.`,
+              fontName: 'CompactTableSerif',
+              fontSize: 8,
+              confidence: 0.99,
+            },
+          ],
+        } satisfies PdfRegionLine
+      })
+      const compositeRegion = {
+        ...textRegion(
+          'explicit-left-caption-spanning-parent',
+          box(0.116, 0.15, 0.771, 0.196),
+          tableLines.flatMap((line, index) => [line, oppositeLines[index]]),
+          'spanning',
+        ),
+        column: 'span' as const,
+      }
+      const tableCaption = {
+        ...caption(
+          'explicit-left-table-caption',
+          0.11,
+          'Table 6. Left-column source results.',
+        ),
+        column: 'left' as const,
+        box: box(0.09, 0.11, 0.383, 0.02),
+      }
+
+      const result = resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [tableCaption, compositeRegion],
+        nativeObjects: [],
+      })
+
+      expect(result).toMatchObject({
+        status: 'matched',
+        scope: {
+          sourceRegionIds: [compositeRegion.id],
+          sourceLineIds: tableLines.map((sourceLine) => sourceLine.id),
+        },
+      })
+      expect(result.scope?.sourceLineIds).not.toEqual(
+        expect.arrayContaining(
+          oppositeLines.map((sourceLine) => sourceLine.id),
+        ),
+      )
+      expect(
+        result.scope!.cropBox.x + result.scope!.cropBox.width,
+      ).toBeLessThan(0.48)
+    })
+
+    it('ignores a non-reading-order page number when inferring the real Table 1 lane', () => {
+      const page5Box = (
+        x: number,
+        y: number,
+        width: number,
+        height = 0.01258,
+      ): NormalizedSourceBox => ({
+        ...box(x, y, width, height),
+        page: 5,
+      })
+      const sourceRegion = (
+        regionId: string,
+        lineId: string,
+        text: string,
+        column: 'left' | 'right',
+        x: number,
+        y: number,
+        width: number,
+        kind: PdfPageRegion['kind'] = 'body',
+        includedInReadingOrder = true,
+      ) => {
+        const sourceBox = page5Box(x, y, width)
+        const sourceLine = {
+          id: lineId,
+          text,
+          fontSize: 8.9664,
+          box: sourceBox,
+          runs: [
+            {
+              ...sourceBox,
+              text,
+              fontName: 'NXWQTR+STIXGeneral-Regular',
+              fontSize: 8.9664,
+              confidence: 1,
+            },
+          ],
+        } satisfies PdfRegionLine
+        return {
+          ...textRegion(regionId, sourceBox, [sourceLine], kind),
+          column,
+          includedInReadingOrder,
+        } satisfies PdfPageRegion
+      }
+      const actualCaption = {
+        ...caption(
+          'page-005-region-011',
+          0.45381,
+          'Table 1. s1-32B is an open and sample-efficient reasoning model.',
+        ),
+        page: 5,
+        column: 'span' as const,
+        box: page5Box(0.50153, 0.45381, 0.38573, 0.08679),
+      }
+      const oppositeProse = [
+        sourceRegion(
+          'page-005-region-015-prose-1',
+          'page-005-line-0039',
+          'Other models We benchmark s1-32B against: OpenAI o1 series',
+          'left',
+          0.09059,
+          0.56777,
+          0.38235,
+        ),
+        sourceRegion(
+          'page-005-region-015-prose-2',
+          'page-005-line-0040',
+          'which are closed-source models that popularized the idea of',
+          'left',
+          0.09059,
+          0.58287,
+          0.38235,
+        ),
+        sourceRegion(
+          'page-005-region-015-prose-3',
+          'page-005-line-0042',
+          'test-time scaling; DeepSeek r1 series are open-weight models',
+          'left',
+          0.09059,
+          0.59796,
+          0.38358,
+        ),
+      ]
+      const tableCells = [
+        sourceRegion(
+          'page-005-region-015-model',
+          'page-005-line-0035',
+          'Model',
+          'left',
+          0.51212,
+          0.55452,
+          0.0425,
+        ),
+        sourceRegion(
+          'page-005-region-014',
+          'page-005-line-0034',
+          '# ex.',
+          'right',
+          0.63009,
+          0.55439,
+          0.0313,
+        ),
+        sourceRegion(
+          'page-005-region-012',
+          'page-005-line-0032',
+          'AIME MATH',
+          'right',
+          0.69096,
+          0.54684,
+          0.10817,
+        ),
+        sourceRegion(
+          'page-005-region-013',
+          'page-005-line-0033',
+          'GPQA',
+          'right',
+          0.8268,
+          0.54684,
+          0.04433,
+        ),
+        ...[
+          ['o1-preview', 0.60476, 'N.A.', '44.6', '85.5', '73.3'],
+          ['o1-mini', 0.61985, 'N.A.', '70.0', '90.0', '60.0'],
+          ['o1', 0.63495, 'N.A.', '74.4', '94.8', '77.3'],
+        ].flatMap(([model, y, examples, aime, math, gpqa], rowIndex) => [
+          sourceRegion(
+            `actual-model-${rowIndex + 1}`,
+            `actual-model-line-${rowIndex + 1}`,
+            String(model),
+            'left',
+            0.51212,
+            Number(y),
+            rowIndex === 0 ? 0.07348 : rowIndex === 1 ? 0.05155 : 0.01628,
+          ),
+          sourceRegion(
+            `actual-examples-${rowIndex + 1}`,
+            `actual-examples-line-${rowIndex + 1}`,
+            String(examples),
+            'right',
+            0.64007,
+            Number(y),
+            0.03135,
+          ),
+          sourceRegion(
+            `actual-aime-${rowIndex + 1}`,
+            `actual-aime-line-${rowIndex + 1}`,
+            String(aime),
+            'right',
+            0.70406,
+            Number(y),
+            0.02849,
+          ),
+          sourceRegion(
+            `actual-math-${rowIndex + 1}`,
+            `actual-math-line-${rowIndex + 1}`,
+            String(math),
+            'right',
+            0.77064,
+            Number(y),
+            0.02849,
+          ),
+          sourceRegion(
+            `actual-gpqa-${rowIndex + 1}`,
+            `actual-gpqa-line-${rowIndex + 1}`,
+            String(gpqa),
+            'right',
+            0.85077,
+            Number(y),
+            0.02849,
+          ),
+        ]),
+      ]
+      const pageNumber = sourceRegion(
+        'page-005-region-078',
+        'page-005-line-0126',
+        '5',
+        'left',
+        0.48358,
+        0.92172,
+        0.00814,
+        'page-number',
+        false,
+      )
+      const lowerFirstColumn = sourceRegion(
+        'page-005-region-056-model',
+        'page-005-line-0092',
+        'r1-distill',
+        'left',
+        0.51212,
+        0.76834,
+        0.05595,
+      )
+      const lowerOppositeProse = sourceRegion(
+        'page-005-region-056-prose',
+        'page-005-line-0097',
+        'evaluation challenging. We circumvent this by manually',
+        'left',
+        0.09059,
+        0.77784,
+        0.38292,
+      )
+      const lowerRightLines = [
+        sourceRegion(
+          'page-005-region-059-score',
+          'page-005-line-0096',
+          '62.1',
+          'right',
+          0.85077,
+          0.76834,
+          0.02849,
+        ).lines[0],
+        sourceRegion(
+          'page-005-region-059-group',
+          'page-005-line-0098',
+          'Open Weights and Open Data',
+          'right',
+          0.59159,
+          0.78975,
+          0.20819,
+        ).lines[0],
+        sourceRegion(
+          'page-005-region-059-examples',
+          'page-005-line-0102',
+          '17K',
+          'right',
+          0.64339,
+          0.81116,
+          0.02803,
+        ).lines[0],
+      ]
+      const lowerRightComposite = {
+        ...textRegion(
+          'page-005-region-059',
+          page5Box(0.59159, 0.76834, 0.28767, 0.0554),
+          lowerRightLines,
+        ),
+        column: 'right' as const,
+      }
+      const lowerNumericCells = [
+        sourceRegion(
+          'page-005-region-055',
+          'page-005-line-0093',
+          '800K',
+          'right',
+          0.63525,
+          0.76834,
+          0.03617,
+        ),
+        sourceRegion(
+          'page-005-region-057',
+          'page-005-line-0094',
+          '72.6',
+          'right',
+          0.70406,
+          0.76834,
+          0.02849,
+        ),
+        sourceRegion(
+          'page-005-region-058',
+          'page-005-line-0095',
+          '94.3',
+          'right',
+          0.77064,
+          0.76834,
+          0.02849,
+        ),
+      ]
+      const resolve = (marginRegion: PdfPageRegion) =>
+        resolvePdfTableScope({
+          caption: actualCaption,
+          pageRegions: [
+            actualCaption,
+            ...oppositeProse,
+            ...tableCells,
+            lowerFirstColumn,
+            lowerOppositeProse,
+            lowerRightComposite,
+            ...lowerNumericCells,
+            marginRegion,
+          ],
+          nativeObjects: [],
+        })
+      const scoped = resolve(pageNumber)
+
+      expect(scoped).toMatchObject({
+        status: 'matched',
+      })
+      expect(scoped.scope?.sourceLineIds).not.toEqual(
+        expect.arrayContaining(
+          oppositeProse
+            .flatMap((region) =>
+              region.lines.map((sourceLine) => sourceLine.id),
+            )
+            .concat(
+              lowerOppositeProse.lines.map((sourceLine) => sourceLine.id),
+            ),
+        ),
+      )
+      expect(scoped.scope?.cropBox.x).toBeGreaterThanOrEqual(0.5)
+      expect(
+        scoped.scope!.cropBox.x + scoped.scope!.cropBox.width,
+      ).toBeLessThanOrEqual(0.89)
+    })
+
+    it('falls back from the real Table 1 internal column gap to its page gutter', () => {
+      const page5Box = (
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+      ): NormalizedSourceBox => ({
+        page: 5,
+        x,
+        y,
+        width,
+        height,
+        rotation: 0,
+        method: 'pdf-text',
+      })
+      type ActualLine = [
+        id: string,
+        text: string,
+        x: number,
+        y: number,
+        width: number,
+        bold?: boolean,
+      ]
+      const actualRegion = (
+        id: string,
+        column: 'left' | 'right',
+        regionBox: [x: number, y: number, width: number, height: number],
+        lines: ActualLine[],
+      ): PdfPageRegion => {
+        const sourceLines = lines.map<PdfRegionLine>(
+          ([lineId, text, x, y, width, bold = false]) => {
+            const sourceBox = page5Box(x, y, width, 0.01258)
+            return {
+              id: lineId,
+              text,
+              fontSize: 9.9626,
+              box: sourceBox,
+              runs: [
+                {
+                  ...sourceBox,
+                  text,
+                  fontName: bold
+                    ? 'KTBBOM+STIXGeneral-Bold'
+                    : 'NXWQTR+STIXGeneral-Regular',
+                  fontSize: 9.9626,
+                  confidence: 1,
+                },
+              ],
+            }
+          },
+        )
+        const sourceBox = page5Box(...regionBox)
+        return {
+          ...textRegion(id, sourceBox, sourceLines),
+          column,
+        }
+      }
+      const actualCaption = {
+        ...caption(
+          'page-005-region-011',
+          0.45381,
+          'Table 1. s1-32B is an open and sample-efficient reasoning model.',
+        ),
+        page: 5,
+        column: 'span' as const,
+        box: page5Box(0.50153, 0.45381, 0.38573, 0.08679),
+      }
+      const actualRegions = [
+        actualRegion(
+          'page-005-region-015-prose-1',
+          'left',
+          [0.09059, 0.56777, 0.38235, 0.01258],
+          [
+            [
+              'page-005-line-0039',
+              'Other models We benchmark s1-32B against: OpenAI o1 series',
+              0.09059,
+              0.56777,
+              0.38235,
+            ],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-015-prose-2',
+          'left',
+          [0.09059, 0.58287, 0.38235, 0.01258],
+          [
+            [
+              'page-005-line-0040',
+              'which are closed-source models that popularized the idea of',
+              0.09059,
+              0.58287,
+              0.38235,
+            ],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-015-prose-3',
+          'left',
+          [0.09059, 0.59796, 0.38358, 0.01258],
+          [
+            [
+              'page-005-line-0042',
+              'test-time scaling; DeepSeek r1 series are open-weight models',
+              0.09059,
+              0.59796,
+              0.38358,
+            ],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-018',
+          'right',
+          [0.64007, 0.56194, 0.23919, 0.0554],
+          [
+            ['page-005-line-0038', 'Diamond', 0.81867, 0.56194, 0.06059],
+            ['page-005-line-0041', 'API only', 0.66485, 0.58335, 0.06168, true],
+            ['page-005-line-0044', 'N.A.', 0.64007, 0.60476, 0.03135],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-027',
+          'right',
+          [0.64007, 0.61985, 0.23919, 0.02768],
+          [
+            ['page-005-line-0053', '60.0', 0.85077, 0.61985, 0.02849],
+            ['page-005-line-0056', 'N.A.', 0.64007, 0.63495, 0.03135],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-025',
+          'right',
+          [0.70406, 0.61985, 0.02849, 0.01258],
+          [['page-005-line-0051', '70.0', 0.70406, 0.61985, 0.02849]],
+        ),
+        actualRegion(
+          'page-005-region-026',
+          'right',
+          [0.77064, 0.61985, 0.02849, 0.01258],
+          [['page-005-line-0052', '90.0', 0.77064, 0.61985, 0.02849]],
+        ),
+        actualRegion(
+          'page-005-region-030',
+          'right',
+          [0.70406, 0.63495, 0.02849, 0.01258],
+          [['page-005-line-0057', '74.4', 0.70406, 0.63495, 0.02849, true]],
+        ),
+        actualRegion(
+          'page-005-region-031',
+          'right',
+          [0.77064, 0.63495, 0.02849, 0.01258],
+          [['page-005-line-0058', '94.8', 0.77064, 0.63495, 0.02849, true]],
+        ),
+        actualRegion(
+          'page-005-region-035',
+          'right',
+          [0.70406, 0.65759, 0.02849, 0.01258],
+          [['page-005-line-0063', '60.0', 0.70406, 0.65759, 0.02849]],
+        ),
+        actualRegion(
+          'page-005-region-036',
+          'right',
+          [0.76778, 0.65759, 0.03135, 0.01258],
+          [['page-005-line-0064', 'N.A.', 0.76778, 0.65759, 0.03135]],
+        ),
+        actualRegion(
+          'page-005-region-037',
+          'right',
+          [0.8479, 0.65759, 0.03135, 0.01258],
+          [['page-005-line-0065', 'N.A.', 0.8479, 0.65759, 0.03135]],
+        ),
+        actualRegion(
+          'page-005-region-039',
+          'left',
+          [0.51212, 0.66514, 0.08229, 0.01258],
+          [['page-005-line-0067', 'Flash Think.', 0.51212, 0.66514, 0.08229]],
+        ),
+        actualRegion(
+          'page-005-region-041',
+          'right',
+          [0.64662, 0.68655, 0.09814, 0.01258],
+          [
+            [
+              'page-005-line-0069',
+              'Open Weights',
+              0.64662,
+              0.68655,
+              0.09814,
+              true,
+            ],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-046',
+          'right',
+          [0.64007, 0.71551, 0.23919, 0.03522],
+          [
+            ['page-005-line-0076', '49.0', 0.85077, 0.71551, 0.02849],
+            ['page-005-line-0081', 'N.A.', 0.64007, 0.73815, 0.03135],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-044',
+          'right',
+          [0.70406, 0.71551, 0.02849, 0.01258],
+          [['page-005-line-0074', '26.7', 0.70406, 0.71551, 0.02849]],
+        ),
+        actualRegion(
+          'page-005-region-045',
+          'right',
+          [0.77064, 0.71551, 0.02849, 0.01258],
+          [['page-005-line-0075', '84.0', 0.77064, 0.71551, 0.02849]],
+        ),
+        actualRegion(
+          'page-005-region-048',
+          'left',
+          [0.09059, 0.73815, 0.48935, 0.02334],
+          [
+            ['page-005-line-0080', 'QwQ-32B', 0.51212, 0.73815, 0.06782],
+            [
+              'page-005-line-0085',
+              'scores, we use the Gemini API to benchmark it ourselves.',
+              0.09059,
+              0.74891,
+              0.3852,
+            ],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-059',
+          'right',
+          [0.59159, 0.76834, 0.28767, 0.0554],
+          [
+            ['page-005-line-0096', '62.1', 0.85077, 0.76834, 0.02849],
+            [
+              'page-005-line-0098',
+              'Open Weights and Open Data',
+              0.59159,
+              0.78975,
+              0.20819,
+              true,
+            ],
+            ['page-005-line-0102', '17K', 0.64339, 0.81116, 0.02803],
+          ],
+        ),
+        actualRegion(
+          'page-005-region-057',
+          'right',
+          [0.70406, 0.76834, 0.02849, 0.01258],
+          [['page-005-line-0094', '72.6', 0.70406, 0.76834, 0.02849]],
+        ),
+        actualRegion(
+          'page-005-region-058',
+          'right',
+          [0.77064, 0.76834, 0.02849, 0.01258],
+          [['page-005-line-0095', '94.3', 0.77064, 0.76834, 0.02849]],
+        ),
+      ]
+
+      const scoped = resolvePdfTableScope({
+        caption: actualCaption,
+        pageRegions: [actualCaption, ...actualRegions],
+        nativeObjects: [],
+      })
+
+      expect(scoped).toMatchObject({
+        status: 'matched',
+      })
+      expect(scoped.scope?.sourceLineIds).not.toContain('page-005-line-0085')
+      expect(scoped.scope?.cropBox.x).toBeGreaterThanOrEqual(0.5)
+      expect(
+        scoped.scope!.cropBox.x + scoped.scope!.cropBox.width,
+      ).toBeLessThanOrEqual(0.89)
+    })
+
+    it('does not partition a truly spanning caption at the inferred page gutter', () => {
+      const leftLines = Array.from({ length: 4 }, (_, index) =>
+        tabularLine(
+          `spanning-left-row-${index + 1}`,
+          0.16 + index * 0.03,
+          [0.1, 0.21, 0.32],
+        ),
+      )
+      const rightLines = Array.from({ length: 4 }, (_, index) =>
+        tabularLine(
+          `spanning-right-row-${index + 1}`,
+          0.16 + index * 0.03,
+          [0.56, 0.67, 0.78],
+        ),
+      )
+      const fullWidthTable = {
+        ...textRegion(
+          'full-width-two-lane-table',
+          box(0.1, 0.16, 0.715, 0.102),
+          leftLines.flatMap((line, index) => [line, rightLines[index]]),
+        ),
+        column: 'span' as const,
+      }
+      const tableCaption = {
+        ...caption(
+          'full-width-span-caption',
+          0.12,
+          'Table 2. Full-width benchmark results.',
+        ),
+        column: 'span' as const,
+        box: box(0.08, 0.12, 0.82, 0.02),
+      }
+      const result = resolvePdfTableScope({
+        caption: tableCaption,
+        pageRegions: [
+          tableCaption,
+          laneWitness('full-width-left-witness', 'left', 0.09, 0.382),
+          fullWidthTable,
+          laneWitness('full-width-right-witness', 'right', 0.512, 0.373),
+        ],
+        nativeObjects: [],
+      })
+
+      expect(result).toMatchObject({
+        status: 'matched',
+        scope: {
+          sourceRegionIds: [fullWidthTable.id],
+          sourceLineIds: leftLines.flatMap((line, index) => [
+            line.id,
+            rightLines[index].id,
+          ]),
+        },
+      })
+      expect(result.scope?.cropBox.x).toBeLessThan(0.2)
+      expect(
+        result.scope!.cropBox.x + result.scope!.cropBox.width,
+      ).toBeGreaterThan(0.75)
+    })
+
+    it('does not infer a local lane on a genuinely single-column prose page', () => {
+      const proseLines = Array.from({ length: 7 }, (_, index) => {
+        const sourceBox = box(0.12, 0.16 + index * 0.02, 0.68, 0.014)
+        return {
+          id: `single-column-prose-${index + 1}`,
+          text: `Ordinary narrative prose continues in one column on line ${index + 1}.`,
+          fontSize: 10,
+          box: sourceBox,
+          runs: [
+            {
+              ...sourceBox,
+              text: `Ordinary narrative prose continues in one column on line ${index + 1}.`,
+              fontName: 'BodySerif',
+              fontSize: 10,
+              confidence: 0.99,
+            },
+          ],
+        } satisfies PdfRegionLine
+      })
+      const prose = textRegion(
+        'genuine-single-column-prose',
+        box(0.12, 0.16, 0.68, 0.134),
+        proseLines,
+      )
+      const tableCaption = {
+        ...caption(
+          'genuine-single-column-caption',
+          0.12,
+          'Table 3. A caption without a proved source table.',
+        ),
+        column: 'single' as const,
+      }
+
+      expect(
+        resolvePdfTableScope({
+          caption: tableCaption,
+          pageRegions: [tableCaption, prose],
+          nativeObjects: [],
+        }),
+      ).toMatchObject({
+        status: 'unresolved',
+        scope: null,
+        candidates: [],
+      })
+    })
   })
 })

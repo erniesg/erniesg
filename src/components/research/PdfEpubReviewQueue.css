@@ -80,6 +80,14 @@
   font-weight: 650;
 }
 
+.pdf-review-selector-model {
+  max-width: 28rem;
+  font-size: 0.58rem;
+  font-weight: 400;
+  line-height: 1.35;
+  opacity: 0.68;
+}
+
 .pdf-review-toolbar input,
 .pdf-review-toolbar select,
 .pdf-review-toolbar button,
@@ -129,6 +137,29 @@
   border-radius: 999px;
   padding: 0.25rem 0.5rem;
   background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.pdf-review-status-fields {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: 0.45rem 1.25rem;
+  margin: 0;
+}
+
+.pdf-review-status-fields > div {
+  display: grid;
+  gap: 0.05rem;
+}
+
+.pdf-review-status-fields dt {
+  font-size: 0.58rem;
+  opacity: 0.62;
+}
+
+.pdf-review-status-fields dd {
+  margin: 0;
+  font-weight: 700;
 }
 
 .pdf-review-identity .is-mismatch {
@@ -191,8 +222,9 @@
 }
 
 .pdf-source-page-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
   min-height: 3.35rem;
   box-sizing: border-box;
   align-items: center;
@@ -211,15 +243,6 @@
   color: CanvasText;
 }
 
-.pdf-source-page-toolbar button:last-child {
-  justify-self: end;
-}
-
-.pdf-source-page-toolbar strong {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.7rem;
-}
-
 .pdf-source-page-stage {
   display: grid;
   min-height: 0;
@@ -229,16 +252,30 @@
   background: #e8e8e8;
 }
 
+.pdf-source-page-stage[data-zoom-mode='fit-page'] {
+  overflow: hidden;
+}
+
 .pdf-source-page-stage:focus-visible {
   outline: 2px solid currentColor;
   outline-offset: -3px;
 }
 
+.pdf-source-page-shell {
+  display: block;
+  flex: 0 0 auto;
+  transform-origin: top left;
+}
+
 .pdf-source-page-stage canvas {
   display: block;
-  max-width: 100%;
+  width: var(--pdf-page-width);
+  height: var(--pdf-page-height);
+  max-width: none;
   background: white;
   box-shadow: 0 0.15rem 0.7rem rgb(0 0 0 / 14%);
+  transform: scale(var(--pdf-review-scale));
+  transform-origin: top left;
 }
 
 .pdf-source-page-stage p {
@@ -334,9 +371,26 @@
   height: auto;
   align-items: start;
   padding: 1rem;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto;
   overflow-anchor: none;
+}
+
+.publication-importer--review .epub-preview-stage[data-zoom-mode='fit-page'] {
+  overflow: hidden;
+}
+
+.epub-rendition-preview--review[data-review-pagination-status='paginating']
+  .epub-preview-stage::after {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #e8e8e8;
+  color: CanvasText;
+  content: 'Paginating complete EPUB pages…';
+  font-size: 0.72rem;
+  font-weight: 650;
 }
 
 .publication-importer--review .epub-review-controls {
@@ -372,41 +426,6 @@
 
 .publication-importer--review .epub-review-settings[open] > summary {
   border-color: currentColor;
-}
-
-.publication-importer--review .epub-review-navigation {
-  position: absolute;
-  z-index: 12;
-  top: calc(100% + 0.5rem);
-  right: 1rem;
-  left: 1rem;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.55rem;
-  min-height: 3.1rem;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  border-radius: 0.45rem;
-  padding: 0.4rem 0.55rem;
-  background: Canvas;
-  box-shadow: 0 0.45rem 1.2rem color-mix(in srgb, CanvasText 18%, transparent);
-  font-size: 0.67rem;
-}
-
-.publication-importer--review .epub-review-navigation button {
-  min-height: 2.15rem;
-  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-radius: 0.4rem;
-  padding: 0.35rem 0.55rem;
-  background: Canvas;
-  color: CanvasText;
-}
-
-.publication-importer--review .epub-review-navigation span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .publication-importer--review .epub-review-viewport-controls {
@@ -466,10 +485,9 @@
 }
 
 .publication-importer--review .epub-review-pagination {
-  display: grid;
-  grid-template-columns:
-    minmax(7rem, 1fr) minmax(8rem, auto) minmax(7rem, 1fr)
-    auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
   min-height: 3.35rem;
@@ -477,7 +495,55 @@
   padding: 0.5rem;
 }
 
-.publication-importer--review .epub-review-pagination button {
+.page-navigation {
+  display: grid;
+  grid-template-columns: 2.35rem minmax(8.5rem, auto) 2.35rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.page-navigation button {
+  box-sizing: border-box;
+  width: 2.35rem;
+  height: 2.35rem;
+  min-height: 2.35rem;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.page-navigation strong {
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+}
+
+.epub-review-return {
+  box-sizing: border-box;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  line-height: 1;
+}
+
+.page-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.page-zoom-controls select {
+  min-height: 2.35rem;
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-radius: 0.4rem;
+  padding: 0.3rem;
+  background: Canvas;
+  color: CanvasText;
+  font-size: 0.65rem;
+}
+
+.publication-importer--review .epub-review-pagination button,
+.page-zoom-controls button {
   min-height: 2.35rem;
   border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
   border-radius: 0.4rem;
@@ -491,16 +557,6 @@
   opacity: 0.42;
 }
 
-.publication-importer--review .epub-review-pagination > button:nth-of-type(2) {
-  justify-self: end;
-}
-
-.publication-importer--review .epub-review-pagination strong {
-  text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-}
-
 .publication-importer--review .epub-review-page-status {
   border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
   padding: 0.4rem 0.65rem;
@@ -509,15 +565,14 @@
 }
 
 .publication-importer--review .epub-preview-device {
+  box-sizing: border-box;
   width: var(--epub-device-width);
   height: var(--epub-device-height);
   min-height: 0;
   overflow: hidden;
-  border: 2px solid color-mix(in srgb, CanvasText 58%, transparent);
+  border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
   background: Canvas;
-  box-shadow:
-    0 0 0 0.3rem color-mix(in srgb, Canvas 55%, transparent),
-    0 0.45rem 1.2rem color-mix(in srgb, CanvasText 24%, transparent);
+  box-shadow: 0 0.15rem 0.7rem rgb(0 0 0 / 14%);
   aspect-ratio: auto;
   transform: scale(var(--epub-review-scale));
   transform-origin: top left;

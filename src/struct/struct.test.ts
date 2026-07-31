@@ -158,6 +158,28 @@ describe('STRUCT canonical document graph', () => {
     expect(renderPublicationXhtml(graph)).toContain(`href="#${target.id}"`)
   })
 
+  it('translates STRUCT fragment targets without rewriting explicit external links', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const target = graph.blocks[1]
+    graph.blocks[0] = {
+      ...graph.blocks[0],
+      text: 'Local External',
+      inline: [
+        { start: 0, end: 5, href: '#source-node', targetIds: [target.id] },
+        {
+          start: 6,
+          end: 14,
+          href: 'https://example.com',
+          targetIds: [target.id],
+        },
+      ],
+    }
+    const xhtml = renderPublicationXhtml(graph)
+    expect(xhtml).toContain(`href="#${target.id}"`)
+    expect(xhtml).toContain('href="https://example.com"')
+    expect(xhtml).not.toContain('href="#source-node"')
+  })
+
   it('round-trips the graph into a deterministic EPUB package', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const first = await buildStructEpub(graph)

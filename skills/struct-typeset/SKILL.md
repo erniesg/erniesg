@@ -1,0 +1,44 @@
+---
+name: struct-typeset
+description: Reconstruct and typeset source-backed PDF, DOCX, HTML, or scanned documents while preserving figures, diagrams, captions, tables, equations, footnotes, citations, hyperlinks, and multi-column reading order. Use when converting documents to EPUB or accessible HTML, diagnosing missing or flattened document structure, designing extraction adapters, or validating faithful visual fallbacks and provenance.
+---
+
+# Struct Typeset
+
+Build outputs from a canonical, source-backed document graph. Prefer verified semantics; preserve the bounded source region whenever structure is ambiguous.
+
+## Workflow
+
+1. Inspect the source adapter and existing fixtures before changing extraction logic.
+2. Extract text runs, glyph geometry, page objects, embedded assets, annotations, and links without assigning semantics prematurely.
+3. Convert the extraction result with `src/struct/from-reconstruction.ts`. Keep extractor IDs only in evidence; expose stable STRUCT IDs in graph relationships.
+4. Verify reading order, captions, notes, citations, tables, equations, and hyperlinks against source geometry and annotations.
+5. Promote an object to semantic structure only when its evidence is sufficient. Otherwise retain a bounded source asset or page-region fallback with its caption and provenance.
+6. Render from the STRUCT graph. Never drop an unresolved source obligation, invent a link destination, flatten a table into headings, or treat Markdown-like source text as markup without source evidence.
+7. Present recovery through `src/struct/recovery.ts`. Keep machine codes in logs or review tooling; show users plain-language outcomes and actions.
+8. Validate with diverse fixtures and inspect the produced EPUB or HTML, not only intermediate JSON.
+
+## Required invariants
+
+- Preserve every recoverable source text span exactly once in the reading flow or a declared source fallback.
+- Give every block, asset, and relationship stable IDs plus source pages, boxes, confidence, and source IDs.
+- Point graph relationships only to graph nodes/assets or explicit external destinations.
+- Keep verified hyperlinks clickable and uncertain references visible without a false destination.
+- Represent verified tables with cells, spans, header scope, and inline links; keep ambiguous tables as one bounded visual object.
+- Retain equations and diagrams as source artwork unless a transcription is independently verified.
+- Keep footnote/endnote markers and bodies even when their association is unresolved.
+- Hash receipts from canonical metadata and asset digests, not duplicate embedded bytes.
+- Treat a readable fallback as recoverable output, not publication-ready output.
+
+## Validation
+
+Run the narrowest relevant fixtures first, then the repository gates:
+
+```bash
+npx vitest run src/struct/struct.test.ts src/research/epub-source-fallback.test.ts
+npm run test
+npm run build
+scripts/agent-evidence
+```
+
+Add fixtures that vary independently across born-digital/scanned input, one/two columns, raster/vector visuals, semantic/ambiguous tables, equations, notes, and internal/external links. Do not tune a rule to a paper title, author, fixed page, or expected caption string.

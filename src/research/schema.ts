@@ -203,10 +203,7 @@ const figureNode = canonicalNodeBase
                         rowSpan: z.number().int().positive(),
                         id: canonicalId.optional(),
                         headerIds: z.array(canonicalId).optional(),
-                        sourceRuns: z
-                          .array(semanticTableSourceRun)
-                          .min(1)
-                          .optional(),
+                        sourceRuns: z.array(semanticTableSourceRun).optional(),
                         inlineRuns: z.array(semanticTableInlineRun).optional(),
                         inlineMapping: z
                           .object({

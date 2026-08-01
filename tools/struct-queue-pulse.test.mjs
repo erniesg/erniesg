@@ -1,9 +1,22 @@
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
   classifyRepositorySessions,
   evaluateDiskCapacity,
+  evaluateTimerHealth,
   parseTargetUnit,
   selectSafeCleanupCandidates,
 } from './struct-queue-pulse.mjs'
@@ -13,6 +26,13 @@ const servicePath = new URL(
   import.meta.url,
 )
 const service = readFileSync(servicePath, 'utf8')
+const pulsePath = fileURLToPath(
+  new URL('./struct-queue-pulse.mjs', import.meta.url),
+)
+const fakeSystemctlPath = new URL(
+  '../tests/fixtures/struct-queue-systemctl.mjs',
+  import.meta.url,
+)
 
 const now = Date.parse('2026-08-01T12:00:00Z')
 
@@ -64,7 +84,7 @@ describe('STRUCT queue pulse contract', () => {
 
   it('counts an exact live tmux session as the repository global slot', () => {
     const result = classifyRepositorySessions({
-      ledger: { schema_version: '1', sessions: [session()] },
+      ledger: { schema_version: 1, sessions: [session()] },
       repo: 'erniesg/erniesg',
       now,
       processArgs: [
@@ -160,6 +180,28 @@ describe('STRUCT queue pulse contract', () => {
     ).toMatchObject({ blocked: true, reason: 'disk-free-space-low' })
   })
 
+  it('requires the repo scheduler, future fire, and exact timeout policy', () => {
+    const healthy = evaluateTimerHealth({
+      timerProperties:
+        'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\nSubState=waiting\n',
+      timerList:
+        'Sat 2026-08-01 12:30:00 UTC 25min Sat 2026-08-01 12:00:00 UTC 5min ago erniesg-struct-typeset-queue.timer erniesg-struct-typeset-queue.service\n',
+      serviceProperties: 'TimeoutStartUSec=30min\nTimeoutStopUSec=5min\n',
+    })
+    const masked = evaluateTimerHealth({
+      timerProperties:
+        'LoadState=masked\nUnitFileState=masked\nActiveState=inactive\nSubState=dead\n',
+      timerList: 'n/a n/a n/a n/a erniesg-struct-typeset-queue.timer\n',
+      serviceProperties: 'TimeoutStartUSec=30min\nTimeoutStopUSec=5min\n',
+    })
+
+    expect(healthy.healthy).toBe(true)
+    expect(masked).toMatchObject({
+      healthy: false,
+      reason: 'scheduler-health-invalid',
+    })
+  })
+
   it('allows cleanup only for checkpointed terminal worktrees and reproducible caches', () => {
     const completedSession = session({
       session_id: 'completed-session',
@@ -225,5 +267,132 @@ describe('STRUCT queue pulse contract', () => {
       '/srv/cache/reproducible/pdf-renders',
     ])
     expect(result.rejected).toHaveLength(2)
+  })
+})
+
+const runPulse = ({
+  sessions = [],
+  processArgs = [],
+  disk = { totalBytes: 100, freeBytes: 40 },
+  systemctlState = 'healthy',
+} = {}) => {
+  const root = mkdtempSync(join(tmpdir(), 'struct-queue-pulse-'))
+  const overnight = join(root, 'overnight')
+  const state = join(root, 'state')
+  const checkpoint = join(state, 'checkpoints/latest.json')
+  const calls = join(root, 'systemctl-calls.jsonl')
+  const processSnapshot = join(root, 'process-snapshot.txt')
+  const diskState = join(root, 'disk-state.json')
+  mkdirSync(overnight, { recursive: true })
+  mkdirSync(state, { recursive: true })
+  writeFileSync(
+    join(overnight, 'erniesg-erniesg.target'),
+    'rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service\n',
+  )
+  writeFileSync(
+    join(state, 'vm-sessions.json'),
+    `${JSON.stringify({ schema_version: 1, sessions })}\n`,
+  )
+  writeFileSync(processSnapshot, `${processArgs.join('\n')}\n`)
+  writeFileSync(diskState, `${JSON.stringify(disk)}\n`)
+  chmodSync(fakeSystemctlPath, 0o755)
+
+  const result = spawnSync(process.execPath, [pulsePath], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      STRUCT_QUEUE_REPO_ROOT: root,
+      STRUCT_QUEUE_STATE_ROOT: state,
+      STRUCT_QUEUE_OVERNIGHT_ROOT: overnight,
+      STRUCT_QUEUE_CHECKPOINT_FILE: checkpoint,
+      STRUCT_QUEUE_WORKTREE_ROOT: join(root, 'worktrees'),
+      STRUCT_QUEUE_REPRODUCIBLE_CACHE_ROOT: join(root, 'cache/reproducible'),
+      STRUCT_QUEUE_HANDOFF_ROOT: join(root, 'handoffs'),
+      STRUCT_QUEUE_SYSTEMCTL: fileURLToPath(fakeSystemctlPath),
+      STRUCT_QUEUE_PROCESS_SNAPSHOT_FILE: processSnapshot,
+      STRUCT_QUEUE_DISK_STATE_FILE: diskState,
+      STRUCT_QUEUE_MINIMUM_FREE_BYTES: '5',
+      STRUCT_QUEUE_DISK_HIGH_WATER_PERCENT: '90',
+      STRUCT_QUEUE_FAKE_SYSTEMCTL_STATE: systemctlState,
+      STRUCT_QUEUE_FAKE_SYSTEMCTL_CALLS: calls,
+    },
+  })
+  if (!existsSync(checkpoint)) {
+    throw new Error(
+      `queue pulse did not write a checkpoint: ${result.stderr || result.error || 'unknown failure'}`,
+    )
+  }
+  const savedCheckpoint = JSON.parse(readFileSync(checkpoint, 'utf8'))
+  const systemctlCalls = readFileSync(calls, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  rmSync(root, { recursive: true, force: true })
+  return { result, checkpoint: savedCheckpoint, systemctlCalls }
+}
+
+describe('STRUCT queue pulse resumability', () => {
+  it('starts the isolated drain without waiting and leaves an atomic checkpoint', () => {
+    const { result, checkpoint, systemctlCalls } = runPulse()
+
+    expect(result.status, JSON.stringify(checkpoint)).toBe(0)
+    expect(checkpoint).toMatchObject({
+      schema_version: '1',
+      outcome: 'dispatch-requested',
+      failure_class: null,
+    })
+    expect(systemctlCalls).toContainEqual([
+      '--user',
+      'start',
+      '--no-block',
+      'rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service',
+    ])
+  })
+
+  it('records the exact live worker and does not dispatch a duplicate', () => {
+    const active = session()
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      sessions: [active],
+      processArgs: [
+        `tmux -L rucksack-0123 new-session -d -s ${active.tmux_session}`,
+      ],
+    })
+
+    expect(result.status).toBe(0)
+    expect(checkpoint).toMatchObject({
+      outcome: 'worker-active',
+      live_sessions: [{ issue: '119', session_id: active.session_id }],
+    })
+    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
+  })
+
+  it('fails closed at high water and records the recovery action', () => {
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      disk: { totalBytes: 100, freeBytes: 10 },
+    })
+
+    expect(result.status).toBe(2)
+    expect(checkpoint).toMatchObject({
+      outcome: 'queue-health-blocked',
+      failure_class: 'disk-high-water',
+    })
+    expect(checkpoint.next_action).toMatch(
+      /active worktrees, handoffs, receipts/,
+    )
+    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
+  })
+
+  it('records a masked scheduler as a health failure', () => {
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      systemctlState: 'masked-timer',
+    })
+
+    expect(result.status).toBe(2)
+    expect(checkpoint).toMatchObject({
+      outcome: 'queue-health-blocked',
+      failure_class: 'scheduler-health-invalid',
+    })
+    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 })

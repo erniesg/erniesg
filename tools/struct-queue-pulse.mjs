@@ -104,7 +104,7 @@ export const classifyRepositorySessions = ({
   const parsedLedger = asObject(ledger)
   if (
     !parsedLedger ||
-    parsedLedger.schema_version !== '1' ||
+    String(parsedLedger.schema_version) !== '1' ||
     !Array.isArray(parsedLedger.sessions)
   ) {
     return blockedSessionState(
@@ -387,10 +387,20 @@ const systemctl = (args) =>
   run(process.env.STRUCT_QUEUE_SYSTEMCTL ?? 'systemctl', ['--user', ...args])
 
 const diskUsage = (path) => {
+  const fixture = process.env.STRUCT_QUEUE_DISK_STATE_FILE
+  if (fixture) return readJson(fixture)
   const stats = statfsSync(path, { bigint: true })
   const totalBytes = Number(stats.blocks * stats.bsize)
   const freeBytes = Number(stats.bavail * stats.bsize)
   return { totalBytes, freeBytes }
+}
+
+const processSnapshot = () => {
+  const fixture = process.env.STRUCT_QUEUE_PROCESS_SNAPSHOT_FILE
+  const raw = fixture
+    ? readFileSync(fixture, 'utf8')
+    : run('ps', ['-eo', 'args='])
+  return raw.split(/\r?\n/u).filter(Boolean)
 }
 
 const writeAtomicCheckpoint = (path, value) => {
@@ -414,7 +424,7 @@ const loadCleanupManifest = (path, stateRoot) => {
   const manifest = readJson(path)
   if (
     !asObject(manifest) ||
-    manifest.schema_version !== '1' ||
+    String(manifest.schema_version) !== '1' ||
     !Array.isArray(manifest.candidates)
   ) {
     throw new Error('cleanup manifest is malformed')
@@ -612,9 +622,7 @@ export const runQueuePulse = () => {
       })
     }
 
-    const processArgs = run('ps', ['-eo', 'args='])
-      .split(/\r?\n/u)
-      .filter(Boolean)
+    const processArgs = processSnapshot()
     const ledger = readJson(config.sessionFile)
     const sessionState = classifyRepositorySessions({
       ledger,

@@ -167,6 +167,9 @@ describe('EPUB rendition preview', () => {
     expect(css).not.toContain('overflow: auto hidden')
     expect(css).toContain('overflow-wrap: anywhere !important')
     expect(css).toContain('white-space: normal !important')
+    expect(css).toContain('.source-code {')
+    expect(css).toContain('overflow-x: auto !important')
+    expect(css).toContain('white-space: pre !important')
   })
 
   it('captures reader font sizes in cooperative read and write passes', async () => {

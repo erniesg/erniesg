@@ -17210,23 +17210,14 @@ describe('PDF visual association graph', () => {
     expect(rasterizeFigure.mock.calls[0][0]).toMatchObject({
       kind: 'figure',
       page: 1,
-      sourceObjectIds: ['algorithm-source-p001-001'],
+      sourceObjectIds: ['code-source-p001-001-001'],
     })
-    expect(
-      containsSourceBox(
-        rasterizeFigure.mock.calls[0][0].sourceBox,
-        algorithmCaption.box,
-      ),
-    ).toBe(true)
     expect(
       containsSourceBox(
         rasterizeFigure.mock.calls[0][0].sourceBox,
         algorithmRegions[4].box,
       ),
     ).toBe(true)
-    expect(rasterizeFigure.mock.calls[0][0].sourceBox.y).toBeLessThanOrEqual(
-      algorithmCaption.box.y - 0.009,
-    )
     expect(
       rasterizeFigure.mock.calls[0][0].sourceBox.y +
         rasterizeFigure.mock.calls[0][0].sourceBox.height,
@@ -17243,13 +17234,14 @@ describe('PDF visual association graph', () => {
         sourceLineIds: algorithmRegions.flatMap((region) =>
           region.lines.map((line) => line.id),
         ),
-        sourceText: '',
+        sourceText: algorithmRegions.map((region) => region.text).join('\n'),
         status: 'matched',
+        preformatted: expect.objectContaining({ status: 'proved' }),
         evidence: expect.arrayContaining([
-          'source-algorithm-block',
-          'contiguous-algorithm-line-markers',
+          'source-preformatted-block',
+          'source-indentation-and-ragged-measure',
           'source-page-crop',
-          'source-text-transcript-unresolved',
+          'source-line-breaks-preserved',
         ]),
       }),
     ])
@@ -17524,6 +17516,126 @@ function preformattedCropRasterizer() {
 }
 
 describe('PDF preformatted source blocks', () => {
+  it('detects a shell transcript from monospaced source evidence without language keywords', async () => {
+    const fixture = preformattedTestRegion('shell-transcript', 1, [
+      {
+        text: 'Captured session:',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.2,
+      },
+      { text: '$ tool --version', fontName: 'NimbusMonoPS-Regular', y: 0.24 },
+      { text: 'tool 4.2.0', fontName: 'NimbusMonoPS-Regular', y: 0.26 },
+      { text: '$ exit', fontName: 'NimbusMonoPS-Regular', y: 0.28 },
+    ])
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [fixture],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        semanticKind: 'code',
+        captionRegionId: fixture.id,
+        evidence: expect.arrayContaining(['monospaced-source-lines']),
+        preformatted: expect.objectContaining({
+          status: 'proved',
+          lines: fixture.lines.slice(1).map((line) =>
+            expect.objectContaining({
+              text: line.text,
+              sourceRegionId: fixture.id,
+              sourceLineId: line.id,
+            }),
+          ),
+        }),
+      }),
+    ])
+  })
+
+  it('keeps keyword-shaped justified prose as prose without source listing evidence', async () => {
+    const prose = preformattedTestRegion('keyword-prose', 1, [
+      {
+        text: 'Here is some source code:',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.2,
+      },
+      {
+        text: 'This ordinary paragraph remains fully justified.',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.23,
+      },
+      {
+        text: 'Its language does not establish a listing boundary.',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.25,
+      },
+      {
+        text: 'Source geometry remains the only promotion authority.',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.27,
+      },
+    ])
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [prose],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(result.relationships).toEqual([])
+    expect(result.consumedLineIds.size).toBe(0)
+  })
+
+  it('keeps one proved listing across a two-column source break in canonical line order', async () => {
+    const caption: PdfPageRegion = {
+      ...preformattedTestRegion('column-listing-caption', 1, [
+        {
+          text: 'Listing 2: Recorded values',
+          fontName: 'NimbusRomNo9L-Regu',
+          y: 0.62,
+        },
+      ]),
+      column: 'left',
+    }
+    const left: PdfPageRegion = {
+      ...preformattedTestRegion('column-listing-left', 1, [
+        { text: 'alpha := 1', fontName: 'SFTT1000', y: 0.67 },
+        { text: 'beta := 2', fontName: 'SFTT1000', y: 0.7 },
+      ]),
+      column: 'left',
+    }
+    const right: PdfPageRegion = {
+      ...preformattedTestRegion('column-listing-right', 1, [
+        { text: 'gamma := 3', fontName: 'SFTT1000', x: 0.55, y: 0.1 },
+        { text: 'delta := 4', fontName: 'SFTT1000', x: 0.55, y: 0.13 },
+      ]),
+      column: 'right',
+    }
+    const rasterizeFigure = preformattedCropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [right, caption, left],
+      rasterizeFigure,
+    })
+    const relationship = result.relationships[0]
+
+    expect(result.relationships).toHaveLength(1)
+    expect(relationship).toMatchObject({
+      label: 'Listing 2',
+      semanticKind: 'code',
+      sourceLineIds: [...left.lines, ...right.lines].map((line) => line.id),
+      preformatted: {
+        status: 'proved',
+        lines: [...left.lines, ...right.lines].map((line) =>
+          expect.objectContaining({ text: line.text, sourceLineId: line.id }),
+        ),
+      },
+    })
+    expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+  })
+
   it('preserves proportional-font pseudocode as an exact source crop', async () => {
     const introducer = preformattedTestRegion('pseudocode-introducer', 1, [
       {
@@ -17614,7 +17726,7 @@ describe('PDF preformatted source blocks', () => {
         ],
       },
       evidence: expect.arrayContaining([
-        'explicit-preformatted-introducer',
+        'source-indentation-and-ragged-measure',
         'exact-single-run-line-text',
         'source-geometry-indentation',
         'source-page-crop',
@@ -18528,6 +18640,222 @@ describe('PDF preformatted source blocks', () => {
       opening.lines
         .slice(1)
         .every((line) => result.consumedLineIds.has(line.id)),
+    ).toBe(true)
+  })
+
+  it('uses literal leading whitespace without adding quantized geometry indentation', async () => {
+    const opening = preformattedTestRegion('literal-indent-listing', 1, [
+      {
+        text: 'The following listing keeps authored indentation:',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.2,
+      },
+      {
+        text: '  if ready:',
+        fontName: 'SFTT1000',
+        x: 0.18,
+        width: 0.35,
+        y: 0.24,
+      },
+      {
+        text: '    return value',
+        fontName: 'SFTT1000',
+        x: 0.21,
+        width: 0.28,
+        y: 0.255,
+      },
+      { text: '  else:', fontName: 'SFTT1000', x: 0.18, width: 0.2, y: 0.27 },
+      {
+        text: '    return fallback',
+        fontName: 'SFTT1000',
+        x: 0.21,
+        width: 0.24,
+        y: 0.285,
+      },
+    ])
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [opening],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    const relationship = result.relationships[0]
+    expect(relationship.preformatted).toMatchObject({
+      status: 'proved',
+      lines: [
+        { text: '  if ready:', indentColumns: 0 },
+        { text: '    return value', indentColumns: 0 },
+        { text: '  else:', indentColumns: 0 },
+        { text: '    return fallback', indentColumns: 0 },
+      ],
+    })
+  })
+
+  it('continues a listing from the right column into the next page left column', async () => {
+    const opening = {
+      ...preformattedTestRegion('right-column-listing', 1, [
+        {
+          text: 'The listing continues on the next page:',
+          fontName: 'NimbusRomNo9L-Regu',
+          y: 0.58,
+        },
+        { text: 'const first = 1', fontName: 'SFTT1000', y: 0.61 },
+        { text: 'const second = 2', fontName: 'SFTT1000', y: 0.625 },
+        { text: 'return first + second', fontName: 'SFTT1000', y: 0.64 },
+      ]),
+      column: 'right' as const,
+    }
+    const continuation = {
+      ...preformattedTestRegion('next-page-left-listing', 2, [
+        { text: 'const third = 3', fontName: 'SFTT1000', y: 0.09 },
+        { text: 'return third', fontName: 'SFTT1000', y: 0.105 },
+      ]),
+      column: 'left' as const,
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([], 1), page([], 2)],
+      regions: [continuation, opening],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(
+      result.relationships[0].preformatted?.lines.map((line) => line.text),
+    ).toEqual([
+      'const first = 1',
+      'const second = 2',
+      'return first + second',
+      'const third = 3',
+      'return third',
+    ])
+  })
+
+  it('keeps a mid-page spanning source lane deterministic around column bands', async () => {
+    const spanListing = {
+      ...preformattedTestRegion('mid-page-span-listing', 1, [
+        {
+          text: 'Listing 4: Shared configuration',
+          fontName: 'NimbusRomNo9L-Regu',
+          y: 0.43,
+        },
+        { text: 'host = "localhost"', fontName: 'SFTT1000', y: 0.47 },
+        { text: 'port = 8080', fontName: 'SFTT1000', y: 0.485 },
+        { text: 'secure = true', fontName: 'SFTT1000', y: 0.5 },
+      ]),
+      column: 'span' as const,
+    }
+    const leftProse = {
+      ...preformattedTestRegion('mid-page-left-prose', 1, [
+        {
+          text: 'Left column material above the shared listing.',
+          fontName: 'NimbusRomNo9L-Regu',
+          y: 0.2,
+        },
+      ]),
+      column: 'left' as const,
+    }
+    const rightProse = {
+      ...preformattedTestRegion('mid-page-right-prose', 1, [
+        {
+          text: 'Right column material above the shared listing.',
+          fontName: 'NimbusRomNo9L-Regu',
+          y: 0.2,
+        },
+      ]),
+      column: 'right' as const,
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [rightProse, spanListing, leftProse],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0].captionRegionId).toBe(spanListing.id)
+    expect(
+      result.relationships[0].preformatted?.lines.map((line) => line.text),
+    ).toEqual(['host = "localhost"', 'port = 8080', 'secure = true'])
+  })
+
+  it('reserves typed table rows before generic listing detection', async () => {
+    const caption = {
+      ...preformattedTestRegion(
+        'typed-table-caption',
+        1,
+        [
+          {
+            text: 'Table 1: Monospaced rows remain tabular',
+            fontName: 'NimbusRomNo9L-Regu',
+            y: 0.2,
+          },
+        ],
+        'caption',
+      ),
+    }
+    const rows = preformattedTestRegion('typed-table-rows', 1, [
+      { text: 'alpha     1', fontName: 'SFTT1000', y: 0.24, width: 0.22 },
+      { text: 'beta      2', fontName: 'SFTT1000', y: 0.255, width: 0.2 },
+      { text: 'gamma     3', fontName: 'SFTT1000', y: 0.27, width: 0.18 },
+      { text: 'delta     4', fontName: 'SFTT1000', y: 0.285, width: 0.16 },
+    ])
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [rows, caption],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(
+      result.relationships.some(
+        (relationship) => relationship.semanticKind === 'code',
+      ),
+    ).toBe(false)
+    expect(
+      result.relationships.some(
+        (relationship) => relationship.kind === 'table',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not promote a bibliography entry run or a typed equation to code', async () => {
+    const references = preformattedTestRegion('bibliography-negative', 1, [
+      { text: 'References:', fontName: 'NimbusRomNo9L-Regu', y: 0.2 },
+      { text: '[1] A source-backed entry', fontName: 'SFTT1000', y: 0.24 },
+      {
+        text: '[2] Another source-backed entry',
+        fontName: 'SFTT1000',
+        y: 0.255,
+      },
+      {
+        text: '[3] A final source-backed entry',
+        fontName: 'SFTT1000',
+        y: 0.27,
+      },
+    ])
+    const equation = equationRegion(
+      'typed-equation-negative',
+      'x = y + 1',
+      box(0.2, 0.42, 0.3, 0.02),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [references, equation],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(
+      result.relationships.some(
+        (relationship) => relationship.semanticKind === 'code',
+      ),
+    ).toBe(false)
+    expect(
+      result.relationships.some(
+        (relationship) => relationship.kind === 'equation',
+      ),
     ).toBe(true)
   })
 })

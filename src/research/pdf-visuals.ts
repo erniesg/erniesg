@@ -64,6 +64,11 @@ import {
 import { sanitizeXmlText } from './publication-integrity'
 import { sha256HexSync } from './sha256-sync'
 import { PDFJS_DISPLAY_OPERATOR_ADAPTER } from './pdf-text-paint'
+import {
+  runTableCandidateProvider,
+  type TableCandidateProvider,
+  type TableCandidateReceipt,
+} from './table-candidate-provider'
 
 type VisualKind = PdfVisualRelationship['kind']
 type PdfNativeObject = NonNullable<PdfPageAnalysis['objects']>[number]
@@ -9185,12 +9190,16 @@ export async function reconstructPdfVisuals({
   pages,
   regions,
   rasterizeFigure: suppliedRasterizeFigure,
+  tableCandidateProvider,
+  allowRemoteTableCandidateProvider = false,
   onProgress,
   signal,
 }: {
   pages: PdfPageAnalysis[]
   regions: PdfPageRegion[]
   rasterizeFigure?: PdfFigureRasterizer
+  tableCandidateProvider?: TableCandidateProvider
+  allowRemoteTableCandidateProvider?: boolean
   onProgress?: (progress: PdfImportProgress) => void
   signal?: AbortSignal
 }) {
@@ -9199,6 +9208,7 @@ export async function reconstructPdfVisuals({
     ? withSourceCropAttemptProvenance(suppliedRasterizeFigure)
     : undefined
   const diagnostics: ReconstructionDiagnostic[] = []
+  const tableCandidateReceipts: TableCandidateReceipt[] = []
   const unresolvedExtensionTextItemKeys = new Set<string>()
   const unresolvedExtensionTextItems: PdfSourceRun[] = []
   for (const page of pages) {
@@ -9663,6 +9673,108 @@ export async function reconstructPdfVisuals({
           ) {
             semanticTableGrid = null
           }
+        }
+        if (
+          !semanticTableScope &&
+          !semanticTableGrid &&
+          boundedScope.scope &&
+          tableCandidateProvider
+        ) {
+          const scope = boundedScope.scope
+          const scopedRegions = availableTableRegions.filter((region) =>
+            scope.sourceRegionIds.includes(region.id),
+          )
+          let providerDiagnostic:
+            | TableCandidateReceipt['diagnostic']
+            | 'table-candidate-provider-unavailable' =
+            'table-candidate-provider-unavailable'
+          if (rasterizeFigure && scopedRegions.length > 0) {
+            const candidateImage = await rasterizeFigure({
+              kind: 'table',
+              page: scope.page,
+              sourceBox: scope.cropBox,
+              sourceObjectIds: [`table-candidate:${scope.id}`],
+              sourceBoxes: [{ ...scope.cropBox }],
+              tightenToSourceInk: false,
+            }).catch(() => null)
+            if (
+              candidateImage &&
+              (candidateImage.mediaType === 'image/png' ||
+                candidateImage.mediaType === 'image/jpeg')
+            ) {
+              const candidateResult = await runTableCandidateProvider({
+                provider: tableCandidateProvider,
+                image: {
+                  bytes: candidateImage.bytes,
+                  mediaType: candidateImage.mediaType,
+                  sha256: candidateImage.sha256,
+                  sourceCropBox: scope.cropBox,
+                },
+                sourceRegions: scopedRegions,
+                allowRemote: allowRemoteTableCandidateProvider,
+              })
+              let receipt = candidateResult.receipt
+              if (candidateResult.verified) {
+                const verifiedGrid = candidateResult.verified.grid
+                const verifiedTable = canonicalTableFromLines(
+                  verifiedGrid.lines,
+                  {
+                    detectedRectangularGeometry: true,
+                    detectedGrid: verifiedGrid,
+                    sourceRegions: verifiedGrid.sourceRegions,
+                    links:
+                      pages.find((page) => page.page === caption.page)?.links ??
+                      [],
+                  },
+                )
+                const annotationIds = (verifiedTable?.rows ?? []).flatMap(
+                  (row) =>
+                    row.cells.flatMap((cell) =>
+                      (cell.inlineRuns ?? []).flatMap((run) =>
+                        run.annotationId ? [run.annotationId] : [],
+                      ),
+                    ),
+                )
+                if (
+                  verifiedTable &&
+                  new Set(annotationIds).size === annotationIds.length
+                ) {
+                  semanticTableGrid = verifiedGrid
+                } else {
+                  receipt = {
+                    ...receipt,
+                    verifiedGridSha256: null,
+                    diagnostic: 'table-candidate-proposal-failed-verification',
+                  }
+                }
+              }
+              tableCandidateReceipts.push(receipt)
+              providerDiagnostic = receipt.diagnostic
+            }
+          }
+          const diagnosticCode = {
+            'table-candidate-no-proposal': 'TABLE_CANDIDATE_NO_PROPOSAL',
+            'table-candidate-proposal-failed-verification':
+              'TABLE_CANDIDATE_VERIFICATION_FAILED',
+            'table-candidate-provider-unavailable':
+              'TABLE_CANDIDATE_PROVIDER_UNAVAILABLE',
+            'table-candidate-verified': 'TABLE_CANDIDATE_VERIFIED',
+          }[providerDiagnostic] as ReconstructionDiagnostic['code']
+          diagnostics.push({
+            code: diagnosticCode,
+            severity:
+              providerDiagnostic === 'table-candidate-verified' ||
+              providerDiagnostic === 'table-candidate-no-proposal'
+                ? 'info'
+                : 'warning',
+            page: scope.page,
+            message: `${label.label}: ${providerDiagnostic}.`,
+            sourceBoxes: [scope.cropBox],
+            target: {
+              regionIds: [caption.id, ...scope.sourceRegionIds],
+              markerId: null,
+            },
+          })
         }
         // A proved bounded text/native scope outranks the legacy geometric
         // detector. The latter may join a neighbouring chart that shares row
@@ -12280,5 +12392,6 @@ export async function reconstructPdfVisuals({
     consumedLineIds,
     partialRegionLineSelections,
     diagnostics,
+    ...(tableCandidateProvider ? { tableCandidateReceipts } : {}),
   }
 }

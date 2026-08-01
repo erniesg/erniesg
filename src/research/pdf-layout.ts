@@ -75,6 +75,7 @@ import {
   visualCanonicalNodeId,
   type PdfFigureRasterizer,
 } from './pdf-visuals'
+import type { TableCandidateProvider } from './table-candidate-provider'
 export { visualCanonicalNodeId } from './pdf-visuals'
 import {
   canonicalPdfSourceSemanticFlowEvidence,
@@ -10682,6 +10683,8 @@ export async function reconstructPageAnalyses({
   byteLength,
   metadata = {},
   rasterizeFigure,
+  tableCandidateProvider,
+  allowRemoteTableCandidateProvider = false,
   onProgress,
   signal,
 }: {
@@ -10691,6 +10694,8 @@ export async function reconstructPageAnalyses({
   byteLength: number
   metadata?: PdfDocumentMetadata
   rasterizeFigure?: PdfFigureRasterizer
+  tableCandidateProvider?: TableCandidateProvider
+  allowRemoteTableCandidateProvider?: boolean
   onProgress?: (progress: PdfImportProgress) => void
   signal?: AbortSignal
 }): Promise<PdfReconstruction> {
@@ -10888,6 +10893,8 @@ export async function reconstructPageAnalyses({
     pages,
     regions: regionResult.regions,
     rasterizeFigure,
+    tableCandidateProvider,
+    allowRemoteTableCandidateProvider,
     onProgress,
     signal,
   })
@@ -11943,6 +11950,9 @@ export async function reconstructPageAnalyses({
       countsByDiagnosticCode: {},
     },
     diagnostics: assessment.diagnostics,
+    ...(tableCandidateProvider
+      ? { tableCandidateReceipts: visualResult.tableCandidateReceipts ?? [] }
+      : {}),
     semanticSignals: assessment.semanticSignals,
     completeness: assessment.completeness,
     readiness: assessment.readiness,

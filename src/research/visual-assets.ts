@@ -1981,6 +1981,7 @@ function exactSourceSequenceForDetectedCell(
   ) {
     return null
   }
+  if (!cell.text.trim()) return sourceCellBoxes === undefined ? null : []
   const available = orderedOwnedTableSourceRuns(
     tableLineSourceIds(owningDetectedLine).flatMap((lineId) => {
       const owner = sourceLineOwners.get(lineId)?.[0]

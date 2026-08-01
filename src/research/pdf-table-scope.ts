@@ -54,6 +54,9 @@ const MIN_COLUMN_GUTTER_CENTRE = 0.25
 const MAX_COLUMN_GUTTER_CENTRE = 0.75
 const MIN_DOMINANT_GUTTER_SIDE_ENTRIES = 3
 const MIN_DOMINANT_GUTTER_COLUMN_AGREEMENT = 0.7
+const MAX_SOURCE_FALLBACK_CAPTION_GAP = 0.055
+const MAX_SOURCE_FALLBACK_ROW_GAP = 0.055
+const MIN_SOURCE_FALLBACK_SCORE = 4
 
 export function compactTabularSlabMayFollowCaption({
   tabularSlab,
@@ -189,6 +192,13 @@ export type PdfTableObjectLineage = {
 export type PdfTableScope = {
   id: string
   proof: PdfTableScopeProof
+  /**
+   * A fallback scope is intentionally not a semantic-table claim. It is a
+   * deterministic source envelope that lets the readable export retain the
+   * original region while a later semantic detector remains free to fail
+   * closed.
+   */
+  fallback?: 'source-preserved'
   page: number
   direction: 'above' | 'below'
   sourceRegionIds: string[]
@@ -221,6 +231,12 @@ export type PdfTableScopeResolution = {
   status: 'matched' | 'ambiguous' | 'unresolved'
   scope: PdfTableScope | null
   candidates: PdfTableScope[]
+  /**
+   * Candidate source envelopes that are safe to preserve but not strong
+   * enough to promote as a bounded table scope. Keeping these separate from
+   * `candidates` preserves the semantic resolver's fail-closed contract.
+   */
+  fallbackCandidates?: PdfTableScope[]
   ambiguity: PdfTableScopeAmbiguity
 }
 
@@ -4192,6 +4208,267 @@ function ruledCandidates(
   return { candidates, duplicateObjectIds }
 }
 
+function sourceFallbackStructuredPromptLine(line: PdfRegionLine) {
+  return /^(?:#{1,6}\s|[-*]\s|\d{1,3}[.)]\s|\{[^}]+\}|(?:you|return|output|response|action|world|role|environment)\b)/iu.test(
+    line.text.trim(),
+  )
+}
+
+function sourceFallbackNumericLine(line: PdfRegionLine) {
+  const text = line.text.trim()
+  const numericTokens = text.match(/[-+]?\d+(?:[.,]\d+)?%?/gu) ?? []
+  const lexicalTokens = text.match(/\p{L}{2,}/gu) ?? []
+  return (
+    numericTokens.length >= 2 && numericTokens.length >= lexicalTokens.length
+  )
+}
+
+function sourceFallbackTableScore(rows: TableLineRow[]) {
+  const entries = rows.flatMap((row) => row.entries)
+  const lines = entries.map((entry) => entry.line)
+  const multiAnchorRows = rows.filter(
+    (row) => row.anchors.length >= MIN_TABULAR_ROW_ANCHORS,
+  ).length
+  const numericRows = lines.filter(sourceFallbackNumericLine).length
+  const structuredPromptRows = lines.filter(
+    sourceFallbackStructuredPromptLine,
+  ).length
+  const chartLabelRows = entries.filter((entry) =>
+    ['chart-label', 'side'].includes(entry.region.kind),
+  ).length
+  const wideRows = rows.filter((row) => row.box.width >= 0.5).length
+  return (
+    multiAnchorRows * 4 +
+    numericRows +
+    structuredPromptRows * 2 +
+    Math.min(chartLabelRows, 4) +
+    (rows.length >= 5 ? 2 : 0) +
+    (wideRows >= 5 ? 2 : 0)
+  )
+}
+
+function sourceFallbackStructuralRow(row: TableLineRow) {
+  return (
+    row.anchors.length >= 2 ||
+    row.entries.some((entry) =>
+      ['chart-label', 'side'].includes(entry.region.kind),
+    ) ||
+    row.entries.some((entry) => sourceFallbackNumericLine(entry.line))
+  )
+}
+
+function sourceFallbackTableLikeRows(rows: TableLineRow[]) {
+  const structural = rows.map(sourceFallbackStructuralRow)
+  return rows.map(
+    (row, index) =>
+      structural[index] ||
+      (row.anchors.length === 1 &&
+        structural[index - 1] === true &&
+        structural[index + 1] === true),
+  )
+}
+
+/**
+ * Find the nearest deterministic source envelope when semantic table proof
+ * fails. This deliberately accepts mixed text shapes (atomized chart labels,
+ * compact numeric rows, and prompt-like blocks), but it never promotes the
+ * result to a semantic table. The envelope is retained only as a readable
+ * source-artwork fallback and is ranked by source geometry/text signals.
+ */
+function sourcePreservedFallbackTableCandidates(
+  caption: PdfPageRegion,
+  pageRegions: PdfPageRegion[],
+) {
+  const ranked: Array<{ score: number; scope: PdfTableScope }> = []
+  const promptLikeCaption = /\bprompt\b/iu.test(caption.text)
+  const lanes = [
+    completeAboveCaptionLane(caption, pageRegions),
+    completeBelowCaptionLane(caption, pageRegions),
+  ]
+  for (const lane of lanes) {
+    const excludedVisualTextLineCount = pageRegions
+      .filter(
+        (region) =>
+          region.page === caption.page &&
+          ['chart-label', 'side'].includes(region.kind) &&
+          region.includedInReadingOrder === false,
+      )
+      .reduce((total, region) => total + region.lines.length, 0)
+    const entries = pageRegions
+      .filter(
+        (region) =>
+          region.id !== caption.id &&
+          region.page === caption.page &&
+          region.lines.length > 0 &&
+          region.text.trim().length > 0 &&
+          region.nativeObjectIds.length === 0 &&
+          eligibleTableTextRegion(region) &&
+          region.kind !== 'header' &&
+          region.kind !== 'footer' &&
+          (region.includedInReadingOrder !== false ||
+            (excludedVisualTextLineCount >= 5 &&
+              ['chart-label', 'side'].includes(region.kind))) &&
+          validBox(region.box),
+      )
+      .flatMap<TableLineEntry>((region) =>
+        region.lines
+          .map((line) => ({ region, line }))
+          .filter(
+            (entry) =>
+              validTableLineEntry(entry) &&
+              boxWithinLane(entry.line.box, lane) &&
+              captionOwnsTextSlabLine(caption, entry),
+          ),
+      )
+    const rows = tableLineRows(entries)
+    if (rows.length === 0) continue
+    const rowLanes = [
+      ...new Set(rows.map((row) => row.lane)),
+    ] as TableColumnLane[]
+    for (const rowLane of rowLanes) {
+      const laneRows = rows
+        .filter((row) => row.lane === rowLane)
+        .sort((left, right) => left.y - right.y)
+      const tableLikeRows = sourceFallbackTableLikeRows(laneRows)
+      if (laneRows.length === 0) continue
+      const distanceFromCaption = (row: TableLineRow) =>
+        lane.direction === 'above'
+          ? caption.box.y - (row.box.y + row.box.height)
+          : row.box.y - (caption.box.y + caption.box.height)
+      const nearestIndex = laneRows.reduce(
+        (best, row, index) =>
+          Math.max(distanceFromCaption(row), 0) <
+          Math.max(distanceFromCaption(laneRows[best]), 0)
+            ? index
+            : best,
+        0,
+      )
+      if (
+        distanceFromCaption(laneRows[nearestIndex]) >
+        MAX_SOURCE_FALLBACK_CAPTION_GAP
+      ) {
+        continue
+      }
+      if (!promptLikeCaption && !tableLikeRows[nearestIndex]) {
+        continue
+      }
+      const selectedRows = [laneRows[nearestIndex]]
+      for (let index = nearestIndex - 1; index >= 0; index -= 1) {
+        const current = selectedRows[0]
+        if (!promptLikeCaption && !tableLikeRows[index]) {
+          break
+        }
+        if (
+          gapBetween(laneRows[index].box, current.box).vertical >
+          MAX_SOURCE_FALLBACK_ROW_GAP
+        ) {
+          break
+        }
+        selectedRows.unshift(laneRows[index])
+      }
+      for (let index = nearestIndex + 1; index < laneRows.length; index += 1) {
+        const current = selectedRows.at(-1)!
+        if (!promptLikeCaption && !tableLikeRows[index]) {
+          break
+        }
+        if (
+          gapBetween(current.box, laneRows[index].box).vertical >
+          MAX_SOURCE_FALLBACK_ROW_GAP
+        ) {
+          break
+        }
+        selectedRows.push(laneRows[index])
+      }
+      const score = sourceFallbackTableScore(selectedRows)
+      if (score < MIN_SOURCE_FALLBACK_SCORE) continue
+      const selectedEntries = selectedRows.flatMap((row) => row.entries)
+      const selectedLineBoxes = selectedEntries.map((entry) => entry.line.box)
+      const cropBox = unionBoxes(
+        selectedLineBoxes,
+        selectedLineBoxes.some((sourceBox) => sourceBox.method === 'ocr')
+          ? 'ocr'
+          : 'pdf-text',
+      )
+      if (
+        cropBox.width < MIN_TEXT_SLAB_WIDTH * 0.45 ||
+        cropBox.height < MIN_TEXT_SLAB_HEIGHT * 0.3 ||
+        cropBox.width * cropBox.height > MAX_SCOPE_AREA ||
+        horizontalOverlap(caption.box, cropBox) <= BOX_TOLERANCE
+      ) {
+        continue
+      }
+      const regionsById = new Map<string, PdfPageRegion>()
+      const selectedLineIdsByRegion = new Map<string, Set<string>>()
+      for (const entry of selectedEntries) {
+        regionsById.set(entry.region.id, entry.region)
+        const selected =
+          selectedLineIdsByRegion.get(entry.region.id) ?? new Set<string>()
+        selected.add(entry.line.id)
+        selectedLineIdsByRegion.set(entry.region.id, selected)
+      }
+      const selectedRegions = [...regionsById.values()].sort((left, right) =>
+        left.id.localeCompare(right.id),
+      )
+      const {
+        regionLineage,
+        lineLineage,
+        sourceRegionIds,
+        sourceLineIds,
+        sourceLineBoxes,
+      } = selectedTextLineage(selectedRegions, selectedLineIdsByRegion)
+      const scope: PdfTableScope = {
+        id: scopeId(
+          'caption-bounded-text-slab',
+          sourceRegionIds,
+          lineLineage,
+          [],
+          cropBox,
+        ),
+        proof: 'caption-bounded-text-slab',
+        fallback: 'source-preserved',
+        page: caption.page,
+        direction: lane.direction,
+        sourceRegionIds,
+        sourceLineIds,
+        sourceObjectIds: [],
+        sourceBoxes: sourceLineBoxes.map((sourceBox) => ({ ...sourceBox })),
+        sourceLineBoxes,
+        cropBox,
+        regionLineage,
+        lineLineage,
+        objectLineage: [],
+        evidence: [
+          captionEvidence(caption, lane),
+          {
+            code: 'contiguous-single-anchor-slab',
+            rowCount: selectedRows.length,
+            lineIds: [...sourceLineIds],
+            singleAnchorRowCount: selectedRows.filter(
+              (row) => row.anchors.length === 1,
+            ).length,
+            wideLayout: cropBox.width >= MIN_WIDE_TEXT_SLAB_WIDTH,
+            compressedTypography: false,
+            sourceStartHeading: false,
+          },
+        ],
+      }
+      ranked.push({ score, scope })
+    }
+  }
+  const unique = new Map<string, { score: number; scope: PdfTableScope }>()
+  for (const candidate of ranked) {
+    const existing = unique.get(candidate.scope.id)
+    if (!existing || candidate.score > existing.score) {
+      unique.set(candidate.scope.id, candidate)
+    }
+  }
+  const best = [...unique.values()].sort(
+    (left, right) =>
+      right.score - left.score || left.scope.id.localeCompare(right.scope.id),
+  )[0]
+  return best ? [best.scope] : []
+}
+
 function unresolved(
   caption: PdfPageRegion,
   code: PdfTableScopeAmbiguity['code'],
@@ -4501,14 +4778,10 @@ export function resolvePdfTableScope({
     rawCandidates,
   ).sort((left, right) => left.id.localeCompare(right.id))
   const regionsById = new Map(regions.map((region) => [region.id, region]))
-  const captionOwnedCandidates = candidates.some(
-    (candidate) => candidate.direction === 'above',
+  const captionOwnedCandidates = candidates.filter(
+    (candidate) =>
+      !belongsToFollowingNumberedCaption(candidate, caption, regions),
   )
-    ? candidates.filter(
-        (candidate) =>
-          !belongsToFollowingNumberedCaption(candidate, caption, regions),
-      )
-    : candidates
   const incompleteHeaderLineIds = [
     ...new Set(
       captionOwnedCandidates.flatMap((candidate) =>
@@ -4596,7 +4869,14 @@ export function resolvePdfTableScope({
     if (unprovenStartCandidates.length > 0) {
       evidence.push('table-source-start-boundary-unproven')
     }
-    return unresolved(caption, 'no-proven-scope', [], evidence)
+    const result = unresolved(caption, 'no-proven-scope', [], evidence)
+    const fallbackCandidates = sourcePreservedFallbackTableCandidates(
+      caption,
+      regions,
+    )
+    return fallbackCandidates.length > 0
+      ? { ...result, fallbackCandidates }
+      : result
   }
   if (resolvedCandidates.length > 1) {
     return unresolved(caption, 'competing-scopes', resolvedCandidates, [

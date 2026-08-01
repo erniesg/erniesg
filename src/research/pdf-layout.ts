@@ -10648,8 +10648,12 @@ function canonicalVisualDraft(
     (captionBlock && validNormalizedSourceBox(captionBlock.region.box)
       ? { ...captionBlock.region.box }
       : null)
+  const sourcePreservedFallback =
+    relationship.status !== 'matched' &&
+    relationship.assetIds.length > 0 &&
+    relationship.evidence.includes('source-preserved-table-fallback')
   if (
-    relationship.status !== 'matched' ||
+    (!sourcePreservedFallback && relationship.status !== 'matched') ||
     !captionBlock ||
     !captionPlaceholder ||
     !sameSourceBox(captionPlaceholder, captionBlock.region.box) ||

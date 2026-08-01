@@ -2989,14 +2989,22 @@ function semanticAssetCounts({
     semanticSignals.captions,
     semanticSignals.tables + semanticSignals.equations,
   )
+  const sourcePreservedFallbackCount = relationshipComponentCount(
+    relationships.filter(
+      (relationship) =>
+        relationship.status !== 'matched' &&
+        relationship.assetIds.length > 0 &&
+        relationship.evidence.includes('source-preserved-table-fallback'),
+    ),
+  )
   return {
     sourceAssetCount: detectedSemanticVisuals,
     // Count the validated side with the same relationship-scoped component
     // identity. A content-addressed asset may legitimately satisfy more than
     // one independently validated relationship.
-    exportedAssetCount: relationshipComponentCount(
-      validatedVisualRelationships,
-    ),
+    exportedAssetCount:
+      relationshipComponentCount(validatedVisualRelationships) +
+      sourcePreservedFallbackCount,
   }
 }
 
@@ -3909,7 +3917,7 @@ export function assessPdfCompleteness({
     qualityDiagnostics.push({
       code: 'UNRESOLVED_HYPERLINK',
       severity: 'error',
-      message: `Mapped ${completeness.mappedHyperlinkCount} of ${completeness.expectedHyperlinkCount} source PDF link annotations exactly once into canonical inline runs.`,
+      message: `Verified ${completeness.mappedHyperlinkCount} of ${completeness.expectedHyperlinkCount} source links. Unverified links remain visible as text instead of becoming broken links.`,
     })
   }
   if (lineLedger.configured && !lineLedger.valid) {
@@ -3923,21 +3931,21 @@ export function assessPdfCompleteness({
     qualityDiagnostics.push({
       code: 'UNRESOLVED_CORRUPTING_JOIN',
       severity: 'error',
-      message: `${lineLedger.unresolved} line-boundary decision${lineLedger.unresolved === 1 ? '' : 's'} remain unresolved and may corrupt continuous prose.`,
+      message: `${lineLedger.unresolved} line join${lineLedger.unresolved === 1 ? '' : 's'} remain uncertain. The export keeps those breaks rather than joining words incorrectly.`,
     })
   }
   if (completeness.assetCoverage < policy.minimumAssetCoverage) {
     qualityDiagnostics.push({
       code: 'INCOMPLETE_ASSET_COVERAGE',
       severity: 'error',
-      message: `Reconstructed ${exportedAssetCount} of ${sourceAssetCount} detected semantic visual obligations; required coverage is ${policy.minimumAssetCoverage.toFixed(3)}.`,
+      message: `Kept ${exportedAssetCount} of ${sourceAssetCount} detected visual regions. Any missing artwork remains a named source-recovery item instead of being silently omitted.`,
     })
   }
   if (completeness.relationshipCoverage < policy.minimumRelationshipCoverage) {
     qualityDiagnostics.push({
       code: 'INCOMPLETE_RELATIONSHIP_COVERAGE',
       severity: 'error',
-      message: `Resolved ${relationships.resolved} of ${relationships.expected} detected semantic relationships; required coverage is ${policy.minimumRelationshipCoverage.toFixed(3)}.`,
+      message: `Verified ${relationships.resolved} of ${relationships.expected} links between captions, notes, citations, and their targets. Uncertain connections remain visible without a guessed destination.`,
     })
   }
   if (
@@ -3949,14 +3957,14 @@ export function assessPdfCompleteness({
     qualityDiagnostics.push({
       code: 'INCOMPLETE_SEMANTIC_TABLE_COVERAGE',
       severity: 'error',
-      message: `Reconstructed ${completeness.resolvedSemanticTableCount} of ${completeness.expectedSemanticTableCount} detected tables as semantic row-and-column structures; the remaining image fallback${completeness.expectedSemanticTableCount - completeness.resolvedSemanticTableCount === 1 ? '' : 's'} require review.`,
+      message: `Rebuilt ${completeness.resolvedSemanticTableCount} of ${completeness.expectedSemanticTableCount} tables as structured rows and columns. The remaining table${completeness.expectedSemanticTableCount - completeness.resolvedSemanticTableCount === 1 ? '' : 's'} stays as source-preserved artwork or a bounded text fallback.`,
     })
   }
   if (unresolvedObjectCount > policy.maximumUnresolvedObjects) {
     qualityDiagnostics.push({
       code: 'UNRESOLVED_SEMANTIC_OBJECTS',
       severity: 'error',
-      message: `${unresolvedObjectCount} detected semantic object${unresolvedObjectCount === 1 ? '' : 's'} remain unresolved (images ${unresolvedObjects.assets}, captions ${unresolvedObjects.captions}, tables ${unresolvedObjects.tables}, equations ${unresolvedObjects.equations}, citations ${unresolvedObjects.citations}, footnote references ${unresolvedObjects.footnoteReferences}, notes ${unresolvedObjects.footnotes}).`,
+      message: `${unresolvedObjectCount} source detail${unresolvedObjectCount === 1 ? '' : 's'} still need review: ${unresolvedObjects.assets} visual${unresolvedObjects.assets === 1 ? '' : 's'}, ${unresolvedObjects.tables} table${unresolvedObjects.tables === 1 ? '' : 's'}, ${unresolvedObjects.equations} equation${unresolvedObjects.equations === 1 ? '' : 's'}, ${unresolvedObjects.citations} citation${unresolvedObjects.citations === 1 ? '' : 's'}, and ${unresolvedObjects.footnotes + unresolvedObjects.footnoteReferences} note reference${unresolvedObjects.footnotes + unresolvedObjects.footnoteReferences === 1 ? '' : 's'}. Recoverable source content is kept in the readable export.`,
     })
   }
 

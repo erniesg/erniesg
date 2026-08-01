@@ -11,6 +11,7 @@ import {
   detectRectangularTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
+  detectUniformTableWithinProvenScope,
   detectWrappedCellTableWithinProvenScope,
   detectWrappedHeaderTableWithinProvenScope,
 } from './pdf-table-detection'
@@ -66,6 +67,39 @@ function region(
 }
 
 describe('bounded table region detection', () => {
+  it('promotes a uniform source-proven grid with an explicit header', () => {
+    const header = line('grid-header', 0.16, [0.1, 0.26, 0.42])
+    header.runs = header.runs.map((run) => ({
+      ...run,
+      bold: true,
+      fontName: 'serif-bold',
+    }))
+    const body = [
+      line('grid-row-1', 0.19, [0.1, 0.26, 0.42]),
+      line('grid-row-2', 0.22, [0.1, 0.26, 0.42]),
+    ]
+    const table = region('source-grid', 'body', 0.16, [header, ...body])
+    const detected = detectUniformTableWithinProvenScope([table], {
+      sourceRegionIds: [table.id],
+      sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+      evidence: [{ code: 'repeated-row-bands' }],
+    })
+
+    expect(detected).toMatchObject({
+      columnCount: 3,
+      headerRowCount: 1,
+      evidence: expect.arrayContaining([
+        'general-source-grid-promoter',
+        'complete-source-lineage',
+      ]),
+    })
+    expect(detected?.lines).toHaveLength(3)
+    expect(detected?.lines.every((row) => row.cells.length === 3)).toBe(true)
+    expect(detected?.lines[0].cells.map((cell) => cell.run)).toEqual(
+      header.runs,
+    )
+  })
+
   it('selects repeated columns above a numbered table caption', () => {
     const caption = region('Table 3', 'caption', 0.3, [])
     const table = region('table-grid', 'body', 0.16, [

@@ -151,9 +151,7 @@ describe('STRUCT canonical document graph', () => {
       text: 'See target',
       inline: [{ start: 0, end: 10, targetIds: [target.id] }],
     }
-    expect(renderPublicationXhtml(graph)).toContain(
-      `href="#${target.id}"`,
-    )
+    expect(renderPublicationXhtml(graph)).toContain(`href="#${target.id}"`)
   })
 
   it('round-trips the graph into a deterministic EPUB package', async () => {
@@ -214,12 +212,17 @@ describe('STRUCT recovery language', () => {
         },
       ],
     })
-    expect(summary.title).toBe('Your readable EPUB is ready for review.')
+    expect(summary.title).toBe(
+      'Your EPUB is readable, but not publication-ready yet.',
+    )
     expect(summary.issues.map(({ category }) => category)).toEqual([
       'visuals',
       'links',
     ])
     expect(summary.summary).not.toContain('UNRESOLVED_')
+    expect(summary.userAction).toContain(
+      'No action is needed to read the fallback',
+    )
   })
 })
 

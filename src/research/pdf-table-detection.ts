@@ -743,6 +743,167 @@ export function detectTableNearCaption(
   )
 }
 
+/**
+ * Promote a plainly rectangular, source-proved table without relying on one
+ * paper-specific table shape. The scope is authoritative for membership; this
+ * detector only accepts a uniform row/column matrix with an explicit source
+ * header and complete line ownership. Anything wrapped, spanned, or missing a
+ * cell remains on the source-preserved fallback path.
+ */
+export function detectUniformTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly { code: string }[]
+  },
+): PdfDetectedTableGrid | null {
+  if (
+    scope.sourceRegionIds.length === 0 ||
+    scope.sourceLineIds.length < 2 ||
+    new Set(scope.sourceRegionIds).size !== scope.sourceRegionIds.length ||
+    new Set(scope.sourceLineIds).size !== scope.sourceLineIds.length
+  ) {
+    return null
+  }
+  const regionIds = new Set(scope.sourceRegionIds)
+  const lineIds = new Set(scope.sourceLineIds)
+  const sourceRegions = regions.filter((region) => regionIds.has(region.id))
+  if (sourceRegions.length !== regionIds.size) return null
+  const sourceLines = sourceRegions.flatMap((region) =>
+    region.lines.filter((line) => lineIds.has(line.id)),
+  )
+  if (
+    sourceLines.length !== lineIds.size ||
+    new Set(sourceLines.map((line) => line.id)).size !== lineIds.size ||
+    sourceLines.some((line) => line.runs.every((run) => !run.text.trim()))
+  ) {
+    return null
+  }
+  const bands: PdfRegionLine[][] = []
+  for (const line of [...sourceLines].sort(
+    (left, right) =>
+      left.box.y - right.box.y ||
+      left.box.x - right.box.x ||
+      left.id.localeCompare(right.id),
+  )) {
+    const band = bands.find(
+      (candidate) => Math.abs(candidate[0].box.y - line.box.y) <= 0.004,
+    )
+    if (band) band.push(line)
+    else bands.push([line])
+  }
+  const rows = bands.map((band) =>
+    band
+      .flatMap((line) => line.runs.filter((run) => run.text.trim()))
+      .sort((left, right) => left.x - right.x || left.y - right.y),
+  )
+  const columnCount = rows[0]?.length ?? 0
+  if (
+    rows.length < 2 ||
+    columnCount < 2 ||
+    columnCount > 12 ||
+    rows.some((row) => row.length !== columnCount)
+  ) {
+    return null
+  }
+  const anchors = rows[0].map((run) => run.x)
+  if (
+    rows.some((row) =>
+      row.some(
+        (run, index) =>
+          Math.abs(run.x - anchors[index]) > COLUMN_ANCHOR_TOLERANCE,
+      ),
+    ) ||
+    rows.some((row) =>
+      row.slice(1).some((run, index) => {
+        const previous = row[index]
+        return run.x - (previous.x + previous.width) < FIXED_CELL_GAP_THRESHOLD
+      }),
+    )
+  ) {
+    return null
+  }
+  const headerStyle = (run: PdfSourceRun) =>
+    run.bold === true ||
+    /(?:bold|black|demi|semibold|(?:^|[-_])medi(?:um)?(?:$|[-_]))/iu.test(
+      run.fontName,
+    )
+  if (
+    !rows[0].every(headerStyle) ||
+    !rows
+      .slice(1)
+      .flat()
+      .some((run) => !headerStyle(run))
+  ) {
+    return null
+  }
+  const rowGrid = bands.map((band, rowIndex) => {
+    const rowRuns = rows[rowIndex]
+    const left = Math.min(...rowRuns.map((run) => run.x))
+    const top = Math.min(...band.map((line) => line.box.y))
+    const right = Math.max(...rowRuns.map((run) => run.x + run.width))
+    const bottom = Math.max(...band.map((line) => line.box.y + line.box.height))
+    const row = {
+      ...band[0],
+      id: `detected-source-grid-row-${String(rowIndex + 1).padStart(3, '0')}`,
+      text: rowRuns.map((run) => run.text).join(' '),
+      box: {
+        ...band[0].box,
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+      },
+      runs: rowRuns,
+      sourceLineIds: band.map((line) => line.id),
+      sourceRegionIds: [
+        ...new Set(
+          sourceRegions
+            .filter((region) =>
+              band.some((line) => region.lines.includes(line)),
+            )
+            .map((region) => region.id),
+        ),
+      ],
+      sourceRegionKinds: [
+        ...new Set(
+          sourceRegions
+            .filter((region) =>
+              band.some((line) => region.lines.includes(line)),
+            )
+            .map((region) => region.kind),
+        ),
+      ].sort(),
+    }
+    return {
+      ...row,
+      cells: rowRuns.map((run, columnIndex) => ({
+        // Keep the original source-run object. The canonical verifier uses
+        // object identity to prove which source line owns each cell; copying
+        // the run here would make an otherwise complete grid unverifiable.
+        run,
+        columnIndex,
+        columnSpan: 1,
+        rowSpan: 1,
+      })),
+    }
+  })
+  return {
+    sourceRegions,
+    sourceLineIds: [...lineIds].sort(),
+    lines: rowGrid,
+    columnCount,
+    headerRowCount: 1,
+    evidence: [
+      'general-source-grid-promoter',
+      'uniform-column-anchors',
+      'explicit-source-header',
+      'complete-source-lineage',
+    ],
+  }
+}
+
 // Variable-width formula cells can move their centers far from otherwise
 // stable column starts. Left-edge alignment is therefore available only after
 // the independent scope resolver has proved the exact supplemental shard and

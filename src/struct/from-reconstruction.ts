@@ -5,6 +5,7 @@ import type {
   PdfReconstruction,
 } from '../research/import-types'
 import type { ResearchNode } from '../research/schema'
+import { recoveryDiagnosticInputs } from '../research/recovery-projection'
 import { structDigest, structId } from './ids'
 import { recoverySummary, toStructDiagnostic } from './recovery'
 import { orderBlocksByLayout, pageLayoutsFromBlocks } from './reading-order'
@@ -721,7 +722,7 @@ export function buildStructDocument(
   const pages = pageLayoutsFromBlocks(pageInputs, orderedBlocks)
   const recovery = recoverySummary({
     ready: reconstruction.readiness.ready,
-    diagnostics: reconstruction.diagnostics,
+    diagnostics: recoveryDiagnosticInputs(reconstruction),
     blockingCodes: reconstruction.readiness.blockingDiagnosticCodes,
     textCoverage: reconstruction.completeness.textCoverage,
     assetCoverage: reconstruction.completeness.assetCoverage,

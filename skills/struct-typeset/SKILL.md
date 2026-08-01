@@ -18,6 +18,28 @@ Build outputs from a canonical, source-backed document graph. Prefer verified se
 7. Present recovery through `src/struct/recovery.ts`. Keep machine codes in logs or review tooling; show users plain-language outcomes and actions.
 8. Validate with diverse fixtures and inspect the produced EPUB or HTML, not only intermediate JSON.
 
+## Model consultation boundary
+
+Use deterministic extraction and validation first. When a bounded layout decision remains ambiguous, open a separate Codex task with `gpt-5.6-luna` and `max` reasoning. Supply only the deterministic candidates and their STRUCT provenance. Reject any response that invents text, bytes, bounds, or destinations. Persist the proposal separately from the autonomous VM implementation receipt, then convert every accepted decision class into a fixture and deterministic rule.
+
+## Autonomous development loop
+
+- Resume the newest clean checkpoint for the issue before creating a branch or
+  rerunning discovery. Record the branch, commit, failing fixture, and next
+  command in the issue receipt.
+- Declare each worker as `parser-core` or `evidence-eval` and name its write
+  scope. Never run two parser-core workers or two workers that can edit the same
+  files. A second evidence/eval worker is allowed only when the queue proves
+  disjoint paths plus disk and memory headroom; otherwise use one worker.
+- Work red → green → refactor with the narrowest affected fixtures. Commit each
+  independently passing slice. Run the full suite, build, corpus, and visual
+  comparison only at integration checkpoints instead of after every small edit.
+- Preserve dependency caches between checkpointed runs, but treat them as
+  reproducible. Never reclaim a live worktree, handoff, receipt, referenced
+  evidence artifact, or source file to make space.
+- Autonomous VM implementation uses `gpt-5.6-sol` with `high` reasoning. Keep
+  the optional Luna layout consultation separate as described above.
+
 ## Required invariants
 
 - Preserve every recoverable source text span exactly once in the reading flow or a declared source fallback.

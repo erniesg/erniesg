@@ -491,7 +491,7 @@ describe('fail-closed non-semantic PDF table fallback', () => {
       rasterizeFigure.mock.calls.map(([input]) =>
         Math.round((tableBox.x - input.sourceBox.x) * 1_000),
       ),
-    ).toEqual([4, 0, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32])
+    ).toEqual([24, 20, 26, 28, 30, 32])
     expect(
       rasterizeFigure.mock.calls.every(
         ([input]) =>

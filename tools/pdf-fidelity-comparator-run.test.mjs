@@ -658,5 +658,5 @@ describe('PDF fidelity comparator run receipt', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 })

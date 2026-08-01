@@ -5,6 +5,7 @@ import type {
   PdfPageRegion,
   PdfPreformattedSource,
   PdfPreformattedSourceLine,
+  PdfRegionLine,
   PdfRegionColumn,
   PdfSourceRun,
   PdfSourceCropAttempt,
@@ -2706,6 +2707,43 @@ function boxForLines(lines: PdfPageRegion['lines']): NormalizedSourceBox {
       ? 'ocr'
       : 'pdf-text',
   }
+}
+
+function exactSourceLinesById(
+  regions: readonly PdfPageRegion[],
+  sourceLineIds: readonly string[],
+): PdfRegionLine[] | null {
+  if (
+    sourceLineIds.length === 0 ||
+    new Set(sourceLineIds).size !== sourceLineIds.length
+  ) {
+    return null
+  }
+  const selectedIds = new Set(sourceLineIds)
+  const owners = new Map<string, PdfRegionLine[]>()
+  for (const region of regions) {
+    for (const line of region.lines) {
+      if (!selectedIds.has(line.id)) continue
+      const matching = owners.get(line.id) ?? []
+      matching.push(line)
+      owners.set(line.id, matching)
+    }
+  }
+  const selected = sourceLineIds.flatMap((lineId) => {
+    const matching = owners.get(lineId)
+    return matching?.length === 1 ? matching : []
+  })
+  if (
+    selected.length !== sourceLineIds.length ||
+    selected.some(
+      (line) =>
+        line.box.page !== selected[0].box.page ||
+        line.box.rotation !== selected[0].box.rotation,
+    )
+  ) {
+    return null
+  }
+  return selected
 }
 
 function availableRegionsForTable(
@@ -10187,9 +10225,28 @@ export async function reconstructPdfVisuals({
         !probableDisplayEquationText(equationSourceText(selectedSources))
           ? []
           : selectedSources
+      const selectedTableSourceLineIds =
+        label.kind === 'table'
+          ? (semanticTableGrid?.sourceLineIds ??
+            detectedTable?.sourceLineIds ??
+            [])
+          : []
+      const exactSelectedTableSourceLines =
+        selectedTableSourceLineIds.length > 0
+          ? exactSourceLinesById(sources, selectedTableSourceLineIds)
+          : null
       candidates = []
-      if (!tableScopeResolution && sources.length > 0) {
-        const sourceBox = unionBox(sources)
+      if (
+        !tableScopeResolution &&
+        sources.length > 0 &&
+        (label.kind !== 'table' ||
+          selectedTableSourceLineIds.length === 0 ||
+          exactSelectedTableSourceLines)
+      ) {
+        const sourceBox =
+          label.kind === 'table' && exactSelectedTableSourceLines
+            ? boxForLines(exactSelectedTableSourceLines)
+            : unionBox(sources)
         const sourceObjectId = `${label.kind}-p${String(sourceBox.page).padStart(3, '0')}-${String(captionIndex + 1).padStart(3, '0')}`
         const page = pages.find((item) => item.page === sourceBox.page)!
         const sourceLines = sources.flatMap((source) => source.lines)
@@ -12076,6 +12133,24 @@ export async function reconstructPdfVisuals({
       renderVisibleTextRuns,
       renderOnlyOwnedRunKeys,
     )
+    const sourceRegionIdSet = new Set(sources.map((region) => region.id))
+    const hasNearbyUnownedEquationText = regions.some((candidate) => {
+      if (
+        sourceRegionIdSet.has(candidate.id) ||
+        consumedRegionIds.has(candidate.id) ||
+        candidate.page !== source.page ||
+        candidate.text.trim().length === 0 ||
+        printedEquationNumberFragment(candidate)
+      ) {
+        return false
+      }
+      const gap = boxGap(sourceBox, candidate.box)
+      return (
+        gap.vertical <= 0.03 &&
+        gap.horizontal <= 0.12 &&
+        ['body', 'spanning', 'side', 'equation'].includes(candidate.kind)
+      )
+    })
     if (overlappingUnownedSourceText) {
       approximationEvidence.push('overlapping-unowned-source-text')
     }
@@ -12097,7 +12172,20 @@ export async function reconstructPdfVisuals({
       sourceCropBox,
       unboundedInitialCropBox,
     )
-    if (rasterizeFigure && sourceScopeComplete) {
+    // A complete ownership proof is required for semantic promotion, but it
+    // is not required to keep the equation readable. When the source box is
+    // bounded and contains no unowned text, rasterize that exact box as a
+    // source-preserved fallback instead of allowing its glyphs to fall into
+    // ordinary prose. Contaminated/ambiguous boxes remain fail-closed.
+    const sourcePreservedFallbackEligible =
+      ownership !== null &&
+      !sourceScopeComplete &&
+      !overlappingUnownedSourceText &&
+      !hasNearbyUnownedEquationText
+    if (
+      rasterizeFigure &&
+      (sourceScopeComplete || sourcePreservedFallbackEligible)
+    ) {
       const rasterizeEquationCrop = async (
         cropBox: NormalizedSourceBox,
         excludedSourceBoxes: readonly NormalizedSourceBox[],
@@ -12408,11 +12496,12 @@ export async function reconstructPdfVisuals({
       }
     }
     if (sourceCrop && cropMatched) mergeAsset(assetStore, sourceCrop)
+    const fallbackOwnership = ownership
     const equationGeometryTranscript =
-      cropMatched && sourceCrop && transcript === null
+      cropMatched && sourceCrop && transcript === null && fallbackOwnership
         ? createSourceGeometryScriptTranscript({
-            sourceRegionIds: ownership!.sourceRegionIds,
-            sourceLineIds: ownership!.sourceLineIds,
+            sourceRegionIds: fallbackOwnership.sourceRegionIds,
+            sourceLineIds: fallbackOwnership.sourceLineIds,
             sourceObjectIds: [sourceObjectId],
             regions,
             sourceCropAsset: sourceCrop,
@@ -12425,7 +12514,9 @@ export async function reconstructPdfVisuals({
       ? [
           'source-equation-region',
           'bounded-source-geometry',
-          'source-proved-atomic-equation-component',
+          ...(sourceScopeComplete
+            ? ['source-proved-atomic-equation-component']
+            : ['source-preserved-equation-fallback']),
           ...resolvedTranscriptEvidence,
           ...(adaptivePaddingRetry
             ? ['source-page-crop-adaptive-padding']
@@ -12474,8 +12565,8 @@ export async function reconstructPdfVisuals({
       // Keep the primary equation region in reading order so layout can turn
       // its source text into the typed caption for this atomic obligation.
       captionRegionId: source.id,
-      sourceRegionIds: ownership?.sourceRegionIds ?? [],
-      sourceLineIds: ownership?.sourceLineIds ?? [],
+      sourceRegionIds: fallbackOwnership?.sourceRegionIds ?? [],
+      sourceLineIds: fallbackOwnership?.sourceLineIds ?? [],
       sourceObjectIds: cropMatched ? [sourceObjectId] : [],
       assetIds: cropMatched ? [sourceCrop!.id] : [],
       status: cropMatched ? 'matched' : 'unresolved',
@@ -12484,15 +12575,16 @@ export async function reconstructPdfVisuals({
       candidates: [
         {
           sourceRegionIds:
-            ownership?.sourceRegionIds ?? sources.map((region) => region.id),
-          ...(ownership
+            fallbackOwnership?.sourceRegionIds ??
+            sources.map((region) => region.id),
+          ...(fallbackOwnership
             ? {
-                sourceLineIds: ownership.sourceLineIds,
+                sourceLineIds: fallbackOwnership.sourceLineIds,
                 sourceText,
                 ownershipExtentSha256: pdfVisualOwnershipExtentSha256(
                   regions,
-                  ownership.sourceRegionIds,
-                  ownership.sourceLineIds,
+                  fallbackOwnership.sourceRegionIds,
+                  fallbackOwnership.sourceLineIds,
                 ),
                 ...(appliedRenderOnlyOwnerships.length > 0
                   ? {

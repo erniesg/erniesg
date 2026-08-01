@@ -1044,16 +1044,22 @@ function exactScopedSourceRegions(
     sourceRegionIds.has(region.id),
   )
   if (sourceRegions.length !== sourceRegionIds.size) return null
-  const nonemptySourceLines = sourceRegions.flatMap((region) =>
-    region.lines.filter(
-      (line) =>
-        line.text.trim().length > 0 ||
-        line.runs.some((run) => run.text.trim().length > 0),
-    ),
+  // A scope may intentionally select only part of a shared source region
+  // (for example, a table band that shares a region with its caption or
+  // neighbouring prose). Validate the exact selected lineage rather than
+  // requiring every line in the parent region to be claimed.
+  const selectedSourceLines = sourceRegions.flatMap((region) =>
+    region.lines.filter((line) => sourceLineIds.has(line.id)),
   )
   if (
-    nonemptySourceLines.length !== sourceLineIds.size ||
-    nonemptySourceLines.some((line) => !sourceLineIds.has(line.id))
+    selectedSourceLines.length !== sourceLineIds.size ||
+    new Set(selectedSourceLines.map((line) => line.id)).size !==
+      sourceLineIds.size ||
+    selectedSourceLines.some(
+      (line) =>
+        line.text.trim().length === 0 &&
+        line.runs.every((run) => !run.text.trim()),
+    )
   ) {
     return null
   }
@@ -1194,7 +1200,8 @@ export function detectRectangularTableWithinProvenScope(
     (item) =>
       item.code === 'repeated-column-anchors' ||
       item.code === 'multi-run-tabular-line-band' ||
-      item.code === 'contiguous-tabular-slab',
+      item.code === 'contiguous-tabular-slab' ||
+      item.code === 'contiguous-single-anchor-slab',
   )
   if (!hasRowProof || !hasColumnProof) return null
 
@@ -1403,7 +1410,8 @@ export function detectWrappedCellTableWithinProvenScope(
     (item) =>
       item.code === 'repeated-column-anchors' ||
       item.code === 'multi-run-tabular-line-band' ||
-      item.code === 'contiguous-tabular-slab',
+      item.code === 'contiguous-tabular-slab' ||
+      item.code === 'contiguous-single-anchor-slab',
   )
   if (!hasRowProof || !hasColumnProof) return null
 

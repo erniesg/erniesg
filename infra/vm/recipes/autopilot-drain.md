@@ -1,10 +1,11 @@
 # Rucksack Autopilot Drain Timer
 
-This repo includes a held, future user-level systemd timer for a trusted VM to
-check the queue every 30 minutes and drain VM-routed GitHub Issues into detached
-Codex/Claude sessions. The installer keeps every drain held by default. One VM
-account may own both provider login and publisher credentials only after the
-fixed bubblewrap and system-manager network-isolation proofs pass.
+This repo includes a user-level systemd timer for a trusted VM to check the
+queue every 30 minutes and drain VM-routed GitHub Issues into detached
+Codex/Claude sessions. Installation contains every drain first; explicit
+activation then enables only this repository after the fixed bubblewrap and
+system-manager network-isolation proofs pass. One VM account may own both
+provider login and publisher credentials only inside that proven boundary.
 
 Prerequisites on the VM:
 
@@ -29,6 +30,59 @@ Activate only this repository drain after the live isolation probes pass:
 rucksack vm autopilot install-timer erniesg/erniesg --repo-root . --profile dev-vm --enable-drain --isolation bubblewrap --execute
 ```
 
+Let the activation command finish before closing the SSH session. Do not run a
+second installer or queue drain concurrently: installer cleanup temporarily
+masks all drains, and concurrent cleanup can leave the target masked after a
+seemingly successful activation. Recheck the target after the command exits and
+again after the first queue pass:
+
+```bash
+timer=rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
+service=rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service
+systemctl --user show "$timer" -p LoadState -p UnitFileState -p ActiveState -p SubState
+systemctl --user list-timers --all --no-legend | grep -F "$timer"
+systemctl --user show "$service" -p TimeoutStartUSec -p TimeoutStopUSec -p ActiveState -p SubState -p Result
+```
+
+The only safe overnight state is `loaded/enabled/active/waiting` with a future
+`list-timers` entry and `TimeoutStartUSec=30min`, `TimeoutStopUSec=5min`.
+`masked` or `failed` means the queue is not autonomous; wait for any installer
+to finish, explicitly re-enable this repo's timer with the activation command,
+and record the state in `.agent/state/latest-checkpoint.md`.
+
+For long-lived overnight work, install the repo-owned pulse after the
+Rucksack installer has finished. It is deliberately named outside
+`rucksack-autopilot-*-drain.*`, so the containment pass may hold the generated
+drain without disabling the scheduler. The pulse only wakes the proven drain
+service, skips an active drain or any still-live repository issue session, and
+honors an operator hold marker. The session guard is required because
+`--max-workers 1` limits launches in one queue invocation; it is not a global
+worker cap across repeated pulses:
+
+```bash
+mkdir -p ~/.config/rucksack/overnight ~/.config/systemd/user
+install -m 600 /path/to/erniesg/infra/vm/systemd/erniesg-struct-typeset-queue.service \
+  ~/.config/systemd/user/erniesg-struct-typeset-queue.service
+install -m 600 /path/to/erniesg/infra/vm/systemd/erniesg-struct-typeset-queue.timer \
+  ~/.config/systemd/user/erniesg-struct-typeset-queue.timer
+touch ~/.config/rucksack/overnight/erniesg-erniesg.enabled
+systemctl --user daemon-reload
+systemctl --user enable --now erniesg-struct-typeset-queue.timer
+```
+
+Verify the pulse itself, not just the generated drain:
+
+```bash
+systemctl --user show erniesg-struct-typeset-queue.timer \
+  -p LoadState -p UnitFileState -p ActiveState -p SubState
+systemctl --user list-timers --all --no-legend | grep -F erniesg-struct-typeset-queue.timer
+```
+
+To pause overnight work intentionally, create
+`~/.config/rucksack/overnight/erniesg-erniesg.hold` and stop the pulse timer;
+remove that marker and explicitly start the timer to resume. A failed pulse is
+reported in its journal and in the checkpoint; it is never relabeled as idle.
+
 Configure Discord notifications on the VM if you want human-gate pings outside
 GitHub. The command opens an SSH prompt and stores the webhook only in the VM
 user environment file:
@@ -37,17 +91,12 @@ user environment file:
 rucksack vm autopilot discord erniesg/erniesg --profile dev-vm --execute
 ```
 
-Manual equivalent for the repo-specific queue timer only:
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service ~/.config/systemd/user/
-cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer ~/.config/systemd/user/
-loginctl enable-linger "$USER"
-systemctl --user daemon-reload
-systemctl --user disable --now rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
-systemctl --user status rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
-```
+Do not install the checked-in generic
+`rucksack-autopilot-erniesg-erniesg-drain.service` as a manual equivalent. It
+predates the fixed publisher/network boundary and can drift from the active
+Rucksack runtime. Install the versioned drain only through
+`rucksack vm autopilot install-timer`; the repository owns only the outer
+STRUCT pulse shown above.
 
 `loginctl enable-linger "$USER"` keeps the user service manager available after
 the SSH session disconnects. It does not enable the held drain timer.
@@ -91,10 +140,21 @@ leaves issues queued and refreshes the human-gate notification instead of
 starting failing workers. The timer follows the same behavior after explicit
 activation and successful isolation proof.
 
-The held timer deliberately omits `--plan-when-idle`: a planner may write
+The generated drain service allows up to 30 minutes for one bounded queue pass
+and five minutes for shutdown. This prevents systemd's default 90-second
+oneshot timeout from terminating a healthy Codex worker while it is running
+tests or source-comparison evidence. The outer pulse refuses another pass while
+any repository issue session is live, so one worker is the global limit rather
+than merely the per-invocation launch limit. Rucksack's retry/self-heal limits
+remain authoritative.
+
+The timer deliberately omits `--plan-when-idle`: a planner may write
 partial or successful issue specs, and the durable base checkout must stay
 clean. Generate and commit new ledger specs through an operator-owned
-disposable worktree before the VM reconciles them.
+disposable worktree before the VM reconciles them. Each pass writes an atomic
+checkpoint with the issue/PR, source SHA, evidence manifest, tests, visual
+artifacts, next command, and failure class. A new worker starts from that
+checkpoint and the GitHub labels, not from a chat transcript.
 
 Review repair fails closed on GraphQL errors, malformed or truncated GitHub
 review data, and ambiguous App marker identity. It trusts the configured

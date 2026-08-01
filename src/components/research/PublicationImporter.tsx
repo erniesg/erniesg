@@ -42,12 +42,17 @@ import {
   type PdfLineJoinReviewContext,
 } from '../../research/pdf-lines'
 import { downloadLinkedPdf } from '../../research/pdf-url'
+import { recoveryDiagnosticInputs } from '../../research/recovery-projection'
 import {
   getTargetProfile,
   resolveTargetProfile,
   type TargetOrientation,
 } from '../../research/targets'
-import { diagnosticCopy, recoverySummary } from '../../struct/recovery'
+import {
+  diagnosticCopy,
+  hasActionableRecovery,
+  recoverySummary,
+} from '../../struct/recovery'
 import EpubDownloadLink from './EpubDownloadLink'
 import EpubRenditionPreview, {
   epubPreviewArtifactKey,
@@ -1543,7 +1548,7 @@ export default function PublicationImporter({
     }
     return recoverySummary({
       ready: state.result.readiness.ready,
-      diagnostics: state.result.diagnostics,
+      diagnostics: recoveryDiagnosticInputs(state.result),
       blockingCodes: state.result.readiness.blockingDiagnosticCodes,
       textCoverage: state.result.completeness.textCoverage,
       assetCoverage: state.result.completeness.assetCoverage,
@@ -1736,7 +1741,11 @@ export default function PublicationImporter({
                     ? state.epubs
                       ? 'EPUB ready'
                       : 'Validating EPUB'
-                    : 'Review required'}
+                    : hasActionableRecovery(userRecovery)
+                      ? 'Action required'
+                      : state.epubs
+                        ? 'EPUB ready'
+                        : 'Validating EPUB'}
                 </span>
                 <strong>{state.result.source.fileName}</strong>
                 <small>
@@ -1806,7 +1815,9 @@ export default function PublicationImporter({
             </output>
           )}
 
-          {!reviewMode && state.status === 'review-required' && (
+          {!reviewMode &&
+            state.status === 'review-required' &&
+            hasActionableRecovery(userRecovery) && (
             <div className="publication-ocr-gate" role="alert">
               <span>Review summary</span>
               <h3>
@@ -1820,9 +1831,14 @@ export default function PublicationImporter({
                   aria-label="Review items"
                 >
                   {userRecovery.issues.map((issue) => (
-                    <li key={issue.category}>
+                    <li
+                      key={`${issue.category}:${issue.title}:${issue.action ?? ''}:${issue.pages.join(',')}`}
+                    >
                       <strong>{issue.title}</strong>
                       <span>{issue.count}</span>
+                      {issue.pages.length > 0 && (
+                        <small>Pages {issue.pages.join(', ')}</small>
+                      )}
                       {issue.action && <small>{issue.action}</small>}
                     </li>
                   ))}

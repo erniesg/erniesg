@@ -309,27 +309,42 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
     notes: 'Some footnotes or endnotes could not be linked safely',
     source: 'Some structured content stayed in its source layout',
   }
+  // A source-preserved fallback is an automatic recovery, not a task for the
+  // reader. Only diagnostics with an explicit human action belong in this
+  // summary. This prevents one asset/link/relationship record from becoming
+  // a misleading badge such as “89 links need review”.
+  const actionable = relevant.filter((diagnostic) =>
+    Boolean(diagnosticCopy(diagnostic.code, diagnostic.message).action),
+  )
   const groups = new Map<
     StructDiagnostic['category'],
-    { title: string; count: number; action?: string }
+    { title: string; pages: Set<number>; unknownCount: number; action?: string }
   >()
-  for (const diagnostic of relevant) {
+  for (const diagnostic of actionable) {
     const copy = diagnosticCopy(diagnostic.code, diagnostic.message)
     const previous = groups.get(copy.category)
+    const pages = previous?.pages ?? new Set<number>()
+    if (diagnostic.page !== undefined) pages.add(diagnostic.page)
     groups.set(copy.category, {
       title: categoryTitles[copy.category],
-      count: (previous?.count ?? 0) + 1,
+      pages,
+      unknownCount:
+        (previous?.unknownCount ?? 0) + (diagnostic.page === undefined ? 1 : 0),
       ...(previous?.action || copy.action
         ? { action: previous?.action ?? copy.action }
         : {}),
     })
   }
-  const issues = [...groups.entries()].map(([category, group]) => ({
-    category,
-    title: group.title,
-    count: group.count,
-    ...(group.action ? { action: group.action } : {}),
-  }))
+  const issues = [...groups.entries()].map(([category, group]) => {
+    const pages = [...group.pages].sort((left, right) => left - right)
+    return {
+      category,
+      title: group.title,
+      count: pages.length > 0 ? pages.length : Math.min(group.unknownCount, 1),
+      pages,
+      ...(group.action ? { action: group.action } : {}),
+    }
+  })
   if (input.ready) {
     return {
       status: 'ready',
@@ -345,18 +360,28 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
     (input.relationshipCoverage ?? 0) >= 0
   return {
     status: 'review-required',
-    title: fallbackAvailable
-      ? 'Your EPUB is readable, but not publication-ready yet.'
-      : 'This file needs a source check before it can be exported.',
+    title:
+      fallbackAvailable && issues.length === 0
+        ? 'Your EPUB is ready to read.'
+        : fallbackAvailable
+          ? 'Your EPUB is readable, but not publication-ready yet.'
+          : 'This file needs a source check before it can be exported.',
     summary: fallbackAvailable
-      ? 'You can read the local fallback now. Recoverable text, captions, links, and source-preserved visuals were kept wherever a safe semantic reconstruction was not possible. Nothing was uploaded.'
+      ? issues.length === 0
+        ? 'The importer reconstructed what it could prove and kept source-preserved figures, tables, equations, notes, and uncertain links in place. Nothing needs your attention to read this file, and nothing was uploaded.'
+        : 'You can read the local fallback now. Recoverable text, captions, links, and source-preserved visuals were kept wherever a safe semantic reconstruction was not possible. Nothing was uploaded.'
       : 'The importer could not recover enough source content to make a trustworthy EPUB. Nothing was uploaded.',
     issues,
     userAction:
       issues.length > 0
-        ? issues.some((issue) => issue.action)
-          ? 'No action is needed to read the fallback. Before publishing, open the preview and compare the listed pages with the original.'
-          : 'No action is needed to read the fallback. Keep the original file beside it and review the affected visuals or links before publishing.'
+        ? `Open the preview and check ${issues
+            .flatMap((issue) => issue.pages)
+            .filter((page, index, pages) => pages.indexOf(page) === index)
+            .sort((left, right) => left - right)
+            .map((page) => `page ${page}`)
+            .join(
+              ', ',
+            )}${issues.some((issue) => issue.pages.length === 0) ? (issues.some((issue) => issue.pages.length > 0) ? ', and any unnumbered item' : 'the affected item') : ''}.`
         : undefined,
   }
 }

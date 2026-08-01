@@ -212,17 +212,56 @@ describe('STRUCT recovery language', () => {
         },
       ],
     })
-    expect(summary.title).toBe(
-      'Your EPUB is readable, but not publication-ready yet.',
-    )
-    expect(summary.issues.map(({ category }) => category)).toEqual([
-      'visuals',
-      'links',
-    ])
+    expect(summary.title).toBe('Your EPUB is ready to read.')
+    expect(summary.issues).toEqual([])
     expect(summary.summary).not.toContain('UNRESOLVED_')
-    expect(summary.userAction).toContain(
-      'No action is needed to read the fallback',
-    )
+    expect(summary.userAction).toBeUndefined()
+  })
+
+  it('shows only deduplicated pages for diagnostics that require human action', () => {
+    const summary = recoverySummary({
+      ready: false,
+      blockingCodes: ['LOW_CONFIDENCE_OCR', 'UNRESOLVED_VISUAL_OBJECT'],
+      textCoverage: 0.98,
+      assetCoverage: 1,
+      relationshipCoverage: 1,
+      diagnostics: [
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'internal message',
+          page: 4,
+        },
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'duplicate internal message',
+          page: 4,
+        },
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'internal message',
+          page: 9,
+        },
+        {
+          code: 'UNRESOLVED_VISUAL_OBJECT',
+          severity: 'error',
+          message: 'source-preserved fallback',
+          page: 9,
+        },
+      ],
+    })
+
+    expect(summary.issues).toEqual([
+      expect.objectContaining({
+        category: 'text',
+        count: 2,
+        pages: [4, 9],
+        action: expect.stringContaining('Compare'),
+      }),
+    ])
+    expect(summary.userAction).toContain('page 4, page 9')
   })
 })
 

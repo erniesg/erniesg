@@ -1823,6 +1823,9 @@ export default function PublicationImporter({
                     <li key={issue.category}>
                       <strong>{issue.title}</strong>
                       <span>{issue.count}</span>
+                      {issue.pages.length > 0 && (
+                        <small>Pages {issue.pages.join(', ')}</small>
+                      )}
                       {issue.action && <small>{issue.action}</small>}
                     </li>
                   ))}

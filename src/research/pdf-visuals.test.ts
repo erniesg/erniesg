@@ -1602,6 +1602,58 @@ describe('PDF visual association graph', () => {
     )
   })
 
+  it('source-preserves an equation when semantic ownership is incomplete', async () => {
+    const formula = equationRegion(
+      'incomplete-equation-scope',
+      'x = y + 1',
+      box(0.25, 0.24, 0.24, 0.025),
+    )
+    // The source line is uniquely owned, but its detached-math provenance is
+    // malformed. Semantic scope must fail closed while the exact source box
+    // remains safe to preserve.
+    formula.lines[0].id = 'incomplete-equation-detached-math-1-host-ambiguous'
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'equation',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 16,
+          height: 6,
+          pixels: new Uint8Array(16 * 6 * 4).fill(91),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [formula],
+      rasterizeFigure,
+    })
+
+    expect(rasterizeFigure).toHaveBeenCalledOnce()
+    expect(result.relationships[0]).toMatchObject({
+      kind: 'equation',
+      status: 'matched',
+      sourceRegionIds: [formula.id],
+      sourceLineIds: [formula.lines[0].id],
+      assetIds: [expect.stringMatching(/^asset-/)],
+      evidence: expect.arrayContaining([
+        'source-preserved-equation-fallback',
+        'source-page-crop',
+      ]),
+    })
+    expect(result.consumedRegionIds.has(formula.id)).toBe(false)
+    expect(result.assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'equation',
+          rendition: 'source-page-crop',
+        }),
+      ]),
+    )
+  })
+
   it('does not publish styled script glyphs from a hardcoded serif text SVG', async () => {
     const formula = equationRegion(
       'equation-region',

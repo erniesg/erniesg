@@ -1,6 +1,6 @@
 # Durable scheduler for the STRUCT queue. Rucksack containment only matches
-# its generated drain names; this pulse therefore survives a worker handoff
-# and can re-enter the proven drain service on the next bounded pass.
+# generated drain names; this pulse survives worker handoffs and re-enters the
+# proven drain service on the next bounded pass.
 [Unit]
 Description=STRUCT queue pulse every 30 minutes
 Documentation=man:systemd.timer(5)

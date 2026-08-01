@@ -21,29 +21,26 @@ that product umbrella completes.
   timer is loaded, enabled, active, has a future fire, and the service has the
   repository timeout policy (`30m` start, `5m` stop). A mask or failed state is
   a queue-health failure, not a successful idle result.
-- Default to one total live VM issue session for this repository across
-  repeated pulse invocations. `--max-workers 1` is only a per-invocation launch
-  limit; active unexpired leases/sessions consume the global slot before
-  selection. After durable cross-pulse accounting and resource preflight are
-  proven, the cap may rise to two only as one `parser-core` worker plus one
-  path-disjoint `evidence-eval` worker. Reconcile GitHub labels, exact issue
-  leases, declared write scopes, disk, and memory before dispatch; never
-  duplicate a running or human-blocked issue.
-- Preflight disk capacity before dispatch. At the configured high-water mark,
-  preserve the active lease, handoff, evidence receipts, and referenced
-  artifacts; reclaim only completed/expired worktrees and reproducible caches
-  whose owning run has an atomic checkpoint. Never clean during an active run,
-  and fail closed with a queue-health checkpoint if safe reclamation cannot
-  restore the required headroom.
+- Enforce one total live VM issue session for this repository across repeated
+  pulse invocations. `--max-workers 1` is only a per-invocation launch limit;
+  an exact live session consumes the global slot before selection. Preserve a
+  worker whose process is still live even when its heartbeat has expired; a
+  completed or expired process-free session frees the slot. Missing,
+  malformed, or conflicting session state fails closed. Reconcile GitHub
+  labels and exact issue leases before dispatch; never duplicate a running or
+  human-blocked issue.
 - Keep parser-core work serialized through declared dependencies. Evidence or
   evaluation work may run in parallel only when its declared path/resource
   scope is disjoint from the active worker.
+- Preflight disk capacity before dispatch. At the configured high-water mark,
+  preserve the active lease, handoffs, receipts, evidence, and referenced
+  artifacts. Reclaim only an explicitly checkpointed terminal, clean worktree
+  or a cache inside the dedicated reproducible-cache root. If safe reclamation
+  does not restore the configured headroom, launch nothing and record the exact
+  queue-health blocker.
 - Record an atomic checkpoint after each pass: issue, branch/PR, source SHA,
   evidence manifest, tests, visual source/output artifacts, next issue, and
   failure class. A reconnecting agent must be able to resume from it.
-- Resume a clean checkpointed branch instead of restarting discovery. Run
-  focused red/green tests per commit and defer the full suite, corpus, and
-  source-versus-render matrix to integration checkpoints.
 - Use bounded retries/self-heal. After the configured two attempts, retain the
   issue's actionable failure and move it to a human gate; do not spin forever.
 - Require source-vs-render comparison and the local readable fallback before
@@ -52,11 +49,10 @@ that product umbrella completes.
 - Keep model/layout calls optional and candidate-constrained. Persist every
   accepted proposal and distill it into a fixture plus deterministic rule.
 - Install the default-branch `struct-typeset` skill as a pinned, read-only VM
-  skill and record its SHA-256 in each applicable worker receipt. Autonomous VM
-  implementation workers use `gpt-5.6-sol` / `high`. An on-demand local layout
-  consultation is a separate Codex task using `gpt-5.6-luna` / `max`; record a
-  separate receipt and never conflate it with the implementation worker. An
-  already-running worker keeps its launch model and is never relabeled.
+  skill and record its SHA-256 in each applicable worker receipt. Future layout
+  workers use the owner-requested `gpt-5.6-sol` / `high` VM profile;
+  already-running workers keep their recorded model and are never relabeled
+  retroactively.
 - Resolve the generated drain through an installer-owned stable target alias or
   validated state file rather than a repository-hard-coded unit version.
 
@@ -74,31 +70,36 @@ that product umbrella completes.
 - A fake systemd response for a healthy timer is accepted only when it is
   loaded, enabled, active, and has a future fire; masked, failed, or missing
   state is reported as queue-health failure.
-- At default total capacity one, one live session plus one queued issue launches
-  nothing; a completed/expired session frees exactly one slot. With the tested
-  two-lane policy enabled, a live `parser-core` worker may admit exactly one
-  path-disjoint `evidence-eval` worker when disk and memory pass, but never a
-  second parser worker or overlapping write scope. Missing or malformed lease,
-  scope, or resource state fails closed instead of opening a slot.
+- At total capacity one, one live session plus one queued issue launches
+  nothing; a completed/expired session frees exactly one slot. Missing or
+  malformed lease state fails closed for recovery instead of opening a slot.
 - At the disk high-water mark, an active worktree and every referenced evidence
-  artifact remain untouched. Only a completed/expired worktree with a durable
-  checkpoint and reproducible cache entries are eligible; insufficient safe
-  reclamation launches no worker and records the exact capacity blocker.
+  or handoff path remain untouched. Cleanup accepts only a terminal checkpoint
+  with the exact worktree and source SHA, or a path beneath the dedicated
+  reproducible-cache root. Every worktree-local log/reference must first have
+  a checksum-verified durable copy outside that worktree. Insufficient
+  post-cleanup headroom launches nothing.
 - An interrupted worker, completed worker, and provider-blocked worker each
   leave one atomic checkpoint with a resumable next action and no duplicate
   lease.
 - Two consecutive pulse passes keep the repo-owned scheduler enabled while the
   generated drain may be held during a worker pass, and never exceed the total
   configured session cap.
-- A future autonomous VM worker receipt identifies `gpt-5.6-sol`, `high`, and
-  the exact installed `struct-typeset` skill digest. Any local layout
-  consultation has its own receipt identifying `gpt-5.6-luna`, `max`, the
-  bounded candidates supplied, and the accepted or rejected proposal. Stubbed
-  tests do not require a live provider credential.
+- A future applicable worker receipt identifies `gpt-5.6-sol`, `high`, and the
+  exact installed `struct-typeset` skill digest. Stubbed tests do not require a
+  live provider credential.
+- A later two-lane scheduler may run at most one parser-core worker plus one
+  evidence/eval worker only when both carry versioned resource claims, their
+  write scopes and ports are disjoint, and measured disk and memory headroom
+  pass under the dispatch lock. Unknown claims, overlapping scopes, or low
+  headroom retain the total cap of one. This cross-pulse selection belongs to
+  Rucksack issues `erniesg/rucksack#347` and `erniesg/rucksack#349`; the repo
+  pulse must not guess it from process names.
 
 ## Validation command
 
 ```bash
+npx vitest run tools/struct-queue-pulse.test.mjs
 systemd-analyze verify infra/vm/systemd/erniesg-struct-typeset-queue.service infra/vm/systemd/erniesg-struct-typeset-queue.timer
 infra/vm/verify.sh
 scripts/agent-evidence
@@ -118,9 +119,10 @@ plain-language blocked/resumable status.
 ## Stop conditions
 
 Stop before automatically clearing an operator hold, dispatching a duplicate
-lease, increasing worker/retry limits, treating a masked timer as idle, or
-claiming unattended completion without a durable checkpoint and future timer
-fire.
+lease, increasing worker/retry limits without verified resource claims,
+treating a masked timer as idle, deleting an uncheckpointed worktree or
+evidence artifact, or claiming unattended completion without a durable
+checkpoint and future timer fire.
 
 ## Human clarification protocol
 
@@ -137,10 +139,11 @@ so restarting is cheaper and safer than rerunning a whole corpus.
 ## Trade-offs
 
 The extra pulse unit adds one scheduler to verify, but it prevents a long worker
-or installer cleanup from silently disabling future work. One parser worker at
-a time avoids duplicate edits and makes source-lineage ordering deterministic.
-A separately accounted evidence/eval lane recovers wall-clock time without
-allowing concurrent parser mutations.
+or installer cleanup from silently disabling future work. The conservative
+one-worker default avoids duplicate edits and makes evidence ordering
+deterministic. Verified resource claims can later recover one disjoint
+evidence/eval lane without turning every 30-minute pulse into another parser
+worker.
 
 ## Free-form response
 

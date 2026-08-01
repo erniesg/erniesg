@@ -307,6 +307,26 @@ describe('table candidate provider verification', () => {
     )
   })
 
+  it('passes cancellation to provider inference', async () => {
+    const bytes = new Uint8Array([7, 8, 9])
+    const image = {
+      bytes,
+      mediaType: 'image/png' as const,
+      sha256: sha256HexSync(bytes),
+      sourceCropBox: crop,
+    }
+    const signal = new AbortController().signal
+    const infer = vi.fn(async () => proposal())
+    const provider = createDoclingTableCandidateProvider({
+      version: '2.48.0',
+      modelDigest: 'd'.repeat(64),
+      configuration: { threads: 1 },
+      infer,
+    })
+    await runTableCandidateProvider({ provider, image, sourceRegions, signal })
+    expect(infer).toHaveBeenCalledWith(expect.objectContaining({ signal }))
+  })
+
   it('reports all three paths against one corpus denominator', () => {
     const first = createTableCandidateBenchmarkReport({
       corpusId: 'table-corpus-v1',

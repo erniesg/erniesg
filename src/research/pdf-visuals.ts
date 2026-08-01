@@ -10232,6 +10232,7 @@ export async function reconstructPdfVisuals({
                 },
                 sourceRegions: scopedRegions,
                 allowRemote: allowRemoteTableCandidateProvider,
+                signal,
               })
               let receipt = candidateResult.receipt
               if (candidateResult.verified) {

@@ -45,6 +45,7 @@ export type TableCandidateProvider = {
     image: Uint8Array
     mediaType: TableCandidateImage['mediaType']
     imageSha256: string
+    signal?: AbortSignal
   }) => Promise<TableCandidateProposal | null>
 }
 
@@ -502,12 +503,14 @@ export async function runTableCandidateProvider({
   image,
   sourceRegions,
   allowRemote = false,
+  signal,
   cache,
 }: {
   provider: TableCandidateProvider
   image: TableCandidateImage
   sourceRegions: readonly PdfPageRegion[]
   allowRemote?: boolean
+  signal?: AbortSignal
   cache?: Map<string, TableCandidateProposal | null>
 }): Promise<{
   verified: VerifiedTableCandidate | null
@@ -550,6 +553,7 @@ export async function runTableCandidateProvider({
         image: image.bytes.slice(),
         mediaType: image.mediaType,
         imageSha256: image.sha256,
+        signal,
       })
       cache?.set(cacheKey, proposal)
     }

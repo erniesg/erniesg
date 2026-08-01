@@ -325,12 +325,11 @@ describe('SRT canonical graph schema', () => {
     const paper = scopedTablePaper()
     const table = paper.nodes[0].table
     if (!table) throw new Error('Scoped table fixture lost its table data')
-    table.rows[1].cells[1] = {
-      ...table.rows[1].cells[1],
+    Object.assign(table.rows[1].cells[1], {
       text: '',
       sourceRuns: [],
       inlineMapping: { expected: 0, mapped: 0 },
-    }
+    })
 
     expect(researchPaperSchema.safeParse(paper).success).toBe(true)
   })

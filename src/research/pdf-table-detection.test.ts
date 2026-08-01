@@ -8,6 +8,7 @@ import type {
 import {
   detectExplicitHeaderNumericTableWithinProvenScope,
   detectHierarchicalTableWithinProvenScope,
+  detectRectangularTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
   detectWrappedHeaderTableWithinProvenScope,
@@ -772,6 +773,81 @@ describe('bounded table region detection', () => {
       columnSpan: 1,
       rowSpan: 1,
     })
+  })
+
+  it('promotes a proved rectangular table with mixed source text', () => {
+    const lines = [
+      line('header', 0.2, [0.1, 0.35, 0.62]),
+      line('body-1', 0.23, [0.1, 0.35, 0.62]),
+      line('body-2', 0.26, [0.1, 0.35, 0.62]),
+      line('body-3', 0.29, [0.1, 0.35, 0.62]),
+    ]
+    ;['Model', 'Environment', 'Result'].forEach((text, index) => {
+      lines[0].runs[index] = {
+        ...lines[0].runs[index],
+        text,
+        fontName: 'TableSerif-Medium',
+      }
+    })
+    ;[
+      ['BookWorld', 'Castle', 'Characters interact'],
+      ['Baseline', 'Village', 'No interaction'],
+      ['Ablation', 'Harbor', 'Interaction delayed'],
+    ].forEach((texts, rowIndex) => {
+      texts.forEach((text, columnIndex) => {
+        lines[rowIndex + 1].runs[columnIndex] = {
+          ...lines[rowIndex + 1].runs[columnIndex],
+          text,
+          width: columnIndex === 2 ? 0.12 : 0.08,
+        }
+      })
+    })
+    for (const sourceLine of lines) {
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+    }
+    const table = region('mixed-text-table', 'body', 0.2, lines, 'span')
+
+    const detected = detectRectangularTableWithinProvenScope([table], {
+      direction: 'above',
+      sourceRegionIds: [table.id],
+      sourceLineIds: lines.map((sourceLine) => sourceLine.id),
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'repeated-column-anchors' },
+      ],
+    })
+
+    expect(detected).toMatchObject({
+      columnCount: 3,
+      headerRowCount: 1,
+      evidence: expect.arrayContaining([
+        'complete-bounded-table-scope',
+        'repeated-rectangular-column-geometry',
+        'source-typography-header',
+      ]),
+    })
+    expect(detected?.lines[1].cells[2].run.text).toBe('Characters interact')
+  })
+
+  it('keeps a rectangular text slab as fallback without header proof', () => {
+    const lines = [
+      line('row-1', 0.2, [0.1, 0.35, 0.62]),
+      line('row-2', 0.23, [0.1, 0.35, 0.62]),
+      line('row-3', 0.26, [0.1, 0.35, 0.62]),
+    ]
+    const table = region('unproved-header-table', 'body', 0.2, lines, 'span')
+
+    expect(
+      detectRectangularTableWithinProvenScope([table], {
+        direction: 'above',
+        sourceRegionIds: [table.id],
+        sourceLineIds: lines.map((sourceLine) => sourceLine.id),
+        evidence: [
+          { code: 'repeated-row-bands' },
+          { code: 'repeated-column-anchors' },
+        ],
+      }),
+    ).toBeNull()
   })
 
   it.each([

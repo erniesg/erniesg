@@ -28,6 +28,7 @@ import { pdfFontTextRequiresStructuralReconstruction } from './pdf-font-text'
 import {
   detectExplicitHeaderNumericTableWithinProvenScope,
   detectHierarchicalTableWithinProvenScope,
+  detectRectangularTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
   detectWrappedHeaderTableWithinProvenScope,
@@ -9523,6 +9524,10 @@ export async function reconstructPdfVisuals({
               boundedScope.scope,
             ) ??
             detectExplicitHeaderNumericTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
+            ) ??
+            detectRectangularTableWithinProvenScope(
               availableTableRegions,
               boundedScope.scope,
             )

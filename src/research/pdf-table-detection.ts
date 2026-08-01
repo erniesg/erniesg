@@ -798,6 +798,13 @@ function tableHeaderCell(text: string) {
   return /\p{L}/u.test(text) && !numericTableBodyCell(text)
 }
 
+function sourceRunHasHeaderFace(run: PdfSourceRun) {
+  return (
+    run.bold === true ||
+    /(?:bold|semi[- ]?bold|demi|medi(?:um)?|black)/iu.test(run.fontName)
+  )
+}
+
 function scopeProvenNumericMatrixBodyCell(text: string) {
   return /^(?:[<>≤≥~≈])?[+\-−]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:(?:[eE][+\-−]?\d+)|(?:[x×]10[+\-−]?\d+))?(?:%|[x×])?$/u.test(
     text.replace(/\s+/gu, ''),
@@ -979,6 +986,146 @@ export function detectExplicitHeaderNumericTableWithinProvenScope(
       'semantic-header-explicit-matrix-geometry',
       'repeated-uniform-numeric-body-rows',
       'variable-width-stub-left-anchor',
+    ],
+  }
+}
+
+// Promote an ordinary rectangular table only after the scope resolver has
+// accounted for every non-empty source line, repeated geometry proves the
+// columns, and either source lineage or typography proves the header. Cell
+// text always comes from the source runs; an unproved grid stays a raster.
+export function detectRectangularTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly {
+      code: string
+      headerLineIds?: readonly string[]
+    }[]
+  },
+): PdfDetectedTableGrid | null {
+  const hasRowProof = scope.evidence.some(
+    (item) => item.code === 'repeated-row-bands',
+  )
+  const hasColumnProof = scope.evidence.some(
+    (item) =>
+      item.code === 'repeated-column-anchors' ||
+      item.code === 'multi-run-tabular-line-band' ||
+      item.code === 'contiguous-tabular-slab',
+  )
+  if (!hasRowProof || !hasColumnProof) return null
+
+  const sourceRegions = exactScopedSourceRegions(regions, scope)
+  if (!sourceRegions) return null
+  const rows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines
+        .filter((line) => scope.sourceLineIds.includes(line.id))
+        .map((line) => ({ region, line })),
+    ),
+  )
+  // Require three body rows so a caption-adjacent two-fragment header plus a
+  // pair of prose records cannot become a table merely by sharing anchors.
+  if (rows.length < 4) return null
+
+  const gapThreshold = adaptiveCellGapThreshold(rows)
+  const cellsByRow = rows.map((row) => rowCells(row, gapThreshold))
+  const columnCount = cellsByRow[0]?.length ?? 0
+  if (
+    columnCount < 2 ||
+    columnCount > 12 ||
+    cellsByRow.some(
+      (cells) =>
+        cells.length !== columnCount ||
+        cells.some((cell) => cell.text.trim().length === 0) ||
+        cells.some(
+          (cell, index) =>
+            index < cells.length - 1 &&
+            cell.x + cell.width > cells[index + 1].x + 0.001,
+        ),
+    )
+  ) {
+    return null
+  }
+
+  const sourceHeaderLineIds = new Set(
+    scope.evidence.flatMap((item) => item.headerLineIds ?? []),
+  )
+  const headerByLineage =
+    sourceHeaderLineIds.size > 0 &&
+    rows[0].sourceLineIds.every((lineId) => sourceHeaderLineIds.has(lineId)) &&
+    rows
+      .slice(1)
+      .every((row) =>
+        row.sourceLineIds.every((lineId) => !sourceHeaderLineIds.has(lineId)),
+      )
+  const headerByRegion = rows[0].sourceRegionKinds.every(
+    (kind) => kind === 'header',
+  )
+  const headerByTypography =
+    cellsByRow[0].every(sourceRunHasHeaderFace) &&
+    cellsByRow
+      .slice(1)
+      .some((cells) => cells.some((cell) => !sourceRunHasHeaderFace(cell)))
+  if (!headerByLineage && !headerByRegion && !headerByTypography) return null
+
+  const leftAnchors = Array.from({ length: columnCount }, (_, columnIndex) =>
+    median(cellsByRow.map((cells) => cells[columnIndex].x)),
+  )
+  const centerAnchors = Array.from({ length: columnCount }, (_, columnIndex) =>
+    median(
+      cellsByRow.map((cells) => {
+        const cell = cells[columnIndex]
+        return cell.x + cell.width / 2
+      }),
+    ),
+  )
+  const alignedColumns = Array.from({ length: columnCount }, (_, index) => {
+    const leftDeviation = Math.max(
+      ...cellsByRow.map((cells) =>
+        Math.abs(cells[index].x - leftAnchors[index]),
+      ),
+    )
+    const centerDeviation = Math.max(
+      ...cellsByRow.map((cells) =>
+        Math.abs(
+          cells[index].x + cells[index].width / 2 - centerAnchors[index],
+        ),
+      ),
+    )
+    return Math.min(leftDeviation, centerDeviation) <= COLUMN_ANCHOR_TOLERANCE
+  })
+  if (alignedColumns.some((aligned) => !aligned)) return null
+
+  return {
+    sourceRegions: [...sourceRegions].sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    ),
+    sourceLineIds: [...scope.sourceLineIds],
+    lines: rows.map((row, rowIndex) => {
+      const cells = cellsByRow[rowIndex].map((run, columnIndex) => ({
+        run,
+        columnIndex,
+        columnSpan: 1,
+        rowSpan: 1,
+      }))
+      return { ...row, runs: cells.map((cell) => cell.run), cells }
+    }),
+    columnCount,
+    headerRowCount: 1,
+    evidence: [
+      'complete-bounded-table-scope',
+      'repeated-rectangular-column-geometry',
+      headerByLineage
+        ? 'source-lineage-header'
+        : headerByRegion
+          ? 'source-region-header'
+          : 'source-typography-header',
     ],
   }
 }

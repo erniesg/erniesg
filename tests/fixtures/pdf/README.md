@@ -33,6 +33,12 @@ source-glyph equation raster, and bibliography entries. Its
 text and visual content were written for this repository and do not reduce or
 copy any external paper.
 
+`source-output-checkpoints.pdf` is the small source/output review fixture. It
+contains a source flowchart, a caption, a sentence explicitly labelled as
+continuing across a column break, and a pseudocode listing. The paired evidence
+command uses this page only; it never renders owner-local papers into the
+repository.
+
 `sparse-embedded-text.pdf` is a title/divider page with no image content. It
 proves that high-confidence OCR which only confirms the embedded text completes
 the OCR attempt without duplicating runs, while the no-OCR path stays blocked.

@@ -80,6 +80,17 @@
       ]
     },
     {
+      "file": "source-output-checkpoints.pdf",
+      "sha256": "2265f0d49304011feb8c972bf24bf5b93db099180d4fa270826e19df23c2de30",
+      "features": [
+        "source-output-checkpoints",
+        "source-flowchart",
+        "caption-boundary",
+        "prose-continuity",
+        "pseudocode-block"
+      ]
+    },
+    {
       "file": "diagnostic-overlays.pdf",
       "features": [
         "ambiguous-reading-order",

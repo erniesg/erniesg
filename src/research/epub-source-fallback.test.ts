@@ -8,6 +8,11 @@ import type {
 } from './import-types'
 import { strFromU8 } from 'fflate'
 import { sha256HexSync } from './sha256-sync'
+import { recoveryDiagnosticInputs } from './recovery-projection'
+import {
+  hasActionableRecovery,
+  recoverySummary,
+} from '../struct/recovery'
 
 describe('readable EPUB source-preserved visual fallback', () => {
   it('keeps an unresolved figure with a safe asset set instead of hiding it', async () => {
@@ -151,5 +156,16 @@ describe('readable EPUB source-preserved visual fallback', () => {
     expect(content).toContain('src="assets/source-visual.svg"')
     expect(content).toContain('Figure 1. Source-preserved diagram.')
     expect(content).not.toContain('figure-placeholder')
+
+    const recovery = recoverySummary({
+      ready: result.readiness.ready,
+      blockingCodes: result.readiness.blockingDiagnosticCodes,
+      diagnostics: recoveryDiagnosticInputs(result),
+      textCoverage: result.completeness.textCoverage,
+      assetCoverage: result.completeness.assetCoverage,
+      relationshipCoverage: result.completeness.relationshipCoverage,
+    })
+    expect(hasActionableRecovery(recovery)).toBe(false)
+    expect(recovery.issues).toEqual([])
   })
 })

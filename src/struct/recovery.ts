@@ -9,6 +9,15 @@ type DiagnosticCopy = Pick<
   'category' | 'title' | 'message'
 > & { action?: string }
 
+export type RecoveryDiagnosticInput = {
+  code: string
+  severity: StructDiagnosticSeverity
+  message: string
+  page?: number
+  pages?: number[]
+  automaticRecovery?: boolean
+}
+
 /**
  * Internal diagnostics stay machine-readable, but users need to know what
  * survived, what was preserved as source material, and whether they need to
@@ -46,15 +55,19 @@ const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
   },
   UNRESOLVED_VISUAL_OBJECT: {
     category: 'visuals',
-    title: 'A figure or diagram was kept as source artwork',
+    title: 'A figure or diagram is missing from the readable export',
     message:
-      'The source visual and its caption remain in the readable export even though it was not safely converted to a semantic object.',
+      'No packaged source visual could be proven for this figure or diagram.',
+    action:
+      'Open the marked page and confirm the figure is visible. If it is absent, keep the source PDF instead of publishing this EPUB.',
   },
   UNREFERENCED_VISUAL_ASSET: {
     category: 'visuals',
-    title: 'A source visual had no reliable anchor',
+    title: 'An image could not be placed in the EPUB',
     message:
-      'The original visual is included in a source-preserved section so it is not lost.',
+      'The PDF reports an image that the importer could not bind to source geometry and a rendered EPUB node.',
+    action:
+      'Open the marked page and confirm every image is visible. If one is absent, keep the source PDF instead of publishing this EPUB.',
   },
   AMBIGUOUS_VISUAL_MATCH: {
     category: 'visuals',
@@ -240,9 +253,11 @@ const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
 
 const FALLBACK_COPY: DiagnosticCopy = {
   category: 'source',
-  title: 'A source detail needs review',
+  title: 'The importer could not verify part of this file',
   message:
     'The readable export preserves the recoverable source content and avoids making an unsupported structural guess.',
+  action:
+    'Try again with a clearer original file. If it still fails, keep the source file instead of publishing this EPUB.',
 }
 
 export function diagnosticCopy(
@@ -279,12 +294,7 @@ export function toStructDiagnostic(input: {
 
 type RecoveryInput = {
   ready: boolean
-  diagnostics: ReadonlyArray<{
-    code: string
-    severity: StructDiagnosticSeverity
-    message: string
-    page?: number
-  }>
+  diagnostics: ReadonlyArray<RecoveryDiagnosticInput>
   blockingCodes?: readonly string[]
   textCoverage?: number
   assetCoverage?: number
@@ -299,37 +309,53 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
       diagnostic.severity !== 'info' &&
       (blocking.size === 0 || blocking.has(diagnostic.code)),
   )
-  const categoryTitles: Record<StructDiagnostic['category'], string> = {
-    text: 'Some text needs a source check',
-    layout: 'Some page order or layout needs a quick check',
-    visuals: 'Some figures or diagrams stayed source-preserved',
-    tables: 'Some tables stayed source-preserved',
-    equations: 'Some equations stayed source-preserved',
-    links: 'Some links or references could not be verified',
-    notes: 'Some footnotes or endnotes could not be linked safely',
-    source: 'Some structured content stayed in its source layout',
-  }
+  // A source-preserved fallback is an automatic recovery only when the adapter
+  // proves it. Unclassified and future blocker codes fail closed so a genuinely
+  // missing object can never be mislabeled as ready.
+  const actionable = relevant.filter(
+    (diagnostic) => diagnostic.automaticRecovery !== true,
+  )
   const groups = new Map<
-    StructDiagnostic['category'],
-    { title: string; count: number; action?: string }
+    string,
+    {
+      category: StructDiagnostic['category']
+      title: string
+      pages: Set<number>
+      unknownCount: number
+      action: string
+    }
   >()
-  for (const diagnostic of relevant) {
+  for (const diagnostic of actionable) {
     const copy = diagnosticCopy(diagnostic.code, diagnostic.message)
-    const previous = groups.get(copy.category)
-    groups.set(copy.category, {
-      title: categoryTitles[copy.category],
-      count: (previous?.count ?? 0) + 1,
-      ...(previous?.action || copy.action
-        ? { action: previous?.action ?? copy.action }
-        : {}),
+    const action = copy.action ?? FALLBACK_COPY.action!
+    const groupKey = `${copy.category}\u0000${copy.title}\u0000${action}`
+    const previous = groups.get(groupKey)
+    const pages = previous?.pages ?? new Set<number>()
+    const diagnosticPages = diagnostic.pages?.length
+      ? diagnostic.pages
+      : diagnostic.page === undefined
+        ? []
+        : [diagnostic.page]
+    for (const page of diagnosticPages) pages.add(page)
+    groups.set(groupKey, {
+      category: copy.category,
+      title: copy.title,
+      pages,
+      unknownCount:
+        (previous?.unknownCount ?? 0) + (diagnosticPages.length === 0 ? 1 : 0),
+      action,
     })
   }
-  const issues = [...groups.entries()].map(([category, group]) => ({
-    category,
-    title: group.title,
-    count: group.count,
-    ...(group.action ? { action: group.action } : {}),
-  }))
+  const issues = [...groups.values()].map((group) => {
+    const pages = [...group.pages].sort((left, right) => left - right)
+    return {
+      category: group.category,
+      title: group.title,
+      count: pages.length > 0 ? pages.length : Math.min(group.unknownCount, 1),
+      pages,
+      action: group.action,
+    }
+  })
   if (input.ready) {
     return {
       status: 'ready',
@@ -343,20 +369,45 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
     (input.textCoverage ?? 0) > 0 &&
     (input.assetCoverage ?? 0) >= 0 &&
     (input.relationshipCoverage ?? 0) >= 0
+  if (!fallbackAvailable && issues.length === 0) {
+    issues.push({
+      category: FALLBACK_COPY.category,
+      title: FALLBACK_COPY.title,
+      count: 1,
+      pages: [],
+      action: FALLBACK_COPY.action!,
+    })
+  }
   return {
     status: 'review-required',
-    title: fallbackAvailable
-      ? 'Your EPUB is readable, but not publication-ready yet.'
-      : 'This file needs a source check before it can be exported.',
+    title:
+      fallbackAvailable && issues.length === 0
+        ? 'Your EPUB is ready to read.'
+        : fallbackAvailable
+          ? 'Your EPUB is readable, but not publication-ready yet.'
+          : 'This file needs a source check before it can be exported.',
     summary: fallbackAvailable
-      ? 'You can read the local fallback now. Recoverable text, captions, links, and source-preserved visuals were kept wherever a safe semantic reconstruction was not possible. Nothing was uploaded.'
+      ? issues.length === 0
+        ? 'The importer reconstructed what it could prove and kept source-preserved figures, tables, equations, notes, and uncertain links in place. Nothing needs your attention to read this file, and nothing was uploaded.'
+        : 'You can read the local fallback now. Recoverable text, captions, links, and source-preserved visuals were kept wherever a safe semantic reconstruction was not possible. Nothing was uploaded.'
       : 'The importer could not recover enough source content to make a trustworthy EPUB. Nothing was uploaded.',
     issues,
     userAction:
       issues.length > 0
-        ? issues.some((issue) => issue.action)
-          ? 'No action is needed to read the fallback. Before publishing, open the preview and compare the listed pages with the original.'
-          : 'No action is needed to read the fallback. Keep the original file beside it and review the affected visuals or links before publishing.'
+        ? `Open the preview and check ${issues
+            .flatMap((issue) => issue.pages)
+            .filter((page, index, pages) => pages.indexOf(page) === index)
+            .sort((left, right) => left - right)
+            .map((page) => `page ${page}`)
+            .join(
+              ', ',
+            )}${issues.some((issue) => issue.pages.length === 0) ? (issues.some((issue) => issue.pages.length > 0) ? ', and any unnumbered item' : 'the affected item') : ''}.`
         : undefined,
   }
+}
+
+export function hasActionableRecovery(
+  recovery: StructRecovery | undefined,
+): recovery is StructRecovery & { userAction: string } {
+  return Boolean(recovery?.userAction)
 }

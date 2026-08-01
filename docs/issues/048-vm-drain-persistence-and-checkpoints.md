@@ -21,17 +21,29 @@ that product umbrella completes.
   timer is loaded, enabled, active, has a future fire, and the service has the
   repository timeout policy (`30m` start, `5m` stop). A mask or failed state is
   a queue-health failure, not a successful idle result.
-- Enforce one total live VM issue session for this repository across repeated
-  pulse invocations. `--max-workers 1` is only a per-invocation launch limit;
-  active unexpired leases/sessions consume the global slot before selection.
-  Reconcile GitHub labels and exact issue leases before dispatch; never
+- Default to one total live VM issue session for this repository across
+  repeated pulse invocations. `--max-workers 1` is only a per-invocation launch
+  limit; active unexpired leases/sessions consume the global slot before
+  selection. After durable cross-pulse accounting and resource preflight are
+  proven, the cap may rise to two only as one `parser-core` worker plus one
+  path-disjoint `evidence-eval` worker. Reconcile GitHub labels, exact issue
+  leases, declared write scopes, disk, and memory before dispatch; never
   duplicate a running or human-blocked issue.
+- Preflight disk capacity before dispatch. At the configured high-water mark,
+  preserve the active lease, handoff, evidence receipts, and referenced
+  artifacts; reclaim only completed/expired worktrees and reproducible caches
+  whose owning run has an atomic checkpoint. Never clean during an active run,
+  and fail closed with a queue-health checkpoint if safe reclamation cannot
+  restore the required headroom.
 - Keep parser-core work serialized through declared dependencies. Evidence or
   evaluation work may run in parallel only when its declared path/resource
   scope is disjoint from the active worker.
 - Record an atomic checkpoint after each pass: issue, branch/PR, source SHA,
   evidence manifest, tests, visual source/output artifacts, next issue, and
   failure class. A reconnecting agent must be able to resume from it.
+- Resume a clean checkpointed branch instead of restarting discovery. Run
+  focused red/green tests per commit and defer the full suite, corpus, and
+  source-versus-render matrix to integration checkpoints.
 - Use bounded retries/self-heal. After the configured two attempts, retain the
   issue's actionable failure and move it to a human gate; do not spin forever.
 - Require source-vs-render comparison and the local readable fallback before
@@ -40,18 +52,19 @@ that product umbrella completes.
 - Keep model/layout calls optional and candidate-constrained. Persist every
   accepted proposal and distill it into a fixture plus deterministic rule.
 - Install the default-branch `struct-typeset` skill as a pinned, read-only VM
-  skill and record its SHA-256 in each applicable worker receipt. Future layout
-  workers use the owner-requested `gpt-5.6-sol` / `high` VM profile;
-  already-running workers keep their recorded model and are never relabeled
-  retroactively.
+  skill and record its SHA-256 in each applicable worker receipt. Autonomous VM
+  implementation workers use `gpt-5.6-sol` / `high`. An on-demand local layout
+  consultation is a separate Codex task using `gpt-5.6-luna` / `max`; record a
+  separate receipt and never conflate it with the implementation worker. An
+  already-running worker keeps its launch model and is never relabeled.
 - Resolve the generated drain through an installer-owned stable target alias or
   validated state file rather than a repository-hard-coded unit version.
 
 ## Tests and evidence
 
 - Unit-test timer-state, total active-slot accounting, stable target resolution,
-  skill digest recording, and checkpoint parsing with fake systemd/queue/session
-  responses.
+  disk high-water handling, skill digest recording, and checkpoint parsing with
+  fake systemd/queue/session responses.
 - Exercise an interrupted worker, a completed worker, and a masked timer; all
   three must produce an explicit resumable state.
 - Run the full repository evidence command and a held-out STRUCT corpus pass.
@@ -61,18 +74,27 @@ that product umbrella completes.
 - A fake systemd response for a healthy timer is accepted only when it is
   loaded, enabled, active, and has a future fire; masked, failed, or missing
   state is reported as queue-health failure.
-- At total capacity one, one live session plus one queued issue launches
-  nothing; a completed/expired session frees exactly one slot. Missing or
-  malformed lease state fails closed for recovery instead of opening a slot.
+- At default total capacity one, one live session plus one queued issue launches
+  nothing; a completed/expired session frees exactly one slot. With the tested
+  two-lane policy enabled, a live `parser-core` worker may admit exactly one
+  path-disjoint `evidence-eval` worker when disk and memory pass, but never a
+  second parser worker or overlapping write scope. Missing or malformed lease,
+  scope, or resource state fails closed instead of opening a slot.
+- At the disk high-water mark, an active worktree and every referenced evidence
+  artifact remain untouched. Only a completed/expired worktree with a durable
+  checkpoint and reproducible cache entries are eligible; insufficient safe
+  reclamation launches no worker and records the exact capacity blocker.
 - An interrupted worker, completed worker, and provider-blocked worker each
   leave one atomic checkpoint with a resumable next action and no duplicate
   lease.
 - Two consecutive pulse passes keep the repo-owned scheduler enabled while the
   generated drain may be held during a worker pass, and never exceed the total
   configured session cap.
-- A future applicable worker receipt identifies `gpt-5.6-sol`, `high`, and the
-  exact installed `struct-typeset` skill digest. Stubbed tests do not require a
-  live provider credential.
+- A future autonomous VM worker receipt identifies `gpt-5.6-sol`, `high`, and
+  the exact installed `struct-typeset` skill digest. Any local layout
+  consultation has its own receipt identifying `gpt-5.6-luna`, `max`, the
+  bounded candidates supplied, and the accepted or rejected proposal. Stubbed
+  tests do not require a live provider credential.
 
 ## Validation command
 
@@ -115,9 +137,10 @@ so restarting is cheaper and safer than rerunning a whole corpus.
 ## Trade-offs
 
 The extra pulse unit adds one scheduler to verify, but it prevents a long worker
-or installer cleanup from silently disabling future work. One worker at a time
-reduces throughput while avoiding duplicate edits and makes evidence ordering
-deterministic.
+or installer cleanup from silently disabling future work. One parser worker at
+a time avoids duplicate edits and makes source-lineage ordering deterministic.
+A separately accounted evidence/eval lane recovers wall-clock time without
+allowing concurrent parser mutations.
 
 ## Free-form response
 

@@ -198,6 +198,7 @@ export type StructRecovery = {
     category: StructDiagnostic['category']
     title: string
     count: number
+    pages: number[]
     action?: string
   }>
   userAction?: string

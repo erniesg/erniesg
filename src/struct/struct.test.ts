@@ -4,7 +4,11 @@ import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
 import { renderPublicationXhtml } from './xhtml'
 import { orderBlocksByLayout } from './reading-order'
-import { diagnosticCopy, recoverySummary } from './recovery'
+import {
+  diagnosticCopy,
+  hasActionableRecovery,
+  recoverySummary,
+} from './recovery'
 import type { StructBlock } from './types'
 import { reconstructDocx } from '../research/docx-import'
 import {
@@ -191,7 +195,7 @@ describe('STRUCT recovery language', () => {
   it('turns internal diagnostic codes into user-facing recovery guidance', () => {
     expect(diagnosticCopy('UNRESOLVED_VISUAL_OBJECT')).toMatchObject({
       category: 'visuals',
-      title: 'A figure or diagram was kept as source artwork',
+      title: 'A figure or diagram is missing from the readable export',
     })
     const summary = recoverySummary({
       ready: false,
@@ -204,25 +208,148 @@ describe('STRUCT recovery language', () => {
           code: 'UNRESOLVED_VISUAL_OBJECT',
           severity: 'error',
           message: 'internal message',
+          automaticRecovery: true,
         },
         {
           code: 'UNRESOLVED_HYPERLINK',
           severity: 'error',
           message: 'internal message',
+          automaticRecovery: true,
         },
       ],
     })
-    expect(summary.title).toBe(
-      'Your EPUB is readable, but not publication-ready yet.',
-    )
-    expect(summary.issues.map(({ category }) => category)).toEqual([
-      'visuals',
-      'links',
-    ])
+    expect(summary.title).toBe('Your EPUB is ready to read.')
+    expect(summary.issues).toEqual([])
     expect(summary.summary).not.toContain('UNRESOLVED_')
-    expect(summary.userAction).toContain(
-      'No action is needed to read the fallback',
+    expect(summary.userAction).toBeUndefined()
+    expect(hasActionableRecovery(summary)).toBe(false)
+  })
+
+  it('shows only deduplicated pages for diagnostics that require human action', () => {
+    const summary = recoverySummary({
+      ready: false,
+      blockingCodes: ['LOW_CONFIDENCE_OCR', 'UNRESOLVED_VISUAL_OBJECT'],
+      textCoverage: 0.98,
+      assetCoverage: 1,
+      relationshipCoverage: 1,
+      diagnostics: [
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'internal message',
+          page: 4,
+        },
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'duplicate internal message',
+          page: 4,
+        },
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'internal message',
+          page: 9,
+        },
+        {
+          code: 'UNRESOLVED_VISUAL_OBJECT',
+          severity: 'error',
+          message: 'source-preserved fallback',
+          page: 9,
+          automaticRecovery: true,
+        },
+      ],
+    })
+
+    expect(summary.issues).toEqual([
+      expect.objectContaining({
+        category: 'text',
+        count: 2,
+        pages: [4, 9],
+        action: expect.stringContaining('Compare'),
+      }),
+    ])
+    expect(summary.userAction).toContain('page 4, page 9')
+    expect(hasActionableRecovery(summary)).toBe(true)
+  })
+
+  it('fails closed for missing visuals and unknown blockers', () => {
+    const summary = recoverySummary({
+      ready: false,
+      blockingCodes: ['UNRESOLVED_VISUAL_OBJECT', 'FUTURE_BLOCKER'],
+      textCoverage: 1,
+      assetCoverage: 0.5,
+      relationshipCoverage: 1,
+      diagnostics: [
+        {
+          code: 'UNRESOLVED_VISUAL_OBJECT',
+          severity: 'error',
+          message: 'No packaged visual exists.',
+          page: 3,
+        },
+        {
+          code: 'FUTURE_BLOCKER',
+          severity: 'error',
+          message: 'An unknown invariant failed.',
+          page: 8,
+        },
+      ],
+    })
+
+    expect(hasActionableRecovery(summary)).toBe(true)
+    expect(summary.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: 'visuals', pages: [3] }),
+        expect.objectContaining({ category: 'source', pages: [8] }),
+      ]),
     )
+    expect(summary.issues.every((issue) => Boolean(issue.action))).toBe(true)
+  })
+
+  it('does not merge different actions merely because they share a category', () => {
+    const summary = recoverySummary({
+      ready: false,
+      blockingCodes: ['LOW_CONFIDENCE_OCR', 'INCOMPLETE_TEXT_COVERAGE'],
+      textCoverage: 0.9,
+      assetCoverage: 1,
+      relationshipCoverage: 1,
+      diagnostics: [
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'ocr',
+          pages: [2, 3],
+        },
+        {
+          code: 'INCOMPLETE_TEXT_COVERAGE',
+          severity: 'error',
+          message: 'coverage',
+          page: 7,
+        },
+      ],
+    })
+
+    expect(summary.issues).toHaveLength(2)
+    expect(summary.issues.map((issue) => issue.pages)).toEqual([[2, 3], [7]])
+    expect(new Set(summary.issues.map((issue) => issue.action)).size).toBe(2)
+  })
+
+  it('does not hide an unrecoverable file merely because no diagnostic was emitted', () => {
+    const summary = recoverySummary({
+      ready: false,
+      textCoverage: 0,
+      assetCoverage: 0,
+      relationshipCoverage: 0,
+      diagnostics: [],
+    })
+
+    expect(hasActionableRecovery(summary)).toBe(true)
+    expect(summary.issues).toEqual([
+      expect.objectContaining({
+        category: 'source',
+        action: expect.stringContaining('clearer original file'),
+      }),
+    ])
   })
 })
 

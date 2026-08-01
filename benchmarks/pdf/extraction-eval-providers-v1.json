@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "scholarly-pdf-extraction-provider-comparison-2026-08-v1",
+  "evalSet": {
+    "path": "benchmarks/pdf/extraction-eval-strata-v1.json",
+    "fileSha256": "219efcf7f1d75935afa55a34893af4354d599a1140c7c3e808ba7e2e488ba232",
+    "evalSetSha256": "41636518cc8215d3494cde7d3cebc7052874ff6761c83e958d9ca9b117a2a8d0"
+  },
+  "providers": [
+    {
+      "id": "deterministic-path",
+      "kind": "deterministic",
+      "version": "source-backed-fixture-path-v1",
+      "mode": "abstain",
+      "sourceIdentitySha256": null,
+      "predictionsPath": null
+    },
+    {
+      "id": "candidate-provider-a",
+      "kind": "candidate",
+      "version": "reported-only-a-v1",
+      "mode": "abstain",
+      "sourceIdentitySha256": null,
+      "predictionsPath": null
+    },
+    {
+      "id": "candidate-provider-b",
+      "kind": "candidate",
+      "version": "reported-only-b-v1",
+      "mode": "abstain",
+      "sourceIdentitySha256": null,
+      "predictionsPath": null
+    }
+  ]
+}

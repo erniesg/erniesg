@@ -26,6 +26,7 @@
     "pdf:export": "node tools/pdf-export.mjs",
     "pdf:local:doctor": "node tools/pdf-local-mac-doctor.mjs",
     "pdf:benchmark:compare": "node tools/pdf-benchmark-compare.mjs",
+    "pdf:benchmark:extraction": "node tools/pdf-extraction-eval.mjs",
     "pdf:ocr:benchmark": "node tools/pdf-ocr-engine-benchmark.mjs",
     "pdf:benchmark:readiness": "node tools/pdf-benchmark-readiness.mjs",
     "pdf:private-decisions:compose": "node tools/pdf-private-decision-compose.mjs",

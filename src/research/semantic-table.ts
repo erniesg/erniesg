@@ -685,6 +685,98 @@ function sameInlineRuns(
   )
 }
 
+function alignVerifiedSourceLineage(
+  table: StrictSemanticTable,
+  sourceRows: VerifiedTableSourceRun[][],
+) {
+  const sourceByKey = new Map(
+    sourceRows.flatMap((row, bandIndex) =>
+      row.map((source) => [source.key, { source, bandIndex }] as const),
+    ),
+  )
+  if (sourceByKey.size !== sourceRows.flat().length) return null
+
+  if (sourceRows.length > table.rows.length) {
+    const bodyRows = table.rows.slice(1)
+    const bodyColumnCount = bodyRows[0]?.cells.length ?? 0
+    const completeBodyGrid =
+      bodyColumnCount >= 2 &&
+      bodyRows.every(
+        (row) =>
+          row.cells.length === bodyColumnCount &&
+          row.cells.every(
+            (cell) => cell.columnSpan === 1 && cell.rowSpan === 1,
+          ),
+      )
+    if (completeBodyGrid) {
+      const bodyColumnAnchors = Array.from(
+        { length: bodyColumnCount },
+        (_, columnIndex) =>
+          median(
+            bodyRows.map((row) =>
+              Math.min(
+                ...(row.cells[columnIndex].sourceRuns ?? []).map(
+                  (source) => source.box.x,
+                ),
+              ),
+            ),
+          ),
+      )
+      if (
+        table.rows.some(
+          (row) =>
+            row.cells.length === bodyColumnCount &&
+            row.cells.some((cell, columnIndex) => {
+              const left = Math.min(
+                ...(cell.sourceRuns ?? []).map((source) => source.box.x),
+              )
+              return Math.abs(left - bodyColumnAnchors[columnIndex]) > 0.045
+            }),
+        )
+      ) {
+        return null
+      }
+    }
+  }
+
+  const claimedKeys = new Set<string>()
+  const alignedRows: VerifiedTableSourceRun[][] = []
+  let previousBandIndex = -1
+  for (const row of table.rows) {
+    const aligned: VerifiedTableSourceRun[] = []
+    const rowBandIndexes: number[] = []
+    for (const cell of row.cells) {
+      if (!cell.sourceRuns || cell.sourceRuns.length === 0) return null
+      for (const claimed of cell.sourceRuns) {
+        const key = sourceRunKey(
+          claimed.regionId,
+          claimed.lineId,
+          claimed.runIndex,
+        )
+        const selected = sourceByKey.get(key)
+        if (
+          !selected ||
+          claimedKeys.has(key) ||
+          claimed.text !== selected.source.run.text ||
+          !sameSourceBox(claimed.box, selected.source.run)
+        ) {
+          return null
+        }
+        claimedKeys.add(key)
+        rowBandIndexes.push(selected.bandIndex)
+        aligned.push(selected.source)
+      }
+    }
+    if (rowBandIndexes.length === 0) return null
+    const firstBandIndex = Math.min(...rowBandIndexes)
+    const lastBandIndex = Math.max(...rowBandIndexes)
+    if (firstBandIndex <= previousBandIndex) return null
+    previousBandIndex = lastBandIndex
+    alignedRows.push(aligned)
+  }
+  return claimedKeys.size === sourceByKey.size ? alignedRows : null
+}
+
 export function isSourceVerifiedSemanticTable({
   table,
   relationship,
@@ -817,7 +909,10 @@ export function isSourceVerifiedSemanticTable({
   ) {
     return false
   }
-  if (sourceRows.length !== table.rows.length) {
+  const alignedSourceRows = alignVerifiedSourceLineage(table, sourceRows)
+  if (alignedSourceRows) {
+    sourceRows = alignedSourceRows
+  } else if (sourceRows.length !== table.rows.length) {
     const closedRows = alignVerifiedWrappedColumnHeaderLineage({
       table,
       sourceRows,
@@ -827,6 +922,8 @@ export function isSourceVerifiedSemanticTable({
     })
     if (!closedRows) return false
     sourceRows = closedRows
+  } else {
+    return false
   }
   const sourceCells = sourceRows.flat()
   if (

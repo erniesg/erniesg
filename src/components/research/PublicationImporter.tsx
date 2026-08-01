@@ -47,7 +47,11 @@ import {
   resolveTargetProfile,
   type TargetOrientation,
 } from '../../research/targets'
-import { diagnosticCopy, recoverySummary } from '../../struct/recovery'
+import {
+  diagnosticCopy,
+  hasActionableRecovery,
+  recoverySummary,
+} from '../../struct/recovery'
 import EpubDownloadLink from './EpubDownloadLink'
 import EpubRenditionPreview, {
   epubPreviewArtifactKey,
@@ -1806,7 +1810,9 @@ export default function PublicationImporter({
             </output>
           )}
 
-          {!reviewMode && state.status === 'review-required' && (
+          {!reviewMode &&
+            state.status === 'review-required' &&
+            hasActionableRecovery(userRecovery) && (
             <div className="publication-ocr-gate" role="alert">
               <span>Review summary</span>
               <h3>

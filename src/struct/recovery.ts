@@ -385,3 +385,9 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
         : undefined,
   }
 }
+
+export function hasActionableRecovery(
+  recovery: StructRecovery | undefined,
+): recovery is StructRecovery & { userAction: string } {
+  return Boolean(recovery?.userAction)
+}

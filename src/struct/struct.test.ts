@@ -4,7 +4,11 @@ import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
 import { renderPublicationXhtml } from './xhtml'
 import { orderBlocksByLayout } from './reading-order'
-import { diagnosticCopy, recoverySummary } from './recovery'
+import {
+  diagnosticCopy,
+  hasActionableRecovery,
+  recoverySummary,
+} from './recovery'
 import type { StructBlock } from './types'
 import { reconstructDocx } from '../research/docx-import'
 import {
@@ -216,6 +220,7 @@ describe('STRUCT recovery language', () => {
     expect(summary.issues).toEqual([])
     expect(summary.summary).not.toContain('UNRESOLVED_')
     expect(summary.userAction).toBeUndefined()
+    expect(hasActionableRecovery(summary)).toBe(false)
   })
 
   it('shows only deduplicated pages for diagnostics that require human action', () => {
@@ -262,6 +267,7 @@ describe('STRUCT recovery language', () => {
       }),
     ])
     expect(summary.userAction).toContain('page 4, page 9')
+    expect(hasActionableRecovery(summary)).toBe(true)
   })
 })
 

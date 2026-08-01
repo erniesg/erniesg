@@ -54,6 +54,7 @@ self-heal policy remains authoritative (two attempts, then a human gate).
 Safe fallback is automatic; only a source comparison that identifies a page
 and exact action may become user work.
 
-Last evidence manifest: `.agent/evidence/20260801T074540748Z/manifest.json`.
+Last evidence manifest: `.agent/evidence/20260801T081504739Z/manifest.json`
+(`npm run build` and `npm run test` passed).
 Latest handoff artifact:
 `/Users/erniesg/.codex/handoffs/erniesg-20260801-155555.md`.

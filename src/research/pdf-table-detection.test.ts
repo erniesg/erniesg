@@ -109,11 +109,19 @@ describe('bounded table region detection', () => {
     }))
     const bodyOne = line('partial-body-one', 0.13, [0.1, 0.3, 0.5])
     bodyOne.runs[1]!.text = 'first value'
-    const bodyOneContinuation = line('partial-body-one-continuation', 0.145, [0.3])
+    const bodyOneContinuation = line(
+      'partial-body-one-continuation',
+      0.145,
+      [0.3],
+    )
     bodyOneContinuation.runs[0]!.text = 'continued'
     const bodyTwo = line('partial-body-two', 0.18, [0.1, 0.3, 0.5])
     const bodyThree = line('partial-body-three', 0.21, [0.1, 0.3, 0.5])
-    const excludedFromScope = line('partial-region-unselected-line', 0.25, [0.1])
+    const excludedFromScope = line(
+      'partial-region-unselected-line',
+      0.25,
+      [0.1],
+    )
     const table = region('partial-source-region', 'body', 0.1, [
       header,
       bodyOne,

@@ -195,7 +195,7 @@ describe('STRUCT recovery language', () => {
   it('turns internal diagnostic codes into user-facing recovery guidance', () => {
     expect(diagnosticCopy('UNRESOLVED_VISUAL_OBJECT')).toMatchObject({
       category: 'visuals',
-      title: 'A figure or diagram was kept as source artwork',
+      title: 'A figure or diagram is missing from the readable export',
     })
     const summary = recoverySummary({
       ready: false,
@@ -208,11 +208,13 @@ describe('STRUCT recovery language', () => {
           code: 'UNRESOLVED_VISUAL_OBJECT',
           severity: 'error',
           message: 'internal message',
+          automaticRecovery: true,
         },
         {
           code: 'UNRESOLVED_HYPERLINK',
           severity: 'error',
           message: 'internal message',
+          automaticRecovery: true,
         },
       ],
     })
@@ -254,6 +256,7 @@ describe('STRUCT recovery language', () => {
           severity: 'error',
           message: 'source-preserved fallback',
           page: 9,
+          automaticRecovery: true,
         },
       ],
     })
@@ -268,6 +271,39 @@ describe('STRUCT recovery language', () => {
     ])
     expect(summary.userAction).toContain('page 4, page 9')
     expect(hasActionableRecovery(summary)).toBe(true)
+  })
+
+  it('fails closed for missing visuals and unknown blockers', () => {
+    const summary = recoverySummary({
+      ready: false,
+      blockingCodes: ['UNRESOLVED_VISUAL_OBJECT', 'FUTURE_BLOCKER'],
+      textCoverage: 1,
+      assetCoverage: 0.5,
+      relationshipCoverage: 1,
+      diagnostics: [
+        {
+          code: 'UNRESOLVED_VISUAL_OBJECT',
+          severity: 'error',
+          message: 'No packaged visual exists.',
+          page: 3,
+        },
+        {
+          code: 'FUTURE_BLOCKER',
+          severity: 'error',
+          message: 'An unknown invariant failed.',
+          page: 8,
+        },
+      ],
+    })
+
+    expect(hasActionableRecovery(summary)).toBe(true)
+    expect(summary.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: 'visuals', pages: [3] }),
+        expect.objectContaining({ category: 'source', pages: [8] }),
+      ]),
+    )
+    expect(summary.issues.every((issue) => Boolean(issue.action))).toBe(true)
   })
 })
 

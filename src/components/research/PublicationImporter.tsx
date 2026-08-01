@@ -42,6 +42,7 @@ import {
   type PdfLineJoinReviewContext,
 } from '../../research/pdf-lines'
 import { downloadLinkedPdf } from '../../research/pdf-url'
+import { recoveryDiagnosticInputs } from '../../research/recovery-projection'
 import {
   getTargetProfile,
   resolveTargetProfile,
@@ -1547,7 +1548,7 @@ export default function PublicationImporter({
     }
     return recoverySummary({
       ready: state.result.readiness.ready,
-      diagnostics: state.result.diagnostics,
+      diagnostics: recoveryDiagnosticInputs(state.result),
       blockingCodes: state.result.readiness.blockingDiagnosticCodes,
       textCoverage: state.result.completeness.textCoverage,
       assetCoverage: state.result.completeness.assetCoverage,

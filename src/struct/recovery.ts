@@ -9,6 +9,14 @@ type DiagnosticCopy = Pick<
   'category' | 'title' | 'message'
 > & { action?: string }
 
+export type RecoveryDiagnosticInput = {
+  code: string
+  severity: StructDiagnosticSeverity
+  message: string
+  page?: number
+  automaticRecovery?: boolean
+}
+
 /**
  * Internal diagnostics stay machine-readable, but users need to know what
  * survived, what was preserved as source material, and whether they need to
@@ -46,9 +54,11 @@ const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
   },
   UNRESOLVED_VISUAL_OBJECT: {
     category: 'visuals',
-    title: 'A figure or diagram was kept as source artwork',
+    title: 'A figure or diagram is missing from the readable export',
     message:
-      'The source visual and its caption remain in the readable export even though it was not safely converted to a semantic object.',
+      'No packaged source visual could be proven for this figure or diagram.',
+    action:
+      'Open the marked page and confirm the figure is visible. If it is absent, keep the source PDF instead of publishing this EPUB.',
   },
   UNREFERENCED_VISUAL_ASSET: {
     category: 'visuals',
@@ -240,9 +250,11 @@ const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
 
 const FALLBACK_COPY: DiagnosticCopy = {
   category: 'source',
-  title: 'A source detail needs review',
+  title: 'The importer could not verify part of this file',
   message:
     'The readable export preserves the recoverable source content and avoids making an unsupported structural guess.',
+  action:
+    'Try again with a clearer original file. If it still fails, keep the source file instead of publishing this EPUB.',
 }
 
 export function diagnosticCopy(
@@ -279,12 +291,7 @@ export function toStructDiagnostic(input: {
 
 type RecoveryInput = {
   ready: boolean
-  diagnostics: ReadonlyArray<{
-    code: string
-    severity: StructDiagnosticSeverity
-    message: string
-    page?: number
-  }>
+  diagnostics: ReadonlyArray<RecoveryDiagnosticInput>
   blockingCodes?: readonly string[]
   textCoverage?: number
   assetCoverage?: number
@@ -309,12 +316,11 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
     notes: 'Some footnotes or endnotes could not be linked safely',
     source: 'Some structured content stayed in its source layout',
   }
-  // A source-preserved fallback is an automatic recovery, not a task for the
-  // reader. Only diagnostics with an explicit human action belong in this
-  // summary. This prevents one asset/link/relationship record from becoming
-  // a misleading badge such as “89 links need review”.
-  const actionable = relevant.filter((diagnostic) =>
-    Boolean(diagnosticCopy(diagnostic.code, diagnostic.message).action),
+  // A source-preserved fallback is an automatic recovery only when the adapter
+  // proves it. Unclassified and future blocker codes fail closed so a genuinely
+  // missing object can never be mislabeled as ready.
+  const actionable = relevant.filter(
+    (diagnostic) => diagnostic.automaticRecovery !== true,
   )
   const groups = new Map<
     StructDiagnostic['category'],
@@ -322,6 +328,7 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
   >()
   for (const diagnostic of actionable) {
     const copy = diagnosticCopy(diagnostic.code, diagnostic.message)
+    const action = copy.action ?? FALLBACK_COPY.action
     const previous = groups.get(copy.category)
     const pages = previous?.pages ?? new Set<number>()
     if (diagnostic.page !== undefined) pages.add(diagnostic.page)
@@ -330,8 +337,8 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
       pages,
       unknownCount:
         (previous?.unknownCount ?? 0) + (diagnostic.page === undefined ? 1 : 0),
-      ...(previous?.action || copy.action
-        ? { action: previous?.action ?? copy.action }
+      ...(previous?.action || action
+        ? { action: previous?.action ?? action }
         : {}),
     })
   }

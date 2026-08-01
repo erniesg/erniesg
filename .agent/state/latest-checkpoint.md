@@ -82,4 +82,4 @@ PR #348. That PR seeds provenance and must not close either implementation
 issue. Until those fixes land, the installed pulse's VM-wide tmux/Codex guard
 is the authoritative conservative cap.
 Latest handoff artifact:
-`/Users/erniesg/.codex/handoffs/erniesg-20260801-155555.md`.
+`/Users/erniesg/.codex/handoffs/erniesg-20260801-174653.md`.

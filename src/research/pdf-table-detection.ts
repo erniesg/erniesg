@@ -800,7 +800,7 @@ export function detectUniformTableWithinProvenScope(
   )
   const columnCount = rows[0]?.length ?? 0
   if (
-    rows.length < 2 ||
+    rows.length < 3 ||
     columnCount < 2 ||
     columnCount > 12 ||
     rows.some((row) => row.length !== columnCount)

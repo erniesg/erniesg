@@ -21,10 +21,13 @@ that product umbrella completes.
   timer is loaded, enabled, active, has a future fire, and the service has the
   repository timeout policy (`30m` start, `5m` stop). A mask or failed state is
   a queue-health failure, not a successful idle result.
-- Enforce one total live VM issue session for this repository across repeated
-  pulse invocations. `--max-workers 1` is only a per-invocation launch limit;
-  active unexpired leases/sessions consume the global slot before selection.
-  Reconcile GitHub labels and exact issue leases before dispatch; never
+- Default to one total live VM issue session for this repository across
+  repeated pulse invocations. `--max-workers 1` is only a per-invocation launch
+  limit; active unexpired leases/sessions consume the global slot before
+  selection. After durable cross-pulse accounting and resource preflight are
+  proven, the cap may rise to two only as one `parser-core` worker plus one
+  path-disjoint `evidence-eval` worker. Reconcile GitHub labels, exact issue
+  leases, declared write scopes, disk, and memory before dispatch; never
   duplicate a running or human-blocked issue.
 - Preflight disk capacity before dispatch. At the configured high-water mark,
   preserve the active lease, handoff, evidence receipts, and referenced
@@ -38,6 +41,9 @@ that product umbrella completes.
 - Record an atomic checkpoint after each pass: issue, branch/PR, source SHA,
   evidence manifest, tests, visual source/output artifacts, next issue, and
   failure class. A reconnecting agent must be able to resume from it.
+- Resume a clean checkpointed branch instead of restarting discovery. Run
+  focused red/green tests per commit and defer the full suite, corpus, and
+  source-versus-render matrix to integration checkpoints.
 - Use bounded retries/self-heal. After the configured two attempts, retain the
   issue's actionable failure and move it to a human gate; do not spin forever.
 - Require source-vs-render comparison and the local readable fallback before
@@ -68,9 +74,12 @@ that product umbrella completes.
 - A fake systemd response for a healthy timer is accepted only when it is
   loaded, enabled, active, and has a future fire; masked, failed, or missing
   state is reported as queue-health failure.
-- At total capacity one, one live session plus one queued issue launches
-  nothing; a completed/expired session frees exactly one slot. Missing or
-  malformed lease state fails closed for recovery instead of opening a slot.
+- At default total capacity one, one live session plus one queued issue launches
+  nothing; a completed/expired session frees exactly one slot. With the tested
+  two-lane policy enabled, a live `parser-core` worker may admit exactly one
+  path-disjoint `evidence-eval` worker when disk and memory pass, but never a
+  second parser worker or overlapping write scope. Missing or malformed lease,
+  scope, or resource state fails closed instead of opening a slot.
 - At the disk high-water mark, an active worktree and every referenced evidence
   artifact remain untouched. Only a completed/expired worktree with a durable
   checkpoint and reproducible cache entries are eligible; insufficient safe
@@ -128,9 +137,10 @@ so restarting is cheaper and safer than rerunning a whole corpus.
 ## Trade-offs
 
 The extra pulse unit adds one scheduler to verify, but it prevents a long worker
-or installer cleanup from silently disabling future work. One worker at a time
-reduces throughput while avoiding duplicate edits and makes evidence ordering
-deterministic.
+or installer cleanup from silently disabling future work. One parser worker at
+a time avoids duplicate edits and makes source-lineage ordering deterministic.
+A separately accounted evidence/eval lane recovers wall-clock time without
+allowing concurrent parser mutations.
 
 ## Free-form response
 

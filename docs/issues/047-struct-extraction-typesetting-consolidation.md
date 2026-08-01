@@ -61,9 +61,14 @@ coverage rose.
   wrapped continuations and shared source lines; do not patch the same files in
   another worker.
 - Source-versus-render evidence (038) and corpus strata (037) may run beside one
-  parser worker only when their declared write paths are disjoint.
+  parser worker only when their declared write paths are disjoint and the VM
+  capacity preflight proves enough disk and memory headroom. The global maximum
+  is then two workers: one `parser-core` and one `evidence-eval`.
 - The umbrella issue (047) integrates completed child receipts; it is not an
   extra parser worker.
+- Resume an existing clean issue branch/checkpoint instead of regenerating its
+  analysis. Use focused red/green tests for each small commit; reserve the full
+  suite, corpus run, and visual comparison for integration checkpoints.
 
 ## Acceptance tests
 

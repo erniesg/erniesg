@@ -41,8 +41,9 @@ that product umbrella completes.
   accepted proposal and distill it into a fixture plus deterministic rule.
 - Install the default-branch `struct-typeset` skill as a pinned, read-only VM
   skill and record its SHA-256 in each applicable worker receipt. Future layout
-  workers use the configured `gpt-5.6-luna` / `max` VM profile; already-running
-  workers keep their recorded model and are never relabeled retroactively.
+  workers use the owner-requested `gpt-5.6-sol` / `high` VM profile;
+  already-running workers keep their recorded model and are never relabeled
+  retroactively.
 - Resolve the generated drain through an installer-owned stable target alias or
   validated state file rather than a repository-hard-coded unit version.
 
@@ -69,7 +70,7 @@ that product umbrella completes.
 - Two consecutive pulse passes keep the repo-owned scheduler enabled while the
   generated drain may be held during a worker pass, and never exceed the total
   configured session cap.
-- A future applicable worker receipt identifies `gpt-5.6-luna`, `max`, and the
+- A future applicable worker receipt identifies `gpt-5.6-sol`, `high`, and the
   exact installed `struct-typeset` skill digest. Stubbed tests do not require a
   live provider credential.
 

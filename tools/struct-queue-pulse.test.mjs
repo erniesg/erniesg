@@ -87,9 +87,7 @@ describe('STRUCT queue pulse contract', () => {
     const expired = classifyRepositorySessions({
       ledger: {
         schema_version: '1',
-        sessions: [
-          session({ lease_expires_at: '2026-08-01T10:00:00Z' }),
-        ],
+        sessions: [session({ lease_expires_at: '2026-08-01T10:00:00Z' })],
       },
       repo: 'erniesg/erniesg',
       now,
@@ -106,9 +104,7 @@ describe('STRUCT queue pulse contract', () => {
     const result = classifyRepositorySessions({
       ledger: {
         schema_version: '1',
-        sessions: [
-          session({ lease_expires_at: '2026-08-01T10:00:00Z' }),
-        ],
+        sessions: [session({ lease_expires_at: '2026-08-01T10:00:00Z' })],
       },
       repo: 'erniesg/erniesg',
       now,

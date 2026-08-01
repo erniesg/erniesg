@@ -1,0 +1,17 @@
+# Repo-owned pulse wrapper. It intentionally does not use the
+# rucksack-autopilot-*-drain name so Rucksack containment can hold a generated
+# drain without disabling the durable overnight scheduler.
+[Unit]
+Description=Resilient STRUCT queue pulse for erniesg/erniesg
+Documentation=man:systemd.service(5)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=%h/.config/rucksack/overnight/erniesg-erniesg.enabled
+ConditionPathExists=!%h/.config/rucksack/overnight/erniesg-erniesg.hold
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/erniesg/erniesg
+TimeoutStartSec=30min
+TimeoutStopSec=5min
+ExecStart=/usr/bin/env node %h/code/erniesg/erniesg/tools/struct-queue-pulse.mjs

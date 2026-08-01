@@ -9713,6 +9713,7 @@ export async function reconstructPdfVisuals({
     : undefined
   const diagnostics: ReconstructionDiagnostic[] = []
   const tableCandidateReceipts: TableCandidateReceipt[] = []
+  let remoteTableCandidateUsed = false
   const unresolvedExtensionTextItemKeys = new Set<string>()
   const unresolvedExtensionTextItems: PdfSourceRun[] = []
   for (const page of pages) {
@@ -10201,9 +10202,23 @@ export async function reconstructPdfVisuals({
           tableCandidateProvider
         ) {
           const scope = boundedScope.scope
-          const scopedRegions = availableTableRegions.filter((region) =>
-            scope.sourceRegionIds.includes(region.id),
-          )
+          const scopedLineIds = new Set(scope.sourceLineIds)
+          const scopedRegions = availableTableRegions
+            .filter((region) => scope.sourceRegionIds.includes(region.id))
+            .map((region) => {
+              if (scopedLineIds.size === 0) return region
+              const lines = region.lines.filter((line) =>
+                scopedLineIds.has(line.id),
+              )
+              return lines.length > 0
+                ? {
+                    ...region,
+                    lines,
+                    text: lines.map((line) => line.text).join(' '),
+                  }
+                : null
+            })
+            .filter((region): region is PdfPageRegion => region !== null)
           let providerDiagnostic:
             | TableCandidateReceipt['diagnostic']
             | 'table-candidate-provider-unavailable' =
@@ -10234,6 +10249,7 @@ export async function reconstructPdfVisuals({
                 allowRemote: allowRemoteTableCandidateProvider,
                 signal,
               })
+              remoteTableCandidateUsed ||= candidateResult.remoteUsed
               let receipt = candidateResult.receipt
               if (candidateResult.verified) {
                 const verifiedGrid = candidateResult.verified.grid
@@ -12967,6 +12983,7 @@ export async function reconstructPdfVisuals({
     consumedLineIds,
     partialRegionLineSelections,
     diagnostics,
+    remoteTableCandidateUsed,
     ...(tableCandidateProvider ? { tableCandidateReceipts } : {}),
   }
 }

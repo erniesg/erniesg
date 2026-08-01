@@ -1,6 +1,7 @@
 import type {
   NormalizedSourceBox,
   PdfPageRegion,
+  PdfSourceRunReference,
   PdfSourceRun,
 } from './import-types'
 import type { PdfDetectedTableGrid } from './pdf-table-detection'
@@ -8,11 +9,25 @@ import { sha256HexSync } from './sha256-sync'
 
 export const TABLE_CANDIDATE_RECEIPT_SCHEMA_VERSION = '1.0.0' as const
 
+export type TableCandidateAdapterIdentity = {
+  id: string
+  version: string
+  sha256: string
+}
+
+export type TableCandidateRuntimeIdentity = {
+  id: string
+  version: string
+  sha256: string
+}
+
 export type TableCandidateProviderIdentity = {
   id: string
   version: string
   modelDigest: string
   configurationHash: string
+  adapter: TableCandidateAdapterIdentity
+  runtime: TableCandidateRuntimeIdentity
 }
 
 export type TableCandidateCell = {
@@ -20,6 +35,8 @@ export type TableCandidateCell = {
   columnIndex: number
   columnSpan?: number
   rowSpan?: number
+  /** Deterministic source ownership supplied or checked by the adapter. */
+  sourceRunRefs?: PdfSourceRunReference[]
   /** Coordinates normalized to the bounded table image, not the source page. */
   box?: { x: number; y: number; width: number; height: number }
 }
@@ -133,11 +150,29 @@ function raceTableCandidateProvider<T>(
 
 function pinnedIdentity(identity: TableCandidateProviderIdentity) {
   return (
+    isRecord(identity) &&
     /^[a-z0-9][a-z0-9._-]{0,79}$/u.test(identity.id) &&
     identity.version.length > 0 &&
     identity.version.length <= 120 &&
     /^[a-f0-9]{64}$/u.test(identity.modelDigest) &&
-    /^[a-f0-9]{64}$/u.test(identity.configurationHash)
+    /^[a-f0-9]{64}$/u.test(identity.configurationHash) &&
+    pinnedComponentIdentity(identity.adapter) &&
+    pinnedComponentIdentity(identity.runtime)
+  )
+}
+
+function pinnedComponentIdentity(
+  identity: TableCandidateAdapterIdentity | TableCandidateRuntimeIdentity,
+) {
+  return (
+    isRecord(identity) &&
+    typeof identity.id === 'string' &&
+    /^[a-z0-9][a-z0-9._-]{0,79}$/u.test(identity.id) &&
+    typeof identity.version === 'string' &&
+    identity.version.length > 0 &&
+    identity.version.length <= 120 &&
+    typeof identity.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/u.test(identity.sha256)
   )
 }
 
@@ -167,11 +202,15 @@ export function createDoclingTableCandidateProvider({
   version,
   modelDigest,
   configuration,
+  adapter,
+  runtime,
   infer,
 }: {
   version: string
   modelDigest: string
   configuration: unknown
+  adapter: TableCandidateAdapterIdentity
+  runtime: TableCandidateRuntimeIdentity
   infer: TableCandidateProvider['propose']
 }): TableCandidateProvider {
   return {
@@ -180,6 +219,8 @@ export function createDoclingTableCandidateProvider({
       version,
       modelDigest,
       configurationHash: tableCandidateConfigurationHash(configuration),
+      adapter,
+      runtime,
     },
     locality: 'local',
     propose: infer,
@@ -309,6 +350,22 @@ function sourceUnionBox(sources: readonly OwnedRun[]) {
   } satisfies NormalizedSourceBox
 }
 
+function sourceRunReferenceKey(reference: PdfSourceRunReference) {
+  return `${reference.regionId}\u0000${reference.lineId}\u0000${reference.runIndex}`
+}
+
+function validSourceRunReference(value: unknown): value is PdfSourceRunReference {
+  return (
+    isRecord(value) &&
+    typeof value.regionId === 'string' &&
+    value.regionId.length > 0 &&
+    typeof value.lineId === 'string' &&
+    value.lineId.length > 0 &&
+    Number.isSafeInteger(value.runIndex) &&
+    Number(value.runIndex) >= 0
+  )
+}
+
 function validProposalShape(
   proposal: unknown,
 ): proposal is TableCandidateProposal {
@@ -351,6 +408,13 @@ function validProposalShape(
         rowSpan < 1 ||
         columnIndex + columnSpan > columnCount ||
         rowIndex + rowSpan > proposal.rows.length ||
+        (cell.sourceRunRefs !== undefined &&
+          (!Array.isArray(cell.sourceRunRefs) ||
+            cell.sourceRunRefs.some(
+              (reference) => !validSourceRunReference(reference),
+            ) ||
+            new Set(cell.sourceRunRefs.map(sourceRunReferenceKey)).size !==
+              cell.sourceRunRefs.length)) ||
         (cell.box !== undefined && !validUnitBox(cell.box))
       ) {
         return false
@@ -376,13 +440,26 @@ function uniqueTextMatch(
 ): OwnedRun[] | null {
   const matches: OwnedRun[][] = []
   for (let start = 0; start < available.length; start += 1) {
+    const sequence: OwnedRun[] = []
+    let sequenceText = ''
     for (let end = start + 1; end <= available.length; end += 1) {
-      const sequence = available.slice(start, end)
+      const source = available[end - 1]
+      const previous = sequence.at(-1)
+      if (previous) {
+        const differentLine = previous.line.id !== source.line.id
+        const gap = source.run.x - (previous.run.x + previous.run.width)
+        const threshold = Math.max(
+          0.0005,
+          Math.min(previous.run.height, source.run.height) * 0.18,
+        )
+        if (differentLine || gap > threshold) sequenceText += ' '
+      }
+      sequence.push(source)
+      sequenceText += source.run.text
       if (
-        normalizedCandidateText(sourceSequenceText(sequence)) ===
-        normalizedCandidateText(text)
+        normalizedCandidateText(sequenceText) === normalizedCandidateText(text)
       ) {
-        matches.push(sequence)
+        matches.push([...sequence])
       }
     }
   }
@@ -406,7 +483,17 @@ export function verifyTableCandidate({
   if (!validProposalShape(proposal)) return null
   const allRuns = orderedScopeRuns(sourceRegions)
   if (allRuns.length === 0) return null
+  const sourceRunsByKey = new Map(
+    allRuns.map((source) => [source.key, source]),
+  )
+  const sourceOrderByKey = new Map(
+    allRuns.map((source, index) => [source.key, index]),
+  )
   const claimed = new Set<string>()
+  const headerColumnCenters: Array<number | undefined> = Array.from(
+    { length: proposal.columnCount },
+    () => undefined,
+  )
   const lines: PdfDetectedTableGrid['lines'] = []
 
   for (const [rowIndex, proposedRow] of proposal.rows.entries()) {
@@ -418,6 +505,7 @@ export function verifyTableCandidate({
       sourceBox: NormalizedSourceBox
       sourceLineIds: string[]
       sourceRegionIds: string[]
+      sourceRunRefs: PdfSourceRunReference[]
     }> = []
     for (const cell of [...proposedRow.cells].sort(
       (left, right) => left.columnIndex - right.columnIndex,
@@ -429,8 +517,38 @@ export function verifyTableCandidate({
         : []
       let sources: OwnedRun[] | null
       if (normalizedCandidateText(cell.text) === '') {
+        if (cell.sourceRunRefs && cell.sourceRunRefs.length > 0) return null
         if (spatial.length > 0) return null
         sources = []
+      } else if (cell.sourceRunRefs !== undefined) {
+        const sourceRefs = cell.sourceRunRefs
+        const resolved = sourceRefs.map((reference) =>
+          sourceRunsByKey.get(sourceRunReferenceKey(reference)),
+        )
+        if (
+          resolved.some((source) => !source) ||
+          resolved.some((source) => claimed.has(source!.key))
+        ) {
+          return null
+        }
+        const explicitSources = resolved as OwnedRun[]
+        if (
+          explicitSources.length === 0 ||
+          explicitSources.some(
+            (source, sourceIndex) =>
+              sourceIndex > 0 &&
+              (sourceOrderByKey.get(explicitSources[sourceIndex - 1].key) ??
+                Number.POSITIVE_INFINITY) >=
+                (sourceOrderByKey.get(source.key) ?? Number.NEGATIVE_INFINITY),
+          ) ||
+          (absoluteBox &&
+            explicitSources.some(({ run }) => !runCenterInside(run, absoluteBox))) ||
+          normalizedCandidateText(sourceSequenceText(explicitSources)) !==
+            normalizedCandidateText(cell.text)
+        ) {
+          return null
+        }
+        sources = explicitSources
       } else if (absoluteBox) {
         sources =
           spatial.length > 0 &&
@@ -469,7 +587,43 @@ export function verifyTableCandidate({
         sourceRegionIds: [
           ...new Set(sources.map((source) => source.region.id)),
         ],
+        sourceRunRefs: sources.map(({ region, line, runIndex }) => ({
+          regionId: region.id,
+          lineId: line.id,
+          runIndex,
+        })),
       })
+    }
+    for (const cell of verifiedCells) {
+      if (cell.columnSpan !== 1 || cell.sourceBox.width <= 0) continue
+      const center = cell.sourceBox.x + cell.sourceBox.width / 2
+      if (rowIndex < proposal.headerRowCount) {
+        const existing = headerColumnCenters[cell.columnIndex]
+        if (existing !== undefined && Math.abs(existing - center) > 0.08) {
+          return null
+        }
+        headerColumnCenters[cell.columnIndex] = existing ?? center
+      }
+    }
+    if (rowIndex >= proposal.headerRowCount) {
+      for (const cell of verifiedCells) {
+        if (cell.columnSpan !== 1 || !cell.run.text.trim()) continue
+        const expected = headerColumnCenters[cell.columnIndex]
+        if (expected === undefined) continue
+        const neighboringCenters = headerColumnCenters
+          .map((center, columnIndex) =>
+            center !== undefined && columnIndex !== cell.columnIndex
+              ? Math.abs(center - expected)
+              : Infinity,
+          )
+          .filter(Number.isFinite)
+        const tolerance = Math.max(
+          0.04,
+          (Math.min(...neighboringCenters, 0.24) || 0.24) * 0.4,
+        )
+        const center = cell.sourceBox.x + cell.sourceBox.width / 2
+        if (Math.abs(center - expected) > tolerance) return null
+      }
     }
     const rowSources = verifiedCells.flatMap((cell) => cell.sourceBox)
     const left = Math.min(...rowSources.map((box) => box.x))
@@ -510,6 +664,7 @@ export function verifyTableCandidate({
         columnIndex: cell.columnIndex,
         columnSpan: cell.columnSpan,
         rowSpan: cell.rowSpan,
+        sourceRunRefs: [...cell.sourceRunRefs],
       })),
     })
   }
@@ -552,6 +707,7 @@ export async function runTableCandidateProvider({
 }): Promise<{
   verified: VerifiedTableCandidate | null
   receipt: TableCandidateReceipt
+  remoteUsed: boolean
 }> {
   if (!pinnedIdentity(provider.identity)) {
     throw new Error('Table candidate provider identity must be fully pinned.')
@@ -578,12 +734,20 @@ export async function runTableCandidateProvider({
     diagnostic: 'table-candidate-provider-unavailable',
   })
   if (provider.locality === 'remote' && !allowRemote) {
-    return { verified: null, receipt: unavailable() }
+    return { verified: null, receipt: unavailable(), remoteUsed: false }
   }
+  let remoteUsed = false
   try {
-    if (provider.available && !(await provider.available())) {
-      return { verified: null, receipt: unavailable() }
+    if (
+      provider.available &&
+      !(await raceTableCandidateProvider(
+        () => Promise.resolve(provider.available!()),
+        signal,
+      ))
+    ) {
+      return { verified: null, receipt: unavailable(), remoteUsed: false }
     }
+    remoteUsed = provider.locality === 'remote'
     let proposal = cache?.get(cacheKey)
     if (proposal === undefined) {
       proposal = await raceTableCandidateProvider(
@@ -605,7 +769,11 @@ export async function runTableCandidateProvider({
         verifiedGridSha256: null,
         diagnostic: 'table-candidate-no-proposal',
       }
-      return { verified: null, receipt }
+      return {
+        verified: null,
+        receipt,
+        remoteUsed,
+      }
     }
     const candidateSha256 = sha256HexSync(stableJson(proposal))
     const grid = verifyTableCandidate({
@@ -620,7 +788,11 @@ export async function runTableCandidateProvider({
         verifiedGridSha256: null,
         diagnostic: 'table-candidate-proposal-failed-verification',
       }
-      return { verified: null, receipt }
+      return {
+        verified: null,
+        receipt,
+        remoteUsed,
+      }
     }
     const receipt: TableCandidateReceipt = {
       ...baseReceipt,
@@ -628,17 +800,21 @@ export async function runTableCandidateProvider({
       verifiedGridSha256: sha256HexSync(stableJson(grid)),
       diagnostic: 'table-candidate-verified',
     }
-    return { verified: { grid, receipt }, receipt }
+    return {
+      verified: { grid, receipt },
+      receipt,
+      remoteUsed,
+    }
   } catch (error) {
     if (
       error instanceof TableCandidateProviderUnavailableError ||
       (error instanceof Error && error.name === 'AbortError')
     ) {
-      return { verified: null, receipt: unavailable() }
+      return { verified: null, receipt: unavailable(), remoteUsed }
     }
     // Provider failures are availability failures. Do not serialize arbitrary
     // provider messages, which can contain paths or remote response content.
-    return { verified: null, receipt: unavailable() }
+    return { verified: null, receipt: unavailable(), remoteUsed }
   }
 }
 
@@ -659,7 +835,11 @@ export function createTableCandidateBenchmarkReport({
   provider: TableCandidatePathCounts
   verifiedProvider: TableCandidatePathCounts
 }) {
-  const paths = { deterministic, provider, verifiedProvider }
+  const paths = {
+    deterministic: { ...deterministic },
+    provider: { ...provider },
+    verifiedProvider: { ...verifiedProvider },
+  }
   const totals = Object.values(paths).map(
     (counts) => counts.semantic + counts.raster + counts.unresolved,
   )

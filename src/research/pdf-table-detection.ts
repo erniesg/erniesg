@@ -2,6 +2,7 @@ import type {
   NormalizedSourceBox,
   PdfPageRegion,
   PdfRegionLine,
+  PdfSourceRunReference,
   PdfSourceRun,
 } from './import-types'
 
@@ -47,6 +48,7 @@ export type PdfDetectedTableGrid = {
         columnIndex: number
         columnSpan: number
         rowSpan: number
+        sourceRunRefs?: PdfSourceRunReference[]
       }>
     }
   >

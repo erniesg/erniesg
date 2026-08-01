@@ -110,7 +110,174 @@ function proposal(lastCell = '5 , 557 . 0'): TableCandidateProposal {
   }
 }
 
+const adapterIdentity = {
+  id: 'docling-tableformer-adapter',
+  version: '1.0.0',
+  sha256: 'f'.repeat(64),
+}
+
+const runtimeIdentity = {
+  id: 'docling-python',
+  version: '2.48.0',
+  sha256: 'e'.repeat(64),
+}
+
 describe('table candidate provider verification', () => {
+  it('keeps exact run ownership through grouped headers and row/column spans', () => {
+    const values = [
+      ['Model', 'Scores', '', ''],
+      ['', 'Mean', 'Std', 'Count'],
+      ['Alpha', '0.1', '0.2', '3'],
+      ['Beta', '0.3', '0.4', '4'],
+    ]
+    const groupedRegions: PdfPageRegion[] = [
+      {
+        ...sourceRegions[0],
+        id: 'grouped-region',
+        text: values.flat().filter(Boolean).join(' '),
+        lines: values.map((texts, rowIndex) => ({
+          id: `grouped-line-${rowIndex + 1}`,
+          text: texts.filter(Boolean).join(' '),
+          fontSize: 10,
+          box: { ...crop, x: 0.12, y: 0.22 + rowIndex * 0.07, width: 0.7 },
+          runs: texts.flatMap((text, columnIndex) =>
+            text
+              ? [run(text, 0.12 + columnIndex * 0.2, 0.22 + rowIndex * 0.07)]
+              : [],
+          ),
+        })),
+      },
+    ]
+    const ref = (rowIndex: number, runIndex: number) => ({
+      regionId: 'grouped-region',
+      lineId: `grouped-line-${rowIndex + 1}`,
+      runIndex,
+    })
+    const candidate: TableCandidateProposal = {
+      columnCount: 4,
+      headerRowCount: 2,
+      rows: [
+        {
+          cells: [
+            { text: 'Model', columnIndex: 0, rowSpan: 2, sourceRunRefs: [ref(0, 0)] },
+            { text: 'Scores', columnIndex: 1, columnSpan: 3, sourceRunRefs: [ref(0, 1)] },
+          ],
+        },
+        {
+          cells: [
+            { text: 'Mean', columnIndex: 1, sourceRunRefs: [ref(1, 0)] },
+            { text: 'Std', columnIndex: 2, sourceRunRefs: [ref(1, 1)] },
+            { text: 'Count', columnIndex: 3, sourceRunRefs: [ref(1, 2)] },
+          ],
+        },
+        {
+          cells: [
+            { text: 'Alpha', columnIndex: 0, sourceRunRefs: [ref(2, 0)] },
+            { text: '0.1', columnIndex: 1, sourceRunRefs: [ref(2, 1)] },
+            { text: '0.2', columnIndex: 2, sourceRunRefs: [ref(2, 2)] },
+            { text: '3', columnIndex: 3, sourceRunRefs: [ref(2, 3)] },
+          ],
+        },
+        {
+          cells: [
+            { text: 'Beta', columnIndex: 0, sourceRunRefs: [ref(3, 0)] },
+            { text: '0.3', columnIndex: 1, sourceRunRefs: [ref(3, 1)] },
+            { text: '0.4', columnIndex: 2, sourceRunRefs: [ref(3, 2)] },
+            { text: '4', columnIndex: 3, sourceRunRefs: [ref(3, 3)] },
+          ],
+        },
+      ],
+    }
+
+    const grid = verifyTableCandidate({
+      proposal: candidate,
+      sourceRegions: groupedRegions,
+      sourceCropBox: crop,
+    })
+
+    expect(grid).not.toBeNull()
+    expect(grid!.lines[0].cells[0]).toMatchObject({
+      columnIndex: 0,
+      rowSpan: 2,
+      sourceRunRefs: [ref(0, 0)],
+    })
+    expect(grid!.lines[1].cells[1].sourceRunRefs).toEqual([ref(1, 1)])
+    const table = canonicalTableFromLines(grid!.lines, {
+      detectedGrid: grid!,
+      sourceRegions: groupedRegions,
+      links: [],
+    })
+    expect(table?.rows[2].cells[3].sourceRuns).toEqual([
+      expect.objectContaining({
+        regionId: 'grouped-region',
+        lineId: 'grouped-line-3',
+        runIndex: 3,
+        text: '3',
+      }),
+    ])
+  })
+
+  it('rejects duplicate or moved source-run references before promotion', () => {
+    const refs = [
+      { regionId: 'table-region', lineId: 'header-line', runIndex: 0 },
+      { regionId: 'table-region', lineId: 'header-line', runIndex: 1 },
+      { regionId: 'table-region', lineId: 'body-line', runIndex: 0 },
+      { regionId: 'table-region', lineId: 'body-line', runIndex: 1 },
+    ]
+    const withRefs = (lastText: string) => ({
+      ...proposal(lastText),
+      rows: proposal(lastText).rows.map((row, rowIndex) => ({
+        cells: row.cells.map((cell, cellIndex) => ({
+          ...cell,
+          sourceRunRefs: [refs[rowIndex * 2 + cellIndex]],
+        })),
+      })),
+    })
+    const duplicate = withRefs('5,557.0')
+    duplicate.rows[1].cells[1].sourceRunRefs = [refs[2]]
+    expect(
+      verifyTableCandidate({
+        proposal: duplicate,
+        sourceRegions,
+        sourceCropBox: crop,
+      }),
+    ).toBeNull()
+
+    const moved = withRefs('Revenue')
+    moved.rows[1].cells[1].text = 'Revenue'
+    moved.rows[1].cells[1].sourceRunRefs = [refs[2]]
+    expect(
+      verifyTableCandidate({
+        proposal: moved,
+        sourceRegions,
+        sourceCropBox: crop,
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects an empty-cell column swap even when its box has no source ink', () => {
+    const candidate = proposal('5,557.0')
+    candidate.rows[1].cells = [
+      {
+        text: '',
+        columnIndex: 1,
+        box: { x: 0, y: 0.5, width: 0.5, height: 0.5 },
+      },
+      {
+        text: '5,557.0',
+        columnIndex: 0,
+        box: { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+      },
+    ]
+    expect(
+      verifyTableCandidate({
+        proposal: candidate,
+        sourceRegions,
+        sourceCropBox: crop,
+      }),
+    ).toBeNull()
+  })
+
   it('substitutes exact source text and records source-only grid evidence', () => {
     const grid = verifyTableCandidate({
       proposal: proposal(),
@@ -283,6 +450,8 @@ describe('table candidate provider verification', () => {
       version: '2.48.0',
       modelDigest: 'a'.repeat(64),
       configuration: { mode: 'accurate', threads: 1 },
+      adapter: adapterIdentity,
+      runtime: runtimeIdentity,
       infer: vi.fn(async () => null),
     })
     const none = await runTableCandidateProvider({
@@ -312,7 +481,23 @@ describe('table candidate provider verification', () => {
     expect(unavailable.receipt.diagnostic).toBe(
       'table-candidate-provider-unavailable',
     )
+    expect(unavailable.remoteUsed).toBe(false)
     expect(remote.propose).not.toHaveBeenCalled()
+
+    const remoteFailure = {
+      ...provider,
+      locality: 'remote' as const,
+      propose: vi.fn(async () => {
+        throw new Error('remote transport failed')
+      }),
+    }
+    const failedRemote = await runTableCandidateProvider({
+      provider: remoteFailure,
+      image,
+      sourceRegions,
+      allowRemote: true,
+    })
+    expect(failedRemote.remoteUsed).toBe(true)
   })
 
   it('binds deterministic cache entries and receipts to full provider identity', async () => {
@@ -328,6 +513,8 @@ describe('table candidate provider verification', () => {
       version: '2.48.0',
       modelDigest: 'b'.repeat(64),
       configuration: { threads: 1 },
+      adapter: adapterIdentity,
+      runtime: runtimeIdentity,
       infer,
     })
     const cache = new Map()
@@ -346,6 +533,10 @@ describe('table candidate provider verification', () => {
     expect(infer).toHaveBeenCalledTimes(1)
     expect(second.receipt).toEqual(first.receipt)
     expect(second.verified?.grid).toEqual(first.verified?.grid)
+    expect(first.receipt.provider).toMatchObject({
+      adapter: adapterIdentity,
+      runtime: runtimeIdentity,
+    })
 
     const changed = {
       ...provider.identity,
@@ -354,6 +545,29 @@ describe('table candidate provider verification', () => {
     expect(tableCandidateCacheKey(changed, image.sha256)).not.toBe(
       first.receipt.cacheKey,
     )
+  })
+
+  it('rejects a provider whose adapter or runtime identity is not pinned', async () => {
+    const bytes = new Uint8Array([13, 14, 15])
+    const image = {
+      bytes,
+      mediaType: 'image/png' as const,
+      sha256: sha256HexSync(bytes),
+      sourceCropBox: crop,
+    }
+    const provider = {
+      identity: {
+        id: 'docling-tableformer',
+        version: '2.48.0',
+        modelDigest: 'a'.repeat(64),
+        configurationHash: 'b'.repeat(64),
+      },
+      locality: 'local' as const,
+      propose: vi.fn(async () => proposal()),
+    } as unknown as Parameters<typeof runTableCandidateProvider>[0]['provider']
+    await expect(
+      runTableCandidateProvider({ provider, image, sourceRegions }),
+    ).rejects.toThrow(/identity must be fully pinned/u)
   })
 
   it('passes cancellation to provider inference', async () => {
@@ -370,6 +584,8 @@ describe('table candidate provider verification', () => {
       version: '2.48.0',
       modelDigest: 'd'.repeat(64),
       configuration: { threads: 1 },
+      adapter: adapterIdentity,
+      runtime: runtimeIdentity,
       infer,
     })
     await runTableCandidateProvider({ provider, image, sourceRegions, signal })
@@ -395,8 +611,46 @@ describe('table candidate provider verification', () => {
       version: '2.48.0',
       modelDigest: 'e'.repeat(64),
       configuration: { threads: 1 },
+      adapter: adapterIdentity,
+      runtime: runtimeIdentity,
       infer,
     })
+
+    const resultPromise = runTableCandidateProvider({
+      provider,
+      image,
+      sourceRegions,
+      signal: controller.signal,
+    })
+    controller.abort()
+
+    await expect(resultPromise).resolves.toMatchObject({
+      verified: null,
+      receipt: { diagnostic: 'table-candidate-provider-unavailable' },
+    })
+  })
+
+  it('returns promptly when provider availability ignores cancellation', async () => {
+    const bytes = new Uint8Array([16, 17, 18])
+    const image = {
+      bytes,
+      mediaType: 'image/png' as const,
+      sha256: sha256HexSync(bytes),
+      sourceCropBox: crop,
+    }
+    const controller = new AbortController()
+    const provider = createDoclingTableCandidateProvider({
+      version: '2.48.0',
+      modelDigest: '7'.repeat(64),
+      configuration: { threads: 1 },
+      adapter: adapterIdentity,
+      runtime: runtimeIdentity,
+      infer: vi.fn(async () => proposal()),
+    })
+    provider.available = () =>
+      new Promise<boolean>(() => {
+        // Simulate a runtime probe that does not observe AbortSignal.
+      })
 
     const resultPromise = runTableCandidateProvider({
       provider,
@@ -426,5 +680,27 @@ describe('table candidate provider verification', () => {
       verifiedProvider: { semantic: 8, raster: 2, unresolved: 0 },
     })
     expect(repeated).toEqual(first)
+  })
+
+  it('snapshots path counts before hashing a benchmark report', () => {
+    const deterministic = { semantic: 2, raster: 5, unresolved: 3 }
+    const provider = { semantic: 10, raster: 0, unresolved: 0 }
+    const verifiedProvider = { semantic: 8, raster: 2, unresolved: 0 }
+    const report = createTableCandidateBenchmarkReport({
+      corpusId: 'table-corpus-v1',
+      deterministic,
+      provider,
+      verifiedProvider,
+    })
+    const digest = report.sha256
+    deterministic.semantic = 99
+    provider.unresolved = 99
+    verifiedProvider.raster = 99
+    expect(report.paths).toEqual({
+      deterministic: { semantic: 2, raster: 5, unresolved: 3 },
+      provider: { semantic: 10, raster: 0, unresolved: 0 },
+      verifiedProvider: { semantic: 8, raster: 2, unresolved: 0 },
+    })
+    expect(report.sha256).toBe(digest)
   })
 })

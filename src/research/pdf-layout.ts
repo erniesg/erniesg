@@ -11933,7 +11933,7 @@ export async function reconstructPageAnalyses({
       byteLength,
       sha256: sourceHash,
       pageCount: pages.length,
-      localOnly: true,
+      localOnly: !visualResult.remoteTableCandidateUsed,
     },
     paper,
     pages,

@@ -7,6 +7,7 @@ import type {
   PdfSourceExclusionMask,
   PdfSourceCropAttempt,
   PdfSourceRun,
+  PdfSourceRunReference,
   PdfVisualAsset,
 } from './import-types'
 import {
@@ -1955,6 +1956,7 @@ function exactSourceSequenceForDetectedCell(
     string,
     Array<{ regionId: string; line: PdfRegionLine }>
   >,
+  sourceRunRefs?: readonly PdfSourceRunReference[],
 ) {
   const owningDetectedLines = detectedLines.filter((line) =>
     line.runs.includes(cell),
@@ -1980,6 +1982,49 @@ function exactSourceSequenceForDetectedCell(
     !validNormalizedSourceBox(detectedSourceBox)
   ) {
     return null
+  }
+  if (sourceRunRefs !== undefined) {
+    if (!cell.text.trim() && sourceRunRefs.length === 0) return []
+    const sourceByKey = new Map<string, OwnedTableSourceRun>()
+    for (const [lineId, owners] of sourceLineOwners.entries()) {
+      for (const owner of owners) {
+        owner.line.runs.forEach((run, runIndex) => {
+          const key = ownedTableSourceRunKey(owner.regionId, lineId, runIndex)
+          sourceByKey.set(key, {
+            key,
+            regionId: owner.regionId,
+            line: owner.line,
+            runIndex,
+            run,
+          })
+        })
+      }
+    }
+    const explicitSources = sourceRunRefs.map((reference) =>
+      sourceByKey.get(
+        ownedTableSourceRunKey(
+          reference.regionId,
+          reference.lineId,
+          reference.runIndex,
+        ),
+      ),
+    )
+    if (
+      explicitSources.length === 0 ||
+      explicitSources.some((source) => !source) ||
+      new Set(explicitSources.map((source) => source?.key)).size !==
+        explicitSources.length
+    ) {
+      return null
+    }
+    const resolvedSources = explicitSources as OwnedTableSourceRun[]
+    return sourceSequenceMatchesDetectedCell(
+      resolvedSources,
+      cell,
+      detectedSourceBox,
+    )
+      ? resolvedSources
+      : null
   }
   if (!cell.text.trim()) return sourceCellBoxes === undefined ? null : []
   const available = orderedOwnedTableSourceRuns(
@@ -2178,6 +2223,9 @@ export function canonicalTableFromLines(
           cell,
           bands[rowIndex],
           sourceLineOwners,
+          options.detectedGrid?.lines[rowIndex].cells.find(
+            (candidate) => candidate.columnIndex === placement.columnIndex,
+          )?.sourceRunRefs,
         )
         if (
           !sourceMatches ||

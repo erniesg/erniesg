@@ -54,6 +54,13 @@ export type PdfSourceRun = NormalizedSourceBox & {
       }
   )
 
+/** Exact ownership of one source text run inside a bounded visual scope. */
+export type PdfSourceRunReference = {
+  regionId: string
+  lineId: string
+  runIndex: number
+}
+
 export type PdfLineBoundaryDecision = {
   id: string
   page: number
@@ -1068,7 +1075,7 @@ export type PdfReconstruction = {
     byteLength: number
     sha256: string
     pageCount: number
-    localOnly: true
+    localOnly: boolean
     format?: undefined
   }
   paper: ResearchPaper

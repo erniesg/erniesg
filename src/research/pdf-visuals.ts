@@ -31,6 +31,7 @@ import {
   detectRectangularTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
+  detectWrappedCellTableWithinProvenScope,
   detectWrappedHeaderTableWithinProvenScope,
   type PdfDetectedTableGrid,
 } from './pdf-table-detection'
@@ -9524,6 +9525,10 @@ export async function reconstructPdfVisuals({
               boundedScope.scope,
             ) ??
             detectExplicitHeaderNumericTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
+            ) ??
+            detectWrappedCellTableWithinProvenScope(
               availableTableRegions,
               boundedScope.scope,
             ) ??

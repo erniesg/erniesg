@@ -17,6 +17,7 @@ import { assessPdfCompleteness } from './pdf-quality'
 import { isSourceVerifiedSemanticTable } from './semantic-table'
 import {
   detectTableNearCaption,
+  detectWrappedCellTableWithinProvenScope,
   type PdfDetectedTableGrid,
 } from './pdf-table-detection'
 import { canonicalTableFromLines, createTableAsset } from './visual-assets'
@@ -113,6 +114,127 @@ function tableFixture() {
 }
 
 describe('source-verifiable semantic tables', () => {
+  it('keeps wrapped body-cell lineage when a continuation row is canonicalized', () => {
+    const header = line('continuation-header', 0.2, [
+      { text: 'Reference', x: 0.1, bold: true, fontName: 'Table-Bold' },
+      { text: 'Environment', x: 0.3, bold: true, fontName: 'Table-Bold' },
+      { text: 'NPC', x: 0.5, bold: true, fontName: 'Table-Bold' },
+      { text: 'Outcome', x: 0.7, bold: true, fontName: 'Table-Bold' },
+    ])
+    const body = line('continuation-body-1', 0.24, [
+      { text: 'A', x: 0.1 },
+      { text: 'The environment begins', x: 0.3 },
+      { text: 'the NPC waits', x: 0.5 },
+      { text: 'The action resolves', x: 0.7 },
+    ])
+    const continuation = line('continuation-body-1-more', 0.26, [
+      { text: 'and the light changes', x: 0.3 },
+      { text: 'before the door opens', x: 0.5 },
+    ])
+    const completeBody = (id: string, y: number, prefix: string) =>
+      line(id, y, [
+        { text: prefix, x: 0.1 },
+        { text: `${prefix} environment`, x: 0.3 },
+        { text: `${prefix} NPC`, x: 0.5 },
+        { text: `${prefix} outcome`, x: 0.7 },
+      ])
+    const sourceLines = [
+      header,
+      body,
+      continuation,
+      completeBody('continuation-body-2', 0.3, 'B'),
+      completeBody('continuation-body-3', 0.36, 'C'),
+      completeBody('continuation-body-4', 0.42, 'D'),
+    ]
+    const region = {
+      id: 'continuation-table-region',
+      page: 1,
+      kind: 'body',
+      column: 'span',
+      text: sourceLines.map((sourceLine) => sourceLine.text).join(' '),
+      confidence: 1,
+      box: sourceBox(0.1, 0.2, 0.72, 0.24),
+      lines: sourceLines,
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    } satisfies PdfPageRegion
+    const detected = detectWrappedCellTableWithinProvenScope([region], {
+      direction: 'below',
+      sourceRegionIds: [region.id],
+      sourceLineIds: sourceLines.map((sourceLine) => sourceLine.id),
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'repeated-column-anchors' },
+      ],
+    })
+    if (!detected) throw new Error('Expected a wrapped-cell table grid')
+
+    const table = canonicalTableFromLines(detected.lines, {
+      detectedGrid: detected,
+      sourceRegions: [region],
+    })
+    if (!table) throw new Error('Expected a source-verifiable table')
+
+    expect(table.rows).toHaveLength(5)
+    expect(table.rows[1].cells[1]).toMatchObject({
+      text: 'The environment begins and the light changes',
+      sourceRuns: [
+        expect.objectContaining({
+          lineId: body.id,
+          text: 'The environment begins',
+        }),
+        expect.objectContaining({
+          lineId: continuation.id,
+          text: 'and the light changes',
+        }),
+      ],
+    })
+    expect(table.rows[1].cells[2].sourceRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ lineId: body.id, text: 'the NPC waits' }),
+        expect.objectContaining({
+          lineId: continuation.id,
+          text: 'before the door opens',
+        }),
+      ]),
+    )
+    expect(
+      isSourceVerifiedSemanticTable({
+        table,
+        relationship: {
+          id: 'continuation-table-relationship',
+          kind: 'table',
+          label: 'Table 1',
+          captionRegionId: 'continuation-caption',
+          sourceRegionIds: [region.id],
+          sourceLineIds: sourceLines.map((sourceLine) => sourceLine.id),
+          sourceObjectIds: ['continuation-table-object'],
+          assetIds: ['continuation-table-asset'],
+          status: 'matched',
+          confidence: 1,
+          evidence: ['semantic-table'],
+          candidates: [],
+          sourceBoxes: [region.box],
+          sourceText: detected.lines
+            .map((sourceLine) => sourceLine.text)
+            .join(' '),
+          altText: 'Table 1. Wrapped body cells.',
+          altTextSource: 'caption',
+          canonicalNodeId: 'continuation-table-node',
+          captionNodeId: 'continuation-caption-node',
+        },
+        regions: [region],
+        evidence: {
+          confidence: 1,
+          pages: [1],
+          regionIds: [region.id],
+          boxes: [region.box],
+          links: [],
+        },
+      }),
+    ).toBe(true)
+  })
+
   it('preserves exact lineage and associations for a proved two-tier column header', async () => {
     const groupHeader = line('group-header', 0.2, [
       { text: 'Methods', x: 0.1 },

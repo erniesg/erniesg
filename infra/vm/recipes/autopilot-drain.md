@@ -42,6 +42,8 @@ Manual equivalent for the repo-specific queue timer only:
 ```bash
 mkdir -p ~/.config/systemd/user
 cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service ~/.config/systemd/user/
+mkdir -p ~/.config/systemd/user/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service.d
+cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service.d/90-queue-timeout.conf ~/.config/systemd/user/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service.d/
 cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer ~/.config/systemd/user/
 loginctl enable-linger "$USER"
 systemctl --user daemon-reload
@@ -90,6 +92,12 @@ VM leases. If provider login is missing or expired, a supervised manual drain
 leaves issues queued and refreshes the human-gate notification instead of
 starting failing workers. The timer follows the same behavior after explicit
 activation and successful isolation proof.
+
+The generated drain service allows up to 30 minutes for one bounded queue pass
+and five minutes for shutdown. This prevents systemd's default 90-second
+oneshot timeout from terminating a healthy Codex worker while it is running
+tests or source-comparison evidence. The queue still uses one worker at a time
+and the Rucksack retry/self-heal limits remain authoritative.
 
 The held timer deliberately omits `--plan-when-idle`: a planner may write
 partial or successful issue specs, and the durable base checkout must stay

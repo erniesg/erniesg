@@ -327,6 +327,42 @@ describe('table candidate provider verification', () => {
     expect(infer).toHaveBeenCalledWith(expect.objectContaining({ signal }))
   })
 
+  it('returns promptly when an adapter ignores cancellation', async () => {
+    const bytes = new Uint8Array([10, 11, 12])
+    const image = {
+      bytes,
+      mediaType: 'image/png' as const,
+      sha256: sha256HexSync(bytes),
+      sourceCropBox: crop,
+    }
+    const controller = new AbortController()
+    const infer = vi.fn(
+      () =>
+        new Promise<TableCandidateProposal | null>(() => {
+          // Simulate an adapter that does not observe AbortSignal.
+        }),
+    )
+    const provider = createDoclingTableCandidateProvider({
+      version: '2.48.0',
+      modelDigest: 'e'.repeat(64),
+      configuration: { threads: 1 },
+      infer,
+    })
+
+    const resultPromise = runTableCandidateProvider({
+      provider,
+      image,
+      sourceRegions,
+      signal: controller.signal,
+    })
+    controller.abort()
+
+    await expect(resultPromise).resolves.toMatchObject({
+      verified: null,
+      receipt: { diagnostic: 'table-candidate-provider-unavailable' },
+    })
+  })
+
   it('reports all three paths against one corpus denominator', () => {
     const first = createTableCandidateBenchmarkReport({
       corpusId: 'table-corpus-v1',

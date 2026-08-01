@@ -95,6 +95,42 @@ function stableJson(value: unknown) {
   return JSON.stringify(stableValue(value))
 }
 
+function tableCandidateAbortError() {
+  const error = new Error('Table candidate provider inference was aborted.')
+  error.name = 'AbortError'
+  return error
+}
+
+function raceTableCandidateProvider<T>(
+  operation: () => Promise<T>,
+  signal?: AbortSignal,
+) {
+  if (!signal) return operation()
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    let abort: () => void = () => undefined
+    const cleanup = () => signal.removeEventListener('abort', abort)
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    abort = () => finish(() => reject(tableCandidateAbortError()))
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) {
+      abort()
+      return
+    }
+    void Promise.resolve()
+      .then(operation)
+      .then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      )
+  })
+}
+
 function pinnedIdentity(identity: TableCandidateProviderIdentity) {
   return (
     /^[a-z0-9][a-z0-9._-]{0,79}$/u.test(identity.id) &&
@@ -549,12 +585,16 @@ export async function runTableCandidateProvider({
     }
     let proposal = cache?.get(cacheKey)
     if (proposal === undefined) {
-      proposal = await provider.propose({
-        image: image.bytes.slice(),
-        mediaType: image.mediaType,
-        imageSha256: image.sha256,
+      proposal = await raceTableCandidateProvider(
+        () =>
+          provider.propose({
+            image: image.bytes.slice(),
+            mediaType: image.mediaType,
+            imageSha256: image.sha256,
+            signal,
+          }),
         signal,
-      })
+      )
       cache?.set(cacheKey, proposal)
     }
     if (!proposal) {

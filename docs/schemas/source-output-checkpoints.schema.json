@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source-output-checkpoints.schema.json",
+  "title": "Source/output fidelity checkpoints",
+  "description": "Named, fail-closed claims connecting a source-page property to a rendered output property.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "checkpoints"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "checkpoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/checkpoint" }
+    }
+  },
+  "$defs": {
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "document",
+        "page",
+        "profile",
+        "property",
+        "criterion",
+        "source",
+        "output"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "document": { "type": "string", "minLength": 1 },
+        "page": { "type": "integer", "minimum": 1 },
+        "profile": {
+          "enum": ["mobile", "paperProMove", "paperPro", "print"]
+        },
+        "property": {
+          "enum": [
+            "figure-present",
+            "caption-boundary",
+            "prose-continuity",
+            "heading-level",
+            "table-structure",
+            "code-block-structure"
+          ]
+        },
+        "criterion": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/sourceExpectation" },
+        "output": { "$ref": "#/$defs/outputExpectation" }
+      }
+    },
+    "sourceExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature"],
+      "properties": {
+        "feature": { "enum": ["visual", "text", "structure"] },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "outputExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature"],
+      "properties": {
+        "feature": {
+          "enum": ["figure", "caption", "prose", "heading", "table", "code"]
+        },
+        "text": { "type": "string", "minLength": 1 },
+        "level": { "type": "integer", "minimum": 1, "maximum": 6 }
+      }
+    }
+  }
+}

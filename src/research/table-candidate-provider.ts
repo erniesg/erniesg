@@ -323,6 +323,7 @@ function validProposalShape(
     columnCount > 24 ||
     !Number.isInteger(headerRowCount) ||
     headerRowCount < 1 ||
+    headerRowCount > 2 ||
     headerRowCount >= proposal.rows.length ||
     proposal.rows.length < 2
   ) {

@@ -142,6 +142,55 @@ describe('table candidate provider verification', () => {
     ).toBeNull()
   })
 
+  it('rejects provider proposals with more than two header rows', () => {
+    const rows = [
+      ['Metric', 'Value'],
+      ['Units', 'Amount'],
+      ['Reported', 'Current'],
+      ['Revenue', '5,557.0'],
+    ]
+    const candidate: TableCandidateProposal = {
+      columnCount: 2,
+      headerRowCount: 3,
+      rows: rows.map((texts, rowIndex) => ({
+        cells: texts.map((text, columnIndex) => ({
+          text,
+          columnIndex,
+          box: {
+            x: columnIndex * 0.5,
+            y: rowIndex * 0.25,
+            width: 0.5,
+            height: 0.25,
+          },
+        })),
+      })),
+    }
+    const candidateRegions: PdfPageRegion[] = [
+      {
+        ...sourceRegions[0],
+        text: rows.flat().join(' '),
+        lines: rows.map((texts, rowIndex) => ({
+          id: `candidate-row-${rowIndex + 1}`,
+          text: texts.join(' '),
+          fontSize: 10,
+          box: { ...crop, x: 0.14, y: 0.22 + rowIndex * 0.1, width: 0.65 },
+          runs: [
+            run(texts[0], 0.14, 0.22 + rowIndex * 0.1, rowIndex < 3),
+            run(texts[1], 0.58, 0.22 + rowIndex * 0.1, rowIndex < 3),
+          ],
+        })),
+      },
+    ]
+
+    expect(
+      verifyTableCandidate({
+        proposal: candidate,
+        sourceRegions: candidateRegions,
+        sourceCropBox: crop,
+      }),
+    ).toBeNull()
+  })
+
   it('preserves a verified empty continuation stub without inventing text', () => {
     const continuationRun = run('5,558.0', 0.58, 0.53)
     const continuationRegions: PdfPageRegion[] = [

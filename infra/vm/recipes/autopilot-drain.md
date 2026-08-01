@@ -29,6 +29,61 @@ Activate only this repository drain after the live isolation probes pass:
 rucksack vm autopilot install-timer erniesg/erniesg --repo-root . --profile dev-vm --enable-drain --isolation bubblewrap --execute
 ```
 
+Let the installer finish before starting a queue pass. Then install the
+repo-owned pulse, which is deliberately outside the generated
+`rucksack-autopilot-*-drain` containment glob:
+
+```bash
+install -d -m 700 ~/.config/rucksack/overnight ~/.config/systemd/user
+install -m 644 infra/vm/systemd/erniesg-struct-typeset-queue.service ~/.config/systemd/user/
+install -m 644 infra/vm/systemd/erniesg-struct-typeset-queue.timer ~/.config/systemd/user/
+touch ~/.config/rucksack/overnight/erniesg-erniesg.enabled
+loginctl enable-linger "$USER"
+systemctl --user daemon-reload
+systemctl --user enable --now erniesg-struct-typeset-queue.timer
+```
+
+The fixed installer/runtime must atomically publish two mode-`0600` JSON files
+before enabling the pulse:
+
+- `~/.config/rucksack/autopilot/erniesg-erniesg-drain-target.json` identifies
+  schema version `1`, repository `erniesg/erniesg`, the current generated
+  `serviceUnit`, and the absolute path plus SHA-256 of the pinned, read-only
+  default-branch `struct-typeset` skill. It also records
+  `managedBy: "rucksack-installer"`; the pulse never guesses a versioned unit
+  or unmasks one.
+- `~/.local/state/rucksack/erniesg-erniesg/queue-state.json` identifies schema
+  version `1`, repository, a fresh `observedAt`, and the reconciled exact
+  `sessions`, `leases`, and issue labels. Every live record has an issue,
+  status, and expiry. Missing, stale, malformed, duplicated, or unmatched
+  lease/session state fails closed.
+
+After installation cleanup and every pulse, the safe state is
+`loaded/enabled/active/waiting`, a future fire, and `30m`/`5m` service
+timeouts. Verify it explicitly:
+
+```bash
+systemctl --user show erniesg-struct-typeset-queue.timer \
+  -p LoadState -p UnitFileState -p ActiveState -p SubState -p NextElapseUSecRealtime
+systemctl --user show erniesg-struct-typeset-queue.service \
+  -p LoadState -p TimeoutStartUSec -p TimeoutStopUSec
+```
+
+A masked, failed, missing, or past-due state is a queue-health failure, never
+successful idle. Do not clear an operator hold automatically. To hold the
+repository, create
+`~/.config/rucksack/overnight/erniesg-erniesg.hold`; remove it and explicitly
+restart the timer only after the operator approves resumption. Keep every other
+repository drain held.
+
+Each pass atomically replaces
+`~/.local/state/rucksack/erniesg-erniesg/checkpoint.json`. The checkpoint keeps
+the issue, branch/PR, source SHA, evidence/tests, paired source/render
+artifacts, exact next action/command, failure class, pinned skill digest, and
+launch model. One live exact lease/session consumes the repository's only slot
+across pulse invocations. Two identical failures exhaust the bounded retry and
+leave a human-gate resume command rather than spinning.
+
 Configure Discord notifications on the VM if you want human-gate pings outside
 GitHub. The command opens an SSH prompt and stores the webhook only in the VM
 user environment file:

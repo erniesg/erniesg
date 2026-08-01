@@ -1,0 +1,23 @@
+# Repo-owned pulse wrapper. Its name intentionally stays outside Rucksack's
+# generated drain containment glob so installer cleanup cannot mask it.
+[Unit]
+Description=Resilient STRUCT queue pulse for erniesg/erniesg
+Documentation=man:systemd.service(5)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=%h/.config/rucksack/overnight/erniesg-erniesg.enabled
+ConditionPathExists=!%h/.config/rucksack/overnight/erniesg-erniesg.hold
+
+[Service]
+Type=oneshot
+TimeoutStartSec=30min
+TimeoutStopSec=5min
+WorkingDirectory=%h/code/erniesg/erniesg
+Environment=RUCKSACK_REPO_ROOT=%h/code/erniesg/erniesg
+Environment=RUCKSACK_DRAIN_TARGET_FILE=%h/.config/rucksack/autopilot/erniesg-erniesg-drain-target.json
+Environment=RUCKSACK_QUEUE_STATE_FILE=%h/.local/state/rucksack/erniesg-erniesg/queue-state.json
+Environment=RUCKSACK_CHECKPOINT_FILE=%h/.local/state/rucksack/erniesg-erniesg/checkpoint.json
+ExecStart=/usr/bin/node %h/code/erniesg/erniesg/tools/struct-queue-pulse.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+

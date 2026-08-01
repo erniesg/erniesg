@@ -1,0 +1,16 @@
+# Durable scheduler for the STRUCT queue. The generated drain may be held
+# during a worker pass; this timer must remain enabled and waiting.
+[Unit]
+Description=STRUCT queue pulse every 30 minutes
+Documentation=man:systemd.timer(5)
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=30m
+Persistent=true
+RandomizedDelaySec=5m
+Unit=erniesg-struct-typeset-queue.service
+
+[Install]
+WantedBy=timers.target
+

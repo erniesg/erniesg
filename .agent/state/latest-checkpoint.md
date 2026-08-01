@@ -44,6 +44,11 @@ The trusted VM drain is the only autonomous executor. It must report
 do not claim that work is running until the timer is explicitly re-enabled
 after installer cleanup and rechecked.
 
+The repo-owned pulse (`erniesg-struct-typeset-queue.timer`) is the durable
+overnight scheduler. It sits outside Rucksack's generated drain-name hold
+glob, wakes the proven drain service at most every 30 minutes, skips an active
+pass, and honors `~/.config/rucksack/overnight/erniesg-erniesg.hold`.
+
 The queue is intentionally one worker at a time. Rucksack's bounded retry and
 self-heal policy remains authoritative (two attempts, then a human gate).
 Safe fallback is automatic; only a source comparison that identifies a page

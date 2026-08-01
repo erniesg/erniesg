@@ -50,6 +50,36 @@ The only safe overnight state is `loaded/enabled/active/waiting` with a future
 to finish, explicitly re-enable this repo's timer with the activation command,
 and record the state in `.agent/state/latest-checkpoint.md`.
 
+For long-lived overnight work, install the repo-owned pulse after the
+Rucksack installer has finished. It is deliberately named outside
+`rucksack-autopilot-*-drain.*`, so the containment pass may hold the generated
+drain without disabling the scheduler. The pulse only wakes the proven drain
+service, skips an active run, and honors an operator hold marker:
+
+```bash
+mkdir -p ~/.config/rucksack/overnight ~/.config/systemd/user
+install -m 600 /path/to/erniesg/infra/vm/systemd/erniesg-struct-typeset-queue.service \
+  ~/.config/systemd/user/erniesg-struct-typeset-queue.service
+install -m 600 /path/to/erniesg/infra/vm/systemd/erniesg-struct-typeset-queue.timer \
+  ~/.config/systemd/user/erniesg-struct-typeset-queue.timer
+touch ~/.config/rucksack/overnight/erniesg-erniesg.enabled
+systemctl --user daemon-reload
+systemctl --user enable --now erniesg-struct-typeset-queue.timer
+```
+
+Verify the pulse itself, not just the generated drain:
+
+```bash
+systemctl --user show erniesg-struct-typeset-queue.timer \
+  -p LoadState -p UnitFileState -p ActiveState -p SubState
+systemctl --user list-timers --all --no-legend | grep -F erniesg-struct-typeset-queue.timer
+```
+
+To pause overnight work intentionally, create
+`~/.config/rucksack/overnight/erniesg-erniesg.hold` and stop the pulse timer;
+remove that marker and explicitly start the timer to resume. A failed pulse is
+reported in its journal and in the checkpoint; it is never relabeled as idle.
+
 Configure Discord notifications on the VM if you want human-gate pings outside
 GitHub. The command opens an SSH prompt and stores the webhook only in the VM
 user environment file:

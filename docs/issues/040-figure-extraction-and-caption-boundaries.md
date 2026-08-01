@@ -1,6 +1,6 @@
 # Stop dropping figures and stop captions absorbing body prose
 
-depends-on: 013,025,033,038
+depends-on: 013,025,033,038,042
 
 ## Provider
 

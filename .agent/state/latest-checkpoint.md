@@ -8,10 +8,13 @@ worker or handoff agent to resume without replaying the whole conversation.
 - branch: `codex/issue-113-struct-typeset`
 - pull-request: `#114` (draft; do not merge automatically)
 - provider: `vm-codex`
-- future-worker-model: `gpt-5.6-sol`
-- future-worker-reasoning: `high`
+- autonomous-vm-worker-model: `gpt-5.6-sol`
+- autonomous-vm-worker-reasoning: `high`
+- local-layout-consultation-model: `gpt-5.6-luna`
+- local-layout-consultation-reasoning: `max`
 - active-worker-model-at-launch: `gpt-5.6-sol` / `high` (do not relabel)
-- struct-typeset-skill-sha256: `3d96ae5ffb4a2c66a2cc6c393e4a1a89f0893dec2245998392636f0c13e6e37a`
+- vm-installed-struct-typeset-skill-sha256: `3d96ae5ffb4a2c66a2cc6c393e4a1a89f0893dec2245998392636f0c13e6e37a`
+- branch-struct-typeset-skill-sha256: `40702cd6192a2ab50e97717e3c5cef61c5ddee87a94712e583e5819bd86c7a9a`
 - max-workers: `1`
 - drain-timeout: `30m`
 - stop-timeout: `5m`
@@ -31,7 +34,8 @@ worker or handoff agent to resume without replaying the whole conversation.
    parser or renderer.
 3. Keep extraction deterministic and candidate-constrained. Any successful
    model/layout proposal must become a fixture and a deterministic rule before
-   the issue can close.
+   the issue can close. Run local layout consultation as a separate Codex task
+   with `gpt-5.6-luna` / `max`; never relabel an autonomous VM worker receipt.
 4. Run focused TDD, `npm test`, `npm run build:astro`, and
    `scripts/agent-evidence`; record the manifest path in the issue/PR.
 5. Commit a small, reviewable slice, push it, and leave the next exact issue

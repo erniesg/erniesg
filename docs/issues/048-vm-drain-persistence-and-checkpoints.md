@@ -40,10 +40,11 @@ that product umbrella completes.
 - Keep model/layout calls optional and candidate-constrained. Persist every
   accepted proposal and distill it into a fixture plus deterministic rule.
 - Install the default-branch `struct-typeset` skill as a pinned, read-only VM
-  skill and record its SHA-256 in each applicable worker receipt. Future layout
-  workers use the owner-requested `gpt-5.6-sol` / `high` VM profile;
-  already-running workers keep their recorded model and are never relabeled
-  retroactively.
+  skill and record its SHA-256 in each applicable worker receipt. Autonomous VM
+  implementation workers use `gpt-5.6-sol` / `high`. An on-demand local layout
+  consultation is a separate Codex task using `gpt-5.6-luna` / `max`; record a
+  separate receipt and never conflate it with the implementation worker. An
+  already-running worker keeps its launch model and is never relabeled.
 - Resolve the generated drain through an installer-owned stable target alias or
   validated state file rather than a repository-hard-coded unit version.
 
@@ -70,9 +71,11 @@ that product umbrella completes.
 - Two consecutive pulse passes keep the repo-owned scheduler enabled while the
   generated drain may be held during a worker pass, and never exceed the total
   configured session cap.
-- A future applicable worker receipt identifies `gpt-5.6-sol`, `high`, and the
-  exact installed `struct-typeset` skill digest. Stubbed tests do not require a
-  live provider credential.
+- A future autonomous VM worker receipt identifies `gpt-5.6-sol`, `high`, and
+  the exact installed `struct-typeset` skill digest. Any local layout
+  consultation has its own receipt identifying `gpt-5.6-luna`, `max`, the
+  bounded candidates supplied, and the accepted or rejected proposal. Stubbed
+  tests do not require a live provider credential.
 
 ## Validation command
 

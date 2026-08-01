@@ -31,6 +31,9 @@ deterministic by default, and safe when evidence is insufficient.
   may choose only among deterministic candidates supplied in a bounded STRUCT
   context; it cannot author text, bytes, bounds, or destinations. Persist the
   proposal and distill successful classes into a fixture and deterministic rule.
+  Run an on-demand local layout consultation as a separate Codex task using
+  `gpt-5.6-luna` / `max`; do not relabel the autonomous VM implementation
+  worker or reuse its receipt for that consultation.
 - Compare the rendered output with the source before requesting human help.
   User-facing recovery contains only actionable pages and exact next steps;
   safe fallbacks and internal diagnostic counts never become user tasks.

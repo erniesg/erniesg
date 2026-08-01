@@ -8,8 +8,8 @@ worker or handoff agent to resume without replaying the whole conversation.
 - branch: `codex/issue-113-struct-typeset`
 - pull-request: `#114` (draft; do not merge automatically)
 - provider: `vm-codex`
-- future-worker-model: `gpt-5.6-luna`
-- future-worker-reasoning: `max`
+- future-worker-model: `gpt-5.6-sol`
+- future-worker-reasoning: `high`
 - active-worker-model-at-launch: `gpt-5.6-sol` / `high` (do not relabel)
 - struct-typeset-skill-sha256: `3d96ae5ffb4a2c66a2cc6c393e4a1a89f0893dec2245998392636f0c13e6e37a`
 - max-workers: `1`
@@ -83,22 +83,30 @@ before model self-heal is #350. All three are staged by ledger PR #348 at
 Until those fixes land, the installed pulse's VM-wide tmux/Codex guard is the
 authoritative conservative cap.
 
-Three VM-owned transient controls make the current continuation laptop-free:
+The VM-owned controls make the current continuation laptop-free:
 
-- `erniesg-pr121-promote.service` watches exact head `5aa4583` of app PR #121
-  and may squash-merge it only after all four required checks pass. Its merged
-  ledger spec gives issue #119 provenance for the event-driven killed-worker
-  cleanup-test repair; it does not close #119.
-- `erniesg-issue-88-requeue.service` owns the intentional timer pause while
-  unrelated Rucksack issue #226 is active, then re-queues the preserved #88
-  provider result without another implementation pass and restores the timer
-  from an EXIT trap.
-- `erniesg-issue-88-pr-hold.service` applies a merge hold to the future #88 PR
-  until the pinned real provider adapter, importer/operator wiring, and actual
-  BookWorld-plus-held-out comparison are present.
+- App PR #121 merged at exact green head `5aa4583`. GitHub incorrectly closed
+  implementation issue #119 by parsing negative prose as a closing keyword;
+  #119 was explicitly reopened, adopted from merged spec 049, and queued.
+- `erniesg-issue-88-requeue.service` completed after unrelated Rucksack issue
+  #226 exited. It re-queued the preserved #88 provider result without another
+  implementation pass and restored the repo timer.
+- `erniesg-issue-88-pr-hold.service` is now a persistent enabled user unit,
+  explicitly clears provider secrets, survives reboot, and applies a
+  deduplicated GitHub merge hold to the future #88 PR until the pinned real
+  provider adapter, importer/operator wiring, and actual BookWorld-plus-held-out
+  comparison are present.
+- App PR #122 merged the owner-requested `gpt-5.6-sol` / `high` profile into
+  default-branch spec 048. The same pair is verified in the live VM Codex
+  configuration.
 
 PR #118 is green but deliberately `rucksack-blocked`; repair its four recorded
 generalization defects before merge. PR #114 remains draft because the product
-acceptance benchmark is not met. No user action is currently required.
+acceptance benchmark is not met. The Codex queue needs no user action. One
+separate security action remains: rotate and re-authenticate the VM Claude Code
+OAuth credential after a failed custom watcher invocation wrote the inherited
+value to the private VM user journal. The manager environment was cleared,
+Claude logout was run, and all replacement units explicitly unset provider
+secrets; do not reuse the exposed credential.
 Latest handoff artifact:
-`/Users/erniesg/.codex/handoffs/erniesg-20260801-180049.md`.
+`/Users/erniesg/.codex/handoffs/erniesg-20260801-182730.md`.

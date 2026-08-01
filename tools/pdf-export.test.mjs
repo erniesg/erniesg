@@ -83,7 +83,10 @@ async function waitForJson(path) {
           return false
         }
       },
-      { timeout: 10_000 },
+      // A cold CI runner may need to fork the worker and its Vite child
+      // before the observation is flushed. Keep the wait bounded, but leave
+      // enough room for that startup path to complete reliably.
+      { timeout: 30_000 },
     )
     .toBe(true)
   return value

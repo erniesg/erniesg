@@ -5,6 +5,7 @@ import type {
   PdfPageRegion,
   PdfPreformattedSource,
   PdfPreformattedSourceLine,
+  PdfRegionLine,
   PdfSourceRun,
   PdfSourceCropAttempt,
   PdfSourceCropAttemptRequest,
@@ -2705,6 +2706,43 @@ function boxForLines(lines: PdfPageRegion['lines']): NormalizedSourceBox {
       ? 'ocr'
       : 'pdf-text',
   }
+}
+
+function exactSourceLinesById(
+  regions: readonly PdfPageRegion[],
+  sourceLineIds: readonly string[],
+): PdfRegionLine[] | null {
+  if (
+    sourceLineIds.length === 0 ||
+    new Set(sourceLineIds).size !== sourceLineIds.length
+  ) {
+    return null
+  }
+  const selectedIds = new Set(sourceLineIds)
+  const owners = new Map<string, PdfRegionLine[]>()
+  for (const region of regions) {
+    for (const line of region.lines) {
+      if (!selectedIds.has(line.id)) continue
+      const matching = owners.get(line.id) ?? []
+      matching.push(line)
+      owners.set(line.id, matching)
+    }
+  }
+  const selected = sourceLineIds.flatMap((lineId) => {
+    const matching = owners.get(lineId)
+    return matching?.length === 1 ? matching : []
+  })
+  if (
+    selected.length !== sourceLineIds.length ||
+    selected.some(
+      (line) =>
+        line.box.page !== selected[0].box.page ||
+        line.box.rotation !== selected[0].box.rotation,
+    )
+  ) {
+    return null
+  }
+  return selected
 }
 
 function availableRegionsForTable(
@@ -9705,9 +9743,28 @@ export async function reconstructPdfVisuals({
         !probableDisplayEquationText(equationSourceText(selectedSources))
           ? []
           : selectedSources
+      const selectedTableSourceLineIds =
+        label.kind === 'table'
+          ? (semanticTableGrid?.sourceLineIds ??
+            detectedTable?.sourceLineIds ??
+            [])
+          : []
+      const exactSelectedTableSourceLines =
+        selectedTableSourceLineIds.length > 0
+          ? exactSourceLinesById(sources, selectedTableSourceLineIds)
+          : null
       candidates = []
-      if (!tableScopeResolution && sources.length > 0) {
-        const sourceBox = unionBox(sources)
+      if (
+        !tableScopeResolution &&
+        sources.length > 0 &&
+        (label.kind !== 'table' ||
+          selectedTableSourceLineIds.length === 0 ||
+          exactSelectedTableSourceLines)
+      ) {
+        const sourceBox =
+          label.kind === 'table' && exactSelectedTableSourceLines
+            ? boxForLines(exactSelectedTableSourceLines)
+            : unionBox(sources)
         const sourceObjectId = `${label.kind}-p${String(sourceBox.page).padStart(3, '0')}-${String(captionIndex + 1).padStart(3, '0')}`
         const page = pages.find((item) => item.page === sourceBox.page)!
         const sourceLines = sources.flatMap((source) => source.lines)

@@ -873,6 +873,78 @@ describe('bounded table-scope visual fallback', () => {
     expect(result.canonicalTablesByAssetId.size).toBe(0)
   })
 
+  it('bounds a semantic partial-parent table to selected lines and retains neighbouring prose once', async () => {
+    const prose = [proseLine('prose-1', 0.27), proseLine('prose-2', 0.31)]
+    const tableLines = [
+      tabularLine('table-header', 0.52, [0.12, 0.4, 0.67]),
+      tabularLine('table-row-1', 0.56, [0.12, 0.4, 0.67]),
+      tabularLine('table-row-2', 0.6, [0.12, 0.4, 0.67]),
+      tabularLine('table-row-3', 0.64, [0.12, 0.4, 0.67]),
+    ]
+    tableLines[0].runs.forEach((run) => {
+      run.bold = true
+      run.fontName = 'TableSerif-Bold'
+    })
+    const parent = mixedParent(
+      'mixed-semantic-parent',
+      box(0.12, 0.25, 0.625, 0.404, 'pdf-text'),
+      [...prose, ...tableLines],
+    )
+    const tableCaption = caption(
+      'partial-semantic-table-caption',
+      'Table 7. Exact semantic partial-parent results.',
+      box(0.12, 0.678, 0.68, 0.02, 'pdf-text'),
+    )
+    const rasterizeFigure = cropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [parent, tableCaption],
+      rasterizeFigure,
+    })
+
+    const selectedSourceBox = box(0.12, 0.52, 0.625, 0.134, 'pdf-text')
+    const relationship = result.relationships[0]
+    expect(rasterizeFigure).not.toHaveBeenCalled()
+    expect(relationship).toMatchObject({
+      kind: 'table',
+      status: 'matched',
+      sourceRegionIds: [parent.id],
+      sourceLineIds: tableLines.map((line) => line.id),
+      sourceBoxes: [tableCaption.box, selectedSourceBox],
+      sourceText: tableLines.map((line) => line.text).join(' '),
+      evidence: expect.arrayContaining([
+        'bounded-table-scope',
+        'semantic-table',
+        'complete-source-lineage',
+      ]),
+    })
+    expect(relationship.sourceText).not.toContain('prose')
+    expect(result.assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rendition: 'semantic-table',
+          sourceBoxes: [selectedSourceBox],
+        }),
+      ]),
+    )
+    expect(result.consumedRegionIds.has(parent.id)).toBe(false)
+    expect([...result.consumedLineIds].sort()).toEqual(
+      tableLines.map((line) => line.id).sort(),
+    )
+    expect(result.partialRegionLineSelections).toEqual([
+      {
+        regionId: parent.id,
+        consumedLineIds: tableLines.map((line) => line.id).sort(),
+        retainedLineIds: prose.map((line) => line.id).sort(),
+      },
+    ])
+    expect(
+      prose.filter((line) => !result.consumedLineIds.has(line.id)),
+    ).toHaveLength(prose.length)
+    expect(result.canonicalTablesByAssetId.size).toBe(1)
+  })
+
   it('crops a proved body scope with its unique adjacent table header', async () => {
     const headerLine = tabularLine('omitted-header', 0.49, [0.12, 0.4, 0.67])
     const header = {

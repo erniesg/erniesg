@@ -346,14 +346,17 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
   return {
     status: 'review-required',
     title: fallbackAvailable
-      ? 'Your readable EPUB is ready for review.'
+      ? 'Your EPUB is readable, but not publication-ready yet.'
       : 'This file needs a source check before it can be exported.',
     summary: fallbackAvailable
-      ? 'We kept recoverable text and source-preserved visuals wherever a safe semantic reconstruction was not possible. Nothing was uploaded.'
+      ? 'You can read the local fallback now. Recoverable text, captions, links, and source-preserved visuals were kept wherever a safe semantic reconstruction was not possible. Nothing was uploaded.'
       : 'The importer could not recover enough source content to make a trustworthy EPUB. Nothing was uploaded.',
     issues,
-    userAction: issues.some((issue) => issue.action)
-      ? 'Open the preview and compare the listed pages with the original before publishing.'
-      : undefined,
+    userAction:
+      issues.length > 0
+        ? issues.some((issue) => issue.action)
+          ? 'No action is needed to read the fallback. Before publishing, open the preview and compare the listed pages with the original.'
+          : 'No action is needed to read the fallback. Keep the original file beside it and review the affected visuals or links before publishing.'
+        : undefined,
   }
 }

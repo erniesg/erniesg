@@ -1943,6 +1943,43 @@ describe('PDF visual association graph', () => {
     })
   })
 
+  it('keeps an exact native image when conservative grouping emits no figure region', async () => {
+    const sourceObjectId = 'image-p001-parent'
+    const sourceBox = box(0.3, 0.1, 0.4, 0.15)
+    const sourceAsset = sourcePreservedSvgAsset(sourceObjectId, sourceBox)
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          [
+            {
+              id: sourceObjectId,
+              page: 1,
+              kind: 'image',
+              box: sourceBox,
+              confidence: 0.98,
+              assetId: sourceAsset.id,
+            },
+          ],
+          1,
+          [sourceAsset],
+        ),
+      ],
+      // No native object region is supplied: this models a conservative
+      // region classifier filtering a complete source image as furniture.
+      regions: [captionRegion('Figure 1. A source-backed map.')],
+    })
+
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: [sourceObjectId],
+      assetIds: [sourceAsset.id],
+      evidence: expect.arrayContaining([
+        'source-preserved-figure-fallback',
+        'native-object-direct-rendition',
+      ]),
+    })
+  })
+
   it('keeps a losing matched-relationship candidate as an unreferenced source obligation', async () => {
     const selectedBox = box(0.2, 0.44, 0.6, 0.16)
     const losingBox = box(0.2, 0.25, 0.6, 0.12)
@@ -4935,12 +4972,7 @@ describe('PDF visual association graph', () => {
     } satisfies PdfSourceRun
     // Match the real failure mode: geometry order puts a detached radical
     // inside the prose cue while source sequence still proves the cue prefix.
-    mixedCue.lines[0].runs = [
-      cueRun,
-      detachedRootRun,
-      answerRun,
-      variableRun,
-    ]
+    mixedCue.lines[0].runs = [cueRun, detachedRootRun, answerRun, variableRun]
 
     const relation = equationRegion(
       'interleaved-answer-relation',
@@ -5214,9 +5246,29 @@ describe('PDF visual association graph', () => {
         [
           run('𝑃', 0.40743, 0.35674, 0.00967, 0.01258, italic, 9.9626, 70),
           run('=', 0.42406, 0.35674, 0.01115, 0.01258, regular, 9.9626, 72, 70),
-          run('𝜎𝐴𝑇', 0.43974, 0.35674, 0.03018, 0.01258, italic, 9.9626, 74, 72),
+          run(
+            '𝜎𝐴𝑇',
+            0.43974,
+            0.35674,
+            0.03018,
+            0.01258,
+            italic,
+            9.9626,
+            74,
+            72,
+          ),
           run('4', 0.47252, 0.35485, 0.0061, 0.00943, regular, 7.472, 76, 74),
-          run('= 4', 0.48396, 0.35674, 0.02382, 0.01258, regular, 9.9626, 78, 76),
+          run(
+            '= 4',
+            0.48396,
+            0.35674,
+            0.02382,
+            0.01258,
+            regular,
+            9.9626,
+            78,
+            76,
+          ),
           run('𝜋𝜎𝑅', 0.50777, 0.35674, 0.0315, 0.01258, italic, 9.9626, 79),
           run('2', 0.53927, 0.35485, 0.0061, 0.00943, regular, 7.472, 80),
           run('⊙', 0.53927, 0.36429, 0.0093, 0.00943, italic, 7.472, 82),
@@ -5229,9 +5281,28 @@ describe('PDF visual association graph', () => {
         'body',
         'Solving for 𝑇, we get',
         [
-          run('Solving for', 0.09059, 0.37938, 0.07285, 0.01258, serif, 9.9626, 87),
+          run(
+            'Solving for',
+            0.09059,
+            0.37938,
+            0.07285,
+            0.01258,
+            serif,
+            9.9626,
+            87,
+          ),
           run('𝑇', 0.16751, 0.37938, 0.00895, 0.01258, italic, 9.9626, 89, 87),
-          run(', we get', 0.17906, 0.37938, 0.0504, 0.01258, serif, 9.9626, 91, 89),
+          run(
+            ', we get',
+            0.17906,
+            0.37938,
+            0.0504,
+            0.01258,
+            serif,
+            9.9626,
+            91,
+            89,
+          ),
         ],
       )
       const opener = bandRegion(
@@ -5260,10 +5331,29 @@ describe('PDF visual association graph', () => {
           run('√', 0.39188, 0.41069, 0.01927, 0.01258, extension, 9.9626, 114),
           run('6', 0.42072, 0.41253, 0.00814, 0.01258, regular, 9.9626, 117),
           run('.', 0.42886, 0.41253, 0.00407, 0.01258, italic, 9.9626, 118),
-          run('96 × 10', 0.43293, 0.41253, 0.0502, 0.01258, regular, 9.9626, 119),
+          run(
+            '96 × 10',
+            0.43293,
+            0.41253,
+            0.0502,
+            0.01258,
+            regular,
+            9.9626,
+            119,
+          ),
           run('8', 0.48314, 0.41221, 0.0061, 0.00943, regular, 7.472, 120),
           run(')', 0.49006, 0.40247, 0.00762, 0.01258, extension, 9.9626, 121),
-          run('(1506)', 0.50039, 0.41253, 0.0434, 0.01258, regular, 9.9626, 123, 121),
+          run(
+            '(1506)',
+            0.50039,
+            0.41253,
+            0.0434,
+            0.01258,
+            regular,
+            9.9626,
+            123,
+            121,
+          ),
         ],
       )
       const equalsRow = bandRegion(
@@ -5275,9 +5365,29 @@ describe('PDF visual association graph', () => {
           run('=', 0.3032, 0.42317, 0.01115, 0.01258, regular, 9.9626, 95, 93),
           run('4', 0.3234, 0.42026, 0.00488, 0.00755, regular, 5.9776, 97, 95),
           run('⊙', 0.35153, 0.41958, 0.0093, 0.00943, italic, 7.472, 102),
-          run('=', 0.37584, 0.42317, 0.01115, 0.01258, regular, 9.9626, 108, 106),
+          run(
+            '=',
+            0.37584,
+            0.42317,
+            0.01115,
+            0.01258,
+            regular,
+            9.9626,
+            108,
+            106,
+          ),
           run('√', 0.39188, 0.41798, 0.01927, 0.01258, extension, 9.9626, 115),
-          run('4', 0.39604, 0.42209, 0.00488, 0.00755, regular, 5.9776, 110, 108),
+          run(
+            '4',
+            0.39604,
+            0.42209,
+            0.00488,
+            0.00755,
+            regular,
+            5.9776,
+            110,
+            108,
+          ),
         ],
       )
       const resultRow = bandRegion(
@@ -5286,13 +5396,42 @@ describe('PDF visual association graph', () => {
         '3 (5.67 × 10−8) = 49823 ≈ 50000 K.',
         [
           run('3', 0.42655, 0.43382, 0.00814, 0.01258, regular, 9.9626, 124),
-          run('(', 0.43741, 0.42377, 0.00762, 0.01258, extension, 9.9626, 126, 124),
+          run(
+            '(',
+            0.43741,
+            0.42377,
+            0.00762,
+            0.01258,
+            extension,
+            9.9626,
+            126,
+            124,
+          ),
           run('5', 0.44502, 0.43382, 0.00814, 0.01258, regular, 9.9626, 127),
           run('.', 0.45317, 0.43382, 0.00407, 0.01258, italic, 9.9626, 128),
-          run('67 × 10', 0.45723, 0.43382, 0.0502, 0.01258, regular, 9.9626, 129),
+          run(
+            '67 × 10',
+            0.45723,
+            0.43382,
+            0.0502,
+            0.01258,
+            regular,
+            9.9626,
+            129,
+          ),
           run('−8', 0.50744, 0.43351, 0.01447, 0.00943, regular, 7.472, 130),
           run(')', 0.52273, 0.42377, 0.00762, 0.01258, extension, 9.9626, 131),
-          run('= 49823 ≈ 50000 K', 0.55027, 0.42317, 0.13308, 0.01258, regular, 9.9626, 133, 131),
+          run(
+            '= 49823 ≈ 50000 K',
+            0.55027,
+            0.42317,
+            0.13308,
+            0.01258,
+            regular,
+            9.9626,
+            133,
+            131,
+          ),
           run('.', 0.6841, 0.42317, 0.00407, 0.01258, italic, 9.9626, 134),
         ],
       )
@@ -5329,7 +5468,9 @@ describe('PDF visual association graph', () => {
       const sourcePage = page([])
       sourcePage.renderVisibleTextRuns = [
         ...allRegions.flatMap((region) =>
-          region.lines.flatMap((line) => line.runs.map((item) => ({ ...item }))),
+          region.lines.flatMap((line) =>
+            line.runs.map((item) => ({ ...item })),
+          ),
         ),
         whitespaceRun(0.4171, 0.00696, 0.35674, italic, 9.9626, 71),
         whitespaceRun(0.43521, 0.00452, 0.35674, regular, 9.9626, 73),
@@ -5410,7 +5551,7 @@ describe('PDF visual association graph', () => {
           relationship.candidates.some((candidate) =>
             candidate.sourceRegionIds.includes(precedingDisplay.id),
           ),
-      )?.sourceRegionIds,
+        )?.sourceRegionIds,
       ).toEqual([precedingDisplay.id])
     },
   )
@@ -17245,8 +17386,8 @@ describe('PDF visual association graph', () => {
       }),
     ])
     expect(
-      algorithmRegions.every((region) =>
-        !result.consumedRegionIds.has(region.id),
+      algorithmRegions.every(
+        (region) => !result.consumedRegionIds.has(region.id),
       ),
     ).toBe(true)
     expect(

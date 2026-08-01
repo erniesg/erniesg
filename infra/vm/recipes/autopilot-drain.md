@@ -1,10 +1,11 @@
 # Rucksack Autopilot Drain Timer
 
-This repo includes a held, future user-level systemd timer for a trusted VM to
-check the queue every 30 minutes and drain VM-routed GitHub Issues into detached
-Codex/Claude sessions. The installer keeps every drain held by default. One VM
-account may own both provider login and publisher credentials only after the
-fixed bubblewrap and system-manager network-isolation proofs pass.
+This repo includes a user-level systemd timer for a trusted VM to check the
+queue every 30 minutes and drain VM-routed GitHub Issues into detached
+Codex/Claude sessions. Installation contains every drain first; explicit
+activation then enables only this repository after the fixed bubblewrap and
+system-manager network-isolation proofs pass. One VM account may own both
+provider login and publisher credentials only inside that proven boundary.
 
 Prerequisites on the VM:
 
@@ -28,6 +29,26 @@ Activate only this repository drain after the live isolation probes pass:
 ```bash
 rucksack vm autopilot install-timer erniesg/erniesg --repo-root . --profile dev-vm --enable-drain --isolation bubblewrap --execute
 ```
+
+Let the activation command finish before closing the SSH session. Do not run a
+second installer or queue drain concurrently: installer cleanup temporarily
+masks all drains, and concurrent cleanup can leave the target masked after a
+seemingly successful activation. Recheck the target after the command exits and
+again after the first queue pass:
+
+```bash
+timer=rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
+service=rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service
+systemctl --user show "$timer" -p LoadState -p UnitFileState -p ActiveState -p SubState
+systemctl --user list-timers --all --no-legend | grep -F "$timer"
+systemctl --user show "$service" -p TimeoutStartUSec -p TimeoutStopUSec -p ActiveState -p SubState -p Result
+```
+
+The only safe overnight state is `loaded/enabled/active/waiting` with a future
+`list-timers` entry and `TimeoutStartUSec=30min`, `TimeoutStopUSec=5min`.
+`masked` or `failed` means the queue is not autonomous; wait for any installer
+to finish, explicitly re-enable this repo's timer with the activation command,
+and record the state in `.agent/state/latest-checkpoint.md`.
 
 Configure Discord notifications on the VM if you want human-gate pings outside
 GitHub. The command opens an SSH prompt and stores the webhook only in the VM
@@ -99,10 +120,13 @@ oneshot timeout from terminating a healthy Codex worker while it is running
 tests or source-comparison evidence. The queue still uses one worker at a time
 and the Rucksack retry/self-heal limits remain authoritative.
 
-The held timer deliberately omits `--plan-when-idle`: a planner may write
+The timer deliberately omits `--plan-when-idle`: a planner may write
 partial or successful issue specs, and the durable base checkout must stay
 clean. Generate and commit new ledger specs through an operator-owned
-disposable worktree before the VM reconciles them.
+disposable worktree before the VM reconciles them. Each pass writes an atomic
+checkpoint with the issue/PR, source SHA, evidence manifest, tests, visual
+artifacts, next command, and failure class. A new worker starts from that
+checkpoint and the GitHub labels, not from a chat transcript.
 
 Review repair fails closed on GraphQL errors, malformed or truncated GitHub
 review data, and ambiguous App marker identity. It trusts the configured

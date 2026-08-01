@@ -1,7 +1,7 @@
 import { fork, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, watch } from 'node:fs'
 import {
   access,
   chmod,
@@ -14,7 +14,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { strFromU8, unzipSync } from 'fflate'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
@@ -90,6 +90,58 @@ async function waitForJson(path) {
     )
     .toBe(true)
   return value
+}
+
+async function waitForJsonPublication(path) {
+  const deadline = Date.now() + 30_000
+  const watcher = watch(dirname(path), { persistent: false })
+  const publication = new Promise((resolvePublication, rejectPublication) => {
+    watcher.once('error', rejectPublication)
+    watcher.on('change', (_eventType, filename) => {
+      if (!filename || filename.toString() === basename(path)) {
+        resolvePublication()
+      }
+    })
+  })
+  let deadlineImmediate = null
+  try {
+    try {
+      return JSON.parse(await readFile(path, 'utf8'))
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+
+    await Promise.race([
+      publication,
+      new Promise((_, rejectDeadline) => {
+        const checkDeadline = () => {
+          if (Date.now() >= deadline) {
+            rejectDeadline(
+              new Error(
+                `Worker observation was not published: ${basename(path)}`,
+              ),
+            )
+            return
+          }
+          deadlineImmediate = setImmediate(checkDeadline)
+        }
+        deadlineImmediate = setImmediate(checkDeadline)
+      }),
+    ])
+    return JSON.parse(await readFile(path, 'utf8'))
+  } finally {
+    if (deadlineImmediate) clearImmediate(deadlineImmediate)
+    watcher.close()
+  }
+}
+
+async function waitForProcessExit(pid) {
+  const deadline = Date.now() + 2_000
+  while (Date.now() < deadline) {
+    if (!processExists(pid)) return
+    await new Promise((resolveImmediate) => setImmediate(resolveImmediate))
+  }
+  throw new Error(`Worker process did not exit: ${pid}`)
 }
 
 async function waitForParentWatchdogArm(setTimeoutSpy, expectedArmCount) {
@@ -691,8 +743,12 @@ fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
     const directory = await mkdtemp(join(tmpdir(), 'pdf-export-scratch-'))
     const observationPath = join(directory, 'observation.json')
     const outputDirectory = join(directory, 'output')
+    const controller = new AbortController()
+    let pending = null
+    let observation = null
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
-      const { report } = await processExportDocuments({
+      pending = processExportDocuments({
         paths: [join(directory, 'private paper.pdf')],
         corpusContract: null,
         policy: pipeline.policy,
@@ -702,9 +758,10 @@ fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
         validator: { kind: 'skipped', reason: 'java-unavailable' },
         outputDirectory,
         timeoutMs: 3_000,
+        signal: controller.signal,
         runWorker: (job, options) =>
           runIsolatedPdfExportJob(
-            { ...job, observationPath },
+            { ...job, observationPath, delayPipelineStart: true },
             {
               ...options,
               workerModule: resolve(
@@ -713,7 +770,10 @@ fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
             },
           ),
       })
-      const observation = await waitForJson(observationPath)
+      observation = await waitForJsonPublication(observationPath)
+
+      await vi.advanceTimersByTimeAsync(3_000)
+      const { report } = await pending
 
       expect(report.summary).toMatchObject({
         documents: 1,
@@ -722,7 +782,19 @@ fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
         failed: 1,
         failureReasons: { PDF_DOCUMENT_TIMEOUT: 1 },
       })
-      expect(observation.cacheDirectory).toContain(observation.stagingDirectory)
+      await Promise.all([
+        waitForProcessExit(observation.workerPid),
+        waitForProcessExit(observation.grandchildPid),
+      ])
+      expect(basename(observation.cacheDirectory)).toMatch(
+        /^srt-pdf-vite-/,
+      )
+      expect(observation.cacheDirectory).toBe(
+        join(
+          observation.stagingDirectory,
+          basename(observation.cacheDirectory),
+        ),
+      )
       await expect(access(observation.stagingDirectory)).rejects.toMatchObject({
         code: 'ENOENT',
       })
@@ -731,6 +803,15 @@ fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
       })
       expect(await readdir(outputDirectory)).toEqual(['corpus-audit.json'])
     } finally {
+      controller.abort()
+      await pending?.catch(() => {})
+      vi.useRealTimers()
+      if (
+        observation?.grandchildPid &&
+        processExists(observation.grandchildPid)
+      ) {
+        process.kill(observation.grandchildPid, 'SIGKILL')
+      }
       await rm(directory, { recursive: true, force: true })
     }
   }, 30_000)

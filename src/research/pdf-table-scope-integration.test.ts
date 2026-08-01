@@ -9,7 +9,10 @@ import type {
   PdfSourceRun,
   PdfVisualRelationship,
 } from './import-types'
-import { canonicalVisualSourceInlineMapping } from './pdf-layout'
+import {
+  canonicalVisualSourceInlineMapping,
+  residualPdfRegionFragmentsAfterLineConsumption,
+} from './pdf-layout'
 import { reconstructPdfVisuals, type PdfFigureRasterizer } from './pdf-visuals'
 import { isSourceVerifiedSemanticTable } from './semantic-table'
 import { createPngAsset, createSourcePageCropAsset } from './visual-assets'
@@ -939,9 +942,33 @@ describe('bounded table-scope visual fallback', () => {
         retainedLineIds: prose.map((line) => line.id).sort(),
       },
     ])
+    const downstreamFragments = residualPdfRegionFragmentsAfterLineConsumption(
+      parent,
+      result.consumedLineIds,
+      parent.lines.slice(1).map((line, index) => ({
+        id: `partial-semantic-boundary-${index + 1}`,
+        page: parent.page,
+        regionId: parent.id,
+        fromLineId: parent.lines[index].id,
+        toLineId: line.id,
+        outcome: 'space' as const,
+        evidence: ['ordinary-wrap'],
+      })),
+    )
     expect(
-      prose.filter((line) => !result.consumedLineIds.has(line.id)),
-    ).toHaveLength(prose.length)
+      downstreamFragments.flatMap((fragment) =>
+        fragment.region.lines.map((line) => line.id),
+      ),
+    ).toEqual(prose.map((line) => line.id))
+    const downstreamText = downstreamFragments
+      .map((fragment) => fragment.region.text)
+      .join(' ')
+    for (const line of prose) {
+      expect(downstreamText.split(line.text)).toHaveLength(2)
+    }
+    for (const line of tableLines) {
+      expect(downstreamText).not.toContain(line.text)
+    }
     expect(result.canonicalTablesByAssetId.size).toBe(1)
   })
 

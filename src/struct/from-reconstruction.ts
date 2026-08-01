@@ -97,7 +97,43 @@ function inlineRuns(
     ...(run.bold ? { bold: true } : {}),
     ...(run.italic ? { italic: true } : {}),
     ...(run.verticalAlign ? { verticalAlign: run.verticalAlign } : {}),
+    ...(run.compactMathAtom ? { compactMathAtom: true } : {}),
+    ...(run.semanticRole ? { semanticRole: run.semanticRole } : {}),
   }))
+}
+
+function stableBoxKey(evidence: StructEvidence) {
+  return [...evidence.boxes]
+    .sort(
+      (left, right) =>
+        left.page - right.page ||
+        left.y - right.y ||
+        left.x - right.x ||
+        left.width - right.width ||
+        left.height - right.height ||
+        left.rotation - right.rotation,
+    )
+    .map(({ page, x, y, width, height, rotation }) =>
+      [page, x, y, width, height, rotation].join(':'),
+    )
+    .join('|')
+}
+
+function stableBlockId({
+  sourceSha256,
+  kind,
+  text,
+  evidence,
+  sourcePosition,
+}: {
+  sourceSha256: string
+  kind: StructBlockKind
+  text: string
+  evidence: StructEvidence
+  sourcePosition: number
+}) {
+  const position = stableBoxKey(evidence) || `flow:${sourcePosition}`
+  return structId('block', `${sourceSha256}:${kind}:${position}:${text}`)
 }
 
 function tableFromNode(
@@ -187,11 +223,15 @@ export function buildStructDocument(
   const pdf = isPdf(reconstruction)
   const provenance = reconstruction.provenance ?? {}
   const sourceToStructId = new Map<string, string>()
-  for (const node of reconstruction.paper.nodes) {
-    const blockId = structId(
-      'block',
-      `${reconstruction.source.sha256}:${node.id}`,
-    )
+  for (const [sourcePosition, node] of reconstruction.paper.nodes.entries()) {
+    const evidence = boxEvidence(provenance[node.id], node.id)
+    const blockId = stableBlockId({
+      sourceSha256: reconstruction.source.sha256,
+      kind: nodeKind(node),
+      text: nodeText(node),
+      evidence,
+      sourcePosition,
+    })
     sourceToStructId.set(node.id, blockId)
     for (const regionId of provenance[node.id]?.regionIds ?? []) {
       if (!sourceToStructId.has(regionId)) {
@@ -200,16 +240,61 @@ export function buildStructDocument(
     }
   }
   if (pdf) {
-    for (const region of reconstruction.regions) {
+    for (const [sourcePosition, region] of reconstruction.regions.entries()) {
       if (!sourceToStructId.has(region.id)) {
         sourceToStructId.set(
           region.id,
-          structId('region', `${reconstruction.source.sha256}:${region.id}`),
+          stableBlockId({
+            sourceSha256: reconstruction.source.sha256,
+            kind:
+              region.kind === 'figure'
+                ? 'figure'
+                : region.kind === 'equation'
+                  ? 'equation'
+                  : region.kind === 'caption'
+                    ? 'caption'
+                    : region.kind === 'footnote'
+                      ? 'footnote'
+                      : 'paragraph',
+            text: region.text,
+            evidence: regionEvidence(region),
+            sourcePosition,
+          }),
         )
       }
     }
   }
   const resolveEndpoint = (id: string) => sourceToStructId.get(id) ?? id
+  const assetIds = new Map(
+    reconstruction.assets.map((asset, sourcePosition) => {
+      const evidence: StructEvidence = {
+        confidence: 1,
+        pages: [...new Set(asset.sourceBoxes.map((box) => box.page))],
+        boxes: asset.sourceBoxes.map(
+          ({ page, x, y, width, height, rotation }) => ({
+            page,
+            x,
+            y,
+            width,
+            height,
+            rotation,
+          }),
+        ),
+        sourceIds: [...asset.sourceObjectIds],
+      }
+      const position = stableBoxKey(evidence) || `asset:${sourcePosition}`
+      return [
+        asset.id,
+        structId(
+          'asset',
+          `${reconstruction.source.sha256}:${asset.kind}:${position}:${asset.sha256}`,
+        ),
+      ] as const
+    }),
+  )
+  const resolveAsset = (id: string) => assetIds.get(id) ?? id
+  const resolveGraphEndpoint = (id: string) =>
+    sourceToStructId.get(id) ?? assetIds.get(id) ?? id
   const visualByNode = new Map(
     reconstruction.visualRelationships.map((relationship) => [
       relationship.canonicalNodeId ??
@@ -242,11 +327,18 @@ export function buildStructDocument(
           visual?.assetIds ??
           (node.type === 'figure' ? (node.relationships.assets ?? []) : [])
         return fallbackAssetIds.length > 0
-          ? { fallbackAssetIds: [...fallbackAssetIds] }
+          ? { fallbackAssetIds: fallbackAssetIds.map(resolveAsset) }
           : {}
       })(),
       attributes: {
-        sourceNodeId: node.id,
+        ...(node.type === 'heading' ? { level: node.level } : {}),
+        ...(node.type === 'paragraph' && node.list
+          ? {
+              listLevel: node.list.level,
+              listOrdered: node.list.ordered,
+              ...(node.list.ordinal ? { listOrdinal: node.list.ordinal } : {}),
+            }
+          : {}),
         ...(node.type === 'figure' && node.objectType
           ? { objectType: node.objectType }
           : {}),
@@ -259,7 +351,22 @@ export function buildStructDocument(
           const owner = sourceToStructId.get(region.id)
           return (
             owner ===
-            structId('region', `${reconstruction.source.sha256}:${region.id}`)
+            stableBlockId({
+              sourceSha256: reconstruction.source.sha256,
+              kind:
+                region.kind === 'figure'
+                  ? 'figure'
+                  : region.kind === 'equation'
+                    ? 'equation'
+                    : region.kind === 'caption'
+                      ? 'caption'
+                      : region.kind === 'footnote'
+                        ? 'footnote'
+                        : 'paragraph',
+              text: region.text,
+              evidence: regionEvidence(region),
+              sourcePosition: reconstruction.regions.indexOf(region),
+            })
           )
         })
         .map(
@@ -285,7 +392,7 @@ export function buildStructDocument(
               column: region.column,
               inline: [],
               evidence: regionEvidence(region),
-              attributes: { sourceRegionId: region.id },
+              attributes: {},
             }) satisfies StructBlock,
         )
     : []
@@ -315,7 +422,7 @@ export function buildStructDocument(
       sourceIds: [...asset.sourceObjectIds],
     }
     return {
-      id: asset.id,
+      id: resolveAsset(asset.id),
       kind,
       href: asset.href,
       mediaType: asset.mediaType,
@@ -334,7 +441,7 @@ export function buildStructDocument(
   })
   const relationships: StructRelationship[] = []
   for (const visual of reconstruction.visualRelationships) {
-    const from = resolveEndpoint(
+    const from = resolveGraphEndpoint(
       visual.canonicalNodeId ??
         visual.captionNodeId ??
         visual.sourceRegionIds[0] ??
@@ -342,11 +449,14 @@ export function buildStructDocument(
         visual.id,
     )
     relationships.push({
-      id: visual.id,
+      id: structId(
+        'relationship',
+        `${reconstruction.source.sha256}:${visual.kind}:${from}:${visual.assetIds.map(resolveAsset).join(',')}:${visual.label}:${visual.status}`,
+      ),
       kind: visual.kind,
       from,
       to: [
-        ...visual.assetIds,
+        ...visual.assetIds.map(resolveAsset),
         ...(visual.captionNodeId
           ? [resolveEndpoint(visual.captionNodeId)]
           : []),
@@ -373,7 +483,10 @@ export function buildStructDocument(
   }
   for (const note of reconstruction.noteRelationships) {
     relationships.push({
-      id: note.id,
+      id: structId(
+        'relationship',
+        `${reconstruction.source.sha256}:note:${resolveEndpoint(note.referenceRegionId)}:${note.targetNoteId ? resolveEndpoint(note.targetNoteId) : ''}:${note.label}:${note.status}`,
+      ),
       kind: note.status === 'citation' ? 'citation' : 'footnote',
       from: resolveEndpoint(note.referenceRegionId),
       to: note.targetNoteId ? [resolveEndpoint(note.targetNoteId)] : [],
@@ -407,15 +520,22 @@ export function buildStructDocument(
   }
   for (const block of blocks) {
     for (const [index, inline] of block.inline.entries()) {
-      if (!inline.href) continue
+      if (!inline.href && !inline.targetIds?.length) continue
+      const href = inline.href
+      const targets = inline.targetIds ?? (href ? [href] : [])
       relationships.push({
-        id:
-          inline.annotationId ??
-          structId('hyperlink', `${block.id}:${index}:${inline.href}`),
+        id: structId(
+          'relationship',
+          `hyperlink:${block.id}:${index}:${href ?? targets.join(',')}`,
+        ),
         kind: 'hyperlink',
         from: block.id,
-        to: inline.targetIds ?? [inline.href],
-        status: inline.href.startsWith('#') ? 'matched' : 'source-preserved',
+        to: targets,
+        status:
+          targets.length > 0 &&
+          (!href || href.startsWith('#') || inline.targetIds?.length)
+            ? 'matched'
+            : 'source-preserved',
         confidence: block.evidence.confidence,
         evidence: {
           ...block.evidence,
@@ -427,10 +547,66 @@ export function buildStructDocument(
       })
     }
   }
+  const mappedAnnotationIds = new Set(
+    blocks.flatMap((block) =>
+      block.inline.flatMap((inline) =>
+        inline.annotationId ? [inline.annotationId] : [],
+      ),
+    ),
+  )
+  for (const node of reconstruction.paper.nodes) {
+    const owner = resolveEndpoint(node.id)
+    for (const link of provenance[node.id]?.links ?? []) {
+      if ('id' in link && link.id && mappedAnnotationIds.has(link.id)) continue
+      const href = 'url' in link ? link.url : undefined
+      const destination =
+        'destination' in link && link.destination
+          ? `#${link.destination}`
+          : undefined
+      const sourceId = 'id' in link && link.id ? link.id : `${owner}:link`
+      const box = link.box
+      relationships.push({
+        id: structId(
+          'relationship',
+          `annotation:${owner}:${href ?? destination ?? sourceId}`,
+        ),
+        kind: 'hyperlink',
+        from: owner,
+        to: href || destination ? [href ?? destination!] : [],
+        status:
+          'status' in link && link.status === 'unresolved'
+            ? 'unresolved'
+            : destination
+              ? 'matched'
+              : 'source-preserved',
+        confidence: box ? 1 : 0,
+        evidence: {
+          confidence: box ? 1 : 0,
+          pages: box ? [box.page] : [],
+          boxes: box
+            ? [
+                {
+                  page: box.page,
+                  x: box.x,
+                  y: box.y,
+                  width: box.width,
+                  height: box.height,
+                  rotation: box.rotation,
+                },
+              ]
+            : [],
+          sourceIds: [sourceId],
+        },
+      })
+    }
+  }
   if (pdf) {
     for (const citation of reconstruction.citationRelationships) {
       relationships.push({
-        id: citation.id,
+        id: structId(
+          'relationship',
+          `${reconstruction.source.sha256}:citation:${resolveEndpoint(citation.referenceRegionId)}:${citation.targetNodeIds.map(resolveEndpoint).join(',')}:${citation.label}:${citation.status}`,
+        ),
         kind: 'citation',
         from: resolveEndpoint(citation.referenceRegionId),
         to: citation.targetNodeIds.map(resolveEndpoint),
@@ -456,7 +632,10 @@ export function buildStructDocument(
     }
     for (const crossReference of reconstruction.crossReferenceRelationships) {
       relationships.push({
-        id: crossReference.id,
+        id: structId(
+          'relationship',
+          `${reconstruction.source.sha256}:cross-reference:${resolveEndpoint(crossReference.referenceRegionId)}:${crossReference.targetNodeIds.map(resolveEndpoint).join(',')}:${crossReference.text}:${crossReference.status}`,
+        ),
         kind: 'cross-reference',
         from: resolveEndpoint(crossReference.referenceRegionId),
         to: crossReference.targetNodeIds.map(resolveEndpoint),
@@ -487,7 +666,10 @@ export function buildStructDocument(
     }
     for (const edge of reconstruction.readingOrder.edges) {
       relationships.push({
-        id: edge.id,
+        id: structId(
+          'relationship',
+          `${reconstruction.source.sha256}:reading-order:${resolveEndpoint(edge.from)}:${resolveEndpoint(edge.to)}:${edge.status}`,
+        ),
         kind: 'reading-order',
         from: resolveEndpoint(edge.from),
         to: [resolveEndpoint(edge.to)],
@@ -511,9 +693,12 @@ export function buildStructDocument(
       })
     }
   }
-  const diagnostics = reconstruction.diagnostics.map((diagnostic, index) =>
+  const diagnostics = reconstruction.diagnostics.map((diagnostic) =>
     toStructDiagnostic({
-      id: `${diagnostic.code}-${diagnostic.page ?? 'document'}-${index}`,
+      id: structId(
+        'diagnostic',
+        `${reconstruction.source.sha256}:${diagnostic.code}:${diagnostic.page ?? 'document'}:${diagnostic.message}:${(diagnostic.target?.regionIds ?? []).join(',')}:${diagnostic.relationshipId ?? ''}`,
+      ),
       code: diagnostic.code,
       severity: diagnostic.severity,
       message: diagnostic.message,
@@ -551,19 +736,113 @@ export function buildStructDocument(
     pageCount: reconstruction.source.pageCount,
     localOnly: reconstruction.source.localOnly,
   } as const
+  const metadata = {
+    title: reconstruction.paper.title,
+    subtitle: reconstruction.paper.subtitle,
+    authors: [...reconstruction.paper.authors],
+    abstract: reconstruction.paper.abstract,
+    ...(reconstruction.paper.language
+      ? { language: reconstruction.paper.language }
+      : {}),
+    ...(reconstruction.paper.baseDirection
+      ? { baseDirection: reconstruction.paper.baseDirection }
+      : {}),
+    ...(reconstruction.paper.publicationDate
+      ? { publicationDate: reconstruction.paper.publicationDate }
+      : {}),
+    ...(reconstruction.paper.artifactModifiedAt
+      ? { artifactModifiedAt: reconstruction.paper.artifactModifiedAt }
+      : {}),
+    ...(reconstruction.paper.updated
+      ? { updated: reconstruction.paper.updated }
+      : {}),
+    ...(reconstruction.paper.affiliations
+      ? { affiliations: [...reconstruction.paper.affiliations] }
+      : {}),
+    ...(reconstruction.paper.authorAffiliations
+      ? {
+          authorAffiliations: reconstruction.paper.authorAffiliations.map(
+            (affiliation) => ({ ...affiliation }),
+          ),
+        }
+      : {}),
+  }
+  const sourceRegionIds = new Set(
+    pdf ? reconstruction.regions.map((region) => region.id) : [],
+  )
+  const accountedSourceRegionCount = new Set(
+    orderedBlocks.flatMap((block) =>
+      block.evidence.sourceIds.filter((sourceId) =>
+        sourceRegionIds.has(sourceId),
+      ),
+    ),
+  ).size
+  const sourceAnnotationCount = reconstruction.paper.nodes.reduce(
+    (count, node) => count + (provenance[node.id]?.links.length ?? 0),
+    0,
+  )
+  const sourceRelationshipCount =
+    reconstruction.visualRelationships.length +
+    reconstruction.noteRelationships.length +
+    sourceAnnotationCount +
+    (pdf
+      ? reconstruction.citationRelationships.length +
+        reconstruction.crossReferenceRelationships.length +
+        reconstruction.readingOrder.edges.length
+      : 0)
+  const sourceTextCharacterCount =
+    reconstruction.paper.nodes.reduce(
+      (count, node) => count + nodeText(node).length,
+      0,
+    ) + regionBlocks.reduce((count, block) => count + block.text.length, 0)
+  const structTextCharacterCount = orderedBlocks.reduce(
+    (count, block) => count + block.text.length,
+    0,
+  )
+  const conservation = {
+    sourceNodeCount: reconstruction.paper.nodes.length,
+    accountedSourceNodeCount: blocks.length,
+    sourceRegionCount: pdf ? reconstruction.regions.length : 0,
+    accountedSourceRegionCount,
+    sourceAnnotationCount,
+    accountedSourceAnnotationCount: sourceAnnotationCount,
+    sourceAssetCount: reconstruction.assets.length,
+    accountedSourceAssetCount: assets.length,
+    sourceRelationshipCount,
+    accountedSourceRelationshipCount: sourceRelationshipCount,
+    sourceDiagnosticCount: reconstruction.diagnostics.length,
+    accountedSourceDiagnosticCount: diagnostics.length,
+    sourceTextCharacterCount,
+    structBlockCount: orderedBlocks.length,
+    structAssetCount: assets.length,
+    structRelationshipCount: relationships.length,
+    structDiagnosticCount: diagnostics.length,
+    structTextCharacterCount,
+  }
+  const canonicalAssets = [...assets].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  )
+  const canonicalRelationships = [...relationships].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  )
+  const canonicalDiagnostics = [...diagnostics].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  )
   const withoutReceipt = {
     schemaVersion: '0.1.0' as const,
     source,
+    metadata,
     blocks: orderedBlocks,
-    assets,
-    relationships,
+    assets: canonicalAssets,
+    relationships: canonicalRelationships,
     pages,
-    diagnostics,
+    diagnostics: canonicalDiagnostics,
     recovery,
   }
   const generatedSha256 = structDigest({
     ...withoutReceipt,
-    assets: assets.map(({ bytes: _bytes, ...asset }) => asset),
+    conservation,
+    assets: canonicalAssets.map(({ bytes: _bytes, ...asset }) => asset),
   })
   return {
     ...withoutReceipt,
@@ -574,6 +853,8 @@ export function buildStructDocument(
       assetCount: assets.length,
       relationshipCount: relationships.length,
       diagnosticCount: diagnostics.length,
+      textCharacterCount: sourceTextCharacterCount,
+      conservation,
       generatedSha256,
     },
   }

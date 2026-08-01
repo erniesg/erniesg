@@ -14,7 +14,7 @@ Build outputs from a canonical, source-backed document graph. Prefer verified se
 3. Convert the extraction result with `src/struct/from-reconstruction.ts`. Keep extractor IDs only in evidence; expose stable STRUCT IDs in graph relationships.
 4. Verify reading order, captions, notes, citations, tables, equations, and hyperlinks against source geometry and annotations.
 5. Promote an object to semantic structure only when its evidence is sufficient. Otherwise retain a bounded source asset or page-region fallback with its caption and provenance.
-6. Render from the STRUCT graph. Never drop an unresolved source obligation, invent a link destination, flatten a table into headings, or treat Markdown-like source text as markup without source evidence.
+6. Render from the STRUCT graph with `src/struct/xhtml.ts` or assemble an EPUB with `src/struct/epub.ts`. The compatibility exports in `src/research/epub.ts` accept `StructDocument`; extractor-private data is not needed on this path. Never drop an unresolved source obligation, invent a link destination, flatten a table into headings, or treat Markdown-like source text as markup without source evidence.
 7. Present recovery through `src/struct/recovery.ts`. Keep machine codes in logs or review tooling; show users plain-language outcomes and actions.
 8. Validate with diverse fixtures and inspect the produced EPUB or HTML, not only intermediate JSON.
 
@@ -28,6 +28,7 @@ Build outputs from a canonical, source-backed document graph. Prefer verified se
 - Retain equations and diagrams as source artwork unless a transcription is independently verified.
 - Keep footnote/endnote markers and bodies even when their association is unresolved.
 - Hash receipts from canonical metadata and asset digests, not duplicate embedded bytes.
+- Reconcile source and STRUCT node, region, asset, relationship, diagnostic, and text-character counts in `receipt.conservation`; pin representative `generatedSha256` receipts in fixtures.
 - Treat a readable fallback as recoverable output, not publication-ready output.
 
 ## Validation

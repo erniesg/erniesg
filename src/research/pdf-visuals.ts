@@ -28,8 +28,11 @@ import { pdfFontTextRequiresStructuralReconstruction } from './pdf-font-text'
 import {
   detectExplicitHeaderNumericTableWithinProvenScope,
   detectHierarchicalTableWithinProvenScope,
+  detectRectangularTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
+  detectUniformTableWithinProvenScope,
+  detectWrappedCellTableWithinProvenScope,
   detectWrappedHeaderTableWithinProvenScope,
   type PdfDetectedTableGrid,
 } from './pdf-table-detection'
@@ -2530,6 +2533,95 @@ async function figureCandidates(
   )
 }
 
+/**
+ * Recover a complete native image when region grouping was conservative.
+ *
+ * Some PDFs expose a figure as one parent image plus many tiny label/vector
+ * fragments.  The parent image can be filtered as page furniture or fail the
+ * connected-scaffold proof even though PDF.js has already decoded an exact
+ * source asset for it.  In that case the caption is still enough to bind the
+ * nearest large, source-backed image: the candidate is never synthesized and
+ * its source object/asset lineage remains explicit.
+ */
+function sourcePreservedFigureFallbackCandidate({
+  caption,
+  pages,
+  regions,
+  assetStore,
+  renderEnvelope,
+}: {
+  caption: PdfPageRegion
+  pages: PdfPageAnalysis[]
+  regions: PdfPageRegion[]
+  assetStore: ReadonlyMap<string, PdfVisualAsset>
+  renderEnvelope?: NormalizedSourceBox
+}): VisualCandidate | null {
+  const page = pages.find((value) => value.page === caption.page)
+  if (!page) return null
+  const contains = (outer: NormalizedSourceBox, inner: NormalizedSourceBox) =>
+    outer.x <= inner.x + 0.0005 &&
+    outer.y <= inner.y + 0.0005 &&
+    outer.x + outer.width >= inner.x + inner.width - 0.0005 &&
+    outer.y + outer.height >= inner.y + inner.height - 0.0005
+  const imageObjects = (page.objects ?? [])
+    .filter(
+      (object) =>
+        object.kind === 'image' &&
+        typeof object.assetId === 'string' &&
+        assetStore.has(object.assetId) &&
+        object.box.width * object.box.height >= 0.01 &&
+        object.box.width <= 0.9 &&
+        object.box.height <= 0.65 &&
+        (!renderEnvelope || contains(object.box, renderEnvelope)),
+    )
+    .filter((object) => {
+      const distance = caption.box.y - (object.box.y + object.box.height)
+      return (
+        distance >= -0.004 &&
+        distance <= 0.14 &&
+        horizontalOverlapRatio(caption.box, object.box) >= 0.5
+      )
+    })
+  if (imageObjects.length === 0) return null
+  const parentObjects = imageObjects.filter(
+    (object) =>
+      !imageObjects.some(
+        (other) =>
+          other.id !== object.id &&
+          other.box.width * other.box.height >
+            object.box.width * object.box.height * 1.25 &&
+          contains(other.box, object.box),
+      ),
+  )
+  const sourceObject = [
+    ...(parentObjects.length > 0 ? parentObjects : imageObjects),
+  ].sort(
+    (left, right) =>
+      right.box.width * right.box.height - left.box.width * left.box.height ||
+      left.id.localeCompare(right.id),
+  )[0]
+  if (!sourceObject || !sourceObject.assetId) return null
+  const sourceRegions = regions.filter((region) =>
+    region.nativeObjectIds.includes(sourceObject.id),
+  )
+  const column = sourceRegions[0]?.column ?? caption.column
+  return {
+    kind: 'figure',
+    sourceRegionIds: sourceRegions.map((region) => region.id),
+    sourceObjectIds: [sourceObject.id],
+    assetIds: [sourceObject.assetId],
+    sourceBoxes: [{ ...sourceObject.box }],
+    sourceText: '',
+    page: sourceObject.page,
+    column,
+    renderBox: { ...sourceObject.box },
+    evidence: [
+      'source-preserved-figure-fallback',
+      'native-object-direct-rendition',
+    ],
+  }
+}
+
 function nextSourceRegions(
   caption: PdfPageRegion,
   regions: PdfPageRegion[],
@@ -3375,9 +3467,7 @@ function algorithmTerminalLine(value: string) {
   return (
     /\breturn\b/iu.test(value) ||
     /\boutput\s*:/iu.test(value) ||
-    /\bend\s+(?:algorithm|procedure|while|for|if|loop|function)\b/iu.test(
-      value,
-    )
+    /\bend\s+(?:algorithm|procedure|while|for|if|loop|function)\b/iu.test(value)
   )
 }
 
@@ -3435,9 +3525,7 @@ function boundedAlgorithmBlocks(
           left.id.localeCompare(right.id),
       )
     const requireIndex = candidates.findIndex((region) =>
-      /^(?:\d{1,3}\s*[:.]\s*)?(?:Require|Input)\s*:/iu.test(
-        region.text.trim(),
-      ),
+      /^(?:\d{1,3}\s*[:.]\s*)?(?:Require|Input)\s*:/iu.test(region.text.trim()),
     )
     if (requireIndex < 0) continue
     const sourceRegions: PdfPageRegion[] = []
@@ -5879,6 +5967,9 @@ function tableScopeCandidate(
   const evidence = [
     'bounded-table-scope',
     'non-semantic-source-scope',
+    ...(scope.fallback === 'source-preserved'
+      ? ['source-preserved-table-fallback']
+      : []),
     ...scope.evidence.map((item) => item.code),
     ...(resolution.status === 'ambiguous'
       ? [
@@ -6136,7 +6227,11 @@ function matchTableScopeResolution(
   regions: PdfPageRegion[],
   objectAssetIds: ReadonlyMap<string, string | null>,
 ): ReturnType<typeof matchCandidate> {
-  const scored = resolution.candidates.map((scope) => {
+  const scopes =
+    resolution.candidates.length > 0
+      ? resolution.candidates
+      : (resolution.fallbackCandidates ?? [])
+  const scored = scopes.map((scope) => {
     const candidate = tableScopeCandidate(
       scope,
       resolution,
@@ -6749,8 +6844,7 @@ function sourceProvedInlineStackedMathFormula(region: PdfPageRegion) {
     runs.every(
       (run) =>
         Number.isSafeInteger(run.sourceSequenceIndex) &&
-        (knownSourceMathFont(run.fontName) ||
-          neutralSourcePunctuation(run)),
+        (knownSourceMathFont(run.fontName) || neutralSourcePunctuation(run)),
     ) &&
     runs.some((run) => knownSourceMathFont(run.fontName)) &&
     new Set(runs.map((run) => run.sourceSequenceIndex)).size === runs.length &&
@@ -7655,8 +7749,7 @@ function splitSourceProvedAnswerCueEquations(
       continue
     }
     const sourceOrderedRuns = [...visibleRuns].sort(
-      (left, right) =>
-        left.sourceSequenceIndex! - right.sourceSequenceIndex!,
+      (left, right) => left.sourceSequenceIndex! - right.sourceSequenceIndex!,
     )
     let cueRuns: typeof sourceOrderedRuns | null = null
     let equationRuns: typeof sourceOrderedRuns | null = null
@@ -8079,10 +8172,7 @@ function componentAttachableSequenceOwnerCluster(
     return null
   }
   const combined = unionBox([...displayRegions, ...orderedCluster])
-  if (
-    combined.height > 0.12 ||
-    combined.width > MAX_DISPLAY_EQUATION_WIDTH
-  ) {
+  if (combined.height > 0.12 || combined.width > MAX_DISPLAY_EQUATION_WIDTH) {
     return null
   }
   if (
@@ -8110,7 +8200,9 @@ function componentAttachableSequenceOwnerCluster(
     )
     if (attachableIndex < 0) return null
     const owner = remaining[attachableIndex]
-    if (!preservesPrintedEquationCardinality(growingComponent, owner, regions)) {
+    if (
+      !preservesPrintedEquationCardinality(growingComponent, owner, regions)
+    ) {
       return null
     }
     growingComponent.push(owner)
@@ -8151,8 +8243,10 @@ function attachedEquationRegions(
         ![...candidateInlineFormulaBaseIds].some((baseId) =>
           ownedInlineFormulaBaseIds.has(baseId),
         )
-      const sourceSequenceOwnerRegionIds =
-        sourceSequenceEquationOwnerRegionIds(candidate, regions)
+      const sourceSequenceOwnerRegionIds = sourceSequenceEquationOwnerRegionIds(
+        candidate,
+        regions,
+      )
       const candidateAlreadyAttached = displayRegions.some(
         (region) => region.id === candidate.id,
       )
@@ -8206,8 +8300,9 @@ function attachedEquationRegions(
       ) {
         continue
       }
-      const regionsToAttach =
-        attachableSourceSequenceOwnerCluster ?? [candidate]
+      const regionsToAttach = attachableSourceSequenceOwnerCluster ?? [
+        candidate,
+      ]
       const combined = unionBox([...displayRegions, ...regionsToAttach])
       if (
         combined.height > 0.12 ||
@@ -8323,15 +8418,15 @@ function attachedEquationRegions(
       const unresolvedDetachedHost = unresolvedDetachedMathHost(candidate)
       const ownedRegions = [...displayRegions, ...attachedFragments]
       const ownedLineIds = new Set(
-        ownedRegions.flatMap((region) =>
-          region.lines.map((line) => line.id),
-        ),
+        ownedRegions.flatMap((region) => region.lines.map((line) => line.id)),
       )
       const belongsToAnotherDetachedHost =
         detachedHostLineIds.size > 0 &&
         ![...detachedHostLineIds].every((lineId) => ownedLineIds.has(lineId))
-      const sourceSequenceOwnerRegionIds =
-        sourceSequenceEquationOwnerRegionIds(candidate, regions)
+      const sourceSequenceOwnerRegionIds = sourceSequenceEquationOwnerRegionIds(
+        candidate,
+        regions,
+      )
       const linkedSourceSequenceOwner =
         sourceSequenceOwnerRegionIds.size > 0 &&
         ownedRegions.some((region) =>
@@ -8456,15 +8551,15 @@ function attachedEquationRegions(
         : linkedSourceSequenceOwner
           ? (fragment ??
             (sourceProvedInlineFormula || compactFragment ? candidate : null))
-        : linkedInlineMathSibling
-          ? fragment
-          : sourceOwnedFragment
+          : linkedInlineMathSibling
             ? fragment
-            : adjacentSourceMathFontContinuation
+            : sourceOwnedFragment
               ? fragment
-              : adjacentCompactFragment
-                ? candidate
-                : null
+              : adjacentSourceMathFontContinuation
+                ? fragment
+                : adjacentCompactFragment
+                  ? candidate
+                  : null
       const bypassesDisplayAdjacencyGuards =
         selected !== null &&
         !linkedDetachedMathHost &&
@@ -8788,7 +8883,8 @@ async function displayEquationComponents(
           region.kind === 'equation' &&
           hasDisplayEquationEvidence(region, pageRegions) &&
           !unresolvedMathExtensionGlyphFragment(region),
-      ) ?? source
+      ) ??
+      source
     components.push({ source: primarySource, regions: componentRegions })
   }
   if (displaySources.length > 0) {
@@ -9470,6 +9566,7 @@ export async function reconstructPdfVisuals({
     let tableScopeResolution: PdfTableScopeResolution | null = null
     let semanticTableScope: CompleteSemanticTableScope | null = null
     let semanticTableGrid: PdfDetectedTableGrid | null = null
+    let semanticTableLineage: PdfTableScope['regionLineage'] | null = null
     let candidates = figures.filter(
       (candidate) => candidate.kind === label.kind,
     )
@@ -9501,6 +9598,7 @@ export async function reconstructPdfVisuals({
                   !unavailableSourceObjectIds.has(sourceObject.id),
               ) ?? [],
         })
+        semanticTableLineage = boundedScope.scope?.regionLineage ?? null
         if (!detectedTable && boundedScope.scope) {
           detectedTable = detectTableWithinProvenScope(
             caption,
@@ -9514,6 +9612,10 @@ export async function reconstructPdfVisuals({
         )
         if (!semanticTableScope && boundedScope.scope) {
           semanticTableGrid =
+            detectUniformTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
+            ) ??
             detectWrappedHeaderTableWithinProvenScope(
               availableTableRegions,
               boundedScope.scope,
@@ -9523,6 +9625,14 @@ export async function reconstructPdfVisuals({
               boundedScope.scope,
             ) ??
             detectExplicitHeaderNumericTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
+            ) ??
+            detectWrappedCellTableWithinProvenScope(
+              availableTableRegions,
+              boundedScope.scope,
+            ) ??
+            detectRectangularTableWithinProvenScope(
               availableTableRegions,
               boundedScope.scope,
             )
@@ -9563,7 +9673,9 @@ export async function reconstructPdfVisuals({
         tableScopeResolution =
           semanticTableScope || semanticTableGrid
             ? null
-            : boundedScope.status === 'matched' || detectedTable === null
+            : boundedScope.status === 'matched' ||
+                detectedTable === null ||
+                (boundedScope.fallbackCandidates?.length ?? 0) > 0
               ? boundedScope
               : null
       }
@@ -9691,10 +9803,29 @@ export async function reconstructPdfVisuals({
             )
               ? sources[0].column
               : 'span',
+            ...(label.kind === 'table' &&
+            semanticTableGrid &&
+            semanticTableLineage
+              ? {
+                  // Preserve the independently proved line ownership even
+                  // when caption scoring leaves the relationship unresolved.
+                  // This keeps a source-backed table out of flowing prose
+                  // without pretending the caption association is certain.
+                  tableRegionLineage: semanticTableLineage.map((lineage) => ({
+                    ...lineage,
+                    lineIds: [...lineage.lineIds],
+                    retainedLineIds: [...lineage.retainedLineIds],
+                    box: { ...lineage.box },
+                  })),
+                }
+              : {}),
             ...(label.kind === 'table'
               ? {
                   evidence: visualAsset
                     ? [
+                        ...(semanticTableLineage
+                          ? ['bounded-table-scope']
+                          : []),
                         'detected-table-geometry',
                         'semantic-table',
                         ...(semanticTableScope?.evidence ?? []),
@@ -9718,7 +9849,7 @@ export async function reconstructPdfVisuals({
         }
       }
     }
-    const result = tableScopeResolution
+    let result = tableScopeResolution
       ? matchTableScopeResolution(
           tableScopeResolution,
           caption,
@@ -9726,10 +9857,58 @@ export async function reconstructPdfVisuals({
           objectAssetIds,
         )
       : matchCandidate(caption, label, candidates, regions)
+    const bestHasCompleteSingleAsset = Boolean(
+      result.best?.candidate.sourceObjectIds.length === 1 &&
+      result.best.candidate.assetIds.length === 1 &&
+      assetStore.has(result.best.candidate.assetIds[0]),
+    )
+    if (label.kind === 'figure' && !bestHasCompleteSingleAsset) {
+      const fallbackCandidate = sourcePreservedFigureFallbackCandidate({
+        caption,
+        pages,
+        regions,
+        assetStore,
+        renderEnvelope: result.best?.candidate.renderBox,
+      })
+      if (fallbackCandidate) {
+        candidates = [...candidates, fallbackCandidate]
+        const fallbackResult = matchCandidate(
+          caption,
+          label,
+          [fallbackCandidate],
+          regions,
+        )
+        if (fallbackResult.matched) {
+          // A complete source image is a safer rendition than an incomplete
+          // grouped scaffold, but the scaffold must remain in the evidence
+          // set so ownership conflicts and unreferenced obligations are not
+          // erased. Promote the exact fallback without turning the two
+          // representations into an artificial ambiguity.
+          result = {
+            ...fallbackResult,
+            scored: [...result.scored, ...fallbackResult.scored],
+            ambiguous: false,
+            matched: true,
+          }
+        } else {
+          // Keep the original grouped candidates in the ambiguity set. A
+          // rejected fallback is evidence of attempted recovery, not a
+          // reason to discard competing native lineage.
+          result = {
+            ...result,
+            scored: [...result.scored, ...fallbackResult.scored],
+          }
+        }
+      }
+    }
     const scoredCandidateRecords = result.scored.map((scored) =>
       matchRecord(scored, regions),
     )
     const matchedCandidate = result.best?.candidate
+    const sourcePreservedTableFallback = Boolean(
+      label.kind === 'table' &&
+      matchedCandidate?.evidence?.includes('source-preserved-table-fallback'),
+    )
     const sourcePageCropVetoed = Boolean(
       matchedCandidate?.sourcePageCropBlockedByReadingOrderText,
     )
@@ -9831,8 +10010,10 @@ export async function reconstructPdfVisuals({
         best.sourceBoxes[0],
       ),
     )
+    const sourceCandidateEligibleForCrop =
+      result.matched || sourcePreservedTableFallback
     if (
-      result.matched &&
+      sourceCandidateEligibleForCrop &&
       sourcePageCropVetoed &&
       existingSingleSourceComplete &&
       result.best &&
@@ -9843,7 +10024,7 @@ export async function reconstructPdfVisuals({
     let retainedPageCrop: PdfVisualAsset | undefined
     let pageCropFailureEvidence: string | undefined
     if (
-      result.matched &&
+      sourceCandidateEligibleForCrop &&
       best &&
       scopedSourceLineage &&
       scopedSourceLineage.sourceObjectIds.length > 0 &&
@@ -10496,10 +10677,18 @@ export async function reconstructPdfVisuals({
       : result.matched && payloadComplete
         ? ('matched' as const)
         : ('unresolved' as const)
+    const ownsUnresolvedProvenSemanticTableText = Boolean(
+      status === 'unresolved' &&
+      label.kind === 'table' &&
+      result.best?.candidate.evidence?.includes('semantic-table') &&
+      result.best?.candidate.tableRegionLineage?.length,
+    )
     const ownsUnresolvedBoundedTableText =
       status === 'unresolved' &&
       label.kind === 'table' &&
-      result.matched &&
+      (result.matched ||
+        sourcePreservedTableFallback ||
+        ownsUnresolvedProvenSemanticTableText) &&
       Boolean(matchedCandidate?.tableRegionLineage?.length) &&
       matchedCandidate!.tableRegionLineage!.every(
         (lineage) => lineage.lineIds.length > 0,
@@ -10666,7 +10855,10 @@ export async function reconstructPdfVisuals({
           }
         }
       }
-    } else if (unresolvedBoundedTableLineageIsWholeRegion) {
+    } else if (
+      unresolvedBoundedTableLineageIsWholeRegion &&
+      !sourcePreservedTableFallback
+    ) {
       // Whole-region source scopes remain owned by the unresolved table.
       // Partial-parent scopes stay in canonical flow because consuming only
       // their selected lines would drop the sole recoverable table text.
@@ -10747,8 +10939,16 @@ export async function reconstructPdfVisuals({
           : ownsUnresolvedBoundedTableText
             ? unresolvedBoundedTableLineIds
             : unresolvedFigureLineIds,
-      sourceObjectIds: status === 'matched' ? best!.sourceObjectIds : [],
-      assetIds: status === 'matched' ? best!.assetIds : [],
+      sourceObjectIds:
+        status === 'matched' ||
+        (sourcePreservedTableFallback && payloadComplete)
+          ? best!.sourceObjectIds
+          : [],
+      assetIds:
+        status === 'matched' ||
+        (sourcePreservedTableFallback && payloadComplete)
+          ? best!.assetIds
+          : [],
       status,
       confidence: result.best?.score ?? 0,
       evidence:

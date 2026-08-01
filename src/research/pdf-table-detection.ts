@@ -33,6 +33,10 @@ type ClusteredTableRow = PdfRegionLine & {
   sourceCellBoxes?: NormalizedSourceBox[]
 }
 
+type DetectedTableCellRun = PdfSourceRun & {
+  sourceLineIds?: string[]
+}
+
 export type PdfDetectedTableGrid = {
   sourceRegions: PdfPageRegion[]
   sourceLineIds: string[]
@@ -366,6 +370,7 @@ function adaptiveCellGapThreshold(lines: PdfRegionLine[]) {
 function rowCells(
   line: PdfRegionLine,
   gapThreshold = FIXED_CELL_GAP_THRESHOLD,
+  sourceRunLineIds?: ReadonlyMap<PdfSourceRun, string>,
 ) {
   const runs = orderedRuns(line)
   const groups: (typeof runs)[] = []
@@ -382,7 +387,22 @@ function rowCells(
       group.push(run)
     }
   }
-  return groups.map(mergedTableCellRuns)
+  return groups.map((group) => {
+    const cell = mergedTableCellRuns(group)
+    const sourceLineIds = sourceRunLineIds
+      ? [
+          ...new Set(
+            group.flatMap((run) => {
+              const sourceLineId = sourceRunLineIds.get(run)
+              return sourceLineId ? [sourceLineId] : []
+            }),
+          ),
+        ].sort()
+      : []
+    return sourceLineIds.length > 0
+      ? ({ ...cell, sourceLineIds } satisfies DetectedTableCellRun)
+      : cell
+  })
 }
 
 function mergedTableCellRuns(group: PdfSourceRun[]) {
@@ -723,6 +743,167 @@ export function detectTableNearCaption(
   )
 }
 
+/**
+ * Promote a plainly rectangular, source-proved table without relying on one
+ * paper-specific table shape. The scope is authoritative for membership; this
+ * detector only accepts a uniform row/column matrix with an explicit source
+ * header and complete line ownership. Anything wrapped, spanned, or missing a
+ * cell remains on the source-preserved fallback path.
+ */
+export function detectUniformTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly { code: string }[]
+  },
+): PdfDetectedTableGrid | null {
+  if (
+    scope.sourceRegionIds.length === 0 ||
+    scope.sourceLineIds.length < 2 ||
+    new Set(scope.sourceRegionIds).size !== scope.sourceRegionIds.length ||
+    new Set(scope.sourceLineIds).size !== scope.sourceLineIds.length
+  ) {
+    return null
+  }
+  const regionIds = new Set(scope.sourceRegionIds)
+  const lineIds = new Set(scope.sourceLineIds)
+  const sourceRegions = regions.filter((region) => regionIds.has(region.id))
+  if (sourceRegions.length !== regionIds.size) return null
+  const sourceLines = sourceRegions.flatMap((region) =>
+    region.lines.filter((line) => lineIds.has(line.id)),
+  )
+  if (
+    sourceLines.length !== lineIds.size ||
+    new Set(sourceLines.map((line) => line.id)).size !== lineIds.size ||
+    sourceLines.some((line) => line.runs.every((run) => !run.text.trim()))
+  ) {
+    return null
+  }
+  const bands: PdfRegionLine[][] = []
+  for (const line of [...sourceLines].sort(
+    (left, right) =>
+      left.box.y - right.box.y ||
+      left.box.x - right.box.x ||
+      left.id.localeCompare(right.id),
+  )) {
+    const band = bands.find(
+      (candidate) => Math.abs(candidate[0].box.y - line.box.y) <= 0.004,
+    )
+    if (band) band.push(line)
+    else bands.push([line])
+  }
+  const rows = bands.map((band) =>
+    band
+      .flatMap((line) => line.runs.filter((run) => run.text.trim()))
+      .sort((left, right) => left.x - right.x || left.y - right.y),
+  )
+  const columnCount = rows[0]?.length ?? 0
+  if (
+    rows.length < 3 ||
+    columnCount < 2 ||
+    columnCount > 12 ||
+    rows.some((row) => row.length !== columnCount)
+  ) {
+    return null
+  }
+  const anchors = rows[0].map((run) => run.x)
+  if (
+    rows.some((row) =>
+      row.some(
+        (run, index) =>
+          Math.abs(run.x - anchors[index]) > COLUMN_ANCHOR_TOLERANCE,
+      ),
+    ) ||
+    rows.some((row) =>
+      row.slice(1).some((run, index) => {
+        const previous = row[index]
+        return run.x - (previous.x + previous.width) < FIXED_CELL_GAP_THRESHOLD
+      }),
+    )
+  ) {
+    return null
+  }
+  const headerStyle = (run: PdfSourceRun) =>
+    run.bold === true ||
+    /(?:bold|black|demi|semibold|(?:^|[-_])medi(?:um)?(?:$|[-_]))/iu.test(
+      run.fontName,
+    )
+  if (
+    !rows[0].every(headerStyle) ||
+    !rows
+      .slice(1)
+      .flat()
+      .some((run) => !headerStyle(run))
+  ) {
+    return null
+  }
+  const rowGrid = bands.map((band, rowIndex) => {
+    const rowRuns = rows[rowIndex]
+    const left = Math.min(...rowRuns.map((run) => run.x))
+    const top = Math.min(...band.map((line) => line.box.y))
+    const right = Math.max(...rowRuns.map((run) => run.x + run.width))
+    const bottom = Math.max(...band.map((line) => line.box.y + line.box.height))
+    const row = {
+      ...band[0],
+      id: `detected-source-grid-row-${String(rowIndex + 1).padStart(3, '0')}`,
+      text: rowRuns.map((run) => run.text).join(' '),
+      box: {
+        ...band[0].box,
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+      },
+      runs: rowRuns,
+      sourceLineIds: band.map((line) => line.id),
+      sourceRegionIds: [
+        ...new Set(
+          sourceRegions
+            .filter((region) =>
+              band.some((line) => region.lines.includes(line)),
+            )
+            .map((region) => region.id),
+        ),
+      ],
+      sourceRegionKinds: [
+        ...new Set(
+          sourceRegions
+            .filter((region) =>
+              band.some((line) => region.lines.includes(line)),
+            )
+            .map((region) => region.kind),
+        ),
+      ].sort(),
+    }
+    return {
+      ...row,
+      cells: rowRuns.map((run, columnIndex) => ({
+        // Keep the original source-run object. The canonical verifier uses
+        // object identity to prove which source line owns each cell; copying
+        // the run here would make an otherwise complete grid unverifiable.
+        run,
+        columnIndex,
+        columnSpan: 1,
+        rowSpan: 1,
+      })),
+    }
+  })
+  return {
+    sourceRegions,
+    sourceLineIds: [...lineIds].sort(),
+    lines: rowGrid,
+    columnCount,
+    headerRowCount: 1,
+    evidence: [
+      'general-source-grid-promoter',
+      'uniform-column-anchors',
+      'explicit-source-header',
+      'complete-source-lineage',
+    ],
+  }
+}
+
 // Variable-width formula cells can move their centers far from otherwise
 // stable column starts. Left-edge alignment is therefore available only after
 // the independent scope resolver has proved the exact supplemental shard and
@@ -796,6 +977,13 @@ function numericTableBodyCell(text: string) {
 
 function tableHeaderCell(text: string) {
   return /\p{L}/u.test(text) && !numericTableBodyCell(text)
+}
+
+function sourceRunHasHeaderFace(run: PdfSourceRun) {
+  return (
+    run.bold === true ||
+    /(?:bold|semi[- ]?bold|demi|medi(?:um)?|black)/iu.test(run.fontName)
+  )
 }
 
 function scopeProvenNumericMatrixBodyCell(text: string) {
@@ -979,6 +1167,450 @@ export function detectExplicitHeaderNumericTableWithinProvenScope(
       'semantic-header-explicit-matrix-geometry',
       'repeated-uniform-numeric-body-rows',
       'variable-width-stub-left-anchor',
+    ],
+  }
+}
+
+// Promote an ordinary rectangular table only after the scope resolver has
+// accounted for every non-empty source line, repeated geometry proves the
+// columns, and either source lineage or typography proves the header. Cell
+// text always comes from the source runs; an unproved grid stays a raster.
+export function detectRectangularTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly {
+      code: string
+      headerLineIds?: readonly string[]
+    }[]
+  },
+): PdfDetectedTableGrid | null {
+  const hasRowProof = scope.evidence.some(
+    (item) => item.code === 'repeated-row-bands',
+  )
+  const hasColumnProof = scope.evidence.some(
+    (item) =>
+      item.code === 'repeated-column-anchors' ||
+      item.code === 'multi-run-tabular-line-band' ||
+      item.code === 'contiguous-tabular-slab',
+  )
+  if (!hasRowProof || !hasColumnProof) return null
+
+  const sourceRegions = exactScopedSourceRegions(regions, scope)
+  if (!sourceRegions) return null
+  const rows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines
+        .filter((line) => scope.sourceLineIds.includes(line.id))
+        .map((line) => ({ region, line })),
+    ),
+  )
+  // Require three body rows so a caption-adjacent two-fragment header plus a
+  // pair of prose records cannot become a table merely by sharing anchors.
+  if (rows.length < 4) return null
+
+  const gapThreshold = adaptiveCellGapThreshold(rows)
+  const cellsByRow = rows.map((row) => rowCells(row, gapThreshold))
+  const columnCount = cellsByRow[0]?.length ?? 0
+  if (
+    columnCount < 2 ||
+    columnCount > 12 ||
+    cellsByRow.some(
+      (cells) =>
+        cells.length !== columnCount ||
+        cells.some((cell) => cell.text.trim().length === 0) ||
+        cells.some(
+          (cell, index) =>
+            index < cells.length - 1 &&
+            cell.x + cell.width > cells[index + 1].x + 0.001,
+        ),
+    )
+  ) {
+    return null
+  }
+
+  const sourceHeaderLineIds = new Set(
+    scope.evidence.flatMap((item) => item.headerLineIds ?? []),
+  )
+  const headerByLineage =
+    sourceHeaderLineIds.size > 0 &&
+    rows[0].sourceLineIds.every((lineId) => sourceHeaderLineIds.has(lineId)) &&
+    rows
+      .slice(1)
+      .every((row) =>
+        row.sourceLineIds.every((lineId) => !sourceHeaderLineIds.has(lineId)),
+      )
+  const headerByRegion = rows[0].sourceRegionKinds.every(
+    (kind) => kind === 'header',
+  )
+  const headerByTypography =
+    cellsByRow[0].every(sourceRunHasHeaderFace) &&
+    cellsByRow
+      .slice(1)
+      .some((cells) => cells.some((cell) => !sourceRunHasHeaderFace(cell)))
+  if (!headerByLineage && !headerByRegion && !headerByTypography) return null
+
+  const leftAnchors = Array.from({ length: columnCount }, (_, columnIndex) =>
+    median(cellsByRow.map((cells) => cells[columnIndex].x)),
+  )
+  const centerAnchors = Array.from({ length: columnCount }, (_, columnIndex) =>
+    median(
+      cellsByRow.map((cells) => {
+        const cell = cells[columnIndex]
+        return cell.x + cell.width / 2
+      }),
+    ),
+  )
+  const alignedColumns = Array.from({ length: columnCount }, (_, index) => {
+    const leftDeviation = Math.max(
+      ...cellsByRow.map((cells) =>
+        Math.abs(cells[index].x - leftAnchors[index]),
+      ),
+    )
+    const centerDeviation = Math.max(
+      ...cellsByRow.map((cells) =>
+        Math.abs(
+          cells[index].x + cells[index].width / 2 - centerAnchors[index],
+        ),
+      ),
+    )
+    return Math.min(leftDeviation, centerDeviation) <= COLUMN_ANCHOR_TOLERANCE
+  })
+  if (alignedColumns.some((aligned) => !aligned)) return null
+
+  return {
+    sourceRegions: [...sourceRegions].sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    ),
+    sourceLineIds: [...scope.sourceLineIds],
+    lines: rows.map((row, rowIndex) => {
+      const cells = cellsByRow[rowIndex].map((run, columnIndex) => ({
+        run,
+        columnIndex,
+        columnSpan: 1,
+        rowSpan: 1,
+      }))
+      return { ...row, runs: cells.map((cell) => cell.run), cells }
+    }),
+    columnCount,
+    headerRowCount: 1,
+    evidence: [
+      'complete-bounded-table-scope',
+      'repeated-rectangular-column-geometry',
+      headerByLineage
+        ? 'source-lineage-header'
+        : headerByRegion
+          ? 'source-region-header'
+          : 'source-typography-header',
+    ],
+  }
+}
+
+function mergeWrappedBodyCellRuns(
+  current: DetectedTableCellRun,
+  continuation: DetectedTableCellRun,
+) {
+  const right = Math.max(
+    current.x + current.width,
+    continuation.x + continuation.width,
+  )
+  const bottom = Math.max(
+    current.y + current.height,
+    continuation.y + continuation.height,
+  )
+  const sourceLineIds = [
+    ...new Set([
+      ...(current.sourceLineIds ?? []),
+      ...(continuation.sourceLineIds ?? []),
+    ]),
+  ].sort()
+  return {
+    ...current,
+    width: right - current.x,
+    height: bottom - current.y,
+    text: `${current.text} ${continuation.text}`,
+    ...(sourceLineIds.length > 0 ? { sourceLineIds } : {}),
+  } satisfies DetectedTableCellRun
+}
+
+function mergeWrappedBodyTableRow(
+  row: ClusteredTableRow,
+  cells: DetectedTableCellRun[],
+  continuation: ClusteredTableRow,
+) {
+  const left = Math.min(row.box.x, continuation.box.x)
+  const top = Math.min(row.box.y, continuation.box.y)
+  const right = Math.max(
+    row.box.x + row.box.width,
+    continuation.box.x + continuation.box.width,
+  )
+  const bottom = Math.max(
+    row.box.y + row.box.height,
+    continuation.box.y + continuation.box.height,
+  )
+  return {
+    ...row,
+    text: cells.map((cell) => cell.text).join(' '),
+    box: {
+      ...row.box,
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    },
+    runs: cells,
+    sourceLineIds: [
+      ...new Set([...row.sourceLineIds, ...continuation.sourceLineIds]),
+    ].sort(),
+    sourceRegionIds: [
+      ...new Set([...row.sourceRegionIds, ...continuation.sourceRegionIds]),
+    ].sort(),
+    sourceRegionKinds: [
+      ...new Set([...row.sourceRegionKinds, ...continuation.sourceRegionKinds]),
+    ].sort(),
+  }
+}
+
+// Promote a table whose body cells wrap onto source lines below their row. The
+// scope must already account for every non-empty source line; this detector
+// only folds a sparse continuation line into the immediately preceding body
+// row when its cells map uniquely to stable column anchors. Wide/ambiguous
+// rows remain source-preserved fallbacks rather than invented table cells.
+export function detectWrappedCellTableWithinProvenScope(
+  regions: PdfPageRegion[],
+  scope: {
+    direction: 'above' | 'below'
+    sourceRegionIds: readonly string[]
+    sourceLineIds: readonly string[]
+    evidence: readonly {
+      code: string
+      headerLineIds?: readonly string[]
+    }[]
+  },
+): PdfDetectedTableGrid | null {
+  const hasRowProof = scope.evidence.some(
+    (item) =>
+      item.code === 'repeated-row-bands' ||
+      item.code === 'contiguous-tabular-slab' ||
+      item.code === 'contiguous-single-anchor-slab',
+  )
+  const hasColumnProof = scope.evidence.some(
+    (item) =>
+      item.code === 'repeated-column-anchors' ||
+      item.code === 'multi-run-tabular-line-band' ||
+      item.code === 'contiguous-tabular-slab',
+  )
+  if (!hasRowProof || !hasColumnProof) return null
+
+  const sourceRegions = exactScopedSourceRegions(regions, scope)
+  if (!sourceRegions) return null
+  const sourceRunLineIds = new Map<PdfSourceRun, string>()
+  for (const sourceRegion of sourceRegions) {
+    for (const sourceLine of sourceRegion.lines) {
+      for (const run of sourceLine.runs)
+        sourceRunLineIds.set(run, sourceLine.id)
+    }
+  }
+  const rows = clusterRows(
+    sourceRegions.flatMap((region) =>
+      region.lines
+        .filter((line) => scope.sourceLineIds.includes(line.id))
+        .map((line) => ({ region, line })),
+    ),
+  )
+  const gapThreshold = adaptiveCellGapThreshold(rows)
+  const cellsByRow = rows.map((row) =>
+    rowCells(row, gapThreshold, sourceRunLineIds),
+  )
+  const frequency = new Map<number, number>()
+  for (const cells of cellsByRow) {
+    if (cells.length >= 2 && cells.length <= 12) {
+      frequency.set(cells.length, (frequency.get(cells.length) ?? 0) + 1)
+    }
+  }
+  const columnCount = [...frequency.entries()].sort(
+    (left, right) => right[1] - left[1] || right[0] - left[0],
+  )[0]?.[0]
+  if (
+    !columnCount ||
+    rows.length === 0 ||
+    cellsByRow[0].length !== columnCount
+  ) {
+    return null
+  }
+
+  const completeBodyRowIndexes = cellsByRow.flatMap((cells, index) =>
+    index > 0 && cells.length === columnCount ? [index] : [],
+  )
+  if (completeBodyRowIndexes.length < 3) return null
+
+  const bodyRows = completeBodyRowIndexes.map((index) => cellsByRow[index])
+  const leftAnchors = Array.from({ length: columnCount }, (_, columnIndex) =>
+    median(bodyRows.map((cells) => cells[columnIndex].x)),
+  )
+  const centerAnchors = Array.from({ length: columnCount }, (_, columnIndex) =>
+    median(
+      bodyRows.map((cells) => {
+        const cell = cells[columnIndex]
+        return cell.x + cell.width / 2
+      }),
+    ),
+  )
+  const columnWidths = Array.from({ length: columnCount }, (_, columnIndex) =>
+    median(bodyRows.map((cells) => cells[columnIndex].width)),
+  )
+  const alignedColumn = (cell: PdfSourceRun, columnIndex: number) =>
+    Math.min(
+      Math.abs(cell.x - leftAnchors[columnIndex]),
+      Math.abs(cell.x + cell.width / 2 - centerAnchors[columnIndex]),
+    ) <= COLUMN_ANCHOR_TOLERANCE
+  if (
+    bodyRows.some((cells) =>
+      cells.some((cell, columnIndex) => !alignedColumn(cell, columnIndex)),
+    )
+  ) {
+    return null
+  }
+
+  const sourceHeaderLineIds = new Set(
+    scope.evidence.flatMap((item) => item.headerLineIds ?? []),
+  )
+  const headerByLineage =
+    sourceHeaderLineIds.size > 0 &&
+    rows[0].sourceLineIds.every((lineId) => sourceHeaderLineIds.has(lineId)) &&
+    rows
+      .slice(1)
+      .every((row) =>
+        row.sourceLineIds.every((lineId) => !sourceHeaderLineIds.has(lineId)),
+      )
+  const headerByRegion = rows[0].sourceRegionKinds.every(
+    (kind) => kind === 'header',
+  )
+  const headerByTypography = cellsByRow[0].every(sourceRunHasHeaderFace)
+  if (!headerByLineage && !headerByRegion && !headerByTypography) return null
+  if (bodyRows.every((cells) => cells.every(sourceRunHasHeaderFace))) {
+    return null
+  }
+
+  const columnIndexForCell = (cell: PdfSourceRun) => {
+    const candidates = Array.from(
+      { length: columnCount },
+      (_, columnIndex) => ({
+        columnIndex,
+        distance: Math.min(
+          Math.abs(cell.x - leftAnchors[columnIndex]),
+          Math.abs(cell.x + cell.width / 2 - centerAnchors[columnIndex]),
+        ),
+      }),
+    ).sort(
+      (left, right) =>
+        left.distance - right.distance || left.columnIndex - right.columnIndex,
+    )
+    const closest = candidates[0]
+    return closest && closest.distance <= COLUMN_ANCHOR_TOLERANCE
+      ? closest.columnIndex
+      : null
+  }
+
+  const logicalRows: Array<{
+    row: ClusteredTableRow
+    cells: DetectedTableCellRun[]
+  }> = [
+    {
+      row: rows[0],
+      cells: cellsByRow[0],
+    },
+  ]
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex]
+    const cells = cellsByRow[rowIndex]
+    if (cells.length === columnCount) {
+      logicalRows.push({ row, cells })
+      continue
+    }
+    if (
+      cells.length === 0 ||
+      cells.length >= columnCount ||
+      logicalRows.length < 2 ||
+      row.sourceRegionKinds.every((kind) => kind === 'header') ||
+      cells.every(sourceRunHasHeaderFace)
+    ) {
+      return null
+    }
+    const previous = logicalRows.at(-1)!
+    const previousBottom = previous.row.box.y + previous.row.box.height
+    const continuationGap = row.box.y - previousBottom
+    if (
+      continuationGap < -0.003 ||
+      continuationGap > Math.max(0.035, previous.row.box.height * 3)
+    ) {
+      return null
+    }
+    const mappedColumns = cells.map(columnIndexForCell)
+    if (
+      mappedColumns.some((column) => column === null) ||
+      new Set(mappedColumns).size !== mappedColumns.length
+    ) {
+      return null
+    }
+    const mergedCells = [...previous.cells]
+    for (const [cellIndex, column] of mappedColumns.entries()) {
+      const columnIndex = column!
+      if (
+        cells[cellIndex].width > Math.max(0.12, columnWidths[columnIndex] * 1.8)
+      ) {
+        return null
+      }
+      mergedCells[columnIndex] = mergeWrappedBodyCellRuns(
+        mergedCells[columnIndex],
+        cells[cellIndex],
+      )
+    }
+    previous.cells = mergedCells
+    previous.row = mergeWrappedBodyTableRow(previous.row, mergedCells, row)
+  }
+
+  if (logicalRows.length < 4) return null
+  const gridLines: PdfDetectedTableGrid['lines'] = logicalRows.map(
+    ({ row, cells: rowCellsByColumn }) => {
+      const cells = rowCellsByColumn.map((run, columnIndex) => ({
+        run,
+        columnIndex,
+        columnSpan: 1,
+        rowSpan: 1,
+      }))
+      return {
+        ...row,
+        runs: cells.map((cell) => cell.run),
+        cells,
+      }
+    },
+  )
+  return {
+    sourceRegions: [...sourceRegions].sort(
+      (left, right) =>
+        left.box.y - right.box.y ||
+        left.box.x - right.box.x ||
+        left.id.localeCompare(right.id),
+    ),
+    sourceLineIds: [...scope.sourceLineIds],
+    lines: gridLines,
+    columnCount,
+    headerRowCount: 1,
+    evidence: [
+      'complete-bounded-table-scope',
+      'repeated-rectangular-column-geometry',
+      'semantic-body-continuation-geometry',
+      headerByLineage
+        ? 'source-lineage-header'
+        : headerByRegion
+          ? 'source-region-header'
+          : 'source-typography-header',
     ],
   }
 }

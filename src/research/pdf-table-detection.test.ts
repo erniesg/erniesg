@@ -8,8 +8,11 @@ import type {
 import {
   detectExplicitHeaderNumericTableWithinProvenScope,
   detectHierarchicalTableWithinProvenScope,
+  detectRectangularTableWithinProvenScope,
   detectTableNearCaption,
   detectTableWithinProvenScope,
+  detectUniformTableWithinProvenScope,
+  detectWrappedCellTableWithinProvenScope,
   detectWrappedHeaderTableWithinProvenScope,
 } from './pdf-table-detection'
 
@@ -64,6 +67,39 @@ function region(
 }
 
 describe('bounded table region detection', () => {
+  it('promotes a uniform source-proven grid with an explicit header', () => {
+    const header = line('grid-header', 0.16, [0.1, 0.26, 0.42])
+    header.runs = header.runs.map((run) => ({
+      ...run,
+      bold: true,
+      fontName: 'serif-bold',
+    }))
+    const body = [
+      line('grid-row-1', 0.19, [0.1, 0.26, 0.42]),
+      line('grid-row-2', 0.22, [0.1, 0.26, 0.42]),
+    ]
+    const table = region('source-grid', 'body', 0.16, [header, ...body])
+    const detected = detectUniformTableWithinProvenScope([table], {
+      sourceRegionIds: [table.id],
+      sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+      evidence: [{ code: 'repeated-row-bands' }],
+    })
+
+    expect(detected).toMatchObject({
+      columnCount: 3,
+      headerRowCount: 1,
+      evidence: expect.arrayContaining([
+        'general-source-grid-promoter',
+        'complete-source-lineage',
+      ]),
+    })
+    expect(detected?.lines).toHaveLength(3)
+    expect(detected?.lines.every((row) => row.cells.length === 3)).toBe(true)
+    expect(detected?.lines[0].cells.map((cell) => cell.run)).toEqual(
+      header.runs,
+    )
+  })
+
   it('selects repeated columns above a numbered table caption', () => {
     const caption = region('Table 3', 'caption', 0.3, [])
     const table = region('table-grid', 'body', 0.16, [
@@ -774,6 +810,81 @@ describe('bounded table region detection', () => {
     })
   })
 
+  it('promotes a proved rectangular table with mixed source text', () => {
+    const lines = [
+      line('header', 0.2, [0.1, 0.35, 0.62]),
+      line('body-1', 0.23, [0.1, 0.35, 0.62]),
+      line('body-2', 0.26, [0.1, 0.35, 0.62]),
+      line('body-3', 0.29, [0.1, 0.35, 0.62]),
+    ]
+    ;['Model', 'Environment', 'Result'].forEach((text, index) => {
+      lines[0].runs[index] = {
+        ...lines[0].runs[index],
+        text,
+        fontName: 'TableSerif-Medium',
+      }
+    })
+    ;[
+      ['BookWorld', 'Castle', 'Characters interact'],
+      ['Baseline', 'Village', 'No interaction'],
+      ['Ablation', 'Harbor', 'Interaction delayed'],
+    ].forEach((texts, rowIndex) => {
+      texts.forEach((text, columnIndex) => {
+        lines[rowIndex + 1].runs[columnIndex] = {
+          ...lines[rowIndex + 1].runs[columnIndex],
+          text,
+          width: columnIndex === 2 ? 0.12 : 0.08,
+        }
+      })
+    })
+    for (const sourceLine of lines) {
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+    }
+    const table = region('mixed-text-table', 'body', 0.2, lines, 'span')
+
+    const detected = detectRectangularTableWithinProvenScope([table], {
+      direction: 'above',
+      sourceRegionIds: [table.id],
+      sourceLineIds: lines.map((sourceLine) => sourceLine.id),
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'repeated-column-anchors' },
+      ],
+    })
+
+    expect(detected).toMatchObject({
+      columnCount: 3,
+      headerRowCount: 1,
+      evidence: expect.arrayContaining([
+        'complete-bounded-table-scope',
+        'repeated-rectangular-column-geometry',
+        'source-typography-header',
+      ]),
+    })
+    expect(detected?.lines[1].cells[2].run.text).toBe('Characters interact')
+  })
+
+  it('keeps a rectangular text slab as fallback without header proof', () => {
+    const lines = [
+      line('row-1', 0.2, [0.1, 0.35, 0.62]),
+      line('row-2', 0.23, [0.1, 0.35, 0.62]),
+      line('row-3', 0.26, [0.1, 0.35, 0.62]),
+    ]
+    const table = region('unproved-header-table', 'body', 0.2, lines, 'span')
+
+    expect(
+      detectRectangularTableWithinProvenScope([table], {
+        direction: 'above',
+        sourceRegionIds: [table.id],
+        sourceLineIds: lines.map((sourceLine) => sourceLine.id),
+        evidence: [
+          { code: 'repeated-row-bands' },
+          { code: 'repeated-column-anchors' },
+        ],
+      }),
+    ).toBeNull()
+  })
+
   it.each([
     {
       name: 'an implicit blank stub header',
@@ -940,6 +1051,142 @@ describe('bounded table region detection', () => {
     expect(detected?.lines[1].cells.map((cell) => cell.columnIndex)).toEqual([
       1, 2, 3, 4,
     ])
+  })
+
+  it('folds source-backed body continuations into their owning table row', () => {
+    const header = line('wrapped-body-header', 0.2, [0.1, 0.3, 0.5, 0.7])
+    ;['Reference', 'Environment', 'NPC', 'Outcome'].forEach((text, index) => {
+      header.runs[index].text = text
+      header.runs[index].fontName = 'Table-Bold'
+      header.runs[index].bold = true
+    })
+    header.text = header.runs.map((run) => run.text).join(' ')
+
+    const bodyLine = (
+      id: string,
+      y: number,
+      values: string[],
+      xs = [0.1, 0.3, 0.5, 0.7],
+    ) => {
+      const sourceLine = line(id, y, xs)
+      sourceLine.runs.forEach((run, index) => {
+        run.text = values[index]
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    }
+    const body1 = bodyLine('wrapped-body-1', 0.24, [
+      'A',
+      'The environment begins',
+      'the NPC waits',
+      'The action resolves',
+    ])
+    const body1Continuation = bodyLine(
+      'wrapped-body-1-continuation',
+      0.26,
+      ['and the light changes', 'before the door opens'],
+      [0.3, 0.5],
+    )
+    const body2 = bodyLine('wrapped-body-2', 0.3, [
+      'B',
+      'A second environment',
+      'a second NPC',
+      'A second outcome',
+    ])
+    const body3 = bodyLine('wrapped-body-3', 0.36, [
+      'C',
+      'A third environment',
+      'a third NPC',
+      'A third outcome',
+    ])
+    const body4 = bodyLine('wrapped-body-4', 0.42, [
+      'D',
+      'A fourth environment',
+      'a fourth NPC',
+      'A fourth outcome',
+    ])
+    const table = region(
+      'wrapped-body-table',
+      'body',
+      0.2,
+      [header, body1, body1Continuation, body2, body3, body4],
+      'span',
+    )
+
+    const detected = detectWrappedCellTableWithinProvenScope([table], {
+      direction: 'below',
+      sourceRegionIds: [table.id],
+      sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+      evidence: [
+        { code: 'repeated-row-bands' },
+        { code: 'repeated-column-anchors' },
+      ],
+    })
+
+    expect(detected).toMatchObject({
+      columnCount: 4,
+      headerRowCount: 1,
+      evidence: expect.arrayContaining(['semantic-body-continuation-geometry']),
+    })
+    expect(detected?.lines).toHaveLength(5)
+    expect(detected?.lines[1].sourceLineIds).toEqual([
+      body1.id,
+      body1Continuation.id,
+    ])
+    expect(detected?.lines[1].cells.map((cell) => cell.run.text)).toEqual([
+      'A',
+      'The environment begins and the light changes',
+      'the NPC waits before the door opens',
+      'The action resolves',
+    ])
+  })
+
+  it('rejects a sparse wide section row instead of attaching it to a body cell', () => {
+    const header = line('section-header', 0.2, [0.1, 0.3, 0.5, 0.7])
+    ;['Reference', 'Environment', 'NPC', 'Outcome'].forEach((text, index) => {
+      header.runs[index].text = text
+      header.runs[index].fontName = 'Table-Bold'
+      header.runs[index].bold = true
+    })
+    header.text = header.runs.map((run) => run.text).join(' ')
+    const complete = (id: string, y: number) => {
+      const sourceLine = line(id, y, [0.1, 0.3, 0.5, 0.7])
+      sourceLine.runs.forEach((run, index) => {
+        run.text = `${id}-${index}`
+      })
+      sourceLine.text = sourceLine.runs.map((run) => run.text).join(' ')
+      return sourceLine
+    }
+    const section = line('section-row', 0.27, [0.1])
+    section.runs[0].text = 'Environment and NPC responses'
+    section.runs[0].width = 0.7
+    section.text = section.runs[0].text
+    const table = region(
+      'section-row-table',
+      'body',
+      0.2,
+      [
+        header,
+        complete('section-body-1', 0.24),
+        section,
+        complete('section-body-2', 0.32),
+        complete('section-body-3', 0.38),
+        complete('section-body-4', 0.44),
+      ],
+      'span',
+    )
+
+    expect(
+      detectWrappedCellTableWithinProvenScope([table], {
+        direction: 'below',
+        sourceRegionIds: [table.id],
+        sourceLineIds: table.lines.map((sourceLine) => sourceLine.id),
+        evidence: [
+          { code: 'repeated-row-bands' },
+          { code: 'repeated-column-anchors' },
+        ],
+      }),
+    ).toBeNull()
   })
 
   it('does not split one merged PDF run into invented hierarchical header cells', () => {

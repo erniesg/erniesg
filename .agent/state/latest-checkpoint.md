@@ -77,9 +77,28 @@ must add it in the fixed trusted runtime. Do not treat this Markdown file as
 that runtime receipt.
 Default-branch provenance landed through app PR `#117`; the merged-main
 reconcile adopted and queued #113/#115. Rucksack's cross-pulse pool-capacity
-defect is #347 and host-wide resource contention is #349, both staged by ledger
-PR #348. That PR seeds provenance and must not close either implementation
-issue. Until those fixes land, the installed pulse's VM-wide tmux/Codex guard
-is the authoritative conservative cap.
+defect is #347, host-wide resource contention is #349, and evidence-only retry
+before model self-heal is #350. All three are staged by ledger PR #348 at
+`5144834`. That PR seeds provenance and must not close any implementation issue.
+Until those fixes land, the installed pulse's VM-wide tmux/Codex guard is the
+authoritative conservative cap.
+
+Three VM-owned transient controls make the current continuation laptop-free:
+
+- `erniesg-pr121-promote.service` watches exact head `5aa4583` of app PR #121
+  and may squash-merge it only after all four required checks pass. Its merged
+  ledger spec gives issue #119 provenance for the event-driven killed-worker
+  cleanup-test repair; it does not close #119.
+- `erniesg-issue-88-requeue.service` owns the intentional timer pause while
+  unrelated Rucksack issue #226 is active, then re-queues the preserved #88
+  provider result without another implementation pass and restores the timer
+  from an EXIT trap.
+- `erniesg-issue-88-pr-hold.service` applies a merge hold to the future #88 PR
+  until the pinned real provider adapter, importer/operator wiring, and actual
+  BookWorld-plus-held-out comparison are present.
+
+PR #118 is green but deliberately `rucksack-blocked`; repair its four recorded
+generalization defects before merge. PR #114 remains draft because the product
+acceptance benchmark is not met. No user action is currently required.
 Latest handoff artifact:
-`/Users/erniesg/.codex/handoffs/erniesg-20260801-174653.md`.
+`/Users/erniesg/.codex/handoffs/erniesg-20260801-180049.md`.

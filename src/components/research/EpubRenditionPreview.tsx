@@ -181,6 +181,20 @@ pre, code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.source-code {
+  box-sizing: border-box;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  overflow-wrap: normal !important;
+  white-space: pre !important;
+  word-break: normal !important;
+}
+.source-code code {
+  overflow-wrap: normal !important;
+  white-space: inherit !important;
+  word-break: normal !important;
+}
 main {
   box-sizing: border-box;
   width: 100vw;

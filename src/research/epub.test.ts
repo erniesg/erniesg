@@ -4542,6 +4542,10 @@ describe('EPUB 3 export', () => {
       '.omitted-table-transcript-source { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }',
     )
     expect(css).toContain(
+      '.source-code { box-sizing: border-box; max-width: 100%; margin: 0; overflow-x: auto; overflow-y: hidden; overflow-wrap: normal;',
+    )
+    expect(css).toContain('white-space: pre; word-break: normal; }')
+    expect(css).toContain(
       '.omitted-visual-transcript, .omitted-table-transcript { border-top: 0.06rem solid currentColor; margin-top: 0.75rem; padding-top: 0.75rem; }',
     )
     expect(css).toContain(
@@ -6130,7 +6134,7 @@ describe('EPUB 3 export', () => {
     expect(content).toContain('data-object-type="code"')
     expect(content).toContain('class="source-code-figure"')
     expect(content).toContain(
-      '<pre class="source-code" data-whitespace-source="source-lines" data-transcript-status="proved"><code><span class="source-code-line source-code-indent-0">GET /Patient?name=a&amp;format=json</span>\n<span class="source-code-line source-code-indent-0">POST /Patient</span>\n<span class="source-code-line source-code-indent-0">{functions}</span></code></pre>',
+      '<pre class="source-code" data-whitespace-source="source-lines" data-transcript-status="proved"><code><span class="source-code-line source-code-indent-0" data-source-region-id="page-001-code-body" data-source-line-id="page-001-code-line-1" data-indent-columns="0">GET /Patient?name=a&amp;format=json</span>\n<span class="source-code-line source-code-indent-0" data-source-region-id="page-001-code-body" data-source-line-id="page-001-code-line-2" data-indent-columns="0">POST /Patient</span>\n<span class="source-code-line source-code-indent-0" data-source-region-id="page-002-code-continuation" data-source-line-id="page-002-code-line-1" data-indent-columns="0">{functions}</span></code></pre>',
     )
     expect(content).not.toContain('<img ')
     expect(content).not.toContain('class="visual-source-transcript"')

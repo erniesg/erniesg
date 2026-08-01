@@ -10891,6 +10891,20 @@ export async function reconstructPageAnalyses({
     onProgress,
     signal,
   })
+  const preformattedLineSets = visualResult.relationships.flatMap(
+    (relationship) =>
+      relationship.preformatted && relationship.sourceLineIds
+        ? [new Set(relationship.sourceLineIds)]
+        : [],
+  )
+  regionResult.lineBoundaryDecisions =
+    regionResult.lineBoundaryDecisions.filter(
+      (decision) =>
+        !preformattedLineSets.some(
+          (lineIds) =>
+            lineIds.has(decision.fromLineId) && lineIds.has(decision.toLineId),
+        ),
+    )
   throwIfPdfReconstructionAborted(signal)
   onProgress?.({
     phase: 'asset-packaging',

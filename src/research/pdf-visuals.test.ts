@@ -17210,23 +17210,14 @@ describe('PDF visual association graph', () => {
     expect(rasterizeFigure.mock.calls[0][0]).toMatchObject({
       kind: 'figure',
       page: 1,
-      sourceObjectIds: ['algorithm-source-p001-001'],
+      sourceObjectIds: ['code-source-p001-001-001'],
     })
-    expect(
-      containsSourceBox(
-        rasterizeFigure.mock.calls[0][0].sourceBox,
-        algorithmCaption.box,
-      ),
-    ).toBe(true)
     expect(
       containsSourceBox(
         rasterizeFigure.mock.calls[0][0].sourceBox,
         algorithmRegions[4].box,
       ),
     ).toBe(true)
-    expect(rasterizeFigure.mock.calls[0][0].sourceBox.y).toBeLessThanOrEqual(
-      algorithmCaption.box.y - 0.009,
-    )
     expect(
       rasterizeFigure.mock.calls[0][0].sourceBox.y +
         rasterizeFigure.mock.calls[0][0].sourceBox.height,
@@ -17243,13 +17234,14 @@ describe('PDF visual association graph', () => {
         sourceLineIds: algorithmRegions.flatMap((region) =>
           region.lines.map((line) => line.id),
         ),
-        sourceText: '',
+        sourceText: algorithmRegions.map((region) => region.text).join('\n'),
         status: 'matched',
+        preformatted: expect.objectContaining({ status: 'proved' }),
         evidence: expect.arrayContaining([
-          'source-algorithm-block',
-          'contiguous-algorithm-line-markers',
+          'source-preformatted-block',
+          'source-indentation-and-ragged-measure',
           'source-page-crop',
-          'source-text-transcript-unresolved',
+          'source-line-breaks-preserved',
         ]),
       }),
     ])
@@ -17524,6 +17516,126 @@ function preformattedCropRasterizer() {
 }
 
 describe('PDF preformatted source blocks', () => {
+  it('detects a shell transcript from monospaced source evidence without language keywords', async () => {
+    const fixture = preformattedTestRegion('shell-transcript', 1, [
+      {
+        text: 'Captured session:',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.2,
+      },
+      { text: '$ tool --version', fontName: 'NimbusMonoPS-Regular', y: 0.24 },
+      { text: 'tool 4.2.0', fontName: 'NimbusMonoPS-Regular', y: 0.26 },
+      { text: '$ exit', fontName: 'NimbusMonoPS-Regular', y: 0.28 },
+    ])
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [fixture],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        semanticKind: 'code',
+        captionRegionId: fixture.id,
+        evidence: expect.arrayContaining(['monospaced-source-lines']),
+        preformatted: expect.objectContaining({
+          status: 'proved',
+          lines: fixture.lines.slice(1).map((line) =>
+            expect.objectContaining({
+              text: line.text,
+              sourceRegionId: fixture.id,
+              sourceLineId: line.id,
+            }),
+          ),
+        }),
+      }),
+    ])
+  })
+
+  it('keeps keyword-shaped justified prose as prose without source listing evidence', async () => {
+    const prose = preformattedTestRegion('keyword-prose', 1, [
+      {
+        text: 'Here is some source code:',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.2,
+      },
+      {
+        text: 'This ordinary paragraph remains fully justified.',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.23,
+      },
+      {
+        text: 'Its language does not establish a listing boundary.',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.25,
+      },
+      {
+        text: 'Source geometry remains the only promotion authority.',
+        fontName: 'NimbusRomNo9L-Regu',
+        y: 0.27,
+      },
+    ])
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [prose],
+      rasterizeFigure: preformattedCropRasterizer(),
+    })
+
+    expect(result.relationships).toEqual([])
+    expect(result.consumedLineIds.size).toBe(0)
+  })
+
+  it('keeps one proved listing across a two-column source break in canonical line order', async () => {
+    const caption: PdfPageRegion = {
+      ...preformattedTestRegion('column-listing-caption', 1, [
+        {
+          text: 'Listing 2: Recorded values',
+          fontName: 'NimbusRomNo9L-Regu',
+          y: 0.62,
+        },
+      ]),
+      column: 'left',
+    }
+    const left: PdfPageRegion = {
+      ...preformattedTestRegion('column-listing-left', 1, [
+        { text: 'alpha := 1', fontName: 'SFTT1000', y: 0.67 },
+        { text: 'beta := 2', fontName: 'SFTT1000', y: 0.7 },
+      ]),
+      column: 'left',
+    }
+    const right: PdfPageRegion = {
+      ...preformattedTestRegion('column-listing-right', 1, [
+        { text: 'gamma := 3', fontName: 'SFTT1000', x: 0.55, y: 0.1 },
+        { text: 'delta := 4', fontName: 'SFTT1000', x: 0.55, y: 0.13 },
+      ]),
+      column: 'right',
+    }
+    const rasterizeFigure = preformattedCropRasterizer()
+
+    const result = await reconstructPdfVisuals({
+      pages: [page([])],
+      regions: [right, caption, left],
+      rasterizeFigure,
+    })
+    const relationship = result.relationships[0]
+
+    expect(result.relationships).toHaveLength(1)
+    expect(relationship).toMatchObject({
+      label: 'Listing 2',
+      semanticKind: 'code',
+      sourceLineIds: [...left.lines, ...right.lines].map((line) => line.id),
+      preformatted: {
+        status: 'proved',
+        lines: [...left.lines, ...right.lines].map((line) =>
+          expect.objectContaining({ text: line.text, sourceLineId: line.id }),
+        ),
+      },
+    })
+    expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+  })
+
   it('preserves proportional-font pseudocode as an exact source crop', async () => {
     const introducer = preformattedTestRegion('pseudocode-introducer', 1, [
       {
@@ -17614,7 +17726,7 @@ describe('PDF preformatted source blocks', () => {
         ],
       },
       evidence: expect.arrayContaining([
-        'explicit-preformatted-introducer',
+        'source-indentation-and-ragged-measure',
         'exact-single-run-line-text',
         'source-geometry-indentation',
         'source-page-crop',

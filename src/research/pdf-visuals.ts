@@ -5,6 +5,7 @@ import type {
   PdfPageRegion,
   PdfPreformattedSource,
   PdfPreformattedSourceLine,
+  PdfRegionColumn,
   PdfSourceRun,
   PdfSourceCropAttempt,
   PdfSourceCropAttemptRequest,
@@ -3617,6 +3618,7 @@ type BoundedPreformattedSegment = {
 type BoundedPreformattedBlock = {
   caption: PdfPageRegion
   label: string
+  semanticKind: 'algorithm' | 'code'
   sourceLines: PreformattedLineOwner[]
   segments: BoundedPreformattedSegment[]
   preformatted: PdfPreformattedSource
@@ -3645,8 +3647,16 @@ function sourceLineOrder(
   left: PreformattedLineOwner,
   right: PreformattedLineOwner,
 ) {
+  const columnRank = (column: PdfRegionColumn) =>
+    column === 'left' ? 0 : column === 'right' ? 1 : -1
   return (
     left.line.box.page - right.line.box.page ||
+    (left.line.box.page === right.line.box.page &&
+    left.region.column !== right.region.column &&
+    (left.region.column === 'left' || left.region.column === 'right') &&
+    (right.region.column === 'left' || right.region.column === 'right')
+      ? columnRank(left.region.column) - columnRank(right.region.column)
+      : 0) ||
     left.line.box.y - right.line.box.y ||
     left.line.box.x - right.line.box.x ||
     left.line.id.localeCompare(right.line.id)
@@ -3767,34 +3777,12 @@ function exactPreformattedLineProof(
   return null
 }
 
-function sourceCodeSyntax(value: string) {
-  const text = value.trim()
-  return (
-    /^(?:GET|POST|PUT|PATCH|DELETE)\s+\S/iu.test(text) ||
-    /^\{[\w.-]+\}$/u.test(text) ||
-    /^["']\s*[\w.-]+\s*["']\s*:/u.test(text) ||
-    /^(?:def|class|contract|interface|library|function|modifier|event|struct|enum|const|let|var|return|import|from)\b/iu.test(
-      text,
-    ) ||
-    /^(?:#|\/|\{|\[|\}|\])/u.test(text) ||
-    /(?:=>|:=|\\n|<\/?[A-Za-z][^>]*>|\/\/|[{};])/u.test(text) ||
-    /(?:\b[A-Za-z_]\w*\s+[A-Za-z_]\w*\s*=|(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*\s*\()/u.test(
-      text,
-    ) ||
-    /^\d{1,3}[.)]\s+\S/u.test(text)
-  )
-}
-
-function sourceCodeSyntaxCount(lines: PreformattedLineOwner[]) {
-  return lines.filter(({ line }) => sourceCodeSyntax(line.text)).length
-}
-
 function sourceLineRecord(
   { region, line }: PreformattedLineOwner,
   indentColumns = 0,
 ): PdfPreformattedSourceLine {
   return {
-    text: line.text,
+    text: line.text.replace(/\s+$/u, ''),
     indentColumns,
     sourceRegionId: region.id,
     sourceLineId: line.id,
@@ -3805,44 +3793,266 @@ function sourceLineRecord(
   }
 }
 
+function attachedPreformattedLabel(value: string) {
+  return /^(?:Algorithm|Listing)\s+(?:\d+(?:\.\d+)*[A-Za-z]?|[IVXLCDM]+)(?=$|[\s:.)–—-])/iu.test(
+    value.trim(),
+  )
+}
+
+function contiguousPreformattedFlow(
+  previous: PreformattedLineOwner,
+  next: PreformattedLineOwner,
+) {
+  const sameLane =
+    previous.region.column === next.region.column ||
+    (['single', 'span'].includes(previous.region.column) &&
+      ['single', 'span'].includes(next.region.column))
+  if (previous.line.box.page === next.line.box.page && sameLane) {
+    const gap =
+      next.line.box.y - (previous.line.box.y + previous.line.box.height)
+    return gap >= -0.006 && gap <= Math.max(0.03, previous.line.box.height * 2)
+  }
+  const columnBreak =
+    previous.line.box.page === next.line.box.page &&
+    previous.region.column === 'left' &&
+    next.region.column === 'right'
+  const pageBreak =
+    next.line.box.page === previous.line.box.page + 1 && sameLane
+  return (
+    (columnBreak || pageBreak) &&
+    previous.line.box.y >= 0.55 &&
+    next.line.box.y <= 0.25
+  )
+}
+
+function sourceIndentationListingEvidence(lines: PreformattedLineOwner[]) {
+  if (lines.length < 4) return false
+  const ordered = [...lines].sort(sourceLineOrder)
+  const levels: number[] = []
+  for (const { line } of ordered) {
+    const tolerance = Math.max(0.003, line.box.height * 0.35)
+    if (!levels.some((level) => Math.abs(level - line.box.x) <= tolerance)) {
+      levels.push(line.box.x)
+    }
+  }
+  levels.sort((left, right) => left - right)
+  if (levels.length < 3) return false
+
+  const rightEdges = ordered.map(({ line }) => line.box.x + line.box.width)
+  const raggedRange = Math.max(...rightEdges) - Math.min(...rightEdges)
+  const orderedHeights = ordered
+    .map(({ line }) => line.box.height)
+    .sort((left, right) => left - right)
+  const medianHeight = orderedHeights[Math.floor(orderedHeights.length / 2)]
+  return raggedRange >= Math.max(0.025, medianHeight * 1.5)
+}
+
+type UnresolvedPreformattedDetection = {
+  page: number
+  regionIds: string[]
+  sourceBoxes: NormalizedSourceBox[]
+}
+
+function sourceEvidencePreformattedBlocks(
+  regions: PdfPageRegion[],
+  claimedLineIds: Set<string>,
+  claimedCaptionRegionIds: Set<string>,
+) {
+  const ordered = orderedSourceLines(regions)
+  const blocks: BoundedPreformattedBlock[] = []
+  const unresolved: UnresolvedPreformattedDetection[] = []
+
+  const attachedCaption = (
+    sourceLines: PreformattedLineOwner[],
+    firstIndex: number,
+    lastIndex: number,
+  ) => {
+    const first = sourceLines[0]
+    const last = sourceLines.at(-1)!
+    const candidates = [ordered[firstIndex - 1], ordered[lastIndex + 1]].filter(
+      (candidate): candidate is PreformattedLineOwner => {
+        if (!candidate || sourceLines.includes(candidate)) return false
+        if (claimedCaptionRegionIds.has(candidate.region.id)) return false
+        const before = candidate === ordered[firstIndex - 1]
+        const gap = before
+          ? first.line.box.y -
+            (candidate.line.box.y + candidate.line.box.height)
+          : candidate.line.box.y - (last.line.box.y + last.line.box.height)
+        const samePage =
+          candidate.line.box.page ===
+          (before ? first.line.box.page : last.line.box.page)
+        if (!samePage || gap < -0.006 || gap > 0.08) return false
+        return (
+          attachedPreformattedLabel(candidate.line.text) ||
+          (before && /:\s*$/u.test(candidate.line.text.trim()))
+        )
+      },
+    )
+    const regionIds = new Set(candidates.map(({ region }) => region.id))
+    return regionIds.size === 1 ? candidates[0] : null
+  }
+
+  const accept = (
+    sourceLines: PreformattedLineOwner[],
+    firstIndex: number,
+    lastIndex: number,
+    evidence: string,
+  ) => {
+    if (
+      sourceLines.length < 3 ||
+      sourceLines.some(({ line }) => claimedLineIds.has(line.id))
+    ) {
+      return
+    }
+    const caption = attachedCaption(sourceLines, firstIndex, lastIndex)
+    if (!caption) {
+      unresolved.push({
+        page: sourceLines[0].line.box.page,
+        regionIds: [...new Set(sourceLines.map(({ region }) => region.id))],
+        sourceBoxes: sourceLines.map(({ line }) =>
+          normalizedLineageBox(line.box),
+        ),
+      })
+      return
+    }
+    const preformatted = exactPreformattedSource(sourceLines, true)
+    blocks.push({
+      caption: caption.region,
+      label: attachedPreformattedLabel(caption.line.text)
+        ? caption.line.text
+            .trim()
+            .match(
+              /^(?:Algorithm|Listing)\s+(?:\d+(?:\.\d+)*[A-Za-z]?|[IVXLCDM]+)/iu,
+            )![0]
+        : `Code block p${String(sourceLines[0].line.box.page).padStart(3, '0')}-${String(
+            blocks.filter(
+              (block) => block.caption.page === sourceLines[0].line.box.page,
+            ).length + 1,
+          ).padStart(3, '0')}`,
+      semanticKind: /^Algorithm\b/iu.test(caption.line.text.trim())
+        ? 'algorithm'
+        : 'code',
+      sourceLines,
+      segments: preformattedSegments(sourceLines),
+      preformatted,
+      evidence: [
+        'source-preformatted-block',
+        evidence,
+        'source-region-lane-continuity',
+        ...preformatted.evidence,
+      ],
+      captionFallbackLineId: null,
+    })
+    claimedCaptionRegionIds.add(caption.region.id)
+    for (const { line } of sourceLines) claimedLineIds.add(line.id)
+  }
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    if (claimedLineIds.has(ordered[index].line.id)) continue
+    if (monospacedSourceLine(ordered[index].line)) {
+      const sourceLines = [ordered[index]]
+      let lastIndex = index
+      while (
+        lastIndex + 1 < ordered.length &&
+        !claimedLineIds.has(ordered[lastIndex + 1].line.id) &&
+        monospacedSourceLine(ordered[lastIndex + 1].line) &&
+        contiguousPreformattedFlow(ordered[lastIndex], ordered[lastIndex + 1])
+      ) {
+        sourceLines.push(ordered[++lastIndex])
+      }
+      if (sourceLines.length >= 3) {
+        accept(sourceLines, index, lastIndex, 'monospaced-source-lines')
+        index = lastIndex
+        continue
+      }
+    }
+
+    const anchor = ordered[index]
+    if (
+      monospacedSourceLine(anchor.line) ||
+      (!attachedPreformattedLabel(anchor.line.text) &&
+        !/:\s*$/u.test(anchor.line.text.trim()))
+    ) {
+      continue
+    }
+    const sourceLines: PreformattedLineOwner[] = []
+    let lastIndex = index
+    while (
+      lastIndex + 1 < ordered.length &&
+      !claimedLineIds.has(ordered[lastIndex + 1].line.id) &&
+      (lastIndex === index
+        ? ordered[lastIndex].line.box.page ===
+            ordered[lastIndex + 1].line.box.page &&
+          ordered[lastIndex + 1].line.box.y -
+            (ordered[lastIndex].line.box.y +
+              ordered[lastIndex].line.box.height) >=
+            -0.006 &&
+          ordered[lastIndex + 1].line.box.y -
+            (ordered[lastIndex].line.box.y +
+              ordered[lastIndex].line.box.height) <=
+            0.08
+        : contiguousPreformattedFlow(
+            ordered[lastIndex],
+            ordered[lastIndex + 1],
+          ))
+    ) {
+      sourceLines.push(ordered[++lastIndex])
+    }
+    if (sourceIndentationListingEvidence(sourceLines)) {
+      accept(
+        sourceLines,
+        index + 1,
+        lastIndex,
+        'source-indentation-and-ragged-measure',
+      )
+      index = lastIndex
+    }
+  }
+  return { blocks, unresolved }
+}
+
 function exactPreformattedSource(
   lines: PreformattedLineOwner[],
   allowTranscriptProof: boolean,
 ): PdfPreformattedSource {
   const ordered = [...lines].sort(sourceLineOrder)
   const lineProofs = ordered.map(({ line }) => exactPreformattedLineProof(line))
-  const stablePageIndent = [
-    ...new Set(ordered.map(({ line }) => line.box.page)),
-  ].every((page) => {
-    const pageLines = ordered.filter(({ line }) => line.box.page === page)
-    const baseline = pageLines[0]?.line.box.x
-    return (
-      baseline !== undefined &&
-      pageLines.every(({ line }) => Math.abs(line.box.x - baseline) <= 0.002)
+  const laneKey = ({ region, line }: PreformattedLineOwner) =>
+    `${line.box.page}:${region.column}`
+  const laneBaselines = new Map<string, number>()
+  for (const owner of ordered) {
+    const key = laneKey(owner)
+    laneBaselines.set(
+      key,
+      Math.min(laneBaselines.get(key) ?? owner.line.box.x, owner.line.box.x),
     )
-  })
+  }
+  const relativeIndent = (owner: PreformattedLineOwner) =>
+    owner.line.box.x - laneBaselines.get(laneKey(owner))!
+  const stablePageIndent = ordered.every(
+    (owner) => Math.abs(relativeIndent(owner)) <= 0.002,
+  )
   const proved =
     allowTranscriptProof &&
     ordered.length > 0 &&
     lineProofs.every((proof) => proof !== null)
-  const indentationLevelsByPage = new Map<number, number[]>()
-  for (const { line } of ordered) {
-    const levels = indentationLevelsByPage.get(line.box.page) ?? []
-    const tolerance = Math.max(line.box.height * 0.75, 0.006)
-    if (!levels.some((level) => Math.abs(level - line.box.x) <= tolerance)) {
-      levels.push(line.box.x)
-      levels.sort((left, right) => left - right)
+  const indentationLevels: number[] = []
+  for (const owner of ordered) {
+    const indent = relativeIndent(owner)
+    const tolerance = Math.max(owner.line.box.height * 0.75, 0.006)
+    if (
+      !indentationLevels.some((level) => Math.abs(level - indent) <= tolerance)
+    ) {
+      indentationLevels.push(indent)
+      indentationLevels.sort((left, right) => left - right)
     }
-    indentationLevelsByPage.set(line.box.page, levels)
   }
   const recordedLines = ordered.map((owner) => {
-    const levels = indentationLevelsByPage.get(owner.line.box.page) ?? [
-      owner.line.box.x,
-    ]
-    const level = levels.reduce(
+    const indent = relativeIndent(owner)
+    const level = indentationLevels.reduce(
       (best, candidate, index) =>
-        Math.abs(candidate - owner.line.box.x) <
-        Math.abs(levels[best] - owner.line.box.x)
+        Math.abs(candidate - indent) <
+        Math.abs(indentationLevels[best] - indent)
           ? index
           : best,
       0,
@@ -3880,12 +4090,25 @@ function preformattedSegments(
   sourceLines: PreformattedLineOwner[],
   sourceObjects: PdfNativeObject[] = [],
 ) {
-  const pages = [...new Set(sourceLines.map(({ line }) => line.box.page))].sort(
-    (left, right) => left - right,
+  const lanes = [
+    ...new Map(
+      sourceLines.map((owner) => [
+        `${owner.line.box.page}:${owner.region.column}`,
+        { page: owner.line.box.page, column: owner.region.column },
+      ]),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      left.page - right.page ||
+      (left.column === 'left' ? 0 : left.column === 'right' ? 1 : -1) -
+        (right.column === 'left' ? 0 : right.column === 'right' ? 1 : -1),
   )
-  return pages.map<BoundedPreformattedSegment>((page) => {
+  return lanes.map<BoundedPreformattedSegment>(({ page, column }) => {
     const pageLines = sourceLines
-      .filter(({ line }) => line.box.page === page)
+      .filter(
+        ({ region, line }) =>
+          line.box.page === page && region.column === column,
+      )
       .sort(sourceLineOrder)
     const pageObjects = sourceObjects
       .filter((object) => object.page === page)
@@ -3943,94 +4166,6 @@ function retainedCaptionText(
     .map((line) => line.text.trim())
     .filter(Boolean)
     .join(' ')
-}
-
-function explicitPreformattedBlocks(
-  regions: PdfPageRegion[],
-  claimedLineIds: Set<string>,
-  claimedCaptionRegionIds: Set<string>,
-) {
-  const ordered = orderedSourceLines(regions)
-  const blocks: BoundedPreformattedBlock[] = []
-  for (let anchorIndex = 0; anchorIndex < ordered.length; anchorIndex += 1) {
-    const anchor = ordered[anchorIndex]
-    const anchorLineIndex = anchor.region.lines.findIndex(
-      (line) => line.id === anchor.line.id,
-    )
-    const anchorText = anchor.region.lines
-      .slice(0, anchorLineIndex + 1)
-      .map((line) => line.text.trim())
-      .filter(Boolean)
-      .join(' ')
-    const explicitPseudocode =
-      /\b(?:pseudo\s*code|code\s+(?:example|sample|snippet)|smart\s+contract)\b[^.!?]*:\s*$/iu.test(
-        anchorText,
-      )
-    if (
-      claimedLineIds.has(anchor.line.id) ||
-      claimedCaptionRegionIds.has(anchor.region.id) ||
-      monospacedSourceLine(anchor.line) ||
-      !/:\s*$/u.test(anchor.line.text.trim()) ||
-      (!explicitPseudocode &&
-        !/\b(?:prompt|source\s+code|code\s+block|request\s+template)\b[^.!?]*:\s*$/iu.test(
-          anchorText,
-        ))
-    ) {
-      continue
-    }
-    const sourceLines: PreformattedLineOwner[] = []
-    let previous = anchor
-    for (const candidate of ordered.slice(anchorIndex + 1)) {
-      if (claimedLineIds.has(candidate.line.id)) break
-      const samePage = candidate.line.box.page === previous.line.box.page
-      const nextPage =
-        candidate.line.box.page === previous.line.box.page + 1 &&
-        previous.line.box.y >= 0.55 &&
-        candidate.line.box.y <= 0.2
-      if (!samePage && !nextPage) break
-      if (
-        samePage &&
-        candidate.line.box.y -
-          (previous.line.box.y + previous.line.box.height) >
-          (explicitPseudocode ? 0.12 : 0.08)
-      ) {
-        break
-      }
-      if (
-        !monospacedSourceLine(candidate.line) &&
-        !(explicitPseudocode && sourceCodeSyntax(candidate.line.text))
-      ) {
-        break
-      }
-      sourceLines.push(candidate)
-      previous = candidate
-    }
-    if (sourceLines.length < 3 || sourceCodeSyntaxCount(sourceLines) < 2) {
-      continue
-    }
-    const sourceLineIds = new Set(sourceLines.map(({ line }) => line.id))
-    if (!retainedCaptionText(anchor.region, sourceLineIds)) continue
-    const preformatted = exactPreformattedSource(sourceLines, true)
-    blocks.push({
-      caption: anchor.region,
-      label: `Code block p${String(anchor.region.page).padStart(3, '0')}-${String(
-        blocks.filter((block) => block.caption.page === anchor.region.page)
-          .length + 1,
-      ).padStart(3, '0')}`,
-      sourceLines,
-      segments: preformattedSegments(sourceLines),
-      preformatted,
-      evidence: [
-        'source-preformatted-block',
-        'explicit-preformatted-introducer',
-        ...preformatted.evidence,
-      ],
-      captionFallbackLineId: null,
-    })
-    claimedCaptionRegionIds.add(anchor.region.id)
-    for (const { line } of sourceLines) claimedLineIds.add(line.id)
-  }
-  return blocks
 }
 
 function programListingBlocks(
@@ -4131,6 +4266,7 @@ function programListingBlocks(
       label:
         parsed?.label ??
         `Code listing p${String(caption.page).padStart(3, '0')}`,
+      semanticKind: 'code',
       sourceLines,
       segments: preformattedSegments(sourceLines),
       preformatted,
@@ -4222,10 +4358,15 @@ function vectorPanelPreformattedBlocks(
     const monospacedCount = panelLines.filter(({ line }) =>
       monospacedSourceLine(line),
     ).length
+    const monospacedRunLineCount = panelLines.filter(({ line }) =>
+      substantiveSourceRuns(line).some((run) =>
+        MONOSPACED_SOURCE_FONT.test(run.fontName),
+      ),
+    ).length
     if (
       panelLines.length < 3 ||
       monospacedCount < 1 ||
-      sourceCodeSyntaxCount(panelLines) < 2
+      monospacedRunLineCount < 2
     ) {
       continue
     }
@@ -4277,6 +4418,7 @@ function vectorPanelPreformattedBlocks(
         blocks.filter((block) => block.caption.page === objectBox.page).length +
           1,
       ).padStart(3, '0')}`,
+      semanticKind: 'code',
       sourceLines,
       segments: preformattedSegments(sourceLines, objects),
       preformatted,
@@ -4302,13 +4444,14 @@ function boundedPreformattedBlocks(
 ) {
   const claimedLineIds = new Set<string>()
   const claimedCaptionRegionIds = new Set<string>()
+  const sourceEvidence = sourceEvidencePreformattedBlocks(
+    regions,
+    claimedLineIds,
+    claimedCaptionRegionIds,
+  )
   const blocks = [
     ...programListingBlocks(regions, claimedLineIds, claimedCaptionRegionIds),
-    ...explicitPreformattedBlocks(
-      regions,
-      claimedLineIds,
-      claimedCaptionRegionIds,
-    ),
+    ...sourceEvidence.blocks,
     ...vectorPanelPreformattedBlocks(
       pages,
       regions,
@@ -4316,13 +4459,16 @@ function boundedPreformattedBlocks(
       claimedCaptionRegionIds,
     ),
   ]
-  return blocks.sort((left, right) => {
-    const leftLine = left.sourceLines[0]
-    const rightLine = right.sourceLines[0]
-    return leftLine && rightLine
-      ? sourceLineOrder(leftLine, rightLine)
-      : left.label.localeCompare(right.label)
-  })
+  return {
+    blocks: blocks.sort((left, right) => {
+      const leftLine = left.sourceLines[0]
+      const rightLine = right.sourceLines[0]
+      return leftLine && rightLine
+        ? sourceLineOrder(leftLine, rightLine)
+        : left.label.localeCompare(right.label)
+    }),
+    unresolved: sourceEvidence.unresolved,
+  }
 }
 
 function intersectSourceBox(
@@ -9321,7 +9467,19 @@ export async function reconstructPdfVisuals({
       return label ? ([[region, label]] as const) : []
     }),
   )
-  const preformattedBlocks = boundedPreformattedBlocks(pages, regions)
+  const preformattedDetection = boundedPreformattedBlocks(pages, regions)
+  const preformattedBlocks = preformattedDetection.blocks
+  for (const unresolved of preformattedDetection.unresolved) {
+    diagnostics.push({
+      code: 'UNRESOLVED_PREFORMATTED_BLOCK',
+      severity: 'warning',
+      page: unresolved.page,
+      message:
+        'A source run has preformatted font or indentation evidence, but no unique attached caption or introducer proves its complete scope; it remains prose.',
+      sourceBoxes: unresolved.sourceBoxes,
+      target: { regionIds: unresolved.regionIds, markerId: null },
+    })
+  }
   const preformattedCaptionRegionIds = new Set(
     preformattedBlocks.map((block) => block.caption.id),
   )
@@ -11197,7 +11355,7 @@ export async function reconstructPdfVisuals({
     relationships.push({
       id: '',
       kind: 'figure',
-      semanticKind: 'code',
+      semanticKind: block.semanticKind,
       preformatted: block.preformatted,
       label: block.label,
       captionRegionId: block.caption.id,

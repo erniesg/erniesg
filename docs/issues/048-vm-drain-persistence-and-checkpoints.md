@@ -43,6 +43,68 @@ without repeating work.
   three must produce an explicit resumable state.
 - Run the full repository evidence command and a held-out STRUCT corpus pass.
 
+## Acceptance tests
+
+- A fake systemd response for a healthy timer is accepted only when it is
+  loaded, enabled, active, and has a future fire; masked, failed, or missing
+  state is reported as queue-health failure.
+- An interrupted worker, completed worker, and provider-blocked worker each
+  leave one atomic checkpoint with a resumable next action and no duplicate
+  lease.
+- Two consecutive pulse passes keep the repo-owned scheduler enabled while
+  the generated drain may be held during a worker pass.
+
+## Validation command
+
+```bash
+systemd-analyze verify infra/vm/systemd/erniesg-struct-typeset-queue.service infra/vm/systemd/erniesg-struct-typeset-queue.timer
+infra/vm/verify.sh
+scripts/agent-evidence
+```
+
+## Allowed secrets
+
+None in the repository or checkpoints. GitHub/provider credentials remain in
+the trusted VM stores and are minted only by the fixed parent runtime.
+
+## Artifact outputs
+
+The repo-owned pulse units, durable checkpoint, systemd/timer verification,
+queue labels and lease receipts, source-versus-render evidence manifest, and a
+plain-language blocked/resumable status.
+
+## Stop conditions
+
+Stop before automatically clearing an operator hold, dispatching a duplicate
+lease, increasing worker/retry limits, treating a masked timer as idle, or
+claiming unattended completion without a durable checkpoint and future timer
+fire.
+
+## Human clarification protocol
+
+Ask only when the queue reaches a named external gate (provider login, source
+comparison decision, or publication-bundle review). Include the exact issue,
+page/region or gate, the one action required, and the command that resumes it.
+
+## Recommended response
+
+Keep the generated Rucksack drain as the proven execution boundary and add a
+small repo-owned scheduler outside its containment glob. Checkpoint every pass
+so restarting is cheaper and safer than rerunning a whole corpus.
+
+## Trade-offs
+
+The extra pulse unit adds one scheduler to verify, but it prevents a long worker
+or installer cleanup from silently disabling future work. One worker at a time
+reduces throughput while avoiding duplicate edits and makes evidence ordering
+deterministic.
+
+## Free-form response
+
+Overnight development is successful when a disconnected laptop changes nothing:
+the VM keeps one bounded pass moving, records what happened, and leaves the next
+worker an exact command rather than a mystery state.
+
 ## Definition of done
 
 Two consecutive unattended queue passes leave the selected timer active and

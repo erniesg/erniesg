@@ -42,6 +42,50 @@ single-column, two-column, raster/vector, table, equation, note, citation, and
 hyperlink fixtures. Each run must include deterministic rerun hashes, STRUCT
 conservation receipts, EPUB spine smoke, and source-versus-render screenshots.
 
+## Acceptance tests
+
+- A source-agnostic fixture in each required document stratum round-trips
+  source → STRUCT → EPUB without dropped text, assets, relationships, or
+  source-preserved fallback regions.
+- The BookWorld benchmark and at least one held-out paper exercise the same
+  extraction path without a paper-title or page-number rule; their receipts
+  reconcile source obligations to rendered obligations.
+- A candidate-constrained model proposal is rejected when it invents text,
+  bytes, bounds, or destinations, and accepted proposals are persisted as
+  provenance plus a deterministic fixture/rule.
+- Source-versus-render evidence runs before recovery UI generation and the UI
+  contains only actionable page/region groups; safe fallbacks do not become
+  user tasks.
+
+## Validation command
+
+```bash
+npx vitest run src/struct/struct.test.ts src/research/pdf-visuals.test.ts src/research/pdf-table-detection.test.ts
+npm test
+npm run build:astro
+scripts/agent-evidence
+```
+
+## Allowed secrets
+
+None for deterministic extraction, tests, local rendering, or source
+comparison. An explicitly enabled model consultation may use the trusted VM's
+provider login, but credentials and source payloads never enter the repository,
+logs, fixtures, or issue comments.
+
+## Artifact outputs
+
+The STRUCT graph and conservation receipt, deterministic extraction/evidence
+manifest, source-versus-EPUB screenshots, local readable fallback, held-out
+metrics, and a plain-language recovery summary containing only exact actions.
+
+## Stop conditions
+
+Stop before inventing text or assets, dropping a source visual, claiming an
+unverified relationship, forcing an ambiguous table/equation into prose,
+asking a human without source comparison, or declaring a pass when a required
+receipt, screenshot, or held-out metric is missing.
+
 ## Definition of done
 
 - TDD coverage for every required obligation and a held-out run with no
@@ -59,3 +103,23 @@ Do not ask a human until deterministic extraction, candidate-constrained model
 layout (when explicitly enabled), source comparison, and the local fallback
 have all run. If a question remains, name the exact page, source region, and
 single action required.
+
+## Recommended response
+
+Build one conservation-first graph boundary and make each parser issue land a
+reusable fixture plus rule. Keep source-preserved fallbacks automatic so the
+user never has to repair content that the importer can safely retain.
+
+## Trade-offs
+
+Bounded source fallbacks preserve fidelity while semantic proof is incomplete,
+but they defer some reflow quality. Deterministic proof costs more engineering
+than paper-specific heuristics, yet it is the only path that can generalize to
+unseen layouts and produce trustworthy recovery decisions.
+
+## Free-form response
+
+The finished system should turn a new paper into a structured, readable EPUB
+without asking the reader to understand extraction internals; any remaining
+human action is a final, page-specific editorial decision backed by source
+evidence.

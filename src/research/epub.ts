@@ -7,6 +7,12 @@ import {
   type ZipOptions,
 } from 'fflate'
 import { XMLValidator } from 'fast-xml-parser'
+import { buildStructEpub } from '../struct/epub'
+import {
+  renderPublicationXhtml as renderStructPublicationXhtml,
+  type StructXhtmlOptions,
+} from '../struct/xhtml'
+import type { StructDocument } from '../struct/types'
 import {
   DocxImportError,
   PdfImportError,
@@ -73,6 +79,12 @@ export const MAX_EPUB_ASSETS_PER_BOOK = 512
 export const MAX_EPUB_ASSET_BYTES_PER_BOOK = 128 * 1024 * 1024
 export const MAX_READABLE_FALLBACK_EQUATIONS_PER_BOOK = 512
 const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
+
+function isStructDocument(
+  input: StructDocument | ResearchPaper,
+): input is StructDocument {
+  return 'schemaVersion' in input && input.schemaVersion === '0.1.0'
+}
 
 function duplicateVisualRelationshipNodeOwnership(
   relationships: readonly PublicationVisualRelationship[],
@@ -2350,7 +2362,7 @@ function xhtmlLanguageAttributes(paper: ResearchPaper) {
   return `xml:lang="${language}" lang="${language}"${direction ? ` dir="${direction}"` : ''}`
 }
 
-export function renderPublicationXhtml(
+function renderResearchPublicationXhtml(
   paper: ResearchPaper,
   options: {
     embedStyles?: boolean
@@ -2618,6 +2630,33 @@ export function renderPublicationXhtml(
 `
   assertSerializedXhtmlSemanticIntegrity(xhtml, 'EPUB content')
   return xhtml
+}
+
+export function renderPublicationXhtml(
+  document: StructDocument,
+  options?: StructXhtmlOptions,
+): string
+export function renderPublicationXhtml(
+  paper: ResearchPaper,
+  options?: {
+    embedStyles?: boolean
+    reconstruction?: DocumentReconstruction
+    styles?: string
+    visualAssets?: Map<string, PublicationAsset>
+  },
+): string
+export function renderPublicationXhtml(
+  input: StructDocument | ResearchPaper,
+  options: {
+    embedStyles?: boolean
+    reconstruction?: DocumentReconstruction
+    styles?: string
+    visualAssets?: Map<string, PublicationAsset>
+  } = {},
+) {
+  return isStructDocument(input)
+    ? renderStructPublicationXhtml(input, options)
+    : renderResearchPublicationXhtml(input, options)
 }
 
 function navXhtml(paper: ResearchPaper) {
@@ -4869,6 +4908,7 @@ export function inspectEpub(
   }
 }
 
+export function buildEpub(document: StructDocument): Promise<EpubExport>
 export function buildEpub(
   paper: ResearchPaper,
   profile: TargetProfile,
@@ -4879,10 +4919,13 @@ export function buildEpub(
   profile?: TargetProfile,
 ): Promise<EpubExport>
 export async function buildEpub(
-  paper: ResearchPaper,
+  paper: ResearchPaper | StructDocument,
   reconstructionOrProfile?: DocumentReconstruction | TargetProfile,
   profileInput?: TargetProfile,
 ): Promise<EpubExport> {
+  if (isStructDocument(paper)) {
+    return buildStructEpub(paper)
+  }
   return buildEpubInternal(
     paper,
     reconstructionOrProfile,

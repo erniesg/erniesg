@@ -60,6 +60,23 @@ export type StructInline = {
   bold?: boolean
   italic?: boolean
   verticalAlign?: 'superscript' | 'subscript'
+  compactMathAtom?: boolean
+  semanticRole?:
+    'citation' | 'cross-reference' | 'affiliation-marker' | 'bibliography-entry'
+}
+
+export type StructMetadata = {
+  title: string
+  subtitle: string
+  authors: string[]
+  abstract: string
+  language?: string
+  baseDirection?: 'ltr' | 'rtl' | 'unknown'
+  publicationDate?: string
+  artifactModifiedAt?: string
+  updated?: string
+  affiliations?: string[]
+  authorAffiliations?: Array<{ author: string; label: string }>
 }
 
 export type StructTableCell = {
@@ -193,12 +210,34 @@ export type StructReceipt = {
   assetCount: number
   relationshipCount: number
   diagnosticCount: number
+  textCharacterCount: number
+  conservation: {
+    sourceNodeCount: number
+    accountedSourceNodeCount: number
+    sourceRegionCount: number
+    accountedSourceRegionCount: number
+    sourceAnnotationCount: number
+    accountedSourceAnnotationCount: number
+    sourceAssetCount: number
+    accountedSourceAssetCount: number
+    sourceRelationshipCount: number
+    accountedSourceRelationshipCount: number
+    sourceDiagnosticCount: number
+    accountedSourceDiagnosticCount: number
+    sourceTextCharacterCount: number
+    structBlockCount: number
+    structAssetCount: number
+    structRelationshipCount: number
+    structDiagnosticCount: number
+    structTextCharacterCount: number
+  }
   generatedSha256: string
 }
 
 export type StructDocument = {
   schemaVersion: typeof STRUCT_SCHEMA_VERSION
   source: StructSource
+  metadata: StructMetadata
   blocks: StructBlock[]
   assets: StructAsset[]
   relationships: StructRelationship[]

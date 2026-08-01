@@ -26,6 +26,12 @@ that product umbrella completes.
   active unexpired leases/sessions consume the global slot before selection.
   Reconcile GitHub labels and exact issue leases before dispatch; never
   duplicate a running or human-blocked issue.
+- Preflight disk capacity before dispatch. At the configured high-water mark,
+  preserve the active lease, handoff, evidence receipts, and referenced
+  artifacts; reclaim only completed/expired worktrees and reproducible caches
+  whose owning run has an atomic checkpoint. Never clean during an active run,
+  and fail closed with a queue-health checkpoint if safe reclamation cannot
+  restore the required headroom.
 - Keep parser-core work serialized through declared dependencies. Evidence or
   evaluation work may run in parallel only when its declared path/resource
   scope is disjoint from the active worker.
@@ -51,8 +57,8 @@ that product umbrella completes.
 ## Tests and evidence
 
 - Unit-test timer-state, total active-slot accounting, stable target resolution,
-  skill digest recording, and checkpoint parsing with fake systemd/queue/session
-  responses.
+  disk high-water handling, skill digest recording, and checkpoint parsing with
+  fake systemd/queue/session responses.
 - Exercise an interrupted worker, a completed worker, and a masked timer; all
   three must produce an explicit resumable state.
 - Run the full repository evidence command and a held-out STRUCT corpus pass.
@@ -65,6 +71,10 @@ that product umbrella completes.
 - At total capacity one, one live session plus one queued issue launches
   nothing; a completed/expired session frees exactly one slot. Missing or
   malformed lease state fails closed for recovery instead of opening a slot.
+- At the disk high-water mark, an active worktree and every referenced evidence
+  artifact remain untouched. Only a completed/expired worktree with a durable
+  checkpoint and reproducible cache entries are eligible; insufficient safe
+  reclamation launches no worker and records the exact capacity blocker.
 - An interrupted worker, completed worker, and provider-blocked worker each
   leave one atomic checkpoint with a resumable next action and no duplicate
   lease.

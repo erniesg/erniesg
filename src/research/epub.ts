@@ -2146,7 +2146,7 @@ function renderNode(
         visual.semanticKind === 'algorithm' &&
         visual.evidence.includes('source-algorithm-block')
       const sourceCode =
-        visual.semanticKind === 'code' &&
+        visual.preformatted !== undefined &&
         visual.evidence.includes('source-preformatted-block')
       const provedSourceCode =
         sourceCode &&
@@ -2232,6 +2232,9 @@ function renderNode(
             .preformatted!.lines.map(
               (line) =>
                 `<span class="source-code-line source-code-indent-${Math.min(
+                  16,
+                  Math.max(0, line.indentColumns ?? 0),
+                )}" data-source-region-id="${attribute(line.sourceRegionId)}" data-source-line-id="${attribute(line.sourceLineId)}" data-indent-columns="${Math.min(
                   16,
                   Math.max(0, line.indentColumns ?? 0),
                 )}">${text(line.text)}</span>`,
@@ -2751,9 +2754,9 @@ figcaption, .orphan-caption { font-size: 0.86rem; margin-top: 0.6rem; }
 .omitted-visual-transcript > p:first-child, .omitted-table-transcript > p:first-child { font-family: sans-serif; font-size: 0.76rem; font-weight: 700; }
 .omitted-table-transcript-source { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .omitted-algorithm-transcript { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
-.source-code { max-width: 100%; margin: 0; overflow-x: auto; padding: 0.8rem; border: 0.06rem solid currentColor; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre-wrap; }
+.source-code { box-sizing: border-box; max-width: 100%; margin: 0; overflow-x: auto; overflow-y: hidden; overflow-wrap: normal; padding: 0.8rem; border: 0.06rem solid currentColor; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.78rem; line-height: 1.45; white-space: pre; word-break: normal; }
 .source-code code { display: block; font: inherit; white-space: inherit; }
-.source-code-line { display: block; min-height: 1.45em; }
+.source-code-line { display: inline; }
 .source-code[data-transcript-status="unresolved"] { border-style: dashed; }
 .source-code-image-comparison { margin-block-start: 0.55rem; font-size: 0.72rem; }
 .source-code-image-comparison summary { cursor: pointer; font-family: ui-sans-serif, system-ui, sans-serif; }

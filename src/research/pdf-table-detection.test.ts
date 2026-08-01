@@ -100,6 +100,62 @@ describe('bounded table region detection', () => {
     )
   })
 
+  it('accepts partial source-region lineage when wrapped rows remain provable', () => {
+    const header = line('partial-header', 0.1, [0.1, 0.3, 0.5])
+    header.runs = header.runs.map((run) => ({
+      ...run,
+      bold: true,
+      fontName: 'serif-bold',
+    }))
+    const bodyOne = line('partial-body-one', 0.13, [0.1, 0.3, 0.5])
+    bodyOne.runs[1]!.text = 'first value'
+    const bodyOneContinuation = line(
+      'partial-body-one-continuation',
+      0.145,
+      [0.3],
+    )
+    bodyOneContinuation.runs[0]!.text = 'continued'
+    const bodyTwo = line('partial-body-two', 0.18, [0.1, 0.3, 0.5])
+    const bodyThree = line('partial-body-three', 0.21, [0.1, 0.3, 0.5])
+    const excludedFromScope = line(
+      'partial-region-unselected-line',
+      0.25,
+      [0.1],
+    )
+    const table = region('partial-source-region', 'body', 0.1, [
+      header,
+      bodyOne,
+      bodyOneContinuation,
+      bodyTwo,
+      bodyThree,
+      excludedFromScope,
+    ])
+
+    const detected = detectWrappedCellTableWithinProvenScope([table], {
+      direction: 'above',
+      sourceRegionIds: [table.id],
+      sourceLineIds: [
+        header.id,
+        bodyOne.id,
+        bodyOneContinuation.id,
+        bodyTwo.id,
+        bodyThree.id,
+      ],
+      evidence: [{ code: 'contiguous-single-anchor-slab' }],
+    })
+
+    expect(detected).not.toBeNull()
+    expect(detected?.lines).toHaveLength(4)
+    expect(detected?.lines[1].cells[1]?.run.text).toContain('continued')
+    expect(detected?.sourceLineIds).toEqual([
+      header.id,
+      bodyOne.id,
+      bodyOneContinuation.id,
+      bodyTwo.id,
+      bodyThree.id,
+    ])
+  })
+
   it('selects repeated columns above a numbered table caption', () => {
     const caption = region('Table 3', 'caption', 0.3, [])
     const table = region('table-grid', 'body', 0.16, [

@@ -7,6 +7,11 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# Queue drains may wait for a bounded Codex worker and its verification pass.
+# Keep the scheduler from killing a healthy run at systemd's 90-second default;
+# the worker/queue has its own bounded retry and provider gates.
+TimeoutStartSec=30min
+TimeoutStopSec=5min
 WorkingDirectory=%h/code/erniesg/erniesg
 # The user manager delegates this fixed command to a system-manager transient unit,
 # where private-network and cloud-metadata egress denial is actually enforced.

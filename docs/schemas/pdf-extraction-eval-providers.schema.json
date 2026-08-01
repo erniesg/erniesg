@@ -4,7 +4,13 @@
   "title": "Extraction benchmark provider comparison manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "id", "evalSet", "providers"],
+  "required": [
+    "schemaVersion",
+    "id",
+    "evalSet",
+    "evaluationStatus",
+    "providers"
+  ],
   "properties": {
     "schemaVersion": { "const": "1.0.0" },
     "id": { "$ref": "#/$defs/id" },
@@ -20,6 +26,9 @@
         "fileSha256": { "$ref": "#/$defs/sha256" },
         "evalSetSha256": { "$ref": "#/$defs/sha256" }
       }
+    },
+    "evaluationStatus": {
+      "enum": ["reported-only", "comparison-ready"]
     },
     "providers": {
       "type": "array",

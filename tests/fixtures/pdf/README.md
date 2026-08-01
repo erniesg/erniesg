@@ -46,8 +46,9 @@ language-pack and Unicode behavior can be tested without copying a third-party
 document or font.
 
 `diagnostic-overlays.pdf` deliberately retains two plausible column orders and
-two equally scored note bodies. It is the repository-owned visual evidence
-fixture for reading-order and note-relationship overlays.
+two equally scored note bodies, with a running head and page number at the
+page furniture boundaries. It is the repository-owned visual evidence fixture
+for reading-order, note-relationship, and boilerplate-exclusion overlays.
 
 `adjudication-required.pdf` contains two deliberately tied note matches and a
 below-threshold two-column order. It exercises exact-scope human decisions and

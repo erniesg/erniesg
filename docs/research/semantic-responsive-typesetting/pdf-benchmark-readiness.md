@@ -26,22 +26,26 @@ by a source.
 
 The additive extraction benchmark is kept separate from the frozen fidelity
 cases in [`benchmarks/pdf/extraction-eval-strata-v1.json`](../../../benchmarks/pdf/extraction-eval-strata-v1.json).
-It uses repository-owned source fixtures, with two independent source reviews
-per label, and records table cells (including row/column topology and header
-scope) and heading sequences (including unnumbered and non-English headings).
-The corpus has two one-column and two two-column documents. No parser output is
-consulted when labels are made.
+It uses repository-owned source fixtures and records table cells (including
+row/column topology, header scope, source geometry, and source-line lineage)
+and heading sequences (including unnumbered and non-English headings). The
+corpus has two one-column and two two-column documents. No parser output is
+consulted when labels are made. Labels remain `review-required` until a
+roster-bound reviewer artifact and source-only decision artifact are committed;
+the checked-in fixture slice does not invent reviewer identities.
 
 Every stratum declares its scoring formula and a fail-closed degenerate-answer
 guard. An explicit abstention is reported at `0.25`; an empty answer, a
-page-wide grid, an every-line heading flood, a caption without a bounded visual,
-or another guarded answer scores `0`. Prose continuity is gated only by the
+metadata-only table or object without source geometry and lineage, a page-wide
+grid, an every-line heading flood, a caption without a bounded visual, or
+another guarded answer scores `0`. Prose continuity is gated only by the
 pipeline's authoritative line-boundary counters; a regex proxy cannot enter
-the score.
+the score. Candidate envelopes also bind the canonical eval-set hash.
 
 Run the deterministic path and every configured candidate provider in one
-privacy-safe comparison (the default provider manifest is intentionally
-reported-only until a candidate is independently frozen):
+privacy-safe report. The default provider manifest is explicitly
+`reported-only`: all providers abstain until independently frozen output is
+available, so the command must not be read as a quality comparison.
 
 ```bash
 npm run pdf:benchmark:extraction -- \
@@ -51,8 +55,10 @@ npm run pdf:benchmark:extraction -- \
 ```
 
 The report contains only provider identities, artifact hashes, counts, scores
-grouped by stratum and layout, and bounded diagnostic codes. Source text,
-local paths, and rendered evidence remain outside the report.
+grouped by stratum and layout, a `reported-only`/`comparison` status, and
+bounded diagnostic codes. In `reported-only` mode provider scores are `null`
+and `NO_SCORED_PROVIDER_OUTPUT` is emitted; source text, local paths, and
+rendered evidence remain outside the report.
 
 Every frozen split identity covers each document id, exact source-PDF SHA-256,
 verified template-family id, and SHA-256 of the source-only assignment

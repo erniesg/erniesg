@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-extraction-eval-candidate-1.0.0.json",
+  "title": "Source-bound PDF extraction evaluation candidate envelope",
+  "description": "A provider output is admissible only when it names the canonical eval-set hash. Predictions are scored only when their stratum-specific geometry and source-lineage bindings are present.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evalSetId",
+    "evalSetSha256",
+    "provider",
+    "cases"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "evalSetId": { "$ref": "#/$defs/id" },
+    "evalSetSha256": { "$ref": "#/$defs/sha256" },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "version", "sourceIdentitySha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["deterministic", "candidate"] },
+        "version": { "$ref": "#/$defs/id" },
+        "sourceIdentitySha256": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caseId", "status", "prediction", "diagnostics"],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["scored", "abstain"] },
+        "prediction": {
+          "oneOf": [{ "type": "null" }, { "type": "object" }]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    }
+  }
+}

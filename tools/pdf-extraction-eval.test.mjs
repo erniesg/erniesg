@@ -90,7 +90,11 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     expect(report.privacy).toBe(
       'identities-hashes-counts-diagnostic-codes-only',
     )
+    expect(report.status).toBe('reported-only')
     expect(report.providers).toHaveLength(3)
+    expect(report.providers.every((provider) => provider.score === null)).toBe(
+      true,
+    )
     expect(report.rows).toHaveLength(3 * 8 * 2)
     expect(report.rows.every((row) => row.score === 0.25)).toBe(true)
     expect(new Set(report.rows.map(({ stratum }) => stratum))).toEqual(
@@ -127,6 +131,176 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     )
     expect(tableRow).toMatchObject({ degenerateCaseCount: 1, score: 0 })
     expect(abstainedRows.every((row) => row.score === 0.25)).toBe(true)
+  })
+
+  it('does not give metadata-only table or object predictions a perfect score', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const tableCase = candidate.cases.find((item) =>
+      item.caseId.endsWith('.table-structure'),
+    )
+    tableCase.status = 'scored'
+    tableCase.prediction = {
+      tables: [
+        {
+          rows: 3,
+          columns: 2,
+          headerScope: 'row',
+          cells: [
+            { row: 0, column: 0, rowSpan: 1, columnSpan: 1, text: 'Profile' },
+            { row: 0, column: 1, rowSpan: 1, columnSpan: 1, text: 'Nodes' },
+            { row: 1, column: 0, rowSpan: 1, columnSpan: 1, text: 'Mobile' },
+            { row: 1, column: 1, rowSpan: 1, columnSpan: 1, text: '12' },
+            { row: 2, column: 0, rowSpan: 1, columnSpan: 1, text: 'E-ink' },
+            { row: 2, column: 1, rowSpan: 1, columnSpan: 1, text: '12' },
+          ],
+        },
+      ],
+    }
+    const objectCase = candidate.cases.find((item) =>
+      item.caseId.endsWith('.figure-diagram'),
+    )
+    objectCase.status = 'scored'
+    objectCase.prediction = {
+      objects: [
+        {
+          kind: 'figure-or-diagram',
+          sourcePage: 2,
+          captionRelationship: 'caption-of',
+          bounded: true,
+        },
+      ],
+    }
+    tableCase.diagnostics = []
+    objectCase.diagnostics = []
+
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) => row.stratum === 'table-structure' && row.layout === 'one-column',
+      ),
+    ).toMatchObject({ score: 0, degenerateCaseCount: 1 })
+    expect(
+      report.rows.find(
+        (row) => row.stratum === 'figure-diagram' && row.layout === 'one-column',
+      ),
+    ).toMatchObject({ score: 0, degenerateCaseCount: 1 })
+  })
+
+  it('accepts a prediction only when its source geometry and lineage match', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const tableCase = candidate.cases.find((item) =>
+      item.caseId.endsWith('.table-structure'),
+    )
+    const expectedTable = evalSet.cases.find((item) =>
+      item.id.endsWith('.table-structure'),
+    ).source.groundTruth.tables[0]
+    tableCase.status = 'scored'
+    tableCase.prediction = {
+      tables: [{ ...expectedTable }],
+    }
+    tableCase.diagnostics = []
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) => row.stratum === 'table-structure' && row.layout === 'one-column',
+      ),
+    ).toMatchObject({ score: 1, scoredCaseCount: 1, degenerateCaseCount: 0 })
+  })
+
+  it('requires a canonical eval-set hash in every candidate envelope', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const identity = validatePdfExtractionEvalSet(evalSet)
+    expect(candidate.evalSetSha256).toBe(identity.evalSetSha256)
+
+    delete candidate.evalSetSha256
+    expect(() =>
+      comparePdfExtractionProviders(evalSet, [candidate]),
+    ).toThrow('INVALID_PDF_EXTRACTION_CANDIDATE')
+  })
+
+  it('rejects two-reviewer labels without roster-bound source-only evidence', async () => {
+    const evalSet = await readEvalSet()
+    evalSet.documents[0].groundTruthReview.reviewStatus = 'two-reviewer-agreed'
+    evalSet.documents[0].groundTruthReview.reviewers = [
+      'fixture-reviewer-a',
+      'fixture-reviewer-b',
+    ]
+    evalSet.documents[0].groundTruthReview.reviewEvidence = null
+    expect(() => validatePdfExtractionEvalSet(evalSet)).toThrow(
+      'INVALID_PDF_EXTRACTION_EVAL_SET',
+    )
+  })
+
+  it('keeps the diagnostic furniture label tied to a real running-head and page-number case', async () => {
+    const evalSet = await readEvalSet()
+    const furnitureCase = evalSet.cases.find(
+      (item) => item.id === 'diagnostic-overlays.boilerplate-exclusion',
+    )
+    expect(furnitureCase.source.groundTruth.excluded).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'running-head' }),
+        expect.objectContaining({ kind: 'page-number' }),
+      ]),
+    )
+  })
+
+  it('scores valid many-to-one footnote references instead of treating them as degenerate', async () => {
+    const evalSet = await readEvalSet()
+    const footnoteCase = evalSet.cases.find((item) =>
+      item.id.endsWith('.footnote-resolution'),
+    )
+    footnoteCase.source.groundTruth.references.push({
+      id: 'note-reference-2',
+      sourcePage: footnoteCase.source.sourcePage,
+      marker: '1',
+      bodyId: 'footnote-1',
+    })
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const output = candidate.cases.find(
+      (item) => item.caseId === footnoteCase.id,
+    )
+    output.status = 'scored'
+    output.prediction = {
+      relationships: [
+        {
+          referenceId: 'note-reference-1',
+          bodyId: 'footnote-1',
+          marker: '1',
+        },
+        {
+          referenceId: 'note-reference-2',
+          bodyId: 'footnote-1',
+          marker: '1',
+        },
+      ],
+    }
+    output.diagnostics = []
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'footnote-resolution' && row.layout === footnoteCase.layout,
+      ),
+    ).toMatchObject({ score: 1, degenerateCaseCount: 0, scoredCaseCount: 1 })
   })
 
   it('refuses regex-only prose continuity evidence', async () => {

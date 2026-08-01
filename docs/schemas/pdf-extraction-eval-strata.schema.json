@@ -46,6 +46,18 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
+    "box": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      ],
+      "items": false
+    },
     "layout": {
       "enum": ["one-column", "two-column"]
     },
@@ -57,19 +69,54 @@
         "derivedFrom",
         "reviewStatus",
         "reviewers",
-        "parserOutputConsulted"
+        "parserOutputConsulted",
+        "reviewEvidence"
       ],
       "properties": {
         "kind": { "const": "source-reviewed" },
         "derivedFrom": { "const": "source-document" },
-        "reviewStatus": { "const": "two-reviewer-agreed" },
+        "reviewStatus": {
+          "enum": ["review-required", "two-reviewer-agreed"]
+        },
         "reviewers": {
           "type": "array",
-          "minItems": 2,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/id" }
         },
-        "parserOutputConsulted": { "const": false }
+        "parserOutputConsulted": { "const": false },
+        "reviewEvidence": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/reviewEvidence" }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "reviewStatus": { "const": "review-required" },
+            "reviewers": { "type": "array", "maxItems": 0 },
+            "reviewEvidence": { "type": "null" }
+          }
+        },
+        {
+          "properties": {
+            "reviewStatus": { "const": "two-reviewer-agreed" },
+            "reviewers": { "type": "array", "minItems": 2 },
+            "reviewEvidence": { "$ref": "#/$defs/reviewEvidence" }
+          }
+        }
+      ]
+    },
+    "reviewEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rosterPath", "rosterSha256", "decisionPath", "decisionSha256"],
+      "properties": {
+        "rosterPath": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" },
+        "rosterSha256": { "$ref": "#/$defs/sha256" },
+        "decisionPath": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" },
+        "decisionSha256": { "$ref": "#/$defs/sha256" }
       }
     },
     "protocol": {
@@ -171,6 +218,8 @@
         "formula": { "type": "string", "minLength": 1 },
         "scoreRange": {
           "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
           "prefixItems": [{ "const": 0 }, { "const": 1 }],
           "items": false
         },
@@ -265,6 +314,9 @@
         "rows",
         "columns",
         "headerScope",
+        "box",
+        "sourceRegionIds",
+        "sourceLineIds",
         "cells"
       ],
       "properties": {
@@ -274,6 +326,19 @@
         "columns": { "type": "integer", "minimum": 1 },
         "headerScope": {
           "enum": ["row", "column", "row-and-column", "none"]
+        },
+        "box": { "$ref": "#/$defs/box" },
+        "sourceRegionIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "sourceLineIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
         },
         "cells": {
           "type": "array",
@@ -328,14 +393,30 @@
         "sourcePage",
         "kind",
         "bounded",
-        "captionRelationship"
+        "captionRelationship",
+        "box",
+        "sourceRegionIds",
+        "sourceLineIds"
       ],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "sourcePage": { "type": "integer", "minimum": 1 },
         "kind": { "enum": ["display-equation", "figure-or-diagram"] },
         "bounded": { "const": true },
-        "captionRelationship": { "type": "string", "minLength": 1 }
+        "captionRelationship": { "type": "string", "minLength": 1 },
+        "box": { "$ref": "#/$defs/box" },
+        "sourceRegionIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "sourceLineIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
       }
     },
     "objectGroundTruth": {

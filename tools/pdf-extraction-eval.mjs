@@ -52,6 +52,8 @@ const SAFE_DIAGNOSTIC = /^[A-Z][A-Z0-9_]{2,63}$/
 const MAX_JSON_BYTES = 32 * 1024 * 1024
 const ABSTENTION_SCORE = 0.25
 const DEGENERATE_SCORE = 0
+const REVIEW_STATUSES = Object.freeze(['review-required', 'two-reviewer-agreed'])
+const REVIEW_EVIDENCE_VALIDATED = Symbol('pdfExtractionReviewEvidenceValidated')
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -151,6 +153,41 @@ function pathIsRepositoryRelative(value) {
   )
 }
 
+function isNormalizedBox(value) {
+  return (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every((item) => typeof item === 'number' && Number.isFinite(item)) &&
+    value[0] >= 0 &&
+    value[0] < 1 &&
+    value[1] >= 0 &&
+    value[1] < 1 &&
+    value[2] > 0 &&
+    value[2] <= 1 &&
+    value[3] > 0 &&
+    value[3] <= 1 &&
+    value[0] + value[2] <= 1 &&
+    value[1] + value[3] <= 1
+  )
+}
+
+function validateSourceBinding(value, code) {
+  if (
+    !isRecord(value) ||
+    !isNormalizedBox(value.box) ||
+    !Array.isArray(value.sourceRegionIds) ||
+    value.sourceRegionIds.length === 0 ||
+    !uniqueBy(value.sourceRegionIds, (id) => id) ||
+    !value.sourceRegionIds.every((id) => SAFE_ID.test(id ?? '')) ||
+    !Array.isArray(value.sourceLineIds) ||
+    value.sourceLineIds.length === 0 ||
+    !uniqueBy(value.sourceLineIds, (id) => id) ||
+    !value.sourceLineIds.every((id) => SAFE_ID.test(id ?? ''))
+  ) {
+    invalid(code)
+  }
+}
+
 function expectedStratum(value) {
   return (
     isRecord(value) &&
@@ -181,15 +218,37 @@ function validateGroundTruthReview(value, code) {
       'reviewStatus',
       'reviewers',
       'parserOutputConsulted',
+      'reviewEvidence',
     ]) ||
     value.kind !== 'source-reviewed' ||
     value.derivedFrom !== 'source-document' ||
-    value.reviewStatus !== 'two-reviewer-agreed' ||
+    !REVIEW_STATUSES.includes(value.reviewStatus) ||
     !Array.isArray(value.reviewers) ||
-    value.reviewers.length < 2 ||
     !uniqueBy(value.reviewers, (reviewer) => reviewer) ||
     !value.reviewers.every((reviewer) => SAFE_ID.test(reviewer)) ||
     value.parserOutputConsulted !== false
+  ) {
+    invalid(code)
+  }
+  if (value.reviewStatus === 'review-required') {
+    if (value.reviewers.length !== 0 || value.reviewEvidence !== null) {
+      invalid(code)
+    }
+    return
+  }
+  if (
+    value.reviewers.length < 2 ||
+    !isRecord(value.reviewEvidence) ||
+    !exactKeys(value.reviewEvidence, [
+      'rosterPath',
+      'rosterSha256',
+      'decisionPath',
+      'decisionSha256',
+    ]) ||
+    !pathIsRepositoryRelative(value.reviewEvidence.rosterPath) ||
+    !SHA256.test(value.reviewEvidence.rosterSha256 ?? '') ||
+    !pathIsRepositoryRelative(value.reviewEvidence.decisionPath) ||
+    !SHA256.test(value.reviewEvidence.decisionSha256 ?? '')
   ) {
     invalid(code)
   }
@@ -298,6 +357,9 @@ function validateTableGroundTruth(value, code) {
         'rows',
         'columns',
         'headerScope',
+        'box',
+        'sourceRegionIds',
+        'sourceLineIds',
         'cells',
       ]) ||
       !SAFE_ID.test(table.id ?? '') ||
@@ -315,6 +377,7 @@ function validateTableGroundTruth(value, code) {
     ) {
       invalid(code)
     }
+    validateSourceBinding(table, code)
     for (const cell of table.cells) {
       if (
         !exactKeys(cell, ['row', 'column', 'rowSpan', 'columnSpan', 'text']) ||
@@ -386,6 +449,9 @@ function validateObjectGroundTruth(value, code, kind) {
         'kind',
         'bounded',
         'captionRelationship',
+        'box',
+        'sourceRegionIds',
+        'sourceLineIds',
       ]) ||
       !SAFE_ID.test(object.id ?? '') ||
       !Number.isSafeInteger(object.sourcePage) ||
@@ -397,6 +463,7 @@ function validateObjectGroundTruth(value, code, kind) {
     ) {
       invalid(code)
     }
+    validateSourceBinding(object, code)
   }
 }
 
@@ -799,8 +866,146 @@ async function readRepositoryJson(repositoryPath, code) {
   }
 }
 
+async function validateReviewEvidenceFiles(value, identity) {
+  const reviewValues = reviewValuesForEvalSet(value)
+  const agreed = reviewValues.filter(
+    (review) => review.reviewStatus === 'two-reviewer-agreed',
+  )
+  if (agreed.length === 0) return
+  if (reviewValues.some((review) => review.reviewStatus === 'review-required')) {
+    invalid('PDF_EXTRACTION_REVIEW_INCOMPLETE')
+  }
+  const evidence = agreed[0].reviewEvidence
+  if (
+    agreed.some(
+      (review) => canonicalJson(review.reviewEvidence) !== canonicalJson(evidence),
+    )
+  ) {
+    invalid('PDF_EXTRACTION_REVIEW_EVIDENCE_BINDING_MISMATCH')
+  }
+  const rosterArtifact = await readRepositoryJson(
+    evidence.rosterPath,
+    'PDF_EXTRACTION_REVIEW_ROSTER_FILE',
+  )
+  if (
+    sha256(rosterArtifact.bytes) !== evidence.rosterSha256 ||
+    !exactKeys(rosterArtifact.value, [
+      'schemaVersion',
+      'kind',
+      'evalSetId',
+      'reviewers',
+    ]) ||
+    rosterArtifact.value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
+    rosterArtifact.value.kind !== 'pdf-extraction-reviewer-roster' ||
+    rosterArtifact.value.evalSetId !== identity.id ||
+    !Array.isArray(rosterArtifact.value.reviewers) ||
+    rosterArtifact.value.reviewers.length < 2 ||
+    !uniqueBy(rosterArtifact.value.reviewers, (reviewer) => reviewer.reviewerId)
+  ) {
+    invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+  }
+  for (const reviewer of rosterArtifact.value.reviewers) {
+    if (
+      !exactKeys(reviewer, ['reviewerId', 'identityEvidenceSha256']) ||
+      !SAFE_ID.test(reviewer.reviewerId ?? '') ||
+      !SHA256.test(reviewer.identityEvidenceSha256 ?? '')
+    ) {
+      invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+    }
+  }
+  const rosterIds = new Set(
+    rosterArtifact.value.reviewers.map((reviewer) => reviewer.reviewerId),
+  )
+  const decisionArtifact = await readRepositoryJson(
+    evidence.decisionPath,
+    'PDF_EXTRACTION_REVIEW_DECISION_FILE',
+  )
+  if (
+    sha256(decisionArtifact.bytes) !== evidence.decisionSha256 ||
+    !exactKeys(decisionArtifact.value, [
+      'schemaVersion',
+      'kind',
+      'evalSetId',
+      'evalSetSha256',
+      'sourceOnly',
+      'candidateOutputConsultedForLabel',
+      'decisions',
+    ]) ||
+    decisionArtifact.value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
+    decisionArtifact.value.kind !== 'pdf-extraction-source-only-decisions' ||
+    decisionArtifact.value.evalSetId !== identity.id ||
+    decisionArtifact.value.evalSetSha256 !== identity.evalSetSha256 ||
+    decisionArtifact.value.sourceOnly !== true ||
+    decisionArtifact.value.candidateOutputConsultedForLabel !== false ||
+    !Array.isArray(decisionArtifact.value.decisions) ||
+    !uniqueBy(decisionArtifact.value.decisions, (decision) => decision.caseId)
+  ) {
+    invalid('PDF_EXTRACTION_REVIEW_DECISION_MISMATCH')
+  }
+  const documentById = new Map(value.documents.map((item) => [item.id, item]))
+  const caseIds = new Set(value.cases.map((item) => item.id))
+  for (const decision of decisionArtifact.value.decisions) {
+    if (
+      !exactKeys(decision, [
+        'caseId',
+        'sourceSha256',
+        'reviewers',
+        'decision',
+        'decisionSha256',
+      ]) ||
+      !caseIds.has(decision.caseId) ||
+      !SHA256.test(decision.sourceSha256 ?? '') ||
+      decision.sourceSha256 !==
+        documentById.get(
+          value.cases.find((item) => item.id === decision.caseId).documentId,
+        ).sha256 ||
+      !Array.isArray(decision.reviewers) ||
+      decision.reviewers.length < 2 ||
+      !uniqueBy(decision.reviewers, (reviewer) => reviewer) ||
+      !decision.reviewers.every((reviewer) => rosterIds.has(reviewer)) ||
+      decision.decision !== 'agreed' ||
+      !SHA256.test(decision.decisionSha256 ?? '')
+    ) {
+      invalid('PDF_EXTRACTION_REVIEW_DECISION_MISMATCH')
+    }
+  }
+  const agreedCaseIds = new Set(
+    decisionArtifact.value.decisions.map((decision) => decision.caseId),
+  )
+  if ([...caseIds].some((caseId) => !agreedCaseIds.has(caseId))) {
+    invalid('PDF_EXTRACTION_REVIEW_DECISION_MISMATCH')
+  }
+  const decisionReviewerIds = new Set(
+    decisionArtifact.value.decisions.flatMap((decision) => decision.reviewers),
+  )
+  for (const review of agreed) {
+    if (
+      review.reviewers.some(
+        (reviewer) =>
+          !rosterIds.has(reviewer) || !decisionReviewerIds.has(reviewer),
+      )
+    ) {
+      invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+    }
+  }
+  Object.defineProperty(value, REVIEW_EVIDENCE_VALIDATED, {
+    value: true,
+    enumerable: false,
+    configurable: true,
+  })
+}
+
+function reviewValuesForEvalSet(value) {
+  return [
+    ...value.documents.map((item) => item.groundTruthReview),
+    ...value.strata.map((item) => item.groundTruth),
+    ...value.cases.map((item) => item.source.groundTruth.review),
+  ]
+}
+
 export async function validatePdfExtractionEvalSetFiles(value) {
   const identity = validatePdfExtractionEvalSet(value)
+  await validateReviewEvidenceFiles(value, identity)
   for (const document of value.documents) {
     if (!pathIsRepositoryRelative(document.fixturePath)) {
       invalid('INVALID_PDF_EXTRACTION_FIXTURE_PATH')
@@ -834,9 +1039,16 @@ export async function validatePdfExtractionEvalSetFiles(value) {
 function validateCandidateProvider(value, evalIdentity, code) {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ['schemaVersion', 'evalSetId', 'provider', 'cases']) ||
+    !exactKeys(value, [
+      'schemaVersion',
+      'evalSetId',
+      'evalSetSha256',
+      'provider',
+      'cases',
+    ]) ||
     value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
     value.evalSetId !== evalIdentity.id ||
+    value.evalSetSha256 !== evalIdentity.evalSetSha256 ||
     !isRecord(value.provider) ||
     !exactKeys(value.provider, [
       'id',
@@ -909,11 +1121,44 @@ function predictionArray(prediction, key) {
   return Array.isArray(prediction?.[key]) ? prediction[key] : null
 }
 
+function sourceBindingMatches(expected, candidate) {
+  return (
+    hasValidSourceBinding(candidate) &&
+    canonicalJson(candidate.box) === canonicalJson(expected.box) &&
+    canonicalJson(candidate.sourceRegionIds) ===
+      canonicalJson(expected.sourceRegionIds) &&
+    canonicalJson(candidate.sourceLineIds) ===
+      canonicalJson(expected.sourceLineIds)
+  )
+}
+
+function hasValidSourceBinding(value) {
+  return (
+    isRecord(value) &&
+    isNormalizedBox(value.box) &&
+    Array.isArray(value.sourceRegionIds) &&
+    value.sourceRegionIds.length > 0 &&
+    uniqueBy(value.sourceRegionIds, (id) => id) &&
+    value.sourceRegionIds.every((id) => SAFE_ID.test(id ?? '')) &&
+    Array.isArray(value.sourceLineIds) &&
+    value.sourceLineIds.length > 0 &&
+    uniqueBy(value.sourceLineIds, (id) => id) &&
+    value.sourceLineIds.every((id) => SAFE_ID.test(id ?? ''))
+  )
+}
+
+function missingSourceBinding(predictions) {
+  return predictions.some((prediction) => !hasValidSourceBinding(prediction))
+}
+
 function tableScore(expected, prediction) {
   const expectedTables = expected.tables
   const predictedTables = predictionArray(prediction, 'tables')
   if (!predictedTables) return degenerateResult()
   if (predictedTables.length === 0) return degenerateResult()
+  if (missingSourceBinding(predictedTables)) {
+    return degenerateResult('MISSING_TABLE_GEOMETRY_OR_LINEAGE')
+  }
   if (
     predictedTables.some(
       (table) =>
@@ -930,8 +1175,10 @@ function tableScore(expected, prediction) {
       candidate.rows !== table.rows ||
       candidate.columns !== table.columns ||
       candidate.headerScope !== table.headerScope ||
+      candidate.sourcePage !== table.sourcePage ||
       !Array.isArray(candidate.cells) ||
-      !candidate.cells.every(isRecord)
+      !candidate.cells.every(isRecord) ||
+      !sourceBindingMatches(table, candidate)
     ) {
       return count
     }
@@ -994,6 +1241,9 @@ function objectScore(expected, prediction, key, degenerateCode) {
   const objects = predictionArray(prediction, key)
   if (!objects) return degenerateResult()
   if (objects.length === 0) return degenerateResult()
+  if (missingSourceBinding(objects)) {
+    return degenerateResult('MISSING_OBJECT_GEOMETRY_OR_LINEAGE')
+  }
   if (
     objects.some(
       (object) =>
@@ -1011,7 +1261,8 @@ function objectScore(expected, prediction, key, degenerateCode) {
       candidate.kind === item.kind &&
       candidate.sourcePage === item.sourcePage &&
       candidate.captionRelationship === item.captionRelationship &&
-      candidate.bounded === true
+      candidate.bounded === true &&
+      sourceBindingMatches(item, candidate)
     )
   }).length
   return diagnosticResult(
@@ -1098,7 +1349,15 @@ function relationshipScore(expected, prediction) {
   const relationships = predictionArray(prediction, 'relationships')
   if (!relationships) return degenerateResult()
   if (relationships.length === 0) return degenerateResult()
+  const relationshipKeys = relationships.map(
+    (relationship) =>
+      `${relationship?.referenceId}\0${relationship?.bodyId}\0${relationship?.marker}`,
+  )
+  if (!uniqueBy(relationshipKeys, (key) => key)) {
+    return degenerateResult('DEGENERATE_DUPLICATE_FOOTNOTE_RELATIONSHIP')
+  }
   if (
+    new Set(expected.references.map((reference) => reference.bodyId)).size > 1 &&
     relationships.length > 1 &&
     new Set(relationships.map((item) => item?.bodyId)).size === 1
   ) {
@@ -1203,6 +1462,7 @@ function noGroundTruthOutput(evalSet, provider) {
   return {
     schemaVersion: PDF_EXTRACTION_EVAL_SCHEMA_VERSION,
     evalSetId: evalSet.id,
+    evalSetSha256: canonicalHash(evalSet),
     provider: {
       id: provider.id,
       kind: provider.kind,
@@ -1245,6 +1505,14 @@ export function createAbstainingPdfExtractionCandidate(evalSet, provider) {
  */
 export function comparePdfExtractionProviders(evalSet, providers) {
   const identity = validatePdfExtractionEvalSet(evalSet)
+  if (
+    reviewValuesForEvalSet(evalSet).some(
+      (review) => review.reviewStatus === 'two-reviewer-agreed',
+    ) &&
+    evalSet[REVIEW_EVIDENCE_VALIDATED] !== true
+  ) {
+    invalid('PDF_EXTRACTION_REVIEW_EVIDENCE_NOT_VERIFIED')
+  }
   if (!Array.isArray(providers) || providers.length === 0) {
     invalid('PDF_EXTRACTION_NO_PROVIDERS')
   }
@@ -1310,23 +1578,30 @@ export function comparePdfExtractionProviders(evalSet, providers) {
         providerRows.push(row)
       }
     }
-    const scoredRows = providerRows.filter((row) => row.score !== null)
+    const scoredOutputRows = providerRows.filter(
+      (row) => row.scoredCaseCount > 0,
+    )
     providerSummaries.push({
       providerId: candidate.provider.id,
       providerKind: candidate.provider.kind,
       providerVersion: candidate.provider.version,
       caseCount: candidate.cases.length,
-      score: scoredRows.length
-        ? average(scoredRows.map((row) => row.score))
+      score: scoredOutputRows.length
+        ? average(scoredOutputRows.map((row) => row.score))
         : null,
       diagnosticCodes: [
         ...new Set(providerRows.flatMap((row) => row.diagnostics)),
       ].sort(),
     })
   }
+  const hasScoredOutput = providerSummaries.some(
+    (provider) => provider.score !== null,
+  )
   const reportWithoutHash = {
     schemaVersion: PDF_EXTRACTION_EVAL_REPORT_SCHEMA_VERSION,
     privacy: PDF_EXTRACTION_EVAL_REPORT_PRIVACY,
+    status: hasScoredOutput ? 'comparison' : 'reported-only',
+    diagnosticCodes: hasScoredOutput ? [] : ['NO_SCORED_PROVIDER_OUTPUT'],
     evalSet: {
       id: identity.id,
       schemaVersion: identity.schemaVersion,
@@ -1343,6 +1618,9 @@ export function comparePdfExtractionProviders(evalSet, providers) {
     summary: {
       providerCount: providerSummaries.length,
       rowCount: rows.length,
+      scoredProviderCount: providerSummaries.filter(
+        (provider) => provider.score !== null,
+      ).length,
       strata: [...EXTRACTION_STRATA],
       layouts: [...EXTRACTION_LAYOUTS],
       reportByLayout: true,
@@ -1382,7 +1660,13 @@ function parseArgs(argv) {
 async function loadProviderManifest(value, evalIdentity, evalSet) {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ['schemaVersion', 'id', 'evalSet', 'providers']) ||
+    !exactKeys(value, [
+      'schemaVersion',
+      'id',
+      'evalSet',
+      'evaluationStatus',
+      'providers',
+    ]) ||
     value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
     !SAFE_ID.test(value.id ?? '') ||
     !isRecord(value.evalSet) ||
@@ -1390,11 +1674,28 @@ async function loadProviderManifest(value, evalIdentity, evalSet) {
     !pathIsRepositoryRelative(value.evalSet.path) ||
     !SHA256.test(value.evalSet.fileSha256 ?? '') ||
     value.evalSet.evalSetSha256 !== evalIdentity.evalSetSha256 ||
+    !['reported-only', 'comparison-ready'].includes(value.evaluationStatus) ||
     !Array.isArray(value.providers) ||
     value.providers.length === 0 ||
     !uniqueBy(value.providers, ({ id }) => id)
   ) {
     invalid('INVALID_PDF_EXTRACTION_PROVIDER_MANIFEST')
+  }
+  const expectedEvaluationStatus = value.providers.some(
+    (provider) => provider.mode === 'file',
+  )
+    ? 'comparison-ready'
+    : 'reported-only'
+  if (value.evaluationStatus !== expectedEvaluationStatus) {
+    invalid('PDF_EXTRACTION_PROVIDER_STATUS_MISMATCH')
+  }
+  if (
+    expectedEvaluationStatus === 'comparison-ready' &&
+    reviewValuesForEvalSet(evalSet).some(
+      (review) => review.reviewStatus === 'review-required',
+    )
+  ) {
+    invalid('PDF_EXTRACTION_REVIEW_REQUIRED')
   }
   if (!value.providers.some((provider) => provider.kind === 'deterministic')) {
     invalid('PDF_EXTRACTION_NO_DETERMINISTIC_PROVIDER')

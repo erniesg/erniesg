@@ -3,9 +3,10 @@
   "id": "scholarly-pdf-extraction-provider-comparison-2026-08-v1",
   "evalSet": {
     "path": "benchmarks/pdf/extraction-eval-strata-v1.json",
-    "fileSha256": "219efcf7f1d75935afa55a34893af4354d599a1140c7c3e808ba7e2e488ba232",
-    "evalSetSha256": "41636518cc8215d3494cde7d3cebc7052874ff6761c83e958d9ca9b117a2a8d0"
+    "fileSha256": "36aed098cd1a6e2a12dbb05737ae667f639ef06021415b5c8c2cb498c784f462",
+    "evalSetSha256": "ae3c64093c71e5d2cc16590f10d44217a8df881457f4cd742b662c6fa70559dd"
   },
+  "evaluationStatus": "reported-only",
   "providers": [
     {
       "id": "deterministic-path",

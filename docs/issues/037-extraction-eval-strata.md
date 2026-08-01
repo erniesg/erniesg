@@ -28,6 +28,13 @@ A stratum is therefore only admissible with a defined ground truth and a metric 
 - Metrics are stated so a degenerate answer scores zero: emitting a page-wide grid, emitting every line as a heading, or emitting no objects at all must each score worse than abstaining.
 - Prose-continuity metrics use the pipeline's own authoritative counters where they exist rather than text regexes, and any regex proxy is validated against a counter or a rendered page before it may gate anything.
 - The comparator reports the deterministic path and every configured candidate provider on the same corpus, per stratum and per layout, so a change in either direction is visible in one table.
+- A scored table or object prediction carries source-page geometry and source
+  region/line lineage; metadata-only output is a guarded zero rather than a
+  perfect match. Candidate envelopes bind the canonical eval-set hash.
+- Review labels are admissible only with a roster-bound identity artifact and a
+  source-only decision artifact. Until those artifacts and at least one real
+  provider output exist, the command emits a `reported-only` report and does
+  not claim a comparison.
 - Running the benchmark is a single documented command, and its report is privacy-safe: identities, hashes, counts, and diagnostic codes only.
 
 ## TDD sequence

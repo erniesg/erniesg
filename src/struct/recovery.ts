@@ -14,6 +14,7 @@ export type RecoveryDiagnosticInput = {
   severity: StructDiagnosticSeverity
   message: string
   page?: number
+  pages?: number[]
   automaticRecovery?: boolean
 }
 
@@ -62,9 +63,11 @@ const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
   },
   UNREFERENCED_VISUAL_ASSET: {
     category: 'visuals',
-    title: 'A source visual had no reliable anchor',
+    title: 'An image could not be placed in the EPUB',
     message:
-      'The original visual is included in a source-preserved section so it is not lost.',
+      'The PDF reports an image that the importer could not bind to source geometry and a rendered EPUB node.',
+    action:
+      'Open the marked page and confirm every image is visible. If one is absent, keep the source PDF instead of publishing this EPUB.',
   },
   AMBIGUOUS_VISUAL_MATCH: {
     category: 'visuals',
@@ -306,16 +309,6 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
       diagnostic.severity !== 'info' &&
       (blocking.size === 0 || blocking.has(diagnostic.code)),
   )
-  const categoryTitles: Record<StructDiagnostic['category'], string> = {
-    text: 'Some text needs a source check',
-    layout: 'Some page order or layout needs a quick check',
-    visuals: 'Some figures or diagrams stayed source-preserved',
-    tables: 'Some tables stayed source-preserved',
-    equations: 'Some equations stayed source-preserved',
-    links: 'Some links or references could not be verified',
-    notes: 'Some footnotes or endnotes could not be linked safely',
-    source: 'Some structured content stayed in its source layout',
-  }
   // A source-preserved fallback is an automatic recovery only when the adapter
   // proves it. Unclassified and future blocker codes fail closed so a genuinely
   // missing object can never be mislabeled as ready.
@@ -323,33 +316,44 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
     (diagnostic) => diagnostic.automaticRecovery !== true,
   )
   const groups = new Map<
-    StructDiagnostic['category'],
-    { title: string; pages: Set<number>; unknownCount: number; action?: string }
+    string,
+    {
+      category: StructDiagnostic['category']
+      title: string
+      pages: Set<number>
+      unknownCount: number
+      action: string
+    }
   >()
   for (const diagnostic of actionable) {
     const copy = diagnosticCopy(diagnostic.code, diagnostic.message)
-    const action = copy.action ?? FALLBACK_COPY.action
-    const previous = groups.get(copy.category)
+    const action = copy.action ?? FALLBACK_COPY.action!
+    const groupKey = `${copy.category}\u0000${copy.title}\u0000${action}`
+    const previous = groups.get(groupKey)
     const pages = previous?.pages ?? new Set<number>()
-    if (diagnostic.page !== undefined) pages.add(diagnostic.page)
-    groups.set(copy.category, {
-      title: categoryTitles[copy.category],
+    const diagnosticPages = diagnostic.pages?.length
+      ? diagnostic.pages
+      : diagnostic.page === undefined
+        ? []
+        : [diagnostic.page]
+    for (const page of diagnosticPages) pages.add(page)
+    groups.set(groupKey, {
+      category: copy.category,
+      title: copy.title,
       pages,
       unknownCount:
-        (previous?.unknownCount ?? 0) + (diagnostic.page === undefined ? 1 : 0),
-      ...(previous?.action || action
-        ? { action: previous?.action ?? action }
-        : {}),
+        (previous?.unknownCount ?? 0) + (diagnosticPages.length === 0 ? 1 : 0),
+      action,
     })
   }
-  const issues = [...groups.entries()].map(([category, group]) => {
+  const issues = [...groups.values()].map((group) => {
     const pages = [...group.pages].sort((left, right) => left - right)
     return {
-      category,
+      category: group.category,
       title: group.title,
       count: pages.length > 0 ? pages.length : Math.min(group.unknownCount, 1),
       pages,
-      ...(group.action ? { action: group.action } : {}),
+      action: group.action,
     }
   })
   if (input.ready) {
@@ -365,6 +369,15 @@ export function recoverySummary(input: RecoveryInput): StructRecovery {
     (input.textCoverage ?? 0) > 0 &&
     (input.assetCoverage ?? 0) >= 0 &&
     (input.relationshipCoverage ?? 0) >= 0
+  if (!fallbackAvailable && issues.length === 0) {
+    issues.push({
+      category: FALLBACK_COPY.category,
+      title: FALLBACK_COPY.title,
+      count: 1,
+      pages: [],
+      action: FALLBACK_COPY.action!,
+    })
+  }
   return {
     status: 'review-required',
     title:

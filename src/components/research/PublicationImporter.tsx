@@ -1741,7 +1741,11 @@ export default function PublicationImporter({
                     ? state.epubs
                       ? 'EPUB ready'
                       : 'Validating EPUB'
-                    : 'Review required'}
+                    : hasActionableRecovery(userRecovery)
+                      ? 'Action required'
+                      : state.epubs
+                        ? 'EPUB ready'
+                        : 'Validating EPUB'}
                 </span>
                 <strong>{state.result.source.fileName}</strong>
                 <small>
@@ -1827,7 +1831,9 @@ export default function PublicationImporter({
                   aria-label="Review items"
                 >
                   {userRecovery.issues.map((issue) => (
-                    <li key={issue.category}>
+                    <li
+                      key={`${issue.category}:${issue.title}:${issue.action ?? ''}:${issue.pages.join(',')}`}
+                    >
                       <strong>{issue.title}</strong>
                       <span>{issue.count}</span>
                       {issue.pages.length > 0 && (

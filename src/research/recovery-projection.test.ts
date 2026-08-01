@@ -15,7 +15,11 @@ describe('reader recovery projection evidence', () => {
       recoveryDiagnosticInputs({
         diagnostics: [diagnostic],
         visualRelationships: [
-          { id: 'figure-1', assetIds: ['asset-1'] },
+          {
+            id: 'figure-1',
+            assetIds: ['asset-1'],
+            canonicalNodeId: 'figure-node-1',
+          },
         ],
         assets: [{ id: 'asset-1', bytes: new Uint8Array([1]) }],
       })[0].automaticRecovery,
@@ -28,6 +32,27 @@ describe('reader recovery projection evidence', () => {
         assets: [],
       })[0].automaticRecovery,
     ).toBe(false)
+  })
+
+  it('requires canonical render ownership and keeps every affected page', () => {
+    const [diagnostic] = recoveryDiagnosticInputs({
+      diagnostics: [
+        {
+          code: 'UNRESOLVED_VISUAL_OBJECT',
+          severity: 'error',
+          message: 'candidate asset was not rendered',
+          relationshipId: 'figure-1',
+          sourceBoxes: [{ page: 5 }, { page: 3 }, { page: 5 }],
+        },
+      ],
+      visualRelationships: [
+        { id: 'figure-1', assetIds: ['asset-1'], canonicalNodeId: null },
+      ],
+      assets: [{ id: 'asset-1', bytes: new Uint8Array([1]) }],
+    })
+
+    expect(diagnostic.automaticRecovery).toBe(false)
+    expect(diagnostic.pages).toEqual([3, 5])
   })
 
   it('keeps proven visible unresolved links automatic but fails closed for unknown codes', () => {

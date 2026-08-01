@@ -22,8 +22,16 @@ type RecoveryProjectionSource = {
       target?: { markerId: string | null }
     }
   >
-  visualRelationships?: ReadonlyArray<{ id: string; assetIds: string[] }>
-  assets?: ReadonlyArray<{ id: string; bytes?: Uint8Array }>
+  visualRelationships?: ReadonlyArray<{
+    id: string
+    assetIds: string[]
+    canonicalNodeId?: string | null
+  }>
+  assets?: ReadonlyArray<{
+    id: string
+    bytes?: Uint8Array
+    rendition?: string
+  }>
 }
 
 const ALWAYS_AUTOMATIC_CODES = new Set([
@@ -70,6 +78,7 @@ function hasPackagedRelationshipAsset(
   return (source.visualRelationships ?? []).some(
     (relationship) =>
       relationshipIds.has(relationship.id) &&
+      Boolean(relationship.canonicalNodeId) &&
       relationship.assetIds.some((assetId) => packagedAssetIds.has(assetId)),
   )
 }
@@ -77,16 +86,27 @@ function hasPackagedRelationshipAsset(
 export function recoveryDiagnosticInputs(
   source: RecoveryProjectionSource,
 ): RecoveryDiagnosticInput[] {
-  return source.diagnostics.map((diagnostic) => ({
-    code: diagnostic.code,
-    severity: diagnostic.severity,
-    message: diagnostic.message,
-    ...(diagnostic.page ?? diagnostic.sourceBoxes?.[0]?.page
-      ? { page: diagnostic.page ?? diagnostic.sourceBoxes?.[0]?.page }
-      : {}),
-    automaticRecovery:
-      ALWAYS_AUTOMATIC_CODES.has(diagnostic.code) ||
-      (ASSET_BACKED_CODES.has(diagnostic.code) &&
-        hasPackagedRelationshipAsset(source, diagnostic)),
-  }))
+  return source.diagnostics.map((diagnostic) => {
+    const pages = [
+      ...new Set(
+        [
+          ...(diagnostic.page === undefined ? [] : [diagnostic.page]),
+          ...(diagnostic.sourceBoxes ?? []).map((box) => box.page),
+        ].filter(
+          (page): page is number =>
+            Number.isSafeInteger(page) && page > 0,
+        ),
+      ),
+    ].sort((left, right) => left - right)
+    return {
+      code: diagnostic.code,
+      severity: diagnostic.severity,
+      message: diagnostic.message,
+      ...(pages.length > 0 ? { page: pages[0], pages } : {}),
+      automaticRecovery:
+        ALWAYS_AUTOMATIC_CODES.has(diagnostic.code) ||
+        (ASSET_BACKED_CODES.has(diagnostic.code) &&
+          hasPackagedRelationshipAsset(source, diagnostic)),
+    }
+  })
 }

@@ -305,6 +305,52 @@ describe('STRUCT recovery language', () => {
     )
     expect(summary.issues.every((issue) => Boolean(issue.action))).toBe(true)
   })
+
+  it('does not merge different actions merely because they share a category', () => {
+    const summary = recoverySummary({
+      ready: false,
+      blockingCodes: ['LOW_CONFIDENCE_OCR', 'INCOMPLETE_TEXT_COVERAGE'],
+      textCoverage: 0.9,
+      assetCoverage: 1,
+      relationshipCoverage: 1,
+      diagnostics: [
+        {
+          code: 'LOW_CONFIDENCE_OCR',
+          severity: 'warning',
+          message: 'ocr',
+          pages: [2, 3],
+        },
+        {
+          code: 'INCOMPLETE_TEXT_COVERAGE',
+          severity: 'error',
+          message: 'coverage',
+          page: 7,
+        },
+      ],
+    })
+
+    expect(summary.issues).toHaveLength(2)
+    expect(summary.issues.map((issue) => issue.pages)).toEqual([[2, 3], [7]])
+    expect(new Set(summary.issues.map((issue) => issue.action)).size).toBe(2)
+  })
+
+  it('does not hide an unrecoverable file merely because no diagnostic was emitted', () => {
+    const summary = recoverySummary({
+      ready: false,
+      textCoverage: 0,
+      assetCoverage: 0,
+      relationshipCoverage: 0,
+      diagnostics: [],
+    })
+
+    expect(hasActionableRecovery(summary)).toBe(true)
+    expect(summary.issues).toEqual([
+      expect.objectContaining({
+        category: 'source',
+        action: expect.stringContaining('clearer original file'),
+      }),
+    ])
+  })
 })
 
 describe('STRUCT geometry ordering', () => {

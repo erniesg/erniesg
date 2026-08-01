@@ -9,9 +9,11 @@
   Claude Code OAuth credential was included. The unit did not perform its
   intended watch.
 - Containment: removed the credential from the user systemd manager
-  environment, ran Claude logout, replaced all watchers with file-backed
-  scripts plus `UnsetEnvironment=`, and made the #88 hold persistent. No Codex
-  worker or repository process received the credential from this watcher.
+  environment, ran Claude logout, moved the persistent
+  `~/.config/claude-token.env` source into a mode-`0600` quarantine outside
+  active configuration, replaced all watchers with file-backed scripts plus
+  `UnsetEnvironment=`, and made the #88 hold persistent. No Codex worker or
+  repository process received the credential from this watcher.
 - Remaining action: rotate and re-authenticate the VM Claude Code OAuth
   credential. Do not reuse the exposed value.
 - Rule: never pass multiline watcher programs through nested SSH/systemd shell

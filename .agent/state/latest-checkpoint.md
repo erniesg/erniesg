@@ -106,7 +106,8 @@ acceptance benchmark is not met. The Codex queue needs no user action. One
 separate security action remains: rotate and re-authenticate the VM Claude Code
 OAuth credential after a failed custom watcher invocation wrote the inherited
 value to the private VM user journal. The manager environment was cleared,
-Claude logout was run, and all replacement units explicitly unset provider
-secrets; do not reuse the exposed credential.
+Claude logout was run, the active token-env source was moved into a mode-`0600`
+quarantine, and all replacement units explicitly unset provider secrets; do
+not reuse the exposed credential.
 Latest handoff artifact:
 `/Users/erniesg/.codex/handoffs/erniesg-20260801-182730.md`.

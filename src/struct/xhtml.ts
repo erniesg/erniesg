@@ -62,7 +62,11 @@ function renderInline(value: string, runs: readonly StructInline[]) {
         } else if (run.verticalAlign === 'subscript') {
           rendered = `<sub>${rendered}</sub>`
         }
-        const href = run.href ?? run.targetIds?.[0]
+        const internalTarget = run.targetIds?.[0]
+        const href =
+          run.href?.startsWith('#') && internalTarget
+            ? `#${internalTarget}`
+            : (run.href ?? (internalTarget ? `#${internalTarget}` : undefined))
         if (href) rendered = `<a href="${attribute(href)}">${rendered}</a>`
       }
       return rendered

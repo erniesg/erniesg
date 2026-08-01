@@ -392,7 +392,7 @@ export function buildStructDocument(
               column: region.column,
               inline: [],
               evidence: regionEvidence(region),
-              attributes: { sourceRegionId: region.id },
+              attributes: {},
             }) satisfies StructBlock,
         )
     : []
@@ -520,16 +520,22 @@ export function buildStructDocument(
   }
   for (const block of blocks) {
     for (const [index, inline] of block.inline.entries()) {
-      if (!inline.href) continue
+      if (!inline.href && !inline.targetIds?.length) continue
+      const href = inline.href
+      const targets = inline.targetIds ?? (href ? [href] : [])
       relationships.push({
         id: structId(
           'relationship',
-          `hyperlink:${block.id}:${index}:${inline.href}`,
+          `hyperlink:${block.id}:${index}:${href ?? targets.join(',')}`,
         ),
         kind: 'hyperlink',
         from: block.id,
-        to: inline.targetIds ?? [inline.href],
-        status: inline.href.startsWith('#') ? 'matched' : 'source-preserved',
+        to: targets,
+        status:
+          targets.length > 0 &&
+          (!href || href.startsWith('#') || inline.targetIds?.length)
+            ? 'matched'
+            : 'source-preserved',
         confidence: block.evidence.confidence,
         evidence: {
           ...block.evidence,
@@ -761,7 +767,6 @@ export function buildStructDocument(
         }
       : {}),
   }
-  const relationshipSourceCount = relationships.length
   const sourceRegionIds = new Set(
     pdf ? reconstruction.regions.map((region) => region.id) : [],
   )
@@ -776,7 +781,21 @@ export function buildStructDocument(
     (count, node) => count + (provenance[node.id]?.links.length ?? 0),
     0,
   )
-  const sourceTextCharacterCount = orderedBlocks.reduce(
+  const sourceRelationshipCount =
+    reconstruction.visualRelationships.length +
+    reconstruction.noteRelationships.length +
+    sourceAnnotationCount +
+    (pdf
+      ? reconstruction.citationRelationships.length +
+        reconstruction.crossReferenceRelationships.length +
+        reconstruction.readingOrder.edges.length
+      : 0)
+  const sourceTextCharacterCount =
+    reconstruction.paper.nodes.reduce(
+      (count, node) => count + nodeText(node).length,
+      0,
+    ) + regionBlocks.reduce((count, block) => count + block.text.length, 0)
+  const structTextCharacterCount = orderedBlocks.reduce(
     (count, block) => count + block.text.length,
     0,
   )
@@ -788,14 +807,17 @@ export function buildStructDocument(
     sourceAnnotationCount,
     accountedSourceAnnotationCount: sourceAnnotationCount,
     sourceAssetCount: reconstruction.assets.length,
-    sourceRelationshipCount: relationshipSourceCount,
+    accountedSourceAssetCount: assets.length,
+    sourceRelationshipCount,
+    accountedSourceRelationshipCount: sourceRelationshipCount,
     sourceDiagnosticCount: reconstruction.diagnostics.length,
+    accountedSourceDiagnosticCount: diagnostics.length,
     sourceTextCharacterCount,
     structBlockCount: orderedBlocks.length,
     structAssetCount: assets.length,
     structRelationshipCount: relationships.length,
     structDiagnosticCount: diagnostics.length,
-    structTextCharacterCount: sourceTextCharacterCount,
+    structTextCharacterCount,
   }
   const canonicalAssets = [...assets].sort((left, right) =>
     left.id.localeCompare(right.id),

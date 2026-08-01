@@ -219,8 +219,11 @@ export type StructReceipt = {
     sourceAnnotationCount: number
     accountedSourceAnnotationCount: number
     sourceAssetCount: number
+    accountedSourceAssetCount: number
     sourceRelationshipCount: number
+    accountedSourceRelationshipCount: number
     sourceDiagnosticCount: number
+    accountedSourceDiagnosticCount: number
     sourceTextCharacterCount: number
     structBlockCount: number
     structAssetCount: number

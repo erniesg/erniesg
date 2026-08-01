@@ -30,6 +30,15 @@ describe('STRUCT canonical document graph', () => {
   it('adapts a structured DOCX without exposing source-specific node types', async () => {
     const reconstruction = await structuredDocx()
     const graph = buildStructDocument(reconstruction)
+    const sourceAnnotationCount = reconstruction.paper.nodes.reduce(
+      (count, node) =>
+        count + (reconstruction.provenance?.[node.id]?.links.length ?? 0),
+      0,
+    )
+    const sourceRelationshipCount =
+      reconstruction.visualRelationships.length +
+      reconstruction.noteRelationships.length +
+      sourceAnnotationCount
 
     expect(graph.schemaVersion).toBe('0.1.0')
     expect(graph.source.format).toBe('docx')
@@ -60,10 +69,13 @@ describe('STRUCT canonical document graph', () => {
       sourceNodeCount: reconstruction.paper.nodes.length,
       accountedSourceNodeCount: reconstruction.paper.nodes.length,
       sourceAssetCount: reconstruction.assets.length,
+      accountedSourceAssetCount: reconstruction.assets.length,
       sourceRegionCount: 0,
       accountedSourceRegionCount: 0,
-      sourceRelationshipCount: graph.relationships.length,
+      sourceRelationshipCount,
+      accountedSourceRelationshipCount: sourceRelationshipCount,
       sourceDiagnosticCount: reconstruction.diagnostics.length,
+      accountedSourceDiagnosticCount: reconstruction.diagnostics.length,
       sourceTextCharacterCount: graph.receipt.textCharacterCount,
       structBlockCount: graph.blocks.length,
       structAssetCount: graph.assets.length,
@@ -119,7 +131,7 @@ describe('STRUCT canonical document graph', () => {
   it('pins the structured DOCX receipt', async () => {
     const graph = buildStructDocument(await structuredDocx())
     expect(graph.receipt.generatedSha256).toBe(
-      '9d9f433684e19f84a7438f203f0b4c191b09e1c1672537f1e04c6e998d3f0cf6',
+      '6d2a3caa10db878156972cdfef60a398aa6879a7dea36008fdcd3ea2b71ba971',
     )
   })
 
@@ -129,6 +141,19 @@ describe('STRUCT canonical document graph', () => {
     expect(xhtml).toContain(`<title>${graph.metadata.title}</title>`)
     expect(xhtml).toContain(`data-struct-id="${graph.blocks[0].id}"`)
     expect(xhtml).not.toContain('sourceNodeId')
+  })
+
+  it('renders a STRUCT internal target as a fragment link', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const target = graph.blocks[1]
+    graph.blocks[0] = {
+      ...graph.blocks[0],
+      text: 'See target',
+      inline: [{ start: 0, end: 10, targetIds: [target.id] }],
+    }
+    expect(renderPublicationXhtml(graph)).toContain(
+      `href="#${target.id}"`,
+    )
   })
 
   it('round-trips the graph into a deterministic EPUB package', async () => {

@@ -3605,6 +3605,13 @@ function boundedAlgorithmBlocks(
 type PreformattedLineOwner = {
   region: PdfPageRegion
   line: PdfPageRegion['lines'][number]
+  /**
+   * Canonical source order is computed from the complete page geometry before
+   * a listing is narrowed to its owning lines. Keeping that ordinal on the
+   * owner means every later materializer (segments, provenance, and recovered
+   * text) reuses the same total order instead of applying a context-free sort.
+   */
+  canonicalOrder?: number
 }
 
 type BoundedPreformattedSegment = {
@@ -3647,35 +3654,181 @@ function sourceLineOrder(
   left: PreformattedLineOwner,
   right: PreformattedLineOwner,
 ) {
+  // Every production owner is canonicalized before it reaches a materializer.
+  // Keep an uncanonicalized owner deterministic too, and make the mixed case
+  // transitive by placing it after the page-wide rank instead of switching
+  // between two incomparable relations.
+  const leftRank = left.canonicalOrder ?? Number.MAX_SAFE_INTEGER
+  const rightRank = right.canonicalOrder ?? Number.MAX_SAFE_INTEGER
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank
+  }
+  // Owners created by a narrowly-scoped detector may not have the page-wide
+  // ordinal. Their fallback still needs to be a strict total order. In
+  // particular, never compare left/right by one rule and single/span by a
+  // different rule: that relation is non-transitive when the lanes mix.
   const columnRank = (column: PdfRegionColumn) =>
-    column === 'left' ? 0 : column === 'right' ? 1 : -1
+    column === 'left' ? 0 : column === 'right' ? 1 : column === 'span' ? 2 : 3
   return (
     left.line.box.page - right.line.box.page ||
-    (left.line.box.page === right.line.box.page &&
-    left.region.column !== right.region.column &&
-    (left.region.column === 'left' || left.region.column === 'right') &&
-    (right.region.column === 'left' || right.region.column === 'right')
-      ? columnRank(left.region.column) - columnRank(right.region.column)
-      : 0) ||
+    columnRank(left.region.column) - columnRank(right.region.column) ||
     left.line.box.y - right.line.box.y ||
     left.line.box.x - right.line.box.x ||
+    left.region.id.localeCompare(right.region.id) ||
     left.line.id.localeCompare(right.line.id)
   )
 }
 
+function sourceRegionOrder(left: PdfPageRegion, right: PdfPageRegion) {
+  const columnRank = (column: PdfRegionColumn) =>
+    column === 'left' ? 0 : column === 'right' ? 1 : column === 'span' ? 2 : 3
+  return (
+    left.box.y - right.box.y ||
+    columnRank(left.column) - columnRank(right.column) ||
+    left.box.x - right.box.x ||
+    left.id.localeCompare(right.id)
+  )
+}
+
+/**
+ * Build the same page-spanning bands used by the canonical reading-order
+ * resolver. A span is emitted after the left/right (or single) regions above
+ * it and before the regions below it. The resulting ordinal is a strict total
+ * order even when a page mixes left, right, single, and span regions.
+ */
+function canonicalSourceLineOwners(
+  regions: PdfPageRegion[],
+  includeBlankLines = false,
+) {
+  const eligibleRegions = regions.filter(
+    (region) =>
+      region.lines.length > 0 &&
+      !['header', 'footer', 'page-number'].includes(region.kind),
+  )
+  const orderedOwners: PreformattedLineOwner[] = []
+  const pages = [...new Set(eligibleRegions.map((region) => region.page))].sort(
+    (left, right) => left - right,
+  )
+  for (const page of pages) {
+    const pageRegions = eligibleRegions.filter((region) => region.page === page)
+    const emitted = new Set<string>()
+    const appendRegions = (pageSlice: PdfPageRegion[]) => {
+      const columns: PdfRegionColumn[] = ['left', 'right', 'single']
+      for (const column of columns) {
+        pageSlice
+          .filter((region) => region.column === column)
+          .sort(sourceRegionOrder)
+          .forEach((region) => {
+            const lines = [...region.lines]
+              .filter((line) => includeBlankLines || line.text.trim())
+              .sort(
+                (left, right) =>
+                  left.box.y - right.box.y ||
+                  left.box.x - right.box.x ||
+                  left.id.localeCompare(right.id),
+              )
+            for (const line of lines) {
+              orderedOwners.push({ region, line })
+            }
+            emitted.add(region.id)
+          })
+      }
+      // A page without a detected column split can still contain a source
+      // region tagged as span. Keep it deterministic after the ordinary flow.
+      pageSlice
+        .filter((region) => region.column === 'span')
+        .sort(sourceRegionOrder)
+        .forEach((region) => {
+          const lines = [...region.lines]
+            .filter((line) => includeBlankLines || line.text.trim())
+            .sort(
+              (left, right) =>
+                left.box.y - right.box.y ||
+                left.box.x - right.box.x ||
+                left.id.localeCompare(right.id),
+            )
+          for (const line of lines) orderedOwners.push({ region, line })
+          emitted.add(region.id)
+        })
+      // A malformed or future column value must not disappear from the order.
+      pageSlice
+        .filter((region) => !emitted.has(region.id))
+        .sort((left, right) => {
+          const rank = (column: PdfRegionColumn) =>
+            column === 'left'
+              ? 0
+              : column === 'right'
+                ? 1
+                : column === 'span'
+                  ? 2
+                  : 3
+          return (
+            rank(left.column) - rank(right.column) ||
+            sourceRegionOrder(left, right)
+          )
+        })
+        .forEach((region) => {
+          for (const line of [...region.lines]
+            .filter((line) => includeBlankLines || line.text.trim())
+            .sort(
+              (left, right) =>
+                left.box.y - right.box.y ||
+                left.box.x - right.box.x ||
+                left.id.localeCompare(right.id),
+            )) {
+            orderedOwners.push({ region, line })
+          }
+        })
+    }
+
+    const spans = pageRegions
+      .filter((region) => region.column === 'span')
+      .sort(sourceRegionOrder)
+    for (const span of spans) {
+      const band = pageRegions.filter(
+        (region) =>
+          region.column !== 'span' &&
+          !emitted.has(region.id) &&
+          region.box.y < span.box.y,
+      )
+      appendRegions(band)
+      const spanLines = [...span.lines]
+        .filter((line) => includeBlankLines || line.text.trim())
+        .sort(
+          (left, right) =>
+            left.box.y - right.box.y ||
+            left.box.x - right.box.x ||
+            left.id.localeCompare(right.id),
+        )
+      for (const line of spanLines) orderedOwners.push({ region: span, line })
+      emitted.add(span.id)
+    }
+    appendRegions(pageRegions.filter((region) => !emitted.has(region.id)))
+  }
+  return orderedOwners.map((owner, index) => ({
+    ...owner,
+    canonicalOrder: index,
+  }))
+}
+
+function canonicalizeSourceLineOwners(
+  regions: PdfPageRegion[],
+  owners: PreformattedLineOwner[],
+) {
+  const orderByLineId = new Map(
+    canonicalSourceLineOwners(regions, true).map((owner) => [
+      owner.line.id,
+      owner.canonicalOrder!,
+    ]),
+  )
+  return owners.map((owner) => ({
+    ...owner,
+    canonicalOrder: orderByLineId.get(owner.line.id),
+  }))
+}
+
 function orderedSourceLines(regions: PdfPageRegion[]) {
-  return regions
-    .filter(
-      (region) =>
-        region.lines.length > 0 &&
-        !['header', 'footer', 'page-number'].includes(region.kind),
-    )
-    .flatMap((region) =>
-      region.lines
-        .filter((line) => line.text.trim())
-        .map((line) => ({ region, line })),
-    )
-    .sort(sourceLineOrder)
+  return canonicalSourceLineOwners(regions)
 }
 
 function substantiveSourceRuns(line: PdfPageRegion['lines'][number]) {
@@ -3793,6 +3946,10 @@ function sourceLineRecord(
   }
 }
 
+function hasLiteralLeadingWhitespace(value: string) {
+  return /^[\t ]/u.test(value)
+}
+
 function attachedPreformattedLabel(value: string) {
   return /^(?:Algorithm|Listing)\s+(?:\d+(?:\.\d+)*[A-Za-z]?|[IVXLCDM]+)(?=$|[\s:.)–—-])/iu.test(
     value.trim(),
@@ -3816,8 +3973,13 @@ function contiguousPreformattedFlow(
     previous.line.box.page === next.line.box.page &&
     previous.region.column === 'left' &&
     next.region.column === 'right'
+  const crossPageColumnBreak =
+    next.line.box.page === previous.line.box.page + 1 &&
+    previous.region.column === 'right' &&
+    next.region.column === 'left'
   const pageBreak =
-    next.line.box.page === previous.line.box.page + 1 && sameLane
+    (next.line.box.page === previous.line.box.page + 1 && sameLane) ||
+    crossPageColumnBreak
   return (
     (columnBreak || pageBreak) &&
     previous.line.box.y >= 0.55 &&
@@ -3853,6 +4015,145 @@ type UnresolvedPreformattedDetection = {
   sourceBoxes: NormalizedSourceBox[]
 }
 
+type PreformattedScopeReservation = {
+  lineIds: Set<string>
+  captionRegionIds: Set<string>
+}
+
+function preformattedScopeReservations(
+  pages: PdfPageAnalysis[],
+  regions: PdfPageRegion[],
+  captionLabels: ReadonlyMap<PdfPageRegion, PdfScholarlyVisualLabel>,
+): PreformattedScopeReservation {
+  const lineIds = new Set<string>()
+  const captionRegionIds = new Set<string>()
+  const reserveRegion = (region: PdfPageRegion) => {
+    for (const line of region.lines) lineIds.add(line.id)
+  }
+
+  // Regions already typed by the source adapter are semantic owners, even
+  // when their visual rendition is unresolved. Generic listing detection must
+  // not steal their lines or their captions and make the typed pass disappear.
+  for (const region of regions) {
+    if (['table', 'equation', 'figure'].includes(region.kind)) {
+      reserveRegion(region)
+    }
+    if (
+      region.kind === 'equation' ||
+      hasMathExtensionFontProvenance(region) ||
+      sourceMathFragment(region)
+    ) {
+      reserveRegion(region)
+    }
+  }
+
+  const typedCaption = (region: PdfPageRegion) => {
+    const label = captionLabels.get(region)
+    if (!label) return null
+    const firstRun = region.lines
+      .flatMap((line) => line.runs)
+      .find((run) => run.text.trim())
+    if (
+      region.kind !== 'caption' &&
+      !(firstRun && dedicatedCaptionLabelStyle(firstRun))
+    ) {
+      return null
+    }
+    if (unstyledProseTableReference(region)) return null
+    return label
+  }
+
+  for (const [caption, label] of captionLabels) {
+    const typed = typedCaption(caption)
+    if (!typed) continue
+
+    // Caption-bounded program listings are the one typed-looking figure
+    // envelope intentionally handled by the preformatted detector itself.
+    // Leave that caption available to programListingBlocks.
+    const programListing =
+      typed.kind === 'figure' &&
+      /\b(?:example|generated)\s+program\b|\bprogram\s+for\b/iu.test(
+        caption.text,
+      )
+    if (!programListing) {
+      captionRegionIds.add(caption.id)
+      reserveRegion(caption)
+    }
+
+    if (typed.kind === 'table' || typed.kind === 'equation') {
+      // These are the same bounded source lanes used by the typed visual pass.
+      // Reserving them before generic detection prevents a monospaced table row
+      // or formula fragment from becoming a competing code block.
+      for (const source of nextSourceRegions(caption, regions, typed.kind)) {
+        reserveRegion(source)
+      }
+    }
+
+    if (typed.kind === 'figure') {
+      const page = pages.find((candidate) => candidate.page === caption.page)
+      const nativeBoxes = (page?.objects ?? [])
+        .filter((object) => object.kind === 'image' || object.kind === 'vector')
+        .map((object) => object.box)
+      for (const source of regions) {
+        if (source.page !== caption.page || source.id === caption.id) continue
+        if (source.kind === 'figure' || source.kind === 'chart-label') {
+          reserveRegion(source)
+          continue
+        }
+        if (
+          source.kind === 'body' ||
+          source.kind === 'spanning' ||
+          source.kind === 'side'
+        ) {
+          const overlapsNative = nativeBoxes.some(
+            (nativeBox) =>
+              intersectionArea(nativeBox, source.box) >
+              Math.min(
+                nativeBox.width * nativeBox.height,
+                source.box.width * source.box.height,
+              ) *
+                0.2,
+          )
+          if (overlapsNative) reserveRegion(source)
+        }
+      }
+    }
+  }
+
+  // Bibliography entries are intentionally source-backed prose/list structure,
+  // not listings. Reserve an identifiable reference section before a leading
+  // "References:" line can be used as a generic introducer.
+  const bibliographyHeading = (value: string) =>
+    /^(?:(?:\d+(?:\.\d+)*)[.)]?\s+)?(?:references|bibliography)\s*:?[\s]*$/iu.test(
+      value.trim(),
+    )
+  const headings = regions.filter(
+    (region) =>
+      bibliographyHeading(region.text) ||
+      region.lines.some((line) => bibliographyHeading(line.text)),
+  )
+  for (const heading of headings) {
+    reserveRegion(heading)
+    const following = regions
+      .filter(
+        (region) =>
+          region.page === heading.page &&
+          region.id !== heading.id &&
+          region.column === heading.column &&
+          region.box.y >= heading.box.y + heading.box.height - 0.004,
+      )
+      .sort(sourceRegionOrder)
+    for (const region of following) {
+      const entryLike = region.lines.some((line) =>
+        /^(?:\[\s*\d+\s*\]|\d+[.)])\s+/u.test(line.text.trim()),
+      )
+      if (entryLike) reserveRegion(region)
+    }
+  }
+
+  return { lineIds, captionRegionIds }
+}
+
 function sourceEvidencePreformattedBlocks(
   regions: PdfPageRegion[],
   claimedLineIds: Set<string>,
@@ -3870,7 +4171,11 @@ function sourceEvidencePreformattedBlocks(
     const first = sourceLines[0]
     const last = sourceLines.at(-1)!
     const candidates = [ordered[firstIndex - 1], ordered[lastIndex + 1]].filter(
-      (candidate): candidate is PreformattedLineOwner => {
+      (
+        candidate,
+      ): candidate is PreformattedLineOwner & {
+        canonicalOrder: number
+      } => {
         if (!candidate || sourceLines.includes(candidate)) return false
         if (claimedCaptionRegionIds.has(candidate.region.id)) return false
         const before = candidate === ordered[firstIndex - 1]
@@ -4032,6 +4337,9 @@ function exactPreformattedSource(
   const stablePageIndent = ordered.every(
     (owner) => Math.abs(relativeIndent(owner)) <= 0.002,
   )
+  const hasLiteralIndentation = ordered.some(({ line }) =>
+    hasLiteralLeadingWhitespace(line.text),
+  )
   const proved =
     allowTranscriptProof &&
     ordered.length > 0 &&
@@ -4057,9 +4365,14 @@ function exactPreformattedSource(
           : best,
       0,
     )
-    const indentColumns = stablePageIndent
-      ? 0
-      : Math.min(16, Math.max(0, level * 2))
+    // A source line may already carry literal indentation. In that case the
+    // text itself is the lossless representation; adding a quantized geometry
+    // class would double the visual indent. Geometry supplies indentation only
+    // when extraction discarded the leading whitespace.
+    const indentColumns =
+      hasLiteralIndentation || stablePageIndent
+        ? 0
+        : Math.min(16, Math.max(0, level * 2))
     return sourceLineRecord(owner, indentColumns)
   })
   return {
@@ -4247,9 +4560,12 @@ function programListingBlocks(
           left.box.x - right.box.x ||
           left.id.localeCompare(right.id),
       )
-    const sourceLines = sourceRegions
-      .flatMap((region) => region.lines.map((line) => ({ region, line })))
-      .sort(sourceLineOrder)
+    const sourceLines = canonicalizeSourceLineOwners(
+      regions,
+      sourceRegions.flatMap((region) =>
+        region.lines.map((line) => ({ region, line })),
+      ),
+    ).sort(sourceLineOrder)
     if (
       sourceLines.length < 6 ||
       sourceLines.filter(({ line }) => monospacedSourceLine(line)).length < 2 ||
@@ -4441,9 +4757,13 @@ function vectorPanelPreformattedBlocks(
 function boundedPreformattedBlocks(
   pages: PdfPageAnalysis[],
   regions: PdfPageRegion[],
+  reservations: PreformattedScopeReservation = {
+    lineIds: new Set<string>(),
+    captionRegionIds: new Set<string>(),
+  },
 ) {
-  const claimedLineIds = new Set<string>()
-  const claimedCaptionRegionIds = new Set<string>()
+  const claimedLineIds = new Set(reservations.lineIds)
+  const claimedCaptionRegionIds = new Set(reservations.captionRegionIds)
   const sourceEvidence = sourceEvidencePreformattedBlocks(
     regions,
     claimedLineIds,
@@ -9467,7 +9787,11 @@ export async function reconstructPdfVisuals({
       return label ? ([[region, label]] as const) : []
     }),
   )
-  const preformattedDetection = boundedPreformattedBlocks(pages, regions)
+  const preformattedDetection = boundedPreformattedBlocks(
+    pages,
+    regions,
+    preformattedScopeReservations(pages, regions, captionLabels),
+  )
   const preformattedBlocks = preformattedDetection.blocks
   for (const unresolved of preformattedDetection.unresolved) {
     diagnostics.push({

@@ -29,6 +29,47 @@ Activate only this repository drain after the live isolation probes pass:
 rucksack vm autopilot install-timer erniesg/erniesg --repo-root . --profile dev-vm --enable-drain --isolation bubblewrap --execute
 ```
 
+Let the installer finish before installing the repo-owned pulse. Record its
+exact generated service in the pulse state file; the pulse validates this
+single versioned name and never embeds or guesses an installer version:
+
+```bash
+generated_service=rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service
+systemctl --user show "$generated_service" -p LoadState -p ActiveState --no-pager
+mkdir -p ~/.config/rucksack/overnight ~/.config/systemd/user
+target_state=$(mktemp)
+printf '%s\n' "$generated_service" > "$target_state"
+install -m 600 "$target_state" ~/.config/rucksack/overnight/erniesg-erniesg.target
+rm -f "$target_state"
+install -m 600 infra/vm/systemd/erniesg-struct-typeset-queue.service \
+  ~/.config/systemd/user/erniesg-struct-typeset-queue.service
+install -m 600 infra/vm/systemd/erniesg-struct-typeset-queue.timer \
+  ~/.config/systemd/user/erniesg-struct-typeset-queue.timer
+touch ~/.config/rucksack/overnight/erniesg-erniesg.enabled
+systemctl --user daemon-reload
+systemctl --user enable --now erniesg-struct-typeset-queue.timer
+```
+
+The pulse validates the timer, future fire, `30m`/`5m` timeout policy, target,
+exact session ledger, and disk headroom before requesting the generated drain
+with `--no-block`. The generated unit and detached worker retain their own
+lifetimes if the pulse exits or reaches its timeout. Every pass atomically
+writes:
+
+```text
+~/.local/state/rucksack/queue-checkpoints/erniesg-erniesg/latest.json
+```
+
+At disk high water, the pulse does not scan and delete arbitrary directories.
+It accepts cleanup candidates only from
+`~/.config/rucksack/overnight/erniesg-erniesg.cleanup.json`. A worktree needs an
+external terminal checkpoint with the exact repo, session, worktree, source
+SHA, status, and `cleanup_eligible: true`; it must also be clean and contain no
+`.agent/evidence`. A cache must be explicitly reproducible and live beneath
+`~/.cache/rucksack/reproducible/`. State, handoffs, evidence, live worktrees,
+and referenced paths are protected roots. With no proven candidate, or when
+cleanup cannot restore headroom, the pulse fails closed and launches nothing.
+
 Configure Discord notifications on the VM if you want human-gate pings outside
 GitHub. The command opens an SSH prompt and stores the webhook only in the VM
 user environment file:
@@ -37,17 +78,10 @@ user environment file:
 rucksack vm autopilot discord erniesg/erniesg --profile dev-vm --execute
 ```
 
-Manual equivalent for the repo-specific queue timer only:
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service ~/.config/systemd/user/
-cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer ~/.config/systemd/user/
-loginctl enable-linger "$USER"
-systemctl --user daemon-reload
-systemctl --user disable --now rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
-systemctl --user status rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
-```
+Do not install the checked-in generic drain service as a manual equivalent. It
+can drift from the fixed publisher/network boundary. Install the generated
+drain through Rucksack; the repository owns only the outer pulse and its
+validated target state.
 
 `loginctl enable-linger "$USER"` keeps the user service manager available after
 the SSH session disconnects. It does not enable the held drain timer.
@@ -66,6 +100,14 @@ daily with jitter. Busy workers and
 transient npm failures retry at bounded intervals, while permanent local-path or
 tooling errors wait for the next daily run after an operator repairs the VM.
 The 30-minute queue drain no longer runs a package update on every poll.
+
+The default global capacity remains one verified live issue worker. A future
+second lane is limited to one disjoint evidence/eval worker beside one
+parser-core worker, and only after Rucksack persists versioned resource claims
+and enforces disk, memory, path, port, browser, and publisher conflicts under
+the dispatch lock. Until `erniesg/rucksack#347` and `#349` land, unknown claims
+fail closed to one worker; the repo pulse does not infer safety from labels or
+filenames.
 
 Inspect runs:
 

@@ -44,9 +44,15 @@ if (command === 'show' && unit === 'erniesg-struct-typeset-queue.service') {
 }
 
 if (command === 'show' && unit?.endsWith('-drain.service')) {
-  process.stdout.write(
-    'LoadState=loaded\nActiveState=inactive\nSubState=dead\n',
-  )
+  if (state === 'masked-target') {
+    process.stdout.write(
+      'LoadState=masked\nActiveState=inactive\nSubState=dead\n',
+    )
+  } else {
+    process.stdout.write(
+      'LoadState=loaded\nActiveState=inactive\nSubState=dead\n',
+    )
+  }
   process.exit(0)
 }
 

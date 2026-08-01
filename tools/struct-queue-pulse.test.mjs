@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   classifyRepositorySessions,
+  classifyVmSessions,
   evaluateDiskCapacity,
   evaluateTimerHealth,
   parseTargetUnit,
@@ -26,6 +27,13 @@ const servicePath = new URL(
   import.meta.url,
 )
 const service = readFileSync(servicePath, 'utf8')
+const issueSpec = readFileSync(
+  new URL(
+    '../docs/issues/048-vm-drain-persistence-and-checkpoints.md',
+    import.meta.url,
+  ),
+  'utf8',
+)
 const pulsePath = fileURLToPath(
   new URL('./struct-queue-pulse.mjs', import.meta.url),
 )
@@ -135,6 +143,34 @@ describe('STRUCT queue pulse contract', () => {
 
     expect(result.live).toHaveLength(1)
     expect(result.availableSlots).toBe(0)
+  })
+
+  it('keeps the default host-wide cap at one until resource claims are proven', () => {
+    const otherRepo = session({
+      repo: 'erniesg/rucksack',
+      issue_number: '349',
+      session_id: 'rucksack-erniesg-rucksack-issue-349-feedface',
+      tmux_session: 'rucksack-erniesg-rucksack-issue-349-feedface',
+      branch: 'codex/issue-349-rucksack',
+      local_checkout_path: '/srv/worktrees/rucksack/issue-349-vm-codex',
+      log_path: '/srv/worktrees/rucksack/issue-349-vm-codex/run.log',
+    })
+    const result = classifyVmSessions({
+      ledger: { schema_version: 1, sessions: [otherRepo] },
+      now,
+      processArgs: [
+        `tmux -L rucksack-4567 new-session -d -s ${otherRepo.tmux_session}`,
+      ],
+    })
+
+    expect(result.status).toBe('ok')
+    expect(result.live).toMatchObject([
+      { repo: 'erniesg/rucksack', issue_number: '349' },
+    ])
+    expect(result.availableSlots).toBe(0)
+    expect(issueSpec).toContain('one parser-core worker plus one')
+    expect(issueSpec).toContain('Rucksack issues `erniesg/rucksack#347`')
+    expect(issueSpec).toContain('Unknown claims, overlapping scopes, or low')
   })
 
   it('fails closed when repository lease state is missing or malformed', () => {
@@ -367,6 +403,19 @@ describe('STRUCT queue pulse resumability', () => {
     expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 
+  it('recognizes a normal codex exec process and never clears containment masks', () => {
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      processArgs: [
+        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol resume',
+      ],
+    })
+
+    expect(result.status).toBe(0)
+    expect(checkpoint.outcome).toBe('worker-active')
+    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
+    expect(systemctlCalls.some((args) => args.includes('unmask'))).toBe(false)
+  })
+
   it('fails closed at high water and records the recovery action', () => {
     const { result, checkpoint, systemctlCalls } = runPulse({
       disk: { totalBytes: 100, freeBytes: 10 },
@@ -394,5 +443,18 @@ describe('STRUCT queue pulse resumability', () => {
       failure_class: 'scheduler-health-invalid',
     })
     expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
+  })
+
+  it('does not unmask a generated drain held by Rucksack containment', () => {
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      systemctlState: 'masked-target',
+    })
+
+    expect(result.status).toBe(2)
+    expect(checkpoint).toMatchObject({
+      outcome: 'queue-health-blocked',
+      failure_class: 'drain-target-unavailable',
+    })
+    expect(systemctlCalls.some((args) => args.includes('unmask'))).toBe(false)
   })
 })

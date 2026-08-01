@@ -94,9 +94,9 @@ const blockedSessionState = (reason, detail) => ({
   availableSlots: 0,
 })
 
-export const classifyRepositorySessions = ({
+const classifySessions = ({
   ledger,
-  repo,
+  repo = null,
   now = Date.now(),
   processArgs = [],
   maxWorkers = 1,
@@ -113,7 +113,7 @@ export const classifyRepositorySessions = ({
     )
   }
   if (
-    !isNonEmptyString(repo) ||
+    (repo !== null && !isNonEmptyString(repo)) ||
     !Number.isInteger(maxWorkers) ||
     maxWorkers < 1
   ) {
@@ -133,7 +133,7 @@ export const classifyRepositorySessions = ({
         'A session record cannot be assigned to a repository.',
       )
     }
-    if (item.repo !== repo) continue
+    if (repo !== null && item.repo !== repo) continue
 
     const issueNumber = String(item.issue_number ?? '')
     const heartbeatAt = parseTime(item.heartbeat_at)
@@ -186,6 +186,11 @@ export const classifyRepositorySessions = ({
     availableSlots: Math.max(0, maxWorkers - live.length),
   }
 }
+
+export const classifyRepositorySessions = (options) => classifySessions(options)
+
+export const classifyVmSessions = (options) =>
+  classifySessions({ ...options, repo: null })
 
 export const evaluateDiskCapacity = ({
   totalBytes,
@@ -431,6 +436,7 @@ const loadCleanupManifest = (path, stateRoot) => {
   }
   return manifest.candidates.map((raw) => {
     const candidate = { ...raw }
+    delete candidate.checkpoint
     if (candidate.kind !== 'worktree') return candidate
     if (
       !isNonEmptyString(candidate.checkpoint_path) ||
@@ -624,25 +630,36 @@ export const runQueuePulse = () => {
 
     const processArgs = processSnapshot()
     const ledger = readJson(config.sessionFile)
+    const vmSessionState = classifyVmSessions({
+      ledger,
+      processArgs,
+      maxWorkers: 1,
+    })
     const sessionState = classifyRepositorySessions({
       ledger,
       repo: config.repo,
       processArgs,
       maxWorkers: 1,
     })
-    if (sessionState.status !== 'ok') {
+    if (vmSessionState.status !== 'ok' || sessionState.status !== 'ok') {
+      const blockedState =
+        vmSessionState.status !== 'ok' ? vmSessionState : sessionState
       return finish('queue-health-blocked', 2, {
-        failure_class: sessionState.reason,
-        session_state: sessionState,
+        failure_class: blockedState.reason,
+        session_state: blockedState,
         timer_health: timerHealth,
         next_action:
           'Run the exact Rucksack session recovery command before dispatch.',
       })
     }
-    if (sessionState.live.length > 0 || directCodexWorkerIsLive(processArgs)) {
+    if (
+      vmSessionState.live.length > 0 ||
+      directCodexWorkerIsLive(processArgs)
+    ) {
       return finish('worker-active', 0, {
         failure_class: null,
-        live_sessions: sessionState.live.map((item) => ({
+        live_sessions: vmSessionState.live.map((item) => ({
+          repo: item.repo,
           issue: item.issue_number,
           session_id: item.session_id,
           branch: item.branch,

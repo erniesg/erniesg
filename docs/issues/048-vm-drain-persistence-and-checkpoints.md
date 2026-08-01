@@ -23,12 +23,21 @@ that product umbrella completes.
   a queue-health failure, not a successful idle result.
 - Enforce one total live VM issue session for this repository across repeated
   pulse invocations. `--max-workers 1` is only a per-invocation launch limit;
-  active unexpired leases/sessions consume the global slot before selection.
-  Reconcile GitHub labels and exact issue leases before dispatch; never
-  duplicate a running or human-blocked issue.
+  an exact live session consumes the global slot before selection. Preserve a
+  worker whose process is still live even when its heartbeat has expired; a
+  completed or expired process-free session frees the slot. Missing,
+  malformed, or conflicting session state fails closed. Reconcile GitHub
+  labels and exact issue leases before dispatch; never duplicate a running or
+  human-blocked issue.
 - Keep parser-core work serialized through declared dependencies. Evidence or
   evaluation work may run in parallel only when its declared path/resource
   scope is disjoint from the active worker.
+- Preflight disk capacity before dispatch. At the configured high-water mark,
+  preserve the active lease, handoffs, receipts, evidence, and referenced
+  artifacts. Reclaim only an explicitly checkpointed terminal, clean worktree
+  or a cache inside the dedicated reproducible-cache root. If safe reclamation
+  does not restore the configured headroom, launch nothing and record the exact
+  queue-health blocker.
 - Record an atomic checkpoint after each pass: issue, branch/PR, source SHA,
   evidence manifest, tests, visual source/output artifacts, next issue, and
   failure class. A reconnecting agent must be able to resume from it.
@@ -50,8 +59,8 @@ that product umbrella completes.
 ## Tests and evidence
 
 - Unit-test timer-state, total active-slot accounting, stable target resolution,
-  skill digest recording, and checkpoint parsing with fake systemd/queue/session
-  responses.
+  disk high-water handling, skill digest recording, and checkpoint parsing with
+  fake systemd/queue/session responses.
 - Exercise an interrupted worker, a completed worker, and a masked timer; all
   three must produce an explicit resumable state.
 - Run the full repository evidence command and a held-out STRUCT corpus pass.
@@ -64,6 +73,10 @@ that product umbrella completes.
 - At total capacity one, one live session plus one queued issue launches
   nothing; a completed/expired session frees exactly one slot. Missing or
   malformed lease state fails closed for recovery instead of opening a slot.
+- At the disk high-water mark, an active worktree and every referenced evidence
+  or handoff path remain untouched. Cleanup accepts only a terminal checkpoint
+  with the exact worktree and source SHA, or a path beneath the dedicated
+  reproducible-cache root. Insufficient post-cleanup headroom launches nothing.
 - An interrupted worker, completed worker, and provider-blocked worker each
   leave one atomic checkpoint with a resumable next action and no duplicate
   lease.
@@ -73,10 +86,18 @@ that product umbrella completes.
 - A future applicable worker receipt identifies `gpt-5.6-sol`, `high`, and the
   exact installed `struct-typeset` skill digest. Stubbed tests do not require a
   live provider credential.
+- A later two-lane scheduler may run at most one parser-core worker plus one
+  evidence/eval worker only when both carry versioned resource claims, their
+  write scopes and ports are disjoint, and measured disk and memory headroom
+  pass under the dispatch lock. Unknown claims, overlapping scopes, or low
+  headroom retain the total cap of one. This cross-pulse selection belongs to
+  Rucksack issues `erniesg/rucksack#347` and `erniesg/rucksack#349`; the repo
+  pulse must not guess it from process names.
 
 ## Validation command
 
 ```bash
+npx vitest run tools/struct-queue-pulse.test.mjs
 systemd-analyze verify infra/vm/systemd/erniesg-struct-typeset-queue.service infra/vm/systemd/erniesg-struct-typeset-queue.timer
 infra/vm/verify.sh
 scripts/agent-evidence
@@ -96,9 +117,10 @@ plain-language blocked/resumable status.
 ## Stop conditions
 
 Stop before automatically clearing an operator hold, dispatching a duplicate
-lease, increasing worker/retry limits, treating a masked timer as idle, or
-claiming unattended completion without a durable checkpoint and future timer
-fire.
+lease, increasing worker/retry limits without verified resource claims,
+treating a masked timer as idle, deleting an uncheckpointed worktree or
+evidence artifact, or claiming unattended completion without a durable
+checkpoint and future timer fire.
 
 ## Human clarification protocol
 
@@ -115,9 +137,11 @@ so restarting is cheaper and safer than rerunning a whole corpus.
 ## Trade-offs
 
 The extra pulse unit adds one scheduler to verify, but it prevents a long worker
-or installer cleanup from silently disabling future work. One worker at a time
-reduces throughput while avoiding duplicate edits and makes evidence ordering
-deterministic.
+or installer cleanup from silently disabling future work. The conservative
+one-worker default avoids duplicate edits and makes evidence ordering
+deterministic. Verified resource claims can later recover one disjoint
+evidence/eval lane without turning every 30-minute pulse into another parser
+worker.
 
 ## Free-form response
 

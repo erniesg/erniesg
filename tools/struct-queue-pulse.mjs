@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -65,6 +66,14 @@ const commandContainsTmuxSession = (command, tmuxSession) => {
   return new RegExp(`(?:^|\\s)(?:-s|-t)(?:=|\\s+)=?${escaped}(?:\\s|$)`).test(
     command,
   )
+}
+
+const issueTmuxSessionsInProcess = (command) => {
+  if (!isNonEmptyString(command) || !command.includes('tmux')) return []
+  const matches = command.matchAll(
+    /(?:^|\s)(?:-s|-t)(?:=|\s+)=?(rucksack-[A-Za-z0-9_.-]+-issue-[1-9][0-9]*-[A-Za-z0-9]+)(?=\s|$)/gu,
+  )
+  return [...matches].map((match) => match[1])
 }
 
 export const parseTargetUnit = (raw) => {
@@ -158,6 +167,19 @@ const classifySessions = ({
     }
     seenSessionIds.add(item.session_id)
     relevant.push({ ...item, heartbeatAt, leaseExpiresAt })
+  }
+
+  if (repo === null) {
+    const knownTmuxSessions = new Set(relevant.map((item) => item.tmux_session))
+    const unmatchedProcessSession = processArgs
+      .flatMap(issueTmuxSessionsInProcess)
+      .find((tmuxSession) => !knownTmuxSessions.has(tmuxSession))
+    if (unmatchedProcessSession) {
+      return blockedSessionState(
+        'session-ledger-conflict',
+        `Live session ${unmatchedProcessSession} is missing from the VM ledger.`,
+      )
+    }
   }
 
   const live = []
@@ -319,6 +341,28 @@ export const selectSafeCleanupCandidates = ({
         reject('worktree-checkpoint-invalid')
         continue
       }
+      const requiredReferences = [terminal.item.log_path].filter((path) =>
+        pathIsInside(candidate.path, path),
+      )
+      const preservedArtifacts = Array.isArray(checkpoint.preserved_artifacts)
+        ? checkpoint.preserved_artifacts
+        : []
+      const referencesPreserved = requiredReferences.every((sourcePath) =>
+        preservedArtifacts.some(
+          (artifact) =>
+            asObject(artifact) &&
+            resolve(String(artifact.source_path ?? '')) ===
+              resolve(sourcePath) &&
+            isNonEmptyString(artifact.durable_path) &&
+            isAbsolute(artifact.durable_path) &&
+            !pathsOverlap(candidate.path, artifact.durable_path) &&
+            /^(?:[0-9a-f]{64})$/iu.test(String(artifact.sha256 ?? '')),
+        ),
+      )
+      if (!referencesPreserved) {
+        reject('worktree-references-not-preserved')
+        continue
+      }
       allowed.push(candidate)
       continue
     }
@@ -464,6 +508,17 @@ const removeCleanupCandidate = ({ candidate, repoRoot }) => {
       '--porcelain',
     ]).trim()
     if (dirty) throw new Error('worktree is dirty')
+    for (const artifact of candidate.checkpoint.preserved_artifacts ?? []) {
+      if (!existsSync(artifact.durable_path)) {
+        throw new Error('preserved artifact is missing')
+      }
+      const digest = createHash('sha256')
+        .update(readFileSync(artifact.durable_path))
+        .digest('hex')
+      if (digest !== String(artifact.sha256).toLowerCase()) {
+        throw new Error('preserved artifact checksum does not match')
+      }
+    }
     run('git', ['-C', repoRoot, 'worktree', 'remove', candidate.path])
     run('git', ['-C', repoRoot, 'worktree', 'prune'])
     return { path: candidate.path, status: 'removed', kind: candidate.kind }

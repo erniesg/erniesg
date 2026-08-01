@@ -65,7 +65,9 @@ It accepts cleanup candidates only from
 `~/.config/rucksack/overnight/erniesg-erniesg.cleanup.json`. A worktree needs an
 external terminal checkpoint with the exact repo, session, worktree, source
 SHA, status, and `cleanup_eligible: true`; it must also be clean and contain no
-`.agent/evidence`. A cache must be explicitly reproducible and live beneath
+`.agent/evidence`. Each worktree-local log/reference needs a durable path and
+SHA-256 receipt outside that worktree, and the pulse verifies that copy before
+removal. A cache must be explicitly reproducible and live beneath
 `~/.cache/rucksack/reproducible/`. State, handoffs, evidence, live worktrees,
 and referenced paths are protected roots. With no proven candidate, or when
 cleanup cannot restore headroom, the pulse fails closed and launches nothing.

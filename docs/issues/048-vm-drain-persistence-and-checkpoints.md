@@ -76,7 +76,9 @@ that product umbrella completes.
 - At the disk high-water mark, an active worktree and every referenced evidence
   or handoff path remain untouched. Cleanup accepts only a terminal checkpoint
   with the exact worktree and source SHA, or a path beneath the dedicated
-  reproducible-cache root. Insufficient post-cleanup headroom launches nothing.
+  reproducible-cache root. Every worktree-local log/reference must first have
+  a checksum-verified durable copy outside that worktree. Insufficient
+  post-cleanup headroom launches nothing.
 - An interrupted worker, completed worker, and provider-blocked worker each
   leave one atomic checkpoint with a resumable next action and no duplicate
   lease.

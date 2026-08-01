@@ -196,6 +196,23 @@ describe('STRUCT queue pulse contract', () => {
     ).toMatchObject({ status: 'blocked', availableSlots: 0 })
   })
 
+  it('fails closed when a live issue tmux has no matching ledger record', () => {
+    expect(
+      classifyVmSessions({
+        ledger: { schema_version: 1, sessions: [] },
+        repo: 'erniesg/erniesg',
+        now,
+        processArgs: [
+          'tmux -L rucksack-0123 new-session -d -s rucksack-erniesg-erniesg-issue-777-deadbeef',
+        ],
+      }),
+    ).toMatchObject({
+      status: 'blocked',
+      reason: 'session-ledger-conflict',
+      availableSlots: 0,
+    })
+  })
+
   it('blocks dispatch at either disk high-water threshold', () => {
     expect(
       evaluateDiskCapacity({
@@ -243,16 +260,23 @@ describe('STRUCT queue pulse contract', () => {
       session_id: 'completed-session',
       tmux_session: 'completed-session',
       local_checkout_path: '/srv/worktrees/erniesg/completed',
+      log_path: '/srv/worktrees/erniesg/completed/run.log',
     })
     const liveSession = session({
       session_id: 'live-session',
       tmux_session: 'live-session',
       local_checkout_path: '/srv/worktrees/erniesg/live',
     })
+    const unarchivedSession = session({
+      session_id: 'unarchived-session',
+      tmux_session: 'unarchived-session',
+      local_checkout_path: '/srv/worktrees/erniesg/unarchived',
+      log_path: '/srv/worktrees/erniesg/unarchived/run.log',
+    })
     const sessionState = {
       status: 'ok',
       live: [liveSession],
-      completed: [completedSession],
+      completed: [completedSession, unarchivedSession],
       expired: [],
     }
     const candidates = [
@@ -271,6 +295,28 @@ describe('STRUCT queue pulse contract', () => {
           repo: 'erniesg/erniesg',
           session_id: 'completed-session',
           worktree: '/srv/worktrees/erniesg/completed',
+          cleanup_eligible: true,
+          status: 'completed',
+          source_sha: '0123456789abcdef0123456789abcdef01234567',
+          preserved_artifacts: [
+            {
+              source_path: '/srv/worktrees/erniesg/completed/run.log',
+              durable_path: '/srv/state/receipts/completed-run.log',
+              sha256:
+                '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            },
+          ],
+        },
+      },
+      {
+        kind: 'worktree',
+        path: '/srv/worktrees/erniesg/unarchived',
+        session_id: 'unarchived-session',
+        checkpoint: {
+          schema_version: '1',
+          repo: 'erniesg/erniesg',
+          session_id: 'unarchived-session',
+          worktree: '/srv/worktrees/erniesg/unarchived',
           cleanup_eligible: true,
           status: 'completed',
           source_sha: '0123456789abcdef0123456789abcdef01234567',
@@ -302,7 +348,10 @@ describe('STRUCT queue pulse contract', () => {
       '/srv/worktrees/erniesg/completed',
       '/srv/cache/reproducible/pdf-renders',
     ])
-    expect(result.rejected).toHaveLength(2)
+    expect(result.rejected).toHaveLength(3)
+    expect(result.rejected.map((item) => item.reason)).toContain(
+      'worktree-references-not-preserved',
+    )
   })
 })
 

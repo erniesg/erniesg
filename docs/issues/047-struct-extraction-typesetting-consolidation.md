@@ -42,6 +42,26 @@ single-column, two-column, raster/vector, table, equation, note, citation, and
 hyperlink fixtures. Each run must include deterministic rerun hashes, STRUCT
 conservation receipts, EPUB spine smoke, and source-versus-render screenshots.
 
+Fresh evidence supersedes saved screenshots or metrics. The 2026-08-01 clean
+BookWorld rerun produced 0/8 semantic tables; the saved 1/8 report is stale.
+Treat issue 036's provider work as an interface slice until a concrete adapter,
+fallback-candidate path, and real BookWorld-plus-held-out benchmark prove that
+coverage rose.
+
+## Execution partition
+
+- Serialize parser-core issues 042 → 040 → 043 → 044 so page furniture,
+  figures/captions, continuous prose, and notes/citations do not concurrently
+  edit the same layout/visual files.
+- Table candidate work (036) owns table detection/canonicalization until its
+  branch lands. The next table slice is cell-scoped source lineage for shifted
+  wrapped continuations and shared source lines; do not patch the same files in
+  another worker.
+- Source-versus-render evidence (038) and corpus strata (037) may run beside one
+  parser worker only when their declared write paths are disjoint.
+- The umbrella issue (047) integrates completed child receipts; it is not an
+  extra parser worker.
+
 ## Acceptance tests
 
 - A source-agnostic fixture in each required document stratum round-trips

@@ -54,7 +54,10 @@ For long-lived overnight work, install the repo-owned pulse after the
 Rucksack installer has finished. It is deliberately named outside
 `rucksack-autopilot-*-drain.*`, so the containment pass may hold the generated
 drain without disabling the scheduler. The pulse only wakes the proven drain
-service, skips an active run, and honors an operator hold marker:
+service, skips an active drain or any still-live repository issue session, and
+honors an operator hold marker. The session guard is required because
+`--max-workers 1` limits launches in one queue invocation; it is not a global
+worker cap across repeated pulses:
 
 ```bash
 mkdir -p ~/.config/rucksack/overnight ~/.config/systemd/user
@@ -88,19 +91,12 @@ user environment file:
 rucksack vm autopilot discord erniesg/erniesg --profile dev-vm --execute
 ```
 
-Manual equivalent for the repo-specific queue timer only:
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service ~/.config/systemd/user/
-mkdir -p ~/.config/systemd/user/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service.d
-cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service.d/90-queue-timeout.conf ~/.config/systemd/user/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service.d/
-cp infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer ~/.config/systemd/user/
-loginctl enable-linger "$USER"
-systemctl --user daemon-reload
-systemctl --user disable --now rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
-systemctl --user status rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer
-```
+Do not install the checked-in generic
+`rucksack-autopilot-erniesg-erniesg-drain.service` as a manual equivalent. It
+predates the fixed publisher/network boundary and can drift from the active
+Rucksack runtime. Install the versioned drain only through
+`rucksack vm autopilot install-timer`; the repository owns only the outer
+STRUCT pulse shown above.
 
 `loginctl enable-linger "$USER"` keeps the user service manager available after
 the SSH session disconnects. It does not enable the held drain timer.
@@ -147,8 +143,10 @@ activation and successful isolation proof.
 The generated drain service allows up to 30 minutes for one bounded queue pass
 and five minutes for shutdown. This prevents systemd's default 90-second
 oneshot timeout from terminating a healthy Codex worker while it is running
-tests or source-comparison evidence. The queue still uses one worker at a time
-and the Rucksack retry/self-heal limits remain authoritative.
+tests or source-comparison evidence. The outer pulse refuses another pass while
+any repository issue session is live, so one worker is the global limit rather
+than merely the per-invocation launch limit. Rucksack's retry/self-heal limits
+remain authoritative.
 
 The timer deliberately omits `--plan-when-idle`: a planner may write
 partial or successful issue specs, and the durable base checkout must stay

@@ -1,7 +1,5 @@
 # Keep the trusted VM drain active and make overnight work resumable
 
-depends-on: 047
-
 ## Provider
 
 vm-codex
@@ -11,7 +9,8 @@ vm-codex
 Make unattended development safe and efficient after the laptop closes. A
 successful queue pass must not silently leave the repo timer masked, and every
 pass must leave enough durable state for the next worker or handoff to resume
-without repeating work.
+without repeating work. This issue supports spec 047 and must be runnable before
+that product umbrella completes.
 
 ## Required behavior
 
@@ -22,8 +21,14 @@ without repeating work.
   timer is loaded, enabled, active, has a future fire, and the service has the
   repository timeout policy (`30m` start, `5m` stop). A mask or failed state is
   a queue-health failure, not a successful idle result.
-- Keep one VM worker at a time. Reconcile GitHub labels and exact issue leases
-  before dispatch; never duplicate a running or human-blocked issue.
+- Enforce one total live VM issue session for this repository across repeated
+  pulse invocations. `--max-workers 1` is only a per-invocation launch limit;
+  active unexpired leases/sessions consume the global slot before selection.
+  Reconcile GitHub labels and exact issue leases before dispatch; never
+  duplicate a running or human-blocked issue.
+- Keep parser-core work serialized through declared dependencies. Evidence or
+  evaluation work may run in parallel only when its declared path/resource
+  scope is disjoint from the active worker.
 - Record an atomic checkpoint after each pass: issue, branch/PR, source SHA,
   evidence manifest, tests, visual source/output artifacts, next issue, and
   failure class. A reconnecting agent must be able to resume from it.
@@ -34,11 +39,18 @@ without repeating work.
   action; internal diagnostic counts stay in evidence, not the UI.
 - Keep model/layout calls optional and candidate-constrained. Persist every
   accepted proposal and distill it into a fixture plus deterministic rule.
+- Install the default-branch `struct-typeset` skill as a pinned, read-only VM
+  skill and record its SHA-256 in each applicable worker receipt. Future layout
+  workers use the configured `gpt-5.6-luna` / `max` VM profile; already-running
+  workers keep their recorded model and are never relabeled retroactively.
+- Resolve the generated drain through an installer-owned stable target alias or
+  validated state file rather than a repository-hard-coded unit version.
 
 ## Tests and evidence
 
-- Unit-test timer-state and checkpoint parsing with a fake systemd/queue
-  response.
+- Unit-test timer-state, total active-slot accounting, stable target resolution,
+  skill digest recording, and checkpoint parsing with fake systemd/queue/session
+  responses.
 - Exercise an interrupted worker, a completed worker, and a masked timer; all
   three must produce an explicit resumable state.
 - Run the full repository evidence command and a held-out STRUCT corpus pass.
@@ -48,11 +60,18 @@ without repeating work.
 - A fake systemd response for a healthy timer is accepted only when it is
   loaded, enabled, active, and has a future fire; masked, failed, or missing
   state is reported as queue-health failure.
+- At total capacity one, one live session plus one queued issue launches
+  nothing; a completed/expired session frees exactly one slot. Missing or
+  malformed lease state fails closed for recovery instead of opening a slot.
 - An interrupted worker, completed worker, and provider-blocked worker each
   leave one atomic checkpoint with a resumable next action and no duplicate
   lease.
-- Two consecutive pulse passes keep the repo-owned scheduler enabled while
-  the generated drain may be held during a worker pass.
+- Two consecutive pulse passes keep the repo-owned scheduler enabled while the
+  generated drain may be held during a worker pass, and never exceed the total
+  configured session cap.
+- A future applicable worker receipt identifies `gpt-5.6-luna`, `max`, and the
+  exact installed `struct-typeset` skill digest. Stubbed tests do not require a
+  live provider credential.
 
 ## Validation command
 

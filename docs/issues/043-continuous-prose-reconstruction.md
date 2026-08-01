@@ -1,6 +1,6 @@
 # Deliver continuous prose across lines, columns, and pages
 
-depends-on: 024,035,038,042
+depends-on: 024,035,038,040,042
 
 ## Provider
 

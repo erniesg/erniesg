@@ -57,7 +57,17 @@
           "type": "array",
           "items": { "$ref": "#/$defs/id" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "abstain" } }
+          },
+          "then": {
+            "properties": { "prediction": { "type": "null" } }
+          }
+        }
+      ]
     }
   }
 }

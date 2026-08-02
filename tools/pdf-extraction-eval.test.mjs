@@ -1,10 +1,14 @@
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it } from 'vitest'
 import {
   EXTRACTION_LAYOUTS,
   EXTRACTION_STRATA,
   comparePdfExtractionProviders,
   createAbstainingPdfExtractionCandidate,
+  loadProviderManifest,
+  sha256,
   validatePdfExtractionEvalSet,
   validatePdfExtractionEvalSetFiles,
 } from './pdf-extraction-eval.mjs'
@@ -301,6 +305,291 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
           row.stratum === 'footnote-resolution' && row.layout === footnoteCase.layout,
       ),
     ).toMatchObject({ score: 1, degenerateCaseCount: 0, scoredCaseCount: 1 })
+  })
+
+  it('includes abstained rows in sparse provider aggregates', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const tableCase = candidate.cases.find((item) =>
+      item.caseId.endsWith('.table-structure'),
+    )
+    const expectedTable = evalSet.cases.find((item) =>
+      item.id.endsWith('.table-structure'),
+    ).source.groundTruth.tables[0]
+    tableCase.status = 'scored'
+    tableCase.prediction = { tables: [{ ...expectedTable }] }
+    tableCase.diagnostics = []
+
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    const provider = report.providers[0]
+    const expectedAggregate = Number(
+      (
+        report.rows.reduce((sum, row) => sum + row.score, 0) /
+        report.rows.length
+      ).toFixed(5),
+    )
+    expect(provider.score).toBe(expectedAggregate)
+    expect(provider.score).toBeLessThan(1)
+    expect(provider.score).toBeGreaterThan(0.25)
+  })
+
+  it('matches bounded objects by source binding rather than array order', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const objectCase = evalSet.cases.find(
+      (item) => item.id === 'structured-scientific.figure-diagram',
+    )
+    const output = candidate.cases.find((item) => item.caseId === objectCase.id)
+    output.status = 'scored'
+    output.prediction = {
+      objects: [...objectCase.source.groundTruth.objects].reverse(),
+    }
+    output.diagnostics = []
+
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'figure-diagram' && row.layout === 'two-column',
+      ),
+    ).toMatchObject({ score: 1, scoredCaseCount: 1, degenerateCaseCount: 0 })
+  })
+
+  it('fails closed on extra or invalid table cells', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const tableCase = candidate.cases.find((item) =>
+      item.caseId.endsWith('.table-structure'),
+    )
+    const expectedTable = evalSet.cases.find((item) =>
+      item.id.endsWith('.table-structure'),
+    ).source.groundTruth.tables[0]
+    tableCase.status = 'scored'
+    tableCase.prediction = {
+      tables: [
+        {
+          ...expectedTable,
+          cells: [
+            ...expectedTable.cells,
+            { row: 999, column: 999, rowSpan: 1, columnSpan: 1, text: 'noise' },
+          ],
+        },
+      ],
+    }
+    tableCase.diagnostics = []
+
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) => row.stratum === 'table-structure' && row.layout === 'one-column',
+      ),
+    ).toMatchObject({ score: 0, scoredCaseCount: 0, degenerateCaseCount: 1 })
+  })
+
+  it('keeps eval-set identity stable when review evidence files change', async () => {
+    const evalSet = await readEvalSet()
+    const reviews = [
+      ...evalSet.documents.map((item) => item.groundTruthReview),
+      ...evalSet.strata.map((item) => item.groundTruth),
+      ...evalSet.cases.map((item) => item.source.groundTruth.review),
+    ]
+    for (const review of reviews) {
+      review.reviewStatus = 'two-reviewer-agreed'
+      review.reviewers = ['fixture-reviewer-a', 'fixture-reviewer-b']
+      review.reviewEvidence = {
+        rosterPath: 'docs/reviews/roster.json',
+        rosterSha256: 'a'.repeat(64),
+        decisionPath: 'docs/reviews/decisions.json',
+        decisionSha256: 'b'.repeat(64),
+      }
+    }
+    const changed = JSON.parse(JSON.stringify(evalSet))
+    for (const review of [
+      ...changed.documents.map((item) => item.groundTruthReview),
+      ...changed.strata.map((item) => item.groundTruth),
+      ...changed.cases.map((item) => item.source.groundTruth.review),
+    ]) {
+      review.reviewEvidence.decisionSha256 = 'c'.repeat(64)
+    }
+
+    expect(validatePdfExtractionEvalSet(evalSet).evalSetSha256).toBe(
+      validatePdfExtractionEvalSet(changed).evalSetSha256,
+    )
+  })
+
+  it('binds each case reviewer list to its corresponding decision', async () => {
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-review-')
+    const rosterPath = join(directory, 'roster.json')
+    const decisionPath = join(directory, 'decisions.json')
+    const reviewerA = 'fixture-reviewer-a'
+    const reviewerB = 'fixture-reviewer-b'
+    const reviewerC = 'fixture-reviewer-c'
+    try {
+      const reviews = [
+        ...evalSet.documents.map((item) => item.groundTruthReview),
+        ...evalSet.strata.map((item) => item.groundTruth),
+        ...evalSet.cases.map((item) => item.source.groundTruth.review),
+      ]
+      for (const review of reviews) {
+        review.reviewStatus = 'two-reviewer-agreed'
+        review.reviewers = [reviewerA, reviewerB]
+        review.reviewEvidence = {
+          rosterPath,
+          rosterSha256: '0'.repeat(64),
+          decisionPath,
+          decisionSha256: '0'.repeat(64),
+        }
+      }
+      evalSet.cases.forEach((item, index) => {
+        item.source.groundTruth.review.reviewers =
+          index % 2 === 0 ? [reviewerA, reviewerB] : [reviewerB, reviewerC]
+      })
+
+      const roster = {
+        schemaVersion: '1.0.0',
+        kind: 'pdf-extraction-reviewer-roster',
+        evalSetId: evalSet.id,
+        reviewers: [
+          { reviewerId: reviewerA, identityEvidenceSha256: 'a'.repeat(64) },
+          { reviewerId: reviewerB, identityEvidenceSha256: 'b'.repeat(64) },
+          { reviewerId: reviewerC, identityEvidenceSha256: 'c'.repeat(64) },
+        ],
+      }
+      const identity = validatePdfExtractionEvalSet(evalSet)
+      const documentById = new Map(
+        evalSet.documents.map((item) => [item.id, item]),
+      )
+      const decisions = evalSet.cases.map((item) => ({
+        caseId: item.id,
+        sourceSha256: documentById.get(item.documentId).sha256,
+        reviewers: [...item.source.groundTruth.review.reviewers],
+        decision: 'agreed',
+        decisionSha256: 'd'.repeat(64),
+      }))
+      const decisionArtifact = {
+        schemaVersion: '1.0.0',
+        kind: 'pdf-extraction-source-only-decisions',
+        evalSetId: evalSet.id,
+        evalSetSha256: identity.evalSetSha256,
+        sourceOnly: true,
+        candidateOutputConsultedForLabel: false,
+        decisions,
+      }
+      const rosterBytes = Buffer.from(`${JSON.stringify(roster)}\n`)
+      const decisionBytes = Buffer.from(`${JSON.stringify(decisionArtifact)}\n`)
+      await writeFile(rosterPath, rosterBytes)
+      await writeFile(decisionPath, decisionBytes)
+      const evidence = {
+        rosterPath,
+        rosterSha256: sha256(rosterBytes),
+        decisionPath,
+        decisionSha256: sha256(decisionBytes),
+      }
+      for (const review of reviews) review.reviewEvidence = evidence
+
+      await expect(validatePdfExtractionEvalSetFiles(evalSet)).resolves.toMatchObject(
+        { evalSetSha256: identity.evalSetSha256 },
+      )
+
+      evalSet.cases[0].source.groundTruth.review.reviewers = [
+        ...evalSet.cases[1].source.groundTruth.review.reviewers,
+      ]
+      await expect(validatePdfExtractionEvalSetFiles(evalSet)).rejects.toThrow(
+        'PDF_EXTRACTION_REVIEW_DECISION_MISMATCH',
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('requires the manifest hash to match exact file-mode prediction bytes', async () => {
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-provider-')
+    const predictionsPath = join(directory, 'predictions.json')
+    try {
+      for (const review of [
+        ...evalSet.documents.map((item) => item.groundTruthReview),
+        ...evalSet.strata.map((item) => item.groundTruth),
+        ...evalSet.cases.map((item) => item.source.groundTruth.review),
+      ]) {
+        review.reviewStatus = 'two-reviewer-agreed'
+        review.reviewers = ['fixture-reviewer-a', 'fixture-reviewer-b']
+        review.reviewEvidence = {
+          rosterPath: 'docs/reviews/roster.json',
+          rosterSha256: 'a'.repeat(64),
+          decisionPath: 'docs/reviews/decisions.json',
+          decisionSha256: 'b'.repeat(64),
+        }
+      }
+      const identity = validatePdfExtractionEvalSet(evalSet)
+      const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+        id: 'candidate-file',
+        kind: 'deterministic',
+        version: 'candidate-file-v1',
+      })
+      const predictionBytes = Buffer.from(`${JSON.stringify(candidate)}\n`)
+      await writeFile(predictionsPath, predictionBytes)
+      const manifest = JSON.parse(
+        await readFile('benchmarks/pdf/extraction-eval-providers-v1.json', 'utf8'),
+      )
+      manifest.evalSet.evalSetSha256 = identity.evalSetSha256
+      manifest.evaluationStatus = 'comparison-ready'
+      manifest.providers = [
+        {
+          id: candidate.provider.id,
+          kind: candidate.provider.kind,
+          version: candidate.provider.version,
+          mode: 'file',
+          sourceIdentitySha256: null,
+          predictionsPath,
+          predictionsSha256: sha256(predictionBytes),
+        },
+      ]
+      await expect(
+        loadProviderManifest(manifest, identity, evalSet),
+      ).resolves.toHaveLength(1)
+
+      await writeFile(predictionsPath, `${predictionBytes} `)
+      await expect(loadProviderManifest(manifest, identity, evalSet)).rejects.toThrow(
+        'PDF_EXTRACTION_PROVIDER_PREDICTIONS_HASH_MISMATCH',
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('publishes the runtime abstention constraint in the candidate schema', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const schema = JSON.parse(
+      await readFile('docs/schemas/pdf-extraction-eval-candidate.schema.json', 'utf8'),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    expect(validate(candidate)).toBe(true)
+
+    candidate.cases[0].prediction = {}
+    expect(validate(candidate)).toBe(false)
+
+    candidate.cases[0].status = 'scored'
+    candidate.cases[0].prediction = null
+    expect(validate(candidate)).toBe(true)
   })
 
   it('refuses regex-only prose continuity evidence', async () => {

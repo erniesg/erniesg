@@ -54,7 +54,8 @@
         "version",
         "mode",
         "sourceIdentitySha256",
-        "predictionsPath"
+        "predictionsPath",
+        "predictionsSha256"
       ],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
@@ -72,13 +73,17 @@
               "pattern": "^[A-Za-z0-9._/-]+$"
             }
           ]
+        },
+        "predictionsSha256": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
         }
       },
       "oneOf": [
         {
           "properties": {
             "mode": { "const": "abstain" },
-            "predictionsPath": { "const": null }
+            "predictionsPath": { "const": null },
+            "predictionsSha256": { "const": null }
           }
         },
         {
@@ -87,7 +92,8 @@
             "predictionsPath": {
               "type": "string",
               "pattern": "^[A-Za-z0-9._/-]+$"
-            }
+            },
+            "predictionsSha256": { "$ref": "#/$defs/sha256" }
           }
         }
       ]

@@ -60,6 +60,13 @@ bounded diagnostic codes. In `reported-only` mode provider scores are `null`
 and `NO_SCORED_PROVIDER_OUTPUT` is emitted; source text, local paths, and
 rendered evidence remain outside the report.
 
+The canonical eval-set identity preserves source and reviewer-label identity but
+excludes review-evidence file digests, so a source-only decision artifact can
+bind the eval-set hash without creating a digest cycle. File-mode providers must
+also declare `predictionsSha256`; the loader verifies the exact repository bytes
+before accepting the candidate. Abstaining providers declare both prediction
+fields as `null`.
+
 Every frozen split identity covers each document id, exact source-PDF SHA-256,
 verified template-family id, and SHA-256 of the source-only assignment
 evidence. A blind document is acceptable only when every source containing it

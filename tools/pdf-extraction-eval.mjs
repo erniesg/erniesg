@@ -104,6 +104,36 @@ function canonicalHash(value) {
   return sha256(canonicalJson(value))
 }
 
+function reviewIdentityProjection(review) {
+  if (!isRecord(review)) return review
+  const { reviewEvidence: _reviewEvidence, ...identity } = review
+  return identity
+}
+
+function evalSetIdentityProjection(value) {
+  return {
+    ...value,
+    documents: value.documents.map((document) => ({
+      ...document,
+      groundTruthReview: reviewIdentityProjection(document.groundTruthReview),
+    })),
+    strata: value.strata.map((stratum) => ({
+      ...stratum,
+      groundTruth: reviewIdentityProjection(stratum.groundTruth),
+    })),
+    cases: value.cases.map((item) => ({
+      ...item,
+      source: {
+        ...item.source,
+        groundTruth: {
+          ...item.source.groundTruth,
+          review: reviewIdentityProjection(item.source.groundTruth.review),
+        },
+      },
+    })),
+  }
+}
+
 function rounded(value) {
   return Math.round(value * 100000) / 100000
 }
@@ -812,11 +842,12 @@ export function validatePdfExtractionEvalSet(value) {
     if (!hasNonEnglishHeading) {
       invalid('PDF_EXTRACTION_EVAL_MISSING_NON_ENGLISH_HEADING')
     }
+    const identityProjection = evalSetIdentityProjection(value)
     return {
       valid: true,
       id: value.id,
       schemaVersion: value.schemaVersion,
-      evalSetSha256: canonicalHash(value),
+      evalSetSha256: canonicalHash(identityProjection),
       documentIdentitySha256: canonicalHash(
         value.documents.map(({ id, sha256: sourceSha256, layout }) => ({
           id,
@@ -824,7 +855,7 @@ export function validatePdfExtractionEvalSet(value) {
           layout,
         })),
       ),
-      caseIdentitySha256: canonicalHash(value.cases),
+      caseIdentitySha256: canonicalHash(identityProjection.cases),
       documentCount: value.documents.length,
       caseCount: value.cases.length,
       stratumCount: value.strata.length,
@@ -975,17 +1006,26 @@ async function validateReviewEvidenceFiles(value, identity) {
   if ([...caseIds].some((caseId) => !agreedCaseIds.has(caseId))) {
     invalid('PDF_EXTRACTION_REVIEW_DECISION_MISMATCH')
   }
-  const decisionReviewerIds = new Set(
-    decisionArtifact.value.decisions.flatMap((decision) => decision.reviewers),
+  const decisionByCaseId = new Map(
+    decisionArtifact.value.decisions.map((decision) => [
+      decision.caseId,
+      decision,
+    ]),
   )
   for (const review of agreed) {
-    if (
-      review.reviewers.some(
-        (reviewer) =>
-          !rosterIds.has(reviewer) || !decisionReviewerIds.has(reviewer),
-      )
-    ) {
+    if (review.reviewers.some((reviewer) => !rosterIds.has(reviewer))) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+    }
+  }
+  for (const item of value.cases) {
+    const decision = decisionByCaseId.get(item.id)
+    const caseReview = item.source.groundTruth.review
+    if (
+      !decision ||
+      canonicalJson([...caseReview.reviewers].sort()) !==
+        canonicalJson([...decision.reviewers].sort())
+    ) {
+      invalid('PDF_EXTRACTION_REVIEW_DECISION_MISMATCH')
     }
   }
   Object.defineProperty(value, REVIEW_EVIDENCE_VALIDATED, {
@@ -1151,6 +1191,37 @@ function missingSourceBinding(predictions) {
   return predictions.some((prediction) => !hasValidSourceBinding(prediction))
 }
 
+function hasValidPredictedTableCells(table) {
+  if (
+    !isRecord(table) ||
+    !Number.isSafeInteger(table.rows) ||
+    table.rows < 1 ||
+    !Number.isSafeInteger(table.columns) ||
+    table.columns < 1 ||
+    !Array.isArray(table.cells) ||
+    table.cells.length === 0
+  ) {
+    return false
+  }
+  const coordinates = new Set()
+  return table.cells.every(
+    (cell) =>
+      exactKeys(cell, ['row', 'column', 'rowSpan', 'columnSpan', 'text']) &&
+      Number.isSafeInteger(cell.row) &&
+      cell.row >= 0 &&
+      cell.row < table.rows &&
+      Number.isSafeInteger(cell.column) &&
+      cell.column >= 0 &&
+      cell.column < table.columns &&
+      cell.rowSpan === 1 &&
+      cell.columnSpan === 1 &&
+      typeof cell.text === 'string' &&
+      cell.text.trim().length > 0 &&
+      !coordinates.has(`${cell.row}:${cell.column}`) &&
+      coordinates.add(`${cell.row}:${cell.column}`),
+  )
+}
+
 function tableScore(expected, prediction) {
   const expectedTables = expected.tables
   const predictedTables = predictionArray(prediction, 'tables')
@@ -1168,37 +1239,37 @@ function tableScore(expected, prediction) {
   ) {
     return degenerateResult('DEGENERATE_PAGE_WIDE_GRID')
   }
-  const matched = expectedTables.reduce((count, table, index) => {
-    const candidate = predictedTables[index]
-    if (
-      !candidate ||
-      candidate.rows !== table.rows ||
-      candidate.columns !== table.columns ||
-      candidate.headerScope !== table.headerScope ||
-      candidate.sourcePage !== table.sourcePage ||
-      !Array.isArray(candidate.cells) ||
-      !candidate.cells.every(isRecord) ||
-      !sourceBindingMatches(table, candidate)
-    ) {
-      return count
-    }
+  if (predictedTables.some((table) => !hasValidPredictedTableCells(table))) {
+    return degenerateResult('INVALID_TABLE_CELLS')
+  }
+  const matchedPredictions = new Set()
+  const tableScores = expectedTables.map((table) => {
+    const candidateIndex = predictedTables.findIndex(
+      (candidate, index) =>
+        !matchedPredictions.has(index) &&
+        candidate.rows === table.rows &&
+        candidate.columns === table.columns &&
+        candidate.headerScope === table.headerScope &&
+        candidate.sourcePage === table.sourcePage &&
+        sourceBindingMatches(table, candidate),
+    )
+    if (candidateIndex < 0) return 0
+    matchedPredictions.add(candidateIndex)
+    const candidate = predictedTables[candidateIndex]
     const cells = new Map(
       candidate.cells.map((cell) => [`${cell.row}:${cell.column}`, cell]),
     )
-    return (
-      count +
-      table.cells.filter((cell) => {
-        const predictedCell = cells.get(`${cell.row}:${cell.column}`)
-        return (
-          predictedCell?.text === cell.text &&
-          predictedCell.rowSpan === cell.rowSpan &&
-          predictedCell.columnSpan === cell.columnSpan
-        )
-      }).length /
-        table.cells.length
-    )
-  }, 0)
-  const topologyScore = matched / expectedTables.length
+    const matchedCells = table.cells.filter((cell) => {
+      const predictedCell = cells.get(`${cell.row}:${cell.column}`)
+      return (
+        predictedCell?.text === cell.text &&
+        predictedCell.rowSpan === cell.rowSpan &&
+        predictedCell.columnSpan === cell.columnSpan
+      )
+    }).length
+    return f1(matchedCells, table.cells.length, candidate.cells.length)
+  })
+  const topologyScore = average(tableScores)
   const extraPenalty =
     predictedTables.length > expectedTables.length
       ? expectedTables.length / predictedTables.length
@@ -1254,17 +1325,21 @@ function objectScore(expected, prediction, key, degenerateCode) {
     return degenerateResult(degenerateCode)
   }
   const expectedObjects = expected.objects
-  const matched = expectedObjects.filter((item, index) => {
-    const candidate = objects[index]
-    return (
-      candidate &&
-      candidate.kind === item.kind &&
-      candidate.sourcePage === item.sourcePage &&
-      candidate.captionRelationship === item.captionRelationship &&
-      candidate.bounded === true &&
-      sourceBindingMatches(item, candidate)
+  const matchedObjects = new Set()
+  const matched = expectedObjects.reduce((count, item) => {
+    const candidateIndex = objects.findIndex(
+      (candidate, index) =>
+        !matchedObjects.has(index) &&
+        candidate.kind === item.kind &&
+        candidate.sourcePage === item.sourcePage &&
+        candidate.captionRelationship === item.captionRelationship &&
+        candidate.bounded === true &&
+        sourceBindingMatches(item, candidate),
     )
-  }).length
+    if (candidateIndex < 0) return count
+    matchedObjects.add(candidateIndex)
+    return count + 1
+  }, 0)
   return diagnosticResult(
     f1(matched, expectedObjects.length, objects.length),
     'scored',
@@ -1458,11 +1533,11 @@ function scoreCase(item, stratum, output) {
   invalid('INVALID_PDF_EXTRACTION_STRATUM')
 }
 
-function noGroundTruthOutput(evalSet, provider) {
+function noGroundTruthOutput(evalSet, identity, provider) {
   return {
     schemaVersion: PDF_EXTRACTION_EVAL_SCHEMA_VERSION,
     evalSetId: evalSet.id,
-    evalSetSha256: canonicalHash(evalSet),
+    evalSetSha256: identity.evalSetSha256,
     provider: {
       id: provider.id,
       kind: provider.kind,
@@ -1483,7 +1558,7 @@ export function createAbstainingPdfExtractionCandidate(evalSet, provider) {
   ) {
     invalid('INVALID_PDF_EXTRACTION_PROVIDER')
   }
-  const candidate = noGroundTruthOutput(evalSet, provider)
+  const candidate = noGroundTruthOutput(evalSet, identity, provider)
   candidate.cases = evalSet.cases.map((item) => ({
     caseId: item.id,
     status: 'abstain',
@@ -1578,7 +1653,7 @@ export function comparePdfExtractionProviders(evalSet, providers) {
         providerRows.push(row)
       }
     }
-    const scoredOutputRows = providerRows.filter(
+    const hasScoredOutput = providerRows.some(
       (row) => row.scoredCaseCount > 0,
     )
     providerSummaries.push({
@@ -1586,8 +1661,8 @@ export function comparePdfExtractionProviders(evalSet, providers) {
       providerKind: candidate.provider.kind,
       providerVersion: candidate.provider.version,
       caseCount: candidate.cases.length,
-      score: scoredOutputRows.length
-        ? average(scoredOutputRows.map((row) => row.score))
+      score: hasScoredOutput
+        ? average(providerRows.map((row) => row.score))
         : null,
       diagnosticCodes: [
         ...new Set(providerRows.flatMap((row) => row.diagnostics)),
@@ -1657,7 +1732,7 @@ function parseArgs(argv) {
   return options
 }
 
-async function loadProviderManifest(value, evalIdentity, evalSet) {
+export async function loadProviderManifest(value, evalIdentity, evalSet) {
   if (
     !isRecord(value) ||
     !exactKeys(value, [
@@ -1710,6 +1785,7 @@ async function loadProviderManifest(value, evalIdentity, evalSet) {
         'mode',
         'sourceIdentitySha256',
         'predictionsPath',
+        'predictionsSha256',
       ]) ||
       !SAFE_ID.test(item.id ?? '') ||
       !EXTRACTION_PROVIDER_KINDS.includes(item.kind) ||
@@ -1718,7 +1794,10 @@ async function loadProviderManifest(value, evalIdentity, evalSet) {
       (item.sourceIdentitySha256 !== null &&
         !SHA256.test(item.sourceIdentitySha256 ?? '')) ||
       (item.mode === 'abstain' && item.predictionsPath !== null) ||
-      (item.mode === 'file' && !pathIsRepositoryRelative(item.predictionsPath))
+      (item.mode === 'abstain' && item.predictionsSha256 !== null) ||
+      (item.mode === 'file' &&
+        (!pathIsRepositoryRelative(item.predictionsPath) ||
+          !SHA256.test(item.predictionsSha256 ?? '')))
     ) {
       invalid('INVALID_PDF_EXTRACTION_PROVIDER_MANIFEST')
     }
@@ -1729,6 +1808,9 @@ async function loadProviderManifest(value, evalIdentity, evalSet) {
         item.predictionsPath,
         'INVALID_PDF_EXTRACTION_PROVIDER_OUTPUT',
       )
+      if (sha256(artifact.bytes) !== item.predictionsSha256) {
+        invalid('PDF_EXTRACTION_PROVIDER_PREDICTIONS_HASH_MISMATCH')
+      }
       const candidate = artifact.value
       validateCandidateProvider(
         candidate,

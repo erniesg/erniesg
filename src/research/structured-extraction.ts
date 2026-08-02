@@ -1,0 +1,1045 @@
+import { z } from 'zod'
+import { sha256HexSync } from './sha256-sync.ts'
+import type { PdfReconstruction } from './import-types'
+
+/**
+ * The model-facing extraction contract is intentionally smaller than the
+ * publication graph.  Models may suggest references to source runs and
+ * deterministic assets; they never supply authoritative text or bytes.
+ */
+export const STRUCTURED_EXTRACTION_SCHEMA_VERSION = '1.0.0' as const
+
+export const STRUCTURED_EXTRACTION_NODE_TYPES = [
+  'title',
+  'author',
+  'affiliation',
+  'abstract',
+  'heading',
+  'paragraph',
+  'code',
+  'table',
+  'figure',
+  'equation',
+  'footnote',
+  'reference',
+] as const
+
+export type StructuredExtractionNodeType =
+  (typeof STRUCTURED_EXTRACTION_NODE_TYPES)[number]
+
+export const STRUCTURED_EXTRACTION_LAYOUTS = [
+  'one-column',
+  'two-column',
+] as const
+
+export type StructuredExtractionLayout =
+  (typeof STRUCTURED_EXTRACTION_LAYOUTS)[number]
+
+export const STRUCTURED_EXTRACTION_SPLITS = ['development', 'held-out'] as const
+
+export type StructuredExtractionSplit =
+  (typeof STRUCTURED_EXTRACTION_SPLITS)[number]
+
+export type StructuredSourceRun = {
+  id: string
+  text: string
+  page: number
+  order: number
+  /** A source run is already normalized by the deterministic extractor. */
+  layout?: StructuredExtractionLayout
+  stratum?: string
+}
+
+export type StructuredSourceAsset = {
+  id: string
+  kind: 'figure' | 'diagram' | 'table' | 'equation'
+  page: number
+  bounds: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+  bytesSha256: string
+  sourceObjectIds: string[]
+  captionRunIds?: string[]
+}
+
+export type StructuredProvenArtifact = {
+  id: string
+  kind:
+    | 'region-lane'
+    | 'table-scope'
+    | 'line-boundary'
+    | 'note-relationship'
+    | 'citation-relationship'
+    | 'source-run-provenance'
+  sourceRunIds: string[]
+}
+
+export type StructuredExtractionContext = {
+  documentId: string
+  sourceSha256: string
+  split: StructuredExtractionSplit
+  layout: StructuredExtractionLayout
+  sourceRuns: StructuredSourceRun[]
+  sourceAssets: StructuredSourceAsset[]
+  provenArtifacts?: StructuredProvenArtifact[]
+  /** These runs remain accounted for but may not enter body flow. */
+  boilerplateRunIds?: string[]
+  /** Ground truth is deliberately not part of this model input. */
+  readonly groundTruth?: never
+}
+
+export type StructuredExtractionTableCell = {
+  sourceRunIds: string[]
+  headerScope?: 'row' | 'column' | 'rowgroup' | 'colgroup' | 'none'
+}
+
+export type StructuredExtractionTable = {
+  rows: Array<{ cells: StructuredExtractionTableCell[] }>
+}
+
+export type StructuredExtractionNode = {
+  id: string
+  type: StructuredExtractionNodeType
+  sourceRunIds: string[]
+  /** Optional proposal text. The verifier replaces it with source text. */
+  text?: string
+  level?: number
+  assetId?: string
+  captionNodeId?: string
+  altText?: string
+  altTextSource?: 'caption' | 'model' | 'image'
+  table?: StructuredExtractionTable
+}
+
+export type StructuredExtractionProposal = {
+  schemaVersion?: typeof STRUCTURED_EXTRACTION_SCHEMA_VERSION
+  nodes: StructuredExtractionNode[]
+  /** All deterministic assets that the model associates with the flow. */
+  assetIds?: string[]
+  /** Explicit accounting for page furniture omitted from body flow. */
+  excludedBoilerplateRunIds?: string[]
+  /** Optional model diagnostics are never copied to the publication graph. */
+  diagnostics?: string[]
+}
+
+export type VerifiedStructuredExtractionNode = Omit<
+  StructuredExtractionNode,
+  'text' | 'altText' | 'altTextSource' | 'table'
+> & {
+  text: string
+  provenance: {
+    sourceRunIds: string[]
+  }
+  altText?: string
+  altTextSource?: 'caption'
+  table?: {
+    rows: Array<{
+      cells: Array<{
+        text: string
+        sourceRunIds: string[]
+        headerScope: NonNullable<StructuredExtractionTableCell['headerScope']>
+      }>
+    }>
+  }
+}
+
+export type VerifiedStructuredExtraction = {
+  schemaVersion: typeof STRUCTURED_EXTRACTION_SCHEMA_VERSION
+  documentId: string
+  sourceSha256: string
+  nodes: VerifiedStructuredExtractionNode[]
+  assetIds: string[]
+  excludedBoilerplateRunIds: string[]
+  accountedSourceRunIds: string[]
+}
+
+export type StructuredExtractionVerificationIssueCode =
+  | 'invalid-output'
+  | 'unknown-source-run'
+  | 'unverified-span'
+  | 'source-text-mismatch'
+  | 'duplicate-source-run'
+  | 'boilerplate-in-body'
+  | 'boilerplate-not-accounted'
+  | 'unknown-asset'
+  | 'asset-kind-mismatch'
+  | 'asset-identity-mismatch'
+  | 'asset-bytes-or-bounds-authored'
+  | 'missing-caption'
+  | 'model-authored-alt-text'
+  | 'invalid-heading-level'
+  | 'invalid-table'
+
+export type StructuredExtractionVerificationIssue = {
+  code: StructuredExtractionVerificationIssueCode
+  nodeId?: string
+  sourceRunId?: string
+  assetId?: string
+  message: string
+}
+
+export type StructuredExtractionVerificationResult =
+  | {
+      status: 'passed'
+      output: VerifiedStructuredExtraction
+      issues: []
+    }
+  | {
+      status: 'failed'
+      output: null
+      issues: StructuredExtractionVerificationIssue[]
+    }
+
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u)
+const idSchema = z.string().min(1).max(256)
+const sourceRunSchema = z
+  .object({
+    id: idSchema,
+    text: z.string(),
+    page: z.number().int().positive(),
+    order: z.number().int().nonnegative(),
+    layout: z.enum(STRUCTURED_EXTRACTION_LAYOUTS).optional(),
+    stratum: z.string().min(1).optional(),
+  })
+  .strict()
+
+const sourceAssetSchema = z
+  .object({
+    id: idSchema,
+    kind: z.enum(['figure', 'diagram', 'table', 'equation']),
+    page: z.number().int().positive(),
+    bounds: z
+      .object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+        width: z.number().positive(),
+        height: z.number().positive(),
+      })
+      .strict(),
+    bytesSha256: sha256Schema,
+    sourceObjectIds: z.array(idSchema),
+    captionRunIds: z.array(idSchema).optional(),
+  })
+  .strict()
+
+const sourceArtifactSchema = z
+  .object({
+    id: idSchema,
+    kind: z.enum([
+      'region-lane',
+      'table-scope',
+      'line-boundary',
+      'note-relationship',
+      'citation-relationship',
+      'source-run-provenance',
+    ]),
+    sourceRunIds: z.array(idSchema),
+  })
+  .strict()
+
+const contextSchema = z
+  .object({
+    documentId: idSchema,
+    sourceSha256: sha256Schema,
+    split: z.enum(STRUCTURED_EXTRACTION_SPLITS),
+    layout: z.enum(STRUCTURED_EXTRACTION_LAYOUTS),
+    sourceRuns: z.array(sourceRunSchema),
+    sourceAssets: z.array(sourceAssetSchema),
+    provenArtifacts: z.array(sourceArtifactSchema).optional(),
+    boilerplateRunIds: z.array(idSchema).optional(),
+  })
+  .strict()
+
+const tableCellSchema = z
+  .object({
+    sourceRunIds: z.array(idSchema).min(1),
+    headerScope: z
+      .enum(['row', 'column', 'rowgroup', 'colgroup', 'none'])
+      .optional(),
+  })
+  .strict()
+
+const nodeSchema = z
+  .object({
+    id: idSchema,
+    type: z.enum(STRUCTURED_EXTRACTION_NODE_TYPES),
+    sourceRunIds: z.array(idSchema).min(1),
+    text: z.string().optional(),
+    level: z.number().int().min(1).max(6).optional(),
+    assetId: idSchema.optional(),
+    captionNodeId: idSchema.optional(),
+    altText: z.string().optional(),
+    altTextSource: z.enum(['caption', 'model', 'image']).optional(),
+    table: z
+      .object({ rows: z.array(z.object({ cells: z.array(tableCellSchema) })) })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
+const proposalSchema = z
+  .object({
+    schemaVersion: z.literal(STRUCTURED_EXTRACTION_SCHEMA_VERSION).optional(),
+    nodes: z.array(nodeSchema).min(1),
+    assetIds: z.array(idSchema).optional(),
+    excludedBoilerplateRunIds: z.array(idSchema).optional(),
+    diagnostics: z.array(z.string()).optional(),
+  })
+  .strict()
+
+/**
+ * Adapt the deterministic PDF reconstruction into the arm-neutral context.
+ * IDs are derived from region/line/run positions and are therefore stable for
+ * a fixed reconstruction receipt; no source text is copied into a receipt.
+ */
+export function structuredExtractionContextFromReconstruction({
+  reconstruction,
+  documentId = reconstruction.source.fileName,
+  split,
+  layout,
+  stratum,
+}: {
+  reconstruction: PdfReconstruction
+  documentId?: string
+  split: StructuredExtractionSplit
+  layout: StructuredExtractionLayout
+  stratum?: string
+}): StructuredExtractionContext {
+  const sourceRuns: StructuredSourceRun[] = []
+  const runIdsByKey = new Map<string, string>()
+  let order = 0
+  for (const region of reconstruction.regions) {
+    for (const line of region.lines) {
+      for (const [runIndex, run] of line.runs.entries()) {
+        const id = `r-${region.id}-${line.id}-${runIndex}`
+        runIdsByKey.set(`${region.id}\u0000${line.id}\u0000${runIndex}`, id)
+        sourceRuns.push({
+          id,
+          text: run.text,
+          page: run.page,
+          order: order++,
+          layout,
+          ...(stratum ? { stratum } : {}),
+        })
+      }
+    }
+  }
+  const runIdsForRegion = (regionId: string) => {
+    const region = reconstruction.regions.find(({ id }) => id === regionId)
+    if (!region) return []
+    return region.lines.flatMap((line) =>
+      line.runs
+        .map((_, runIndex) =>
+          runIdsByKey.get(`${region.id}\u0000${line.id}\u0000${runIndex}`)!,
+        )
+        .filter(Boolean),
+    )
+  }
+  const sourceAssets: StructuredSourceAsset[] = reconstruction.assets.map(
+    (asset) => {
+      const relationship = reconstruction.visualRelationships.find(
+        ({ assetIds }) => assetIds.includes(asset.id),
+      )
+      const kind: StructuredSourceAsset['kind'] =
+        asset.kind === 'table'
+          ? 'table'
+          : asset.kind === 'equation'
+            ? 'equation'
+            : relationship?.kind === 'figure'
+              ? 'figure'
+              : 'diagram'
+      const box = asset.sourceCropBox ?? asset.sourceBoxes[0]
+      return {
+        id: asset.id,
+        kind,
+        page: box?.page ?? 1,
+        bounds: {
+          x: box?.x ?? 0,
+          y: box?.y ?? 0,
+          width: box?.width ?? 0.001,
+          height: box?.height ?? 0.001,
+        },
+        bytesSha256: asset.sha256,
+        sourceObjectIds: [...asset.sourceObjectIds],
+        ...(relationship
+          ? { captionRunIds: runIdsForRegion(relationship.captionRegionId) }
+          : {}),
+      }
+    },
+  )
+  const boilerplateRunIds = reconstruction.regions
+    .filter((region) =>
+      ['header', 'footer', 'page-number'].includes(region.kind),
+    )
+    .flatMap(({ id }) => runIdsForRegion(id))
+  const provenArtifacts: StructuredProvenArtifact[] = [
+    ...reconstruction.regions.map((region) => ({
+      id: region.id,
+      kind: 'region-lane' as const,
+      sourceRunIds: runIdsForRegion(region.id),
+    })),
+    ...reconstruction.visualRelationships
+      .filter(({ kind }) => kind === 'table')
+      .map((relationship) => ({
+        id: relationship.id,
+        kind: 'table-scope' as const,
+        sourceRunIds: relationship.sourceRegionIds.flatMap(runIdsForRegion),
+      })),
+    ...reconstruction.lineBoundaryDecisions.map((decision) => ({
+      id: decision.id,
+      kind: 'line-boundary' as const,
+      sourceRunIds: runIdsForRegion(decision.regionId),
+    })),
+    ...reconstruction.noteRelationships.map((relationship) => ({
+      id: relationship.id,
+      kind: 'note-relationship' as const,
+      sourceRunIds: [relationship.referenceRegionId].flatMap(runIdsForRegion),
+    })),
+    ...reconstruction.citationRelationships.map((relationship) => ({
+      id: relationship.id,
+      kind: 'citation-relationship' as const,
+      sourceRunIds: [relationship.referenceRegionId].flatMap(runIdsForRegion),
+    })),
+    {
+      id: 'source-run-provenance',
+      kind: 'source-run-provenance' as const,
+      sourceRunIds: sourceRuns.map(({ id }) => id),
+    },
+  ]
+  return {
+    documentId,
+    sourceSha256: reconstruction.source.sha256,
+    split,
+    layout,
+    sourceRuns,
+    sourceAssets,
+    provenArtifacts,
+    boilerplateRunIds,
+  }
+}
+
+function normalizedText(value: string) {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim()
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`,
+      )
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(child)
+    }
+    Object.freeze(value)
+  }
+  return value
+}
+
+export function structuredExtractionStableJson(value: unknown) {
+  return stableJson(value)
+}
+
+export function structuredExtractionHash(value: unknown) {
+  return sha256HexSync(stableJson(value))
+}
+
+export function parseStructuredExtractionContext(
+  value: unknown,
+): StructuredExtractionContext {
+  return contextSchema.parse(value)
+}
+
+export function parseStructuredExtractionProposal(
+  value: unknown,
+): StructuredExtractionProposal {
+  return proposalSchema.parse(value) as StructuredExtractionProposal
+}
+
+function sourceTextForRunIds(
+  sourceRunIds: readonly string[],
+  runsById: ReadonlyMap<string, StructuredSourceRun>,
+) {
+  return normalizedText(
+    sourceRunIds
+      .map((id) => runsById.get(id)?.text ?? '')
+      .filter((text) => text.length > 0)
+      .join(' '),
+  )
+}
+
+function issue(
+  code: StructuredExtractionVerificationIssueCode,
+  message: string,
+  fields: Partial<StructuredExtractionVerificationIssue> = {},
+): StructuredExtractionVerificationIssue {
+  return { code, message, ...fields }
+}
+
+function verifyNodeTable(
+  node: StructuredExtractionNode,
+  runsById: ReadonlyMap<string, StructuredSourceRun>,
+  claimed: Set<string>,
+  issues: StructuredExtractionVerificationIssue[],
+  boilerplate: ReadonlySet<string>,
+) {
+  if (!node.table || node.type !== 'table') return undefined
+  if (node.table.rows.length === 0) {
+    issues.push(
+      issue('invalid-table', 'A table must contain at least one row.', {
+        nodeId: node.id,
+      }),
+    )
+    return undefined
+  }
+  const rows: VerifiedStructuredExtractionNode['table'] = { rows: [] }
+  for (const row of node.table.rows) {
+    if (row.cells.length === 0) {
+      issues.push(
+        issue('invalid-table', 'A table row must contain cells.', {
+          nodeId: node.id,
+        }),
+      )
+      return undefined
+    }
+    const cells = []
+    for (const cell of row.cells) {
+      const cellText = sourceTextForRunIds(cell.sourceRunIds, runsById)
+      if (!cellText) {
+        issues.push(
+          issue('unverified-span', 'A table cell has no source text.', {
+            nodeId: node.id,
+          }),
+        )
+        return undefined
+      }
+      for (const sourceRunId of cell.sourceRunIds) {
+        if (boilerplate.has(sourceRunId)) {
+          issues.push(
+            issue(
+              'boilerplate-in-body',
+              `Boilerplate run ${sourceRunId} cannot enter a table cell.`,
+              { nodeId: node.id, sourceRunId },
+            ),
+          )
+        }
+        if (!runsById.has(sourceRunId)) {
+          issues.push(
+            issue('unknown-source-run', `Unknown source run ${sourceRunId}.`, {
+              nodeId: node.id,
+              sourceRunId,
+            }),
+          )
+        } else if (claimed.has(sourceRunId)) {
+          issues.push(
+            issue(
+              'duplicate-source-run',
+              `Source run ${sourceRunId} is emitted more than once.`,
+              { nodeId: node.id, sourceRunId },
+            ),
+          )
+        }
+        claimed.add(sourceRunId)
+      }
+      cells.push({
+        text: cellText,
+        sourceRunIds: [...cell.sourceRunIds],
+        headerScope: cell.headerScope ?? 'none',
+      })
+    }
+    rows.rows.push({ cells })
+  }
+  return rows
+}
+
+function validateNodeText(
+  node: StructuredExtractionNode,
+  runsById: ReadonlyMap<string, StructuredSourceRun>,
+  claimed: Set<string>,
+  issues: StructuredExtractionVerificationIssue[],
+) {
+  if (!Array.isArray(node.sourceRunIds) || node.sourceRunIds.length === 0) {
+    issues.push(
+      issue(
+        'unverified-span',
+        'Every emitted node must reference source runs.',
+        { nodeId: node.id },
+      ),
+    )
+    return ''
+  }
+  const text = sourceTextForRunIds(node.sourceRunIds, runsById)
+  if (!text) {
+    issues.push(
+      issue('unverified-span', 'A node references no readable source text.', {
+        nodeId: node.id,
+      }),
+    )
+  }
+  if (node.text !== undefined && normalizedText(node.text) !== text) {
+    issues.push(
+      issue(
+        'source-text-mismatch',
+        'Model text does not exactly match the referenced source runs.',
+        { nodeId: node.id },
+      ),
+    )
+  }
+  const sourceOrders = node.sourceRunIds
+    .map((sourceRunId) => runsById.get(sourceRunId)?.order)
+    .filter((order): order is number => order !== undefined)
+  if (
+    sourceOrders.some(
+      (order, index) => index > 0 && order < sourceOrders[index - 1]!,
+    )
+  ) {
+    issues.push(
+      issue(
+        'unverified-span',
+        'Source runs must be emitted in deterministic source order.',
+        { nodeId: node.id },
+      ),
+    )
+  }
+  for (const sourceRunId of node.sourceRunIds) {
+    if (!runsById.has(sourceRunId)) {
+      issues.push(
+        issue('unknown-source-run', `Unknown source run ${sourceRunId}.`, {
+          nodeId: node.id,
+          sourceRunId,
+        }),
+      )
+    } else if (claimed.has(sourceRunId)) {
+      issues.push(
+        issue(
+          'duplicate-source-run',
+          `Source run ${sourceRunId} is emitted more than once.`,
+          { nodeId: node.id, sourceRunId },
+        ),
+      )
+    }
+    claimed.add(sourceRunId)
+  }
+  return text
+}
+
+function verifyAsset(
+  node: StructuredExtractionNode,
+  context: StructuredExtractionContext,
+  assetsById: ReadonlyMap<string, StructuredSourceAsset>,
+  nodesById: ReadonlyMap<string, StructuredExtractionNode>,
+  issues: StructuredExtractionVerificationIssue[],
+) {
+  if (!node.assetId) return
+  const asset = assetsById.get(node.assetId)
+  if (!asset) {
+    issues.push(
+      issue('unknown-asset', `Unknown deterministic asset ${node.assetId}.`, {
+        nodeId: node.id,
+        assetId: node.assetId,
+      }),
+    )
+    return
+  }
+  if (
+    (node.type === 'figure' && !['figure', 'diagram'].includes(asset.kind)) ||
+    (node.type === 'table' && asset.kind !== 'table') ||
+    (node.type === 'equation' && asset.kind !== 'equation')
+  ) {
+    issues.push(
+      issue(
+        'asset-kind-mismatch',
+        `Asset ${node.assetId} cannot back a ${node.type} node.`,
+        { nodeId: node.id, assetId: node.assetId },
+      ),
+    )
+  }
+  // The proposal type has no bytes/bounds fields. Reject them defensively if
+  // an untyped caller smuggles them in, rather than silently accepting model
+  // authored geometry.
+  const untyped = node as StructuredExtractionNode & Record<string, unknown>
+  if ('bytes' in untyped || 'bounds' in untyped || 'bytesSha256' in untyped) {
+    issues.push(
+      issue(
+        'asset-bytes-or-bounds-authored',
+        `Asset ${node.assetId} bytes and bounds belong to the deterministic layer.`,
+        { nodeId: node.id, assetId: node.assetId },
+      ),
+    )
+  }
+  if (node.type === 'figure') {
+    if (!node.captionNodeId || !nodesById.has(node.captionNodeId)) {
+      issues.push(
+        issue(
+          'missing-caption',
+          `Figure ${node.id} must reference a source-backed caption.`,
+          { nodeId: node.id, assetId: node.assetId },
+        ),
+      )
+    } else if (node.altTextSource !== 'caption') {
+      issues.push(
+        issue(
+          'model-authored-alt-text',
+          `Figure ${node.id} alt text must be caption-derived.`,
+          { nodeId: node.id, assetId: node.assetId },
+        ),
+      )
+    } else {
+      const caption = nodesById.get(node.captionNodeId)!
+      const captionText = sourceTextForRunIds(
+        caption.sourceRunIds,
+        new Map(context.sourceRuns.map((run) => [run.id, run])),
+      )
+      if (
+        asset.captionRunIds &&
+        (asset.captionRunIds.length !== caption.sourceRunIds.length ||
+          asset.captionRunIds.some(
+            (runId, index) => runId !== caption.sourceRunIds[index],
+          ))
+      ) {
+        issues.push(
+          issue(
+            'asset-identity-mismatch',
+            `Figure ${node.id} caption does not match the deterministic asset caption ownership.`,
+            { nodeId: node.id, assetId: node.assetId },
+          ),
+        )
+      }
+      if (
+        node.altText !== undefined &&
+        normalizedText(node.altText) !== captionText
+      ) {
+        issues.push(
+          issue(
+            'model-authored-alt-text',
+            `Figure ${node.id} alt text does not equal its caption.`,
+            { nodeId: node.id, assetId: node.assetId },
+          ),
+        )
+      }
+    }
+  }
+}
+
+function captionTextForNode(
+  node: StructuredExtractionNode,
+  nodesById: ReadonlyMap<string, StructuredExtractionNode>,
+  runsById: ReadonlyMap<string, StructuredSourceRun>,
+) {
+  if (!node.captionNodeId) return undefined
+  const caption = nodesById.get(node.captionNodeId)
+  return caption
+    ? sourceTextForRunIds(caption.sourceRunIds, runsById)
+    : undefined
+}
+
+/**
+ * Verify and materialize a model proposal.  On any violation this function
+ * returns no document; callers must use the deterministic fallback instead of
+ * partially publishing a candidate.
+ */
+export function verifyStructuredExtraction(
+  contextInput: StructuredExtractionContext,
+  proposalInput: unknown,
+): StructuredExtractionVerificationResult {
+  let context: StructuredExtractionContext
+  let proposal: StructuredExtractionProposal
+  try {
+    context = parseStructuredExtractionContext(contextInput)
+    proposal = parseStructuredExtractionProposal(proposalInput)
+  } catch (error) {
+    return {
+      status: 'failed',
+      output: null,
+      issues: [
+        issue(
+          'invalid-output',
+          error instanceof z.ZodError
+            ? error.issues
+                .map((entry) => `${entry.path.join('.')}: ${entry.message}`)
+                .join('; ')
+            : 'Structured extraction proposal is invalid.',
+        ),
+      ],
+    }
+  }
+
+  const issues: StructuredExtractionVerificationIssue[] = []
+  const runsById = new Map(context.sourceRuns.map((run) => [run.id, run]))
+  const assetsById = new Map(
+    context.sourceAssets.map((asset) => [asset.id, asset]),
+  )
+  const nodesById = new Map(proposal.nodes.map((node) => [node.id, node]))
+  const claimed = new Set<string>()
+  const boilerplate = new Set(context.boilerplateRunIds ?? [])
+  const excluded = new Set(proposal.excludedBoilerplateRunIds ?? [])
+  const nodes: VerifiedStructuredExtractionNode[] = []
+
+  if (
+    new Set(context.sourceRuns.map(({ id }) => id)).size !==
+      context.sourceRuns.length ||
+    new Set(context.sourceRuns.map(({ order }) => order)).size !==
+      context.sourceRuns.length
+  ) {
+    issues.push(
+      issue(
+        'invalid-output',
+        'Source run identifiers and source order positions must be unique.',
+      ),
+    )
+  }
+  if (
+    new Set(context.sourceAssets.map(({ id }) => id)).size !==
+    context.sourceAssets.length
+  ) {
+    issues.push(
+      issue(
+        'invalid-output',
+        'Deterministic asset identifiers must be unique.',
+      ),
+    )
+  }
+
+  if (nodesById.size !== proposal.nodes.length) {
+    issues.push(issue('invalid-output', 'Node identifiers must be unique.'))
+  }
+  for (const node of proposal.nodes) {
+    if (
+      node.type === 'heading' &&
+      (node.level === undefined || node.level < 1 || node.level > 6)
+    ) {
+      issues.push(
+        issue(
+          'invalid-heading-level',
+          'Headings require a level from 1 through 6.',
+          { nodeId: node.id },
+        ),
+      )
+    }
+    const claimedBeforeNode = new Set(claimed)
+    const text = validateNodeText(node, runsById, claimed, issues)
+    for (const sourceRunId of node.sourceRunIds) {
+      if (boilerplate.has(sourceRunId)) {
+        issues.push(
+          issue(
+            'boilerplate-in-body',
+            `Boilerplate run ${sourceRunId} cannot enter body flow.`,
+            { nodeId: node.id, sourceRunId },
+          ),
+        )
+      }
+    }
+    // Table cells are the semantic spans. Their source runs may also be
+    // listed on the table node so the node itself remains source anchored;
+    // avoid treating that intentional containment as duplicate emission.
+    const tableClaimed =
+      node.type === 'table' ? new Set(claimedBeforeNode) : claimed
+    const table = verifyNodeTable(
+      node,
+      runsById,
+      tableClaimed,
+      issues,
+      boilerplate,
+    )
+    if (node.type === 'table') {
+      for (const sourceRunId of tableClaimed) claimed.add(sourceRunId)
+      // The node-level source references and cell-level references describe
+      // the same source ownership, not two emitted text spans.
+      const nodeSourceCounts = new Map<string, number>()
+      for (const sourceRunId of node.sourceRunIds) {
+        nodeSourceCounts.set(
+          sourceRunId,
+          (nodeSourceCounts.get(sourceRunId) ?? 0) + 1,
+        )
+      }
+      for (const sourceRunId of node.sourceRunIds) {
+        const duplicate = issues.find(
+          (entry) =>
+            entry.code === 'duplicate-source-run' &&
+            entry.nodeId === node.id &&
+            entry.sourceRunId === sourceRunId,
+        )
+        if (
+          duplicate &&
+          nodeSourceCounts.get(sourceRunId) === 1 &&
+          !claimedBeforeNode.has(sourceRunId) &&
+          tableClaimed.has(sourceRunId)
+        ) {
+          const index = issues.indexOf(duplicate)
+          issues.splice(index, 1)
+        }
+      }
+    }
+    verifyAsset(node, context, assetsById, nodesById, issues)
+    const captionText =
+      node.type === 'figure'
+        ? captionTextForNode(node, nodesById, runsById)
+        : undefined
+    if (node.type === 'figure' && captionText !== undefined) {
+      // Never carry proposal text into the verified graph. Caption-derived alt
+      // text is rebuilt from the source run ledger even when the proposal did
+      // not include an altText field.
+      node.altText = captionText
+      node.altTextSource = 'caption'
+    }
+    nodes.push({
+      id: node.id,
+      type: node.type,
+      sourceRunIds: [...node.sourceRunIds],
+      text,
+      ...(node.level === undefined ? {} : { level: node.level }),
+      ...(node.assetId === undefined ? {} : { assetId: node.assetId }),
+      ...(node.captionNodeId === undefined
+        ? {}
+        : { captionNodeId: node.captionNodeId }),
+      ...(node.altText === undefined ? {} : { altText: node.altText }),
+      ...(node.altTextSource === 'caption'
+        ? { altTextSource: 'caption' as const }
+        : {}),
+      provenance: { sourceRunIds: [...node.sourceRunIds] },
+      ...(table ? { table } : {}),
+    })
+  }
+
+  for (const sourceRunId of excluded) {
+    if (!boilerplate.has(sourceRunId)) {
+      issues.push(
+        issue(
+          'boilerplate-not-accounted',
+          `Run ${sourceRunId} is not declared boilerplate.`,
+          { sourceRunId },
+        ),
+      )
+    }
+    if (!runsById.has(sourceRunId)) {
+      issues.push(
+        issue('unknown-source-run', `Unknown boilerplate run ${sourceRunId}.`, {
+          sourceRunId,
+        }),
+      )
+    }
+  }
+  for (const sourceRunId of boilerplate) {
+    if (!runsById.has(sourceRunId)) {
+      issues.push(
+        issue('unknown-source-run', `Unknown boilerplate run ${sourceRunId}.`, {
+          sourceRunId,
+        }),
+      )
+    }
+    if (!excluded.has(sourceRunId) && !claimed.has(sourceRunId)) {
+      issues.push(
+        issue(
+          'boilerplate-not-accounted',
+          `Boilerplate run ${sourceRunId} was neither excluded nor emitted.`,
+          { sourceRunId },
+        ),
+      )
+    }
+  }
+
+  const assetIds = [
+    ...new Set([
+      ...(proposal.assetIds ?? []),
+      ...proposal.nodes.flatMap((node) => (node.assetId ? [node.assetId] : [])),
+    ]),
+  ]
+  for (const assetId of assetIds) {
+    if (!assetsById.has(assetId))
+      issues.push(
+        issue('unknown-asset', `Unknown deterministic asset ${assetId}.`, {
+          assetId,
+        }),
+      )
+  }
+  const accountedSourceRunIds = [...new Set([...claimed, ...excluded])].sort()
+  if (issues.length > 0) return { status: 'failed', output: null, issues }
+  return {
+    status: 'passed',
+    issues: [],
+    output: {
+      schemaVersion: STRUCTURED_EXTRACTION_SCHEMA_VERSION,
+      documentId: context.documentId,
+      sourceSha256: context.sourceSha256,
+      nodes,
+      assetIds: assetIds.sort(),
+      excludedBoilerplateRunIds: [...excluded].sort(),
+      accountedSourceRunIds,
+    },
+  }
+}
+
+export function verifyStructuredExtractionOrThrow(
+  context: StructuredExtractionContext,
+  proposal: unknown,
+) {
+  const result = verifyStructuredExtraction(context, proposal)
+  if (result.status === 'failed') {
+    throw new Error(
+      result.issues
+        .map(({ code, message }) => `${code}: ${message}`)
+        .join('\n'),
+    )
+  }
+  return result.output
+}
+
+// Public vocabulary aliases used by callers that refer to the shared
+// contract as "structured output" rather than "structured extraction".
+export const verifyStructuredOutput = verifyStructuredExtraction
+export const verifyStructuredOutputOrThrow = verifyStructuredExtractionOrThrow
+
+/** Build the source-only input each candidate is allowed to receive. */
+export function modelInputForStructuredExtraction(
+  context: StructuredExtractionContext,
+  arm: 'geometric-baseline' | 'llm-authored' | 'llm-grounded',
+): StructuredExtractionContext {
+  const base: StructuredExtractionContext = {
+    documentId: context.documentId,
+    sourceSha256: context.sourceSha256,
+    split: context.split,
+    layout: context.layout,
+    sourceRuns: context.sourceRuns.map((run) => ({ ...run })),
+    sourceAssets: context.sourceAssets.map((asset) => ({
+      ...asset,
+      bounds: { ...asset.bounds },
+      sourceObjectIds: [...asset.sourceObjectIds],
+      ...(asset.captionRunIds
+        ? { captionRunIds: [...asset.captionRunIds] }
+        : {}),
+    })),
+    ...(context.boilerplateRunIds
+      ? { boilerplateRunIds: [...context.boilerplateRunIds] }
+      : {}),
+  }
+  if (arm === 'geometric-baseline' || arm === 'llm-grounded') {
+    base.provenArtifacts = (context.provenArtifacts ?? []).map((artifact) => ({
+      ...artifact,
+      sourceRunIds: [...artifact.sourceRunIds],
+    }))
+  }
+  return deepFreeze(base)
+}
+
+export function isStructuredExtractionByteStable(
+  first: VerifiedStructuredExtraction,
+  second: VerifiedStructuredExtraction,
+) {
+  return (
+    structuredExtractionStableJson(first) ===
+    structuredExtractionStableJson(second)
+  )
+}

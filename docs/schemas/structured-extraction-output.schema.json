@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/structured-extraction-output-1.0.0.json",
+  "title": "Source-backed structured extraction output",
+  "description": "Candidate structure may reference source runs and deterministic assets; all emitted text is materialized by the verifier.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "documentId",
+    "sourceSha256",
+    "nodes",
+    "assetIds",
+    "excludedBoilerplateRunIds",
+    "accountedSourceRunIds"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "documentId": { "$ref": "#/$defs/id" },
+    "sourceSha256": { "$ref": "#/$defs/sha256" },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "assetIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "excludedBoilerplateRunIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "accountedSourceRunIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "sourceRunIds", "text", "provenance"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": {
+          "enum": [
+            "title",
+            "author",
+            "affiliation",
+            "abstract",
+            "heading",
+            "paragraph",
+            "code",
+            "table",
+            "figure",
+            "equation",
+            "footnote",
+            "reference"
+          ]
+        },
+        "sourceRunIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "text": { "type": "string" },
+        "level": { "type": "integer", "minimum": 1, "maximum": 6 },
+        "assetId": { "$ref": "#/$defs/id" },
+        "captionNodeId": { "$ref": "#/$defs/id" },
+        "altText": { "type": "string" },
+        "altTextSource": { "const": "caption" },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sourceRunIds"],
+          "properties": {
+            "sourceRunIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/id" }
+            }
+          }
+        },
+        "table": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rows"],
+          "properties": {
+            "rows": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["cells"],
+                "properties": {
+                  "cells": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["text", "sourceRunIds", "headerScope"],
+                      "properties": {
+                        "text": { "type": "string" },
+                        "sourceRunIds": {
+                          "type": "array",
+                          "minItems": 1,
+                          "uniqueItems": true,
+                          "items": { "$ref": "#/$defs/id" }
+                        },
+                        "headerScope": {
+                          "enum": [
+                            "row",
+                            "column",
+                            "rowgroup",
+                            "colgroup",
+                            "none"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1671,6 +1671,8 @@ export async function createPdfPipeline({
   ocrEngine = DEFAULT_HEADLESS_OCR_ENGINE,
   ocrRemoteOptIn = false,
   documentVisibility = DEFAULT_DOCUMENT_VISIBILITY,
+  tableCandidateProvider,
+  allowRemoteTableCandidateProvider = false,
 } = {}) {
   const resolvedOcrEngine = normalizeHeadlessOcrEngine(ocrEngine)
   const engineContext = { remoteOptIn: ocrRemoteOptIn, documentVisibility }
@@ -1738,6 +1740,11 @@ export async function createPdfPipeline({
     ocrEngine: resolvedOcrEngine,
     ocrResolution,
     ocr,
+    tableCandidateProvider,
+    allowRemoteTableCandidateProvider,
+    async loadTableCandidateProviderModule() {
+      return vite.ssrLoadModule('/src/research/table-candidate-provider.ts')
+    },
     async loadExportModules() {
       exportModules ??= Promise.all([
         vite.ssrLoadModule('/src/research/epub.ts'),
@@ -1841,6 +1848,15 @@ export async function auditPdfPath(
       {
         standardFontDataUrl: pipeline.standardFontDataUrl,
         ocr: pipeline.ocr,
+        ...(pipeline.tableCandidateProvider
+          ? { tableCandidateProvider: pipeline.tableCandidateProvider }
+          : {}),
+        ...(pipeline.allowRemoteTableCandidateProvider
+          ? {
+              allowRemoteTableCandidateProvider:
+                pipeline.allowRemoteTableCandidateProvider,
+            }
+          : {}),
       },
     )
     const ocr = safeOcrProvenance(reconstruction.pages)

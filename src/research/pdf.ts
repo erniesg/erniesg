@@ -40,6 +40,7 @@ import {
   extractPdfLinkAnnotations,
   resolvePdfNamedDestinationEvidence,
 } from './pdf-links'
+import type { TableCandidateProvider } from './table-candidate-provider'
 
 export { extractPdfLinkAnnotations } from './pdf-links'
 
@@ -49,6 +50,8 @@ type PdfImportOptions = {
   ocr?: PdfOcrOptions
   decisionFile?: HumanDecisionFile
   language?: string
+  tableCandidateProvider?: TableCandidateProvider
+  allowRemoteTableCandidateProvider?: boolean
 }
 
 export const MAX_OCR_RASTER_PIXELS = 3_200_000
@@ -1497,6 +1500,9 @@ export async function reconstructPdf(
       fileName: file.name,
       byteLength: file.size,
       metadata,
+      tableCandidateProvider: options.tableCandidateProvider,
+      allowRemoteTableCandidateProvider:
+        options.allowRemoteTableCandidateProvider,
       onProgress,
       signal: options.signal,
       rasterizeFigure: async (input) => {

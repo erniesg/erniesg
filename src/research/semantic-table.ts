@@ -66,9 +66,18 @@ function exactSourceText(value: unknown) {
 }
 
 function validCell(value: unknown): value is StrictSemanticTableCell {
+  const sourceVerifiedEmptyCell =
+    isRecord(value) &&
+    typeof value.text === 'string' &&
+    normalizedText(value.text).length === 0 &&
+    Array.isArray(value.sourceRuns) &&
+    value.sourceRuns.length === 0 &&
+    isRecord(value.inlineMapping) &&
+    value.inlineMapping.expected === 0 &&
+    value.inlineMapping.mapped === 0
   return (
     isRecord(value) &&
-    normalizedText(value.text).length > 0 &&
+    (normalizedText(value.text).length > 0 || sourceVerifiedEmptyCell) &&
     HEADER_SCOPES.has(value.headerScope) &&
     positiveInteger(value.columnSpan) &&
     positiveInteger(value.rowSpan)
@@ -438,18 +447,18 @@ function verifiedHeaderSpanGeometry(
   const firstHeader = table.rows[0]
   const leafHeader = table.rows[1]
   const bodyCenters = Array.from({ length: grid.columns }, (_, columnIndex) => {
-    const centers = bodyRows.flatMap((row, relativeRowIndex) =>
-      row.cells.flatMap((cell, cellIndex) => {
-        const placement =
-          grid.placements[headerRowCount + relativeRowIndex][cellIndex]
-        return placement.columnIndex === columnIndex
-          ? [semanticCellCenter(cell)]
-          : []
-      }),
-    )
-    return centers.some((center) => center === null)
-      ? null
-      : median(centers as number[])
+    const centers = bodyRows
+      .flatMap((row, relativeRowIndex) =>
+        row.cells.flatMap((cell, cellIndex) => {
+          const placement =
+            grid.placements[headerRowCount + relativeRowIndex][cellIndex]
+          return placement.columnIndex === columnIndex
+            ? [semanticCellCenter(cell)]
+            : []
+        }),
+      )
+      .filter((center): center is number => center !== null)
+    return centers.length === 0 ? null : median(centers)
   })
   if (bodyCenters.some((center) => center === null)) return false
   const numericBodyCenters = bodyCenters as number[]
@@ -746,7 +755,12 @@ function alignVerifiedSourceLineage(
     const aligned: VerifiedTableSourceRun[] = []
     const rowBandIndexes: number[] = []
     for (const cell of row.cells) {
-      if (!cell.sourceRuns || cell.sourceRuns.length === 0) return null
+      if (
+        !cell.sourceRuns ||
+        (normalizedText(cell.text).length > 0 && cell.sourceRuns.length === 0)
+      ) {
+        return null
+      }
       for (const claimed of cell.sourceRuns) {
         const key = sourceRunKey(
           claimed.regionId,
@@ -902,7 +916,8 @@ export function isSourceVerifiedSemanticTable({
         !cell.id ||
         !Array.isArray(cell.headerIds) ||
         !Array.isArray(cell.sourceRuns) ||
-        cell.sourceRuns.length === 0 ||
+        (normalizedText(cell.text).length > 0 &&
+          cell.sourceRuns.length === 0) ||
         cell.sourceRuns.some((source) => !isRecord(source)) ||
         !cell.inlineMapping,
     )

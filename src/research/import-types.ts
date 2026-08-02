@@ -1,4 +1,5 @@
 import type { ResearchPaper } from './schema'
+import type { TableCandidateReceipt } from './table-candidate-provider'
 
 export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
 export const MAX_LOCAL_DOCX_BYTES = 50 * 1024 * 1024
@@ -52,6 +53,13 @@ export type PdfSourceRun = NormalizedSourceBox & {
         sourceWhitespacePredecessorIndex: number
       }
   )
+
+/** Exact ownership of one source text run inside a bounded visual scope. */
+export type PdfSourceRunReference = {
+  regionId: string
+  lineId: string
+  runIndex: number
+}
 
 export type PdfLineBoundaryDecision = {
   id: string
@@ -862,6 +870,10 @@ export type ReconstructionDiagnostic = {
     | 'AMBIGUOUS_VISUAL_MATCH'
     | 'UNRESOLVED_VISUAL_OBJECT'
     | 'BOUNDED_TABLE_FALLBACK'
+    | 'TABLE_CANDIDATE_NO_PROPOSAL'
+    | 'TABLE_CANDIDATE_VERIFICATION_FAILED'
+    | 'TABLE_CANDIDATE_PROVIDER_UNAVAILABLE'
+    | 'TABLE_CANDIDATE_VERIFIED'
     | 'UNREFERENCED_VISUAL_ASSET'
     | 'NO_RECONSTRUCTABLE_TEXT'
     | 'ISOLATED_PROSE_GLYPH'
@@ -1063,7 +1075,7 @@ export type PdfReconstruction = {
     byteLength: number
     sha256: string
     pageCount: number
-    localOnly: true
+    localOnly: boolean
     format?: undefined
   }
   paper: ResearchPaper
@@ -1085,6 +1097,7 @@ export type PdfReconstruction = {
   provenance: Record<string, NodeSourceEvidence>
   humanAdjudications: HumanAdjudicationProvenance
   diagnostics: ReconstructionDiagnostic[]
+  tableCandidateReceipts?: TableCandidateReceipt[]
   semanticSignals: PdfSemanticSignals
   completeness: PdfCompletenessMetrics
   readiness: PdfReadiness

@@ -463,11 +463,6 @@ const writeAtomicCheckpoint = (path, value) => {
   renameSync(temporary, path)
 }
 
-const directCodexWorkerIsLive = (processArgs) =>
-  processArgs.some((command) =>
-    /(?:^|\s)(?:\S*\/)?codex\s+.*\bexec\b/u.test(command),
-  )
-
 const loadCleanupManifest = (path, stateRoot) => {
   if (!existsSync(path)) return []
   const manifest = readJson(path)
@@ -708,9 +703,11 @@ export const runQueuePulse = () => {
       })
     }
     if (
-      vmSessionState.live.length > 0 ||
-      directCodexWorkerIsLive(processArgs)
+      vmSessionState.live.length > 0
     ) {
+      // Process names alone do not establish an issue worker. The VM session
+      // ledger paired with exact tmux-process matching is authoritative;
+      // coordinators, reviewers, and other repo lanes also run Codex exec.
       return finish('worker-active', 0, {
         failure_class: null,
         live_sessions: vmSessionState.live.map((item) => ({

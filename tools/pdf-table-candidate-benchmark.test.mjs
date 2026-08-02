@@ -108,6 +108,29 @@ describe('table candidate benchmark runner', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it('fails closed when an input audit does not produce a reconstruction', async () => {
+    const close = vi.fn(async () => {})
+    await expect(
+      runTableCandidateBenchmark({
+        corpusId: 'bookworld-v1',
+        inputs: ['bookworld'],
+        collectPaths: async () => ['book-1.pdf'],
+        createPipeline: async () => ({
+          loadTableCandidateProviderModule: async () => ({
+            TABLE_CANDIDATE_RECEIPT_SCHEMA_VERSION: '1.0.0',
+            createTableCandidateBenchmarkReport: vi.fn(),
+          }),
+          close,
+        }),
+        auditPath: async () => ({
+          reconstruction: null,
+          document: { basename: 'book-1.pdf', code: 'PDF_AUDIT_FAILED' },
+        }),
+      }),
+    ).rejects.toThrow('TABLE_CANDIDATE_INPUT_AUDIT_FAILED')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('runs the provider once and reuses its verified reconstruction', async () => {
     const module = {
       TABLE_CANDIDATE_RECEIPT_SCHEMA_VERSION: '1.0.0',
@@ -178,6 +201,15 @@ describe('table candidate benchmark runner', () => {
         basename: 'book-1.pdf',
         sha256: 's'.repeat(64),
         counts: { semantic: 1, raster: 1, unresolved: 0 },
+      },
+    ])
+    expect(report.providerReceiptManifest).toEqual([
+      {
+        basename: 'book-1.pdf',
+        sha256: 's'.repeat(64),
+        tableCandidateReceipts: [
+          { candidateSha256: 'a'.repeat(64) },
+        ],
       },
     ])
     expect(report.providerReceiptManifestSha256).toMatch(/^[a-f0-9]{64}$/u)

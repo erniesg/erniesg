@@ -76,6 +76,12 @@ const issueTmuxSessionsInProcess = (command) => {
   return [...matches].map((match) => match[1])
 }
 
+const processCommand = (entry) =>
+  typeof entry === 'string' ? entry : String(entry?.command ?? '')
+
+const processCgroup = (entry) =>
+  typeof entry === 'string' ? '' : String(entry?.cgroup ?? '')
+
 export const parseTargetUnit = (raw) => {
   if (typeof raw !== 'string') {
     throw new Error('drain target state is missing')
@@ -172,7 +178,7 @@ const classifySessions = ({
   if (repo === null) {
     const knownTmuxSessions = new Set(relevant.map((item) => item.tmux_session))
     const unmatchedProcessSession = processArgs
-      .flatMap(issueTmuxSessionsInProcess)
+      .flatMap((entry) => issueTmuxSessionsInProcess(processCommand(entry)))
       .find((tmuxSession) => !knownTmuxSessions.has(tmuxSession))
     if (unmatchedProcessSession) {
       return blockedSessionState(
@@ -187,7 +193,7 @@ const classifySessions = ({
   const expired = []
   for (const item of relevant) {
     const processIsLive = processArgs.some((command) =>
-      commandContainsTmuxSession(command, item.tmux_session),
+      commandContainsTmuxSession(processCommand(command), item.tmux_session),
     )
     if (processIsLive) {
       live.push(item)
@@ -446,10 +452,32 @@ const diskUsage = (path) => {
 
 const processSnapshot = () => {
   const fixture = process.env.STRUCT_QUEUE_PROCESS_SNAPSHOT_FILE
-  const raw = fixture
-    ? readFileSync(fixture, 'utf8')
-    : run('ps', ['-eo', 'args='])
-  return raw.split(/\r?\n/u).filter(Boolean)
+  if (fixture) {
+    return readFileSync(fixture, 'utf8')
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          const parsed = JSON.parse(line)
+          if (asObject(parsed) && isNonEmptyString(parsed.command)) {
+            return parsed
+          }
+        } catch {}
+        return { command: line, cgroup: '' }
+      })
+  }
+  return run('ps', ['-eo', 'pid=,args='])
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => {
+      const match = /^\s*([0-9]+)\s+(.*)$/u.exec(line)
+      if (!match) return { command: line, cgroup: '' }
+      let cgroup = ''
+      try {
+        cgroup = readFileSync(`/proc/${match[1]}/cgroup`, 'utf8')
+      } catch {}
+      return { command: match[2], cgroup }
+    })
 }
 
 const writeAtomicCheckpoint = (path, value) => {
@@ -464,12 +492,15 @@ const writeAtomicCheckpoint = (path, value) => {
 }
 
 const directCodexExec = /(?:^|\s)(?:\S*\/)?codex\s+.*\bexec\b/u
-const trustedCoordinatorIdentity = /\btrusted\s+VM\s+coordinator\b/iu
+// Systemd owns the cgroup path; prompt text in argv is untrusted input.
+const trustedCoordinatorCgroup =
+  /(?:^|\/)overnight-(?:erniesg-steward|cross-repo-landing-coordinator-v2)\.service$/u
 
 const directCodexWorkerIsLive = (processArgs) =>
   processArgs.some(
     (command) =>
-      directCodexExec.test(command) && !trustedCoordinatorIdentity.test(command),
+      directCodexExec.test(processCommand(command)) &&
+      !trustedCoordinatorCgroup.test(processCgroup(command).trim()),
   )
 
 const loadCleanupManifest = (path, stateRoot) => {

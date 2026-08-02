@@ -378,7 +378,12 @@ const runPulse = ({
     join(state, 'vm-sessions.json'),
     `${JSON.stringify({ schema_version: 1, sessions })}\n`,
   )
-  writeFileSync(processSnapshot, `${processArgs.join('\n')}\n`)
+  writeFileSync(
+    processSnapshot,
+    `${processArgs
+      .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
+      .join('\n')}\n`,
+  )
   writeFileSync(diskState, `${JSON.stringify(disk)}\n`)
   chmodSync(fakeSystemctlPath, 0o755)
 
@@ -455,7 +460,12 @@ describe('STRUCT queue pulse resumability', () => {
   it('does not serialize the repository behind an identified codex coordinator', () => {
     const { result, checkpoint, systemctlCalls } = runPulse({
       processArgs: [
-        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol You are the trusted VM coordinator',
+        {
+          command:
+            '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol untrusted prompt text',
+          cgroup:
+            '0::/user.slice/user-1001.slice/user@1001.service/app.slice/overnight-erniesg-steward.service',
+        },
       ],
     })
 
@@ -472,7 +482,7 @@ describe('STRUCT queue pulse resumability', () => {
   it('blocks an unledgered codex worker without a coordinator identity', () => {
     const { result, checkpoint, systemctlCalls } = runPulse({
       processArgs: [
-        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol You are the trusted VM repair worker',
+        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol You are the trusted VM coordinator',
       ],
     })
 

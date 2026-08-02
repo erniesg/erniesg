@@ -14,6 +14,7 @@ import {
   PublicationAdapterRegistry,
   buildRegisteredPublication,
 } from '../adapter-registry'
+import type { PublicationNode } from '../schema'
 
 async function fixtureCollection(name: string) {
   const root = await mkdtemp(resolve(tmpdir(), 'publication-astro-'))
@@ -169,11 +170,13 @@ describe('Astro publication adapter', () => {
       ]),
     })
     const list = result.graph.nodes.find(
-      (node) => node.type === 'list' && node.ordered,
+      (node): node is Extract<PublicationNode, { type: 'list' }> =>
+        node.type === 'list' && node.ordered,
     )
     expect(list).toBeDefined()
     const item = result.graph.nodes.find(
-      (node) => node.type === 'list-item' && node.id === list?.itemIds[0],
+      (node): node is Extract<PublicationNode, { type: 'list-item' }> =>
+        node.type === 'list-item' && node.id === list?.itemIds[0],
     )
     expect(item).toMatchObject({ childListIds: [expect.any(String)] })
     expect(

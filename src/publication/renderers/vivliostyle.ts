@@ -171,7 +171,7 @@ function renderNode(
   node: PublicationNode,
   byId: Map<string, PublicationNode>,
   assetPaths: Map<string, string>,
-) {
+): string {
   const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns) : ''
   switch (node.type) {
     case 'heading':
@@ -181,14 +181,14 @@ function renderNode(
     case 'list': {
       const tag = node.ordered ? 'ol' : 'ul'
       const start = node.ordered && node.start ? ` start="${node.start}"` : ''
-      const items = node.itemIds
+      const items: string = node.itemIds
         .map((id) => byId.get(id))
         .filter(
           (item): item is Extract<PublicationNode, { type: 'list-item' }> =>
             Boolean(item?.type === 'list-item'),
         )
         .map((item) => {
-          const nested = item.childListIds
+          const nested: string = item.childListIds
             .map((childId) => byId.get(childId))
             .filter(
               (child): child is Extract<PublicationNode, { type: 'list' }> =>

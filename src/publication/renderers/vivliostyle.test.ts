@@ -8,6 +8,7 @@ import {
   publicationGraphToHtml,
   vivliostyleRenderer,
 } from './vivliostyle'
+import type { PublicationNode } from '../schema'
 
 async function fixtureCollection(name: string) {
   const root = await mkdtemp(resolve(tmpdir(), 'publication-renderer-'))
@@ -67,7 +68,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     const graph = {
       ...bundle.graph,
       nodes: bundle.graph.nodes.map((node) =>
-        node.id === paragraph.id
+        node.type === 'paragraph' && node.id === paragraph.id
           ? {
               ...node,
               text: `${node.text}${suffix}`,
@@ -83,9 +84,13 @@ describe('Vivliostyle publication renderer boundary', () => {
           : node,
       ),
     }
-    const outerList = graph.nodes.find((node) => node.type === 'list')
+    const outerList = graph.nodes.find(
+      (node): node is Extract<PublicationNode, { type: 'list' }> =>
+        node.type === 'list',
+    )
     const outerItem = graph.nodes.find(
-      (node) => node.type === 'list-item' && node.id === outerList?.itemIds[0],
+      (node): node is Extract<PublicationNode, { type: 'list-item' }> =>
+        node.type === 'list-item' && node.id === outerList?.itemIds[0],
     )
     if (!outerList || !outerItem || outerItem.type !== 'list-item')
       throw new Error('missing list fixture')

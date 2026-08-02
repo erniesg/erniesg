@@ -80,6 +80,7 @@ export { visualCanonicalNodeId } from './pdf-visuals'
 import {
   canonicalPdfSourceSemanticFlowEvidence,
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+  PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE,
   pdfSourceFragmentId,
@@ -2659,8 +2660,9 @@ function sourceSemanticFlowBoundaryCandidate(
   const baselineGap = Math.abs(fromMetrics.baseline - toMetrics.baseline)
   if (
     fontRatio > 1.5 ||
-    baselineGap >
-      Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4)
+    (topology !== 'same-page-column' &&
+      baselineGap >
+        Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4))
   ) {
     return null
   }
@@ -2678,13 +2680,15 @@ function sourceSemanticFlowBoundaryCandidate(
     return null
   }
   const evidence = canonicalPdfSourceSemanticFlowEvidence(
-    exactStackedPunctuationTransition
-      ? PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
-      : outcome === 'space' &&
-          to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
-          to.run.sourceWhitespacePredecessorIndex === maximumFromSequence
-        ? PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE
-        : PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+    topology === 'same-page-column'
+      ? PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE
+      : exactStackedPunctuationTransition
+        ? PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
+        : outcome === 'space' &&
+            to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
+            to.run.sourceWhitespacePredecessorIndex === maximumFromSequence
+          ? PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE
+          : PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
   )
   const decision: SourceSemanticFlowBoundaryCandidate = {
     page: from.run.page,
@@ -2860,18 +2864,25 @@ function appendBlockContinuation(
             targetLineage?.fragment === 'cross-gutter-right'
           ? 'cross-gutter-to-span'
           : requestedTopology
+  const recordableTopology =
+    inferredTopology === 'inline-stacked-fragment' ||
+    inferredTopology === 'lexical-hyphen' ||
+    inferredTopology === 'same-page-column'
+      ? inferredTopology
+      : null
   const semanticFlowDecision =
     semanticDeletionDecision ??
-    (inferredTopology &&
-    semanticFlowOutcome !== 'space' &&
+    (recordableTopology &&
     semanticFlowOutcome !== 'unresolved' &&
-    (inferredTopology === 'inline-stacked-fragment' ||
-      inferredTopology === 'lexical-hyphen')
+    (semanticFlowOutcome !== 'space'
+      ? recordableTopology === 'inline-stacked-fragment' ||
+        recordableTopology === 'lexical-hyphen'
+      : recordableTopology === 'same-page-column')
       ? sourceSemanticFlowBoundaryDecision(
           target,
           continuation,
           semanticFlowOutcome,
-          inferredTopology,
+          recordableTopology,
         )
       : null)
   if (
@@ -3982,6 +3993,54 @@ export function sourceProvenRunFragmentToSpanBoundary(
   )
 }
 
+function sourceProvenSamePageColumnFlowBoundary(
+  target: RegionBlock,
+  continuation: RegionBlock,
+) {
+  const targetTailSegment = blockSourceSegments(target).at(-1)
+  const continuationHeadSegment = blockSourceSegments(continuation)[0]
+  const targetTailLine = targetTailSegment?.region.lines
+    .filter((line) => line.text.trim())
+    .at(-1)
+  const continuationHeadLine = continuationHeadSegment?.region.lines.find(
+    (line) => line.text.trim(),
+  )
+  if (
+    !targetTailSegment ||
+    !continuationHeadSegment ||
+    !targetTailLine ||
+    !continuationHeadLine ||
+    targetTailSegment.region.page !== continuationHeadSegment.region.page ||
+    targetTailSegment.region.column !== 'left' ||
+    continuationHeadSegment.region.column !== 'right' ||
+    targetTailLine.box.y + targetTailLine.box.height < 0.65 ||
+    continuationHeadLine.box.y > 0.35 ||
+    targetTailLine.box.x >= continuationHeadLine.box.x ||
+    targetTailLine.box.x + targetTailLine.box.width >
+      continuationHeadLine.box.x + 0.01 ||
+    /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) ||
+    detachedCitationYearContinuation(target.text, continuation.text) ||
+    !likelyUnmarkedCrossPageContinuation(target, continuation) ||
+    hasOmittedSourceBetweenBlocks(target, continuation)
+  ) {
+    return false
+  }
+  const fontRatio =
+    Math.max(targetTailLine.fontSize, continuationHeadLine.fontSize) /
+    Math.max(
+      1,
+      Math.min(targetTailLine.fontSize, continuationHeadLine.fontSize),
+    )
+  if (fontRatio > 1.12) return false
+  const candidate = sourceSemanticFlowBoundaryCandidate(
+    target,
+    continuation,
+    'space',
+    'same-page-column',
+  )
+  return candidate !== null
+}
+
 function sourceProvenSamePageParagraphBoundary(
   target: RegionBlock,
   continuation: RegionBlock,
@@ -4000,6 +4059,10 @@ function sourceProvenSamePageParagraphBoundary(
   const runFragmentToSpanBoundary = sourceProvenRunFragmentToSpanBoundary(
     targetTailSegment?.region ?? target.region,
     continuationHeadSegment?.region ?? continuation.region,
+  )
+  const sourceProvenColumnFlowBoundary = sourceProvenSamePageColumnFlowBoundary(
+    target,
+    continuation,
   )
   const targetLineage = targetTailLine?.sourceFragmentLineage
   const continuationLineage = continuationHeadLine?.sourceFragmentLineage
@@ -4046,7 +4109,9 @@ function sourceProvenSamePageParagraphBoundary(
         ? 'cross-gutter-to-span'
         : sourceAttestedCitationYearBoundary
           ? 'same-column-citation-year'
-          : 'lexical-hyphen',
+          : sourceProvenColumnFlowBoundary
+            ? 'same-page-column'
+            : 'lexical-hyphen',
   )
   if (
     !targetTailSegment ||
@@ -4057,11 +4122,13 @@ function sourceProvenSamePageParagraphBoundary(
     targetTailSegment.region.page !== continuationHeadSegment.region.page ||
     (targetTailSegment.region.column !==
       continuationHeadSegment.region.column &&
-      !runFragmentToSpanBoundary) ||
+      !runFragmentToSpanBoundary &&
+      !sourceProvenColumnFlowBoundary) ||
     (!runFragmentToSpanBoundary &&
       !explicitFragmentFamilyBoundary &&
       !sourceAttestedHyphenBoundary &&
-      !sourceAttestedCitationYearBoundary) ||
+      !sourceAttestedCitationYearBoundary &&
+      !sourceProvenColumnFlowBoundary) ||
     hasOmittedSourceBetweenBlocks(target, continuation) ||
     semanticFlowBoundary === null
   ) {
@@ -4081,7 +4148,7 @@ function sourceProvenSamePageParagraphBoundary(
       Math.min(targetTailLine.fontSize, continuationHeadLine.fontSize),
     )
   if (fontRatio > 1.12) return false
-  if (runFragmentToSpanBoundary) return true
+  if (runFragmentToSpanBoundary || sourceProvenColumnFlowBoundary) return true
   const dominantBaselineAdvance =
     continuationMetrics.baseline - targetMetrics.baseline
   const sourceProvenDominantBaselineAdvance =
@@ -4322,6 +4389,10 @@ export async function mergeProseContinuations(
           unhyphenatedLexicon,
           language,
         )
+      const sourceProvenSamePageColumnFlow =
+        continuation?.type === 'paragraph' &&
+        interveningOwnedCaptions.length === 0 &&
+        sourceProvenSamePageColumnFlowBoundary(target, continuation)
       const sourceProvenFloatBoundary =
         crossesOwnedFloat &&
         (sourceProvenPageBoundary ||
@@ -4453,7 +4524,9 @@ export async function mergeProseContinuations(
           ? target.region.column === continuation.region.column
             ? 'same-column-citation-year'
             : 'cross-column-citation-year'
-          : null,
+          : sourceProvenSamePageColumnFlow
+            ? 'same-page-column'
+            : null,
       )
       blocks.splice(continuationIndex, 1)
     }

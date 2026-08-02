@@ -1272,6 +1272,12 @@ function owningCaptionForBox(
   return captions
     .filter((candidate) => {
       if (candidate.page !== box.page || candidate.box.y < box.y) return false
+      if (
+        candidate.sourceCaptionLane &&
+        !captionSourceLaneMatchesBox(candidate, box, 'span')
+      ) {
+        return false
+      }
       const overlap = Math.max(
         0,
         Math.min(candidate.box.x + candidate.box.width, box.x + box.width) -
@@ -6193,6 +6199,16 @@ function candidateScore(
     candidate.page !== caption.page ||
     (candidate.captionRegionId !== undefined &&
       candidate.captionRegionId !== caption.id)
+  ) {
+    return null
+  }
+  if (
+    caption.sourceCaptionLane &&
+    (candidate.sourceBoxes.length === 0 ||
+      candidate.sourceBoxes.some(
+        (sourceBox) =>
+          !captionSourceLaneMatchesBox(caption, sourceBox, candidate.column),
+      ))
   ) {
     return null
   }

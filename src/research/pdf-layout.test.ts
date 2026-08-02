@@ -518,6 +518,100 @@ describe('PDF semantic reconstruction', () => {
     expect(sourceProvenRunFragmentToSpanBoundary(right, span)).toBe(true)
   })
 
+  it('joins a source-adjacent sentence across the bottom-to-top column boundary', async () => {
+    const makeRegion = (
+      id: string,
+      column: 'left' | 'right',
+      text: string,
+      x: number,
+      y: number,
+      sourceSequenceIndex: number,
+      whitespaceBefore?: number,
+    ): PdfPageRegion => {
+      const sourceRun: PdfSourceRun =
+        whitespaceBefore === undefined
+          ? {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+            }
+          : {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+              sourceWhitespaceBefore: 'pdf-text-item',
+              sourceWhitespacePredecessorIndex: whitespaceBefore,
+            }
+      return {
+        id,
+        page: 1,
+        kind: 'body',
+        column,
+        text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `${id}-line`,
+            text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: `${id}-source-line`,
+              fragment: 'whole',
+              sourceSequenceIndexes: [sourceSequenceIndex],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }
+    }
+    const target = makeRegion(
+      'column-flow-target',
+      'left',
+      'The sentence continues toward the',
+      0.09,
+      0.82,
+      100,
+    )
+    const continuation = makeRegion(
+      'column-flow-continuation',
+      'right',
+      'next column boundary with source proof.',
+      0.515,
+      0.1,
+      101,
+      100,
+    )
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe(
+      'The sentence continues toward the next column boundary with source proof.',
+    )
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      topology: 'same-page-column',
+      outcome: 'space',
+      evidence: expect.arrayContaining([
+        'exact-source-sequence-adjacency',
+        'same-page-column-flow',
+      ]),
+    })
+  })
+
   it('does not treat an unrelated right-column block as lineage for a following span', () => {
     const rightRun = {
       ...run(1, 'An unrelated right-column paragraph.', 0.54, 0.4, 0.34),

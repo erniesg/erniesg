@@ -115,6 +115,10 @@ export const PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE = Object.freeze(
   ].sort(),
 )
 
+export const PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE = Object.freeze(
+  [...PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE, 'same-page-column-flow'].sort(),
+)
+
 export function canonicalPdfSourceSemanticFlowEvidence(
   evidence: readonly string[],
 ) {
@@ -2411,6 +2415,84 @@ function captionLineFontSize(line: PdfTextLine) {
   return line.fontSize
 }
 
+function captionFontFamily(fontName: string) {
+  return fontName
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/^[a-z]{6}\+/iu, '')
+    .replace(
+      /(?:[-+_,.\s]*(?:bold|black|demi(?:bold)?|semibold|medium|regular|roman|book|italic|ital|oblique|obl))+$/iu,
+      '',
+    )
+    .replace(/\d+$/u, '')
+    .replace(/[^a-z0-9]+/gu, '')
+}
+
+function captionLineFontFamilies(line: PdfTextLine) {
+  const counts = new Map<string, number>()
+  let visibleCharacters = 0
+  for (const run of line.runs) {
+    const textLength = run.text.replace(/\s/gu, '').length
+    if (textLength === 0) continue
+    const family = captionFontFamily(run.fontName)
+    if (!family) continue
+    counts.set(family, (counts.get(family) ?? 0) + textLength)
+    visibleCharacters += textLength
+  }
+  if (visibleCharacters === 0) return new Set<string>()
+  const minimumShare = Math.min(0.15, 2 / visibleCharacters)
+  return new Set(
+    [...counts.entries()]
+      .filter(([, count]) => count / visibleCharacters >= minimumShare)
+      .map(([family]) => family),
+  )
+}
+
+function captionTypographyCompatible(
+  seed: PdfTextLine,
+  candidate: PdfTextLine,
+) {
+  const seedFamilies = captionLineFontFamilies(seed)
+  const candidateFamilies = captionLineFontFamilies(candidate)
+  if (seedFamilies.size === 0 || candidateFamilies.size === 0) {
+    return seedFamilies.size === candidateFamilies.size
+  }
+  return [...candidateFamilies].some((family) => seedFamilies.has(family))
+}
+
+function captionLaneCompatible(
+  seed: PdfTextLine,
+  previous: PdfTextLine,
+  candidate: PdfTextLine,
+) {
+  const boundary =
+    seed.sourceCaptionLaneBoundary ?? previous.sourceCaptionLaneBoundary
+  const side = seed.sourceCaptionLaneSide ?? previous.sourceCaptionLaneSide
+  if (boundary === undefined || side === undefined) return true
+  if (
+    (candidate.sourceCaptionLaneBoundary !== undefined &&
+      Math.abs(candidate.sourceCaptionLaneBoundary - boundary) > 0.002) ||
+    (candidate.sourceCaptionLaneSide !== undefined &&
+      candidate.sourceCaptionLaneSide !== side)
+  ) {
+    return false
+  }
+  const left = candidate.x
+  const right = candidate.x + candidate.width
+  const tolerance = 0.004
+  if (candidate.sourceCaptionLaneSide === undefined) {
+    if (side === 'left' && right > boundary - tolerance) return false
+    if (side === 'right' && left < boundary + tolerance) return false
+  }
+  if (left < boundary - tolerance && right > boundary + tolerance) {
+    return false
+  }
+  const center = left + candidate.width / 2
+  return side === 'left'
+    ? center <= boundary + tolerance
+    : center >= boundary - tolerance
+}
+
 function completesQuotedCaptionExpression(
   previous: ClassifiedLine,
   candidate: ClassifiedLine,
@@ -2428,8 +2510,15 @@ function captionContinuationGeometry(
   seed: ClassifiedLine,
   previous: ClassifiedLine,
   candidate: ClassifiedLine,
+  enforceCaptionLane = true,
 ) {
   if (candidate.captionLaneSplitAmbiguous) return false
+  if (
+    (enforceCaptionLane && !captionLaneCompatible(seed, previous, candidate)) ||
+    !captionTypographyCompatible(seed, candidate)
+  ) {
+    return false
+  }
   const candidateProseWordCount =
     candidate.text.match(/\p{L}{2,}/gu)?.length ?? 0
   const equationClassifiedCaptionProse =
@@ -2570,15 +2659,20 @@ function splitSourceCaptionLaneContinuations(lines: ClassifiedLine[]) {
             sourceCaptionLaneBoundary: pair.boundary,
             sourceCaptionLaneSide: 'right' as const,
           }
-          return captionContinuationGeometry(pair.left, leftPrevious, left) &&
-            captionContinuationGeometry(pair.right, rightPrevious, right)
+          return captionContinuationGeometry(
+            pair.left,
+            leftPrevious,
+            left,
+            false,
+          ) &&
+            captionContinuationGeometry(pair.right, rightPrevious, right, false)
             ? [{ line, left, right }]
             : []
         })
         if (boundaries.length !== 1) {
           if (
-            captionContinuationGeometry(pair.left, leftPrevious, line) ||
-            captionContinuationGeometry(pair.right, rightPrevious, line)
+            captionContinuationGeometry(pair.left, leftPrevious, line, false) ||
+            captionContinuationGeometry(pair.right, rightPrevious, line, false)
           ) {
             line.captionLaneSplitAmbiguous = true
           }

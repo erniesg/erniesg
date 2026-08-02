@@ -42,6 +42,7 @@ import { classifyPdfNoteMarkers } from './pdf-note-classifier'
 import {
   canonicalPdfSourceSemanticFlowEvidence,
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+  PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   pdfSourceFragmentId,
   pdfSourceSemanticFlowBoundaryDecisionId,
@@ -171,12 +172,15 @@ function isPdfSourceSemanticFlowBoundaryDecision(
     typeof value.rotation === 'number' &&
     Number.isFinite(value.rotation) &&
     ['pdf-text', 'ocr'].includes(value.method as string) &&
-    ['inline-stacked-fragment', 'lexical-hyphen'].includes(
+    ['inline-stacked-fragment', 'lexical-hyphen', 'same-page-column'].includes(
       value.topology as string,
     ) &&
-    ['no-space', 'discretionary-hyphen-delete', 'hard-hyphen-retain'].includes(
-      value.outcome as string,
-    ) &&
+    [
+      'no-space',
+      'space',
+      'discretionary-hyphen-delete',
+      'hard-hyphen-retain',
+    ].includes(value.outcome as string) &&
     isPdfSourceSemanticFlowBoundaryEndpoint(value.from) &&
     isPdfSourceSemanticFlowBoundaryEndpoint(value.to) &&
     Array.isArray(value.evidence) &&
@@ -1005,8 +1009,9 @@ function validatedSourceSemanticFlowBoundaryDecision(
   const baselineGap = Math.abs(fromMetrics.baseline - toMetrics.baseline)
   if (
     fontRatio > 1.5 ||
-    baselineGap >
-      Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4)
+    (decision.topology !== 'same-page-column' &&
+      baselineGap >
+        Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4))
   ) {
     return null
   }
@@ -1058,6 +1063,18 @@ function validatedSourceSemanticFlowBoundaryDecision(
     }
     expectedOutcome = 'no-space'
     expectedEvidence = PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
+  } else if (
+    decision.topology === 'same-page-column' &&
+    decision.outcome === 'space' &&
+    sourceProvenSamePageColumnFlowBoundary(
+      leftRegion,
+      rightRegion,
+      from.line,
+      to.line,
+    )
+  ) {
+    expectedOutcome = 'space'
+    expectedEvidence = PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE
   } else {
     return null
   }
@@ -1091,6 +1108,58 @@ function sourceSemanticFlowBoundaryKey(
   toRegionId: string,
 ) {
   return `${fromRegionId}\0${toRegionId}`
+}
+
+function sourceProvenSamePageColumnFlowBoundary(
+  leftRegion: PdfPageRegion,
+  rightRegion: PdfPageRegion,
+  fromLine: PdfPageRegion['lines'][number],
+  toLine: PdfPageRegion['lines'][number],
+) {
+  const previousText = leftRegion.text.trimEnd()
+  const continuationText = rightRegion.text.trimStart()
+  const detachedNumericContinuation =
+    /\b(?:a|an|the|of|for|from|with|without|among|between|over|under|by|than|approximately|about|around|nearly|roughly|exactly|includes?|including|contains?|containing|comprises?|comprising)\s*$/iu.test(
+      previousText,
+    ) &&
+    /^\d+(?:[,.]\d+)*(?:\s*[%×x+-]\s*\d+(?:[,.]\d+)*)?\s+\p{L}/u.test(
+      continuationText,
+    )
+  const detachedScholarlyContinuation =
+    /\b(?:Section|Appendix|Figure|Fig\.|Table|Equation|Eq\.)$/u.test(
+      previousText,
+    ) && /^(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)*)\.(?:\s|$)/u.test(continuationText)
+  const detachedDashContinuation =
+    !/[.!?:;](?:["'’”\])}]*)$/u.test(previousText) &&
+    /^[–—-]\s+\p{Ll}/u.test(continuationText)
+  const unmarkedContinuation = Boolean(
+    previousText &&
+    continuationText &&
+    !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
+    (/^\p{Ll}/u.test(continuationText) ||
+      detachedNumericContinuation ||
+      detachedScholarlyContinuation ||
+      detachedDashContinuation),
+  )
+  if (
+    leftRegion.page !== rightRegion.page ||
+    leftRegion.column !== 'left' ||
+    rightRegion.column !== 'right' ||
+    fromLine.id !==
+      leftRegion.lines.filter((line) => line.text.trim()).at(-1)?.id ||
+    toLine.id !== rightRegion.lines.find((line) => line.text.trim())?.id ||
+    fromLine.box.y + fromLine.box.height < 0.65 ||
+    toLine.box.y > 0.35 ||
+    fromLine.box.x >= toLine.box.x ||
+    fromLine.box.x + fromLine.box.width > toLine.box.x + 0.01 ||
+    !unmarkedContinuation
+  ) {
+    return false
+  }
+  const fontRatio =
+    Math.max(fromLine.fontSize, toLine.fontSize) /
+    Math.max(1, Math.min(fromLine.fontSize, toLine.fontSize))
+  return fontRatio <= 1.12
 }
 
 type SourceSemanticFlowBoundaryLedgerAudit = {

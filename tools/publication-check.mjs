@@ -10,6 +10,7 @@ import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
+import { publicationPdfRendererForArchitecture } from '../src/publication/toolchain.ts'
 
 export function parsePublicationCheckArgs(argv) {
   const options = {}
@@ -242,13 +243,12 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       receipt.profiles['a4-pdf'].figurePlacement,
     'A5 and A4 figure placement policies must differ',
   )
+  const expectedPdfRenderer = publicationPdfRendererForArchitecture()
   for (const profile of ['a5-pdf', 'a4-pdf'])
     assert(
-      ['vivliostyle-cli', 'playwright-chromium'].includes(
-        receipt.artifacts.find((artifact) => artifact.profile === profile)
-          ?.renderer,
-      ),
-      `${profile} receipt does not identify its PDF renderer`,
+      receipt.artifacts.find((artifact) => artifact.profile === profile)
+        ?.renderer === expectedPdfRenderer,
+      `${profile} receipt renderer does not match the ${process.arch} policy (${expectedPdfRenderer})`,
     )
   const parity = JSON.parse(
     await readFile(resolve(root, 'astro-route-parity.json'), 'utf8'),

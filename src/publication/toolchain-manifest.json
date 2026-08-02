@@ -18,6 +18,18 @@
       "arm64BrowserVersion": "149.0.7827.55"
     }
   },
+  "rendererPolicy": {
+    "x64": {
+      "pdf": "vivliostyle-cli",
+      "browser": "puppeteer",
+      "reason": "Vivliostyle CLI 11.1.0 is pinned to the x64 Chromium toolchain."
+    },
+    "arm64": {
+      "pdf": "playwright-chromium",
+      "browser": "playwright",
+      "reason": "The pinned ARM64 Chromium compatibility revision is driven through Playwright because the Vivliostyle CLI browser path is x64-only in this release."
+    }
+  },
   "epubcheck": {
     "package": "epubcheck-static",
     "packageVersion": "4.0.0-v5.3.0",

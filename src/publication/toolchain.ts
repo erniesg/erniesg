@@ -8,6 +8,20 @@ const require = createRequire(import.meta.url)
 
 export const PUBLICATION_TOOLCHAIN = manifest
 
+export type PublicationPdfRenderer = 'vivliostyle-cli' | 'playwright-chromium'
+
+export function publicationPdfRendererForArchitecture(
+  architecture: string = process.arch,
+): PublicationPdfRenderer {
+  const key = architecture === 'arm64' ? 'arm64' : 'x64'
+  const renderer = manifest.rendererPolicy[key].pdf
+  if (renderer !== 'vivliostyle-cli' && renderer !== 'playwright-chromium')
+    throw new Error(
+      `Unsupported PDF renderer policy for ${key}: ${String(renderer)}`,
+    )
+  return renderer
+}
+
 function sha256(bytes: Uint8Array) {
   return createHash('sha256').update(bytes).digest('hex')
 }
@@ -20,6 +34,10 @@ export async function verifyPublicationToolchain(
   repositoryRoot = process.cwd(),
 ) {
   const errors: string[] = []
+  if (manifest.rendererPolicy.x64.pdf !== 'vivliostyle-cli')
+    errors.push('x64 renderer policy must select vivliostyle-cli')
+  if (manifest.rendererPolicy.arm64.pdf !== 'playwright-chromium')
+    errors.push('arm64 renderer policy must select playwright-chromium')
   const exactPackages = [
     manifest.vivliostyleCli,
     { package: manifest.browser.package, version: manifest.browser.version },

@@ -25,7 +25,11 @@ import type {
   PublicationBundle,
   PublicationRenderer,
 } from '../adapter-registry'
-import { PUBLICATION_TOOLCHAIN, verifyPublicationToolchain } from '../toolchain'
+import {
+  PUBLICATION_TOOLCHAIN,
+  publicationPdfRendererForArchitecture,
+  verifyPublicationToolchain,
+} from '../toolchain'
 
 export const PUBLICATION_PROFILES = [
   'phone-webpub',
@@ -450,7 +454,8 @@ async function createPdf(
   outputPath: string,
   size: 'A4' | 'A5',
 ): Promise<PdfRenderer> {
-  if (process.arch === 'arm64') {
+  const renderer = publicationPdfRendererForArchitecture()
+  if (renderer === 'playwright-chromium') {
     const revision = PUBLICATION_TOOLCHAIN.browser.compatibility.arm64Revision
     const candidates = [
       resolve(
@@ -500,6 +505,8 @@ async function createPdf(
     }
     return 'playwright-chromium'
   }
+  if (renderer !== 'vivliostyle-cli')
+    throw new Error(`Unsupported PDF renderer policy: ${renderer}`)
   let browserPath: string
   try {
     browserPath = computeExecutablePath({

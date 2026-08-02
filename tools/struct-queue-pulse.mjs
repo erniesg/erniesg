@@ -76,6 +76,18 @@ const issueTmuxSessionsInProcess = (command) => {
   return [...matches].map((match) => match[1])
 }
 
+const processCommand = (entry) =>
+  typeof entry === 'string' ? entry : String(entry?.command ?? '')
+
+const processCgroup = (entry) =>
+  typeof entry === 'string' ? '' : String(entry?.cgroup ?? '')
+
+const processPid = (entry) =>
+  typeof entry === 'string' ? Number.NaN : Number(entry?.pid)
+
+const processParentPid = (entry) =>
+  typeof entry === 'string' ? Number.NaN : Number(entry?.ppid)
+
 export const parseTargetUnit = (raw) => {
   if (typeof raw !== 'string') {
     throw new Error('drain target state is missing')
@@ -172,7 +184,7 @@ const classifySessions = ({
   if (repo === null) {
     const knownTmuxSessions = new Set(relevant.map((item) => item.tmux_session))
     const unmatchedProcessSession = processArgs
-      .flatMap(issueTmuxSessionsInProcess)
+      .flatMap((entry) => issueTmuxSessionsInProcess(processCommand(entry)))
       .find((tmuxSession) => !knownTmuxSessions.has(tmuxSession))
     if (unmatchedProcessSession) {
       return blockedSessionState(
@@ -187,7 +199,7 @@ const classifySessions = ({
   const expired = []
   for (const item of relevant) {
     const processIsLive = processArgs.some((command) =>
-      commandContainsTmuxSession(command, item.tmux_session),
+      commandContainsTmuxSession(processCommand(command), item.tmux_session),
     )
     if (processIsLive) {
       live.push(item)
@@ -446,10 +458,32 @@ const diskUsage = (path) => {
 
 const processSnapshot = () => {
   const fixture = process.env.STRUCT_QUEUE_PROCESS_SNAPSHOT_FILE
-  const raw = fixture
-    ? readFileSync(fixture, 'utf8')
-    : run('ps', ['-eo', 'args='])
-  return raw.split(/\r?\n/u).filter(Boolean)
+  if (fixture) {
+    return readFileSync(fixture, 'utf8')
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          const parsed = JSON.parse(line)
+          if (asObject(parsed) && isNonEmptyString(parsed.command)) {
+            return parsed
+          }
+        } catch {}
+        return { command: line, cgroup: '' }
+      })
+  }
+  return run('ps', ['-eo', 'pid=,ppid=,args='])
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => {
+      const match = /^\s*([0-9]+)\s+([0-9]+)\s+(.*)$/u.exec(line)
+      if (!match) return { command: line, cgroup: '' }
+      let cgroup = ''
+      try {
+        cgroup = readFileSync(`/proc/${match[1]}/cgroup`, 'utf8')
+      } catch {}
+      return { pid: Number(match[1]), ppid: Number(match[2]), command: match[3], cgroup }
+    })
 }
 
 const writeAtomicCheckpoint = (path, value) => {
@@ -463,9 +497,34 @@ const writeAtomicCheckpoint = (path, value) => {
   renameSync(temporary, path)
 }
 
-const directCodexWorkerIsLive = (processArgs) =>
-  processArgs.some((command) =>
-    /(?:^|\s)(?:\S*\/)?codex\s+.*\bexec\b/u.test(command),
+const directCodexExec = /(?:^|\s)(?:\S*\/)?codex\s+.*\bexec\b/u
+// Systemd owns the cgroup path; prompt text in argv is untrusted input.
+const trustedCoordinatorCgroup =
+  /(?:^|\/)overnight-(?:erniesg-steward|cross-repo-landing-coordinator-v2)\.service$/u
+
+const trustedCoordinatorMainProcess = (entry, processEntries) => {
+  const cgroup = processCgroup(entry).trim()
+  const pid = processPid(entry)
+  const ppid = processParentPid(entry)
+  if (
+    !trustedCoordinatorCgroup.test(cgroup) ||
+    !Number.isInteger(pid) ||
+    !Number.isInteger(ppid)
+  ) {
+    return false
+  }
+  return !processEntries.some(
+    (candidate) =>
+      processPid(candidate) === ppid &&
+      processCgroup(candidate).trim() === cgroup,
+  )
+}
+
+const directCodexWorkerIsLive = (processEntries) =>
+  processEntries.some(
+    (entry) =>
+      directCodexExec.test(processCommand(entry)) &&
+      !trustedCoordinatorMainProcess(entry, processEntries),
   )
 
 const loadCleanupManifest = (path, stateRoot) => {
@@ -707,10 +766,10 @@ export const runQueuePulse = () => {
           'Run the exact Rucksack session recovery command before dispatch.',
       })
     }
-    if (
-      vmSessionState.live.length > 0 ||
-      directCodexWorkerIsLive(processArgs)
-    ) {
+    if (vmSessionState.live.length > 0 || directCodexWorkerIsLive(processArgs)) {
+      // Process names alone do not establish an issue worker. The VM session
+      // ledger paired with exact tmux-process matching is authoritative;
+      // coordinators, reviewers, and other repo lanes also run Codex exec.
       return finish('worker-active', 0, {
         failure_class: null,
         live_sessions: vmSessionState.live.map((item) => ({

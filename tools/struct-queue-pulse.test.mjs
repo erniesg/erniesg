@@ -378,7 +378,12 @@ const runPulse = ({
     join(state, 'vm-sessions.json'),
     `${JSON.stringify({ schema_version: 1, sessions })}\n`,
   )
-  writeFileSync(processSnapshot, `${processArgs.join('\n')}\n`)
+  writeFileSync(
+    processSnapshot,
+    `${processArgs
+      .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
+      .join('\n')}\n`,
+  )
   writeFileSync(diskState, `${JSON.stringify(disk)}\n`)
   chmodSync(fakeSystemctlPath, 0o755)
 
@@ -452,17 +457,65 @@ describe('STRUCT queue pulse resumability', () => {
     expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 
-  it('recognizes a normal codex exec process and never clears containment masks', () => {
+  it('does not serialize the repository behind an identified codex coordinator', () => {
     const { result, checkpoint, systemctlCalls } = runPulse({
       processArgs: [
-        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol resume',
+        {
+          pid: 100,
+          ppid: 1,
+          command:
+            '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol untrusted prompt text',
+          cgroup:
+            '0::/user.slice/user-1001.slice/user@1001.service/app.slice/overnight-erniesg-steward.service',
+        },
+      ],
+    })
+
+    expect(result.status).toBe(0)
+    expect(checkpoint.outcome).toBe('dispatch-requested')
+    expect(systemctlCalls).toContainEqual([
+      '--user',
+      'start',
+      '--no-block',
+      'rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service',
+    ])
+  })
+
+  it('counts a direct codex child in the coordinator cgroup', () => {
+    const cgroup =
+      '0::/user.slice/user-1001.slice/user@1001.service/app.slice/overnight-erniesg-steward.service'
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      processArgs: [
+        {
+          pid: 100,
+          ppid: 1,
+          command: '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol coordinator',
+          cgroup,
+        },
+        {
+          pid: 101,
+          ppid: 100,
+          command: '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol child',
+          cgroup,
+        },
       ],
     })
 
     expect(result.status).toBe(0)
     expect(checkpoint.outcome).toBe('worker-active')
     expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
-    expect(systemctlCalls.some((args) => args.includes('unmask'))).toBe(false)
+  })
+
+  it('blocks an unledgered codex worker without a coordinator identity', () => {
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      processArgs: [
+        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol You are the trusted VM coordinator',
+      ],
+    })
+
+    expect(result.status).toBe(0)
+    expect(checkpoint.outcome).toBe('worker-active')
+    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 
   it('fails closed at high water and records the recovery action', () => {

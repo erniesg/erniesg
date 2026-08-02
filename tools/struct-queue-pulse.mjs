@@ -463,6 +463,15 @@ const writeAtomicCheckpoint = (path, value) => {
   renameSync(temporary, path)
 }
 
+const directCodexExec = /(?:^|\s)(?:\S*\/)?codex\s+.*\bexec\b/u
+const trustedCoordinatorIdentity = /\btrusted\s+VM\s+coordinator\b/iu
+
+const directCodexWorkerIsLive = (processArgs) =>
+  processArgs.some(
+    (command) =>
+      directCodexExec.test(command) && !trustedCoordinatorIdentity.test(command),
+  )
+
 const loadCleanupManifest = (path, stateRoot) => {
   if (!existsSync(path)) return []
   const manifest = readJson(path)
@@ -702,9 +711,7 @@ export const runQueuePulse = () => {
           'Run the exact Rucksack session recovery command before dispatch.',
       })
     }
-    if (
-      vmSessionState.live.length > 0
-    ) {
+    if (vmSessionState.live.length > 0 || directCodexWorkerIsLive(processArgs)) {
       // Process names alone do not establish an issue worker. The VM session
       // ledger paired with exact tmux-process matching is authoritative;
       // coordinators, reviewers, and other repo lanes also run Codex exec.

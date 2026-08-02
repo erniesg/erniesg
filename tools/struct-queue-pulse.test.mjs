@@ -452,10 +452,10 @@ describe('STRUCT queue pulse resumability', () => {
     expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 
-  it('does not serialize the repository behind an unrelated codex coordinator', () => {
+  it('does not serialize the repository behind an identified codex coordinator', () => {
     const { result, checkpoint, systemctlCalls } = runPulse({
       processArgs: [
-        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol resume',
+        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol You are the trusted VM coordinator',
       ],
     })
 
@@ -467,6 +467,18 @@ describe('STRUCT queue pulse resumability', () => {
       '--no-block',
       'rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service',
     ])
+  })
+
+  it('blocks an unledgered codex worker without a coordinator identity', () => {
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      processArgs: [
+        '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol You are the trusted VM repair worker',
+      ],
+    })
+
+    expect(result.status).toBe(0)
+    expect(checkpoint.outcome).toBe('worker-active')
+    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 
   it('fails closed at high water and records the recovery action', () => {

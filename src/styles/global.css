@@ -338,8 +338,18 @@
     min-height: 0;
     min-width: 0;
   }
-  .srt-paper [data-pagination-scale] {
-    zoom: var(--srt-pagination-scale);
+  .srt-pagination-fallback-frame {
+    position: relative;
+    height: var(--srt-pagination-frame-height);
+    overflow: clip;
+  }
+  .srt-pagination-fallback-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: calc(100% / var(--srt-pagination-scale));
+    transform: scale(var(--srt-pagination-scale));
+    transform-origin: top left;
   }
   .srt-paper h2 {
     @apply font-normal;
@@ -539,11 +549,17 @@
   .publication-progress span {
     @apply truncate text-xs text-muted-foreground;
   }
+  .publication-progress small {
+    @apply text-xs leading-relaxed text-muted-foreground;
+  }
   .publication-progress strong {
     @apply text-lg font-medium;
   }
   .publication-progress progress {
     @apply h-2 w-full accent-foreground;
+  }
+  .publication-progress > button {
+    @apply min-h-11 w-fit rounded-md border px-4 py-2 text-sm font-medium;
   }
   .publication-failure,
   .publication-ocr-gate {
@@ -574,13 +590,19 @@
     @apply text-background/75;
   }
   .publication-blocking-issues {
-    @apply mt-5 flex flex-wrap gap-2;
+    @apply mt-5 grid max-w-3xl gap-2;
   }
   .publication-blocking-issues li {
-    @apply flex items-center gap-2 rounded border border-background/25 px-2 py-1 font-mono text-[9px] uppercase tracking-wide;
+    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded border border-background/25 px-3 py-2 text-sm;
+  }
+  .publication-blocking-issues li strong {
+    @apply font-medium;
   }
   .publication-blocking-issues span {
-    @apply rounded bg-background px-1.5 py-0.5 text-foreground;
+    @apply rounded bg-background px-1.5 py-0.5 text-xs font-medium text-foreground;
+  }
+  .publication-blocking-issues small {
+    @apply col-span-2 text-xs leading-relaxed text-background/70;
   }
   .publication-result-bar {
     @apply mt-6 flex flex-col gap-5 rounded-lg border bg-background p-4 sm:flex-row sm:items-center sm:justify-between;
@@ -677,6 +699,9 @@
   }
   .epub-preview-stage:focus-visible {
     @apply outline outline-2 outline-offset-[-3px] outline-foreground;
+  }
+  .epub-preview-device-shell {
+    display: contents;
   }
   .epub-preview-device {
     width: min(100%, var(--epub-device-width));

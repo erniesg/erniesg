@@ -1,0 +1,83 @@
+%PDF-1.4
+% synthetic fixture owned by erniesg
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length 41 >>
+stream
+789C7BFDFAF5EBD7CACA10FCFAF56B0062580B91>
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 542 >>
+stream
+BT
+/F2 20 Tf
+72 730 Td
+(Source/output checkpoint fixture) Tj
+ET
+BT
+/F1 12 Tf
+72 680 Td
+(Figure 1. Source flowchart) Tj
+ET
+BT
+/F1 12 Tf
+72 640 Td
+(The result sentence continues across a column break.) Tj
+ET
+BT
+/F2 14 Tf
+72 580 Td
+(Pseudocode) Tj
+ET
+BT
+/F1 12 Tf
+90 550 Td
+(for each source line:) Tj
+ET
+BT
+/F1 12 Tf
+108 528 Td
+(compare source and rendition) Tj
+ET
+BT
+/F1 12 Tf
+108 506 Td
+(keep the named property visible) Tj
+ET
+q
+360 0 0 160 126 300 cm
+/Im1 Do
+Q
+BT
+/F1 10 Tf
+72 250 Td
+(Figure 1 caption stays below the source flowchart.) Tj
+ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000046 00000 n 
+0000000095 00000 n 
+0000000152 00000 n 
+0000000222 00000 n 
+0000000446 00000 n 
+0000000608 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1201
+%%EOF

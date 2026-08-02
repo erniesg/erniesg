@@ -5,6 +5,8 @@ const evidenceRoot = process.env.AGENT_EVIDENCE_DIR ?? '.agent/evidence'
 const staticBuildDirectory = process.env.SRT_STATIC_BUILD_DIR
 const devPort = process.env.SRT_E2E_PORT ?? '1234'
 const devBaseUrl = `http://127.0.0.1:${devPort}`
+const browserName =
+  process.env.SRT_E2E_BROWSER === 'webkit' ? 'webkit' : 'chromium'
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -16,9 +18,11 @@ export default defineConfig({
   reporter: [['line']],
   updateSnapshots: 'none',
   use: {
-    ...(staticBuildDirectory ? { channel: 'chromium' as const } : {}),
+    ...(staticBuildDirectory && browserName === 'chromium'
+      ? { channel: 'chromium' as const }
+      : {}),
     baseURL: staticBuildDirectory ? 'https://srt-evaluation.test' : devBaseUrl,
-    browserName: 'chromium',
+    browserName,
     colorScheme: 'light',
     deviceScaleFactor: 1,
     locale: 'en-US',

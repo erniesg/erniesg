@@ -178,7 +178,7 @@ function imageObject(raster) {
   return `<< /Type /XObject /Subtype /Image /Width ${raster.width} /Height ${raster.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length ${encoded.length} >>\nstream\n${encoded}\nendstream`
 }
 
-function createPdf(pageDefinitions) {
+function createPdf(pageDefinitions, { language } = {}) {
   const objects = []
   const reserve = () => {
     objects.push('')
@@ -225,7 +225,7 @@ function createPdf(pageDefinitions) {
       : ''
   set(
     catalogId,
-    `<< /Type /Catalog /Pages ${pagesId} 0 R${destinationNames} >>`,
+    `<< /Type /Catalog /Pages ${pagesId} 0 R${language ? ` /Lang (${escaped(language)})` : ''}${destinationNames} >>`,
   )
   set(
     pagesId,
@@ -950,6 +950,7 @@ const fixtures = {
   'diagnostic-overlays.pdf': [
     {
       lines: [
+        { text: 'Diagnostic extraction benchmark', x: 54, y: 770, size: 8 },
         { text: 'Left candidate order begins here.', x: 54, y: 690 },
         { text: 'Right candidate order begins here.', x: 330, y: 690 },
         { text: 'Indented left order continues here.', x: 100, y: 300 },
@@ -971,6 +972,7 @@ const fixtures = {
           y: 70,
           size: 8,
         },
+        { text: '1', x: 306, y: 24, size: 8 },
       ],
     },
   ],
@@ -1157,7 +1159,13 @@ const fixtures = {
 }
 
 const selectedFixtures = new Set(process.argv.slice(2))
+const fixtureOptions = {
+  'pdf-to-epub-fidelity.pdf': { language: 'en-US' },
+}
 for (const [name, pages] of Object.entries(fixtures)) {
   if (selectedFixtures.size > 0 && !selectedFixtures.has(name)) continue
-  writeFileSync(new URL(name, import.meta.url), createPdf(pages))
+  writeFileSync(
+    new URL(name, import.meta.url),
+    createPdf(pages, fixtureOptions[name]),
+  )
 }

@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/extraction-bakeoff-report-1.0.0.json",
+  "title": "LLM extraction architecture bake-off report",
+  "description": "Privacy-safe, held-out-scored comparison of the geometric baseline and the two candidate extraction arms.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "corpusId",
+    "heldOutIdentitySha256",
+    "candidateIdentities",
+    "heldOutScoredOnce",
+    "arms",
+    "comparison",
+    "disagreements",
+    "reportSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "corpusId": { "$ref": "#/$defs/id" },
+    "heldOutIdentitySha256": { "$ref": "#/$defs/sha256" },
+    "heldOutScoredOnce": { "const": true },
+    "candidateIdentities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "properties": {
+        "geometric-baseline": { "$ref": "#/$defs/identity" },
+        "llm-authored": { "$ref": "#/$defs/identity" },
+        "llm-grounded": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "arms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "properties": {
+        "geometric-baseline": { "$ref": "#/$defs/arm" },
+        "llm-authored": { "$ref": "#/$defs/arm" },
+        "llm-grounded": { "$ref": "#/$defs/arm" }
+      }
+    },
+    "comparison": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/comparison" }
+    },
+    "disagreements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/disagreement" }
+    },
+    "reportSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 192,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerId",
+        "modelId",
+        "modelVersion",
+        "modelDigest",
+        "promptHash"
+      ],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/id" },
+        "modelId": { "$ref": "#/$defs/id" },
+        "modelVersion": { "$ref": "#/$defs/id" },
+        "modelDigest": { "$ref": "#/$defs/sha256" },
+        "promptHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "issueCodes", "issueCount"],
+      "properties": {
+        "status": { "enum": ["passed", "failed"] },
+        "issueCodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "issueCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "caseScore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "documentId",
+        "stratum",
+        "layout",
+        "score",
+        "typePrecision",
+        "typeRecall",
+        "sourceRecall",
+        "assetRecall",
+        "boilerplateContamination",
+        "verification"
+      ],
+      "properties": {
+        "caseId": { "$ref": "#/$defs/id" },
+        "documentId": { "$ref": "#/$defs/id" },
+        "stratum": { "$ref": "#/$defs/id" },
+        "layout": { "enum": ["one-column", "two-column"] },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "typePrecision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "typeRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "assetRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "boilerplateContamination": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verification": { "$ref": "#/$defs/verification" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentId",
+        "split",
+        "layout",
+        "status",
+        "verification",
+        "outputHash",
+        "byteStable",
+        "latencyMsPerPage",
+        "costUsdPerPage",
+        "caseScores"
+      ],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/id" },
+        "split": { "enum": ["development", "held-out"] },
+        "layout": { "enum": ["one-column", "two-column"] },
+        "status": { "enum": ["passed", "failed", "disqualified"] },
+        "verification": { "$ref": "#/$defs/verification" },
+        "outputHash": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
+        "byteStable": { "type": "boolean" },
+        "latencyMsPerPage": {
+          "oneOf": [{ "type": "null" }, { "type": "number", "minimum": 0 }]
+        },
+        "costUsdPerPage": {
+          "oneOf": [{ "type": "null" }, { "type": "number", "minimum": 0 }]
+        },
+        "caseScores": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/caseScore" }
+        }
+      }
+    },
+    "arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documents", "byStratumAndLayout", "disqualified"],
+      "properties": {
+        "documents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/document" }
+        },
+        "byStratumAndLayout": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "disqualified": { "type": "boolean" }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stratum",
+        "layout",
+        "scores",
+        "winner",
+        "disagreementDocumentIds"
+      ],
+      "properties": {
+        "stratum": { "$ref": "#/$defs/id" },
+        "layout": { "enum": ["one-column", "two-column"] },
+        "scores": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "number", "minimum": 0, "maximum": 1 }
+            ]
+          }
+        },
+        "winner": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "enum": [
+                "geometric-baseline",
+                "llm-authored",
+                "llm-grounded",
+                "tie"
+              ]
+            }
+          ]
+        },
+        "disagreementDocumentIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "disagreement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentId", "stratum", "layout", "arms", "reason"],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/id" },
+        "stratum": { "$ref": "#/$defs/id" },
+        "layout": { "enum": ["one-column", "two-column"] },
+        "arms": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["geometric-baseline", "llm-authored", "llm-grounded"]
+          }
+        },
+        "reason": { "enum": ["verification", "structure", "score"] }
+      }
+    }
+  }
+}

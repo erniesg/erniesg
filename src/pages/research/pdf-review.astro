@@ -1,0 +1,60 @@
+---
+import Container from '@/components/Container.astro'
+import PdfEpubReviewQueue, {
+  type PdfReviewSample,
+} from '@/components/research/PdfEpubReviewQueue'
+import Layout from '@/layouts/Layout.astro'
+import corpusContract from '../../../benchmarks/pdf/corpus-contract-v2.json'
+
+const corpusId = `${corpusContract.frozen.id}+${corpusContract.seededRandom.id}`
+const samples: PdfReviewSample[] = [
+  ...corpusContract.frozen.documents.map((document) => ({
+    id: document.id,
+    setId: corpusContract.frozen.id,
+    corpusGroup: 'frozen' as const,
+    sha256: document.sha256,
+    byteLength: document.byteLength,
+    sourceUrl: `https://arxiv.org/pdf/${document.id}`,
+    ...(document.id === '2501.09223v1'
+      ? {
+          reviewTier: 'stress' as const,
+          pageCountHint: 231,
+        }
+      : {}),
+  })),
+  ...corpusContract.seededRandom.documents.map((document) => ({
+    id: document.id,
+    setId: corpusContract.seededRandom.id,
+    corpusGroup: 'seeded-random' as const,
+    sha256: document.sha256,
+    byteLength: document.byteLength,
+    sourceUrl: `https://arxiv.org/pdf/${document.id}`,
+  })),
+]
+---
+
+<Layout
+  title="PDF to EPUB review queue"
+  description="Review twenty hash-pinned source papers beside their generated EPUB renditions."
+  noindex
+>
+  <Container class="flex max-w-[116rem] flex-col gap-y-4 px-3 pb-12">
+    <a
+      class="text-sm text-muted-foreground hover:text-foreground"
+      href="/research/studio"
+    >
+      ← Single-paper studio
+    </a>
+    <header class="flex flex-col gap-y-3 border-b pb-6">
+      <h1 class="text-3xl font-bold">Review 20 PDF → EPUB conversions</h1>
+      <p class="max-w-4xl text-sm leading-relaxed text-muted-foreground">
+        Review one fidelity criterion at a time against the hash-pinned input
+        and actual Mobile EPUB. Converter-detected defects are shown separately.
+        They do not prevent review, but they must be fixed before publication
+        approval. Your structured labels auto-save locally; export the
+        hash-bound receipt when finished.
+      </p>
+    </header>
+    <PdfEpubReviewQueue corpusId={corpusId} samples={samples} client:load />
+  </Container>
+</Layout>

@@ -1,4 +1,5 @@
 import type { ResearchPaper } from './schema'
+import type { TableCandidateReceipt } from './table-candidate-provider'
 
 export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
 export const MAX_LOCAL_DOCX_BYTES = 50 * 1024 * 1024
@@ -17,11 +18,28 @@ export type NormalizedSourceBox = {
   method: 'pdf-text' | 'pdf-object' | 'pdf-link' | 'ocr'
 }
 
+export type PdfTextPaintRunProvenance = {
+  algorithm: 'pdfjs-text-paint-run-v1'
+  textLedgerSha256: string
+  normalizedTextStart: number
+  normalizedTextEnd: number
+  operatorLedgerSha256: string
+  operationIndexes: number[]
+  filterableOperationIndexes: number[]
+}
+
+export type PdfSourceSemanticAdmission = {
+  algorithm: 'pdf-text-item-semantic-admission-v1'
+  status: 'unresolved-extension-glyph'
+}
+
 export type PdfSourceRun = NormalizedSourceBox & {
   text: string
   fontName: string
   fontSize: number
   sourceSequenceIndex?: number
+  sourceTextPaint?: PdfTextPaintRunProvenance
+  sourceSemanticAdmission?: PdfSourceSemanticAdmission
   bold?: boolean
   italic?: boolean
   confidence: number
@@ -36,6 +54,13 @@ export type PdfSourceRun = NormalizedSourceBox & {
       }
   )
 
+/** Exact ownership of one source text run inside a bounded visual scope. */
+export type PdfSourceRunReference = {
+  regionId: string
+  lineId: string
+  runIndex: number
+}
+
 export type PdfLineBoundaryDecision = {
   id: string
   page: number
@@ -47,16 +72,197 @@ export type PdfLineBoundaryDecision = {
     | 'no-space'
     | 'preserved-lexical-hyphen'
     | 'removed-discretionary-hyphen'
+    | 'ambiguous'
     | 'structural-boundary'
     | 'unresolved'
   evidence: string[]
 }
 
-export type PdfSourceExclusionMask = {
-  algorithm: 'nearest-source-box-v1'
-  expansionPixels: 2
-  ownedSourceBoxes: NormalizedSourceBox[]
-  excludedSourceBoxes: NormalizedSourceBox[]
+export type PdfSourceFragmentLineage = {
+  algorithm: 'source-run-fragment-v1'
+  sourceLineId: string
+  fragment:
+    | 'whole'
+    | 'inline-stacked-before'
+    | 'inline-stacked-formula'
+    | 'inline-stacked-after'
+    | 'cross-gutter-left'
+    | 'cross-gutter-right'
+  sourceSequenceIndexes: number[]
+}
+
+export type PdfSourceSemanticFlowBoundaryEndpoint = {
+  regionId: string
+  lineId: string
+  runIndex: number
+  sourceSequenceIndex: number
+  sourceRunSha256: string
+  sourceFragmentId: string
+}
+
+export type PdfSourceSemanticFlowBoundaryDecision = {
+  id: string
+  page: number
+  rotation: number
+  method: 'pdf-text' | 'ocr'
+  topology: 'inline-stacked-fragment' | 'lexical-hyphen'
+  outcome: 'no-space' | 'discretionary-hyphen-delete' | 'hard-hyphen-retain'
+  from: PdfSourceSemanticFlowBoundaryEndpoint
+  to: PdfSourceSemanticFlowBoundaryEndpoint
+  evidence: string[]
+}
+
+type PdfCanonicalHyphenBoundaryProofCommon = {
+  sourceBoundaryProven: true
+  pinnedSplit: {
+    left: string
+    right: string
+    index: number
+  }
+  splitPointValid: true
+  hardHyphenForm: string
+  hardHyphenCounterproof: null
+  model: {
+    id: string
+    language: string
+    dictionarySha256: string
+    affixSha256: string
+    hyphenationSha256: string
+  }
+  evidence: string[]
+}
+
+export type PdfCanonicalHyphenBoundaryProof =
+  | (PdfCanonicalHyphenBoundaryProofCommon & {
+      tier: 'exact-same-document'
+      pinnedWord: string
+      pinnedJoinedFormValid: true
+      exactSameDocumentJoinedForm: string
+      sameDocumentJoinedFormValid: true
+    })
+  | (PdfCanonicalHyphenBoundaryProofCommon & {
+      tier: 'same-document-derived-affix'
+      derivedWord: string
+      productivePrefix: {
+        kind: 'prefix'
+        value: 're'
+        affixClass: 'PFX'
+        flag: 'A'
+        crossProduct: true
+        affixSha256: string
+      }
+      baseWord: string
+      pinnedBaseWordValid: true
+      exactSameDocumentBaseWord: string
+      sameDocumentBaseWordValid: true
+    })
+
+export type PdfCanonicalHyphenBoundaryDecision = {
+  id: string
+  context: 'bibliography-continuation' | 'canonical-flow-continuation'
+  outcome: 'removed-discretionary-hyphen'
+  fromRegionId: string
+  fromLineId: string
+  toRegionId: string
+  toLineId: string
+  geometry: {
+    from: NormalizedSourceBox
+    to: NormalizedSourceBox
+  }
+  proof: PdfCanonicalHyphenBoundaryProof
+}
+
+export type PdfSourceExclusionMask =
+  | {
+      algorithm: 'nearest-source-box-v1'
+      expansionPixels: 2
+      ownedSourceBoxes: NormalizedSourceBox[]
+      excludedSourceBoxes: NormalizedSourceBox[]
+    }
+  | {
+      algorithm: 'pdfjs-display-text-operation-filter-v2'
+      expansionPixels: 0
+      pdfjsVersion: string
+      pdfjsBuild: string
+      displayOperatorAdapter: 'pdfjs-5.4.624-display-intent-v1'
+      renderIntent: 'display'
+      annotationMode: 'enable'
+      sourceTextLedgerSha256: string
+      displayTextLedgerSha256: string
+      ownedTextLedgerSpans: { start: number; end: number }[]
+      excludedTextLedgerSpans: { start: number; end: number }[]
+      operatorLedgerSha256: string
+      ownedOperationIndexes: number[]
+      excludedOperationIndexes: number[]
+      ownedOnlyExcludedOperationIndexes: number[]
+      ownedSourceBoxes: NormalizedSourceBox[]
+      excludedSourceBoxes: NormalizedSourceBox[]
+      baselineRgbaSha256: string
+      filteredRgbaSha256: string
+      ownedOnlyRgbaSha256: string
+      changedPixelCount: number
+      normalizedDiffBox: NormalizedSourceBox
+      excludedRunPaintEnvelopes: NormalizedSourceBox[]
+    }
+
+export type PdfTextOperationFilterAttestation = Extract<
+  PdfSourceExclusionMask,
+  { algorithm: 'pdfjs-display-text-operation-filter-v2' }
+>
+
+export type PdfTextOperationFilterPlan = Pick<
+  PdfTextOperationFilterAttestation,
+  | 'algorithm'
+  | 'expansionPixels'
+  | 'displayOperatorAdapter'
+  | 'renderIntent'
+  | 'annotationMode'
+  | 'sourceTextLedgerSha256'
+  | 'ownedTextLedgerSpans'
+  | 'excludedTextLedgerSpans'
+  | 'ownedSourceBoxes'
+  | 'excludedSourceBoxes'
+>
+
+export type PdfTextOperationFilterRequest = PdfTextOperationFilterPlan &
+  Pick<PdfTextOperationFilterAttestation, 'pdfjsVersion' | 'pdfjsBuild'>
+
+export type PdfResolvedTextOperationFilterRequest = Omit<
+  PdfTextOperationFilterAttestation,
+  | 'baselineRgbaSha256'
+  | 'filteredRgbaSha256'
+  | 'ownedOnlyRgbaSha256'
+  | 'changedPixelCount'
+  | 'normalizedDiffBox'
+  | 'excludedRunPaintEnvelopes'
+>
+
+export type PdfSourceCropAttemptRequest = {
+  kind: 'figure' | 'table' | 'equation'
+  page: number
+  sourceBox: NormalizedSourceBox
+  sourceObjectIds: string[]
+  sourceBoxes: NormalizedSourceBox[]
+  ownedSourceBoxes?: NormalizedSourceBox[]
+  excludedSourceBoxes?: NormalizedSourceBox[]
+  sourceTextOperationFilter?: PdfTextOperationFilterPlan
+  tightenToSourceInk?: boolean
+}
+
+export type PdfSourceCropAttempt = {
+  schemaVersion: '1.0.0'
+  sequence: number
+  request: PdfSourceCropAttemptRequest
+  outcome:
+    | {
+        status: 'edge-contact'
+        evidence: 'source-page-crop-edge-contact'
+      }
+    | {
+        status: 'accepted'
+        assetId: string
+        assetSha256: string
+      }
 }
 
 export type PdfVisualAsset = {
@@ -85,6 +291,7 @@ export type PdfVisualAsset = {
   sourceBoxes: NormalizedSourceBox[]
   sourceCropBox?: NormalizedSourceBox
   sourceExclusionMask?: PdfSourceExclusionMask
+  sourceCropAttempts?: PdfSourceCropAttempt[]
 }
 
 export type PdfNativeObject = {
@@ -156,6 +363,28 @@ export type PdfLinkAnnotation =
   | PdfInternalLinkAnnotation
   | PdfUnresolvedLinkAnnotation
 
+export type PdfLinkSourceAnchorFragment = {
+  regionId: string
+  lineId: string
+  runIndex: number
+  sourceSequenceIndex: number | null
+  sourceStart: number
+  sourceEnd: number
+  text: string
+  sourceBox: NormalizedSourceBox
+  ownershipEvidence?:
+    | 'single-pdf-text-run-character-interval-v1'
+    | 'external-target-alias-character-interval-v1'
+}
+
+export type PdfLinkSourceAnchor = {
+  annotationId: string
+  page: number
+  status: 'anchored' | 'unresolved'
+  fragments: PdfLinkSourceAnchorFragment[]
+  evidence: 'exact-source-run-interval-v1'
+}
+
 export type PdfEmbeddedLink =
   | PdfLinkAnnotation
   | {
@@ -226,6 +455,42 @@ export type PdfRegionKind =
   | 'footnote'
   | 'endnote'
 
+/**
+ * Evidence used when a source run is kept out of canonical reading order as
+ * page furniture.  The classifier deliberately describes geometry and
+ * repetition, never a journal or keyword allowlist.
+ */
+export type PdfFurnitureClassification =
+  | 'repeated-text'
+  | 'incrementing-numeral'
+  | 'rotated-margin'
+  | 'separator-rule'
+  | 'explicit-paratext'
+
+export type PdfFurnitureBand = 'top' | 'bottom' | 'left' | 'right'
+
+export type PdfFurnitureEvidence = {
+  classification: PdfFurnitureClassification
+  band: PdfFurnitureBand
+  pages: number[]
+  boxes: NormalizedSourceBox[]
+  /** Stable, source-derived evidence strings suitable for diagnostics. */
+  evidence: string[]
+  /** Text skeleton after replacing numerals, when the source has text. */
+  normalizedText?: string
+  /** Parsed numeral values in source page order, when available. */
+  sequence?: number[]
+  sourceRunIndexes?: number[]
+}
+
+export type PdfFurnitureReview = {
+  reason: 'single-occurrence-margin'
+  band: PdfFurnitureBand
+  pages: number[]
+  boxes: NormalizedSourceBox[]
+  evidence: string[]
+}
+
 export type PdfRegionColumn = 'single' | 'left' | 'right' | 'span'
 
 export type PdfRegionLine = {
@@ -234,6 +499,8 @@ export type PdfRegionLine = {
   fontSize: number
   box: NormalizedSourceBox
   runs: PdfSourceRun[]
+  captionContinuationSeedId?: string
+  sourceFragmentLineage?: PdfSourceFragmentLineage
 }
 
 export type PdfPageRegion = {
@@ -247,6 +514,14 @@ export type PdfPageRegion = {
   lines: PdfRegionLine[]
   nativeObjectIds: string[]
   includedInReadingOrder: boolean
+  /** Present when this region is accounted furniture, not canonical flow. */
+  furniture?: PdfFurnitureEvidence
+  /** Present when margin geometry is bounded but repetition is unproven. */
+  furnitureReview?: PdfFurnitureReview
+  sourceCaptionLane?: {
+    boundary: number
+    side: 'left' | 'right'
+  }
 }
 
 export type PdfReadingOrderEvidence = {
@@ -406,6 +681,14 @@ export type PdfCitationRelationship = {
     | 'human-reclassified-citation'
   >
   targetNodeIds: string[]
+  targets?: Array<{
+    label: string
+    targetNodeId: string
+    referenceStart: number
+    referenceEnd: number
+    sourceBoxes: NormalizedSourceBox[]
+    evidence: string[]
+  }>
   status: 'matched' | 'unresolved'
   canonicalAnchor: {
     nodeId: string
@@ -455,15 +738,20 @@ export type PdfScholarlyCrossReferenceRelationship = {
 export type PdfVisualMatchCandidate = {
   id?: string
   sourceRegionIds: string[]
+  sourceLineIds?: string[]
   sourceObjectIds: string[]
   assetIds: string[]
+  ownershipExtentSha256?: string
   score: number
   evidence: string[]
   sourceBoxes: NormalizedSourceBox[]
+  sourceText?: string
+  renderOnlySourceRunOwnerships?: PdfEquationRenderOnlySourceRunOwnership[]
 }
 
 export type PdfPreformattedSourceLine = {
   text: string
+  indentColumns?: number
   sourceRegionId: string
   sourceLineId: string
   sourceBox: NormalizedSourceBox
@@ -486,12 +774,70 @@ export type PdfEquationTranscriptAdjudication = {
   sourceCropAssetSha256: string
 }
 
+export type PdfEquationMathToken =
+  | { type: 'mi'; text: string }
+  | { type: 'mn'; text: string }
+  | { type: 'mo'; text: string }
+
+export type PdfEquationMathNode =
+  | PdfEquationMathToken
+  | {
+      type: 'msub'
+      base: PdfEquationMathToken
+      subscript: PdfEquationMathToken
+    }
+  | {
+      type: 'msup'
+      base: PdfEquationMathToken
+      superscript: PdfEquationMathToken
+    }
+  | {
+      type: 'msubsup'
+      base: PdfEquationMathToken
+      subscript: PdfEquationMathToken
+      superscript: PdfEquationMathToken
+    }
+
+export type PdfSourceGeometryScriptTranscript = {
+  schemaVersion: '1.0.0'
+  source: 'source-geometry-script-transcript-v1'
+  mathml: {
+    type: 'math'
+    display: 'block'
+    children: PdfEquationMathNode[]
+  }
+  plainText: string
+  spokenText: string
+  provenance: {
+    algorithm: 'exact-unicode-math-font-script-geometry-v1'
+    sourceRegionIdsSha256: string
+    sourceLineIdsSha256: string
+    sourceRunsSha256: string
+    sourceCropAssetSha256: string
+    transcriptSha256: string
+  }
+}
+
+export type PdfEquationRenderOnlySourceRunOwnership = {
+  algorithm: 'equation-bracketed-render-only-extension-glyph-v1'
+  page: number
+  sourceLineId: string
+  sourceSequenceIndex: number
+  precedingSourceSequenceIndex: number
+  followingSourceSequenceIndex: number
+  sourceRunSha256: string
+  precedingSourceRunSha256: string
+  followingSourceRunSha256: string
+}
+
 export type PdfVisualRelationship = {
   id: string
   kind: 'figure' | 'table' | 'equation'
   semanticKind?: 'algorithm' | 'code'
   preformatted?: PdfPreformattedSource
   equationTranscriptAdjudication?: PdfEquationTranscriptAdjudication
+  equationGeometryTranscript?: PdfSourceGeometryScriptTranscript
+  renderOnlySourceRunOwnerships?: PdfEquationRenderOnlySourceRunOwnership[]
   label: string
   captionRegionId: string
   sourceRegionIds: string[]
@@ -525,6 +871,7 @@ export type PdfPageAnalysis = {
   links?: PdfEmbeddedLink[]
   assets?: PdfVisualAsset[]
   runs: PdfSourceRun[]
+  renderVisibleTextRuns?: PdfSourceRun[]
   ocr?: PdfOcrPageEvidence
   spread?: PdfPhysicalSpread
 }
@@ -563,6 +910,10 @@ export type ReconstructionDiagnostic = {
     | 'AMBIGUOUS_VISUAL_MATCH'
     | 'UNRESOLVED_VISUAL_OBJECT'
     | 'BOUNDED_TABLE_FALLBACK'
+    | 'TABLE_CANDIDATE_NO_PROPOSAL'
+    | 'TABLE_CANDIDATE_VERIFICATION_FAILED'
+    | 'TABLE_CANDIDATE_PROVIDER_UNAVAILABLE'
+    | 'TABLE_CANDIDATE_VERIFIED'
     | 'UNREFERENCED_VISUAL_ASSET'
     | 'NO_RECONSTRUCTABLE_TEXT'
     | 'ISOLATED_PROSE_GLYPH'
@@ -575,12 +926,15 @@ export type ReconstructionDiagnostic = {
     | 'UNRESOLVED_FRONT_MATTER'
     | 'INCOMPLETE_INLINE_STYLE_COVERAGE'
     | 'INVALID_LINE_BOUNDARY_LEDGER'
+    | 'INVALID_SOURCE_SEMANTIC_FLOW_BOUNDARY_LEDGER'
+    | 'INVALID_CANONICAL_HYPHEN_BOUNDARY_LEDGER'
     | 'UNRESOLVED_CORRUPTING_JOIN'
     | 'EPUB_TEXT_SANITIZATION_LOSS'
     | 'DANGLING_EPUB_INTERNAL_REFERENCE'
     | 'INCOMPLETE_TEXT_COVERAGE'
     | 'INCOMPLETE_ASSET_COVERAGE'
     | 'INCOMPLETE_RELATIONSHIP_COVERAGE'
+    | 'INCOMPLETE_SEMANTIC_TABLE_COVERAGE'
     | 'UNRESOLVED_EQUATION_TRANSCRIPT'
     | 'UNRESOLVED_ALGORITHM_BLOCK'
     | 'UNRESOLVED_ALGORITHM_TRANSCRIPT'
@@ -588,6 +942,8 @@ export type ReconstructionDiagnostic = {
     | 'UNRESOLVED_PREFORMATTED_TRANSCRIPT'
     | 'UNRESOLVED_SEMANTIC_OBJECTS'
     | 'STALE_HUMAN_DECISION'
+    | 'FURNITURE_REVIEW_REQUIRED'
+    | 'FURNITURE_CONTAMINATION'
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
@@ -644,6 +1000,17 @@ export type PdfCompletenessMetrics = {
   ocrRequiredPages: number[]
   readingOrderDiagnostics: number
   readingOrderEvaluation: PdfReadingOrderEvaluation
+  /** Optional for backward-compatible reports without furniture evidence. */
+  furnitureExcludedRunCount?: number
+  furnitureExcludedTextCharacters?: number
+  furnitureContaminationCount?: number
+  lostTextCharacterCount?: number
+  textCoverageAccounting?: {
+    sourceCharacters: number
+    coveredInFlowCharacters: number
+    coveredByFurnitureCharacters: number
+    lostCharacters: number
+  }
 }
 
 export type PdfCompletenessPolicy = {
@@ -761,13 +1128,17 @@ export type PdfReconstruction = {
     byteLength: number
     sha256: string
     pageCount: number
-    localOnly: true
+    localOnly: boolean
     format?: undefined
   }
   paper: ResearchPaper
   pages: PdfPageAnalysis[]
   regions: PdfPageRegion[]
   lineBoundaryDecisions: PdfLineBoundaryDecision[]
+  sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[]
+  sourceSemanticFlowBoundaryDecisionCount: number
+  canonicalHyphenBoundaryDecisions: PdfCanonicalHyphenBoundaryDecision[]
+  canonicalHyphenBoundaryDecisionCount: number
   unresolvedCorruptingJoinCount: number
   structurallyConsumedLineBoundaryCount: number
   readingOrder: PdfReadingOrderGraph
@@ -779,6 +1150,7 @@ export type PdfReconstruction = {
   provenance: Record<string, NodeSourceEvidence>
   humanAdjudications: HumanAdjudicationProvenance
   diagnostics: ReconstructionDiagnostic[]
+  tableCandidateReceipts?: TableCandidateReceipt[]
   semanticSignals: PdfSemanticSignals
   completeness: PdfCompletenessMetrics
   readiness: PdfReadiness
@@ -812,10 +1184,22 @@ export type DocxReconstruction = {
 export type DocumentReconstruction = PdfReconstruction | DocxReconstruction
 
 export type PdfImportProgress = {
-  phase: 'opening' | 'extracting' | 'ocr' | 'reconstructing'
+  phase:
+    | 'opening'
+    | 'extracting'
+    | 'ocr'
+    | 'segmenting'
+    | 'reading-order'
+    | 'semantic-promotion'
+    | 'asset-packaging'
+    | 'reconstructing'
+    | 'assembling'
+    | 'paginating'
+    | 'validating'
   completed: number
   total: number
   message: string
+  checkpoint?: string
 }
 
 export type DocumentImportProgress = PdfImportProgress
@@ -833,6 +1217,7 @@ export class PdfImportError extends Error {
     | 'INVALID_PDF_URL'
     | 'PDF_DOWNLOAD_FAILED'
     | 'IMPORT_CANCELLED'
+    | 'CONVERSION_STALLED'
     | 'INCOMPLETE_RECONSTRUCTION'
 
   constructor(code: PdfImportError['code'], message: string) {

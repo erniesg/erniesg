@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "1.0.0",
+  "checkpoints": [
+    {
+      "id": "fidelity-page-1-figure-present",
+      "document": "source-output-checkpoints.pdf",
+      "page": 1,
+      "profile": "paperPro",
+      "property": "figure-present",
+      "criterion": "Figure 1 is visible in the source page and remains a figure in the rendition.",
+      "source": { "feature": "visual", "text": "Figure 1" },
+      "output": { "feature": "figure" }
+    },
+    {
+      "id": "fidelity-page-1-caption-boundary",
+      "document": "source-output-checkpoints.pdf",
+      "page": 1,
+      "profile": "paperPro",
+      "property": "caption-boundary",
+      "criterion": "The Figure 1 caption stays attached to its figure and does not absorb following prose.",
+      "source": { "feature": "visual", "text": "Figure 1" },
+      "output": { "feature": "caption", "text": "Figure 1. Source flowchart" }
+    },
+    {
+      "id": "fidelity-page-1-prose-continuity",
+      "document": "source-output-checkpoints.pdf",
+      "page": 1,
+      "profile": "paperPro",
+      "property": "prose-continuity",
+      "criterion": "The result sentence remains one continuous prose block in the rendition.",
+      "source": { "feature": "text" },
+      "output": {
+        "feature": "prose",
+        "text": "The result sentence continues across a column break."
+      }
+    },
+    {
+      "id": "fidelity-page-1-code-block-structure",
+      "document": "source-output-checkpoints.pdf",
+      "page": 1,
+      "profile": "paperPro",
+      "property": "code-block-structure",
+      "criterion": "The pseudocode checkpoint is emitted as a preformatted code block, not running prose.",
+      "source": { "feature": "structure", "text": "Pseudocode" },
+      "output": { "feature": "code" }
+    },
+    {
+      "id": "fidelity-page-1-furniture-exclusion",
+      "document": "source-output-checkpoints.pdf",
+      "page": 1,
+      "profile": "paperPro",
+      "property": "furniture-exclusion",
+      "criterion": "The source/output pair records zero furniture contamination in canonical prose.",
+      "source": {
+        "feature": "structure",
+        "furnitureContaminationCount": 0
+      },
+      "output": {
+        "feature": "prose",
+        "text": "The result sentence continues across a column break."
+      }
+    }
+  ]
+}

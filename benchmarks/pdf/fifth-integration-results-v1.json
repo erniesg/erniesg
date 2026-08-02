@@ -1,0 +1,466 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-vm-farm-fifth-integration-2026-07-28-v1",
+  "generatedAt": "2026-07-28T15:54:05Z",
+  "verdict": {
+    "status": "blocked",
+    "publicationReady": false,
+    "verifiedPublicationReady": 0,
+    "denominator": 26,
+    "summary": "The reviewer-required scheduler and validation farm repairs are integrated and their code, orchestration, exact-validator, package-scan, browser, and stress gates pass. Publication remains blocked: 0 of 26 catalog papers are ready, 25 require review, one failed closed after stalling, three EPUB profiles are consequently absent, and required external reader evidence is unavailable."
+  },
+  "implementation": {
+    "headCommit": "119465e06d7e43679c0d19f8ed46ab4824e55699",
+    "worktreeState": "dirty-before-and-after",
+    "activeWorktreeWasAuthoritative": true,
+    "producerBranchesMerged": false,
+    "preservedActiveRepairs": [
+      "heartbeat and stage telemetry",
+      "stalled-job watchdog and process-tree cleanup",
+      "cross-reference repairs",
+      "reconstruction repairs"
+    ],
+    "integrationOrder": [
+      "fail-closed hyphen and join fallback",
+      "globally bounded deterministic exporter scheduler",
+      "fail-closed validation orchestrator and supplementary Chromium spine smoke"
+    ],
+    "changes": {
+      "hyphenAndJoin": {
+        "policy": "Removed the geometry-plus-unrelated-lexicon fail-open deletion path. A line-end hyphen is removed only with affirmative lexical evidence; geometry-only rare compounds, hanging-list items, and bibliography cases remain visibly hyphenated and reviewable.",
+        "generalizedLegitimateCompoundCoverageRetained": true,
+        "files": {
+          "src/research/pdf-lines.ts": "3f1a177b5b7f40c1764848558dde313430bb37bd7c9c957b87d496b343889dc3",
+          "src/research/pdf-lines.test.ts": "e6aa796eec78b8e574cd0476d832c57731ec4cde8aa922204eed72698d08e93b"
+        }
+      },
+      "scheduler": {
+        "maximumConcurrentDocumentConversions": 2,
+        "acceptedCliConcurrency": [1, 2],
+        "resultOrdering": "input contract order, independent of completion order",
+        "fatalAndCancellationPolicy": "Abort queued work, hard-kill outstanding worker process trees, await cleanup, discard per-document staging, and publish no partial corpus directory.",
+        "files": {
+          "tools/pdf-export.mjs": "fe722d191964b13d698156d8914f92dd6a624ac572889150fad43e9102687e29",
+          "tools/pdf-export.test.mjs": "63e5afb66361c114886516970a8e3159a1f48b1f8df7f290e8d1615e9cf9e87f"
+        }
+      },
+      "validationFarm": {
+        "maximumConcurrentDocumentConversions": 2,
+        "proof": "At most two conversion shards run concurrently and every shard invokes tools/pdf-export.mjs with --concurrency 1.",
+        "unexpectedQueueRejectionPolicy": "An internal AbortController stops queued work and kills sibling child process trees, including descendants, before rejection settles.",
+        "artifactLocator": "shards/<shard-id>/<attempt-id>/<relative-artifact-path>",
+        "artifactLocatorUniqueness": "verified by attempt-qualified receipt construction, resume validation, and tests",
+        "chromiumSpineSmokeScope": {
+          "role": "supplementary-only",
+          "included": ["Chromium spine document load", "finite layout smoke"],
+          "excluded": [
+            "WebKit",
+            "href and fragment integrity",
+            "reader marker scans",
+            "responsiveness",
+            "Apple Books",
+            "target e-ink"
+          ],
+          "publicationReadinessEstablished": false
+        },
+        "files": {
+          "tools/pdf-corpus-orchestrator.mjs": "a4c3340e49896fcd15b36179047a0a601ccec6c2f4c3e0d64c041bf481a1d486",
+          "tools/pdf-corpus-orchestrator.node-test.mjs": "9d547a81ca960cee886e3ff1aeeefcc81b8e1e0b0f2b184f93b1d0b3bb6a8141",
+          "tools/pdf-epub-browser-reader.mjs": "3695e5521128a57cdfac0ddd546a3cf10c87f7a3f045863ca8eac801af367f13",
+          "package.json": "9427f4c35067b751efac1669b8b1919b4ce5cb642a0c9db213f4a86305d0a1ce"
+        },
+        "packageScripts": {
+          "pdf:corpus-regenerate": "node tools/pdf-corpus-orchestrator.mjs",
+          "pdf:corpus-regenerate:test": "node --test tools/pdf-corpus-orchestrator.node-test.mjs"
+        }
+      }
+    }
+  },
+  "reviewInputs": {
+    "roundFourReceipt": {
+      "path": "benchmarks/pdf/fourth-repair-pass-results-v1.json",
+      "sha256": "5441b2f23e3df9c23762648fdb6a845c4044d4b6d08b0049e46fff0666e56d93"
+    },
+    "roundFourLog": {
+      "path": "/home/ubuntu/code/erniesg/erniesg-pdf-epub-overnight-20260728.round4.log",
+      "sha256": "c068f651fe6fb6c9ea45e103d7ef6f0af2880809e2d187119cd9861a5b0b9b70"
+    },
+    "reviewerLog": {
+      "path": "/tmp/erniesg-vm-integration-review.log",
+      "sha256": "49769bc667d18fab25f784af5c1339eb05cb174ff6e6e7d62db3491ad3c4f67c",
+      "originalVerdict": "HOLD"
+    },
+    "schedulerProducer": {
+      "worktree": "/tmp/erniesg-pdf-corpus-scheduler",
+      "logSha256": "28605a9cdad78451fcf9a8e4e0ed5777a420c4d804f874a6bab5f697e8c13383",
+      "binaryDiffSha256": "915d6dcbeaed5b5b8e239a25221df8d6c7b780b43891ba41a46016ee8965c8df"
+    },
+    "validationProducer": {
+      "worktree": "/tmp/erniesg-pdf-validation-shards",
+      "logSha256": "432c5500817557a49f047bf1f5d253d1b238b4b943b16200df03b0d47a079bed",
+      "binaryDiffSha256": "c7a751d7b4e572b2f9f364d4f9605736277a436fe5cfce5c59a45c0d909255f5"
+    }
+  },
+  "environment": {
+    "node": "22.22.3",
+    "npm": "10.9.8",
+    "astro": "7.1.3",
+    "vitest": "4.1.10",
+    "playwright": "1.61.1",
+    "java": "OpenJDK 21.0.11",
+    "epubCheck": {
+      "version": "5.3.0",
+      "jar": "/home/ubuntu/.local/share/epubcheck-5.3.0/epubcheck.jar",
+      "jarSha256": "f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65"
+    },
+    "daisyAce": {
+      "version": "1.4.6",
+      "launcherSha256": "39909ce78d85972fb694db2f485d117e051b6bb925f01c149fab303df6eef537",
+      "accessibilityFindingsAreFatal": true,
+      "arguments": ["--exiterror2", "--outdir", "<report>", "<epub>"]
+    },
+    "chromium": {
+      "version": "149.0.7827.0",
+      "binarySha256": "c1aa0fb5b6c60eb093df69d9e40dd50ab2039d3ccba8836ef21880340a77af64"
+    },
+    "webkit": {
+      "version": "26.5",
+      "miniBrowserSha256": "98384046ffbca250cfb254be6849210749f6455b0a5f18ebae022daf6bd39382"
+    }
+  },
+  "commands": {
+    "focusedCombined": "npx vitest run src/research/pdf-lines.test.ts src/research/pdf-quality.test.ts src/research/pdf-layout.test.ts src/research/pdf-regions.test.ts src/research/pdf-visuals.test.ts src/research/pdf-cross-references.test.ts src/research/decision-record.test.ts tools/pdf-export.test.mjs tools/pdf-corpus-contract.test.mjs",
+    "orchestratorNodeTests": "npm run pdf:corpus-regenerate:test",
+    "fullVitest": "npm test",
+    "astroCheckAndBuild": "npm run build:astro",
+    "vmVerifyBeforeAndAfter": "infra/vm/verify.sh",
+    "agentEvidence": "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR scripts/agent-evidence",
+    "chromiumViewerMatrix": "PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\" npx playwright test tests/e2e/pdf-review-viewer.spec.ts tests/e2e/pdf-to-epub-fidelity.spec.ts --reporter=line",
+    "webkitViewerMatrix": "SRT_E2E_BROWSER=webkit PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\" npx playwright test tests/e2e/pdf-review-viewer.spec.ts tests/e2e/pdf-to-epub-fidelity.spec.ts --reporter=line",
+    "stress231Pages": "RUN_PDF_STRESS_E2E=1 PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\" npx playwright test tests/e2e/pdf-review-viewer.spec.ts --grep 'keeps the UI responsive' --reporter=line",
+    "commonCorpusEnvironment": [
+      "export PATH=\"/tmp/erniesg-fifth-validator-bin:$PATH\"",
+      "export EPUBCHECK_JAR=\"/home/ubuntu/.local/share/epubcheck-5.3.0/epubcheck.jar\"",
+      "export PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\"",
+      "export PUPPETEER_EXECUTABLE_PATH=\"$PWD/node_modules/.cache/ms-playwright/chromium-1228/chrome-linux/chrome\""
+    ],
+    "frozenRegeneration": "npm run pdf:corpus-regenerate -- --contract benchmarks/pdf/corpus-contract-v2.json --corpus-set frozen --source-root node_modules/.cache/erniesg-pdf-corpus-20260728 --out /tmp/erniesg-fifth-v2-frozen-final --shard-size 2 --conversion-concurrency 2 --external-validation-concurrency 2 --chromium-spine-smoke-concurrency 1 --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --document-timeout-seconds 1800 --validation-timeout-seconds 600",
+    "seededRandomRegeneration": "npm run pdf:corpus-regenerate -- --contract benchmarks/pdf/corpus-contract-v2.json --corpus-set seededRandom --source-root node_modules/.cache/erniesg-pdf-corpus-20260728 --out /tmp/erniesg-fifth-v2-seeded-final --shard-size 2 --conversion-concurrency 2 --external-validation-concurrency 2 --chromium-spine-smoke-concurrency 1 --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --document-timeout-seconds 1800 --validation-timeout-seconds 600",
+    "priorFinalRegression": "node tools/pdf-export.mjs node_modules/.cache/erniesg-pdf-corpus-20260728/2305.05176v1.pdf node_modules/.cache/erniesg-pdf-corpus-20260728/2506.21416v1.pdf node_modules/.cache/erniesg-pdf-corpus-20260728/2506.03099v1.pdf --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --readable-fallback --concurrency 2 --document-timeout-seconds 1800 --out /tmp/erniesg-fifth-prior-final-heldout",
+    "priorDiscoveryRegression": "node tools/pdf-export.mjs node_modules/.cache/erniesg-pdf-corpus-20260728/2511.12884v1.pdf node_modules/.cache/erniesg-pdf-corpus-20260728/2406.18665v4.pdf node_modules/.cache/erniesg-pdf-corpus-20260728/2505.23941v1.pdf --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --readable-fallback --concurrency 2 --document-timeout-seconds 1800 --out /tmp/erniesg-fifth-prior-discovery",
+    "exactArtifactValidators": {
+      "driver": "bounded two-process queue over the 75 SHA-verified paths in /tmp/erniesg-fifth-artifacts.json",
+      "epubCheckPerArtifact": "java -jar \"$EPUBCHECK_JAR\" --failonwarnings \"$epub\"",
+      "acePerArtifact": "ace --exiterror2 --outdir \"$report_dir\" \"$epub\"",
+      "results": [
+        "/tmp/erniesg-fifth-epubcheck-all-results.json",
+        "/tmp/erniesg-fifth-ace-all-results.json"
+      ]
+    },
+    "exactArtifactScans": {
+      "driver": "deterministic Node archive scan over the 75 SHA-verified paths in /tmp/erniesg-fifth-artifacts.json",
+      "checks": [
+        "manifest asset existence",
+        "asset references",
+        "href and fragment targets",
+        "reader markers",
+        "packaged JavaScript"
+      ],
+      "result": "/tmp/erniesg-fifth-epub-scans.json"
+    }
+  },
+  "validation": {
+    "focusedCombined": {
+      "status": "passed",
+      "files": 9,
+      "testsPassed": 710,
+      "durationMs": 169640
+    },
+    "focusedImplementation": {
+      "hyphenTestsPassed": 61,
+      "schedulerSelectedTestsPassed": 7,
+      "schedulerUnselectedTestsSkipped": 28,
+      "orchestratorNodeTestsPassed": 6,
+      "heldoutContractTestsPassed": 2
+    },
+    "fullVitest": {
+      "status": "passed",
+      "files": 98,
+      "testsPassed": 1743,
+      "testsSkipped": 1,
+      "testsTotal": 1744,
+      "durationMs": 197010
+    },
+    "astro": {
+      "status": "passed",
+      "diagnosticFiles": 281,
+      "errors": 0,
+      "warnings": 0,
+      "hints": 11,
+      "staticPagesBuilt": 132
+    },
+    "agentEvidence": {
+      "status": "passed",
+      "manifest": ".agent/evidence/20260728T154355328Z/manifest.json",
+      "manifestSha256": "c6a946e6fd7824473104281be5417c36064abf6a0b3e89b16e3a587b4f70e63b",
+      "durationMs": 252522,
+      "requiredLanes": {
+        "build": {
+          "status": "passed",
+          "durationMs": 55291
+        },
+        "test": {
+          "status": "passed",
+          "durationMs": 197225
+        }
+      },
+      "scope": "Implementation state before this receipt file was added."
+    },
+    "vmVerify": {
+      "before": "failed",
+      "after": "failed",
+      "exitCode": 1,
+      "failure": "rucksack-app.service is inactive",
+      "passes": [
+        "ports 22, 80, and 443",
+        "disk free, including 1941 MB after validation",
+        "available memory, including 13813 MB after validation",
+        "Tailscale"
+      ],
+      "warning": "HEALTHCHECK_URL is unset"
+    },
+    "stress231Pages": {
+      "status": "passed",
+      "documentId": "2501.09223v1",
+      "pages": 231,
+      "terminalDocumentStatus": "review-required",
+      "completionMs": 128980,
+      "cancellationLatencyMs": 86,
+      "maximumMainThreadLatencyMs": 78,
+      "maximumMainHeapBytes": 53500000,
+      "workerCountObserved": 2
+    },
+    "viewerMatrices": {
+      "applicationFixtureOnly": true,
+      "exactArtifactResponsiveMatrixEstablished": false,
+      "chromium149": {
+        "testsPassed": 3,
+        "guardedStressSkipped": 1,
+        "layoutCombinations": 96,
+        "durationMs": 66000
+      },
+      "webkit265": {
+        "testsPassed": 3,
+        "guardedStressSkipped": 1,
+        "layoutCombinations": 96,
+        "durationMs": 96000
+      },
+      "combinationDefinition": "4 devices x 2 orientations x 4 font sizes x 3 font families",
+      "scopeWarning": "These application-fixture matrices do not establish a full responsive Chromium or WebKit matrix over every generated EPUB artifact."
+    },
+    "corpus": {
+      "contract": {
+        "path": "benchmarks/pdf/corpus-contract-v2.json",
+        "fileSha256": "91b38615b1f9b4acce960bc6ee23d41a8c7eb048714184a469677af0645bc956",
+        "canonicalContractSha256": "df8d26b2dfa64e2afe106d4ac53b630012918aeba4638b437307748ee3541814",
+        "uniqueDocuments": 20,
+        "allSourceByteLengthsAndSha256Matched": true
+      },
+      "frozen": {
+        "status": "completed-but-not-passing",
+        "commandExitCode": 1,
+        "documents": {
+          "total": 10,
+          "ready": 0,
+          "reviewRequired": 9,
+          "failed": 1
+        },
+        "failedDocument": {
+          "id": "2501.09223v1",
+          "reason": "PDF_DOCUMENT_STALLED"
+        },
+        "artifacts": {
+          "expected": 30,
+          "produced": 27,
+          "missing": 3
+        },
+        "validators": {
+          "epubCheck530": { "passed": 27, "notRun": 3 },
+          "daisyAce146": { "passed": 27, "notRun": 3 },
+          "chromiumSpineSmoke": { "passed": 27, "notRun": 3 }
+        },
+        "runIdentitySha256": "d39fd8db72604f33297b0290461138ec74d9d1dd2b26fc5b6b81cd32c1c7db90",
+        "wallDurationMs": 612260,
+        "receipt": "/tmp/erniesg-fifth-v2-frozen-final/run-d39fd8db72604f33297b0290461138ec/corpus-regeneration-receipt.json",
+        "receiptFileSha256": "83b34f4ac42212d4e8ab3d130f751a394dafdd10b763531088318cd0fbfcc1c7",
+        "receiptContentSha256": "2586e07a4355a5b447b1866d9af519489931b6cce1d3dc85320a7dab306fcd5b"
+      },
+      "seededRandom": {
+        "status": "completed-but-not-passing",
+        "commandExitCode": 1,
+        "documents": {
+          "total": 10,
+          "ready": 0,
+          "reviewRequired": 10,
+          "failed": 0
+        },
+        "artifacts": {
+          "expected": 30,
+          "produced": 30,
+          "missing": 0
+        },
+        "validators": {
+          "epubCheck530": { "passed": 30, "notRun": 0 },
+          "daisyAce146": { "passed": 30, "notRun": 0 },
+          "chromiumSpineSmoke": { "passed": 30, "notRun": 0 }
+        },
+        "runIdentitySha256": "11234ffba585c7bcbba946e5da7756aad08dcb92a79a446b4ec29c7613302180",
+        "wallDurationMs": 516145,
+        "receipt": "/tmp/erniesg-fifth-v2-seeded-final/run-11234ffba585c7bcbba946e5da7756aa/corpus-regeneration-receipt.json",
+        "receiptFileSha256": "e606150c4029d4167283678d57a4efa0d2481a4fcb35ae11ff4788b18e56fe7c",
+        "receiptContentSha256": "d988ab3e1dbe8d38853ee54eaf817b1b50b8f534183d2208b27b7c12ad4ae231"
+      },
+      "priorFinalRegression": {
+        "contractPath": "benchmarks/pdf/final-audit-heldout-contract-v1.json",
+        "contractSha256": "cf9c9d85c399495d23e47c08ee490e3cf337f5cd7315c43e4e2be2e3ef9b2022",
+        "classification": "regression, not untouched holdout",
+        "documents": {
+          "total": 3,
+          "ready": 0,
+          "reviewRequired": 3,
+          "failed": 0
+        },
+        "artifacts": { "expected": 9, "produced": 9, "missing": 0 },
+        "wallDurationMs": 106143,
+        "report": "/tmp/erniesg-fifth-prior-final-heldout/corpus-audit.json",
+        "reportSha256": "d759ece5816b16c1a4d50232fcb13b3666e7bdc48be9a593b449caa010db8120"
+      },
+      "priorDiscoveryRegression": {
+        "contractPath": "benchmarks/pdf/overnight-heldout-contract-v1.json",
+        "contractSha256": "14464f161149dae09e4f811f426a978217d8ff8c57832c1bcb9a399e3ca4a52d",
+        "classification": "regression, not untouched holdout",
+        "documents": {
+          "total": 3,
+          "ready": 0,
+          "reviewRequired": 3,
+          "failed": 0
+        },
+        "artifacts": { "expected": 9, "produced": 9, "missing": 0 },
+        "wallDurationMs": 485781,
+        "report": "/tmp/erniesg-fifth-prior-discovery/corpus-audit.json",
+        "reportSha256": "91973f177982da8280cc85b09ef416e12c343cf31559f4e07fed8741668b2306"
+      },
+      "aggregate": {
+        "documents": {
+          "total": 26,
+          "ready": 0,
+          "reviewRequired": 25,
+          "failed": 1
+        },
+        "artifacts": {
+          "expected": 78,
+          "produced": 75,
+          "missing": 3
+        },
+        "failedAndReviewRequiredRemainInDenominator": true
+      }
+    },
+    "exactArtifacts": {
+      "manifest": "/tmp/erniesg-fifth-artifacts.json",
+      "manifestSha256": "6f3262c4e2e5a99343f187ffb8c17ea9d140a62143d624dfbafae13911a5b6de",
+      "artifacts": 75,
+      "identityMismatches": 0,
+      "identityHashAlgorithm": "SHA-256 over canonical ordered tuples of set, document id, profile, byte length, and artifact SHA-256",
+      "setIdentitySha256": {
+        "v2Frozen27": "a9d9a2541e0a6a6c210300715f75fc5b3f10337ad9b13936985347d756da3374",
+        "v2SeededRandom30": "f9fb488ae83c2e77df3ec2cad7a9c44d88040fbcd86adfeaffc90ac002bdf2a2",
+        "priorFinalRegression9": "e373c101de72ef348770dc3908a7ce2729c07acbc8d47ef69da4dd0807bfa299",
+        "priorDiscoveryRegression9": "21935abc030fa9808178a2a37cc12d50e2d67ecb3acf216db71250a9db32c89f"
+      },
+      "epubCheck530": {
+        "passed": 75,
+        "failed": 0,
+        "concurrency": 2,
+        "resultsSha256": "8186d7f1e0902c38af902b3fc02707c092f2ff143cf29e671b5d84a07317d8db"
+      },
+      "daisyAce146": {
+        "passed": 75,
+        "failed": 0,
+        "concurrency": 2,
+        "resultsSha256": "6ac606b50f115be26e3e114d5d66691f4323411e531f6164f8d08bec0ad67cf9"
+      },
+      "archiveScans": {
+        "passed": 75,
+        "failed": 0,
+        "manifestItemsChecked": 1554,
+        "assetReferencesChecked": 1236,
+        "assetFailures": 0,
+        "hrefAndFragmentReferencesChecked": 13566,
+        "hrefAndFragmentFailures": 0,
+        "readerMarkerFindings": 0,
+        "packagedJavaScriptFindings": 0,
+        "resultsSha256": "38e9e52f539cd2179be08677f221f4872f4bb8325f6392d7ffc80854d18c54fe"
+      }
+    }
+  },
+  "beforeAfterDeltas": {
+    "publicationReadiness": {
+      "roundFourVerifiedReady": 0,
+      "fifthIntegrationVerifiedReady": 0,
+      "delta": 0
+    },
+    "stress231Pages": {
+      "completionMs": { "before": 131370, "after": 128980, "delta": -2390 },
+      "cancellationLatencyMs": { "before": 117, "after": 86, "delta": -31 },
+      "maximumMainThreadLatencyMs": { "before": 38, "after": 78, "delta": 40 },
+      "maximumMainHeapBytes": {
+        "before": 53500000,
+        "after": 53500000,
+        "delta": 0
+      }
+    },
+    "comparableNineDocumentRegression": {
+      "before": {
+        "ready": 0,
+        "reviewRequired": 9,
+        "failed": 0,
+        "knownUnresolvedCorruptingJoins": 2,
+        "documentsWithKnownUnresolvedCorruptingJoins": 1,
+        "documentsWithCanonicalFlowOrderViolation": 2,
+        "documentsWithIncompleteAssetCoverage": 8
+      },
+      "after": {
+        "ready": 0,
+        "reviewRequired": 8,
+        "failed": 1,
+        "materializedDocuments": 8,
+        "knownUnresolvedCorruptingJoins": 85,
+        "documentsWithKnownUnresolvedCorruptingJoins": 8,
+        "documentsWithCanonicalFlowOrderViolation": 1,
+        "documentsWithIncompleteAssetCoverage": 7
+      },
+      "interpretation": "The larger visible join count is an intentional fail-closed diagnostic delta after removing the reviewer's hyphen-deletion fail-open path, not a readiness improvement. The stalled paper remains in the nine-paper denominator; its reconstruction counts are unavailable."
+    }
+  },
+  "holdout": {
+    "newUntouchedPoolAvailable": false,
+    "eligibleDocuments": 0,
+    "catalogDocuments": 26,
+    "reason": "All 26 catalog papers had already appeared in fixed, seeded-random, prior-round, or heldout-labeled contracts. Previously heldout-labeled sets are reported only as regression sets in this receipt."
+  },
+  "unavailableExternalReaders": [
+    "native desktop EPUB reader",
+    "Apple Books",
+    "target e-ink reader or device"
+  ],
+  "remainingBlockers": [
+    "Publication readiness is 0 of 26: 25 papers require review and 2501.09223v1 failed closed with PDF_DOCUMENT_STALLED.",
+    "Three expected EPUB profiles are missing because the failed paper published no partial document or corpus artifact.",
+    "Known corrupting joins, canonical flow issues, incomplete assets and relationships, semantic objects, tables, equations, citations, notes, hyperlinks, visuals, inline styles, text coverage, and source-region diagnostics remain.",
+    "infra/vm/verify.sh fails because rucksack-app.service is inactive, and HEALTHCHECK_URL is unset.",
+    "The Chromium spine smoke is supplementary only; it establishes none of WebKit, href or fragment, marker, responsiveness, Apple Books, or target e-ink coverage.",
+    "Chromium and WebKit application-fixture matrices are not a complete exact-artifact reader matrix.",
+    "Required native desktop, Apple Books, and target e-ink validation remains external and unavailable.",
+    "No untouched holdout remains in the 26-paper catalog."
+  ]
+}

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types --disable-warning=ExperimentalWarning
 import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { sourceMathAtomCompactionRanges } from '../src/research/pdf-inline-script-integrity.ts'
@@ -330,10 +330,7 @@ function figureInternalTextGroups(relationship, page, visualBox, regions) {
   return groups
 }
 
-function semanticTableEntities(
-  reconstruction,
-  validatedVisualRelationships,
-) {
+function semanticTableEntities(reconstruction, validatedVisualRelationships) {
   const assets = new Map(
     (reconstruction.assets ?? []).map((asset) => [asset.id, asset]),
   )
@@ -1044,6 +1041,17 @@ function parseArguments(arguments_) {
   return { request: arguments_[1], output: arguments_[3] }
 }
 
+export function pdfVisualValidationReplayInput(reconstruction) {
+  return {
+    paper: reconstruction.paper,
+    provenance: reconstruction.provenance,
+    relationships: reconstruction.visualRelationships,
+    assets: reconstruction.assets,
+    regions: reconstruction.regions,
+    pages: reconstruction.pages,
+  }
+}
+
 async function main() {
   const paths = parseArguments(process.argv.slice(2))
   const request = JSON.parse(await readFile(paths.request, 'utf8'))
@@ -1073,13 +1081,9 @@ async function main() {
       reconstructions.set(document.id, reconstruction)
       validatedVisualRelationshipsByDocument.set(
         document.id,
-        validatedPdfVisualRelationships({
-          paper: reconstruction.paper,
-          provenance: reconstruction.provenance,
-          relationships: reconstruction.visualRelationships,
-          assets: reconstruction.assets,
-          regions: reconstruction.regions,
-        }),
+        validatedPdfVisualRelationships(
+          pdfVisualValidationReplayInput(reconstruction),
+        ),
       )
     }
     const predictions = createDeterministicPredictions(

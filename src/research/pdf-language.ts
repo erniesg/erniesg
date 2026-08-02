@@ -147,19 +147,10 @@ function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
 }
 
-/**
- * Conservatively proves only overwhelmingly English born-digital text. This
- * is not a general language detector: unsupported, short, mixed, or close
- * Latin-language candidates deliberately remain `und`.
- */
-export function inferPublicationLanguageFromPdfText(
-  pages: readonly PdfPageAnalysis[],
+function inferEnglishFromNormalizedText(
+  text: string,
+  evidenceTag: 'pdf-text-language' | 'pdf-text-language-nfkc',
 ): PdfTextLanguageInference | null {
-  const text = pages
-    .flatMap((page) => page.runs)
-    .map((run) => run.text)
-    .join(' ')
-    .normalize('NFC')
   const letters = text.match(/\p{Letter}/gu) ?? []
   if (letters.length === 0) return null
   const latinLetterRatio =
@@ -205,6 +196,31 @@ export function inferPublicationLanguageFromPdfText(
   }
   return {
     ...result,
-    evidence: `pdf-text-language:en:words=${result.wordCount}:markers=${result.markerCount}:density=${result.markerDensity}:latin=${result.latinLetterRatio}:competitor=${result.competingMarkerCount}`,
+    evidence: `${evidenceTag}:en:words=${result.wordCount}:markers=${result.markerCount}:density=${result.markerDensity}:latin=${result.latinLetterRatio}:competitor=${result.competingMarkerCount}`,
   }
+}
+
+/**
+ * Conservatively proves only overwhelmingly English born-digital text. This
+ * is not a general language detector: unsupported, short, mixed, or close
+ * Latin-language candidates deliberately remain `und`.
+ */
+export function inferPublicationLanguageFromPdfText(
+  pages: readonly PdfPageAnalysis[],
+): PdfTextLanguageInference | null {
+  const sourceText = pages
+    .flatMap((page) => page.runs)
+    .map((run) => run.text)
+    .join(' ')
+  const nfcText = sourceText.normalize('NFC')
+  const nfcInference = inferEnglishFromNormalizedText(
+    nfcText,
+    'pdf-text-language',
+  )
+  if (nfcInference) return nfcInference
+
+  const nfkcText = sourceText.normalize('NFKC')
+  return nfkcText === nfcText
+    ? null
+    : inferEnglishFromNormalizedText(nfkcText, 'pdf-text-language-nfkc')
 }

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-extraction-eval-review-1.0.0.json",
+  "title": "Source-only extraction evaluation review evidence",
+  "description": "Roster and decision artifacts bind reviewer identities and labels without exposing private source content or consulting candidate output.",
+  "oneOf": [
+    { "$ref": "#/$defs/roster" },
+    { "$ref": "#/$defs/decisions" }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "roster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "kind", "evalSetId", "reviewers"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "kind": { "const": "pdf-extraction-reviewer-roster" },
+        "evalSetId": { "$ref": "#/$defs/id" },
+        "reviewers": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reviewerId", "identityEvidenceSha256"],
+            "properties": {
+              "reviewerId": { "$ref": "#/$defs/id" },
+              "identityEvidenceSha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "evalSetId",
+        "evalSetSha256",
+        "sourceOnly",
+        "candidateOutputConsultedForLabel",
+        "decisions"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "kind": { "const": "pdf-extraction-source-only-decisions" },
+        "evalSetId": { "$ref": "#/$defs/id" },
+        "evalSetSha256": { "$ref": "#/$defs/sha256" },
+        "sourceOnly": { "const": true },
+        "candidateOutputConsultedForLabel": { "const": false },
+        "decisions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "caseId",
+              "sourceSha256",
+              "reviewers",
+              "decision",
+              "decisionSha256"
+            ],
+            "properties": {
+              "caseId": { "$ref": "#/$defs/id" },
+              "sourceSha256": { "$ref": "#/$defs/sha256" },
+              "reviewers": {
+                "type": "array",
+                "minItems": 2,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/id" }
+              },
+              "decision": { "const": "agreed" },
+              "decisionSha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

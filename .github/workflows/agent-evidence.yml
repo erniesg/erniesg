@@ -12,7 +12,10 @@ permissions:
 
 jobs:
   evidence:
-    runs-on: ubuntu-latest
+    # Hosted by default; set the repository variable RUCKSACK_RUNS_ON to a JSON
+    # label array to fall back to a trusted self-hosted runner. Private
+    # repositories only.
+    runs-on: ${{ fromJSON(vars.RUCKSACK_RUNS_ON || '["ubuntu-latest"]') }}
     permissions:
       contents: read
     steps:
@@ -37,6 +40,7 @@ jobs:
           GITHUB_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           RUCKSACK_EXPECTED_REPOSITORY: ${{ github.repository }}
           RUCKSACK_EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
+          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
           if [ -L .agent ] || [ -L .agent/evidence ]; then
@@ -88,6 +92,9 @@ jobs:
             "lint", "build", "type-check", "unit", "test", "e2e",
             "rust-check", "rust-test", "python-test",
           ]);
+          // The documented exit taxonomy, rendered from rucksack.evidence_taxonomy so the
+          // validator cannot drift from the script that produces the manifest.
+          const blockedClassExitCodes = {"blocked-auth": 3, "blocked-decision": 4, "blocked-environment": 2};
 
           function fail(message) {
             console.error(`evidence manifest rejected: ${message}`);
@@ -189,7 +196,7 @@ jobs:
               "started_at", "ended_at", "duration_ms", "agent_version", "invocation",
               "lanes_run", "runner", "lanes", "artifacts", "result", "required_failures",
             ],
-            ["blocked_reason", "caveats"],
+            ["blocked_reason", "blocked_class", "caveats"],
             "manifest",
           );
 
@@ -309,15 +316,33 @@ jobs:
               fail("passed manifest is inconsistent with lanes or exit status");
             }
             if (Object.hasOwn(manifest, "blocked_reason")) fail("passed manifest must not contain blocked_reason");
+            if (Object.hasOwn(manifest, "blocked_class")) fail("passed manifest must not contain blocked_class");
           } else if (manifest.result === "failed") {
             if (requiredFailures.length === 0 || evidenceStatus !== 1) {
               fail("failed manifest is inconsistent with lanes or exit status");
             }
             if (Object.hasOwn(manifest, "blocked_reason")) fail("failed manifest must not contain blocked_reason");
+            if (Object.hasOwn(manifest, "blocked_class")) fail("failed manifest must not contain blocked_class");
           } else {
             stringValue(manifest.blocked_reason, "manifest.blocked_reason");
-            if (manifest.lanes.length !== 0 || !new Set([2, 3, 4]).has(evidenceStatus)) {
+            if (!new Set([2, 3, 4]).has(evidenceStatus)) {
               fail("blocked manifest is inconsistent with lanes or exit status");
+            }
+            // A blocked run either never selected a lane (nothing to fail) or ran lanes
+            // whose required failures were classified as a fault of the machine. Both are
+            // "blocked"; a blocked manifest that ran lanes and reports no required failure
+            // would be claiming a block it cannot point at.
+            if (manifest.lanes.length === 0) {
+              if (requiredFailures.length !== 0) fail("blocked manifest without lanes must not report required failures");
+              if (Object.hasOwn(manifest, "blocked_class")) fail("blocked manifest without lanes must not classify a lane");
+            } else {
+              if (requiredFailures.length === 0) fail("blocked manifest with lanes must record the required failures that blocked it");
+              const blockedClass = stringValue(manifest.blocked_class, "manifest.blocked_class");
+              // Object.hasOwn, not a bare lookup: "__proto__" and "constructor" are not classes.
+              if (!Object.hasOwn(blockedClassExitCodes, blockedClass)) fail("manifest.blocked_class is not a documented class");
+              if (blockedClassExitCodes[blockedClass] !== evidenceStatus) {
+                fail("manifest.blocked_class does not match the evidence exit status");
+              }
             }
           }
 

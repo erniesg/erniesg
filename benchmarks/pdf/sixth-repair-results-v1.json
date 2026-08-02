@@ -1,0 +1,483 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "pdf-epub-sixth-stall-repair-2026-07-28-v1",
+  "generatedAt": "2026-07-28T17:04:26Z",
+  "verdict": {
+    "status": "conversion-repaired-publication-blocked",
+    "conversionCorrectness": "passed",
+    "publicationReady": false,
+    "verifiedPublicationReady": 0,
+    "denominator": 10,
+    "summary": "The deterministic PDF_DOCUMENT_STALLED failure is repaired without changing the 30-second watchdog. The formerly stalled 231-page document and all ten frozen documents completed, all 30 expected EPUBs were atomically produced, EPUBCheck 5.3.0, Ace 1.4.6, Chromium spine smoke, and independent package scans passed for all 30 artifacts. Publication readiness remains blocked because all ten documents fail one or more fidelity gates."
+  },
+  "reviewInputs": {
+    "fifthIntegrationResults": {
+      "path": "benchmarks/pdf/fifth-integration-results-v1.json",
+      "sha256": "b54233926b4cd22192234de5811a915ddb5a9148059581f080d56623982b24b8"
+    },
+    "fifthFrozenReceipt": {
+      "path": "/tmp/erniesg-fifth-v2-frozen-final/run-d39fd8db72604f33297b0290461138ec/corpus-regeneration-receipt.json",
+      "fileSha256": "83b34f4ac42212d4e8ab3d130f751a394dafdd10b763531088318cd0fbfcc1c7",
+      "sealedReceiptSha256": "2586e07a4355a5b447b1866d9af519489931b6cce1d3dc85320a7dab306fcd5b",
+      "documentsFailed": 1,
+      "artifactsProduced": 27,
+      "artifactsMissing": 3,
+      "terminalFailure": "PDF_DOCUMENT_STALLED"
+    }
+  },
+  "diagnosis": {
+    "classification": "event-loop-starvation-false-heartbeat-timeout",
+    "deadlock": false,
+    "nondeterministicResourceContention": false,
+    "reproductionCount": 2,
+    "watchdogSeconds": 30,
+    "watchdogChanged": false,
+    "evidence": {
+      "preRepairTerminalStatus": "failed",
+      "preRepairFailureCode": "PDF_DOCUMENT_STALLED",
+      "preRepairHeartbeatCount": 88,
+      "preRepairLastStage": "validating",
+      "preRepairLastHeartbeatElapsedMs": 85903,
+      "preRepairWallSeconds": 119.64,
+      "preRepairUserCpuSeconds": 128.78,
+      "preRepairSystemCpuSeconds": 3.94,
+      "preRepairMaximumResidentSetKiB": 846640,
+      "precedingStagesCompleted": [
+        "semantic-promotion",
+        "figure-grouping",
+        "asset-packaging",
+        "reading-order"
+      ],
+      "rootCause": "The validation path unconditionally computed a whole-document BigInt longest-common-subsequence fallback and then discarded it whenever provenance-backed ordered-region conservation was available. This CPU-bound synchronous work silenced the worker event loop long enough for the truthful 30-second parent watchdog to fire.",
+      "figureGroupingFinding": "The focused hypothesis was instrumented rather than assumed. In the repaired frozen receipt, figure grouping ran from 18765 ms to 19057 ms, about 292 ms, so it was not the stalled stage."
+    }
+  },
+  "implementation": {
+    "headCommit": "119465e06d7e43679c0d19f8ed46ab4824e55699",
+    "worktreeState": "dirty-before-and-after",
+    "activeWorktreeWasAuthoritative": true,
+    "repair": {
+      "qualityConservation": "Compute whole-document ordered matched characters only for the fallback path that lacks provenance-backed ordered regions. Provenance-backed conservation no longer performs and discards the quadratic fallback.",
+      "cooperativeProgress": "Added cancellation-aware cooperative task yields around page reconstruction, visual indexing, figure grouping, and quality conservation, with bounded semantic-promotion and validation checkpoints.",
+      "cancellation": "Reconstruction and visual grouping now observe the shared AbortSignal before and after cooperative boundaries and throw the existing fail-closed PdfImportError cancellation code.",
+      "telemetry": "Worker heartbeats now include bounded checkpoint labels. Export performance evidence captures heartbeat count, maximum RSS and heap, CPU use, last stage/checkpoint, and at most 64 aggregate stage/checkpoint records.",
+      "orchestratorReceipts": "Conversion stderr is continuously drained into a 512 KiB bounded buffer. Only exact-schema, safe-basename performance evidence is retained in the final receipt; source paths and raw stderr are excluded.",
+      "failClosed": "The 30-second silence watchdog, review-required fidelity gates, fatal validator semantics, worker termination, per-document staging, and atomic publish/cleanup behavior remain in force.",
+      "maximumConcurrentDocumentConversions": 2
+    },
+    "changedFiles": {
+      "src/research/import-types.ts": "415870c03cff410b9f6956a01480530db801ccf3126ead362d64badbae92fe75",
+      "src/research/pdf.ts": "949fa6397c4439ecd872a9b31157634a5330198eb785bf46567d6599c267da14",
+      "src/research/pdf-layout.ts": "fc473ce80abd7a529eb62ccb1f4da2af31594961ad0548eddecd0adb2c6e99c4",
+      "src/research/pdf-visuals.ts": "d55d2a6de93879ddc43109dc1e211b08c766b16061b00e57ed6d5f4a2079b47d",
+      "src/research/pdf-quality.ts": "aaece0d900398d2c1b145bd1890ca0c0f6a94c3c7e89d7f9f60bd0173679c58b",
+      "tools/pdf-export.mjs": "f6ffaa20c1d2c8e75c2504b2fbc3cacc88482f5651e60035366cf1c52d5e7bbf",
+      "tools/pdf-export.test.mjs": "9922d2d913103421b70b8946b1b95c6e8217132a0a9b7fbc005c51b735bf0e9f",
+      "tests/fixtures/pdf-export-heartbeat-worker.mjs": "5ef0a490978916893e80677033d4310d8a64ffff0ec460ffcf18d493fe1ac9a0",
+      "tests/fixtures/pdf-export-stalled-worker.mjs": "492f03d6b4c6fd05649401d14cc0c7884e131acaec4526b1c853fdffd23ad1e8",
+      "tools/pdf-corpus-orchestrator.mjs": "905da0628a64223024e7a04e0d965d67d05010ef0bdc142457b828e9ff0836bc",
+      "tools/pdf-corpus-orchestrator.node-test.mjs": "c3b506796f978c9b887cffb6ca7fce2f867d7b5e3ca957b27d947a548cada950",
+      "tools/pdf-epub-package-scan.mjs": "fe8e00f868dc5ac6866c75a0694ba11255eaedabbcccbd00d176ff134a04c0e2"
+    },
+    "preservation": {
+      "paperIdSpecialCaseAdded": false,
+      "watchdogRelaxed": false,
+      "unrelatedDirtyFilesPreserved": true,
+      "commitCreated": false,
+      "pushPerformed": false,
+      "deployPerformed": false,
+      "filesMateriallyDeleted": false
+    }
+  },
+  "environment": {
+    "node": "22.22.3",
+    "npm": "10.9.8",
+    "vitest": "4.1.10",
+    "epubCheck": {
+      "version": "5.3.0",
+      "jarSha256": "f7f96617c929371821609b88c8484d6dc9f24fe916499863c46094c5fb778a65"
+    },
+    "daisyAce": {
+      "version": "1.4.6",
+      "launcherSha256": "39909ce78d85972fb694db2f485d117e051b6bb925f01c149fab303df6eef537"
+    },
+    "chromium": {
+      "version": "149.0.7827.0",
+      "binarySha256": "c1aa0fb5b6c60eb093df69d9e40dd50ab2039d3ccba8836ef21880340a77af64"
+    }
+  },
+  "commands": {
+    "preRepairReproduction": "/usr/bin/time -v node tools/pdf-export.mjs node_modules/.cache/erniesg-pdf-corpus-20260728/2501.09223v1.pdf --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --readable-fallback --concurrency 1 --document-timeout-seconds 1800 --out /tmp/erniesg-sixth-pre-repair-targeted",
+    "targetedAllProfiles": "/usr/bin/time -v node tools/pdf-export.mjs node_modules/.cache/erniesg-pdf-corpus-20260728/2501.09223v1.pdf --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --readable-fallback --concurrency 1 --document-timeout-seconds 1800 --out /tmp/erniesg-sixth-targeted-all-v2",
+    "commonCorpusEnvironment": [
+      "export PATH=\"/tmp/erniesg-fifth-validator-bin:$PATH\"",
+      "export EPUBCHECK_JAR=\"/home/ubuntu/.local/share/epubcheck-5.3.0/epubcheck.jar\"",
+      "export PLAYWRIGHT_BROWSERS_PATH=\"$PWD/node_modules/.cache/ms-playwright\"",
+      "export PUPPETEER_EXECUTABLE_PATH=\"$PWD/node_modules/.cache/ms-playwright/chromium-1228/chrome-linux/chrome\""
+    ],
+    "frozenRegeneration": "/usr/bin/time -v npm run pdf:corpus-regenerate -- --contract benchmarks/pdf/corpus-contract-v2.json --corpus-set frozen --source-root node_modules/.cache/erniesg-pdf-corpus-20260728 --out /tmp/erniesg-sixth-v2-frozen-final --shard-size 2 --conversion-concurrency 2 --external-validation-concurrency 2 --chromium-spine-smoke-concurrency 1 --target mobile --target paperProMove --target paperPro --ocr-engine none --document-visibility private --document-timeout-seconds 1800 --validation-timeout-seconds 600",
+    "packageScans": "node tools/pdf-epub-package-scan.mjs --receipt /tmp/erniesg-sixth-v2-frozen-final/run-16cbf526112e6953732a9e2ed3fc60ae/corpus-regeneration-receipt.json --out /tmp/erniesg-sixth-epub-package-scans.json",
+    "focusedHeartbeatAndCancellation": "npx vitest run tools/pdf-export.test.mjs src/research/pdf.test.ts --testNamePattern 'bounded stage and resource heartbeats|heartbeat stalls|cancels when the operator aborts at reconstruction'",
+    "focusedOrchestrator": "npm run pdf:corpus-regenerate:test",
+    "focusedReconstruction": "npx vitest run src/research/pdf-quality.test.ts src/research/pdf-layout.test.ts src/research/pdf-visuals.test.ts",
+    "fullVitestInitial": "/usr/bin/time -v npm run test",
+    "initialFailureIsolation": "/usr/bin/time -v npx vitest run tools/pdf-corpus-audit.test.mjs tools/pdf-target-free-candidate-run.test.mjs tools/pdf-fidelity-comparator-run.test.mjs tools/pdf-export.test.mjs --maxWorkers=1",
+    "fullVitestBounded": "/usr/bin/time -v npx vitest run --exclude 'tests/e2e/**' --maxWorkers=1",
+    "astroCheckAndBuild": "/usr/bin/time -v npm run build:astro",
+    "vmVerifyBeforeAndAfter": "/usr/bin/time -v infra/vm/verify.sh",
+    "agentEvidence": "/usr/bin/time -v scripts/agent-evidence",
+    "receiptSealVerification": "Recompute canonical SHA-256 over the final receipt with receiptSha256 omitted and compare it with the sealed receiptSha256."
+  },
+  "validation": {
+    "preRepairReproduction": {
+      "status": "expected-failure-reproduced",
+      "processExitCode": 1,
+      "documentsFailed": 1,
+      "failureCode": "PDF_DOCUMENT_STALLED",
+      "auditSha256": "fff5730f0e0fc455abb3eb04c95f8f283474ef60ea203b7bea5e7c403e59d149"
+    },
+    "focusedTests": {
+      "status": "passed",
+      "heartbeatAndCancellation": {
+        "testsPassed": 3,
+        "testsSkipped": 60,
+        "files": 2
+      },
+      "orchestratorNode": {
+        "testsPassed": 7,
+        "testsFailed": 0
+      },
+      "qualityLayoutVisual": {
+        "testsPassed": 476,
+        "testsFailed": 0,
+        "files": 3
+      },
+      "coverage": [
+        "bounded stage/checkpoint and RSS/heap/CPU heartbeats",
+        "30-second heartbeat-stall termination",
+        "operator cancellation during reconstruction",
+        "safe exact-schema performance evidence parsing",
+        "raw path and truncated stderr rejection",
+        "quality, layout, and visual reconstruction regressions"
+      ]
+    },
+    "targetedAllProfiles": {
+      "status": "review-required",
+      "conversionCompleted": true,
+      "processExitCode": 1,
+      "processExitMeaning": "Fidelity readiness gate remained fail-closed; this was not a conversion or tool failure.",
+      "documents": {
+        "total": 1,
+        "ready": 0,
+        "reviewRequired": 1,
+        "failed": 0
+      },
+      "wallSeconds": 162.71,
+      "userCpuSeconds": 184.54,
+      "systemCpuSeconds": 6.42,
+      "maximumResidentSetKiB": 891724,
+      "auditSha256": "0e242eee3afa2c220e9cd96565d99ad5ce2b346e0918ccce082af2a4555d0e83",
+      "exportManifestSha256": "434866605e11b84bb175feaf54bae3a970298ce2e6562fb3ce47b34fd055250a",
+      "artifacts": [
+        {
+          "profile": "mobile",
+          "byteLength": 1220620,
+          "sha256": "0f3e1e132f479d7c92862314a5792557182929173f183167018f8157a91822fb",
+          "structuralValidation": "passed",
+          "epubCheck": "passed"
+        },
+        {
+          "profile": "paperProMove",
+          "byteLength": 1033198,
+          "sha256": "0c261bdcadfb6a86371c86cfa6afaffad4b03aa680a118360719ed0aec477d8a",
+          "structuralValidation": "passed",
+          "epubCheck": "passed"
+        },
+        {
+          "profile": "paperPro",
+          "byteLength": 1220719,
+          "sha256": "9922050942b8d69b21f42c5a845186459f1ca668b50441d582bcce8f8b992c2a",
+          "structuralValidation": "passed",
+          "epubCheck": "passed"
+        }
+      ]
+    },
+    "frozenCorpus": {
+      "status": "completed-review-required",
+      "processExitCode": 1,
+      "processExitMeaning": "The orchestrator completed and sealed its receipt. Exit 1 records that publication readiness is false; no document, validator, or tool terminated unsuccessfully.",
+      "runDirectory": "/tmp/erniesg-sixth-v2-frozen-final/run-16cbf526112e6953732a9e2ed3fc60ae",
+      "receipt": {
+        "path": "/tmp/erniesg-sixth-v2-frozen-final/run-16cbf526112e6953732a9e2ed3fc60ae/corpus-regeneration-receipt.json",
+        "fileSha256": "58723fb2aedb92ba625c0621d33a833af3bdd0a4f4db78fd454e2fd7804483e1",
+        "sealedReceiptSha256": "9e12b0be8b0f233bca91301e326c2db9098f542865cf419a86719fa501cf5f3a",
+        "sealRecomputed": true,
+        "contractSha256": "df8d26b2dfa64e2afe106d4ac53b630012918aeba4638b437307748ee3541814",
+        "documentIdentitySha256": "4486bb696a8b7b9b2cc853f20510c6c006b4fdfab2883ec9d593b27c17192f67",
+        "toolchainSha256": "f6b9d667a885ac25793cbd5ace31dce6fdc8a0e1bfa776428cde985b0ae25a98",
+        "configurationSha256": "16daef76551b298d2df74cfa5644039f2e25cf6542da3523273befb219ba836e",
+        "runIdentitySha256": "16cbf526112e6953732a9e2ed3fc60ae6177fe181e0d6f9948af293f7fb7ca5d"
+      },
+      "runtime": {
+        "wallSeconds": 804.25,
+        "userCpuSeconds": 1684.47,
+        "systemCpuSeconds": 92.67,
+        "maximumResidentSetKiB": 938828
+      },
+      "concurrency": {
+        "conversionShards": 2,
+        "exporterDocumentsPerShard": 1,
+        "maximumConcurrentDocuments": 2,
+        "externalValidators": 2,
+        "chromiumSpineSmokes": 1
+      },
+      "documents": {
+        "total": 10,
+        "ready": 0,
+        "reviewRequired": 10,
+        "failed": 0,
+        "passRate": 0
+      },
+      "artifacts": {
+        "expected": 30,
+        "produced": 30,
+        "missing": 0
+      },
+      "validators": {
+        "epubCheck530": {
+          "total": 30,
+          "passed": 30,
+          "failed": 0,
+          "unavailable": 0,
+          "notRun": 0
+        },
+        "daisyAce146": {
+          "total": 30,
+          "passed": 30,
+          "failed": 0,
+          "unavailable": 0,
+          "notRun": 0
+        },
+        "chromiumSpineSmoke": {
+          "total": 30,
+          "passed": 30,
+          "failed": 0,
+          "unavailable": 0,
+          "notRun": 0
+        }
+      }
+    },
+    "formerlyStalledDocumentPerformance": {
+      "sourceBasename": "2501.09223v1.pdf",
+      "pages": 231,
+      "terminalStatus": "completed",
+      "documentOutcome": "review-required",
+      "heartbeatCount": 104,
+      "maximumRssBytes": 880783360,
+      "maximumHeapUsedBytes": 497298624,
+      "elapsedMs": 143778,
+      "userCpuMicros": 115875325,
+      "systemCpuMicros": 2130325,
+      "lastStage": "completed",
+      "lastCheckpoint": "completed",
+      "selectedStageEvidence": [
+        {
+          "stage": "extracting",
+          "firstElapsedMs": 2588,
+          "lastElapsedMs": 11152,
+          "heartbeatCount": 10
+        },
+        {
+          "stage": "semantic-promotion",
+          "checkpoint": "figure-grouping",
+          "firstElapsedMs": 18765,
+          "lastElapsedMs": 18765,
+          "heartbeatCount": 2
+        },
+        {
+          "stage": "semantic-promotion",
+          "checkpoint": "figure-grouping-complete",
+          "firstElapsedMs": 19057,
+          "lastElapsedMs": 19057,
+          "heartbeatCount": 1
+        },
+        {
+          "stage": "semantic-promotion",
+          "checkpoint": "semantic-promotion",
+          "firstElapsedMs": 20422,
+          "lastElapsedMs": 74528,
+          "heartbeatCount": 48,
+          "lastCompleted": 304,
+          "total": 310
+        },
+        {
+          "stage": "validating",
+          "checkpoint": "quality-conservation",
+          "firstElapsedMs": 91477,
+          "lastElapsedMs": 91477,
+          "heartbeatCount": 1
+        },
+        {
+          "stage": "validating",
+          "checkpoint": "quality-complete",
+          "firstElapsedMs": 102651,
+          "lastElapsedMs": 102652,
+          "heartbeatCount": 2
+        },
+        {
+          "stage": "epub-assembly",
+          "firstElapsedMs": 103318,
+          "lastElapsedMs": 143765,
+          "heartbeatCount": 7,
+          "lastCompleted": 3,
+          "total": 3
+        }
+      ],
+      "pathRedaction": {
+        "inputPathsPresentInPerformanceEvidence": false,
+        "rawStderrPresentInReceipt": false,
+        "documentIdentityField": "safe basename only",
+        "maximumUniqueStageCheckpointRecords": 64,
+        "maximumCapturedConversionStderrBytes": 524288
+      }
+    },
+    "packageScans": {
+      "status": "passed",
+      "path": "/tmp/erniesg-sixth-epub-package-scans.json",
+      "sha256": "7e0817d6ad8106ab44abfb1db736a13e86010c7b134ec1b072959ce53fd49923",
+      "receiptSealedSha256": "9e12b0be8b0f233bca91301e326c2db9098f542865cf419a86719fa501cf5f3a",
+      "artifacts": 30,
+      "passed": 30,
+      "failed": 0,
+      "manifestItemsChecked": 837,
+      "assetReferencesChecked": 708,
+      "assetFailures": 0,
+      "hrefSrcDataTargetsChecked": 6615,
+      "hrefOrFragmentFailures": 0,
+      "readerMarkerFindings": 0,
+      "javascriptFindings": 0
+    },
+    "fullVitest": {
+      "status": "passed",
+      "files": 98,
+      "testsPassed": 1743,
+      "testsSkipped": 1,
+      "testsTotal": 1744,
+      "durationMs": 325270,
+      "boundedWorkers": 1,
+      "initialConcurrentRun": {
+        "status": "load-sensitive-timeouts",
+        "filesPassed": 94,
+        "filesFailed": 4,
+        "testsPassed": 1736,
+        "testsFailed": 7,
+        "testsSkipped": 1,
+        "causeEvidence": "Six failures hit the default 5000 ms timeout and one worker scratch assertion hit its 10000 ms polling budget while the machine was concurrently loaded. All four files passed unchanged in isolation with one worker, then all 98 files passed unchanged in one complete bounded run."
+      },
+      "failedFileIsolation": {
+        "status": "passed",
+        "files": 4,
+        "testsPassed": 86,
+        "testsFailed": 0
+      }
+    },
+    "astro": {
+      "status": "passed",
+      "diagnosticFiles": 282,
+      "errors": 0,
+      "warnings": 0,
+      "hints": 11,
+      "staticPagesBuilt": 132
+    },
+    "agentEvidence": {
+      "status": "passed",
+      "manifest": ".agent/evidence/20260728T165841207Z/manifest.json",
+      "manifestSha256": "97e44a21a15dd52510f7cbf3c8bebf4772192532ac22ea5a9703e9daea34a1c6",
+      "durationMs": 253590,
+      "requiredLanes": {
+        "build": {
+          "command": "npm run build",
+          "status": "passed",
+          "durationMs": 55849
+        },
+        "test": {
+          "command": "npm run test",
+          "status": "passed",
+          "durationMs": 197736
+        }
+      },
+      "scope": "Implementation state before this results file was added."
+    },
+    "vmVerify": {
+      "before": "failed",
+      "after": "failed",
+      "exitCode": 1,
+      "failure": "rucksack-app.service is inactive",
+      "passes": [
+        "ports 22, 80, and 443",
+        "1574 MB free disk after validation",
+        "13728 MB available memory after validation",
+        "Tailscale"
+      ],
+      "warning": "HEALTHCHECK_URL is unset, so app HTTP health was not checked.",
+      "classification": "App-service/deploy health failure, not PDF conversion correctness. No service mutation or deploy was authorized or attempted."
+    }
+  },
+  "beforeAfterDeltas": {
+    "frozenDocumentsFailed": {
+      "before": 1,
+      "after": 0
+    },
+    "frozenDocumentsReviewRequired": {
+      "before": 9,
+      "after": 10
+    },
+    "frozenArtifactsProduced": {
+      "before": 27,
+      "after": 30
+    },
+    "frozenArtifactsMissing": {
+      "before": 3,
+      "after": 0
+    },
+    "validatorPassesPerLane": {
+      "before": 27,
+      "after": 30
+    },
+    "publicationReadyDocuments": {
+      "before": 0,
+      "after": 0
+    }
+  },
+  "remainingBlockers": {
+    "publicationReadiness": "blocked",
+    "highestFrequencyGeneralizedBlockersByDocument": {
+      "UNRESOLVED_CORRUPTING_JOIN": 10,
+      "INCOMPLETE_ASSET_COVERAGE": 9,
+      "INCOMPLETE_RELATIONSHIP_COVERAGE": 9,
+      "UNRESOLVED_HYPERLINK": 9,
+      "UNRESOLVED_SCHOLARLY_CROSS_REFERENCE": 9,
+      "UNRESOLVED_SEMANTIC_OBJECTS": 9,
+      "UNRESOLVED_VISUAL_OBJECT": 9,
+      "INCOMPLETE_SEMANTIC_TABLE_COVERAGE": 8,
+      "MISSING_SOURCE_REGION": 8,
+      "CANONICAL_FLOW_ORDER_VIOLATION": 7
+    },
+    "readinessWorkDecision": "Corpus evidence confirms that lexical proof for line-end joins is the highest-frequency generalized blocker at 10 of 10 documents; the strict semantic-table chain affects 8 of 10. No additional readiness heuristic was added in this pass because the existing join policy intentionally fails closed without affirmative lexical proof, and safely changing that evidence model requires a separate measured corpus iteration. The stall repair, full frozen rerun, validator matrix, full tests, build, and repository evidence were prioritized over an unmeasured fail-open shortcut.",
+    "formerlyStalledDocument": {
+      "textCoverage": 0.98853,
+      "assetCoverage": 0.26253,
+      "relationshipCoverage": 0.14257,
+      "semanticTableCoverage": 0,
+      "unresolvedCorruptingJoinCount": 30,
+      "missingSourceRegionCount": 126,
+      "readingOrderDiagnostics": 25,
+      "ready": false
+    },
+    "externalReaderEvidence": [
+      "WebKit exact-artifact coverage was not part of the configured frozen orchestrator run.",
+      "Apple Books and target e-ink hardware evidence remain unavailable.",
+      "Chromium spine smoke is supplementary and does not establish publication readiness."
+    ]
+  }
+}

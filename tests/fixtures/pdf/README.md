@@ -33,6 +33,13 @@ source-glyph equation raster, and bibliography entries. Its
 text and visual content were written for this repository and do not reduce or
 copy any external paper.
 
+`source-output-checkpoints.pdf` is the small source/output review fixture. It
+contains a source flowchart, a caption, a sentence explicitly labelled as
+continuing across a column break, and a pseudocode listing. The paired evidence
+command uses this page only; it never renders owner-local papers into the
+repository. Its named furniture-exclusion checkpoint also requires the
+reconstruction's per-document contamination counter.
+
 `sparse-embedded-text.pdf` is a title/divider page with no image content. It
 proves that high-confidence OCR which only confirms the embedded text completes
 the OCR attempt without duplicating runs, while the no-OCR path stays blocked.
@@ -46,8 +53,9 @@ language-pack and Unicode behavior can be tested without copying a third-party
 document or font.
 
 `diagnostic-overlays.pdf` deliberately retains two plausible column orders and
-two equally scored note bodies. It is the repository-owned visual evidence
-fixture for reading-order and note-relationship overlays.
+two equally scored note bodies, with a running head and page number at the
+page furniture boundaries. It is the repository-owned visual evidence fixture
+for reading-order, note-relationship, and boilerplate-exclusion overlays.
 
 `adjudication-required.pdf` contains two deliberately tied note matches and a
 below-threshold two-column order. It exercises exact-scope human decisions and

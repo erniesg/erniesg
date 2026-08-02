@@ -19,6 +19,8 @@ eligible:
     - "src/research/**"
     - "src/components/research/**"
     - "src/pages/research/**"
+    - "src/struct/**"
+    - "skills/struct-typeset/**"
     - "tools/pdf-*"
     - "tools/srt/**"
     - "package.json"

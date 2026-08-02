@@ -70,7 +70,9 @@ function categoryFor(
     code === 'SOURCE_ORDER_FLOAT_FALLBACK' ||
     code === 'READING_ORDER_CYCLE' ||
     code === 'LOW_CONFIDENCE_BLOCK' ||
-    code === 'REPEATED_MARGIN_TEXT'
+    code === 'REPEATED_MARGIN_TEXT' ||
+    code === 'FURNITURE_REVIEW_REQUIRED' ||
+    code === 'FURNITURE_CONTAMINATION'
   ) {
     return 'reading-order'
   }
@@ -249,8 +251,16 @@ function inferredBoxes(
   }
   if (diagnostic.code === 'REPEATED_MARGIN_TEXT') {
     return reconstruction.regions
-      .filter((region) => region.kind === 'header' || region.kind === 'footer')
-      .map((region) => region.box)
+      .filter((region) => region.furniture)
+      .flatMap((region) => [region.box, ...(region.furniture?.boxes ?? [])])
+  }
+  if (
+    diagnostic.code === 'FURNITURE_REVIEW_REQUIRED' ||
+    diagnostic.code === 'FURNITURE_CONTAMINATION'
+  ) {
+    return reconstruction.regions
+      .filter((region) => region.furniture || region.furnitureReview)
+      .flatMap((region) => [region.box, ...(region.furniture?.boxes ?? [])])
   }
   if (diagnostic.code === 'READING_ORDER_CYCLE') {
     return reconstruction.regions

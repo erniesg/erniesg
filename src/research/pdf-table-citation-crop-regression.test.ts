@@ -156,6 +156,7 @@ describe('raw PDF source-backed table citation regression', () => {
       ready: false,
       blockingDiagnosticCodes: expect.arrayContaining([
         'UNRESOLVED_FRONT_MATTER',
+        'INCOMPLETE_SEMANTIC_TABLE_COVERAGE',
       ]),
     })
     expect(reconstruction.readiness.blockingDiagnosticCodes).not.toContain(
@@ -189,9 +190,7 @@ describe('raw PDF source-backed table citation regression', () => {
     const xhtml = strFromU8(inspected.files['EPUB/content.xhtml'])
     const bibliorefs = [...xhtml.matchAll(/<a\b[^>]*epub:type="biblioref"/gu)]
 
-    expect(xhtml).toContain(
-      'class="visually-hidden visual-source-transcript"',
-    )
+    expect(xhtml).toContain('class="visually-hidden visual-source-transcript"')
     expect(xhtml).toContain('Aggregate result | 71 | 90 | Stable')
     expect(xhtml).not.toMatch(/<p\b[^>]*>[^<]*Readability score/gu)
     expect(xhtml).not.toContain('<table')

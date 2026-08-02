@@ -80,6 +80,7 @@ export const publicationInlineRunSchema = z
     bold: z.boolean().optional(),
     italic: z.boolean().optional(),
     inlineCode: z.boolean().optional(),
+    strikethrough: z.boolean().optional(),
     href: safeUrlSchema.optional(),
     annotationId: idSchema.optional(),
     verticalAlign: z.enum(['superscript', 'subscript']).optional(),
@@ -358,6 +359,7 @@ export const publicationGraphSchema = z
   .superRefine((graph, context) => {
     const ids = new Set<string>()
     const nodesById = new Map<string, z.infer<typeof publicationNodeSchema>>()
+    const inlineRelationshipIds = new Set<string>()
     graph.nodes.forEach((node, index) => {
       if (ids.has(node.id)) {
         context.addIssue({
@@ -368,6 +370,11 @@ export const publicationGraphSchema = z
       }
       ids.add(node.id)
       nodesById.set(node.id, node)
+      if ('inlineRuns' in node && node.inlineRuns) {
+        node.inlineRuns.forEach((run) => {
+          if (run.relationshipId) inlineRelationshipIds.add(run.relationshipId)
+        })
+      }
       if (node.edition.editionId !== graph.edition.id) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
@@ -451,7 +458,8 @@ export const publicationGraphSchema = z
     })
     graph.nodes.forEach((node, index) => {
       relationshipTargets(node).forEach((target, relationshipIndex) => {
-        if (!ids.has(target)) {
+        if (!ids.has(target) &&
+          !(node.type === 'note' && inlineRelationshipIds.has(target))) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['nodes', index, 'relationships', relationshipIndex],

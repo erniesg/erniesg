@@ -7,6 +7,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   writeFile,
 } from 'node:fs/promises'
 import { basename, extname, relative, resolve, sep } from 'node:path'
@@ -144,6 +145,7 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
       if (active.some((run) => run.inlineCode)) value = `<code>${value}</code>`
       if (active.some((run) => run.italic)) value = `<em>${value}</em>`
       if (active.some((run) => run.bold)) value = `<strong>${value}</strong>`
+      if (active.some((run) => run.strikethrough)) value = `<del>${value}</del>`
       const verticalAlign = active.find((run) => run.verticalAlign)
       if (verticalAlign?.verticalAlign === 'superscript')
         value = `<sup>${value}</sup>`
@@ -278,12 +280,18 @@ async function writeAssets(
   return paths
 }
 
+export async function prepareWebPubDirectory(directory: string) {
+  await rm(directory, { recursive: true, force: true })
+  await mkdir(directory, { recursive: true })
+}
+
 async function createWebPub(
   bundle: PublicationBundle,
   outputDirectory: string,
   css: string,
 ) {
   const root = resolve(outputDirectory, 'phone-webpub')
+  await prepareWebPubDirectory(root)
   const assetPaths = await writeAssets(bundle, resolve(root, 'assets'))
   await writeFile(resolve(root, 'publication.css'), css)
   await copyFile(
@@ -328,6 +336,98 @@ async function createWebPub(
 
 function zipOptions(compression: 'STORE' | 'DEFLATE' = 'DEFLATE') {
   return { date: FIXED_DATE, compression, createFolders: false } as const
+}
+
+type EpubTocHeading = Pick<
+  Extract<PublicationNode, { type: 'heading' }>,
+  'id' | 'level' | 'text'
+>
+
+type EpubTocEntry = {
+  heading: EpubTocHeading
+  children: EpubTocEntry[]
+}
+
+export function renderEpubToc(headings: EpubTocHeading[]) {
+  const roots: EpubTocEntry[] = []
+  const stack: Array<{ level: number; entries: EpubTocEntry[] }> = [
+    { level: 0, entries: roots },
+  ]
+  for (const heading of headings) {
+    let level = Math.max(1, Math.trunc(heading.level))
+    if (roots.length === 0) {
+      level = 1
+      stack[0].level = level
+    } else {
+      while (stack.length > 1 && level < stack.at(-1)!.level)
+        stack.pop()
+      if (level > stack.at(-1)!.level) {
+        const parent = stack.at(-1)!.entries.at(-1)
+        if (parent) stack.push({ level, entries: parent.children })
+        else level = stack.at(-1)!.level
+      }
+    }
+    stack.at(-1)!.entries.push({ heading, children: [] })
+  }
+  const render = (entries: EpubTocEntry[]): string =>
+    `<ol>${entries
+      .map(
+        ({ heading, children }) =>
+          `<li><a href="content.xhtml#${escapeHtml(heading.id)}">${escapeHtml(heading.text)}</a>${children.length ? render(children) : ''}</li>`,
+      )
+      .join('')}</ol>`
+  return render(roots)
+}
+
+export function publicationPlaywrightExecutableCandidates(
+  revision: string,
+  platform = process.platform,
+  architecture = process.arch,
+) {
+  const platformKey =
+    platform === 'darwin'
+      ? `mac-${architecture === 'arm64' ? 'arm64' : 'x64'}`
+      : platform === 'win32'
+        ? 'win-x64'
+        : `linux-${architecture === 'arm64' ? 'arm64' : 'x64'}`
+  const chromiumPaths: Record<string, string[]> = {
+    'linux-x64': ['chrome-linux64', 'chrome'],
+    'linux-arm64': ['chrome-linux', 'chrome'],
+    'mac-x64': [
+      'chrome-mac-x64',
+      'Google Chrome for Testing.app',
+      'Contents',
+      'MacOS',
+      'Google Chrome for Testing',
+    ],
+    'mac-arm64': [
+      'chrome-mac-arm64',
+      'Google Chrome for Testing.app',
+      'Contents',
+      'MacOS',
+      'Google Chrome for Testing',
+    ],
+    'win-x64': ['chrome-win64', 'chrome.exe'],
+  }
+  const headlessPaths: Record<string, string[]> = {
+    'linux-x64': ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
+    'linux-arm64': ['chrome-linux', 'headless_shell'],
+    'mac-x64': ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
+    'mac-arm64': ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
+    'win-x64': ['chrome-headless-shell-win64', 'chrome-headless-shell.exe'],
+  }
+  return [
+    resolve(
+      PLAYWRIGHT_BROWSER_CACHE,
+      `chromium-${revision}`,
+      ...chromiumPaths[platformKey],
+    ),
+    resolve(
+      PLAYWRIGHT_BROWSER_CACHE,
+      `chromium_headless_shell-${revision}`,
+      ...headlessPaths[platformKey],
+    ),
+  ]
 }
 
 async function createEpub(
@@ -390,7 +490,7 @@ async function createEpub(
   )
   zip.file(
     'EPUB/nav.xhtml',
-    `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title>Navigation</title></head><body><nav epub:type="toc" aria-label="Table of contents"><h1>Contents</h1><ol>${headings.map((node) => `<li><a href="content.xhtml#${node.id}">${escapeHtml(node.text)}</a></li>`).join('')}</ol></nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml">Article</a></li></ol></nav></body></html>`,
+    `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title>Navigation</title></head><body><nav epub:type="toc" aria-label="Table of contents"><h1>Contents</h1>${renderEpubToc(headings)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml">Article</a></li></ol></nav></body></html>`,
     zipOptions(),
   )
   const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`
@@ -457,20 +557,7 @@ async function createPdf(
   const renderer = publicationPdfRendererForArchitecture()
   if (renderer === 'playwright-chromium') {
     const revision = PUBLICATION_TOOLCHAIN.browser.compatibility.arm64Revision
-    const candidates = [
-      resolve(
-        PLAYWRIGHT_BROWSER_CACHE,
-        `chromium_headless_shell-${revision}`,
-        'chrome-linux',
-        'headless_shell',
-      ),
-      resolve(
-        PLAYWRIGHT_BROWSER_CACHE,
-        `chromium-${revision}`,
-        'chrome-linux',
-        'chrome',
-      ),
-    ]
+    const candidates = publicationPlaywrightExecutableCandidates(revision)
     const executablePath = await candidates.reduce<Promise<string>>(
       async (previous, candidate) => {
         const found = await previous

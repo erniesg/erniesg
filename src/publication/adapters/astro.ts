@@ -45,7 +45,20 @@ type MdastNode = {
   }
 }
 
-type InlineResult = { text: string; inlineRuns: PublicationInlineRun[] }
+type InlineFootnoteReference = {
+  identifier: string
+  relationshipId: string
+}
+
+type InlineResult = {
+  text: string
+  inlineRuns: PublicationInlineRun[]
+  footnoteReferences: InlineFootnoteReference[]
+}
+
+type InlineContentOptions = {
+  nextFootnoteReferenceId?: (identifier: string) => string
+}
 
 const MEDIA_TYPES: Record<string, string> = {
   '.avif': 'image/avif',
@@ -79,9 +92,11 @@ function unsupported(sourceId: string, node: MdastNode): never {
 function inlineContent(
   sourceId: string,
   children: MdastNode[] = [],
+  options: InlineContentOptions = {},
 ): InlineResult {
   let text = ''
   const inlineRuns: PublicationInlineRun[] = []
+  const footnoteReferences: InlineFootnoteReference[] = []
   const append = (
     value: string,
     style?: Omit<PublicationInlineRun, 'start' | 'end'>,
@@ -110,7 +125,9 @@ function inlineContent(
         )
         break
       case 'delete':
-        node.children?.forEach((child) => visit(child, style))
+        node.children?.forEach((child) =>
+          visit(child, { ...style, strikethrough: true }),
+        )
         break
       case 'link':
         node.children?.forEach((child) =>
@@ -127,10 +144,15 @@ function inlineContent(
         append('\n')
         break
       case 'footnoteReference': {
-        const id = `note-${node.identifier}`
+        const identifier = node.identifier ?? 'unknown'
+        const relationshipId =
+          options.nextFootnoteReferenceId?.(identifier) ??
+          `ref-${identifier}`
+        footnoteReferences.push({ identifier, relationshipId })
+        const id = `note-${identifier}`
         append(`[${node.identifier}]`, {
           ...style,
-          relationshipId: `ref-${node.identifier}`,
+          relationshipId,
           semanticRole: 'cross-reference',
           targetIds: [id],
           verticalAlign: 'superscript',
@@ -147,7 +169,11 @@ function inlineContent(
     }
   }
   children.forEach((child) => visit(child))
-  return { text, inlineRuns }
+  return { text, inlineRuns, footnoteReferences }
+}
+
+function publicationInlineContent(inline: InlineResult) {
+  return { text: inline.text, inlineRuns: inline.inlineRuns }
 }
 
 function safeEntryId(entryId: string) {
@@ -226,7 +252,8 @@ export async function adaptAstroBlogEntry(
   const usedNodeIds = new Set<string>()
   const headingSlugger = new GithubSlugger()
   const nextId = (kind: string) => {
-    const id = `${kind}-${++nodeSequence}`
+    let id = `${kind}-${++nodeSequence}`
+    while (usedNodeIds.has(id)) id = `${kind}-${++nodeSequence}`
     usedNodeIds.add(id)
     return id
   }
@@ -293,6 +320,23 @@ export async function adaptAstroBlogEntry(
     })
   }
 
+  const footnoteReferenceCounts = new Map<string, number>()
+  const nextFootnoteReferenceId = (identifier: string) => {
+    const count = (footnoteReferenceCounts.get(identifier) ?? 0) + 1
+    footnoteReferenceCounts.set(identifier, count)
+    return `ref-${identifier}${count === 1 ? '' : `-${count}`}`
+  }
+  const inlineOptions = { nextFootnoteReferenceId }
+  const pendingFootnotes: Array<{
+    identifier: string
+    backlinkId: string
+  }> = []
+  const registerInlineFootnotes = (inline: InlineResult) => {
+    inline.footnoteReferences.forEach(({ identifier, relationshipId }) =>
+      pendingFootnotes.push({ identifier, backlinkId: relationshipId }),
+    )
+  }
+
   const addList = (block: MdastNode): string => {
     const listId = nextId('list')
     const items = block.children ?? []
@@ -313,34 +357,32 @@ export async function adaptAstroBlogEntry(
         if (child.type !== 'list') unsupported(sourceId, child)
         return addList(child)
       })
+      const inline = inlineContent(sourceId, paragraph.children, inlineOptions)
       nodes.push({
         ...baseNode(itemIds[index], sourceId, locale, sourceRevision),
         type: 'list-item',
         parentListId: listId,
         childListIds,
-        ...inlineContent(sourceId, paragraph.children),
+        ...publicationInlineContent(inline),
       })
+      registerInlineFootnotes(inline)
     })
     return listId
   }
 
-  const pendingFootnotes: Array<{ node: MdastNode; backlinkId: string }> = []
   for (const block of tree.children ?? []) {
     if (block.type.startsWith('mdx') || block.type === 'html')
       unsupported(sourceId, block)
     if (block.type === 'heading') {
-      const inline = inlineContent(sourceId, block.children)
+      const inline = inlineContent(sourceId, block.children, inlineOptions)
+      const id = nextHeadingId(inline.text)
       nodes.push({
-        ...baseNode(
-          nextHeadingId(inline.text),
-          sourceId,
-          locale,
-          sourceRevision,
-        ),
+        ...baseNode(id, sourceId, locale, sourceRevision),
         type: 'heading',
         level: block.depth ?? 2,
-        ...inline,
+        ...publicationInlineContent(inline),
       })
+      registerInlineFootnotes(inline)
     } else if (block.type === 'paragraph') {
       const image = block.children?.length === 1 ? block.children[0] : undefined
       if (image?.type === 'image') {
@@ -372,35 +414,32 @@ export async function adaptAstroBlogEntry(
           })
       } else {
         const id = nextId('paragraph')
-        const inline = inlineContent(sourceId, block.children)
+        const inline = inlineContent(sourceId, block.children, inlineOptions)
         if (!inline.text) continue
         nodes.push({
           ...baseNode(id, sourceId, locale, sourceRevision),
           type: 'paragraph',
-          ...inline,
+          ...publicationInlineContent(inline),
         })
-        for (const child of block.children ?? [])
-          if (child.type === 'footnoteReference')
-            pendingFootnotes.push({ node: child, backlinkId: id })
+        registerInlineFootnotes(inline)
       }
     } else if (block.type === 'list') {
       addList(block)
     } else if (block.type === 'blockquote') {
       const paragraphs = block.children ?? []
-      if (paragraphs.some((child) => child.type !== 'paragraph'))
-        unsupported(sourceId, block)
-      const inline = inlineContent(
-        sourceId,
-        paragraphs.flatMap((child, index) => [
-          ...(index ? [{ type: 'text', value: '\n' } as MdastNode] : []),
-          ...(child.children ?? []),
-        ]),
+      if (
+        paragraphs.length !== 1 ||
+        paragraphs.some((child) => child.type !== 'paragraph')
       )
+        unsupported(sourceId, block)
+      const inline = inlineContent(sourceId, paragraphs[0].children, inlineOptions)
+      const id = nextId('quote')
       nodes.push({
-        ...baseNode(nextId('quote'), sourceId, locale, sourceRevision),
+        ...baseNode(id, sourceId, locale, sourceRevision),
         type: 'quote',
-        ...inline,
+        ...publicationInlineContent(inline),
       })
+      registerInlineFootnotes(inline)
     } else if (block.type === 'code') {
       nodes.push({
         ...baseNode(nextId('code'), sourceId, locale, sourceRevision),
@@ -416,15 +455,16 @@ export async function adaptAstroBlogEntry(
         format: 'latex',
       })
     } else if (block.type === 'footnoteDefinition') {
-      const ref = pendingFootnotes.find(
-        (item) => item.node.identifier === block.identifier,
+      const refs = pendingFootnotes.filter(
+        (item) => item.identifier === block.identifier,
       )
       const paragraphs = block.children ?? []
-      if (!ref || paragraphs.some((child) => child.type !== 'paragraph'))
+      if (!refs.length || paragraphs.some((child) => child.type !== 'paragraph'))
         unsupported(sourceId, block)
       const inline = inlineContent(
         sourceId,
         paragraphs.flatMap((child) => child.children ?? []),
+        inlineOptions,
       )
       nodes.push({
         ...baseNode(
@@ -436,8 +476,8 @@ export async function adaptAstroBlogEntry(
         type: 'note',
         noteKind: 'footnote',
         label: block.identifier ?? '',
-        backlinkIds: [ref.backlinkId],
-        ...inline,
+        backlinkIds: [...new Set(refs.map((item) => item.backlinkId))],
+        ...publicationInlineContent(inline),
       })
     } else if (block.type !== 'thematicBreak') {
       unsupported(sourceId, block)

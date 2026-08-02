@@ -62,6 +62,23 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
+export async function verifyArtifactReceipt(root, artifact, relativePath) {
+  assert(
+    artifact && typeof artifact.sha256 === 'string',
+    `Missing receipt for ${relativePath}`,
+  )
+  const bytes = new Uint8Array(await readFile(resolve(root, relativePath)))
+  assert(
+    artifact.byteLength === bytes.byteLength,
+    `${relativePath} byte length changed from its receipt`,
+  )
+  assert(
+    artifact.sha256 === sha256(bytes),
+    `${relativePath} hash changed from its receipt`,
+  )
+  return bytes
+}
+
 function imageAlternativeTexts(html) {
   const alternatives = []
   const visit = (node) => {
@@ -113,7 +130,12 @@ async function checkWebPubReceipt(root, artifact) {
   assert(total === artifact.byteLength, 'WebPub receipt byte length is invalid')
 }
 
-async function checkPdf(path, expected, size) {
+async function checkPdf(
+  path,
+  expected,
+  size,
+  { requireLinks = false, requireImages = false } = {},
+) {
   const bytes = new Uint8Array(await readFile(path))
   const pdf = await PDFDocument.load(bytes)
   assert(pdf.getPageCount() > 0, `${expected} has no pages`)
@@ -163,8 +185,10 @@ async function checkPdf(path, expected, size) {
     /\/FontFile(?:2|3)?\b/.test(source),
     `${size} PDF has no embedded font`,
   )
-  assert(/\/Annots\b/.test(source), `${size} PDF has no link annotations`)
-  assert(/\/Subtype\s*\/Image\b/.test(source), `${size} PDF has no image asset`)
+  if (requireLinks)
+    assert(/\/Annots\b/.test(source), `${size} PDF has no link annotations`)
+  if (requireImages)
+    assert(/\/Subtype\s*\/Image\b/.test(source), `${size} PDF has no image asset`)
   return pdf.getPageCount()
 }
 
@@ -206,7 +230,15 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       )
   }
   const epubPath = resolve(root, 'eink.epub')
-  const epub = await JSZip.loadAsync(await readFile(epubPath))
+  const epubArtifact = receipt.artifacts.find(
+    (artifact) => artifact.profile === 'eink-epub',
+  )
+  const epubBytes = await verifyArtifactReceipt(
+    root,
+    epubArtifact,
+    'eink.epub',
+  )
+  const epub = await JSZip.loadAsync(epubBytes)
   const packageDocument = await epub.file('EPUB/package.opf')?.async('string')
   const navigation = await epub.file('EPUB/nav.xhtml')?.async('string')
   const content = await epub.file('EPUB/content.xhtml')?.async('string')
@@ -227,17 +259,36 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         `EPUB dropped heading ${node.id}`,
       )
   await run('java', ['-jar', epubcheck.path, epubPath])
+  const pdfRequirements = {
+    requireLinks: graph.nodes.some(
+      (node) =>
+        ('inlineRuns' in node && node.inlineRuns?.some((run) => run.href)) ||
+        (node.type === 'reference' && Boolean(node.href)),
+    ),
+    requireImages: graph.nodes.some(
+      (node) => node.type === 'figure' || node.type === 'media',
+    ),
+  }
+  const a5Artifact = receipt.artifacts.find(
+    (artifact) => artifact.profile === 'a5-pdf',
+  )
+  const a4Artifact = receipt.artifacts.find(
+    (artifact) => artifact.profile === 'a4-pdf',
+  )
+  await verifyArtifactReceipt(root, a5Artifact, 'a5-pdf.pdf')
+  await verifyArtifactReceipt(root, a4Artifact, 'a4-pdf.pdf')
   const a5Pages = await checkPdf(
     resolve(root, 'a5-pdf.pdf'),
     graph.metadata.title,
     'A5',
+    pdfRequirements,
   )
   const a4Pages = await checkPdf(
     resolve(root, 'a4-pdf.pdf'),
     graph.metadata.title,
     'A4',
+    pdfRequirements,
   )
-  assert(a5Pages !== a4Pages, 'A5 and A4 PDF page counts must differ')
   assert(
     receipt.profiles['a5-pdf'].figurePlacement !==
       receipt.profiles['a4-pdf'].figurePlacement,

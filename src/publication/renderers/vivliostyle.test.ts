@@ -1,11 +1,14 @@
-import { cp, mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { access, cp, mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
   PUBLICATION_PROFILES,
+  prepareWebPubDirectory,
   publicationGraphToHtml,
+  publicationPlaywrightExecutableCandidates,
+  renderEpubToc,
   vivliostyleRenderer,
 } from './vivliostyle'
 import type { PublicationNode } from '../schema'
@@ -141,5 +144,42 @@ describe('Vivliostyle publication renderer boundary', () => {
         profiles: PUBLICATION_PROFILES.slice(0, 1),
       }),
     ).rejects.toThrow(/output matrix must be exactly/)
+  })
+
+  it('nests EPUB navigation entries according to heading levels', () => {
+    const toc = renderEpubToc([
+      { id: 'h1', level: 1, text: 'One' },
+      { id: 'h2', level: 2, text: 'Two' },
+      { id: 'h3', level: 3, text: 'Three' },
+      { id: 'h2b', level: 2, text: 'Two B' },
+    ])
+    expect(toc).toContain(
+      '<li><a href="content.xhtml#h1">One</a><ol><li><a href="content.xhtml#h2">Two</a><ol><li><a href="content.xhtml#h3">Three</a></li></ol></li><li><a href="content.xhtml#h2b">Two B</a></li></ol></li>',
+    )
+  })
+
+  it('resolves Playwright executables using each supported host layout', () => {
+    expect(
+      publicationPlaywrightExecutableCandidates('1228', 'darwin', 'arm64'),
+    ).toEqual([
+      expect.stringContaining('chrome-mac-arm64/Google Chrome for Testing.app'),
+      expect.stringContaining('chrome-headless-shell-mac-arm64'),
+    ])
+    expect(
+      publicationPlaywrightExecutableCandidates('1228', 'win32', 'arm64'),
+    ).toEqual([
+      expect.stringContaining('chrome-win64/chrome.exe'),
+      expect.stringContaining('chrome-headless-shell-win64'),
+    ])
+  })
+
+  it('removes stale WebPub assets before a new publication', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-clean-'))
+    const webpub = resolve(root, 'phone-webpub')
+    await mkdir(resolve(webpub, 'assets'), { recursive: true })
+    const stale = resolve(webpub, 'assets', 'stale.svg')
+    await (await import('node:fs/promises')).writeFile(stale, 'stale')
+    await prepareWebPubDirectory(webpub)
+    await expect(access(stale)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

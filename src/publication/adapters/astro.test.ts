@@ -186,6 +186,69 @@ describe('Astro publication adapter', () => {
     ).toBeDefined()
   })
 
+  it('allocates generated ids around authored slugs without collisions', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-id-collision-'))
+    const entry = resolve(root, 'id-collision')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: IDs\ndescription: ID collision fixture\ndate: 2026-07-27\n---\n# Paragraph 2\n\nFirst paragraph.\n\nSecond paragraph.\n`,
+    )
+    const result = await adaptAstroBlogEntry({
+      entryId: 'id-collision',
+      contentRoot: root,
+    })
+    const ids = result.graph.nodes.map((node) => node.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
+      id: 'paragraph-2',
+    })
+  })
+
+  it('preserves deletion semantics, unique repeated footnote anchors, and all backlinks', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-'))
+    const entry = resolve(root, 'footnote-references')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Footnotes\ndescription: Footnote fixture\ndate: 2026-07-27\n---\nA ~~removed~~ claim [^proof] and again [^proof].\n\n[^proof]: The note remains linked.\n`,
+    )
+    const result = await adaptAstroBlogEntry({
+      entryId: 'footnote-references',
+      contentRoot: root,
+    })
+    const paragraph = result.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    const note = result.graph.nodes.find((node) => node.type === 'note')
+    expect(paragraph).toMatchObject({
+      inlineRuns: expect.arrayContaining([
+        expect.objectContaining({ strikethrough: true }),
+        expect.objectContaining({ relationshipId: 'ref-proof' }),
+        expect.objectContaining({ relationshipId: 'ref-proof-2' }),
+      ]),
+    })
+    expect(note).toMatchObject({
+      backlinkIds: ['ref-proof', 'ref-proof-2'],
+    })
+  })
+
+  it('rejects multi-paragraph blockquotes instead of flattening their boundaries', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-quote-'))
+    const entry = resolve(root, 'multi-paragraph-quote')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Quote\ndescription: Quote fixture\ndate: 2026-07-27\n---\n> First paragraph.\n>\n> Second paragraph.\n`,
+    )
+    await expect(
+      adaptAstroBlogEntry({
+        entryId: 'multi-paragraph-quote',
+        contentRoot: root,
+      }),
+    ).rejects.toThrow(/Unsupported MDX node blockquote/)
+  })
+
   it('selects the registered source before invoking a source-neutral renderer', async () => {
     const registry = new PublicationAdapterRegistry().register(
       astroPublicationAdapter,

@@ -452,7 +452,7 @@ describe('STRUCT queue pulse resumability', () => {
     expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 
-  it('recognizes a normal codex exec process and never clears containment masks', () => {
+  it('does not serialize the repository behind an unrelated codex coordinator', () => {
     const { result, checkpoint, systemctlCalls } = runPulse({
       processArgs: [
         '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol resume',
@@ -460,9 +460,13 @@ describe('STRUCT queue pulse resumability', () => {
     })
 
     expect(result.status).toBe(0)
-    expect(checkpoint.outcome).toBe('worker-active')
-    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
-    expect(systemctlCalls.some((args) => args.includes('unmask'))).toBe(false)
+    expect(checkpoint.outcome).toBe('dispatch-requested')
+    expect(systemctlCalls).toContainEqual([
+      '--user',
+      'start',
+      '--no-block',
+      'rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service',
+    ])
   })
 
   it('fails closed at high water and records the recovery action', () => {

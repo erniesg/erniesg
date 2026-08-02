@@ -461,6 +461,8 @@ describe('STRUCT queue pulse resumability', () => {
     const { result, checkpoint, systemctlCalls } = runPulse({
       processArgs: [
         {
+          pid: 100,
+          ppid: 1,
           command:
             '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol untrusted prompt text',
           cgroup:
@@ -477,6 +479,31 @@ describe('STRUCT queue pulse resumability', () => {
       '--no-block',
       'rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service',
     ])
+  })
+
+  it('counts a direct codex child in the coordinator cgroup', () => {
+    const cgroup =
+      '0::/user.slice/user-1001.slice/user@1001.service/app.slice/overnight-erniesg-steward.service'
+    const { result, checkpoint, systemctlCalls } = runPulse({
+      processArgs: [
+        {
+          pid: 100,
+          ppid: 1,
+          command: '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol coordinator',
+          cgroup,
+        },
+        {
+          pid: 101,
+          ppid: 100,
+          command: '/home/ubuntu/.local/bin/codex exec --model gpt-5.6-sol child',
+          cgroup,
+        },
+      ],
+    })
+
+    expect(result.status).toBe(0)
+    expect(checkpoint.outcome).toBe('worker-active')
+    expect(systemctlCalls.some((args) => args.includes('start'))).toBe(false)
   })
 
   it('blocks an unledgered codex worker without a coordinator identity', () => {

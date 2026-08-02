@@ -82,6 +82,12 @@ const processCommand = (entry) =>
 const processCgroup = (entry) =>
   typeof entry === 'string' ? '' : String(entry?.cgroup ?? '')
 
+const processPid = (entry) =>
+  typeof entry === 'string' ? Number.NaN : Number(entry?.pid)
+
+const processParentPid = (entry) =>
+  typeof entry === 'string' ? Number.NaN : Number(entry?.ppid)
+
 export const parseTargetUnit = (raw) => {
   if (typeof raw !== 'string') {
     throw new Error('drain target state is missing')
@@ -466,17 +472,17 @@ const processSnapshot = () => {
         return { command: line, cgroup: '' }
       })
   }
-  return run('ps', ['-eo', 'pid=,args='])
+  return run('ps', ['-eo', 'pid=,ppid=,args='])
     .split(/\r?\n/u)
     .filter(Boolean)
     .map((line) => {
-      const match = /^\s*([0-9]+)\s+(.*)$/u.exec(line)
+      const match = /^\s*([0-9]+)\s+([0-9]+)\s+(.*)$/u.exec(line)
       if (!match) return { command: line, cgroup: '' }
       let cgroup = ''
       try {
         cgroup = readFileSync(`/proc/${match[1]}/cgroup`, 'utf8')
       } catch {}
-      return { command: match[2], cgroup }
+      return { pid: Number(match[1]), ppid: Number(match[2]), command: match[3], cgroup }
     })
 }
 
@@ -496,11 +502,29 @@ const directCodexExec = /(?:^|\s)(?:\S*\/)?codex\s+.*\bexec\b/u
 const trustedCoordinatorCgroup =
   /(?:^|\/)overnight-(?:erniesg-steward|cross-repo-landing-coordinator-v2)\.service$/u
 
-const directCodexWorkerIsLive = (processArgs) =>
-  processArgs.some(
-    (command) =>
-      directCodexExec.test(processCommand(command)) &&
-      !trustedCoordinatorCgroup.test(processCgroup(command).trim()),
+const trustedCoordinatorMainProcess = (entry, processEntries) => {
+  const cgroup = processCgroup(entry).trim()
+  const pid = processPid(entry)
+  const ppid = processParentPid(entry)
+  if (
+    !trustedCoordinatorCgroup.test(cgroup) ||
+    !Number.isInteger(pid) ||
+    !Number.isInteger(ppid)
+  ) {
+    return false
+  }
+  return !processEntries.some(
+    (candidate) =>
+      processPid(candidate) === ppid &&
+      processCgroup(candidate).trim() === cgroup,
+  )
+}
+
+const directCodexWorkerIsLive = (processEntries) =>
+  processEntries.some(
+    (entry) =>
+      directCodexExec.test(processCommand(entry)) &&
+      !trustedCoordinatorMainProcess(entry, processEntries),
   )
 
 const loadCleanupManifest = (path, stateRoot) => {

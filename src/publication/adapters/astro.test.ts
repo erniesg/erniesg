@@ -1,4 +1,11 @@
-import { cp, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -123,6 +130,57 @@ describe('Astro publication adapter', () => {
     expect(() => registry.register(astroPublicationAdapter)).toThrow(
       /already registered/,
     )
+  })
+
+  it('preserves authored heading fragments, inline code, and nested list ownership while rejecting escaping assets', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-contract-'))
+    const entry = resolve(root, 'contract')
+    const outside = await mkdtemp(resolve(tmpdir(), 'publication-outside-'))
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Contract\ndescription: Contract fixture\ndate: 2026-07-27\n---\n# Why Astro?\n\n[Jump](#why-astro) to \`main\`.\n\n1. Parent\n   - Child\n\n![Card](./asset.svg)\n`,
+    )
+    await writeFile(resolve(outside, 'asset.svg'), '<svg/>')
+    await symlink(resolve(outside, 'asset.svg'), resolve(entry, 'asset.svg'))
+    await expect(
+      adaptAstroBlogEntry({ entryId: 'contract', contentRoot: root }),
+    ).rejects.toThrow(/asset escapes its entry/)
+
+    await unlink(resolve(entry, 'asset.svg'))
+    await writeFile(resolve(entry, 'asset.svg'), '<svg/>')
+    const result = await adaptAstroBlogEntry({
+      entryId: 'contract',
+      contentRoot: root,
+    })
+    expect(
+      result.graph.nodes.find(
+        (node) => node.type === 'heading' && node.text === 'Why Astro?',
+      ),
+    ).toMatchObject({ id: 'why-astro' })
+    expect(
+      result.graph.nodes.find(
+        (node) => node.type === 'paragraph' && node.text.includes('main'),
+      ),
+    ).toMatchObject({
+      inlineRuns: expect.arrayContaining([
+        expect.objectContaining({ inlineCode: true }),
+        expect.objectContaining({ href: '#why-astro' }),
+      ]),
+    })
+    const list = result.graph.nodes.find(
+      (node) => node.type === 'list' && node.ordered,
+    )
+    expect(list).toBeDefined()
+    const item = result.graph.nodes.find(
+      (node) => node.type === 'list-item' && node.id === list?.itemIds[0],
+    )
+    expect(item).toMatchObject({ childListIds: [expect.any(String)] })
+    expect(
+      result.graph.nodes.find(
+        (node) => node.type === 'list' && node.id === item?.childListIds[0],
+      ),
+    ).toBeDefined()
   })
 
   it('selects the registered source before invoking a source-neutral renderer', async () => {

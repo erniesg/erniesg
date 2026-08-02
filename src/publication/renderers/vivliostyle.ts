@@ -6,9 +6,10 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   writeFile,
 } from 'node:fs/promises'
-import { basename, extname, resolve } from 'node:path'
+import { basename, extname, relative, resolve, sep } from 'node:path'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
 import { PDFDocument } from 'pdf-lib'
@@ -79,8 +80,19 @@ type ArtifactReceipt = {
   path: string
   sha256: string
   byteLength: number
+  renderer: ArtifactRenderer
+  files?: ArtifactFile[]
   pageCount?: number
   geometry?: { widthPoints: number; heightPoints: number }
+}
+
+type ArtifactRenderer =
+  'semantic-html' | 'jszip' | 'vivliostyle-cli' | 'playwright-chromium'
+
+type ArtifactFile = {
+  path: string
+  sha256: string
+  byteLength: number
 }
 
 export type PublicationReceipt = {
@@ -125,11 +137,31 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
       if (!value) return ''
       if (active.some((run) => run.compactMathAtom))
         value = `<span class="math">${value}</span>`
+      if (active.some((run) => run.inlineCode)) value = `<code>${value}</code>`
       if (active.some((run) => run.italic)) value = `<em>${value}</em>`
       if (active.some((run) => run.bold)) value = `<strong>${value}</strong>`
+      const verticalAlign = active.find((run) => run.verticalAlign)
+      if (verticalAlign?.verticalAlign === 'superscript')
+        value = `<sup>${value}</sup>`
+      else if (verticalAlign?.verticalAlign === 'subscript')
+        value = `<sub>${value}</sub>`
       const link = active.find((run) => run.href)
-      if (link)
-        value = `<a href="${escapeHtml(link.href!)}"${link.targetIds?.[0] ? ` aria-describedby="${escapeHtml(link.targetIds[0])}"` : ''}>${value}</a>`
+      if (link) {
+        const attributes = [
+          `href="${escapeHtml(link.href!)}"`,
+          ...(link.relationshipId
+            ? [`id="${escapeHtml(link.relationshipId)}"`]
+            : []),
+          ...(link.semanticRole === 'cross-reference' &&
+          link.relationshipId?.startsWith('ref-')
+            ? ['role="doc-noteref"']
+            : []),
+          ...(link.targetIds?.[0]
+            ? [`aria-describedby="${escapeHtml(link.targetIds[0])}"`]
+            : []),
+        ].join(' ')
+        value = `<a ${attributes}>${value}</a>`
+      }
       return value
     })
     .join('')
@@ -155,10 +187,17 @@ function renderNode(
           (item): item is Extract<PublicationNode, { type: 'list-item' }> =>
             Boolean(item?.type === 'list-item'),
         )
-        .map(
-          (item) =>
-            `<li id="${item.id}">${inlineHtml(item.text, item.inlineRuns)}</li>`,
-        )
+        .map((item) => {
+          const nested = item.childListIds
+            .map((childId) => byId.get(childId))
+            .filter(
+              (child): child is Extract<PublicationNode, { type: 'list' }> =>
+                child?.type === 'list',
+            )
+            .map((child) => renderNode(child, byId, assetPaths))
+            .join('')
+          return `<li id="${item.id}">${inlineHtml(item.text, item.inlineRuns)}${nested}</li>`
+        })
         .join('')
       return `<${tag} id="${node.id}"${start}>${items}</${tag}>`
     }
@@ -195,7 +234,16 @@ export function publicationGraphToHtml(
   stylesheet = 'publication.css',
 ) {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]))
+  const nestedListIds = new Set(
+    graph.nodes
+      .filter(
+        (node): node is Extract<PublicationNode, { type: 'list-item' }> =>
+          node.type === 'list-item',
+      )
+      .flatMap((node) => node.childListIds),
+  )
   const body = graph.nodes
+    .filter((node) => !nestedListIds.has(node.id))
     .map((node) => renderNode(node, byId, assetPaths))
     .join('\n')
   const direction =
@@ -373,13 +421,24 @@ async function run(command: string, args: string[], environment = process.env) {
   })
 }
 
-async function normalizePdf(path: string, title: string) {
+type PdfRenderer = Extract<
+  ArtifactRenderer,
+  'vivliostyle-cli' | 'playwright-chromium'
+>
+
+async function normalizePdf(
+  path: string,
+  title: string,
+  renderer: PdfRenderer,
+) {
   const pdf = await PDFDocument.load(await readFile(path))
   pdf.setTitle(title)
   pdf.setAuthor('')
   pdf.setCreator('ernie.sg publication compiler')
   pdf.setProducer(
-    `Vivliostyle CLI ${PUBLICATION_TOOLCHAIN.vivliostyleCli.version}`,
+    renderer === 'vivliostyle-cli'
+      ? `Vivliostyle CLI ${PUBLICATION_TOOLCHAIN.vivliostyleCli.version}`
+      : `Playwright Chromium ${PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion}`,
   )
   pdf.setCreationDate(FIXED_DATE)
   pdf.setModificationDate(FIXED_DATE)
@@ -390,7 +449,7 @@ async function createPdf(
   htmlPath: string,
   outputPath: string,
   size: 'A4' | 'A5',
-) {
+): Promise<PdfRenderer> {
   if (process.arch === 'arm64') {
     const revision = PUBLICATION_TOOLCHAIN.browser.compatibility.arm64Revision
     const candidates = [
@@ -439,7 +498,7 @@ async function createPdf(
     } finally {
       await browser.close()
     }
-    return
+    return 'playwright-chromium'
   }
   let browserPath: string
   try {
@@ -485,11 +544,13 @@ async function createPdf(
       ALL_PROXY: '',
     },
   )
+  return 'vivliostyle-cli'
 }
 
 async function receiptFor(
   profile: PublicationProfile,
   path: string,
+  renderer: ArtifactRenderer,
 ): Promise<ArtifactReceipt> {
   const bytes = new Uint8Array(await readFile(path))
   const receipt: ArtifactReceipt = {
@@ -497,6 +558,7 @@ async function receiptFor(
     path,
     sha256: sha256(bytes),
     byteLength: bytes.byteLength,
+    renderer,
   }
   if (profile.endsWith('-pdf')) {
     const pdf = await PDFDocument.load(bytes)
@@ -508,6 +570,47 @@ async function receiptFor(
     }
   }
   return receipt
+}
+
+async function publicationFiles(
+  root: string,
+  directory = root,
+): Promise<ArtifactFile[]> {
+  const entries = (await readdir(directory, { withFileTypes: true })).sort(
+    (left, right) => left.name.localeCompare(right.name),
+  )
+  const files: ArtifactFile[] = []
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...(await publicationFiles(root, path)))
+      continue
+    }
+    if (!entry.isFile()) continue
+    const bytes = new Uint8Array(await readFile(path))
+    files.push({
+      path: relative(root, path).split(sep).join('/'),
+      sha256: sha256(bytes),
+      byteLength: bytes.byteLength,
+    })
+  }
+  return files.sort((left, right) => left.path.localeCompare(right.path))
+}
+
+async function receiptForDirectory(
+  profile: PublicationProfile,
+  directory: string,
+  renderer: ArtifactRenderer,
+): Promise<ArtifactReceipt> {
+  const files = await publicationFiles(directory)
+  return {
+    profile,
+    path: directory,
+    sha256: sha256(JSON.stringify(files)),
+    byteLength: files.reduce((total, file) => total + file.byteLength, 0),
+    renderer,
+    files,
+  }
 }
 
 export const vivliostyleRenderer: PublicationRenderer = {
@@ -562,13 +665,13 @@ export const vivliostyleRenderer: PublicationRenderer = {
         publicationGraphToHtml(bundle.graph, layoutAssets, profile),
       )
       const path = resolve(output, `${profile}.pdf`)
-      await createPdf(htmlPath, path, size)
-      await normalizePdf(path, bundle.graph.metadata.title)
-      pdfArtifacts.push(await receiptFor(profile, path))
+      const renderer = await createPdf(htmlPath, path, size)
+      await normalizePdf(path, bundle.graph.metadata.title, renderer)
+      pdfArtifacts.push(await receiptFor(profile, path, renderer))
     }
     const artifacts = [
-      await receiptFor('phone-webpub', resolve(webpub, 'index.html')),
-      await receiptFor('eink-epub', epub),
+      await receiptForDirectory('phone-webpub', webpub, 'semantic-html'),
+      await receiptFor('eink-epub', epub, 'jszip'),
       ...pdfArtifacts,
     ]
     const { execFileSync } = await import('node:child_process')

@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
@@ -6,6 +8,21 @@ import {
   publicationGraphToHtml,
   vivliostyleRenderer,
 } from './vivliostyle'
+
+async function fixtureCollection(name: string) {
+  const root = await mkdtemp(resolve(tmpdir(), 'publication-renderer-'))
+  const entry = resolve(root, name)
+  await mkdir(entry)
+  await cp(
+    resolve(`tests/fixtures/publication/astro/${name}.mdx`),
+    resolve(entry, 'index.mdx'),
+  )
+  await cp(
+    resolve('tests/fixtures/publication/astro/fixture-image.svg'),
+    resolve(entry, 'fixture-image.svg'),
+  )
+  return root
+}
 
 describe('Vivliostyle publication renderer boundary', () => {
   it('renders repository-owned semantic HTML without Astro knowledge', async () => {
@@ -33,6 +50,80 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
     expect(rendererSource).not.toMatch(/from ['"][^'"]*astro/)
     expect(rendererSource).not.toContain('.provenance')
+  })
+
+  it('renders nested lists, inline-code semantics, and footnote noteref semantics', async () => {
+    const contentRoot = await fixtureCollection('synthetic-publication')
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'synthetic-publication',
+      contentRoot,
+    })
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (!paragraph || paragraph.type !== 'paragraph')
+      throw new Error('missing paragraph')
+    const suffix = ' main'
+    const graph = {
+      ...bundle.graph,
+      nodes: bundle.graph.nodes.map((node) =>
+        node.id === paragraph.id
+          ? {
+              ...node,
+              text: `${node.text}${suffix}`,
+              inlineRuns: [
+                ...(node.inlineRuns ?? []),
+                {
+                  start: node.text.length + 1,
+                  end: node.text.length + suffix.length,
+                  inlineCode: true,
+                },
+              ],
+            }
+          : node,
+      ),
+    }
+    const outerList = graph.nodes.find((node) => node.type === 'list')
+    const outerItem = graph.nodes.find(
+      (node) => node.type === 'list-item' && node.id === outerList?.itemIds[0],
+    )
+    if (!outerList || !outerItem || outerItem.type !== 'list-item')
+      throw new Error('missing list fixture')
+    const nestedList = {
+      ...outerList,
+      id: 'nested-list',
+      itemIds: ['nested-item'],
+    }
+    const nestedItem = {
+      ...outerItem,
+      id: 'nested-item',
+      parentListId: 'nested-list',
+      childListIds: [],
+      text: 'Nested child',
+      inlineRuns: [],
+    }
+    graph.nodes = graph.nodes
+      .map((node) =>
+        node.id === outerItem.id
+          ? { ...node, childListIds: ['nested-list'] }
+          : node,
+      )
+      .concat(nestedList, nestedItem)
+    const paths = new Map(
+      bundle.assetBundle.descriptor.assets.map((asset) => [
+        asset.id,
+        `assets/${asset.fileName}`,
+      ]),
+    )
+    const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
+    expect(html).toContain('<code>main</code>')
+    expect(html).toContain('id="ref-proof"')
+    expect(html).toContain('role="doc-noteref"')
+    expect(html).toContain('<sup>[proof]</sup>')
+    expect(html.match(/id="nested-list"/g)).toHaveLength(1)
+    expect(html.indexOf('Nested child')).toBeGreaterThan(
+      html.indexOf('First item'),
+    )
   })
 
   it('fails an incomplete output matrix before rendering', async () => {

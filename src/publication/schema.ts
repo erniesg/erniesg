@@ -79,6 +79,7 @@ export const publicationInlineRunSchema = z
     end: z.number().int().positive(),
     bold: z.boolean().optional(),
     italic: z.boolean().optional(),
+    inlineCode: z.boolean().optional(),
     href: safeUrlSchema.optional(),
     annotationId: idSchema.optional(),
     verticalAlign: z.enum(['superscript', 'subscript']).optional(),
@@ -183,6 +184,7 @@ const listItemNode = nodeBase
   .extend({
     type: z.literal('list-item'),
     parentListId: idSchema,
+    childListIds: relationshipArray.default([]),
     ...textContent,
   })
   .strict()
@@ -320,7 +322,7 @@ function relationshipTargets(node: z.infer<typeof publicationNodeSchema>) {
     case 'list':
       return node.itemIds
     case 'list-item':
-      return [node.parentListId]
+      return [node.parentListId, ...node.childListIds]
     case 'figure':
       return node.captionId ? [node.captionId] : []
     case 'caption':
@@ -480,6 +482,18 @@ export const publicationGraphSchema = z
           code: z.ZodIssueCode.custom,
           path: ['nodes', index, 'parentListId'],
           message: 'List-item parent must be a list',
+        })
+      }
+      if (node.type === 'list-item') {
+        node.childListIds.forEach((childId, relationshipIndex) => {
+          const child = nodesById.get(childId)
+          if (child && child.type !== 'list') {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['nodes', index, 'childListIds', relationshipIndex],
+              message: 'Nested list relationship must target a list',
+            })
+          }
         })
       }
       if (node.type === 'caption') {

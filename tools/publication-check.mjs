@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as epubcheck from 'epubcheck-static'
 import JSZip from 'jszip'
+import { parse } from 'parse5'
 import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
@@ -53,6 +55,61 @@ async function run(command, args) {
 
 function assert(value, message) {
   if (!value) throw new Error(message)
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function imageAlternativeTexts(html) {
+  const alternatives = []
+  const visit = (node) => {
+    if (node.tagName === 'img') {
+      const alt = node.attrs?.find((attribute) => attribute.name === 'alt')
+      if (alt) alternatives.push(alt.value)
+    }
+    for (const child of node.childNodes ?? []) visit(child)
+  }
+  visit(parse(html))
+  return alternatives
+}
+
+async function checkWebPubReceipt(root, artifact) {
+  assert(
+    artifact && Array.isArray(artifact.files) && artifact.files.length > 0,
+    'WebPub receipt does not include a complete file manifest',
+  )
+  assert(
+    artifact.sha256 === sha256(JSON.stringify(artifact.files)),
+    'WebPub receipt manifest hash is invalid',
+  )
+  const webpubRoot = resolve(root, 'phone-webpub')
+  let total = 0
+  for (const file of artifact.files) {
+    assert(
+      typeof file.path === 'string' &&
+        !isAbsolute(file.path) &&
+        !file.path.split('/').includes('..'),
+      'WebPub receipt contains an unsafe file path',
+    )
+    const path = resolve(webpubRoot, file.path)
+    const escaped = relative(webpubRoot, path)
+    assert(
+      escaped === file.path && !escaped.startsWith('../'),
+      'WebPub receipt file escapes its artifact directory',
+    )
+    const bytes = new Uint8Array(await readFile(path))
+    assert(
+      file.byteLength === bytes.byteLength,
+      `WebPub file length changed: ${file.path}`,
+    )
+    assert(
+      file.sha256 === sha256(bytes),
+      `WebPub file hash changed: ${file.path}`,
+    )
+    total += bytes.byteLength
+  }
+  assert(total === artifact.byteLength, 'WebPub receipt byte length is invalid')
 }
 
 async function checkPdf(path, expected, size) {
@@ -123,7 +180,12 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     receipt.artifacts.length === 4,
     'Publication receipt matrix is incomplete',
   )
+  const webpubArtifact = receipt.artifacts.find(
+    (artifact) => artifact.profile === 'phone-webpub',
+  )
+  await checkWebPubReceipt(root, webpubArtifact)
   const html = await readFile(resolve(root, 'phone-webpub/index.html'), 'utf8')
+  const imageAlts = imageAlternativeTexts(html)
   assert(
     html.includes(`lang="${graph.edition.locale}"`) &&
       html.includes('<main>') &&
@@ -138,7 +200,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       )
     if (node.type === 'figure' || node.type === 'media')
       assert(
-        html.includes(`alt="${node.accessibility.alternativeText}"`),
+        imageAlts.includes(node.accessibility.alternativeText ?? ''),
         `WebPub dropped image alternative for ${node.id}`,
       )
   }
@@ -180,6 +242,14 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       receipt.profiles['a4-pdf'].figurePlacement,
     'A5 and A4 figure placement policies must differ',
   )
+  for (const profile of ['a5-pdf', 'a4-pdf'])
+    assert(
+      ['vivliostyle-cli', 'playwright-chromium'].includes(
+        receipt.artifacts.find((artifact) => artifact.profile === profile)
+          ?.renderer,
+      ),
+      `${profile} receipt does not identify its PDF renderer`,
+    )
   const parity = JSON.parse(
     await readFile(resolve(root, 'astro-route-parity.json'), 'utf8'),
   )

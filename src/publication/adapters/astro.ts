@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, extname, relative, resolve, sep } from 'node:path'
 import matter from 'gray-matter'
+import GithubSlugger from 'github-slugger'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import remarkMdx from 'remark-mdx'
@@ -117,7 +118,7 @@ function inlineContent(
         )
         break
       case 'inlineCode':
-        append(node.value ?? '', style)
+        append(node.value ?? '', { ...style, inlineCode: true })
         break
       case 'inlineMath':
         append(node.value ?? '', { ...style, compactMathAtom: true })
@@ -222,14 +223,41 @@ export async function adaptAstroBlogEntry(
   const assetBytes = new Map<string, Uint8Array>()
   const assets: AssetDescriptor[] = []
   let nodeSequence = 0
-  const nextId = (kind: string) => `${kind}-${++nodeSequence}`
+  const usedNodeIds = new Set<string>()
+  const headingSlugger = new GithubSlugger()
+  const nextId = (kind: string) => {
+    const id = `${kind}-${++nodeSequence}`
+    usedNodeIds.add(id)
+    return id
+  }
+  const nextHeadingId = (text: string) => {
+    let id = headingSlugger.slug(text)
+    if (!id) return nextId('heading')
+    while (usedNodeIds.has(id)) id = headingSlugger.slug(text)
+    usedNodeIds.add(id)
+    return id
+  }
+  let entryRealDirectory: string
+  try {
+    entryRealDirectory = await realpath(entryDirectory)
+  } catch {
+    throw new Error(`Unknown Astro blog entry: ${entryId}`)
+  }
   const addAsset = async (rawPath: string, alt: string) => {
     if (/^[a-z]+:/i.test(rawPath) || rawPath.startsWith('/'))
       throw new Error(`Astro publication assets must be local: ${rawPath}`)
     const path = resolve(entryDirectory, rawPath)
     if (!inside(entryDirectory, path))
       throw new Error(`Astro publication asset escapes its entry: ${rawPath}`)
-    const bytes = new Uint8Array(await readFile(path))
+    let realPath: string
+    try {
+      realPath = await realpath(path)
+    } catch {
+      throw new Error(`Astro publication asset is unavailable: ${rawPath}`)
+    }
+    if (!inside(entryRealDirectory, realPath))
+      throw new Error(`Astro publication asset escapes its entry: ${rawPath}`)
+    const bytes = new Uint8Array(await readFile(realPath))
     const hash = digest(bytes)
     const existing = assets.find((asset) => asset.sha256 === hash)
     if (existing) return existing.id
@@ -265,7 +293,7 @@ export async function adaptAstroBlogEntry(
     })
   }
 
-  const addList = (block: MdastNode) => {
+  const addList = (block: MdastNode): string => {
     const listId = nextId('list')
     const items = block.children ?? []
     const itemIds = items.map(() => nextId('item'))
@@ -281,17 +309,19 @@ export async function adaptAstroBlogEntry(
       const paragraph = children[0]
       if (!paragraph || paragraph.type !== 'paragraph')
         unsupported(sourceId, item)
+      const childListIds = children.slice(1).map((child) => {
+        if (child.type !== 'list') unsupported(sourceId, child)
+        return addList(child)
+      })
       nodes.push({
         ...baseNode(itemIds[index], sourceId, locale, sourceRevision),
         type: 'list-item',
         parentListId: listId,
+        childListIds,
         ...inlineContent(sourceId, paragraph.children),
       })
-      children.slice(1).forEach((child) => {
-        if (child.type !== 'list') unsupported(sourceId, child)
-        addList(child)
-      })
     })
+    return listId
   }
 
   const pendingFootnotes: Array<{ node: MdastNode; backlinkId: string }> = []
@@ -301,7 +331,12 @@ export async function adaptAstroBlogEntry(
     if (block.type === 'heading') {
       const inline = inlineContent(sourceId, block.children)
       nodes.push({
-        ...baseNode(nextId('heading'), sourceId, locale, sourceRevision),
+        ...baseNode(
+          nextHeadingId(inline.text),
+          sourceId,
+          locale,
+          sourceRevision,
+        ),
         type: 'heading',
         level: block.depth ?? 2,
         ...inline,

@@ -5292,6 +5292,58 @@ describe('deterministic scholarly page regions', () => {
     ])
   })
 
+  it('requires the dominant caption font family instead of an incidental shared run', async () => {
+    const seed = {
+      ...run(1, 'Figure 6. A', 0.09, 0.2, 0.22, 9, 0.011),
+      fontName: 'CaptionSerif-BoldMT',
+    }
+    const seedShared = {
+      ...run(1, 'zz', 0.32, 0.2, 0.02, 9, 0.011),
+      fontName: 'SharedSymbol',
+    }
+    const candidate = {
+      ...run(1, 'continued', 0.09, 0.214, 0.2, 9, 0.011),
+      fontName: 'BodySans-Regular',
+    }
+    const candidateShared = {
+      ...run(1, 'zz', 0.3, 0.214, 0.02, 9, 0.011),
+      fontName: 'SharedSymbol',
+    }
+    const result = await reconstruct([page(1, [seed, seedShared, candidate, candidateShared])])
+    const caption = result.regions.find((region) => region.kind === 'caption')
+    expect(caption).toBeDefined()
+    expect(caption?.text).toContain('Figure 6.')
+    expect(caption?.text).not.toContain('continued')
+    expect(
+      result.paper.nodes.some(
+        (node) => node.type === 'paragraph' && node.text.includes('continued'),
+      ),
+    ).toBe(true)
+  })
+
+  it('normalizes PostScript MT suffixes when matching caption font families', async () => {
+    const seed = {
+      ...run(
+        1,
+        'Figure 7. A caption continues across lines',
+        0.09,
+        0.2,
+        0.7,
+        9,
+        0.011,
+      ),
+      fontName: 'Arial-BoldMT',
+    }
+    const candidate = {
+      ...run(1, 'with the same family.', 0.09, 0.214, 0.3, 9, 0.011),
+      fontName: 'ArialMT',
+    }
+    const result = await reconstruct([page(1, [seed, candidate])])
+    expect(
+      result.regions.find((region) => region.kind === 'caption')?.text,
+    ).toContain('with the same family.')
+  })
+
   it('keeps caption continuations together when opposite-column prose interleaves by y', async () => {
     const result = await reconstruct([
       page(1, [

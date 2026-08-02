@@ -3553,7 +3553,7 @@ function likelyUnmarkedCrossPageContinuation(
     previousText &&
     continuationText &&
     !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
-    (/^\p{Ll}/u.test(continuationText) ||
+    (/^(?:\p{Ll}|\p{Lo})/u.test(continuationText) ||
       detachedScholarlyReferenceContinuation(previousText, continuationText) ||
       detachedCitationYearContinuation(previousText, continuationText) ||
       detachedNumericProseContinuation(previousText, continuationText) ||

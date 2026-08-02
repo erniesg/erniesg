@@ -610,6 +610,98 @@ describe('PDF semantic reconstruction', () => {
         'same-page-column-flow',
       ]),
     })
+    expect(sourceSemanticFlowBoundaryDecisions[0].evidence).toContain(
+      'same-page-column-geometry',
+    )
+    expect(sourceSemanticFlowBoundaryDecisions[0].evidence).not.toContain(
+      'font-baseline-compatible',
+    )
+  })
+
+  it('joins an uncased-script sentence across the bottom-to-top column boundary', async () => {
+    const makeRegion = (
+      id: string,
+      column: 'left' | 'right',
+      text: string,
+      x: number,
+      y: number,
+      sourceSequenceIndex: number,
+      whitespaceBefore?: number,
+    ): PdfPageRegion => {
+      const sourceRun: PdfSourceRun =
+        whitespaceBefore === undefined
+          ? {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+            }
+          : {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+              sourceWhitespaceBefore: 'pdf-text-item',
+              sourceWhitespacePredecessorIndex: whitespaceBefore,
+            }
+      return {
+        id,
+        page: 1,
+        kind: 'body',
+        column,
+        text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `${id}-line`,
+            text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: `${id}-source-line`,
+              fragment: 'whole',
+              sourceSequenceIndexes: [sourceSequenceIndex],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }
+    }
+    const target = makeRegion(
+      'uncased-column-flow-target',
+      'left',
+      'البيانات تستمر نحو',
+      0.09,
+      0.82,
+      200,
+    )
+    const continuation = makeRegion(
+      'uncased-column-flow-continuation',
+      'right',
+      'العلمية في العمود التالي',
+      0.515,
+      0.1,
+      201,
+      200,
+    )
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe(
+      'البيانات تستمر نحو العلمية في العمود التالي',
+    )
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
   })
 
   it('does not treat an unrelated right-column block as lineage for a following span', () => {

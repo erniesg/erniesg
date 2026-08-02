@@ -116,7 +116,12 @@ export const PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE = Object.freeze(
 )
 
 export const PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE = Object.freeze(
-  [...PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE, 'same-page-column-flow'].sort(),
+  [
+    'exact-source-sequence-adjacency',
+    'explicit-fragment-lineage',
+    'same-page-column-flow',
+    'same-page-column-geometry',
+  ].sort(),
 )
 
 export function canonicalPdfSourceSemanticFlowEvidence(
@@ -2420,6 +2425,8 @@ function captionFontFamily(fontName: string) {
     .trim()
     .toLocaleLowerCase()
     .replace(/^[a-z]{6}\+/iu, '')
+    .replace(/(?:ps)?mt$/iu, '')
+    .replace(/ps$/iu, '')
     .replace(
       /(?:[-+_,.\s]*(?:bold|black|demi(?:bold)?|semibold|medium|regular|roman|book|italic|ital|oblique|obl))+$/iu,
       '',
@@ -2428,23 +2435,20 @@ function captionFontFamily(fontName: string) {
     .replace(/[^a-z0-9]+/gu, '')
 }
 
-function captionLineFontFamilies(line: PdfTextLine) {
+function captionLineDominantFontFamily(line: PdfTextLine) {
   const counts = new Map<string, number>()
-  let visibleCharacters = 0
   for (const run of line.runs) {
     const textLength = run.text.replace(/\s/gu, '').length
     if (textLength === 0) continue
     const family = captionFontFamily(run.fontName)
     if (!family) continue
     counts.set(family, (counts.get(family) ?? 0) + textLength)
-    visibleCharacters += textLength
   }
-  if (visibleCharacters === 0) return new Set<string>()
-  const minimumShare = Math.min(0.15, 2 / visibleCharacters)
-  return new Set(
-    [...counts.entries()]
-      .filter(([, count]) => count / visibleCharacters >= minimumShare)
-      .map(([family]) => family),
+  return (
+    [...counts.entries()].sort(
+      ([leftFamily, leftCount], [rightFamily, rightCount]) =>
+        rightCount - leftCount || leftFamily.localeCompare(rightFamily),
+    )[0]?.[0] ?? null
   )
 }
 
@@ -2452,12 +2456,8 @@ function captionTypographyCompatible(
   seed: PdfTextLine,
   candidate: PdfTextLine,
 ) {
-  const seedFamilies = captionLineFontFamilies(seed)
-  const candidateFamilies = captionLineFontFamilies(candidate)
-  if (seedFamilies.size === 0 || candidateFamilies.size === 0) {
-    return seedFamilies.size === candidateFamilies.size
-  }
-  return [...candidateFamilies].some((family) => seedFamilies.has(family))
+  return captionLineDominantFontFamily(seed) ===
+    captionLineDominantFontFamily(candidate)
 }
 
 function captionLaneCompatible(

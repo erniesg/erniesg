@@ -3,6 +3,10 @@ import type {
   PdfLineBoundaryDecision,
   PdfPageAnalysis,
   PdfPageRegion,
+  PdfFurnitureBand,
+  PdfFurnitureClassification,
+  PdfFurnitureEvidence,
+  PdfFurnitureReview,
   PdfReadingOrderAmbiguityClass,
   PdfReadingOrderEdge,
   PdfReadingOrderEvaluation,
@@ -42,6 +46,8 @@ type ClassifiedLine = PdfTextLine & {
   tabularGridBandId?: string
   captionLaneSplitAmbiguous?: boolean
   sourceFragmentLineage?: PdfSourceFragmentLineage
+  furniture?: PdfFurnitureEvidence
+  furnitureReview?: PdfFurnitureReview
 }
 
 type ColumnLayout = {
@@ -161,10 +167,537 @@ function quantile(values: number[], fraction: number) {
 function normalizeMarginText(text: string) {
   return text
     .toLocaleLowerCase()
-    .replace(/\d+/g, '#')
+    .normalize('NFKC')
+    .replace(/[\p{N}]+/gu, '#')
+    .replace(/\b[ivxlcdm]+\b/giu, '#')
     .replace(/\s+/g, ' ')
     .trim()
 }
+
+type FurnitureRunOccurrence = {
+  run: PdfSourceRun
+  band: PdfFurnitureBand
+  key: string
+  normalizedText: string
+  numericValues: number[]
+}
+
+export type PdfFurnitureAssessment = {
+  patterns: Array<{
+    classification: PdfFurnitureClassification
+    band: PdfFurnitureBand
+    normalizedText: string
+    pages: number[]
+    boxes: NormalizedSourceBox[]
+    sequence?: number[]
+    evidence: string[]
+  }>
+  furnitureRuns: Array<{
+    run: PdfSourceRun
+    evidence: PdfFurnitureEvidence
+  }>
+  reviewRuns: Array<{
+    run: PdfSourceRun
+    review: PdfFurnitureReview
+  }>
+  repeatedMarginCount: number
+  byRunKey: ReadonlyMap<string, PdfFurnitureEvidence>
+  reviewByRunKey: ReadonlyMap<string, PdfFurnitureReview>
+  objectById: ReadonlyMap<string, PdfFurnitureEvidence>
+}
+
+function isQuarterTurn(rotation: number) {
+  const value = Math.abs(rotation % 180)
+  return Math.abs(value - 90) <= 2
+}
+
+function furnitureBand(
+  source: Pick<
+    NormalizedSourceBox,
+    'x' | 'y' | 'width' | 'height' | 'rotation'
+  >,
+): PdfFurnitureBand | null {
+  if (isQuarterTurn(source.rotation) && source.x <= 0.05) {
+    return 'left'
+  }
+  if (isQuarterTurn(source.rotation) && source.x + source.width >= 0.95) {
+    return 'right'
+  }
+  // Narrow, unrotated runs flush with the page edge are also margin bands.
+  // The width gate keeps ordinary two-column body text out of review.
+  if (source.x <= 0.05 && source.width <= 0.2) return 'left'
+  if (source.x + source.width >= 0.95 && source.width <= 0.2) return 'right'
+  if (source.y <= 0.1) return 'top'
+  if (source.y + source.height >= 0.9) return 'bottom'
+  return null
+}
+
+function sourceRunBox(run: PdfSourceRun): NormalizedSourceBox {
+  return {
+    page: run.page,
+    x: run.x,
+    y: run.y,
+    width: run.width,
+    height: run.height,
+    rotation: run.rotation,
+    method: run.method,
+  }
+}
+
+function furnitureRunKey(run: PdfSourceRun) {
+  return [
+    run.page,
+    run.text,
+    run.x,
+    run.y,
+    run.width,
+    run.height,
+    run.rotation,
+    run.fontName,
+    run.fontSize,
+    run.sourceSequenceIndex ?? '',
+  ].join('\u001f')
+}
+
+function digitValue(character: string) {
+  const codePoint = character.codePointAt(0) ?? -1
+  const ranges = [
+    [0x30, 0x39],
+    [0x660, 0x669],
+    [0x6f0, 0x6f9],
+    [0x7c0, 0x7c9],
+    [0x966, 0x96f],
+    [0x9e6, 0x9ef],
+    [0xa66, 0xa6f],
+    [0xae6, 0xaef],
+    [0xb66, 0xb6f],
+    [0xbe6, 0xbef],
+    [0xc66, 0xc6f],
+    [0xce6, 0xcef],
+    [0xd66, 0xd6f],
+    [0xde6, 0xdef],
+    [0xe50, 0xe59],
+    [0xed0, 0xed9],
+    [0xf20, 0xf29],
+    [0x1040, 0x1049],
+    [0x1090, 0x1099],
+    [0x17e0, 0x17e9],
+    [0x1810, 0x1819],
+    [0x1946, 0x194f],
+    [0x19d0, 0x19d9],
+    [0x1a80, 0x1a89],
+    [0x1a90, 0x1a99],
+    [0x1b50, 0x1b59],
+    [0x1bb0, 0x1bb9],
+    [0x1c40, 0x1c49],
+    [0x1c50, 0x1c59],
+    [0xa620, 0xa629],
+    [0xa8d0, 0xa8d9],
+    [0xa900, 0xa909],
+    [0xa9d0, 0xa9d9],
+    [0xa9f0, 0xa9f9],
+    [0xaa50, 0xaa59],
+    [0xabf0, 0xabf9],
+    [0x104a0, 0x104a9],
+    [0x10d30, 0x10d39],
+    [0x11066, 0x1106f],
+    [0x110f0, 0x110f9],
+    [0x11136, 0x1113f],
+    [0x111d0, 0x111d9],
+    [0x112f0, 0x112f9],
+    [0x11450, 0x11459],
+    [0x114d0, 0x114d9],
+    [0x11650, 0x11659],
+    [0x116c0, 0x116c9],
+    [0x11730, 0x11739],
+    [0x118e0, 0x118e9],
+    [0x11950, 0x11959],
+    [0x11c50, 0x11c59],
+    [0x11d50, 0x11d59],
+    [0x11da0, 0x11da9],
+    [0x16a60, 0x16a69],
+    [0x16ac0, 0x16ac9],
+    [0x16b50, 0x16b59],
+    [0x1d7ce, 0x1d7ff],
+    [0x1e140, 0x1e149],
+    [0x1e2f0, 0x1e2f9],
+    [0x1e950, 0x1e959],
+    [0x1fbf0, 0x1fbf9],
+    [0xff10, 0xff19],
+  ] as const
+  for (const [start, end] of ranges) {
+    if (codePoint >= start && codePoint <= end) return codePoint - start
+  }
+  return null
+}
+
+function numericTokenValue(token: string) {
+  const digits = [...token]
+  if (
+    digits.length > 0 &&
+    digits.every((character) => digitValue(character) !== null)
+  ) {
+    return digits.reduce(
+      (value, character) => value * 10 + (digitValue(character) ?? 0),
+      0,
+    )
+  }
+  const roman = token.toLocaleLowerCase()
+  if (!/^[ivxlcdm]+$/u.test(roman)) return null
+  const values: Record<string, number> = {
+    i: 1,
+    v: 5,
+    x: 10,
+    l: 50,
+    c: 100,
+    d: 500,
+    m: 1000,
+  }
+  let total = 0
+  let previous = 0
+  for (const character of [...roman].reverse()) {
+    const value = values[character]
+    if (value < previous) total -= value
+    else {
+      total += value
+      previous = value
+    }
+  }
+  return total > 0 ? total : null
+}
+
+function marginNumericValues(text: string) {
+  const values: number[] = []
+  for (const match of text
+    .normalize('NFKC')
+    .matchAll(/[\p{N}]+|\b[ivxlcdm]+\b/giu)) {
+    const value = numericTokenValue(match[0])
+    if (value !== null) values.push(value)
+  }
+  return values
+}
+
+function marginTextIsNumeralOnly(text: string) {
+  return (
+    marginNumericValues(text).length > 0 &&
+    /^[\s.,:;()[\]{}+\-–—\p{N}ivxlcdm]+$/iu.test(text)
+  )
+}
+
+function firstPageTitleBlockRun(run: PdfSourceRun, bodyFontSize: number) {
+  if (isQuarterTurn(run.rotation)) return false
+  if (run.page !== 1 || run.y > 0.42) return false
+  if (run.y < 0.08 && run.fontSize < bodyFontSize * 1.2 && run.width < 0.55) {
+    return false
+  }
+  return run.width >= 0.28 || run.fontSize >= bodyFontSize * 0.92
+}
+
+function furniturePatternProven(occurrences: FurnitureRunOccurrence[]) {
+  const pages = [
+    ...new Set(occurrences.map((occurrence) => occurrence.run.page)),
+  ].sort((left, right) => left - right)
+  if (pages.length < 2) return null
+  const hasNumbers = occurrences.some(
+    (occurrence) => occurrence.numericValues.length > 0,
+  )
+  const orderedOccurrences = occurrences
+    .slice()
+    .sort((left, right) => left.run.page - right.run.page)
+  const sequence = orderedOccurrences.flatMap((occurrence) => {
+    const values = occurrence.numericValues
+    return values.length > 0 ? [values.at(-1)!] : []
+  })
+  const stableNumericPrefix = orderedOccurrences.every((occurrence) => {
+    const values = occurrence.numericValues
+    const first = orderedOccurrences[0]?.numericValues ?? []
+    return (
+      values.length === first.length &&
+      values.slice(0, -1).every((value, index) => value === first[index])
+    )
+  })
+  const incrementing =
+    hasNumbers &&
+    sequence.length === pages.length &&
+    stableNumericPrefix &&
+    sequence.every(
+      (value, index) => index === 0 || value === sequence[index - 1] + 1,
+    )
+  const exactText =
+    new Set(
+      occurrences.map((occurrence) => occurrence.run.text.normalize('NFKC')),
+    ).size === 1
+  if (!exactText && !incrementing) return null
+  const rotated = occurrences.some((occurrence) =>
+    isQuarterTurn(occurrence.run.rotation),
+  )
+  const geometryKey = (occurrence: FurnitureRunOccurrence) =>
+    [
+      Math.round(occurrence.run.x / 0.025),
+      Math.round(occurrence.run.y / 0.025),
+      Math.round(occurrence.run.width / 0.025),
+      Math.round(occurrence.run.height / 0.01),
+      isQuarterTurn(occurrence.run.rotation)
+        ? Math.round(Math.abs(occurrence.run.rotation) / 90)
+        : 0,
+    ].join(':')
+  const stableGeometry = new Set(occurrences.map(geometryKey)).size === 1
+  const classification: PdfFurnitureClassification = rotated
+    ? 'rotated-margin'
+    : incrementing
+      ? 'incrementing-numeral'
+      : 'repeated-text'
+  const evidence = [
+    'cross-page-repetition',
+    'same-margin-band',
+    ...(stableGeometry
+      ? ['stable-source-geometry']
+      : ['bounded-margin-geometry']),
+    ...(incrementing ? ['incrementing-numeral-sequence'] : []),
+    ...(rotated ? ['quarter-turn-margin-rotation'] : []),
+  ]
+  return {
+    classification,
+    pages,
+    boxes: occurrences
+      .slice()
+      .sort(
+        (left, right) =>
+          left.run.page - right.run.page || left.run.x - right.run.x,
+      )
+      .map((occurrence) => sourceRunBox(occurrence.run)),
+    sequence: incrementing ? sequence : undefined,
+    evidence,
+  }
+}
+
+/**
+ * Classify page furniture before line grouping.  The output keeps a stable
+ * source-run key so line splitting can carry the proof into PdfPageRegion.
+ */
+export function classifyPdfFurniture(
+  pages: readonly PdfPageAnalysis[],
+  {
+    deferredRunKeys = new Set<string>(),
+  }: { deferredRunKeys?: ReadonlySet<string> } = {},
+): PdfFurnitureAssessment {
+  const bodyFontSize = median(
+    pages
+      .flatMap((page) => page.runs.map((run) => run.fontSize))
+      .filter((size) => size > 0),
+  )
+  const occurrencesByPattern = new Map<string, FurnitureRunOccurrence[]>()
+  for (const page of pages) {
+    for (const run of page.runs) {
+      if (deferredRunKeys.has(furnitureRunKey(run))) continue
+      const band = furnitureBand(run)
+      if (!band || firstPageTitleBlockRun(run, bodyFontSize)) continue
+      const text = run.text.normalize('NFKC').replace(/\s+/gu, ' ').trim()
+      if (!text) continue
+      const numericValues = marginNumericValues(text)
+      const alphabeticCharacters = (text.match(/[\p{L}]/gu) ?? []).length
+      const numericOnly =
+        numericValues.length > 0 &&
+        (alphabeticCharacters === 0 || marginTextIsNumeralOnly(text))
+      if ((!numericOnly && text.length < 4) || run.width < 0.01) continue
+      const normalizedText = normalizeMarginText(text)
+      // The band, rather than an exact x coordinate, is the invariant across
+      // alternating-page headers and two-column folios.  Geometry is still
+      // retained in the evidence boxes and used to keep body text out of the
+      // candidate set.
+      const numericSystem =
+        numericValues.length > 0
+          ? (text
+              .match(/[\p{N}]+/u)?.[0]
+              ?.codePointAt(0)
+              ?.toString(16)
+              .slice(0, -1) ??
+            (marginTextIsNumeralOnly(text) ? 'roman' : 'numeric'))
+          : ''
+      const key = `${band}\u0000${normalizedText}\u0000${numericSystem}`
+      const list = occurrencesByPattern.get(key) ?? []
+      list.push({ run, band, key, normalizedText, numericValues })
+      occurrencesByPattern.set(key, list)
+    }
+  }
+  const furnitureRuns: Array<{
+    run: PdfSourceRun
+    evidence: PdfFurnitureEvidence
+  }> = []
+  const byRunKey = new Map<string, PdfFurnitureEvidence>()
+  const patterns: PdfFurnitureAssessment['patterns'] = []
+  for (const occurrences of occurrencesByPattern.values()) {
+    const proven = furniturePatternProven(occurrences)
+    if (!proven) continue
+    const first = occurrences[0]
+    const evidence: PdfFurnitureEvidence = {
+      classification: proven.classification,
+      band: first.band,
+      pages: proven.pages,
+      boxes: proven.boxes,
+      evidence: proven.evidence,
+      normalizedText: first.normalizedText,
+      ...(proven.sequence ? { sequence: proven.sequence } : {}),
+      sourceRunIndexes: occurrences
+        .map(({ run }) => run.sourceSequenceIndex)
+        .filter((index): index is number => index !== undefined)
+        .sort((left, right) => left - right),
+    }
+    patterns.push({
+      classification: proven.classification,
+      band: first.band,
+      normalizedText: first.normalizedText,
+      pages: proven.pages,
+      boxes: proven.boxes,
+      evidence: proven.evidence,
+      ...(proven.sequence ? { sequence: proven.sequence } : {}),
+    })
+    for (const occurrence of occurrences) {
+      const key = furnitureRunKey(occurrence.run)
+      byRunKey.set(key, evidence)
+      furnitureRuns.push({ run: occurrence.run, evidence })
+    }
+  }
+  // A quarter-turned margin stamp is self-proving from geometry and rotation;
+  // it does not need a text or journal-name match.  Keep this deliberately
+  // narrow so a single horizontal sentence at the bottom remains reviewable.
+  for (const page of pages) {
+    for (const run of page.runs) {
+      if (deferredRunKeys.has(furnitureRunKey(run))) continue
+      const band = furnitureBand(run)
+      if (
+        !band ||
+        !isQuarterTurn(run.rotation) ||
+        byRunKey.has(furnitureRunKey(run))
+      )
+        continue
+      const evidence: PdfFurnitureEvidence = {
+        classification: 'rotated-margin',
+        band,
+        pages: [run.page],
+        boxes: [sourceRunBox(run)],
+        evidence: ['quarter-turn-margin-rotation', 'margin-band-geometry'],
+        normalizedText: normalizeMarginText(run.text),
+        sourceRunIndexes:
+          run.sourceSequenceIndex === undefined
+            ? []
+            : [run.sourceSequenceIndex],
+      }
+      byRunKey.set(furnitureRunKey(run), evidence)
+      furnitureRuns.push({ run, evidence })
+    }
+  }
+  const reviewRuns: Array<{ run: PdfSourceRun; review: PdfFurnitureReview }> =
+    []
+  const reviewByRunKey = new Map<string, PdfFurnitureReview>()
+  for (const page of pages) {
+    for (const run of page.runs) {
+      const key = furnitureRunKey(run)
+      if (deferredRunKeys.has(key)) continue
+      if (byRunKey.has(key)) continue
+      const band = furnitureBand(run)
+      if (!band || firstPageTitleBlockRun(run, bodyFontSize)) continue
+      const edgeLike =
+        band === 'left' ||
+        band === 'right' ||
+        (band === 'top' && run.y <= 0.06) ||
+        (band === 'bottom' && run.y + run.height >= 0.92)
+      if (!edgeLike) continue
+      const text = run.text.replace(/\s+/gu, ' ').trim()
+      const words = text.match(/[\p{L}\p{N}]{2,}/gu) ?? []
+      if (text.length < 8 || words.length < 2 || run.width < 0.08) continue
+      const review: PdfFurnitureReview = {
+        reason: 'single-occurrence-margin',
+        band,
+        pages: [run.page],
+        boxes: [sourceRunBox(run)],
+        evidence: [
+          'single-page-occurrence',
+          'margin-band-geometry',
+          'repetition-unproven',
+        ],
+      }
+      reviewByRunKey.set(key, review)
+      reviewRuns.push({ run, review })
+    }
+  }
+  const objectById = new Map<string, PdfFurnitureEvidence>()
+  const ruleGroups = new Map<
+    string,
+    Array<{
+      object: NonNullable<PdfPageAnalysis['objects']>[number]
+      band: PdfFurnitureBand
+    }>
+  >()
+  for (const page of pages) {
+    for (const object of page.objects ?? []) {
+      const band = furnitureBand(object.box)
+      if (
+        !band ||
+        object.kind !== 'vector' ||
+        object.box.width < 0.45 ||
+        object.box.height > 0.015
+      ) {
+        continue
+      }
+      const key = [
+        band,
+        Math.round(object.box.x / 0.025),
+        Math.round(object.box.y / 0.025),
+        Math.round(object.box.width / 0.025),
+        Math.round(object.box.height / 0.01),
+      ].join(':')
+      const group = ruleGroups.get(key) ?? []
+      group.push({ object, band })
+      ruleGroups.set(key, group)
+    }
+  }
+  const hasMarginRunOnPage = new Set(furnitureRuns.map(({ run }) => run.page))
+  for (const group of ruleGroups.values()) {
+    const pagesForRule = [
+      ...new Set(group.map(({ object }) => object.page)),
+    ].sort((left, right) => left - right)
+    if (
+      pagesForRule.length < 2 &&
+      !pagesForRule.some((page) => hasMarginRunOnPage.has(page))
+    ) {
+      continue
+    }
+    const first = group[0]
+    const evidence: PdfFurnitureEvidence = {
+      classification: 'separator-rule',
+      band: first.band,
+      pages: pagesForRule,
+      boxes: group
+        .slice()
+        .sort((left, right) => left.object.page - right.object.page)
+        .map(({ object }) => ({ ...object.box })),
+      evidence: [
+        ...(pagesForRule.length >= 2 ? ['cross-page-repetition'] : []),
+        'same-margin-band',
+        'thin-rule-geometry',
+      ],
+    }
+    for (const { object } of group) objectById.set(object.id, evidence)
+  }
+  return {
+    patterns: patterns.sort(
+      (left, right) =>
+        left.pages[0] - right.pages[0] ||
+        left.band.localeCompare(right.band) ||
+        left.normalizedText.localeCompare(right.normalizedText),
+    ),
+    furnitureRuns,
+    reviewRuns,
+    repeatedMarginCount: patterns.length,
+    byRunKey,
+    reviewByRunKey,
+    objectById,
+  }
+}
+
+/** Backwards-compatible descriptive alias for callers that name the stage. */
+export const classifyPageFurniture = classifyPdfFurniture
 
 function beginsVisualCaption(text: string) {
   const normalized = text.replace(/\s+/gu, ' ').trim()
@@ -337,29 +870,16 @@ function proseDominantInlineMathLine(line: PdfTextLine) {
   return proseDominantPdfMathSource(line)
 }
 
-function marginBand(source: Pick<PdfTextLine, 'y' | 'height'>) {
-  return source.y <= 0.1 || source.y + source.height >= 0.9
-}
-
-function repeatedMarginKeys(pages: PdfPageAnalysis[]) {
-  const occurrences = new Map<string, Set<number>>()
-  for (const page of pages) {
-    for (const run of page.runs) {
-      if (!marginBand(run)) continue
-      const key = normalizeMarginText(run.text)
-      // Compact repeated cells are ambiguous and stay visible. Running
-      // furniture must supply a prose-sized source run; folios are classified
-      // independently from their bounded numeric syntax.
-      if (key.length < 4 || key.length > 160 || run.width < 0.12) continue
-      const pageNumbers = occurrences.get(key) ?? new Set<number>()
-      pageNumbers.add(page.page)
-      occurrences.set(key, pageNumbers)
-    }
-  }
-  return new Set(
-    [...occurrences.entries()]
-      .filter(([, pages]) => pages.size >= 2)
-      .map(([key]) => key),
+function marginBand(
+  source: Pick<PdfTextLine, 'x' | 'y' | 'width' | 'height'> & {
+    rotation?: number
+  },
+) {
+  return (
+    source.y <= 0.1 ||
+    source.y + source.height >= 0.9 ||
+    (isQuarterTurn(source.rotation ?? 0) &&
+      (source.x <= 0.12 || source.x + source.width >= 0.88))
   )
 }
 
@@ -1212,6 +1732,7 @@ function splitRepeatedMarginSourceRuns(
   lines: PdfTextLine[],
   repeated: ReadonlySet<string>,
   protectedLines: ReadonlySet<PdfTextLine> = new Set(),
+  furnitureByRunKey: ReadonlyMap<string, PdfFurnitureEvidence> = new Map(),
 ) {
   return lines.flatMap((line) => {
     if (
@@ -1224,14 +1745,16 @@ function splitRepeatedMarginSourceRuns(
     }
     const orderedRuns = [...line.runs].sort((left, right) => left.x - right.x)
     const repeatedIndexes = orderedRuns.flatMap((run, index) =>
-      marginBand(run) && repeated.has(normalizeMarginText(run.text))
+      marginBand(run) &&
+      (furnitureByRunKey.has(furnitureRunKey(run)) ||
+        repeated.has(normalizeMarginText(run.text)))
         ? [index]
         : [],
     )
     if (repeatedIndexes.length === 0) return [line]
-    // A diagram title and a running author can overlap vertically enough for
-    // line grouping to fuse them. Split only source runs already proven
-    // repeated across pages, retaining every residual run as its own line.
+    // A diagram title and a margin run can overlap vertically enough for line
+    // grouping to fuse them. Split only runs with furniture evidence (or a
+    // bounded review record), retaining every residual run as its own line.
     const repeatedIndexSet = new Set(repeatedIndexes)
     const fragments: PdfTextLine[] = []
     let ordinaryRuns: typeof orderedRuns = []
@@ -1625,6 +2148,128 @@ function bodyFontSize(lines: PdfTextLine[]) {
   return quantile(sizes, 0.75) || median(sizes) || 12
 }
 
+type NoteLineClassificationEvidence = {
+  label: string | null
+  explicitFootnote: boolean
+  symbolicFootnote: boolean
+  renderedFootnote: boolean
+}
+
+function noteLineClassificationEvidence(
+  line: PdfTextLine,
+  fontSize: number,
+  lowerBand: number,
+  numberedBodyListLines: ReadonlySet<PdfTextLine>,
+): NoteLineClassificationEvidence {
+  const normalized = normalizedNoteLabel(line.text)
+  const label = noteLabelFromText(normalized)
+  const explicitFootnote = new RegExp(
+    `^(?:footnote|note)\\s+${NOTE_LABEL}`,
+    'i',
+  ).test(normalized)
+  const symbolicFootnote = /^[*†‡§]/u.test(normalized)
+  const substantiveRuns = line.runs.filter((run) => run.text.trim())
+  const monospacedNumberedContent =
+    !symbolicFootnote &&
+    /^\d{1,3}(?:[.)\]]|\s)/u.test(normalized) &&
+    substantiveRuns.length > 0 &&
+    substantiveRuns.every((run) =>
+      /(?:courier|inconsolata|nimbusmon|mono|typewriter|cmtt|lmtt|sftt)/iu.test(
+        run.fontName,
+      ),
+    )
+  // Decimal-leading lower-band content is overwhelmingly a plot tick, metric
+  // row, or table cell, not an integer-labeled note body. Integer-only labels
+  // remain eligible because a genuine footnote may place its marker on a line
+  // of its own.
+  const decimalTabularContent = /^[-+]?\d+[.,]\d/u.test(normalized)
+  const renderedFootnote =
+    label !== null &&
+    !decimalTabularContent &&
+    !monospacedNumberedContent &&
+    !numberedBodyListLines.has(line) &&
+    !numberedBodySectionHeading(normalized) &&
+    line.y + line.height >= lowerBand &&
+    line.fontSize >= 5 &&
+    line.fontSize <= fontSize * (symbolicFootnote ? 0.96 : 0.9) + 0.01
+  return {
+    label,
+    explicitFootnote,
+    symbolicFootnote,
+    renderedFootnote,
+  }
+}
+
+/**
+ * Footnote ownership is resolved before furniture. This hand-off is
+ * geometry- and marker-based; it deliberately has no journal or keyword
+ * allowlist. Any source run in a note-owned line is deferred to the note
+ * stratum, so a repeated lower band cannot hide a genuine note body.
+ */
+function noteStratumRunKeys(lines: readonly PdfTextLine[]) {
+  const pageFontSize = bodyFontSize([...lines])
+  const numberedBodyListLines = unreferencedSequentialNumberedListLines([
+    ...lines,
+  ])
+  const lowerBand = quantile(
+    lines.map((line) => line.y + line.height),
+    0.65,
+  )
+  const orderedLines = [...lines].sort(
+    (left, right) => left.y - right.y || left.x - right.x,
+  )
+  const keys = new Set<string>()
+  const noteSeeds = orderedLines.filter((line) => {
+    const evidence = noteLineClassificationEvidence(
+      line,
+      pageFontSize,
+      lowerBand,
+      numberedBodyListLines,
+    )
+    return evidence.explicitFootnote || evidence.renderedFootnote
+  })
+  for (const seed of noteSeeds) {
+    for (const run of seed.runs) {
+      if (run.text.trim()) keys.add(furnitureRunKey(run))
+    }
+    let previous = seed
+    while (
+      !endsCaptionSentence(previous.text) ||
+      endsIncompleteWrappedUrl(previous.text)
+    ) {
+      const candidate = orderedLines
+        .filter((line) => {
+          if (
+            line.page !== seed.page ||
+            line === seed ||
+            line.y <= previous.y ||
+            noteLabelFromText(line.text) !== null
+          ) {
+            return false
+          }
+          const verticalGap = line.y - (previous.y + previous.height)
+          const fontTolerance = Math.max(0.6, seed.fontSize * 0.08)
+          return (
+            verticalGap <= Math.max(0.008, seed.height * 0.8) &&
+            Math.abs(line.x - seed.x) <= 0.04 &&
+            Math.abs(line.fontSize - seed.fontSize) <= fontTolerance
+          )
+        })
+        .sort(
+          (left, right) =>
+            left.y - right.y ||
+            Math.abs(left.x - seed.x) - Math.abs(right.x - seed.x),
+        )[0]
+      if (!candidate) break
+      previous = candidate
+      for (const run of candidate.runs) {
+        if (run.text.trim()) keys.add(furnitureRunKey(run))
+      }
+    }
+  }
+  return keys
+}
+
 function spread(values: number[]) {
   return values.length < 2 ? 0 : Math.max(...values) - Math.min(...values)
 }
@@ -1686,6 +2331,7 @@ function preclassifyMarginNotes(
   const dominant = dominantIndent(body)
   if (!dominant || dominant.members.length < 2) return
   for (const line of body) {
+    if (line.furnitureReview) continue
     if (dominant.members.includes(line)) continue
     const alignedWithBody = dominant.members.some((candidate) => {
       const lineCenter = line.y + line.height / 2
@@ -4557,6 +5203,12 @@ function makeRegions(
       return regionLine
     })
     const kind = orderedGroup[0].kind
+    const furnitureEvidence = orderedGroup.find(
+      (line) => line.furniture,
+    )?.furniture
+    const furnitureReview = orderedGroup.find(
+      (line) => line.furnitureReview,
+    )?.furnitureReview
     const sourceCaptionLaneBoundary = orderedGroup[0].sourceCaptionLaneBoundary
     const sourceCaptionLaneSide = orderedGroup[0].sourceCaptionLaneSide
     const sourceCaptionLane =
@@ -4597,6 +5249,8 @@ function makeRegions(
         'side',
         'chart-label',
       ].includes(kind),
+      ...(furnitureEvidence ? { furniture: furnitureEvidence } : {}),
+      ...(furnitureReview ? { furnitureReview } : {}),
       ...(sourceCaptionLane ? { sourceCaptionLane } : {}),
     }
   })
@@ -4605,6 +5259,7 @@ function makeRegions(
 function makeObjectRegions(
   pages: PdfPageAnalysis[],
   layouts: Map<number, ColumnLayout>,
+  furnitureByObjectId: ReadonlyMap<string, PdfFurnitureEvidence> = new Map(),
 ) {
   return pages.flatMap((page) =>
     (page.objects ?? [])
@@ -4630,6 +5285,7 @@ function makeObjectRegions(
           },
           layout,
         )
+        const furniture = furnitureByObjectId.get(object.id)
         return {
           id: `page-${String(page.page).padStart(3, '0')}-object-region-${String(index + 1).padStart(3, '0')}`,
           page: page.page,
@@ -4640,7 +5296,8 @@ function makeObjectRegions(
           box: { ...object.box },
           lines: [],
           nativeObjectIds: [object.id],
-          includedInReadingOrder: true,
+          includedInReadingOrder: !furniture,
+          ...(furniture ? { furniture } : {}),
         }
       }),
   )
@@ -4948,8 +5605,19 @@ export function reconstructPageRegions(
   pages: PdfPageAnalysis[],
   { language = null }: { language?: string | null } = {},
 ) {
-  const repeated = repeatedMarginKeys(pages)
   const groupedLines = pages.map((page) => groupRunsIntoLines(page))
+  const deferredFurnitureRunKeys = new Set<string>()
+  for (const lines of groupedLines) {
+    for (const key of noteStratumRunKeys(lines)) {
+      deferredFurnitureRunKeys.add(key)
+    }
+  }
+  const furnitureAssessment = classifyPdfFurniture(pages, {
+    deferredRunKeys: deferredFurnitureRunKeys,
+  })
+  const repeated = new Set(
+    furnitureAssessment.patterns.map((pattern) => pattern.normalizedText),
+  )
   const protectedRepeatedMarginHeadings =
     sourceProvenRepeatedMarginHeadingLines(groupedLines, repeated)
   const rawLines = groupedLines.map((lines) =>
@@ -4959,6 +5627,7 @@ export function reconstructPageRegions(
           lines,
           repeated,
           protectedRepeatedMarginHeadings,
+          furnitureAssessment.byRunKey,
         ),
       ),
     ),
@@ -4968,6 +5637,45 @@ export function reconstructPageRegions(
   const classified: ClassifiedLine[] = []
   const layouts = new Map<number, ColumnLayout>()
   let inEndnotes = false
+
+  const lineFurniture = (line: PdfTextLine) => {
+    const visibleRuns = line.runs.filter((run) => run.text.trim())
+    if (visibleRuns.length === 0) return undefined
+    const evidences = visibleRuns.flatMap((run) => {
+      const evidence = furnitureAssessment.byRunKey.get(furnitureRunKey(run))
+      return evidence ? [evidence] : []
+    })
+    if (evidences.length === visibleRuns.length && evidences.length > 0) {
+      return evidences[0]
+    }
+    return undefined
+  }
+  const lineDeferredToNotes = (line: PdfTextLine) => {
+    const visibleRuns = line.runs.filter((run) => run.text.trim())
+    return (
+      visibleRuns.length > 0 &&
+      visibleRuns.every((run) =>
+        deferredFurnitureRunKeys.has(furnitureRunKey(run)),
+      )
+    )
+  }
+  const lineFurnitureReview = (
+    line: PdfTextLine,
+    explicitParatextLines?: ReadonlySet<PdfTextLine>,
+  ) => {
+    if (explicitParatextLines?.has(line)) return undefined
+    const visibleRuns = line.runs.filter((run) => run.text.trim())
+    if (visibleRuns.length === 0) return undefined
+    const reviews = visibleRuns.flatMap((run) => {
+      const review = furnitureAssessment.reviewByRunKey.get(
+        furnitureRunKey(run),
+      )
+      return review ? [review] : []
+    })
+    return reviews.length === visibleRuns.length && reviews.length > 0
+      ? reviews[0]
+      : undefined
+  }
 
   for (const [pageIndex, pageLines] of rawLines.entries()) {
     const page = pages[pageIndex]
@@ -4982,40 +5690,18 @@ export function reconstructPageRegions(
     let preliminary = pageLines
       .sort(sourceLineFlowOrder)
       .map<ClassifiedLine>((line, lineIndex) => {
+        const furniture = lineFurniture(line)
+        const furnitureReview = lineFurnitureReview(line, paratextLines)
         const normalized = normalizedNoteLabel(line.text)
         const endnoteHeading = /^(?:endnotes?|notes?)$/i.test(normalized)
-        const label = noteLabelFromText(normalized)
+        const noteEvidence = noteLineClassificationEvidence(
+          line,
+          fontSize,
+          lowerBand,
+          numberedBodyListLines,
+        )
+        const { label, explicitFootnote, renderedFootnote } = noteEvidence
         const inlineStackedFragment = inlineStackedFragmentParts(line)
-        const explicitFootnote = new RegExp(
-          `^(?:footnote|note)\\s+${NOTE_LABEL}`,
-          'i',
-        ).test(normalized)
-        const symbolicFootnote = /^[*†‡§]/u.test(normalized)
-        const substantiveRuns = line.runs.filter((run) => run.text.trim())
-        const monospacedNumberedContent =
-          !symbolicFootnote &&
-          /^\d{1,3}(?:[.)\]]|\s)/u.test(normalized) &&
-          substantiveRuns.length > 0 &&
-          substantiveRuns.every((run) =>
-            /(?:courier|inconsolata|nimbusmon|mono|typewriter|cmtt|lmtt|sftt)/iu.test(
-              run.fontName,
-            ),
-          )
-        // Decimal-leading lower-band content is overwhelmingly a plot tick,
-        // metric row, or table cell, not an integer-labeled note body. The
-        // comma form covers decimal-comma plots as well. Integer-only labels
-        // remain eligible because a genuine footnote may place its marker on
-        // a line of its own.
-        const decimalTabularContent = /^[-+]?\d+[.,]\d/u.test(normalized)
-        const renderedFootnote =
-          label !== null &&
-          !decimalTabularContent &&
-          !monospacedNumberedContent &&
-          !numberedBodyListLines.has(line) &&
-          !numberedBodySectionHeading(normalized) &&
-          line.y + line.height >= lowerBand &&
-          line.fontSize >= 5 &&
-          line.fontSize <= fontSize * (symbolicFootnote ? 0.96 : 0.9) + 0.01
         let kind: PdfRegionKind = 'body'
         let confidence = 0.9
         if (inEndnotes && label !== null) {
@@ -5042,26 +5728,29 @@ export function reconstructPageRegions(
         } else if (paratextLines.has(line)) {
           kind = 'footer'
           confidence = 0.99
-        } else if (
-          (line.y <= 0.1 || line.y + line.height >= 0.9) &&
-          /^(?:\d{1,4}(?::\d{1,4})?|[ivxlcdm]+)$/i.test(normalized)
-        ) {
-          kind = 'page-number'
-          confidence = 0.98
+        } else if (furniture) {
+          kind =
+            furniture.band === 'left' || furniture.band === 'right'
+              ? 'side'
+              : furniture.classification === 'incrementing-numeral' &&
+                  marginTextIsNumeralOnly(line.text)
+                ? 'page-number'
+                : furniture.band === 'top'
+                  ? 'header'
+                  : 'footer'
+          confidence = 0.99
         } else if (
           marginBand(line) &&
           repeated.has(normalizeMarginText(line.text))
         ) {
           kind = line.y < 0.5 ? 'header' : 'footer'
           confidence = 0.99
-        } else if (line.y <= 0.08 && line.fontSize <= fontSize * 0.9) {
-          kind = 'header'
-          confidence = 0.78
         } else if (
-          line.y + line.height >= 0.92 &&
+          furniture &&
+          (line.y <= 0.08 || line.y + line.height >= 0.92) &&
           line.fontSize <= fontSize * 0.9
         ) {
-          kind = 'footer'
+          kind = line.y <= 0.08 ? 'header' : 'footer'
           confidence = 0.78
         } else if (/-detached-math-\d+-host-/u.test(line.id ?? '')) {
           kind = 'equation'
@@ -5112,6 +5801,23 @@ export function reconstructPageRegions(
           kind,
           confidence,
           noteLabel: label,
+          ...(furniture
+            ? { furniture }
+            : paratextLines.has(line) && !lineDeferredToNotes(line)
+              ? {
+                  furniture: {
+                    classification: 'explicit-paratext' as const,
+                    band: 'bottom' as const,
+                    pages: [line.page],
+                    boxes: line.runs
+                      .filter((run) => run.text.trim())
+                      .map(sourceRunBox),
+                    evidence: ['first-page-paratext-geometry'],
+                    normalizedText: normalizeMarginText(line.text),
+                  },
+                }
+              : {}),
+          ...(furnitureReview ? { furnitureReview } : {}),
         }
       })
 
@@ -5158,6 +5864,7 @@ export function reconstructPageRegions(
         line.confidence = layout.accepted ? 0.95 : 0.58
       } else if (
         line.kind === 'body' &&
+        !line.furnitureReview &&
         !/^\p{L}$/u.test(normalizedNoteLabel(line.text)) &&
         !sourceRaisedFrontMatterAffiliation(line) &&
         line.fontSize <= fontSize * 0.85 &&
@@ -5204,23 +5911,24 @@ export function reconstructPageRegions(
     language,
     lineBoundaryDecisions,
   ).flatMap(splitRunBackedSymbolicNoteDefinitions)
-  const regions = [...textRegions, ...makeObjectRegions(pages, layouts)].sort(
-    (left, right) => {
-      if (left.page !== right.page) return left.page - right.page
-      const splitDefinitionOrder = splitNoteDefinitionOrder(left, right)
-      if (splitDefinitionOrder !== null) return splitDefinitionOrder
-      const inlineOrder = inlineStackedFragmentOrder(
-        left.lines[0] ?? { id: undefined },
-        right.lines[0] ?? { id: undefined },
-      )
-      if (inlineOrder !== null) return inlineOrder
-      return (
-        left.box.y - right.box.y ||
-        left.box.x - right.box.x ||
-        left.id.localeCompare(right.id)
-      )
-    },
-  )
+  const regions = [
+    ...textRegions,
+    ...makeObjectRegions(pages, layouts, furnitureAssessment.objectById),
+  ].sort((left, right) => {
+    if (left.page !== right.page) return left.page - right.page
+    const splitDefinitionOrder = splitNoteDefinitionOrder(left, right)
+    if (splitDefinitionOrder !== null) return splitDefinitionOrder
+    const inlineOrder = inlineStackedFragmentOrder(
+      left.lines[0] ?? { id: undefined },
+      right.lines[0] ?? { id: undefined },
+    )
+    if (inlineOrder !== null) return inlineOrder
+    return (
+      left.box.y - right.box.y ||
+      left.box.x - right.box.x ||
+      left.id.localeCompare(right.id)
+    )
+  })
   const readingOrder = buildReadingOrder(regions, layouts)
   return {
     regions,
@@ -5230,7 +5938,14 @@ export function reconstructPageRegions(
         decision.outcome === 'unresolved' || decision.outcome === 'ambiguous',
     ).length,
     readingOrder,
-    repeatedMarginCount: repeated.size,
+    repeatedMarginCount: furnitureAssessment.repeatedMarginCount,
+    furnitureExcludedRunCount: furnitureAssessment.furnitureRuns.length,
+    furnitureExcludedTextCharacters: furnitureAssessment.furnitureRuns.reduce(
+      (total, { run }) => total + [...run.text].length,
+      0,
+    ),
+    furnitureReviewCount: furnitureAssessment.reviewRuns.length,
+    furnitureAssessment,
     ambiguousPages: [...layouts.entries()]
       .filter(([, layout]) => layout.ambiguous)
       .map(([page]) => page),

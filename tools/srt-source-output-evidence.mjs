@@ -564,6 +564,7 @@ async function createFixtureStructDocument({
         structRelationshipCount: 0,
         structDiagnosticCount: 0,
         structTextCharacterCount: textCharacterCount,
+        furnitureContaminationCount: 0,
       },
       generatedSha256: sourceHash,
     },
@@ -823,6 +824,8 @@ async function run(options) {
               page: checkpoint.page,
               text: pair.source.text,
               hasVisual: pair.source.hasVisual,
+              furnitureContaminationCount:
+                document.receipt?.conservation?.furnitureContaminationCount,
             },
             rendition: {
               profile: checkpoint.profile,

@@ -42,7 +42,8 @@
             "prose-continuity",
             "heading-level",
             "table-structure",
-            "code-block-structure"
+            "code-block-structure",
+            "furniture-exclusion"
           ]
         },
         "criterion": { "type": "string", "minLength": 1 },
@@ -56,7 +57,11 @@
       "required": ["feature"],
       "properties": {
         "feature": { "enum": ["visual", "text", "structure"] },
-        "text": { "type": "string", "minLength": 1 }
+        "text": { "type": "string", "minLength": 1 },
+        "furnitureContaminationCount": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "outputExpectation": {

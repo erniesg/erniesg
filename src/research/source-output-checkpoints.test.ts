@@ -256,4 +256,75 @@ describe('source/output checkpoints', () => {
       }),
     ).toMatchObject({ checkpointId: 'code-block-structure', status: 'failed' })
   })
+
+  it('fails closed when the furniture contamination counter is absent or nonzero', () => {
+    const checkpoint = parseSourceOutputCheckpointSet({
+      schemaVersion: '1.0.0',
+      checkpoints: [
+        {
+          ...base,
+          id: 'furniture-exclusion',
+          property: 'furniture-exclusion',
+          source: {
+            feature: 'structure',
+            furnitureContaminationCount: 0,
+          },
+          output: {
+            feature: 'prose',
+            text: 'Canonical body remains readable.',
+          },
+        },
+      ],
+    }).checkpoints[0]
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source: {
+          page: 2,
+          text: 'Canonical body remains readable.',
+          hasVisual: false,
+        },
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>Canonical body remains readable.</p>',
+        },
+      }),
+    ).toMatchObject({
+      status: 'failed',
+      reason: expect.stringContaining('counter'),
+    })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source: {
+          page: 2,
+          text: 'Canonical body remains readable.',
+          hasVisual: false,
+          furnitureContaminationCount: 1,
+        },
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>Canonical body remains readable.</p>',
+        },
+      }),
+    ).toMatchObject({
+      status: 'failed',
+      reason: expect.stringContaining('expected 0'),
+    })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source: {
+          page: 2,
+          text: 'Canonical body remains readable.',
+          hasVisual: false,
+          furnitureContaminationCount: 0,
+        },
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>Canonical body remains readable.</p>',
+        },
+      }),
+    ).toEqual({ checkpointId: 'furniture-exclusion', status: 'passed' })
+  })
 })

@@ -10805,9 +10805,7 @@ export async function reconstructPageAnalyses({
       message: `Removed ${regionResult.repeatedMarginCount} repeated header or footer pattern${regionResult.repeatedMarginCount === 1 ? '' : 's'} from reading order.`,
       target: {
         regionIds: regionResult.regions
-          .filter(
-            (region) => region.kind === 'header' || region.kind === 'footer',
-          )
+          .filter((region) => region.furniture)
           .map((region) => region.id),
         markerId: null,
       },
@@ -11916,6 +11914,14 @@ export async function reconstructPageAnalyses({
     inlineSpanLedger,
     hyperlinkLedger: hyperlinkResolution.ledger,
     canonicalFloatScopes,
+    furnitureExcludedRunCount: regionResult.furnitureExcludedRunCount,
+    furnitureExcludedTextCharacters:
+      regionResult.furnitureExcludedTextCharacters,
+    furnitureContaminationCount: regionResult.regions.reduce(
+      (count, region) =>
+        count + (region.furniture && region.includedInReadingOrder ? 1 : 0),
+      0,
+    ),
   })
   throwIfPdfReconstructionAborted(signal)
   onProgress?.({

@@ -6618,4 +6618,120 @@ describe('deterministic scholarly page regions', () => {
       evaluateReadingOrder(result.readingOrder, result.readingOrder.order),
     ).toMatchObject({ orderAccuracy: 1, cycleRate: 0 })
   })
+
+  it('accounts for Unicode folios, rotated stamps, and one-off margin review', () => {
+    const arabic = ['١', '٢', '٣']
+    const devanagari = ['१', '२', '३']
+    const roman = ['I', 'II', 'III']
+    const pages = [1, 2, 3].map((pageNumber, index) =>
+      page(pageNumber, [
+        run(pageNumber, arabic[index], 0.46, 0.95, 0.03, 8),
+        run(pageNumber, devanagari[index], 0.52, 0.95, 0.03, 8),
+        run(pageNumber, roman[index], 0.58, 0.95, 0.03, 8),
+        {
+          ...run(
+            pageNumber,
+            'opaque rotated archive stamp',
+            0.02,
+            0.35,
+            0.5,
+            8,
+          ),
+          rotation: 90,
+        },
+        run(
+          pageNumber,
+          pageNumber === 2
+            ? 'A genuine sentence in the lower margin remains reviewable.'
+            : `Canonical body prose on page ${pageNumber}.`,
+          0.12,
+          pageNumber === 2 ? 0.94 : 0.2,
+          0.7,
+          10,
+        ),
+      ]),
+    )
+    const first = reconstructPageRegions(pages)
+    const second = reconstructPageRegions(pages)
+    const furniture = first.regions.filter((region) => region.furniture)
+    expect(
+      furniture.filter((region) => region.kind === 'page-number'),
+    ).toHaveLength(9)
+    expect(
+      furniture.some(
+        (region) =>
+          region.furniture?.classification === 'rotated-margin' &&
+          region.furniture.evidence.includes('quarter-turn-margin-rotation'),
+      ),
+    ).toBe(true)
+    expect(
+      first.regions.some(
+        (region) =>
+          region.furnitureReview?.reason === 'single-occurrence-margin' &&
+          region.includedInReadingOrder,
+      ),
+    ).toBe(true)
+    expect(first.regions).toEqual(second.regions)
+  })
+
+  it('defers overlapping repeated numeral bands to the footnote stratum', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Body prose establishes the page font.', 0.12, 0.2, 0.72, 10),
+        run(
+          1,
+          '1. Genuine note body remains a footnote, not page furniture,',
+          0.12,
+          0.86,
+          0.72,
+          7,
+        ),
+        run(
+          1,
+          'The wrapped note continuation remains owned by the footnote.',
+          0.12,
+          0.884,
+          0.72,
+          7,
+        ),
+      ]),
+      page(2, [
+        run(
+          2,
+          'More body prose establishes the page font.',
+          0.12,
+          0.2,
+          0.72,
+          10,
+        ),
+        run(
+          2,
+          '2. Genuine note body remains a footnote, not page furniture,',
+          0.12,
+          0.86,
+          0.72,
+          7,
+        ),
+        run(
+          2,
+          'The wrapped note continuation remains owned by the footnote.',
+          0.12,
+          0.884,
+          0.72,
+          7,
+        ),
+      ]),
+    ])
+
+    const notes = result.regions.filter((region) => region.kind === 'footnote')
+    expect(notes).toHaveLength(2)
+    expect(notes.every((region) => region.includedInReadingOrder)).toBe(true)
+    expect(notes.every((region) => region.furniture === undefined)).toBe(true)
+    expect(
+      notes.every((region) =>
+        region.text.includes('wrapped note continuation'),
+      ),
+    ).toBe(true)
+    expect(result.furnitureAssessment.furnitureRuns).toHaveLength(0)
+  })
 })

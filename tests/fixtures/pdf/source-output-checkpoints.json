@@ -43,6 +43,22 @@
       "criterion": "The pseudocode checkpoint is emitted as a preformatted code block, not running prose.",
       "source": { "feature": "structure", "text": "Pseudocode" },
       "output": { "feature": "code" }
+    },
+    {
+      "id": "fidelity-page-1-furniture-exclusion",
+      "document": "source-output-checkpoints.pdf",
+      "page": 1,
+      "profile": "paperPro",
+      "property": "furniture-exclusion",
+      "criterion": "The source/output pair records zero furniture contamination in canonical prose.",
+      "source": {
+        "feature": "structure",
+        "furnitureContaminationCount": 0
+      },
+      "output": {
+        "feature": "prose",
+        "text": "The result sentence continues across a column break."
+      }
     }
   ]
 }

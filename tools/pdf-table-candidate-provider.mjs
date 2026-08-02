@@ -22,6 +22,7 @@ const IDENTIFIER = /^[a-z0-9][a-z0-9._-]{0,79}$/u
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/u
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 const MAX_INPUT_BYTES = 50 * 1024 * 1024
+export const DEFAULT_TABLE_CANDIDATE_PROVIDER_TIMEOUT_MS = 60_000
 
 function invalid(message = 'Invalid table candidate provider configuration.') {
   const error = new Error(message)
@@ -174,7 +175,13 @@ function commandAvailable(command, args = []) {
   })
 }
 
-function runProcess({ command, args, input, signal }) {
+function runProcess({
+  command,
+  args,
+  input,
+  signal,
+  timeoutMs = DEFAULT_TABLE_CANDIDATE_PROVIDER_TIMEOUT_MS,
+}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -183,10 +190,12 @@ function runProcess({ command, args, input, signal }) {
     let output = ''
     let outputBytes = 0
     let settled = false
+    let timeout
     const decoder = new StringDecoder('utf8')
     const finish = (callback) => {
       if (settled) return
       settled = true
+      if (timeout) clearTimeout(timeout)
       signal?.removeEventListener('abort', abort)
       callback()
     }
@@ -219,6 +228,10 @@ function runProcess({ command, args, input, signal }) {
       output += decoder.end()
       finish(() => resolve(output))
     })
+    timeout = setTimeout(() => {
+      child.kill()
+      finish(() => reject(unavailableError()))
+    }, timeoutMs)
     child.stdin.end(input)
   })
 }
@@ -231,6 +244,7 @@ function runProcess({ command, args, input, signal }) {
 export function createProcessTableCandidateProvider({
   module,
   configuration,
+  timeoutMs = DEFAULT_TABLE_CANDIDATE_PROVIDER_TIMEOUT_MS,
 }) {
   const config = parseTableCandidateProviderConfiguration(configuration)
   let availability
@@ -251,6 +265,7 @@ export function createProcessTableCandidateProvider({
         args: config.args,
         input: payload,
         signal,
+        timeoutMs,
       })
     } catch {
       throw unavailableError()
@@ -266,6 +281,10 @@ export function createProcessTableCandidateProvider({
     version: config.version,
     modelDigest: config.modelDigest,
     configuration: config.configuration,
+    identityConfiguration: {
+      configuration: config.configuration,
+      args: config.args,
+    },
     adapter: config.adapter,
     runtime: config.runtime,
     infer,

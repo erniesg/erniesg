@@ -145,12 +145,7 @@ async function runPipeline(
   for (const path of paths) {
     const record = await auditPath(path, pipeline)
     if (!record.reconstruction) {
-      documents.push({ basename: record.document.basename, code: record.document.code })
-      verifiedDocuments.push({
-        basename: record.document.basename,
-        code: record.document.code,
-      })
-      continue
+      throw new Error('TABLE_CANDIDATE_INPUT_AUDIT_FAILED')
     }
     const verifiedCounts = tableCandidatePathSummary(record.reconstruction)
     const counts = tableCandidatePathSummary(record.reconstruction, { rawProvider })
@@ -177,6 +172,7 @@ async function runPipeline(
     verifiedCounts: verifiedAggregate,
     documents,
     verifiedDocuments,
+    receiptManifest,
     receiptManifestSha256: sha256(Buffer.from(stableJson(receiptManifest))),
   }
 }
@@ -271,6 +267,7 @@ export async function runTableCandidateBenchmark({
           verifiedCounts: { ...deterministic.counts },
           documents: [],
           verifiedDocuments: [],
+          receiptManifest: null,
           receiptManifestSha256: null,
         }
     validateSourceRenderEvidence(sourceRenderEvidence, deterministic.documents)
@@ -291,6 +288,7 @@ export async function runTableCandidateBenchmark({
         provider: providerRun.documents,
         verifiedProvider: providerRun.verifiedDocuments,
       },
+      providerReceiptManifest: providerRun.receiptManifest,
       providerReceiptManifestSha256: providerRun.receiptManifestSha256,
       sourceRenderEvidence,
       evidenceStatus: sourceRenderEvidence ? 'attached' : 'missing',

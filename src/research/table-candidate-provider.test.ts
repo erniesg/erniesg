@@ -549,6 +549,66 @@ describe('table candidate provider verification', () => {
     ).toBe(false)
   })
 
+  it('ignores empty wrapped-row cells when deriving source column anchors', () => {
+    const wrappedRegions: PdfPageRegion[] = [
+      {
+        ...sourceRegions[0],
+        text: `${sourceRegions[0].text} 5,558.0 5,559.0`,
+        lines: [
+          ...sourceRegions[0].lines,
+          {
+            id: 'wrapped-continuation-line-1',
+            text: '5,558.0',
+            fontSize: 10,
+            box: { ...crop, x: 0.58, y: 0.53, width: 0.12, height: 0.03 },
+            runs: [run('5,558.0', 0.58, 0.53)],
+          },
+          {
+            id: 'wrapped-continuation-line-2',
+            text: '5,559.0',
+            fontSize: 10,
+            box: { ...crop, x: 0.58, y: 0.56, width: 0.12, height: 0.03 },
+            runs: [run('5,559.0', 0.58, 0.56)],
+          },
+        ],
+      },
+    ]
+    const candidate: TableCandidateProposal = {
+      columnCount: 2,
+      headerRowCount: 1,
+      rows: [
+        proposal().rows[0],
+        proposal().rows[1],
+        {
+          cells: [
+            {
+              text: '',
+              columnIndex: 0,
+              box: { x: 0, y: 0.75, width: 0.5, height: 0.25 },
+            },
+            {
+              text: '5,558.0 5,559.0',
+              columnIndex: 1,
+              box: { x: 0.5, y: 0.75, width: 0.5, height: 0.25 },
+            },
+          ],
+        },
+      ],
+    }
+    const grid = verifyTableCandidate({
+      proposal: candidate,
+      sourceRegions: wrappedRegions,
+      sourceCropBox: crop,
+    })
+    expect(grid).not.toBeNull()
+    const table = canonicalTableFromLines(grid!.lines, {
+      detectedGrid: grid!,
+      sourceRegions: wrappedRegions,
+      links: [],
+    })
+    expect(isStrictSemanticTable(table)).toBe(true)
+  })
+
   it('distinguishes no proposal, failed verification, and unavailable provider', async () => {
     const bytes = new Uint8Array([1, 2, 3])
     const image = {
@@ -655,6 +715,26 @@ describe('table candidate provider verification', () => {
     }
     expect(tableCandidateCacheKey(changed, image.sha256)).not.toBe(
       first.receipt.cacheKey,
+    )
+  })
+
+  it('binds process arguments into the provider identity', () => {
+    const create = (args: string[]) =>
+      createDoclingTableCandidateProvider({
+        version: '2.48.0',
+        modelDigest: 'a'.repeat(64),
+        configuration: { threads: 1 },
+        identityConfiguration: {
+          configuration: { threads: 1 },
+          args,
+        },
+        adapter: adapterIdentity,
+        runtime: runtimeIdentity,
+        infer: vi.fn(async () => null),
+      })
+
+    expect(create(['--fast']).identity.configurationHash).not.toBe(
+      create(['--accurate']).identity.configurationHash,
     )
   })
 

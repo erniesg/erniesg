@@ -202,6 +202,7 @@ export function createDoclingTableCandidateProvider({
   version,
   modelDigest,
   configuration,
+  identityConfiguration = configuration,
   adapter,
   runtime,
   infer,
@@ -209,6 +210,7 @@ export function createDoclingTableCandidateProvider({
   version: string
   modelDigest: string
   configuration: unknown
+  identityConfiguration?: unknown
   adapter: TableCandidateAdapterIdentity
   runtime: TableCandidateRuntimeIdentity
   infer: TableCandidateProvider['propose']
@@ -218,7 +220,7 @@ export function createDoclingTableCandidateProvider({
       id: 'docling-tableformer',
       version,
       modelDigest,
-      configurationHash: tableCandidateConfigurationHash(configuration),
+      configurationHash: tableCandidateConfigurationHash(identityConfiguration),
       adapter,
       runtime,
     },

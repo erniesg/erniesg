@@ -718,28 +718,30 @@ function alignVerifiedSourceLineage(
           ),
       )
     if (completeBodyGrid) {
-      const bodyColumnAnchors = Array.from(
+      const bodyColumnAnchors: Array<number | null> = Array.from(
         { length: bodyColumnCount },
-        (_, columnIndex) =>
-          median(
-            bodyRows.map((row) =>
-              Math.min(
-                ...(row.cells[columnIndex].sourceRuns ?? []).map(
-                  (source) => source.box.x,
-                ),
-              ),
+        (_, columnIndex) => {
+          const anchors = bodyRows.flatMap((row) =>
+            (row.cells[columnIndex].sourceRuns ?? []).map(
+              (source) => source.box.x,
             ),
-          ),
+          )
+          return anchors.length > 0 ? median(anchors) : null
+        },
       )
       if (
         table.rows.some(
           (row) =>
             row.cells.length === bodyColumnCount &&
             row.cells.some((cell, columnIndex) => {
+              const anchor = bodyColumnAnchors[columnIndex]
+              if (anchor === null || !(cell.sourceRuns ?? []).length) {
+                return false
+              }
               const left = Math.min(
                 ...(cell.sourceRuns ?? []).map((source) => source.box.x),
               )
-              return Math.abs(left - bodyColumnAnchors[columnIndex]) > 0.045
+              return Math.abs(left - anchor) > 0.045
             }),
         )
       ) {

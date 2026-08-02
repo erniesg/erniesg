@@ -196,4 +196,40 @@ describe('table candidate provider operator boundary', () => {
       }),
     ).resolves.toEqual({ ok: '€' })
   })
+
+  it('bounds a provider subprocess that never exits', async () => {
+    const script = [
+      'process.stdin.resume()',
+      'setInterval(() => {}, 1000)',
+    ].join(';')
+    const provider = createProcessTableCandidateProvider({
+      module: {
+        createDoclingTableCandidateProvider: ({ infer, adapter, runtime }) => ({
+          identity: {
+            id: 'docling-tableformer',
+            version: '2.48.0',
+            modelDigest: 'a'.repeat(64),
+            configurationHash: 'b'.repeat(64),
+            adapter,
+            runtime,
+          },
+          locality: 'local',
+          propose: infer,
+        }),
+      },
+      configuration: configuration({
+        command: process.execPath,
+        args: ['-e', script],
+      }),
+      timeoutMs: 50,
+    })
+
+    await expect(
+      provider.propose({
+        image: Uint8Array.from([1, 2, 3]),
+        mediaType: 'image/png',
+        imageSha256: 'c'.repeat(64),
+      }),
+    ).rejects.toThrow('configured table candidate runtime is unavailable')
+  })
 })

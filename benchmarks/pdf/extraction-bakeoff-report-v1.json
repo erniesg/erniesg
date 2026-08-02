@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "corpusId": "synthetic-extraction-bakeoff-v1",
-  "heldOutIdentitySha256": "d6f59400f1c093dc5c82125444ce6cf92fe6fb46f906428fd4dc957f1edcb9d6",
+  "heldOutIdentitySha256": "b95c199887b1a35bdae8558e660c0e6fddaf41b09c655d57dfd64ee29505c545",
   "candidateIdentities": {
     "geometric-baseline": {
       "providerId": "geometric-baseline",
@@ -362,11 +362,13 @@
           "documentId": "heldout-one",
           "split": "held-out",
           "layout": "one-column",
-          "status": "disqualified",
+          "status": "failed",
           "verification": {
             "status": "failed",
-            "issueCodes": ["source-text-mismatch", "byte-instability"],
-            "issueCount": 2
+            "issueCodes": [
+              "source-text-mismatch"
+            ],
+            "issueCount": 1
           },
           "outputHash": null,
           "byteStable": false,
@@ -386,8 +388,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -403,8 +407,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -420,8 +426,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -437,8 +445,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -454,8 +464,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -471,8 +483,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -488,8 +502,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -505,8 +521,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             }
           ]
@@ -515,11 +533,13 @@
           "documentId": "heldout-two",
           "split": "held-out",
           "layout": "two-column",
-          "status": "disqualified",
+          "status": "failed",
           "verification": {
             "status": "failed",
-            "issueCodes": ["source-text-mismatch", "byte-instability"],
-            "issueCount": 2
+            "issueCodes": [
+              "source-text-mismatch"
+            ],
+            "issueCount": 1
           },
           "outputHash": null,
           "byteStable": false,
@@ -539,8 +559,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -556,8 +578,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -573,8 +597,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -590,8 +616,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -607,8 +635,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -624,8 +654,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -641,8 +673,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             },
             {
@@ -658,8 +692,10 @@
               "boilerplateContamination": 0,
               "verification": {
                 "status": "failed",
-                "issueCodes": ["source-text-mismatch", "byte-instability"],
-                "issueCount": 2
+                "issueCodes": [
+                  "source-text-mismatch"
+                ],
+                "issueCount": 1
               }
             }
           ]
@@ -683,7 +719,7 @@
         "tables/one-column": 0,
         "tables/two-column": 0
       },
-      "disqualified": true
+      "disqualified": false
     },
     "llm-grounded": {
       "documents": [
@@ -1025,7 +1061,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "boilerplate-exclusion",
@@ -1036,7 +1074,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     },
     {
       "stratum": "code-listings",
@@ -1047,7 +1087,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "code-listings",
@@ -1058,7 +1100,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     },
     {
       "stratum": "equations",
@@ -1069,7 +1113,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "equations",
@@ -1080,7 +1126,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     },
     {
       "stratum": "figures-diagrams",
@@ -1091,7 +1139,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "figures-diagrams",
@@ -1102,7 +1152,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     },
     {
       "stratum": "footnotes-citations",
@@ -1113,7 +1165,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "footnotes-citations",
@@ -1124,7 +1178,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     },
     {
       "stratum": "prose-continuity",
@@ -1135,7 +1191,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "prose-continuity",
@@ -1146,7 +1204,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     },
     {
       "stratum": "sectioning",
@@ -1157,7 +1217,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "sectioning",
@@ -1168,7 +1230,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     },
     {
       "stratum": "tables",
@@ -1179,7 +1243,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-one"]
+      "disagreementDocumentIds": [
+        "heldout-one"
+      ]
     },
     {
       "stratum": "tables",
@@ -1190,7 +1256,9 @@
         "llm-grounded": 1
       },
       "winner": "llm-grounded",
-      "disagreementDocumentIds": ["heldout-two"]
+      "disagreementDocumentIds": [
+        "heldout-two"
+      ]
     }
   ],
   "disagreements": [
@@ -1198,114 +1266,178 @@
       "documentId": "heldout-one",
       "stratum": "boilerplate-exclusion",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "boilerplate-exclusion",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-one",
       "stratum": "code-listings",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "code-listings",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-one",
       "stratum": "equations",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "equations",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-one",
       "stratum": "figures-diagrams",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "figures-diagrams",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-one",
       "stratum": "footnotes-citations",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "footnotes-citations",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-one",
       "stratum": "prose-continuity",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "prose-continuity",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-one",
       "stratum": "sectioning",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "sectioning",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-one",
       "stratum": "tables",
       "layout": "one-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     },
     {
       "documentId": "heldout-two",
       "stratum": "tables",
       "layout": "two-column",
-      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "arms": [
+        "geometric-baseline",
+        "llm-authored",
+        "llm-grounded"
+      ],
       "reason": "verification"
     }
   ],
-  "reportSha256": "f7c9f73c6a8ac216c5887e6f24f30076e3ffa1e6751fabf4cf4090a578501d76"
+  "reportSha256": "e6c606e68fc42dde1778953bc8ca99ebcdcc3e24efe2064f6f24841ad3398269"
 }

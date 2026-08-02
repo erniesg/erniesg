@@ -19,6 +19,6 @@
     "A proposed winner must improve the affected stratum and layout without lowering any other held-out stratum below the recorded baseline.",
     "Any unverified span, model-authored alt text, or model-authored asset bounds disqualifies the candidate regardless of score."
   ],
-  "heldOutIdentitySha256": "d6f59400f1c093dc5c82125444ce6cf92fe6fb46f906428fd4dc957f1edcb9d6",
-  "reportSha256": "f7c9f73c6a8ac216c5887e6f24f30076e3ffa1e6751fabf4cf4090a578501d76"
+  "heldOutIdentitySha256": "b95c199887b1a35bdae8558e660c0e6fddaf41b09c655d57dfd64ee29505c545",
+  "reportSha256": "e6c606e68fc42dde1778953bc8ca99ebcdcc3e24efe2064f6f24841ad3398269"
 }

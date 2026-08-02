@@ -283,7 +283,7 @@ const nodeSchema = z
 const proposalSchema = z
   .object({
     schemaVersion: z.literal(STRUCTURED_EXTRACTION_SCHEMA_VERSION).optional(),
-    nodes: z.array(nodeSchema),
+    nodes: z.array(nodeSchema).min(1),
     assetIds: z.array(idSchema).optional(),
     excludedBoilerplateRunIds: z.array(idSchema).optional(),
     diagnostics: z.array(z.string()).optional(),
@@ -494,6 +494,7 @@ function verifyNodeTable(
   runsById: ReadonlyMap<string, StructuredSourceRun>,
   claimed: Set<string>,
   issues: StructuredExtractionVerificationIssue[],
+  boilerplate: ReadonlySet<string>,
 ) {
   if (!node.table || node.type !== 'table') return undefined
   if (node.table.rows.length === 0) {
@@ -526,6 +527,15 @@ function verifyNodeTable(
         return undefined
       }
       for (const sourceRunId of cell.sourceRunIds) {
+        if (boilerplate.has(sourceRunId)) {
+          issues.push(
+            issue(
+              'boilerplate-in-body',
+              `Boilerplate run ${sourceRunId} cannot enter a table cell.`,
+              { nodeId: node.id, sourceRunId },
+            ),
+          )
+        }
         if (!runsById.has(sourceRunId)) {
           issues.push(
             issue('unknown-source-run', `Unknown source run ${sourceRunId}.`, {
@@ -795,7 +805,12 @@ export function verifyStructuredExtraction(
     new Set(context.sourceAssets.map(({ id }) => id)).size !==
     context.sourceAssets.length
   ) {
-    issues.push(issue('invalid-output', 'Deterministic asset identifiers must be unique.'))
+    issues.push(
+      issue(
+        'invalid-output',
+        'Deterministic asset identifiers must be unique.',
+      ),
+    )
   }
 
   if (nodesById.size !== proposal.nodes.length) {
@@ -814,6 +829,7 @@ export function verifyStructuredExtraction(
         ),
       )
     }
+    const claimedBeforeNode = new Set(claimed)
     const text = validateNodeText(node, runsById, claimed, issues)
     for (const sourceRunId of node.sourceRunIds) {
       if (boilerplate.has(sourceRunId)) {
@@ -829,12 +845,26 @@ export function verifyStructuredExtraction(
     // Table cells are the semantic spans. Their source runs may also be
     // listed on the table node so the node itself remains source anchored;
     // avoid treating that intentional containment as duplicate emission.
-    const tableClaimed = node.type === 'table' ? new Set<string>() : claimed
-    const table = verifyNodeTable(node, runsById, tableClaimed, issues)
+    const tableClaimed =
+      node.type === 'table' ? new Set(claimedBeforeNode) : claimed
+    const table = verifyNodeTable(
+      node,
+      runsById,
+      tableClaimed,
+      issues,
+      boilerplate,
+    )
     if (node.type === 'table') {
       for (const sourceRunId of tableClaimed) claimed.add(sourceRunId)
       // The node-level source references and cell-level references describe
       // the same source ownership, not two emitted text spans.
+      const nodeSourceCounts = new Map<string, number>()
+      for (const sourceRunId of node.sourceRunIds) {
+        nodeSourceCounts.set(
+          sourceRunId,
+          (nodeSourceCounts.get(sourceRunId) ?? 0) + 1,
+        )
+      }
       for (const sourceRunId of node.sourceRunIds) {
         const duplicate = issues.find(
           (entry) =>
@@ -842,7 +872,12 @@ export function verifyStructuredExtraction(
             entry.nodeId === node.id &&
             entry.sourceRunId === sourceRunId,
         )
-        if (duplicate) {
+        if (
+          duplicate &&
+          nodeSourceCounts.get(sourceRunId) === 1 &&
+          !claimedBeforeNode.has(sourceRunId) &&
+          tableClaimed.has(sourceRunId)
+        ) {
           const index = issues.indexOf(duplicate)
           issues.splice(index, 1)
         }
@@ -917,10 +952,10 @@ export function verifyStructuredExtraction(
   }
 
   const assetIds = [
-    ...new Set(
-      proposal.assetIds ??
-        proposal.nodes.flatMap((node) => (node.assetId ? [node.assetId] : [])),
-    ),
+    ...new Set([
+      ...(proposal.assetIds ?? []),
+      ...proposal.nodes.flatMap((node) => (node.assetId ? [node.assetId] : [])),
+    ]),
   ]
   for (const assetId of assetIds) {
     if (!assetsById.has(assetId))

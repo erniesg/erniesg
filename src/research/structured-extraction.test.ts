@@ -109,6 +109,18 @@ describe('source-backed structured extraction verifier', () => {
     }
   })
 
+  it('rejects an empty candidate instead of treating it as a publishable output', () => {
+    const result = verifyStructuredExtraction(context(), {
+      schemaVersion: '1.0.0',
+      nodes: [],
+    })
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('invalid-output')
+    }
+  })
+
   it('rejects model-authored alt text even when an asset is otherwise valid', () => {
     const proposal = validProposal()
     proposal.nodes[2]!.altText = 'A detailed description invented from pixels'
@@ -159,6 +171,74 @@ describe('source-backed structured extraction verifier', () => {
         sourceRunIds: ['table-head'],
         headerScope: 'column',
       })
+    }
+  })
+
+  it('rejects table cells that reuse a source run from another table', () => {
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'table-one',
+        type: 'table',
+        sourceRunIds: ['table-head'],
+        table: {
+          rows: [{ cells: [{ sourceRunIds: ['table-head'] }] }],
+        },
+      },
+      {
+        id: 'table-two',
+        type: 'table',
+        sourceRunIds: ['table-head'],
+        table: {
+          rows: [{ cells: [{ sourceRunIds: ['table-head'] }] }],
+        },
+      },
+    )
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'duplicate-source-run',
+            sourceRunId: 'table-head',
+          }),
+        ]),
+      )
+    }
+  })
+
+  it('rejects boilerplate hidden inside table cells', () => {
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'table',
+      type: 'table',
+      sourceRunIds: ['table-head'],
+      table: {
+        rows: [{ cells: [{ sourceRunIds: ['running-head'] }] }],
+      },
+    })
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'boilerplate-in-body',
+      )
+    }
+  })
+
+  it('unions explicit and node-referenced deterministic assets', () => {
+    const candidate = validProposal()
+    candidate.assetIds = []
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      expect(result.output.assetIds).toEqual(['figure-asset'])
     }
   })
 

@@ -578,7 +578,12 @@ describe('table candidate provider verification', () => {
       headerRowCount: 1,
       rows: [
         proposal().rows[0],
-        proposal().rows[1],
+        {
+          cells: proposal().rows[1].cells.map((cell) => ({
+            ...cell,
+            box: cell.box ? { ...cell.box, height: 0.2 } : undefined,
+          })),
+        },
         {
           cells: [
             {

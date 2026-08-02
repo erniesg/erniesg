@@ -48,7 +48,32 @@ export type StructBlockKind =
   | 'footnote'
   | 'endnote'
   | 'code'
+  | 'furniture'
   | 'unknown'
+
+export type StructFurnitureEvidence = {
+  classification:
+    | 'repeated-text'
+    | 'incrementing-numeral'
+    | 'rotated-margin'
+    | 'separator-rule'
+    | 'explicit-paratext'
+  band: 'top' | 'bottom' | 'left' | 'right'
+  pages: number[]
+  boxes: StructBox[]
+  evidence: string[]
+  normalizedText?: string
+  sequence?: number[]
+  sourceRunIndexes?: number[]
+}
+
+export type StructFurnitureReview = {
+  reason: 'single-occurrence-margin'
+  band: 'top' | 'bottom' | 'left' | 'right'
+  pages: number[]
+  boxes: StructBox[]
+  evidence: string[]
+}
 
 export type StructInline = {
   start: number
@@ -110,6 +135,8 @@ export type StructBlock = {
   evidence: StructEvidence
   table?: StructTable
   fallbackAssetIds?: string[]
+  furniture?: StructFurnitureEvidence
+  furnitureReview?: StructFurnitureReview
   attributes?: Record<string, string | number | boolean>
 }
 
@@ -231,6 +258,13 @@ export type StructReceipt = {
     structRelationshipCount: number
     structDiagnosticCount: number
     structTextCharacterCount: number
+    /** Present for PDF graphs that contain accounted page furniture. */
+    sourceFurnitureBlockCount?: number
+    accountedFurnitureBlockCount?: number
+    sourceFurnitureTextCharacterCount?: number
+    structFurnitureBlockCount?: number
+    structFurnitureTextCharacterCount?: number
+    furnitureContaminationCount?: number
   }
   generatedSha256: string
 }

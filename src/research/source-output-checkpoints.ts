@@ -19,6 +19,7 @@ export const SOURCE_OUTPUT_CHECKPOINT_PROPERTIES = [
   'heading-level',
   'table-structure',
   'code-block-structure',
+  'furniture-exclusion',
 ] as const
 
 export type SourceOutputCheckpointProperty =
@@ -44,6 +45,7 @@ const sourceExpectationSchema = z
   .object({
     feature: z.enum(SOURCE_OUTPUT_FEATURES),
     text: z.string().min(1).optional(),
+    furnitureContaminationCount: z.number().int().min(0).optional(),
   })
   .strict()
 
@@ -116,6 +118,8 @@ function expectedRenditionFeature(
       return 'table'
     case 'code-block-structure':
       return 'code'
+    case 'furniture-exclusion':
+      return 'prose'
   }
 }
 
@@ -131,6 +135,8 @@ function expectedSourceFeature(
     case 'heading-level':
     case 'table-structure':
     case 'code-block-structure':
+      return 'structure'
+    case 'furniture-exclusion':
       return 'structure'
   }
 }
@@ -232,6 +238,7 @@ export type SourceCheckpointObservation = {
   page: number
   text: string
   hasVisual: boolean
+  furnitureContaminationCount?: number
 }
 
 export type RenditionCheckpointObservation = {
@@ -424,6 +431,19 @@ export function evaluateSourceOutputCheckpoint(
       checkpointId: checkpoint.id,
       status: 'failed',
       reason: 'The source page has no readable evidence.',
+    }
+  }
+  if (checkpoint.property === 'furniture-exclusion') {
+    const expected = checkpoint.source.furnitureContaminationCount ?? 0
+    if (observation.source.furnitureContaminationCount !== expected) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason:
+          observation.source.furnitureContaminationCount === undefined
+            ? 'The reconstruction did not provide a furniture contamination counter.'
+            : `Furniture contamination count is ${observation.source.furnitureContaminationCount}, expected ${expected}.`,
+      }
     }
   }
   if (checkpoint.source.feature === 'visual' && !observation.source.hasVisual) {

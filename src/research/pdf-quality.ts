@@ -103,6 +103,9 @@ type QualityInput = {
   hyperlinkLedger?: { expected: number; mapped: number }
   sourceSha256?: string
   canonicalFloatScopes?: readonly CanonicalFloatScopeEvidence[]
+  furnitureExcludedRunCount?: number
+  furnitureExcludedTextCharacters?: number
+  furnitureContaminationCount?: number
 }
 
 function exactObjectKeys(value: unknown, expected: readonly string[]) {
@@ -3297,6 +3300,9 @@ export function assessPdfCompleteness({
   hyperlinkLedger = { expected: 0, mapped: 0 },
   sourceSha256,
   canonicalFloatScopes = [],
+  furnitureExcludedRunCount,
+  furnitureExcludedTextCharacters,
+  furnitureContaminationCount,
 }: QualityInput): {
   semanticSignals: PdfSemanticSignals
   completeness: PdfCompletenessMetrics
@@ -3369,6 +3375,36 @@ export function assessPdfCompleteness({
           .map((run) => run.text)
           .join(' '),
   )
+  const orderedSourceRegionIds = new Set(
+    orderedSourceRegions.map((region) => region.id),
+  )
+  const furnitureRegions = allSourceRegions.filter((region) => region.furniture)
+  const excludedFurnitureRegions = furnitureRegions.filter(
+    (region) => !orderedSourceRegionIds.has(region.id),
+  )
+  const derivedFurnitureRunCount = furnitureRegions.reduce(
+    (total, region) =>
+      total + region.lines.reduce((count, line) => count + line.runs.length, 0),
+    0,
+  )
+  const derivedFurnitureTextCharacters = excludedFurnitureRegions.reduce(
+    (total, region) =>
+      total +
+      region.lines.reduce(
+        (lineTotal, line) =>
+          lineTotal +
+          line.runs.reduce(
+            (runTotal, run) =>
+              runTotal + characterCount(normalizedText(run.text)),
+            0,
+          ),
+        0,
+      ),
+    0,
+  )
+  const derivedFurnitureContaminationCount = furnitureRegions.filter((region) =>
+    orderedSourceRegionIds.has(region.id),
+  ).length
   const validatedVisualRepresentation = validatedVisualRepresentationByNode(
     paper,
     provenance,
@@ -3425,6 +3461,26 @@ export function assessPdfCompleteness({
           (provenance[node.id]?.regionIds.length ?? 0) > 1 ? [node.id] : [],
         )
       : []
+  const furnitureRegionIds = new Set(
+    furnitureRegions.map((region) => region.id),
+  )
+  const provenanceFurnitureContaminationCount = paper.nodes.reduce(
+    (total, node) =>
+      total +
+      (provenance?.[node.id]?.regionIds ?? []).filter((regionId) =>
+        furnitureRegionIds.has(regionId),
+      ).length,
+    0,
+  )
+  const resolvedFurnitureRunCount =
+    furnitureExcludedRunCount ?? derivedFurnitureRunCount
+  const resolvedFurnitureTextCharacters =
+    furnitureExcludedTextCharacters ?? derivedFurnitureTextCharacters
+  const resolvedFurnitureContaminationCount = Math.max(
+    furnitureContaminationCount ?? 0,
+    derivedFurnitureContaminationCount,
+    provenanceFurnitureContaminationCount,
+  )
   const matchedTextCharacters = conservedText.matchedCharacters
   const duplicateSpans = duplicateCanonicalSpanCount(sourceText, paper)
   const classifiedLineBoundaries = classifyStructuralLineBoundaryDecisions({
@@ -3559,12 +3615,35 @@ export function assessPdfCompleteness({
       )
     })
     .map((page) => page.page)
+  const coveredByFurnitureCharacters = derivedFurnitureTextCharacters
+  // The non-provenance fallback derives source text from every page run,
+  // including furniture. Provenance-backed conservation starts from the
+  // canonical flow and therefore needs the excluded furniture added back.
+  const sourceTextCharactersWithFurniture = provenanceBackedConservation
+    ? conservedText.sourceCharacters + coveredByFurnitureCharacters
+    : conservedText.sourceCharacters
+  const coveredInFlowCharacters = matchedTextCharacters
+  const lostTextCharacterCount = Math.max(
+    sourceTextCharactersWithFurniture -
+      coveredInFlowCharacters -
+      coveredByFurnitureCharacters,
+    0,
+  )
+  const furnitureAccountingEnabled =
+    furnitureRegions.length > 0 ||
+    resolvedFurnitureRunCount > 0 ||
+    resolvedFurnitureContaminationCount > 0
   const completeness: PdfCompletenessMetrics = {
-    sourceTextCharacters: conservedText.sourceCharacters,
+    sourceTextCharacters: furnitureAccountingEnabled
+      ? sourceTextCharactersWithFurniture
+      : conservedText.sourceCharacters,
     outputTextCharacters: conservedText.outputCharacters,
     matchedTextCharacters,
     textCoverage: Math.min(
-      coverage(matchedTextCharacters, conservedText.sourceCharacters),
+      coverage(
+        matchedTextCharacters + coveredByFurnitureCharacters,
+        sourceTextCharactersWithFurniture,
+      ),
       coverage(matchedTextCharacters, conservedText.outputCharacters),
     ),
     duplicateCanonicalSpanCount: duplicateSpans,
@@ -3607,8 +3686,55 @@ export function assessPdfCompleteness({
     ocrRequiredPages,
     readingOrderDiagnostics,
     readingOrderEvaluation,
+    ...(furnitureAccountingEnabled
+      ? {
+          furnitureExcludedRunCount: resolvedFurnitureRunCount,
+          furnitureExcludedTextCharacters: resolvedFurnitureTextCharacters,
+          furnitureContaminationCount: resolvedFurnitureContaminationCount,
+          lostTextCharacterCount,
+          textCoverageAccounting: {
+            sourceCharacters: sourceTextCharactersWithFurniture,
+            coveredInFlowCharacters,
+            coveredByFurnitureCharacters,
+            lostCharacters: lostTextCharacterCount,
+          },
+        }
+      : {}),
   }
   const qualityDiagnostics: ReconstructionDiagnostic[] = []
+  const furnitureReviewRegions = allSourceRegions.filter(
+    (region) => region.furnitureReview,
+  )
+  if (furnitureReviewRegions.length > 0) {
+    qualityDiagnostics.push({
+      code: 'FURNITURE_REVIEW_REQUIRED',
+      severity: 'error',
+      message: `${furnitureReviewRegions.length} single-occurrence margin run${furnitureReviewRegions.length === 1 ? '' : 's'} remain readable but require bounded source review before publication.`,
+      sourceBoxes: furnitureReviewRegions.flatMap(
+        (region) => region.furnitureReview?.boxes ?? [],
+      ),
+      target: {
+        regionIds: furnitureReviewRegions.map((region) => region.id),
+        markerId: null,
+      },
+    })
+  }
+  if (resolvedFurnitureContaminationCount > 0) {
+    const contaminationRegionIds = furnitureRegions
+      .filter((region) => orderedSourceRegionIds.has(region.id))
+      .map((region) => region.id)
+    qualityDiagnostics.push({
+      code: 'FURNITURE_CONTAMINATION',
+      severity: 'error',
+      message: `${resolvedFurnitureContaminationCount} accounted furniture region${resolvedFurnitureContaminationCount === 1 ? '' : 's'} entered canonical body flow.`,
+      sourceBoxes: furnitureRegions
+        .filter((region) => orderedSourceRegionIds.has(region.id))
+        .flatMap((region) => [region.box, ...(region.furniture?.boxes ?? [])]),
+      ...(contaminationRegionIds.length > 0
+        ? { target: { regionIds: contaminationRegionIds, markerId: null } }
+        : {}),
+    })
+  }
   if (!semanticFlowLedgerValid) {
     qualityDiagnostics.push({
       code: 'INVALID_SOURCE_SEMANTIC_FLOW_BOUNDARY_LEDGER',

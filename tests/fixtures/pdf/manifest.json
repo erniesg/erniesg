@@ -87,7 +87,8 @@
         "source-flowchart",
         "caption-boundary",
         "prose-continuity",
-        "pseudocode-block"
+        "pseudocode-block",
+        "furniture-exclusion"
       ]
     },
     {

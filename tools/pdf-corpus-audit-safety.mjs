@@ -3,6 +3,10 @@ const SAFE_DIAGNOSTIC_MESSAGES = Object.freeze({
   MIXED_PAGE: 'A page mixes sparse text with image content.',
   REPEATED_MARGIN_TEXT:
     'Repeated header or footer patterns were removed from reading order.',
+  FURNITURE_REVIEW_REQUIRED:
+    'A single-occurrence margin run requires bounded source review.',
+  FURNITURE_CONTAMINATION:
+    'Accounted page furniture entered canonical reading flow.',
   LOW_CONFIDENCE_BLOCK: 'A reconstructed block requires reading-order review.',
   RESOLVED_READING_ORDER:
     'A reading-order region was resolved from deterministic geometry.',

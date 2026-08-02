@@ -90,6 +90,9 @@ function renderTable(table: StructTable) {
 }
 
 function renderBlock(document: StructDocument, block: StructBlock) {
+  // Furniture remains queryable in STRUCT with its source evidence, but is
+  // intentionally outside the publication reading flow.
+  if (block.kind === 'furniture') return ''
   const id = attribute(block.id)
   const content = renderInline(block.text, block.inline)
   if (block.kind === 'heading') {

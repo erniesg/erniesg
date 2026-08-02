@@ -15,6 +15,8 @@ import type {
   StructBlockKind,
   StructDocument,
   StructEvidence,
+  StructFurnitureEvidence,
+  StructFurnitureReview,
   StructInline,
   StructRelationship,
   StructSourceFormat,
@@ -218,6 +220,66 @@ function regionEvidence(region: PdfPageRegion): StructEvidence {
   }
 }
 
+function regionStructKind(region: PdfPageRegion): StructBlockKind {
+  if (region.furniture) return 'furniture'
+  return region.kind === 'figure'
+    ? 'figure'
+    : region.kind === 'equation'
+      ? 'equation'
+      : region.kind === 'caption'
+        ? 'caption'
+        : region.kind === 'footnote'
+          ? 'footnote'
+          : 'paragraph'
+}
+
+function furnitureEvidence(
+  evidence: PdfPageRegion['furniture'],
+): StructFurnitureEvidence | undefined {
+  if (!evidence) return undefined
+  return {
+    classification: evidence.classification,
+    band: evidence.band,
+    pages: [...evidence.pages],
+    boxes: evidence.boxes.map(({ page, x, y, width, height, rotation }) => ({
+      page,
+      x,
+      y,
+      width,
+      height,
+      rotation,
+    })),
+    evidence: [...evidence.evidence],
+    ...(evidence.normalizedText
+      ? { normalizedText: evidence.normalizedText }
+      : {}),
+    ...(evidence.sequence ? { sequence: [...evidence.sequence] } : {}),
+    ...(evidence.sourceRunIndexes
+      ? { sourceRunIndexes: [...evidence.sourceRunIndexes] }
+      : {}),
+  }
+}
+
+function furnitureReview(
+  review: PdfPageRegion['furnitureReview'],
+): StructFurnitureReview | undefined {
+  if (!review) return undefined
+  return {
+    reason: review.reason,
+    band: review.band,
+    pages: [...review.pages],
+    boxes: review.boxes.map(({ page, x, y, width, height, rotation }) => ({
+      page,
+      x,
+      y,
+      width,
+      height,
+      rotation,
+    })),
+    evidence: [...review.evidence],
+  }
+}
+
 export function buildStructDocument(
   reconstruction: DocumentReconstruction,
 ): StructDocument {
@@ -247,16 +309,7 @@ export function buildStructDocument(
           region.id,
           stableBlockId({
             sourceSha256: reconstruction.source.sha256,
-            kind:
-              region.kind === 'figure'
-                ? 'figure'
-                : region.kind === 'equation'
-                  ? 'equation'
-                  : region.kind === 'caption'
-                    ? 'caption'
-                    : region.kind === 'footnote'
-                      ? 'footnote'
-                      : 'paragraph',
+            kind: regionStructKind(region),
             text: region.text,
             evidence: regionEvidence(region),
             sourcePosition,
@@ -354,16 +407,7 @@ export function buildStructDocument(
             owner ===
             stableBlockId({
               sourceSha256: reconstruction.source.sha256,
-              kind:
-                region.kind === 'figure'
-                  ? 'figure'
-                  : region.kind === 'equation'
-                    ? 'equation'
-                    : region.kind === 'caption'
-                      ? 'caption'
-                      : region.kind === 'footnote'
-                        ? 'footnote'
-                        : 'paragraph',
+              kind: regionStructKind(region),
               text: region.text,
               evidence: regionEvidence(region),
               sourcePosition: reconstruction.regions.indexOf(region),
@@ -374,16 +418,7 @@ export function buildStructDocument(
           (region, index) =>
             ({
               id: resolveEndpoint(region.id),
-              kind:
-                region.kind === 'figure'
-                  ? 'figure'
-                  : region.kind === 'equation'
-                    ? 'equation'
-                    : region.kind === 'caption'
-                      ? 'caption'
-                      : region.kind === 'footnote'
-                        ? 'footnote'
-                        : 'paragraph',
+              kind: regionStructKind(region),
               text: region.text,
               page: region.page,
               order:
@@ -393,6 +428,12 @@ export function buildStructDocument(
               column: region.column,
               inline: [],
               evidence: regionEvidence(region),
+              ...(region.furniture
+                ? { furniture: furnitureEvidence(region.furniture) }
+                : {}),
+              ...(region.furnitureReview
+                ? { furnitureReview: furnitureReview(region.furnitureReview) }
+                : {}),
               attributes: {},
             }) satisfies StructBlock,
         )
@@ -800,6 +841,13 @@ export function buildStructDocument(
     (count, block) => count + block.text.length,
     0,
   )
+  const furnitureBlocks = orderedBlocks.filter(
+    (block) => block.kind === 'furniture',
+  )
+  const furnitureTextCharacterCount = furnitureBlocks.reduce(
+    (count, block) => count + block.text.length,
+    0,
+  )
   const conservation = {
     sourceNodeCount: reconstruction.paper.nodes.length,
     accountedSourceNodeCount: blocks.length,
@@ -819,6 +867,25 @@ export function buildStructDocument(
     structRelationshipCount: relationships.length,
     structDiagnosticCount: diagnostics.length,
     structTextCharacterCount,
+    ...(furnitureBlocks.length > 0
+      ? {
+          sourceFurnitureBlockCount: reconstruction.regions.filter(
+            (region) => region.furniture,
+          ).length,
+          accountedFurnitureBlockCount: furnitureBlocks.length,
+          sourceFurnitureTextCharacterCount: reconstruction.regions
+            .filter((region) => region.furniture)
+            .reduce((count, region) => count + region.text.length, 0),
+          structFurnitureBlockCount: furnitureBlocks.length,
+          structFurnitureTextCharacterCount: furnitureTextCharacterCount,
+        }
+      : {}),
+    ...(reconstruction.completeness.furnitureContaminationCount !== undefined
+      ? {
+          furnitureContaminationCount:
+            reconstruction.completeness.furnitureContaminationCount,
+        }
+      : {}),
   }
   const canonicalAssets = [...assets].sort((left, right) =>
     left.id.localeCompare(right.id),

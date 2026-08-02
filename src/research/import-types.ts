@@ -447,6 +447,42 @@ export type PdfRegionKind =
   | 'footnote'
   | 'endnote'
 
+/**
+ * Evidence used when a source run is kept out of canonical reading order as
+ * page furniture.  The classifier deliberately describes geometry and
+ * repetition, never a journal or keyword allowlist.
+ */
+export type PdfFurnitureClassification =
+  | 'repeated-text'
+  | 'incrementing-numeral'
+  | 'rotated-margin'
+  | 'separator-rule'
+  | 'explicit-paratext'
+
+export type PdfFurnitureBand = 'top' | 'bottom' | 'left' | 'right'
+
+export type PdfFurnitureEvidence = {
+  classification: PdfFurnitureClassification
+  band: PdfFurnitureBand
+  pages: number[]
+  boxes: NormalizedSourceBox[]
+  /** Stable, source-derived evidence strings suitable for diagnostics. */
+  evidence: string[]
+  /** Text skeleton after replacing numerals, when the source has text. */
+  normalizedText?: string
+  /** Parsed numeral values in source page order, when available. */
+  sequence?: number[]
+  sourceRunIndexes?: number[]
+}
+
+export type PdfFurnitureReview = {
+  reason: 'single-occurrence-margin'
+  band: PdfFurnitureBand
+  pages: number[]
+  boxes: NormalizedSourceBox[]
+  evidence: string[]
+}
+
 export type PdfRegionColumn = 'single' | 'left' | 'right' | 'span'
 
 export type PdfRegionLine = {
@@ -470,6 +506,10 @@ export type PdfPageRegion = {
   lines: PdfRegionLine[]
   nativeObjectIds: string[]
   includedInReadingOrder: boolean
+  /** Present when this region is accounted furniture, not canonical flow. */
+  furniture?: PdfFurnitureEvidence
+  /** Present when margin geometry is bounded but repetition is unproven. */
+  furnitureReview?: PdfFurnitureReview
   sourceCaptionLane?: {
     boundary: number
     side: 'left' | 'right'
@@ -890,6 +930,8 @@ export type ReconstructionDiagnostic = {
     | 'UNRESOLVED_PREFORMATTED_TRANSCRIPT'
     | 'UNRESOLVED_SEMANTIC_OBJECTS'
     | 'STALE_HUMAN_DECISION'
+    | 'FURNITURE_REVIEW_REQUIRED'
+    | 'FURNITURE_CONTAMINATION'
   severity: 'info' | 'warning' | 'error'
   page?: number
   message: string
@@ -946,6 +988,17 @@ export type PdfCompletenessMetrics = {
   ocrRequiredPages: number[]
   readingOrderDiagnostics: number
   readingOrderEvaluation: PdfReadingOrderEvaluation
+  /** Optional for backward-compatible reports without furniture evidence. */
+  furnitureExcludedRunCount?: number
+  furnitureExcludedTextCharacters?: number
+  furnitureContaminationCount?: number
+  lostTextCharacterCount?: number
+  textCoverageAccounting?: {
+    sourceCharacters: number
+    coveredInFlowCharacters: number
+    coveredByFurnitureCharacters: number
+    lostCharacters: number
+  }
 }
 
 export type PdfCompletenessPolicy = {

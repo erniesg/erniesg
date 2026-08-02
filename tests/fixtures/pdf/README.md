@@ -37,7 +37,8 @@ copy any external paper.
 contains a source flowchart, a caption, a sentence explicitly labelled as
 continuing across a column break, and a pseudocode listing. The paired evidence
 command uses this page only; it never renders owner-local papers into the
-repository.
+repository. Its named furniture-exclusion checkpoint also requires the
+reconstruction's per-document contamination counter.
 
 `sparse-embedded-text.pdf` is a title/divider page with no image content. It
 proves that high-confidence OCR which only confirms the embedded text completes

@@ -475,6 +475,44 @@
         "readingOrderDiagnostics": { "type": "integer", "minimum": 0 },
         "readingOrderEvaluation": {
           "$ref": "#/$defs/readingOrderEvaluation"
+        },
+        "furnitureExcludedRunCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "furnitureExcludedTextCharacters": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "furnitureContaminationCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lostTextCharacterCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "textCoverageAccounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sourceCharacters",
+            "coveredInFlowCharacters",
+            "coveredByFurnitureCharacters",
+            "lostCharacters"
+          ],
+          "properties": {
+            "sourceCharacters": { "type": "integer", "minimum": 0 },
+            "coveredInFlowCharacters": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "coveredByFurnitureCharacters": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lostCharacters": { "type": "integer", "minimum": 0 }
+          }
         }
       },
       "dependentRequired": {

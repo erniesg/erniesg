@@ -195,6 +195,21 @@ const DIAGNOSTIC_COPY: Record<string, DiagnosticCopy> = {
       'The readable export is available for review, but it should not be treated as a final publication.',
     action: 'Check the affected pages against the source before publishing.',
   },
+  FURNITURE_REVIEW_REQUIRED: {
+    category: 'layout',
+    title: 'A page-margin run needs a quick source check',
+    message:
+      'A single-occurrence margin run remains in the readable flow because repetition did not prove it was page furniture.',
+    action:
+      'Check the marked page before publishing. The run remains visible and was not silently discarded.',
+  },
+  FURNITURE_CONTAMINATION: {
+    category: 'layout',
+    title: 'Page furniture entered the reading flow',
+    message:
+      'The export found a repeated margin run inside canonical body flow and stopped publication until its source geometry is reviewed.',
+    action: 'Compare the marked page with the source PDF before publishing.',
+  },
   UNRESOLVED_CORRUPTING_JOIN: {
     category: 'text',
     title: 'A line break could not be joined safely',

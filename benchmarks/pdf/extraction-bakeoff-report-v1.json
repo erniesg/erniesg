@@ -1,0 +1,1311 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpusId": "synthetic-extraction-bakeoff-v1",
+  "heldOutIdentitySha256": "d6f59400f1c093dc5c82125444ce6cf92fe6fb46f906428fd4dc957f1edcb9d6",
+  "candidateIdentities": {
+    "geometric-baseline": {
+      "providerId": "geometric-baseline",
+      "modelId": "geometric-baseline-model",
+      "modelVersion": "fixture-1.0.0",
+      "modelDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promptHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "llm-authored": {
+      "providerId": "llm-authored",
+      "modelId": "llm-authored-model",
+      "modelVersion": "fixture-1.0.0",
+      "modelDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promptHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "llm-grounded": {
+      "providerId": "llm-grounded",
+      "modelId": "llm-grounded-model",
+      "modelVersion": "fixture-1.0.0",
+      "modelDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promptHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "heldOutScoredOnce": true,
+  "arms": {
+    "geometric-baseline": {
+      "documents": [
+        {
+          "documentId": "heldout-one",
+          "split": "held-out",
+          "layout": "one-column",
+          "status": "passed",
+          "verification": {
+            "status": "passed",
+            "issueCodes": [],
+            "issueCount": 0
+          },
+          "outputHash": "f74fa39356ad082e442413559cacfecfe06a60969ff9145829cc3ba7dfb2f45d",
+          "byteStable": true,
+          "latencyMsPerPage": 1,
+          "costUsdPerPage": 0,
+          "caseScores": [
+            {
+              "caseId": "heldout-one-sectioning",
+              "documentId": "heldout-one",
+              "stratum": "sectioning",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-prose-continuity",
+              "documentId": "heldout-one",
+              "stratum": "prose-continuity",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-boilerplate-exclusion",
+              "documentId": "heldout-one",
+              "stratum": "boilerplate-exclusion",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-code-listings",
+              "documentId": "heldout-one",
+              "stratum": "code-listings",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-tables",
+              "documentId": "heldout-one",
+              "stratum": "tables",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-figures-diagrams",
+              "documentId": "heldout-one",
+              "stratum": "figures-diagrams",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-equations",
+              "documentId": "heldout-one",
+              "stratum": "equations",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-footnotes-citations",
+              "documentId": "heldout-one",
+              "stratum": "footnotes-citations",
+              "layout": "one-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            }
+          ]
+        },
+        {
+          "documentId": "heldout-two",
+          "split": "held-out",
+          "layout": "two-column",
+          "status": "passed",
+          "verification": {
+            "status": "passed",
+            "issueCodes": [],
+            "issueCount": 0
+          },
+          "outputHash": "56f0eca85a79cbdb5456b76202f99698141f0915981b881db2519d81163c3422",
+          "byteStable": true,
+          "latencyMsPerPage": 1,
+          "costUsdPerPage": 0,
+          "caseScores": [
+            {
+              "caseId": "heldout-two-sectioning",
+              "documentId": "heldout-two",
+              "stratum": "sectioning",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-prose-continuity",
+              "documentId": "heldout-two",
+              "stratum": "prose-continuity",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-boilerplate-exclusion",
+              "documentId": "heldout-two",
+              "stratum": "boilerplate-exclusion",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-code-listings",
+              "documentId": "heldout-two",
+              "stratum": "code-listings",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-tables",
+              "documentId": "heldout-two",
+              "stratum": "tables",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-figures-diagrams",
+              "documentId": "heldout-two",
+              "stratum": "figures-diagrams",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-equations",
+              "documentId": "heldout-two",
+              "stratum": "equations",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-footnotes-citations",
+              "documentId": "heldout-two",
+              "stratum": "footnotes-citations",
+              "layout": "two-column",
+              "score": 0.8,
+              "typePrecision": 1,
+              "typeRecall": 0.5,
+              "sourceRecall": 0.5,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            }
+          ]
+        }
+      ],
+      "byStratumAndLayout": {
+        "boilerplate-exclusion/one-column": 0.8,
+        "boilerplate-exclusion/two-column": 0.8,
+        "code-listings/one-column": 0.8,
+        "code-listings/two-column": 0.8,
+        "equations/one-column": 0.8,
+        "equations/two-column": 0.8,
+        "figures-diagrams/one-column": 0.8,
+        "figures-diagrams/two-column": 0.8,
+        "footnotes-citations/one-column": 0.8,
+        "footnotes-citations/two-column": 0.8,
+        "prose-continuity/one-column": 0.8,
+        "prose-continuity/two-column": 0.8,
+        "sectioning/one-column": 0.8,
+        "sectioning/two-column": 0.8,
+        "tables/one-column": 0.8,
+        "tables/two-column": 0.8
+      },
+      "disqualified": false
+    },
+    "llm-authored": {
+      "documents": [
+        {
+          "documentId": "heldout-one",
+          "split": "held-out",
+          "layout": "one-column",
+          "status": "disqualified",
+          "verification": {
+            "status": "failed",
+            "issueCodes": ["source-text-mismatch", "byte-instability"],
+            "issueCount": 2
+          },
+          "outputHash": null,
+          "byteStable": false,
+          "latencyMsPerPage": 1,
+          "costUsdPerPage": 0,
+          "caseScores": [
+            {
+              "caseId": "heldout-one-sectioning",
+              "documentId": "heldout-one",
+              "stratum": "sectioning",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-one-prose-continuity",
+              "documentId": "heldout-one",
+              "stratum": "prose-continuity",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-one-boilerplate-exclusion",
+              "documentId": "heldout-one",
+              "stratum": "boilerplate-exclusion",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-one-code-listings",
+              "documentId": "heldout-one",
+              "stratum": "code-listings",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-one-tables",
+              "documentId": "heldout-one",
+              "stratum": "tables",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-one-figures-diagrams",
+              "documentId": "heldout-one",
+              "stratum": "figures-diagrams",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-one-equations",
+              "documentId": "heldout-one",
+              "stratum": "equations",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-one-footnotes-citations",
+              "documentId": "heldout-one",
+              "stratum": "footnotes-citations",
+              "layout": "one-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            }
+          ]
+        },
+        {
+          "documentId": "heldout-two",
+          "split": "held-out",
+          "layout": "two-column",
+          "status": "disqualified",
+          "verification": {
+            "status": "failed",
+            "issueCodes": ["source-text-mismatch", "byte-instability"],
+            "issueCount": 2
+          },
+          "outputHash": null,
+          "byteStable": false,
+          "latencyMsPerPage": 1,
+          "costUsdPerPage": 0,
+          "caseScores": [
+            {
+              "caseId": "heldout-two-sectioning",
+              "documentId": "heldout-two",
+              "stratum": "sectioning",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-two-prose-continuity",
+              "documentId": "heldout-two",
+              "stratum": "prose-continuity",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-two-boilerplate-exclusion",
+              "documentId": "heldout-two",
+              "stratum": "boilerplate-exclusion",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-two-code-listings",
+              "documentId": "heldout-two",
+              "stratum": "code-listings",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-two-tables",
+              "documentId": "heldout-two",
+              "stratum": "tables",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-two-figures-diagrams",
+              "documentId": "heldout-two",
+              "stratum": "figures-diagrams",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-two-equations",
+              "documentId": "heldout-two",
+              "stratum": "equations",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            },
+            {
+              "caseId": "heldout-two-footnotes-citations",
+              "documentId": "heldout-two",
+              "stratum": "footnotes-citations",
+              "layout": "two-column",
+              "score": 0,
+              "typePrecision": 1,
+              "typeRecall": 0,
+              "sourceRecall": 0,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "failed",
+                "issueCodes": ["source-text-mismatch", "byte-instability"],
+                "issueCount": 2
+              }
+            }
+          ]
+        }
+      ],
+      "byStratumAndLayout": {
+        "boilerplate-exclusion/one-column": 0,
+        "boilerplate-exclusion/two-column": 0,
+        "code-listings/one-column": 0,
+        "code-listings/two-column": 0,
+        "equations/one-column": 0,
+        "equations/two-column": 0,
+        "figures-diagrams/one-column": 0,
+        "figures-diagrams/two-column": 0,
+        "footnotes-citations/one-column": 0,
+        "footnotes-citations/two-column": 0,
+        "prose-continuity/one-column": 0,
+        "prose-continuity/two-column": 0,
+        "sectioning/one-column": 0,
+        "sectioning/two-column": 0,
+        "tables/one-column": 0,
+        "tables/two-column": 0
+      },
+      "disqualified": true
+    },
+    "llm-grounded": {
+      "documents": [
+        {
+          "documentId": "heldout-one",
+          "split": "held-out",
+          "layout": "one-column",
+          "status": "passed",
+          "verification": {
+            "status": "passed",
+            "issueCodes": [],
+            "issueCount": 0
+          },
+          "outputHash": "06ad4f63c333174d3d855db815ca91d05a46f47f043b9c914645995099d2635e",
+          "byteStable": true,
+          "latencyMsPerPage": 1,
+          "costUsdPerPage": 0,
+          "caseScores": [
+            {
+              "caseId": "heldout-one-sectioning",
+              "documentId": "heldout-one",
+              "stratum": "sectioning",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-prose-continuity",
+              "documentId": "heldout-one",
+              "stratum": "prose-continuity",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-boilerplate-exclusion",
+              "documentId": "heldout-one",
+              "stratum": "boilerplate-exclusion",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-code-listings",
+              "documentId": "heldout-one",
+              "stratum": "code-listings",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-tables",
+              "documentId": "heldout-one",
+              "stratum": "tables",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-figures-diagrams",
+              "documentId": "heldout-one",
+              "stratum": "figures-diagrams",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-equations",
+              "documentId": "heldout-one",
+              "stratum": "equations",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-one-footnotes-citations",
+              "documentId": "heldout-one",
+              "stratum": "footnotes-citations",
+              "layout": "one-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            }
+          ]
+        },
+        {
+          "documentId": "heldout-two",
+          "split": "held-out",
+          "layout": "two-column",
+          "status": "passed",
+          "verification": {
+            "status": "passed",
+            "issueCodes": [],
+            "issueCount": 0
+          },
+          "outputHash": "36c1634902376d92e27c994b90865a517a1d1c95a58bd0189f147a4943257f6e",
+          "byteStable": true,
+          "latencyMsPerPage": 1,
+          "costUsdPerPage": 0,
+          "caseScores": [
+            {
+              "caseId": "heldout-two-sectioning",
+              "documentId": "heldout-two",
+              "stratum": "sectioning",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-prose-continuity",
+              "documentId": "heldout-two",
+              "stratum": "prose-continuity",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-boilerplate-exclusion",
+              "documentId": "heldout-two",
+              "stratum": "boilerplate-exclusion",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-code-listings",
+              "documentId": "heldout-two",
+              "stratum": "code-listings",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-tables",
+              "documentId": "heldout-two",
+              "stratum": "tables",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-figures-diagrams",
+              "documentId": "heldout-two",
+              "stratum": "figures-diagrams",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-equations",
+              "documentId": "heldout-two",
+              "stratum": "equations",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            },
+            {
+              "caseId": "heldout-two-footnotes-citations",
+              "documentId": "heldout-two",
+              "stratum": "footnotes-citations",
+              "layout": "two-column",
+              "score": 1,
+              "typePrecision": 1,
+              "typeRecall": 1,
+              "sourceRecall": 1,
+              "assetRecall": 1,
+              "boilerplateContamination": 0,
+              "verification": {
+                "status": "passed",
+                "issueCodes": [],
+                "issueCount": 0
+              }
+            }
+          ]
+        }
+      ],
+      "byStratumAndLayout": {
+        "boilerplate-exclusion/one-column": 1,
+        "boilerplate-exclusion/two-column": 1,
+        "code-listings/one-column": 1,
+        "code-listings/two-column": 1,
+        "equations/one-column": 1,
+        "equations/two-column": 1,
+        "figures-diagrams/one-column": 1,
+        "figures-diagrams/two-column": 1,
+        "footnotes-citations/one-column": 1,
+        "footnotes-citations/two-column": 1,
+        "prose-continuity/one-column": 1,
+        "prose-continuity/two-column": 1,
+        "sectioning/one-column": 1,
+        "sectioning/two-column": 1,
+        "tables/one-column": 1,
+        "tables/two-column": 1
+      },
+      "disqualified": false
+    }
+  },
+  "comparison": [
+    {
+      "stratum": "boilerplate-exclusion",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "boilerplate-exclusion",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    },
+    {
+      "stratum": "code-listings",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "code-listings",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    },
+    {
+      "stratum": "equations",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "equations",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    },
+    {
+      "stratum": "figures-diagrams",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "figures-diagrams",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    },
+    {
+      "stratum": "footnotes-citations",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "footnotes-citations",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    },
+    {
+      "stratum": "prose-continuity",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "prose-continuity",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    },
+    {
+      "stratum": "sectioning",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "sectioning",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    },
+    {
+      "stratum": "tables",
+      "layout": "one-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-one"]
+    },
+    {
+      "stratum": "tables",
+      "layout": "two-column",
+      "scores": {
+        "geometric-baseline": 0.8,
+        "llm-authored": 0,
+        "llm-grounded": 1
+      },
+      "winner": "llm-grounded",
+      "disagreementDocumentIds": ["heldout-two"]
+    }
+  ],
+  "disagreements": [
+    {
+      "documentId": "heldout-one",
+      "stratum": "boilerplate-exclusion",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "boilerplate-exclusion",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-one",
+      "stratum": "code-listings",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "code-listings",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-one",
+      "stratum": "equations",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "equations",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-one",
+      "stratum": "figures-diagrams",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "figures-diagrams",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-one",
+      "stratum": "footnotes-citations",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "footnotes-citations",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-one",
+      "stratum": "prose-continuity",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "prose-continuity",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-one",
+      "stratum": "sectioning",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "sectioning",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-one",
+      "stratum": "tables",
+      "layout": "one-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    },
+    {
+      "documentId": "heldout-two",
+      "stratum": "tables",
+      "layout": "two-column",
+      "arms": ["geometric-baseline", "llm-authored", "llm-grounded"],
+      "reason": "verification"
+    }
+  ],
+  "reportSha256": "f7c9f73c6a8ac216c5887e6f24f30076e3ffa1e6751fabf4cf4090a578501d76"
+}

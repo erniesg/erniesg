@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.0.0",
+  "decisionId": "extraction-architecture-v1",
+  "owner": "llm-grounded",
+  "humanDecisionRequired": false,
+  "perStratum": {
+    "boilerplate-exclusion": "llm-grounded",
+    "code-listings": "llm-grounded",
+    "equations": "llm-grounded",
+    "figures-diagrams": "llm-grounded",
+    "footnotes-citations": "llm-grounded",
+    "prose-continuity": "llm-grounded",
+    "sectioning": "llm-grounded",
+    "tables": "llm-grounded"
+  },
+  "geometricRole": "Remain the source-run, asset-bound, and publication verifier in every arm; it may provide the fail-closed fallback.",
+  "reversalCriteria": [
+    "Reverse only after a new hash-pinned held-out split is scored once per candidate version.",
+    "A proposed winner must improve the affected stratum and layout without lowering any other held-out stratum below the recorded baseline.",
+    "Any unverified span, model-authored alt text, or model-authored asset bounds disqualifies the candidate regardless of score."
+  ],
+  "heldOutIdentitySha256": "d6f59400f1c093dc5c82125444ce6cf92fe6fb46f906428fd4dc957f1edcb9d6",
+  "reportSha256": "f7c9f73c6a8ac216c5887e6f24f30076e3ffa1e6751fabf4cf4090a578501d76"
+}

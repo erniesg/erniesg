@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "synthetic-extraction-bakeoff-v1",
+  "privacy": "synthetic-identities-hashes-metrics-only",
+  "sourcePolicy": "owner-local-papers-must-be-bound-by-sha256-before-run",
+  "splits": {
+    "development": {
+      "status": "fixture",
+      "documentIds": ["development-one"]
+    },
+    "held-out": {
+      "status": "fixture",
+      "documentIds": ["heldout-one", "heldout-two"]
+    }
+  },
+  "layouts": ["one-column", "two-column"],
+  "strata": [
+    "sectioning",
+    "prose-continuity",
+    "boilerplate-exclusion",
+    "code-listings",
+    "tables",
+    "figures-diagrams",
+    "equations",
+    "footnotes-citations"
+  ],
+  "groundTruthPolicy": "independent-source-reviewed-labels-never-candidate-output",
+  "heldOutPolicy": "score-once-per-candidate-identity-no-tuning",
+  "runner": "tools/pdf-extraction-bakeoff.mjs",
+  "reportSchema": "docs/schemas/extraction-bakeoff-report.schema.json"
+}

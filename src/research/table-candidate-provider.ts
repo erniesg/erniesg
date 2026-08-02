@@ -594,6 +594,19 @@ export function verifyTableCandidate({
         })),
       })
     }
+    for (let cellIndex = 1; cellIndex < verifiedCells.length; cellIndex += 1) {
+      const previous = verifiedCells[cellIndex - 1]
+      const current = verifiedCells[cellIndex]
+      if (
+        previous.columnSpan === 1 &&
+        current.columnSpan === 1 &&
+        previous.columnIndex + 1 === current.columnIndex &&
+        previous.sourceBox.x + previous.sourceBox.width >
+          current.sourceBox.x + 0.000001
+      ) {
+        return null
+      }
+    }
     for (const cell of verifiedCells) {
       if (cell.columnSpan !== 1 || cell.sourceBox.width <= 0) continue
       const center = cell.sourceBox.x + cell.sourceBox.width / 2
@@ -607,7 +620,7 @@ export function verifyTableCandidate({
     }
     if (rowIndex >= proposal.headerRowCount) {
       for (const cell of verifiedCells) {
-        if (cell.columnSpan !== 1 || !cell.run.text.trim()) continue
+        if (cell.columnSpan !== 1) continue
         const expected = headerColumnCenters[cell.columnIndex]
         if (expected === undefined) continue
         const neighboringCenters = headerColumnCenters
@@ -622,7 +635,31 @@ export function verifyTableCandidate({
           (Math.min(...neighboringCenters, 0.24) || 0.24) * 0.4,
         )
         const center = cell.sourceBox.x + cell.sourceBox.width / 2
-        if (Math.abs(center - expected) > tolerance) return null
+        if (cell.run.text.trim() && Math.abs(center - expected) > tolerance) {
+          return null
+        }
+        const leftCenter = headerColumnCenters
+          .slice(0, cell.columnIndex)
+          .reverse()
+          .find((value) => value !== undefined)
+        const rightCenter = headerColumnCenters
+          .slice(cell.columnIndex + 1)
+          .find((value) => value !== undefined)
+        const bandLeft =
+          leftCenter === undefined
+            ? sourceCropBox.x
+            : (leftCenter + expected) / 2
+        const bandRight =
+          rightCenter === undefined
+            ? sourceCropBox.x + sourceCropBox.width
+            : (expected + rightCenter) / 2
+        const boxLeft = cell.sourceBox.x
+        const boxRight = cell.sourceBox.x + cell.sourceBox.width
+        const bandOverlap = Math.max(
+          0,
+          Math.min(boxRight, bandRight) - Math.max(boxLeft, bandLeft),
+        )
+        if (bandOverlap / cell.sourceBox.width < 0.5) return null
       }
     }
     const rowSources = verifiedCells.flatMap((cell) => cell.sourceBox)

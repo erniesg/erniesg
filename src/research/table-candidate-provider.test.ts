@@ -278,6 +278,117 @@ describe('table candidate provider verification', () => {
     ).toBeNull()
   })
 
+  it('rejects an empty-cell column swap when grouped headers provide no column centers', () => {
+    const groupedSourceRegions: PdfPageRegion[] = [
+      {
+        ...sourceRegions[0],
+        text: 'Metric Value Revenue',
+        lines: [
+          {
+            id: 'grouped-header-line',
+            text: 'Metric Value',
+            fontSize: 10,
+            box: { ...crop, x: 0.14, y: 0.24, width: 0.65, height: 0.03 },
+            runs: [
+              run('Metric', 0.14, 0.24, true),
+              run('Value', 0.58, 0.24, true),
+            ],
+          },
+          {
+            id: 'grouped-body-line',
+            text: 'Revenue',
+            fontSize: 10,
+            box: { ...crop, x: 0.14, y: 0.43, width: 0.12, height: 0.03 },
+            runs: [run('Revenue', 0.14, 0.43)],
+          },
+        ],
+      },
+    ]
+    const candidate: TableCandidateProposal = {
+      columnCount: 2,
+      headerRowCount: 1,
+      rows: [
+        {
+          cells: [
+            {
+              text: 'Metric Value',
+              columnIndex: 0,
+              columnSpan: 2,
+              box: { x: 0, y: 0, width: 1, height: 0.5 },
+            },
+          ],
+        },
+        {
+          cells: [
+            {
+              text: '',
+              columnIndex: 0,
+              box: { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+            },
+            {
+              text: 'Revenue',
+              columnIndex: 1,
+              box: { x: 0, y: 0.5, width: 0.5, height: 0.5 },
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(
+      verifyTableCandidate({
+        proposal: candidate,
+        sourceRegions: groupedSourceRegions,
+        sourceCropBox: crop,
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects an empty cell outside its established header band', () => {
+    const bandSourceRegions: PdfPageRegion[] = [
+      {
+        ...sourceRegions[0],
+        text: 'Metric Value 5,557.0',
+        lines: [
+          sourceRegions[0].lines[0],
+          {
+            ...sourceRegions[0].lines[1],
+            text: '5,557.0',
+            runs: [sourceRegions[0].lines[1].runs[1]],
+          },
+        ],
+      },
+    ]
+    const candidate: TableCandidateProposal = {
+      ...proposal('5,557.0'),
+      rows: [
+        proposal('5,557.0').rows[0],
+        {
+          cells: [
+            {
+              text: '',
+              columnIndex: 0,
+              box: { x: 0.45, y: 0.5, width: 0.1, height: 0.5 },
+            },
+            {
+              text: '5,557.0',
+              columnIndex: 1,
+              box: { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(
+      verifyTableCandidate({
+        proposal: candidate,
+        sourceRegions: bandSourceRegions,
+        sourceCropBox: crop,
+      }),
+    ).toBeNull()
+  })
+
   it('substitutes exact source text and records source-only grid evidence', () => {
     const grid = verifyTableCandidate({
       proposal: proposal(),

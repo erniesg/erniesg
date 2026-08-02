@@ -1,0 +1,584 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ernie.sg/schemas/pdf-extraction-eval-strata-1.0.0.json",
+  "title": "Source-reviewed scholarly PDF extraction strata benchmark",
+  "description": "Privacy-safe contract for source-reviewed extraction strata. Parser output is never admissible as ground truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "privacy",
+    "protocol",
+    "documents",
+    "strata",
+    "cases"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "privacy": {
+      "const": "repository-fixture-identities-source-reviewed-no-private-inputs"
+    },
+    "protocol": { "$ref": "#/$defs/protocol" },
+    "documents": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/document" }
+    },
+    "strata": {
+      "type": "array",
+      "minItems": 8,
+      "items": { "$ref": "#/$defs/stratum" }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "box": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      ],
+      "items": false
+    },
+    "layout": {
+      "enum": ["one-column", "two-column"]
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "derivedFrom",
+        "reviewStatus",
+        "reviewers",
+        "parserOutputConsulted",
+        "reviewEvidence"
+      ],
+      "properties": {
+        "kind": { "const": "source-reviewed" },
+        "derivedFrom": { "const": "source-document" },
+        "reviewStatus": {
+          "enum": ["review-required", "two-reviewer-agreed"]
+        },
+        "reviewers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "parserOutputConsulted": { "const": false },
+        "reviewEvidence": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/reviewEvidence" }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "reviewStatus": { "const": "review-required" },
+            "reviewers": { "type": "array", "maxItems": 0 },
+            "reviewEvidence": { "type": "null" }
+          }
+        },
+        {
+          "properties": {
+            "reviewStatus": { "const": "two-reviewer-agreed" },
+            "reviewers": { "type": "array", "minItems": 2 },
+            "reviewEvidence": { "$ref": "#/$defs/reviewEvidence" }
+          }
+        }
+      ]
+    },
+    "reviewEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rosterPath", "rosterSha256", "decisionPath", "decisionSha256"],
+      "properties": {
+        "rosterPath": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" },
+        "rosterSha256": { "$ref": "#/$defs/sha256" },
+        "decisionPath": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" },
+        "decisionSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "reportPrivacy",
+        "sourceLabelPolicy",
+        "regexProxyPolicy",
+        "abstentionPolicy",
+        "corpusBalance"
+      ],
+      "properties": {
+        "command": { "const": "npm run pdf:benchmark:extraction" },
+        "reportPrivacy": {
+          "const": "identities-hashes-counts-diagnostic-codes-only"
+        },
+        "sourceLabelPolicy": {
+          "const": "source-review-required-parser-output-never-a-label"
+        },
+        "regexProxyPolicy": {
+          "const": "authoritative-pipeline-counters-only-regex-never-gates"
+        },
+        "abstentionPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["score", "beatsDegenerateAnswer", "status"],
+          "properties": {
+            "score": { "const": 0.25 },
+            "beatsDegenerateAnswer": { "const": true },
+            "status": { "const": "reported-not-correct" }
+          }
+        },
+        "corpusBalance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "layouts",
+            "minimumDocumentsPerLayout",
+            "reportByLayout"
+          ],
+          "properties": {
+            "layouts": {
+              "const": ["one-column", "two-column"]
+            },
+            "minimumDocumentsPerLayout": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reportByLayout": { "const": true }
+          }
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "fixturePath",
+        "sha256",
+        "byteLength",
+        "pageCount",
+        "layout",
+        "groundTruthReview"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "fixturePath": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byteLength": { "type": "integer", "minimum": 1 },
+        "pageCount": { "type": "integer", "minimum": 1 },
+        "layout": { "$ref": "#/$defs/layout" },
+        "groundTruthReview": { "$ref": "#/$defs/review" }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "unit",
+        "formula",
+        "scoreRange",
+        "abstentionScore",
+        "degenerateScore",
+        "degenerateAnswerGuardId",
+        "authoritativeEvidence"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "unit": { "type": "string", "minLength": 1 },
+        "formula": { "type": "string", "minLength": 1 },
+        "scoreRange": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [{ "const": 0 }, { "const": 1 }],
+          "items": false
+        },
+        "abstentionScore": { "const": 0.25 },
+        "degenerateScore": { "const": 0 },
+        "degenerateAnswerGuardId": { "$ref": "#/$defs/id" },
+        "authoritativeEvidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "rejects",
+        "detection",
+        "score",
+        "abstentionScore",
+        "failClosed"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "rejects": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "detection": { "type": "string", "minLength": 1 },
+        "score": { "const": 0 },
+        "abstentionScore": { "const": 0.25 },
+        "failClosed": { "const": true }
+      }
+    },
+    "stratum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "task",
+        "description",
+        "groundTruth",
+        "metric",
+        "degenerateAnswerGuard"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "task": { "$ref": "#/$defs/id" },
+        "description": { "type": "string", "minLength": 1 },
+        "groundTruth": { "$ref": "#/$defs/review" },
+        "metric": { "$ref": "#/$defs/metric" },
+        "degenerateAnswerGuard": { "$ref": "#/$defs/guard" }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "documentId", "stratum", "layout", "source"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "documentId": { "$ref": "#/$defs/id" },
+        "stratum": { "$ref": "#/$defs/id" },
+        "layout": { "$ref": "#/$defs/layout" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sourcePage", "groundTruth"],
+          "properties": {
+            "sourcePage": { "type": "integer", "minimum": 1 },
+            "groundTruth": { "$ref": "#/$defs/caseGroundTruth" }
+          }
+        }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row", "column", "rowSpan", "columnSpan", "text"],
+      "properties": {
+        "row": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 },
+        "rowSpan": { "const": 1 },
+        "columnSpan": { "const": 1 },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sourcePage",
+        "rows",
+        "columns",
+        "headerScope",
+        "box",
+        "sourceRegionIds",
+        "sourceLineIds",
+        "cells"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "rows": { "type": "integer", "minimum": 1 },
+        "columns": { "type": "integer", "minimum": 1 },
+        "headerScope": {
+          "enum": ["row", "column", "row-and-column", "none"]
+        },
+        "box": { "$ref": "#/$defs/box" },
+        "sourceRegionIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "sourceLineIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "cells": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/cell" }
+        }
+      }
+    },
+    "tableGroundTruth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tables", "review"],
+      "properties": {
+        "tables": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/table" }
+        },
+        "review": { "$ref": "#/$defs/review" }
+      }
+    },
+    "heading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text", "level", "numbered", "language"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "text": { "type": "string", "minLength": 1 },
+        "level": { "type": "integer", "minimum": 1, "maximum": 6 },
+        "numbered": { "type": "boolean" },
+        "language": { "type": "string", "minLength": 2 }
+      }
+    },
+    "headingGroundTruth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["headings", "review"],
+      "properties": {
+        "headings": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/heading" }
+        },
+        "review": { "$ref": "#/$defs/review" }
+      }
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sourcePage",
+        "kind",
+        "bounded",
+        "captionRelationship",
+        "box",
+        "sourceRegionIds",
+        "sourceLineIds"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "kind": { "enum": ["display-equation", "figure-or-diagram"] },
+        "bounded": { "const": true },
+        "captionRelationship": { "type": "string", "minLength": 1 },
+        "box": { "$ref": "#/$defs/box" },
+        "sourceRegionIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "sourceLineIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "objectGroundTruth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objects", "review"],
+      "properties": {
+        "objects": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/object" }
+        },
+        "review": { "$ref": "#/$defs/review" }
+      }
+    },
+    "authoritativeCounters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lineBoundaryCount",
+        "decidedLineBoundaryCount",
+        "unresolvedCorruptingJoinCount"
+      ],
+      "properties": {
+        "lineBoundaryCount": { "type": "integer", "minimum": 0 },
+        "decidedLineBoundaryCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unresolvedCorruptingJoinCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "proseParagraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourcePage", "continuity"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "continuity": { "const": "source-proven-continuous" }
+      }
+    },
+    "proseGroundTruth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paragraphs", "authoritativeCounters", "review"],
+      "properties": {
+        "paragraphs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/proseParagraph" }
+        },
+        "authoritativeCounters": {
+          "$ref": "#/$defs/authoritativeCounters"
+        },
+        "review": { "$ref": "#/$defs/review" }
+      }
+    },
+    "boilerplateItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourcePage", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "kind": { "enum": ["running-head", "page-number"] }
+      }
+    },
+    "boilerplateGroundTruth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["excluded", "bodyLineCount", "review"],
+      "properties": {
+        "excluded": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/boilerplateItem" }
+        },
+        "bodyLineCount": { "type": "integer", "minimum": 1 },
+        "review": { "$ref": "#/$defs/review" }
+      }
+    },
+    "footnoteReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourcePage", "marker", "bodyId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "marker": { "type": "string", "minLength": 1 },
+        "bodyId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "footnoteBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourcePage", "marker"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "marker": { "type": "string", "minLength": 1 }
+      }
+    },
+    "footnoteGroundTruth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["references", "bodies", "review"],
+      "properties": {
+        "references": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/footnoteReference" }
+        },
+        "bodies": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/footnoteBody" }
+        },
+        "review": { "$ref": "#/$defs/review" }
+      }
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "index"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "index": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "columnGroundTruth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columnCount", "columns", "readingOrder", "review"],
+      "properties": {
+        "columnCount": { "type": "integer", "minimum": 1 },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/column" }
+        },
+        "readingOrder": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "review": { "$ref": "#/$defs/review" }
+      }
+    },
+    "caseGroundTruth": {
+      "oneOf": [
+        { "$ref": "#/$defs/tableGroundTruth" },
+        { "$ref": "#/$defs/headingGroundTruth" },
+        { "$ref": "#/$defs/objectGroundTruth" },
+        { "$ref": "#/$defs/proseGroundTruth" },
+        { "$ref": "#/$defs/boilerplateGroundTruth" },
+        { "$ref": "#/$defs/footnoteGroundTruth" },
+        { "$ref": "#/$defs/columnGroundTruth" }
+      ]
+    }
+  }
+}

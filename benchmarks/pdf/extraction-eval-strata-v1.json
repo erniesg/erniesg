@@ -1,0 +1,1134 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "scholarly-pdf-extraction-strata-2026-08-v1",
+  "privacy": "repository-fixture-identities-source-reviewed-no-private-inputs",
+  "protocol": {
+    "command": "npm run pdf:benchmark:extraction",
+    "reportPrivacy": "identities-hashes-counts-diagnostic-codes-only",
+    "sourceLabelPolicy": "source-review-required-parser-output-never-a-label",
+    "regexProxyPolicy": "authoritative-pipeline-counters-only-regex-never-gates",
+    "abstentionPolicy": {
+      "score": 0.25,
+      "beatsDegenerateAnswer": true,
+      "status": "reported-not-correct"
+    },
+    "corpusBalance": {
+      "layouts": ["one-column", "two-column"],
+      "minimumDocumentsPerLayout": 2,
+      "reportByLayout": true
+    }
+  },
+  "documents": [
+    {
+      "id": "pdf-to-epub-fidelity",
+      "fixturePath": "tests/fixtures/pdf/pdf-to-epub-fidelity.pdf",
+      "sha256": "17921375594e87b1377e86d304f9f151c393255eb94b8e0f523179f6b9e07cea",
+      "byteLength": 16759,
+      "pageCount": 3,
+      "layout": "one-column",
+      "groundTruthReview": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      }
+    },
+    {
+      "id": "structured-scientific",
+      "fixturePath": "tests/fixtures/pdf/structured-scientific.pdf",
+      "sha256": "7a75163906224b0dbf78e28975f6e16ec0e3b7485532995f9a1226b3f1928500",
+      "byteLength": 6075,
+      "pageCount": 1,
+      "layout": "two-column",
+      "groundTruthReview": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      }
+    },
+    {
+      "id": "multilingual-scan",
+      "fixturePath": "tests/fixtures/pdf/multilingual-scan.pdf",
+      "sha256": "514195c541dcf6aa28b5d41a439ac623ccaf9cca2f452e9b4c49411e1c559aec",
+      "byteLength": 6580,
+      "pageCount": 1,
+      "layout": "one-column",
+      "groundTruthReview": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      }
+    },
+    {
+      "id": "diagnostic-overlays",
+      "fixturePath": "tests/fixtures/pdf/diagnostic-overlays.pdf",
+      "sha256": "bdafe1056d6b47d9b59dddcf4585c42c42851e9cd32cecbd912087117b7c2633",
+      "byteLength": 1238,
+      "pageCount": 1,
+      "layout": "two-column",
+      "groundTruthReview": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      }
+    }
+  ],
+  "strata": [
+    {
+      "id": "table-structure",
+      "task": "table-structure",
+      "description": "Recover bounded rows, columns, header scope, spans, and source cell text.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "table-structure-f1",
+        "name": "table topology and cell F1",
+        "unit": "table-and-cell-f1",
+        "formula": "mean(exact-header-scope-and-topology × cell-text-F1) per reviewed table",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "table-structure-degenerate-answer-guard",
+        "authoritativeEvidence": "source-reviewed rows, columns, header scope, spans, cell text, geometry, and line lineage"
+      },
+      "degenerateAnswerGuard": {
+        "id": "table-structure-degenerate-answer-guard",
+        "rejects": [
+          "empty-or-missing-table-output",
+          "page-wide-grid-that-covers-the-body-measure",
+          "one-grid-fused-across-multiple-reviewed-tables"
+        ],
+        "detection": "A guarded table output scores zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    },
+    {
+      "id": "heading-structure",
+      "task": "heading-structure",
+      "description": "Recover the ordered heading sequence and level, including unnumbered and non-English headings.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "heading-sequence-f1",
+        "name": "heading sequence and level F1",
+        "unit": "ordered-heading-f1",
+        "formula": "F1 over exact (heading text, level) decisions with sequence preserved",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "heading-structure-degenerate-answer-guard",
+        "authoritativeEvidence": "source-reviewed heading sequence, level, numbering flag, and language"
+      },
+      "degenerateAnswerGuard": {
+        "id": "heading-structure-degenerate-answer-guard",
+        "rejects": [
+          "empty-or-missing-heading-output",
+          "every-line-as-a-heading",
+          "heading-count-more-than-two-times-reviewed-sequence"
+        ],
+        "detection": "A broad heading flood scores zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    },
+    {
+      "id": "display-equation",
+      "task": "display-equation",
+      "description": "Recover display-equation grouping and visible equation ownership as bounded objects.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "display-equation-object-f1",
+        "name": "display-equation object F1",
+        "unit": "bounded-equation-object-f1",
+        "formula": "F1 over source-page equation objects after grouping and label ownership",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "display-equation-degenerate-answer-guard",
+        "authoritativeEvidence": "source glyph/raster bounds and reviewed visible equation labels"
+      },
+      "degenerateAnswerGuard": {
+        "id": "display-equation-degenerate-answer-guard",
+        "rejects": [
+          "empty-or-missing-equation-output",
+          "page-wide-equation-box",
+          "each-body-line-emitted-as-an-equation"
+        ],
+        "detection": "Unbounded or absent equation objects score zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    },
+    {
+      "id": "figure-diagram",
+      "task": "figure-diagram",
+      "description": "Recover bounded figure/diagram assets and retain their caption relationship.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "figure-diagram-object-f1",
+        "name": "figure and diagram object F1",
+        "unit": "bounded-visual-object-f1",
+        "formula": "F1 over bounded source objects with a caption-of relationship",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "figure-diagram-degenerate-answer-guard",
+        "authoritativeEvidence": "source raster/component bounds and reviewed caption ownership"
+      },
+      "degenerateAnswerGuard": {
+        "id": "figure-diagram-degenerate-answer-guard",
+        "rejects": [
+          "empty-or-missing-visual-output",
+          "page-wide-asset-fused-with-neighbouring-content",
+          "caption-without-a-bounded-asset"
+        ],
+        "detection": "A dropped or unbounded visual scores zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    },
+    {
+      "id": "prose-continuity",
+      "task": "prose-continuity",
+      "description": "Measure continuous prose with the pipeline's authoritative line-boundary counters.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "prose-authoritative-continuity",
+        "name": "authoritative prose continuity",
+        "unit": "counter-derived-continuity",
+        "formula": "max(0, 1 - unresolvedCorruptingJoinCount / max(1, lineBoundaryCount))",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "prose-continuity-degenerate-answer-guard",
+        "authoritativeEvidence": "unresolvedCorruptingJoinCount and line-boundary decision ledger"
+      },
+      "degenerateAnswerGuard": {
+        "id": "prose-continuity-degenerate-answer-guard",
+        "rejects": [
+          "missing-authoritative-counters",
+          "regex-only-hyphenation-proxy",
+          "line-boundary-counter-arithmetic-inconsistency"
+        ],
+        "detection": "Regex-only or inconsistent evidence scores zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    },
+    {
+      "id": "boilerplate-exclusion",
+      "task": "boilerplate-exclusion",
+      "description": "Exclude running heads and page numbers without deleting body prose.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "boilerplate-contamination-rate",
+        "name": "running-head and page-number contamination",
+        "unit": "zero-contamination-indicator",
+        "formula": "1 iff both contamination counters are zero and excludedCount is bounded; otherwise 0",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "boilerplate-exclusion-degenerate-answer-guard",
+        "authoritativeEvidence": "source-reviewed furniture list and body-line denominator"
+      },
+      "degenerateAnswerGuard": {
+        "id": "boilerplate-exclusion-degenerate-answer-guard",
+        "rejects": [
+          "missing-contamination-counters",
+          "excluding-most-body-lines",
+          "running-head-or-page-number-left-in-body-flow"
+        ],
+        "detection": "Over-exclusion and contamination both score zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    },
+    {
+      "id": "footnote-resolution",
+      "task": "footnote-resolution",
+      "description": "Resolve each note marker to its typed body without collapsing unrelated notes.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "footnote-relationship-f1",
+        "name": "footnote marker/body relationship F1",
+        "unit": "typed-note-relationship-f1",
+        "formula": "F1 over exact marker, reference, and typed-body relationships",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "footnote-resolution-degenerate-answer-guard",
+        "authoritativeEvidence": "source-reviewed marker/body relationships and backlinks"
+      },
+      "degenerateAnswerGuard": {
+        "id": "footnote-resolution-degenerate-answer-guard",
+        "rejects": [
+          "empty-or-missing-note-relationships",
+          "all-note-bodies-assigned-to-one-reference",
+          "dangling-note-body-or-reference"
+        ],
+        "detection": "Missing, dangling, or collapsed note relationships score zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    },
+    {
+      "id": "column-layout",
+      "task": "column-layout",
+      "description": "Recover column assignment and reading order for one- and two-column pages.",
+      "groundTruth": {
+        "kind": "source-reviewed",
+        "derivedFrom": "source-document",
+        "reviewStatus": "review-required",
+        "reviewers": [],
+        "parserOutputConsulted": false,
+        "reviewEvidence": null
+      },
+      "metric": {
+        "id": "column-pairwise-order",
+        "name": "column assignment and pairwise order",
+        "unit": "mean-column-count-and-order",
+        "formula": "mean(column-count exactness, pairwise reading-order accuracy)",
+        "scoreRange": [0, 1],
+        "abstentionScore": 0.25,
+        "degenerateScore": 0,
+        "degenerateAnswerGuardId": "column-layout-degenerate-answer-guard",
+        "authoritativeEvidence": "source geometry, column lanes, and reviewed reading-order sequence"
+      },
+      "degenerateAnswerGuard": {
+        "id": "column-layout-degenerate-answer-guard",
+        "rejects": [
+          "empty-or-missing-reading-order",
+          "page-wide-single-column-for-two-column-source",
+          "alternating-lines-without-column-lane"
+        ],
+        "detection": "A page-wide or absent layout answer scores zero; an explicit abstention scores 0.25.",
+        "score": 0,
+        "abstentionScore": 0.25,
+        "failClosed": true
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "pdf-to-epub-fidelity.table-structure",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "table-structure",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 2,
+        "groundTruth": {
+          "tables": [
+            {
+              "id": "table-1",
+              "sourcePage": 2,
+              "rows": 3,
+              "columns": 2,
+              "headerScope": "row",
+              "cells": [
+                {
+                  "row": 0,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Profile"
+                },
+                {
+                  "row": 0,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Nodes"
+                },
+                {
+                  "row": 1,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Mobile"
+                },
+                {
+                  "row": 1,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "12"
+                },
+                {
+                  "row": 2,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "E-ink"
+                },
+                {
+                  "row": 2,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "12"
+                }
+              ],
+              "box": [
+                0.117647,
+                0.555556,
+                0.24183,
+                0.055556
+              ],
+              "sourceRegionIds": [
+                "pdf-to-epub-fidelity-table-structure-table-1-region"
+              ],
+              "sourceLineIds": [
+                "pdf-to-epub-fidelity-table-structure-table-1-row-1",
+                "pdf-to-epub-fidelity-table-structure-table-1-row-2",
+                "pdf-to-epub-fidelity-table-structure-table-1-row-3"
+              ]
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.table-structure",
+      "documentId": "structured-scientific",
+      "stratum": "table-structure",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "tables": [
+            {
+              "id": "table-1",
+              "sourcePage": 1,
+              "rows": 2,
+              "columns": 2,
+              "headerScope": "row",
+              "cells": [
+                {
+                  "row": 0,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Group"
+                },
+                {
+                  "row": 0,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Score"
+                },
+                {
+                  "row": 1,
+                  "column": 0,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "Control"
+                },
+                {
+                  "row": 1,
+                  "column": 1,
+                  "rowSpan": 1,
+                  "columnSpan": 1,
+                  "text": "10"
+                }
+              ],
+              "box": [
+                0.117647,
+                0.689394,
+                0.163399,
+                0.037879
+              ],
+              "sourceRegionIds": [
+                "structured-scientific-table-structure-table-1-region"
+              ],
+              "sourceLineIds": [
+                "structured-scientific-table-structure-table-1-row-1",
+                "structured-scientific-table-structure-table-1-row-2"
+              ]
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "pdf-to-epub-fidelity.heading-structure",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "heading-structure",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "headings": [
+            {
+              "id": "abstract",
+              "text": "Abstract",
+              "level": 1,
+              "numbered": false,
+              "language": "en"
+            },
+            {
+              "id": "methods",
+              "text": "1 Methods",
+              "level": 1,
+              "numbered": true,
+              "language": "en"
+            },
+            {
+              "id": "structure",
+              "text": "1.1 Structure",
+              "level": 2,
+              "numbered": true,
+              "language": "en"
+            },
+            {
+              "id": "results",
+              "text": "2 Results",
+              "level": 1,
+              "numbered": true,
+              "language": "en"
+            },
+            {
+              "id": "discussion",
+              "text": "Discussion",
+              "level": 1,
+              "numbered": false,
+              "language": "en"
+            },
+            {
+              "id": "references",
+              "text": "References",
+              "level": 1,
+              "numbered": false,
+              "language": "en"
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.heading-structure",
+      "documentId": "structured-scientific",
+      "stratum": "heading-structure",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "headings": [
+            {
+              "id": "synthetic-title",
+              "text": "Synthetic semantic completeness fixture",
+              "level": 1,
+              "numbered": false,
+              "language": "en"
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "multilingual-scan.heading-structure",
+      "documentId": "multilingual-scan",
+      "stratum": "heading-structure",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "headings": [
+            {
+              "id": "multilingual-source",
+              "text": "MULTILINGUAL SOURCE",
+              "level": 1,
+              "numbered": false,
+              "language": "en"
+            },
+            {
+              "id": "local-research",
+              "text": "本地研究",
+              "level": 1,
+              "numbered": false,
+              "language": "zh"
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "pdf-to-epub-fidelity.display-equation",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "display-equation",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 2,
+        "groundTruth": {
+          "objects": [
+            {
+              "id": "equation-1",
+              "sourcePage": 2,
+              "kind": "display-equation",
+              "bounded": true,
+              "captionRelationship": "caption-of",
+              "box": [
+                0.359477,
+                0.719697,
+                0.310458,
+                0.060606
+              ],
+              "sourceRegionIds": [
+                "pdf-to-epub-fidelity-display-equation-equation-1-region"
+              ],
+              "sourceLineIds": [
+                "pdf-to-epub-fidelity-display-equation-equation-1-caption",
+                "pdf-to-epub-fidelity-display-equation-equation-1-body"
+              ]
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.display-equation",
+      "documentId": "structured-scientific",
+      "stratum": "display-equation",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "objects": [
+            {
+              "id": "equation-1",
+              "sourcePage": 1,
+              "kind": "display-equation",
+              "bounded": true,
+              "captionRelationship": "caption-of",
+              "box": [
+                0.367647,
+                0.805556,
+                0.269608,
+                0.05303
+              ],
+              "sourceRegionIds": [
+                "structured-scientific-display-equation-equation-1-region"
+              ],
+              "sourceLineIds": [
+                "structured-scientific-display-equation-equation-1-caption",
+                "structured-scientific-display-equation-equation-1-body"
+              ]
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "pdf-to-epub-fidelity.figure-diagram",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "figure-diagram",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 2,
+        "groundTruth": {
+          "objects": [
+            {
+              "id": "figure-1",
+              "sourcePage": 2,
+              "kind": "figure-or-diagram",
+              "bounded": true,
+              "captionRelationship": "caption-of",
+              "box": [
+                0.294118,
+                0.166667,
+                0.408497,
+                0.189394
+              ],
+              "sourceRegionIds": [
+                "pdf-to-epub-fidelity-figure-diagram-figure-1-region"
+              ],
+              "sourceLineIds": [
+                "pdf-to-epub-fidelity-figure-diagram-figure-1-caption",
+                "pdf-to-epub-fidelity-figure-diagram-figure-1-body"
+              ]
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.figure-diagram",
+      "documentId": "structured-scientific",
+      "stratum": "figure-diagram",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "objects": [
+            {
+              "id": "figure-1",
+              "sourcePage": 1,
+              "kind": "figure-or-diagram",
+              "bounded": true,
+              "captionRelationship": "caption-of",
+              "box": [
+                0.359477,
+                0.280303,
+                0.424837,
+                0.138889
+              ],
+              "sourceRegionIds": [
+                "structured-scientific-figure-diagram-figure-1-region"
+              ],
+              "sourceLineIds": [
+                "structured-scientific-figure-diagram-figure-1-caption",
+                "structured-scientific-figure-diagram-figure-1-body"
+              ]
+            },
+            {
+              "id": "figure-2",
+              "sourcePage": 1,
+              "kind": "figure-or-diagram",
+              "bounded": true,
+              "captionRelationship": "caption-of",
+              "box": [
+                0.392157,
+                0.494949,
+                0.245098,
+                0.088384
+              ],
+              "sourceRegionIds": [
+                "structured-scientific-figure-diagram-figure-2-region"
+              ],
+              "sourceLineIds": [
+                "structured-scientific-figure-diagram-figure-2-caption",
+                "structured-scientific-figure-diagram-figure-2-body"
+              ]
+            }
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "pdf-to-epub-fidelity.prose-continuity",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "prose-continuity",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "paragraphs": [
+            {
+              "id": "paragraph-1",
+              "sourcePage": 1,
+              "continuity": "source-proven-continuous"
+            },
+            {
+              "id": "paragraph-2",
+              "sourcePage": 1,
+              "continuity": "source-proven-continuous"
+            }
+          ],
+          "authoritativeCounters": {
+            "lineBoundaryCount": 2,
+            "decidedLineBoundaryCount": 2,
+            "unresolvedCorruptingJoinCount": 0
+          },
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.prose-continuity",
+      "documentId": "structured-scientific",
+      "stratum": "prose-continuity",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "paragraphs": [
+            {
+              "id": "left-prose",
+              "sourcePage": 1,
+              "continuity": "source-proven-continuous"
+            },
+            {
+              "id": "right-prose",
+              "sourcePage": 1,
+              "continuity": "source-proven-continuous"
+            }
+          ],
+          "authoritativeCounters": {
+            "lineBoundaryCount": 3,
+            "decidedLineBoundaryCount": 3,
+            "unresolvedCorruptingJoinCount": 0
+          },
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "pdf-to-epub-fidelity.boilerplate-exclusion",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "boilerplate-exclusion",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "excluded": [],
+          "bodyLineCount": 16,
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.boilerplate-exclusion",
+      "documentId": "structured-scientific",
+      "stratum": "boilerplate-exclusion",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "excluded": [],
+          "bodyLineCount": 12,
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "diagnostic-overlays.boilerplate-exclusion",
+      "documentId": "diagnostic-overlays",
+      "stratum": "boilerplate-exclusion",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "excluded": [
+            {
+              "id": "running-head-1",
+              "sourcePage": 1,
+              "kind": "running-head"
+            },
+            {
+              "id": "page-number-1",
+              "sourcePage": 1,
+              "kind": "page-number"
+            }
+          ],
+          "bodyLineCount": 7,
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "pdf-to-epub-fidelity.footnote-resolution",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "footnote-resolution",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "references": [
+            {
+              "id": "note-reference-1",
+              "sourcePage": 1,
+              "marker": "1",
+              "bodyId": "footnote-1"
+            }
+          ],
+          "bodies": [{ "id": "footnote-1", "sourcePage": 1, "marker": "1" }],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.footnote-resolution",
+      "documentId": "structured-scientific",
+      "stratum": "footnote-resolution",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "references": [
+            {
+              "id": "note-reference-1",
+              "sourcePage": 1,
+              "marker": "1",
+              "bodyId": "footnote-1"
+            }
+          ],
+          "bodies": [{ "id": "footnote-1", "sourcePage": 1, "marker": "1" }],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "pdf-to-epub-fidelity.column-layout",
+      "documentId": "pdf-to-epub-fidelity",
+      "stratum": "column-layout",
+      "layout": "one-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "columnCount": 1,
+          "columns": [{ "id": "column-0", "index": 0 }],
+          "readingOrder": ["title", "abstract", "methods", "body"],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "structured-scientific.column-layout",
+      "documentId": "structured-scientific",
+      "stratum": "column-layout",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "columnCount": 2,
+          "columns": [
+            { "id": "column-0", "index": 0 },
+            { "id": "column-1", "index": 1 }
+          ],
+          "readingOrder": [
+            "left-line-1",
+            "left-line-2",
+            "left-line-3",
+            "left-line-4",
+            "right-line-1",
+            "right-line-2",
+            "right-line-3",
+            "right-line-4"
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    },
+    {
+      "id": "diagnostic-overlays.column-layout",
+      "documentId": "diagnostic-overlays",
+      "stratum": "column-layout",
+      "layout": "two-column",
+      "source": {
+        "sourcePage": 1,
+        "groundTruth": {
+          "columnCount": 2,
+          "columns": [
+            { "id": "column-0", "index": 0 },
+            { "id": "column-1", "index": 1 }
+          ],
+          "readingOrder": [
+            "left-start",
+            "left-continuation",
+            "right-start",
+            "right-continuation"
+          ],
+          "review": {
+            "kind": "source-reviewed",
+            "derivedFrom": "source-document",
+            "reviewStatus": "review-required",
+            "reviewers": [],
+            "parserOutputConsulted": false,
+            "reviewEvidence": null
+          }
+        }
+      }
+    }
+  ]
+}

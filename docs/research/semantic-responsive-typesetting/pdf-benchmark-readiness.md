@@ -22,6 +22,51 @@ inside the repository. The checker rejects document identity collisions, split
 leakage, unverified template-family declarations, and split documents not bound
 by a source.
 
+### Reader-visible extraction strata
+
+The additive extraction benchmark is kept separate from the frozen fidelity
+cases in [`benchmarks/pdf/extraction-eval-strata-v1.json`](../../../benchmarks/pdf/extraction-eval-strata-v1.json).
+It uses repository-owned source fixtures and records table cells (including
+row/column topology, header scope, source geometry, and source-line lineage)
+and heading sequences (including unnumbered and non-English headings). The
+corpus has two one-column and two two-column documents. No parser output is
+consulted when labels are made. Labels remain `review-required` until a
+roster-bound reviewer artifact and source-only decision artifact are committed;
+the checked-in fixture slice does not invent reviewer identities.
+
+Every stratum declares its scoring formula and a fail-closed degenerate-answer
+guard. An explicit abstention is reported at `0.25`; an empty answer, a
+metadata-only table or object without source geometry and lineage, a page-wide
+grid, an every-line heading flood, a caption without a bounded visual, or
+another guarded answer scores `0`. Prose continuity is gated only by the
+pipeline's authoritative line-boundary counters; a regex proxy cannot enter
+the score. Candidate envelopes also bind the canonical eval-set hash.
+
+Run the deterministic path and every configured candidate provider in one
+privacy-safe report. The default provider manifest is explicitly
+`reported-only`: all providers abstain until independently frozen output is
+available, so the command must not be read as a quality comparison.
+
+```bash
+npm run pdf:benchmark:extraction -- \
+  --eval-set benchmarks/pdf/extraction-eval-strata-v1.json \
+  --providers benchmarks/pdf/extraction-eval-providers-v1.json \
+  --out /tmp/pdf-extraction-eval-report.json
+```
+
+The report contains only provider identities, artifact hashes, counts, scores
+grouped by stratum and layout, a `reported-only`/`comparison` status, and
+bounded diagnostic codes. In `reported-only` mode provider scores are `null`
+and `NO_SCORED_PROVIDER_OUTPUT` is emitted; source text, local paths, and
+rendered evidence remain outside the report.
+
+The canonical eval-set identity preserves source and reviewer-label identity but
+excludes review-evidence file digests, so a source-only decision artifact can
+bind the eval-set hash without creating a digest cycle. File-mode providers must
+also declare `predictionsSha256`; the loader verifies the exact repository bytes
+before accepting the candidate. Abstaining providers declare both prediction
+fields as `null`.
+
 Every frozen split identity covers each document id, exact source-PDF SHA-256,
 verified template-family id, and SHA-256 of the source-only assignment
 evidence. A blind document is acceptable only when every source containing it

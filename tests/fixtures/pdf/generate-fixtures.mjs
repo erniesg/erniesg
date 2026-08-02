@@ -950,6 +950,7 @@ const fixtures = {
   'diagnostic-overlays.pdf': [
     {
       lines: [
+        { text: 'Diagnostic extraction benchmark', x: 54, y: 770, size: 8 },
         { text: 'Left candidate order begins here.', x: 54, y: 690 },
         { text: 'Right candidate order begins here.', x: 330, y: 690 },
         { text: 'Indented left order continues here.', x: 100, y: 300 },
@@ -971,6 +972,7 @@ const fixtures = {
           y: 70,
           size: 8,
         },
+        { text: '1', x: 306, y: 24, size: 8 },
       ],
     },
   ],

@@ -27,6 +27,20 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableValue(value[key])]),
+  )
+}
+
+function stableJson(value) {
+  return JSON.stringify(stableValue(value))
+}
+
 function addCounts(left, right) {
   return {
     semantic: left.semantic + right.semantic,
@@ -124,22 +138,47 @@ async function runPipeline(
   { rawProvider = false, auditPath = auditPdfPath } = {},
 ) {
   const aggregate = emptyCounts()
+  const verifiedAggregate = emptyCounts()
   const documents = []
+  const verifiedDocuments = []
+  const receiptManifest = []
   for (const path of paths) {
     const record = await auditPath(path, pipeline)
     if (!record.reconstruction) {
       documents.push({ basename: record.document.basename, code: record.document.code })
+      verifiedDocuments.push({
+        basename: record.document.basename,
+        code: record.document.code,
+      })
       continue
     }
+    const verifiedCounts = tableCandidatePathSummary(record.reconstruction)
     const counts = tableCandidatePathSummary(record.reconstruction, { rawProvider })
     Object.assign(aggregate, addCounts(aggregate, counts))
-    documents.push({
+    Object.assign(verifiedAggregate, addCounts(verifiedAggregate, verifiedCounts))
+    const document = {
       basename: record.document.basename,
       sha256: record.document.sha256,
       counts,
+    }
+    documents.push(document)
+    verifiedDocuments.push({
+      ...document,
+      counts: verifiedCounts,
+    })
+    receiptManifest.push({
+      basename: record.document.basename,
+      sha256: record.document.sha256,
+      tableCandidateReceipts: record.reconstruction.tableCandidateReceipts ?? [],
     })
   }
-  return { counts: aggregate, documents }
+  return {
+    counts: aggregate,
+    verifiedCounts: verifiedAggregate,
+    documents,
+    verifiedDocuments,
+    receiptManifestSha256: sha256(Buffer.from(stableJson(receiptManifest))),
+  }
 }
 
 async function sourceRenderEvidence(path) {
@@ -170,7 +209,22 @@ async function sourceRenderEvidence(path) {
   if (new Set(sourceHashes).size !== sourceHashes.length) {
     throw new Error('TABLE_CANDIDATE_SOURCE_RENDER_EVIDENCE_INVALID')
   }
-  return { sha256: sha256(Buffer.from(JSON.stringify(value))), documents: value.documents }
+  return { sha256: sha256(Buffer.from(stableJson(value))), documents: value.documents }
+}
+
+function validateSourceRenderEvidence(value, deterministicDocuments) {
+  if (!value) return
+  const expected = deterministicDocuments
+    .map((document) => document.sha256)
+    .filter((hash) => SHA256.test(hash))
+  const actual = value.documents.map((document) => document.sourceSha256)
+  if (
+    expected.length !== actual.length ||
+    new Set(expected).size !== new Set(actual).size ||
+    expected.some((hash) => !actual.includes(hash))
+  ) {
+    throw new Error('TABLE_CANDIDATE_SOURCE_RENDER_EVIDENCE_MISMATCH')
+  }
 }
 
 export async function runTableCandidateBenchmark({
@@ -186,64 +240,72 @@ export async function runTableCandidateBenchmark({
   const paths = await collectPaths(inputs)
   if (paths.length === 0) throw new Error('NO_PDF_INPUTS')
   const modulePipeline = await createPipeline()
-  const providerResolution = resolveTableCandidateProviderConfiguration({
-    provider: providerConfig ? 'docling-tableformer' : 'none',
-    optIn,
-    configuration: providerConfig,
-  })
-  if (!providerResolution.available) {
-    await modulePipeline.close()
-    throw new Error(providerResolution.diagnostic.code)
-  }
-  const providerModule = await modulePipeline.loadTableCandidateProviderModule()
-  const deterministicPipeline = modulePipeline
-  const deterministic = await runPipeline(paths, deterministicPipeline, {
-    auditPath,
-  })
-  const provider = providerConfig
-    ? createProcessTableCandidateProvider({
-        module: providerModule,
-        configuration: providerConfig,
-      })
-    : null
-  const providerPipeline = provider
-    ? await createPipeline({ tableCandidateProvider: provider })
-    : null
+  let providerPipeline = null
   try {
+    const providerResolution = resolveTableCandidateProviderConfiguration({
+      provider: providerConfig ? 'docling-tableformer' : 'none',
+      optIn,
+      configuration: providerConfig,
+    })
+    if (!providerResolution.available) {
+      throw new Error(providerResolution.diagnostic.code)
+    }
+    const providerModule = await modulePipeline.loadTableCandidateProviderModule()
+    const deterministic = await runPipeline(paths, modulePipeline, { auditPath })
+    const provider = providerConfig
+      ? createProcessTableCandidateProvider({
+          module: providerModule,
+          configuration: providerConfig,
+        })
+      : null
+    providerPipeline = provider
+      ? await createPipeline({ tableCandidateProvider: provider })
+      : null
     const providerRun = providerPipeline
       ? await runPipeline(paths, providerPipeline, {
           rawProvider: true,
           auditPath,
         })
-      : { counts: { ...deterministic.counts }, documents: [] }
-    const verifiedRun = providerPipeline
-      ? await runPipeline(paths, providerPipeline, { auditPath })
-      : { counts: { ...deterministic.counts }, documents: [] }
-    const report = providerModule.createTableCandidateBenchmarkReport({
+      : {
+          counts: { ...deterministic.counts },
+          verifiedCounts: { ...deterministic.counts },
+          documents: [],
+          verifiedDocuments: [],
+          receiptManifestSha256: null,
+        }
+    validateSourceRenderEvidence(sourceRenderEvidence, deterministic.documents)
+    const aggregateReport = providerModule.createTableCandidateBenchmarkReport({
       corpusId,
       deterministic: deterministic.counts,
       provider: providerRun.counts,
-      verifiedProvider: verifiedRun.counts,
+      verifiedProvider: providerRun.verifiedCounts,
     })
-    return {
+    const report = {
       schemaVersion: TABLE_CANDIDATE_BENCHMARK_SCHEMA_VERSION,
       contractVersion: providerModule.TABLE_CANDIDATE_RECEIPT_SCHEMA_VERSION,
       corpusId,
       provider: provider?.identity ?? null,
-      paths: report.paths,
-      sha256: report.sha256,
+      paths: aggregateReport.paths,
       documents: {
         deterministic: deterministic.documents,
         provider: providerRun.documents,
-        verifiedProvider: verifiedRun.documents,
+        verifiedProvider: providerRun.verifiedDocuments,
       },
+      providerReceiptManifestSha256: providerRun.receiptManifestSha256,
       sourceRenderEvidence,
       evidenceStatus: sourceRenderEvidence ? 'attached' : 'missing',
     }
+    return {
+      ...report,
+      sha256: sha256(Buffer.from(stableJson(report))),
+    }
   } finally {
-    await providerPipeline?.close()
-    // The deterministic run owns the first Vite instance in every mode.
-    await deterministicPipeline.close()
+    try {
+      await providerPipeline?.close()
+    } finally {
+      // The deterministic run owns the first Vite instance in every mode.
+      await modulePipeline.close()
+    }
   }
 }
 

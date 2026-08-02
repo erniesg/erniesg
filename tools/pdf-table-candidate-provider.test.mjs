@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   createProcessTableCandidateProvider,
   DEFAULT_TABLE_CANDIDATE_PROVIDER,
@@ -13,7 +16,7 @@ const identity = (id, fill) => ({
   sha256: fill.repeat(64),
 })
 
-function configuration() {
+function configuration(overrides = {}) {
   return {
     provider: 'docling-tableformer',
     command: '/opt/docling-tableformer/run',
@@ -23,6 +26,7 @@ function configuration() {
     adapter: identity('docling-tableformer-adapter', 'b'),
     runtime: identity('docling-python', 'c'),
     configuration: { mode: 'accurate', threads: 2 },
+    ...overrides,
   }
 }
 
@@ -119,5 +123,77 @@ describe('table candidate provider operator boundary', () => {
     ).resolves.toBeNull()
     expect(provider.identity.adapter).toEqual(configuration().adapter)
     expect(provider.identity.runtime).toEqual(configuration().runtime)
+  })
+
+  it('probes the configured executable without assuming a --version flag', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'table-candidate-provider-'))
+    const command = join(directory, 'provider')
+    await writeFile(
+      command,
+      '#!/bin/sh\n[ "$1" = "--version" ] && exit 1\nexit 0\n',
+      'utf8',
+    )
+    await chmod(command, 0o755)
+    try {
+      const provider = createProcessTableCandidateProvider({
+        module: {
+          createDoclingTableCandidateProvider: ({ infer, adapter, runtime }) => ({
+            identity: {
+              id: 'docling-tableformer',
+              version: '2.48.0',
+              modelDigest: 'a'.repeat(64),
+              configurationHash: 'b'.repeat(64),
+              adapter,
+              runtime,
+            },
+            locality: 'local',
+            propose: infer,
+          }),
+        },
+        configuration: configuration({ command, args: [] }),
+      })
+      await expect(provider.available?.()).resolves.toBe(true)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves multibyte JSON when stdout chunks split inside a code point', async () => {
+    const script = [
+      'process.stdin.resume()',
+      "process.stdin.on('end', () => {",
+      "  const bytes = Buffer.from(JSON.stringify({ ok: '€' }))",
+      '  const split = bytes.indexOf(0xe2) + 1',
+      '  process.stdout.write(bytes.subarray(0, split))',
+      '  setTimeout(() => process.stdout.write(bytes.subarray(split)), 10)',
+      '})',
+    ].join(';')
+    const provider = createProcessTableCandidateProvider({
+      module: {
+        createDoclingTableCandidateProvider: ({ infer, adapter, runtime }) => ({
+          identity: {
+            id: 'docling-tableformer',
+            version: '2.48.0',
+            modelDigest: 'a'.repeat(64),
+            configurationHash: 'b'.repeat(64),
+            adapter,
+            runtime,
+          },
+          locality: 'local',
+          propose: infer,
+        }),
+      },
+      configuration: configuration({
+        command: process.execPath,
+        args: ['-e', script],
+      }),
+    })
+    await expect(
+      provider.propose({
+        image: Uint8Array.from([1, 2, 3]),
+        mediaType: 'image/png',
+        imageSha256: 'c'.repeat(64),
+      }),
+    ).resolves.toEqual({ ok: '€' })
   })
 })

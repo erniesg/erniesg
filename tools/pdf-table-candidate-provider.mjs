@@ -5,9 +5,9 @@
 // trusted local benchmark/import run. The configured process receives a
 // bounded image payload and never receives a source path or extracted text.
 
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { promisify } from 'node:util'
+import { StringDecoder } from 'node:string_decoder'
 
 export const TABLE_CANDIDATE_PROVIDER_CONTRACT_VERSION = '1.0.0'
 export const TABLE_CANDIDATE_PROVIDERS = Object.freeze([
@@ -17,7 +17,6 @@ export const TABLE_CANDIDATE_PROVIDERS = Object.freeze([
 export const DEFAULT_TABLE_CANDIDATE_PROVIDER = 'none'
 export const TABLE_CANDIDATE_OPT_IN_FLAG = '--table-candidate-opt-in'
 
-const execFileAsync = promisify(execFile)
 const SHA256 = /^[a-f0-9]{64}$/u
 const IDENTIFIER = /^[a-z0-9][a-z0-9._-]{0,79}$/u
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/u
@@ -149,18 +148,30 @@ function unavailableError() {
   return error
 }
 
-async function commandAvailable(command) {
-  try {
-    await execFileAsync(command, ['--version'], {
-      encoding: 'utf8',
-      timeout: 5_000,
-      maxBuffer: 64 * 1024,
-      windowsHide: true,
+function commandAvailable(command, args = []) {
+  return new Promise((resolve) => {
+    let settled = false
+    let child
+    const finish = (available) => {
+      if (settled) return
+      settled = true
+      resolve(available)
+    }
+    try {
+      child = spawn(command, args, {
+        stdio: ['ignore', 'ignore', 'ignore'],
+        windowsHide: true,
+      })
+    } catch {
+      finish(false)
+      return
+    }
+    child.once('error', () => finish(false))
+    child.once('spawn', () => {
+      child.kill()
+      finish(true)
     })
-    return true
-  } catch {
-    return false
-  }
+  })
 }
 
 function runProcess({ command, args, input, signal }) {
@@ -172,6 +183,7 @@ function runProcess({ command, args, input, signal }) {
     let output = ''
     let outputBytes = 0
     let settled = false
+    const decoder = new StringDecoder('utf8')
     const finish = (callback) => {
       if (settled) return
       settled = true
@@ -195,7 +207,7 @@ function runProcess({ command, args, input, signal }) {
         finish(() => reject(unavailableError()))
         return
       }
-      output += chunk.toString('utf8')
+      output += decoder.write(chunk)
     })
     child.stderr.resume()
     child.stdin.on('error', () => finish(() => reject(unavailableError())))
@@ -204,6 +216,7 @@ function runProcess({ command, args, input, signal }) {
         finish(() => reject(unavailableError()))
         return
       }
+      output += decoder.end()
       finish(() => resolve(output))
     })
     child.stdin.end(input)
@@ -258,7 +271,7 @@ export function createProcessTableCandidateProvider({
     infer,
   })
   provider.available = async () => {
-    availability ??= commandAvailable(config.command)
+    availability ??= commandAvailable(config.command, config.args)
     return availability
   }
   return provider

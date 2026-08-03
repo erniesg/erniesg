@@ -84,6 +84,7 @@ export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
   add(graph.metadata.subtitle)
   add(graph.metadata.abstract)
   for (const contributor of graph.metadata.contributors ?? []) add(contributor)
+  let titleHeadingHeaderPending = true
   for (const node of graph.nodes) {
     const selected = publicationNodeForProfile(node, profile)
     if (
@@ -91,7 +92,10 @@ export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
       selected.level === 1 &&
       selected.text === graph.metadata.title
     )
-      continue
+      if (titleHeadingHeaderPending) {
+        titleHeadingHeaderPending = false
+        continue
+      }
     if ('text' in selected) add(selected.text)
     switch (selected.type) {
       case 'quote':

@@ -164,6 +164,15 @@ const textContent = {
 }
 
 const relationshipArray = z.array(idSchema).max(10_000)
+const uniqueChildListRelationshipArray = relationshipArray.superRefine(
+  (ids, context) => {
+    if (new Set(ids).size !== ids.length)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Nested child-list relationships must be unique',
+      })
+  },
+)
 const headingNode = nodeBase
   .extend({
     type: z.literal('heading'),
@@ -186,7 +195,7 @@ const listItemNode = nodeBase
   .extend({
     type: z.literal('list-item'),
     parentListId: idSchema,
-    childListIds: relationshipArray.default([]),
+    childListIds: uniqueChildListRelationshipArray.default([]),
     ...textContent,
   })
   .strict()

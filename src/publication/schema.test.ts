@@ -299,4 +299,30 @@ describe('PublicationGraph', () => {
     )
     expect(publicationGraphSchema.safeParse(multiplyOwned).success).toBe(false)
   })
+
+  it('rejects duplicate child-list relationships', () => {
+    const duplicate = graphFixture() as any
+    duplicate.nodes.push(
+      {
+        ...common,
+        id: 'nested-list',
+        type: 'list',
+        ordered: false,
+        itemIds: ['nested-item'],
+      },
+      {
+        ...common,
+        id: 'nested-item',
+        type: 'list-item',
+        parentListId: 'nested-list',
+        childListIds: [],
+        text: 'Nested item',
+      },
+    )
+    duplicate.nodes.find((node: any) => node.id === 'item').childListIds = [
+      'nested-list',
+      'nested-list',
+    ]
+    expect(publicationGraphSchema.safeParse(duplicate).success).toBe(false)
+  })
 })

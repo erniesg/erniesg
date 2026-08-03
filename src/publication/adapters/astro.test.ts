@@ -133,6 +133,26 @@ describe('Astro publication adapter', () => {
     )
   })
 
+  it('rejects entry and source symlinks that escape the configured collection', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-realpath-'))
+    const outside = await mkdtemp(resolve(tmpdir(), 'publication-realpath-outside-'))
+    await writeFile(
+      resolve(outside, 'index.mdx'),
+      `---\ntitle: Escaped\ndescription: Escaped entry\ndate: 2026-07-27\n---\n# Escaped\n`,
+    )
+    await symlink(resolve(outside), resolve(root, 'escaped'))
+    await expect(
+      adaptAstroBlogEntry({ entryId: 'escaped', contentRoot: root }),
+    ).rejects.toThrow(/escapes the blog collection/)
+
+    const safe = resolve(root, 'safe')
+    await mkdir(safe)
+    await symlink(resolve(outside, 'index.mdx'), resolve(safe, 'index.mdx'))
+    await expect(
+      adaptAstroBlogEntry({ entryId: 'safe', contentRoot: root }),
+    ).rejects.toThrow(/source escapes the blog collection/)
+  })
+
   it('preserves authored heading fragments, inline code, and nested list ownership while rejecting escaping assets', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-contract-'))
     const entry = resolve(root, 'contract')
@@ -282,7 +302,7 @@ describe('Astro publication adapter', () => {
     await mkdir(entry)
     await writeFile(
       resolve(entry, 'index.mdx'),
-      `---\ntitle: Footnote note collision\ndescription: Footnote note collision fixture\ndate: 2026-07-27\n---\n# Note Proof\n\nA claim[^proof].\n\n[^proof]: The note remains linked.\n`,
+      `---\ntitle: Footnote note collision\ndescription: Footnote note collision fixture\ndate: 2026-07-27\n---\n# Note Proof\n\nA [heading link](#note-proof) and a claim[^proof].\n\n[^proof]: The note remains linked.\n`,
     )
     const result = await adaptAstroBlogEntry({
       entryId: 'footnote-note-collision',
@@ -293,9 +313,11 @@ describe('Astro publication adapter', () => {
     })
     expect(result.graph.nodes.find((node) => node.type === 'paragraph')).toMatchObject({
       inlineRuns: [
+        expect.objectContaining({ href: '#note-proof' }),
         expect.objectContaining({
           href: '#note-proof-1',
           targetIds: ['note-proof-1'],
+          semanticRole: 'cross-reference',
         }),
       ],
     })

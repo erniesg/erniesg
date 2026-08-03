@@ -314,12 +314,14 @@ describe('publication:check CLI', () => {
       metadata: { title: 'Title', contributors: [] },
       nodes: [
         { id: 'title', type: 'heading', level: 1, text: 'Title' },
+        { id: 'title-2', type: 'heading', level: 1, text: 'Title' },
         { id: 'body', type: 'paragraph', text: 'Body text' },
         { id: 'repeat-a', type: 'paragraph', text: 'repeat' },
         { id: 'repeat-b', type: 'paragraph', text: 'repeat' },
       ],
     }
     expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual([
+      'Title',
       'Title',
       'Body text',
       'repeat',

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
   PUBLICATION_PROFILES,
+  preparePublicationAssetDirectory,
   prepareWebPubDirectory,
   publicationAssetFileExtension,
   publicationEpubAccessibilityMetadata,
@@ -295,6 +296,39 @@ describe('Vivliostyle publication renderer boundary', () => {
     const phone = publicationGraphToHtml(graph, paths, 'phone-webpub')
     expect(phone).toContain(`src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`)
     expect(phone).not.toContain('مختصر')
+  })
+
+  it('selects reviewed profile variants for equation captions', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const template = bundle.graph.nodes[0]
+    const graph = {
+      ...bundle.graph,
+      nodes: [
+        {
+          ...template,
+          id: 'equation',
+          type: 'equation' as const,
+          source: 'x = 1',
+          format: 'plain-text' as const,
+          captionId: 'equation-caption',
+        },
+        {
+          ...template,
+          id: 'equation-caption',
+          type: 'caption' as const,
+          parentId: 'equation',
+          text: 'Canonical equation caption',
+          variants: [
+            { kind: 'compact' as const, text: 'Compact equation caption', reviewed: true },
+          ],
+        },
+      ],
+    }
+    const html = publicationGraphToHtml(graph, new Map(), 'a5-pdf')
+    expect(html).toContain('Compact equation caption')
+    expect(html).not.toContain('Canonical equation caption')
   })
 
   it('derives EPUB accessibility modes and features from graph media', () => {
@@ -613,19 +647,19 @@ describe('Vivliostyle publication renderer boundary', () => {
   it('requires the pinned browser build before rendering', () => {
     expect(
       publicationBrowserVersionMatches(
-        'Chromium 149.0.7827.0',
+        'Chromium 149.0.7827.55',
         '149.0.7827.55',
       ),
     ).toBe(true)
     expect(
       publicationBrowserVersionMatches(
-        'Chromium 148.0.7800.1',
+        'Chromium 149.0.7827.0',
         '149.0.7827.55',
       ),
     ).toBe(false)
   })
 
-  it('removes stale WebPub assets before a new publication', async () => {
+  it('removes stale WebPub and layout assets before a new publication', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-clean-'))
     const webpub = resolve(root, 'phone-webpub')
     await mkdir(resolve(webpub, 'assets'), { recursive: true })
@@ -633,5 +667,12 @@ describe('Vivliostyle publication renderer boundary', () => {
     await (await import('node:fs/promises')).writeFile(stale, 'stale')
     await prepareWebPubDirectory(webpub)
     await expect(access(stale)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const layout = resolve(root, 'layout-assets')
+    await mkdir(layout, { recursive: true })
+    const staleLayout = resolve(layout, 'stale.svg')
+    await (await import('node:fs/promises')).writeFile(staleLayout, 'stale')
+    await preparePublicationAssetDirectory(layout)
+    await expect(access(staleLayout)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

@@ -220,13 +220,35 @@ export async function adaptAstroBlogEntry(
 ): Promise<PublicationSourceResult> {
   const entryId = safeEntryId(locator.entryId)
   const contentRoot = resolve(locator.contentRoot ?? 'src/content/blog')
+  let contentRealRoot: string
+  try {
+    contentRealRoot = await realpath(contentRoot)
+  } catch {
+    throw new Error(`Unknown Astro blog collection: ${contentRoot}`)
+  }
   const entryDirectory = resolve(contentRoot, entryId)
   if (!inside(contentRoot, entryDirectory))
     throw new Error(`Astro entry escapes the blog collection: ${entryId}`)
+  let entryRealDirectory: string
+  try {
+    entryRealDirectory = await realpath(entryDirectory)
+  } catch {
+    throw new Error(`Unknown Astro blog entry: ${entryId}`)
+  }
+  if (!inside(contentRealRoot, entryRealDirectory))
+    throw new Error(`Astro entry escapes the blog collection: ${entryId}`)
   const sourcePath = resolve(entryDirectory, 'index.mdx')
+  let sourceRealPath: string
+  try {
+    sourceRealPath = await realpath(sourcePath)
+  } catch {
+    throw new Error(`Unknown Astro blog entry: ${entryId}`)
+  }
+  if (!inside(entryRealDirectory, sourceRealPath))
+    throw new Error(`Astro entry source escapes the blog collection: ${entryId}`)
   let source: string
   try {
-    source = await readFile(sourcePath, 'utf8')
+    source = await readFile(sourceRealPath, 'utf8')
   } catch {
     throw new Error(`Unknown Astro blog entry: ${entryId}`)
   }
@@ -274,12 +296,6 @@ export async function adaptAstroBlogEntry(
     while (usedNodeIds.has(id)) id = `${slug}-${suffix++}`
     usedNodeIds.add(id)
     return id
-  }
-  let entryRealDirectory: string
-  try {
-    entryRealDirectory = await realpath(entryDirectory)
-  } catch {
-    throw new Error(`Unknown Astro blog entry: ${entryId}`)
   }
   const addAsset = async (rawPath: string, alt: string) => {
     if (/^[a-z]+:/i.test(rawPath) || rawPath.startsWith('/'))
@@ -519,10 +535,12 @@ export async function adaptAstroBlogEntry(
         if (!('inlineRuns' in node) || !node.inlineRuns) continue
         node.inlineRuns = node.inlineRuns.map((run) => ({
           ...run,
-          ...(run.href === `#${preferredId}`
+          ...(run.semanticRole === 'cross-reference' &&
+          run.href === `#${preferredId}`
             ? { href: `#${noteId}` }
             : {}),
-          ...(run.targetIds?.includes(preferredId)
+          ...(run.semanticRole === 'cross-reference' &&
+          run.targetIds?.includes(preferredId)
             ? {
                 targetIds: run.targetIds.map((target) =>
                   target === preferredId ? noteId : target,

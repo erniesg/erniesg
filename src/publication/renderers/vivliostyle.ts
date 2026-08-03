@@ -336,10 +336,13 @@ function renderNode(
         throw new Error('MathML equation rendering is unsupported')
       {
         const caption = node.captionId ? byId.get(node.captionId) : undefined
+        const renderedCaption = caption
+          ? publicationNodeForProfile(caption, profile)
+          : undefined
         const label = node.label
           ? `<span class="equation-label">${escapeHtml(node.label)}</span>`
           : ''
-        return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${caption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(caption, edition)}>${inlineHtml(caption.text, caption.inlineRuns)}</div>` : ''}</div>`
+        return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${renderedCaption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</div>` : ''}</div>`
       }
     case 'note':
       return `<aside ${nodeAttributes(node, edition, ['role="doc-footnote"'])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
@@ -479,7 +482,7 @@ async function writeAssets(
   directory: string,
   prefix = 'assets/',
 ) {
-  await mkdir(directory, { recursive: true })
+  await preparePublicationAssetDirectory(directory)
   const paths = new Map<string, string>()
   for (const descriptor of bundle.assetBundle.descriptor.assets) {
     const extension = publicationAssetFileExtension(
@@ -514,6 +517,10 @@ export function publicationEpubManifestItemId(assetId: string, index: number) {
 }
 
 export async function prepareWebPubDirectory(directory: string) {
+  await preparePublicationAssetDirectory(directory)
+}
+
+export async function preparePublicationAssetDirectory(directory: string) {
   await rm(directory, { recursive: true, force: true })
   await mkdir(directory, { recursive: true })
 }
@@ -699,8 +706,8 @@ export function publicationBrowserVersionMatches(
   expectedVersion: string,
 ) {
   const actual = String(versionOutput).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
-  const expected = String(expectedVersion).match(/^(\d+\.\d+\.\d+)/u)?.[1]
-  return Boolean(actual && expected && actual.startsWith(`${expected}.`))
+  const expected = String(expectedVersion).match(/^(\d+\.\d+\.\d+\.\d+)$/u)?.[1]
+  return Boolean(actual && expected && actual === expected)
 }
 
 function verifyPublicationBrowserExecutable(

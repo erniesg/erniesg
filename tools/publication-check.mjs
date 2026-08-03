@@ -129,18 +129,25 @@ export function assertPdfSearchableTextRequirements(
 }
 
 export function orderPdfTextRequirements(requiredTexts, renderedText) {
+  const renderedTextWithCollapsedWhitespace = String(renderedText ?? '').replace(
+    /\s+/gu,
+    ' ',
+  )
   const searchableRenderedText = normalizePdfSearchableText(renderedText)
+  const renderedTextPosition = (value) => {
+    const expected = String(value ?? '').trim().replace(/\s+/gu, ' ')
+    const exactIndex = expected
+      ? renderedTextWithCollapsedWhitespace.indexOf(expected)
+      : -1
+    if (exactIndex >= 0) return exactIndex
+    const searchableExpected = normalizePdfSearchableText(value)
+    const normalizedIndex = searchableExpected
+      ? searchableRenderedText.indexOf(searchableExpected)
+      : -1
+    return normalizedIndex < 0 ? Number.MAX_SAFE_INTEGER : normalizedIndex
+  }
   return [...(requiredTexts ?? [])].sort((left, right) => {
-    const leftIndex = searchableRenderedText.indexOf(
-      normalizePdfSearchableText(left),
-    )
-    const rightIndex = searchableRenderedText.indexOf(
-      normalizePdfSearchableText(right),
-    )
-    return (
-      (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) -
-      (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
-    )
+    return renderedTextPosition(left) - renderedTextPosition(right)
   })
 }
 

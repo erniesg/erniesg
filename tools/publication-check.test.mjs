@@ -112,6 +112,12 @@ describe('publication:check CLI', () => {
         'parent item child item',
       ),
     ).toEqual(['parent item', 'child item'])
+    expect(
+      orderPdfTextRequirements(
+        ['Why Astro?', 'Unlimited Bandwidth'],
+        'An earlier paragraph mentions unlimited bandwidth. Why Astro? Unlimited Bandwidth',
+      ),
+    ).toEqual(['Why Astro?', 'Unlimited Bandwidth'])
   })
 
   it('chooses the first non-empty accessibility alternative', () => {

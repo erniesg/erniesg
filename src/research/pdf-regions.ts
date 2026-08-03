@@ -2420,10 +2420,12 @@ function captionLineFontSize(line: PdfTextLine) {
   return line.fontSize
 }
 
-function captionFontFamily(fontName: string) {
-  return fontName
-    .trim()
-    .toLocaleLowerCase()
+export function captionFontFamily(fontName: string) {
+  const normalized = fontName.trim().toLocaleLowerCase()
+  if (/^[a-z][a-z0-9]*_d\d+_f\d+$/u.test(normalized)) {
+    return normalized.replace(/[^a-z0-9]+/gu, '')
+  }
+  return normalized
     .replace(/^[a-z]{6}\+/iu, '')
     .replace(/mt$/iu, '')
     .replace(/ps(?=[-+_,.\s]|$)/iu, '')
@@ -2431,6 +2433,7 @@ function captionFontFamily(fontName: string) {
       /(?:[-+_,.\s]*(?:bold|black|demi(?:bold)?|semibold|medium|regular|roman|book|italic|ital|oblique|obl))+$/iu,
       '',
     )
+    .replace(/(?:[-+_,.\s]+(?:bdit|bdi|bi|bd|it|reg|rm|md|med|lt|sb))+$/iu, '')
     .replace(/\d+$/u, '')
     .replace(/[^a-z0-9]+/gu, '')
 }
@@ -2456,8 +2459,10 @@ function captionTypographyCompatible(
   seed: PdfTextLine,
   candidate: PdfTextLine,
 ) {
-  return captionLineDominantFontFamily(seed) ===
+  return (
+    captionLineDominantFontFamily(seed) ===
     captionLineDominantFontFamily(candidate)
+  )
 }
 
 function captionLaneCompatible(

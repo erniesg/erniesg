@@ -74,6 +74,48 @@ export const DEFAULT_PDF_COMPLETENESS_POLICY: PdfCompletenessPolicy = {
 
 const UNRESOLVED_AUTHOR_PLACEHOLDER = 'Imported locally'
 
+const PDF_SENTENCE_END_WITH_CLOSING =
+  /[.!?\u061F\u0964\u0965\u1362\u1803\u3002\uFF01\uFF0E\uFF1F](?:["'’”\])}]*)$/u
+
+function rtlLanguage(tag: string | null) {
+  if (!tag) return false
+  try {
+    const locale = new Intl.Locale(tag)
+    const script = locale.script
+    if (
+      script &&
+      ['Arab', 'Hebr', 'Syrc', 'Thaa', 'Nkoo', 'Adlm'].includes(script)
+    ) {
+      return true
+    }
+    return [
+      'ar',
+      'dv',
+      'fa',
+      'he',
+      'ks',
+      'ku',
+      'ps',
+      'sd',
+      'syr',
+      'ug',
+      'ur',
+      'yi',
+    ].includes(locale.language)
+  } catch {
+    return false
+  }
+}
+
+function rtlBaseDirection(
+  language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
+) {
+  if (baseDirection === 'rtl') return true
+  if (baseDirection === 'ltr' || baseDirection === 'unknown') return false
+  return rtlLanguage(language)
+}
+
 export type CanonicalFloatScopeEvidence = {
   interruptedRegionIds: readonly [string, string]
   scopeRegionIds: readonly string[]
@@ -898,6 +940,7 @@ function validatedSourceSemanticFlowBoundaryDecision(
   hardHyphenLexicon: ReadonlySet<string>,
   unhyphenatedLexicon: ReadonlySet<string>,
   language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
 ) {
   const candidates = decisions.filter(
     (decision) =>
@@ -1071,6 +1114,8 @@ function validatedSourceSemanticFlowBoundaryDecision(
       rightRegion,
       from.line,
       to.line,
+      language,
+      baseDirection,
     )
   ) {
     expectedOutcome = 'space'
@@ -1115,6 +1160,8 @@ function sourceProvenSamePageColumnFlowBoundary(
   rightRegion: PdfPageRegion,
   fromLine: PdfPageRegion['lines'][number],
   toLine: PdfPageRegion['lines'][number],
+  language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
 ) {
   const previousText = leftRegion.text.trimEnd()
   const continuationText = rightRegion.text.trimStart()
@@ -1130,28 +1177,34 @@ function sourceProvenSamePageColumnFlowBoundary(
       previousText,
     ) && /^(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)*)\.(?:\s|$)/u.test(continuationText)
   const detachedDashContinuation =
-    !/[.!?:;](?:["'’”\])}]*)$/u.test(previousText) &&
-    /^[–—-]\s+\p{Ll}/u.test(continuationText)
+    !/[.!?:;\u061F\u0964\u0965\u1362\u1803\u3002\uFF01\uFF0E\uFF1F](?:["'’”\])}]*)$/u.test(
+      previousText,
+    ) && /^[–—-]\s+\p{Ll}/u.test(continuationText)
   const unmarkedContinuation = Boolean(
     previousText &&
     continuationText &&
-    !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
+    !PDF_SENTENCE_END_WITH_CLOSING.test(previousText) &&
     (/^(?:\p{Ll}|\p{Lo})/u.test(continuationText) ||
       detachedNumericContinuation ||
       detachedScholarlyContinuation ||
       detachedDashContinuation),
   )
+  const rtl = rtlBaseDirection(language, baseDirection)
+  const columnsMatch = rtl
+    ? leftRegion.column === 'right' && rightRegion.column === 'left'
+    : leftRegion.column === 'left' && rightRegion.column === 'right'
+  const columnsAreOrdered = rtl
+    ? toLine.box.x + toLine.box.width <= fromLine.box.x + 0.01
+    : fromLine.box.x + fromLine.box.width <= toLine.box.x + 0.01
   if (
     leftRegion.page !== rightRegion.page ||
-    leftRegion.column !== 'left' ||
-    rightRegion.column !== 'right' ||
+    !columnsMatch ||
     fromLine.id !==
       leftRegion.lines.filter((line) => line.text.trim()).at(-1)?.id ||
     toLine.id !== rightRegion.lines.find((line) => line.text.trim())?.id ||
     fromLine.box.y + fromLine.box.height < 0.65 ||
     toLine.box.y > 0.35 ||
-    fromLine.box.x >= toLine.box.x ||
-    fromLine.box.x + fromLine.box.width > toLine.box.x + 0.01 ||
+    !columnsAreOrdered ||
     !unmarkedContinuation
   ) {
     return false
@@ -1176,6 +1229,7 @@ function auditSourceSemanticFlowBoundaryLedger({
   hardHyphenLexicon,
   unhyphenatedLexicon,
   language,
+  baseDirection,
 }: {
   allRegions: readonly PdfPageRegion[]
   visualRelationships: readonly PdfVisualRelationship[]
@@ -1184,6 +1238,7 @@ function auditSourceSemanticFlowBoundaryLedger({
   hardHyphenLexicon: ReadonlySet<string>
   unhyphenatedLexicon: ReadonlySet<string>
   language: string | null
+  baseDirection: ResearchPaper['baseDirection'] | null
 }): SourceSemanticFlowBoundaryLedgerAudit {
   const audit: SourceSemanticFlowBoundaryLedgerAudit = {
     valid: true,
@@ -1228,6 +1283,7 @@ function auditSourceSemanticFlowBoundaryLedger({
       hardHyphenLexicon,
       unhyphenatedLexicon,
       language,
+      baseDirection,
     )
     if (!validated) {
       audit.valid = false
@@ -1868,6 +1924,7 @@ export function provenanceTextConservation({
     hardHyphenLexicon,
     unhyphenatedLexicon,
     language: paper.language ?? null,
+    baseDirection: paper.baseDirection ?? null,
   })
   const orderedRegionMap = new Map(
     orderedRegions.map((region) => [region.id, region]),

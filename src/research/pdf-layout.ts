@@ -3496,6 +3496,9 @@ function provenBibliographyContinuation(
   return null
 }
 
+const PDF_SENTENCE_END_WITH_CLOSING =
+  /[.!?\u061F\u0964\u0965\u1362\u1803\u3002\uFF01\uFF0E\uFF1F](?:["'’”\])}]*)$/u
+
 const UNCERTAIN_BIBLIOGRAPHY_BOUNDARY_MESSAGE =
   'The bibliography item boundary is uncertain because a plausible markerless continuation lacks source-contiguous same-flow or adjacent-page geometry.'
 
@@ -3552,7 +3555,7 @@ function likelyUnmarkedCrossPageContinuation(
   return Boolean(
     previousText &&
     continuationText &&
-    !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
+    !PDF_SENTENCE_END_WITH_CLOSING.test(previousText) &&
     (/^(?:\p{Ll}|\p{Lo})/u.test(continuationText) ||
       detachedScholarlyReferenceContinuation(previousText, continuationText) ||
       detachedCitationYearContinuation(previousText, continuationText) ||
@@ -3996,6 +3999,8 @@ export function sourceProvenRunFragmentToSpanBoundary(
 function sourceProvenSamePageColumnFlowBoundary(
   target: RegionBlock,
   continuation: RegionBlock,
+  language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
 ) {
   const targetTailSegment = blockSourceSegments(target).at(-1)
   const continuationHeadSegment = blockSourceSegments(continuation)[0]
@@ -4005,19 +4010,39 @@ function sourceProvenSamePageColumnFlowBoundary(
   const continuationHeadLine = continuationHeadSegment?.region.lines.find(
     (line) => line.text.trim(),
   )
+  const rtl =
+    baseDirection === 'rtl' ||
+    (baseDirection !== 'ltr' &&
+      baseDirection !== 'unknown' &&
+      (language ? rtlLanguage(language) : false))
+  const sourceColumnsMatch = rtl
+    ? targetTailSegment?.region.column === 'right' &&
+      continuationHeadSegment?.region.column === 'left'
+    : targetTailSegment?.region.column === 'left' &&
+      continuationHeadSegment?.region.column === 'right'
+  const sourceColumnsAreOrdered = rtl
+    ? Boolean(
+        targetTailLine &&
+        continuationHeadLine &&
+        continuationHeadLine.box.x + continuationHeadLine.box.width <=
+          targetTailLine.box.x + 0.01,
+      )
+    : Boolean(
+        targetTailLine &&
+        continuationHeadLine &&
+        targetTailLine.box.x + targetTailLine.box.width <=
+          continuationHeadLine.box.x + 0.01,
+      )
   if (
     !targetTailSegment ||
     !continuationHeadSegment ||
     !targetTailLine ||
     !continuationHeadLine ||
     targetTailSegment.region.page !== continuationHeadSegment.region.page ||
-    targetTailSegment.region.column !== 'left' ||
-    continuationHeadSegment.region.column !== 'right' ||
+    !sourceColumnsMatch ||
     targetTailLine.box.y + targetTailLine.box.height < 0.65 ||
     continuationHeadLine.box.y > 0.35 ||
-    targetTailLine.box.x >= continuationHeadLine.box.x ||
-    targetTailLine.box.x + targetTailLine.box.width >
-      continuationHeadLine.box.x + 0.01 ||
+    !sourceColumnsAreOrdered ||
     /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) ||
     detachedCitationYearContinuation(target.text, continuation.text) ||
     !likelyUnmarkedCrossPageContinuation(target, continuation) ||
@@ -4047,6 +4072,7 @@ function sourceProvenSamePageParagraphBoundary(
   hardHyphenLexicon: ReadonlySet<string>,
   unhyphenatedLexicon: ReadonlySet<string>,
   language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
 ) {
   const targetTailSegment = blockSourceSegments(target).at(-1)
   const continuationHeadSegment = blockSourceSegments(continuation)[0]
@@ -4063,6 +4089,8 @@ function sourceProvenSamePageParagraphBoundary(
   const sourceProvenColumnFlowBoundary = sourceProvenSamePageColumnFlowBoundary(
     target,
     continuation,
+    language,
+    baseDirection,
   )
   const targetLineage = targetTailLine?.sourceFragmentLineage
   const continuationLineage = continuationHeadLine?.sourceFragmentLineage
@@ -4280,6 +4308,7 @@ export async function mergeProseContinuations(
     hardHyphenLexicon = new Set<string>(),
     unhyphenatedLexicon = new Set<string>(),
     language = null,
+    baseDirection = null,
     diagnostics = [],
     canonicalFloatScopes = [],
     canonicalHyphenBoundaryDecisions = [],
@@ -4289,6 +4318,7 @@ export async function mergeProseContinuations(
     hardHyphenLexicon?: ReadonlySet<string>
     unhyphenatedLexicon?: ReadonlySet<string>
     language?: string | null
+    baseDirection?: ResearchPaper['baseDirection'] | null
     diagnostics?: ReconstructionDiagnostic[]
     canonicalFloatScopes?: CanonicalFloatScopeEvidence[]
     canonicalHyphenBoundaryDecisions?: PdfCanonicalHyphenBoundaryDecision[]
@@ -4388,11 +4418,17 @@ export async function mergeProseContinuations(
           hardHyphenLexicon,
           unhyphenatedLexicon,
           language,
+          baseDirection,
         )
       const sourceProvenSamePageColumnFlow =
         continuation?.type === 'paragraph' &&
         interveningOwnedCaptions.length === 0 &&
-        sourceProvenSamePageColumnFlowBoundary(target, continuation)
+        sourceProvenSamePageColumnFlowBoundary(
+          target,
+          continuation,
+          language,
+          baseDirection,
+        )
       const sourceProvenFloatBoundary =
         crossesOwnedFloat &&
         (sourceProvenPageBoundary ||
@@ -11145,6 +11181,7 @@ export async function reconstructPageAnalyses({
     hardHyphenLexicon: inlineHardHyphenLexicon(sourceRegionLines),
     unhyphenatedLexicon: inlineUnhyphenatedLexicon(sourceRegionLines),
     language: publicationMetadata.language,
+    baseDirection: publicationMetadata.baseDirection,
     diagnostics,
     canonicalFloatScopes,
     canonicalHyphenBoundaryDecisions,

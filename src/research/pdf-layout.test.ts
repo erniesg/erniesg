@@ -175,6 +175,63 @@ function run(
   }
 }
 
+function sourceFlowRegion({
+  id,
+  column,
+  text,
+  x,
+  y,
+  sourceSequenceIndex,
+  whitespaceBefore,
+}: {
+  id: string
+  column: 'left' | 'right'
+  text: string
+  x: number
+  y: number
+  sourceSequenceIndex: number
+  whitespaceBefore?: number
+}): PdfPageRegion {
+  const sourceRun: PdfSourceRun =
+    whitespaceBefore === undefined
+      ? {
+          ...run(1, text, x, y, 0.385),
+          sourceSequenceIndex,
+        }
+      : {
+          ...run(1, text, x, y, 0.385),
+          sourceSequenceIndex,
+          sourceWhitespaceBefore: 'pdf-text-item',
+          sourceWhitespacePredecessorIndex: whitespaceBefore,
+        }
+  return {
+    id,
+    page: 1,
+    kind: 'body',
+    column,
+    text,
+    confidence: 1,
+    box: { ...sourceRun },
+    lines: [
+      {
+        id: `${id}-line`,
+        text,
+        fontSize: sourceRun.fontSize,
+        box: { ...sourceRun },
+        runs: [sourceRun],
+        sourceFragmentLineage: {
+          algorithm: 'source-run-fragment-v1',
+          sourceLineId: `${id}-source-line`,
+          fragment: 'whole',
+          sourceSequenceIndexes: [sourceSequenceIndex],
+        },
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+}
+
 function mathRun(
   text: string,
   x: number,
@@ -698,10 +755,88 @@ describe('PDF semantic reconstruction', () => {
     })
 
     expect(blocks).toHaveLength(1)
-    expect(blocks[0].text).toBe(
-      'البيانات تستمر نحو العلمية في العمود التالي',
-    )
+    expect(blocks[0].text).toBe('البيانات تستمر نحو العلمية في العمود التالي')
     expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+  })
+
+  it.each(['。', '！', '？', '؟'])(
+    'does not join uncased text after the Unicode sentence terminator %s',
+    async (terminator) => {
+      const target = sourceFlowRegion({
+        id: `unicode-terminal-target-${terminator}`,
+        column: 'left',
+        text: `研究結果${terminator}`,
+        x: 0.09,
+        y: 0.82,
+        sourceSequenceIndex: 300,
+      })
+      const continuation = sourceFlowRegion({
+        id: `unicode-terminal-continuation-${terminator}`,
+        column: 'right',
+        text: '次の段落が始まる',
+        x: 0.515,
+        y: 0.1,
+        sourceSequenceIndex: 301,
+        whitespaceBefore: 300,
+      })
+      const blocks = [target, continuation].map((region) => ({
+        type: 'paragraph' as const,
+        region,
+        text: region.text,
+        confidence: 1,
+      }))
+
+      await mergeProseContinuations(blocks, {
+        sourceSemanticFlowBoundaryDecisions: [],
+      })
+
+      expect(blocks).toHaveLength(2)
+    },
+  )
+
+  it('respects proven RTL column order before joining uncased prose', async () => {
+    const target = sourceFlowRegion({
+      id: 'rtl-column-flow-target',
+      column: 'right',
+      text: 'البيانات تستمر نحو',
+      x: 0.515,
+      y: 0.82,
+      sourceSequenceIndex: 400,
+    })
+    const continuation = sourceFlowRegion({
+      id: 'rtl-column-flow-continuation',
+      column: 'left',
+      text: 'العلمية في العمود التالي',
+      x: 0.09,
+      y: 0.1,
+      sourceSequenceIndex: 401,
+      whitespaceBefore: 400,
+    })
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      language: 'ar',
+      baseDirection: 'rtl',
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('البيانات تستمر نحو العلمية في العمود التالي')
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      topology: 'same-page-column',
+      evidence: expect.arrayContaining([
+        'same-page-column-flow',
+        'same-page-column-geometry',
+      ]),
+    })
   })
 
   it('does not treat an unrelated right-column block as lineage for a following span', () => {

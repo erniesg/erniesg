@@ -2284,11 +2284,11 @@ describe('PDF semantic signal detection', () => {
   it('validates uncased-script same-page-column decisions from layout', () => {
     const sourceRuns = [
       {
-        ...run('البيانات تستمر نحو', 0.09, 0.82, 10, 0.385),
+        ...run('البيانات تستمر نحو', 0.515, 0.82, 10, 0.385),
         sourceSequenceIndex: 200,
       },
       {
-        ...run('العلمية في العمود التالي', 0.515, 0.1, 10, 0.385),
+        ...run('العلمية في العمود التالي', 0.09, 0.1, 10, 0.385),
         sourceSequenceIndex: 201,
         sourceWhitespaceBefore: 'pdf-text-item' as const,
         sourceWhitespacePredecessorIndex: 200,
@@ -2299,7 +2299,7 @@ describe('PDF semantic signal detection', () => {
         id: `uncased-column-region-${index + 1}`,
         page: 1,
         kind: 'body',
-        column: index === 0 ? 'left' : 'right',
+        column: index === 0 ? 'right' : 'left',
         text: sourceRun.text,
         confidence: 1,
         box: { ...sourceRun },
@@ -2350,6 +2350,7 @@ describe('PDF semantic signal detection', () => {
       updated: '2026-07-30',
       abstract: 'Test',
       language: 'ar',
+      baseDirection: 'rtl',
       nodes: [
         {
           id: 'uncased-column-node',

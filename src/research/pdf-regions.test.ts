@@ -8,6 +8,7 @@ import {
   hasAcceptedCycle,
   noteLabelFromText,
   proseDominantPdfMathSource,
+  captionFontFamily,
   reconstructPageRegions,
   splitRunBackedCrossGutterProse,
   sourceProvenDominantBaselineSequentialWrap,
@@ -5309,7 +5310,9 @@ describe('deterministic scholarly page regions', () => {
       ...run(1, 'zz', 0.3, 0.214, 0.02, 9, 0.011),
       fontName: 'SharedSymbol',
     }
-    const result = await reconstruct([page(1, [seed, seedShared, candidate, candidateShared])])
+    const result = await reconstruct([
+      page(1, [seed, seedShared, candidate, candidateShared]),
+    ])
     const caption = result.regions.find((region) => region.kind === 'caption')
     expect(caption).toBeDefined()
     expect(caption?.text).toContain('Figure 6.')
@@ -5365,6 +5368,17 @@ describe('deterministic scholarly page regions', () => {
     expect(
       result.regions.find((region) => region.kind === 'caption')?.text,
     ).toContain('with the same family.')
+  })
+
+  it('preserves opaque PDF.js font IDs and recognizes abbreviated style suffixes', () => {
+    expect(captionFontFamily('g_d0_f1')).toBe('gd0f1')
+    expect(captionFontFamily('g_d0_f1')).not.toBe(captionFontFamily('g_d0_f2'))
+    expect(captionFontFamily('HelveticaNeueLTStd-Bd')).toBe(
+      captionFontFamily('HelveticaNeueLTStd-Regular'),
+    )
+    expect(captionFontFamily('MinionPro-It')).toBe(
+      captionFontFamily('MinionPro-Regular'),
+    )
   })
 
   it('keeps caption continuations together when opposite-column prose interleaves by y', async () => {

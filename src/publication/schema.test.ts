@@ -258,4 +258,45 @@ describe('PublicationGraph', () => {
     mutate(value)
     expect(publicationGraphSchema.safeParse(value).success).toBe(false)
   })
+
+  it('rejects cyclic nested lists and multiply-owned child lists', () => {
+    const cyclic = graphFixture() as any
+    cyclic.nodes.push(
+      {
+        ...common,
+        id: 'nested-list',
+        type: 'list',
+        ordered: false,
+        itemIds: ['nested-item'],
+      },
+      {
+        ...common,
+        id: 'nested-item',
+        type: 'list-item',
+        parentListId: 'nested-list',
+        childListIds: ['list'],
+        text: 'Nested item',
+      },
+    )
+    cyclic.nodes.find((node: any) => node.id === 'item').childListIds = [
+      'nested-list',
+    ]
+    expect(publicationGraphSchema.safeParse(cyclic).success).toBe(false)
+
+    const multiplyOwned = graphFixture() as any
+    multiplyOwned.nodes.push(
+      {
+        ...common,
+        id: 'second-list-item',
+        type: 'list-item',
+        parentListId: 'list',
+        childListIds: ['list'],
+        text: 'Second owner',
+      },
+    )
+    multiplyOwned.nodes.find((node: any) => node.id === 'list').itemIds.push(
+      'second-list-item',
+    )
+    expect(publicationGraphSchema.safeParse(multiplyOwned).success).toBe(false)
+  })
 })

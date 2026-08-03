@@ -32,7 +32,8 @@ type MdastNode = {
   value?: string
   depth?: number
   ordered?: boolean
-  start?: number
+  start?: number | null
+  checked?: boolean | null
   url?: string
   alt?: string
   title?: string
@@ -141,7 +142,7 @@ function inlineContent(
         append(node.value ?? '', { ...style, compactMathAtom: true })
         break
       case 'break':
-        append('\n')
+        append('\n', { ...style, hardBreak: true })
         break
       case 'footnoteReference': {
         const identifier = node.identifier ?? 'unknown'
@@ -327,14 +328,17 @@ export async function adaptAstroBlogEntry(
     return `ref-${identifier}${count === 1 ? '' : `-${count}`}`
   }
   const inlineOptions = { nextFootnoteReferenceId }
-  const pendingFootnotes: Array<{
-    identifier: string
-    backlinkId: string
-  }> = []
+  const footnoteBacklinks = new Map<string, string[]>()
+  const footnoteDefinitions = new Map<string, MdastNode>()
+  for (const block of tree.children ?? [])
+    if (block.type === 'footnoteDefinition' && block.identifier)
+      footnoteDefinitions.set(block.identifier, block)
   const registerInlineFootnotes = (inline: InlineResult) => {
-    inline.footnoteReferences.forEach(({ identifier, relationshipId }) =>
-      pendingFootnotes.push({ identifier, backlinkId: relationshipId }),
-    )
+    inline.footnoteReferences.forEach(({ identifier, relationshipId }) => {
+      const backlinks = footnoteBacklinks.get(identifier) ?? []
+      backlinks.push(relationshipId)
+      footnoteBacklinks.set(identifier, backlinks)
+    })
   }
 
   const addList = (block: MdastNode): string => {
@@ -345,10 +349,16 @@ export async function adaptAstroBlogEntry(
       ...baseNode(listId, sourceId, locale, sourceRevision),
       type: 'list',
       ordered: Boolean(block.ordered),
-      ...(block.start ? { start: block.start } : {}),
+      ...(block.start !== undefined && block.start !== null
+        ? { start: block.start }
+        : {}),
       itemIds,
     })
     items.forEach((item, index) => {
+      if (item.checked !== undefined && item.checked !== null)
+        throw new Error(
+          `Unsupported task-list item at ${sourceLocation(sourceId, item)}`,
+        )
       const children = item.children ?? []
       const paragraph = children[0]
       if (!paragraph || paragraph.type !== 'paragraph')
@@ -455,33 +465,36 @@ export async function adaptAstroBlogEntry(
         format: 'latex',
       })
     } else if (block.type === 'footnoteDefinition') {
-      const refs = pendingFootnotes.filter(
-        (item) => item.identifier === block.identifier,
-      )
-      const paragraphs = block.children ?? []
-      if (!refs.length || paragraphs.some((child) => child.type !== 'paragraph'))
-        unsupported(sourceId, block)
-      const inline = inlineContent(
-        sourceId,
-        paragraphs.flatMap((child) => child.children ?? []),
-        inlineOptions,
-      )
-      nodes.push({
-        ...baseNode(
-          `note-${block.identifier}`,
-          sourceId,
-          locale,
-          sourceRevision,
-        ),
-        type: 'note',
-        noteKind: 'footnote',
-        label: block.identifier ?? '',
-        backlinkIds: [...new Set(refs.map((item) => item.backlinkId))],
-        ...publicationInlineContent(inline),
-      })
-    } else if (block.type !== 'thematicBreak') {
+      continue
+    } else if (block.type === 'thematicBreak') {
+      unsupported(sourceId, block)
+    } else {
       unsupported(sourceId, block)
     }
+  }
+
+  for (const [identifier, block] of footnoteDefinitions) {
+    const backlinks = footnoteBacklinks.get(identifier) ?? []
+    const paragraphs = block.children ?? []
+    if (
+      !backlinks.length ||
+      paragraphs.length !== 1 ||
+      paragraphs[0]?.type !== 'paragraph'
+    )
+      unsupported(sourceId, block)
+    const inline = inlineContent(
+      sourceId,
+      paragraphs[0].children,
+      inlineOptions,
+    )
+    nodes.push({
+      ...baseNode(`note-${identifier}`, sourceId, locale, sourceRevision),
+      type: 'note',
+      noteKind: 'footnote',
+      label: identifier,
+      backlinkIds: [...new Set(backlinks)],
+      ...publicationInlineContent(inline),
+    })
   }
 
   const translations = (await readdir(entryDirectory))

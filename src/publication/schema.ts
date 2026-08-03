@@ -81,6 +81,7 @@ export const publicationInlineRunSchema = z
     italic: z.boolean().optional(),
     inlineCode: z.boolean().optional(),
     strikethrough: z.boolean().optional(),
+    hardBreak: z.boolean().optional(),
     href: safeUrlSchema.optional(),
     annotationId: idSchema.optional(),
     verticalAlign: z.enum(['superscript', 'subscript']).optional(),
@@ -177,7 +178,7 @@ const listNode = nodeBase
   .extend({
     type: z.literal('list'),
     ordered: z.boolean(),
-    start: z.number().int().positive().optional(),
+    start: z.number().int().nonnegative().optional(),
     itemIds: relationshipArray.min(1),
   })
   .strict()
@@ -532,6 +533,56 @@ export const publicationGraphSchema = z
         }
       }
     })
+
+    const nestedListOwners = new Map<string, string>()
+    const listEdges = new Map<string, string[]>()
+    graph.nodes.forEach((node) => {
+      if (node.type !== 'list-item') return
+      const edges = listEdges.get(node.parentListId) ?? []
+      for (const [relationshipIndex, childId] of node.childListIds.entries()) {
+        const child = nodesById.get(childId)
+        if (child?.type !== 'list') continue
+        const owner = nestedListOwners.get(childId)
+        if (owner && owner !== node.id) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes'],
+            message: `Nested list ${childId} has multiple owners (${owner}, ${node.id})`,
+          })
+        } else {
+          nestedListOwners.set(childId, node.id)
+        }
+        if (!edges.includes(childId)) edges.push(childId)
+        if (childId === node.parentListId) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes'],
+            message: `Nested list relationship cycles through ${childId}`,
+          })
+        }
+        void relationshipIndex
+      }
+      listEdges.set(node.parentListId, edges)
+    })
+    const visiting = new Set<string>()
+    const visited = new Set<string>()
+    const visitList = (listId: string) => {
+      if (visiting.has(listId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['nodes'],
+          message: `Nested list relationship cycle detected at ${listId}`,
+        })
+        return
+      }
+      if (visited.has(listId)) return
+      visiting.add(listId)
+      for (const childId of listEdges.get(listId) ?? []) visitList(childId)
+      visiting.delete(listId)
+      visited.add(listId)
+    }
+    for (const node of graph.nodes)
+      if (node.type === 'list') visitList(node.id)
   })
 
 export type PublicationGraph = z.infer<typeof publicationGraphSchema>

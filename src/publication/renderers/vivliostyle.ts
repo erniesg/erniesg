@@ -133,13 +133,15 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
     boundaries.add(run.end)
   }
   const points = [...boundaries].sort((a, b) => a - b)
-  return points
+  const segments = points
     .slice(0, -1)
     .map((start, index) => {
       const end = points[index + 1]
       const active = runs.filter((run) => run.start <= start && run.end >= end)
-      let value = escapeHtml(text.slice(start, end))
-      if (!value) return ''
+      let value = active.some((run) => run.hardBreak)
+        ? '<br>'
+        : escapeHtml(text.slice(start, end))
+      if (!value) return undefined
       if (active.some((run) => run.compactMathAtom))
         value = `<span class="math">${value}</span>`
       if (active.some((run) => run.inlineCode)) value = `<code>${value}</code>`
@@ -151,32 +153,74 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
         value = `<sup>${value}</sup>`
       else if (verticalAlign?.verticalAlign === 'subscript')
         value = `<sub>${value}</sub>`
-      const link = active.find((run) => run.href)
-      if (link) {
-        const attributes = [
-          `href="${escapeHtml(link.href!)}"`,
-          ...(link.relationshipId
-            ? [`id="${escapeHtml(link.relationshipId)}"`]
-            : []),
-          ...(link.semanticRole === 'cross-reference' &&
-          link.relationshipId?.startsWith('ref-')
-            ? ['role="doc-noteref"']
-            : []),
-          ...(link.targetIds?.[0]
-            ? [`aria-describedby="${escapeHtml(link.targetIds[0])}"`]
-            : []),
-        ].join(' ')
-        value = `<a ${attributes}>${value}</a>`
-      }
-      return value
+      const link = active.find(
+        (run) =>
+          Boolean(run.href) ||
+          (run.semanticRole === 'citation' && Boolean(run.targetIds?.length)),
+      )
+      return { value, link }
     })
-    .join('')
+    .filter(Boolean) as Array<{
+    value: string
+    link?: PublicationInlineRun
+  }>
+  const linkHref = (link: PublicationInlineRun) =>
+    link.href ?? `#${link.targetIds?.[0] ?? ''}`
+  const linkKey = (link?: PublicationInlineRun) =>
+    link
+      ? JSON.stringify([
+          linkHref(link),
+          link.relationshipId,
+          link.semanticRole,
+          link.targetIds,
+        ])
+      : ''
+  const linkAttributes = (link: PublicationInlineRun) =>
+    [
+      `href="${escapeHtml(linkHref(link))}"`,
+      ...(link.relationshipId
+        ? [`id="${escapeHtml(link.relationshipId)}"`]
+        : []),
+      ...(link.semanticRole === 'cross-reference' &&
+      link.relationshipId?.startsWith('ref-')
+        ? ['role="doc-noteref"']
+        : []),
+      ...(link.semanticRole === 'citation'
+        ? ['role="doc-biblioref"', 'data-semantic-role="citation"']
+        : []),
+      ...(link.targetIds?.[0]
+        ? [`aria-describedby="${escapeHtml(link.targetIds[0])}"`]
+        : []),
+      ...(link.targetIds?.length
+        ? [`data-target-ids="${escapeHtml(link.targetIds.join(' '))}"`]
+        : []),
+    ].join(' ')
+  let html = ''
+  for (let index = 0; index < segments.length; ) {
+    const segment = segments[index]!
+    if (!segment.link) {
+      html += segment.value
+      index += 1
+      continue
+    }
+    const key = linkKey(segment.link)
+    let value = segment.value
+    let end = index + 1
+    while (end < segments.length && linkKey(segments[end]!.link) === key) {
+      value += segments[end]!.value
+      end += 1
+    }
+    html += `<a ${linkAttributes(segment.link)}>${value}</a>`
+    index = end
+  }
+  return html
 }
 
 function renderNode(
   node: PublicationNode,
   byId: Map<string, PublicationNode>,
   assetPaths: Map<string, string>,
+  listStack = new Set<string>(),
 ): string {
   const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns) : ''
   switch (node.type) {
@@ -185,8 +229,14 @@ function renderNode(
     case 'paragraph':
       return `<p id="${node.id}">${text}</p>`
     case 'list': {
+      if (listStack.has(node.id))
+        throw new Error(`Cyclic nested list relationship at ${node.id}`)
+      const nextListStack = new Set(listStack).add(node.id)
       const tag = node.ordered ? 'ol' : 'ul'
-      const start = node.ordered && node.start ? ` start="${node.start}"` : ''
+      const start =
+        node.ordered && node.start !== undefined
+          ? ` start="${node.start}"`
+          : ''
       const items: string = node.itemIds
         .map((id) => byId.get(id))
         .filter(
@@ -200,7 +250,7 @@ function renderNode(
               (child): child is Extract<PublicationNode, { type: 'list' }> =>
                 child?.type === 'list',
             )
-            .map((child) => renderNode(child, byId, assetPaths))
+            .map((child) => renderNode(child, byId, assetPaths, nextListStack))
             .join('')
           return `<li id="${item.id}">${inlineHtml(item.text, item.inlineRuns)}${nested}</li>`
         })
@@ -215,7 +265,12 @@ function renderNode(
     case 'code':
       return `<pre id="${node.id}"><code${node.language ? ` class="language-${escapeHtml(node.language)}"` : ''}>${escapeHtml(node.code)}</code></pre>`
     case 'equation':
-      return `<div id="${node.id}" class="equation" role="math" data-format="${node.format}">${escapeHtml(node.source)}</div>`
+      if (node.format === 'mathml')
+        throw new Error('MathML equation rendering is unsupported')
+      {
+        const caption = node.captionId ? byId.get(node.captionId) : undefined
+        return `<div id="${node.id}" class="equation" role="math" data-format="${node.format}">${escapeHtml(node.source)}${caption?.type === 'caption' ? `<div class="caption" id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</div>` : ''}</div>`
+      }
     case 'note':
       return `<aside id="${node.id}" role="doc-footnote"><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
     case 'figure': {
@@ -223,13 +278,55 @@ function renderNode(
       return `<figure id="${node.id}">${node.assetIds.map((assetId) => `<img src="${escapeHtml(assetPaths.get(assetId) ?? '')}" alt="${escapeHtml(node.accessibility.alternativeText ?? '')}">`).join('')}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
     }
     case 'reference':
-      return `<p id="${node.id}" role="doc-biblioentry">${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : text}</p>`
+      return `<p id="${node.id}" role="doc-biblioentry">${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : node.targetIds[0] ? `<a href="#${escapeHtml(node.targetIds[0])}" role="doc-biblioref">${text}</a>` : text}</p>`
     case 'aside':
       return `<aside id="${node.id}">${text}</aside>`
     case 'media':
-      return `<figure id="${node.id}"><img src="${escapeHtml(assetPaths.get(node.assetId) ?? '')}" alt="${escapeHtml(node.accessibility.alternativeText ?? '')}"></figure>`
+      {
+        const source = escapeHtml(assetPaths.get(node.assetId) ?? '')
+        const alternativeText = escapeHtml(
+          node.accessibility.alternativeText ?? '',
+        )
+        const media =
+          node.mediaKind === 'image'
+            ? `<img src="${source}" alt="${alternativeText}">`
+            : node.mediaKind === 'audio'
+              ? `<audio controls src="${source}" aria-label="${alternativeText}"></audio>`
+              : node.mediaKind === 'video'
+                ? `<video controls src="${source}" aria-label="${alternativeText}"></video>`
+                : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
+        const caption = node.captionId ? byId.get(node.captionId) : undefined
+        return `<figure id="${node.id}">${media}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
+      }
     case 'table':
-      return `<table id="${node.id}">${node.rows.map((row) => `<tr>${row.cells.map((cell) => `<${cell.headerScope ? 'th' : 'td'}${cell.headerScope ? ` scope="${cell.headerScope}"` : ''}>${escapeHtml(cell.text)}</${cell.headerScope ? 'th' : 'td'}>`).join('')}</tr>`).join('')}</table>`
+      {
+        const caption = node.captionId ? byId.get(node.captionId) : undefined
+        const rows = node.rows
+          .map(
+            (row) =>
+              `<tr>${row.cells
+                .map((cell) => {
+                  const tag = cell.headerScope ? 'th' : 'td'
+                  const attributes = [
+                    ...(cell.id ? [`id="${escapeHtml(cell.id)}"`] : []),
+                    ...(cell.headerScope
+                      ? [`scope="${cell.headerScope}"`]
+                      : []),
+                    ...(cell.columnSpan > 1
+                      ? [`colspan="${cell.columnSpan}"`]
+                      : []),
+                    ...(cell.rowSpan > 1 ? [`rowspan="${cell.rowSpan}"`] : []),
+                    ...(cell.headerIds?.length
+                      ? [`headers="${escapeHtml(cell.headerIds.join(' '))}"`]
+                      : []),
+                  ].join(' ')
+                  return `<${tag}${attributes ? ` ${attributes}` : ''}>${escapeHtml(cell.text)}</${tag}>`
+                })
+                .join('')}</tr>`,
+          )
+          .join('')
+        return `<table id="${node.id}">${caption?.type === 'caption' ? `<caption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</caption>` : ''}${rows}</table>`
+      }
   }
 }
 
@@ -252,8 +349,7 @@ export function publicationGraphToHtml(
     .filter((node) => !nestedListIds.has(node.id))
     .map((node) => renderNode(node, byId, assetPaths))
     .join('\n')
-  const direction =
-    graph.edition.direction === 'auto' ? 'ltr' : graph.edition.direction
+  const direction = graph.edition.direction
   return `<!doctype html>
 <html lang="${graph.edition.locale}" dir="${direction}" data-profile="${profile}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(graph.metadata.title)}</title><meta name="description" content="${escapeHtml(graph.metadata.abstract ?? '')}"><link rel="stylesheet" href="${stylesheet}"></head>
@@ -482,7 +578,7 @@ async function createEpub(
   const xhtml = publicationGraphToHtml(bundle.graph, assetPaths, 'eink-epub')
     .replace('<!doctype html>', '<?xml version="1.0" encoding="utf-8"?>')
     .replace('<html ', '<html xmlns="http://www.w3.org/1999/xhtml" ')
-    .replaceAll(/<(meta|link|img)([^>]*?)(?<!\/)>/g, '<$1$2 />')
+    .replaceAll(/<(meta|link|img|br)([^>]*?)(?<!\/)>/g, '<$1$2 />')
   zip.file('EPUB/content.xhtml', xhtml, zipOptions())
   const headings = bundle.graph.nodes.filter(
     (node): node is Extract<PublicationNode, { type: 'heading' }> =>
@@ -645,11 +741,12 @@ async function receiptFor(
   profile: PublicationProfile,
   path: string,
   renderer: ArtifactRenderer,
+  receiptPath: string = profile,
 ): Promise<ArtifactReceipt> {
   const bytes = new Uint8Array(await readFile(path))
   const receipt: ArtifactReceipt = {
     profile,
-    path,
+    path: receiptPath,
     sha256: sha256(bytes),
     byteLength: bytes.byteLength,
     renderer,
@@ -695,11 +792,12 @@ async function receiptForDirectory(
   profile: PublicationProfile,
   directory: string,
   renderer: ArtifactRenderer,
+  receiptPath: string = profile,
 ): Promise<ArtifactReceipt> {
   const files = await publicationFiles(directory)
   return {
     profile,
-    path: directory,
+    path: receiptPath,
     sha256: sha256(JSON.stringify(files)),
     byteLength: files.reduce((total, file) => total + file.byteLength, 0),
     renderer,
@@ -761,11 +859,18 @@ export const vivliostyleRenderer: PublicationRenderer = {
       const path = resolve(output, `${profile}.pdf`)
       const renderer = await createPdf(htmlPath, path, size)
       await normalizePdf(path, bundle.graph.metadata.title, renderer)
-      pdfArtifacts.push(await receiptFor(profile, path, renderer))
+      pdfArtifacts.push(
+        await receiptFor(profile, path, renderer, `${profile}.pdf`),
+      )
     }
     const artifacts = [
-      await receiptForDirectory('phone-webpub', webpub, 'semantic-html'),
-      await receiptFor('eink-epub', epub, 'jszip'),
+      await receiptForDirectory(
+        'phone-webpub',
+        webpub,
+        'semantic-html',
+        'phone-webpub',
+      ),
+      await receiptFor('eink-epub', epub, 'jszip', 'eink.epub'),
       ...pdfArtifacts,
     ]
     const { execFileSync } = await import('node:child_process')

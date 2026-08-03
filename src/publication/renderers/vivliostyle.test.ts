@@ -134,6 +134,160 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
   })
 
+  it('coalesces styled link runs and preserves hard-break markup', async () => {
+    const contentRoot = await fixtureCollection('synthetic-publication')
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'synthetic-publication',
+      contentRoot,
+    })
+    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    if (!paragraph || paragraph.type !== 'paragraph') throw new Error('missing paragraph')
+    const graph = {
+      ...bundle.graph,
+      nodes: bundle.graph.nodes.map((node) =>
+        node.id === paragraph.id
+          ? {
+              ...node,
+              text: 'read this',
+              inlineRuns: [
+                { start: 0, end: 5, href: 'https://example.com/' },
+                { start: 5, end: 9, href: 'https://example.com/', bold: true },
+                { start: 9, end: 10, hardBreak: true },
+              ],
+            }
+          : node,
+      ),
+    }
+    const paths = new Map(
+      bundle.assetBundle.descriptor.assets.map((asset) => [
+        asset.id,
+        `assets/${asset.fileName}`,
+      ]),
+    )
+    const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
+    expect(html.match(/href="https:\/\/example\.com\//g)).toHaveLength(1)
+    expect(html).toContain('<strong>this</strong>')
+    expect(html).toContain('<br>')
+  })
+
+  it('renders captions, table relationships, media kinds, automatic direction, and citations', async () => {
+    const bundle = await adaptAstroBlogEntry({ entryId: 'moving-to-cloudflare-with-astro' })
+    const template = bundle.graph.nodes[0]
+    const assetId = bundle.assetBundle.descriptor.assets[0]?.id ?? 'asset'
+    const graph = {
+      ...bundle.graph,
+      edition: { ...bundle.graph.edition, direction: 'auto' as const },
+      nodes: [
+        template,
+        {
+          ...template,
+          id: 'citation-paragraph',
+          type: 'paragraph' as const,
+          text: 'Cite',
+          inlineRuns: [
+            {
+              start: 0,
+              end: 4,
+              semanticRole: 'citation' as const,
+              targetIds: ['citation-reference'],
+            },
+          ],
+        },
+        {
+          ...template,
+          id: 'citation-reference',
+          type: 'reference' as const,
+          targetIds: ['citation-paragraph'],
+          text: 'Reference',
+        },
+        {
+          ...template,
+          id: 'render-table',
+          type: 'table' as const,
+          captionId: 'render-table-caption',
+          rows: [
+            {
+              cells: [
+                {
+                  id: 'header',
+                  text: 'Header',
+                  headerScope: 'column' as const,
+                  columnSpan: 2,
+                  rowSpan: 2,
+                },
+                {
+                  id: 'cell',
+                  text: 'Cell',
+                  headerScope: null,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                  headerIds: ['header'],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          ...template,
+          id: 'render-table-caption',
+          type: 'caption' as const,
+          parentId: 'render-table',
+          text: 'Table caption',
+        },
+        {
+          ...template,
+          id: 'render-media',
+          type: 'media' as const,
+          mediaKind: 'audio' as const,
+          assetId,
+          captionId: 'render-media-caption',
+        },
+        {
+          ...template,
+          id: 'render-media-caption',
+          type: 'caption' as const,
+          parentId: 'render-media',
+          text: 'Audio caption',
+        },
+      ],
+    }
+    const paths = new Map([[assetId, 'assets/audio.bin']])
+    const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
+    expect(html).toContain('dir="auto"')
+    expect(html).toContain('<caption id="render-table-caption">Table caption</caption>')
+    expect(html).toContain('colspan="2"')
+    expect(html).toContain('rowspan="2"')
+    expect(html).toContain('headers="header"')
+    expect(html).toContain('<audio controls')
+    expect(html).toContain('Audio caption')
+    expect(html).toContain('href="#citation-reference"')
+  })
+
+  it('fails closed for MathML until a safe renderer exists', async () => {
+    const bundle = await adaptAstroBlogEntry({ entryId: 'moving-to-cloudflare-with-astro' })
+    const template = bundle.graph.nodes[0]
+    const graph = {
+      ...bundle.graph,
+      nodes: [
+        template,
+        {
+          ...template,
+          id: 'mathml',
+          type: 'equation' as const,
+          source: '<math><mi>x</mi></math>',
+          format: 'mathml' as const,
+        },
+      ],
+    }
+    expect(() =>
+      publicationGraphToHtml(
+        graph,
+        new Map(),
+        'phone-webpub',
+      ),
+    ).toThrow(/MathML/)
+  })
+
   it('fails an incomplete output matrix before rendering', async () => {
     const bundle = await adaptAstroBlogEntry({
       entryId: 'moving-to-cloudflare-with-astro',

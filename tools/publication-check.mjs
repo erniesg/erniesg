@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { readdir, readFile } from 'node:fs/promises'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as epubcheck from 'epubcheck-static'
 import JSZip from 'jszip'
@@ -9,7 +9,9 @@ import { parse } from 'parse5'
 import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
+import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
+import { serializePublicationGraph } from '../src/publication/schema.ts'
 import { publicationPdfRendererForArchitecture } from '../src/publication/toolchain.ts'
 
 export function parsePublicationCheckArgs(argv) {
@@ -92,7 +94,24 @@ function imageAlternativeTexts(html) {
   return alternatives
 }
 
-async function checkWebPubReceipt(root, artifact) {
+async function publicationFiles(root, directory = root) {
+  const entries = (await readdir(directory, { withFileTypes: true })).sort(
+    (left, right) => left.name.localeCompare(right.name),
+  )
+  const files = []
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...(await publicationFiles(root, path)))
+      continue
+    }
+    if (!entry.isFile()) continue
+    files.push(relative(root, path).split(sep).join('/'))
+  }
+  return files.sort()
+}
+
+export async function checkWebPubReceipt(root, artifact) {
   assert(
     artifact && Array.isArray(artifact.files) && artifact.files.length > 0,
     'WebPub receipt does not include a complete file manifest',
@@ -102,18 +121,32 @@ async function checkWebPubReceipt(root, artifact) {
     'WebPub receipt manifest hash is invalid',
   )
   const webpubRoot = resolve(root, 'phone-webpub')
+  const expectedPaths = artifact.files.map((file) =>
+    String(file.path).replaceAll('\\', '/'),
+  )
+  assert(
+    new Set(expectedPaths).size === expectedPaths.length,
+    'WebPub receipt contains duplicate file paths',
+  )
+  const actualPaths = await publicationFiles(webpubRoot)
+  assert(
+    actualPaths.length === expectedPaths.length &&
+      actualPaths.every((path) => expectedPaths.includes(path)),
+    'WebPub artifact file set differs from its receipt',
+  )
   let total = 0
   for (const file of artifact.files) {
+    const normalizedPath = String(file.path).replaceAll('\\', '/')
     assert(
       typeof file.path === 'string' &&
-        !isAbsolute(file.path) &&
-        !file.path.split('/').includes('..'),
+        !isAbsolute(normalizedPath) &&
+        !normalizedPath.split('/').includes('..'),
       'WebPub receipt contains an unsafe file path',
     )
-    const path = resolve(webpubRoot, file.path)
-    const escaped = relative(webpubRoot, path)
+    const path = resolve(webpubRoot, normalizedPath)
+    const escaped = relative(webpubRoot, path).split(sep).join('/')
     assert(
-      escaped === file.path && !escaped.startsWith('../'),
+      escaped === normalizedPath && !escaped.startsWith('../'),
       'WebPub receipt file escapes its artifact directory',
     )
     const bytes = new Uint8Array(await readFile(path))
@@ -200,6 +233,17 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   )
   const receipt = JSON.parse(
     await readFile(resolve(root, 'publication-receipt.json'), 'utf8'),
+  )
+  const assetBundle = JSON.parse(
+    await readFile(resolve(root, 'asset-bundle.json'), 'utf8'),
+  )
+  assert(
+    receipt.source?.graphSha256 === sha256(serializePublicationGraph(graph)),
+    'Publication graph changed from its receipt',
+  )
+  assert(
+    receipt.source?.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
+    'Asset bundle changed from its receipt',
   )
   assert(
     receipt.artifacts.length === 4,

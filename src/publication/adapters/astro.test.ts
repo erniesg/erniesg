@@ -233,6 +233,57 @@ describe('Astro publication adapter', () => {
     })
   })
 
+  it('resolves definitions before references and preserves authored hard breaks', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-order-'))
+    const entry = resolve(root, 'definition-before-reference')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Ordered footnote\ndescription: Footnote order fixture\ndate: 2026-07-27\n---\n[^proof]: Defined before its reference.\n\nA hard  \nbreak and a reference[^proof].\n`,
+    )
+    const result = await adaptAstroBlogEntry({
+      entryId: 'definition-before-reference',
+      contentRoot: root,
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'note')).toMatchObject({
+      text: 'Defined before its reference.',
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'paragraph')).toMatchObject({
+      inlineRuns: expect.arrayContaining([expect.objectContaining({ hardBreak: true })]),
+    })
+  })
+
+  it('preserves zero ordered-list starts and rejects task-list and thematic-break loss', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-block-contract-'))
+    const createEntry = async (name: string, body: string) => {
+      const entry = resolve(root, name)
+      await mkdir(entry)
+      await writeFile(
+        resolve(entry, 'index.mdx'),
+        `---\ntitle: ${name}\ndescription: Block fixture\ndate: 2026-07-27\n---\n${body}`,
+      )
+      return entry
+    }
+    await createEntry('zero-list', '0. First zero-based item\n')
+    const zeroList = await adaptAstroBlogEntry({
+      entryId: 'zero-list',
+      contentRoot: root,
+    })
+    expect(zeroList.graph.nodes.find((node) => node.type === 'list')).toMatchObject({
+      start: 0,
+    })
+
+    await createEntry('task-list', '- [x] Shipped\n')
+    await expect(
+      adaptAstroBlogEntry({ entryId: 'task-list', contentRoot: root }),
+    ).rejects.toThrow(/task-list/i)
+
+    await createEntry('thematic-break', 'Before\n\n---\n\nAfter\n')
+    await expect(
+      adaptAstroBlogEntry({ entryId: 'thematic-break', contentRoot: root }),
+    ).rejects.toThrow(/thematicBreak/)
+  })
+
   it('rejects multi-paragraph blockquotes instead of flattening their boundaries', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-quote-'))
     const entry = resolve(root, 'multi-paragraph-quote')

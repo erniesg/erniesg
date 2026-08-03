@@ -6,8 +6,11 @@ import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import {
   assertPdfPageGeometry,
+  assertPdfCropBox,
   checkWebPubReceipt,
+  normalizePdfSearchableText,
   parsePublicationCheckArgs,
+  publicationPdfTextRequirements,
   validateWebPubGraph,
   verifyArtifactReceipt,
 } from './publication-check.mjs'
@@ -39,6 +42,55 @@ describe('publication:check CLI', () => {
     expect(() => assertPdfPageGeometry(pdf, 'fixture', 'A5')).toThrow(
       /page 2 geometry is not A5/,
     )
+  })
+
+  it('rejects crop boxes whose far edge exceeds the media box', () => {
+    expect(() =>
+      assertPdfCropBox(
+        {
+          getMediaBox: () => ({ x: 0, y: 0, width: 419.528, height: 595.276 }),
+          getCropBox: () => ({ x: 1, y: 1, width: 418, height: 594 }),
+        },
+        'fixture',
+      ),
+    ).not.toThrow()
+    expect(() =>
+      assertPdfCropBox(
+        {
+          getMediaBox: () => ({ x: 0, y: 0, width: 419.528, height: 595.276 }),
+          getCropBox: () => ({ x: 1, y: 1, width: 419, height: 596 }),
+        },
+        'fixture',
+      ),
+    ).toThrow(/crop box outside/)
+  })
+
+  it('requires searchable text for the graph body, not only its title', () => {
+    const graph = {
+      metadata: {
+        title: 'Publication title',
+        abstract: 'Publication abstract',
+        contributors: ['Author'],
+      },
+      nodes: [
+        { type: 'paragraph', text: 'Body proof' },
+        { type: 'code', code: 'const proof = true' },
+        {
+          type: 'table',
+          rows: [{ cells: [{ text: 'Cell proof' }] }],
+        },
+      ],
+    }
+    expect(publicationPdfTextRequirements(graph)).toEqual(
+      expect.arrayContaining([
+        'Publication title',
+        'Publication abstract',
+        'Body proof',
+        'const proof = true',
+        'Cell proof',
+      ]),
+    )
+    expect(normalizePdfSearchableText('Café proof')).toBe('cafeproof')
   })
 
   it('fails closed when an EPUB or PDF no longer matches its receipt bytes', async () => {

@@ -276,6 +276,35 @@ describe('Astro publication adapter', () => {
     })
   })
 
+  it('rewrites footnote targets when a heading already owns the preferred note id', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-note-collision-'))
+    const entry = resolve(root, 'footnote-note-collision')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Footnote note collision\ndescription: Footnote note collision fixture\ndate: 2026-07-27\n---\n# Note Proof\n\nA claim[^proof].\n\n[^proof]: The note remains linked.\n`,
+    )
+    const result = await adaptAstroBlogEntry({
+      entryId: 'footnote-note-collision',
+      contentRoot: root,
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
+      id: 'note-proof',
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'paragraph')).toMatchObject({
+      inlineRuns: [
+        expect.objectContaining({
+          href: '#note-proof-1',
+          targetIds: ['note-proof-1'],
+        }),
+      ],
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'note')).toMatchObject({
+      id: 'note-proof-1',
+      backlinkIds: ['ref-proof'],
+    })
+  })
+
   it('resolves definitions before references and preserves authored hard breaks', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-order-'))
     const entry = resolve(root, 'definition-before-reference')

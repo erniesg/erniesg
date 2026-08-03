@@ -59,6 +59,7 @@ type InlineResult = {
 
 type InlineContentOptions = {
   nextFootnoteReferenceId?: (identifier: string) => string
+  footnoteTargetId?: (identifier: string) => string
 }
 
 const MEDIA_TYPES: Record<string, string> = {
@@ -150,7 +151,8 @@ function inlineContent(
           options.nextFootnoteReferenceId?.(identifier) ??
           `ref-${identifier}`
         footnoteReferences.push({ identifier, relationshipId })
-        const id = `note-${identifier}`
+        const id =
+          options.footnoteTargetId?.(identifier) ?? `note-${identifier}`
         append(`[${node.identifier}]`, {
           ...style,
           relationshipId,
@@ -341,12 +343,17 @@ export async function adaptAstroBlogEntry(
     usedNodeIds.add(relationshipId)
     return relationshipId
   }
-  const inlineOptions = { nextFootnoteReferenceId }
   const footnoteBacklinks = new Map<string, string[]>()
   const footnoteDefinitions = new Map<string, MdastNode>()
   for (const block of tree.children ?? [])
     if (block.type === 'footnoteDefinition' && block.identifier)
       footnoteDefinitions.set(block.identifier, block)
+  const footnoteNodeIds = new Map<string, string>()
+  const inlineOptions = {
+    nextFootnoteReferenceId,
+    footnoteTargetId: (identifier: string) =>
+      footnoteNodeIds.get(identifier) ?? `note-${identifier}`,
+  }
   const registerInlineFootnotes = (inline: InlineResult) => {
     inline.footnoteReferences.forEach(({ identifier, relationshipId }) => {
       const backlinks = footnoteBacklinks.get(identifier) ?? []
@@ -501,8 +508,32 @@ export async function adaptAstroBlogEntry(
       paragraphs[0].children,
       inlineOptions,
     )
+    const preferredId = `note-${identifier}`
+    let noteId = preferredId
+    let suffix = 1
+    while (usedNodeIds.has(noteId)) noteId = `${preferredId}-${suffix++}`
+    usedNodeIds.add(noteId)
+    footnoteNodeIds.set(identifier, noteId)
+    if (noteId !== preferredId) {
+      for (const node of nodes) {
+        if (!('inlineRuns' in node) || !node.inlineRuns) continue
+        node.inlineRuns = node.inlineRuns.map((run) => ({
+          ...run,
+          ...(run.href === `#${preferredId}`
+            ? { href: `#${noteId}` }
+            : {}),
+          ...(run.targetIds?.includes(preferredId)
+            ? {
+                targetIds: run.targetIds.map((target) =>
+                  target === preferredId ? noteId : target,
+                ),
+              }
+            : {}),
+        }))
+      }
+    }
     nodes.push({
-      ...baseNode(`note-${identifier}`, sourceId, locale, sourceRevision),
+      ...baseNode(noteId, sourceId, locale, sourceRevision),
       type: 'note',
       noteKind: 'footnote',
       label: identifier,

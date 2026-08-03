@@ -7,6 +7,7 @@ import {
   PUBLICATION_PROFILES,
   prepareWebPubDirectory,
   publicationAssetFileExtension,
+  publicationEpubManifestItemId,
   publicationGraphToHtml,
   publicationPlaywrightExecutableCandidates,
   renderEpubToc,
@@ -168,6 +169,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
     expect(html.match(/href="https:\/\/example\.com\//g)).toHaveLength(1)
     expect(html).toContain('<strong>this</strong>')
+    expect(html).toContain('</a><br>')
     expect(html).toContain('<br>')
   })
 
@@ -314,6 +316,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(html).toContain('rowspan="2"')
     expect(html).toContain('headers="header"')
     expect(html).toContain('<audio controls')
+    expect(html).toContain('<audio controls="controls"')
     expect(html).toContain('Audio caption')
     expect(html).toContain('href="#citation-reference"')
     expect(() =>
@@ -402,6 +405,16 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(publicationAssetFileExtension('photo.JPG', 'image/jpeg')).toBe(
       '.jpg',
     )
+  })
+
+  it('derives XML-safe, unique EPUB manifest ids from asset ids', () => {
+    expect(publicationEpubManifestItemId('cover:hero#1', 0)).toBe(
+      'asset-0-cover-hero-1',
+    )
+    expect(publicationEpubManifestItemId('cover:hero#1', 1)).toBe(
+      'asset-1-cover-hero-1',
+    )
+    expect(publicationEpubManifestItemId('', 2)).toBe('asset-2-item')
   })
 
   it('resolves Playwright executables using each supported host layout', () => {

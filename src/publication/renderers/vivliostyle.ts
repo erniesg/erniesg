@@ -11,6 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, extname, relative, resolve, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
 import { PDFDocument } from 'pdf-lib'
@@ -110,7 +111,7 @@ export type PublicationReceipt = {
     semanticHtml: '1.0.0'
     accessibility: '1.0.0'
   }
-  toolchain: typeof PUBLICATION_TOOLCHAIN
+  toolchain: ReturnType<typeof publicationToolchainForRuntime>
   repository: { commit: string; dirty: boolean }
   artifacts: ArtifactReceipt[]
 }
@@ -151,9 +152,9 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
     .map((start, index) => {
       const end = points[index + 1]
       const active = runs.filter((run) => run.start <= start && run.end >= end)
-      let value = active.some((run) => run.hardBreak)
-        ? '<br>'
-        : escapeHtml(text.slice(start, end))
+      let value = escapeHtml(text.slice(start, end))
+      if (active.some((run) => run.hardBreak))
+        value = value.replaceAll('\n', '<br>')
       if (!value) return undefined
       if (active.some((run) => run.compactMathAtom))
         value = `<span class="math">${value}</span>`
@@ -289,7 +290,7 @@ function renderNode(
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
       const alternativeText = accessibilityLabel(node)
-      if (!node.accessibility.decorative && !alternativeText)
+      if (node.accessibility.decorative !== true && !alternativeText)
         throw new Error(
           `Figure ${node.id} requires alternative text or a long description`,
         )
@@ -316,7 +317,7 @@ function renderNode(
       {
         const source = escapeHtml(assetPaths.get(node.assetId) ?? '')
         const label = accessibilityLabel(node)
-        if (!node.accessibility.decorative && !label)
+        if (node.accessibility.decorative !== true && !label)
           throw new Error(
             `Media ${node.id} requires alternative text, a long description, or a transcript`,
           )
@@ -325,9 +326,9 @@ function renderNode(
           node.mediaKind === 'image'
             ? `<img src="${source}" alt="${alternativeText}">`
             : node.mediaKind === 'audio'
-              ? `<audio controls src="${source}" aria-label="${alternativeText}"></audio>`
+              ? `<audio controls="controls" src="${source}" aria-label="${alternativeText}"></audio>`
               : node.mediaKind === 'video'
-                ? `<video controls src="${source}" aria-label="${alternativeText}"></video>`
+                ? `<video controls="controls" src="${source}" aria-label="${alternativeText}"></video>`
                 : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
         const caption = node.captionId ? byId.get(node.captionId) : undefined
         return `<figure id="${node.id}">${media}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
@@ -434,6 +435,11 @@ export function publicationAssetFileExtension(
     : '.bin'
 }
 
+export function publicationEpubManifestItemId(assetId: string, index: number) {
+  const safeId = assetId.replace(/[^A-Za-z0-9_.-]+/gu, '-')
+  return `asset-${index}-${safeId || 'item'}`
+}
+
 export async function prepareWebPubDirectory(directory: string) {
   await rm(directory, { recursive: true, force: true })
   await mkdir(directory, { recursive: true })
@@ -504,30 +510,20 @@ type EpubTocEntry = {
 
 export function renderEpubToc(headings: EpubTocHeading[]) {
   const roots: EpubTocEntry[] = []
-  const stack: Array<{ level: number; entries: EpubTocEntry[] }> = [
-    { level: 0, entries: roots },
-  ]
   const firstHeadingLevel = headings.length
     ? Math.max(1, Math.trunc(headings[0].level))
     : 1
+  const stack: Array<{ level: number; entry: EpubTocEntry }> = []
   for (const heading of headings) {
-    let level = Math.max(
+    const level = Math.max(
       1,
       Math.trunc(heading.level) - firstHeadingLevel + 1,
     )
-    if (roots.length === 0) {
-      level = 1
-      stack[0].level = level
-    } else {
-      while (stack.length > 1 && level < stack.at(-1)!.level)
-        stack.pop()
-      if (level > stack.at(-1)!.level) {
-        const parent = stack.at(-1)!.entries.at(-1)
-        if (parent) stack.push({ level, entries: parent.children })
-        else level = stack.at(-1)!.level
-      }
-    }
-    stack.at(-1)!.entries.push({ heading, children: [] })
+    const entry: EpubTocEntry = { heading, children: [] }
+    while (stack.length && stack.at(-1)!.level >= level) stack.pop()
+    if (stack.length) stack.at(-1)!.entry.children.push(entry)
+    else roots.push(entry)
+    stack.push({ level, entry })
   }
   const render = (entries: EpubTocEntry[]): string =>
     `<ol>${entries
@@ -604,7 +600,7 @@ async function createEpub(
   )
   const assetPaths = new Map<string, string>()
   const assetItems: string[] = []
-  for (const descriptor of bundle.assetBundle.descriptor.assets) {
+  for (const [index, descriptor] of bundle.assetBundle.descriptor.assets.entries()) {
     const extension = publicationAssetFileExtension(
       descriptor.fileName,
       descriptor.mediaType,
@@ -617,7 +613,7 @@ async function createEpub(
       zipOptions(),
     )
     assetItems.push(
-      `<item id="${descriptor.id}" href="${file}" media-type="${descriptor.mediaType}"/>`,
+      `<item id="${publicationEpubManifestItemId(descriptor.id, index)}" href="${file}" media-type="${descriptor.mediaType}"/>`,
     )
   }
   for (const font of [
@@ -742,7 +738,7 @@ async function createPdf(
     try {
       const page = await browser.newPage()
       await page.emulateMedia({ media: 'print' })
-      await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle' })
+      await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle' })
       await page.pdf({
         path: outputPath,
         format: size,

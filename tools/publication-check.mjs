@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -62,6 +62,52 @@ function assert(value, message) {
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
+}
+
+export function normalizePdfSearchableText(value) {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+    .toLowerCase()
+}
+
+export function publicationPdfTextRequirements(graph) {
+  const required = new Set()
+  const add = (value) => {
+    if (typeof value === 'string' && value.trim()) required.add(value)
+  }
+  add(graph.metadata.title)
+  add(graph.metadata.subtitle)
+  add(graph.metadata.abstract)
+  for (const contributor of graph.metadata.contributors ?? []) add(contributor)
+  for (const node of graph.nodes) {
+    if ('text' in node) add(node.text)
+    switch (node.type) {
+      case 'quote':
+        add(node.attribution)
+        break
+      case 'code':
+        add(node.code)
+        break
+      case 'figure':
+        add(node.sourceText)
+        break
+      case 'table':
+        for (const row of node.rows) for (const cell of row.cells) add(cell.text)
+        break
+      case 'equation':
+        add(node.source)
+        add(node.label)
+        break
+      case 'note':
+        add(node.label)
+        break
+      default:
+        break
+    }
+  }
+  return [...required]
 }
 
 export async function verifyArtifactReceipt(root, artifact, relativePath) {
@@ -283,27 +329,30 @@ export function assertPdfPageGeometry(pdf, expected, size) {
   })
 }
 
-async function checkPdf(
+export function assertPdfCropBox(page, expected) {
+  const media = page.getMediaBox()
+  const crop = page.getCropBox()
+  const epsilon = 0.01
+  assert(
+    crop.x >= media.x - epsilon &&
+      crop.y >= media.y - epsilon &&
+      crop.x + crop.width <= media.x + media.width + epsilon &&
+      crop.y + crop.height <= media.y + media.height + epsilon,
+    `${expected} has a crop box outside its media box`,
+  )
+}
+
+export async function checkPdf(
   path,
   expected,
   size,
-  { requireLinks = false, requireImages = false } = {},
+  { requireLinks = false, requireImages = false, requiredTexts } = {},
 ) {
   const bytes = new Uint8Array(await readFile(path))
   const pdf = await PDFDocument.load(bytes)
   assert(pdf.getPageCount() > 0, `${expected} has no pages`)
   assertPdfPageGeometry(pdf, expected, size)
-  for (const page of pdf.getPages()) {
-    const media = page.getMediaBox()
-    const crop = page.getCropBox()
-    assert(
-      crop.x >= media.x &&
-        crop.y >= media.y &&
-        crop.width <= media.width &&
-        crop.height <= media.height,
-      `${expected} has a crop box outside its media box`,
-    )
-  }
+  for (const page of pdf.getPages()) assertPdfCropBox(page, expected)
   const source = Buffer.from(bytes).toString('latin1')
   const document = await getDocument({
     data: bytes,
@@ -319,12 +368,15 @@ async function checkPdf(
       .join(' ')
   }
   await document.destroy()
-  const searchableText = text.replace(/[^\p{L}\p{N}]+/gu, '')
-  const searchableExpected = expected.replace(/[^\p{L}\p{N}]+/gu, '')
-  assert(
-    searchableText.includes(searchableExpected),
-    `${size} PDF does not preserve selectable title text`,
-  )
+  const searchableText = normalizePdfSearchableText(text)
+  for (const requiredText of requiredTexts?.length ? requiredTexts : [expected]) {
+    const searchableExpected = normalizePdfSearchableText(requiredText)
+    if (!searchableExpected) continue
+    assert(
+      searchableText.includes(searchableExpected),
+      `${size} PDF does not preserve selectable body text: ${requiredText}`,
+    )
+  }
   assert(
     /\/FontFile(?:2|3)?\b/.test(source),
     `${size} PDF has no embedded font`,
@@ -355,6 +407,24 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   assert(
     receipt.source?.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
     'Asset bundle changed from its receipt',
+  )
+  const currentCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim()
+  const currentDirty =
+    execFileSync('git', ['status', '--short'], { encoding: 'utf8' }).trim()
+      .length > 0
+  assert(
+    receipt.repository?.commit === currentCommit,
+    'Publication receipt is bound to a different checked-out commit',
+  )
+  assert(
+    receipt.repository?.dirty === false && !currentDirty,
+    'Publication receipt is not bound to a clean checked-out repository',
+  )
+  assert(
+    receipt.toolchain?.node === process.versions.node,
+    'Publication receipt does not record the current Node runtime',
   )
   assert(
     receipt.artifacts.length === 4,
@@ -407,6 +477,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         (node.type === 'figure' && node.assetIds.length > 0) ||
         (node.type === 'media' && node.mediaKind === 'image'),
     ),
+    requiredTexts: publicationPdfTextRequirements(graph),
   }
   const a5Artifact = receipt.artifacts.find(
     (artifact) => artifact.profile === 'a5-pdf',
@@ -472,6 +543,56 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       JSON.stringify(expectedImageAlternatives),
     'Canonical Astro route image alternative parity is stale',
   )
+  assert(
+    parity.graphSha256 === sha256(serializePublicationGraph(graph)),
+    'Canonical Astro route parity graph binding is stale',
+  )
+  assert(
+    parity.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
+    'Canonical Astro route parity asset binding is stale',
+  )
+  const expectedImageNodes = graph.nodes.filter(
+    (node) =>
+      (node.type === 'figure' && node.assetIds.length > 0) ||
+      (node.type === 'media' && node.mediaKind === 'image'),
+  )
+  assert(
+    Array.isArray(parity.imageBindings) &&
+      parity.imageBindings.length === expectedImageNodes.length,
+    'Canonical Astro route image asset bindings are incomplete',
+  )
+  const assetById = new Map(assetBundle.assets.map((asset) => [asset.id, asset]))
+  parity.imageBindings.forEach((binding, index) => {
+    const node = expectedImageNodes[index]
+    const assetId = node.type === 'figure' ? node.assetIds[0] : node.assetId
+    const descriptor = assetById.get(assetId)
+    const alternativeText = accessibilityLabel(node)
+    assert(
+      descriptor &&
+        binding.assetId === assetId &&
+        binding.fileName === descriptor.fileName &&
+        binding.sha256 === descriptor.sha256 &&
+        binding.alternativeText === alternativeText,
+      `Canonical Astro route image asset binding is stale for ${assetId}`,
+    )
+    const routeSrc = String(binding.routeSrc ?? '')
+    assert(
+      routeSrc && !/^[a-z][a-z\d+.-]*:/iu.test(routeSrc),
+      `Canonical Astro route image binding is not local for ${assetId}`,
+    )
+    const sourceStem = String(descriptor.fileName ?? '')
+      .replace(/\.[^.]*$/u, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, '')
+    const routeStem = routeSrc
+      .replace(/\.[^.]*$/u, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, '')
+    assert(
+      !sourceStem || routeStem.includes(sourceStem),
+      `Canonical Astro route image binding does not identify source asset ${assetId}`,
+    )
+  })
   process.stdout.write(
     `Publication matrix passed structural, accessibility, EPUBCheck, and PDF checks at ${root}\n`,
   )

@@ -11,6 +11,7 @@ import {
   accessibilityLabel,
   checkWebPubReceipt,
   normalizePdfSearchableText,
+  orderPdfTextRequirements,
   parsePublicationCheckArgs,
   publicationPdfTextRequirements,
   validateWebPubGraph,
@@ -105,6 +106,12 @@ describe('publication:check CLI', () => {
         'Body proof',
       ]),
     ).toThrow(/Body proof/)
+    expect(
+      orderPdfTextRequirements(
+        ['child item', 'parent item'],
+        'parent item child item',
+      ),
+    ).toEqual(['parent item', 'child item'])
   })
 
   it('chooses the first non-empty accessibility alternative', () => {

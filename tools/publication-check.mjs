@@ -128,6 +128,22 @@ export function assertPdfSearchableTextRequirements(
   }
 }
 
+export function orderPdfTextRequirements(requiredTexts, renderedText) {
+  const searchableRenderedText = normalizePdfSearchableText(renderedText)
+  return [...(requiredTexts ?? [])].sort((left, right) => {
+    const leftIndex = searchableRenderedText.indexOf(
+      normalizePdfSearchableText(left),
+    )
+    const rightIndex = searchableRenderedText.indexOf(
+      normalizePdfSearchableText(right),
+    )
+    return (
+      (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) -
+      (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
+    )
+  })
+}
+
 export async function verifyArtifactReceipt(root, artifact, relativePath) {
   assert(
     artifact && typeof artifact.sha256 === 'string',
@@ -511,6 +527,13 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     ),
     requiredTexts: publicationPdfTextRequirements(graph),
   }
+  const renderedPdfText = textContent(
+    parse(await readFile(resolve(root, 'a5-pdf.html'), 'utf8')),
+  )
+  pdfRequirements.requiredTexts = orderPdfTextRequirements(
+    pdfRequirements.requiredTexts,
+    renderedPdfText,
+  )
   const a5Artifact = receipt.artifacts.find(
     (artifact) => artifact.profile === 'a5-pdf',
   )

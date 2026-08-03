@@ -309,6 +309,24 @@ describe('publication:check CLI', () => {
     ).toEqual(['#canonical'])
   })
 
+  it('does not count the metadata title and document H1 as separate PDF body requirements', () => {
+    const graph = {
+      metadata: { title: 'Title', contributors: [] },
+      nodes: [
+        { id: 'title', type: 'heading', level: 1, text: 'Title' },
+        { id: 'body', type: 'paragraph', text: 'Body text' },
+        { id: 'repeat-a', type: 'paragraph', text: 'repeat' },
+        { id: 'repeat-b', type: 'paragraph', text: 'repeat' },
+      ],
+    }
+    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual([
+      'Title',
+      'Body text',
+      'repeat',
+      'repeat',
+    ])
+  })
+
   it('rejects a required body node dropped from a WebPub or EPUB profile', () => {
     const graph = {
       edition: { locale: 'en', direction: 'ltr' },

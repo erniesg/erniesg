@@ -86,6 +86,12 @@ export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
   for (const contributor of graph.metadata.contributors ?? []) add(contributor)
   for (const node of graph.nodes) {
     const selected = publicationNodeForProfile(node, profile)
+    if (
+      selected.type === 'heading' &&
+      selected.level === 1 &&
+      selected.text === graph.metadata.title
+    )
+      continue
     if ('text' in selected) add(selected.text)
     switch (selected.type) {
       case 'quote':

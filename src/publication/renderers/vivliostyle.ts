@@ -230,18 +230,64 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
   return html
 }
 
+export function publicationVariantKindForProfile(profile: PublicationProfile) {
+  switch (profile) {
+    case 'eink-epub':
+      return 'monochrome' as const
+    case 'a5-pdf':
+    case 'a4-pdf':
+      return 'compact' as const
+    case 'phone-webpub':
+      return 'static' as const
+  }
+}
+
+function nodeForProfile(node: PublicationNode, profile: PublicationProfile) {
+  const variant = node.variants?.find(
+    (candidate) =>
+      candidate.reviewed &&
+      candidate.kind === publicationVariantKindForProfile(profile),
+  )
+  if (!variant) return node
+  if (variant.assetId && node.type === 'figure')
+    return { ...node, assetIds: [variant.assetId] }
+  if (variant.assetId && node.type === 'media')
+    return { ...node, assetId: variant.assetId }
+  if (variant.text !== undefined && 'text' in node)
+    return { ...node, text: variant.text, inlineRuns: [] }
+  if (variant.text !== undefined && node.type === 'figure')
+    return { ...node, sourceText: variant.text }
+  return node
+}
+
+function nodeAttributes(
+  node: PublicationNode,
+  edition: PublicationGraph['edition'],
+  extra: string[] = [],
+) {
+  const attributes = [`id="${escapeHtml(node.id)}"`, ...extra.filter(Boolean)]
+  if (node.locale !== edition.locale)
+    attributes.push(`lang="${escapeHtml(node.locale)}"`)
+  if (node.direction !== edition.direction)
+    attributes.push(`dir="${escapeHtml(node.direction)}"`)
+  return attributes.join(' ')
+}
+
 function renderNode(
   node: PublicationNode,
   byId: Map<string, PublicationNode>,
   assetPaths: Map<string, string>,
+  profile: PublicationProfile,
+  edition: PublicationGraph['edition'],
   listStack = new Set<string>(),
 ): string {
+  node = nodeForProfile(node, profile)
   const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns) : ''
   switch (node.type) {
     case 'heading':
-      return `<h${node.level} id="${node.id}">${text}</h${node.level}>`
+      return `<h${node.level} ${nodeAttributes(node, edition)}>${text}</h${node.level}>`
     case 'paragraph':
-      return `<p id="${node.id}">${text}</p>`
+      return `<p ${nodeAttributes(node, edition)}>${text}</p>`
     case 'list': {
       if (listStack.has(node.id))
         throw new Error(`Cyclic nested list relationship at ${node.id}`)
@@ -262,29 +308,35 @@ function renderNode(
               (child): child is Extract<PublicationNode, { type: 'list' }> =>
                 child?.type === 'list',
             )
-            .map((child) => renderNode(child, byId, assetPaths, nextListStack))
+            .map((child) =>
+              renderNode(child, byId, assetPaths, profile, edition, nextListStack),
+            )
             .join('')
-          return `<li id="${item.id}">${inlineHtml(item.text, item.inlineRuns)}${nested}</li>`
+          const renderedItem = nodeForProfile(item, profile) as Extract<
+            PublicationNode,
+            { type: 'list-item' }
+          >
+          return `<li ${nodeAttributes(renderedItem, edition)}>${inlineHtml(renderedItem.text, renderedItem.inlineRuns)}${nested}</li>`
         })
         .join('')
-      return `<${tag} id="${node.id}"${start}>${items}</${tag}>`
+      return `<${tag} ${nodeAttributes(node, edition, start ? [start] : [])}>${items}</${tag}>`
     }
     case 'list-item':
     case 'caption':
       return ''
     case 'quote':
-      return `<blockquote id="${node.id}"><p>${text}</p>${node.attribution ? `<cite>${escapeHtml(node.attribution)}</cite>` : ''}</blockquote>`
+      return `<blockquote ${nodeAttributes(node, edition)}><p>${text}</p>${node.attribution ? `<cite>${escapeHtml(node.attribution)}</cite>` : ''}</blockquote>`
     case 'code':
-      return `<pre id="${node.id}"><code${node.language ? ` class="language-${escapeHtml(node.language)}"` : ''}>${escapeHtml(node.code)}</code></pre>`
+      return `<pre ${nodeAttributes(node, edition)}><code${node.language ? ` class="language-${escapeHtml(node.language)}"` : ''}>${escapeHtml(node.code)}</code></pre>`
     case 'equation':
       if (node.format === 'mathml')
         throw new Error('MathML equation rendering is unsupported')
       {
         const caption = node.captionId ? byId.get(node.captionId) : undefined
-        return `<div id="${node.id}" class="equation" role="math" data-format="${node.format}">${escapeHtml(node.source)}${caption?.type === 'caption' ? `<div class="caption" id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</div>` : ''}</div>`
+        return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${caption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(caption, edition)}>${inlineHtml(caption.text, caption.inlineRuns)}</div>` : ''}</div>`
       }
     case 'note':
-      return `<aside id="${node.id}" role="doc-footnote"><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
+      return `<aside ${nodeAttributes(node, edition, ['role="doc-footnote"'])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
       const alternativeText = accessibilityLabel(node)
@@ -293,10 +345,12 @@ function renderNode(
           `Figure ${node.id} requires alternative text or a long description`,
         )
       const assets = node.assetIds
-        .map(
-          (assetId) =>
-            `<img src="${escapeHtml(assetPaths.get(assetId) ?? '')}" alt="${escapeHtml(alternativeText)}">`,
-        )
+        .map((assetId) => {
+          const path = assetPaths.get(assetId)
+          if (!path)
+            throw new Error(`Figure ${node.id} references an unavailable asset ${assetId}`)
+          return `<img src="${escapeHtml(path)}" alt="${escapeHtml(alternativeText)}">`
+        })
         .join('')
       const source = node.sourceText
         ? `<pre id="${node.id}-source" class="figure-source"${alternativeText ? ` aria-label="${escapeHtml(alternativeText)}"` : ''}>${escapeHtml(node.sourceText)}</pre>`
@@ -305,14 +359,18 @@ function renderNode(
         throw new Error(
           `Figure ${node.id} has no renderable asset or source text`,
         )
-      return `<figure id="${node.id}">${assets}${source}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
+      const renderedCaption = caption ? nodeForProfile(caption, profile) : undefined
+      return `<figure ${nodeAttributes(node, edition)}>${assets}${source}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
     }
     case 'reference':
-      return `<p id="${node.id}" role="doc-biblioentry">${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : node.targetIds[0] ? `<a href="#${escapeHtml(node.targetIds[0])}" role="doc-biblioref">${text}</a>` : text}</p>`
+      return `<p ${nodeAttributes(node, edition, ['role="doc-biblioentry"'])}>${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : node.targetIds[0] ? `<a href="#${escapeHtml(node.targetIds[0])}" role="doc-biblioref">${text}</a>` : text}</p>`
     case 'aside':
-      return `<aside id="${node.id}">${text}</aside>`
+      return `<aside ${nodeAttributes(node, edition)}>${text}</aside>`
     case 'media': {
-      const source = escapeHtml(assetPaths.get(node.assetId) ?? '')
+      const assetPath = assetPaths.get(node.assetId)
+      if (!assetPath)
+        throw new Error(`Media ${node.id} references an unavailable asset ${node.assetId}`)
+      const source = escapeHtml(assetPath)
       const label = accessibilityLabel(node)
       if (node.accessibility.decorative !== true && !label)
         throw new Error(
@@ -328,7 +386,8 @@ function renderNode(
               ? `<video controls="controls" src="${source}" aria-label="${alternativeText}"></video>`
               : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
       const caption = node.captionId ? byId.get(node.captionId) : undefined
-      return `<figure id="${node.id}">${media}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
+      const renderedCaption = caption ? nodeForProfile(caption, profile) : undefined
+      return `<figure ${nodeAttributes(node, edition)}>${media}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
     }
     case 'table': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
@@ -354,7 +413,8 @@ function renderNode(
               .join('')}</tr>`,
         )
         .join('')
-      return `<table id="${node.id}">${caption?.type === 'caption' ? `<caption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</caption>` : ''}${rows}</table>`
+      const renderedCaption = caption ? nodeForProfile(caption, profile) : undefined
+      return `<table ${nodeAttributes(node, edition)}>${renderedCaption?.type === 'caption' ? `<caption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</caption>` : ''}${rows}</table>`
     }
   }
 }
@@ -386,7 +446,7 @@ export function publicationGraphToHtml(
   )
   const body = graph.nodes
     .filter((node) => !nestedListIds.has(node.id))
-    .map((node) => renderNode(node, byId, assetPaths))
+    .map((node) => renderNode(node, byId, assetPaths, profile, graph.edition))
     .join('\n')
   const direction = graph.edition.direction
   return `<!doctype html>
@@ -527,6 +587,44 @@ export function renderEpubToc(headings: EpubTocHeading[]) {
   return render(roots)
 }
 
+export function publicationEpubAccessibilityMetadata(graph: PublicationGraph) {
+  const accessModes = new Set<string>()
+  const features = new Set<string>()
+  const hasText = graph.nodes.some(
+    (node) =>
+      ('text' in node && Boolean(node.text.trim())) ||
+      node.type === 'code' ||
+      node.type === 'equation' ||
+      node.type === 'table',
+  )
+  if (hasText || graph.metadata.title.trim()) accessModes.add('textual')
+  for (const node of graph.nodes) {
+    const accessibility = node.accessibility
+    if (accessibility.alternativeText?.trim())
+      features.add('alternativeText')
+    if (accessibility.longDescription?.trim()) features.add('longDescription')
+    if (accessibility.transcript?.trim()) features.add('transcript')
+    if (node.type === 'figure' && node.assetIds.length > 0)
+      accessModes.add('visual')
+    if (node.type !== 'media') continue
+    if (node.mediaKind === 'image' || node.mediaKind === 'video')
+      accessModes.add('visual')
+    if (node.mediaKind === 'audio' || node.mediaKind === 'video')
+      accessModes.add('auditory')
+    if (node.mediaKind === 'interactive') accessModes.add('visual')
+  }
+  if (accessModes.size === 0) accessModes.add('textual')
+  const orderedModes = ['textual', 'visual', 'auditory'].filter((mode) =>
+    accessModes.has(mode),
+  )
+  const sufficient = hasText ? ['textual'] : orderedModes
+  return {
+    accessModes: orderedModes,
+    accessModeSufficient: sufficient,
+    accessibilityFeatures: [...features].sort(),
+  }
+}
+
 export function publicationPlaywrightExecutableCandidates(
   revision: string,
   platform = process.platform,
@@ -642,6 +740,22 @@ async function createEpub(
     (node): node is Extract<PublicationNode, { type: 'heading' }> =>
       node.type === 'heading',
   )
+  const accessibility = publicationEpubAccessibilityMetadata(bundle.graph)
+  const accessModeMetadata = accessibility.accessModes
+    .map((mode) => `<meta property="schema:accessMode">${mode}</meta>`)
+    .join('')
+  const accessModeSufficientMetadata = accessibility.accessModeSufficient
+    .map(
+      (mode) =>
+        `<meta property="schema:accessModeSufficient">${mode}</meta>`,
+    )
+    .join('')
+  const accessibilityFeatureMetadata = accessibility.accessibilityFeatures
+    .map(
+      (feature) =>
+        `<meta property="schema:accessibilityFeature">${feature}</meta>`,
+    )
+    .join('')
   zip.file(
     'EPUB/nav.xhtml',
     `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title>Navigation</title></head><body><nav epub:type="toc" aria-label="Table of contents"><h1>Contents</h1>${renderEpubToc(headings)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml">Article</a></li></ol></nav></body></html>`,
@@ -650,7 +764,7 @@ async function createEpub(
   const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`
   zip.file(
     'EPUB/package.opf',
-    `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title><dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta><meta property="schema:accessMode">textual</meta><meta property="schema:accessModeSufficient">textual</meta><meta property="schema:accessibilityFeature">alternativeText</meta><meta property="schema:accessibilityHazard">none</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
+    `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title><dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>${accessModeMetadata}${accessModeSufficientMetadata}${accessibilityFeatureMetadata}<meta property="schema:accessibilityHazard">none</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
     zipOptions(),
   )
   await writeFile(

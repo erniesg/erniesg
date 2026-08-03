@@ -37,6 +37,9 @@ describe('publication toolchain manifest', () => {
       'playwright-chromium',
     )
     expect(publicationToolchainForRuntime().node).toBe(process.versions.node)
+    expect(publicationToolchainForRuntime().runtime.node).toBe(
+      process.versions.node,
+    )
   })
 
   it('fails closed when repository toolchain assets are missing or mismatched', async () => {

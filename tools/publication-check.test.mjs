@@ -7,11 +7,13 @@ import { describe, expect, it } from 'vitest'
 import {
   assertPdfPageGeometry,
   assertPdfCropBox,
+  assertPdfLinkAnnotations,
   assertPdfSearchableTextRequirements,
   accessibilityLabel,
   checkWebPubReceipt,
   normalizePdfSearchableText,
   orderPdfTextRequirements,
+  publicationPdfLinkRequirements,
   parsePublicationCheckArgs,
   publicationPdfTextRequirements,
   validateWebPubGraph,
@@ -118,6 +120,40 @@ describe('publication:check CLI', () => {
         'An earlier paragraph mentions unlimited bandwidth. Why Astro? Unlimited Bandwidth',
       ),
     ).toEqual(['Why Astro?', 'Unlimited Bandwidth'])
+    expect(
+      orderPdfTextRequirements(
+        ['After punctuation', 'Hard\nBreak'],
+        'HardBreak. Earlier punctuation! After punctuation',
+      ),
+    ).toEqual(['Hard\nBreak', 'After punctuation'])
+  })
+
+  it('requires every authored link to have a matching PDF annotation', () => {
+    const graph = {
+      nodes: [
+        {
+          inlineRuns: [{ href: 'https://example.com/' }],
+        },
+        { type: 'reference', href: '#target' },
+      ],
+    }
+    const required = publicationPdfLinkRequirements(graph)
+    expect(required).toEqual(['https://example.com/', '#target'])
+    expect(() =>
+      assertPdfLinkAnnotations(
+        [{ target: 'https://example.com/' }, {}],
+        required,
+      ),
+    ).not.toThrow()
+    expect(() =>
+      assertPdfLinkAnnotations([{ target: 'https://example.com/' }], required),
+    ).toThrow(/requires 2/)
+    expect(() =>
+      assertPdfLinkAnnotations(
+        [{ target: 'https://other.example/' }, {}],
+        required,
+      ),
+    ).toThrow(/missing.*https:\/\/example\.com/)
   })
 
   it('chooses the first non-empty accessibility alternative', () => {

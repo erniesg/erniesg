@@ -12,7 +12,7 @@ export function publicationToolchainForRuntime() {
   const node = process.versions.node
   if (!/^\d+\.\d+\.\d+$/.test(node))
     throw new Error(`Node runtime ${node} is not normalized`)
-  return { ...PUBLICATION_TOOLCHAIN, node }
+  return { ...PUBLICATION_TOOLCHAIN, node, runtime: { node } }
 }
 
 export type PublicationPdfRenderer = 'vivliostyle-cli' | 'playwright-chromium'

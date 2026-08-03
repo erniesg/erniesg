@@ -7,9 +7,11 @@ import {
   PUBLICATION_PROFILES,
   prepareWebPubDirectory,
   publicationAssetFileExtension,
+  publicationEpubAccessibilityMetadata,
   publicationEpubManifestItemId,
   publicationGraphToHtml,
   publicationPlaywrightExecutableCandidates,
+  publicationVariantKindForProfile,
   renderEpubToc,
   vivliostyleRenderer,
 } from './vivliostyle'
@@ -243,6 +245,87 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toThrow(/requires alternative text or a long description/)
   })
 
+  it('selects reviewed profile variants and preserves node language and direction', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const figure = bundle.graph.nodes.find((node) => node.type === 'figure')
+    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    if (!figure || !paragraph || figure.type !== 'figure' || paragraph.type !== 'paragraph')
+      throw new Error('missing variant fixture')
+    const graph = {
+      ...bundle.graph,
+      nodes: [
+        {
+          ...figure,
+          variants: [
+            {
+              kind: 'monochrome' as const,
+              assetId: 'monochrome-asset',
+              reviewed: true,
+            },
+          ],
+        },
+        {
+          ...paragraph,
+          locale: 'ar',
+          direction: 'rtl' as const,
+          variants: [
+            { kind: 'compact' as const, text: 'مختصر', reviewed: true },
+          ],
+        },
+      ],
+    }
+    const paths = new Map(
+      bundle.assetBundle.descriptor.assets.map((asset) => [
+        asset.id,
+        `assets/${asset.fileName}`,
+      ]),
+    )
+    paths.set('monochrome-asset', 'assets/monochrome.png')
+    expect(publicationVariantKindForProfile('eink-epub')).toBe('monochrome')
+    expect(publicationVariantKindForProfile('a5-pdf')).toBe('compact')
+    const epub = publicationGraphToHtml(graph, paths, 'eink-epub')
+    expect(epub).toContain('src="assets/monochrome.png"')
+    expect(epub).toContain('lang="ar"')
+    expect(epub).toContain('dir="rtl"')
+    const a5 = publicationGraphToHtml(graph, paths, 'a5-pdf')
+    expect(a5).toContain('مختصر')
+    const phone = publicationGraphToHtml(graph, paths, 'phone-webpub')
+    expect(phone).toContain(`src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`)
+    expect(phone).not.toContain('مختصر')
+  })
+
+  it('derives EPUB accessibility modes and features from graph media', () => {
+    const metadata = publicationEpubAccessibilityMetadata({
+      metadata: { title: 'Publication' },
+      nodes: [
+        {
+          type: 'paragraph',
+          text: 'Body',
+          accessibility: { alternativeText: '', decorative: false },
+        },
+        {
+          type: 'figure',
+          assetIds: ['image'],
+          accessibility: { alternativeText: 'Image', decorative: false },
+        },
+        {
+          type: 'media',
+          mediaKind: 'audio',
+          assetId: 'audio',
+          accessibility: { transcript: 'Transcript', decorative: false },
+        },
+      ],
+    } as any)
+    expect(metadata.accessModes).toEqual(['textual', 'visual', 'auditory'])
+    expect(metadata.accessModeSufficient).toEqual(['textual'])
+    expect(metadata.accessibilityFeatures).toEqual([
+      'alternativeText',
+      'transcript',
+    ])
+  })
+
   it('renders captions, table relationships, media kinds, automatic direction, and citations', async () => {
     const bundle = await adaptAstroBlogEntry({
       entryId: 'moving-to-cloudflare-with-astro',
@@ -405,7 +488,16 @@ describe('Vivliostyle publication renderer boundary', () => {
       ],
     }
     expect(() =>
-      publicationGraphToHtml(graph, new Map(), 'phone-webpub'),
+      publicationGraphToHtml(
+        graph,
+        new Map(
+          bundle.assetBundle.descriptor.assets.map((asset) => [
+            asset.id,
+            `assets/${asset.fileName}`,
+          ]),
+        ),
+        'phone-webpub',
+      ),
     ).toThrow(/MathML/)
   })
 

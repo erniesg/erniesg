@@ -133,7 +133,19 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
     /\s+/gu,
     ' ',
   )
-  const searchableRenderedText = normalizePdfSearchableText(renderedText)
+  let searchableRenderedText = ''
+  const searchablePositions = []
+  for (let index = 0; index < renderedTextWithCollapsedWhitespace.length; ) {
+    const codePoint = renderedTextWithCollapsedWhitespace[index]
+    const normalized = normalizePdfSearchableText(codePoint)
+    if (normalized) {
+      searchableRenderedText += normalized
+      searchablePositions.push(
+        ...[...normalized].map(() => index),
+      )
+    }
+    index += codePoint.length
+  }
   const renderedTextPosition = (value) => {
     const expected = String(value ?? '').trim().replace(/\s+/gu, ' ')
     const exactIndex = expected
@@ -144,11 +156,47 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
     const normalizedIndex = searchableExpected
       ? searchableRenderedText.indexOf(searchableExpected)
       : -1
-    return normalizedIndex < 0 ? Number.MAX_SAFE_INTEGER : normalizedIndex
+    return normalizedIndex < 0
+      ? Number.MAX_SAFE_INTEGER
+      : searchablePositions[normalizedIndex] ?? Number.MAX_SAFE_INTEGER
   }
   return [...(requiredTexts ?? [])].sort((left, right) => {
     return renderedTextPosition(left) - renderedTextPosition(right)
   })
+}
+
+export function publicationPdfLinkRequirements(graph) {
+  const links = []
+  for (const node of graph.nodes) {
+    for (const run of node.inlineRuns ?? [])
+      if (run.href) links.push(run.href)
+    if (node.type === 'reference' && node.href) links.push(node.href)
+  }
+  return links
+}
+
+export function assertPdfLinkAnnotations(annotations, requiredLinks) {
+  const expected = [...(requiredLinks ?? [])]
+  if (expected.length === 0) return
+  const available = [...(annotations ?? [])]
+  assert(
+    available.length >= expected.length,
+    `PDF contains ${available.length} link annotations but requires ${expected.length}`,
+  )
+  const remaining = [...available]
+  for (const required of expected) {
+    const index = remaining.findIndex((annotation) => {
+      if (!annotation || typeof annotation !== 'object') return false
+      if (typeof annotation.target === 'string')
+        return annotation.target === required
+      return required.startsWith('#')
+    })
+    assert(
+      index >= 0,
+      `PDF is missing a link annotation for ${required}`,
+    )
+    remaining.splice(index, 1)
+  }
 }
 
 export async function verifyArtifactReceipt(root, artifact, relativePath) {
@@ -405,7 +453,12 @@ export async function checkPdf(
   path,
   expected,
   size,
-  { requireLinks = false, requireImages = false, requiredTexts } = {},
+  {
+    requireLinks = false,
+    requireImages = false,
+    requiredTexts,
+    requiredLinks = [],
+  } = {},
 ) {
   const bytes = new Uint8Array(await readFile(path))
   const pdf = await PDFDocument.load(bytes)
@@ -419,25 +472,42 @@ export async function checkPdf(
     isEvalSupported: false,
   }).promise
   let text = ''
+  const annotations = []
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber)
     const content = await page.getTextContent()
     text += content.items
       .map((item) => ('str' in item ? item.str : ''))
       .join(' ')
+    for (const annotation of await page.getAnnotations({ intent: 'display' }))
+      if (annotation.subtype === 'Link')
+        annotations.push({
+          target:
+            typeof annotation.url === 'string'
+              ? annotation.url
+              : typeof annotation.unsafeUrl === 'string'
+                ? annotation.unsafeUrl
+                : undefined,
+        })
   }
   await document.destroy()
   const searchableText = normalizePdfSearchableText(text)
+  assert(
+    Array.isArray(requiredTexts) && requiredTexts.length > 0,
+    `${size} PDF body text requirements are missing`,
+  )
   assertPdfSearchableTextRequirements(
     searchableText,
-    requiredTexts?.length ? requiredTexts : [expected],
+    requiredTexts,
   )
   assert(
     /\/FontFile(?:2|3)?\b/.test(source),
     `${size} PDF has no embedded font`,
   )
-  if (requireLinks)
+  if (requireLinks) {
     assert(/\/Annots\b/.test(source), `${size} PDF has no link annotations`)
+    assertPdfLinkAnnotations(annotations, requiredLinks)
+  }
   if (requireImages)
     assert(
       /\/Subtype\s*\/Image\b/.test(source),
@@ -452,9 +522,8 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   const graph = publicationGraphSchema.parse(
     JSON.parse(await readFile(resolve(root, 'publication-graph.json'), 'utf8')),
   )
-  const receipt = JSON.parse(
-    await readFile(resolve(root, 'publication-receipt.json'), 'utf8'),
-  )
+  const receiptBytes = await readFile(resolve(root, 'publication-receipt.json'))
+  const receipt = JSON.parse(receiptBytes.toString('utf8'))
   const assetBundle = JSON.parse(
     await readFile(resolve(root, 'asset-bundle.json'), 'utf8'),
   )
@@ -484,6 +553,10 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   assert(
     receipt.toolchain?.node === process.versions.node,
     'Publication receipt does not record the current Node runtime',
+  )
+  assert(
+    receipt.toolchain?.runtime?.node === process.versions.node,
+    'Publication receipt runtime binding is missing or stale',
   )
   assert(
     receipt.artifacts.length === 4,
@@ -527,6 +600,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         ('inlineRuns' in node && node.inlineRuns?.some((run) => run.href)) ||
         (node.type === 'reference' && Boolean(node.href)),
     ),
+    requiredLinks: publicationPdfLinkRequirements(graph),
     requireImages: graph.nodes.some(
       (node) =>
         (node.type === 'figure' && node.assetIds.length > 0) ||
@@ -612,6 +686,10 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   assert(
     parity.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
     'Canonical Astro route parity asset binding is stale',
+  )
+  assert(
+    parity.publicationReceiptSha256 === sha256(receiptBytes),
+    'Canonical Astro route parity receipt binding is stale',
   )
   assert(
     /^[a-f0-9]{64}$/u.test(String(parity.routeHtmlSha256 ?? '')),

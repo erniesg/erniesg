@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parsePublicationBuildArgs,
+  publicationReceiptDigest,
   publicationRouteHtmlDigest,
 } from './publication-build.mjs'
 
@@ -34,6 +35,15 @@ describe('publication:build CLI', () => {
     )
     expect(publicationRouteHtmlDigest('<html>route</html>')).not.toBe(
       publicationRouteHtmlDigest('<html>changed</html>'),
+    )
+  })
+
+  it('binds route parity to the exact publication receipt bytes', () => {
+    expect(publicationReceiptDigest('{"version":"1.0.0"}')).toMatch(
+      /^[a-f0-9]{64}$/,
+    )
+    expect(publicationReceiptDigest('{"version":"1.0.1"}')).not.toBe(
+      publicationReceiptDigest('{"version":"1.0.0"}'),
     )
   })
 })

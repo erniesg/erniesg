@@ -66,6 +66,10 @@ export function publicationRouteHtmlDigest(html) {
   return createHash('sha256').update(html).digest('hex')
 }
 
+export function publicationReceiptDigest(receipt) {
+  return createHash('sha256').update(receipt).digest('hex')
+}
+
 export function publicationRepositoryForCurrentCheckout() {
   return {
     commit: execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -141,6 +145,9 @@ export async function writeRouteParity(entry, output, bundle) {
   const graphImageAlternatives = graphImages
     .map((image) => image.alternativeText)
     .filter(Boolean)
+  const publicationReceipt = await readFile(
+    resolve(output, 'publication-receipt.json'),
+  )
   await writeFile(
     resolve(output, 'astro-route-parity.json'),
     `${JSON.stringify(
@@ -153,6 +160,7 @@ export async function writeRouteParity(entry, output, bundle) {
         assetBundleSha256: createHash('sha256')
           .update(serializeAssetBundle(bundle.assetBundle))
           .digest('hex'),
+        publicationReceiptSha256: publicationReceiptDigest(publicationReceipt),
         routeHtmlSha256: publicationRouteHtmlDigest(html),
         headingOrder: graphHeadings,
         localImageAlternatives: graphImageAlternatives,
@@ -177,12 +185,12 @@ export async function publicationBuild(argv = process.argv.slice(2)) {
     outputDirectory: options.output,
     profiles: PUBLICATION_PROFILES,
   })
-  await writeRouteParity(options.entry, options.output, bundle)
   const receiptPath = resolve(options.output, 'publication-receipt.json')
   const currentReceipt = JSON.parse(await readFile(receiptPath, 'utf8'))
   const repository = publicationRepositoryForCurrentCheckout()
   currentReceipt.repository = repository
   await writeFile(receiptPath, `${JSON.stringify(currentReceipt, null, 2)}\n`)
+  await writeRouteParity(options.entry, options.output, bundle)
   process.stdout.write(
     `Publication matrix built at ${resolve(options.output)} (${receipt.artifacts.length} artifacts)\n`,
   )

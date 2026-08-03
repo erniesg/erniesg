@@ -5379,6 +5379,12 @@ describe('deterministic scholarly page regions', () => {
     expect(captionFontFamily('MinionPro-It')).toBe(
       captionFontFamily('MinionPro-Regular'),
     )
+    expect(captionFontFamily('NimbusRomNo9L-Medi')).toBe(
+      captionFontFamily('NimbusRomNo9L-Regu'),
+    )
+    expect(captionFontFamily('NimbusRomNo9L-ReguItal')).toBe(
+      captionFontFamily('NimbusRomNo9L-Ital'),
+    )
   })
 
   it('keeps caption continuations together when opposite-column prose interleaves by y', async () => {

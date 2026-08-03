@@ -41,6 +41,7 @@ import { unprovedInlineMathAtomNodeIds } from './pdf-inline-script-integrity'
 import { classifyPdfNoteMarkers } from './pdf-note-classifier'
 import {
   canonicalPdfSourceSemanticFlowEvidence,
+  pdfSourceColumnFlowJoinOutcome,
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
@@ -75,7 +76,7 @@ export const DEFAULT_PDF_COMPLETENESS_POLICY: PdfCompletenessPolicy = {
 const UNRESOLVED_AUTHOR_PLACEHOLDER = 'Imported locally'
 
 const PDF_SENTENCE_END_WITH_CLOSING =
-  /[.!?\u061F\u0964\u0965\u1362\u1803\u3002\uFF01\uFF0E\uFF1F](?:["'’”\])}]*)$/u
+  /\p{Sentence_Terminal}(?:["'’”\p{Close_Punctuation}\p{Final_Punctuation}]*)$/u
 
 function rtlLanguage(tag: string | null) {
   if (!tag) return false
@@ -1108,7 +1109,6 @@ function validatedSourceSemanticFlowBoundaryDecision(
     expectedEvidence = PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
   } else if (
     decision.topology === 'same-page-column' &&
-    decision.outcome === 'space' &&
     sourceProvenSamePageColumnFlowBoundary(
       leftRegion,
       rightRegion,
@@ -1118,7 +1118,11 @@ function validatedSourceSemanticFlowBoundaryDecision(
       baseDirection,
     )
   ) {
-    expectedOutcome = 'space'
+    expectedOutcome = pdfSourceColumnFlowJoinOutcome(
+      language,
+      rightRegion.text.trimStart(),
+      to.run,
+    ).outcome
     expectedEvidence = PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE
   } else {
     return null

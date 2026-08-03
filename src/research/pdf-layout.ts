@@ -83,6 +83,7 @@ import {
   PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE,
+  pdfSourceColumnFlowJoinOutcome,
   pdfSourceFragmentId,
   pdfSourceSemanticFlowBoundaryDecisionId,
   pdfSourceSemanticFlowRunSha256,
@@ -2673,8 +2674,14 @@ function sourceSemanticFlowBoundaryCandidate(
       toLine.sourceFragmentLineage.sourceLineId &&
     /^[,.;:!?%)}\]]/u.test(continuation.text.trimStart()),
   )
+  const noSpaceSamePageColumnTransition =
+    topology === 'same-page-column' &&
+    outcome === 'no-space' &&
+    to.run.sourceWhitespaceBefore !== 'pdf-text-item'
   if (
-    (outcome === 'no-space') !== exactStackedPunctuationTransition ||
+    (outcome === 'no-space' &&
+      !exactStackedPunctuationTransition &&
+      !noSpaceSamePageColumnTransition) ||
     (outcome === 'space' && exactStackedPunctuationTransition)
   ) {
     return null
@@ -2874,10 +2881,12 @@ function appendBlockContinuation(
     semanticDeletionDecision ??
     (recordableTopology &&
     semanticFlowOutcome !== 'unresolved' &&
-    (semanticFlowOutcome !== 'space'
-      ? recordableTopology === 'inline-stacked-fragment' ||
-        recordableTopology === 'lexical-hyphen'
-      : recordableTopology === 'same-page-column')
+    (recordableTopology === 'same-page-column'
+      ? semanticFlowOutcome === 'space' || semanticFlowOutcome === 'no-space'
+      : semanticFlowOutcome !== 'space'
+        ? recordableTopology === 'inline-stacked-fragment' ||
+          recordableTopology === 'lexical-hyphen'
+        : false)
       ? sourceSemanticFlowBoundaryDecision(
           target,
           continuation,
@@ -3497,7 +3506,7 @@ function provenBibliographyContinuation(
 }
 
 const PDF_SENTENCE_END_WITH_CLOSING =
-  /[.!?\u061F\u0964\u0965\u1362\u1803\u3002\uFF01\uFF0E\uFF1F](?:["'’”\])}]*)$/u
+  /\p{Sentence_Terminal}(?:["'’”\p{Close_Punctuation}\p{Final_Punctuation}]*)$/u
 
 const UNCERTAIN_BIBLIOGRAPHY_BOUNDARY_MESSAGE =
   'The bibliography item boundary is uncertain because a plausible markerless continuation lacks source-contiguous same-flow or adjacent-page geometry.'
@@ -3996,6 +4005,25 @@ export function sourceProvenRunFragmentToSpanBoundary(
   )
 }
 
+function sourceColumnFlowJoin(
+  continuation: RegionBlock,
+  language: string | null,
+) {
+  const continuationHeadLine = blockSourceSegments(
+    continuation,
+  )[0]?.region.lines.find((line) => line.text.trim())
+  const continuationHeadRun = continuationHeadLine?.runs.find((run) =>
+    run.text.trim(),
+  )
+  return continuationHeadRun
+    ? pdfSourceColumnFlowJoinOutcome(
+        language,
+        continuation.text.trimStart(),
+        continuationHeadRun,
+      )
+    : null
+}
+
 function sourceProvenSamePageColumnFlowBoundary(
   target: RegionBlock,
   continuation: RegionBlock,
@@ -4060,7 +4088,7 @@ function sourceProvenSamePageColumnFlowBoundary(
   const candidate = sourceSemanticFlowBoundaryCandidate(
     target,
     continuation,
-    'space',
+    sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space',
     'same-page-column',
   )
   return candidate !== null
@@ -4092,6 +4120,9 @@ function sourceProvenSamePageParagraphBoundary(
     language,
     baseDirection,
   )
+  const sourceColumnFlowOutcome = sourceProvenColumnFlowBoundary
+    ? (sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space')
+    : 'space'
   const targetLineage = targetTailLine?.sourceFragmentLineage
   const continuationLineage = continuationHeadLine?.sourceFragmentLineage
   const explicitFragmentFamilyBoundary = Boolean(
@@ -4130,7 +4161,7 @@ function sourceProvenSamePageParagraphBoundary(
   const semanticFlowBoundary = sourceSemanticFlowBoundaryCandidate(
     target,
     continuation,
-    'space',
+    sourceColumnFlowOutcome,
     explicitFragmentFamilyBoundary
       ? 'inline-stacked-fragment'
       : runFragmentToSpanBoundary
@@ -4429,6 +4460,10 @@ export async function mergeProseContinuations(
           language,
           baseDirection,
         )
+      const samePageColumnFlowJoin =
+        sourceProvenSamePageColumnFlow && continuation?.type === 'paragraph'
+          ? sourceColumnFlowJoin(continuation, language)
+          : null
       const sourceProvenFloatBoundary =
         crossesOwnedFloat &&
         (sourceProvenPageBoundary ||
@@ -4547,14 +4582,16 @@ export async function mergeProseContinuations(
       appendBlockContinuation(
         target,
         continuation,
-        hyphenJoin.separator,
-        hyphenJoin.hyphenBoundary
-          ? {
-              context: 'canonical-flow-continuation',
-              ...hyphenJoin.hyphenBoundary,
-              decisions: canonicalHyphenBoundaryDecisions,
-            }
-          : null,
+        samePageColumnFlowJoin?.separator ?? hyphenJoin.separator,
+        samePageColumnFlowJoin
+          ? null
+          : hyphenJoin.hyphenBoundary
+            ? {
+                context: 'canonical-flow-continuation',
+                ...hyphenJoin.hyphenBoundary,
+                decisions: canonicalHyphenBoundaryDecisions,
+              }
+            : null,
         sourceSemanticFlowBoundaryDecisions,
         citationYearContinuation
           ? target.region.column === continuation.region.column

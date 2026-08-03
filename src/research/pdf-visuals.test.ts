@@ -16940,6 +16940,75 @@ describe('PDF visual association graph', () => {
     })
   })
 
+  it('retains a composite visual whose native source box crosses a caption lane', async () => {
+    const compositeBox = box(0.09, 0.2, 0.8, 0.18)
+    const sourceAssets = await Promise.all(
+      ['image-p001-cross-lane', 'vector-p001-cross-lane'].map(
+        (sourceObjectId, index) =>
+          createPngAsset({
+            sourceObjectId,
+            sourceBox: compositeBox,
+            width: 4,
+            height: 4,
+            colorSpace: 'rgba',
+            pixels: new Uint8Array(4 * 4 * 4).fill(64 + index * 32),
+          }),
+      ),
+    )
+    const objects = [
+      {
+        id: 'image-p001-cross-lane',
+        page: 1,
+        kind: 'image' as const,
+        box: compositeBox,
+        confidence: 0.98,
+        assetId: sourceAssets[0].id,
+      },
+      {
+        id: 'vector-p001-cross-lane',
+        page: 1,
+        kind: 'vector' as const,
+        box: compositeBox,
+        confidence: 0.98,
+        assetId: sourceAssets[1].id,
+      },
+    ]
+    const caption = {
+      ...captionRegion(
+        'Figure 1. A composite panel crossing the lane.',
+        box(0.09, 0.42, 0.34, 0.03),
+      ),
+      id: 'cross-lane-caption',
+      sourceCaptionLane: { boundary: 0.5, side: 'left' as const },
+    }
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects, 1, sourceAssets)],
+      regions: [
+        ...objects.map((object, index) =>
+          objectRegion(`cross-lane-region-${index + 1}`, object.id, object.box),
+        ),
+        caption,
+      ],
+      rasterizeFigure: async (input) =>
+        createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 40,
+          pixels: new Uint8Array(80 * 40 * 4).fill(96),
+        }),
+    })
+
+    expect(result.relationships[0]).toMatchObject({
+      status: 'matched',
+      sourceObjectIds: objects.map((object) => object.id),
+      evidence: expect.arrayContaining(['connected-native-scaffold']),
+    })
+  })
+
   it('keeps adjacent panel-label prose inside its uniquely captioned multi-panel figure', async () => {
     const panelBoxes = [
       box(0.176, 0.103, 0.291, 0.169),

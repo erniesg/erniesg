@@ -2294,34 +2294,32 @@ describe('PDF semantic signal detection', () => {
         sourceWhitespacePredecessorIndex: 200,
       },
     ]
-    const regions = sourceRuns.map(
-      (sourceRun, index): PdfPageRegion => ({
-        id: `uncased-column-region-${index + 1}`,
-        page: 1,
-        kind: 'body',
-        column: index === 0 ? 'right' : 'left',
-        text: sourceRun.text,
-        confidence: 1,
-        box: { ...sourceRun },
-        lines: [
-          {
-            id: `uncased-column-line-${index + 1}`,
-            text: sourceRun.text,
-            fontSize: sourceRun.fontSize,
-            box: { ...sourceRun },
-            runs: [sourceRun],
-            sourceFragmentLineage: {
-              algorithm: 'source-run-fragment-v1',
-              sourceLineId: `uncased-column-source-line-${index + 1}`,
-              fragment: 'whole',
-              sourceSequenceIndexes: [sourceRun.sourceSequenceIndex],
-            },
+    const regions = sourceRuns.map((sourceRun, index): PdfPageRegion => ({
+      id: `uncased-column-region-${index + 1}`,
+      page: 1,
+      kind: 'body',
+      column: index === 0 ? 'right' : 'left',
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `uncased-column-line-${index + 1}`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [sourceRun],
+          sourceFragmentLineage: {
+            algorithm: 'source-run-fragment-v1',
+            sourceLineId: `uncased-column-source-line-${index + 1}`,
+            fragment: 'whole',
+            sourceSequenceIndexes: [sourceRun.sourceSequenceIndex],
           },
-        ],
-        nativeObjectIds: [],
-        includedInReadingOrder: true,
-      }),
-    )
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }))
     const endpoint = (index: number) => ({
       regionId: regions[index].id,
       lineId: regions[index].lines[0].id,
@@ -2362,6 +2360,103 @@ describe('PDF semantic signal detection', () => {
     }
     const provenance: Record<string, NodeSourceEvidence> = {
       'uncased-column-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: regions.map((region) => region.id),
+        boxes: regions.map((region) => ({ ...region.box })),
+        links: [],
+      },
+    }
+    const result = provenanceTextConservation({
+      allRegions: regions,
+      orderedRegions: regions,
+      paper,
+      provenance,
+      lineBoundaryDecisions: [],
+      sourceSemanticFlowBoundaryDecisions: [decision],
+    })
+
+    expect(result.semanticFlowBoundaryLedgerValid).toBe(true)
+    expect(result.semanticTextViolationNodeIds).toEqual([])
+  })
+
+  it('validates no-space Chinese same-page-column decisions from layout', () => {
+    const sourceRuns = [
+      {
+        ...run('研究结果继续', 0.09, 0.82, 10, 0.385),
+        sourceSequenceIndex: 500,
+      },
+      {
+        ...run('在下一栏完成', 0.515, 0.1, 10, 0.385),
+        sourceSequenceIndex: 501,
+      },
+    ]
+    const regions = sourceRuns.map((sourceRun, index): PdfPageRegion => ({
+      id: `cjk-column-region-${index + 1}`,
+      page: 1,
+      kind: 'body',
+      column: index === 0 ? 'left' : 'right',
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `cjk-column-line-${index + 1}`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [sourceRun],
+          sourceFragmentLineage: {
+            algorithm: 'source-run-fragment-v1',
+            sourceLineId: `cjk-column-source-line-${index + 1}`,
+            fragment: 'whole',
+            sourceSequenceIndexes: [sourceRun.sourceSequenceIndex],
+          },
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }))
+    const endpoint = (index: number) => ({
+      regionId: regions[index].id,
+      lineId: regions[index].lines[0].id,
+      runIndex: 0,
+      sourceSequenceIndex: sourceRuns[index].sourceSequenceIndex!,
+      sourceRunSha256: pdfSourceSemanticFlowRunSha256(sourceRuns[index]),
+      sourceFragmentId: `cjk-column-source-line-${index + 1}:whole`,
+    })
+    const decision = sourceSemanticFlowDecision({
+      page: 1,
+      rotation: 0,
+      method: 'pdf-text',
+      topology: 'same-page-column',
+      outcome: 'no-space',
+      from: endpoint(0),
+      to: endpoint(1),
+      evidence: [...PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE],
+    })
+    const paper: ResearchPaper = {
+      id: 'cjk-column-paper',
+      version: '1.0.0',
+      status: 'working',
+      title: '',
+      subtitle: 'Test',
+      authors: [],
+      updated: '2026-07-30',
+      abstract: 'Test',
+      language: 'zh',
+      baseDirection: 'ltr',
+      nodes: [
+        {
+          id: 'cjk-column-node',
+          type: 'paragraph',
+          text: '研究结果继续在下一栏完成',
+          source: 'test',
+        },
+      ],
+    }
+    const provenance: Record<string, NodeSourceEvidence> = {
+      'cjk-column-node': {
         confidence: 1,
         pages: [1],
         regionIds: regions.map((region) => region.id),

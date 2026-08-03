@@ -759,7 +759,7 @@ describe('PDF semantic reconstruction', () => {
     expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
   })
 
-  it.each(['。', '！', '？', '؟'])(
+  it.each(['。', '！', '？', '؟', '۔'])(
     'does not join uncased text after the Unicode sentence terminator %s',
     async (terminator) => {
       const target = sourceFlowRegion({
@@ -793,6 +793,50 @@ describe('PDF semantic reconstruction', () => {
       expect(blocks).toHaveLength(2)
     },
   )
+
+  it('joins a Chinese column continuation without inventing a source space', async () => {
+    const target = sourceFlowRegion({
+      id: 'cjk-column-flow-target',
+      column: 'left',
+      text: '研究结果继续',
+      x: 0.09,
+      y: 0.82,
+      sourceSequenceIndex: 500,
+    })
+    const continuation = sourceFlowRegion({
+      id: 'cjk-column-flow-continuation',
+      column: 'right',
+      text: '在下一栏完成',
+      x: 0.515,
+      y: 0.1,
+      sourceSequenceIndex: 501,
+    })
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      language: 'zh',
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('研究结果继续在下一栏完成')
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      topology: 'same-page-column',
+      outcome: 'no-space',
+      evidence: expect.arrayContaining([
+        'exact-source-sequence-adjacency',
+        'same-page-column-flow',
+      ]),
+    })
+  })
 
   it('respects proven RTL column order before joining uncased prose', async () => {
     const target = sourceFlowRegion({

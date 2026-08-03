@@ -124,6 +124,28 @@ export const PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE = Object.freeze(
   ].sort(),
 )
 
+export function pdfSourceColumnFlowJoinOutcome(
+  language: string | null,
+  continuationText: string,
+  continuationRun: PdfSourceRun,
+) {
+  const hasSourceWhitespace =
+    continuationRun.sourceWhitespaceBefore === 'pdf-text-item' &&
+    continuationRun.sourceWhitespacePredecessorIndex !== undefined
+  if (hasSourceWhitespace) {
+    return { outcome: 'space' as const, separator: ' ' as const }
+  }
+  const languageCode = language?.toLocaleLowerCase().split(/[-_]/u)[0]
+  const cjkLanguage = languageCode === 'zh' || languageCode === 'ja'
+  const cjkScript =
+    /^[^\p{L}\p{N}]*(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u.test(
+      continuationText,
+    )
+  return cjkLanguage || cjkScript
+    ? { outcome: 'no-space' as const, separator: '' as const }
+    : { outcome: 'space' as const, separator: ' ' as const }
+}
+
 export function canonicalPdfSourceSemanticFlowEvidence(
   evidence: readonly string[],
 ) {
@@ -2433,7 +2455,10 @@ export function captionFontFamily(fontName: string) {
       /(?:[-+_,.\s]*(?:bold|black|demi(?:bold)?|semibold|medium|regular|roman|book|italic|ital|oblique|obl))+$/iu,
       '',
     )
-    .replace(/(?:[-+_,.\s]+(?:bdit|bdi|bi|bd|it|reg|rm|md|med|lt|sb))+$/iu, '')
+    .replace(
+      /(?:[-+_,.\s]+(?:reguital|medi|regu|bdit|bdi|bi|bd|it|reg|rm|md|med|lt|sb))+$/iu,
+      '',
+    )
     .replace(/\d+$/u, '')
     .replace(/[^a-z0-9]+/gu, '')
 }

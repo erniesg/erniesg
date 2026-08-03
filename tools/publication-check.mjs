@@ -271,32 +271,42 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
     /\s+/gu,
     ' ',
   )
-  let searchableRenderedText = ''
-  const searchablePositions = []
+  let normalizedRenderedText = ''
+  const normalizedPositions = []
+  const normalizedOffsetByRawIndex = []
+  let normalizedOffset = 0
   for (let index = 0; index < renderedTextWithCollapsedWhitespace.length; ) {
     const codePoint = renderedTextWithCollapsedWhitespace[index]
-    const normalized = normalizePdfSearchableText(codePoint)
+    const normalized = normalizePdfVerificationText(codePoint)
+    for (let offset = 0; offset < codePoint.length; offset += 1)
+      normalizedOffsetByRawIndex[index + offset] = normalizedOffset
     if (normalized) {
-      searchableRenderedText += normalized
-      searchablePositions.push(
+      normalizedRenderedText += normalized
+      normalizedPositions.push(
         ...[...normalized].map(() => index),
       )
+      normalizedOffset += [...normalized].length
     }
     index += codePoint.length
   }
+  normalizedOffsetByRawIndex[renderedTextWithCollapsedWhitespace.length] =
+    normalizedOffset
   const renderedTextPosition = (value) => {
-    const expected = String(value ?? '').trim().replace(/\s+/gu, ' ')
-    const exactIndex = expected
-      ? renderedTextWithCollapsedWhitespace.indexOf(expected)
+    const rawExpected = String(value ?? '').trim().replace(/\s+/gu, ' ')
+    const exactIndex = rawExpected
+      ? renderedTextWithCollapsedWhitespace.indexOf(rawExpected)
       : -1
-    if (exactIndex >= 0) return exactIndex
-    const searchableExpected = normalizePdfSearchableText(value)
-    const normalizedIndex = searchableExpected
-      ? searchableRenderedText.indexOf(searchableExpected)
+    if (exactIndex >= 0)
+      return (
+        normalizedOffsetByRawIndex[exactIndex] ?? Number.MAX_SAFE_INTEGER
+      )
+    const expected = normalizePdfVerificationText(value)
+    const normalizedIndex = expected
+      ? normalizedRenderedText.indexOf(expected)
       : -1
     return normalizedIndex < 0
       ? Number.MAX_SAFE_INTEGER
-      : searchablePositions[normalizedIndex] ?? Number.MAX_SAFE_INTEGER
+      : normalizedPositions[normalizedIndex] ?? Number.MAX_SAFE_INTEGER
   }
   return [...(requiredTexts ?? [])].sort((left, right) => {
     return renderedTextPosition(left) - renderedTextPosition(right)

@@ -140,6 +140,12 @@ describe('publication:check CLI', () => {
         'HardBreak. Earlier punctuation! After punctuation',
       ),
     ).toEqual(['Hard\nBreak', 'After punctuation'])
+    expect(
+      orderPdfTextRequirements(
+        ['After punctuation', 'Hard\nBreak'],
+        `${'!'.repeat(40)}After punctuation HardBreak`,
+      ),
+    ).toEqual(['After punctuation', 'Hard\nBreak'])
   })
 
   it('rejects PDF text outside the visible crop and requires every image asset', () => {

@@ -187,6 +187,18 @@ describe('publication:check CLI', () => {
     ).toThrow(/widow\/orphan/)
   })
 
+  it('follows rendered PDF order when nested list text is flattened', () => {
+    const searchableText = 'parentitemchilditem'
+    const locations = [...searchableText].map(() => ({ page: 1, line: 1 }))
+    expect(() =>
+      assertPdfWidowOrphanRequirements(
+        searchableText,
+        locations,
+        ['child item', 'parent item'],
+      ),
+    ).not.toThrow()
+  })
+
   it('requires every authored link to have a matching PDF annotation', () => {
     const graph = {
       nodes: [

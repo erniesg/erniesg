@@ -227,8 +227,17 @@ export function assertPdfWidowOrphanRequirements(
   minimumLines = 3,
 ) {
   const normalized = normalizePdfVerificationText(searchableText)
+  const firstOccurrence = (requiredText) => {
+    const expected = normalizePdfVerificationText(requiredText)
+    if (!expected) return Number.MAX_SAFE_INTEGER
+    const start = normalized.indexOf(expected)
+    return start < 0 ? Number.MAX_SAFE_INTEGER : start
+  }
+  const orderedRequiredTexts = [...(requiredTexts ?? [])].sort(
+    (left, right) => firstOccurrence(left) - firstOccurrence(right),
+  )
   let cursor = 0
-  for (const requiredText of requiredTexts ?? []) {
+  for (const requiredText of orderedRequiredTexts) {
     const expected = normalizePdfVerificationText(requiredText)
     if (!expected) continue
     const start = normalized.indexOf(expected, cursor)

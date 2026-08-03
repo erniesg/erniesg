@@ -60,4 +60,13 @@ describe('publication:build CLI', () => {
     expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Body proof</p></article>')).toEqual(expected)
     expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Changed</p></article>')).not.toEqual(expected)
   })
+
+  it('treats Astro typographic apostrophes as the same authored body text', () => {
+    const graph = {
+      nodes: [{ type: 'paragraph', text: "Author's proof" }],
+    }
+    expect(canonicalRouteBodyFingerprint('<article><p>Author’s proof</p></article>')).toEqual(
+      publicationGraphBodyFingerprint(graph),
+    )
+  })
 })

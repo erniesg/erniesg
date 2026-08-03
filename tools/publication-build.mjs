@@ -52,7 +52,10 @@ function collectElements(node, result = { headings: [], images: [] }) {
 }
 
 function bodyText(value) {
-  return String(value ?? '').replace(/\s+/gu, ' ').trim()
+  return String(value ?? '')
+    .replace(/\s+/gu, ' ')
+    .replaceAll('’', "'")
+    .trim()
 }
 
 function graphNodeText(node) {
@@ -313,51 +316,53 @@ export async function writeRouteParity(entry, output, bundle, repository) {
       (node.type === 'figure' && node.assetIds.length > 0) ||
       (node.type === 'media' && node.mediaKind === 'image'),
   )
-  const graphImages = graphImageNodes.map((node) => {
-    const assetId = node.type === 'figure' ? node.assetIds[0] : node.assetId
-    const descriptor = bundle.assetBundle.descriptor.assets.find(
-      (asset) => asset.id === assetId,
-    )
-    if (!descriptor)
-      throw new Error(`Publication graph image asset is missing: ${assetId}`)
-    const alternativeText =
-      [
-        node.accessibility.alternativeText,
-        node.accessibility.longDescription,
-        node.accessibility.transcript,
-      ].find((value) => typeof value === 'string' && value.trim()) ?? ''
-    const stem = assetStem(descriptor.fileName)
-    const image = route.images.find(
-      (candidate) =>
-        candidate.alt === alternativeText &&
-        isLocalRouteAsset(candidate.src) &&
-        (!stem || assetStem(candidate.src).includes(stem)),
-    )
-    if (!image)
-      throw new Error(
-        `Canonical Astro route is missing local image asset for ${assetId}`,
+  const graphImages = await Promise.all(
+    graphImageNodes.map(async (node) => {
+      const assetId = node.type === 'figure' ? node.assetIds[0] : node.assetId
+      const descriptor = bundle.assetBundle.descriptor.assets.find(
+        (asset) => asset.id === assetId,
       )
-    return {
-      assetId,
-      fileName: descriptor.fileName,
-      sha256: descriptor.sha256,
-      routeSrc: image.src,
-      routeSha256: await (async () => {
-        const rawSrc = String(image.src ?? '').split(/[?#]/u)[0]
-        if (!isLocalRouteAsset(rawSrc) || !rawSrc)
-          throw new Error(`Canonical Astro route image is not local for ${assetId}`)
-        const routeRoot = resolve('dist')
-        const candidate = isAbsolute(rawSrc)
-          ? resolve(routeRoot, rawSrc.replace(/^[/\\]+/u, ''))
-          : resolve(dirname(routePath), rawSrc)
-        const escaped = relative(routeRoot, candidate).split(sep).join('/')
-        if (escaped.startsWith('../') || isAbsolute(escaped))
-          throw new Error(`Canonical Astro route image escapes dist for ${assetId}`)
-        return createHash('sha256').update(await readFile(candidate)).digest('hex')
-      })(),
-      alternativeText,
-    }
-  })
+      if (!descriptor)
+        throw new Error(`Publication graph image asset is missing: ${assetId}`)
+      const alternativeText =
+        [
+          node.accessibility.alternativeText,
+          node.accessibility.longDescription,
+          node.accessibility.transcript,
+        ].find((value) => typeof value === 'string' && value.trim()) ?? ''
+      const stem = assetStem(descriptor.fileName)
+      const image = route.images.find(
+        (candidate) =>
+          candidate.alt === alternativeText &&
+          isLocalRouteAsset(candidate.src) &&
+          (!stem || assetStem(candidate.src).includes(stem)),
+      )
+      if (!image)
+        throw new Error(
+          `Canonical Astro route is missing local image asset for ${assetId}`,
+        )
+      return {
+        assetId,
+        fileName: descriptor.fileName,
+        sha256: descriptor.sha256,
+        routeSrc: image.src,
+        routeSha256: await (async () => {
+          const rawSrc = String(image.src ?? '').split(/[?#]/u)[0]
+          if (!isLocalRouteAsset(rawSrc) || !rawSrc)
+            throw new Error(`Canonical Astro route image is not local for ${assetId}`)
+          const routeRoot = resolve('dist')
+          const candidate = isAbsolute(rawSrc)
+            ? resolve(routeRoot, rawSrc.replace(/^[/\\]+/u, ''))
+            : resolve(dirname(routePath), rawSrc)
+          const escaped = relative(routeRoot, candidate).split(sep).join('/')
+          if (escaped.startsWith('../') || isAbsolute(escaped))
+            throw new Error(`Canonical Astro route image escapes dist for ${assetId}`)
+          return createHash('sha256').update(await readFile(candidate)).digest('hex')
+        })(),
+        alternativeText,
+      }
+    }),
+  )
   const graphImageAlternatives = graphImages
     .map((image) => image.alternativeText)
     .filter(Boolean)

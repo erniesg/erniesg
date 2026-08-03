@@ -1,0 +1,200 @@
+{
+  "version": "1.0.0",
+  "graph": {
+    "version": "1.0.0",
+    "id": "planner-four-profile",
+    "metadata": {
+      "title": "A deterministic publication",
+      "contributors": ["Publication Test"],
+      "abstract": "One graph, four bounded composition contexts.",
+      "defaultLocale": "en",
+      "defaultDirection": "ltr",
+      "keywords": []
+    },
+    "edition": { "id": "edition-en", "locale": "en", "direction": "ltr" },
+    "nodes": [
+      {
+        "id": "title",
+        "type": "heading",
+        "level": 1,
+        "text": "A deterministic publication",
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "essential",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "decorative": false },
+        "variants": [],
+        "permittedTransformationIds": [],
+        "edition": { "editionId": "edition-en" }
+      },
+      {
+        "id": "intro",
+        "type": "paragraph",
+        "text": "The canonical graph remains stable while each target receives a legal, measurable layout plan.",
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "essential",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "decorative": false },
+        "variants": [],
+        "permittedTransformationIds": [],
+        "edition": { "editionId": "edition-en" }
+      },
+      {
+        "id": "full-figure",
+        "type": "figure",
+        "title": "A full-span figure",
+        "assetIds": [],
+        "captionId": "full-figure-caption",
+        "sourceText": "A source-backed figure.",
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "essential",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "alternativeText": "A source-backed figure", "decorative": false },
+        "variants": [],
+        "permittedTransformationIds": [],
+        "edition": { "editionId": "edition-en" }
+      },
+      {
+        "id": "full-figure-caption",
+        "type": "caption",
+        "parentId": "full-figure",
+        "text": "The figure remains attached to its caption.",
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "supporting",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "decorative": false },
+        "variants": [],
+        "permittedTransformationIds": [],
+        "edition": { "editionId": "edition-en" }
+      },
+      {
+        "id": "conventional-table",
+        "type": "table",
+        "rows": [
+          { "cells": [
+            { "id": "h1", "text": "Profile", "headerScope": "column", "columnSpan": 1, "rowSpan": 1 },
+            { "id": "h2", "text": "Status", "headerScope": "column", "columnSpan": 1, "rowSpan": 1 }
+          ] },
+          { "cells": [
+            { "id": "c1", "text": "Phone", "headerScope": null, "columnSpan": 1, "rowSpan": 1, "headerIds": ["h1"] },
+            { "id": "c2", "text": "eligible", "headerScope": null, "columnSpan": 1, "rowSpan": 1, "headerIds": ["h2"] }
+          ] }
+        ],
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "supporting",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "decorative": false },
+        "variants": [],
+        "permittedTransformationIds": [],
+        "edition": { "editionId": "edition-en" }
+      },
+      {
+        "id": "margin-aside",
+        "type": "aside",
+        "text": "A bounded aside can move to a margin, inline flow, or endnote.",
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "supporting",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "decorative": false },
+        "variants": [],
+        "permittedTransformationIds": [],
+        "edition": { "editionId": "edition-en" }
+      },
+      {
+        "id": "interactive-media",
+        "type": "media",
+        "mediaKind": "interactive",
+        "assetId": "asset-interactive",
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "essential",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "alternativeText": "An interactive demonstration", "decorative": false },
+        "variants": [ { "kind": "static", "text": "A still authored demonstration.", "reviewed": true } ],
+        "permittedTransformationIds": ["substitute-static"],
+        "edition": { "editionId": "edition-en" }
+      },
+      {
+        "id": "color-chart",
+        "type": "figure",
+        "title": "Color chart",
+        "assetIds": [],
+        "sourceText": "A chart with authored monochrome fallback.",
+        "locale": "en",
+        "direction": "ltr",
+        "requirement": "required",
+        "importance": "essential",
+        "provenance": { "adapterId": "fixture", "sourceId": "fixture", "evidence": [] },
+        "accessibility": { "alternativeText": "A color chart", "decorative": false },
+        "variants": [ { "kind": "monochrome", "text": "A monochrome chart.", "reviewed": true } ],
+        "permittedTransformationIds": ["substitute-monochrome"],
+        "edition": { "editionId": "edition-en" }
+      }
+    ]
+  },
+  "policy": {
+    "version": "1.0.0",
+    "id": "fixture-policy",
+    "transformations": [
+      { "id": "substitute-static", "from": "interactive", "to": "media", "operation": "substitute-authored-variant", "preservationClass": "semantic-equivalence", "requiredAuthoredAlternative": "static", "reviewedVariantId": "interactive-media:static" },
+      { "id": "substitute-monochrome", "from": "figure", "to": "figure", "operation": "substitute-authored-variant", "preservationClass": "semantic-equivalence", "requiredAuthoredAlternative": "monochrome", "reviewedVariantId": "color-chart:monochrome" }
+    ],
+    "constraints": [
+      { "id": "preserve-reading-order", "strength": "hard", "subject": "reading-order", "operator": "preserve", "value": true, "rationale": "The graph order is canonical." }
+    ]
+  },
+  "profiles": {
+    "phone-webpub": {
+      "version": "1.0.0", "presetId": "mobile", "sourceProfileVersion": "1.1.0", "flow": "continuous",
+      "logicalDimensions": { "width": 390, "height": null, "unit": "css-px" },
+      "physicalDimensions": null, "orientation": "portrait",
+      "margins": { "top": 16, "right": 16, "bottom": 16, "left": 16, "unit": "css-px" },
+      "color": "full-color", "refresh": "dynamic", "interaction": "scroll", "fontControl": "reader-controlled", "locale": "en", "script": "Latn",
+      "accessibility": { "prefersReducedMotion": false, "prefersHighContrast": false, "forcedColors": false, "screenReaderOptimized": false },
+      "binding": "none", "duplex": "none", "bleed": { "top": 0, "right": 0, "bottom": 0, "left": 0, "unit": "mm" }, "resolution": { "pixelsPerInch": null, "devicePixels": null },
+      "offline": { "required": true, "externalResourcesAllowed": false }, "readerControl": { "orientation": true, "typography": true, "pagination": true, "margins": true }, "paginationAuthority": "reader-controlled"
+    },
+    "eink-epub": {
+      "version": "1.0.0", "presetId": "paperProMove", "sourceProfileVersion": "1.1.0", "flow": "paged",
+      "logicalDimensions": { "width": 1080, "height": 1440, "unit": "device-px" },
+      "physicalDimensions": { "width": 4.75, "height": 6.34, "unit": "in" }, "orientation": "portrait",
+      "margins": { "top": 80, "right": 80, "bottom": 80, "left": 80, "unit": "device-px" },
+      "color": "monochrome", "refresh": "page-refresh", "interaction": "page-turn", "fontControl": "advisory", "locale": "en", "script": "Latn",
+      "accessibility": { "prefersReducedMotion": false, "prefersHighContrast": false, "forcedColors": false, "screenReaderOptimized": false }, "binding": "none", "duplex": "none",
+      "bleed": { "top": 0, "right": 0, "bottom": 0, "left": 0, "unit": "mm" }, "resolution": { "pixelsPerInch": 227, "devicePixels": { "width": 1080, "height": 1440 } },
+      "offline": { "required": true, "externalResourcesAllowed": false }, "readerControl": { "orientation": true, "typography": true, "pagination": true, "margins": true }, "paginationAuthority": "reader-controlled"
+    },
+    "a5-pdf": {
+      "version": "1.0.0", "presetId": "print", "sourceProfileVersion": "1.1.0", "flow": "paged",
+      "logicalDimensions": { "width": 148, "height": 210, "unit": "mm" },
+      "physicalDimensions": { "width": 148, "height": 210, "unit": "mm" }, "orientation": "portrait",
+      "margins": { "top": 18, "right": 16, "bottom": 20, "left": 16, "unit": "mm" },
+      "color": "monochrome", "refresh": "static", "interaction": "none", "fontControl": "publisher-controlled", "locale": "en", "script": "Latn",
+      "accessibility": { "prefersReducedMotion": false, "prefersHighContrast": false, "forcedColors": false, "screenReaderOptimized": false }, "binding": "left", "duplex": "long-edge",
+      "bleed": { "top": 0, "right": 0, "bottom": 0, "left": 0, "unit": "mm" }, "resolution": { "pixelsPerInch": 300, "devicePixels": null }, "offline": { "required": true, "externalResourcesAllowed": false },
+      "readerControl": { "orientation": false, "typography": false, "pagination": false, "margins": false }, "paginationAuthority": "authoritative"
+    },
+    "a4-pdf": {
+      "version": "1.0.0", "presetId": "print", "sourceProfileVersion": "1.1.0", "flow": "paged",
+      "logicalDimensions": { "width": 210, "height": 297, "unit": "mm" },
+      "physicalDimensions": { "width": 210, "height": 297, "unit": "mm" }, "orientation": "portrait",
+      "margins": { "top": 18, "right": 16, "bottom": 20, "left": 16, "unit": "mm" },
+      "color": "monochrome", "refresh": "static", "interaction": "none", "fontControl": "publisher-controlled", "locale": "en", "script": "Latn",
+      "accessibility": { "prefersReducedMotion": false, "prefersHighContrast": false, "forcedColors": false, "screenReaderOptimized": false }, "binding": "left", "duplex": "long-edge",
+      "bleed": { "top": 0, "right": 0, "bottom": 0, "left": 0, "unit": "mm" }, "resolution": { "pixelsPerInch": 300, "devicePixels": null }, "offline": { "required": true, "externalResourcesAllowed": false },
+      "readerControl": { "orientation": false, "typography": false, "pagination": false, "margins": false }, "paginationAuthority": "authoritative"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "profile": {
+    "profileId": "undersized-custom",
+    "profileVersion": "fixture-1.0.0",
+    "flow": "paged",
+    "logicalDimensions": { "width": 60, "height": 90, "unit": "css-px" },
+    "margins": { "top": 20, "right": 20, "bottom": 20, "left": 20, "unit": "css-px" },
+    "color": "monochrome",
+    "refresh": "static",
+    "interaction": "none",
+    "binding": "none",
+    "duplex": "none",
+    "bleed": { "top": 0, "right": 0, "bottom": 0, "left": 0, "unit": "mm" },
+    "resolution": { "pixelsPerInch": null, "devicePixels": null }
+  },
+  "expected": {
+    "noEligiblePlan": true,
+    "artifactEmitted": false,
+    "smallestAlternatives": ["RELAX_SMALLEST_GEOMETRIC_CONSTRAINT"]
+  }
+}
+

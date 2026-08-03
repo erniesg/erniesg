@@ -91,7 +91,6 @@ export function publicationPdfTextRequirements(graph) {
         add(node.code)
         break
       case 'figure':
-        add(node.title)
         add(node.sourceText)
         break
       case 'table':

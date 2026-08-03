@@ -647,14 +647,14 @@ describe('Vivliostyle publication renderer boundary', () => {
   it('requires the pinned browser build before rendering', () => {
     expect(
       publicationBrowserVersionMatches(
-        'Chromium 149.0.7827.55',
-        '149.0.7827.55',
+        'Chromium 149.0.7827.0',
+        '149.0.7827.0',
       ),
     ).toBe(true)
     expect(
       publicationBrowserVersionMatches(
-        'Chromium 149.0.7827.0',
-        '149.0.7827.55',
+        'Chromium 149.0.7827.55',
+        '149.0.7827.0',
       ),
     ).toBe(false)
   })

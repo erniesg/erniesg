@@ -205,6 +205,26 @@ describe('Astro publication adapter', () => {
     })
   })
 
+  it('normalizes non-ASCII heading slugs to schema-safe ids', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-heading-unicode-'))
+    const entry = resolve(root, 'heading-unicode')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Unicode headings\ndescription: Unicode heading fixture\ndate: 2026-07-27\n---\n# Café\n\n# 中文\n\n# Café\n`,
+    )
+    const result = await adaptAstroBlogEntry({
+      entryId: 'heading-unicode',
+      contentRoot: root,
+    })
+    expect(result.graph.nodes.filter((node) => node.type === 'heading').map((node) => node.id)).toEqual([
+      'cafe',
+      'heading-1',
+      'cafe-1',
+    ])
+    expect(result.graph.nodes.every((node) => /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(node.id))).toBe(true)
+  })
+
   it('preserves deletion semantics, unique repeated footnote anchors, and all backlinks', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-'))
     const entry = resolve(root, 'footnote-references')

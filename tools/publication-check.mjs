@@ -94,6 +94,112 @@ function imageAlternativeTexts(html) {
   return alternatives
 }
 
+function accessibilityLabel(node) {
+  return (
+    node.accessibility?.alternativeText ??
+    node.accessibility?.longDescription ??
+    node.accessibility?.transcript ??
+    ''
+  )
+}
+
+function elementById(html, id) {
+  const root = parse(html)
+  let result
+  const visit = (node) => {
+    if (result) return
+    const idAttribute = node.attrs?.find((attribute) => attribute.name === 'id')
+    if (idAttribute?.value === id) {
+      result = node
+      return
+    }
+    for (const child of node.childNodes ?? []) visit(child)
+  }
+  visit(root)
+  return result
+}
+
+function hasTag(node, tagName) {
+  if (!node) return false
+  if (node.tagName === tagName) return true
+  return (node.childNodes ?? []).some((child) => hasTag(child, tagName))
+}
+
+function attribute(node, name) {
+  return node?.attrs?.find((value) => value.name === name)?.value
+}
+
+function textContent(node) {
+  if (!node) return ''
+  if (node.nodeName === '#text') return node.value ?? ''
+  return (node.childNodes ?? []).map(textContent).join('')
+}
+
+function assertWebPubNode(html, imageAlts, node) {
+  if (node.type === 'heading') {
+    assert(
+      elementById(html, node.id)?.tagName === `h${node.level}`,
+      `WebPub dropped heading ${node.id}`,
+    )
+    return
+  }
+  if (node.type === 'figure') {
+    const figure = elementById(html, node.id)
+    assert(figure?.tagName === 'figure', `WebPub dropped figure ${node.id}`)
+    const label = accessibilityLabel(node)
+    if (node.assetIds.length > 0)
+      assert(
+        imageAlts.includes(label),
+        `WebPub dropped figure image alternative for ${node.id}`,
+      )
+    else
+      assert(
+        Boolean(node.sourceText) &&
+          hasTag(figure, 'pre') &&
+          textContent(elementById(html, `${node.id}-source`)) === node.sourceText,
+        `WebPub dropped source fallback for figure ${node.id}`,
+      )
+    return
+  }
+  if (node.type !== 'media') return
+  const mediaFigure = elementById(html, node.id)
+  assert(mediaFigure?.tagName === 'figure', `WebPub dropped media ${node.id}`)
+  const label = accessibilityLabel(node)
+  if (node.mediaKind === 'image') {
+    assert(
+      imageAlts.includes(label),
+      `WebPub dropped image alternative for ${node.id}`,
+    )
+    return
+  }
+  const expectedTag =
+    node.mediaKind === 'audio'
+      ? 'audio'
+      : node.mediaKind === 'video'
+        ? 'video'
+        : 'a'
+  const media = mediaFigure.childNodes?.find(
+    (child) => child.tagName === expectedTag,
+  )
+  assert(media, `WebPub dropped ${node.mediaKind} media for ${node.id}`)
+  assert(
+    attribute(media, 'aria-label') === label,
+    `WebPub dropped ${node.mediaKind} accessibility label for ${node.id}`,
+  )
+}
+
+export function validateWebPubGraph(graph, html) {
+  const imageAlts = imageAlternativeTexts(html)
+  const root = parse(html)
+  assert(
+    html.includes(`lang="${graph.edition.locale}"`) &&
+      html.includes('<main>') &&
+      hasTag(root, 'h1'),
+    'WebPub is missing language, landmarks, or headings',
+  )
+  for (const node of graph.nodes) assertWebPubNode(html, imageAlts, node)
+}
+
 async function publicationFiles(root, directory = root) {
   const entries = (await readdir(directory, { withFileTypes: true })).sort(
     (left, right) => left.name.localeCompare(right.name),
@@ -254,25 +360,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   )
   await checkWebPubReceipt(root, webpubArtifact)
   const html = await readFile(resolve(root, 'phone-webpub/index.html'), 'utf8')
-  const imageAlts = imageAlternativeTexts(html)
-  assert(
-    html.includes(`lang="${graph.edition.locale}"`) &&
-      html.includes('<main>') &&
-      html.includes('<h1>'),
-    'WebPub is missing language, landmarks, or headings',
-  )
-  for (const node of graph.nodes) {
-    if (node.type === 'heading')
-      assert(
-        html.includes(`id="${node.id}"`),
-        `WebPub dropped heading ${node.id}`,
-      )
-    if (node.type === 'figure' || node.type === 'media')
-      assert(
-        imageAlts.includes(node.accessibility.alternativeText ?? ''),
-        `WebPub dropped image alternative for ${node.id}`,
-      )
-  }
+  validateWebPubGraph(graph, html)
   const epubPath = resolve(root, 'eink.epub')
   const epubArtifact = receipt.artifacts.find(
     (artifact) => artifact.profile === 'eink-epub',
@@ -310,7 +398,9 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requireImages: graph.nodes.some(
-      (node) => node.type === 'figure' || node.type === 'media',
+      (node) =>
+        (node.type === 'figure' && node.assetIds.length > 0) ||
+        (node.type === 'media' && node.mediaKind === 'image'),
     ),
   }
   const a5Artifact = receipt.artifacts.find(
@@ -348,9 +438,34 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   const parity = JSON.parse(
     await readFile(resolve(root, 'astro-route-parity.json'), 'utf8'),
   )
+  const expectedHeadings = graph.nodes
+    .filter((node) => node.type === 'heading')
+    .map((node) => node.text)
+  const expectedImageAlternatives = graph.nodes
+    .filter(
+      (node) =>
+        (node.type === 'figure' && node.assetIds.length > 0) ||
+        (node.type === 'media' && node.mediaKind === 'image'),
+    )
+    .map((node) => accessibilityLabel(node))
+    .filter(Boolean)
+  const expectedCanonicalRoute = `/blog/${graph.id.replace(/^publication-/, '')}`
   assert(
-    parity.result === 'passed',
+    parity.result === 'passed' && parity.version === '1.0.0',
     'Canonical Astro route parity did not pass',
+  )
+  assert(
+    parity.canonicalRoute === expectedCanonicalRoute,
+    'Canonical Astro route parity points at the wrong entry',
+  )
+  assert(
+    JSON.stringify(parity.headingOrder) === JSON.stringify(expectedHeadings),
+    'Canonical Astro route heading parity is stale',
+  )
+  assert(
+    JSON.stringify(parity.localImageAlternatives) ===
+      JSON.stringify(expectedImageAlternatives),
+    'Canonical Astro route image alternative parity is stale',
   )
   process.stdout.write(
     `Publication matrix passed structural, accessibility, EPUBCheck, and PDF checks at ${root}\n`,

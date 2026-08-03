@@ -259,9 +259,17 @@ export async function adaptAstroBlogEntry(
     return id
   }
   const nextHeadingId = (text: string) => {
-    let id = headingSlugger.slug(text)
-    if (!id) return nextId('heading')
-    while (usedNodeIds.has(id)) id = headingSlugger.slug(text)
+    const slug = headingSlugger
+      .slug(text)
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .replace(/[^\x00-\x7F]/g, '')
+      .replace(/[^A-Za-z0-9._:-]+/g, '-')
+      .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+    if (!slug) return nextId('heading')
+    let id = slug
+    let suffix = 1
+    while (usedNodeIds.has(id)) id = `${slug}-${suffix++}`
     usedNodeIds.add(id)
     return id
   }

@@ -148,7 +148,7 @@ describe('Vivliostyle publication renderer boundary', () => {
         node.id === paragraph.id
           ? {
               ...node,
-              text: 'read this',
+              text: 'read this\n',
               inlineRuns: [
                 { start: 0, end: 5, href: 'https://example.com/' },
                 { start: 5, end: 9, href: 'https://example.com/', bold: true },
@@ -168,6 +168,60 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(html.match(/href="https:\/\/example\.com\//g)).toHaveLength(1)
     expect(html).toContain('<strong>this</strong>')
     expect(html).toContain('<br>')
+  })
+
+  it('rejects hard-break runs that cover authored text', async () => {
+    const contentRoot = await fixtureCollection('synthetic-publication')
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'synthetic-publication',
+      contentRoot,
+    })
+    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    if (!paragraph || paragraph.type !== 'paragraph') throw new Error('missing paragraph')
+    const graph = {
+      ...bundle.graph,
+      nodes: bundle.graph.nodes.map((node) =>
+        node.id === paragraph.id
+          ? { ...node, text: 'authored text', inlineRuns: [{ start: 0, end: 4, hardBreak: true }] }
+          : node,
+      ),
+    }
+    expect(() => publicationGraphToHtml(graph, new Map(), 'phone-webpub')).toThrow(
+      /Malformed hard-break inline run/,
+    )
+  })
+
+  it('renders subtitles and source-backed figures while requiring alternatives', async () => {
+    const bundle = await adaptAstroBlogEntry({ entryId: 'moving-to-cloudflare-with-astro' })
+    const template = bundle.graph.nodes[0]
+    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
+    const sourceFigure = {
+      ...template,
+      id: 'source-figure',
+      title: 'Source figure',
+      assetIds: [],
+      sourceText: 'diagram source',
+      accessibility: { decorative: false, longDescription: 'Diagram description' },
+    }
+    const graph = {
+      ...bundle.graph,
+      metadata: { ...bundle.graph.metadata, subtitle: 'A useful subtitle' },
+      nodes: [sourceFigure],
+    }
+    const html = publicationGraphToHtml(graph, new Map(), 'phone-webpub')
+    expect(html).toContain('<p class="subtitle">A useful subtitle</p>')
+    expect(html).toContain('class="figure-source"')
+    expect(html).toContain('diagram source')
+    expect(() =>
+      publicationGraphToHtml(
+        {
+          ...graph,
+          nodes: [{ ...sourceFigure, accessibility: { decorative: false } }],
+        },
+        new Map(),
+        'phone-webpub',
+      ),
+    ).toThrow(/requires alternative text or a long description/)
   })
 
   it('renders captions, table relationships, media kinds, automatic direction, and citations', async () => {

@@ -74,8 +74,17 @@ async function writeRouteParity(entry, output, graph) {
     cursor = index + 1
   }
   const graphImages = graph.nodes
-    .filter((node) => node.type === 'figure' || node.type === 'media')
-    .map((node) => node.accessibility.alternativeText)
+    .filter(
+      (node) =>
+        (node.type === 'figure' && node.assetIds.length > 0) ||
+        (node.type === 'media' && node.mediaKind === 'image'),
+    )
+    .map(
+      (node) =>
+        node.accessibility.alternativeText ??
+        node.accessibility.longDescription ??
+        node.accessibility.transcript,
+    )
     .filter(Boolean)
   for (const alternative of graphImages)
     if (!route.images.some((image) => image.alt === alternative))

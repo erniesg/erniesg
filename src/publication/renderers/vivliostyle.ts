@@ -127,6 +127,18 @@ function escapeHtml(value: string) {
 }
 
 function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
+  for (const run of runs) {
+    if (!run.hardBreak) continue
+    if (
+      run.start < 0 ||
+      run.end !== run.start + 1 ||
+      run.end > text.length ||
+      text.slice(run.start, run.end) !== '\n'
+    )
+      throw new Error(
+        `Malformed hard-break inline run ${run.start}:${run.end}; it must cover exactly one newline`,
+      )
+  }
   const boundaries = new Set([0, text.length])
   for (const run of runs) {
     boundaries.add(run.start)
@@ -275,7 +287,25 @@ function renderNode(
       return `<aside id="${node.id}" role="doc-footnote"><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
-      return `<figure id="${node.id}">${node.assetIds.map((assetId) => `<img src="${escapeHtml(assetPaths.get(assetId) ?? '')}" alt="${escapeHtml(node.accessibility.alternativeText ?? '')}">`).join('')}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
+      const alternativeText = accessibilityLabel(node)
+      if (!node.accessibility.decorative && !alternativeText)
+        throw new Error(
+          `Figure ${node.id} requires alternative text or a long description`,
+        )
+      const assets = node.assetIds
+        .map(
+          (assetId) =>
+            `<img src="${escapeHtml(assetPaths.get(assetId) ?? '')}" alt="${escapeHtml(alternativeText)}">`,
+        )
+        .join('')
+      const source = node.sourceText
+        ? `<pre id="${node.id}-source" class="figure-source"${alternativeText ? ` aria-label="${escapeHtml(alternativeText)}"` : ''}>${escapeHtml(node.sourceText)}</pre>`
+        : ''
+      if (!assets && !source)
+        throw new Error(
+          `Figure ${node.id} has no renderable asset or source text`,
+        )
+      return `<figure id="${node.id}">${assets}${source}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
     }
     case 'reference':
       return `<p id="${node.id}" role="doc-biblioentry">${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : node.targetIds[0] ? `<a href="#${escapeHtml(node.targetIds[0])}" role="doc-biblioref">${text}</a>` : text}</p>`
@@ -284,9 +314,7 @@ function renderNode(
     case 'media':
       {
         const source = escapeHtml(assetPaths.get(node.assetId) ?? '')
-        const alternativeText = escapeHtml(
-          node.accessibility.alternativeText ?? '',
-        )
+        const alternativeText = escapeHtml(accessibilityLabel(node))
         const media =
           node.mediaKind === 'image'
             ? `<img src="${source}" alt="${alternativeText}">`
@@ -330,6 +358,15 @@ function renderNode(
   }
 }
 
+function accessibilityLabel(node: PublicationNode) {
+  return (
+    node.accessibility.alternativeText ??
+    node.accessibility.longDescription ??
+    node.accessibility.transcript ??
+    ''
+  )
+}
+
 export function publicationGraphToHtml(
   graph: PublicationGraph,
   assetPaths: Map<string, string>,
@@ -353,7 +390,7 @@ export function publicationGraphToHtml(
   return `<!doctype html>
 <html lang="${graph.edition.locale}" dir="${direction}" data-profile="${profile}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(graph.metadata.title)}</title><meta name="description" content="${escapeHtml(graph.metadata.abstract ?? '')}"><link rel="stylesheet" href="${stylesheet}"></head>
-<body><header><h1>${escapeHtml(graph.metadata.title)}</h1>${graph.metadata.abstract ? `<p class="dek">${escapeHtml(graph.metadata.abstract)}</p>` : ''}<p class="byline">${graph.metadata.contributors.map(escapeHtml).join(', ')}</p></header><main>${body}</main></body></html>
+<body><header><h1>${escapeHtml(graph.metadata.title)}</h1>${graph.metadata.subtitle ? `<p class="subtitle">${escapeHtml(graph.metadata.subtitle)}</p>` : ''}${graph.metadata.abstract ? `<p class="dek">${escapeHtml(graph.metadata.abstract)}</p>` : ''}<p class="byline">${graph.metadata.contributors.map(escapeHtml).join(', ')}</p></header><main>${body}</main></body></html>
 `
 }
 

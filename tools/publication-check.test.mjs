@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   checkWebPubReceipt,
   parsePublicationCheckArgs,
+  validateWebPubGraph,
   verifyArtifactReceipt,
 } from './publication-check.mjs'
 
@@ -90,5 +91,39 @@ describe('publication:check CLI', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('checks media kinds independently and preserves source figure fallbacks', () => {
+    const common = {
+      accessibility: { decorative: false },
+    }
+    const graph = {
+      edition: { locale: 'en' },
+      nodes: [
+        { ...common, id: 'heading', type: 'heading', level: 1, text: 'Title' },
+        {
+          ...common,
+          id: 'source-figure',
+          type: 'figure',
+          assetIds: [],
+          sourceText: 'source fallback',
+          accessibility: { decorative: false, longDescription: 'Diagram' },
+        },
+        {
+          ...common,
+          id: 'audio',
+          type: 'media',
+          mediaKind: 'audio',
+          assetId: 'audio-asset',
+          accessibility: { decorative: false, transcript: 'Audio transcript' },
+        },
+      ],
+    }
+    const html =
+      '<html lang="en"><body><header><h1 id="heading">Title</h1></header><main>' +
+      '<figure id="source-figure"><pre id="source-figure-source" class="figure-source">source fallback</pre></figure>' +
+      '<figure id="audio"><audio aria-label="Audio transcript"></audio></figure>' +
+      '</main></body></html>'
+    expect(() => validateWebPubGraph(graph, html)).not.toThrow()
   })
 })

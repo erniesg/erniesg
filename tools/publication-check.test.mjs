@@ -14,8 +14,11 @@ import {
   normalizePdfSearchableText,
   orderPdfTextRequirements,
   publicationPdfLinkRequirements,
+  publicationPdfLinkRequirementsForProfile,
   parsePublicationCheckArgs,
   publicationPdfTextRequirements,
+  pdfAnnotationTarget,
+  validatePublicationGraphContent,
   validateWebPubGraph,
   verifyArtifactReceipt,
 } from './publication-check.mjs'
@@ -141,7 +144,7 @@ describe('publication:check CLI', () => {
     expect(required).toEqual(['https://example.com/', '#target'])
     expect(() =>
       assertPdfLinkAnnotations(
-        [{ target: 'https://example.com/' }, {}],
+        [{ target: 'https://example.com/' }, { target: '#target' }],
         required,
       ),
     ).not.toThrow()
@@ -150,10 +153,14 @@ describe('publication:check CLI', () => {
     ).toThrow(/requires 2/)
     expect(() =>
       assertPdfLinkAnnotations(
-        [{ target: 'https://other.example/' }, {}],
+        [{ target: 'https://other.example/' }, { target: '#other' }],
         required,
       ),
     ).toThrow(/missing.*https:\/\/example\.com/)
+    expect(pdfAnnotationTarget({ dest: 'target' })).toBe('#target')
+    expect(pdfAnnotationTarget({ dest: ['target', { name: 'XYZ' }] })).toBe(
+      '#target',
+    )
   })
 
   it('chooses the first non-empty accessibility alternative', () => {
@@ -266,5 +273,55 @@ describe('publication:check CLI', () => {
       '<figure id="audio"><audio aria-label="Audio transcript"></audio></figure>' +
       '</main></body></html>'
     expect(() => validateWebPubGraph(graph, html)).not.toThrow()
+  })
+
+  it('keeps profile-selected text and links distinct and preserves duplicate requirements', () => {
+    const graph = {
+      metadata: {
+        title: 'Title',
+        contributors: [],
+      },
+      nodes: [
+        {
+          id: 'body',
+          type: 'paragraph',
+          text: 'canonical text',
+          variants: [
+            { kind: 'compact', text: 'compact text', reviewed: true },
+          ],
+          inlineRuns: [{ href: '#canonical' }],
+        },
+        { id: 'duplicate', type: 'paragraph', text: 'repeat' },
+        { id: 'duplicate-2', type: 'paragraph', text: 'repeat' },
+      ],
+    }
+    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual(
+      expect.arrayContaining(['compact text', 'repeat', 'repeat']),
+    )
+    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).not.toContain(
+      'canonical text',
+    )
+    expect(publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')).toEqual(
+      [],
+    )
+    expect(
+      publicationPdfLinkRequirementsForProfile(graph, 'phone-webpub'),
+    ).toEqual(['#canonical'])
+  })
+
+  it('rejects a required body node dropped from a WebPub or EPUB profile', () => {
+    const graph = {
+      edition: { locale: 'en', direction: 'ltr' },
+      metadata: { title: 'Title', contributors: [] },
+      nodes: [
+        { id: 'heading', type: 'heading', level: 1, text: 'Heading' },
+        { id: 'body', type: 'paragraph', text: 'Required body' },
+      ],
+    }
+    const html =
+      '<html lang="en"><body><header><h1>Title</h1></header><main><h1 id="heading">Heading</h1></main></body></html>'
+    expect(() => validatePublicationGraphContent(graph, html)).toThrow(
+      /required node body/,
+    )
   })
 })

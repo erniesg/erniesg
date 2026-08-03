@@ -8,7 +8,10 @@ import JSZip from 'jszip'
 import { parse } from 'parse5'
 import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
+import {
+  PUBLICATION_PROFILES,
+  publicationNodeForProfile,
+} from '../src/publication/renderers/vivliostyle.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
 import { serializePublicationGraph } from '../src/publication/schema.ts'
@@ -72,43 +75,44 @@ export function normalizePdfSearchableText(value) {
     .toLowerCase()
 }
 
-export function publicationPdfTextRequirements(graph) {
-  const required = new Set()
+export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
+  const required = []
   const add = (value) => {
-    if (typeof value === 'string' && value.trim()) required.add(value)
+    if (typeof value === 'string' && value.trim()) required.push(value)
   }
   add(graph.metadata.title)
   add(graph.metadata.subtitle)
   add(graph.metadata.abstract)
   for (const contributor of graph.metadata.contributors ?? []) add(contributor)
   for (const node of graph.nodes) {
-    if ('text' in node) add(node.text)
-    switch (node.type) {
+    const selected = publicationNodeForProfile(node, profile)
+    if ('text' in selected) add(selected.text)
+    switch (selected.type) {
       case 'quote':
-        add(node.attribution)
+        add(selected.attribution)
         break
       case 'code':
-        add(node.code)
+        add(selected.code)
         break
       case 'figure':
-        add(node.sourceText)
+        add(selected.sourceText)
         break
       case 'table':
-        for (const row of node.rows)
+        for (const row of selected.rows)
           for (const cell of row.cells) add(cell.text)
         break
       case 'equation':
-        add(node.source)
-        add(node.label)
+        add(selected.source)
+        add(selected.label)
         break
       case 'note':
-        add(node.label)
+        add(selected.label)
         break
       default:
         break
     }
   }
-  return [...required]
+  return required
 }
 
 export function assertPdfSearchableTextRequirements(
@@ -166,11 +170,20 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
 }
 
 export function publicationPdfLinkRequirements(graph) {
+  return publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')
+}
+
+export function publicationPdfLinkRequirementsForProfile(
+  graph,
+  profile = 'a5-pdf',
+) {
   const links = []
   for (const node of graph.nodes) {
-    for (const run of node.inlineRuns ?? [])
+    const selected = publicationNodeForProfile(node, profile)
+    for (const run of selected.inlineRuns ?? [])
       if (run.href) links.push(run.href)
-    if (node.type === 'reference' && node.href) links.push(node.href)
+    if (selected.type === 'reference' && selected.href)
+      links.push(selected.href)
   }
   return links
 }
@@ -187,9 +200,8 @@ export function assertPdfLinkAnnotations(annotations, requiredLinks) {
   for (const required of expected) {
     const index = remaining.findIndex((annotation) => {
       if (!annotation || typeof annotation !== 'object') return false
-      if (typeof annotation.target === 'string')
-        return annotation.target === required
-      return required.startsWith('#')
+      const target = pdfAnnotationTarget(annotation)
+      return target === required
     })
     assert(
       index >= 0,
@@ -197,6 +209,27 @@ export function assertPdfLinkAnnotations(annotations, requiredLinks) {
     )
     remaining.splice(index, 1)
   }
+}
+
+export function pdfAnnotationTarget(annotation) {
+  if (typeof annotation?.target === 'string') return annotation.target
+  if (typeof annotation?.url === 'string') return annotation.url
+  if (typeof annotation?.unsafeUrl === 'string') return annotation.unsafeUrl
+  const destination = annotation?.dest
+  if (typeof destination === 'string')
+    return destination.startsWith('#') ? destination : `#${destination}`
+  if (Array.isArray(destination)) {
+    const named = destination.find(
+      (value) =>
+        typeof value === 'string' ||
+        (value && typeof value === 'object' && typeof value.name === 'string'),
+    )
+    if (typeof named === 'string')
+      return named.startsWith('#') ? named : `#${named}`
+    if (named && typeof named === 'object' && typeof named.name === 'string')
+      return named.name.startsWith('#') ? named.name : `#${named.name}`
+  }
+  return ''
 }
 
 export async function verifyArtifactReceipt(root, artifact, relativePath) {
@@ -350,7 +383,65 @@ export function validateWebPubGraph(graph, html) {
       hasTag(root, 'h1'),
     'WebPub is missing language, landmarks, or headings',
   )
-  for (const node of graph.nodes) assertWebPubNode(html, imageAlts, node)
+  validatePublicationGraphContent(graph, html, 'phone-webpub', imageAlts)
+}
+
+function comparableHtmlText(value) {
+  return normalizePdfSearchableText(String(value ?? ''))
+}
+
+function requiredNodeText(node) {
+  switch (node.type) {
+    case 'heading':
+    case 'paragraph':
+    case 'list-item':
+    case 'quote':
+    case 'caption':
+    case 'aside':
+    case 'reference':
+    case 'note':
+      return node.text ? [node.text] : []
+    case 'code':
+      return [node.code]
+    case 'figure':
+      return node.sourceText ? [node.sourceText] : []
+    case 'table':
+      return node.rows.flatMap((row) => row.cells.map((cell) => cell.text))
+    case 'equation':
+      return [node.source, node.label]
+    default:
+      return []
+  }
+}
+
+export function validatePublicationGraphContent(
+  graph,
+  html,
+  profile = 'phone-webpub',
+  imageAlts = imageAlternativeTexts(html),
+) {
+  for (const original of graph.nodes) {
+    if (original.requirement === 'optional') continue
+    const node = publicationNodeForProfile(original, profile)
+    if (node.type === 'caption') continue
+    if (profile === 'phone-webpub') assertWebPubNode(html, imageAlts, node)
+    const element = elementById(html, node.id)
+    assert(element, `${profile} dropped required node ${node.id}`)
+    if (node.type === 'heading')
+      assert(
+        element.tagName === `h${node.level}`,
+        `${profile} changed required heading ${node.id}`,
+      )
+    for (const expected of requiredNodeText(node)) {
+      if (!expected?.trim()) continue
+      assert(
+        comparableHtmlText(textContent(element)).includes(
+          comparableHtmlText(expected),
+        ),
+        `${profile} dropped required node content ${node.id}: ${expected}`,
+      )
+    }
+  }
 }
 
 async function publicationFiles(root, directory = root) {
@@ -587,26 +678,29 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       navigation.includes('epub:type="landmarks"'),
     'EPUB is missing navigation or landmarks',
   )
-  for (const node of graph.nodes)
-    if (node.type === 'heading')
-      assert(
-        content?.includes(`id="${node.id}"`),
-        `EPUB dropped heading ${node.id}`,
-      )
+  validatePublicationGraphContent(
+    graph,
+    content ?? '',
+    'eink-epub',
+    imageAlternativeTexts(content ?? ''),
+  )
   await run('java', ['-jar', epubcheck.path, epubPath])
+  const pdfNodes = graph.nodes.map((node) =>
+    publicationNodeForProfile(node, 'a5-pdf'),
+  )
   const pdfRequirements = {
-    requireLinks: graph.nodes.some(
+    requireLinks: pdfNodes.some(
       (node) =>
         ('inlineRuns' in node && node.inlineRuns?.some((run) => run.href)) ||
         (node.type === 'reference' && Boolean(node.href)),
     ),
-    requiredLinks: publicationPdfLinkRequirements(graph),
-    requireImages: graph.nodes.some(
+    requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
+    requireImages: pdfNodes.some(
       (node) =>
         (node.type === 'figure' && node.assetIds.length > 0) ||
         (node.type === 'media' && node.mediaKind === 'image'),
     ),
-    requiredTexts: publicationPdfTextRequirements(graph),
+    requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
   }
   const renderedPdfText = textContent(
     parse(await readFile(resolve(root, 'a5-pdf.html'), 'utf8')),
@@ -634,6 +728,18 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     graph.metadata.title,
     'A4',
     pdfRequirements,
+  )
+  assert(
+    Number.isInteger(a5Artifact.pageCount) && a5Artifact.pageCount === a5Pages,
+    'A5 receipt pageCount does not match the checked PDF',
+  )
+  assert(
+    Number.isInteger(a4Artifact.pageCount) && a4Artifact.pageCount === a4Pages,
+    'A4 receipt pageCount does not match the checked PDF',
+  )
+  assert(
+    a5Pages > a4Pages,
+    `A5 profile must produce more pages than A4 (${a5Pages} vs ${a4Pages})`,
   )
   assert(
     receipt.profiles['a5-pdf'].figurePlacement !==
@@ -686,6 +792,10 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   assert(
     parity.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
     'Canonical Astro route parity asset binding is stale',
+  )
+  assert(
+    parity.repositoryCommit === currentCommit && parity.repositoryDirty === false,
+    'Canonical Astro route parity is bound to a stale or dirty repository',
   )
   assert(
     parity.publicationReceiptSha256 === sha256(receiptBytes),

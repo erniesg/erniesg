@@ -9,6 +9,7 @@ import {
   publicationAssetFileExtension,
   publicationEpubAccessibilityMetadata,
   publicationEpubManifestItemId,
+  publicationBrowserVersionMatches,
   publicationGraphToHtml,
   publicationPlaywrightExecutableCandidates,
   publicationVariantKindForProfile,
@@ -469,6 +470,42 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toContain('aria-label="Spoken proof"')
   })
 
+  it('hides decorative non-image media controls and preserves equation labels', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const template = bundle.graph.nodes[0]
+    const graph = {
+      ...bundle.graph,
+      nodes: [
+        {
+          ...template,
+          type: 'media' as const,
+          id: 'decorative-audio',
+          mediaKind: 'audio' as const,
+          assetId: 'asset',
+          accessibility: { decorative: true },
+        },
+        {
+          ...template,
+          type: 'equation' as const,
+          id: 'equation-with-label',
+          source: 'x = 1',
+          format: 'plain-text' as const,
+          label: 'Eq. 1',
+        },
+      ],
+    }
+    const html = publicationGraphToHtml(
+      graph,
+      new Map([['asset', 'assets/audio.mp3']]),
+      'phone-webpub',
+    )
+    expect(html).toContain('aria-hidden="true"')
+    expect(html).not.toContain('<audio controls')
+    expect(html).toContain('class="equation-label">Eq. 1</span>')
+  })
+
   it('fails closed for MathML until a safe renderer exists', async () => {
     const bundle = await adaptAstroBlogEntry({
       entryId: 'moving-to-cloudflare-with-astro',
@@ -571,6 +608,21 @@ describe('Vivliostyle publication renderer boundary', () => {
       expect.stringContaining('chrome-win64/chrome.exe'),
       expect.stringContaining('chrome-headless-shell-win64'),
     ])
+  })
+
+  it('requires the pinned browser build before rendering', () => {
+    expect(
+      publicationBrowserVersionMatches(
+        'Chromium 149.0.7827.0',
+        '149.0.7827.55',
+      ),
+    ).toBe(true)
+    expect(
+      publicationBrowserVersionMatches(
+        'Chromium 148.0.7800.1',
+        '149.0.7827.55',
+      ),
+    ).toBe(false)
   })
 
   it('removes stale WebPub assets before a new publication', async () => {

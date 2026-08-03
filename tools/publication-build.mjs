@@ -81,7 +81,7 @@ export function publicationRepositoryForCurrentCheckout() {
   }
 }
 
-export async function writeRouteParity(entry, output, bundle) {
+export async function writeRouteParity(entry, output, bundle, repository) {
   const { graph } = bundle
   const routePath = resolve('dist/blog', entry, 'index.html')
   let html
@@ -161,6 +161,10 @@ export async function writeRouteParity(entry, output, bundle) {
           .update(serializeAssetBundle(bundle.assetBundle))
           .digest('hex'),
         publicationReceiptSha256: publicationReceiptDigest(publicationReceipt),
+        repositoryCommit:
+          repository?.commit ?? publicationRepositoryForCurrentCheckout().commit,
+        repositoryDirty:
+          repository?.dirty ?? publicationRepositoryForCurrentCheckout().dirty,
         routeHtmlSha256: publicationRouteHtmlDigest(html),
         headingOrder: graphHeadings,
         localImageAlternatives: graphImageAlternatives,
@@ -190,7 +194,7 @@ export async function publicationBuild(argv = process.argv.slice(2)) {
   const repository = publicationRepositoryForCurrentCheckout()
   currentReceipt.repository = repository
   await writeFile(receiptPath, `${JSON.stringify(currentReceipt, null, 2)}\n`)
-  await writeRouteParity(options.entry, options.output, bundle)
+  await writeRouteParity(options.entry, options.output, bundle, repository)
   process.stdout.write(
     `Publication matrix built at ${resolve(options.output)} (${receipt.artifacts.length} artifacts)\n`,
   )

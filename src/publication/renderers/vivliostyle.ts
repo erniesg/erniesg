@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
   access,
   chmod,
@@ -242,7 +242,10 @@ export function publicationVariantKindForProfile(profile: PublicationProfile) {
   }
 }
 
-function nodeForProfile(node: PublicationNode, profile: PublicationProfile) {
+export function publicationNodeForProfile(
+  node: PublicationNode,
+  profile: PublicationProfile,
+) {
   const variant = node.variants?.find(
     (candidate) =>
       candidate.reviewed &&
@@ -281,7 +284,7 @@ function renderNode(
   edition: PublicationGraph['edition'],
   listStack = new Set<string>(),
 ): string {
-  node = nodeForProfile(node, profile)
+  node = publicationNodeForProfile(node, profile)
   const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns) : ''
   switch (node.type) {
     case 'heading':
@@ -312,7 +315,7 @@ function renderNode(
               renderNode(child, byId, assetPaths, profile, edition, nextListStack),
             )
             .join('')
-          const renderedItem = nodeForProfile(item, profile) as Extract<
+          const renderedItem = publicationNodeForProfile(item, profile) as Extract<
             PublicationNode,
             { type: 'list-item' }
           >
@@ -333,7 +336,10 @@ function renderNode(
         throw new Error('MathML equation rendering is unsupported')
       {
         const caption = node.captionId ? byId.get(node.captionId) : undefined
-        return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${caption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(caption, edition)}>${inlineHtml(caption.text, caption.inlineRuns)}</div>` : ''}</div>`
+        const label = node.label
+          ? `<span class="equation-label">${escapeHtml(node.label)}</span>`
+          : ''
+        return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${caption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(caption, edition)}>${inlineHtml(caption.text, caption.inlineRuns)}</div>` : ''}</div>`
       }
     case 'note':
       return `<aside ${nodeAttributes(node, edition, ['role="doc-footnote"'])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
@@ -359,7 +365,9 @@ function renderNode(
         throw new Error(
           `Figure ${node.id} has no renderable asset or source text`,
         )
-      const renderedCaption = caption ? nodeForProfile(caption, profile) : undefined
+      const renderedCaption = caption
+        ? publicationNodeForProfile(caption, profile)
+        : undefined
       return `<figure ${nodeAttributes(node, edition)}>${assets}${source}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
     }
     case 'reference':
@@ -379,14 +387,22 @@ function renderNode(
       const alternativeText = escapeHtml(label)
       const media =
         node.mediaKind === 'image'
-          ? `<img src="${source}" alt="${alternativeText}">`
+          ? `<img src="${source}" alt="${alternativeText}"${node.accessibility.decorative ? ' aria-hidden="true"' : ''}>`
           : node.mediaKind === 'audio'
-            ? `<audio controls="controls" src="${source}" aria-label="${alternativeText}"></audio>`
+            ? node.accessibility.decorative
+              ? `<audio src="${source}" aria-hidden="true"></audio>`
+              : `<audio controls="controls" src="${source}" aria-label="${alternativeText}"></audio>`
             : node.mediaKind === 'video'
-              ? `<video controls="controls" src="${source}" aria-label="${alternativeText}"></video>`
-              : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
+              ? node.accessibility.decorative
+                ? `<video src="${source}" aria-hidden="true"></video>`
+                : `<video controls="controls" src="${source}" aria-label="${alternativeText}"></video>`
+              : node.accessibility.decorative
+                ? `<span class="decorative-media" aria-hidden="true"></span>`
+                : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
       const caption = node.captionId ? byId.get(node.captionId) : undefined
-      const renderedCaption = caption ? nodeForProfile(caption, profile) : undefined
+      const renderedCaption = caption
+        ? publicationNodeForProfile(caption, profile)
+        : undefined
       return `<figure ${nodeAttributes(node, edition)}>${media}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
     }
     case 'table': {
@@ -413,7 +429,9 @@ function renderNode(
               .join('')}</tr>`,
         )
         .join('')
-      const renderedCaption = caption ? nodeForProfile(caption, profile) : undefined
+      const renderedCaption = caption
+        ? publicationNodeForProfile(caption, profile)
+        : undefined
       return `<table ${nodeAttributes(node, edition)}>${renderedCaption?.type === 'caption' ? `<caption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</caption>` : ''}${rows}</table>`
     }
   }
@@ -676,6 +694,37 @@ export function publicationPlaywrightExecutableCandidates(
   ]
 }
 
+export function publicationBrowserVersionMatches(
+  versionOutput: string,
+  expectedVersion: string,
+) {
+  const actual = String(versionOutput).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
+  const expected = String(expectedVersion).match(/^(\d+\.\d+\.\d+)/u)?.[1]
+  return Boolean(actual && expected && actual.startsWith(`${expected}.`))
+}
+
+function verifyPublicationBrowserExecutable(
+  executablePath: string,
+  expectedVersion: string,
+) {
+  let versionOutput = ''
+  try {
+    versionOutput = execFileSync(executablePath, ['--version'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    })
+  } catch (error) {
+    throw new Error(
+      `Pinned publication browser could not report its version: ${String(error)}`,
+    )
+  }
+  if (!publicationBrowserVersionMatches(versionOutput, expectedVersion))
+    throw new Error(
+      `Pinned publication browser version ${versionOutput.trim() || '(missing)'} does not match ${expectedVersion}`,
+    )
+  return versionOutput.trim()
+}
+
 async function createEpub(
   bundle: PublicationBundle,
   outputPath: string,
@@ -756,6 +805,9 @@ async function createEpub(
         `<meta property="schema:accessibilityFeature">${feature}</meta>`,
     )
     .join('')
+  const contributorMetadata = bundle.graph.metadata.contributors
+    .map((contributor) => `<dc:creator>${escapeHtml(contributor)}</dc:creator>`)
+    .join('')
   zip.file(
     'EPUB/nav.xhtml',
     `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title>Navigation</title></head><body><nav epub:type="toc" aria-label="Table of contents"><h1>Contents</h1>${renderEpubToc(headings)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml">Article</a></li></ol></nav></body></html>`,
@@ -764,7 +816,7 @@ async function createEpub(
   const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`
   zip.file(
     'EPUB/package.opf',
-    `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title><dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>${accessModeMetadata}${accessModeSufficientMetadata}${accessibilityFeatureMetadata}<meta property="schema:accessibilityHazard">none</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
+    `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title>${contributorMetadata}<dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>${accessModeMetadata}${accessModeSufficientMetadata}${accessibilityFeatureMetadata}<meta property="schema:accessibilityHazard">none</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
     zipOptions(),
   )
   await writeFile(
@@ -843,6 +895,10 @@ async function createPdf(
       throw new Error(
         'Pinned Playwright Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
       )
+    verifyPublicationBrowserExecutable(
+      executablePath,
+      PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion,
+    )
     const browser = await chromium.launch({ executablePath, headless: true })
     try {
       const page = await browser.newPage()
@@ -877,6 +933,10 @@ async function createPdf(
       'Pinned Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
     )
   }
+  verifyPublicationBrowserExecutable(
+    browserPath,
+    PUBLICATION_TOOLCHAIN.browser.browserVersion,
+  )
   const cli = resolve('node_modules/.bin/vivliostyle')
   await run(
     cli,

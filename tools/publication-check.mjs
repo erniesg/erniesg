@@ -105,6 +105,7 @@ export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
         add(selected.code)
         break
       case 'figure':
+        add(selected.title)
         add(selected.sourceText)
         break
       case 'table':
@@ -190,8 +191,15 @@ export function publicationPdfLinkRequirementsForProfile(
   const links = []
   for (const node of graph.nodes) {
     const selected = publicationNodeForProfile(node, profile)
-    for (const run of selected.inlineRuns ?? [])
+    for (const run of selected.inlineRuns ?? []) {
       if (run.href) links.push(run.href)
+      else if (
+        (run.semanticRole === 'citation' ||
+          run.semanticRole === 'cross-reference') &&
+        run.targetIds?.length
+      )
+        links.push(`#${run.targetIds[0]}`)
+    }
     if (selected.type === 'reference' && selected.href)
       links.push(selected.href)
   }
@@ -378,6 +386,13 @@ function assertWebPubNode(html, imageAlts, node) {
     (child) => child.tagName === expectedTag,
   )
   assert(media, `WebPub dropped ${node.mediaKind} media for ${node.id}`)
+  if (node.accessibility?.decorative === true) {
+    assert(
+      attribute(media, 'aria-hidden') === 'true',
+      `WebPub dropped decorative ${node.mediaKind} semantics for ${node.id}`,
+    )
+    return
+  }
   assert(
     attribute(media, 'aria-label') === label,
     `WebPub dropped ${node.mediaKind} accessibility label for ${node.id}`,
@@ -414,7 +429,7 @@ function requiredNodeText(node) {
     case 'code':
       return [node.code]
     case 'figure':
-      return node.sourceText ? [node.sourceText] : []
+      return [node.title, node.sourceText]
     case 'table':
       return node.rows.flatMap((row) => row.cells.map((cell) => cell.text))
     case 'equation':
@@ -701,7 +716,14 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   const pdfRequirements = {
     requireLinks: pdfNodes.some(
       (node) =>
-        ('inlineRuns' in node && node.inlineRuns?.some((run) => run.href)) ||
+        ('inlineRuns' in node &&
+          node.inlineRuns?.some(
+            (run) =>
+              Boolean(run.href) ||
+              ((run.semanticRole === 'citation' ||
+                run.semanticRole === 'cross-reference') &&
+                Boolean(run.targetIds?.length)),
+          )) ||
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),

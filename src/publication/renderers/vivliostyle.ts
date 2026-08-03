@@ -170,7 +170,9 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
       const link = active.find(
         (run) =>
           Boolean(run.href) ||
-          (run.semanticRole === 'citation' && Boolean(run.targetIds?.length)),
+          ((run.semanticRole === 'citation' ||
+            run.semanticRole === 'cross-reference') &&
+            Boolean(run.targetIds?.length)),
       )
       return { value, link }
     })
@@ -345,7 +347,15 @@ function renderNode(
         return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${renderedCaption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</div>` : ''}</div>`
       }
     case 'note':
-      return `<aside ${nodeAttributes(node, edition, ['role="doc-footnote"'])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
+      {
+        const role =
+          node.noteKind === 'footnote'
+            ? 'doc-footnote'
+            : node.noteKind === 'endnote'
+              ? 'doc-endnote'
+              : 'doc-annotation'
+        return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
+      }
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
       const alternativeText = accessibilityLabel(node)
@@ -371,7 +381,7 @@ function renderNode(
       const renderedCaption = caption
         ? publicationNodeForProfile(caption, profile)
         : undefined
-      return `<figure ${nodeAttributes(node, edition)}>${assets}${source}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
+      return `<figure ${nodeAttributes(node, edition)}><div class="figure-title">${escapeHtml(node.title)}</div>${assets}${source}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
     }
     case 'reference':
       return `<p ${nodeAttributes(node, edition, ['role="doc-biblioentry"'])}>${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : node.targetIds[0] ? `<a href="#${escapeHtml(node.targetIds[0])}" role="doc-biblioref">${text}</a>` : text}</p>`

@@ -163,6 +163,24 @@ describe('publication:check CLI', () => {
     )
   })
 
+  it('requires target-only cross-references in PDF link requirements', () => {
+    const graph = {
+      nodes: [
+        {
+          inlineRuns: [
+            {
+              semanticRole: 'cross-reference',
+              targetIds: ['target'],
+            },
+          ],
+        },
+      ],
+    }
+    expect(publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')).toEqual([
+      '#target',
+    ])
+  })
+
   it('chooses the first non-empty accessibility alternative', () => {
     expect(
       accessibilityLabel({
@@ -273,6 +291,55 @@ describe('publication:check CLI', () => {
       '<figure id="audio"><audio aria-label="Audio transcript"></audio></figure>' +
       '</main></body></html>'
     expect(() => validateWebPubGraph(graph, html)).not.toThrow()
+  })
+
+  it('accepts decorative audio without a textual accessibility label', () => {
+    const graph = {
+      edition: { locale: 'en' },
+      nodes: [
+        { id: 'heading', type: 'heading', level: 1, text: 'Title' },
+        {
+          id: 'decorative-audio',
+          type: 'media',
+          mediaKind: 'audio',
+          assetId: 'audio-asset',
+          accessibility: { decorative: true },
+        },
+      ],
+    }
+    const html =
+      '<html lang="en"><body><h1 id="heading">Title</h1><main>' +
+      '<figure id="decorative-audio"><audio aria-hidden="true"></audio></figure>' +
+      '</main></body></html>'
+    expect(() => validateWebPubGraph(graph, html)).not.toThrow()
+  })
+
+  it('requires figure titles in WebPub and PDF content requirements', () => {
+    const graph = {
+      edition: { locale: 'en', direction: 'ltr' },
+      metadata: { title: 'Title', contributors: [] },
+      nodes: [
+        { id: 'heading', type: 'heading', level: 1, text: 'Title' },
+        {
+          id: 'figure',
+          type: 'figure',
+          title: 'Figure title',
+          assetIds: [],
+          sourceText: 'source fallback',
+          accessibility: { decorative: false, longDescription: 'Diagram' },
+        },
+      ],
+    }
+    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual(
+      expect.arrayContaining(['Figure title', 'source fallback']),
+    )
+    const html =
+      '<html lang="en"><body><h1 id="heading">Title</h1><main>' +
+      '<figure id="figure"><pre id="figure-source" class="figure-source">source fallback</pre></figure>' +
+      '</main></body></html>'
+    expect(() => validateWebPubGraph(graph, html)).toThrow(
+      /required node (?:content )?figure/,
+    )
   })
 
   it('keeps profile-selected text and links distinct and preserves duplicate requirements', () => {

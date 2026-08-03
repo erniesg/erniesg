@@ -76,6 +76,7 @@ a {
 html[data-profile='eink-epub'] {
   color-scheme: light;
   filter: grayscale(1);
+  line-height: 1.5;
 }
 html[data-profile='eink-epub'] body {
   font-family: serif;

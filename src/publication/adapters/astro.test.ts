@@ -225,6 +225,30 @@ describe('Astro publication adapter', () => {
     })
   })
 
+  it('reserves the fixed hero figure id before authored heading slugs', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-hero-collision-'))
+    const entry = resolve(root, 'hero-collision')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Hero collision\ndescription: Hero id fixture\ndate: 2026-07-27\nimage: ./hero.svg\nimageAlt: Hero illustration\n---\n# Hero Figure\n`,
+    )
+    await writeFile(
+      resolve(entry, 'hero.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    )
+    const result = await adaptAstroBlogEntry({
+      entryId: 'hero-collision',
+      contentRoot: root,
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'figure')).toMatchObject({
+      id: 'hero-figure',
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
+      id: 'hero-figure-1',
+    })
+  })
+
   it('normalizes non-ASCII heading slugs to schema-safe ids', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-heading-unicode-'))
     const entry = resolve(root, 'heading-unicode')

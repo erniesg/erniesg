@@ -233,6 +233,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     }
     const html = publicationGraphToHtml(graph, new Map(), 'phone-webpub')
     expect(html).toContain('<p class="subtitle">A useful subtitle</p>')
+    expect(html).toContain('<div class="figure-title">Source figure</div>')
     expect(html).toContain('class="figure-source"')
     expect(html).toContain('diagram source')
     expect(() =>
@@ -245,6 +246,62 @@ describe('Vivliostyle publication renderer boundary', () => {
         'phone-webpub',
       ),
     ).toThrow(/requires alternative text or a long description/)
+  })
+
+  it('renders target-only cross-references and preserves note-kind semantics', async () => {
+    const contentRoot = await fixtureCollection('synthetic-publication')
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'synthetic-publication',
+      contentRoot,
+    })
+    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    const note = bundle.graph.nodes.find((node) => node.type === 'note')
+    if (!paragraph || paragraph.type !== 'paragraph' || !note || note.type !== 'note')
+      throw new Error('missing semantic fixture')
+    const graph = {
+      ...bundle.graph,
+      nodes: bundle.graph.nodes
+        .map((node) =>
+          node.id === paragraph.id
+            ? {
+                ...node,
+                text: 'Jump',
+                inlineRuns: [
+                  {
+                    start: 0,
+                    end: 4,
+                    semanticRole: 'cross-reference' as const,
+                    targetIds: ['hero-figure'],
+                  },
+                ],
+              }
+            : node,
+        )
+        .concat(
+          { ...note, id: 'endnote', noteKind: 'endnote', backlinkIds: [] },
+          { ...note, id: 'author-note', noteKind: 'author-note', backlinkIds: [] },
+        ),
+    }
+    const html = publicationGraphToHtml(
+      graph,
+      new Map(
+        bundle.assetBundle.descriptor.assets.map((asset) => [
+          asset.id,
+          `assets/${asset.fileName}`,
+        ]),
+      ),
+      'phone-webpub',
+    )
+    expect(html).toContain('href="#hero-figure"')
+    expect(html).toContain('role="doc-endnote"')
+    expect(html).toContain('role="doc-annotation"')
+  })
+
+  it('keeps the e-ink stylesheet line height aligned with the receipt', async () => {
+    const css = await readFile('src/styles/publication/publication.css', 'utf8')
+    expect(css).toMatch(
+      /html\[data-profile='eink-epub'\]\s*\{[^}]*line-height:\s*1\.5/s,
+    )
   })
 
   it('selects reviewed profile variants and preserves node language and direction', async () => {

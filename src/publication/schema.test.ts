@@ -325,4 +325,19 @@ describe('PublicationGraph', () => {
     ]
     expect(publicationGraphSchema.safeParse(duplicate).success).toBe(false)
   })
+
+  it('rejects duplicate list-item relationships and empty reviewed text variants', () => {
+    const duplicateItems = graphFixture() as any
+    duplicateItems.nodes.find((node: any) => node.id === 'list').itemIds = [
+      'item',
+      'item',
+    ]
+    expect(publicationGraphSchema.safeParse(duplicateItems).success).toBe(false)
+
+    const emptyVariant = graphFixture() as any
+    emptyVariant.nodes.find((node: any) => node.id === 'paragraph').variants = [
+      { kind: 'compact', text: '', reviewed: true },
+    ]
+    expect(publicationGraphSchema.safeParse(emptyVariant).success).toBe(false)
+  })
 })

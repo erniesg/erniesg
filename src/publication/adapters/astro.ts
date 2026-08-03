@@ -335,6 +335,7 @@ export async function adaptAstroBlogEntry(
 
   if (parsed.data.image) {
     const assetId = await addAsset(parsed.data.image, parsed.data.imageAlt)
+    usedNodeIds.add('hero-figure')
     nodes.push({
       ...baseNode('hero-figure', sourceId, locale, sourceRevision),
       type: 'figure',

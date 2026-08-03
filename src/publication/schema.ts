@@ -131,7 +131,7 @@ const variantSchema = z
   .object({
     kind: z.enum(['compact', 'monochrome', 'static']),
     assetId: idSchema.optional(),
-    text: textSchema.optional(),
+    text: nonEmptyTextSchema.optional(),
     reviewed: z.boolean(),
   })
   .strict()
@@ -173,6 +173,15 @@ const uniqueChildListRelationshipArray = relationshipArray.superRefine(
       })
   },
 )
+const uniqueListItemRelationshipArray = relationshipArray.min(1).superRefine(
+  (ids, context) => {
+    if (new Set(ids).size !== ids.length)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'List item relationships must be unique',
+      })
+  },
+)
 const headingNode = nodeBase
   .extend({
     type: z.literal('heading'),
@@ -188,7 +197,7 @@ const listNode = nodeBase
     type: z.literal('list'),
     ordered: z.boolean(),
     start: z.number().int().nonnegative().optional(),
-    itemIds: relationshipArray.min(1),
+    itemIds: uniqueListItemRelationshipArray,
   })
   .strict()
 const listItemNode = nodeBase

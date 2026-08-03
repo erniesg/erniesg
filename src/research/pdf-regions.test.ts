@@ -5344,6 +5344,29 @@ describe('deterministic scholarly page regions', () => {
     ).toContain('with the same family.')
   })
 
+  it('normalizes PostScript PS markers independently of style suffixes', async () => {
+    const seed = {
+      ...run(
+        1,
+        'Figure 8. A caption continues across lines',
+        0.09,
+        0.2,
+        0.7,
+        9,
+        0.011,
+      ),
+      fontName: 'TimesNewRomanPS-BoldMT',
+    }
+    const candidate = {
+      ...run(1, 'with the same family.', 0.09, 0.214, 0.3, 9, 0.011),
+      fontName: 'TimesNewRomanPSMT',
+    }
+    const result = await reconstruct([page(1, [seed, candidate])])
+    expect(
+      result.regions.find((region) => region.kind === 'caption')?.text,
+    ).toContain('with the same family.')
+  })
+
   it('keeps caption continuations together when opposite-column prose interleaves by y', async () => {
     const result = await reconstruct([
       page(1, [

@@ -37,8 +37,10 @@ import {
 } from './visual-assets'
 import {
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+  PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   pdfSourceSemanticFlowBoundaryDecisionId,
+  pdfSourceSemanticFlowRunSha256,
 } from './pdf-regions'
 
 function sourceSemanticFlowDecision(
@@ -2276,6 +2278,106 @@ describe('PDF semantic signal detection', () => {
       sourceSemanticFlowBoundaryDecisions: typeof decisions
     })
 
+    expect(result.semanticTextViolationNodeIds).toEqual([])
+  })
+
+  it('validates uncased-script same-page-column decisions from layout', () => {
+    const sourceRuns = [
+      {
+        ...run('البيانات تستمر نحو', 0.09, 0.82, 10, 0.385),
+        sourceSequenceIndex: 200,
+      },
+      {
+        ...run('العلمية في العمود التالي', 0.515, 0.1, 10, 0.385),
+        sourceSequenceIndex: 201,
+        sourceWhitespaceBefore: 'pdf-text-item' as const,
+        sourceWhitespacePredecessorIndex: 200,
+      },
+    ]
+    const regions = sourceRuns.map(
+      (sourceRun, index): PdfPageRegion => ({
+        id: `uncased-column-region-${index + 1}`,
+        page: 1,
+        kind: 'body',
+        column: index === 0 ? 'left' : 'right',
+        text: sourceRun.text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `uncased-column-line-${index + 1}`,
+            text: sourceRun.text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: `uncased-column-source-line-${index + 1}`,
+              fragment: 'whole',
+              sourceSequenceIndexes: [sourceRun.sourceSequenceIndex],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }),
+    )
+    const endpoint = (index: number) => ({
+      regionId: regions[index].id,
+      lineId: regions[index].lines[0].id,
+      runIndex: 0,
+      sourceSequenceIndex: sourceRuns[index].sourceSequenceIndex!,
+      sourceRunSha256: pdfSourceSemanticFlowRunSha256(sourceRuns[index]),
+      sourceFragmentId: `uncased-column-source-line-${index + 1}:whole`,
+    })
+    const decision = sourceSemanticFlowDecision({
+      page: 1,
+      rotation: 0,
+      method: 'pdf-text',
+      topology: 'same-page-column',
+      outcome: 'space',
+      from: endpoint(0),
+      to: endpoint(1),
+      evidence: [...PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE],
+    })
+    const paper: ResearchPaper = {
+      id: 'uncased-column-paper',
+      version: '1.0.0',
+      status: 'working',
+      title: '',
+      subtitle: 'Test',
+      authors: [],
+      updated: '2026-07-30',
+      abstract: 'Test',
+      language: 'ar',
+      nodes: [
+        {
+          id: 'uncased-column-node',
+          type: 'paragraph',
+          text: 'البيانات تستمر نحو العلمية في العمود التالي',
+          source: 'test',
+        },
+      ],
+    }
+    const provenance: Record<string, NodeSourceEvidence> = {
+      'uncased-column-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: regions.map((region) => region.id),
+        boxes: regions.map((region) => ({ ...region.box })),
+        links: [],
+      },
+    }
+    const result = provenanceTextConservation({
+      allRegions: regions,
+      orderedRegions: regions,
+      paper,
+      provenance,
+      lineBoundaryDecisions: [],
+      sourceSemanticFlowBoundaryDecisions: [decision],
+    })
+
+    expect(result.semanticFlowBoundaryLedgerValid).toBe(true)
     expect(result.semanticTextViolationNodeIds).toEqual([])
   })
 

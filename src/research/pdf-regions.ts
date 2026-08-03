@@ -2425,8 +2425,8 @@ function captionFontFamily(fontName: string) {
     .trim()
     .toLocaleLowerCase()
     .replace(/^[a-z]{6}\+/iu, '')
-    .replace(/(?:ps)?mt$/iu, '')
-    .replace(/ps$/iu, '')
+    .replace(/mt$/iu, '')
+    .replace(/ps(?=[-+_,.\s]|$)/iu, '')
     .replace(
       /(?:[-+_,.\s]*(?:bold|black|demi(?:bold)?|semibold|medium|regular|roman|book|italic|ital|oblique|obl))+$/iu,
       '',

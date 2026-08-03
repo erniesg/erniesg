@@ -1136,7 +1136,7 @@ function sourceProvenSamePageColumnFlowBoundary(
     previousText &&
     continuationText &&
     !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
-    (/^\p{Ll}/u.test(continuationText) ||
+    (/^(?:\p{Ll}|\p{Lo})/u.test(continuationText) ||
       detachedNumericContinuation ||
       detachedScholarlyContinuation ||
       detachedDashContinuation),

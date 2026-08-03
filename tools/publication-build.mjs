@@ -4,7 +4,6 @@ import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
 import {
   PublicationAdapterRegistry,
-  buildRegisteredPublication,
 } from '../src/publication/adapter-registry.ts'
 import { astroPublicationAdapter } from '../src/publication/adapters/astro.ts'
 import {
@@ -112,18 +111,12 @@ export async function publicationBuild(argv = process.argv.slice(2)) {
   const registry = new PublicationAdapterRegistry().register(
     astroPublicationAdapter,
   )
-  const receipt = await buildRegisteredPublication(
-    registry,
-    vivliostyleRenderer,
-    {
-      adapterId: options.adapter,
-      locator: { entryId: options.entry },
-      outputDirectory: options.output,
-      profiles: PUBLICATION_PROFILES,
-    },
-  )
   const bundle = await registry.resolve(options.adapter, {
     entryId: options.entry,
+  })
+  const receipt = await vivliostyleRenderer.render(bundle, {
+    outputDirectory: options.output,
+    profiles: PUBLICATION_PROFILES,
   })
   await writeRouteParity(options.entry, options.output, bundle.graph)
   process.stdout.write(

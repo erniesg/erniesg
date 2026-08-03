@@ -8,6 +8,10 @@ const require = createRequire(import.meta.url)
 
 export const PUBLICATION_TOOLCHAIN = manifest
 
+export function publicationToolchainForRuntime() {
+  return { ...PUBLICATION_TOOLCHAIN, node: process.versions.node }
+}
+
 export type PublicationPdfRenderer = 'vivliostyle-cli' | 'playwright-chromium'
 
 export function publicationPdfRendererForArchitecture(
@@ -34,6 +38,24 @@ export async function verifyPublicationToolchain(
   repositoryRoot = process.cwd(),
 ) {
   const errors: string[] = []
+  const minimumNode = manifest.node.match(/^(?:>=)?(\d+)\.(\d+)\.(\d+)$/)
+  const runtimeNode = process.versions.node.match(/^(\d+)\.(\d+)\.(\d+)$/)
+  if (!minimumNode || !runtimeNode) {
+    errors.push(`Node runtime ${process.versions.node} is not normalized`)
+  } else {
+    const minimum = minimumNode.slice(1).map(Number)
+    const runtime = runtimeNode.slice(1).map(Number)
+    if (
+      runtime[0] < minimum[0] ||
+      (runtime[0] === minimum[0] && runtime[1] < minimum[1]) ||
+      (runtime[0] === minimum[0] &&
+        runtime[1] === minimum[1] &&
+        runtime[2] < minimum[2])
+    )
+      errors.push(
+        `Node runtime ${process.versions.node} is below ${manifest.node}`,
+      )
+  }
   if (manifest.rendererPolicy.x64.pdf !== 'vivliostyle-cli')
     errors.push('x64 renderer policy must select vivliostyle-cli')
   if (manifest.rendererPolicy.arm64.pdf !== 'playwright-chromium')

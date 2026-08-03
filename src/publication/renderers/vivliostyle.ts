@@ -28,6 +28,7 @@ import type {
 } from '../adapter-registry'
 import {
   PUBLICATION_TOOLCHAIN,
+  publicationToolchainForRuntime,
   publicationPdfRendererForArchitecture,
   verifyPublicationToolchain,
 } from '../toolchain'
@@ -314,7 +315,12 @@ function renderNode(
     case 'media':
       {
         const source = escapeHtml(assetPaths.get(node.assetId) ?? '')
-        const alternativeText = escapeHtml(accessibilityLabel(node))
+        const label = accessibilityLabel(node)
+        if (!node.accessibility.decorative && !label)
+          throw new Error(
+            `Media ${node.id} requires alternative text, a long description, or a transcript`,
+          )
+        const alternativeText = escapeHtml(label)
         const media =
           node.mediaKind === 'image'
             ? `<img src="${source}" alt="${alternativeText}">`
@@ -402,7 +408,10 @@ async function writeAssets(
   await mkdir(directory, { recursive: true })
   const paths = new Map<string, string>()
   for (const descriptor of bundle.assetBundle.descriptor.assets) {
-    const extension = extname(descriptor.fileName ?? '') || '.bin'
+    const extension = publicationAssetFileExtension(
+      descriptor.fileName,
+      descriptor.mediaType,
+    )
     const fileName = `${descriptor.id}${extension}`
     await writeFile(
       resolve(directory, fileName),
@@ -411,6 +420,18 @@ async function writeAssets(
     paths.set(descriptor.id, `${prefix}${fileName}`)
   }
   return paths
+}
+
+export function publicationAssetFileExtension(
+  fileName: string | undefined,
+  mediaType: string,
+) {
+  const candidate = extname(fileName ?? '').toLocaleLowerCase()
+  if (/^\.[a-z0-9]+$/u.test(candidate)) return candidate
+  const subtype = mediaType.split('/')[1]?.split(/[+;]/u)[0] ?? ''
+  return /^[a-z0-9]+$/iu.test(subtype)
+    ? `.${subtype.toLocaleLowerCase()}`
+    : '.bin'
 }
 
 export async function prepareWebPubDirectory(directory: string) {
@@ -486,8 +507,14 @@ export function renderEpubToc(headings: EpubTocHeading[]) {
   const stack: Array<{ level: number; entries: EpubTocEntry[] }> = [
     { level: 0, entries: roots },
   ]
+  const firstHeadingLevel = headings.length
+    ? Math.max(1, Math.trunc(headings[0].level))
+    : 1
   for (const heading of headings) {
-    let level = Math.max(1, Math.trunc(heading.level))
+    let level = Math.max(
+      1,
+      Math.trunc(heading.level) - firstHeadingLevel + 1,
+    )
     if (roots.length === 0) {
       level = 1
       stack[0].level = level
@@ -578,7 +605,10 @@ async function createEpub(
   const assetPaths = new Map<string, string>()
   const assetItems: string[] = []
   for (const descriptor of bundle.assetBundle.descriptor.assets) {
-    const extension = extname(descriptor.fileName ?? '') || '.bin'
+    const extension = publicationAssetFileExtension(
+      descriptor.fileName,
+      descriptor.mediaType,
+    )
     const file = `assets/${descriptor.id}${extension}`
     assetPaths.set(descriptor.id, file)
     zip.file(
@@ -931,7 +961,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
         semanticHtml: '1.0.0',
         accessibility: '1.0.0',
       },
-      toolchain: PUBLICATION_TOOLCHAIN,
+      toolchain: publicationToolchainForRuntime(),
       repository,
       artifacts,
     }

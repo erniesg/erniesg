@@ -269,6 +269,20 @@ export async function checkWebPubReceipt(root, artifact) {
   assert(total === artifact.byteLength, 'WebPub receipt byte length is invalid')
 }
 
+export function assertPdfPageGeometry(pdf, expected, size) {
+  const target =
+    size === 'A5'
+      ? { width: 419.528, height: 595.276 }
+      : { width: 595.276, height: 841.89 }
+  pdf.getPages().forEach((page, index) => {
+    assert(
+      Math.abs(page.getWidth() - target.width) < 1 &&
+        Math.abs(page.getHeight() - target.height) < 1,
+      `${expected} page ${index + 1} geometry is not ${size}`,
+    )
+  })
+}
+
 async function checkPdf(
   path,
   expected,
@@ -278,16 +292,7 @@ async function checkPdf(
   const bytes = new Uint8Array(await readFile(path))
   const pdf = await PDFDocument.load(bytes)
   assert(pdf.getPageCount() > 0, `${expected} has no pages`)
-  const first = pdf.getPage(0)
-  const target =
-    size === 'A5'
-      ? { width: 419.528, height: 595.276 }
-      : { width: 595.276, height: 841.89 }
-  assert(
-    Math.abs(first.getWidth() - target.width) < 1 &&
-      Math.abs(first.getHeight() - target.height) < 1,
-    `${expected} page geometry is not ${size}`,
-  )
+  assertPdfPageGeometry(pdf, expected, size)
   for (const page of pdf.getPages()) {
     const media = page.getMediaBox()
     const crop = page.getCropBox()

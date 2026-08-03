@@ -253,6 +253,29 @@ describe('Astro publication adapter', () => {
     })
   })
 
+  it('reserves footnote anchors in the global node id namespace', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-collision-'))
+    const entry = resolve(root, 'footnote-collision')
+    await mkdir(entry)
+    await writeFile(
+      resolve(entry, 'index.mdx'),
+      `---\ntitle: Footnote collision\ndescription: Footnote collision fixture\ndate: 2026-07-27\n---\n# Ref Proof\n\nA claim[^proof].\n\n[^proof]: The note remains linked.\n`,
+    )
+    const result = await adaptAstroBlogEntry({
+      entryId: 'footnote-collision',
+      contentRoot: root,
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'heading')).toMatchObject({
+      id: 'ref-proof',
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'paragraph')).toMatchObject({
+      inlineRuns: [expect.objectContaining({ relationshipId: 'ref-proof-2' })],
+    })
+    expect(result.graph.nodes.find((node) => node.type === 'note')).toMatchObject({
+      backlinkIds: ['ref-proof-2'],
+    })
+  })
+
   it('resolves definitions before references and preserves authored hard breaks', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-footnote-order-'))
     const entry = resolve(root, 'definition-before-reference')

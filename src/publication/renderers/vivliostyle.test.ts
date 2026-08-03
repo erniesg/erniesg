@@ -6,6 +6,7 @@ import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
   PUBLICATION_PROFILES,
   prepareWebPubDirectory,
+  publicationAssetFileExtension,
   publicationGraphToHtml,
   publicationPlaywrightExecutableCandidates,
   renderEpubToc,
@@ -315,6 +316,20 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(html).toContain('<audio controls')
     expect(html).toContain('Audio caption')
     expect(html).toContain('href="#citation-reference"')
+    expect(() =>
+      publicationGraphToHtml(
+        {
+          ...graph,
+          nodes: graph.nodes.map((node) =>
+            node.id === 'render-media'
+              ? { ...node, accessibility: { decorative: false } }
+              : node,
+          ),
+        },
+        paths,
+        'phone-webpub',
+      ),
+    ).toThrow(/Media render-media requires/)
   })
 
   it('fails closed for MathML until a safe renderer exists', async () => {
@@ -363,6 +378,29 @@ describe('Vivliostyle publication renderer boundary', () => {
     ])
     expect(toc).toContain(
       '<li><a href="content.xhtml#h1">One</a><ol><li><a href="content.xhtml#h2">Two</a><ol><li><a href="content.xhtml#h3">Three</a></li></ol></li><li><a href="content.xhtml#h2b">Two B</a></li></ol></li>',
+    )
+  })
+
+  it('normalizes all EPUB heading levels relative to the first authored heading', () => {
+    const toc = renderEpubToc([
+      { id: 'h2', level: 2, text: 'First' },
+      { id: 'h2b', level: 2, text: 'Second' },
+      { id: 'h3', level: 3, text: 'Nested' },
+    ])
+    expect(toc).toBe(
+      '<ol><li><a href="content.xhtml#h2">First</a></li><li><a href="content.xhtml#h2b">Second</a><ol><li><a href="content.xhtml#h3">Nested</a></li></ol></li></ol>',
+    )
+  })
+
+  it('derives safe asset extensions from media types', () => {
+    expect(publicationAssetFileExtension('cover.#fragment', 'image/png')).toBe(
+      '.png',
+    )
+    expect(publicationAssetFileExtension('diagram.svg+xml', 'image/svg+xml')).toBe(
+      '.svg',
+    )
+    expect(publicationAssetFileExtension('photo.JPG', 'image/jpeg')).toBe(
+      '.jpg',
     )
   })
 

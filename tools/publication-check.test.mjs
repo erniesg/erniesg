@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import {
+  assertPdfPageGeometry,
   checkWebPubReceipt,
   parsePublicationCheckArgs,
   validateWebPubGraph,
@@ -28,6 +30,15 @@ describe('publication:check CLI', () => {
         'phone-webpub,eink-epub',
       ]),
     ).toThrow(/exactly/)
+  })
+
+  it('validates every PDF page against the selected profile geometry', async () => {
+    const pdf = await PDFDocument.create()
+    pdf.addPage([419.528, 595.276])
+    pdf.addPage([300, 400])
+    expect(() => assertPdfPageGeometry(pdf, 'fixture', 'A5')).toThrow(
+      /page 2 geometry is not A5/,
+    )
   })
 
   it('fails closed when an EPUB or PDF no longer matches its receipt bytes', async () => {

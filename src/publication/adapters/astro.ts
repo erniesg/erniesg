@@ -331,9 +331,15 @@ export async function adaptAstroBlogEntry(
 
   const footnoteReferenceCounts = new Map<string, number>()
   const nextFootnoteReferenceId = (identifier: string) => {
-    const count = (footnoteReferenceCounts.get(identifier) ?? 0) + 1
+    let count = (footnoteReferenceCounts.get(identifier) ?? 0) + 1
+    let relationshipId = `ref-${identifier}${count === 1 ? '' : `-${count}`}`
+    while (usedNodeIds.has(relationshipId)) {
+      count += 1
+      relationshipId = `ref-${identifier}-${count}`
+    }
     footnoteReferenceCounts.set(identifier, count)
-    return `ref-${identifier}${count === 1 ? '' : `-${count}`}`
+    usedNodeIds.add(relationshipId)
+    return relationshipId
   }
   const inlineOptions = { nextFootnoteReferenceId }
   const footnoteBacklinks = new Map<string, string[]>()

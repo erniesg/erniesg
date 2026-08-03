@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   PUBLICATION_TOOLCHAIN,
+  publicationToolchainForRuntime,
   publicationPdfRendererForArchitecture,
   verifyPublicationToolchain,
 } from './toolchain'
@@ -35,6 +36,7 @@ describe('publication toolchain manifest', () => {
     expect(publicationPdfRendererForArchitecture('arm64')).toBe(
       'playwright-chromium',
     )
+    expect(publicationToolchainForRuntime().node).toBe(process.versions.node)
   })
 
   it('fails closed when repository toolchain assets are missing or mismatched', async () => {

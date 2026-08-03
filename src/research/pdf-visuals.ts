@@ -10129,6 +10129,7 @@ export async function reconstructPdfVisuals({
   const consumedRegionIds = new Set<string>()
   const consumedLineIds = new Set<string>()
   const consumedSourceObjectIds = new Set<string>()
+  const consumedSourceObjectScopes = new Map<string, NormalizedSourceBox[]>()
   const relationships: PdfVisualRelationship[] = []
 
   for (const [captionIndex, caption] of captions.entries()) {
@@ -10670,14 +10671,55 @@ export async function reconstructPdfVisuals({
     const sourcePageCropVetoed = Boolean(
       matchedCandidate?.sourcePageCropBlockedByReadingOrderText,
     )
-    const best = matchedCandidate
+    const nativeCandidate = matchedCandidate
       ? nativeOnlyFigureCandidate(matchedCandidate, regions, objectAssetIds)
       : undefined
+    // Crop recovery narrows source lineage for one caption. Keep that
+    // working copy isolated from the shared candidate pool so a later
+    // caption can still evaluate the original full-width composite scope.
+    const best = nativeCandidate
+      ? {
+          ...nativeCandidate,
+          sourceRegionIds: [...nativeCandidate.sourceRegionIds],
+          sourceLineIds: nativeCandidate.sourceLineIds
+            ? [...nativeCandidate.sourceLineIds]
+            : undefined,
+          sourceObjectIds: [...nativeCandidate.sourceObjectIds],
+          assetIds: [...nativeCandidate.assetIds],
+          sourceBoxes: nativeCandidate.sourceBoxes.map((sourceBox) => ({
+            ...sourceBox,
+          })),
+          renderBox: nativeCandidate.renderBox
+            ? { ...nativeCandidate.renderBox }
+            : undefined,
+          textOwnershipBox: nativeCandidate.textOwnershipBox
+            ? { ...nativeCandidate.textOwnershipBox }
+            : undefined,
+          evidence: nativeCandidate.evidence
+            ? [...nativeCandidate.evidence]
+            : undefined,
+        }
+      : undefined
+    const laneScopedRenderBox =
+      best && best.kind === 'figure'
+        ? captionLaneScopedRenderBox(caption, best)
+        : best?.renderBox
+    const figureOwnershipScope =
+      best?.kind === 'figure'
+        ? (laneScopedRenderBox ?? best.renderBox ?? best.sourceBoxes[0])
+        : null
     const figureLineageConflictsPriorOwnership =
       best?.kind === 'figure' &&
-      (best.sourceObjectIds.some((sourceObjectId) =>
-        consumedSourceObjectIds.has(sourceObjectId),
-      ) ||
+      (best.sourceObjectIds.some((sourceObjectId) => {
+        if (!consumedSourceObjectIds.has(sourceObjectId)) return false
+        const priorScopes = consumedSourceObjectScopes.get(sourceObjectId)
+        if (!figureOwnershipScope || !priorScopes || priorScopes.length === 0) {
+          return true
+        }
+        return priorScopes.some((priorScope) =>
+          materiallyOverlappingSourceBoxes(priorScope, figureOwnershipScope),
+        )
+      }) ||
         containedFigureOverlayLineage(best, regions).some((overlay) =>
           overlay.lineIds.some((lineId) => consumedLineIds.has(lineId)),
         ))
@@ -10688,10 +10730,6 @@ export async function reconstructPdfVisuals({
     ) {
       result.best.evidence.push('cross-type-source-lineage-conflict')
     }
-    const laneScopedRenderBox =
-      best && best.kind === 'figure'
-        ? captionLaneScopedRenderBox(caption, best)
-        : best?.renderBox
     const boundedCropBaseBox =
       laneScopedRenderBox ??
       (best?.kind === 'table' && best.sourceBoxes.length === 1
@@ -11529,6 +11567,12 @@ export async function reconstructPdfVisuals({
     if (status === 'matched') {
       for (const sourceObjectId of best!.sourceObjectIds) {
         consumedSourceObjectIds.add(sourceObjectId)
+        if (figureOwnershipScope && best!.kind === 'figure') {
+          const priorScopes =
+            consumedSourceObjectScopes.get(sourceObjectId) ?? []
+          priorScopes.push({ ...figureOwnershipScope })
+          consumedSourceObjectScopes.set(sourceObjectId, priorScopes)
+        }
       }
       if (label.kind === 'table' || label.kind === 'equation') {
         if (

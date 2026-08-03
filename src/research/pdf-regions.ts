@@ -135,13 +135,11 @@ export function pdfSourceColumnFlowJoinOutcome(
   if (hasSourceWhitespace) {
     return { outcome: 'space' as const, separator: ' ' as const }
   }
-  const languageCode = language?.toLocaleLowerCase().split(/[-_]/u)[0]
-  const cjkLanguage = languageCode === 'zh' || languageCode === 'ja'
   const cjkScript =
     /^[^\p{L}\p{N}]*(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u.test(
       continuationText,
     )
-  return cjkLanguage || cjkScript
+  return cjkScript
     ? { outcome: 'no-space' as const, separator: '' as const }
     : { outcome: 'space' as const, separator: ' ' as const }
 }

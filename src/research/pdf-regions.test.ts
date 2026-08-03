@@ -7,6 +7,7 @@ import {
   evaluateReadingOrder,
   hasAcceptedCycle,
   noteLabelFromText,
+  pdfSourceColumnFlowJoinOutcome,
   proseDominantPdfMathSource,
   captionFontFamily,
   reconstructPageRegions,
@@ -517,6 +518,18 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('uses the continuation script instead of the document language for column spacing', () => {
+    const continuationRun = run(1, 'the model', 0.5, 0.2, 0.12)
+    continuationRun.sourceSequenceIndex = 2
+
+    expect(
+      pdfSourceColumnFlowJoinOutcome('zh', 'the model', continuationRun),
+    ).toEqual({ outcome: 'space', separator: ' ' })
+    expect(
+      pdfSourceColumnFlowJoinOutcome('zh', '模型', continuationRun),
+    ).toEqual({ outcome: 'no-space', separator: '' })
+  })
+
   it('keeps a source-bracketed bold fraction atom out of its preceding prose region', () => {
     const sourcePage = detachedDisplayFractionAtomPage()
     const result = reconstructPageRegions([sourcePage])

@@ -17009,6 +17009,112 @@ describe('PDF visual association graph', () => {
     })
   })
 
+  it('gives disjoint lane-scoped crops independent composite ownership', async () => {
+    const compositeBox = box(0.09, 0.2, 0.8, 0.18)
+    const sourceAssets = await Promise.all(
+      ['image-p001-disjoint-lanes', 'vector-p001-disjoint-lanes'].map(
+        (sourceObjectId, index) =>
+          createPngAsset({
+            sourceObjectId,
+            sourceBox: compositeBox,
+            width: 4,
+            height: 4,
+            colorSpace: 'rgba',
+            pixels: new Uint8Array(4 * 4 * 4).fill(64 + index * 32),
+          }),
+      ),
+    )
+    const objects = [
+      {
+        id: 'image-p001-disjoint-lanes',
+        page: 1,
+        kind: 'image' as const,
+        box: compositeBox,
+        confidence: 0.98,
+        assetId: sourceAssets[0].id,
+      },
+      {
+        id: 'vector-p001-disjoint-lanes',
+        page: 1,
+        kind: 'vector' as const,
+        box: compositeBox,
+        confidence: 0.98,
+        assetId: sourceAssets[1].id,
+      },
+    ]
+    const captions = [
+      {
+        ...captionRegion(
+          'Figure 1. The left composite panel.',
+          box(0.09, 0.42, 0.34, 0.03),
+        ),
+        id: 'left-disjoint-caption',
+        sourceCaptionLane: { boundary: 0.5, side: 'left' as const },
+      },
+      {
+        ...captionRegion(
+          'Figure 2. The right composite panel.',
+          box(0.56, 0.42, 0.34, 0.03),
+        ),
+        id: 'right-disjoint-caption',
+        sourceCaptionLane: { boundary: 0.5, side: 'right' as const },
+      },
+    ]
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) =>
+        createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 40,
+          pixels: new Uint8Array(80 * 40 * 4).fill(96),
+        }),
+    )
+
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects, 1, sourceAssets)],
+      regions: [
+        ...objects.map((object, index) =>
+          objectRegion(
+            `disjoint-lane-region-${index + 1}`,
+            object.id,
+            object.box,
+          ),
+        ),
+        ...captions,
+      ],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    expect(
+      result.relationships.map((relationship) => relationship.status),
+    ).toEqual(['matched', 'matched'])
+    expect(
+      result.relationships.map((relationship) => relationship.sourceObjectIds),
+    ).toEqual([
+      objects.map((object) => object.id),
+      objects.map((object) => object.id),
+    ])
+    expect(rasterizeFigure).toHaveBeenCalledTimes(2)
+    expect(rasterizeFigure.mock.calls[0][0].sourceBox.width).toBeLessThan(
+      compositeBox.width,
+    )
+    expect(rasterizeFigure.mock.calls[1][0].sourceBox.width).toBeLessThan(
+      compositeBox.width,
+    )
+    expect(
+      rasterizeFigure.mock.calls[0][0].sourceBox.x +
+        rasterizeFigure.mock.calls[0][0].sourceBox.width / 2,
+    ).toBeLessThan(0.5)
+    expect(
+      rasterizeFigure.mock.calls[1][0].sourceBox.x +
+        rasterizeFigure.mock.calls[1][0].sourceBox.width / 2,
+    ).toBeGreaterThanOrEqual(0.5)
+  })
+
   it('keeps adjacent panel-label prose inside its uniquely captioned multi-panel figure', async () => {
     const panelBoxes = [
       box(0.176, 0.103, 0.291, 0.169),

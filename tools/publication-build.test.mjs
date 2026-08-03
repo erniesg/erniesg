@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   parsePublicationBuildArgs,
+  canonicalRouteBodyFingerprint,
+  publicationGraphBodyFingerprint,
   publicationReceiptDigest,
   publicationRouteHtmlDigest,
 } from './publication-build.mjs'
@@ -45,5 +47,17 @@ describe('publication:build CLI', () => {
     expect(publicationReceiptDigest('{"version":"1.0.1"}')).not.toBe(
       publicationReceiptDigest('{"version":"1.0.0"}'),
     )
+  })
+
+  it('binds canonical route body semantics to the publication graph', () => {
+    const graph = {
+      nodes: [
+        { type: 'heading', level: 1, text: 'Heading' },
+        { type: 'paragraph', text: 'Body proof' },
+      ],
+    }
+    const expected = publicationGraphBodyFingerprint(graph)
+    expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Body proof</p></article>')).toEqual(expected)
+    expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Changed</p></article>')).not.toEqual(expected)
   })
 })

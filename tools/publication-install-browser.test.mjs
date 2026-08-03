@@ -6,8 +6,9 @@ describe('publication browser installer', () => {
     const invocation = publicationBrowserInstallInvocation()
     expect(invocation.playwright.command).toBe(process.execPath)
     expect(invocation.playwright.args[0]).toMatch(
-      /node_modules[\\/]@playwright[\\/]test[\\/]cli\.js$/,
+      /node_modules[\\/]playwright[\\/]cli\.js$/,
     )
+    expect(invocation.playwright.args[0]).not.toMatch(/@playwright[\\/]test/)
     expect(invocation.puppeteer.command).toBe(process.execPath)
     expect(invocation.puppeteer.args[0]).toMatch(
       /node_modules[\\/]@puppeteer[\\/]browsers[\\/]lib[\\/]main-cli\.js$/,

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
@@ -49,6 +49,205 @@ function collectElements(node, result = { headings: [], images: [] }) {
   }
   node.childNodes?.forEach((child) => collectElements(child, result))
   return result
+}
+
+function bodyText(value) {
+  return String(value ?? '').replace(/\s+/gu, ' ').trim()
+}
+
+function graphNodeText(node) {
+  if ('text' in node) return bodyText(node.text)
+  return ''
+}
+
+export function publicationGraphBodyFingerprint(graph) {
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]))
+  const nestedListIds = new Set(
+    graph.nodes
+      .filter((node) => node.type === 'list-item')
+      .flatMap((node) => node.childListIds ?? []),
+  )
+  const fingerprint = []
+  const captionToken = (captionId, tag = 'figcaption') => {
+    const caption = captionId ? byId.get(captionId) : undefined
+    if (caption?.type === 'caption')
+      fingerprint.push(`${tag}:${graphNodeText(caption)}`)
+  }
+  const visit = (node) => {
+    switch (node.type) {
+      case 'heading':
+        fingerprint.push(`h${node.level}:${graphNodeText(node)}`)
+        break
+      case 'paragraph':
+        fingerprint.push(`p:${graphNodeText(node)}`)
+        break
+      case 'list':
+        fingerprint.push(node.ordered ? 'ol' : 'ul')
+        for (const itemId of node.itemIds) {
+          const item = byId.get(itemId)
+          if (!item || item.type !== 'list-item') continue
+          fingerprint.push(`li:${graphNodeText(item)}`)
+          for (const childId of item.childListIds ?? []) {
+            const child = byId.get(childId)
+            if (child?.type === 'list') visit(child)
+          }
+        }
+        break
+      case 'list-item':
+        break
+      case 'quote':
+        fingerprint.push(
+          `blockquote:${bodyText([node.text, node.attribution].filter(Boolean).join(' '))}`,
+        )
+        break
+      case 'code':
+        fingerprint.push(`pre:${bodyText(node.code)}`)
+        break
+      case 'table':
+        fingerprint.push('table')
+        captionToken(node.captionId, 'caption')
+        for (const row of node.rows)
+          for (const cell of row.cells)
+            fingerprint.push(`${cell.headerScope ? 'th' : 'td'}:${bodyText(cell.text)}`)
+        break
+      case 'equation':
+        fingerprint.push(`math:${bodyText([node.source, node.label].filter(Boolean).join(' '))}`)
+        captionToken(node.captionId)
+        break
+      case 'aside':
+        fingerprint.push(`aside:${graphNodeText(node)}`)
+        break
+      case 'note':
+        fingerprint.push(`aside:${node.noteKind}:${bodyText([node.label, node.text].join(' '))}`)
+        break
+      case 'reference':
+        fingerprint.push(`p:doc-biblioentry:${graphNodeText(node)}`)
+        break
+      case 'caption':
+        break
+      case 'figure':
+        if (node.assetIds.length === 0 && node.sourceText)
+          fingerprint.push(`figure:${bodyText([node.title, node.sourceText].join(' '))}`)
+        captionToken(node.captionId)
+        break
+      case 'media':
+        if (node.mediaKind === 'interactive' && node.accessibility.transcript)
+          fingerprint.push(`figure:${bodyText(node.accessibility.transcript)}`)
+        captionToken(node.captionId)
+        break
+      default:
+        break
+    }
+  }
+  for (const node of graph.nodes) {
+    if (node.type === 'list-item' || nestedListIds.has(node.id) || node.type === 'caption') continue
+    visit(node)
+  }
+  return fingerprint
+}
+
+function findTag(root, tagName) {
+  if (!root) return undefined
+  if (root.tagName === tagName) return root
+  for (const child of root.childNodes ?? []) {
+    const found = findTag(child, tagName)
+    if (found) return found
+  }
+  return undefined
+}
+
+function directBodyText(node, excludedTags = new Set()) {
+  if (!node) return ''
+  if (node.nodeName === '#text') return node.value ?? ''
+  if (node.tagName && excludedTags.has(node.tagName)) return ''
+  return (node.childNodes ?? [])
+    .map((child) => directBodyText(child, excludedTags))
+    .join('')
+}
+
+function attribute(node, name) {
+  return node?.attrs?.find((value) => value.name === name)?.value
+}
+
+function textContent(node) {
+  if (!node) return ''
+  if (node.nodeName === '#text') return node.value ?? ''
+  return (node.childNodes ?? []).map(textContent).join('')
+}
+
+export function canonicalRouteBodyFingerprint(html) {
+  const root = findTag(parse(html), 'article') ?? findTag(parse(html), 'main')
+  const fingerprint = []
+  const visit = (node) => {
+    const tag = node.tagName
+    if (!tag) {
+      for (const child of node.childNodes ?? []) visit(child)
+      return
+    }
+    if (/^h[1-6]$/u.test(tag)) {
+      fingerprint.push(`${tag}:${bodyText(textContent(node))}`)
+      return
+    }
+    if (tag === 'p') {
+      const role = attribute(node, 'role')
+      fingerprint.push(
+        role === 'doc-biblioentry'
+          ? `p:doc-biblioentry:${bodyText(textContent(node))}`
+          : `p:${bodyText(textContent(node))}`,
+      )
+      return
+    }
+    if (tag === 'blockquote') {
+      fingerprint.push(`blockquote:${bodyText(textContent(node))}`)
+      return
+    }
+    if (tag === 'pre') {
+      fingerprint.push(`pre:${bodyText(textContent(node))}`)
+      return
+    }
+    if (tag === 'ul' || tag === 'ol') {
+      fingerprint.push(tag)
+      for (const child of node.childNodes ?? []) if (child.tagName === 'li') visit(child)
+      return
+    }
+    if (tag === 'li') {
+      fingerprint.push(
+        `li:${bodyText(directBodyText(node, new Set(['ul', 'ol'])))}`,
+      )
+      for (const child of node.childNodes ?? []) if (child.tagName === 'ul' || child.tagName === 'ol') visit(child)
+      return
+    }
+    if (tag === 'table') {
+      fingerprint.push('table')
+      for (const child of node.childNodes ?? []) visit(child)
+      return
+    }
+    if (tag === 'caption') {
+      fingerprint.push(`caption:${bodyText(textContent(node))}`)
+      return
+    }
+    if (tag === 'th' || tag === 'td') {
+      fingerprint.push(`${tag}:${bodyText(textContent(node))}`)
+      return
+    }
+    if (attribute(node, 'role') === 'math') {
+      fingerprint.push(`math:${bodyText(textContent(node))}`)
+      return
+    }
+    if (tag === 'aside') {
+      const role = attribute(node, 'role')
+      const prefix = role?.startsWith('doc-') ? `aside:${role}:` : 'aside:'
+      fingerprint.push(`${prefix}${bodyText(textContent(node))}`)
+      return
+    }
+    if (tag === 'figcaption') {
+      fingerprint.push(`figcaption:${bodyText(textContent(node))}`)
+      return
+    }
+    for (const child of node.childNodes ?? []) visit(child)
+  }
+  if (root) visit(root)
+  return fingerprint
 }
 
 function isLocalRouteAsset(src) {
@@ -105,6 +304,10 @@ export async function writeRouteParity(entry, output, bundle, repository) {
       )
     cursor = index + 1
   }
+  const graphBody = publicationGraphBodyFingerprint(graph)
+  const routeBody = canonicalRouteBodyFingerprint(html)
+  if (JSON.stringify(graphBody) !== JSON.stringify(routeBody))
+    throw new Error('Canonical Astro route body semantics differ from the publication graph')
   const graphImageNodes = graph.nodes.filter(
     (node) =>
       (node.type === 'figure' && node.assetIds.length > 0) ||
@@ -139,6 +342,19 @@ export async function writeRouteParity(entry, output, bundle, repository) {
       fileName: descriptor.fileName,
       sha256: descriptor.sha256,
       routeSrc: image.src,
+      routeSha256: await (async () => {
+        const rawSrc = String(image.src ?? '').split(/[?#]/u)[0]
+        if (!isLocalRouteAsset(rawSrc) || !rawSrc)
+          throw new Error(`Canonical Astro route image is not local for ${assetId}`)
+        const routeRoot = resolve('dist')
+        const candidate = isAbsolute(rawSrc)
+          ? resolve(routeRoot, rawSrc.replace(/^[/\\]+/u, ''))
+          : resolve(dirname(routePath), rawSrc)
+        const escaped = relative(routeRoot, candidate).split(sep).join('/')
+        if (escaped.startsWith('../') || isAbsolute(escaped))
+          throw new Error(`Canonical Astro route image escapes dist for ${assetId}`)
+        return createHash('sha256').update(await readFile(candidate)).digest('hex')
+      })(),
       alternativeText,
     }
   })
@@ -167,6 +383,7 @@ export async function writeRouteParity(entry, output, bundle, repository) {
           repository?.dirty ?? publicationRepositoryForCurrentCheckout().dirty,
         routeHtmlSha256: publicationRouteHtmlDigest(html),
         headingOrder: graphHeadings,
+        bodyOrder: graphBody,
         localImageAlternatives: graphImageAlternatives,
         imageBindings: graphImages,
         result: 'passed',

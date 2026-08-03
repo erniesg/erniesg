@@ -128,7 +128,11 @@ function escapeHtml(value: string) {
     .replaceAll('"', '&quot;')
 }
 
-function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
+function inlineHtml(
+  text: string,
+  runs: PublicationInlineRun[] = [],
+  targetNodes?: Map<string, PublicationNode>,
+) {
   for (const run of runs) {
     if (!run.hardBreak) continue
     if (
@@ -198,7 +202,7 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
         ? [`id="${escapeHtml(link.relationshipId)}"`]
         : []),
       ...(link.semanticRole === 'cross-reference' &&
-      link.relationshipId?.startsWith('ref-')
+      link.targetIds?.some((targetId) => targetNodes?.get(targetId)?.type === 'note')
         ? ['role="doc-noteref"']
         : []),
       ...(link.semanticRole === 'citation'
@@ -287,7 +291,7 @@ function renderNode(
   listStack = new Set<string>(),
 ): string {
   node = publicationNodeForProfile(node, profile)
-  const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns) : ''
+  const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns, byId) : ''
   switch (node.type) {
     case 'heading':
       return `<h${node.level} ${nodeAttributes(node, edition)}>${text}</h${node.level}>`
@@ -321,7 +325,7 @@ function renderNode(
             PublicationNode,
             { type: 'list-item' }
           >
-          return `<li ${nodeAttributes(renderedItem, edition)}>${inlineHtml(renderedItem.text, renderedItem.inlineRuns)}${nested}</li>`
+          return `<li ${nodeAttributes(renderedItem, edition)}>${inlineHtml(renderedItem.text, renderedItem.inlineRuns, byId)}${nested}</li>`
         })
         .join('')
       return `<${tag} ${nodeAttributes(node, edition, start ? [start] : [])}>${items}</${tag}>`
@@ -344,7 +348,7 @@ function renderNode(
         const label = node.label
           ? `<span class="equation-label">${escapeHtml(node.label)}</span>`
           : ''
-        return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${renderedCaption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</div>` : ''}</div>`
+        return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${renderedCaption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns, byId)}</div>` : ''}</div>`
       }
     case 'note':
       {
@@ -381,7 +385,7 @@ function renderNode(
       const renderedCaption = caption
         ? publicationNodeForProfile(caption, profile)
         : undefined
-      return `<figure ${nodeAttributes(node, edition)}><div class="figure-title">${escapeHtml(node.title)}</div>${assets}${source}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
+      return `<figure ${nodeAttributes(node, edition)}><div class="figure-title">${escapeHtml(node.title)}</div>${assets}${source}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns, byId)}</figcaption>` : ''}</figure>`
     }
     case 'reference':
       return `<p ${nodeAttributes(node, edition, ['role="doc-biblioentry"'])}>${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : node.targetIds[0] ? `<a href="#${escapeHtml(node.targetIds[0])}" role="doc-biblioref">${text}</a>` : text}</p>`
@@ -412,11 +416,17 @@ function renderNode(
               : node.accessibility.decorative
                 ? `<span class="decorative-media" aria-hidden="true"></span>`
                 : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
+      const printedTranscript =
+        !node.accessibility.decorative &&
+        (profile === 'a5-pdf' || profile === 'a4-pdf') &&
+        node.accessibility.transcript?.trim()
+          ? `<p id="${escapeHtml(node.id)}-transcript" class="media-transcript">${escapeHtml(node.accessibility.transcript)}</p>`
+          : ''
       const caption = node.captionId ? byId.get(node.captionId) : undefined
       const renderedCaption = caption
         ? publicationNodeForProfile(caption, profile)
         : undefined
-      return `<figure ${nodeAttributes(node, edition)}>${media}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</figcaption>` : ''}</figure>`
+      return `<figure ${nodeAttributes(node, edition)}>${media}${printedTranscript}${renderedCaption?.type === 'caption' ? `<figcaption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns, byId)}</figcaption>` : ''}</figure>`
     }
     case 'table': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
@@ -445,7 +455,7 @@ function renderNode(
       const renderedCaption = caption
         ? publicationNodeForProfile(caption, profile)
         : undefined
-      return `<table ${nodeAttributes(node, edition)}>${renderedCaption?.type === 'caption' ? `<caption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns)}</caption>` : ''}${rows}</table>`
+      return `<table ${nodeAttributes(node, edition)}>${renderedCaption?.type === 'caption' ? `<caption ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns, byId)}</caption>` : ''}${rows}</table>`
     }
   }
 }
@@ -467,6 +477,17 @@ export function publicationGraphToHtml(
   stylesheet = 'publication.css',
 ) {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]))
+  for (const node of graph.nodes) {
+    if (node.type !== 'caption') continue
+    const parent = byId.get(node.parentId)
+    if (
+      parent &&
+      (!('captionId' in parent) || parent.captionId !== node.id)
+    )
+      throw new Error(
+        `Caption ${node.id} has no reciprocal caption ownership from ${node.parentId}`,
+      )
+  }
   const nestedListIds = new Set(
     graph.nodes
       .filter(
@@ -833,7 +854,7 @@ async function createEpub(
   const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`
   zip.file(
     'EPUB/package.opf',
-    `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title>${contributorMetadata}<dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>${accessModeMetadata}${accessModeSufficientMetadata}${accessibilityFeatureMetadata}<meta property="schema:accessibilityHazard">none</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
+    `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title>${contributorMetadata}<dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>${accessModeMetadata}${accessModeSufficientMetadata}${accessibilityFeatureMetadata}</metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
     zipOptions(),
   )
   await writeFile(

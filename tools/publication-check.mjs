@@ -16,6 +16,10 @@ import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
 import { serializePublicationGraph } from '../src/publication/schema.ts'
 import { publicationPdfRendererForArchitecture } from '../src/publication/toolchain.ts'
+import {
+  canonicalRouteBodyFingerprint,
+  publicationGraphBodyFingerprint,
+} from './publication-build.mjs'
 
 export function parsePublicationCheckArgs(argv) {
   const options = {}
@@ -75,6 +79,14 @@ export function normalizePdfSearchableText(value) {
     .toLowerCase()
 }
 
+export function normalizePdfVerificationText(value) {
+  return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[\s\p{Z}\p{C}]+/gu, '')
+}
+
 export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
   const required = []
   const add = (value) => {
@@ -119,9 +131,31 @@ export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
       case 'note':
         add(selected.label)
         break
+      case 'media':
+        add(selected.accessibility.transcript)
+        break
       default:
         break
     }
+  }
+  return required
+}
+
+export function publicationPdfWidowOrphanRequirements(
+  graph,
+  profile = 'a5-pdf',
+) {
+  const required = []
+  for (const node of graph.nodes) {
+    const selected = publicationNodeForProfile(node, profile)
+    if (selected.requirement === 'optional') continue
+    if (
+      selected.type === 'paragraph' ||
+      selected.type === 'list-item' ||
+      selected.type === 'quote' ||
+      selected.type === 'aside'
+    )
+      if (selected.text.trim()) required.push(selected.text)
   }
   return required
 }
@@ -130,16 +164,96 @@ export function assertPdfSearchableTextRequirements(
   searchableText,
   requiredTexts,
 ) {
+  const normalizedSearchableText = normalizePdfVerificationText(searchableText)
   let cursor = 0
   for (const requiredText of requiredTexts ?? []) {
-    const searchableExpected = normalizePdfSearchableText(requiredText)
+    const searchableExpected = normalizePdfVerificationText(requiredText)
     if (!searchableExpected) continue
-    const index = searchableText.indexOf(searchableExpected, cursor)
+    const index = normalizedSearchableText.indexOf(searchableExpected, cursor)
     assert(
       index >= 0,
       `PDF does not preserve selectable body text: ${requiredText}`,
     )
     cursor = index + searchableExpected.length
+  }
+}
+
+export function assertPdfTextItemGeometry(item, crop, expected) {
+  const value = String(item?.str ?? '')
+  if (!value.trim()) return
+  const transform = Array.isArray(item?.transform) ? item.transform : undefined
+  if (!transform || transform.length < 6) return
+  const [a, b, c, d, e, f] = transform.map(Number)
+  const width = Math.abs(Number(item.width) || 0)
+  const height = Math.abs(
+    Number(item.height) || Math.hypot(a, b) || Math.hypot(c, d) || 0,
+  )
+  const xScale = Math.hypot(a, b) || 1
+  const yScale = Math.hypot(c, d) || 1
+  const ux = [a / xScale, b / xScale]
+  const uy = [c / yScale, d / yScale]
+  const points = [
+    [0, 0],
+    [width, 0],
+    [0, height],
+    [width, height],
+  ].map(([x, y]) => [ux[0] * x + uy[0] * y + e, ux[1] * x + uy[1] * y + f])
+  const minX = Math.min(...points.map(([x]) => x))
+  const maxX = Math.max(...points.map(([x]) => x))
+  const minY = Math.min(...points.map(([, y]) => y))
+  const maxY = Math.max(...points.map(([, y]) => y))
+  const epsilon = 1.5
+  assert(
+    minX >= crop.x - epsilon &&
+      minY >= crop.y - epsilon &&
+      maxX <= crop.x + crop.width + epsilon &&
+      maxY <= crop.y + crop.height + epsilon,
+    `${expected} text item is outside visible page bounds: ${value}`,
+  )
+}
+
+export function assertPdfImageCount(source, requiredCount, expected) {
+  const actual = [...String(source ?? '').matchAll(/\/Subtype\s*\/Image\b/gu)].length
+  assert(
+    actual >= requiredCount,
+    `${expected} PDF contains ${actual} image assets but requires ${requiredCount} image assets`,
+  )
+}
+
+export function assertPdfWidowOrphanRequirements(
+  searchableText,
+  locations,
+  requiredTexts,
+  minimumLines = 3,
+) {
+  const normalized = normalizePdfVerificationText(searchableText)
+  let cursor = 0
+  for (const requiredText of requiredTexts ?? []) {
+    const expected = normalizePdfVerificationText(requiredText)
+    if (!expected) continue
+    const start = normalized.indexOf(expected, cursor)
+    assert(start >= 0, `PDF widow/orphan text is missing: ${requiredText}`)
+    const end = start + expected.length
+    const span = (locations ?? []).slice(start, end)
+    const pages = [...new Set(span.map((location) => location?.page))].filter(
+      (page) => page !== undefined,
+    )
+    if (pages.length > 1) {
+      const firstPage = pages[0]
+      const lastPage = pages.at(-1)
+      for (const page of [firstPage, lastPage]) {
+        const lines = new Set(
+          span
+            .filter((location) => location?.page === page)
+            .map((location) => location?.line),
+        )
+        assert(
+          lines.size >= minimumLines,
+          `PDF widow/orphan constraint failed for ${requiredText}: page ${page} has ${lines.size} lines, requires ${minimumLines}`,
+        )
+      }
+    }
+    cursor = end
   }
 }
 
@@ -381,7 +495,9 @@ function assertWebPubNode(html, imageAlts, node) {
       ? 'audio'
       : node.mediaKind === 'video'
         ? 'video'
-        : 'a'
+        : node.mediaKind === 'interactive' && node.accessibility?.decorative
+          ? 'span'
+          : 'a'
   const media = mediaFigure.childNodes?.find(
     (child) => child.tagName === expectedTag,
   )
@@ -572,8 +688,10 @@ export async function checkPdf(
   {
     requireLinks = false,
     requireImages = false,
+    requiredImageCount = requireImages ? 1 : 0,
     requiredTexts,
     requiredLinks = [],
+    widowOrphanTexts = [],
   } = {},
 ) {
   const bytes = new Uint8Array(await readFile(path))
@@ -588,13 +706,21 @@ export async function checkPdf(
     isEvalSupported: false,
   }).promise
   let text = ''
+  const locations = []
   const annotations = []
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber)
     const content = await page.getTextContent()
-    text += content.items
-      .map((item) => ('str' in item ? item.str : ''))
-      .join(' ')
+    const crop = pdf.getPages()[pageNumber - 1].getCropBox()
+    for (const item of content.items) {
+      if (!('str' in item)) continue
+      assertPdfTextItemGeometry(item, crop, `${expected} page ${pageNumber}`)
+      const normalizedItem = normalizePdfVerificationText(item.str)
+      text += normalizedItem
+      const line = Math.round(Number(item.transform?.[5] ?? 0) * 10) / 10
+      for (const _character of normalizedItem)
+        locations.push({ page: pageNumber, line })
+    }
     for (const annotation of await page.getAnnotations({ intent: 'display' }))
       if (annotation.subtype === 'Link')
         annotations.push({
@@ -607,15 +733,16 @@ export async function checkPdf(
         })
   }
   await document.destroy()
-  const searchableText = normalizePdfSearchableText(text)
   assert(
     Array.isArray(requiredTexts) && requiredTexts.length > 0,
     `${size} PDF body text requirements are missing`,
   )
   assertPdfSearchableTextRequirements(
-    searchableText,
+    text,
     requiredTexts,
   )
+  if (widowOrphanTexts.length)
+    assertPdfWidowOrphanRequirements(text, locations, widowOrphanTexts)
   assert(
     /\/FontFile(?:2|3)?\b/.test(source),
     `${size} PDF has no embedded font`,
@@ -624,11 +751,8 @@ export async function checkPdf(
     assert(/\/Annots\b/.test(source), `${size} PDF has no link annotations`)
     assertPdfLinkAnnotations(annotations, requiredLinks)
   }
-  if (requireImages)
-    assert(
-      /\/Subtype\s*\/Image\b/.test(source),
-      `${size} PDF has no image asset`,
-    )
+  if (requiredImageCount > 0)
+    assertPdfImageCount(source, requiredImageCount, size)
   return pdf.getPageCount()
 }
 
@@ -727,13 +851,17 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requireImages: pdfNodes.some(
+    requiredImageCount: pdfNodes.filter(
+      (node) => node.requirement !== 'optional',
+    ).filter(
       (node) =>
         (node.type === 'figure' && node.assetIds.length > 0) ||
         (node.type === 'media' && node.mediaKind === 'image'),
-    ),
+    ).length,
     requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
+    widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
   }
+  pdfRequirements.requireImages = pdfRequirements.requiredImageCount > 0
   const renderedPdfText = textContent(
     parse(await readFile(resolve(root, 'a5-pdf.html'), 'utf8')),
   )
@@ -813,6 +941,11 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     'Canonical Astro route heading parity is stale',
   )
   assert(
+    JSON.stringify(parity.bodyOrder) ===
+      JSON.stringify(publicationGraphBodyFingerprint(graph)),
+    'Canonical Astro route body parity is stale',
+  )
+  assert(
     JSON.stringify(parity.localImageAlternatives) ===
       JSON.stringify(expectedImageAlternatives),
     'Canonical Astro route image alternative parity is stale',
@@ -857,6 +990,11 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     sha256(canonicalRouteHtml) === parity.routeHtmlSha256,
     'Canonical Astro route parity is bound to a stale route artifact',
   )
+  assert(
+    JSON.stringify(canonicalRouteBodyFingerprint(canonicalRouteHtml)) ===
+      JSON.stringify(publicationGraphBodyFingerprint(graph)),
+    'Canonical Astro route body semantics differ from the publication graph',
+  )
   const canonicalRoute = canonicalRouteElements(canonicalRouteHtml)
   let headingCursor = 0
   for (const heading of expectedHeadings) {
@@ -880,7 +1018,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   const assetById = new Map(
     assetBundle.assets.map((asset) => [asset.id, asset]),
   )
-  parity.imageBindings.forEach((binding, index) => {
+  for (const [index, binding] of parity.imageBindings.entries()) {
     const node = expectedImageNodes[index]
     const assetId = node.type === 'figure' ? node.assetIds[0] : node.assetId
     const descriptor = assetById.get(assetId)
@@ -916,7 +1054,24 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       ),
       `Canonical Astro route image binding is not present in the current route for ${assetId}`,
     )
-  })
+    const rawRouteSrc = routeSrc.split(/[?#]/u)[0]
+    const routeRoot = resolve('dist')
+    const routeAssetPath = isAbsolute(rawRouteSrc)
+      ? resolve(routeRoot, rawRouteSrc.replace(/^[/\\]+/u, ''))
+      : resolve(routePath, '..', rawRouteSrc)
+    const escapedRouteAsset = relative(routeRoot, routeAssetPath)
+      .split(sep)
+      .join('/')
+    assert(
+      !escapedRouteAsset.startsWith('../') && !isAbsolute(escapedRouteAsset),
+      `Canonical Astro route image binding escapes dist for ${assetId}`,
+    )
+    assert(
+      /^[a-f0-9]{64}$/u.test(String(binding.routeSha256 ?? '')) &&
+        binding.routeSha256 === sha256(await readFile(routeAssetPath)),
+      `Canonical Astro route image bytes are stale for ${assetId}`,
+    )
+  }
   process.stdout.write(
     `Publication matrix passed structural, accessibility, EPUBCheck, and PDF checks at ${root}\n`,
   )

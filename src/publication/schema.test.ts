@@ -253,6 +253,28 @@ describe('PublicationGraph', () => {
         value.nodes[8].rows[0].cells[0].headerIds = ['missing-header']
       },
     ],
+    [
+      'table header relationship to data cell',
+      (value: any) => {
+        value.nodes[8].rows[0].cells = [
+          {
+            id: 'header',
+            text: 'Not a header',
+            headerScope: null,
+            columnSpan: 1,
+            rowSpan: 1,
+          },
+          {
+            id: 'cell',
+            text: 'Cell',
+            headerScope: null,
+            columnSpan: 1,
+            rowSpan: 1,
+            headerIds: ['header'],
+          },
+        ]
+      },
+    ],
   ])('rejects %s', (_label, mutate) => {
     const value = graphFixture()
     mutate(value)

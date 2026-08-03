@@ -454,6 +454,9 @@ export const publicationGraphSchema = z
         node.rows.forEach((row, rowIndex) => {
           row.cells.forEach((cell, cellIndex) => {
             cell.headerIds?.forEach((headerId, headerIndex) => {
+              const targetCell = node.rows
+                .flatMap((candidateRow) => candidateRow.cells)
+                .find((candidateCell) => candidateCell.id === headerId)
               if (!cellIds.has(headerId)) {
                 context.addIssue({
                   code: z.ZodIssueCode.custom,
@@ -468,6 +471,21 @@ export const publicationGraphSchema = z
                     headerIndex,
                   ],
                   message: `Dangling table header relationship: ${headerId}`,
+                })
+              } else if (!targetCell?.headerScope) {
+                context.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: [
+                    'nodes',
+                    index,
+                    'rows',
+                    rowIndex,
+                    'cells',
+                    cellIndex,
+                    'headerIds',
+                    headerIndex,
+                  ],
+                  message: 'Table header relationships must target header cells',
                 })
               }
             })
@@ -534,6 +552,16 @@ export const publicationGraphSchema = z
             path: ['nodes', index, 'parentId'],
             message:
               'Caption parent must be a figure, table, equation, or media node',
+          })
+        }
+        if (
+          parent &&
+          (!('captionId' in parent) || parent.captionId !== node.id)
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes', index, 'parentId'],
+            message: 'Caption relationships must be reciprocal',
           })
         }
       }

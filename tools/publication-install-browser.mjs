@@ -11,7 +11,7 @@ export function publicationBrowserInstallInvocation() {
   return {
     playwright: {
       command: process.execPath,
-      args: [resolve('node_modules/@playwright/test/cli.js'), 'install', 'chromium'],
+      args: [resolve('node_modules/playwright/cli.js'), 'install', 'chromium'],
     },
     puppeteer: {
       command: process.execPath,

@@ -7,11 +7,15 @@ import { describe, expect, it } from 'vitest'
 import {
   assertPdfPageGeometry,
   assertPdfCropBox,
+  assertPdfImageCount,
   assertPdfLinkAnnotations,
   assertPdfSearchableTextRequirements,
+  assertPdfTextItemGeometry,
+  assertPdfWidowOrphanRequirements,
   accessibilityLabel,
   checkWebPubReceipt,
   normalizePdfSearchableText,
+  normalizePdfVerificationText,
   orderPdfTextRequirements,
   publicationPdfLinkRequirements,
   publicationPdfLinkRequirementsForProfile,
@@ -99,6 +103,13 @@ describe('publication:check CLI', () => {
       ]),
     )
     expect(normalizePdfSearchableText('Café proof')).toBe('cafeproof')
+    expect(normalizePdfVerificationText('x + y = z')).toBe('x+y=z')
+    expect(() =>
+      assertPdfSearchableTextRequirements('x y z', ['x + y = z']),
+    ).toThrow(/x \+ y = z/)
+    expect(() =>
+      assertPdfSearchableTextRequirements('x + y = z', ['x + y = z']),
+    ).not.toThrow()
     expect(() =>
       assertPdfSearchableTextRequirements('publicationtitlebodyproof', [
         'Publication title',
@@ -129,6 +140,51 @@ describe('publication:check CLI', () => {
         'HardBreak. Earlier punctuation! After punctuation',
       ),
     ).toEqual(['Hard\nBreak', 'After punctuation'])
+  })
+
+  it('rejects PDF text outside the visible crop and requires every image asset', () => {
+    const crop = { x: 0, y: 0, width: 100, height: 100 }
+    expect(() =>
+      assertPdfTextItemGeometry(
+        { str: 'inside', transform: [10, 0, 0, 10, 20, 20], width: 20, height: 10 },
+        crop,
+        'fixture',
+      ),
+    ).not.toThrow()
+    expect(() =>
+      assertPdfTextItemGeometry(
+        { str: 'outside', transform: [10, 0, 0, 10, 95, 20], width: 20, height: 10 },
+        crop,
+        'fixture',
+      ),
+    ).toThrow(/outside visible page bounds/)
+    expect(() => assertPdfImageCount('/Subtype /Image\n/Subtype /Image', 2, 'fixture')).not.toThrow()
+    expect(() => assertPdfImageCount('/Subtype /Image', 2, 'fixture')).toThrow(
+      /requires 2 image assets/,
+    )
+  })
+
+  it('enforces widow and orphan line minimums for text spanning pages', () => {
+    const completeLocations = [
+      { page: 1, line: 1 },
+      { page: 1, line: 2 },
+      { page: 1, line: 3 },
+      { page: 2, line: 1 },
+      { page: 2, line: 2 },
+      { page: 2, line: 3 },
+    ]
+    expect(() =>
+      assertPdfWidowOrphanRequirements('abcdef', completeLocations, ['abcdef']),
+    ).not.toThrow()
+    expect(() =>
+      assertPdfWidowOrphanRequirements(
+        'abcdef',
+        completeLocations.map((location, index) =>
+          index < 3 ? location : { page: 2, line: 1 },
+        ),
+        ['abcdef'],
+      ),
+    ).toThrow(/widow\/orphan/)
   })
 
   it('requires every authored link to have a matching PDF annotation', () => {

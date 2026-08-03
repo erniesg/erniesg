@@ -293,8 +293,62 @@ describe('Vivliostyle publication renderer boundary', () => {
       'phone-webpub',
     )
     expect(html).toContain('href="#hero-figure"')
+    const heroLink = html.match(/<a[^>]+href="#hero-figure"[^>]*>/)?.[0]
+    expect(heroLink).toBeDefined()
+    expect(heroLink).not.toContain('role="doc-noteref"')
     expect(html).toContain('role="doc-endnote"')
     expect(html).toContain('role="doc-annotation"')
+  })
+
+  it('prints nondecorative audio transcripts in paged profiles', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const template = bundle.graph.nodes[0]
+    const graph = {
+      ...bundle.graph,
+      nodes: [
+        {
+          ...template,
+          id: 'print-audio',
+          type: 'media' as const,
+          mediaKind: 'audio' as const,
+          assetId: 'audio-asset',
+          accessibility: { decorative: false, transcript: 'Spoken proof' },
+        },
+      ],
+    }
+    const html = publicationGraphToHtml(
+      graph,
+      new Map([['audio-asset', 'assets/audio.mp3']]),
+      'a5-pdf',
+    )
+    expect(html).toContain('class="media-transcript"')
+    expect(html).toContain('Spoken proof')
+  })
+
+  it('rejects captions without reciprocal parent ownership', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const template = bundle.graph.nodes[0]
+    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
+    const figure = { ...template, id: 'orphan-figure' } as any
+    delete figure.captionId
+    const caption = {
+      ...template,
+      id: 'orphan-caption',
+      type: 'caption' as const,
+      parentId: 'orphan-figure',
+      text: 'Orphan caption',
+    } as any
+    expect(() =>
+      publicationGraphToHtml(
+        { ...bundle.graph, nodes: [figure, caption] },
+        new Map(),
+        'phone-webpub',
+      ),
+    ).toThrow(/reciprocal caption ownership/)
   })
 
   it('keeps the e-ink stylesheet line height aligned with the receipt', async () => {

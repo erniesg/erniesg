@@ -9,7 +9,10 @@ const require = createRequire(import.meta.url)
 export const PUBLICATION_TOOLCHAIN = manifest
 
 export function publicationToolchainForRuntime() {
-  return { ...PUBLICATION_TOOLCHAIN, node: process.versions.node }
+  const node = process.versions.node
+  if (!/^\d+\.\d+\.\d+$/.test(node))
+    throw new Error(`Node runtime ${node} is not normalized`)
+  return { ...PUBLICATION_TOOLCHAIN, node }
 }
 
 export type PublicationPdfRenderer = 'vivliostyle-cli' | 'playwright-chromium'

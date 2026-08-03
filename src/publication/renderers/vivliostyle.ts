@@ -210,7 +210,7 @@ function inlineHtml(text: string, runs: PublicationInlineRun[] = []) {
         : []),
     ].join(' ')
   let html = ''
-  for (let index = 0; index < segments.length; ) {
+  for (let index = 0; index < segments.length;) {
     const segment = segments[index]!
     if (!segment.link) {
       html += segment.value
@@ -248,9 +248,7 @@ function renderNode(
       const nextListStack = new Set(listStack).add(node.id)
       const tag = node.ordered ? 'ol' : 'ul'
       const start =
-        node.ordered && node.start !== undefined
-          ? ` start="${node.start}"`
-          : ''
+        node.ordered && node.start !== undefined ? ` start="${node.start}"` : ''
       const items: string = node.itemIds
         .map((id) => byId.get(id))
         .filter(
@@ -313,64 +311,61 @@ function renderNode(
       return `<p id="${node.id}" role="doc-biblioentry">${node.href ? `<a href="${escapeHtml(node.href)}">${text}</a>` : node.targetIds[0] ? `<a href="#${escapeHtml(node.targetIds[0])}" role="doc-biblioref">${text}</a>` : text}</p>`
     case 'aside':
       return `<aside id="${node.id}">${text}</aside>`
-    case 'media':
-      {
-        const source = escapeHtml(assetPaths.get(node.assetId) ?? '')
-        const label = accessibilityLabel(node)
-        if (node.accessibility.decorative !== true && !label)
-          throw new Error(
-            `Media ${node.id} requires alternative text, a long description, or a transcript`,
-          )
-        const alternativeText = escapeHtml(label)
-        const media =
-          node.mediaKind === 'image'
-            ? `<img src="${source}" alt="${alternativeText}">`
-            : node.mediaKind === 'audio'
-              ? `<audio controls="controls" src="${source}" aria-label="${alternativeText}"></audio>`
-              : node.mediaKind === 'video'
-                ? `<video controls="controls" src="${source}" aria-label="${alternativeText}"></video>`
-                : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
-        const caption = node.captionId ? byId.get(node.captionId) : undefined
-        return `<figure id="${node.id}">${media}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
-      }
-    case 'table':
-      {
-        const caption = node.captionId ? byId.get(node.captionId) : undefined
-        const rows = node.rows
-          .map(
-            (row) =>
-              `<tr>${row.cells
-                .map((cell) => {
-                  const tag = cell.headerScope ? 'th' : 'td'
-                  const attributes = [
-                    ...(cell.id ? [`id="${escapeHtml(cell.id)}"`] : []),
-                    ...(cell.headerScope
-                      ? [`scope="${cell.headerScope}"`]
-                      : []),
-                    ...(cell.columnSpan > 1
-                      ? [`colspan="${cell.columnSpan}"`]
-                      : []),
-                    ...(cell.rowSpan > 1 ? [`rowspan="${cell.rowSpan}"`] : []),
-                    ...(cell.headerIds?.length
-                      ? [`headers="${escapeHtml(cell.headerIds.join(' '))}"`]
-                      : []),
-                  ].join(' ')
-                  return `<${tag}${attributes ? ` ${attributes}` : ''}>${escapeHtml(cell.text)}</${tag}>`
-                })
-                .join('')}</tr>`,
-          )
-          .join('')
-        return `<table id="${node.id}">${caption?.type === 'caption' ? `<caption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</caption>` : ''}${rows}</table>`
-      }
+    case 'media': {
+      const source = escapeHtml(assetPaths.get(node.assetId) ?? '')
+      const label = accessibilityLabel(node)
+      if (node.accessibility.decorative !== true && !label)
+        throw new Error(
+          `Media ${node.id} requires alternative text, a long description, or a transcript`,
+        )
+      const alternativeText = escapeHtml(label)
+      const media =
+        node.mediaKind === 'image'
+          ? `<img src="${source}" alt="${alternativeText}">`
+          : node.mediaKind === 'audio'
+            ? `<audio controls="controls" src="${source}" aria-label="${alternativeText}"></audio>`
+            : node.mediaKind === 'video'
+              ? `<video controls="controls" src="${source}" aria-label="${alternativeText}"></video>`
+              : `<a href="${source}" aria-label="${alternativeText}">${alternativeText}</a>`
+      const caption = node.captionId ? byId.get(node.captionId) : undefined
+      return `<figure id="${node.id}">${media}${caption?.type === 'caption' ? `<figcaption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</figcaption>` : ''}</figure>`
+    }
+    case 'table': {
+      const caption = node.captionId ? byId.get(node.captionId) : undefined
+      const rows = node.rows
+        .map(
+          (row) =>
+            `<tr>${row.cells
+              .map((cell) => {
+                const tag = cell.headerScope ? 'th' : 'td'
+                const attributes = [
+                  ...(cell.id ? [`id="${escapeHtml(cell.id)}"`] : []),
+                  ...(cell.headerScope ? [`scope="${cell.headerScope}"`] : []),
+                  ...(cell.columnSpan > 1
+                    ? [`colspan="${cell.columnSpan}"`]
+                    : []),
+                  ...(cell.rowSpan > 1 ? [`rowspan="${cell.rowSpan}"`] : []),
+                  ...(cell.headerIds?.length
+                    ? [`headers="${escapeHtml(cell.headerIds.join(' '))}"`]
+                    : []),
+                ].join(' ')
+                return `<${tag}${attributes ? ` ${attributes}` : ''}>${escapeHtml(cell.text)}</${tag}>`
+              })
+              .join('')}</tr>`,
+        )
+        .join('')
+      return `<table id="${node.id}">${caption?.type === 'caption' ? `<caption id="${caption.id}">${inlineHtml(caption.text, caption.inlineRuns)}</caption>` : ''}${rows}</table>`
+    }
   }
 }
 
 function accessibilityLabel(node: PublicationNode) {
   return (
-    node.accessibility.alternativeText ??
-    node.accessibility.longDescription ??
-    node.accessibility.transcript ??
-    ''
+    [
+      node.accessibility.alternativeText,
+      node.accessibility.longDescription,
+      node.accessibility.transcript,
+    ].find((value) => typeof value === 'string' && value.trim()) ?? ''
   )
 }
 
@@ -515,10 +510,7 @@ export function renderEpubToc(headings: EpubTocHeading[]) {
     : 1
   const stack: Array<{ level: number; entry: EpubTocEntry }> = []
   for (const heading of headings) {
-    const level = Math.max(
-      1,
-      Math.trunc(heading.level) - firstHeadingLevel + 1,
-    )
+    const level = Math.max(1, Math.trunc(heading.level) - firstHeadingLevel + 1)
     const entry: EpubTocEntry = { heading, children: [] }
     while (stack.length && stack.at(-1)!.level >= level) stack.pop()
     if (stack.length) stack.at(-1)!.entry.children.push(entry)
@@ -600,7 +592,10 @@ async function createEpub(
   )
   const assetPaths = new Map<string, string>()
   const assetItems: string[] = []
-  for (const [index, descriptor] of bundle.assetBundle.descriptor.assets.entries()) {
+  for (const [
+    index,
+    descriptor,
+  ] of bundle.assetBundle.descriptor.assets.entries()) {
     const extension = publicationAssetFileExtension(
       descriptor.fileName,
       descriptor.mediaType,
@@ -738,7 +733,9 @@ async function createPdf(
     try {
       const page = await browser.newPage()
       await page.emulateMedia({ media: 'print' })
-      await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle' })
+      await page.goto(pathToFileURL(htmlPath).href, {
+        waitUntil: 'networkidle',
+      })
       await page.pdf({
         path: outputPath,
         format: size,

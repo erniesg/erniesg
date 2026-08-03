@@ -142,8 +142,11 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'synthetic-publication',
       contentRoot,
     })
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
-    if (!paragraph || paragraph.type !== 'paragraph') throw new Error('missing paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (!paragraph || paragraph.type !== 'paragraph')
+      throw new Error('missing paragraph')
     const graph = {
       ...bundle.graph,
       nodes: bundle.graph.nodes.map((node) =>
@@ -179,32 +182,45 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'synthetic-publication',
       contentRoot,
     })
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
-    if (!paragraph || paragraph.type !== 'paragraph') throw new Error('missing paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (!paragraph || paragraph.type !== 'paragraph')
+      throw new Error('missing paragraph')
     const graph = {
       ...bundle.graph,
       nodes: bundle.graph.nodes.map((node) =>
         node.id === paragraph.id
-          ? { ...node, text: 'authored text', inlineRuns: [{ start: 0, end: 4, hardBreak: true }] }
+          ? {
+              ...node,
+              text: 'authored text',
+              inlineRuns: [{ start: 0, end: 4, hardBreak: true }],
+            }
           : node,
       ),
     }
-    expect(() => publicationGraphToHtml(graph, new Map(), 'phone-webpub')).toThrow(
-      /Malformed hard-break inline run/,
-    )
+    expect(() =>
+      publicationGraphToHtml(graph, new Map(), 'phone-webpub'),
+    ).toThrow(/Malformed hard-break inline run/)
   })
 
   it('renders subtitles and source-backed figures while requiring alternatives', async () => {
-    const bundle = await adaptAstroBlogEntry({ entryId: 'moving-to-cloudflare-with-astro' })
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
     const template = bundle.graph.nodes[0]
-    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
+    if (!template || template.type !== 'figure')
+      throw new Error('missing figure fixture')
     const sourceFigure = {
       ...template,
       id: 'source-figure',
       title: 'Source figure',
       assetIds: [],
       sourceText: 'diagram source',
-      accessibility: { decorative: false, longDescription: 'Diagram description' },
+      accessibility: {
+        decorative: false,
+        longDescription: 'Diagram description',
+      },
     }
     const graph = {
       ...bundle.graph,
@@ -228,7 +244,9 @@ describe('Vivliostyle publication renderer boundary', () => {
   })
 
   it('renders captions, table relationships, media kinds, automatic direction, and citations', async () => {
-    const bundle = await adaptAstroBlogEntry({ entryId: 'moving-to-cloudflare-with-astro' })
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
     const template = bundle.graph.nodes[0]
     const assetId = bundle.assetBundle.descriptor.assets[0]?.id ?? 'asset'
     const graph = {
@@ -311,7 +329,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     const paths = new Map([[assetId, 'assets/audio.bin']])
     const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
     expect(html).toContain('dir="auto"')
-    expect(html).toContain('<caption id="render-table-caption">Table caption</caption>')
+    expect(html).toContain(
+      '<caption id="render-table-caption">Table caption</caption>',
+    )
     expect(html).toContain('colspan="2"')
     expect(html).toContain('rowspan="2"')
     expect(html).toContain('headers="header"')
@@ -335,8 +355,41 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toThrow(/Media render-media requires/)
   })
 
+  it('falls through empty alternatives before requiring a media label', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const template = bundle.graph.nodes[0]
+    const graph = {
+      ...bundle.graph,
+      nodes: [
+        {
+          ...template,
+          type: 'media' as const,
+          id: 'audio-with-fallback-label',
+          mediaKind: 'audio' as const,
+          assetId: 'asset',
+          accessibility: {
+            decorative: false,
+            alternativeText: '',
+            transcript: 'Spoken proof',
+          },
+        },
+      ],
+    }
+    expect(
+      publicationGraphToHtml(
+        graph,
+        new Map([['asset', 'assets/audio.mp3']]),
+        'phone-webpub',
+      ),
+    ).toContain('aria-label="Spoken proof"')
+  })
+
   it('fails closed for MathML until a safe renderer exists', async () => {
-    const bundle = await adaptAstroBlogEntry({ entryId: 'moving-to-cloudflare-with-astro' })
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
     const template = bundle.graph.nodes[0]
     const graph = {
       ...bundle.graph,
@@ -352,11 +405,7 @@ describe('Vivliostyle publication renderer boundary', () => {
       ],
     }
     expect(() =>
-      publicationGraphToHtml(
-        graph,
-        new Map(),
-        'phone-webpub',
-      ),
+      publicationGraphToHtml(graph, new Map(), 'phone-webpub'),
     ).toThrow(/MathML/)
   })
 
@@ -399,9 +448,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(publicationAssetFileExtension('cover.#fragment', 'image/png')).toBe(
       '.png',
     )
-    expect(publicationAssetFileExtension('diagram.svg+xml', 'image/svg+xml')).toBe(
-      '.svg',
-    )
+    expect(
+      publicationAssetFileExtension('diagram.svg+xml', 'image/svg+xml'),
+    ).toBe('.svg')
     expect(publicationAssetFileExtension('photo.JPG', 'image/jpeg')).toBe(
       '.jpg',
     )

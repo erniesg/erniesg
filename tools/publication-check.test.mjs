@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest'
 import {
   assertPdfPageGeometry,
   assertPdfCropBox,
+  assertPdfSearchableTextRequirements,
+  accessibilityLabel,
   checkWebPubReceipt,
   normalizePdfSearchableText,
   parsePublicationCheckArgs,
@@ -91,6 +93,30 @@ describe('publication:check CLI', () => {
       ]),
     )
     expect(normalizePdfSearchableText('Café proof')).toBe('cafeproof')
+    expect(() =>
+      assertPdfSearchableTextRequirements('publicationtitlebodyproof', [
+        'Publication title',
+        'Body proof',
+      ]),
+    ).not.toThrow()
+    expect(() =>
+      assertPdfSearchableTextRequirements('publicationtitle', [
+        'Publication title',
+        'Body proof',
+      ]),
+    ).toThrow(/Body proof/)
+  })
+
+  it('chooses the first non-empty accessibility alternative', () => {
+    expect(
+      accessibilityLabel({
+        accessibility: {
+          alternativeText: '',
+          longDescription: 'Diagram description',
+          transcript: 'Transcript',
+        },
+      }),
+    ).toBe('Diagram description')
   })
 
   it('fails closed when an EPUB or PDF no longer matches its receipt bytes', async () => {
@@ -107,7 +133,10 @@ describe('publication:check CLI', () => {
       await expect(
         verifyArtifactReceipt(root, artifact, 'eink.epub'),
       ).resolves.toEqual(new Uint8Array(bytes))
-      await writeFile(resolve(root, 'eink.epub'), Buffer.alloc(bytes.length, 0x58))
+      await writeFile(
+        resolve(root, 'eink.epub'),
+        Buffer.alloc(bytes.length, 0x58),
+      )
       await expect(
         verifyArtifactReceipt(root, artifact, 'eink.epub'),
       ).rejects.toThrow(/hash changed/)

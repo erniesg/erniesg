@@ -91,10 +91,12 @@ export function publicationPdfTextRequirements(graph) {
         add(node.code)
         break
       case 'figure':
+        add(node.title)
         add(node.sourceText)
         break
       case 'table':
-        for (const row of node.rows) for (const cell of row.cells) add(cell.text)
+        for (const row of node.rows)
+          for (const cell of row.cells) add(cell.text)
         break
       case 'equation':
         add(node.source)
@@ -108,6 +110,23 @@ export function publicationPdfTextRequirements(graph) {
     }
   }
   return [...required]
+}
+
+export function assertPdfSearchableTextRequirements(
+  searchableText,
+  requiredTexts,
+) {
+  let cursor = 0
+  for (const requiredText of requiredTexts ?? []) {
+    const searchableExpected = normalizePdfSearchableText(requiredText)
+    if (!searchableExpected) continue
+    const index = searchableText.indexOf(searchableExpected, cursor)
+    assert(
+      index >= 0,
+      `PDF does not preserve selectable body text: ${requiredText}`,
+    )
+    cursor = index + searchableExpected.length
+  }
 }
 
 export async function verifyArtifactReceipt(root, artifact, relativePath) {
@@ -140,13 +159,30 @@ function imageAlternativeTexts(html) {
   return alternatives
 }
 
-function accessibilityLabel(node) {
+export function accessibilityLabel(node) {
   return (
-    node.accessibility?.alternativeText ??
-    node.accessibility?.longDescription ??
-    node.accessibility?.transcript ??
-    ''
+    [
+      node.accessibility?.alternativeText,
+      node.accessibility?.longDescription,
+      node.accessibility?.transcript,
+    ].find((value) => typeof value === 'string' && value.trim()) ?? ''
   )
+}
+
+function canonicalRouteElements(html) {
+  const result = { headings: [], images: [] }
+  const visit = (node) => {
+    if (node.tagName && /^h[1-6]$/u.test(node.tagName))
+      result.headings.push(textContent(node).trim())
+    if (node.tagName === 'img')
+      result.images.push({
+        src: attribute(node, 'src'),
+        alt: attribute(node, 'alt'),
+      })
+    for (const child of node.childNodes ?? []) visit(child)
+  }
+  visit(parse(html))
+  return result
 }
 
 function elementById(html, id) {
@@ -202,7 +238,8 @@ function assertWebPubNode(html, imageAlts, node) {
       assert(
         Boolean(node.sourceText) &&
           hasTag(figure, 'pre') &&
-          textContent(elementById(html, `${node.id}-source`)) === node.sourceText,
+          textContent(elementById(html, `${node.id}-source`)) ===
+            node.sourceText,
         `WebPub dropped source fallback for figure ${node.id}`,
       )
     return
@@ -369,14 +406,10 @@ export async function checkPdf(
   }
   await document.destroy()
   const searchableText = normalizePdfSearchableText(text)
-  for (const requiredText of requiredTexts?.length ? requiredTexts : [expected]) {
-    const searchableExpected = normalizePdfSearchableText(requiredText)
-    if (!searchableExpected) continue
-    assert(
-      searchableText.includes(searchableExpected),
-      `${size} PDF does not preserve selectable body text: ${requiredText}`,
-    )
-  }
+  assertPdfSearchableTextRequirements(
+    searchableText,
+    requiredTexts?.length ? requiredTexts : [expected],
+  )
   assert(
     /\/FontFile(?:2|3)?\b/.test(source),
     `${size} PDF has no embedded font`,
@@ -384,7 +417,10 @@ export async function checkPdf(
   if (requireLinks)
     assert(/\/Annots\b/.test(source), `${size} PDF has no link annotations`)
   if (requireImages)
-    assert(/\/Subtype\s*\/Image\b/.test(source), `${size} PDF has no image asset`)
+    assert(
+      /\/Subtype\s*\/Image\b/.test(source),
+      `${size} PDF has no image asset`,
+    )
   return pdf.getPageCount()
 }
 
@@ -405,7 +441,8 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     'Publication graph changed from its receipt',
   )
   assert(
-    receipt.source?.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
+    receipt.source?.assetBundleSha256 ===
+      sha256(serializeAssetBundle(assetBundle)),
     'Asset bundle changed from its receipt',
   )
   const currentCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -440,11 +477,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   const epubArtifact = receipt.artifacts.find(
     (artifact) => artifact.profile === 'eink-epub',
   )
-  const epubBytes = await verifyArtifactReceipt(
-    root,
-    epubArtifact,
-    'eink.epub',
-  )
+  const epubBytes = await verifyArtifactReceipt(root, epubArtifact, 'eink.epub')
   const epub = await JSZip.loadAsync(epubBytes)
   const packageDocument = await epub.file('EPUB/package.opf')?.async('string')
   const navigation = await epub.file('EPUB/nav.xhtml')?.async('string')
@@ -551,6 +584,40 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     parity.assetBundleSha256 === sha256(serializeAssetBundle(assetBundle)),
     'Canonical Astro route parity asset binding is stale',
   )
+  assert(
+    /^[a-f0-9]{64}$/u.test(String(parity.routeHtmlSha256 ?? '')),
+    'Canonical Astro route parity is missing its route digest',
+  )
+  const routeParts = String(parity.canonicalRoute ?? '')
+    .split('/')
+    .filter(Boolean)
+  assert(
+    routeParts[0] === 'blog' &&
+      routeParts.length >= 2 &&
+      routeParts.every((part) => /^[A-Za-z0-9._-]+$/u.test(part)),
+    'Canonical Astro route parity has an unsafe route path',
+  )
+  const routePath = resolve('dist', ...routeParts, 'index.html')
+  let canonicalRouteHtml
+  try {
+    canonicalRouteHtml = await readFile(routePath, 'utf8')
+  } catch {
+    throw new Error(`Canonical Astro route is unavailable at ${routePath}`)
+  }
+  assert(
+    sha256(canonicalRouteHtml) === parity.routeHtmlSha256,
+    'Canonical Astro route parity is bound to a stale route artifact',
+  )
+  const canonicalRoute = canonicalRouteElements(canonicalRouteHtml)
+  let headingCursor = 0
+  for (const heading of expectedHeadings) {
+    const index = canonicalRoute.headings.indexOf(heading, headingCursor)
+    assert(
+      index >= 0,
+      `Canonical Astro route is missing publication heading: ${heading}`,
+    )
+    headingCursor = index + 1
+  }
   const expectedImageNodes = graph.nodes.filter(
     (node) =>
       (node.type === 'figure' && node.assetIds.length > 0) ||
@@ -561,7 +628,9 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       parity.imageBindings.length === expectedImageNodes.length,
     'Canonical Astro route image asset bindings are incomplete',
   )
-  const assetById = new Map(assetBundle.assets.map((asset) => [asset.id, asset]))
+  const assetById = new Map(
+    assetBundle.assets.map((asset) => [asset.id, asset]),
+  )
   parity.imageBindings.forEach((binding, index) => {
     const node = expectedImageNodes[index]
     const assetId = node.type === 'figure' ? node.assetIds[0] : node.assetId
@@ -591,6 +660,12 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     assert(
       !sourceStem || routeStem.includes(sourceStem),
       `Canonical Astro route image binding does not identify source asset ${assetId}`,
+    )
+    assert(
+      canonicalRoute.images.some(
+        (image) => image.src === routeSrc && image.alt === alternativeText,
+      ),
+      `Canonical Astro route image binding is not present in the current route for ${assetId}`,
     )
   })
   process.stdout.write(

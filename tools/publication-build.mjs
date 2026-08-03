@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
-import {
-  PublicationAdapterRegistry,
-} from '../src/publication/adapter-registry.ts'
+import { PublicationAdapterRegistry } from '../src/publication/adapter-registry.ts'
 import { astroPublicationAdapter } from '../src/publication/adapters/astro.ts'
 import {
   PUBLICATION_PROFILES,
@@ -63,6 +62,21 @@ function assetStem(fileName) {
     .replace(/[^a-z0-9]+/gu, '')
 }
 
+export function publicationRouteHtmlDigest(html) {
+  return createHash('sha256').update(html).digest('hex')
+}
+
+export function publicationRepositoryForCurrentCheckout() {
+  return {
+    commit: execFileSync('git', ['rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim(),
+    dirty:
+      execFileSync('git', ['status', '--short'], { encoding: 'utf8' }).trim()
+        .length > 0,
+  }
+}
+
 export async function writeRouteParity(entry, output, bundle) {
   const { graph } = bundle
   const routePath = resolve('dist/blog', entry, 'index.html')
@@ -87,12 +101,11 @@ export async function writeRouteParity(entry, output, bundle) {
       )
     cursor = index + 1
   }
-  const graphImageNodes = graph.nodes
-    .filter(
-      (node) =>
-        (node.type === 'figure' && node.assetIds.length > 0) ||
-        (node.type === 'media' && node.mediaKind === 'image'),
-    )
+  const graphImageNodes = graph.nodes.filter(
+    (node) =>
+      (node.type === 'figure' && node.assetIds.length > 0) ||
+      (node.type === 'media' && node.mediaKind === 'image'),
+  )
   const graphImages = graphImageNodes.map((node) => {
     const assetId = node.type === 'figure' ? node.assetIds[0] : node.assetId
     const descriptor = bundle.assetBundle.descriptor.assets.find(
@@ -101,10 +114,11 @@ export async function writeRouteParity(entry, output, bundle) {
     if (!descriptor)
       throw new Error(`Publication graph image asset is missing: ${assetId}`)
     const alternativeText =
-      node.accessibility.alternativeText ??
-      node.accessibility.longDescription ??
-      node.accessibility.transcript ??
-      ''
+      [
+        node.accessibility.alternativeText,
+        node.accessibility.longDescription,
+        node.accessibility.transcript,
+      ].find((value) => typeof value === 'string' && value.trim()) ?? ''
     const stem = assetStem(descriptor.fileName)
     const image = route.images.find(
       (candidate) =>
@@ -139,6 +153,7 @@ export async function writeRouteParity(entry, output, bundle) {
         assetBundleSha256: createHash('sha256')
           .update(serializeAssetBundle(bundle.assetBundle))
           .digest('hex'),
+        routeHtmlSha256: publicationRouteHtmlDigest(html),
         headingOrder: graphHeadings,
         localImageAlternatives: graphImageAlternatives,
         imageBindings: graphImages,
@@ -163,10 +178,15 @@ export async function publicationBuild(argv = process.argv.slice(2)) {
     profiles: PUBLICATION_PROFILES,
   })
   await writeRouteParity(options.entry, options.output, bundle)
+  const receiptPath = resolve(options.output, 'publication-receipt.json')
+  const currentReceipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+  const repository = publicationRepositoryForCurrentCheckout()
+  currentReceipt.repository = repository
+  await writeFile(receiptPath, `${JSON.stringify(currentReceipt, null, 2)}\n`)
   process.stdout.write(
     `Publication matrix built at ${resolve(options.output)} (${receipt.artifacts.length} artifacts)\n`,
   )
-  return receipt
+  return { ...receipt, repository }
 }
 
 if (

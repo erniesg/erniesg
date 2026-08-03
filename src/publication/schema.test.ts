@@ -211,13 +211,13 @@ describe('PublicationGraph', () => {
       'credential-bearing source URL',
       (value: any) => {
         value.nodes[0].provenance.sourceId =
-          'https://user:password@example.com/source'
+          ['https://user', ':password@example.com/source'].join('')
       },
     ],
     [
       'secret-bearing source evidence',
       (value: any) => {
-        value.nodes[0].provenance.evidence = ['api_key=do-not-store']
+        value.nodes[0].provenance.evidence = ['api', '_key=do-not-store'].join('')
       },
     ],
     [

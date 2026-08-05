@@ -638,4 +638,53 @@ describe('publication:check CLI', () => {
       validatePublicationGraphContent(graph, html, 'eink-epub'),
     ).toThrow(/eink-epub media diagram dropped image asset/)
   })
+
+  it('binds non-image EPUB media elements to their owning nodes', () => {
+    const cases = [
+      {
+        kind: 'audio',
+        nodeId: 'audio-media',
+        accessibility: { transcript: 'Audio transcript', decorative: false },
+        element: '<audio controls="controls" aria-label="Audio transcript"></audio>',
+      },
+      {
+        kind: 'video',
+        nodeId: 'video-media',
+        accessibility: { alternativeText: 'Video alternative', decorative: false },
+        element: '<video controls="controls" aria-label="Video alternative"></video>',
+      },
+      {
+        kind: 'interactive',
+        nodeId: 'interactive-media',
+        accessibility: {
+          alternativeText: 'Interactive alternative',
+          decorative: false,
+        },
+        element:
+          '<a href="https://example.com/interactive" aria-label="Interactive alternative">Interactive alternative</a>',
+      },
+    ]
+    for (const { kind, nodeId, accessibility, element } of cases) {
+      const graph = {
+        nodes: [
+          {
+            id: nodeId,
+            type: 'media',
+            mediaKind: kind,
+            assetId: `${kind}-asset`,
+            accessibility,
+          },
+        ],
+      }
+      const owned = `<main><figure id="${nodeId}">${element}</figure><figure id="other-${kind}"></figure></main>`
+      const misplaced = `<main><figure id="${nodeId}"></figure><figure id="other-${kind}">${element}</figure></main>`
+
+      expect(() =>
+        validatePublicationGraphContent(graph, owned, 'eink-epub'),
+      ).not.toThrow()
+      expect(() =>
+        validatePublicationGraphContent(graph, misplaced, 'eink-epub'),
+      ).toThrow(`eink-epub dropped ${kind} media for ${nodeId}`)
+    }
+  })
 })

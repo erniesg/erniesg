@@ -147,34 +147,52 @@ describe('publication:check CLI', () => {
       ),
     ).toEqual(['After punctuation', 'Hard\nBreak'])
     expect(
-      orderPdfTextRequirements(
-        ['A\nB', 'X'],
-        'a b c d e f g h i j AB X',
-      ),
+      orderPdfTextRequirements(['A\nB', 'X'], 'a b c d e f g h i j AB X'),
     ).toEqual(['A\nB', 'X'])
-    expect(
-      orderPdfTextRequirements(['𠀀\nA', 'X'], '𠀀A X'),
-    ).toEqual(['𠀀\nA', 'X'])
+    expect(orderPdfTextRequirements(['𠀀\nA', 'X'], '𠀀A X')).toEqual([
+      '𠀀\nA',
+      'X',
+    ])
     expect(orderPdfTextRequirements(['A', '𠀀'], '𠀀 A')).toEqual(['𠀀', 'A'])
+    expect(orderPdfTextRequirements(['ΟΣ\nA', 'X'], 'ΟΣA X')).toEqual([
+      'ΟΣ\nA',
+      'X',
+    ])
+    expect(orderPdfTextRequirements(['ΟΣ\nA', 'É'], 'É ΟΣA X')).toEqual([
+      'É',
+      'ΟΣ\nA',
+    ])
   })
 
   it('rejects PDF text outside the visible crop and requires every image asset', () => {
     const crop = { x: 0, y: 0, width: 100, height: 100 }
     expect(() =>
       assertPdfTextItemGeometry(
-        { str: 'inside', transform: [10, 0, 0, 10, 20, 20], width: 20, height: 10 },
+        {
+          str: 'inside',
+          transform: [10, 0, 0, 10, 20, 20],
+          width: 20,
+          height: 10,
+        },
         crop,
         'fixture',
       ),
     ).not.toThrow()
     expect(() =>
       assertPdfTextItemGeometry(
-        { str: 'outside', transform: [10, 0, 0, 10, 95, 20], width: 20, height: 10 },
+        {
+          str: 'outside',
+          transform: [10, 0, 0, 10, 95, 20],
+          width: 20,
+          height: 10,
+        },
         crop,
         'fixture',
       ),
     ).toThrow(/outside visible page bounds/)
-    expect(() => assertPdfImageCount('/Subtype /Image\n/Subtype /Image', 2, 'fixture')).not.toThrow()
+    expect(() =>
+      assertPdfImageCount('/Subtype /Image\n/Subtype /Image', 2, 'fixture'),
+    ).not.toThrow()
     expect(() => assertPdfImageCount('/Subtype /Image', 2, 'fixture')).toThrow(
       /requires 2 image assets/,
     )
@@ -207,11 +225,10 @@ describe('publication:check CLI', () => {
     const searchableText = 'parentitemchilditem'
     const locations = [...searchableText].map(() => ({ page: 1, line: 1 }))
     expect(() =>
-      assertPdfWidowOrphanRequirements(
-        searchableText,
-        locations,
-        ['child item', 'parent item'],
-      ),
+      assertPdfWidowOrphanRequirements(searchableText, locations, [
+        'child item',
+        'parent item',
+      ]),
     ).not.toThrow()
   })
 
@@ -440,9 +457,7 @@ describe('publication:check CLI', () => {
           id: 'body',
           type: 'paragraph',
           text: 'canonical text',
-          variants: [
-            { kind: 'compact', text: 'compact text', reviewed: true },
-          ],
+          variants: [{ kind: 'compact', text: 'compact text', reviewed: true }],
           inlineRuns: [{ href: '#canonical' }],
         },
         { id: 'duplicate', type: 'paragraph', text: 'repeat' },
@@ -645,13 +660,18 @@ describe('publication:check CLI', () => {
         kind: 'audio',
         nodeId: 'audio-media',
         accessibility: { transcript: 'Audio transcript', decorative: false },
-        element: '<audio controls="controls" aria-label="Audio transcript"></audio>',
+        element:
+          '<audio controls="controls" aria-label="Audio transcript"></audio>',
       },
       {
         kind: 'video',
         nodeId: 'video-media',
-        accessibility: { alternativeText: 'Video alternative', decorative: false },
-        element: '<video controls="controls" aria-label="Video alternative"></video>',
+        accessibility: {
+          alternativeText: 'Video alternative',
+          decorative: false,
+        },
+        element:
+          '<video controls="controls" aria-label="Video alternative"></video>',
       },
       {
         kind: 'interactive',

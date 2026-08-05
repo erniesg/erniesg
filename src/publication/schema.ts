@@ -101,6 +101,15 @@ export const publicationInlineRunSchema = z
 
 export type PublicationInlineRun = z.infer<typeof publicationInlineRunSchema>
 
+function inlineRunProducesLink(run: PublicationInlineRun) {
+  return Boolean(
+    run.href ||
+    ((run.semanticRole === 'citation' ||
+      run.semanticRole === 'cross-reference') &&
+      run.targetIds?.length),
+  )
+}
+
 const provenanceSchema = z
   .object({
     adapterId: idSchema,
@@ -173,15 +182,15 @@ const uniqueChildListRelationshipArray = relationshipArray.superRefine(
       })
   },
 )
-const uniqueListItemRelationshipArray = relationshipArray.min(1).superRefine(
-  (ids, context) => {
+const uniqueListItemRelationshipArray = relationshipArray
+  .min(1)
+  .superRefine((ids, context) => {
     if (new Set(ids).size !== ids.length)
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'List item relationships must be unique',
       })
-  },
-)
+  })
 const headingNode = nodeBase
   .extend({
     type: z.literal('heading'),
@@ -378,6 +387,22 @@ export const publicationGraphSchema = z
   .superRefine((graph, context) => {
     const ids = new Set<string>()
     const nodesById = new Map<string, z.infer<typeof publicationNodeSchema>>()
+    const renderedDomIds = new Set<string>()
+    const claimRenderedDomId = (
+      id: string,
+      path: Array<string | number>,
+      duplicateMessage = `Duplicate rendered DOM id: ${id}`,
+    ) => {
+      if (renderedDomIds.has(id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path,
+          message: duplicateMessage,
+        })
+        return
+      }
+      renderedDomIds.add(id)
+    }
     type InlineRunReference = {
       relationshipId: string | undefined
       semanticRole: PublicationInlineRun['semanticRole']
@@ -392,15 +417,34 @@ export const publicationGraphSchema = z
       InlineRunReference[]
     >()
     graph.nodes.forEach((node, index) => {
-      if (ids.has(node.id)) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['nodes', index, 'id'],
-          message: `Duplicate node id: ${node.id}`,
-        })
-      }
+      claimRenderedDomId(
+        node.id,
+        ['nodes', index, 'id'],
+        ids.has(node.id)
+          ? `Duplicate node id: ${node.id}`
+          : `Duplicate rendered DOM id: ${node.id}`,
+      )
       ids.add(node.id)
       nodesById.set(node.id, node)
+      if (
+        node.type === 'figure' &&
+        (node.sourceText ||
+          node.variants.some(
+            (variant) => variant.reviewed && variant.text !== undefined,
+          ))
+      )
+        claimRenderedDomId(`${node.id}-source`, ['nodes', index, 'id'])
+      if (
+        node.type === 'media' &&
+        !node.accessibility.decorative &&
+        node.accessibility.transcript?.trim()
+      )
+        claimRenderedDomId(`${node.id}-transcript`, [
+          'nodes',
+          index,
+          'accessibility',
+          'transcript',
+        ])
       if ('inlineRuns' in node && node.inlineRuns) {
         node.inlineRuns.forEach((run, runIndex) => {
           const reference: InlineRunReference = {
@@ -411,13 +455,7 @@ export const publicationGraphSchema = z
             nodeIndex: index,
             runIndex,
           }
-          if (
-            run.relationshipId &&
-            (run.href ||
-              ((run.semanticRole === 'citation' ||
-                run.semanticRole === 'cross-reference') &&
-                run.targetIds?.length))
-          ) {
+          if (run.relationshipId && inlineRunProducesLink(run)) {
             const anchors =
               inlineAnchorRunsByRelationshipId.get(run.relationshipId) ?? []
             anchors.push(reference)
@@ -464,27 +502,40 @@ export const publicationGraphSchema = z
             }
           })
         })
+        const linkProducingRuns = node.inlineRuns
+          .map((run, runIndex) => ({ run, runIndex }))
+          .filter(({ run }) => inlineRunProducesLink(run))
+          .sort(
+            (left, right) =>
+              left.run.start - right.run.start || right.run.end - left.run.end,
+          )
+        let activeRun: (typeof linkProducingRuns)[number] | undefined
+        for (const candidate of linkProducingRuns) {
+          if (activeRun && candidate.run.start < activeRun.run.end) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['nodes', index, 'inlineRuns', candidate.runIndex],
+              message: 'Link-producing inline runs must not overlap',
+            })
+          }
+          if (!activeRun || candidate.run.end > activeRun.run.end)
+            activeRun = candidate
+        }
       }
       if (node.type === 'table') {
         const cellIds = new Set<string>()
         node.rows.forEach((row, rowIndex) => {
           row.cells.forEach((cell, cellIndex) => {
-            if (cell.id && cellIds.has(cell.id)) {
-              context.addIssue({
-                code: z.ZodIssueCode.custom,
-                path: [
-                  'nodes',
-                  index,
-                  'rows',
-                  rowIndex,
-                  'cells',
-                  cellIndex,
-                  'id',
-                ],
-                message: `Duplicate table cell id: ${cell.id}`,
-              })
+            if (cell.id) {
+              claimRenderedDomId(
+                cell.id,
+                ['nodes', index, 'rows', rowIndex, 'cells', cellIndex, 'id'],
+                cellIds.has(cell.id)
+                  ? `Duplicate table cell id: ${cell.id}`
+                  : `Duplicate rendered DOM id: ${cell.id}`,
+              )
+              cellIds.add(cell.id)
             }
-            if (cell.id) cellIds.add(cell.id)
           })
         })
         node.rows.forEach((row, rowIndex) => {
@@ -521,7 +572,8 @@ export const publicationGraphSchema = z
                     'headerIds',
                     headerIndex,
                   ],
-                  message: 'Table header relationships must target header cells',
+                  message:
+                    'Table header relationships must target header cells',
                 })
               }
             })
@@ -529,6 +581,17 @@ export const publicationGraphSchema = z
         })
       }
     })
+    for (const anchors of inlineAnchorRunsByRelationshipId.values()) {
+      for (const anchor of anchors) {
+        claimRenderedDomId(anchor.relationshipId!, [
+          'nodes',
+          anchor.nodeIndex,
+          'inlineRuns',
+          anchor.runIndex,
+          'relationshipId',
+        ])
+      }
+    }
     graph.nodes.forEach((node, index) => {
       relationshipTargets(node).forEach((target, relationshipIndex) => {
         if (node.type !== 'note' && !ids.has(target)) {
@@ -660,8 +723,10 @@ export const publicationGraphSchema = z
             matchingReferences,
           )
           if (
-            (inlineAnchorRunsByRelationshipId.get(reference.relationshipId) ?? [])
-              .length !== 1
+            (
+              inlineAnchorRunsByRelationshipId.get(reference.relationshipId) ??
+              []
+            ).length !== 1
           ) {
             context.addIssue({
               code: z.ZodIssueCode.custom,
@@ -685,15 +750,18 @@ export const publicationGraphSchema = z
                 reference.runIndex,
                 'relationshipId',
               ],
-              message: 'Inline runs targeting notes must have reciprocal backlinks',
+              message:
+                'Inline runs targeting notes must have reciprocal backlinks',
             })
           }
         }
         node.backlinkIds.forEach((backlinkId, backlinkIndex) => {
           if (
             node.backlinkIds.indexOf(backlinkId) === backlinkIndex &&
-            (validReferencesByRelationshipId.get(backlinkId) ?? []).length === 1 &&
-            (inlineAnchorRunsByRelationshipId.get(backlinkId) ?? []).length === 1
+            (validReferencesByRelationshipId.get(backlinkId) ?? []).length ===
+              1 &&
+            (inlineAnchorRunsByRelationshipId.get(backlinkId) ?? []).length ===
+              1
           )
             return
           context.addIssue({
@@ -753,8 +821,7 @@ export const publicationGraphSchema = z
       visiting.delete(listId)
       visited.add(listId)
     }
-    for (const node of graph.nodes)
-      if (node.type === 'list') visitList(node.id)
+    for (const node of graph.nodes) if (node.type === 'list') visitList(node.id)
   })
 
 export type PublicationGraph = z.infer<typeof publicationGraphSchema>

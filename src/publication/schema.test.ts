@@ -224,14 +224,18 @@ describe('PublicationGraph', () => {
     [
       'credential-bearing source URL',
       (value: any) => {
-        value.nodes[0].provenance.sourceId =
-          ['https://user', ':password@example.com/source'].join('')
+        value.nodes[0].provenance.sourceId = [
+          'https://user',
+          ':password@example.com/source',
+        ].join('')
       },
     ],
     [
       'secret-bearing source evidence',
       (value: any) => {
-        value.nodes[0].provenance.evidence = ['api', '_key=do-not-store'].join('')
+        value.nodes[0].provenance.evidence = ['api', '_key=do-not-store'].join(
+          '',
+        )
       },
     ],
     [
@@ -320,19 +324,17 @@ describe('PublicationGraph', () => {
     expect(publicationGraphSchema.safeParse(cyclic).success).toBe(false)
 
     const multiplyOwned = graphFixture() as any
-    multiplyOwned.nodes.push(
-      {
-        ...common,
-        id: 'second-list-item',
-        type: 'list-item',
-        parentListId: 'list',
-        childListIds: ['list'],
-        text: 'Second owner',
-      },
-    )
-    multiplyOwned.nodes.find((node: any) => node.id === 'list').itemIds.push(
-      'second-list-item',
-    )
+    multiplyOwned.nodes.push({
+      ...common,
+      id: 'second-list-item',
+      type: 'list-item',
+      parentListId: 'list',
+      childListIds: ['list'],
+      text: 'Second owner',
+    })
+    multiplyOwned.nodes
+      .find((node: any) => node.id === 'list')
+      .itemIds.push('second-list-item')
     expect(publicationGraphSchema.safeParse(multiplyOwned).success).toBe(false)
   })
 
@@ -384,6 +386,77 @@ describe('PublicationGraph', () => {
     ).inlineRuns[0].href = '#note'
     expect(publicationGraphSchema.safeParse(graph).success).toBe(true)
   })
+
+  it('rejects link overlaps that shadow or split rendered note anchors', () => {
+    const shadowed = graphFixture() as any
+    shadowed.nodes
+      .find((node: any) => node.id === 'paragraph')
+      .inlineRuns.unshift({
+        start: 0,
+        end: 1,
+        href: 'https://example.com/shadow',
+      })
+    expect(publicationGraphSchema.safeParse(shadowed).success).toBe(false)
+
+    const split = graphFixture() as any
+    const paragraph = split.nodes.find((node: any) => node.id === 'paragraph')
+    paragraph.inlineRuns[0].end = paragraph.text.length
+    paragraph.inlineRuns.unshift({
+      start: 3,
+      end: 6,
+      href: 'https://example.com/split',
+    })
+    expect(publicationGraphSchema.safeParse(split).success).toBe(false)
+  })
+
+  it('preserves non-link styling overlap around rendered note anchors', () => {
+    const graph = graphFixture() as any
+    graph.nodes
+      .find((node: any) => node.id === 'paragraph')
+      .inlineRuns.unshift({ start: 0, end: 1, bold: true })
+    expect(publicationGraphSchema.safeParse(graph).success).toBe(true)
+  })
+
+  it.each([
+    ['node ID', 'heading', (_graph: any) => {}],
+    [
+      'table-cell ID',
+      'table-cell',
+      (graph: any) => {
+        graph.nodes.find(
+          (node: any) => node.id === 'table',
+        ).rows[0].cells[0].id = 'table-cell'
+      },
+    ],
+    [
+      'generated figure source ID',
+      'figure-source',
+      (graph: any) => {
+        graph.nodes.find((node: any) => node.id === 'figure').sourceText =
+          'Source'
+      },
+    ],
+    [
+      'generated media transcript ID',
+      'media-transcript',
+      (graph: any) => {
+        graph.nodes.find(
+          (node: any) => node.id === 'media',
+        ).accessibility.transcript = 'Transcript'
+      },
+    ],
+  ])(
+    'rejects note relationship IDs colliding with a %s',
+    (_label, id, mutate) => {
+      const graph = graphFixture() as any
+      mutate(graph)
+      graph.nodes.find(
+        (node: any) => node.id === 'paragraph',
+      ).inlineRuns[0].relationshipId = id
+      graph.nodes.find((node: any) => node.id === 'note').backlinkIds = [id]
+      expect(publicationGraphSchema.safeParse(graph).success).toBe(false)
+    },
+  )
 
   it.each([
     [

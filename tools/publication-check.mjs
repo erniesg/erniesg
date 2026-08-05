@@ -215,7 +215,8 @@ export function assertPdfTextItemGeometry(item, crop, expected) {
 }
 
 export function assertPdfImageCount(source, requiredCount, expected) {
-  const actual = [...String(source ?? '').matchAll(/\/Subtype\s*\/Image\b/gu)].length
+  const actual = [...String(source ?? '').matchAll(/\/Subtype\s*\/Image\b/gu)]
+    .length
   assert(
     actual >= requiredCount,
     `${expected} PDF contains ${actual} image assets but requires ${requiredCount} image assets`,
@@ -269,11 +270,12 @@ export function assertPdfWidowOrphanRequirements(
 }
 
 export function orderPdfTextRequirements(requiredTexts, renderedText) {
-  const renderedTextWithCollapsedWhitespace = String(renderedText ?? '').replace(
-    /\s+/gu,
-    ' ',
+  const renderedTextWithCollapsedWhitespace = String(
+    renderedText ?? '',
+  ).replace(/\s+/gu, ' ')
+  const normalizedRenderedText = normalizePdfVerificationText(
+    renderedTextWithCollapsedWhitespace,
   )
-  let normalizedRenderedText = ''
   const normalizedOffsetByRawIndex = []
   let normalizedOffset = 0
   let rawIndex = 0
@@ -282,7 +284,6 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
     for (let offset = 0; offset < codePoint.length; offset += 1)
       normalizedOffsetByRawIndex[rawIndex + offset] = normalizedOffset
     if (normalized) {
-      normalizedRenderedText += normalized
       normalizedOffset += normalized.length
     }
     rawIndex += codePoint.length
@@ -290,21 +291,26 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
   normalizedOffsetByRawIndex[renderedTextWithCollapsedWhitespace.length] =
     normalizedOffset
   const renderedTextPosition = (value) => {
-    const rawExpected = String(value ?? '').trim().replace(/\s+/gu, ' ')
-    const exactIndex = rawExpected
-      ? renderedTextWithCollapsedWhitespace.indexOf(rawExpected)
-      : -1
-    if (exactIndex >= 0)
-      return (
-        normalizedOffsetByRawIndex[exactIndex] ?? Number.MAX_SAFE_INTEGER
-      )
+    const rawValue = String(value ?? '').trim()
+    const rawExpected = rawValue.replace(/\s+/gu, ' ')
+    const rawExpectedWithoutLineBreaks = rawValue
+      .replace(/[\r\n]+/gu, '')
+      .replace(/\s+/gu, ' ')
+    for (const exactExpected of new Set([
+      rawExpected,
+      rawExpectedWithoutLineBreaks,
+    ])) {
+      const exactIndex = exactExpected
+        ? renderedTextWithCollapsedWhitespace.indexOf(exactExpected)
+        : -1
+      if (exactIndex >= 0)
+        return normalizedOffsetByRawIndex[exactIndex] ?? Number.MAX_SAFE_INTEGER
+    }
     const expected = normalizePdfVerificationText(value)
     const normalizedIndex = expected
       ? normalizedRenderedText.indexOf(expected)
       : -1
-    return normalizedIndex < 0
-      ? Number.MAX_SAFE_INTEGER
-      : normalizedIndex
+    return normalizedIndex < 0 ? Number.MAX_SAFE_INTEGER : normalizedIndex
   }
   return [...(requiredTexts ?? [])].sort((left, right) => {
     return renderedTextPosition(left) - renderedTextPosition(right)
@@ -352,10 +358,7 @@ export function assertPdfLinkAnnotations(annotations, requiredLinks) {
       const target = pdfAnnotationTarget(annotation)
       return target === required
     })
-    assert(
-      index >= 0,
-      `PDF is missing a link annotation for ${required}`,
-    )
+    assert(index >= 0, `PDF is missing a link annotation for ${required}`)
     remaining.splice(index, 1)
   }
 }
@@ -452,15 +455,15 @@ function textContent(node) {
 
 function assertNodeImages(element, assetIds, alternative, label, assetPaths) {
   const images = imageElementsInNode(element)
-  assert(
-    images.length === assetIds.length,
-    `${label} dropped image asset`,
-  )
+  assert(images.length === assetIds.length, `${label} dropped image asset`)
   assetIds.forEach((assetId, index) => {
     const image = images[index]
     const expectedPath = assetPaths?.get(assetId)
     if (assetPaths)
-      assert(expectedPath, `${label} references an unknown image asset ${assetId}`)
+      assert(
+        expectedPath,
+        `${label} references an unknown image asset ${assetId}`,
+      )
     assert(
       attribute(image, 'alt') === alternative &&
         (!expectedPath || attribute(image, 'src') === expectedPath),
@@ -472,7 +475,10 @@ function assertNodeImages(element, assetIds, alternative, label, assetPaths) {
 function assertWebPubNode(node, profile, elements, assetPaths) {
   const label = profile === 'eink-epub' ? 'eink-epub' : 'WebPub'
   if (node.type === 'heading') {
-    assert(elements.get(node.id)?.tagName === `h${node.level}`, `${label} dropped heading ${node.id}`)
+    assert(
+      elements.get(node.id)?.tagName === `h${node.level}`,
+      `${label} dropped heading ${node.id}`,
+    )
     return
   }
   if (node.type === 'figure') {
@@ -491,8 +497,7 @@ function assertWebPubNode(node, profile, elements, assetPaths) {
       assert(
         Boolean(node.sourceText) &&
           hasTag(figure, 'pre') &&
-            textContent(elements.get(`${node.id}-source`)) ===
-              node.sourceText,
+          textContent(elements.get(`${node.id}-source`)) === node.sourceText,
         `${label} dropped source fallback for figure ${node.id}`,
       )
     return
@@ -595,8 +600,7 @@ function requiredGraphNodeOrder(graph) {
     if (!node || visited.has(node.id)) return
     visited.add(node.id)
     if (required(node)) result.push(node.id)
-    if ('captionId' in node && node.captionId)
-      append(byId.get(node.captionId))
+    if ('captionId' in node && node.captionId) append(byId.get(node.captionId))
     if (node.type !== 'list') return
     for (const itemId of node.itemIds ?? []) {
       const item = byId.get(itemId)
@@ -826,10 +830,7 @@ export async function checkPdf(
     Array.isArray(requiredTexts) && requiredTexts.length > 0,
     `${size} PDF body text requirements are missing`,
   )
-  assertPdfSearchableTextRequirements(
-    text,
-    requiredTexts,
-  )
+  assertPdfSearchableTextRequirements(text, requiredTexts)
   if (widowOrphanTexts.length)
     assertPdfWidowOrphanRequirements(text, locations, widowOrphanTexts)
   assert(
@@ -946,13 +947,13 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requiredImageCount: pdfNodes.filter(
-      (node) => node.requirement !== 'optional',
-    ).filter(
-      (node) =>
-        (node.type === 'figure' && node.assetIds.length > 0) ||
-        (node.type === 'media' && node.mediaKind === 'image'),
-    ).length,
+    requiredImageCount: pdfNodes
+      .filter((node) => node.requirement !== 'optional')
+      .filter(
+        (node) =>
+          (node.type === 'figure' && node.assetIds.length > 0) ||
+          (node.type === 'media' && node.mediaKind === 'image'),
+      ).length,
     requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
     widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
   }
@@ -1054,7 +1055,8 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     'Canonical Astro route parity asset binding is stale',
   )
   assert(
-    parity.repositoryCommit === currentCommit && parity.repositoryDirty === false,
+    parity.repositoryCommit === currentCommit &&
+      parity.repositoryDirty === false,
     'Canonical Astro route parity is bound to a stale or dirty repository',
   )
   assert(

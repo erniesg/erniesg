@@ -17122,6 +17122,144 @@ describe('PDF visual association graph', () => {
     )
   })
 
+  it('keeps edge-recovery crops and synthetic ownership inside adjacent caption lanes', async () => {
+    const panelObjectSpecs = [
+      ['left', 0],
+      ['right', 0.5],
+    ] as const
+    const objects = panelObjectSpecs.flatMap(([side, offset]) => [
+      {
+        id: `image-p001-${side}-lane-recovery-1`,
+        page: 1,
+        kind: 'image' as const,
+        box: box(offset + 0.06, 0.07, 0.38, 0.17),
+        confidence: 0.99,
+        assetId: null,
+      },
+      {
+        id: `image-p001-${side}-lane-recovery-2`,
+        page: 1,
+        kind: 'image' as const,
+        box: box(offset + 0.065, 0.075, 0.37, 0.16),
+        confidence: 0.99,
+        assetId: null,
+      },
+      {
+        id: `vector-p001-${side}-lane-recovery-top-band`,
+        page: 1,
+        kind: 'vector' as const,
+        box: box(offset + 0.08, 0.035, 0.34, 0.02),
+        confidence: 0.99,
+        assetId: null,
+      },
+    ])
+    const panelText = [
+      textRegion(
+        'left-lane-recovery-label-1',
+        'Left owned panel label one',
+        box(0.12, 0.08, 0.2, 0.018),
+      ),
+      textRegion(
+        'left-lane-recovery-label-2',
+        'Left owned panel label two',
+        box(0.35, 0.16, 0.145, 0.018),
+      ),
+      textRegion(
+        'right-lane-recovery-label-1',
+        'Right owned panel label one',
+        box(0.505, 0.08, 0.145, 0.018),
+      ),
+      textRegion(
+        'right-lane-recovery-label-2',
+        'Right owned panel label two',
+        box(0.68, 0.16, 0.2, 0.018),
+      ),
+    ]
+    const captions = [
+      {
+        ...captionRegion(
+          'Figure 1. The left recovered panel.',
+          box(0.03, 0.26, 0.47, 0.025),
+        ),
+        id: 'lane-recovery-left-caption',
+        sourceCaptionLane: { boundary: 0.5, side: 'left' as const },
+      },
+      {
+        ...captionRegion(
+          'Figure 2. The right recovered panel.',
+          box(0.5, 0.26, 0.47, 0.025),
+        ),
+        id: 'lane-recovery-right-caption',
+        sourceCaptionLane: { boundary: 0.5, side: 'right' as const },
+      },
+    ]
+    const rasterizeFigure = vi.fn(
+      async (input: Parameters<PdfFigureRasterizer>[0]) => {
+        if (!input.sourceObjectIds[0].startsWith('source-panel:')) {
+          throw new Error('PDF page crop has source ink touching its edge')
+        }
+        return createSourcePageCropAsset({
+          kind: 'raster',
+          cropBox: input.sourceBox,
+          sourceObjectIds: input.sourceObjectIds,
+          sourceBoxes: input.sourceBoxes,
+          width: 80,
+          height: 40,
+          pixels: new Uint8Array(80 * 40 * 4).fill(96),
+        })
+      },
+    )
+    const result = await reconstructPdfVisuals({
+      pages: [page(objects)],
+      regions: [
+        ...objects.map((object, index) =>
+          objectRegion(
+            `lane-recovery-object-${index + 1}`,
+            object.id,
+            object.box,
+          ),
+        ),
+        ...panelText,
+        ...captions,
+      ],
+      rasterizeFigure,
+    })
+
+    expect(result.relationships).toHaveLength(2)
+    expect(result.relationships).toMatchObject([
+      { status: 'matched' },
+      { status: 'matched' },
+    ])
+    expect(
+      result.relationships.map((relationship) => relationship.sourceObjectIds),
+    ).toEqual([
+      ['source-panel:lane-recovery-left-caption'],
+      ['source-panel:lane-recovery-right-caption'],
+    ])
+    const recoveryInputs = rasterizeFigure.mock.calls
+      .map(([input]) => input)
+      .filter((input) => input.sourceObjectIds[0].startsWith('source-panel:'))
+    expect(recoveryInputs).toHaveLength(2)
+    expect(
+      recoveryInputs.map((input) => ({
+        left: input.sourceBox.x,
+        right: input.sourceBox.x + input.sourceBox.width,
+      })),
+    ).toEqual([
+      expect.objectContaining({ left: expect.any(Number), right: 0.5 }),
+      expect.objectContaining({ left: 0.5, right: expect.any(Number) }),
+    ])
+    expect(
+      result.relationships.map((relationship) => relationship.sourceBoxes[1]),
+    ).toEqual(recoveryInputs.map((input) => input.sourceBox))
+    expect(
+      result.relationships.map((relationship) => relationship.sourceLineIds),
+    ).toEqual([
+      panelText.slice(0, 2).map((region) => region.lines[0].id),
+      panelText.slice(2).map((region) => region.lines[0].id),
+    ])
+  })
+
   it('keeps adjacent panel-label prose inside its uniquely captioned multi-panel figure', async () => {
     const panelBoxes = [
       box(0.176, 0.103, 0.291, 0.169),

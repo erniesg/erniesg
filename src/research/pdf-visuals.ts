@@ -468,13 +468,29 @@ function captionLaneScopedRenderBox(
   }
 }
 
-function captionLaneHorizontalBounds(caption: PdfPageRegion) {
+type SourceHorizontalBounds = { left: number; right: number }
+
+function captionLaneHorizontalBounds(
+  caption: PdfPageRegion,
+): SourceHorizontalBounds | undefined {
   const lane = caption.sourceCaptionLane
   if (!lane) return undefined
   const boundary = Math.max(0, Math.min(1, lane.boundary))
   return lane.side === 'left'
     ? { left: 0, right: boundary }
     : { left: boundary, right: 1 }
+}
+
+function sourceBoxWithinHorizontalBounds(
+  sourceBox: NormalizedSourceBox,
+  horizontalBounds: SourceHorizontalBounds | undefined,
+) {
+  return (
+    !horizontalBounds ||
+    (sourceBox.x >= horizontalBounds.left - SOURCE_CROP_CONTAINMENT_TOLERANCE &&
+      sourceBox.x + sourceBox.width <=
+        horizontalBounds.right + SOURCE_CROP_CONTAINMENT_TOLERANCE)
+  )
 }
 
 function narrowCaptionClaimsOneColumn(
@@ -2870,7 +2886,7 @@ function availableRegionsForTable(
 
 function paddedUnionBox(
   boxes: NormalizedSourceBox[],
-  horizontalBounds?: { left: number; right: number },
+  horizontalBounds?: SourceHorizontalBounds,
 ) {
   const padding = 0.004
   const left = Math.max(
@@ -3446,6 +3462,7 @@ function neighborBoundedCropBoxes(
   regions: PdfPageRegion[],
   desiredPadding: number,
   neighborGapFraction = 0.25,
+  horizontalBounds?: SourceHorizontalBounds,
 ) {
   const padded = paddedEquationCropBox(sourceBox, desiredPadding)
   const desired = {
@@ -3547,9 +3564,15 @@ function neighborBoundedCropBoxes(
           (nearestRight - (sourceBox.x + sourceBox.width)) * neighborGapFraction
         : null,
   }
-  const left = bounds.left ?? desired.left
+  const left = Math.max(
+    horizontalBounds?.left ?? 0,
+    bounds.left ?? desired.left,
+  )
   const top = bounds.top ?? desired.top
-  const right = bounds.right ?? desired.right
+  const right = Math.min(
+    horizontalBounds?.right ?? 1,
+    bounds.right ?? desired.right,
+  )
   const bottom = bounds.bottom ?? desired.bottom
   return [
     {
@@ -5426,6 +5449,7 @@ function captionTextBoundedFigureRetryBox(
   candidate: VisualCandidate,
   boundedSourceBox: NormalizedSourceBox,
   captionBox: NormalizedSourceBox,
+  horizontalBounds?: SourceHorizontalBounds,
 ) {
   if (
     candidate.kind !== 'figure' ||
@@ -5455,27 +5479,25 @@ function captionTextBoundedFigureRetryBox(
     ),
   )
   const bottom = boundedSourceBox.y + boundedSourceBox.height
-  const left =
-    nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
-      ? captionBox.x
-      : rounded(
-          Math.max(
-            0,
-            Math.min(...overlayBoxes.map((sourceBox) => sourceBox.x)) -
-              CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
-          ),
-        )
-  const right =
-    nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
-      ? captionBox.x + captionBox.width
-      : rounded(
-          Math.min(
-            1,
-            Math.max(
-              ...overlayBoxes.map((sourceBox) => sourceBox.x + sourceBox.width),
-            ) + CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
-          ),
-        )
+  const left = rounded(
+    Math.max(
+      horizontalBounds?.left ?? 0,
+      nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+        ? captionBox.x
+        : Math.min(...overlayBoxes.map((sourceBox) => sourceBox.x)) -
+            CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
+    ),
+  )
+  const right = rounded(
+    Math.min(
+      horizontalBounds?.right ?? 1,
+      nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+        ? captionBox.x + captionBox.width
+        : Math.max(
+            ...overlayBoxes.map((sourceBox) => sourceBox.x + sourceBox.width),
+          ) + CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
+    ),
+  )
   if (
     top <= boundedSourceBox.y + SOURCE_CROP_CONTAINMENT_TOLERANCE ||
     top >= bottom ||
@@ -5503,6 +5525,7 @@ function captionBoundedPanelRecoveryBoxes(
   regions: readonly PdfPageRegion[],
   objectKinds: ReadonlyMap<string, PdfNativeObject['kind']>,
   pageCropFailureEvidence: string | undefined,
+  horizontalBounds?: SourceHorizontalBounds,
 ) {
   const captionBox = caption.box
   const evidence = new Set(candidate.evidence ?? [])
@@ -5578,7 +5601,7 @@ function captionBoundedPanelRecoveryBoxes(
 
   const left = rounded(
     Math.max(
-      0,
+      horizontalBounds?.left ?? 0,
       Math.min(
         captionBox.x + CAPTION_BOUNDED_PANEL_EDGE_RETRY_PADDING,
         Math.min(...overlayBoxes.map((box) => box.x)) -
@@ -5591,7 +5614,7 @@ function captionBoundedPanelRecoveryBoxes(
   )
   const right = rounded(
     Math.min(
-      1,
+      horizontalBounds?.right ?? 1,
       Math.max(
         captionBox.x +
           captionBox.width -
@@ -10729,6 +10752,8 @@ export async function reconstructPdfVisuals({
           ? paddedUnionBox([laneScopedRenderBox], laneHorizontalBounds)
           : (best.renderBox ?? best.sourceBoxes[0])
         : null
+    const figureOwnershipSourceObjectIds =
+      best?.kind === 'figure' ? [...best.sourceObjectIds] : []
     const figureLineageConflictsPriorOwnership =
       best?.kind === 'figure' &&
       (best.sourceObjectIds.some((sourceObjectId) => {
@@ -10741,7 +10766,11 @@ export async function reconstructPdfVisuals({
           materiallyOverlappingSourceBoxes(priorScope, figureOwnershipScope),
         )
       }) ||
-        containedFigureOverlayLineage(best, regions).some((overlay) =>
+        containedFigureOverlayLineage(best, regions, {
+          ...(figureOwnershipScope
+            ? { containmentBox: figureOwnershipScope }
+            : {}),
+        }).some((overlay) =>
           overlay.lineIds.some((lineId) => consumedLineIds.has(lineId)),
         ))
     if (
@@ -10934,6 +10963,7 @@ export async function reconstructPdfVisuals({
           best,
           boundedCropBaseBox,
           caption.box,
+          laneHorizontalBounds,
         )
         const retryLineage =
           retryBox &&
@@ -11015,6 +11045,7 @@ export async function reconstructPdfVisuals({
             regions,
             padding,
             0.75,
+            laneHorizontalBounds,
           )
           for (const retryBox of retryBoxes) {
             if (
@@ -11246,6 +11277,10 @@ export async function reconstructPdfVisuals({
       }
       if (
         sourceCrop &&
+        sourceBoxWithinHorizontalBounds(
+          sourceCrop.sourceCropBox ?? compositeSourceBox!,
+          laneHorizontalBounds,
+        ) &&
         completeSourcePageCropAsset(
           sourceCrop,
           best.kind,
@@ -11321,6 +11356,7 @@ export async function reconstructPdfVisuals({
         regions,
         objectKinds,
         pageCropFailureEvidence,
+        laneHorizontalBounds,
       )
       const sourceObjectId = `source-panel:${caption.id}`
       for (const recovery of panelRecoveryBoxes) {
@@ -11339,6 +11375,10 @@ export async function reconstructPdfVisuals({
         })
         if (
           retryCrop &&
+          sourceBoxWithinHorizontalBounds(
+            retryCrop.sourceCropBox ?? recovery.sourceBox,
+            laneHorizontalBounds,
+          ) &&
           completeSourcePageCropAsset(
             retryCrop,
             'figure',
@@ -11360,6 +11400,38 @@ export async function reconstructPdfVisuals({
           best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
             ...box,
           }))
+          best.sourceRegionIds = best.sourceRegionIds.filter(
+            (sourceRegionId) => {
+              const sourceRegion = regions.find(
+                (region) => region.id === sourceRegionId,
+              )
+              return Boolean(
+                sourceRegion &&
+                intersectSourceBox(compositeSourceBox!, sourceRegion.box),
+              )
+            },
+          )
+          const retainedSourceLineIds = new Set(
+            regions.flatMap((region) =>
+              best.sourceRegionIds.includes(region.id)
+                ? region.lines.flatMap((line) =>
+                    intersectSourceBox(compositeSourceBox!, line.box)
+                      ? [line.id]
+                      : [],
+                  )
+                : [],
+            ),
+          )
+          best.sourceLineIds = best.sourceLineIds?.filter((sourceLineId) =>
+            retainedSourceLineIds.has(sourceLineId),
+          )
+          best.sourceText = regions
+            .filter((region) => best.sourceRegionIds.includes(region.id))
+            .flatMap((region) =>
+              region.lines.filter((line) => retainedSourceLineIds.has(line.id)),
+            )
+            .map((line) => line.text)
+            .join(' ')
           best.assetIds = [retryCrop.id]
           best.nativeEnvelopeIncomplete = false
           retainedPageCrop = retryCrop
@@ -11473,6 +11545,10 @@ export async function reconstructPdfVisuals({
       (Boolean(
         retainedPageCrop &&
         compositeSourceBox &&
+        sourceBoxWithinHorizontalBounds(
+          compositeSourceBox,
+          laneHorizontalBounds,
+        ) &&
         completeSourcePageCropAsset(
           retainedPageCrop,
           best!.kind,
@@ -11587,12 +11663,25 @@ export async function reconstructPdfVisuals({
       result.best.evidence.push('unresolved-bounded-table-text-owned')
     }
     if (status === 'matched') {
-      for (const sourceObjectId of best!.sourceObjectIds) {
+      const finalFigureOwnershipScope =
+        best!.kind === 'figure' && retainedPageCrop && compositeSourceBox
+          ? compositeSourceBox
+          : figureOwnershipScope
+      const consumedRelationshipSourceObjectIds =
+        best!.kind === 'figure'
+          ? [
+              ...new Set([
+                ...figureOwnershipSourceObjectIds,
+                ...best!.sourceObjectIds,
+              ]),
+            ]
+          : best!.sourceObjectIds
+      for (const sourceObjectId of consumedRelationshipSourceObjectIds) {
         consumedSourceObjectIds.add(sourceObjectId)
-        if (figureOwnershipScope && best!.kind === 'figure') {
+        if (finalFigureOwnershipScope && best!.kind === 'figure') {
           const priorScopes =
             consumedSourceObjectScopes.get(sourceObjectId) ?? []
-          priorScopes.push({ ...figureOwnershipScope })
+          priorScopes.push({ ...finalFigureOwnershipScope })
           consumedSourceObjectScopes.set(sourceObjectId, priorScopes)
         }
       }

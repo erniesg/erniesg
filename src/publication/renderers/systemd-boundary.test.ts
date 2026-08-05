@@ -120,6 +120,8 @@ describe('publication systemd process-tree boundary', () => {
     )
     expect(invocation.args).not.toContain('sh')
     expect(invocation.args).not.toContain('-c')
+    expect(invocation.args).not.toContain('--user')
+    expect(invocation.args).not.toContain('--map-root-user')
     expect(invocation.args.join('\n')).not.toMatch(/\bunshare\b|\bip\b/)
     expect(invocation.timeoutMilliseconds).toBeGreaterThan(120_000)
     expect(invocation.timeoutMilliseconds).toBeLessThanOrEqual(135_000)
@@ -332,6 +334,18 @@ describe('publication systemd process-tree boundary', () => {
         const outsidePath = `${root}-outside.png`
         await writeFile(outsidePath, 'outside')
         try {
+          await writeFile(htmlPath, `<!doctype html><img src="${outsidePath}">`)
+          await expect(
+            runPublicationIsolatedRender({
+              renderer,
+              publicationRoot: root,
+              inputPath: htmlPath,
+              outputPath,
+              size: 'A4',
+              browserPath,
+              expectedBrowserVersion,
+            }),
+          ).rejects.toThrow(/systemd-run exited with status/)
           await writeFile(
             htmlPath,
             `<!doctype html><img src="${outsidePath}"><script>navigator.serviceWorker?.register('service-worker.js');fetch('http://127.0.0.1:${http4Port}/fresh',{cache:'reload'});fetch('http://[::1]:${http6Port}/fresh');new WebSocket('ws://127.0.0.1:${http4Port}/delayed');new WebSocket('ws://[::1]:${http6Port}/delayed');const peer=new RTCPeerConnection({iceServers:[{urls:['stun:127.0.0.1:${udp4Port}','stun:[::1]:${udp6Port}']}]});peer.createDataChannel('probe');peer.createOffer().then((offer)=>peer.setLocalDescription(offer));setTimeout(()=>fetch('http://dns-probe.invalid/delayed'),250)</script>`,

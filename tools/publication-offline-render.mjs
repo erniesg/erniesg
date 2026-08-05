@@ -529,6 +529,13 @@ async function runAbsolute(
   })
 }
 
+export function publicationBrowserVersionMatches(output, expectedVersion) {
+  const actual = String(output).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
+  return (
+    actual === expectedVersion && /^\d+\.\d+\.\d+\.\d+$/.test(expectedVersion)
+  )
+}
+
 async function verifyBrowser(request, monitor) {
   const browser = await realpath(request.browserPath)
   if (!isPathInside(await realpath(BROWSER_CACHE), browser))
@@ -541,7 +548,7 @@ async function verifyBrowser(request, monitor) {
   })
   const output = `${stdout}\n${stderr}`.trim()
   const actual = output.match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
-  if (actual !== request.expectedBrowserVersion)
+  if (!publicationBrowserVersionMatches(output, request.expectedBrowserVersion))
     throw new Error(
       `Pinned publication browser version ${actual ?? '(missing)'} does not match ${request.expectedBrowserVersion}`,
     )

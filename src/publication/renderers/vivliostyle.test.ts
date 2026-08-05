@@ -12,7 +12,6 @@ import {
   publicationEpubManifestItemId,
   publicationEpubNavigationLabels,
   publicationEpubTocHeadings,
-  publicationBrowserVersionMatches,
   publicationGraphToHtml,
   publicationPlaywrightExecutableCandidates,
   publicationVariantKindForProfile,
@@ -884,18 +883,6 @@ describe('Vivliostyle publication renderer boundary', () => {
       expect.stringContaining('chrome-win64/chrome.exe'),
       expect.stringContaining('chrome-headless-shell-win64'),
     ])
-  })
-
-  it('requires the pinned browser build before rendering', () => {
-    expect(
-      publicationBrowserVersionMatches('Chromium 149.0.7827.0', '149.0.7827.0'),
-    ).toBe(true)
-    expect(
-      publicationBrowserVersionMatches(
-        'Chromium 149.0.7827.55',
-        '149.0.7827.0',
-      ),
-    ).toBe(false)
   })
 
   it('removes stale WebPub and layout assets before a new publication', async () => {

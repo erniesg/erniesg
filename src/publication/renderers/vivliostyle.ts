@@ -767,15 +767,6 @@ export function publicationPlaywrightExecutableCandidates(
   ]
 }
 
-export function publicationBrowserVersionMatches(
-  versionOutput: string,
-  expectedVersion: string,
-) {
-  const actual = String(versionOutput).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
-  const expected = String(expectedVersion).match(/^(\d+\.\d+\.\d+\.\d+)$/u)?.[1]
-  return Boolean(actual && expected && actual === expected)
-}
-
 async function createEpub(
   bundle: PublicationBundle,
   outputPath: string,

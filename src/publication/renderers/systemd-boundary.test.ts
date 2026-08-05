@@ -67,9 +67,24 @@ async function listenUdp(
 }
 
 async function closeServer(server: ReturnType<typeof createServer>) {
+  if (!server.listening) return
   await new Promise<void>((accept, reject) =>
     server.close((error) => (error ? reject(error) : accept())),
   )
+}
+
+async function closeUdp(socket: ReturnType<typeof createSocket>) {
+  await new Promise<void>((accept, reject) => {
+    try {
+      socket.close(accept)
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code === 'ERR_SOCKET_DGRAM_NOT_RUNNING'
+      )
+        accept()
+      else reject(error)
+    }
+  })
 }
 
 describe('publication systemd process-tree boundary', () => {
@@ -368,9 +383,12 @@ describe('publication systemd process-tree boundary', () => {
           await rm(outsidePath, { force: true })
         }
       } finally {
-        udp4.close()
-        udp6.close()
-        await Promise.all([closeServer(http4), closeServer(http6)])
+        await Promise.all([
+          closeUdp(udp4),
+          closeUdp(udp6),
+          closeServer(http4),
+          closeServer(http6),
+        ])
         await rm(root, { recursive: true, force: true })
       }
     },

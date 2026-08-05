@@ -329,7 +329,6 @@ export async function runPublicationIsolatedRender(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
-  await rm(outputPath, { force: true })
   await Promise.all([
     access(PUBLICATION_OFFLINE_HELPER_PATH, constants.R_OK),
     access(browserPath, constants.X_OK),
@@ -340,6 +339,7 @@ export async function runPublicationIsolatedRender(
   )
     throw new Error('Publication isolation helper path is not canonical')
   const hostNetworkNamespace = await readlink('/proc/self/ns/net')
+  await rm(outputPath, { force: true })
   const requestPath = resolve(
     publicationRoot,
     `.publication-render-${randomBytes(8).toString('hex')}.json`,

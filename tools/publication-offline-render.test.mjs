@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -9,6 +9,7 @@ import {
   assertPublicationResourceUrl,
   authenticatePublicationRequest,
   executePublicationRenderRequest,
+  publicationBrowserVersionMatches,
   publicationChildEnvironment,
   renderPlaywrightPublication,
   validatePublicationResources,
@@ -73,6 +74,18 @@ describe('offline publication render helper', () => {
     ).toThrow(/unexpected request field/i)
   })
 
+  it('requires the exact pinned browser version inside the helper', () => {
+    expect(
+      publicationBrowserVersionMatches('Chromium 149.0.7827.0', '149.0.7827.0'),
+    ).toBe(true)
+    expect(
+      publicationBrowserVersionMatches(
+        'Chromium 149.0.7827.55',
+        '149.0.7827.0',
+      ),
+    ).toBe(false)
+  })
+
   it('accepts expected HTML, CSS, font, and image assets inside the publication root', async () => {
     const root = await localPublicationFixture()
     await expect(
@@ -89,7 +102,7 @@ describe('offline publication render helper', () => {
 
   it('rejects outside-root files and arbitrary file, data, blob, or network resources', async () => {
     const root = await localPublicationFixture()
-    const outside = resolve(dirname(root), 'outside-publication.png')
+    const outside = `${root}-outside-publication.png`
     await writeFile(outside, 'outside')
 
     await expect(

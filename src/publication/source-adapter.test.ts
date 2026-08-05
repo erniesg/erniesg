@@ -75,6 +75,21 @@ describe('PublicationSourceAdapter', () => {
     ).toThrow(/missing asset/)
   })
 
+  it('rejects a reviewed figure variant that references a missing asset', () => {
+    const result = adaptResearchPaper(researchPaperSchema.parse(rawPaper))
+    const figure = result.graph.nodes.find((node) => node.type === 'figure')
+    if (!figure || figure.type !== 'figure')
+      throw new Error('missing figure fixture')
+    figure.variants.push({
+      kind: 'static',
+      assetId: 'missing-static-asset',
+      reviewed: true,
+    })
+    expect(() => validatePublicationSourceResult(result)).toThrow(
+      /fig-pipeline.*missing asset missing-static-asset/,
+    )
+  })
+
   it('creates deterministic exact-head contract receipts', () => {
     const result = adaptResearchPaper(researchPaperSchema.parse(rawPaper))
     const environment = {

@@ -172,14 +172,17 @@ export function validatePublicationSourceResult(
   }
   const assetIds = new Set(descriptor.assets.map((asset) => asset.id))
   graph.nodes.forEach((node) => {
-    const referenced =
+    const canonical =
       node.type === 'figure'
         ? node.assetIds
         : node.type === 'media'
           ? [node.assetId]
-          : node.variants.flatMap((variant) =>
-              variant.assetId ? [variant.assetId] : [],
-            )
+          : []
+    const referenced = canonical.concat(
+      node.variants.flatMap((variant) =>
+        variant.assetId ? [variant.assetId] : [],
+      ),
+    )
     referenced.forEach((assetId) => {
       if (!assetIds.has(assetId)) {
         throw new Error(

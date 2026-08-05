@@ -2477,6 +2477,103 @@ describe('PDF semantic signal detection', () => {
     expect(result.semanticTextViolationNodeIds).toEqual([])
   })
 
+  it('validates numeric CJK same-page-column decisions from layout', () => {
+    const sourceRuns = [
+      {
+        ...run('研究结果继续', 0.09, 0.82, 10, 0.385),
+        sourceSequenceIndex: 510,
+      },
+      {
+        ...run('2024年的结果', 0.515, 0.1, 10, 0.385),
+        sourceSequenceIndex: 511,
+      },
+    ]
+    const regions = sourceRuns.map((sourceRun, index): PdfPageRegion => ({
+      id: `numeric-cjk-column-region-${index + 1}`,
+      page: 1,
+      kind: 'body',
+      column: index === 0 ? 'left' : 'right',
+      text: sourceRun.text,
+      confidence: 1,
+      box: { ...sourceRun },
+      lines: [
+        {
+          id: `numeric-cjk-column-line-${index + 1}`,
+          text: sourceRun.text,
+          fontSize: sourceRun.fontSize,
+          box: { ...sourceRun },
+          runs: [sourceRun],
+          sourceFragmentLineage: {
+            algorithm: 'source-run-fragment-v1',
+            sourceLineId: `numeric-cjk-column-source-line-${index + 1}`,
+            fragment: 'whole',
+            sourceSequenceIndexes: [sourceRun.sourceSequenceIndex],
+          },
+        },
+      ],
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }))
+    const endpoint = (index: number) => ({
+      regionId: regions[index].id,
+      lineId: regions[index].lines[0].id,
+      runIndex: 0,
+      sourceSequenceIndex: sourceRuns[index].sourceSequenceIndex!,
+      sourceRunSha256: pdfSourceSemanticFlowRunSha256(sourceRuns[index]),
+      sourceFragmentId: `numeric-cjk-column-source-line-${index + 1}:whole`,
+    })
+    const decision = sourceSemanticFlowDecision({
+      page: 1,
+      rotation: 0,
+      method: 'pdf-text',
+      topology: 'same-page-column',
+      outcome: 'no-space',
+      from: endpoint(0),
+      to: endpoint(1),
+      evidence: [...PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE],
+    })
+    const paper: ResearchPaper = {
+      id: 'numeric-cjk-column-paper',
+      version: '1.0.0',
+      status: 'working',
+      title: '',
+      subtitle: 'Test',
+      authors: [],
+      updated: '2026-07-30',
+      abstract: 'Test',
+      language: 'zh',
+      baseDirection: 'ltr',
+      nodes: [
+        {
+          id: 'numeric-cjk-column-node',
+          type: 'paragraph',
+          text: '研究结果继续2024年的结果',
+          source: 'test',
+        },
+      ],
+    }
+    const provenance: Record<string, NodeSourceEvidence> = {
+      'numeric-cjk-column-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: regions.map((region) => region.id),
+        boxes: regions.map((region) => ({ ...region.box })),
+        links: [],
+      },
+    }
+    const result = provenanceTextConservation({
+      allRegions: regions,
+      orderedRegions: regions,
+      paper,
+      provenance,
+      lineBoundaryDecisions: [],
+      sourceSemanticFlowBoundaryDecisions: [decision],
+    })
+
+    expect(result.semanticFlowBoundaryLedgerValid).toBe(true)
+    expect(result.semanticTextViolationNodeIds).toEqual([])
+  })
+
   it.each([
     {
       name: 'missing',

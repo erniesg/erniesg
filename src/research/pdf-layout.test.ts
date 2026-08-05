@@ -838,6 +838,111 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
+  it('joins a numeric Chinese column continuation without inventing a source space', async () => {
+    const target = sourceFlowRegion({
+      id: 'numeric-cjk-column-flow-target',
+      column: 'left',
+      text: '研究结果见',
+      x: 0.09,
+      y: 0.82,
+      sourceSequenceIndex: 510,
+    })
+    const continuation = sourceFlowRegion({
+      id: 'numeric-cjk-column-flow-continuation',
+      column: 'right',
+      text: '2024年的结果',
+      x: 0.515,
+      y: 0.1,
+      sourceSequenceIndex: 511,
+    })
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      language: 'zh',
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('研究结果见2024年的结果')
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      topology: 'same-page-column',
+      outcome: 'no-space',
+    })
+  })
+
+  it('uses the minimum source-sequence continuation run for column spacing', async () => {
+    const target = sourceFlowRegion({
+      id: 'out-of-order-column-flow-target',
+      column: 'left',
+      text: '研究结果见',
+      x: 0.09,
+      y: 0.82,
+      sourceSequenceIndex: 520,
+    })
+    const firstGeometricRun = {
+      ...run(1, '2024', 0.515, 0.1, 0.08),
+      sourceSequenceIndex: 522,
+      sourceWhitespaceBefore: 'pdf-text-item' as const,
+      sourceWhitespacePredecessorIndex: 520,
+    }
+    const secondGeometricRun = {
+      ...run(1, '年的结果', 0.595, 0.1, 0.12),
+      sourceSequenceIndex: 521,
+    }
+    const continuation: PdfPageRegion = {
+      ...sourceFlowRegion({
+        id: 'out-of-order-column-flow-continuation',
+        column: 'right',
+        text: '2024年的结果',
+        x: 0.515,
+        y: 0.1,
+        sourceSequenceIndex: 521,
+      }),
+      lines: [
+        {
+          id: 'out-of-order-column-flow-continuation-line',
+          text: '2024年的结果',
+          fontSize: 10,
+          box: { ...secondGeometricRun, x: 0.515, width: 0.2 },
+          runs: [firstGeometricRun, secondGeometricRun],
+          sourceFragmentLineage: {
+            algorithm: 'source-run-fragment-v1',
+            sourceLineId: 'out-of-order-column-flow-source-line',
+            fragment: 'whole',
+            sourceSequenceIndexes: [522, 521],
+          },
+        },
+      ],
+    }
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      language: 'zh',
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('研究结果见2024年的结果')
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      to: { sourceSequenceIndex: 521 },
+      outcome: 'no-space',
+    })
+  })
+
   it('respects proven RTL column order before joining uncased prose', async () => {
     const target = sourceFlowRegion({
       id: 'rtl-column-flow-target',

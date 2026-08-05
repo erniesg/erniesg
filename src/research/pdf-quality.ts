@@ -42,6 +42,7 @@ import { classifyPdfNoteMarkers } from './pdf-note-classifier'
 import {
   canonicalPdfSourceSemanticFlowEvidence,
   pdfSourceColumnFlowJoinOutcome,
+  pdfSourceColumnFlowStartsWithCjkNumericContinuation,
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
@@ -1170,12 +1171,13 @@ function sourceProvenSamePageColumnFlowBoundary(
   const previousText = leftRegion.text.trimEnd()
   const continuationText = rightRegion.text.trimStart()
   const detachedNumericContinuation =
-    /\b(?:a|an|the|of|for|from|with|without|among|between|over|under|by|than|approximately|about|around|nearly|roughly|exactly|includes?|including|contains?|containing|comprises?|comprising)\s*$/iu.test(
+    (/\b(?:a|an|the|of|for|from|with|without|among|between|over|under|by|than|approximately|about|around|nearly|roughly|exactly|includes?|including|contains?|containing|comprises?|comprising)\s*$/iu.test(
       previousText,
     ) &&
-    /^\d+(?:[,.]\d+)*(?:\s*[%×x+-]\s*\d+(?:[,.]\d+)*)?\s+\p{L}/u.test(
-      continuationText,
-    )
+      /^\d+(?:[,.]\d+)*(?:\s*[%×x+-]\s*\d+(?:[,.]\d+)*)?\s+\p{L}/u.test(
+        continuationText,
+      )) ||
+    pdfSourceColumnFlowStartsWithCjkNumericContinuation(continuationText)
   const detachedScholarlyContinuation =
     /\b(?:Section|Appendix|Figure|Fig\.|Table|Equation|Eq\.)$/u.test(
       previousText,

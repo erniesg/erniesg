@@ -124,6 +124,14 @@ export const PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE = Object.freeze(
   ].sort(),
 )
 
+export function pdfSourceColumnFlowStartsWithCjkNumericContinuation(
+  continuationText: string,
+) {
+  return /^\p{N}+(?:[,.]\p{N}+)*(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u.test(
+    continuationText.trimStart(),
+  )
+}
+
 export function pdfSourceColumnFlowJoinOutcome(
   language: string | null,
   continuationText: string,
@@ -138,7 +146,7 @@ export function pdfSourceColumnFlowJoinOutcome(
   const cjkScript =
     /^[^\p{L}\p{N}]*(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u.test(
       continuationText,
-    )
+    ) || pdfSourceColumnFlowStartsWithCjkNumericContinuation(continuationText)
   return cjkScript
     ? { outcome: 'no-space' as const, separator: '' as const }
     : { outcome: 'space' as const, separator: ' ' as const }

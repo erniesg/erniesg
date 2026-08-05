@@ -17046,7 +17046,7 @@ describe('PDF visual association graph', () => {
       {
         ...captionRegion(
           'Figure 1. The left composite panel.',
-          box(0.09, 0.42, 0.34, 0.03),
+          box(0.09, 0.42, 0.41, 0.03),
         ),
         id: 'left-disjoint-caption',
         sourceCaptionLane: { boundary: 0.5, side: 'left' as const },
@@ -17054,7 +17054,7 @@ describe('PDF visual association graph', () => {
       {
         ...captionRegion(
           'Figure 2. The right composite panel.',
-          box(0.56, 0.42, 0.34, 0.03),
+          box(0.5, 0.42, 0.39, 0.03),
         ),
         id: 'right-disjoint-caption',
         sourceCaptionLane: { boundary: 0.5, side: 'right' as const },
@@ -17113,6 +17113,13 @@ describe('PDF visual association graph', () => {
       rasterizeFigure.mock.calls[1][0].sourceBox.x +
         rasterizeFigure.mock.calls[1][0].sourceBox.width / 2,
     ).toBeGreaterThanOrEqual(0.5)
+    expect(
+      rasterizeFigure.mock.calls[0][0].sourceBox.x +
+        rasterizeFigure.mock.calls[0][0].sourceBox.width,
+    ).toBeLessThanOrEqual(0.5)
+    expect(rasterizeFigure.mock.calls[1][0].sourceBox.x).toBeGreaterThanOrEqual(
+      0.5,
+    )
   })
 
   it('keeps adjacent panel-label prose inside its uniquely captioned multi-panel figure', async () => {

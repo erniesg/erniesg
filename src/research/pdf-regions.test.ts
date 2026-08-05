@@ -528,6 +528,9 @@ describe('deterministic scholarly page regions', () => {
     expect(
       pdfSourceColumnFlowJoinOutcome('zh', '模型', continuationRun),
     ).toEqual({ outcome: 'no-space', separator: '' })
+    expect(
+      pdfSourceColumnFlowJoinOutcome('zh', '2024年的结果', continuationRun),
+    ).toEqual({ outcome: 'no-space', separator: '' })
   })
 
   it('keeps a source-bracketed bold fraction atom out of its preceding prose region', () => {

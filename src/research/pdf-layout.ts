@@ -84,6 +84,7 @@ import {
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE,
   pdfSourceColumnFlowJoinOutcome,
+  pdfSourceColumnFlowStartsWithCjkNumericContinuation,
   pdfSourceFragmentId,
   pdfSourceSemanticFlowBoundaryDecisionId,
   pdfSourceSemanticFlowRunSha256,
@@ -3578,12 +3579,13 @@ function detachedNumericProseContinuation(
   continuationText: string,
 ) {
   return (
-    /\b(?:a|an|the|of|for|from|with|without|among|between|over|under|by|than|approximately|about|around|nearly|roughly|exactly|includes?|including|contains?|containing|comprises?|comprising)\s*$/iu.test(
+    (/\b(?:a|an|the|of|for|from|with|without|among|between|over|under|by|than|approximately|about|around|nearly|roughly|exactly|includes?|including|contains?|containing|comprises?|comprising)\s*$/iu.test(
       previousText.trimEnd(),
     ) &&
-    /^\d+(?:[,.]\d+)*(?:\s*[%×x+-]\s*\d+(?:[,.]\d+)*)?\s+\p{L}/u.test(
-      continuationText.trimStart(),
-    )
+      /^\d+(?:[,.]\d+)*(?:\s*[%×x+-]\s*\d+(?:[,.]\d+)*)?\s+\p{L}/u.test(
+        continuationText.trimStart(),
+      )) ||
+    pdfSourceColumnFlowStartsWithCjkNumericContinuation(continuationText)
   )
 }
 
@@ -4012,9 +4014,15 @@ function sourceColumnFlowJoin(
   const continuationHeadLine = blockSourceSegments(
     continuation,
   )[0]?.region.lines.find((line) => line.text.trim())
-  const continuationHeadRun = continuationHeadLine?.runs.find((run) =>
-    run.text.trim(),
-  )
+  const continuationHeadRun = continuationHeadLine?.runs
+    .filter((run) => run.text.trim() && run.sourceSequenceIndex !== undefined)
+    .reduce<PdfSourceRun | undefined>(
+      (candidate, run) =>
+        !candidate || run.sourceSequenceIndex! < candidate.sourceSequenceIndex!
+          ? run
+          : candidate,
+      undefined,
+    )
   return continuationHeadRun
     ? pdfSourceColumnFlowJoinOutcome(
         language,

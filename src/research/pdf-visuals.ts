@@ -468,6 +468,15 @@ function captionLaneScopedRenderBox(
   }
 }
 
+function captionLaneHorizontalBounds(caption: PdfPageRegion) {
+  const lane = caption.sourceCaptionLane
+  if (!lane) return undefined
+  const boundary = Math.max(0, Math.min(1, lane.boundary))
+  return lane.side === 'left'
+    ? { left: 0, right: boundary }
+    : { left: boundary, right: 1 }
+}
+
 function narrowCaptionClaimsOneColumn(
   left: PdfPageRegion,
   right: PdfPageRegion,
@@ -2859,12 +2868,18 @@ function availableRegionsForTable(
   })
 }
 
-function paddedUnionBox(boxes: NormalizedSourceBox[]) {
+function paddedUnionBox(
+  boxes: NormalizedSourceBox[],
+  horizontalBounds?: { left: number; right: number },
+) {
   const padding = 0.004
-  const left = Math.max(0, Math.min(...boxes.map((box) => box.x)) - padding)
+  const left = Math.max(
+    horizontalBounds?.left ?? 0,
+    Math.min(...boxes.map((box) => box.x)) - padding,
+  )
   const top = Math.max(0, Math.min(...boxes.map((box) => box.y)) - padding)
   const right = Math.min(
-    1,
+    horizontalBounds?.right ?? 1,
     Math.max(...boxes.map((box) => box.x + box.width)) + padding,
   )
   const bottom = Math.min(
@@ -10704,9 +10719,15 @@ export async function reconstructPdfVisuals({
       best && best.kind === 'figure'
         ? captionLaneScopedRenderBox(caption, best)
         : best?.renderBox
+    const laneHorizontalBounds =
+      best?.kind === 'figure' && laneScopedRenderBox
+        ? captionLaneHorizontalBounds(caption)
+        : undefined
     const figureOwnershipScope =
       best?.kind === 'figure'
-        ? (laneScopedRenderBox ?? best.renderBox ?? best.sourceBoxes[0])
+        ? laneScopedRenderBox
+          ? paddedUnionBox([laneScopedRenderBox], laneHorizontalBounds)
+          : (best.renderBox ?? best.sourceBoxes[0])
         : null
     const figureLineageConflictsPriorOwnership =
       best?.kind === 'figure' &&
@@ -10750,6 +10771,7 @@ export async function reconstructPdfVisuals({
     const initialTableCropBox = best
       ? paddedUnionBox(
           laneScopedRenderBox ? [laneScopedRenderBox] : best.sourceBoxes,
+          laneHorizontalBounds,
         )
       : null
     const captionBoundedTextSlabEnvelope = Boolean(

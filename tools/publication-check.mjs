@@ -10,6 +10,7 @@ import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
   PUBLICATION_PROFILES,
+  publicationAssetFileExtension,
   publicationNodeForProfile,
 } from '../src/publication/renderers/vivliostyle.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
@@ -132,7 +133,8 @@ export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
         add(selected.label)
         break
       case 'media':
-        add(selected.accessibility.transcript)
+        if (!selected.accessibility.decorative)
+          add(selected.accessibility.transcript)
         break
       default:
         break
@@ -272,7 +274,6 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
     ' ',
   )
   let normalizedRenderedText = ''
-  const normalizedPositions = []
   const normalizedOffsetByRawIndex = []
   let normalizedOffset = 0
   for (let index = 0; index < renderedTextWithCollapsedWhitespace.length; ) {
@@ -282,10 +283,7 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
       normalizedOffsetByRawIndex[index + offset] = normalizedOffset
     if (normalized) {
       normalizedRenderedText += normalized
-      normalizedPositions.push(
-        ...[...normalized].map(() => index),
-      )
-      normalizedOffset += [...normalized].length
+      normalizedOffset += normalized.length
     }
     index += codePoint.length
   }
@@ -306,7 +304,7 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
       : -1
     return normalizedIndex < 0
       ? Number.MAX_SAFE_INTEGER
-      : normalizedPositions[normalizedIndex] ?? Number.MAX_SAFE_INTEGER
+      : normalizedIndex
   }
   return [...(requiredTexts ?? [])].sort((left, right) => {
     return renderedTextPosition(left) - renderedTextPosition(right)
@@ -400,17 +398,14 @@ export async function verifyArtifactReceipt(root, artifact, relativePath) {
   return bytes
 }
 
-function imageAlternativeTexts(html) {
-  const alternatives = []
-  const visit = (node) => {
-    if (node.tagName === 'img') {
-      const alt = node.attrs?.find((attribute) => attribute.name === 'alt')
-      if (alt) alternatives.push(alt.value)
-    }
-    for (const child of node.childNodes ?? []) visit(child)
+function imageElementsInNode(node) {
+  const images = []
+  const visit = (candidate) => {
+    if (candidate?.tagName === 'img') images.push(candidate)
+    for (const child of candidate?.childNodes ?? []) visit(child)
   }
-  visit(parse(html))
-  return alternatives
+  visit(node)
+  return images
 }
 
 export function accessibilityLabel(node) {
@@ -439,22 +434,6 @@ function canonicalRouteElements(html) {
   return result
 }
 
-function elementById(html, id) {
-  const root = parse(html)
-  let result
-  const visit = (node) => {
-    if (result) return
-    const idAttribute = node.attrs?.find((attribute) => attribute.name === 'id')
-    if (idAttribute?.value === id) {
-      result = node
-      return
-    }
-    for (const child of node.childNodes ?? []) visit(child)
-  }
-  visit(root)
-  return result
-}
-
 function hasTag(node, tagName) {
   if (!node) return false
   if (node.tagName === tagName) return true
@@ -471,41 +450,64 @@ function textContent(node) {
   return (node.childNodes ?? []).map(textContent).join('')
 }
 
-function assertWebPubNode(html, imageAlts, node) {
-  if (node.type === 'heading') {
+function assertNodeImages(element, assetIds, alternative, label, assetPaths) {
+  const images = imageElementsInNode(element)
+  assert(
+    images.length === assetIds.length,
+    `${label} dropped image asset`,
+  )
+  assetIds.forEach((assetId, index) => {
+    const image = images[index]
+    const expectedPath = assetPaths?.get(assetId)
+    if (assetPaths)
+      assert(expectedPath, `${label} references an unknown image asset ${assetId}`)
     assert(
-      elementById(html, node.id)?.tagName === `h${node.level}`,
-      `WebPub dropped heading ${node.id}`,
+      attribute(image, 'alt') === alternative &&
+        (!expectedPath || attribute(image, 'src') === expectedPath),
+      `${label} changed image asset ${assetId}`,
     )
+  })
+}
+
+function assertWebPubNode(node, profile, elements, assetPaths) {
+  const label = profile === 'eink-epub' ? 'eink-epub' : 'WebPub'
+  if (node.type === 'heading') {
+    assert(elements.get(node.id)?.tagName === `h${node.level}`, `${label} dropped heading ${node.id}`)
     return
   }
   if (node.type === 'figure') {
-    const figure = elementById(html, node.id)
-    assert(figure?.tagName === 'figure', `WebPub dropped figure ${node.id}`)
-    const label = accessibilityLabel(node)
+    const figure = elements.get(node.id)
+    assert(figure?.tagName === 'figure', `${label} dropped figure ${node.id}`)
+    const alternative = accessibilityLabel(node)
     if (node.assetIds.length > 0)
-      assert(
-        imageAlts.includes(label),
-        `WebPub dropped figure image alternative for ${node.id}`,
+      assertNodeImages(
+        figure,
+        node.assetIds,
+        alternative,
+        `${label} figure ${node.id}`,
+        assetPaths,
       )
     else
       assert(
         Boolean(node.sourceText) &&
           hasTag(figure, 'pre') &&
-          textContent(elementById(html, `${node.id}-source`)) ===
-            node.sourceText,
-        `WebPub dropped source fallback for figure ${node.id}`,
+            textContent(elements.get(`${node.id}-source`)) ===
+              node.sourceText,
+        `${label} dropped source fallback for figure ${node.id}`,
       )
     return
   }
   if (node.type !== 'media') return
-  const mediaFigure = elementById(html, node.id)
-  assert(mediaFigure?.tagName === 'figure', `WebPub dropped media ${node.id}`)
-  const label = accessibilityLabel(node)
+  const mediaFigure = elements.get(node.id)
+  assert(mediaFigure?.tagName === 'figure', `${label} dropped media ${node.id}`)
+  const alternative = accessibilityLabel(node)
   if (node.mediaKind === 'image') {
-    assert(
-      imageAlts.includes(label),
-      `WebPub dropped image alternative for ${node.id}`,
+    assertNodeImages(
+      mediaFigure,
+      [node.assetId],
+      alternative,
+      `${label} media ${node.id}`,
+      assetPaths,
     )
     return
   }
@@ -520,30 +522,35 @@ function assertWebPubNode(html, imageAlts, node) {
   const media = mediaFigure.childNodes?.find(
     (child) => child.tagName === expectedTag,
   )
-  assert(media, `WebPub dropped ${node.mediaKind} media for ${node.id}`)
+  assert(media, `${label} dropped ${node.mediaKind} media for ${node.id}`)
   if (node.accessibility?.decorative === true) {
     assert(
       attribute(media, 'aria-hidden') === 'true',
-      `WebPub dropped decorative ${node.mediaKind} semantics for ${node.id}`,
+      `${label} dropped decorative ${node.mediaKind} semantics for ${node.id}`,
     )
     return
   }
   assert(
-    attribute(media, 'aria-label') === label,
-    `WebPub dropped ${node.mediaKind} accessibility label for ${node.id}`,
+    attribute(media, 'aria-label') === alternative,
+    `${label} dropped ${node.mediaKind} accessibility label for ${node.id}`,
   )
 }
 
-export function validateWebPubGraph(graph, html) {
-  const imageAlts = imageAlternativeTexts(html)
-  const root = parse(html)
+export function validateWebPubGraph(graph, html, assetPaths) {
+  const index = publicationHtmlIndex(html)
   assert(
     html.includes(`lang="${graph.edition.locale}"`) &&
       html.includes('<main>') &&
-      hasTag(root, 'h1'),
+      hasTag(index.root, 'h1'),
     'WebPub is missing language, landmarks, or headings',
   )
-  validatePublicationGraphContent(graph, html, 'phone-webpub', imageAlts)
+  validatePublicationGraphContent(
+    graph,
+    html,
+    'phone-webpub',
+    assetPaths,
+    index,
+  )
 }
 
 function comparableHtmlText(value) {
@@ -574,18 +581,84 @@ function requiredNodeText(node) {
   }
 }
 
+function requiredGraphNodeOrder(graph) {
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]))
+  const required = (node) => node && node.requirement !== 'optional'
+  const nestedListIds = new Set(
+    graph.nodes
+      .filter((node) => node.type === 'list-item')
+      .flatMap((node) => node.childListIds ?? []),
+  )
+  const result = []
+  const visited = new Set()
+  const append = (node) => {
+    if (!node || visited.has(node.id)) return
+    visited.add(node.id)
+    if (required(node)) result.push(node.id)
+    if ('captionId' in node && node.captionId)
+      append(byId.get(node.captionId))
+    if (node.type !== 'list') return
+    for (const itemId of node.itemIds ?? []) {
+      const item = byId.get(itemId)
+      append(item)
+      for (const childListId of item?.childListIds ?? [])
+        append(byId.get(childListId))
+    }
+  }
+  for (const node of graph.nodes) {
+    if (visited.has(node.id)) continue
+    if (node.type === 'caption') {
+      const parent = byId.get(node.parentId)
+      if (parent && parent.captionId === node.id) continue
+    }
+    if (node.type === 'list' && nestedListIds.has(node.id)) continue
+    if (
+      node.type === 'list-item' &&
+      byId.get(node.parentListId)?.type === 'list'
+    )
+      continue
+    append(node)
+  }
+  return result
+}
+
+function publicationHtmlIndex(html) {
+  const root = parse(html)
+  const elements = new Map()
+  const renderedIds = []
+  const visit = (candidate) => {
+    const id = attribute(candidate, 'id')
+    if (id) {
+      if (!elements.has(id)) elements.set(id, candidate)
+      renderedIds.push(id)
+    }
+    for (const child of candidate.childNodes ?? []) visit(child)
+  }
+  visit(root)
+  return { root, elements, renderedIds }
+}
+
 export function validatePublicationGraphContent(
   graph,
   html,
   profile = 'phone-webpub',
-  imageAlts = imageAlternativeTexts(html),
+  assetPaths,
+  index = publicationHtmlIndex(html),
 ) {
+  const requiredIds = new Set(
+    graph.nodes
+      .filter((node) => node.requirement !== 'optional')
+      .map((node) => node.id),
+  )
+  const { elements } = index
+  const renderedIds = index.renderedIds.filter((id) => requiredIds.has(id))
+  const expectedIds = requiredGraphNodeOrder(graph)
   for (const original of graph.nodes) {
     if (original.requirement === 'optional') continue
     const node = publicationNodeForProfile(original, profile)
-    if (node.type === 'caption') continue
-    if (profile === 'phone-webpub') assertWebPubNode(html, imageAlts, node)
-    const element = elementById(html, node.id)
+    if (profile === 'phone-webpub' || profile === 'eink-epub')
+      assertWebPubNode(node, profile, elements, assetPaths)
+    const element = elements.get(node.id)
     assert(element, `${profile} dropped required node ${node.id}`)
     if (node.type === 'heading')
       assert(
@@ -602,6 +675,11 @@ export function validatePublicationGraphContent(
       )
     }
   }
+  assert(
+    renderedIds.length === expectedIds.length &&
+      renderedIds.every((id, index) => id === expectedIds[index]),
+    `${profile} changed required node order: expected ${expectedIds.join(',')} but rendered ${renderedIds.join(',')}`,
+  )
 }
 
 async function publicationFiles(root, directory = root) {
@@ -741,15 +819,7 @@ export async function checkPdf(
         locations.push({ page: pageNumber, line })
     }
     for (const annotation of await page.getAnnotations({ intent: 'display' }))
-      if (annotation.subtype === 'Link')
-        annotations.push({
-          target:
-            typeof annotation.url === 'string'
-              ? annotation.url
-              : typeof annotation.unsafeUrl === 'string'
-                ? annotation.unsafeUrl
-                : undefined,
-        })
+      if (annotation.subtype === 'Link') annotations.push(annotation)
   }
   await document.destroy()
   assert(
@@ -785,6 +855,12 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   const receipt = JSON.parse(receiptBytes.toString('utf8'))
   const assetBundle = JSON.parse(
     await readFile(resolve(root, 'asset-bundle.json'), 'utf8'),
+  )
+  const publicationAssetPaths = new Map(
+    assetBundle.assets.map((asset) => [
+      asset.id,
+      `assets/${asset.id}${publicationAssetFileExtension(asset.fileName, asset.mediaType)}`,
+    ]),
   )
   assert(
     receipt.source?.graphSha256 === sha256(serializePublicationGraph(graph)),
@@ -826,7 +902,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   )
   await checkWebPubReceipt(root, webpubArtifact)
   const html = await readFile(resolve(root, 'phone-webpub/index.html'), 'utf8')
-  validateWebPubGraph(graph, html)
+  validateWebPubGraph(graph, html, publicationAssetPaths)
   const epubPath = resolve(root, 'eink.epub')
   const epubArtifact = receipt.artifacts.find(
     (artifact) => artifact.profile === 'eink-epub',
@@ -850,7 +926,7 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     graph,
     content ?? '',
     'eink-epub',
-    imageAlternativeTexts(content ?? ''),
+    publicationAssetPaths,
   )
   await run('java', ['-jar', epubcheck.path, epubPath])
   const pdfNodes = graph.nodes.map((node) =>

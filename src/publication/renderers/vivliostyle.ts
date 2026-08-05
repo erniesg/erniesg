@@ -619,7 +619,16 @@ type EpubTocEntry = {
   children: EpubTocEntry[]
 }
 
-export function renderEpubToc(headings: EpubTocHeading[]) {
+export function publicationEpubTocHeadings(nodes: PublicationNode[]) {
+  return nodes
+    .map((node) => publicationNodeForProfile(node, 'eink-epub'))
+    .filter(
+      (node): node is Extract<PublicationNode, { type: 'heading' }> =>
+        node.type === 'heading',
+    )
+}
+
+export function renderEpubToc(headings: EpubTocHeading[], headingLocale?: string) {
   const roots: EpubTocEntry[] = []
   const firstHeadingLevel = headings.length
     ? Math.max(1, Math.trunc(headings[0].level))
@@ -637,10 +646,23 @@ export function renderEpubToc(headings: EpubTocHeading[]) {
     `<ol>${entries
       .map(
         ({ heading, children }) =>
-          `<li><a href="content.xhtml#${escapeHtml(heading.id)}">${escapeHtml(heading.text)}</a>${children.length ? render(children) : ''}</li>`,
+          `<li><a href="content.xhtml#${escapeHtml(heading.id)}"${headingLocale ? ` lang="${escapeHtml(headingLocale)}"` : ''}>${escapeHtml(heading.text)}</a>${children.length ? render(children) : ''}</li>`,
       )
       .join('')}</ol>`
   return render(roots)
+}
+
+export function publicationEpubNavigationLabels(locale: string) {
+  const language = String(locale).toLocaleLowerCase().split('-')[0]
+  const labels = {
+    title: 'Navigation',
+    toc: 'Table of contents',
+    contents: 'Contents',
+    article: 'Article',
+  }
+  return language === 'en'
+    ? labels
+    : { ...labels, languageOverride: 'en' as const }
 }
 
 export function publicationEpubAccessibilityMetadata(graph: PublicationGraph) {
@@ -823,10 +845,14 @@ async function createEpub(
     .replace('<html ', '<html xmlns="http://www.w3.org/1999/xhtml" ')
     .replaceAll(/<(meta|link|img|br)([^>]*?)(?<!\/)>/g, '<$1$2 />')
   zip.file('EPUB/content.xhtml', xhtml, zipOptions())
-  const headings = bundle.graph.nodes.filter(
-    (node): node is Extract<PublicationNode, { type: 'heading' }> =>
-      node.type === 'heading',
+  const headings = publicationEpubTocHeadings(bundle.graph.nodes)
+  const navigationLabels = publicationEpubNavigationLabels(
+    bundle.graph.edition.locale,
   )
+  const generatedLanguage =
+    'languageOverride' in navigationLabels
+      ? ` lang="${navigationLabels.languageOverride}"`
+      : ''
   const accessibility = publicationEpubAccessibilityMetadata(bundle.graph)
   const accessModeMetadata = accessibility.accessModes
     .map((mode) => `<meta property="schema:accessMode">${mode}</meta>`)
@@ -848,7 +874,7 @@ async function createEpub(
     .join('')
   zip.file(
     'EPUB/nav.xhtml',
-    `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title>Navigation</title></head><body><nav epub:type="toc" aria-label="Table of contents"><h1>Contents</h1>${renderEpubToc(headings)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml">Article</a></li></ol></nav></body></html>`,
+    `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title${generatedLanguage}>${escapeHtml(navigationLabels.title)}</title></head><body><nav epub:type="toc"${generatedLanguage} aria-label="${escapeHtml(navigationLabels.toc)}"><h1${generatedLanguage}>${escapeHtml(navigationLabels.contents)}</h1>${renderEpubToc(headings, bundle.graph.edition.locale)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml"${generatedLanguage}>${escapeHtml(navigationLabels.article)}</a></li></ol></nav></body></html>`,
     zipOptions(),
   )
   const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`

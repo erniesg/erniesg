@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parsePublicationBuildArgs,
   canonicalRouteBodyFingerprint,
+  consumeRouteImageIndex,
   publicationGraphBodyFingerprint,
   publicationReceiptDigest,
   publicationRouteHtmlDigest,
@@ -68,5 +69,41 @@ describe('publication:build CLI', () => {
     expect(canonicalRouteBodyFingerprint('<article><p>Author’s proof</p></article>')).toEqual(
       publicationGraphBodyFingerprint(graph),
     )
+  })
+
+  it('normalizes Markdown image titles to graph caption semantics', () => {
+    const graph = {
+      nodes: [
+        {
+          type: 'figure',
+          title: 'Alt text',
+          assetIds: ['asset'],
+          captionId: 'caption',
+        },
+        { id: 'caption', type: 'caption', text: 'Authored image title' },
+      ],
+    }
+    const html =
+      '<article><p><img src="/assets/figure.png" alt="Alt text" title="Authored image title"></p></article>'
+    expect(canonicalRouteBodyFingerprint(html)).toEqual(
+      publicationGraphBodyFingerprint(graph),
+    )
+  })
+
+  it('consumes duplicate canonical-route image matches one-to-one', () => {
+    const images = [
+      { src: '/assets/figure-a.png', alt: 'Repeated image' },
+      { src: '/assets/figure-a-copy.png', alt: 'Repeated image' },
+    ]
+    const usedIndexes = new Set()
+    expect(
+      consumeRouteImageIndex(images, usedIndexes, 'Repeated image', 'figurea'),
+    ).toBe(0)
+    expect(
+      consumeRouteImageIndex(images, usedIndexes, 'Repeated image', 'figurea'),
+    ).toBe(1)
+    expect(
+      consumeRouteImageIndex(images, usedIndexes, 'Repeated image', 'figurea'),
+    ).toBe(-1)
   })
 })

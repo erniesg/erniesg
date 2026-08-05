@@ -27,7 +27,21 @@ export function graphFixture() {
     edition: { id: 'edition-en', locale: 'en', direction: 'ltr' },
     nodes: [
       { ...common, id: 'heading', type: 'heading', level: 1, text: 'Heading' },
-      { ...common, id: 'paragraph', type: 'paragraph', text: 'Paragraph' },
+      {
+        ...common,
+        id: 'paragraph',
+        type: 'paragraph',
+        text: 'Paragraph',
+        inlineRuns: [
+          {
+            start: 0,
+            end: 1,
+            relationshipId: 'note-ref',
+            semanticRole: 'cross-reference',
+            targetIds: ['note'],
+          },
+        ],
+      },
       {
         ...common,
         id: 'list',
@@ -107,7 +121,7 @@ export function graphFixture() {
         type: 'note',
         noteKind: 'footnote',
         label: '1',
-        backlinkIds: ['paragraph'],
+        backlinkIds: ['note-ref'],
         text: 'Note',
       },
       {
@@ -361,5 +375,23 @@ describe('PublicationGraph', () => {
       { kind: 'compact', text: '', reviewed: true },
     ]
     expect(publicationGraphSchema.safeParse(emptyVariant).success).toBe(false)
+  })
+
+  it('requires reciprocal inline note references and backlinks', () => {
+    const unrelatedReference = graphFixture() as any
+    unrelatedReference.nodes.find(
+      (node: any) => node.id === 'paragraph',
+    ).inlineRuns[0].targetIds = ['reference']
+    expect(
+      publicationGraphSchema.safeParse(unrelatedReference).success,
+    ).toBe(false)
+
+    const missingBacklink = graphFixture() as any
+    missingBacklink.nodes.find(
+      (node: any) => node.id === 'note',
+    ).backlinkIds = []
+    expect(publicationGraphSchema.safeParse(missingBacklink).success).toBe(
+      false,
+    )
   })
 })

@@ -379,6 +379,14 @@ export const publicationGraphSchema = z
     const ids = new Set<string>()
     const nodesById = new Map<string, z.infer<typeof publicationNodeSchema>>()
     const inlineRelationshipIds = new Set<string>()
+    const inlineRunsByTargetId = new Map<
+      string,
+      Array<{
+        relationshipId: string | undefined
+        nodeIndex: number
+        runIndex: number
+      }>
+    >()
     graph.nodes.forEach((node, index) => {
       if (ids.has(node.id)) {
         context.addIssue({
@@ -390,8 +398,17 @@ export const publicationGraphSchema = z
       ids.add(node.id)
       nodesById.set(node.id, node)
       if ('inlineRuns' in node && node.inlineRuns) {
-        node.inlineRuns.forEach((run) => {
+        node.inlineRuns.forEach((run, runIndex) => {
           if (run.relationshipId) inlineRelationshipIds.add(run.relationshipId)
+          for (const targetId of run.targetIds ?? []) {
+            const references = inlineRunsByTargetId.get(targetId) ?? []
+            references.push({
+              relationshipId: run.relationshipId,
+              nodeIndex: index,
+              runIndex,
+            })
+            inlineRunsByTargetId.set(targetId, references)
+          }
         })
       }
       if (node.edition.editionId !== graph.edition.id) {
@@ -575,6 +592,40 @@ export const publicationGraphSchema = z
             code: z.ZodIssueCode.custom,
             path: ['nodes', index, 'captionId'],
             message: 'Caption relationships must be reciprocal',
+          })
+        }
+      }
+      if (node.type === 'note') {
+        const references = inlineRunsByTargetId.get(node.id) ?? []
+        const relationshipIds = new Set(
+          references
+            .map((reference) => reference.relationshipId)
+            .filter((id): id is string => Boolean(id)),
+        )
+        node.backlinkIds.forEach((backlinkId, backlinkIndex) => {
+          if (relationshipIds.has(backlinkId)) return
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes', index, 'backlinkIds', backlinkIndex],
+            message: 'Note backlinks must come from inline runs targeting the note',
+          })
+        })
+        for (const reference of references) {
+          if (
+            reference.relationshipId &&
+            node.backlinkIds.includes(reference.relationshipId)
+          )
+            continue
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [
+              'nodes',
+              reference.nodeIndex,
+              'inlineRuns',
+              reference.runIndex,
+              'relationshipId',
+            ],
+            message: 'Inline runs targeting notes must have reciprocal backlinks',
           })
         }
       }

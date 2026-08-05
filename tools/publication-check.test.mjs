@@ -146,6 +146,12 @@ describe('publication:check CLI', () => {
         `${'!'.repeat(40)}After punctuation HardBreak`,
       ),
     ).toEqual(['After punctuation', 'Hard\nBreak'])
+    expect(
+      orderPdfTextRequirements(
+        ['A\nB', 'X'],
+        'a b c d e f g h i j AB X',
+      ),
+    ).toEqual(['A\nB', 'X'])
   })
 
   it('rejects PDF text outside the visible crop and requires every image asset', () => {
@@ -235,6 +241,9 @@ describe('publication:check CLI', () => {
     expect(pdfAnnotationTarget({ dest: ['target', { name: 'XYZ' }] })).toBe(
       '#target',
     )
+    expect(() =>
+      assertPdfLinkAnnotations([{ dest: 'target' }], ['#target']),
+    ).not.toThrow()
   })
 
   it('requires target-only cross-references in PDF link requirements', () => {
@@ -470,6 +479,24 @@ describe('publication:check CLI', () => {
     ])
   })
 
+  it('omits intentionally hidden decorative transcripts from PDF requirements', () => {
+    const graph = {
+      metadata: { title: 'Title', contributors: [] },
+      nodes: [
+        {
+          id: 'decorative-audio',
+          type: 'media',
+          mediaKind: 'audio',
+          accessibility: {
+            decorative: true,
+            transcript: 'Hidden decorative transcript',
+          },
+        },
+      ],
+    }
+    expect(publicationPdfTextRequirements(graph, 'a5-pdf')).toEqual(['Title'])
+  })
+
   it('rejects a required body node dropped from a WebPub or EPUB profile', () => {
     const graph = {
       edition: { locale: 'en', direction: 'ltr' },
@@ -484,5 +511,127 @@ describe('publication:check CLI', () => {
     expect(() => validatePublicationGraphContent(graph, html)).toThrow(
       /required node body/,
     )
+  })
+
+  it('rejects a reordered required node sequence', () => {
+    const graph = {
+      edition: { locale: 'en', direction: 'ltr' },
+      metadata: { title: 'Title', contributors: [] },
+      nodes: [
+        { id: 'first', type: 'heading', level: 1, text: 'First' },
+        { id: 'second', type: 'paragraph', text: 'Second' },
+      ],
+    }
+    const html =
+      '<html lang="en"><body><main><p id="second">Second</p><h1 id="first">First</h1></main></body></html>'
+    expect(() => validatePublicationGraphContent(graph, html)).toThrow(
+      /changed required node order/,
+    )
+  })
+
+  it('accepts owned captions and nested lists in their rendered order', () => {
+    const graph = {
+      nodes: [
+        { id: 'list', type: 'list', ordered: false, itemIds: ['item'] },
+        {
+          id: 'item',
+          type: 'list-item',
+          parentListId: 'list',
+          childListIds: ['nested-list'],
+          text: 'Parent item',
+        },
+        {
+          id: 'nested-list',
+          type: 'list',
+          ordered: false,
+          itemIds: ['nested-item'],
+        },
+        {
+          id: 'nested-item',
+          type: 'list-item',
+          parentListId: 'nested-list',
+          childListIds: [],
+          text: 'Nested item',
+        },
+        {
+          id: 'figure',
+          type: 'figure',
+          title: 'Figure title',
+          assetIds: [],
+          sourceText: 'Figure source',
+          captionId: 'figure-caption',
+        },
+        {
+          id: 'figure-caption',
+          type: 'caption',
+          parentId: 'figure',
+          text: 'Figure caption',
+        },
+      ],
+    }
+    const html =
+      '<main><ul id="list"><li id="item">Parent item<ul id="nested-list"><li id="nested-item">Nested item</li></ul></li></ul>' +
+      '<figure id="figure"><div>Figure title</div><pre>Figure source</pre><figcaption id="figure-caption">Figure caption</figcaption></figure></main>'
+    expect(() =>
+      validatePublicationGraphContent(graph, html, 'a5-pdf'),
+    ).not.toThrow()
+  })
+
+  it('binds each image to its owning node and asset path', () => {
+    const graph = {
+      nodes: [
+        {
+          id: 'first-image',
+          type: 'media',
+          mediaKind: 'image',
+          assetId: 'first-asset',
+          accessibility: { alternativeText: 'First image', decorative: false },
+        },
+        {
+          id: 'second-image',
+          type: 'media',
+          mediaKind: 'image',
+          assetId: 'second-asset',
+          accessibility: { alternativeText: 'Second image', decorative: false },
+        },
+      ],
+    }
+    const swapped =
+      '<main><figure id="first-image"><img src="assets/second.png" alt="First image"></figure>' +
+      '<figure id="second-image"><img src="assets/first.png" alt="Second image"></figure></main>'
+    const assetPaths = new Map([
+      ['first-asset', 'assets/first.png'],
+      ['second-asset', 'assets/second.png'],
+    ])
+    expect(() =>
+      validatePublicationGraphContent(
+        graph,
+        swapped,
+        'phone-webpub',
+        assetPaths,
+      ),
+    ).toThrow(/changed image asset first-asset/)
+  })
+
+  it('checks required media assets in the reflowable EPUB profile', () => {
+    const graph = {
+      edition: { locale: 'en', direction: 'ltr' },
+      metadata: { title: 'Title', contributors: [] },
+      nodes: [
+        { id: 'heading', type: 'heading', level: 1, text: 'Title' },
+        {
+          id: 'diagram',
+          type: 'media',
+          mediaKind: 'image',
+          assetId: 'diagram-asset',
+          accessibility: { alternativeText: 'Diagram', decorative: false },
+        },
+      ],
+    }
+    const html =
+      '<html lang="en"><body><main><h1 id="heading">Title</h1><figure id="diagram"></figure></main></body></html>'
+    expect(() =>
+      validatePublicationGraphContent(graph, html, 'eink-epub'),
+    ).toThrow(/eink-epub media diagram dropped image asset/)
   })
 })

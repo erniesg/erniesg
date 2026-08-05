@@ -10,6 +10,8 @@ import {
   publicationAssetFileExtension,
   publicationEpubAccessibilityMetadata,
   publicationEpubManifestItemId,
+  publicationEpubNavigationLabels,
+  publicationEpubTocHeadings,
   publicationBrowserVersionMatches,
   publicationGraphToHtml,
   publicationPlaywrightExecutableCandidates,
@@ -716,6 +718,42 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(toc).toBe(
       '<ol><li><a href="content.xhtml#h2">First</a></li><li><a href="content.xhtml#h2b">Second</a><ol><li><a href="content.xhtml#h3">Nested</a></li></ol></li></ol>',
     )
+  })
+
+  it('uses reviewed monochrome heading text in EPUB navigation', () => {
+    const headings = publicationEpubTocHeadings([
+      {
+        id: 'heading',
+        type: 'heading',
+        level: 1,
+        text: 'Canonical heading',
+        variants: [
+          {
+            kind: 'monochrome',
+            text: 'E-ink heading',
+            reviewed: true,
+          },
+        ],
+      } as PublicationNode,
+    ])
+    expect(renderEpubToc(headings)).toContain('>E-ink heading</a>')
+    expect(renderEpubToc(headings)).not.toContain('Canonical heading')
+  })
+
+  it('marks generated EPUB navigation labels with their actual language', () => {
+    expect(publicationEpubNavigationLabels('zh-Hans-CN')).toEqual({
+      title: 'Navigation',
+      toc: 'Table of contents',
+      contents: 'Contents',
+      article: 'Article',
+      languageOverride: 'en',
+    })
+    expect(publicationEpubNavigationLabels('en-GB')).toEqual({
+      title: 'Navigation',
+      toc: 'Table of contents',
+      contents: 'Contents',
+      article: 'Article',
+    })
   })
 
   it('derives safe asset extensions from media types', () => {

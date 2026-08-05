@@ -145,6 +145,22 @@ export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {
   return required
 }
 
+export function publicationPdfImageRequirements(graph, profile = 'a5-pdf') {
+  let requiredImageCount = 0
+  for (const node of graph.nodes) {
+    const selected = publicationNodeForProfile(node, profile)
+    if (selected.requirement === 'optional') continue
+    if (selected.type === 'figure')
+      requiredImageCount += selected.assetIds.length
+    else if (selected.type === 'media' && selected.mediaKind === 'image')
+      requiredImageCount += 1
+  }
+  return {
+    requireImages: requiredImageCount > 0,
+    requiredImageCount,
+  }
+}
+
 export function publicationPdfWidowOrphanRequirements(
   graph,
   profile = 'a5-pdf',
@@ -949,17 +965,10 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requiredImageCount: pdfNodes
-      .filter((node) => node.requirement !== 'optional')
-      .filter(
-        (node) =>
-          (node.type === 'figure' && node.assetIds.length > 0) ||
-          (node.type === 'media' && node.mediaKind === 'image'),
-      ).length,
+    ...publicationPdfImageRequirements(graph, 'a5-pdf'),
     requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
     widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
   }
-  pdfRequirements.requireImages = pdfRequirements.requiredImageCount > 0
   const renderedPdfText = textContent(
     parse(await readFile(resolve(root, 'a5-pdf.html'), 'utf8')),
   )

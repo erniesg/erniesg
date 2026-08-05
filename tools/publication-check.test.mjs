@@ -17,6 +17,7 @@ import {
   normalizePdfSearchableText,
   normalizePdfVerificationText,
   orderPdfTextRequirements,
+  publicationPdfImageRequirements,
   publicationPdfLinkRequirements,
   publicationPdfLinkRequirementsForProfile,
   parsePublicationCheckArgs,
@@ -228,6 +229,30 @@ describe('publication:check CLI', () => {
     expect(() => assertPdfImageCount('/Subtype /Image', 2, 'fixture')).toThrow(
       /requires 2 image assets/,
     )
+  })
+
+  it('requires one PDF image for every required figure asset at the caller boundary', () => {
+    const requirements = publicationPdfImageRequirements({
+      nodes: [
+        {
+          type: 'figure',
+          requirement: 'required',
+          assetIds: ['first-image', 'second-image'],
+          variants: [],
+        },
+      ],
+    })
+    expect(requirements).toEqual({
+      requireImages: true,
+      requiredImageCount: 2,
+    })
+    expect(() =>
+      assertPdfImageCount(
+        '/Subtype /Image',
+        requirements.requiredImageCount,
+        'fixture',
+      ),
+    ).toThrow(/requires 2 image assets/)
   })
 
   it('enforces widow and orphan line minimums for text spanning pages', () => {

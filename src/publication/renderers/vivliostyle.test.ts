@@ -1,16 +1,6 @@
-import { createServer } from 'node:http'
-import {
-  access,
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  writeFile,
-} from 'node:fs/promises'
+import { access, cp, mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { chromium } from 'playwright'
 import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
@@ -27,8 +17,6 @@ import {
   publicationPlaywrightExecutableCandidates,
   publicationVariantKindForProfile,
   renderEpubToc,
-  runPublicationOffline,
-  useOfflinePublicationContext,
   vivliostyleRenderer,
 } from './vivliostyle'
 import type { PublicationNode } from '../schema'
@@ -74,6 +62,10 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
     expect(rendererSource).not.toMatch(/from ['"][^'"]*astro/)
     expect(rendererSource).not.toContain('.provenance')
+    expect(rendererSource).toContain('runPublicationIsolatedRender')
+    expect(rendererSource).not.toMatch(
+      /chromium\.launch|\bunshare\b|\bsh\s+-c\b|['"]--version['"]/,
+    )
   })
 
   it('renders nested lists, inline-code semantics, and footnote noteref semantics', async () => {
@@ -904,98 +896,6 @@ describe('Vivliostyle publication renderer boundary', () => {
         '149.0.7827.0',
       ),
     ).toBe(false)
-  })
-
-  it('blocks and reports external requests before Playwright publication rendering', async () => {
-    const root = await mkdtemp(
-      resolve(tmpdir(), 'publication-offline-browser-'),
-    )
-    let requests = 0
-    const server = createServer((_request, response) => {
-      requests += 1
-      response.end('network response')
-    })
-    await new Promise<void>((accept, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', accept)
-    })
-    try {
-      const address = server.address()
-      if (!address || typeof address === 'string')
-        throw new Error('missing external request fixture address')
-      const htmlPath = resolve(root, 'index.html')
-      await writeFile(
-        htmlPath,
-        `<img src="http://127.0.0.1:${address.port}/external.png">`,
-      )
-      const candidates = publicationPlaywrightExecutableCandidates('1228')
-      const executablePath = await candidates.reduce<Promise<string>>(
-        async (previous, candidate) => {
-          const found = await previous
-          if (found) return found
-          try {
-            await access(candidate)
-            return candidate
-          } catch {
-            return ''
-          }
-        },
-        Promise.resolve(''),
-      )
-      expect(executablePath).not.toBe('')
-      const browser = await chromium.launch({ executablePath, headless: true })
-      try {
-        const offline = await useOfflinePublicationContext(browser)
-        const page = await offline.context.newPage()
-        await page.goto(pathToFileURL(htmlPath).href)
-        expect(() => offline.assertNoExternalRequests()).toThrow(
-          /blocked external request.*external\.png/i,
-        )
-        expect(requests).toBe(0)
-        await offline.context.close()
-      } finally {
-        await browser.close()
-      }
-    } finally {
-      await new Promise<void>((accept, reject) =>
-        server.close((error) => (error ? reject(error) : accept())),
-      )
-    }
-  })
-
-  it('isolates the Vivliostyle CLI process from external network requests while preserving loopback', async () => {
-    await runPublicationOffline(process.execPath, [
-      '--input-type=module',
-      '--eval',
-      'const {createServer}=await import("node:http");const server=createServer((_request,response)=>response.end("local"));await new Promise((accept,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",accept)});const address=server.address();const text=await fetch(`http://127.0.0.1:${address.port}`).then(response=>response.text());server.close();if(text!=="local")process.exit(1)',
-    ])
-
-    let requests = 0
-    const server = createServer((_request, response) => {
-      requests += 1
-      response.end('network response')
-    })
-    await new Promise<void>((accept, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', accept)
-    })
-    try {
-      const address = server.address()
-      if (!address || typeof address === 'string')
-        throw new Error('missing external request fixture address')
-      await expect(
-        runPublicationOffline(process.execPath, [
-          '--input-type=module',
-          '--eval',
-          `await fetch("http://127.0.0.1:${address.port}/external")`,
-        ]),
-      ).rejects.toThrow(/exited with status 1/)
-      expect(requests).toBe(0)
-    } finally {
-      await new Promise<void>((accept, reject) =>
-        server.close((error) => (error ? reject(error) : accept())),
-      )
-    }
   })
 
   it('removes stale WebPub and layout assets before a new publication', async () => {

@@ -4991,6 +4991,112 @@ function sourceLineageWithinRenderScope(
   }
 }
 
+function projectFigureLineageToAcceptedSourceCrop(
+  candidate: VisualCandidate,
+  sourceCrop: PdfVisualAsset,
+  sourceCropBox: NormalizedSourceBox,
+  caption: PdfPageRegion,
+  regions: readonly PdfPageRegion[],
+) {
+  const sourceRegionIds = candidate.sourceRegionIds.filter((sourceRegionId) => {
+    const sourceRegion = regions.find((region) => region.id === sourceRegionId)
+    return Boolean(
+      sourceRegion && intersectSourceBox(sourceCropBox, sourceRegion.box),
+    )
+  })
+  const sourceObjectIds = [...sourceCrop.sourceObjectIds]
+  const sourceBoxes = sourceCrop.sourceBoxes.map((sourceBox) => ({
+    ...sourceBox,
+  }))
+  const syntheticPanelRecovery = sourceObjectIds.some((sourceObjectId) =>
+    sourceObjectId.startsWith('source-panel:'),
+  )
+  if (!caption.sourceCaptionLane) {
+    if (!syntheticPanelRecovery) {
+      return {
+        sourceObjectIds,
+        sourceBoxes,
+        sourceRegionIds,
+        sourceLineIds: candidate.sourceLineIds,
+        sourceText: candidate.sourceText,
+      }
+    }
+    const retainedSourceLineIds = new Set(
+      regions.flatMap((region) =>
+        sourceRegionIds.includes(region.id)
+          ? region.lines.flatMap((line) =>
+              intersectSourceBox(sourceCropBox, line.box) ? [line.id] : [],
+            )
+          : [],
+      ),
+    )
+    return {
+      sourceObjectIds,
+      sourceBoxes,
+      sourceRegionIds,
+      sourceLineIds: candidate.sourceLineIds?.filter((sourceLineId) =>
+        retainedSourceLineIds.has(sourceLineId),
+      ),
+      sourceText: regions
+        .filter((region) => sourceRegionIds.includes(region.id))
+        .flatMap((region) =>
+          region.lines.filter((line) => retainedSourceLineIds.has(line.id)),
+        )
+        .map((line) => line.text)
+        .join(' '),
+    }
+  }
+
+  const explicitSourceLineIds = candidate.sourceLineIds?.length
+    ? new Set(candidate.sourceLineIds)
+    : null
+  const horizontalBounds = captionLaneHorizontalBounds(caption)
+  const retainedTextRegionIds = new Set<string>()
+  const retainedSourceLineIds: string[] = []
+  const retainedSourceText: string[] = []
+  const seenSourceLineIds = new Set<string>()
+  for (const sourceRegionId of sourceRegionIds) {
+    const sourceRegion = regions.find((region) => region.id === sourceRegionId)
+    if (!sourceRegion || sourceRegion.lines.length === 0) continue
+    for (const line of sourceRegion.lines) {
+      if (
+        seenSourceLineIds.has(line.id) ||
+        (explicitSourceLineIds && !explicitSourceLineIds.has(line.id)) ||
+        !line.text.trim() ||
+        !fullyContainsBox(
+          sourceCropBox,
+          line.box,
+          SOURCE_CROP_CONTAINMENT_TOLERANCE,
+        ) ||
+        !sourceBoxWithinHorizontalBounds(line.box, horizontalBounds)
+      ) {
+        continue
+      }
+      seenSourceLineIds.add(line.id)
+      retainedTextRegionIds.add(sourceRegionId)
+      retainedSourceLineIds.push(line.id)
+      retainedSourceText.push(line.text)
+    }
+  }
+  return {
+    sourceObjectIds,
+    sourceBoxes,
+    sourceRegionIds: sourceRegionIds.filter((sourceRegionId) => {
+      const sourceRegion = regions.find(
+        (region) => region.id === sourceRegionId,
+      )
+      return Boolean(
+        sourceRegion &&
+        (sourceRegion.lines.length === 0 ||
+          sourceRegion.nativeObjectIds.length > 0 ||
+          retainedTextRegionIds.has(sourceRegionId)),
+      )
+    }),
+    sourceLineIds: retainedSourceLineIds,
+    sourceText: retainedSourceText.join(' '),
+  }
+}
+
 function renderScopeContainsCompleteFigureLineage(
   candidate: VisualCandidate,
   sourceCropBox: NormalizedSourceBox,
@@ -11303,19 +11409,34 @@ export async function reconstructPdfVisuals({
           result.best!.evidence.push('source-page-crop-source-ink-tightened')
         }
         mergeAsset(assetStore, sourceCrop)
-        best.sourceObjectIds = [...scopedSourceLineage.sourceObjectIds]
-        best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
-          ...box,
-        }))
-        best.sourceRegionIds = best.sourceRegionIds.filter((sourceRegionId) => {
-          const sourceRegion = regions.find(
-            (region) => region.id === sourceRegionId,
+        if (best.kind === 'figure') {
+          Object.assign(
+            best,
+            projectFigureLineageToAcceptedSourceCrop(
+              best,
+              sourceCrop,
+              compositeSourceBox,
+              caption,
+              regions,
+            ),
           )
-          return Boolean(
-            sourceRegion &&
-            intersectSourceBox(compositeSourceBox!, sourceRegion.box),
+        } else {
+          best.sourceObjectIds = [...scopedSourceLineage.sourceObjectIds]
+          best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
+            ...box,
+          }))
+          best.sourceRegionIds = best.sourceRegionIds.filter(
+            (sourceRegionId) => {
+              const sourceRegion = regions.find(
+                (region) => region.id === sourceRegionId,
+              )
+              return Boolean(
+                sourceRegion &&
+                intersectSourceBox(compositeSourceBox!, sourceRegion.box),
+              )
+            },
           )
-        })
+        }
         best.assetIds = [sourceCrop.id]
         retainedPageCrop = sourceCrop
         result.best!.evidence = result.best!.evidence.filter(
@@ -11396,42 +11517,16 @@ export async function reconstructPdfVisuals({
             sourceBoxes: retryCrop.sourceBoxes.map((box) => ({ ...box })),
             clipped: !sameSourceBox(compositeSourceBox, recovery.sourceBox),
           }
-          best.sourceObjectIds = [...scopedSourceLineage.sourceObjectIds]
-          best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
-            ...box,
-          }))
-          best.sourceRegionIds = best.sourceRegionIds.filter(
-            (sourceRegionId) => {
-              const sourceRegion = regions.find(
-                (region) => region.id === sourceRegionId,
-              )
-              return Boolean(
-                sourceRegion &&
-                intersectSourceBox(compositeSourceBox!, sourceRegion.box),
-              )
-            },
-          )
-          const retainedSourceLineIds = new Set(
-            regions.flatMap((region) =>
-              best.sourceRegionIds.includes(region.id)
-                ? region.lines.flatMap((line) =>
-                    intersectSourceBox(compositeSourceBox!, line.box)
-                      ? [line.id]
-                      : [],
-                  )
-                : [],
+          Object.assign(
+            best,
+            projectFigureLineageToAcceptedSourceCrop(
+              best,
+              retryCrop,
+              compositeSourceBox,
+              caption,
+              regions,
             ),
           )
-          best.sourceLineIds = best.sourceLineIds?.filter((sourceLineId) =>
-            retainedSourceLineIds.has(sourceLineId),
-          )
-          best.sourceText = regions
-            .filter((region) => best.sourceRegionIds.includes(region.id))
-            .flatMap((region) =>
-              region.lines.filter((line) => retainedSourceLineIds.has(line.id)),
-            )
-            .map((line) => line.text)
-            .join(' ')
           best.assetIds = [retryCrop.id]
           best.nativeEnvelopeIncomplete = false
           retainedPageCrop = retryCrop

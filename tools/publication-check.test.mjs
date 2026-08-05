@@ -187,6 +187,15 @@ describe('publication:check CLI', () => {
     )
   })
 
+  it('folds Greek sigma in searchable text independently of later rendered text', () => {
+    expect(normalizePdfSearchableText('Ο\u0301Σ')).toBe(
+      normalizePdfSearchableText('ΟΣ X').slice(0, 2),
+    )
+    expect(normalizePdfSearchableText('ος')).toBe(
+      normalizePdfSearchableText('οσ'),
+    )
+  })
+
   it('rejects PDF text outside the visible crop and requires every image asset', () => {
     const crop = { x: 0, y: 0, width: 100, height: 100 }
     expect(() =>

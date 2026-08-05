@@ -78,6 +78,7 @@ export function normalizePdfSearchableText(value) {
     .replace(/\p{M}/gu, '')
     .replace(/[^\p{L}\p{N}]+/gu, '')
     .toLowerCase()
+    .replace(/ς/gu, 'σ')
 }
 
 export function normalizePdfVerificationText(value) {

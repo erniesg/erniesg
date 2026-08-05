@@ -205,6 +205,29 @@ describe('PublicationGraph', () => {
     )
   })
 
+  it('accepts UTF-16 inline offsets only at Unicode scalar boundaries', () => {
+    const withRange = (start: number, end: number) => {
+      const graph = graphFixture() as any
+      const paragraph = graph.nodes.find((node: any) => node.id === 'paragraph')
+      paragraph.text = '😀a'
+      paragraph.inlineRuns = [{ start, end, bold: true }]
+      graph.nodes = [paragraph]
+      return graph
+    }
+    const split = publicationGraphSchema.safeParse(withRange(1, 2))
+    expect(split.success).toBe(false)
+    if (!split.success)
+      expect(split.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringMatching(/Unicode scalar boundary/),
+          }),
+        ]),
+      )
+    expect(publicationGraphSchema.safeParse(withRange(0, 2)).success).toBe(true)
+    expect(publicationGraphSchema.safeParse(withRange(2, 3)).success).toBe(true)
+  })
+
   it.each([
     [
       'unknown version',

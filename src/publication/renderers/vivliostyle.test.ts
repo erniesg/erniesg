@@ -194,6 +194,38 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(html).toContain('<br>')
   })
 
+  it('rejects inline ranges that split surrogate pairs and renders valid UTF-16 boundaries intact', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (!paragraph || paragraph.type !== 'paragraph')
+      throw new Error('missing paragraph fixture')
+    const graph = {
+      ...bundle.graph,
+      nodes: [
+        {
+          ...paragraph,
+          text: '😀a',
+          inlineRuns: [{ start: 1, end: 2, bold: true }],
+        },
+      ],
+    }
+    expect(() =>
+      publicationGraphToHtml(graph, new Map(), 'phone-webpub'),
+    ).toThrow(/Unicode scalar boundary/)
+
+    graph.nodes[0].inlineRuns = [
+      { start: 0, end: 2, bold: true },
+      { start: 2, end: 3, italic: true },
+    ]
+    const html = publicationGraphToHtml(graph, new Map(), 'phone-webpub')
+    expect(html).toContain('<strong>😀</strong><em>a</em>')
+    expect(html).not.toContain('�')
+  })
+
   it('rejects hard-break runs that cover authored text', async () => {
     const contentRoot = await fixtureCollection('synthetic-publication')
     const bundle = await adaptAstroBlogEntry({

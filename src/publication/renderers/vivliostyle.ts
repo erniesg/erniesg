@@ -22,7 +22,7 @@ import type {
   PublicationInlineRun,
   PublicationNode,
 } from '../schema'
-import { serializePublicationGraph } from '../schema'
+import { isUnicodeScalarBoundary, serializePublicationGraph } from '../schema'
 import type {
   PublicationBundle,
   PublicationRenderer,
@@ -134,6 +134,13 @@ function inlineHtml(
   targetNodes?: Map<string, PublicationNode>,
 ) {
   for (const run of runs) {
+    if (
+      !isUnicodeScalarBoundary(text, run.start) ||
+      !isUnicodeScalarBoundary(text, run.end)
+    )
+      throw new Error(
+        `Each endpoint of inline range ${run.start}:${run.end} must be a Unicode scalar boundary`,
+      )
     if (!run.hardBreak) continue
     if (
       run.start < 0 ||

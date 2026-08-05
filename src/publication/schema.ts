@@ -101,6 +101,20 @@ export const publicationInlineRunSchema = z
 
 export type PublicationInlineRun = z.infer<typeof publicationInlineRunSchema>
 
+export function isUnicodeScalarBoundary(text: string, offset: number) {
+  if (!Number.isInteger(offset) || offset < 0 || offset > text.length)
+    return false
+  if (offset === 0 || offset === text.length) return true
+  const previous = text.charCodeAt(offset - 1)
+  const next = text.charCodeAt(offset)
+  return !(
+    previous >= 0xd800 &&
+    previous <= 0xdbff &&
+    next >= 0xdc00 &&
+    next <= 0xdfff
+  )
+}
+
 function inlineRunProducesLink(run: PublicationInlineRun) {
   return Boolean(
     run.href ||
@@ -515,6 +529,16 @@ export const publicationGraphSchema = z
               code: z.ZodIssueCode.custom,
               path: ['nodes', index, 'inlineRuns', runIndex],
               message: 'Inline range lies outside node text',
+            })
+          } else if (
+            !isUnicodeScalarBoundary(content, run.start) ||
+            !isUnicodeScalarBoundary(content, run.end)
+          ) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['nodes', index, 'inlineRuns', runIndex],
+              message:
+                'Each inline range endpoint must be a Unicode scalar boundary',
             })
           }
           run.targetIds?.forEach((target, targetIndex) => {

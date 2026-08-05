@@ -67,9 +67,14 @@ function tcp(host, port, websocket = false) {
     }
     const timeout = setTimeout(() => finish(false), 400)
     socket.once('connect', () => {
-      if (websocket)
-        socket.write('GET /publication-isolation-probe HTTP/1.1\r\nHost: sentinel\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: cHVibGljYXRpb24tcHJvYmU=\r\n\r\n')
-      finish(true)
+      if (!websocket) {
+        finish(true)
+        return
+      }
+      socket.end(
+        'GET /publication-isolation-probe HTTP/1.1\r\nHost: sentinel\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: cHVibGljYXRpb24tcHJvYmU=\r\n\r\n',
+        () => finish(true),
+      )
     })
     socket.once('error', () => finish(false))
   })
@@ -93,14 +98,19 @@ function http(host, port) {
 function udp(type, host, port) {
   return new Promise((accept) => {
     const socket = createSocket(type)
-    socket.send(Buffer.from('publication-isolation-probe'), port, host, () => {
-      socket.close()
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      try {
+        socket.close()
+      } catch {
+        // The error path can close the socket before the send callback.
+      }
       accept()
-    })
-    socket.once('error', () => {
-      socket.close()
-      accept()
-    })
+    }
+    socket.send(Buffer.from('publication-isolation-probe'), port, host, finish)
+    socket.once('error', finish)
   })
 }
 

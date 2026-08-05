@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
 import { createSocket } from 'node:dgram'
+import { createServer as createTcpServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import {
   access,
@@ -15,6 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import { PDFDict, PDFDocument, PDFName } from 'pdf-lib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -26,10 +28,12 @@ import { publicationPlaywrightExecutableCandidates } from './vivliostyle'
 import {
   PUBLICATION_BOUNDARY_EXECUTABLES,
   assertPublicationBoundaryRuntime,
+  attestPublicationRuntimeFile,
   buildPublicationSystemdInvocation,
   createPublicationUnitName,
   runPublicationIsolatedRender,
   runPublicationSystemdInvocation,
+  verifyPublicationRuntimeAttestations,
   verifyPublicationBoundaryExecutables,
 } from './systemd-boundary'
 
@@ -59,6 +63,20 @@ async function listen(server: ReturnType<typeof createServer>, host: string) {
   return address.port
 }
 
+async function listenTcp(
+  server: ReturnType<typeof createTcpServer>,
+  host: string,
+) {
+  await new Promise<void>((accept, reject) => {
+    server.once('error', reject)
+    server.listen(0, host, accept)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string')
+    throw new Error(`Missing ${host} TCP sentinel address`)
+  return address.port
+}
+
 async function listenUdp(
   socket: ReturnType<typeof createSocket>,
   host: string,
@@ -74,6 +92,13 @@ async function listenUdp(
 }
 
 async function closeServer(server: ReturnType<typeof createServer>) {
+  if (!server.listening) return
+  await new Promise<void>((accept, reject) =>
+    server.close((error) => (error ? reject(error) : accept())),
+  )
+}
+
+async function closeTcp(server: ReturnType<typeof createTcpServer>) {
   if (!server.listening) return
   await new Promise<void>((accept, reject) =>
     server.close((error) => (error ? reject(error) : accept())),
@@ -203,6 +228,11 @@ async function publicationResidue(root: string) {
   )
 }
 
+const testRuntimeAttestationDependencies = {
+  createRuntimeAttestations: async () => [],
+  verifyRuntimeAttestations: async () => undefined,
+}
+
 describe('publication systemd process-tree boundary', () => {
   it('builds one shell-free, bounded, privilege-dropping system service', () => {
     const invocation = buildPublicationSystemdInvocation(invocationInput)
@@ -329,6 +359,47 @@ describe('publication systemd process-tree boundary', () => {
     expect(name).toMatch(/^[a-z0-9-]+$/)
   })
 
+  it('detects same-UID mutation of an authenticated runtime entrypoint', async () => {
+    const fixture = await atomicPublicationFixture()
+    const attestation = await attestPublicationRuntimeFile(
+      'browser-executable',
+      fixture.browserPath,
+    )
+    await writeFile(fixture.browserPath, '#!/bin/true\n', { mode: 0o700 })
+
+    await expect(
+      verifyPublicationRuntimeAttestations([attestation]),
+    ).rejects.toThrow(/runtime.*changed|attestation/i)
+  })
+
+  it('refuses publication when a runtime entrypoint changes after request authentication', async () => {
+    const fixture = await atomicPublicationFixture()
+    const attestation = await attestPublicationRuntimeFile(
+      'browser-executable',
+      fixture.browserPath,
+    )
+    const rawPdf = await validPdfBytes()
+
+    await expect(
+      runPublicationIsolatedRender(isolatedRenderRequest(fixture), {
+        verifyExecutables: async () => undefined,
+        createRuntimeAttestations: async () => [attestation],
+        runInvocation: async (invocation) => {
+          const { request, requestSha256 } =
+            await authenticatedInvocationRequest(invocation)
+          await writeFile(fixture.browserPath, '#!/bin/true\n', { mode: 0o700 })
+          await writeFile(String(request.outputPath), rawPdf)
+          await writeFile(
+            String(request.proofPath),
+            `${JSON.stringify(isolationProof(request, requestSha256, rawPdf))}\n`,
+          )
+        },
+      }),
+    ).rejects.toThrow(/runtime attestation changed/i)
+    expect(await readFile(fixture.outputPath)).toEqual(fixture.original)
+    expect(await publicationResidue(fixture.root)).toEqual([])
+  })
+
   it('rejects unsupported platforms, root callers, and missing identity APIs', () => {
     expect(() =>
       assertPublicationBoundaryRuntime({
@@ -412,6 +483,7 @@ describe('publication systemd process-tree boundary', () => {
     const events: string[] = []
 
     await runPublicationIsolatedRender(isolatedRenderRequest(fixture), {
+      ...testRuntimeAttestationDependencies,
       verifyExecutables: async () => undefined,
       runInvocation: async (invocation) => {
         const { request, requestSha256, serialized } =
@@ -456,6 +528,7 @@ describe('publication systemd process-tree boundary', () => {
     'missing proof',
     'invalid proof',
     'digest mismatch',
+    'runtime proof mismatch',
     'parse failure',
     'normalization failure',
     'timeout',
@@ -481,6 +554,7 @@ describe('publication systemd process-tree boundary', () => {
       const render = runPublicationIsolatedRender(
         isolatedRenderRequest(fixture),
         {
+          ...testRuntimeAttestationDependencies,
           verifyExecutables: async () => undefined,
           runInvocation: async (invocation) => {
             const { request, requestSha256 } =
@@ -513,6 +587,8 @@ describe('publication systemd process-tree boundary', () => {
             const proof = isolationProof(request, requestSha256, output)
             if (failure === 'digest mismatch')
               proof.outputSha256 = '0'.repeat(64)
+            if (failure === 'runtime proof mismatch')
+              proof.runtimeEntries = [{ injected: true }]
             await writeFile(
               String(request.proofPath),
               `${JSON.stringify(proof)}\n`,
@@ -534,6 +610,7 @@ describe('publication systemd process-tree boundary', () => {
           'missing proof',
           'invalid proof',
           'digest mismatch',
+          'runtime proof mismatch',
           'timeout',
         ].includes(failure)
       )
@@ -559,6 +636,7 @@ describe('publication systemd process-tree boundary', () => {
           outputPath: resolve(linkedParent, 'outside.pdf'),
         },
         {
+          ...testRuntimeAttestationDependencies,
           verifyExecutables: async () => undefined,
           runInvocation: neverRun,
         },
@@ -570,6 +648,7 @@ describe('publication systemd process-tree boundary', () => {
     await symlink(outsideFinal, fixture.outputPath)
     await expect(
       runPublicationIsolatedRender(isolatedRenderRequest(fixture), {
+        ...testRuntimeAttestationDependencies,
         verifyExecutables: async () => undefined,
         runInvocation: neverRun,
       }),
@@ -580,11 +659,20 @@ describe('publication systemd process-tree boundary', () => {
   })
 
   systemdIntegration(
-    'coordinator smoke: renders real local assets and proves host sentinels stay untouched',
+    'coordinator smoke: renders nested assets and proves physical filesystem and network confinement',
     async () => {
       const root = await mkdtemp(resolve('.publication-systemd-smoke-'))
+      const tcpCounts = { ipv4: 0, ipv6: 0 }
       const httpCounts = { ipv4: 0, ipv6: 0, ws4: 0, ws6: 0 }
       const udpCounts = { ipv4: 0, ipv6: 0 }
+      const tcp4 = createTcpServer((socket) => {
+        tcpCounts.ipv4 += 1
+        socket.destroy()
+      })
+      const tcp6 = createTcpServer((socket) => {
+        tcpCounts.ipv6 += 1
+        socket.destroy()
+      })
       const http4 = createServer((_request, response) => {
         httpCounts.ipv4 += 1
         response.end('unexpected')
@@ -605,13 +693,20 @@ describe('publication systemd process-tree boundary', () => {
       const udp6 = createSocket('udp6')
       udp4.on('message', () => (udpCounts.ipv4 += 1))
       udp6.on('message', () => (udpCounts.ipv6 += 1))
+      const outsidePath = `${root}-outside.svg`
       try {
-        const [http4Port, http6Port, udp4Port, udp6Port] = await Promise.all([
-          listen(http4, '127.0.0.1'),
-          listen(http6, '::1'),
-          listenUdp(udp4, '127.0.0.1'),
-          listenUdp(udp6, '::1'),
-        ])
+        const [tcp4Port, tcp6Port, http4Port, http6Port, udp4Port, udp6Port] =
+          await Promise.all([
+            listenTcp(tcp4, '127.0.0.1'),
+            listenTcp(tcp6, '::1'),
+            listen(http4, '127.0.0.1'),
+            listen(http6, '::1'),
+            listenUdp(udp4, '127.0.0.1'),
+            listenUdp(udp6, '::1'),
+          ])
+        await writeFile(outsidePath, '<svg></svg>')
+        const outsideLink = resolve(root, 'outside-link.svg')
+        await symlink(outsidePath, outsideLink)
         await copyFile(
           'public/fonts/Geist-Regular.ttf',
           resolve(root, 'fixture.ttf'),
@@ -677,9 +772,30 @@ describe('publication systemd process-tree boundary', () => {
               ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
               : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
           title: 'Boundary fixture',
+          filesystemDiagnosticPaths: [outsidePath, outsideLink],
+          networkDiagnostic: {
+            tcpIpv4Port: tcp4Port,
+            tcpIpv6Port: tcp6Port,
+            httpIpv4Port: http4Port,
+            httpIpv6Port: http6Port,
+            websocketIpv4Port: http4Port,
+            websocketIpv6Port: http6Port,
+            udpIpv4Port: udp4Port,
+            udpIpv6Port: udp6Port,
+          },
         })) as {
           networkNamespace: string
+          mountNamespace: string
           childNetworkNamespaces: string[]
+          childMountNamespaces: string[]
+          networkDiagnostic: {
+            attempted: string[]
+            privateLoopback: { ipv4: boolean; ipv6: boolean }
+          }
+          filesystemDiagnostics: Array<{
+            path: string
+            inaccessible: boolean
+          }>
         }
         expect(proof.childNetworkNamespaces.length).toBeGreaterThan(0)
         expect(
@@ -687,6 +803,33 @@ describe('publication systemd process-tree boundary', () => {
             (identity) => identity === proof.networkNamespace,
           ),
         ).toBe(true)
+        expect(proof.childMountNamespaces.length).toBeGreaterThan(0)
+        expect(
+          proof.childMountNamespaces.every(
+            (identity) => identity === proof.mountNamespace,
+          ),
+        ).toBe(true)
+        expect(proof.networkDiagnostic).toEqual({
+          attempted: [
+            'tcp-ipv4',
+            'tcp-ipv6',
+            'http-ipv4',
+            'http-ipv6',
+            'websocket-ipv4',
+            'websocket-ipv6',
+            'udp-ipv4',
+            'udp-ipv6',
+          ],
+          privateLoopback: { ipv4: true, ipv6: true },
+        })
+        expect(proof.filesystemDiagnostics).toEqual([
+          { path: outsidePath, inaccessible: true },
+          { path: outsideLink, inaccessible: true },
+        ])
+        await new Promise((accept) => setTimeout(accept, 50))
+        expect(tcpCounts).toEqual({ ipv4: 0, ipv6: 0 })
+        expect(httpCounts).toEqual({ ipv4: 0, ipv6: 0, ws4: 0, ws6: 0 })
+        expect(udpCounts).toEqual({ ipv4: 0, ipv6: 0 })
         const pdf = await PDFDocument.load(await readFile(outputPath))
         const resources = pdf.getPage(0).node.Resources()
         expect(
@@ -700,11 +843,36 @@ describe('publication systemd process-tree boundary', () => {
             name.startsWith('.publication-'),
           ),
         ).toBe(false)
-
-        const outsidePath = `${root}-outside.png`
-        await writeFile(outsidePath, 'outside')
-        try {
-          await writeFile(htmlPath, `<!doctype html><img src="${outsidePath}">`)
+        const successfulDigest = sha256(await readFile(outputPath))
+        const escapedName = basename(outsidePath)
+        const invalidCarriers = [
+          async () =>
+            writeFile(htmlPath, `<!doctype html><img src="${outsidePath}">`),
+          async () => {
+            await writeFile(
+              resolve(root, 'publication.css'),
+              `main{background-image:image-set("${pathToFileURL(outsidePath).href}" 1x)}`,
+            )
+            await writeFile(
+              htmlPath,
+              '<!doctype html><link rel="stylesheet" href="publication.css"><main>fixture</main>',
+            )
+          },
+          async () =>
+            writeFile(
+              htmlPath,
+              `<svg><rect fill="url(${pathToFileURL(outsidePath).href})"/></svg>`,
+            ),
+          async () =>
+            writeFile(
+              htmlPath,
+              `<svg><animate attributeName="xlink:href" values="#local;${pathToFileURL(outsidePath).href}"/></svg>`,
+            ),
+          async () => writeFile(htmlPath, `<img src="%2e%2e/${escapedName}">`),
+          async () => writeFile(htmlPath, '<img src="outside-link.svg">'),
+        ]
+        for (const prepareInvalidCarrier of invalidCarriers) {
+          await prepareInvalidCarrier()
           await expect(
             runPublicationIsolatedRender({
               renderer,
@@ -721,39 +889,19 @@ describe('publication systemd process-tree boundary', () => {
               title: 'Boundary fixture',
             }),
           ).rejects.toThrow(/systemd-run exited with status/)
-          await writeFile(
-            htmlPath,
-            `<!doctype html><img src="${outsidePath}"><script>navigator.serviceWorker?.register('service-worker.js');fetch('http://127.0.0.1:${http4Port}/fresh',{cache:'reload'});fetch('http://[::1]:${http6Port}/fresh');new WebSocket('ws://127.0.0.1:${http4Port}/delayed');new WebSocket('ws://[::1]:${http6Port}/delayed');const peer=new RTCPeerConnection({iceServers:[{urls:['stun:127.0.0.1:${udp4Port}','stun:[::1]:${udp6Port}']}]});peer.createDataChannel('probe');peer.createOffer().then((offer)=>peer.setLocalDescription(offer));setTimeout(()=>fetch('http://dns-probe.invalid/delayed'),250)</script>`,
-          )
-          await expect(
-            runPublicationIsolatedRender({
-              renderer,
-              publicationRoot: root,
-              inputPath: htmlPath,
-              outputPath,
-              size: 'A4',
-              browserPath,
-              expectedBrowserVersion,
-              expectedRendererVersion:
-                renderer === 'vivliostyle-cli'
-                  ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
-                  : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
-              title: 'Boundary fixture',
-            }),
-          ).rejects.toThrow(/systemd-run exited with status/)
-          await new Promise((accept) => setTimeout(accept, 350))
-          expect(httpCounts).toEqual({ ipv4: 0, ipv6: 0, ws4: 0, ws6: 0 })
-          expect(udpCounts).toEqual({ ipv4: 0, ipv6: 0 })
-        } finally {
-          await rm(outsidePath, { force: true })
+          expect(sha256(await readFile(outputPath))).toBe(successfulDigest)
+          expect(await publicationResidue(root)).toEqual([])
         }
       } finally {
         await Promise.all([
+          closeTcp(tcp4),
+          closeTcp(tcp6),
           closeUdp(udp4),
           closeUdp(udp6),
           closeServer(http4),
           closeServer(http6),
         ])
+        await rm(outsidePath, { force: true })
         await rm(root, { recursive: true, force: true })
       }
     },

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, type BigIntStats } from 'node:fs'
 import { spawn } from 'node:child_process'
 import {
   access,
@@ -43,6 +43,12 @@ const PUBLICATION_NODE_MODULES = resolve(
   '..',
   'node_modules',
 )
+const PUBLICATION_RUNTIME_PATHS = {
+  parse5: resolve(PUBLICATION_NODE_MODULES, 'parse5'),
+  playwright: resolve(PUBLICATION_NODE_MODULES, 'playwright'),
+  playwrightCore: resolve(PUBLICATION_NODE_MODULES, 'playwright-core'),
+  vivliostyle: resolve(PUBLICATION_NODE_MODULES, '@vivliostyle/cli'),
+} as const
 const UNIT_RUNTIME_SECONDS = 120
 const INVOCATION_TIMEOUT_MILLISECONDS = 135_000
 const MAX_PROOF_BYTES = 64 * 1024
@@ -68,13 +74,59 @@ export type PublicationIsolatedRenderRequest = {
   expectedBrowserVersion: string
   expectedRendererVersion: string
   title: string
+  networkDiagnostic?: PublicationNetworkDiagnostic
+  filesystemDiagnosticPaths?: string[]
+}
+
+export type PublicationNetworkDiagnostic = {
+  tcpIpv4Port: number
+  tcpIpv6Port: number
+  httpIpv4Port: number
+  httpIpv6Port: number
+  websocketIpv4Port: number
+  websocketIpv6Port: number
+  udpIpv4Port: number
+  udpIpv6Port: number
 }
 
 type PublicationIsolatedRenderDependencies = {
   verifyExecutables?: typeof verifyPublicationBoundaryExecutables
   runInvocation?: typeof runPublicationSystemdInvocation
   normalizePdf?: typeof normalizePublicationPdf
+  createRuntimeAttestations?: typeof createPublicationRuntimeAttestations
+  verifyRuntimeAttestations?: typeof verifyPublicationRuntimeAttestations
 }
+
+export type PublicationRuntimeAttestation =
+  | {
+      kind: 'file'
+      label: string
+      path: string
+      sha256: string
+      byteLength: string
+      device: string
+      inode: string
+      ctimeNanoseconds: string
+      mode: string
+      parentPath: string
+      parentDevice: string
+      parentInode: string
+      parentCtimeNanoseconds: string
+    }
+  | {
+      kind: 'tree'
+      label: string
+      path: string
+      sha256: string
+      entryCount: number
+      device: string
+      inode: string
+      ctimeNanoseconds: string
+      parentPath: string
+      parentDevice: string
+      parentInode: string
+      parentCtimeNanoseconds: string
+    }
 
 export class PublicationSystemdError extends Error {
   exitCode?: number
@@ -125,6 +177,197 @@ function sha256(value: Uint8Array | string) {
 
 function environmentSha256(environment: NodeJS.ProcessEnv) {
   return sha256(JSON.stringify(Object.entries(environment).sort()))
+}
+
+function sameBigIntFileIdentity(left: BigIntStats, right: BigIntStats) {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.ctimeNs === right.ctimeNs &&
+    left.mode === right.mode
+  )
+}
+
+function lexicalName(left: { name: string }, right: { name: string }) {
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+}
+
+function lexicalLabel(
+  left: PublicationRuntimeAttestation,
+  right: PublicationRuntimeAttestation,
+) {
+  return left.label < right.label ? -1 : left.label > right.label ? 1 : 0
+}
+
+async function hashOpenRegularFile(path: string) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile())
+      throw new Error(`Publication runtime path is not a regular file: ${path}`)
+    const digest = createHash('sha256')
+    for await (const chunk of handle.createReadStream({ autoClose: false }))
+      digest.update(chunk)
+    const after = await handle.stat({ bigint: true })
+    if (!sameBigIntFileIdentity(before, after))
+      throw new Error(`Publication runtime file changed while hashing: ${path}`)
+    return { metadata: before, sha256: digest.digest('hex') }
+  } finally {
+    await handle.close()
+  }
+}
+
+async function runtimeParentIdentity(path: string) {
+  const parentPath = await realpath(dirname(path))
+  const metadata = await stat(parentPath, { bigint: true })
+  if (!metadata.isDirectory())
+    throw new Error(
+      `Publication runtime parent is not a directory: ${parentPath}`,
+    )
+  return {
+    parentPath,
+    parentDevice: metadata.dev.toString(),
+    parentInode: metadata.ino.toString(),
+    parentCtimeNanoseconds: metadata.ctimeNs.toString(),
+  }
+}
+
+export async function attestPublicationRuntimeFile(
+  label: string,
+  path: string,
+): Promise<PublicationRuntimeAttestation> {
+  if (!/^[a-z][a-z0-9-]*$/.test(label))
+    throw new Error('Publication runtime label is invalid')
+  const canonical = await realpath(path)
+  if (canonical !== path)
+    throw new Error(`Publication runtime file is not canonical: ${path}`)
+  const [{ metadata, sha256: digest }, parent] = await Promise.all([
+    hashOpenRegularFile(path),
+    runtimeParentIdentity(path),
+  ])
+  return {
+    kind: 'file',
+    label,
+    path,
+    sha256: digest,
+    byteLength: metadata.size.toString(),
+    device: metadata.dev.toString(),
+    inode: metadata.ino.toString(),
+    ctimeNanoseconds: metadata.ctimeNs.toString(),
+    mode: (metadata.mode & 0o777n).toString(8),
+    ...parent,
+  }
+}
+
+export async function attestPublicationRuntimeTree(
+  label: string,
+  path: string,
+): Promise<PublicationRuntimeAttestation> {
+  if (!/^[a-z][a-z0-9-]*$/.test(label))
+    throw new Error('Publication runtime label is invalid')
+  const canonical = await realpath(path)
+  if (canonical !== path)
+    throw new Error(`Publication runtime tree is not canonical: ${path}`)
+  const before = await stat(path, { bigint: true })
+  if (!before.isDirectory())
+    throw new Error(`Publication runtime tree is not a directory: ${path}`)
+  const digest = createHash('sha256')
+  let entryCount = 0
+  const visit = async (directory: string) => {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort(
+      lexicalName,
+    )
+    for (const entry of entries) {
+      const entryPath = resolve(directory, entry.name)
+      const relativePath = relative(path, entryPath).split(sep).join('/')
+      const metadata = await lstat(entryPath, { bigint: true })
+      entryCount += 1
+      if (metadata.isDirectory()) {
+        digest.update(
+          `${JSON.stringify(['directory', relativePath, metadata.mode.toString(), metadata.ctimeNs.toString()])}\n`,
+        )
+        await visit(entryPath)
+      } else if (metadata.isFile()) {
+        const file = await hashOpenRegularFile(entryPath)
+        digest.update(
+          `${JSON.stringify(['file', relativePath, file.metadata.mode.toString(), file.metadata.size.toString(), file.metadata.ctimeNs.toString(), file.sha256])}\n`,
+        )
+      } else if (metadata.isSymbolicLink()) {
+        digest.update(
+          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), await readlink(entryPath)])}\n`,
+        )
+      } else {
+        throw new Error(
+          `Unsupported publication runtime tree entry: ${entryPath}`,
+        )
+      }
+    }
+  }
+  await visit(path)
+  const after = await stat(path, { bigint: true })
+  if (!sameBigIntFileIdentity(before, after))
+    throw new Error(`Publication runtime tree changed while hashing: ${path}`)
+  const parent = await runtimeParentIdentity(path)
+  return {
+    kind: 'tree',
+    label,
+    path,
+    sha256: digest.digest('hex'),
+    entryCount,
+    device: before.dev.toString(),
+    inode: before.ino.toString(),
+    ctimeNanoseconds: before.ctimeNs.toString(),
+    ...parent,
+  }
+}
+
+async function createPublicationRuntimeAttestations(
+  request: PublicationIsolatedRenderRequest,
+  browserPath: string,
+) {
+  const fileInputs = [
+    ['node-executable', PUBLICATION_BOUNDARY_EXECUTABLES.node],
+    ['isolation-helper', PUBLICATION_OFFLINE_HELPER_PATH],
+    ['browser-executable', browserPath],
+  ] as const
+  const treeInputs =
+    request.renderer === 'vivliostyle-cli'
+      ? [
+          ['resource-parser', PUBLICATION_RUNTIME_PATHS.parse5],
+          ['renderer-package', PUBLICATION_RUNTIME_PATHS.vivliostyle],
+        ]
+      : [
+          ['resource-parser', PUBLICATION_RUNTIME_PATHS.parse5],
+          ['renderer-package', PUBLICATION_RUNTIME_PATHS.playwright],
+          ['renderer-core', PUBLICATION_RUNTIME_PATHS.playwrightCore],
+        ]
+  return (
+    await Promise.all([
+      ...fileInputs.map(([label, path]) =>
+        attestPublicationRuntimeFile(label, path),
+      ),
+      ...treeInputs.map(([label, path]) =>
+        attestPublicationRuntimeTree(label, path),
+      ),
+    ])
+  ).sort(lexicalLabel)
+}
+
+export async function verifyPublicationRuntimeAttestations(
+  expected: PublicationRuntimeAttestation[],
+) {
+  const actual = (
+    await Promise.all(
+      expected.map((entry) =>
+        entry.kind === 'file'
+          ? attestPublicationRuntimeFile(entry.label, entry.path)
+          : attestPublicationRuntimeTree(entry.label, entry.path),
+      ),
+    )
+  ).sort(lexicalLabel)
+  if (JSON.stringify(actual) !== JSON.stringify(expected))
+    throw new Error('Publication runtime attestation changed')
 }
 
 async function createPrivateStagingDirectory(parent: string) {
@@ -284,6 +527,26 @@ const PROOF_FIELDS = [
   'version',
 ] as const
 
+const NETWORK_DIAGNOSTIC_ATTEMPTS = [
+  'tcp-ipv4',
+  'tcp-ipv6',
+  'http-ipv4',
+  'http-ipv6',
+  'websocket-ipv4',
+  'websocket-ipv6',
+  'udp-ipv4',
+  'udp-ipv6',
+]
+
+function expectedNetworkDiagnosticProof(value: unknown) {
+  return value
+    ? {
+        attempted: NETWORK_DIAGNOSTIC_ATTEMPTS,
+        privateLoopback: { ipv4: true, ipv6: true },
+      }
+    : null
+}
+
 function exactNamespaceChildren(
   value: unknown,
   namespace: unknown,
@@ -357,8 +620,16 @@ function validateIsolationProof({
       mountNamespace,
       /^mnt:\[\d+\]$/,
     ) ||
-    record.networkDiagnostic !== null ||
-    JSON.stringify(record.filesystemDiagnostics) !== JSON.stringify([])
+    JSON.stringify(record.networkDiagnostic) !==
+      JSON.stringify(
+        expectedNetworkDiagnosticProof(authenticatedRequest.networkDiagnostic),
+      ) ||
+    JSON.stringify(record.filesystemDiagnostics) !==
+      JSON.stringify(
+        (authenticatedRequest.filesystemDiagnosticPaths as string[]).map(
+          (path) => ({ path, inaccessible: true }),
+        ),
+      )
   )
     throw new Error(
       'Isolated publication renderer returned invalid attestation',
@@ -629,6 +900,37 @@ export async function runPublicationIsolatedRender(
     !/^\d+\.\d+\.\d+$/.test(request.expectedRendererVersion)
   )
     throw new Error('Publication normalization identity is invalid')
+  const networkDiagnostic = request.networkDiagnostic ?? null
+  if (
+    networkDiagnostic &&
+    (JSON.stringify(Object.keys(networkDiagnostic).sort()) !==
+      JSON.stringify(
+        [
+          'httpIpv4Port',
+          'httpIpv6Port',
+          'tcpIpv4Port',
+          'tcpIpv6Port',
+          'udpIpv4Port',
+          'udpIpv6Port',
+          'websocketIpv4Port',
+          'websocketIpv6Port',
+        ].sort(),
+      ) ||
+      Object.values(networkDiagnostic).some(
+        (port) => !Number.isSafeInteger(port) || port < 1 || port > 65_535,
+      ))
+  )
+    throw new Error('Publication network diagnostic is invalid')
+  const filesystemDiagnosticPaths = [
+    ...new Set(request.filesystemDiagnosticPaths ?? []),
+  ]
+  if (
+    filesystemDiagnosticPaths.length > 8 ||
+    filesystemDiagnosticPaths.some(
+      (path) => !isAbsolute(path) || /[\0\r\n]/u.test(path),
+    )
+  )
+    throw new Error('Publication filesystem diagnostics are invalid')
   await (
     dependencies.verifyExecutables ?? verifyPublicationBoundaryExecutables
   )()
@@ -651,6 +953,10 @@ export async function runPublicationIsolatedRender(
     PUBLICATION_OFFLINE_HELPER_PATH
   )
     throw new Error('Publication isolation helper path is not canonical')
+  const runtimeEntries = await (
+    dependencies.createRuntimeAttestations ??
+    createPublicationRuntimeAttestations
+  )(request, browserPath)
   const [hostNetworkNamespace, hostMountNamespace] = await Promise.all([
     readlink('/proc/self/ns/net'),
     readlink('/proc/self/ns/mnt'),
@@ -682,9 +988,9 @@ export async function runPublicationIsolatedRender(
       hostNetworkNamespace,
       hostMountNamespace,
       proofPath,
-      runtimeEntries: [],
-      networkDiagnostic: null,
-      filesystemDiagnosticPaths: [],
+      runtimeEntries,
+      networkDiagnostic,
+      filesystemDiagnosticPaths,
     }
     const serialized = `${JSON.stringify(authenticatedRequest)}\n`
     const requestSha256 = sha256(serialized)
@@ -707,6 +1013,10 @@ export async function runPublicationIsolatedRender(
     await (dependencies.runInvocation ?? runPublicationSystemdInvocation)(
       invocation,
     )
+    await (
+      dependencies.verifyRuntimeAttestations ??
+      verifyPublicationRuntimeAttestations
+    )(runtimeEntries)
     const [proofFile, renderedPdf] = await Promise.all([
       readOpenedRegularFile(proofPath, MAX_PROOF_BYTES, 'Publication proof'),
       readOpenedRegularFile(

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readlink, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -15,8 +15,63 @@ import {
   validatePublicationResources,
 } from './publication-offline-render.mjs'
 
+function fakeRuntimeEntry(kind, label, path) {
+  return {
+    kind,
+    label,
+    path,
+    sha256: 'a'.repeat(64),
+    ...(kind === 'file' ? { byteLength: '1', mode: '700' } : { entryCount: 1 }),
+    device: '1',
+    inode: '1',
+    ctimeNanoseconds: '1',
+    parentPath: dirname(path),
+    parentDevice: '1',
+    parentInode: '1',
+    parentCtimeNanoseconds: '1',
+  }
+}
+
+function fakeRuntimeEntries(renderer, browserPath) {
+  const entries = [
+    fakeRuntimeEntry('file', 'browser-executable', browserPath),
+    fakeRuntimeEntry(
+      'file',
+      'isolation-helper',
+      resolve('tools/publication-offline-render.mjs'),
+    ),
+    fakeRuntimeEntry('file', 'node-executable', '/usr/bin/node'),
+    fakeRuntimeEntry('tree', 'resource-parser', resolve('node_modules/parse5')),
+  ]
+  if (renderer === 'vivliostyle-cli')
+    entries.push(
+      fakeRuntimeEntry(
+        'tree',
+        'renderer-package',
+        resolve('node_modules/@vivliostyle/cli'),
+      ),
+    )
+  else
+    entries.push(
+      fakeRuntimeEntry(
+        'tree',
+        'renderer-core',
+        resolve('node_modules/playwright-core'),
+      ),
+      fakeRuntimeEntry(
+        'tree',
+        'renderer-package',
+        resolve('node_modules/playwright'),
+      ),
+    )
+  return entries.sort((left, right) => left.label.localeCompare(right.label))
+}
+
 function requestFor(root, renderer = 'playwright-chromium') {
   const environment = publicationChildEnvironment(root)
+  const browserPath = resolve(
+    'node_modules/.cache/publication-browsers/playwright/chromium-1228/chrome-linux/chrome',
+  )
   return {
     version: 2,
     renderer,
@@ -26,9 +81,7 @@ function requestFor(root, renderer = 'playwright-chromium') {
     outputPath: resolve(root, 'publication.pdf'),
     proofPath: resolve(root, 'isolation-proof.json'),
     size: 'A4',
-    browserPath: resolve(
-      'node_modules/.cache/publication-browsers/playwright/chromium-1228/chrome-linux/chrome',
-    ),
+    browserPath,
     expectedBrowserVersion: '149.0.7827.0',
     expectedRendererVersion:
       renderer === 'vivliostyle-cli' ? '11.1.0' : '1.61.1',
@@ -40,7 +93,7 @@ function requestFor(root, renderer = 'playwright-chromium') {
     expectedGid: 1000,
     hostNetworkNamespace: 'net:[100]',
     hostMountNamespace: 'mnt:[100]',
-    runtimeEntries: [],
+    runtimeEntries: fakeRuntimeEntries(renderer, browserPath),
     networkDiagnostic: null,
     filesystemDiagnosticPaths: [],
   }
@@ -160,6 +213,73 @@ describe('offline publication render helper', () => {
       ).rejects.toThrow(/disallowed publication resource/i)
   })
 
+  it.each(['image-set', '-webkit-image-set'])(
+    'discovers outside-root string URLs in CSS %s()',
+    async (functionName) => {
+      const root = await localPublicationFixture()
+      const outside = `${root}-outside-image-set.svg`
+      await writeFile(outside, '<svg></svg>')
+      await writeFile(
+        resolve(root, 'publication.css'),
+        `main{background-image:${functionName}("${pathToFileURL(outside).href}" 1x)}`,
+      )
+
+      await expect(
+        validatePublicationResources(requestFor(root)),
+      ).rejects.toThrow(/outside publication root/i)
+    },
+  )
+
+  it.each([
+    '<svg><rect fill="url(OUTSIDE)"/></svg>',
+    '<svg><animate attributeName="fill" from="none" to="url(OUTSIDE)"/></svg>',
+    '<svg><set attributeName="href" to="OUTSIDE"/></svg>',
+    '<svg><animate attributeName="xlink:href" values="#local;OUTSIDE"/></svg>',
+  ])('discovers outside-root SVG presentation and SMIL URLs', async (svg) => {
+    const root = await localPublicationFixture()
+    const outside = `${root}-outside-svg.svg`
+    await writeFile(outside, '<svg></svg>')
+    await writeFile(
+      resolve(root, 'index.html'),
+      svg.replaceAll('OUTSIDE', pathToFileURL(outside).href),
+    )
+
+    await expect(
+      validatePublicationResources(requestFor(root)),
+    ).rejects.toThrow(/outside publication root/i)
+  })
+
+  it('canonicalizes encoded traversal and in-root symlink resources', async () => {
+    const root = await localPublicationFixture()
+    const outside = `${root}-outside-encoded.svg`
+    await writeFile(outside, '<svg></svg>')
+    const outsideName = basename(outside)
+    await writeFile(
+      resolve(root, 'index.html'),
+      `<img src="%2e%2e/${outsideName}">`,
+    )
+    await expect(
+      validatePublicationResources(requestFor(root)),
+    ).rejects.toThrow(/outside publication root/i)
+    await writeFile(
+      resolve(root, 'index.html'),
+      `<img src="..%2f${outsideName}">`,
+    )
+    await expect(
+      validatePublicationResources(requestFor(root)),
+    ).rejects.toThrow(/unavailable|outside publication root/i)
+
+    const escape = resolve(root, 'assets', 'escape.svg')
+    await symlink(outside, escape)
+    await writeFile(
+      resolve(root, 'index.html'),
+      '<img src="assets/escape.svg">',
+    )
+    await expect(
+      validatePublicationResources(requestFor(root)),
+    ).rejects.toThrow(/outside publication root/i)
+  })
+
   it('attests a distinct loopback-only namespace, caller identity, and empty capabilities', () => {
     const root = '/tmp/publication-root'
     const environment = publicationChildEnvironment(root)
@@ -238,6 +358,7 @@ describe('offline publication render helper', () => {
           events.push('attest')
           return proof
         },
+        verifyRuntimeEntries: async () => events.push('runtime'),
         validateResources: async () => events.push('resources'),
         verifyRenderer: async () => events.push('renderer-version'),
         verifyBrowser: async () => events.push('browser-version'),
@@ -246,10 +367,12 @@ describe('offline publication render helper', () => {
       })
       expect(events).toEqual([
         'attest',
+        'runtime',
         'resources',
         'renderer-version',
         'browser-version',
         renderer === 'vivliostyle-cli' ? 'vivliostyle' : 'playwright',
+        'runtime',
       ])
     },
   )
@@ -266,6 +389,31 @@ describe('offline publication render helper', () => {
       }),
     ).rejects.toThrow(/attestation failed/)
     expect(verifyBrowser).not.toHaveBeenCalled()
+  })
+
+  it('runs the filesystem isolation diagnostic in a monitored child', async () => {
+    const root = await localPublicationFixture()
+    const request = requestFor(root)
+    request.filesystemDiagnosticPaths = [resolve(root, 'missing-sentinel')]
+    const [networkNamespace, mountNamespace] = await Promise.all([
+      readlink('/proc/self/ns/net'),
+      readlink('/proc/self/ns/mnt'),
+    ])
+
+    const result = await executePublicationRenderRequest(request, {
+      attestIsolation: async () => ({ networkNamespace, mountNamespace }),
+      verifyRuntimeEntries: async () => undefined,
+      validateResources: async () => undefined,
+      verifyRenderer: async () => request.expectedRendererVersion,
+      verifyBrowser: async () => request.expectedBrowserVersion,
+      renderPlaywright: async () => undefined,
+    })
+
+    expect(result.filesystemDiagnostics).toEqual([
+      { path: resolve(root, 'missing-sentinel'), inaccessible: true },
+    ])
+    expect(result.childNetworkNamespaces).toContain(networkNamespace)
+    expect(result.childMountNamespaces).toContain(mountNamespace)
   })
 
   it('uses a fresh service-worker-blocked context and closes it before returning', async () => {

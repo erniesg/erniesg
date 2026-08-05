@@ -35,6 +35,140 @@ const PLAYWRIGHT_PACKAGE = resolve(
   'node_modules/playwright/package.json',
 )
 const NODE_EXECUTABLE = '/usr/bin/node'
+const ISOLATION_DIAGNOSTIC_SOURCE = String.raw`
+import { access } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { createSocket } from 'node:dgram'
+import { request as httpRequest } from 'node:http'
+import { createServer, connect } from 'node:net'
+
+const input = JSON.parse(Buffer.from(process.argv[1], 'base64url').toString('utf8'))
+const attempted = [
+  'tcp-ipv4',
+  'tcp-ipv6',
+  'http-ipv4',
+  'http-ipv6',
+  'websocket-ipv4',
+  'websocket-ipv6',
+  'udp-ipv4',
+  'udp-ipv6',
+]
+
+function tcp(host, port, websocket = false) {
+  return new Promise((accept) => {
+    let settled = false
+    const socket = connect({ host, port })
+    const finish = (connected) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      socket.destroy()
+      accept(connected)
+    }
+    const timeout = setTimeout(() => finish(false), 400)
+    socket.once('connect', () => {
+      if (websocket)
+        socket.write('GET /publication-isolation-probe HTTP/1.1\r\nHost: sentinel\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: cHVibGljYXRpb24tcHJvYmU=\r\n\r\n')
+      finish(true)
+    })
+    socket.once('error', () => finish(false))
+  })
+}
+
+function http(host, port) {
+  return new Promise((accept) => {
+    const request = httpRequest(
+      { host, port, path: '/publication-isolation-probe', timeout: 400 },
+      (response) => {
+        response.resume()
+        accept()
+      },
+    )
+    request.once('timeout', () => request.destroy())
+    request.once('error', () => accept())
+    request.end()
+  })
+}
+
+function udp(type, host, port) {
+  return new Promise((accept) => {
+    const socket = createSocket(type)
+    socket.send(Buffer.from('publication-isolation-probe'), port, host, () => {
+      socket.close()
+      accept()
+    })
+    socket.once('error', () => {
+      socket.close()
+      accept()
+    })
+  })
+}
+
+function listen(host) {
+  return new Promise((accept, reject) => {
+    const server = createServer((socket) => socket.end())
+    server.once('error', reject)
+    server.listen(0, host, () => accept(server))
+  })
+}
+
+function close(server) {
+  return new Promise((accept, reject) =>
+    server.close((error) => (error ? reject(error) : accept())),
+  )
+}
+
+const filesystemDiagnostics = []
+for (const path of input.filesystemDiagnosticPaths) {
+  let inaccessible = false
+  try {
+    await access(path, constants.R_OK)
+  } catch {
+    inaccessible = true
+  }
+  filesystemDiagnostics.push({ path, inaccessible })
+}
+if (filesystemDiagnostics.some(({ inaccessible }) => !inaccessible))
+  throw new Error('A filesystem isolation sentinel remained accessible')
+
+let networkDiagnostic = null
+if (input.networkDiagnostic) {
+  const server4 = await listen('127.0.0.1')
+  const server6 = await listen('::1')
+  try {
+    const address4 = server4.address()
+    const address6 = server6.address()
+    const [ipv4, ipv6] = await Promise.all([
+      tcp('127.0.0.1', address4.port),
+      tcp('::1', address6.port),
+    ])
+    const ports = input.networkDiagnostic
+    await Promise.all([
+      tcp('127.0.0.1', ports.tcpIpv4Port),
+      tcp('::1', ports.tcpIpv6Port),
+      http('127.0.0.1', ports.httpIpv4Port),
+      http('::1', ports.httpIpv6Port),
+      tcp('127.0.0.1', ports.websocketIpv4Port, true),
+      tcp('::1', ports.websocketIpv6Port, true),
+      udp('udp4', '127.0.0.1', ports.udpIpv4Port),
+      udp('udp6', '::1', ports.udpIpv6Port),
+    ])
+    networkDiagnostic = {
+      attempted,
+      privateLoopback: { ipv4, ipv6 },
+    }
+  } finally {
+    await Promise.all([close(server4), close(server6)])
+  }
+}
+if (
+  networkDiagnostic &&
+  (!networkDiagnostic.privateLoopback.ipv4 ||
+    !networkDiagnostic.privateLoopback.ipv6)
+)
+  throw new Error('Private loopback communication failed')
+process.stdout.write(JSON.stringify({ filesystemDiagnostics, networkDiagnostic }))
+`
 const REQUEST_FIELDS = [
   'browserPath',
   'expectedBrowserVersion',
@@ -124,13 +258,36 @@ function assertRenderRequest(request) {
     throw new Error('Host network namespace identity is invalid')
   if (!/^mnt:\[\d+\]$/.test(request.hostMountNamespace))
     throw new Error('Host mount namespace identity is invalid')
-  if (!Array.isArray(request.runtimeEntries) || request.runtimeEntries.length)
-    throw new Error('Publication runtime attestation list is invalid')
-  if (request.networkDiagnostic !== null)
+  assertRuntimeEntries(request)
+  if (
+    request.networkDiagnostic !== null &&
+    (!request.networkDiagnostic ||
+      typeof request.networkDiagnostic !== 'object' ||
+      JSON.stringify(Object.keys(request.networkDiagnostic).sort()) !==
+        JSON.stringify(
+          [
+            'httpIpv4Port',
+            'httpIpv6Port',
+            'tcpIpv4Port',
+            'tcpIpv6Port',
+            'udpIpv4Port',
+            'udpIpv6Port',
+            'websocketIpv4Port',
+            'websocketIpv6Port',
+          ].sort(),
+        ) ||
+      Object.values(request.networkDiagnostic).some(
+        (port) => !Number.isSafeInteger(port) || port < 1 || port > 65_535,
+      ))
+  )
     throw new Error('Publication network diagnostic is invalid')
   if (
     !Array.isArray(request.filesystemDiagnosticPaths) ||
-    request.filesystemDiagnosticPaths.length
+    request.filesystemDiagnosticPaths.length > 8 ||
+    request.filesystemDiagnosticPaths.some(
+      (path) =>
+        typeof path !== 'string' || !isAbsolute(path) || /[\0\r\n]/u.test(path),
+    )
   )
     throw new Error('Publication filesystem diagnostics are invalid')
   return request
@@ -177,6 +334,230 @@ function publicationEnvironmentSha256(environment) {
   return createHash('sha256')
     .update(JSON.stringify(Object.entries(environment).sort()))
     .digest('hex')
+}
+
+function lexicalEntryOrder(left, right) {
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+}
+
+function sameRuntimeIdentity(left, right) {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.ctimeNs === right.ctimeNs &&
+    left.mode === right.mode
+  )
+}
+
+async function hashRuntimeFile(path) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile())
+      throw new Error(`Publication runtime path is not a regular file: ${path}`)
+    const digest = createHash('sha256')
+    for await (const chunk of handle.createReadStream({ autoClose: false }))
+      digest.update(chunk)
+    const after = await handle.stat({ bigint: true })
+    if (!sameRuntimeIdentity(before, after))
+      throw new Error(`Publication runtime file changed while hashing: ${path}`)
+    return { metadata: before, sha256: digest.digest('hex') }
+  } finally {
+    await handle.close()
+  }
+}
+
+async function runtimeParentIdentity(path) {
+  const parentPath = await realpath(dirname(path))
+  const metadata = await stat(parentPath, { bigint: true })
+  if (!metadata.isDirectory())
+    throw new Error(
+      `Publication runtime parent is not a directory: ${parentPath}`,
+    )
+  return {
+    parentPath,
+    parentDevice: metadata.dev.toString(),
+    parentInode: metadata.ino.toString(),
+    parentCtimeNanoseconds: metadata.ctimeNs.toString(),
+  }
+}
+
+async function attestRuntimeFile(label, path) {
+  if ((await realpath(path)) !== path)
+    throw new Error(`Publication runtime file is not canonical: ${path}`)
+  const [{ metadata, sha256 }, parent] = await Promise.all([
+    hashRuntimeFile(path),
+    runtimeParentIdentity(path),
+  ])
+  return {
+    kind: 'file',
+    label,
+    path,
+    sha256,
+    byteLength: metadata.size.toString(),
+    device: metadata.dev.toString(),
+    inode: metadata.ino.toString(),
+    ctimeNanoseconds: metadata.ctimeNs.toString(),
+    mode: (metadata.mode & 0o777n).toString(8),
+    ...parent,
+  }
+}
+
+async function attestRuntimeTree(label, path) {
+  if ((await realpath(path)) !== path)
+    throw new Error(`Publication runtime tree is not canonical: ${path}`)
+  const before = await stat(path, { bigint: true })
+  if (!before.isDirectory())
+    throw new Error(`Publication runtime tree is not a directory: ${path}`)
+  const digest = createHash('sha256')
+  let entryCount = 0
+  const visit = async (directory) => {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort(
+      lexicalEntryOrder,
+    )
+    for (const entry of entries) {
+      const entryPath = resolve(directory, entry.name)
+      const relativePath = relative(path, entryPath).split(sep).join('/')
+      const metadata = await lstat(entryPath, { bigint: true })
+      entryCount += 1
+      if (metadata.isDirectory()) {
+        digest.update(
+          `${JSON.stringify(['directory', relativePath, metadata.mode.toString(), metadata.ctimeNs.toString()])}\n`,
+        )
+        await visit(entryPath)
+      } else if (metadata.isFile()) {
+        const file = await hashRuntimeFile(entryPath)
+        digest.update(
+          `${JSON.stringify(['file', relativePath, file.metadata.mode.toString(), file.metadata.size.toString(), file.metadata.ctimeNs.toString(), file.sha256])}\n`,
+        )
+      } else if (metadata.isSymbolicLink()) {
+        digest.update(
+          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), await readlink(entryPath)])}\n`,
+        )
+      } else {
+        throw new Error(
+          `Unsupported publication runtime tree entry: ${entryPath}`,
+        )
+      }
+    }
+  }
+  await visit(path)
+  const after = await stat(path, { bigint: true })
+  if (!sameRuntimeIdentity(before, after))
+    throw new Error(`Publication runtime tree changed while hashing: ${path}`)
+  const parent = await runtimeParentIdentity(path)
+  return {
+    kind: 'tree',
+    label,
+    path,
+    sha256: digest.digest('hex'),
+    entryCount,
+    device: before.dev.toString(),
+    inode: before.ino.toString(),
+    ctimeNanoseconds: before.ctimeNs.toString(),
+    ...parent,
+  }
+}
+
+function expectedRuntimeEntries(request) {
+  const entries = [
+    ['file', 'browser-executable', request.browserPath],
+    ['file', 'isolation-helper', HELPER_PATH],
+    ['file', 'node-executable', NODE_EXECUTABLE],
+    [
+      'tree',
+      'resource-parser',
+      resolve(REPOSITORY_ROOT, 'node_modules/parse5'),
+    ],
+  ]
+  if (request.renderer === 'vivliostyle-cli')
+    entries.push([
+      'tree',
+      'renderer-package',
+      resolve(REPOSITORY_ROOT, 'node_modules/@vivliostyle/cli'),
+    ])
+  else
+    entries.push(
+      [
+        'tree',
+        'renderer-core',
+        resolve(REPOSITORY_ROOT, 'node_modules/playwright-core'),
+      ],
+      [
+        'tree',
+        'renderer-package',
+        resolve(REPOSITORY_ROOT, 'node_modules/playwright'),
+      ],
+    )
+  return entries.sort((left, right) => left[1].localeCompare(right[1]))
+}
+
+function assertRuntimeEntries(request) {
+  if (!Array.isArray(request.runtimeEntries))
+    throw new Error('Publication runtime attestation list is invalid')
+  const expected = expectedRuntimeEntries(request)
+  if (
+    JSON.stringify(
+      request.runtimeEntries.map(({ kind, label, path }) => [
+        kind,
+        label,
+        path,
+      ]),
+    ) !== JSON.stringify(expected)
+  )
+    throw new Error('Publication runtime attestation paths are incomplete')
+  const sharedFields = [
+    'ctimeNanoseconds',
+    'device',
+    'inode',
+    'kind',
+    'label',
+    'parentCtimeNanoseconds',
+    'parentDevice',
+    'parentInode',
+    'parentPath',
+    'path',
+    'sha256',
+  ]
+  for (const entry of request.runtimeEntries) {
+    const expectedFields = [
+      ...sharedFields,
+      ...(entry.kind === 'file' ? ['byteLength', 'mode'] : ['entryCount']),
+    ].sort()
+    if (
+      !['file', 'tree'].includes(entry.kind) ||
+      JSON.stringify(Object.keys(entry).sort()) !==
+        JSON.stringify(expectedFields) ||
+      !/^[a-f0-9]{64}$/.test(entry.sha256) ||
+      !/^\d+$/.test(entry.device) ||
+      !/^\d+$/.test(entry.inode) ||
+      !/^\d+$/.test(entry.ctimeNanoseconds) ||
+      !/^\d+$/.test(entry.parentDevice) ||
+      !/^\d+$/.test(entry.parentInode) ||
+      !/^\d+$/.test(entry.parentCtimeNanoseconds) ||
+      (entry.kind === 'file' &&
+        (!/^\d+$/.test(entry.byteLength) ||
+          !/^[0-7]{3,4}$/.test(entry.mode))) ||
+      (entry.kind === 'tree' &&
+        (!Number.isSafeInteger(entry.entryCount) || entry.entryCount < 1))
+    )
+      throw new Error('Publication runtime attestation is invalid')
+  }
+}
+
+async function verifyRuntimeEntries(expected) {
+  const actual = (
+    await Promise.all(
+      expected.map((entry) =>
+        entry.kind === 'file'
+          ? attestRuntimeFile(entry.label, entry.path)
+          : attestRuntimeTree(entry.label, entry.path),
+      ),
+    )
+  ).sort((left, right) => left.label.localeCompare(right.label))
+  if (JSON.stringify(actual) !== JSON.stringify(expected))
+    throw new Error('Publication runtime attestation changed')
 }
 
 export async function assertPublicationResourceUrl(url, referrerPath, root) {
@@ -249,6 +630,41 @@ function htmlResourceReferences(document) {
         if (value) references.push(value)
       }
     if (attrs.get('style')) styles.push(attrs.get('style'))
+    if (node.namespaceURI === 'http://www.w3.org/2000/svg') {
+      for (const name of [
+        'clip-path',
+        'color-profile',
+        'cursor',
+        'fill',
+        'filter',
+        'marker',
+        'marker-end',
+        'marker-mid',
+        'marker-start',
+        'mask',
+        'stroke',
+      ]) {
+        const value = attrs.get(name)
+        if (value) styles.push(value)
+      }
+      if (['animate', 'set'].includes(tag)) {
+        const targetAttribute =
+          attrs
+            .get('attributeName')
+            ?.toLowerCase()
+            .replace(/^xlink:/u, '') ??
+          attrs
+            .get('attributename')
+            ?.toLowerCase()
+            .replace(/^xlink:/u, '')
+        const animationValues = ['from', 'to', 'by', 'values'].flatMap(
+          (name) => attrs.get(name)?.split(';') ?? [],
+        )
+        if (targetAttribute === 'href')
+          references.push(...animationValues.filter(Boolean))
+        else styles.push(...animationValues.filter(Boolean))
+      }
+    }
     if (tag === 'style')
       styles.push(
         (node.childNodes ?? [])
@@ -261,6 +677,61 @@ function htmlResourceReferences(document) {
   }
   visit(document)
   return { references, styles }
+}
+
+function cssFunctionBodies(css, pattern) {
+  const bodies = []
+  pattern.lastIndex = 0
+  for (let match = pattern.exec(css); match; match = pattern.exec(css)) {
+    const start = pattern.lastIndex
+    let quote = ''
+    let depth = 1
+    let index = start
+    for (; index < css.length && depth > 0; index += 1) {
+      const character = css[index]
+      if (quote) {
+        if (character === quote) quote = ''
+        continue
+      }
+      if (character === '"' || character === "'") {
+        quote = character
+        continue
+      }
+      if (character === '(') depth += 1
+      if (character === ')') depth -= 1
+    }
+    if (depth !== 0 || quote)
+      throw new Error('Malformed publication CSS image-set()')
+    bodies.push(css.slice(start, index - 1))
+    pattern.lastIndex = index
+  }
+  return bodies
+}
+
+function splitCssCandidates(body) {
+  const candidates = []
+  let quote = ''
+  let depth = 0
+  let start = 0
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index]
+    if (quote) {
+      if (character === quote) quote = ''
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      continue
+    }
+    if (character === '(') depth += 1
+    if (character === ')') depth -= 1
+    if (character === ',' && depth === 0) {
+      candidates.push(body.slice(start, index).trim())
+      start = index + 1
+    }
+  }
+  candidates.push(body.slice(start).trim())
+  return candidates.filter(Boolean)
 }
 
 function cssResourceReferences(css) {
@@ -279,7 +750,19 @@ function cssResourceReferences(css) {
     throw new Error('CSS imports are not allowed in publication output')
   if (/\blocal\s*\(/iu.test(withoutComments))
     throw new Error('Ambient local fonts are not allowed in publication output')
-  return matches.map((match) => (match[1] ?? match[2] ?? match[3]).trim())
+  const imageSetStrings = cssFunctionBodies(
+    withoutComments,
+    /(?:-webkit-)?image-set\s*\(/giu,
+  ).flatMap((body) =>
+    splitCssCandidates(body).flatMap((candidate) => {
+      const quoted = candidate.match(/^(?:"([^"]*)"|'([^']*)')/u)
+      return quoted ? [(quoted[1] ?? quoted[2]).trim()] : []
+    }),
+  )
+  return [
+    ...matches.map((match) => (match[1] ?? match[2] ?? match[3]).trim()),
+    ...imageSetStrings,
+  ]
 }
 
 export async function validatePublicationResources(request) {
@@ -295,6 +778,8 @@ export async function validatePublicationResources(request) {
     const extension = extname(path).toLowerCase()
     if (!['.html', '.htm', '.xhtml', '.css', '.svg'].includes(extension)) return
     const contents = await readFile(path, 'utf8')
+    if (/^\s*<\?xml-stylesheet\b/iu.test(contents))
+      throw new Error('XML stylesheet processing instructions are not allowed')
     if (extension === '.css') {
       for (const url of cssResourceReferences(contents)) {
         const resource = await assertPublicationResourceUrl(url, path, root)
@@ -619,6 +1104,59 @@ async function runAbsolute(
   })
 }
 
+async function runIsolationDiagnostics(request, monitor) {
+  if (!request.networkDiagnostic && !request.filesystemDiagnosticPaths.length)
+    return { filesystemDiagnostics: [], networkDiagnostic: null }
+  const encoded = Buffer.from(
+    JSON.stringify({
+      filesystemDiagnosticPaths: request.filesystemDiagnosticPaths,
+      networkDiagnostic: request.networkDiagnostic,
+    }),
+  ).toString('base64url')
+  const { stdout } = await runAbsolute(
+    NODE_EXECUTABLE,
+    ['--input-type=module', '--eval', ISOLATION_DIAGNOSTIC_SOURCE, encoded],
+    { capture: true, monitor, timeoutMilliseconds: 10_000 },
+  )
+  let result
+  try {
+    result = JSON.parse(stdout)
+  } catch (error) {
+    throw new Error(
+      `Isolation diagnostic returned invalid JSON: ${String(error)}`,
+    )
+  }
+  const expectedNetwork = request.networkDiagnostic
+    ? {
+        attempted: [
+          'tcp-ipv4',
+          'tcp-ipv6',
+          'http-ipv4',
+          'http-ipv6',
+          'websocket-ipv4',
+          'websocket-ipv6',
+          'udp-ipv4',
+          'udp-ipv6',
+        ],
+        privateLoopback: { ipv4: true, ipv6: true },
+      }
+    : null
+  const expectedFilesystem = request.filesystemDiagnosticPaths.map((path) => ({
+    path,
+    inaccessible: true,
+  }))
+  if (
+    JSON.stringify(Object.keys(result).sort()) !==
+      JSON.stringify(['filesystemDiagnostics', 'networkDiagnostic']) ||
+    JSON.stringify(result.networkDiagnostic) !==
+      JSON.stringify(expectedNetwork) ||
+    JSON.stringify(result.filesystemDiagnostics) !==
+      JSON.stringify(expectedFilesystem)
+  )
+    throw new Error('Isolation diagnostic returned invalid results')
+  return result
+}
+
 export function publicationBrowserVersionMatches(output, expectedVersion) {
   const actual = String(output).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
   return (
@@ -778,6 +1316,10 @@ export async function executePublicationRenderRequest(
     dependencies.validateResources ?? validatePublicationResources
   const verify = dependencies.verifyBrowser ?? verifyBrowser
   const verifySelectedRenderer = dependencies.verifyRenderer ?? verifyRenderer
+  const verifyRuntime =
+    dependencies.verifyRuntimeEntries ?? verifyRuntimeEntries
+  const diagnoseIsolation =
+    dependencies.runIsolationDiagnostics ?? runIsolationDiagnostics
   const renderVivliostyle =
     dependencies.renderVivliostyle ?? renderVivliostylePublication
   const renderPlaywright =
@@ -787,6 +1329,7 @@ export async function executePublicationRenderRequest(
       `Publication helper Node ${process.versions.node} does not match ${request.expectedNodeVersion}`,
     )
   const initialSnapshot = await isolate(request)
+  await verifyRuntime(request.runtimeEntries)
   const monitor = monitorRendererNamespaces(
     initialSnapshot.networkNamespace,
     initialSnapshot.mountNamespace,
@@ -795,13 +1338,16 @@ export async function executePublicationRenderRequest(
   let childMountNamespaces = []
   let rendererVersion
   let browserVersion
+  let diagnostics = { filesystemDiagnostics: [], networkDiagnostic: null }
   try {
+    diagnostics = await diagnoseIsolation(request, monitor)
     await validateResources(request)
     rendererVersion = await verifySelectedRenderer(request, monitor)
     browserVersion = await verify(request, monitor)
     if (request.renderer === 'vivliostyle-cli')
       await renderVivliostyle(request, { monitor })
     else await renderPlaywright(request, { monitor })
+    await verifyRuntime(request.runtimeEntries)
   } finally {
     const observedNamespaces = await monitor.stop()
     childNetworkNamespaces = observedNamespaces.network
@@ -822,6 +1368,7 @@ export async function executePublicationRenderRequest(
     childMountNamespaces,
     rendererVersion,
     browserVersion,
+    ...diagnostics,
   }
 }
 
@@ -910,8 +1457,8 @@ async function main() {
     interfaces: proof.interfaces.map(({ name }) => name),
     childNetworkNamespaces: [...new Set(proof.childNetworkNamespaces)].sort(),
     childMountNamespaces: [...new Set(proof.childMountNamespaces)].sort(),
-    networkDiagnostic: null,
-    filesystemDiagnostics: [],
+    networkDiagnostic: proof.networkDiagnostic,
+    filesystemDiagnostics: proof.filesystemDiagnostics,
   }
   await writeFile(request.proofPath, `${JSON.stringify(proofRecord)}\n`, {
     flag: 'wx',

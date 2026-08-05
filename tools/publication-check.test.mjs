@@ -171,6 +171,22 @@ describe('publication:check CLI', () => {
     ])
   })
 
+  it('orders a decomposed Greek sigma requirement before a later rendered token', () => {
+    expect(orderPdfTextRequirements(['Ο\u0301Σ', 'X'], 'ΟΣ X')).toEqual([
+      'Ο\u0301Σ',
+      'X',
+    ])
+  })
+
+  it('folds Greek sigma independently of later rendered text', () => {
+    expect(normalizePdfVerificationText('ος')).toBe(
+      normalizePdfVerificationText('οσ'),
+    )
+    expect(normalizePdfVerificationText('ΟΣ X')).toBe(
+      `${normalizePdfVerificationText('ΟΣ')}x`,
+    )
+  })
+
   it('rejects PDF text outside the visible crop and requires every image asset', () => {
     const crop = { x: 0, y: 0, width: 100, height: 100 }
     expect(() =>

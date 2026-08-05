@@ -86,6 +86,7 @@ export function normalizePdfVerificationText(value) {
     .replace(/\p{M}/gu, '')
     .replace(/[\s\p{Z}\p{C}]+/gu, '')
     .toLowerCase()
+    .replace(/ς/gu, 'σ')
 }
 
 export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {

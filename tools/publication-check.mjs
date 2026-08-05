@@ -84,8 +84,8 @@ export function normalizePdfVerificationText(value) {
   return String(value ?? '')
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
-    .toLowerCase()
     .replace(/[\s\p{Z}\p{C}]+/gu, '')
+    .toLowerCase()
 }
 
 export function publicationPdfTextRequirements(graph, profile = 'a5-pdf') {

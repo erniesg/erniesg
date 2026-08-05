@@ -329,6 +329,44 @@ export const publicationNodeSchema = z.discriminatedUnion('type', [
   mediaNode,
 ])
 
+type PublicationNodeValue = z.infer<typeof publicationNodeSchema>
+type PublicationVariantKind = PublicationNodeValue['variants'][number]['kind']
+
+const publicationVariantKinds: PublicationVariantKind[] = [
+  'static',
+  'monochrome',
+  'compact',
+]
+
+function reviewedVariant(
+  node: PublicationNodeValue,
+  kind: PublicationVariantKind,
+) {
+  return node.variants.find(
+    (variant) => variant.reviewed && variant.kind === kind,
+  )
+}
+
+function inlineRunsRenderInEveryProfile(node: PublicationNodeValue) {
+  if (node.type === 'figure') return false
+  return publicationVariantKinds.every(
+    (kind) => reviewedVariant(node, kind)?.text === undefined,
+  )
+}
+
+function figureSourceRendersInAnyProfile(
+  node: Extract<PublicationNodeValue, { type: 'figure' }>,
+) {
+  return publicationVariantKinds.some((kind) => {
+    const variant = reviewedVariant(node, kind)
+    return Boolean(
+      variant && !variant.assetId && variant.text !== undefined
+        ? variant.text
+        : node.sourceText,
+    )
+  })
+}
+
 const metadataSchema = z
   .object({
     title: nonEmptyTextSchema,
@@ -426,13 +464,7 @@ export const publicationGraphSchema = z
       )
       ids.add(node.id)
       nodesById.set(node.id, node)
-      if (
-        node.type === 'figure' &&
-        (node.sourceText ||
-          node.variants.some(
-            (variant) => variant.reviewed && variant.text !== undefined,
-          ))
-      )
+      if (node.type === 'figure' && figureSourceRendersInAnyProfile(node))
         claimRenderedDomId(`${node.id}-source`, ['nodes', index, 'id'])
       if (
         node.type === 'media' &&
@@ -501,6 +533,29 @@ export const publicationGraphSchema = z
               })
             }
           })
+          if (
+            inlineRunProducesLink(run) &&
+            !inlineRunsRenderInEveryProfile(node)
+          ) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['nodes', index, 'inlineRuns', runIndex],
+              message:
+                'Link-producing inline runs must render in every publication profile',
+            })
+          }
+          if (
+            node.type === 'reference' &&
+            (node.href || node.targetIds[0]) &&
+            inlineRunProducesLink(run)
+          ) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['nodes', index, 'inlineRuns', runIndex],
+              message:
+                'Reference outer links cannot contain link-producing inline runs',
+            })
+          }
         })
         const linkProducingRuns = node.inlineRuns
           .map((run, runIndex) => ({ run, runIndex }))
@@ -617,17 +672,21 @@ export const publicationGraphSchema = z
           }
         })
       }
-      if (
-        node.type === 'list-item' &&
-        nodesById.get(node.parentListId)?.type !== 'list'
-      ) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['nodes', index, 'parentListId'],
-          message: 'List-item parent must be a list',
-        })
-      }
       if (node.type === 'list-item') {
+        const parent = nodesById.get(node.parentListId)
+        if (parent?.type !== 'list') {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes', index, 'parentListId'],
+            message: 'List-item parent must be a list',
+          })
+        } else if (!parent.itemIds.includes(node.id)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes', index, 'parentListId'],
+            message: 'List items must link reciprocally to their owning list',
+          })
+        }
         node.childListIds.forEach((childId, relationshipIndex) => {
           const child = nodesById.get(childId)
           if (child && child.type !== 'list') {

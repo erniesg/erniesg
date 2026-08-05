@@ -158,6 +158,13 @@ describe('publication:check CLI', () => {
       'ΟΣ\nA',
       'X',
     ])
+    expect(normalizePdfVerificationText('ΌΣ\nΑ')).toBe(
+      normalizePdfVerificationText('Ο\u0301ΣΑ'),
+    )
+    expect(orderPdfTextRequirements(['ΌΣ\nΑ', 'X'], 'Ο\u0301ΣΑ X')).toEqual([
+      'ΌΣ\nΑ',
+      'X',
+    ])
     expect(orderPdfTextRequirements(['ΟΣ\nA', 'É'], 'É ΟΣA X')).toEqual([
       'É',
       'ΟΣ\nA',

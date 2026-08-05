@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
 import { PDFDocument } from 'pdf-lib'
-import { chromium } from 'playwright'
+import { chromium, type Browser as PlaywrightBrowser } from 'playwright'
 import { serializeAssetBundle } from '../asset-bundle'
 import type {
   PublicationGraph,
@@ -202,7 +202,9 @@ function inlineHtml(
         ? [`id="${escapeHtml(link.relationshipId)}"`]
         : []),
       ...(link.semanticRole === 'cross-reference' &&
-      link.targetIds?.some((targetId) => targetNodes?.get(targetId)?.type === 'note')
+      link.targetIds?.some(
+        (targetId) => targetNodes?.get(targetId)?.type === 'note',
+      )
         ? ['role="doc-noteref"']
         : []),
       ...(link.semanticRole === 'citation'
@@ -291,7 +293,8 @@ function renderNode(
   listStack = new Set<string>(),
 ): string {
   node = publicationNodeForProfile(node, profile)
-  const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns, byId) : ''
+  const text =
+    'text' in node ? inlineHtml(node.text, node.inlineRuns, byId) : ''
   switch (node.type) {
     case 'heading':
       return `<h${node.level} ${nodeAttributes(node, edition)}>${text}</h${node.level}>`
@@ -318,13 +321,20 @@ function renderNode(
                 child?.type === 'list',
             )
             .map((child) =>
-              renderNode(child, byId, assetPaths, profile, edition, nextListStack),
+              renderNode(
+                child,
+                byId,
+                assetPaths,
+                profile,
+                edition,
+                nextListStack,
+              ),
             )
             .join('')
-          const renderedItem = publicationNodeForProfile(item, profile) as Extract<
-            PublicationNode,
-            { type: 'list-item' }
-          >
+          const renderedItem = publicationNodeForProfile(
+            item,
+            profile,
+          ) as Extract<PublicationNode, { type: 'list-item' }>
           return `<li ${nodeAttributes(renderedItem, edition)}>${inlineHtml(renderedItem.text, renderedItem.inlineRuns, byId)}${nested}</li>`
         })
         .join('')
@@ -350,16 +360,15 @@ function renderNode(
           : ''
         return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${renderedCaption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns, byId)}</div>` : ''}</div>`
       }
-    case 'note':
-      {
-        const role =
-          node.noteKind === 'footnote'
-            ? 'doc-footnote'
-            : node.noteKind === 'endnote'
-              ? 'doc-endnote'
-              : 'doc-annotation'
-        return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
-      }
+    case 'note': {
+      const role =
+        node.noteKind === 'footnote'
+          ? 'doc-footnote'
+          : node.noteKind === 'endnote'
+            ? 'doc-endnote'
+            : 'doc-annotation'
+      return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
+    }
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
       const alternativeText = accessibilityLabel(node)
@@ -371,7 +380,9 @@ function renderNode(
         .map((assetId) => {
           const path = assetPaths.get(assetId)
           if (!path)
-            throw new Error(`Figure ${node.id} references an unavailable asset ${assetId}`)
+            throw new Error(
+              `Figure ${node.id} references an unavailable asset ${assetId}`,
+            )
           return `<img src="${escapeHtml(path)}" alt="${escapeHtml(alternativeText)}">`
         })
         .join('')
@@ -394,7 +405,9 @@ function renderNode(
     case 'media': {
       const assetPath = assetPaths.get(node.assetId)
       if (!assetPath)
-        throw new Error(`Media ${node.id} references an unavailable asset ${node.assetId}`)
+        throw new Error(
+          `Media ${node.id} references an unavailable asset ${node.assetId}`,
+        )
       const source = escapeHtml(assetPath)
       const label = accessibilityLabel(node)
       if (node.accessibility.decorative !== true && !label)
@@ -480,10 +493,7 @@ export function publicationGraphToHtml(
   for (const node of graph.nodes) {
     if (node.type !== 'caption') continue
     const parent = byId.get(node.parentId)
-    if (
-      parent &&
-      (!('captionId' in parent) || parent.captionId !== node.id)
-    )
+    if (parent && (!('captionId' in parent) || parent.captionId !== node.id))
       throw new Error(
         `Caption ${node.id} has no reciprocal caption ownership from ${node.parentId}`,
       )
@@ -678,8 +688,7 @@ export function publicationEpubAccessibilityMetadata(graph: PublicationGraph) {
   if (hasText || graph.metadata.title.trim()) accessModes.add('textual')
   for (const node of graph.nodes) {
     const accessibility = node.accessibility
-    if (accessibility.alternativeText?.trim())
-      features.add('alternativeText')
+    if (accessibility.alternativeText?.trim()) features.add('alternativeText')
     if (accessibility.longDescription?.trim()) features.add('longDescription')
     if (accessibility.transcript?.trim()) features.add('transcript')
     if (node.type === 'figure' && node.assetIds.length > 0)
@@ -859,8 +868,7 @@ async function createEpub(
     .join('')
   const accessModeSufficientMetadata = accessibility.accessModeSufficient
     .map(
-      (mode) =>
-        `<meta property="schema:accessModeSufficient">${mode}</meta>`,
+      (mode) => `<meta property="schema:accessModeSufficient">${mode}</meta>`,
     )
     .join('')
   const accessibilityFeatureMetadata = accessibility.accessibilityFeatures
@@ -907,6 +915,64 @@ async function run(command: string, args: string[], environment = process.env) {
         : reject(new Error(`${basename(command)} exited with status ${code}`)),
     )
   })
+}
+
+export async function runPublicationOffline(
+  command: string,
+  args: string[],
+  environment = process.env,
+) {
+  if (process.platform !== 'linux')
+    throw new Error(
+      'Network-disabled Vivliostyle CLI rendering requires Linux user and network namespaces',
+    )
+  await run(
+    'unshare',
+    [
+      '--user',
+      '--map-root-user',
+      '--net',
+      '--',
+      'sh',
+      '-c',
+      'ip link set lo up && exec "$@"',
+      'publication-offline',
+      command,
+      ...args,
+    ],
+    environment,
+  )
+}
+
+export async function useOfflinePublicationContext(browser: PlaywrightBrowser) {
+  const blockedRequests = new Set<string>()
+  const context = await browser.newContext({ serviceWorkers: 'block' })
+  await context.route('**/*', async (route) => {
+    const url = route.request().url()
+    let protocol = ''
+    try {
+      protocol = new URL(url).protocol
+    } catch {
+      blockedRequests.add(url)
+      await route.abort('blockedbyclient')
+      return
+    }
+    if (['about:', 'blob:', 'data:', 'file:'].includes(protocol)) {
+      await route.continue()
+      return
+    }
+    blockedRequests.add(url)
+    await route.abort('blockedbyclient')
+  })
+  return {
+    context,
+    assertNoExternalRequests() {
+      if (blockedRequests.size)
+        throw new Error(
+          `Publication rendering blocked external request: ${[...blockedRequests].join(', ')}`,
+        )
+    },
+  }
 }
 
 type PdfRenderer = Extract<
@@ -965,11 +1031,13 @@ async function createPdf(
     )
     const browser = await chromium.launch({ executablePath, headless: true })
     try {
-      const page = await browser.newPage()
+      const offline = await useOfflinePublicationContext(browser)
+      const page = await offline.context.newPage()
       await page.emulateMedia({ media: 'print' })
       await page.goto(pathToFileURL(htmlPath).href, {
         waitUntil: 'networkidle',
       })
+      offline.assertNoExternalRequests()
       await page.pdf({
         path: outputPath,
         format: size,
@@ -977,6 +1045,7 @@ async function createPdf(
         tagged: true,
         outline: true,
       })
+      offline.assertNoExternalRequests()
     } finally {
       await browser.close()
     }
@@ -1002,7 +1071,7 @@ async function createPdf(
     PUBLICATION_TOOLCHAIN.browser.browserVersion,
   )
   const cli = resolve('node_modules/.bin/vivliostyle')
-  await run(
+  await runPublicationOffline(
     cli,
     [
       'build',

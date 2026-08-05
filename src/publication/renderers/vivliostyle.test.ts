@@ -1,6 +1,16 @@
-import { access, cp, mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { chromium } from 'playwright'
 import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
@@ -17,6 +27,8 @@ import {
   publicationPlaywrightExecutableCandidates,
   publicationVariantKindForProfile,
   renderEpubToc,
+  runPublicationOffline,
+  useOfflinePublicationContext,
   vivliostyleRenderer,
 } from './vivliostyle'
 import type { PublicationNode } from '../schema'
@@ -256,9 +268,16 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'synthetic-publication',
       contentRoot,
     })
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
     const note = bundle.graph.nodes.find((node) => node.type === 'note')
-    if (!paragraph || paragraph.type !== 'paragraph' || !note || note.type !== 'note')
+    if (
+      !paragraph ||
+      paragraph.type !== 'paragraph' ||
+      !note ||
+      note.type !== 'note'
+    )
       throw new Error('missing semantic fixture')
     const graph = {
       ...bundle.graph,
@@ -281,7 +300,12 @@ describe('Vivliostyle publication renderer boundary', () => {
         )
         .concat(
           { ...note, id: 'endnote', noteKind: 'endnote', backlinkIds: [] },
-          { ...note, id: 'author-note', noteKind: 'author-note', backlinkIds: [] },
+          {
+            ...note,
+            id: 'author-note',
+            noteKind: 'author-note',
+            backlinkIds: [],
+          },
         ),
     }
     const html = publicationGraphToHtml(
@@ -334,7 +358,8 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const template = bundle.graph.nodes[0]
-    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
+    if (!template || template.type !== 'figure')
+      throw new Error('missing figure fixture')
     const figure = { ...template, id: 'orphan-figure' } as any
     delete figure.captionId
     const caption = {
@@ -365,8 +390,15 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const figure = bundle.graph.nodes.find((node) => node.type === 'figure')
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
-    if (!figure || !paragraph || figure.type !== 'figure' || paragraph.type !== 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (
+      !figure ||
+      !paragraph ||
+      figure.type !== 'figure' ||
+      paragraph.type !== 'paragraph'
+    )
       throw new Error('missing variant fixture')
     const graph = {
       ...bundle.graph,
@@ -407,7 +439,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     const a5 = publicationGraphToHtml(graph, paths, 'a5-pdf')
     expect(a5).toContain('مختصر')
     const phone = publicationGraphToHtml(graph, paths, 'phone-webpub')
-    expect(phone).toContain(`src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`)
+    expect(phone).toContain(
+      `src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`,
+    )
     expect(phone).not.toContain('مختصر')
   })
 
@@ -434,7 +468,11 @@ describe('Vivliostyle publication renderer boundary', () => {
           parentId: 'equation',
           text: 'Canonical equation caption',
           variants: [
-            { kind: 'compact' as const, text: 'Compact equation caption', reviewed: true },
+            {
+              kind: 'compact' as const,
+              text: 'Compact equation caption',
+              reviewed: true,
+            },
           ],
         },
       ],
@@ -826,10 +864,7 @@ describe('Vivliostyle publication renderer boundary', () => {
 
   it('requires the pinned browser build before rendering', () => {
     expect(
-      publicationBrowserVersionMatches(
-        'Chromium 149.0.7827.0',
-        '149.0.7827.0',
-      ),
+      publicationBrowserVersionMatches('Chromium 149.0.7827.0', '149.0.7827.0'),
     ).toBe(true)
     expect(
       publicationBrowserVersionMatches(
@@ -837,6 +872,98 @@ describe('Vivliostyle publication renderer boundary', () => {
         '149.0.7827.0',
       ),
     ).toBe(false)
+  })
+
+  it('blocks and reports external requests before Playwright publication rendering', async () => {
+    const root = await mkdtemp(
+      resolve(tmpdir(), 'publication-offline-browser-'),
+    )
+    let requests = 0
+    const server = createServer((_request, response) => {
+      requests += 1
+      response.end('network response')
+    })
+    await new Promise<void>((accept, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', accept)
+    })
+    try {
+      const address = server.address()
+      if (!address || typeof address === 'string')
+        throw new Error('missing external request fixture address')
+      const htmlPath = resolve(root, 'index.html')
+      await writeFile(
+        htmlPath,
+        `<img src="http://127.0.0.1:${address.port}/external.png">`,
+      )
+      const candidates = publicationPlaywrightExecutableCandidates('1228')
+      const executablePath = await candidates.reduce<Promise<string>>(
+        async (previous, candidate) => {
+          const found = await previous
+          if (found) return found
+          try {
+            await access(candidate)
+            return candidate
+          } catch {
+            return ''
+          }
+        },
+        Promise.resolve(''),
+      )
+      expect(executablePath).not.toBe('')
+      const browser = await chromium.launch({ executablePath, headless: true })
+      try {
+        const offline = await useOfflinePublicationContext(browser)
+        const page = await offline.context.newPage()
+        await page.goto(pathToFileURL(htmlPath).href)
+        expect(() => offline.assertNoExternalRequests()).toThrow(
+          /blocked external request.*external\.png/i,
+        )
+        expect(requests).toBe(0)
+        await offline.context.close()
+      } finally {
+        await browser.close()
+      }
+    } finally {
+      await new Promise<void>((accept, reject) =>
+        server.close((error) => (error ? reject(error) : accept())),
+      )
+    }
+  })
+
+  it('isolates the Vivliostyle CLI process from external network requests while preserving loopback', async () => {
+    await runPublicationOffline(process.execPath, [
+      '--input-type=module',
+      '--eval',
+      'const {createServer}=await import("node:http");const server=createServer((_request,response)=>response.end("local"));await new Promise((accept,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",accept)});const address=server.address();const text=await fetch(`http://127.0.0.1:${address.port}`).then(response=>response.text());server.close();if(text!=="local")process.exit(1)',
+    ])
+
+    let requests = 0
+    const server = createServer((_request, response) => {
+      requests += 1
+      response.end('network response')
+    })
+    await new Promise<void>((accept, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', accept)
+    })
+    try {
+      const address = server.address()
+      if (!address || typeof address === 'string')
+        throw new Error('missing external request fixture address')
+      await expect(
+        runPublicationOffline(process.execPath, [
+          '--input-type=module',
+          '--eval',
+          `await fetch("http://127.0.0.1:${address.port}/external")`,
+        ]),
+      ).rejects.toThrow(/exited with status 1/)
+      expect(requests).toBe(0)
+    } finally {
+      await new Promise<void>((accept, reject) =>
+        server.close((error) => (error ? reject(error) : accept())),
+      )
+    }
   })
 
   it('removes stale WebPub and layout assets before a new publication', async () => {

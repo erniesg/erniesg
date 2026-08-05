@@ -239,6 +239,39 @@ describe('offline publication render helper', () => {
     )
   })
 
+  it.each([
+    [
+      'an XML declaration',
+      '<?xml version="1.0"?><?xml-stylesheet href="outside.css"?><svg/>',
+    ],
+    ['a comment', '<!-- lead --><?xml-stylesheet href="outside.css"?><svg/>'],
+    ['whitespace', ' \n\t<?xml-stylesheet href="outside.css"?><svg/>'],
+    [
+      'another processing instruction',
+      '<?xml-model href="schema.rng"?><?xml-stylesheet href="outside.css"?><svg/>',
+    ],
+    ['mixed case', '<?XmL-StYlEsHeEt href="outside.css"?><svg/>'],
+  ])('rejects an SVG XML stylesheet PI after %s', async (_prefix, svg) => {
+    const root = await localPublicationFixture()
+    await writeFile(resolve(root, 'assets', 'fixture.svg'), svg)
+
+    await expect(
+      validatePublicationResources(requestFor(root)),
+    ).rejects.toThrow(/XML stylesheet processing instructions/i)
+  })
+
+  it('accepts an SVG preamble without an XML stylesheet PI', async () => {
+    const root = await localPublicationFixture()
+    await writeFile(
+      resolve(root, 'assets', 'fixture.svg'),
+      '<?xml version="1.0"?>\n<!-- safe -->\n<?xml-model href="schema.rng"?>\n<svg/>',
+    )
+
+    await expect(
+      validatePublicationResources(requestFor(root)),
+    ).resolves.toContain(resolve(root, 'assets', 'fixture.svg'))
+  })
+
   it('rejects outside-root files and arbitrary file, data, blob, or network resources', async () => {
     const root = await localPublicationFixture()
     const outside = `${root}-outside-publication.png`

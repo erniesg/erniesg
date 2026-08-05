@@ -949,7 +949,7 @@ export async function validatePublicationResources(request) {
     const extension = extname(path).toLowerCase()
     if (!['.html', '.htm', '.xhtml', '.css', '.svg'].includes(extension)) return
     const contents = await readFile(path, 'utf8')
-    if (/^\s*<\?xml-stylesheet\b/iu.test(contents))
+    if (/<\?xml-stylesheet\b/iu.test(contents))
       throw new Error('XML stylesheet processing instructions are not allowed')
     if (extension === '.css') {
       for (const url of cssResourceReferences(contents)) {

@@ -26,6 +26,7 @@ import {
 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PDFDocument } from 'pdf-lib'
+import { createPublicationSourceSnapshot } from '../../../tools/publication-offline-render.mjs'
 
 export const PUBLICATION_BOUNDARY_EXECUTABLES = {
   sudo: '/usr/bin/sudo',
@@ -98,6 +99,7 @@ type PublicationIsolatedRenderDependencies = {
   normalizePdf?: typeof normalizePublicationPdf
   createRuntimeAttestations?: typeof createPublicationRuntimeAttestations
   verifyRuntimeAttestations?: typeof verifyPublicationRuntimeAttestations
+  createSourceSnapshot?: typeof createPublicationSourceSnapshot
 }
 
 export type PublicationRuntimeAttestation =
@@ -889,6 +891,7 @@ const PROOF_FIELDS = [
   'rendererVersion',
   'requestSha256',
   'runtimeEntries',
+  'sourceSha256',
   'uid',
   'version',
 ] as const
@@ -969,6 +972,7 @@ function validateIsolationProof({
       authenticatedRequest.expectedEnvironmentSha256 ||
     record.outputSha256 !== sha256(renderedPdf.bytes) ||
     record.outputByteLength !== renderedPdf.size ||
+    record.sourceSha256 !== authenticatedRequest.sourceSha256 ||
     JSON.stringify(record.runtimeEntries) !==
       JSON.stringify(authenticatedRequest.runtimeEntries) ||
     !/^net:\[\d+\]$/.test(String(networkNamespace)) ||
@@ -1099,7 +1103,8 @@ export function buildPublicationSystemdInvocation({
   )
     throw new Error('Publication boundary paths contain unsafe systemd syntax')
   if (
-    !isPathInside(publicationRoot, stagingDirectory) ||
+    publicationRoot === stagingDirectory ||
+    !isPathInside(stagingDirectory, publicationRoot) ||
     !isPathInside(stagingDirectory, requestPath)
   )
     throw new Error(
@@ -1133,12 +1138,12 @@ export function buildPublicationSystemdInvocation({
     'BindReadOnlyPaths=-/etc/group',
     'BindReadOnlyPaths=-/etc/localtime',
     'BindReadOnlyPaths=-/var/cache/fontconfig',
+    `BindPaths=${systemdPathListItem(stagingDirectory)}`,
+    `ReadWritePaths=${systemdPathListItem(stagingDirectory)}`,
     `BindReadOnlyPaths=${systemdPathListItem(publicationRoot)}`,
     ...runtimeReadOnlyPaths.map(
       (path) => `BindReadOnlyPaths=${systemdPathListItem(path)}`,
     ),
-    `BindPaths=${systemdPathListItem(stagingDirectory)}`,
-    `ReadWritePaths=${systemdPathListItem(stagingDirectory)}`,
     'ProtectKernelTunables=yes',
     'ProtectKernelModules=yes',
     'ProtectKernelLogs=yes',
@@ -1481,16 +1486,23 @@ export async function runPublicationIsolatedRender(
   const proofPath = resolve(stagingDirectory, 'proof.json')
   const renderedPath = resolve(stagingDirectory, 'rendered.pdf')
   const normalizedPath = resolve(stagingDirectory, 'normalized.pdf')
+  const sourceRoot = resolve(stagingDirectory, 'source')
   try {
+    const sourceSnapshot = await (
+      dependencies.createSourceSnapshot ?? createPublicationSourceSnapshot
+    )(publicationRoot, inputPath, sourceRoot)
     const expectedEnvironmentSha256 = environmentSha256(
-      childEnvironment(publicationRoot),
+      childEnvironment(sourceSnapshot.root),
     )
     const authenticatedRequest = {
-      version: 2,
+      version: 3,
       renderer: request.renderer,
-      publicationRoot,
+      publicationRoot: sourceSnapshot.root,
       stagingDirectory,
-      inputPath,
+      inputPath: sourceSnapshot.inputPath,
+      sourceEntries: sourceSnapshot.sourceEntries,
+      sourceInputPath: sourceSnapshot.sourceInputPath,
+      sourceSha256: sourceSnapshot.sourceSha256,
       outputPath: renderedPath,
       size: request.size,
       browserPath,
@@ -1511,7 +1523,7 @@ export async function runPublicationIsolatedRender(
     const requestSha256 = sha256(serialized)
     await writeFile(requestPath, serialized, { flag: 'wx', mode: 0o600 })
     const invocation = buildPublicationSystemdInvocation({
-      publicationRoot,
+      publicationRoot: sourceSnapshot.root,
       stagingDirectory,
       requestPath,
       requestSha256,
@@ -1553,6 +1565,7 @@ export async function runPublicationIsolatedRender(
     await Promise.all([
       rm(requestPath, { force: true }),
       rm(proofPath, { force: true }),
+      rm(sourceRoot, { recursive: true, force: true }),
     ])
     if (
       JSON.stringify((await readdir(stagingDirectory)).sort()) !==

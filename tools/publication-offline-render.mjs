@@ -3,12 +3,16 @@ import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import {
   access,
+  chmod,
   lstat,
+  mkdir,
+  mkdtemp,
   open,
   readFile,
   readdir,
   readlink,
   realpath,
+  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -35,6 +39,9 @@ const PLAYWRIGHT_PACKAGE = resolve(
   'node_modules/playwright/package.json',
 )
 const NODE_EXECUTABLE = '/usr/bin/node'
+export const PUBLICATION_SOURCE_MAXIMUM_FILE_BYTES = 128 * 1024 * 1024
+export const PUBLICATION_SOURCE_MAXIMUM_TOTAL_BYTES = 1024 * 1024 * 1024
+export const PUBLICATION_SOURCE_MAXIMUM_FILES = 10_000
 const ISOLATION_DIAGNOSTIC_SOURCE = String.raw`
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
@@ -198,6 +205,9 @@ const REQUEST_FIELDS = [
   'renderer',
   'runtimeEntries',
   'size',
+  'sourceEntries',
+  'sourceInputPath',
+  'sourceSha256',
   'stagingDirectory',
   'version',
 ]
@@ -217,7 +227,7 @@ function assertRenderRequest(request) {
     throw new Error(`Unexpected request field: ${unexpected.join(', ')}`)
   if (missing.length)
     throw new Error(`Missing request field: ${missing.join(', ')}`)
-  if (request.version !== 2)
+  if (request.version !== 3)
     throw new Error('Unsupported publication render request version')
   if (!['vivliostyle-cli', 'playwright-chromium'].includes(request.renderer))
     throw new Error('Unsupported publication renderer request')
@@ -235,12 +245,22 @@ function assertRenderRequest(request) {
       throw new Error(`${field} must be an absolute path`)
   if (!isPathInside(request.publicationRoot, request.inputPath))
     throw new Error('Publication HTML must be inside the publication root')
-  if (!isPathInside(request.publicationRoot, request.stagingDirectory))
-    throw new Error('Publication staging must be inside the publication root')
+  if (
+    request.publicationRoot === request.stagingDirectory ||
+    !isPathInside(request.stagingDirectory, request.publicationRoot)
+  )
+    throw new Error(
+      'Publication source snapshot must be inside private staging',
+    )
   if (!isPathInside(request.stagingDirectory, request.outputPath))
     throw new Error('Publication PDF must be inside private staging')
   if (!isPathInside(request.stagingDirectory, request.proofPath))
     throw new Error('Publication proof must be inside private staging')
+  if (
+    isPathInside(request.publicationRoot, request.outputPath) ||
+    isPathInside(request.publicationRoot, request.proofPath)
+  )
+    throw new Error('Publication output must be outside the source snapshot')
   if (!isPathInside(BROWSER_CACHE, request.browserPath))
     throw new Error('Publication browser must be inside the pinned cache')
   if (extname(request.inputPath).toLowerCase() !== '.html')
@@ -268,6 +288,7 @@ function assertRenderRequest(request) {
     throw new Error('Host network namespace identity is invalid')
   if (!/^mnt:\[\d+\]$/.test(request.hostMountNamespace))
     throw new Error('Host mount namespace identity is invalid')
+  assertSourceEntries(request)
   assertRuntimeEntries(request)
   if (
     request.networkDiagnostic !== null &&
@@ -301,6 +322,64 @@ function assertRenderRequest(request) {
   )
     throw new Error('Publication filesystem diagnostics are invalid')
   return request
+}
+
+function normalizedSourcePath(path) {
+  return (
+    typeof path === 'string' &&
+    path.length > 0 &&
+    path.length <= 4096 &&
+    !isAbsolute(path) &&
+    !path.includes('\\') &&
+    !/[\0\r\n]/u.test(path) &&
+    path
+      .split('/')
+      .every((segment) => segment && segment !== '.' && segment !== '..')
+  )
+}
+
+function sourceEntriesSha256(entries) {
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex')
+}
+
+function assertSourceEntries(request) {
+  if (
+    !Array.isArray(request.sourceEntries) ||
+    request.sourceEntries.length < 1 ||
+    request.sourceEntries.length > PUBLICATION_SOURCE_MAXIMUM_FILES
+  )
+    throw new Error('Publication source snapshot entries are invalid')
+  let totalBytes = 0
+  const paths = []
+  for (const entry of request.sourceEntries) {
+    if (
+      !entry ||
+      typeof entry !== 'object' ||
+      Array.isArray(entry) ||
+      JSON.stringify(Object.keys(entry).sort()) !==
+        JSON.stringify(['byteLength', 'path', 'sha256']) ||
+      !normalizedSourcePath(entry.path) ||
+      !Number.isSafeInteger(entry.byteLength) ||
+      entry.byteLength < 1 ||
+      entry.byteLength > PUBLICATION_SOURCE_MAXIMUM_FILE_BYTES ||
+      !/^[a-f0-9]{64}$/.test(entry.sha256)
+    )
+      throw new Error('Publication source snapshot entry is invalid')
+    totalBytes += entry.byteLength
+    if (totalBytes > PUBLICATION_SOURCE_MAXIMUM_TOTAL_BYTES)
+      throw new Error('Publication source snapshot is unbounded')
+    paths.push(entry.path)
+  }
+  if (
+    JSON.stringify(paths) !== JSON.stringify([...new Set(paths)].sort()) ||
+    !normalizedSourcePath(request.sourceInputPath) ||
+    !paths.includes(request.sourceInputPath) ||
+    request.inputPath !==
+      resolve(request.publicationRoot, ...request.sourceInputPath.split('/')) ||
+    !/^[a-f0-9]{64}$/.test(request.sourceSha256) ||
+    request.sourceSha256 !== sourceEntriesSha256(request.sourceEntries)
+  )
+    throw new Error('Publication source snapshot manifest is invalid')
 }
 
 export function authenticatePublicationRequest(serialized, expectedDigest) {
@@ -806,7 +885,7 @@ export async function assertPublicationResourceUrl(url, referrerPath, root) {
     )
   let path
   try {
-    path = await realpath(fileURLToPath(parsed))
+    path = resolve(fileURLToPath(parsed))
   } catch (error) {
     throw new Error(
       `Publication resource is unavailable: ${url}: ${String(error)}`,
@@ -815,7 +894,17 @@ export async function assertPublicationResourceUrl(url, referrerPath, root) {
   const canonicalRoot = await realpath(root)
   if (!isPathInside(canonicalRoot, path))
     throw new Error(`Publication resource is outside publication root: ${url}`)
-  if (!(await stat(path)).isFile())
+  let canonical
+  try {
+    canonical = await realpath(path)
+  } catch (error) {
+    throw new Error(
+      `Publication resource is unavailable: ${url}: ${String(error)}`,
+    )
+  }
+  if (canonical !== path)
+    throw new Error(`Publication resource must not use symbolic links: ${url}`)
+  if (!(await lstat(path)).isFile())
     throw new Error(`Publication resource is not a regular file: ${url}`)
   return path
 }
@@ -997,19 +1086,80 @@ function cssResourceReferences(css) {
   ]
 }
 
-export async function validatePublicationResources(request) {
-  assertRenderRequest(request)
-  const root = await realpath(request.publicationRoot)
-  const input = await realpath(request.inputPath)
+async function readPublicationSourceFile(path, maximumBytes, description) {
+  let handle
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  } catch (error) {
+    throw new Error(`${description} is unavailable or unsafe: ${String(error)}`)
+  }
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (
+      !before.isFile() ||
+      before.size < 1n ||
+      before.size > BigInt(maximumBytes)
+    )
+      throw new Error(`${description} is not a bounded regular file`)
+    const chunks = []
+    let byteLength = 0
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      byteLength += chunk.byteLength
+      if (byteLength > maximumBytes)
+        throw new Error(`${description} exceeded its byte limit while reading`)
+      chunks.push(chunk)
+    }
+    const [after, pathMetadata] = await Promise.all([
+      handle.stat({ bigint: true }),
+      lstat(path, { bigint: true }),
+    ])
+    if (
+      !sameRuntimeIdentity(before, after) ||
+      !sameRuntimeIdentity(before, pathMetadata) ||
+      byteLength !== Number(before.size)
+    )
+      throw new Error(`${description} changed while it was being authenticated`)
+    return Buffer.concat(chunks, byteLength)
+  } finally {
+    await handle.close()
+  }
+}
+
+function sourceText(bytes, path) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch (error) {
+    throw new Error(
+      `Publication source is not valid UTF-8: ${path}: ${String(error)}`,
+    )
+  }
+}
+
+async function publicationResourcePaths(publicationRoot, inputPath) {
+  const root = await realpath(publicationRoot)
+  const input = await realpath(inputPath)
   if (!isPathInside(root, input))
     throw new Error('Publication HTML is outside publication root')
+  if (root !== publicationRoot || input !== inputPath)
+    throw new Error(
+      'Publication source paths must be canonical and symlink-free',
+    )
   const visited = new Set()
   const inspect = async (path) => {
     if (visited.has(path)) return
     visited.add(path)
+    if (visited.size > PUBLICATION_SOURCE_MAXIMUM_FILES)
+      throw new Error('Publication source snapshot contains too many files')
     const extension = extname(path).toLowerCase()
     if (!['.html', '.htm', '.xhtml', '.css', '.svg'].includes(extension)) return
-    const contents = await readFile(path, 'utf8')
+    const contents = sourceText(
+      await readPublicationSourceFile(
+        path,
+        PUBLICATION_SOURCE_MAXIMUM_FILE_BYTES,
+        'Publication source',
+      ),
+      path,
+    )
     if (/<\?xml-stylesheet\b/iu.test(contents))
       throw new Error('XML stylesheet processing instructions are not allowed')
     if (extension === '.css') {
@@ -1032,6 +1182,145 @@ export async function validatePublicationResources(request) {
   }
   await inspect(input)
   return [...visited].sort()
+}
+
+export async function validatePublicationResources(request) {
+  if (
+    !request ||
+    typeof request !== 'object' ||
+    typeof request.publicationRoot !== 'string' ||
+    !isAbsolute(request.publicationRoot) ||
+    typeof request.inputPath !== 'string' ||
+    !isAbsolute(request.inputPath)
+  )
+    throw new Error('Publication resource request is invalid')
+  return publicationResourcePaths(request.publicationRoot, request.inputPath)
+}
+
+function sourceRelativePath(root, path) {
+  const sourcePath = relative(root, path).split(sep).join('/')
+  if (!normalizedSourcePath(sourcePath))
+    throw new Error(`Publication source path is unsafe: ${path}`)
+  return sourcePath
+}
+
+async function writeSnapshotFile(root, relativePath, bytes) {
+  const path = resolve(root, ...relativePath.split('/'))
+  const parent = dirname(path)
+  await mkdir(parent, { recursive: true, mode: 0o700 })
+  if ((await realpath(parent)) !== parent)
+    throw new Error(`Publication source destination is unsafe: ${relativePath}`)
+  await writeFile(path, bytes, { flag: 'wx', mode: 0o400 })
+  return path
+}
+
+export async function createPublicationSourceSnapshot(
+  publicationRoot,
+  inputPath,
+  snapshotRoot,
+) {
+  if (
+    !isAbsolute(publicationRoot) ||
+    !isAbsolute(inputPath) ||
+    !isAbsolute(snapshotRoot)
+  )
+    throw new Error('Publication source snapshot paths must be absolute')
+  const root = await realpath(publicationRoot)
+  const input = await realpath(inputPath)
+  if (root !== publicationRoot || input !== inputPath)
+    throw new Error('Publication source snapshot paths must be canonical')
+  const paths = await publicationResourcePaths(root, input)
+  await mkdir(snapshotRoot, { mode: 0o700 })
+  await chmod(snapshotRoot, 0o700)
+  try {
+    if ((await realpath(snapshotRoot)) !== snapshotRoot)
+      throw new Error('Publication source snapshot root is not canonical')
+    const entries = []
+    let totalBytes = 0
+    for (const path of paths) {
+      const relativePath = sourceRelativePath(root, path)
+      const bytes = await readPublicationSourceFile(
+        path,
+        PUBLICATION_SOURCE_MAXIMUM_FILE_BYTES,
+        `Publication source ${relativePath}`,
+      )
+      totalBytes += bytes.byteLength
+      if (totalBytes > PUBLICATION_SOURCE_MAXIMUM_TOTAL_BYTES)
+        throw new Error('Publication source snapshot is unbounded')
+      await writeSnapshotFile(snapshotRoot, relativePath, bytes)
+      entries.push({
+        path: relativePath,
+        byteLength: bytes.byteLength,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      })
+    }
+    entries.sort((left, right) => left.path.localeCompare(right.path))
+    const sourceInputPath = sourceRelativePath(root, input)
+    return {
+      root: snapshotRoot,
+      inputPath: resolve(snapshotRoot, ...sourceInputPath.split('/')),
+      sourceEntries: entries,
+      sourceInputPath,
+      sourceSha256: sourceEntriesSha256(entries),
+    }
+  } catch (error) {
+    await rm(snapshotRoot, { recursive: true, force: true })
+    throw error
+  }
+}
+
+export async function materializePublicationSourceSnapshot(request) {
+  assertRenderRequest(request)
+  const prefix = resolve(
+    '/tmp',
+    `publication-source-${request.sourceSha256.slice(0, 16)}-`,
+  )
+  const root = await mkdtemp(prefix)
+  await chmod(root, 0o700)
+  try {
+    for (const entry of request.sourceEntries) {
+      const sourcePath = resolve(
+        request.publicationRoot,
+        ...entry.path.split('/'),
+      )
+      if ((await realpath(sourcePath)) !== sourcePath)
+        throw new Error(
+          `Publication source snapshot entry is not canonical: ${entry.path}`,
+        )
+      const bytes = await readPublicationSourceFile(
+        sourcePath,
+        entry.byteLength,
+        `Publication source snapshot entry ${entry.path}`,
+      )
+      if (
+        bytes.byteLength !== entry.byteLength ||
+        createHash('sha256').update(bytes).digest('hex') !== entry.sha256
+      )
+        throw new Error(
+          `Publication source snapshot entry does not match: ${entry.path}`,
+        )
+      await writeSnapshotFile(root, entry.path, bytes)
+    }
+    const inputPath = resolve(root, ...request.sourceInputPath.split('/'))
+    const resources = await publicationResourcePaths(root, inputPath)
+    const resourcePaths = resources.map((path) =>
+      sourceRelativePath(root, path),
+    )
+    if (
+      JSON.stringify(resourcePaths) !==
+      JSON.stringify(request.sourceEntries.map(({ path }) => path))
+    )
+      throw new Error(
+        'Publication source snapshot resource graph does not match',
+      )
+    return {
+      root,
+      request: { ...request, publicationRoot: root, inputPath },
+    }
+  } catch (error) {
+    await rm(root, { recursive: true, force: true })
+    throw error
+  }
 }
 
 function normalizedHexIsZero(value) {
@@ -1550,6 +1839,8 @@ export async function executePublicationRenderRequest(
   const verifySelectedRenderer = dependencies.verifyRenderer ?? verifyRenderer
   const verifyRuntime =
     dependencies.verifyRuntimeEntries ?? verifyRuntimeEntries
+  const materializeSource =
+    dependencies.materializeSource ?? materializePublicationSourceSnapshot
   const diagnoseIsolation =
     dependencies.runIsolationDiagnostics ?? runIsolationDiagnostics
   const renderVivliostyle =
@@ -1562,6 +1853,8 @@ export async function executePublicationRenderRequest(
     )
   const initialSnapshot = await isolate(request)
   await verifyRuntime(request.runtimeEntries)
+  const authenticatedSource = await materializeSource(request)
+  const renderRequest = authenticatedSource.request
   const monitor = monitorRendererNamespaces(
     initialSnapshot.networkNamespace,
     initialSnapshot.mountNamespace,
@@ -1572,27 +1865,31 @@ export async function executePublicationRenderRequest(
   let browserVersion
   let diagnostics = { filesystemDiagnostics: [], networkDiagnostic: null }
   try {
-    diagnostics = await diagnoseIsolation(request, monitor)
-    await validateResources(request)
-    rendererVersion = await verifySelectedRenderer(request, monitor)
-    browserVersion = await verify(request, monitor)
+    diagnostics = await diagnoseIsolation(renderRequest, monitor)
+    await validateResources(renderRequest)
+    rendererVersion = await verifySelectedRenderer(renderRequest, monitor)
+    browserVersion = await verify(renderRequest, monitor)
     if (request.renderer === 'vivliostyle-cli')
-      await renderVivliostyle(request, { monitor })
-    else await renderPlaywright(request, { monitor })
+      await renderVivliostyle(renderRequest, { monitor })
+    else await renderPlaywright(renderRequest, { monitor })
     await verifyRuntime(request.runtimeEntries)
   } finally {
-    const observedNamespaces = await monitor.stop()
-    childNetworkNamespaces = observedNamespaces.network
-    childMountNamespaces = observedNamespaces.mount
-    if (initialSnapshot.interfaces)
-      assertIsolationSnapshot(
-        {
-          ...initialSnapshot,
-          childNetworkNamespaces,
-          childMountNamespaces,
-        },
-        request,
-      )
+    try {
+      const observedNamespaces = await monitor.stop()
+      childNetworkNamespaces = observedNamespaces.network
+      childMountNamespaces = observedNamespaces.mount
+      if (initialSnapshot.interfaces)
+        assertIsolationSnapshot(
+          {
+            ...initialSnapshot,
+            childNetworkNamespaces,
+            childMountNamespaces,
+          },
+          request,
+        )
+    } finally {
+      await rm(authenticatedSource.root, { recursive: true, force: true })
+    }
   }
   return {
     ...initialSnapshot,
@@ -1660,7 +1957,8 @@ async function main() {
   if (
     canonicalRoot !== request.publicationRoot ||
     canonicalStaging !== request.stagingDirectory ||
-    !isPathInside(canonicalRoot, canonicalStaging) ||
+    canonicalRoot === canonicalStaging ||
+    !isPathInside(canonicalStaging, canonicalRoot) ||
     !isPathInside(canonicalStaging, canonicalRequest)
   )
     throw new Error('Authenticated request file is outside private staging')
@@ -1683,6 +1981,7 @@ async function main() {
     environmentSha256: request.expectedEnvironmentSha256,
     outputSha256: createHash('sha256').update(output).digest('hex'),
     outputByteLength: output.byteLength,
+    sourceSha256: request.sourceSha256,
     runtimeEntries: request.runtimeEntries,
     networkNamespace: proof.networkNamespace,
     mountNamespace: proof.mountNamespace,

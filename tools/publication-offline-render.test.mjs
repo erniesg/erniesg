@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto'
 import {
+  access,
   mkdir,
   mkdtemp,
+  readFile,
+  readdir,
   readlink,
   rename,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,13 +21,42 @@ import {
   assertPublicationResourceUrl,
   attestRuntimeForest,
   authenticatePublicationRequest,
+  createPublicationSourceSnapshot,
   executePublicationRenderRequest,
+  materializePublicationSourceSnapshot,
+  PUBLICATION_SOURCE_MAXIMUM_FILE_BYTES,
   publicationBrowserVersionMatches,
   publicationChildEnvironment,
   renderPlaywrightPublication,
   validatePublicationResources,
   verifyRuntimeEntries,
 } from './publication-offline-render.mjs'
+
+const LOCAL_SOURCE_CONTENTS = {
+  'assets/fixture.svg': '<svg></svg>',
+  'assets/fixture.ttf': 'font fixture',
+  'index.html':
+    '<!doctype html><link rel="stylesheet" href="publication.css"><main><img src="assets/fixture.svg" alt="fixture"></main>',
+  'publication.css':
+    "@font-face{font-family:Fixture;src:url('./assets/fixture.ttf')} body{background-image:url('./assets/fixture.svg')}",
+}
+
+function sourceManifest(contents = LOCAL_SOURCE_CONTENTS) {
+  const sourceEntries = Object.entries(contents)
+    .map(([path, value]) => ({
+      path,
+      byteLength: Buffer.byteLength(value),
+      sha256: createHash('sha256').update(value).digest('hex'),
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path))
+  return {
+    sourceEntries,
+    sourceInputPath: 'index.html',
+    sourceSha256: createHash('sha256')
+      .update(JSON.stringify(sourceEntries))
+      .digest('hex'),
+  }
+}
 
 function fakeRuntimeEntry(kind, label, path) {
   return {
@@ -80,17 +113,19 @@ function fakeRuntimeEntries(renderer, browserPath) {
 
 function requestFor(root, renderer = 'playwright-chromium') {
   const environment = publicationChildEnvironment(root)
+  const stagingDirectory = dirname(root)
   const browserPath = resolve(
     'node_modules/.cache/publication-browsers/playwright/chromium-1228/chrome-linux/chrome',
   )
   return {
-    version: 2,
+    version: 3,
     renderer,
     publicationRoot: root,
-    stagingDirectory: root,
+    stagingDirectory,
     inputPath: resolve(root, 'index.html'),
-    outputPath: resolve(root, 'publication.pdf'),
-    proofPath: resolve(root, 'isolation-proof.json'),
+    outputPath: resolve(stagingDirectory, 'publication.pdf'),
+    proofPath: resolve(stagingDirectory, 'isolation-proof.json'),
+    ...sourceManifest(),
     size: 'A4',
     browserPath,
     expectedBrowserVersion: '149.0.7827.0',
@@ -111,19 +146,46 @@ function requestFor(root, renderer = 'playwright-chromium') {
 }
 
 async function localPublicationFixture() {
-  const root = await mkdtemp(resolve(tmpdir(), 'publication-helper-'))
-  await mkdir(resolve(root, 'assets'))
-  await writeFile(resolve(root, 'assets', 'fixture.svg'), '<svg></svg>')
-  await writeFile(resolve(root, 'assets', 'fixture.ttf'), 'font fixture')
-  await writeFile(
-    resolve(root, 'publication.css'),
-    "@font-face{font-family:Fixture;src:url('./assets/fixture.ttf')} body{background-image:url('./assets/fixture.svg')}",
+  const stagingDirectory = await mkdtemp(
+    resolve(tmpdir(), 'publication-helper-'),
   )
-  await writeFile(
-    resolve(root, 'index.html'),
-    '<!doctype html><link rel="stylesheet" href="publication.css"><main><img src="assets/fixture.svg" alt="fixture"></main>',
+  const root = resolve(stagingDirectory, 'source')
+  await mkdir(resolve(root, 'assets'), { recursive: true })
+  await Promise.all(
+    Object.entries(LOCAL_SOURCE_CONTENTS).map(([path, contents]) =>
+      writeFile(resolve(root, path), contents),
+    ),
   )
   return root
+}
+
+async function nestedPublicationFixture() {
+  const root = await mkdtemp(resolve(tmpdir(), 'publication-helper-nested-'))
+  await Promise.all([
+    mkdir(resolve(root, 'chapters')),
+    mkdir(resolve(root, 'styles')),
+    mkdir(resolve(root, 'assets', 'images'), { recursive: true }),
+    mkdir(resolve(root, 'assets', 'fonts'), { recursive: true }),
+  ])
+  const files = {
+    html: resolve(root, 'chapters', 'index.html'),
+    css: resolve(root, 'styles', 'print.css'),
+    image: resolve(root, 'assets', 'images', 'fixture.svg'),
+    font: resolve(root, 'assets', 'fonts', 'fixture.ttf'),
+  }
+  const trusted = {
+    html: '<!doctype html><link rel="stylesheet" href="../styles/print.css"><main>trusted</main>',
+    css: "@font-face{font-family:Trusted;src:url('../assets/fonts/fixture.ttf')}main{background:url('../assets/images/fixture.svg')}",
+    image: '<svg>trusted</svg>',
+    font: 'trusted-font-bytes',
+  }
+  await Promise.all([
+    writeFile(files.html, trusted.html),
+    writeFile(files.css, trusted.css),
+    writeFile(files.image, trusted.image),
+    writeFile(files.font, trusted.font),
+  ])
+  return { root, files, trusted }
 }
 
 describe('offline publication render helper', () => {
@@ -133,7 +195,7 @@ describe('offline publication render helper', () => {
     const digest = createHash('sha256').update(serialized).digest('hex')
 
     expect(authenticatePublicationRequest(serialized, digest)).toMatchObject({
-      version: 2,
+      version: 3,
       renderer: 'playwright-chromium',
       publicationRoot: root,
     })
@@ -148,6 +210,112 @@ describe('offline publication render helper', () => {
           .digest('hex'),
       ),
     ).toThrow(/unexpected request field/i)
+  })
+
+  it('rejects malformed source manifests before touching renderer state', async () => {
+    const root = await localPublicationFixture()
+    const request = requestFor(root)
+    const authenticate = (candidate) => {
+      const serialized = `${JSON.stringify(candidate)}\n`
+      return () =>
+        authenticatePublicationRequest(
+          serialized,
+          createHash('sha256').update(serialized).digest('hex'),
+        )
+    }
+    const first = request.sourceEntries[0]
+
+    expect(
+      authenticate({
+        ...request,
+        sourceEntries: [first, first, ...request.sourceEntries.slice(1)],
+      }),
+    ).toThrow(/source snapshot manifest/i)
+    expect(
+      authenticate({
+        ...request,
+        sourceEntries: [
+          { ...first, path: '../outside' },
+          ...request.sourceEntries.slice(1),
+        ],
+      }),
+    ).toThrow(/source snapshot entry/i)
+    expect(authenticate({ ...request, sourceSha256: '0'.repeat(64) })).toThrow(
+      /source snapshot manifest/i,
+    )
+    expect(
+      authenticate({
+        ...request,
+        sourceEntries: [
+          { ...first, untrusted: true },
+          ...request.sourceEntries.slice(1),
+        ],
+      }),
+    ).toThrow(/source snapshot entry/i)
+  })
+
+  it('rejects truncated and symlink-replaced snapshots without private residue', async () => {
+    const root = await localPublicationFixture()
+    const request = requestFor(root)
+    const prefix = `publication-source-${request.sourceSha256.slice(0, 16)}-`
+    const before = new Set(
+      (await readdir(tmpdir())).filter((name) => name.startsWith(prefix)),
+    )
+    await truncate(resolve(root, 'assets', 'fixture.ttf'), 4)
+    await expect(materializePublicationSourceSnapshot(request)).rejects.toThrow(
+      /does not match|bounded regular file/i,
+    )
+    expect(
+      (await readdir(tmpdir())).filter(
+        (name) => name.startsWith(prefix) && !before.has(name),
+      ),
+    ).toEqual([])
+
+    const symlinkRoot = await localPublicationFixture()
+    const symlinkRequest = requestFor(symlinkRoot)
+    const outside = `${symlinkRoot}-outside.svg`
+    await writeFile(outside, '<svg></svg>')
+    await rm(resolve(symlinkRoot, 'assets', 'fixture.svg'))
+    await symlink(outside, resolve(symlinkRoot, 'assets', 'fixture.svg'))
+    await expect(
+      materializePublicationSourceSnapshot(symlinkRequest),
+    ).rejects.toThrow(/not canonical|unsafe/i)
+  })
+
+  it('rejects unbounded source files and removes a partial snapshot', async () => {
+    const root = await localPublicationFixture()
+    const stagingDirectory = await mkdtemp(
+      resolve(tmpdir(), 'publication-source-unbounded-'),
+    )
+    const snapshotRoot = resolve(stagingDirectory, 'source')
+    await truncate(
+      resolve(root, 'assets', 'fixture.svg'),
+      PUBLICATION_SOURCE_MAXIMUM_FILE_BYTES + 1,
+    )
+
+    await expect(
+      createPublicationSourceSnapshot(
+        root,
+        resolve(root, 'index.html'),
+        snapshotRoot,
+      ),
+    ).rejects.toThrow(/bounded regular file/i)
+    await expect(access(snapshotRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects non-regular source resources', async () => {
+    const root = await localPublicationFixture()
+    const image = resolve(root, 'assets', 'fixture.svg')
+    await rm(image)
+    await mkdir(image)
+
+    await expect(
+      createPublicationSourceSnapshot(
+        root,
+        resolve(root, 'index.html'),
+        resolve(dirname(root), 'replacement-source'),
+      ),
+    ).rejects.toThrow(/not a regular file/i)
   })
 
   it('requires a closed, in-repository runtime package allowlist', async () => {
@@ -330,7 +498,7 @@ describe('offline publication render helper', () => {
     )
     await expect(
       validatePublicationResources(requestFor(root)),
-    ).rejects.toThrow(/outside publication root/i)
+    ).rejects.toThrow(/outside publication root|symbolic links/i)
     await writeFile(
       resolve(root, 'index.html'),
       '<img src="assets/fixture.svg" onload="fetch(`https://example.invalid`)">',
@@ -393,7 +561,7 @@ describe('offline publication render helper', () => {
 
     await expect(
       validatePublicationResources(requestFor(root)),
-    ).rejects.toThrow(/outside publication root/i)
+    ).rejects.toThrow(/outside publication root|symbolic links/i)
   })
 
   it('canonicalizes encoded traversal and in-root symlink resources', async () => {
@@ -424,7 +592,7 @@ describe('offline publication render helper', () => {
     )
     await expect(
       validatePublicationResources(requestFor(root)),
-    ).rejects.toThrow(/outside publication root/i)
+    ).rejects.toThrow(/outside publication root|symbolic links/i)
   })
 
   it('attests a distinct loopback-only namespace, caller identity, and empty capabilities', () => {
@@ -521,6 +689,97 @@ describe('offline publication render helper', () => {
         renderer === 'vivliostyle-cli' ? 'vivliostyle' : 'playwright',
         'runtime',
       ])
+    },
+  )
+
+  it.each(['vivliostyle-cli', 'playwright-chromium'])(
+    'renders %s only from immutable nested source bytes after live replacement',
+    async (renderer) => {
+      const fixture = await nestedPublicationFixture()
+      const stagingDirectory = await mkdtemp(
+        resolve(tmpdir(), 'publication-source-stage-'),
+      )
+      const sourceSnapshot = await createPublicationSourceSnapshot(
+        fixture.root,
+        fixture.files.html,
+        resolve(stagingDirectory, 'source'),
+      )
+      const outside = `${fixture.root}-outside.svg`
+      await writeFile(outside, '<svg>hostile</svg>')
+      const request = {
+        ...requestFor(sourceSnapshot.root, renderer),
+        inputPath: sourceSnapshot.inputPath,
+        sourceEntries: sourceSnapshot.sourceEntries,
+        sourceInputPath: sourceSnapshot.sourceInputPath,
+        sourceSha256: sourceSnapshot.sourceSha256,
+      }
+      const render = vi.fn(async (renderRequest) => {
+        expect(renderRequest.publicationRoot).not.toBe(fixture.root)
+        await expect(readFile(renderRequest.inputPath, 'utf8')).resolves.toBe(
+          fixture.trusted.html,
+        )
+        await expect(
+          readFile(
+            resolve(renderRequest.publicationRoot, 'styles', 'print.css'),
+            'utf8',
+          ),
+        ).resolves.toBe(fixture.trusted.css)
+        await expect(
+          readFile(
+            resolve(
+              renderRequest.publicationRoot,
+              'assets',
+              'images',
+              'fixture.svg',
+            ),
+            'utf8',
+          ),
+        ).resolves.toBe(fixture.trusted.image)
+        await expect(
+          readFile(
+            resolve(
+              renderRequest.publicationRoot,
+              'assets',
+              'fonts',
+              'fixture.ttf',
+            ),
+            'utf8',
+          ),
+        ).resolves.toBe(fixture.trusted.font)
+      })
+
+      await executePublicationRenderRequest(request, {
+        attestIsolation: async () => ({
+          networkNamespace: 'net:[200]',
+          mountNamespace: 'mnt:[200]',
+        }),
+        verifyRuntimeEntries: async () => undefined,
+        validateResources: async (snapshotRequest) => {
+          const resources = await validatePublicationResources(snapshotRequest)
+          await writeFile(
+            fixture.files.html,
+            fixture.trusted.html.replace('trusted', 'hostile'),
+          )
+          const replacement = `${fixture.files.css}.replacement`
+          await writeFile(
+            replacement,
+            fixture.trusted.css.replace('Trusted', 'Hostile'),
+          )
+          await rename(replacement, fixture.files.css)
+          await rm(fixture.files.image)
+          await symlink(outside, fixture.files.image)
+          await writeFile(
+            fixture.files.font,
+            fixture.trusted.font.replace('trusted', 'hostile'),
+          )
+          return resources
+        },
+        verifyRenderer: async () => request.expectedRendererVersion,
+        verifyBrowser: async () => request.expectedBrowserVersion,
+        renderVivliostyle: render,
+        renderPlaywright: render,
+      })
+      expect(render).toHaveBeenCalledOnce()
     },
   )
 

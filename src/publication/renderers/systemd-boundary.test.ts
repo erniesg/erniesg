@@ -44,7 +44,7 @@ import {
 } from './systemd-boundary'
 
 const invocationInput = {
-  publicationRoot: '/tmp/publication root',
+  publicationRoot: '/tmp/publication root/.publication-stage-test/source',
   stagingDirectory: '/tmp/publication root/.publication-stage-test',
   requestPath:
     '/tmp/publication root/.publication-stage-test/offline-request.json',
@@ -203,6 +203,7 @@ function isolationProof(
     environmentSha256: request.expectedEnvironmentSha256,
     outputSha256: sha256(output),
     outputByteLength: output.byteLength,
+    sourceSha256: request.sourceSha256,
     runtimeEntries: request.runtimeEntries,
     networkNamespace: 'net:[987654321]',
     mountNamespace: 'mnt:[987654321]',
@@ -269,7 +270,7 @@ describe('publication systemd process-tree boundary', () => {
         '--property=InaccessiblePaths=/proc',
         '--property=TemporaryFileSystem=/:ro',
         '--property=BindReadOnlyPaths=/usr',
-        '--property=BindReadOnlyPaths=/tmp/publication\\x20root',
+        '--property=BindReadOnlyPaths=/tmp/publication\\x20root/.publication-stage-test/source',
         '--property=BindReadOnlyPaths=/tmp/publication\\x20runtime/entrypoint.js',
         '--property=BindPaths=/tmp/publication\\x20root/.publication-stage-test',
         '--property=ReadWritePaths=/tmp/publication\\x20root/.publication-stage-test',
@@ -281,7 +282,7 @@ describe('publication systemd process-tree boundary', () => {
         '--property=KillMode=control-group',
         '--property=SendSIGKILL=yes',
         '--property=RuntimeMaxSec=120s',
-        '--working-directory=/tmp/publication root',
+        '--working-directory=/tmp/publication root/.publication-stage-test/source',
         '/usr/bin/unshare',
         '--pid',
         '--fork',
@@ -797,6 +798,7 @@ describe('publication systemd process-tree boundary', () => {
   })
 
   it.each([
+    'source snapshot failure',
     'resource failure',
     'version failure',
     'partial renderer failure',
@@ -831,6 +833,17 @@ describe('publication systemd process-tree boundary', () => {
         {
           ...testRuntimeAttestationDependencies,
           verifyExecutables: async () => undefined,
+          createSourceSnapshot:
+            failure === 'source snapshot failure'
+              ? async (_publicationRoot, _inputPath, snapshotRoot) => {
+                  await mkdir(snapshotRoot)
+                  await writeFile(
+                    resolve(snapshotRoot, 'partial-source'),
+                    'partial',
+                  )
+                  throw new Error('injected source snapshot failure')
+                }
+              : undefined,
           runInvocation: async (invocation) => {
             const { request, requestSha256 } =
               await authenticatedInvocationRequest(invocation)
@@ -879,6 +892,7 @@ describe('publication systemd process-tree boundary', () => {
       expect(await publicationResidue(fixture.root)).toEqual([])
       if (
         [
+          'source snapshot failure',
           'resource failure',
           'version failure',
           'partial renderer failure',

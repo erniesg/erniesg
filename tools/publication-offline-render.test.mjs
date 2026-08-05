@@ -16,10 +16,12 @@ import {
 } from './publication-offline-render.mjs'
 
 function requestFor(root, renderer = 'playwright-chromium') {
+  const environment = publicationChildEnvironment(root)
   return {
-    version: 1,
+    version: 2,
     renderer,
     publicationRoot: root,
+    stagingDirectory: root,
     inputPath: resolve(root, 'index.html'),
     outputPath: resolve(root, 'publication.pdf'),
     proofPath: resolve(root, 'isolation-proof.json'),
@@ -28,9 +30,19 @@ function requestFor(root, renderer = 'playwright-chromium') {
       'node_modules/.cache/publication-browsers/playwright/chromium-1228/chrome-linux/chrome',
     ),
     expectedBrowserVersion: '149.0.7827.0',
+    expectedRendererVersion:
+      renderer === 'vivliostyle-cli' ? '11.1.0' : '1.61.1',
+    expectedNodeVersion: process.versions.node,
+    expectedEnvironmentSha256: createHash('sha256')
+      .update(JSON.stringify(Object.entries(environment).sort()))
+      .digest('hex'),
     expectedUid: 1000,
     expectedGid: 1000,
     hostNetworkNamespace: 'net:[100]',
+    hostMountNamespace: 'mnt:[100]',
+    runtimeEntries: [],
+    networkDiagnostic: null,
+    filesystemDiagnosticPaths: [],
   }
 }
 
@@ -57,7 +69,7 @@ describe('offline publication render helper', () => {
     const digest = createHash('sha256').update(serialized).digest('hex')
 
     expect(authenticatePublicationRequest(serialized, digest)).toMatchObject({
-      version: 1,
+      version: 2,
       renderer: 'playwright-chromium',
       publicationRoot: root,
     })
@@ -154,6 +166,7 @@ describe('offline publication render helper', () => {
     const proof = assertIsolationSnapshot(
       {
         networkNamespace: 'net:[200]',
+        mountNamespace: 'mnt:[200]',
         interfaces: [{ name: 'lo', up: true }],
         ipv4RouteInterfaces: ['lo'],
         ipv6RouteInterfaces: ['lo'],
@@ -170,19 +183,23 @@ describe('offline publication render helper', () => {
         cwd: root,
         environment,
         childNetworkNamespaces: ['net:[200]', 'net:[200]'],
+        childMountNamespaces: ['mnt:[200]', 'mnt:[200]'],
       },
       requestFor(root),
     )
     expect(proof).toMatchObject({
       networkNamespace: 'net:[200]',
+      mountNamespace: 'mnt:[200]',
       interfaces: ['lo'],
       childNetworkNamespaces: ['net:[200]'],
+      childMountNamespaces: ['mnt:[200]'],
     })
 
     expect(() =>
       assertIsolationSnapshot(
         {
           networkNamespace: 'net:[100]',
+          mountNamespace: 'mnt:[200]',
           interfaces: [{ name: 'lo', up: true }],
           ipv4RouteInterfaces: ['lo'],
           ipv6RouteInterfaces: ['lo'],
@@ -199,6 +216,7 @@ describe('offline publication render helper', () => {
           cwd: root,
           environment,
           childNetworkNamespaces: [],
+          childMountNamespaces: [],
         },
         requestFor(root),
       ),
@@ -211,21 +229,26 @@ describe('offline publication render helper', () => {
       const root = await localPublicationFixture()
       const events = []
       const request = requestFor(root, renderer)
-      const proof = { networkNamespace: 'net:[200]' }
+      const proof = {
+        networkNamespace: 'net:[200]',
+        mountNamespace: 'mnt:[200]',
+      }
       await executePublicationRenderRequest(request, {
         attestIsolation: async () => {
           events.push('attest')
           return proof
         },
         validateResources: async () => events.push('resources'),
-        verifyBrowser: async () => events.push('version'),
+        verifyRenderer: async () => events.push('renderer-version'),
+        verifyBrowser: async () => events.push('browser-version'),
         renderVivliostyle: async () => events.push('vivliostyle'),
         renderPlaywright: async () => events.push('playwright'),
       })
       expect(events).toEqual([
         'attest',
         'resources',
-        'version',
+        'renderer-version',
+        'browser-version',
         renderer === 'vivliostyle-cli' ? 'vivliostyle' : 'playwright',
       ])
     },

@@ -880,30 +880,12 @@ type PdfRenderer = Extract<
   'vivliostyle-cli' | 'playwright-chromium'
 >
 
-async function normalizePdf(
-  path: string,
-  title: string,
-  renderer: PdfRenderer,
-) {
-  const pdf = await PDFDocument.load(await readFile(path))
-  pdf.setTitle(title)
-  pdf.setAuthor('')
-  pdf.setCreator('ernie.sg publication compiler')
-  pdf.setProducer(
-    renderer === 'vivliostyle-cli'
-      ? `Vivliostyle CLI ${PUBLICATION_TOOLCHAIN.vivliostyleCli.version}`
-      : `Playwright Chromium ${PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion}`,
-  )
-  pdf.setCreationDate(FIXED_DATE)
-  pdf.setModificationDate(FIXED_DATE)
-  await writeFile(path, await pdf.save({ useObjectStreams: false }))
-}
-
 async function createPdf(
   htmlPath: string,
   outputPath: string,
   size: 'A4' | 'A5',
   renderer: PdfRenderer,
+  title: string,
 ): Promise<PdfRenderer> {
   if (renderer === 'playwright-chromium') {
     const revision = PUBLICATION_TOOLCHAIN.browser.compatibility.arm64Revision
@@ -934,6 +916,9 @@ async function createPdf(
       browserPath: executablePath,
       expectedBrowserVersion:
         PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion,
+      expectedRendererVersion:
+        PUBLICATION_TOOLCHAIN.browser.compatibility.version,
+      title,
     })
     return 'playwright-chromium'
   }
@@ -959,6 +944,8 @@ async function createPdf(
     size,
     browserPath,
     expectedBrowserVersion: PUBLICATION_TOOLCHAIN.browser.browserVersion,
+    expectedRendererVersion: PUBLICATION_TOOLCHAIN.vivliostyleCli.version,
+    title,
   })
   return 'vivliostyle-cli'
 }
@@ -1084,8 +1071,13 @@ export const vivliostyleRenderer: PublicationRenderer = {
         publicationGraphToHtml(bundle.graph, layoutAssets, profile),
       )
       const path = resolve(output, `${profile}.pdf`)
-      const renderer = await createPdf(htmlPath, path, size, pdfRenderer)
-      await normalizePdf(path, bundle.graph.metadata.title, renderer)
+      const renderer = await createPdf(
+        htmlPath,
+        path,
+        size,
+        pdfRenderer,
+        bundle.graph.metadata.title,
+      )
       pdfArtifacts.push(
         await receiptFor(profile, path, renderer, `${profile}.pdf`),
       )

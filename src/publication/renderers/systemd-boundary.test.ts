@@ -1,19 +1,23 @@
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
 import { createSocket } from 'node:dgram'
+import { tmpdir } from 'node:os'
 import {
   access,
+  chmod,
   copyFile,
   mkdtemp,
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import { PDFDict, PDFDocument, PDFName } from 'pdf-lib'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PUBLICATION_TOOLCHAIN,
   publicationPdfRendererForArchitecture,
@@ -31,8 +35,11 @@ import {
 
 const invocationInput = {
   publicationRoot: '/tmp/publication root',
-  requestPath: '/tmp/publication root/.offline-request.json',
+  stagingDirectory: '/tmp/publication root/.publication-stage-test',
+  requestPath:
+    '/tmp/publication root/.publication-stage-test/offline-request.json',
   requestSha256: 'a'.repeat(64),
+  runtimeReadOnlyPaths: ['/tmp/publication runtime/entrypoint.js'],
   uid: 1000,
   gid: 1000,
   unitName: 'erniesg-publication-test-0123456789abcdef',
@@ -87,6 +94,115 @@ async function closeUdp(socket: ReturnType<typeof createSocket>) {
   })
 }
 
+const temporaryPaths = new Set<string>()
+
+afterEach(async () => {
+  await Promise.all(
+    [...temporaryPaths].map((path) =>
+      rm(path, { recursive: true, force: true }),
+    ),
+  )
+  temporaryPaths.clear()
+})
+
+function sha256(bytes: Uint8Array | string) {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+async function validPdfBytes(title = 'staged publication') {
+  const pdf = await PDFDocument.create()
+  pdf.setTitle(title)
+  pdf.addPage([200, 300])
+  return pdf.save({ useObjectStreams: false })
+}
+
+async function atomicPublicationFixture() {
+  const root = await mkdtemp(resolve(tmpdir(), 'publication-atomic-'))
+  temporaryPaths.add(root)
+  const inputPath = resolve(root, 'index.html')
+  const browserPath = resolve(root, 'browser')
+  const outputPath = resolve(root, 'publication.pdf')
+  const original = Buffer.from('known-good-final-bytes')
+  await writeFile(inputPath, '<!doctype html><main>fixture</main>')
+  await writeFile(browserPath, '#!/bin/false\n', { mode: 0o700 })
+  await chmod(browserPath, 0o700)
+  await writeFile(outputPath, original)
+  return { root, inputPath, browserPath, outputPath, original }
+}
+
+async function authenticatedInvocationRequest(invocation: { args: string[] }) {
+  const requestArgument = invocation.args.find((argument) =>
+    argument.startsWith('--request='),
+  )
+  const digestArgument = invocation.args.find((argument) =>
+    argument.startsWith('--request-sha256='),
+  )
+  if (!requestArgument || !digestArgument)
+    throw new Error('Missing authenticated request arguments')
+  const requestPath = requestArgument.slice('--request='.length)
+  const requestSha256 = digestArgument.slice('--request-sha256='.length)
+  const serialized = await readFile(requestPath, 'utf8')
+  return {
+    request: JSON.parse(serialized) as Record<string, any>,
+    requestPath,
+    requestSha256,
+    serialized,
+  }
+}
+
+function isolationProof(
+  request: Record<string, any>,
+  requestSha256: string,
+  output: Uint8Array,
+) {
+  return {
+    version: 1,
+    event: 'publication-isolation-proof',
+    requestSha256,
+    renderer: request.renderer,
+    rendererVersion: request.expectedRendererVersion,
+    browserVersion: request.expectedBrowserVersion,
+    nodeVersion: request.expectedNodeVersion,
+    uid: request.expectedUid,
+    gid: request.expectedGid,
+    environmentSha256: request.expectedEnvironmentSha256,
+    outputSha256: sha256(output),
+    outputByteLength: output.byteLength,
+    runtimeEntries: request.runtimeEntries,
+    networkNamespace: 'net:[987654321]',
+    mountNamespace: 'mnt:[987654321]',
+    interfaces: ['lo'],
+    childNetworkNamespaces: ['net:[987654321]'],
+    childMountNamespaces: ['mnt:[987654321]'],
+    networkDiagnostic: request.networkDiagnostic ? { passed: true } : null,
+    filesystemDiagnostics: (request.filesystemDiagnosticPaths ?? []).map(
+      (path: string) => ({ path, inaccessible: true }),
+    ),
+  }
+}
+
+function isolatedRenderRequest(
+  fixture: Awaited<ReturnType<typeof atomicPublicationFixture>>,
+) {
+  return {
+    renderer: 'playwright-chromium' as const,
+    publicationRoot: fixture.root,
+    inputPath: fixture.inputPath,
+    outputPath: fixture.outputPath,
+    size: 'A4' as const,
+    title: 'Atomic fixture',
+    browserPath: fixture.browserPath,
+    expectedBrowserVersion: '149.0.7827.0',
+    expectedRendererVersion: '1.61.1',
+  }
+}
+
+async function publicationResidue(root: string) {
+  return (await readdir(root)).filter((name) =>
+    name.startsWith('.publication-'),
+  )
+}
+
 describe('publication systemd process-tree boundary', () => {
   it('builds one shell-free, bounded, privilege-dropping system service', () => {
     const invocation = buildPublicationSystemdInvocation(invocationInput)
@@ -108,10 +224,20 @@ describe('publication systemd process-tree boundary', () => {
         '--property=CapabilityBoundingSet=CAP_SETUID CAP_SETGID',
         '--property=PrivateDevices=yes',
         '--property=PrivateTmp=yes',
+        '--property=ProtectHome=tmpfs',
+        '--property=TemporaryFileSystem=/:ro',
+        '--property=BindReadOnlyPaths=/usr',
+        '--property=BindReadOnlyPaths=/tmp/publication\\x20root',
+        '--property=BindReadOnlyPaths=/tmp/publication\\x20runtime/entrypoint.js',
+        '--property=BindPaths=/tmp/publication\\x20root/.publication-stage-test',
+        '--property=ReadWritePaths=/tmp/publication\\x20root/.publication-stage-test',
         '--property=ProtectKernelTunables=yes',
         '--property=ProtectKernelModules=yes',
         '--property=ProtectKernelLogs=yes',
         '--property=ProtectControlGroups=yes',
+        '--property=ExitType=cgroup',
+        '--property=KillMode=control-group',
+        '--property=SendSIGKILL=yes',
         '--property=RuntimeMaxSec=120s',
         '--working-directory=/tmp/publication root',
         '/usr/bin/setpriv',
@@ -126,7 +252,7 @@ describe('publication systemd process-tree boundary', () => {
         'PATH=/usr/bin',
         '/usr/bin/node',
         resolve('tools/publication-offline-render.mjs'),
-        '--request=/tmp/publication root/.offline-request.json',
+        '--request=/tmp/publication root/.publication-stage-test/offline-request.json',
         `--request-sha256=${'a'.repeat(64)}`,
       ]),
     )
@@ -140,20 +266,59 @@ describe('publication systemd process-tree boundary', () => {
     expect(invocation.args.join('\n')).not.toMatch(/\bunshare\b|\bip\b/)
     expect(invocation.timeoutMilliseconds).toBeGreaterThan(120_000)
     expect(invocation.timeoutMilliseconds).toBeLessThanOrEqual(135_000)
+    expect(invocation.unitName).toBe(invocationInput.unitName)
   })
 
   it('uses only absolute trusted boundary tools despite a shadowed PATH', () => {
-    const originalPath = process.env.PATH
-    process.env.PATH = '/tmp/path-shadow'
+    const hostileEnvironment = {
+      PATH: '/tmp/path-shadow',
+      HTTPS_PROXY: 'http://host-proxy.invalid',
+      LD_PRELOAD: '/tmp/hostile.so',
+      NODE_OPTIONS: '--require=/tmp/hostile.cjs',
+    }
+    const originalEnvironment = { ...process.env }
+    Object.assign(process.env, hostileEnvironment)
     try {
       const invocation = buildPublicationSystemdInvocation(invocationInput)
       expect(invocation.command).toBe(PUBLICATION_BOUNDARY_EXECUTABLES.sudo)
       const completeArgv = [invocation.command, ...invocation.args]
       for (const executable of Object.values(PUBLICATION_BOUNDARY_EXECUTABLES))
         expect(completeArgv).toContain(executable)
-      expect(invocation.environment.PATH).toBe('/usr/bin')
+      expect(invocation.environment).toEqual({
+        PATH: '/usr/bin',
+        LANG: 'C.UTF-8',
+        LC_ALL: 'C.UTF-8',
+      })
+      const envIndex = invocation.args.indexOf('-i')
+      const nodeIndex = invocation.args.indexOf(
+        PUBLICATION_BOUNDARY_EXECUTABLES.node,
+      )
+      const childEnvironment = invocation.args.slice(envIndex + 1, nodeIndex)
+      expect(childEnvironment).toEqual([
+        'HOME=/tmp',
+        'TMPDIR=/tmp',
+        'XDG_CACHE_HOME=/tmp/.cache',
+        'PATH=/usr/bin',
+        'LANG=C.UTF-8',
+        'LC_ALL=C.UTF-8',
+        'NODE_ENV=production',
+        'TZ=UTC',
+        'SOURCE_DATE_EPOCH=946684800',
+        'NO_PROXY=*',
+        'no_proxy=*',
+        'HTTP_PROXY=',
+        'HTTPS_PROXY=',
+        'ALL_PROXY=',
+        'http_proxy=',
+        'https_proxy=',
+        'all_proxy=',
+      ])
+      expect(invocation.args.join('\n')).not.toMatch(
+        /path-shadow|host-proxy|hostile\.so|hostile\.cjs/,
+      )
     } finally {
-      process.env.PATH = originalPath
+      for (const name of Object.keys(process.env)) delete process.env[name]
+      Object.assign(process.env, originalEnvironment)
     }
   })
 
@@ -173,8 +338,19 @@ describe('publication systemd process-tree boundary', () => {
       }),
     ).toThrow(/requires Linux/)
     expect(() =>
-      assertPublicationBoundaryRuntime({ platform: 'linux', uid: 0, gid: 0 }),
+      assertPublicationBoundaryRuntime({
+        platform: 'linux',
+        uid: 0,
+        gid: 1000,
+      }),
     ).toThrow(/must not run as root/)
+    expect(() =>
+      assertPublicationBoundaryRuntime({
+        platform: 'linux',
+        uid: 1000,
+        gid: 0,
+      }),
+    ).toThrow(/must not run with a root group/)
     expect(() =>
       assertPublicationBoundaryRuntime({
         platform: 'linux',
@@ -227,6 +403,180 @@ describe('publication systemd process-tree boundary', () => {
         stdio: 'inherit',
       }),
     )
+  })
+
+  it('publishes only a verified normalized staging PDF and never sends the final path to the renderer', async () => {
+    const fixture = await atomicPublicationFixture()
+    const rawPdf = await validPdfBytes('raw renderer output')
+    let rendererOutputPath = ''
+    const events: string[] = []
+
+    await runPublicationIsolatedRender(isolatedRenderRequest(fixture), {
+      verifyExecutables: async () => undefined,
+      runInvocation: async (invocation) => {
+        const { request, requestSha256, serialized } =
+          await authenticatedInvocationRequest(invocation)
+        rendererOutputPath = String(request.outputPath)
+        expect(serialized).not.toContain(fixture.outputPath)
+        expect(await readFile(fixture.outputPath)).toEqual(fixture.original)
+        events.push('render')
+        await writeFile(rendererOutputPath, rawPdf)
+        await writeFile(
+          String(request.proofPath),
+          `${JSON.stringify(isolationProof(request, requestSha256, rawPdf))}\n`,
+        )
+      },
+      normalizePdf: async (renderedPath, normalizedPath) => {
+        events.push('normalize')
+        expect(await readFile(fixture.outputPath)).toEqual(fixture.original)
+        const pdf = await PDFDocument.load(await readFile(renderedPath))
+        pdf.setTitle('normalized publication')
+        await writeFile(
+          normalizedPath,
+          await pdf.save({ useObjectStreams: false }),
+          { flag: 'wx', mode: 0o600 },
+        )
+      },
+    })
+
+    expect(rendererOutputPath).not.toBe(fixture.outputPath)
+    expect(dirname(dirname(rendererOutputPath))).toBe(fixture.root)
+    expect(basename(rendererOutputPath)).toBe('rendered.pdf')
+    expect(events).toEqual(['render', 'normalize'])
+    expect(sha256(await readFile(fixture.outputPath))).not.toBe(
+      sha256(fixture.original),
+    )
+    expect(await publicationResidue(fixture.root)).toEqual([])
+  })
+
+  it.each([
+    'resource failure',
+    'version failure',
+    'partial renderer failure',
+    'missing proof',
+    'invalid proof',
+    'digest mismatch',
+    'parse failure',
+    'normalization failure',
+    'timeout',
+  ])(
+    'preserves a prior final and removes every private artifact after %s',
+    async (failure) => {
+      const fixture = await atomicPublicationFixture()
+      const validPdf = await validPdfBytes()
+      const normalizePdf = vi.fn(
+        async (renderedPath: string, normalizedPath: string) => {
+          if (failure === 'normalization failure') {
+            await writeFile(normalizedPath, 'partial normalized output')
+            throw new Error('injected normalization failure')
+          }
+          const pdf = await PDFDocument.load(await readFile(renderedPath))
+          await writeFile(
+            normalizedPath,
+            await pdf.save({ useObjectStreams: false }),
+            { flag: 'wx', mode: 0o600 },
+          )
+        },
+      )
+      const render = runPublicationIsolatedRender(
+        isolatedRenderRequest(fixture),
+        {
+          verifyExecutables: async () => undefined,
+          runInvocation: async (invocation) => {
+            const { request, requestSha256 } =
+              await authenticatedInvocationRequest(invocation)
+            if (failure === 'resource failure')
+              throw new Error('injected resource validation failure')
+            if (failure === 'version failure')
+              throw new Error('injected browser version failure')
+            if (failure === 'partial renderer failure') {
+              await writeFile(String(request.outputPath), 'partial PDF')
+              throw new Error('injected renderer failure')
+            }
+            if (failure === 'timeout') {
+              await writeFile(
+                String(request.outputPath),
+                'partial before timeout',
+              )
+              throw new Error('systemd-run exceeded 5ms')
+            }
+            const output =
+              failure === 'parse failure'
+                ? Buffer.from('not a PDF')
+                : Buffer.from(validPdf)
+            await writeFile(String(request.outputPath), output)
+            if (failure === 'missing proof') return
+            if (failure === 'invalid proof') {
+              await writeFile(String(request.proofPath), '{invalid json')
+              return
+            }
+            const proof = isolationProof(request, requestSha256, output)
+            if (failure === 'digest mismatch')
+              proof.outputSha256 = '0'.repeat(64)
+            await writeFile(
+              String(request.proofPath),
+              `${JSON.stringify(proof)}\n`,
+            )
+          },
+          normalizePdf,
+        },
+      )
+
+      await expect(render).rejects.toThrow()
+      await new Promise((accept) => setTimeout(accept, 25))
+      expect(await readFile(fixture.outputPath)).toEqual(fixture.original)
+      expect(await publicationResidue(fixture.root)).toEqual([])
+      if (
+        [
+          'resource failure',
+          'version failure',
+          'partial renderer failure',
+          'missing proof',
+          'invalid proof',
+          'digest mismatch',
+          'timeout',
+        ].includes(failure)
+      )
+        expect(normalizePdf).not.toHaveBeenCalled()
+    },
+  )
+
+  it('rejects output-parent and final symlinks without mutating their targets', async () => {
+    const fixture = await atomicPublicationFixture()
+    const outside = await mkdtemp(resolve(tmpdir(), 'publication-outside-'))
+    temporaryPaths.add(outside)
+    const outsideFinal = resolve(outside, 'outside.pdf')
+    const outsideBytes = Buffer.from('outside-target-bytes')
+    await writeFile(outsideFinal, outsideBytes)
+    const linkedParent = resolve(fixture.root, 'linked-parent')
+    await symlink(outside, linkedParent, 'dir')
+    const neverRun = vi.fn(async () => undefined)
+
+    await expect(
+      runPublicationIsolatedRender(
+        {
+          ...isolatedRenderRequest(fixture),
+          outputPath: resolve(linkedParent, 'outside.pdf'),
+        },
+        {
+          verifyExecutables: async () => undefined,
+          runInvocation: neverRun,
+        },
+      ),
+    ).rejects.toThrow(/outside the publication root|symlink/i)
+    expect(await readFile(outsideFinal)).toEqual(outsideBytes)
+
+    await rm(fixture.outputPath)
+    await symlink(outsideFinal, fixture.outputPath)
+    await expect(
+      runPublicationIsolatedRender(isolatedRenderRequest(fixture), {
+        verifyExecutables: async () => undefined,
+        runInvocation: neverRun,
+      }),
+    ).rejects.toThrow(/symbolic link|symlink/i)
+    expect(await readFile(outsideFinal)).toEqual(outsideBytes)
+    expect(neverRun).not.toHaveBeenCalled()
+    expect(await publicationResidue(fixture.root)).toEqual([])
   })
 
   systemdIntegration(
@@ -322,6 +672,11 @@ describe('publication systemd process-tree boundary', () => {
           size: 'A4',
           browserPath,
           expectedBrowserVersion,
+          expectedRendererVersion:
+            renderer === 'vivliostyle-cli'
+              ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
+              : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
+          title: 'Boundary fixture',
         })) as {
           networkNamespace: string
           childNetworkNamespaces: string[]
@@ -359,6 +714,11 @@ describe('publication systemd process-tree boundary', () => {
               size: 'A4',
               browserPath,
               expectedBrowserVersion,
+              expectedRendererVersion:
+                renderer === 'vivliostyle-cli'
+                  ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
+                  : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
+              title: 'Boundary fixture',
             }),
           ).rejects.toThrow(/systemd-run exited with status/)
           await writeFile(
@@ -374,6 +734,11 @@ describe('publication systemd process-tree boundary', () => {
               size: 'A4',
               browserPath,
               expectedBrowserVersion,
+              expectedRendererVersion:
+                renderer === 'vivliostyle-cli'
+                  ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
+                  : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
+              title: 'Boundary fixture',
             }),
           ).rejects.toThrow(/systemd-run exited with status/)
           await new Promise((accept) => setTimeout(accept, 350))

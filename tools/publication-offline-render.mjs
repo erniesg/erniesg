@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import {
   access,
+  lstat,
+  open,
   readFile,
   readdir,
   readlink,
@@ -24,19 +26,35 @@ const VIVLIOSTYLE_CLI = resolve(
   REPOSITORY_ROOT,
   'node_modules/@vivliostyle/cli/dist/cli.js',
 )
+const VIVLIOSTYLE_PACKAGE = resolve(
+  REPOSITORY_ROOT,
+  'node_modules/@vivliostyle/cli/package.json',
+)
+const PLAYWRIGHT_PACKAGE = resolve(
+  REPOSITORY_ROOT,
+  'node_modules/playwright/package.json',
+)
 const NODE_EXECUTABLE = '/usr/bin/node'
 const REQUEST_FIELDS = [
   'browserPath',
   'expectedBrowserVersion',
+  'expectedEnvironmentSha256',
   'expectedGid',
+  'expectedNodeVersion',
+  'expectedRendererVersion',
   'expectedUid',
+  'filesystemDiagnosticPaths',
+  'hostMountNamespace',
   'hostNetworkNamespace',
   'inputPath',
+  'networkDiagnostic',
   'outputPath',
   'proofPath',
   'publicationRoot',
   'renderer',
+  'runtimeEntries',
   'size',
+  'stagingDirectory',
   'version',
 ]
 
@@ -55,7 +73,7 @@ function assertRenderRequest(request) {
     throw new Error(`Unexpected request field: ${unexpected.join(', ')}`)
   if (missing.length)
     throw new Error(`Missing request field: ${missing.join(', ')}`)
-  if (request.version !== 1)
+  if (request.version !== 2)
     throw new Error('Unsupported publication render request version')
   if (!['vivliostyle-cli', 'playwright-chromium'].includes(request.renderer))
     throw new Error('Unsupported publication renderer request')
@@ -63,6 +81,7 @@ function assertRenderRequest(request) {
     throw new Error('Unsupported publication page size')
   for (const field of [
     'publicationRoot',
+    'stagingDirectory',
     'inputPath',
     'outputPath',
     'proofPath',
@@ -72,10 +91,12 @@ function assertRenderRequest(request) {
       throw new Error(`${field} must be an absolute path`)
   if (!isPathInside(request.publicationRoot, request.inputPath))
     throw new Error('Publication HTML must be inside the publication root')
-  if (!isPathInside(request.publicationRoot, request.outputPath))
-    throw new Error('Publication PDF must be inside the publication root')
-  if (!isPathInside(request.publicationRoot, request.proofPath))
-    throw new Error('Publication proof must be inside the publication root')
+  if (!isPathInside(request.publicationRoot, request.stagingDirectory))
+    throw new Error('Publication staging must be inside the publication root')
+  if (!isPathInside(request.stagingDirectory, request.outputPath))
+    throw new Error('Publication PDF must be inside private staging')
+  if (!isPathInside(request.stagingDirectory, request.proofPath))
+    throw new Error('Publication proof must be inside private staging')
   if (!isPathInside(BROWSER_CACHE, request.browserPath))
     throw new Error('Publication browser must be inside the pinned cache')
   if (extname(request.inputPath).toLowerCase() !== '.html')
@@ -86,15 +107,32 @@ function assertRenderRequest(request) {
     throw new Error('Publication proof must be JSON')
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(request.expectedBrowserVersion))
     throw new Error('Expected browser version is invalid')
+  if (!/^\d+\.\d+\.\d+$/.test(request.expectedRendererVersion))
+    throw new Error('Expected renderer version is invalid')
+  if (!/^\d+\.\d+\.\d+$/.test(request.expectedNodeVersion))
+    throw new Error('Expected Node version is invalid')
+  if (!/^[a-f0-9]{64}$/.test(request.expectedEnvironmentSha256))
+    throw new Error('Expected environment digest is invalid')
   if (
     !Number.isSafeInteger(request.expectedUid) ||
     request.expectedUid < 1 ||
     !Number.isSafeInteger(request.expectedGid) ||
-    request.expectedGid < 0
+    request.expectedGid < 1
   )
     throw new Error('Expected caller identity is invalid')
   if (!/^net:\[\d+\]$/.test(request.hostNetworkNamespace))
     throw new Error('Host network namespace identity is invalid')
+  if (!/^mnt:\[\d+\]$/.test(request.hostMountNamespace))
+    throw new Error('Host mount namespace identity is invalid')
+  if (!Array.isArray(request.runtimeEntries) || request.runtimeEntries.length)
+    throw new Error('Publication runtime attestation list is invalid')
+  if (request.networkDiagnostic !== null)
+    throw new Error('Publication network diagnostic is invalid')
+  if (
+    !Array.isArray(request.filesystemDiagnosticPaths) ||
+    request.filesystemDiagnosticPaths.length
+  )
+    throw new Error('Publication filesystem diagnostics are invalid')
   return request
 }
 
@@ -133,6 +171,12 @@ export function publicationChildEnvironment(_publicationRoot) {
     https_proxy: '',
     all_proxy: '',
   }
+}
+
+function publicationEnvironmentSha256(environment) {
+  return createHash('sha256')
+    .update(JSON.stringify(Object.entries(environment).sort()))
+    .digest('hex')
 }
 
 export async function assertPublicationResourceUrl(url, referrerPath, root) {
@@ -285,6 +329,11 @@ export function assertIsolationSnapshot(snapshot, request) {
   )
     throw new Error('Helper remained in the host network namespace')
   if (
+    snapshot.mountNamespace === request.hostMountNamespace ||
+    !/^mnt:\[\d+\]$/.test(snapshot.mountNamespace)
+  )
+    throw new Error('Helper remained in the host mount namespace')
+  if (
     snapshot.interfaces.length !== 1 ||
     snapshot.interfaces[0].name !== 'lo' ||
     !snapshot.interfaces[0].up
@@ -326,6 +375,11 @@ export function assertIsolationSnapshot(snapshot, request) {
       'Helper environment is not the minimal publication environment',
     )
   if (
+    publicationEnvironmentSha256(snapshot.environment) !==
+    request.expectedEnvironmentSha256
+  )
+    throw new Error('Helper environment digest does not match the request')
+  if (
     snapshot.childNetworkNamespaces.some(
       (identity) => identity !== snapshot.networkNamespace,
     )
@@ -333,10 +387,18 @@ export function assertIsolationSnapshot(snapshot, request) {
     throw new Error(
       'A renderer descendant escaped the private network namespace',
     )
+  if (
+    snapshot.childMountNamespaces.some(
+      (identity) => identity !== snapshot.mountNamespace,
+    )
+  )
+    throw new Error('A renderer descendant escaped the private mount namespace')
   return {
     networkNamespace: snapshot.networkNamespace,
+    mountNamespace: snapshot.mountNamespace,
     interfaces: snapshot.interfaces.map(({ name }) => name),
     childNetworkNamespaces: [...new Set(snapshot.childNetworkNamespaces)],
+    childMountNamespaces: [...new Set(snapshot.childMountNamespaces)],
   }
 }
 
@@ -346,15 +408,26 @@ function statusValue(status, name) {
   return value.trim()
 }
 
-async function readIsolationSnapshot(request, childNetworkNamespaces = []) {
-  const [networkNamespace, interfaceNames, status, ipv4Routes, ipv6Routes] =
-    await Promise.all([
-      readlink('/proc/self/ns/net'),
-      readdir('/sys/class/net'),
-      readFile('/proc/self/status', 'utf8'),
-      readFile('/proc/net/route', 'utf8'),
-      readFile('/proc/net/ipv6_route', 'utf8').catch(() => ''),
-    ])
+async function readIsolationSnapshot(
+  request,
+  childNetworkNamespaces = [],
+  childMountNamespaces = [],
+) {
+  const [
+    networkNamespace,
+    mountNamespace,
+    interfaceNames,
+    status,
+    ipv4Routes,
+    ipv6Routes,
+  ] = await Promise.all([
+    readlink('/proc/self/ns/net'),
+    readlink('/proc/self/ns/mnt'),
+    readdir('/sys/class/net'),
+    readFile('/proc/self/status', 'utf8'),
+    readFile('/proc/net/route', 'utf8'),
+    readFile('/proc/net/ipv6_route', 'utf8').catch(() => ''),
+  ])
   const interfaces = await Promise.all(
     interfaceNames.sort().map(async (name) => ({
       name,
@@ -380,6 +453,7 @@ async function readIsolationSnapshot(request, childNetworkNamespaces = []) {
     .filter(Boolean)
   return {
     networkNamespace,
+    mountNamespace,
     interfaces,
     ipv4RouteInterfaces,
     ipv6RouteInterfaces,
@@ -396,6 +470,7 @@ async function readIsolationSnapshot(request, childNetworkNamespaces = []) {
     cwd: await realpath(process.cwd()),
     environment: { ...process.env },
     childNetworkNamespaces,
+    childMountNamespaces,
   }
 }
 
@@ -438,17 +513,29 @@ async function descendantPids(parentPid) {
   return descendants
 }
 
-function monitorRendererNamespaces(expectedNamespace) {
-  const observed = new Set()
+function monitorRendererNamespaces(
+  expectedNetworkNamespace,
+  expectedMountNamespace,
+) {
+  const observedNetwork = new Set()
+  const observedMount = new Set()
   let failure
   const observePid = async (pid) => {
     if (!pid) return
     try {
-      const identity = await readlink(`/proc/${pid}/ns/net`)
-      observed.add(identity)
-      if (identity !== expectedNamespace)
+      const [networkIdentity, mountIdentity] = await Promise.all([
+        readlink(`/proc/${pid}/ns/net`),
+        readlink(`/proc/${pid}/ns/mnt`),
+      ])
+      observedNetwork.add(networkIdentity)
+      observedMount.add(mountIdentity)
+      if (networkIdentity !== expectedNetworkNamespace)
         failure = new Error(
-          `Renderer descendant ${pid} entered unexpected network namespace ${identity}`,
+          `Renderer descendant ${pid} entered unexpected network namespace ${networkIdentity}`,
+        )
+      if (mountIdentity !== expectedMountNamespace)
+        failure = new Error(
+          `Renderer descendant ${pid} entered unexpected mount namespace ${mountIdentity}`,
         )
     } catch {
       // A short-lived child can exit before its namespace link is read.
@@ -467,7 +554,10 @@ function monitorRendererNamespaces(expectedNamespace) {
       clearInterval(interval)
       await scan()
       if (failure) throw failure
-      return [...observed]
+      return {
+        network: [...observedNetwork],
+        mount: [...observedMount],
+      }
     },
   }
 }
@@ -552,6 +642,32 @@ async function verifyBrowser(request, monitor) {
     throw new Error(
       `Pinned publication browser version ${actual ?? '(missing)'} does not match ${request.expectedBrowserVersion}`,
     )
+  return actual
+}
+
+async function verifyRenderer(request, monitor) {
+  const packagePath =
+    request.renderer === 'vivliostyle-cli'
+      ? VIVLIOSTYLE_PACKAGE
+      : PLAYWRIGHT_PACKAGE
+  const packageRecord = JSON.parse(await readFile(packagePath, 'utf8'))
+  if (packageRecord.version !== request.expectedRendererVersion)
+    throw new Error(
+      `Pinned publication renderer version ${String(packageRecord.version)} does not match ${request.expectedRendererVersion}`,
+    )
+  if (request.renderer === 'vivliostyle-cli') {
+    const { stdout, stderr } = await runAbsolute(
+      NODE_EXECUTABLE,
+      [VIVLIOSTYLE_CLI, '--version'],
+      { capture: true, monitor, timeoutMilliseconds: 10_000 },
+    )
+    const actual = `${stdout}\n${stderr}`.match(/\b(\d+\.\d+\.\d+)\b/u)?.[1]
+    if (actual !== request.expectedRendererVersion)
+      throw new Error(
+        `Vivliostyle CLI reported ${actual ?? '(missing)'}; expected ${request.expectedRendererVersion}`,
+      )
+  }
+  return packageRecord.version
 }
 
 async function renderVivliostylePublication(request, { monitor } = {}) {
@@ -661,28 +777,75 @@ export async function executePublicationRenderRequest(
   const validateResources =
     dependencies.validateResources ?? validatePublicationResources
   const verify = dependencies.verifyBrowser ?? verifyBrowser
+  const verifySelectedRenderer = dependencies.verifyRenderer ?? verifyRenderer
   const renderVivliostyle =
     dependencies.renderVivliostyle ?? renderVivliostylePublication
   const renderPlaywright =
     dependencies.renderPlaywright ?? renderPlaywrightPublication
+  if (process.versions.node !== request.expectedNodeVersion)
+    throw new Error(
+      `Publication helper Node ${process.versions.node} does not match ${request.expectedNodeVersion}`,
+    )
   const initialSnapshot = await isolate(request)
-  const monitor = monitorRendererNamespaces(initialSnapshot.networkNamespace)
+  const monitor = monitorRendererNamespaces(
+    initialSnapshot.networkNamespace,
+    initialSnapshot.mountNamespace,
+  )
   let childNetworkNamespaces = []
+  let childMountNamespaces = []
+  let rendererVersion
+  let browserVersion
   try {
     await validateResources(request)
-    await verify(request, monitor)
+    rendererVersion = await verifySelectedRenderer(request, monitor)
+    browserVersion = await verify(request, monitor)
     if (request.renderer === 'vivliostyle-cli')
       await renderVivliostyle(request, { monitor })
     else await renderPlaywright(request, { monitor })
   } finally {
-    childNetworkNamespaces = await monitor.stop()
+    const observedNamespaces = await monitor.stop()
+    childNetworkNamespaces = observedNamespaces.network
+    childMountNamespaces = observedNamespaces.mount
     if (initialSnapshot.interfaces)
       assertIsolationSnapshot(
-        { ...initialSnapshot, childNetworkNamespaces },
+        {
+          ...initialSnapshot,
+          childNetworkNamespaces,
+          childMountNamespaces,
+        },
         request,
       )
   }
-  return { ...initialSnapshot, childNetworkNamespaces }
+  return {
+    ...initialSnapshot,
+    childNetworkNamespaces,
+    childMountNamespaces,
+    rendererVersion,
+    browserVersion,
+  }
+}
+
+async function readBoundedRegularFile(path, maximumBytes, description) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const before = await handle.stat()
+    if (!before.isFile() || before.size < 1 || before.size > maximumBytes)
+      throw new Error(`${description} is not a bounded regular file`)
+    const bytes = await handle.readFile()
+    const after = await handle.stat()
+    if (
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      bytes.byteLength !== before.size
+    )
+      throw new Error(`${description} changed while it was being read`)
+    return bytes
+  } finally {
+    await handle.close()
+  }
 }
 
 function parseArguments(argv) {
@@ -704,19 +867,51 @@ function parseArguments(argv) {
 
 async function main() {
   const { requestPath, digest } = parseArguments(process.argv.slice(2))
-  const serialized = await readFile(requestPath, 'utf8')
+  const serialized = (
+    await readBoundedRegularFile(
+      requestPath,
+      64 * 1024,
+      'Publication render request',
+    )
+  ).toString('utf8')
   const request = authenticatePublicationRequest(serialized, digest)
   const canonicalRoot = await realpath(request.publicationRoot)
   const canonicalRequest = await realpath(requestPath)
-  if (!isPathInside(canonicalRoot, canonicalRequest))
-    throw new Error('Authenticated request file is outside publication root')
+  const canonicalStaging = await realpath(request.stagingDirectory)
+  if (
+    canonicalRoot !== request.publicationRoot ||
+    canonicalStaging !== request.stagingDirectory ||
+    !isPathInside(canonicalRoot, canonicalStaging) ||
+    !isPathInside(canonicalStaging, canonicalRequest)
+  )
+    throw new Error('Authenticated request file is outside private staging')
   const proof = await executePublicationRenderRequest(request)
+  const output = await readBoundedRegularFile(
+    request.outputPath,
+    512 * 1024 * 1024,
+    'Rendered publication PDF',
+  )
   const proofRecord = {
+    version: 1,
     event: 'publication-isolation-proof',
+    requestSha256: digest,
     renderer: request.renderer,
+    rendererVersion: proof.rendererVersion,
+    browserVersion: proof.browserVersion,
+    nodeVersion: process.versions.node,
+    uid: process.getuid?.(),
+    gid: process.getgid?.(),
+    environmentSha256: request.expectedEnvironmentSha256,
+    outputSha256: createHash('sha256').update(output).digest('hex'),
+    outputByteLength: output.byteLength,
+    runtimeEntries: request.runtimeEntries,
     networkNamespace: proof.networkNamespace,
+    mountNamespace: proof.mountNamespace,
     interfaces: proof.interfaces.map(({ name }) => name),
     childNetworkNamespaces: [...new Set(proof.childNetworkNamespaces)].sort(),
+    childMountNamespaces: [...new Set(proof.childMountNamespaces)].sort(),
+    networkDiagnostic: null,
+    filesystemDiagnostics: [],
   }
   await writeFile(request.proofPath, `${JSON.stringify(proofRecord)}\n`, {
     flag: 'wx',

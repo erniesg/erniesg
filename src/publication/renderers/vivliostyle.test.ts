@@ -699,24 +699,24 @@ describe('Vivliostyle publication renderer boundary', () => {
 
   it('nests EPUB navigation entries according to heading levels', () => {
     const toc = renderEpubToc([
-      { id: 'h1', level: 1, text: 'One' },
-      { id: 'h2', level: 2, text: 'Two' },
-      { id: 'h3', level: 3, text: 'Three' },
-      { id: 'h2b', level: 2, text: 'Two B' },
+      { id: 'h1', level: 1, locale: 'en', text: 'One' },
+      { id: 'h2', level: 2, locale: 'en', text: 'Two' },
+      { id: 'h3', level: 3, locale: 'en', text: 'Three' },
+      { id: 'h2b', level: 2, locale: 'en', text: 'Two B' },
     ])
     expect(toc).toContain(
-      '<li><a href="content.xhtml#h1">One</a><ol><li><a href="content.xhtml#h2">Two</a><ol><li><a href="content.xhtml#h3">Three</a></li></ol></li><li><a href="content.xhtml#h2b">Two B</a></li></ol></li>',
+      '<li><a href="content.xhtml#h1" lang="en">One</a><ol><li><a href="content.xhtml#h2" lang="en">Two</a><ol><li><a href="content.xhtml#h3" lang="en">Three</a></li></ol></li><li><a href="content.xhtml#h2b" lang="en">Two B</a></li></ol></li>',
     )
   })
 
   it('normalizes all EPUB heading levels relative to the first authored heading', () => {
     const toc = renderEpubToc([
-      { id: 'h2', level: 2, text: 'First' },
-      { id: 'h2b', level: 2, text: 'Second' },
-      { id: 'h3', level: 3, text: 'Nested' },
+      { id: 'h2', level: 2, locale: 'en', text: 'First' },
+      { id: 'h2b', level: 2, locale: 'en', text: 'Second' },
+      { id: 'h3', level: 3, locale: 'en', text: 'Nested' },
     ])
     expect(toc).toBe(
-      '<ol><li><a href="content.xhtml#h2">First</a></li><li><a href="content.xhtml#h2b">Second</a><ol><li><a href="content.xhtml#h3">Nested</a></li></ol></li></ol>',
+      '<ol><li><a href="content.xhtml#h2" lang="en">First</a></li><li><a href="content.xhtml#h2b" lang="en">Second</a><ol><li><a href="content.xhtml#h3" lang="en">Nested</a></li></ol></li></ol>',
     )
   })
 
@@ -726,6 +726,7 @@ describe('Vivliostyle publication renderer boundary', () => {
         id: 'heading',
         type: 'heading',
         level: 1,
+        locale: 'en',
         text: 'Canonical heading',
         variants: [
           {
@@ -738,6 +739,36 @@ describe('Vivliostyle publication renderer boundary', () => {
     ])
     expect(renderEpubToc(headings)).toContain('>E-ink heading</a>')
     expect(renderEpubToc(headings)).not.toContain('Canonical heading')
+  })
+
+  it('renders each mixed-locale EPUB navigation anchor in its authored locale', async () => {
+    const bundle = await adaptAstroBlogEntry({
+      entryId: 'moving-to-cloudflare-with-astro',
+    })
+    const template = bundle.graph.nodes.find((node) => node.type === 'heading')
+    if (!template || template.type !== 'heading')
+      throw new Error('missing heading fixture')
+    const headings = publicationEpubTocHeadings([
+      {
+        ...template,
+        id: 'heading-en',
+        level: 1,
+        locale: 'en',
+        text: 'English heading',
+        variants: [],
+      },
+      {
+        ...template,
+        id: 'heading-ja',
+        level: 2,
+        locale: 'ja',
+        text: '日本語の見出し',
+        variants: [],
+      },
+    ])
+    expect(renderEpubToc(headings)).toBe(
+      '<ol><li><a href="content.xhtml#heading-en" lang="en">English heading</a><ol><li><a href="content.xhtml#heading-ja" lang="ja">日本語の見出し</a></li></ol></li></ol>',
+    )
   })
 
   it('marks generated EPUB navigation labels with their actual language', () => {

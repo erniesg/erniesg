@@ -152,6 +152,10 @@ describe('publication:check CLI', () => {
         'a b c d e f g h i j AB X',
       ),
     ).toEqual(['A\nB', 'X'])
+    expect(
+      orderPdfTextRequirements(['𠀀\nA', 'X'], '𠀀A X'),
+    ).toEqual(['𠀀\nA', 'X'])
+    expect(orderPdfTextRequirements(['A', '𠀀'], '𠀀 A')).toEqual(['𠀀', 'A'])
   })
 
   it('rejects PDF text outside the visible crop and requires every image asset', () => {

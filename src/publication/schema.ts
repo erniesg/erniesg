@@ -378,14 +378,18 @@ export const publicationGraphSchema = z
   .superRefine((graph, context) => {
     const ids = new Set<string>()
     const nodesById = new Map<string, z.infer<typeof publicationNodeSchema>>()
-    const inlineRelationshipIds = new Set<string>()
-    const inlineRunsByTargetId = new Map<
+    type InlineRunReference = {
+      relationshipId: string | undefined
+      semanticRole: PublicationInlineRun['semanticRole']
+      targetIds: string[]
+      href: string | undefined
+      nodeIndex: number
+      runIndex: number
+    }
+    const inlineRunsByTargetId = new Map<string, InlineRunReference[]>()
+    const inlineAnchorRunsByRelationshipId = new Map<
       string,
-      Array<{
-        relationshipId: string | undefined
-        nodeIndex: number
-        runIndex: number
-      }>
+      InlineRunReference[]
     >()
     graph.nodes.forEach((node, index) => {
       if (ids.has(node.id)) {
@@ -399,14 +403,29 @@ export const publicationGraphSchema = z
       nodesById.set(node.id, node)
       if ('inlineRuns' in node && node.inlineRuns) {
         node.inlineRuns.forEach((run, runIndex) => {
-          if (run.relationshipId) inlineRelationshipIds.add(run.relationshipId)
-          for (const targetId of run.targetIds ?? []) {
+          const reference: InlineRunReference = {
+            relationshipId: run.relationshipId,
+            semanticRole: run.semanticRole,
+            targetIds: run.targetIds ?? [],
+            href: run.href,
+            nodeIndex: index,
+            runIndex,
+          }
+          if (
+            run.relationshipId &&
+            (run.href ||
+              ((run.semanticRole === 'citation' ||
+                run.semanticRole === 'cross-reference') &&
+                run.targetIds?.length))
+          ) {
+            const anchors =
+              inlineAnchorRunsByRelationshipId.get(run.relationshipId) ?? []
+            anchors.push(reference)
+            inlineAnchorRunsByRelationshipId.set(run.relationshipId, anchors)
+          }
+          for (const targetId of new Set(run.targetIds ?? [])) {
             const references = inlineRunsByTargetId.get(targetId) ?? []
-            references.push({
-              relationshipId: run.relationshipId,
-              nodeIndex: index,
-              runIndex,
-            })
+            references.push(reference)
             inlineRunsByTargetId.set(targetId, references)
           }
         })
@@ -512,8 +531,7 @@ export const publicationGraphSchema = z
     })
     graph.nodes.forEach((node, index) => {
       relationshipTargets(node).forEach((target, relationshipIndex) => {
-        if (!ids.has(target) &&
-          !(node.type === 'note' && inlineRelationshipIds.has(target))) {
+        if (node.type !== 'note' && !ids.has(target)) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['nodes', index, 'relationships', relationshipIndex],
@@ -597,37 +615,94 @@ export const publicationGraphSchema = z
       }
       if (node.type === 'note') {
         const references = inlineRunsByTargetId.get(node.id) ?? []
-        const relationshipIds = new Set(
-          references
-            .map((reference) => reference.relationshipId)
-            .filter((id): id is string => Boolean(id)),
-        )
+        const validReferencesByRelationshipId = new Map<
+          string,
+          InlineRunReference[]
+        >()
+        for (const reference of references) {
+          if (
+            reference.semanticRole !== 'cross-reference' ||
+            reference.targetIds[0] !== node.id ||
+            (reference.href && reference.href !== `#${node.id}`)
+          ) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [
+                'nodes',
+                reference.nodeIndex,
+                'inlineRuns',
+                reference.runIndex,
+              ],
+              message:
+                'Inline note references must render cross-reference anchors targeting the note',
+            })
+            continue
+          }
+          if (!reference.relationshipId) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [
+                'nodes',
+                reference.nodeIndex,
+                'inlineRuns',
+                reference.runIndex,
+                'relationshipId',
+              ],
+              message: 'Inline note references must have relationship IDs',
+            })
+            continue
+          }
+          const matchingReferences =
+            validReferencesByRelationshipId.get(reference.relationshipId) ?? []
+          matchingReferences.push(reference)
+          validReferencesByRelationshipId.set(
+            reference.relationshipId,
+            matchingReferences,
+          )
+          if (
+            (inlineAnchorRunsByRelationshipId.get(reference.relationshipId) ?? [])
+              .length !== 1
+          ) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [
+                'nodes',
+                reference.nodeIndex,
+                'inlineRuns',
+                reference.runIndex,
+                'relationshipId',
+              ],
+              message: 'Inline anchor relationship IDs must be unique',
+            })
+          }
+          if (!node.backlinkIds.includes(reference.relationshipId)) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [
+                'nodes',
+                reference.nodeIndex,
+                'inlineRuns',
+                reference.runIndex,
+                'relationshipId',
+              ],
+              message: 'Inline runs targeting notes must have reciprocal backlinks',
+            })
+          }
+        }
         node.backlinkIds.forEach((backlinkId, backlinkIndex) => {
-          if (relationshipIds.has(backlinkId)) return
+          if (
+            node.backlinkIds.indexOf(backlinkId) === backlinkIndex &&
+            (validReferencesByRelationshipId.get(backlinkId) ?? []).length === 1 &&
+            (inlineAnchorRunsByRelationshipId.get(backlinkId) ?? []).length === 1
+          )
+            return
           context.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['nodes', index, 'backlinkIds', backlinkIndex],
-            message: 'Note backlinks must come from inline runs targeting the note',
+            message:
+              'Note backlinks must identify one unique inline run targeting the note',
           })
         })
-        for (const reference of references) {
-          if (
-            reference.relationshipId &&
-            node.backlinkIds.includes(reference.relationshipId)
-          )
-            continue
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [
-              'nodes',
-              reference.nodeIndex,
-              'inlineRuns',
-              reference.runIndex,
-              'relationshipId',
-            ],
-            message: 'Inline runs targeting notes must have reciprocal backlinks',
-          })
-        }
       }
     })
 

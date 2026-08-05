@@ -14,7 +14,7 @@ const common = {
 }
 
 export function graphFixture() {
-  return {
+  return structuredClone({
     version: '1.0.0',
     id: 'publication',
     metadata: {
@@ -148,7 +148,7 @@ export function graphFixture() {
         text: 'Transcript',
       },
     ],
-  }
+  })
 }
 
 describe('PublicationGraph', () => {
@@ -377,21 +377,85 @@ describe('PublicationGraph', () => {
     expect(publicationGraphSchema.safeParse(emptyVariant).success).toBe(false)
   })
 
-  it('requires reciprocal inline note references and backlinks', () => {
-    const unrelatedReference = graphFixture() as any
-    unrelatedReference.nodes.find(
+  it('preserves reciprocal inline note references with matching explicit hrefs', () => {
+    const graph = graphFixture() as any
+    graph.nodes.find(
       (node: any) => node.id === 'paragraph',
-    ).inlineRuns[0].targetIds = ['reference']
-    expect(
-      publicationGraphSchema.safeParse(unrelatedReference).success,
-    ).toBe(false)
+    ).inlineRuns[0].href = '#note'
+    expect(publicationGraphSchema.safeParse(graph).success).toBe(true)
+  })
 
-    const missingBacklink = graphFixture() as any
-    missingBacklink.nodes.find(
-      (node: any) => node.id === 'note',
-    ).backlinkIds = []
-    expect(publicationGraphSchema.safeParse(missingBacklink).success).toBe(
-      false,
-    )
+  it.each([
+    [
+      'unrelated references',
+      (graph: any) => {
+        graph.nodes.find(
+          (node: any) => node.id === 'paragraph',
+        ).inlineRuns[0].targetIds = ['reference']
+      },
+    ],
+    [
+      'note targets without cross-reference semantics',
+      (graph: any) => {
+        delete graph.nodes.find((node: any) => node.id === 'paragraph')
+          .inlineRuns[0].semanticRole
+      },
+    ],
+    [
+      'note targets with mismatched explicit hrefs',
+      (graph: any) => {
+        graph.nodes.find(
+          (node: any) => node.id === 'paragraph',
+        ).inlineRuns[0].href = '#reference'
+      },
+    ],
+    [
+      'notes after the rendered target',
+      (graph: any) => {
+        graph.nodes.find(
+          (node: any) => node.id === 'paragraph',
+        ).inlineRuns[0].targetIds = ['reference', 'note']
+      },
+    ],
+    [
+      'missing relationship IDs',
+      (graph: any) => {
+        delete graph.nodes.find((node: any) => node.id === 'paragraph')
+          .inlineRuns[0].relationshipId
+      },
+    ],
+    [
+      'missing backlinks',
+      (graph: any) => {
+        graph.nodes.find((node: any) => node.id === 'note').backlinkIds = []
+      },
+    ],
+    [
+      'duplicate rendered relationship IDs',
+      (graph: any) => {
+        graph.nodes.find((node: any) => node.id === 'heading').inlineRuns = [
+          {
+            start: 0,
+            end: 1,
+            relationshipId: 'note-ref',
+            semanticRole: 'citation',
+            targetIds: ['reference'],
+          },
+        ]
+      },
+    ],
+    [
+      'duplicate backlink IDs',
+      (graph: any) => {
+        graph.nodes.find((node: any) => node.id === 'note').backlinkIds = [
+          'note-ref',
+          'note-ref',
+        ]
+      },
+    ],
+  ])('rejects invalid note reciprocity: %s', (_label, mutate) => {
+    const graph = graphFixture() as any
+    mutate(graph)
+    expect(publicationGraphSchema.safeParse(graph).success).toBe(false)
   })
 })

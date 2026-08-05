@@ -276,16 +276,16 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
   let normalizedRenderedText = ''
   const normalizedOffsetByRawIndex = []
   let normalizedOffset = 0
-  for (let index = 0; index < renderedTextWithCollapsedWhitespace.length; ) {
-    const codePoint = renderedTextWithCollapsedWhitespace[index]
+  let rawIndex = 0
+  for (const codePoint of renderedTextWithCollapsedWhitespace) {
     const normalized = normalizePdfVerificationText(codePoint)
     for (let offset = 0; offset < codePoint.length; offset += 1)
-      normalizedOffsetByRawIndex[index + offset] = normalizedOffset
+      normalizedOffsetByRawIndex[rawIndex + offset] = normalizedOffset
     if (normalized) {
       normalizedRenderedText += normalized
       normalizedOffset += normalized.length
     }
-    index += codePoint.length
+    rawIndex += codePoint.length
   }
   normalizedOffsetByRawIndex[renderedTextWithCollapsedWhitespace.length] =
     normalizedOffset

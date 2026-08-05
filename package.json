@@ -138,7 +138,7 @@
     "fast-glob": "^3.3.3",
     "gray-matter": "^4.0.3",
     "openai": "^6.45.0",
-    "postcss": "^8.5.19",
+    "postcss": "^8.5.23",
     "prettier": "^3.4.2",
     "prettier-plugin-astro": "^0.14.1",
     "prettier-plugin-astro-organize-imports": "^0.4.11",
@@ -152,11 +152,12 @@
     "yaml": "^2.9.0"
   },
   "overrides": {
-    "brace-expansion": "5.0.8",
+    "brace-expansion": "5.0.9",
     "dompurify": "3.4.12",
     "prismjs": "1.30.0",
     "sharp": "0.35.3",
     "trim": "0.0.3",
+    "undici@>=7.0.0 <7.29.0": "7.29.0",
     "uuid": "11.1.1",
     "valibot": "1.4.2"
   },

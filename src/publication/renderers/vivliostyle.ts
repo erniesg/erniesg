@@ -611,7 +611,7 @@ function zipOptions(compression: 'STORE' | 'DEFLATE' = 'DEFLATE') {
 
 type EpubTocHeading = Pick<
   Extract<PublicationNode, { type: 'heading' }>,
-  'id' | 'level' | 'text'
+  'id' | 'level' | 'locale' | 'text'
 >
 
 type EpubTocEntry = {
@@ -628,7 +628,7 @@ export function publicationEpubTocHeadings(nodes: PublicationNode[]) {
     )
 }
 
-export function renderEpubToc(headings: EpubTocHeading[], headingLocale?: string) {
+export function renderEpubToc(headings: EpubTocHeading[]) {
   const roots: EpubTocEntry[] = []
   const firstHeadingLevel = headings.length
     ? Math.max(1, Math.trunc(headings[0].level))
@@ -646,7 +646,7 @@ export function renderEpubToc(headings: EpubTocHeading[], headingLocale?: string
     `<ol>${entries
       .map(
         ({ heading, children }) =>
-          `<li><a href="content.xhtml#${escapeHtml(heading.id)}"${headingLocale ? ` lang="${escapeHtml(headingLocale)}"` : ''}>${escapeHtml(heading.text)}</a>${children.length ? render(children) : ''}</li>`,
+          `<li><a href="content.xhtml#${escapeHtml(heading.id)}" lang="${escapeHtml(heading.locale)}">${escapeHtml(heading.text)}</a>${children.length ? render(children) : ''}</li>`,
       )
       .join('')}</ol>`
   return render(roots)
@@ -874,7 +874,7 @@ async function createEpub(
     .join('')
   zip.file(
     'EPUB/nav.xhtml',
-    `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title${generatedLanguage}>${escapeHtml(navigationLabels.title)}</title></head><body><nav epub:type="toc"${generatedLanguage} aria-label="${escapeHtml(navigationLabels.toc)}"><h1${generatedLanguage}>${escapeHtml(navigationLabels.contents)}</h1>${renderEpubToc(headings, bundle.graph.edition.locale)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml"${generatedLanguage}>${escapeHtml(navigationLabels.article)}</a></li></ol></nav></body></html>`,
+    `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title${generatedLanguage}>${escapeHtml(navigationLabels.title)}</title></head><body><nav epub:type="toc"${generatedLanguage} aria-label="${escapeHtml(navigationLabels.toc)}"><h1${generatedLanguage}>${escapeHtml(navigationLabels.contents)}</h1>${renderEpubToc(headings)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml"${generatedLanguage}>${escapeHtml(navigationLabels.article)}</a></li></ol></nav></body></html>`,
     zipOptions(),
   )
   const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`

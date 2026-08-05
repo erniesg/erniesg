@@ -360,6 +360,62 @@ function sameRuntimeIdentity(left, right) {
   )
 }
 
+function runtimeClosureRoot(roots, path) {
+  const root = roots.find((candidate) => isPathInside(candidate, path))
+  if (!root)
+    throw new Error(
+      `Publication runtime symlink target is outside every authenticated runtime root: ${path}`,
+    )
+  return root
+}
+
+async function resolveRuntimeSymlinkTarget(linkPath, target, roots) {
+  let path = resolve(dirname(linkPath), target)
+  let root = runtimeClosureRoot(roots, path)
+  let current = root
+  let remaining = relative(root, path).split(sep).filter(Boolean)
+  let followedLinks = 0
+  while (remaining.length) {
+    const candidate = resolve(current, remaining.shift())
+    const before = await lstat(candidate, { bigint: true })
+    if (before.isSymbolicLink()) {
+      followedLinks += 1
+      if (followedLinks > 40)
+        throw new Error(
+          `Publication runtime symlink chain is too deep: ${linkPath}`,
+        )
+      const nestedTarget = await readlink(candidate)
+      const after = await lstat(candidate, { bigint: true })
+      if (!sameRuntimeIdentity(before, after))
+        throw new Error(
+          `Publication runtime link changed while resolving: ${candidate}`,
+        )
+      path = resolve(dirname(candidate), nestedTarget)
+      root = runtimeClosureRoot(roots, path)
+      current = root
+      remaining = [
+        ...relative(root, path).split(sep).filter(Boolean),
+        ...remaining,
+      ]
+      continue
+    }
+    if (remaining.length && !before.isDirectory())
+      throw new Error(
+        `Publication runtime symlink target is invalid: ${linkPath}`,
+      )
+    current = candidate
+  }
+  const canonical = await realpath(linkPath)
+  if (
+    canonical !== current ||
+    !roots.some((root) => isPathInside(root, canonical))
+  )
+    throw new Error(
+      `Publication runtime symlink target is outside every authenticated runtime root: ${linkPath}`,
+    )
+  return canonical
+}
+
 async function hashRuntimeFile(path) {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
@@ -414,7 +470,7 @@ async function attestRuntimeFile(label, path) {
   }
 }
 
-async function inspectRuntimeTree(path, hashContents) {
+async function inspectRuntimeTree(path, hashContents, closureRoots = [path]) {
   if ((await realpath(path)) !== path)
     throw new Error(`Publication runtime tree is not canonical: ${path}`)
   const before = await stat(path, { bigint: true })
@@ -482,6 +538,11 @@ async function inspectRuntimeTree(path, hashContents) {
           throw new Error(
             `Publication runtime link changed while inspecting: ${entryPath}`,
           )
+        const canonicalTarget = await resolveRuntimeSymlinkTarget(
+          entryPath,
+          target,
+          closureRoots,
+        )
         const identity = [
           'symlink',
           relativePath,
@@ -491,10 +552,11 @@ async function inspectRuntimeTree(path, hashContents) {
           metadata.size.toString(),
           metadata.ctimeNs.toString(),
           target,
+          canonicalTarget,
         ]
         identityDigest.update(`${JSON.stringify(identity)}\n`)
         contentDigest.update(
-          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), target])}\n`,
+          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), target, canonicalTarget])}\n`,
         )
       } else {
         throw new Error(
@@ -538,7 +600,7 @@ async function inspectRuntimeForest(paths, hashContents) {
   const identityDigest = createHash('sha256')
   let entryCount = 0
   for (const path of paths) {
-    const tree = await inspectRuntimeTree(path, hashContents)
+    const tree = await inspectRuntimeTree(path, hashContents, paths)
     entryCount += tree.entryCount
     identityDigest.update(
       `${JSON.stringify([
@@ -601,7 +663,6 @@ function assertRuntimeEntries(request) {
   const closure = request.runtimeEntries.find(({ kind }) => kind === 'forest')
   const nodeModules = resolve(REPOSITORY_ROOT, 'node_modules')
   const requiredPackages = [
-    resolve(nodeModules, '.bin'),
     resolve(nodeModules, 'parse5'),
     ...(request.renderer === 'vivliostyle-cli'
       ? [resolve(nodeModules, '@vivliostyle/cli')]

@@ -46,7 +46,6 @@ const PUBLICATION_NODE_MODULES = resolve(
   'node_modules',
 )
 const PUBLICATION_RUNTIME_PATHS = {
-  bin: resolve(PUBLICATION_NODE_MODULES, '.bin'),
   parse5: resolve(PUBLICATION_NODE_MODULES, 'parse5'),
   playwright: resolve(PUBLICATION_NODE_MODULES, 'playwright'),
   playwrightCore: resolve(PUBLICATION_NODE_MODULES, 'playwright-core'),
@@ -223,6 +222,66 @@ function lexicalLabel(
   return left.label < right.label ? -1 : left.label > right.label ? 1 : 0
 }
 
+function runtimeClosureRoot(roots: string[], path: string) {
+  const root = roots.find((candidate) => isPathInside(candidate, path))
+  if (!root)
+    throw new Error(
+      `Publication runtime symlink target is outside every attested runtime root: ${path}`,
+    )
+  return root
+}
+
+async function resolveRuntimeSymlinkTarget(
+  linkPath: string,
+  target: string,
+  roots: string[],
+) {
+  let path = resolve(dirname(linkPath), target)
+  let root = runtimeClosureRoot(roots, path)
+  let current = root
+  let remaining = relative(root, path).split(sep).filter(Boolean)
+  let followedLinks = 0
+  while (remaining.length) {
+    const candidate = resolve(current, remaining.shift()!)
+    const before = await lstat(candidate, { bigint: true })
+    if (before.isSymbolicLink()) {
+      followedLinks += 1
+      if (followedLinks > 40)
+        throw new Error(
+          `Publication runtime symlink chain is too deep: ${linkPath}`,
+        )
+      const nestedTarget = await readlink(candidate)
+      const after = await lstat(candidate, { bigint: true })
+      if (!sameBigIntFileIdentity(before, after))
+        throw new Error(
+          `Publication runtime link changed while resolving: ${candidate}`,
+        )
+      path = resolve(dirname(candidate), nestedTarget)
+      root = runtimeClosureRoot(roots, path)
+      current = root
+      remaining = [
+        ...relative(root, path).split(sep).filter(Boolean),
+        ...remaining,
+      ]
+      continue
+    }
+    if (remaining.length && !before.isDirectory())
+      throw new Error(
+        `Publication runtime symlink target is invalid: ${linkPath}`,
+      )
+    current = candidate
+  }
+  const canonical = await realpath(linkPath)
+  if (
+    canonical !== current ||
+    !roots.some((root) => isPathInside(root, canonical))
+  )
+    throw new Error(
+      `Publication runtime symlink target is outside every attested runtime root: ${linkPath}`,
+    )
+  return canonical
+}
+
 async function hashOpenRegularFile(path: string) {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
@@ -300,6 +359,7 @@ export async function attestPublicationRuntimeTree(
 async function inspectPublicationRuntimeTree(
   path: string,
   hashContents: boolean,
+  closureRoots: string[] = [path],
 ) {
   const canonical = await realpath(path)
   if (canonical !== path)
@@ -369,6 +429,11 @@ async function inspectPublicationRuntimeTree(
           throw new Error(
             `Publication runtime link changed while inspecting: ${entryPath}`,
           )
+        const canonicalTarget = await resolveRuntimeSymlinkTarget(
+          entryPath,
+          target,
+          closureRoots,
+        )
         const identity = [
           'symlink',
           relativePath,
@@ -378,10 +443,11 @@ async function inspectPublicationRuntimeTree(
           metadata.size.toString(),
           metadata.ctimeNs.toString(),
           target,
+          canonicalTarget,
         ]
         identityDigest.update(`${JSON.stringify(identity)}\n`)
         contentDigest.update(
-          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), target])}\n`,
+          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), target, canonicalTarget])}\n`,
         )
       } else {
         throw new Error(
@@ -429,7 +495,7 @@ async function inspectPublicationRuntimeForest(
   const identityDigest = createHash('sha256')
   let entryCount = 0
   for (const path of paths) {
-    const tree = await inspectPublicationRuntimeTree(path, hashContents)
+    const tree = await inspectPublicationRuntimeTree(path, hashContents, paths)
     entryCount += tree.entryCount
     identityDigest.update(
       `${JSON.stringify([
@@ -519,7 +585,6 @@ async function publicationRuntimePackageClosure(
   renderer: PublicationIsolatedRenderRequest['renderer'],
 ) {
   const seeds = [
-    PUBLICATION_RUNTIME_PATHS.bin,
     PUBLICATION_RUNTIME_PATHS.parse5,
     ...(renderer === 'vivliostyle-cli'
       ? [PUBLICATION_RUNTIME_PATHS.vivliostyle]
@@ -529,7 +594,7 @@ async function publicationRuntimePackageClosure(
         ]),
   ]
   const roots = (await Promise.all(seeds.map((path) => realpath(path)))).sort()
-  const queue = roots.filter((path) => path !== PUBLICATION_RUNTIME_PATHS.bin)
+  const queue = [...roots]
   const visited = new Set<string>()
   while (queue.length) {
     const packagePath = queue.pop()!
@@ -1454,6 +1519,10 @@ export async function runPublicationIsolatedRender(
       uid: uid!,
       gid: gid!,
     })
+    await (
+      dependencies.verifyRuntimeAttestations ??
+      verifyPublicationRuntimeAttestations
+    )(runtimeEntries)
     await (dependencies.runInvocation ?? runPublicationSystemdInvocation)(
       invocation,
     )

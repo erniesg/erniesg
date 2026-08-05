@@ -12,6 +12,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -433,12 +434,12 @@ describe('publication systemd process-tree boundary', () => {
       throw new Error('Missing runtime package closure')
     expect(closure.paths).toEqual(
       expect.arrayContaining([
-        resolve('node_modules/.bin'),
         resolve('node_modules/parse5'),
         resolve('node_modules/playwright'),
         resolve('node_modules/playwright-core'),
       ]),
     )
+    expect(closure.paths).not.toContain(resolve('node_modules/.bin'))
     expect(closure.paths).not.toContain(resolve('node_modules'))
     const mountedRuntime = publicationRuntimeReadOnlyPaths(entries)
     expect(mountedRuntime).toEqual(
@@ -458,6 +459,37 @@ describe('publication systemd process-tree boundary', () => {
     await expect(verifyInsideHelper(entries)).resolves.toBeUndefined()
   })
 
+  it('attests the Vivliostyle hoisted dependency closure without the global bin tree', async () => {
+    const fixture = await atomicPublicationFixture()
+    const entries = await createPublicationRuntimeAttestations(
+      {
+        ...isolatedRenderRequest(fixture),
+        renderer: 'vivliostyle-cli',
+        expectedRendererVersion: '11.1.0',
+      },
+      fixture.browserPath,
+    )
+    const closure = entries.find(
+      ({ label }) => label === 'runtime-package-closure',
+    )
+    if (!closure || closure.kind !== 'forest')
+      throw new Error('Missing Vivliostyle runtime package closure')
+    expect(closure.paths).toEqual(
+      expect.arrayContaining([
+        resolve('node_modules/@vivliostyle/cli'),
+        resolve('node_modules/parse5'),
+      ]),
+    )
+    expect(closure.paths).not.toContain(resolve('node_modules/.bin'))
+    expect(closure.paths).not.toContain(resolve('node_modules'))
+    await expect(
+      verifyPublicationRuntimeAttestations(entries),
+    ).resolves.toBeUndefined()
+    const { verifyRuntimeEntries: verifyInsideHelper } =
+      await import('../../../tools/publication-offline-render.mjs')
+    await expect(verifyInsideHelper(entries)).resolves.toBeUndefined()
+  }, 60_000)
+
   it('detects same-UID mutation anywhere in the authenticated runtime forest', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-runtime-'))
     temporaryPaths.add(root)
@@ -476,6 +508,51 @@ describe('publication systemd process-tree boundary', () => {
     await expect(
       verifyPublicationRuntimeAttestations([attestation]),
     ).rejects.toThrow(/runtime attestation changed/i)
+  })
+
+  it('rejects a runtime symlink that escapes every attested closure root', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-runtime-link-'))
+    temporaryPaths.add(root)
+    const closureRoot = resolve(root, 'closure')
+    const outside = resolve(root, 'outside.js')
+    await mkdir(closureRoot)
+    await writeFile(outside, 'export const outside = true\n')
+    await symlink(outside, resolve(closureRoot, 'linked.js'))
+
+    await expect(
+      attestPublicationRuntimeForest('runtime-package-closure', [closureRoot]),
+    ).rejects.toThrow(/symlink target.*attested runtime root/i)
+  })
+
+  it('rejects an in-closure symlink target replacement before renderer execution', async () => {
+    const fixture = await atomicPublicationFixture()
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-runtime-link-'))
+    temporaryPaths.add(root)
+    const links = resolve(root, 'links')
+    const targets = resolve(root, 'targets')
+    await Promise.all([mkdir(links), mkdir(targets)])
+    const target = resolve(targets, 'runtime.js')
+    await writeFile(target, 'export const trusted = true\n')
+    await symlink('../targets/runtime.js', resolve(links, 'runtime.js'))
+    const attestation = await attestPublicationRuntimeForest(
+      'runtime-package-closure',
+      [links, targets],
+    )
+    const replacement = resolve(targets, 'replacement.js')
+    await writeFile(replacement, 'export const trusted = null\n')
+    await rename(replacement, target)
+    const runInvocation = vi.fn(async () => undefined)
+
+    await expect(
+      runPublicationIsolatedRender(isolatedRenderRequest(fixture), {
+        verifyExecutables: async () => undefined,
+        createRuntimeAttestations: async () => [attestation],
+        runInvocation,
+      }),
+    ).rejects.toThrow(/runtime attestation changed/i)
+    expect(runInvocation).not.toHaveBeenCalled()
+    expect(await readFile(fixture.outputPath)).toEqual(fixture.original)
+    expect(await publicationResidue(fixture.root)).toEqual([])
   })
 
   it('refuses publication when a runtime entrypoint changes after request authentication', async () => {

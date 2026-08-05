@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readlink,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -64,10 +65,7 @@ function fakeRuntimeEntries(renderer, browserPath) {
     ),
     fakeRuntimeEntry('file', 'node-executable', '/usr/bin/node'),
   ]
-  const packages = [
-    resolve('node_modules/.bin'),
-    resolve('node_modules/parse5'),
-  ]
+  const packages = [resolve('node_modules/parse5')]
   if (renderer === 'vivliostyle-cli')
     packages.push(resolve('node_modules/@vivliostyle/cli'))
   else {
@@ -220,6 +218,48 @@ describe('offline publication render helper', () => {
       await expect(verifyRuntimeEntries([attestation])).rejects.toThrow(
         /runtime attestation changed/i,
       )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('binds runtime symlinks to targets inside the authenticated closure', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-helper-runtime-'))
+    const links = resolve(root, 'links')
+    const targets = resolve(root, 'targets')
+    try {
+      await Promise.all([mkdir(links), mkdir(targets)])
+      const target = resolve(targets, 'runtime.js')
+      await writeFile(target, 'export const trusted = true\n')
+      await symlink('../targets/runtime.js', resolve(links, 'runtime.js'))
+      const attestation = await attestRuntimeForest('runtime-package-closure', [
+        links,
+        targets,
+      ])
+      const replacement = resolve(targets, 'replacement.js')
+      await writeFile(replacement, 'export const trusted = null\n')
+      await rename(replacement, target)
+
+      await expect(verifyRuntimeEntries([attestation])).rejects.toThrow(
+        /runtime attestation changed/i,
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects runtime symlinks that escape every authenticated root', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-helper-runtime-'))
+    const closureRoot = resolve(root, 'closure')
+    const outside = resolve(root, 'outside.js')
+    try {
+      await mkdir(closureRoot)
+      await writeFile(outside, 'export const outside = true\n')
+      await symlink(outside, resolve(closureRoot, 'linked.js'))
+
+      await expect(
+        attestRuntimeForest('runtime-package-closure', [closureRoot]),
+      ).rejects.toThrow(/symlink target.*authenticated runtime root/i)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

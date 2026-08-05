@@ -19,8 +19,15 @@ export type PublicationPdfRenderer = 'vivliostyle-cli' | 'playwright-chromium'
 
 export function publicationPdfRendererForArchitecture(
   architecture: string = process.arch,
+  platform: string = process.platform,
 ): PublicationPdfRenderer {
-  const key = architecture === 'arm64' ? 'arm64' : 'x64'
+  if (platform !== 'linux')
+    throw new Error('Offline publication PDF rendering requires Linux')
+  if (architecture !== 'x64' && architecture !== 'arm64')
+    throw new Error(
+      `Unsupported Linux publication architecture: ${architecture}`,
+    )
+  const key = architecture
   const renderer = manifest.rendererPolicy[key].pdf
   if (renderer !== 'vivliostyle-cli' && renderer !== 'playwright-chromium')
     throw new Error(

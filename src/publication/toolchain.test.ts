@@ -49,4 +49,16 @@ describe('publication toolchain manifest', () => {
       /Geist-Regular\.ttf is missing|checksum does not match/,
     )
   })
+
+  it('fails closed on non-Linux hosts before selecting a renderer', () => {
+    expect(() =>
+      publicationPdfRendererForArchitecture('arm64', 'darwin'),
+    ).toThrow(/requires Linux/)
+  })
+
+  it('fails closed on unsupported Linux architectures', () => {
+    expect(() =>
+      publicationPdfRendererForArchitecture('riscv64', 'linux'),
+    ).toThrow(/Unsupported Linux publication architecture/)
+  })
 })

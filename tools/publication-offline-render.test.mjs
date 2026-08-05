@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readlink, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -7,12 +14,14 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   assertIsolationSnapshot,
   assertPublicationResourceUrl,
+  attestRuntimeForest,
   authenticatePublicationRequest,
   executePublicationRenderRequest,
   publicationBrowserVersionMatches,
   publicationChildEnvironment,
   renderPlaywrightPublication,
   validatePublicationResources,
+  verifyRuntimeEntries,
 } from './publication-offline-render.mjs'
 
 function fakeRuntimeEntry(kind, label, path) {
@@ -21,7 +30,9 @@ function fakeRuntimeEntry(kind, label, path) {
     label,
     path,
     sha256: 'a'.repeat(64),
-    ...(kind === 'file' ? { byteLength: '1', mode: '700' } : { entryCount: 1 }),
+    ...(kind === 'file'
+      ? { byteLength: '1', mode: '700' }
+      : { entryCount: 1, identitySha256: 'b'.repeat(64) }),
     device: '1',
     inode: '1',
     ctimeNanoseconds: '1',
@@ -32,38 +43,40 @@ function fakeRuntimeEntry(kind, label, path) {
   }
 }
 
+function fakeRuntimeClosure(paths) {
+  return {
+    kind: 'forest',
+    label: 'runtime-package-closure',
+    paths: [...paths].sort(),
+    sha256: 'a'.repeat(64),
+    identitySha256: 'b'.repeat(64),
+    entryCount: paths.length,
+  }
+}
+
 function fakeRuntimeEntries(renderer, browserPath) {
   const entries = [
-    fakeRuntimeEntry('file', 'browser-executable', browserPath),
+    fakeRuntimeEntry('tree', 'browser-runtime', dirname(browserPath)),
     fakeRuntimeEntry(
       'file',
       'isolation-helper',
       resolve('tools/publication-offline-render.mjs'),
     ),
     fakeRuntimeEntry('file', 'node-executable', '/usr/bin/node'),
-    fakeRuntimeEntry('tree', 'resource-parser', resolve('node_modules/parse5')),
+  ]
+  const packages = [
+    resolve('node_modules/.bin'),
+    resolve('node_modules/parse5'),
   ]
   if (renderer === 'vivliostyle-cli')
-    entries.push(
-      fakeRuntimeEntry(
-        'tree',
-        'renderer-package',
-        resolve('node_modules/@vivliostyle/cli'),
-      ),
+    packages.push(resolve('node_modules/@vivliostyle/cli'))
+  else {
+    packages.push(
+      resolve('node_modules/playwright'),
+      resolve('node_modules/playwright-core'),
     )
-  else
-    entries.push(
-      fakeRuntimeEntry(
-        'tree',
-        'renderer-core',
-        resolve('node_modules/playwright-core'),
-      ),
-      fakeRuntimeEntry(
-        'tree',
-        'renderer-package',
-        resolve('node_modules/playwright'),
-      ),
-    )
+  }
+  entries.push(fakeRuntimeClosure(packages))
   return entries.sort((left, right) => left.label.localeCompare(right.label))
 }
 
@@ -139,6 +152,44 @@ describe('offline publication render helper', () => {
     ).toThrow(/unexpected request field/i)
   })
 
+  it('requires a closed, in-repository runtime package allowlist', async () => {
+    const root = await localPublicationFixture()
+    const request = requestFor(root)
+    const closure = request.runtimeEntries.find(({ kind }) => kind === 'forest')
+    const authenticate = (candidate) => {
+      const serialized = `${JSON.stringify(candidate)}\n`
+      return () =>
+        authenticatePublicationRequest(
+          serialized,
+          createHash('sha256').update(serialized).digest('hex'),
+        )
+    }
+    expect(closure).toBeDefined()
+    const missingRequired = {
+      ...request,
+      runtimeEntries: request.runtimeEntries.map((entry) =>
+        entry === closure
+          ? {
+              ...entry,
+              paths: entry.paths.filter(
+                (path) => path !== resolve('node_modules/playwright-core'),
+              ),
+            }
+          : entry,
+      ),
+    }
+    expect(authenticate(missingRequired)).toThrow(/package closure/i)
+    const outsideExpansion = {
+      ...request,
+      runtimeEntries: request.runtimeEntries.map((entry) =>
+        entry === closure
+          ? { ...entry, paths: [...entry.paths, '/tmp/outside-runtime'].sort() }
+          : entry,
+      ),
+    }
+    expect(authenticate(outsideExpansion)).toThrow(/package closure/i)
+  })
+
   it('requires the exact pinned browser version inside the helper', () => {
     expect(
       publicationBrowserVersionMatches('Chromium 149.0.7827.0', '149.0.7827.0'),
@@ -149,6 +200,29 @@ describe('offline publication render helper', () => {
         '149.0.7827.0',
       ),
     ).toBe(false)
+  })
+
+  it('rejects a same-size mutation anywhere in the authenticated runtime closure', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-helper-runtime-'))
+    const first = resolve(root, 'first')
+    const second = resolve(root, 'second')
+    try {
+      await Promise.all([mkdir(first), mkdir(second)])
+      await writeFile(resolve(first, 'package.json'), '{}\n')
+      const runtimePath = resolve(second, 'runtime.js')
+      await writeFile(runtimePath, 'export const trusted = true\n')
+      const attestation = await attestRuntimeForest('runtime-package-closure', [
+        first,
+        second,
+      ])
+      await writeFile(runtimePath, 'export const trusted = null\n')
+
+      await expect(verifyRuntimeEntries([attestation])).rejects.toThrow(
+        /runtime attestation changed/i,
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('accepts expected HTML, CSS, font, and image assets inside the publication root', async () => {

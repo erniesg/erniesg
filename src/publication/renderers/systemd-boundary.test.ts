@@ -29,9 +29,12 @@ import { publicationPlaywrightExecutableCandidates } from './vivliostyle'
 import {
   PUBLICATION_BOUNDARY_EXECUTABLES,
   assertPublicationBoundaryRuntime,
+  attestPublicationRuntimeForest,
   attestPublicationRuntimeFile,
   buildPublicationSystemdInvocation,
+  createPublicationRuntimeAttestations,
   createPublicationUnitName,
+  publicationRuntimeReadOnlyPaths,
   runPublicationIsolatedRender,
   runPublicationSystemdInvocation,
   terminatePublicationSystemdUnit,
@@ -149,7 +152,9 @@ async function atomicPublicationFixture() {
   const root = await mkdtemp(resolve(tmpdir(), 'publication-atomic-'))
   temporaryPaths.add(root)
   const inputPath = resolve(root, 'index.html')
-  const browserPath = resolve(root, 'browser')
+  const browserRuntime = resolve(root, 'browser-runtime')
+  await mkdir(browserRuntime)
+  const browserPath = resolve(browserRuntime, 'browser')
   const outputPath = resolve(root, 'publication.pdf')
   const original = Buffer.from('known-good-final-bytes')
   await writeFile(inputPath, '<!doctype html><main>fixture</main>')
@@ -309,6 +314,14 @@ describe('publication systemd process-tree boundary', () => {
     expect(invocation.timeoutMilliseconds).toBeGreaterThan(120_000)
     expect(invocation.timeoutMilliseconds).toBeLessThanOrEqual(135_000)
     expect(invocation.unitName).toBe(invocationInput.unitName)
+    expect(() =>
+      buildPublicationSystemdInvocation({
+        ...invocationInput,
+        publicationRoot: '/tmp/publication:root',
+        stagingDirectory: '/tmp/publication:root/stage',
+        requestPath: '/tmp/publication:root/stage/request.json',
+      }),
+    ).toThrow(/unsafe systemd syntax/)
   })
 
   it('uses only absolute trusted boundary tools despite a shadowed PATH', () => {
@@ -389,6 +402,79 @@ describe('publication systemd process-tree boundary', () => {
     await expect(
       verifyPublicationRuntimeAttestations([attestation]),
     ).rejects.toThrow(/runtime.*changed|attestation/i)
+  })
+
+  it('attests the complete browser runtime and resolved package closure', async () => {
+    const fixture = await atomicPublicationFixture()
+    const entries = await createPublicationRuntimeAttestations(
+      isolatedRenderRequest(fixture),
+      fixture.browserPath,
+    )
+
+    expect(entries.map(({ label }) => label)).toEqual([
+      'browser-runtime',
+      'isolation-helper',
+      'node-executable',
+      'runtime-package-closure',
+    ])
+    const browserRuntime = entries.find(
+      ({ label }) => label === 'browser-runtime',
+    )
+    expect(browserRuntime).toMatchObject({
+      kind: 'tree',
+      path: dirname(fixture.browserPath),
+    })
+    const closure = entries.find(
+      ({ label }) => label === 'runtime-package-closure',
+    )
+    expect(closure?.kind).toBe('forest')
+    if (!closure || closure.kind !== 'forest')
+      throw new Error('Missing runtime package closure')
+    expect(closure.paths).toEqual(
+      expect.arrayContaining([
+        resolve('node_modules/.bin'),
+        resolve('node_modules/parse5'),
+        resolve('node_modules/playwright'),
+        resolve('node_modules/playwright-core'),
+      ]),
+    )
+    expect(closure.paths).not.toContain(resolve('node_modules'))
+    const mountedRuntime = publicationRuntimeReadOnlyPaths(entries)
+    expect(mountedRuntime).toEqual(
+      expect.arrayContaining([
+        dirname(fixture.browserPath),
+        resolve('tools/publication-offline-render.mjs'),
+        ...closure.paths,
+      ]),
+    )
+    expect(mountedRuntime).not.toContain(resolve('node_modules'))
+    expect(mountedRuntime).not.toContain('/usr/bin/node')
+    await expect(
+      verifyPublicationRuntimeAttestations(entries),
+    ).resolves.toBeUndefined()
+    const { verifyRuntimeEntries: verifyInsideHelper } =
+      await import('../../../tools/publication-offline-render.mjs')
+    await expect(verifyInsideHelper(entries)).resolves.toBeUndefined()
+  })
+
+  it('detects same-UID mutation anywhere in the authenticated runtime forest', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-runtime-'))
+    temporaryPaths.add(root)
+    const first = resolve(root, 'first')
+    const second = resolve(root, 'second')
+    await Promise.all([mkdir(first), mkdir(second)])
+    const nested = resolve(second, 'runtime.js')
+    await writeFile(resolve(first, 'package.json'), '{}\n')
+    await writeFile(nested, 'export const trusted = true\n')
+    const attestation = await attestPublicationRuntimeForest(
+      'runtime-package-closure',
+      [first, second],
+    )
+    await writeFile(nested, 'export const trusted = null\n')
+
+    await expect(
+      verifyPublicationRuntimeAttestations([attestation]),
+    ).rejects.toThrow(/runtime attestation changed/i)
   })
 
   it('refuses publication when a runtime entrypoint changes after request authentication', async () => {

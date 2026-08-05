@@ -46,6 +46,7 @@ const PUBLICATION_NODE_MODULES = resolve(
   'node_modules',
 )
 const PUBLICATION_RUNTIME_PATHS = {
+  bin: resolve(PUBLICATION_NODE_MODULES, '.bin'),
   parse5: resolve(PUBLICATION_NODE_MODULES, 'parse5'),
   playwright: resolve(PUBLICATION_NODE_MODULES, 'playwright'),
   playwrightCore: resolve(PUBLICATION_NODE_MODULES, 'playwright-core'),
@@ -121,6 +122,7 @@ export type PublicationRuntimeAttestation =
       label: string
       path: string
       sha256: string
+      identitySha256: string
       entryCount: number
       device: string
       inode: string
@@ -129,6 +131,14 @@ export type PublicationRuntimeAttestation =
       parentDevice: string
       parentInode: string
       parentCtimeNanoseconds: string
+    }
+  | {
+      kind: 'forest'
+      label: string
+      paths: string[]
+      sha256: string
+      identitySha256: string
+      entryCount: number
     }
 
 export class PublicationSystemdError extends Error {
@@ -279,15 +289,33 @@ export async function attestPublicationRuntimeTree(
 ): Promise<PublicationRuntimeAttestation> {
   if (!/^[a-z][a-z0-9-]*$/.test(label))
     throw new Error('Publication runtime label is invalid')
+  return {
+    kind: 'tree',
+    label,
+    path,
+    ...(await inspectPublicationRuntimeTree(path, true)),
+  }
+}
+
+async function inspectPublicationRuntimeTree(
+  path: string,
+  hashContents: boolean,
+) {
   const canonical = await realpath(path)
   if (canonical !== path)
     throw new Error(`Publication runtime tree is not canonical: ${path}`)
   const before = await stat(path, { bigint: true })
   if (!before.isDirectory())
     throw new Error(`Publication runtime tree is not a directory: ${path}`)
-  const digest = createHash('sha256')
+  const contentDigest = createHash('sha256')
+  const identityDigest = createHash('sha256')
   let entryCount = 0
   const visit = async (directory: string) => {
+    const directoryBefore = await lstat(directory, { bigint: true })
+    if (!directoryBefore.isDirectory())
+      throw new Error(
+        `Publication runtime tree entry is not a directory: ${directory}`,
+      )
     const entries = (await readdir(directory, { withFileTypes: true })).sort(
       lexicalName,
     )
@@ -297,18 +325,63 @@ export async function attestPublicationRuntimeTree(
       const metadata = await lstat(entryPath, { bigint: true })
       entryCount += 1
       if (metadata.isDirectory()) {
-        digest.update(
+        const identity = [
+          'directory',
+          relativePath,
+          metadata.dev.toString(),
+          metadata.ino.toString(),
+          metadata.mode.toString(),
+          metadata.size.toString(),
+          metadata.ctimeNs.toString(),
+        ]
+        identityDigest.update(`${JSON.stringify(identity)}\n`)
+        contentDigest.update(
           `${JSON.stringify(['directory', relativePath, metadata.mode.toString(), metadata.ctimeNs.toString()])}\n`,
         )
         await visit(entryPath)
       } else if (metadata.isFile()) {
-        const file = await hashOpenRegularFile(entryPath)
-        digest.update(
-          `${JSON.stringify(['file', relativePath, file.metadata.mode.toString(), file.metadata.size.toString(), file.metadata.ctimeNs.toString(), file.sha256])}\n`,
+        const file = hashContents
+          ? await hashOpenRegularFile(entryPath)
+          : { metadata, sha256: '' }
+        if (!sameBigIntFileIdentity(metadata, file.metadata))
+          throw new Error(
+            `Publication runtime file changed while inspecting: ${entryPath}`,
+          )
+        identityDigest.update(
+          `${JSON.stringify([
+            'file',
+            relativePath,
+            file.metadata.dev.toString(),
+            file.metadata.ino.toString(),
+            file.metadata.mode.toString(),
+            file.metadata.size.toString(),
+            file.metadata.ctimeNs.toString(),
+          ])}\n`,
         )
+        if (hashContents)
+          contentDigest.update(
+            `${JSON.stringify(['file', relativePath, file.metadata.mode.toString(), file.metadata.size.toString(), file.metadata.ctimeNs.toString(), file.sha256])}\n`,
+          )
       } else if (metadata.isSymbolicLink()) {
-        digest.update(
-          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), await readlink(entryPath)])}\n`,
+        const target = await readlink(entryPath)
+        const afterLink = await lstat(entryPath, { bigint: true })
+        if (!sameBigIntFileIdentity(metadata, afterLink))
+          throw new Error(
+            `Publication runtime link changed while inspecting: ${entryPath}`,
+          )
+        const identity = [
+          'symlink',
+          relativePath,
+          metadata.dev.toString(),
+          metadata.ino.toString(),
+          metadata.mode.toString(),
+          metadata.size.toString(),
+          metadata.ctimeNs.toString(),
+          target,
+        ]
+        identityDigest.update(`${JSON.stringify(identity)}\n`)
+        contentDigest.update(
+          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), target])}\n`,
         )
       } else {
         throw new Error(
@@ -316,6 +389,11 @@ export async function attestPublicationRuntimeTree(
         )
       }
     }
+    const directoryAfter = await lstat(directory, { bigint: true })
+    if (!sameBigIntFileIdentity(directoryBefore, directoryAfter))
+      throw new Error(
+        `Publication runtime directory changed while inspecting: ${directory}`,
+      )
   }
   await visit(path)
   const after = await stat(path, { bigint: true })
@@ -323,10 +401,8 @@ export async function attestPublicationRuntimeTree(
     throw new Error(`Publication runtime tree changed while hashing: ${path}`)
   const parent = await runtimeParentIdentity(path)
   return {
-    kind: 'tree',
-    label,
-    path,
-    sha256: digest.digest('hex'),
+    sha256: hashContents ? contentDigest.digest('hex') : '',
+    identitySha256: identityDigest.digest('hex'),
     entryCount,
     device: before.dev.toString(),
     inode: before.ino.toString(),
@@ -335,33 +411,201 @@ export async function attestPublicationRuntimeTree(
   }
 }
 
-async function createPublicationRuntimeAttestations(
+function assertRuntimeForestPaths(paths: string[]) {
+  if (
+    paths.length < 1 ||
+    paths.length > 1024 ||
+    JSON.stringify(paths) !== JSON.stringify([...new Set(paths)].sort())
+  )
+    throw new Error('Publication runtime forest paths are invalid')
+}
+
+async function inspectPublicationRuntimeForest(
+  paths: string[],
+  hashContents: boolean,
+) {
+  assertRuntimeForestPaths(paths)
+  const contentDigest = createHash('sha256')
+  const identityDigest = createHash('sha256')
+  let entryCount = 0
+  for (const path of paths) {
+    const tree = await inspectPublicationRuntimeTree(path, hashContents)
+    entryCount += tree.entryCount
+    identityDigest.update(
+      `${JSON.stringify([
+        path,
+        tree.identitySha256,
+        tree.entryCount,
+        tree.device,
+        tree.inode,
+        tree.ctimeNanoseconds,
+        tree.parentPath,
+        tree.parentDevice,
+        tree.parentInode,
+        tree.parentCtimeNanoseconds,
+      ])}\n`,
+    )
+    if (hashContents)
+      contentDigest.update(
+        `${JSON.stringify([path, tree.sha256, tree.entryCount])}\n`,
+      )
+  }
+  return {
+    sha256: hashContents ? contentDigest.digest('hex') : '',
+    identitySha256: identityDigest.digest('hex'),
+    entryCount,
+  }
+}
+
+export async function attestPublicationRuntimeForest(
+  label: string,
+  paths: string[],
+): Promise<PublicationRuntimeAttestation> {
+  if (!/^[a-z][a-z0-9-]*$/.test(label))
+    throw new Error('Publication runtime label is invalid')
+  return {
+    kind: 'forest',
+    label,
+    paths,
+    ...(await inspectPublicationRuntimeForest(paths, true)),
+  }
+}
+
+function packageNameSegments(name: string) {
+  const segments = name.startsWith('@') ? name.split('/') : [name]
+  if (
+    !(
+      (segments.length === 1 && !name.startsWith('@')) ||
+      (segments.length === 2 && segments[0].startsWith('@'))
+    ) ||
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === '.' ||
+        segment === '..' ||
+        !/^@?[a-zA-Z0-9._-]+$/.test(segment),
+    )
+  )
+    throw new Error(`Publication runtime package name is unsafe: ${name}`)
+  return segments
+}
+
+async function resolveInstalledPackage(fromPath: string, name: string) {
+  const segments = packageNameSegments(name)
+  const repositoryRoot = dirname(PUBLICATION_NODE_MODULES)
+  let directory = fromPath
+  while (isPathInside(repositoryRoot, directory)) {
+    if (basename(directory) !== 'node_modules') {
+      const candidate = resolve(directory, 'node_modules', ...segments)
+      try {
+        const canonical = await realpath(candidate)
+        if (!isPathInside(PUBLICATION_NODE_MODULES, canonical))
+          throw new Error(
+            `Publication runtime package escapes node_modules: ${name}`,
+          )
+        await access(resolve(canonical, 'package.json'), constants.R_OK)
+        return canonical
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    if (directory === repositoryRoot) break
+    directory = dirname(directory)
+  }
+  return null
+}
+
+async function publicationRuntimePackageClosure(
+  renderer: PublicationIsolatedRenderRequest['renderer'],
+) {
+  const seeds = [
+    PUBLICATION_RUNTIME_PATHS.bin,
+    PUBLICATION_RUNTIME_PATHS.parse5,
+    ...(renderer === 'vivliostyle-cli'
+      ? [PUBLICATION_RUNTIME_PATHS.vivliostyle]
+      : [
+          PUBLICATION_RUNTIME_PATHS.playwright,
+          PUBLICATION_RUNTIME_PATHS.playwrightCore,
+        ]),
+  ]
+  const roots = (await Promise.all(seeds.map((path) => realpath(path)))).sort()
+  const queue = roots.filter((path) => path !== PUBLICATION_RUNTIME_PATHS.bin)
+  const visited = new Set<string>()
+  while (queue.length) {
+    const packagePath = queue.pop()!
+    if (visited.has(packagePath)) continue
+    visited.add(packagePath)
+    let manifest: Record<string, unknown>
+    try {
+      manifest = JSON.parse(
+        await readFile(resolve(packagePath, 'package.json'), 'utf8'),
+      ) as Record<string, unknown>
+    } catch (error) {
+      throw new Error(
+        `Publication runtime package manifest is invalid: ${packagePath}: ${String(error)}`,
+      )
+    }
+    const dependencyObjects = [
+      manifest.dependencies,
+      manifest.optionalDependencies,
+      manifest.peerDependencies,
+    ].filter(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null && !Array.isArray(value),
+    )
+    const optional = new Set([
+      ...Object.keys(
+        (manifest.optionalDependencies as Record<string, unknown>) ?? {},
+      ),
+      ...Object.entries(
+        (manifest.peerDependenciesMeta as Record<
+          string,
+          { optional?: unknown }
+        >) ?? {},
+      )
+        .filter(([, metadata]) => metadata?.optional === true)
+        .map(([name]) => name),
+    ])
+    for (const name of new Set(
+      dependencyObjects.flatMap((dependencies) => Object.keys(dependencies)),
+    )) {
+      const dependencyPath = await resolveInstalledPackage(packagePath, name)
+      if (!dependencyPath) {
+        if (optional.has(name)) continue
+        throw new Error(
+          `Publication runtime dependency is unavailable: ${name} from ${packagePath}`,
+        )
+      }
+      queue.push(dependencyPath)
+      if (!roots.some((root) => isPathInside(root, dependencyPath)))
+        roots.push(dependencyPath)
+    }
+    if (roots.length > 1024)
+      throw new Error('Publication runtime package closure is too large')
+  }
+  return [...new Set(roots)].sort()
+}
+
+export async function createPublicationRuntimeAttestations(
   request: PublicationIsolatedRenderRequest,
   browserPath: string,
-) {
+): Promise<PublicationRuntimeAttestation[]> {
   const fileInputs = [
     ['node-executable', PUBLICATION_BOUNDARY_EXECUTABLES.node],
     ['isolation-helper', PUBLICATION_OFFLINE_HELPER_PATH],
-    ['browser-executable', browserPath],
   ] as const
-  const treeInputs =
-    request.renderer === 'vivliostyle-cli'
-      ? [
-          ['resource-parser', PUBLICATION_RUNTIME_PATHS.parse5],
-          ['renderer-package', PUBLICATION_RUNTIME_PATHS.vivliostyle],
-        ]
-      : [
-          ['resource-parser', PUBLICATION_RUNTIME_PATHS.parse5],
-          ['renderer-package', PUBLICATION_RUNTIME_PATHS.playwright],
-          ['renderer-core', PUBLICATION_RUNTIME_PATHS.playwrightCore],
-        ]
+  const runtimePackages = await publicationRuntimePackageClosure(
+    request.renderer,
+  )
   return (
     await Promise.all([
       ...fileInputs.map(([label, path]) =>
         attestPublicationRuntimeFile(label, path),
       ),
-      ...treeInputs.map(([label, path]) =>
-        attestPublicationRuntimeTree(label, path),
+      attestPublicationRuntimeTree('browser-runtime', dirname(browserPath)),
+      attestPublicationRuntimeForest(
+        'runtime-package-closure',
+        runtimePackages,
       ),
     ])
   ).sort(lexicalLabel)
@@ -370,17 +614,61 @@ async function createPublicationRuntimeAttestations(
 export async function verifyPublicationRuntimeAttestations(
   expected: PublicationRuntimeAttestation[],
 ) {
-  const actual = (
-    await Promise.all(
-      expected.map((entry) =>
-        entry.kind === 'file'
-          ? attestPublicationRuntimeFile(entry.label, entry.path)
-          : attestPublicationRuntimeTree(entry.label, entry.path),
+  await Promise.all(
+    expected.map(async (entry) => {
+      if (entry.kind === 'file') {
+        const actual = await attestPublicationRuntimeFile(
+          entry.label,
+          entry.path,
+        )
+        if (JSON.stringify(actual) !== JSON.stringify(entry))
+          throw new Error('Publication runtime attestation changed')
+        return
+      }
+      if (entry.kind === 'tree') {
+        const actual = await inspectPublicationRuntimeTree(entry.path, false)
+        if (
+          actual.identitySha256 !== entry.identitySha256 ||
+          actual.entryCount !== entry.entryCount ||
+          actual.device !== entry.device ||
+          actual.inode !== entry.inode ||
+          actual.ctimeNanoseconds !== entry.ctimeNanoseconds ||
+          actual.parentPath !== entry.parentPath ||
+          actual.parentDevice !== entry.parentDevice ||
+          actual.parentInode !== entry.parentInode ||
+          actual.parentCtimeNanoseconds !== entry.parentCtimeNanoseconds
+        )
+          throw new Error(
+            `Publication runtime attestation changed: ${entry.label}`,
+          )
+        return
+      }
+      const actual = await inspectPublicationRuntimeForest(entry.paths, false)
+      if (
+        actual.identitySha256 !== entry.identitySha256 ||
+        actual.entryCount !== entry.entryCount
+      )
+        throw new Error(
+          `Publication runtime attestation changed: ${entry.label}`,
+        )
+    }),
+  )
+}
+
+export function publicationRuntimeReadOnlyPaths(
+  entries: PublicationRuntimeAttestation[],
+) {
+  return [
+    ...new Set(
+      entries.flatMap((entry) =>
+        entry.kind === 'forest'
+          ? entry.paths
+          : entry.path === PUBLICATION_BOUNDARY_EXECUTABLES.node
+            ? []
+            : [entry.path],
       ),
-    )
-  ).sort(lexicalLabel)
-  if (JSON.stringify(actual) !== JSON.stringify(expected))
-    throw new Error('Publication runtime attestation changed')
+    ),
+  ]
 }
 
 async function createPrivateStagingDirectory(parent: string) {
@@ -742,7 +1030,7 @@ export function buildPublicationSystemdInvocation({
       stagingDirectory,
       requestPath,
       ...runtimeReadOnlyPaths,
-    ].some((path) => /[%\0\r\n]/u.test(path))
+    ].some((path) => /[:%\0\r\n]/u.test(path))
   )
     throw new Error('Publication boundary paths contain unsafe systemd syntax')
   if (
@@ -1161,13 +1449,7 @@ export async function runPublicationIsolatedRender(
       stagingDirectory,
       requestPath,
       requestSha256,
-      runtimeReadOnlyPaths: [
-        ...new Set([
-          PUBLICATION_OFFLINE_HELPER_PATH,
-          PUBLICATION_NODE_MODULES,
-          browserPath,
-        ]),
-      ],
+      runtimeReadOnlyPaths: publicationRuntimeReadOnlyPaths(runtimeEntries),
       uid: uid!,
       gid: gid!,
     })

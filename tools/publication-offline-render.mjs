@@ -404,15 +404,21 @@ async function attestRuntimeFile(label, path) {
   }
 }
 
-async function attestRuntimeTree(label, path) {
+async function inspectRuntimeTree(path, hashContents) {
   if ((await realpath(path)) !== path)
     throw new Error(`Publication runtime tree is not canonical: ${path}`)
   const before = await stat(path, { bigint: true })
   if (!before.isDirectory())
     throw new Error(`Publication runtime tree is not a directory: ${path}`)
-  const digest = createHash('sha256')
+  const contentDigest = createHash('sha256')
+  const identityDigest = createHash('sha256')
   let entryCount = 0
   const visit = async (directory) => {
+    const directoryBefore = await lstat(directory, { bigint: true })
+    if (!directoryBefore.isDirectory())
+      throw new Error(
+        `Publication runtime tree entry is not a directory: ${directory}`,
+      )
     const entries = (await readdir(directory, { withFileTypes: true })).sort(
       lexicalEntryOrder,
     )
@@ -422,18 +428,63 @@ async function attestRuntimeTree(label, path) {
       const metadata = await lstat(entryPath, { bigint: true })
       entryCount += 1
       if (metadata.isDirectory()) {
-        digest.update(
+        const identity = [
+          'directory',
+          relativePath,
+          metadata.dev.toString(),
+          metadata.ino.toString(),
+          metadata.mode.toString(),
+          metadata.size.toString(),
+          metadata.ctimeNs.toString(),
+        ]
+        identityDigest.update(`${JSON.stringify(identity)}\n`)
+        contentDigest.update(
           `${JSON.stringify(['directory', relativePath, metadata.mode.toString(), metadata.ctimeNs.toString()])}\n`,
         )
         await visit(entryPath)
       } else if (metadata.isFile()) {
-        const file = await hashRuntimeFile(entryPath)
-        digest.update(
-          `${JSON.stringify(['file', relativePath, file.metadata.mode.toString(), file.metadata.size.toString(), file.metadata.ctimeNs.toString(), file.sha256])}\n`,
+        const file = hashContents
+          ? await hashRuntimeFile(entryPath)
+          : { metadata, sha256: '' }
+        if (!sameRuntimeIdentity(metadata, file.metadata))
+          throw new Error(
+            `Publication runtime file changed while inspecting: ${entryPath}`,
+          )
+        identityDigest.update(
+          `${JSON.stringify([
+            'file',
+            relativePath,
+            file.metadata.dev.toString(),
+            file.metadata.ino.toString(),
+            file.metadata.mode.toString(),
+            file.metadata.size.toString(),
+            file.metadata.ctimeNs.toString(),
+          ])}\n`,
         )
+        if (hashContents)
+          contentDigest.update(
+            `${JSON.stringify(['file', relativePath, file.metadata.mode.toString(), file.metadata.size.toString(), file.metadata.ctimeNs.toString(), file.sha256])}\n`,
+          )
       } else if (metadata.isSymbolicLink()) {
-        digest.update(
-          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), await readlink(entryPath)])}\n`,
+        const target = await readlink(entryPath)
+        const afterLink = await lstat(entryPath, { bigint: true })
+        if (!sameRuntimeIdentity(metadata, afterLink))
+          throw new Error(
+            `Publication runtime link changed while inspecting: ${entryPath}`,
+          )
+        const identity = [
+          'symlink',
+          relativePath,
+          metadata.dev.toString(),
+          metadata.ino.toString(),
+          metadata.mode.toString(),
+          metadata.size.toString(),
+          metadata.ctimeNs.toString(),
+          target,
+        ]
+        identityDigest.update(`${JSON.stringify(identity)}\n`)
+        contentDigest.update(
+          `${JSON.stringify(['symlink', relativePath, metadata.ctimeNs.toString(), target])}\n`,
         )
       } else {
         throw new Error(
@@ -441,6 +492,11 @@ async function attestRuntimeTree(label, path) {
         )
       }
     }
+    const directoryAfter = await lstat(directory, { bigint: true })
+    if (!sameRuntimeIdentity(directoryBefore, directoryAfter))
+      throw new Error(
+        `Publication runtime directory changed while inspecting: ${directory}`,
+      )
   }
   await visit(path)
   const after = await stat(path, { bigint: true })
@@ -448,10 +504,8 @@ async function attestRuntimeTree(label, path) {
     throw new Error(`Publication runtime tree changed while hashing: ${path}`)
   const parent = await runtimeParentIdentity(path)
   return {
-    kind: 'tree',
-    label,
-    path,
-    sha256: digest.digest('hex'),
+    sha256: hashContents ? contentDigest.digest('hex') : '',
+    identitySha256: identityDigest.digest('hex'),
     entryCount,
     device: before.dev.toString(),
     inode: before.ino.toString(),
@@ -460,37 +514,64 @@ async function attestRuntimeTree(label, path) {
   }
 }
 
+async function attestRuntimeTree(label, path) {
+  return {
+    kind: 'tree',
+    label,
+    path,
+    ...(await inspectRuntimeTree(path, true)),
+  }
+}
+
+async function inspectRuntimeForest(paths, hashContents) {
+  const contentDigest = createHash('sha256')
+  const identityDigest = createHash('sha256')
+  let entryCount = 0
+  for (const path of paths) {
+    const tree = await inspectRuntimeTree(path, hashContents)
+    entryCount += tree.entryCount
+    identityDigest.update(
+      `${JSON.stringify([
+        path,
+        tree.identitySha256,
+        tree.entryCount,
+        tree.device,
+        tree.inode,
+        tree.ctimeNanoseconds,
+        tree.parentPath,
+        tree.parentDevice,
+        tree.parentInode,
+        tree.parentCtimeNanoseconds,
+      ])}\n`,
+    )
+    if (hashContents)
+      contentDigest.update(
+        `${JSON.stringify([path, tree.sha256, tree.entryCount])}\n`,
+      )
+  }
+  return {
+    sha256: hashContents ? contentDigest.digest('hex') : '',
+    identitySha256: identityDigest.digest('hex'),
+    entryCount,
+  }
+}
+
+export async function attestRuntimeForest(label, paths) {
+  return {
+    kind: 'forest',
+    label,
+    paths,
+    ...(await inspectRuntimeForest(paths, true)),
+  }
+}
+
 function expectedRuntimeEntries(request) {
-  const entries = [
-    ['file', 'browser-executable', request.browserPath],
+  return [
+    ['tree', 'browser-runtime', dirname(request.browserPath)],
     ['file', 'isolation-helper', HELPER_PATH],
     ['file', 'node-executable', NODE_EXECUTABLE],
-    [
-      'tree',
-      'resource-parser',
-      resolve(REPOSITORY_ROOT, 'node_modules/parse5'),
-    ],
-  ]
-  if (request.renderer === 'vivliostyle-cli')
-    entries.push([
-      'tree',
-      'renderer-package',
-      resolve(REPOSITORY_ROOT, 'node_modules/@vivliostyle/cli'),
-    ])
-  else
-    entries.push(
-      [
-        'tree',
-        'renderer-core',
-        resolve(REPOSITORY_ROOT, 'node_modules/playwright-core'),
-      ],
-      [
-        'tree',
-        'renderer-package',
-        resolve(REPOSITORY_ROOT, 'node_modules/playwright'),
-      ],
-    )
-  return entries.sort((left, right) => left[1].localeCompare(right[1]))
+    ['forest', 'runtime-package-closure', null],
+  ].sort((left, right) => left[1].localeCompare(right[1]))
 }
 
 function assertRuntimeEntries(request) {
@@ -502,11 +583,46 @@ function assertRuntimeEntries(request) {
       request.runtimeEntries.map(({ kind, label, path }) => [
         kind,
         label,
-        path,
+        kind === 'forest' ? null : path,
       ]),
     ) !== JSON.stringify(expected)
   )
     throw new Error('Publication runtime attestation paths are incomplete')
+  const closure = request.runtimeEntries.find(({ kind }) => kind === 'forest')
+  const nodeModules = resolve(REPOSITORY_ROOT, 'node_modules')
+  const requiredPackages = [
+    resolve(nodeModules, '.bin'),
+    resolve(nodeModules, 'parse5'),
+    ...(request.renderer === 'vivliostyle-cli'
+      ? [resolve(nodeModules, '@vivliostyle/cli')]
+      : [
+          resolve(nodeModules, 'playwright'),
+          resolve(nodeModules, 'playwright-core'),
+        ]),
+  ]
+  if (
+    !closure ||
+    !Array.isArray(closure.paths) ||
+    closure.paths.length < requiredPackages.length ||
+    closure.paths.length > 1024 ||
+    JSON.stringify(closure.paths) !==
+      JSON.stringify([...new Set(closure.paths)].sort()) ||
+    requiredPackages.some((path) => !closure.paths.includes(path)) ||
+    closure.paths.some(
+      (path) =>
+        typeof path !== 'string' ||
+        !isAbsolute(path) ||
+        !isPathInside(nodeModules, path) ||
+        isPathInside(BROWSER_CACHE, path),
+    ) ||
+    closure.paths.some((path, index) =>
+      closure.paths.some(
+        (possibleParent, parentIndex) =>
+          index !== parentIndex && isPathInside(possibleParent, path),
+      ),
+    )
+  )
+    throw new Error('Publication runtime package closure is invalid')
   const sharedFields = [
     'ctimeNanoseconds',
     'device',
@@ -521,15 +637,39 @@ function assertRuntimeEntries(request) {
     'sha256',
   ]
   for (const entry of request.runtimeEntries) {
+    if (entry.kind === 'forest') {
+      if (
+        JSON.stringify(Object.keys(entry).sort()) !==
+          JSON.stringify(
+            [
+              'entryCount',
+              'identitySha256',
+              'kind',
+              'label',
+              'paths',
+              'sha256',
+            ].sort(),
+          ) ||
+        !/^[a-f0-9]{64}$/.test(entry.sha256) ||
+        !/^[a-f0-9]{64}$/.test(entry.identitySha256) ||
+        !Number.isSafeInteger(entry.entryCount) ||
+        entry.entryCount < entry.paths.length
+      )
+        throw new Error('Publication runtime attestation is invalid')
+      continue
+    }
     const expectedFields = [
       ...sharedFields,
-      ...(entry.kind === 'file' ? ['byteLength', 'mode'] : ['entryCount']),
+      ...(entry.kind === 'file'
+        ? ['byteLength', 'mode']
+        : ['entryCount', 'identitySha256']),
     ].sort()
     if (
       !['file', 'tree'].includes(entry.kind) ||
       JSON.stringify(Object.keys(entry).sort()) !==
         JSON.stringify(expectedFields) ||
       !/^[a-f0-9]{64}$/.test(entry.sha256) ||
+      (entry.kind === 'tree' && !/^[a-f0-9]{64}$/.test(entry.identitySha256)) ||
       !/^\d+$/.test(entry.device) ||
       !/^\d+$/.test(entry.inode) ||
       !/^\d+$/.test(entry.ctimeNanoseconds) ||
@@ -546,18 +686,39 @@ function assertRuntimeEntries(request) {
   }
 }
 
-async function verifyRuntimeEntries(expected) {
-  const actual = (
-    await Promise.all(
-      expected.map((entry) =>
-        entry.kind === 'file'
-          ? attestRuntimeFile(entry.label, entry.path)
-          : attestRuntimeTree(entry.label, entry.path),
-      ),
-    )
-  ).sort((left, right) => left.label.localeCompare(right.label))
-  if (JSON.stringify(actual) !== JSON.stringify(expected))
-    throw new Error('Publication runtime attestation changed')
+export async function verifyRuntimeEntries(expected) {
+  await Promise.all(
+    expected.map(async (entry) => {
+      if (entry.kind === 'file') {
+        const actual = await attestRuntimeFile(entry.label, entry.path)
+        if (JSON.stringify(actual) !== JSON.stringify(entry))
+          throw new Error('Publication runtime attestation changed')
+        return
+      }
+      if (entry.kind === 'tree') {
+        const actual = await inspectRuntimeTree(entry.path, false)
+        if (
+          actual.identitySha256 !== entry.identitySha256 ||
+          actual.entryCount !== entry.entryCount ||
+          actual.device !== entry.device ||
+          actual.inode !== entry.inode ||
+          actual.ctimeNanoseconds !== entry.ctimeNanoseconds ||
+          actual.parentPath !== entry.parentPath ||
+          actual.parentDevice !== entry.parentDevice ||
+          actual.parentInode !== entry.parentInode ||
+          actual.parentCtimeNanoseconds !== entry.parentCtimeNanoseconds
+        )
+          throw new Error('Publication runtime attestation changed')
+        return
+      }
+      const actual = await inspectRuntimeForest(entry.paths, false)
+      if (
+        actual.identitySha256 !== entry.identitySha256 ||
+        actual.entryCount !== entry.entryCount
+      )
+        throw new Error('Publication runtime attestation changed')
+    }),
+  )
 }
 
 export async function assertPublicationResourceUrl(url, referrerPath, root) {

@@ -18,7 +18,7 @@ import {
   renderEpubToc,
   vivliostyleRenderer,
 } from './vivliostyle'
-import type { PublicationNode } from '../schema'
+import type { PublicationInlineRun, PublicationNode } from '../schema'
 
 async function fixtureCollection(name: string) {
   const root = await mkdtemp(resolve(tmpdir(), 'publication-renderer-'))
@@ -194,13 +194,16 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
     if (!paragraph || paragraph.type !== 'paragraph')
       throw new Error('missing paragraph fixture')
+    const inlineRuns: PublicationInlineRun[] = [
+      { start: 1, end: 2, bold: true },
+    ]
     const graph = {
       ...bundle.graph,
       nodes: [
         {
           ...paragraph,
           text: '😀a',
-          inlineRuns: [{ start: 1, end: 2, bold: true }],
+          inlineRuns,
         },
       ],
     }

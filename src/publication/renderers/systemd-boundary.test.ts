@@ -265,6 +265,7 @@ describe('publication systemd process-tree boundary', () => {
         '--property=PrivateTmp=yes',
         '--property=ProtectHome=tmpfs',
         '--property=ProtectProc=invisible',
+        '--property=InaccessiblePaths=/proc',
         '--property=TemporaryFileSystem=/:ro',
         '--property=BindReadOnlyPaths=/usr',
         '--property=BindReadOnlyPaths=/tmp/publication\\x20root',

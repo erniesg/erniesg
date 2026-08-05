@@ -1056,6 +1056,7 @@ export function buildPublicationSystemdInvocation({
     'ProtectSystem=strict',
     'ProtectHome=tmpfs',
     'ProtectProc=invisible',
+    'InaccessiblePaths=/proc',
     'TemporaryFileSystem=/:ro',
     'BindReadOnlyPaths=/usr',
     'BindReadOnlyPaths=-/lib',

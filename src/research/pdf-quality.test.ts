@@ -42,6 +42,7 @@ import {
   pdfSourceSemanticFlowBoundaryDecisionId,
   pdfSourceSemanticFlowRunSha256,
 } from './pdf-regions'
+import { mergeProseContinuations } from './pdf-layout'
 
 function sourceSemanticFlowDecision(
   decision: Omit<PdfSourceSemanticFlowBoundaryDecision, 'id'>,
@@ -2568,6 +2569,148 @@ describe('PDF semantic signal detection', () => {
       provenance,
       lineBoundaryDecisions: [],
       sourceSemanticFlowBoundaryDecisions: [decision],
+    })
+
+    expect(result.semanticFlowBoundaryLedgerValid).toBe(true)
+    expect(result.semanticTextViolationNodeIds).toEqual([])
+  })
+
+  it('verifies the producer-selected minimum run across reordered column whitespace', async () => {
+    const targetRun = {
+      ...run('研究结果见', 0.09, 0.82, 10, 0.385),
+      sourceSequenceIndex: 520,
+    }
+    const firstGeometricContinuationRun = {
+      ...run('2024', 0.515, 0.1, 10, 0.08),
+      sourceSequenceIndex: 522,
+      sourceWhitespaceBefore: 'pdf-text-item' as const,
+      sourceWhitespacePredecessorIndex: 520,
+    }
+    const minimumSequenceContinuationRun = {
+      ...run('年的结果', 0.595, 0.1, 10, 0.12),
+      sourceSequenceIndex: 521,
+    }
+    const regions: PdfPageRegion[] = [
+      {
+        id: 'verified-minimum-run-target-region',
+        page: 1,
+        kind: 'body',
+        column: 'left',
+        text: targetRun.text,
+        confidence: 1,
+        box: { ...targetRun },
+        lines: [
+          {
+            id: 'verified-minimum-run-target-line',
+            text: targetRun.text,
+            fontSize: targetRun.fontSize,
+            box: { ...targetRun },
+            runs: [targetRun],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: 'verified-minimum-run-target-source-line',
+              fragment: 'whole',
+              sourceSequenceIndexes: [520],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      },
+      {
+        id: 'verified-minimum-run-continuation-region',
+        page: 1,
+        kind: 'body',
+        column: 'right',
+        text: '2024年的结果',
+        confidence: 1,
+        box: {
+          ...minimumSequenceContinuationRun,
+          x: 0.515,
+          width: 0.2,
+        },
+        lines: [
+          {
+            id: 'verified-minimum-run-continuation-line',
+            text: '2024年的结果',
+            fontSize: minimumSequenceContinuationRun.fontSize,
+            box: {
+              ...minimumSequenceContinuationRun,
+              x: 0.515,
+              width: 0.2,
+            },
+            runs: [
+              firstGeometricContinuationRun,
+              minimumSequenceContinuationRun,
+            ],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: 'verified-minimum-run-continuation-source-line',
+              fragment: 'whole',
+              sourceSequenceIndexes: [522, 521],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      },
+    ]
+    const blocks = regions.map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const decisions: PdfSourceSemanticFlowBoundaryDecision[] = []
+
+    await mergeProseContinuations(blocks, {
+      language: 'zh',
+      sourceSemanticFlowBoundaryDecisions: decisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('研究结果见2024年的结果')
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({
+      outcome: 'no-space',
+      to: { runIndex: 1, sourceSequenceIndex: 521 },
+    })
+    const paper: ResearchPaper = {
+      id: 'verified-minimum-run-paper',
+      version: '1.0.0',
+      status: 'working',
+      title: '',
+      subtitle: 'Test',
+      authors: [],
+      updated: '2026-07-30',
+      abstract: 'Test',
+      language: 'zh',
+      baseDirection: 'ltr',
+      nodes: [
+        {
+          id: 'verified-minimum-run-node',
+          type: 'paragraph',
+          text: blocks[0].text,
+          source: 'test',
+        },
+      ],
+    }
+    const provenance: Record<string, NodeSourceEvidence> = {
+      'verified-minimum-run-node': {
+        confidence: 1,
+        pages: [1],
+        regionIds: regions.map((region) => region.id),
+        boxes: regions.map((region) => ({ ...region.box })),
+        links: [],
+      },
+    }
+    const result = provenanceTextConservation({
+      allRegions: regions,
+      orderedRegions: regions,
+      paper,
+      provenance,
+      lineBoundaryDecisions: [],
+      sourceSemanticFlowBoundaryDecisions: decisions,
     })
 
     expect(result.semanticFlowBoundaryLedgerValid).toBe(true)

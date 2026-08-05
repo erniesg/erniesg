@@ -9,6 +9,7 @@ import {
   chmod,
   copyFile,
   mkdtemp,
+  mkdir,
   readFile,
   readdir,
   rm,
@@ -33,6 +34,7 @@ import {
   createPublicationUnitName,
   runPublicationIsolatedRender,
   runPublicationSystemdInvocation,
+  terminatePublicationSystemdUnit,
   verifyPublicationRuntimeAttestations,
   verifyPublicationBoundaryExecutables,
 } from './systemd-boundary'
@@ -51,6 +53,8 @@ const invocationInput = {
 
 const systemdIntegration =
   process.env.PUBLICATION_SYSTEMD_INTEGRATION === '1' ? it : it.skip
+const systemdTimeoutIntegration =
+  process.env.PUBLICATION_SYSTEMD_TIMEOUT_INTEGRATION === '1' ? it : it.skip
 
 async function listen(server: ReturnType<typeof createServer>, host: string) {
   await new Promise<void>((accept, reject) => {
@@ -251,10 +255,11 @@ describe('publication systemd process-tree boundary', () => {
         '--property=PrivateNetwork=yes',
         '--property=NoNewPrivileges=yes',
         '--property=AmbientCapabilities=',
-        '--property=CapabilityBoundingSet=CAP_SETUID CAP_SETGID',
+        '--property=CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SYS_ADMIN',
         '--property=PrivateDevices=yes',
         '--property=PrivateTmp=yes',
         '--property=ProtectHome=tmpfs',
+        '--property=ProtectProc=invisible',
         '--property=TemporaryFileSystem=/:ro',
         '--property=BindReadOnlyPaths=/usr',
         '--property=BindReadOnlyPaths=/tmp/publication\\x20root',
@@ -270,12 +275,19 @@ describe('publication systemd process-tree boundary', () => {
         '--property=SendSIGKILL=yes',
         '--property=RuntimeMaxSec=120s',
         '--working-directory=/tmp/publication root',
+        '/usr/bin/unshare',
+        '--pid',
+        '--fork',
+        '--kill-child=SIGKILL',
+        '--mount-proc=/proc',
+        '--propagation=private',
         '/usr/bin/setpriv',
         '--reuid=1000',
         '--regid=1000',
         '--clear-groups',
         '--inh-caps=-all',
         '--ambient-caps=-all',
+        '--bounding-set=-all',
         '--no-new-privs',
         '/usr/bin/env',
         '-i',
@@ -293,7 +305,7 @@ describe('publication systemd process-tree boundary', () => {
     expect(invocation.args).not.toContain('-c')
     expect(invocation.args).not.toContain('--user')
     expect(invocation.args).not.toContain('--map-root-user')
-    expect(invocation.args.join('\n')).not.toMatch(/\bunshare\b|\bip\b/)
+    expect(invocation.args.join('\n')).not.toMatch(/\bip\b/)
     expect(invocation.timeoutMilliseconds).toBeGreaterThan(120_000)
     expect(invocation.timeoutMilliseconds).toBeLessThanOrEqual(135_000)
     expect(invocation.unitName).toBe(invocationInput.unitName)
@@ -312,8 +324,15 @@ describe('publication systemd process-tree boundary', () => {
       const invocation = buildPublicationSystemdInvocation(invocationInput)
       expect(invocation.command).toBe(PUBLICATION_BOUNDARY_EXECUTABLES.sudo)
       const completeArgv = [invocation.command, ...invocation.args]
-      for (const executable of Object.values(PUBLICATION_BOUNDARY_EXECUTABLES))
+      for (const [name, executable] of Object.entries(
+        PUBLICATION_BOUNDARY_EXECUTABLES,
+      )) {
+        if (name === 'systemctl') continue
         expect(completeArgv).toContain(executable)
+      }
+      expect(PUBLICATION_BOUNDARY_EXECUTABLES.systemctl).toBe(
+        '/usr/bin/systemctl',
+      )
       expect(invocation.environment).toEqual({
         PATH: '/usr/bin',
         LANG: 'C.UTF-8',
@@ -431,7 +450,7 @@ describe('publication systemd process-tree boundary', () => {
     ).toThrow(/numeric caller UID and GID/)
   })
 
-  it.each(['sudo', 'systemdRun', 'setpriv'] as const)(
+  it.each(['sudo', 'systemdRun', 'systemctl', 'unshare', 'setpriv'] as const)(
     'fails before rendering when absolute %s is unavailable',
     async (name) => {
       const inspected: string[] = []
@@ -461,10 +480,12 @@ describe('publication systemd process-tree boundary', () => {
       return child as never
     })
     const invocation = buildPublicationSystemdInvocation(invocationInput)
+    const terminateUnit = vi.fn(async () => undefined)
 
     await expect(
-      runPublicationSystemdInvocation(invocation, spawnProcess),
+      runPublicationSystemdInvocation(invocation, spawnProcess, terminateUnit),
     ).rejects.toMatchObject({ exitCode: 37 })
+    expect(terminateUnit).toHaveBeenCalledWith(invocation)
     expect(spawnProcess).toHaveBeenCalledWith(
       '/usr/bin/sudo',
       invocation.args,
@@ -473,6 +494,96 @@ describe('publication systemd process-tree boundary', () => {
         shell: false,
         stdio: 'inherit',
       }),
+    )
+  })
+
+  it('drains the exact unit when the systemd-run wrapper reports an error', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      kill: ReturnType<typeof vi.fn>
+    }
+    child.kill = vi.fn(() => true)
+    const spawnProcess = vi.fn(() => {
+      queueMicrotask(() => child.emit('error', new Error('spawn failed')))
+      return child as never
+    })
+    const terminateUnit = vi.fn(async () => undefined)
+    const invocation = buildPublicationSystemdInvocation(invocationInput)
+
+    await expect(
+      runPublicationSystemdInvocation(invocation, spawnProcess, terminateUnit),
+    ).rejects.toThrow('spawn failed')
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    expect(terminateUnit).toHaveBeenCalledWith(invocation)
+  })
+
+  it('kills and drains the exact unit without waiting for an ignore-TERM wrapper', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      kill: ReturnType<typeof vi.fn>
+    }
+    child.kill = vi.fn(() => true)
+    const spawnProcess = vi.fn(() => child as never)
+    const terminateUnit = vi.fn(async () => undefined)
+    const invocation = {
+      ...buildPublicationSystemdInvocation(invocationInput),
+      timeoutMilliseconds: 5,
+    }
+    const lateExit = setTimeout(() => child.emit('exit', null, 'SIGKILL'), 250)
+    const started = Date.now()
+
+    await expect(
+      runPublicationSystemdInvocation(invocation, spawnProcess, terminateUnit),
+    ).rejects.toThrow(/exceeded 5ms/)
+    clearTimeout(lateExit)
+    expect(Date.now() - started).toBeLessThan(150)
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    expect(terminateUnit).toHaveBeenCalledWith(invocation)
+  })
+
+  it('kills every process in the exact unit and waits for cgroup drain and collection', async () => {
+    const commands: string[][] = []
+    let shows = 0
+    const runSystemctl = vi.fn(async (args: string[]) => {
+      commands.push(args)
+      if (args[0] !== 'show') return { code: 0, stdout: '', stderr: '' }
+      shows += 1
+      return {
+        code: 0,
+        stdout:
+          shows === 1
+            ? 'LoadState=loaded\nActiveState=deactivating\nSubState=stop-sigkill\nControlGroup=/system.slice/erniesg-publication-test.service\nMainPID=4321\n'
+            : shows === 2
+              ? 'LoadState=loaded\nActiveState=failed\nSubState=failed\nControlGroup=/system.slice/erniesg-publication-test.service\nMainPID=0\n'
+              : 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\nMainPID=0\n',
+        stderr: '',
+      }
+    })
+    const readCgroup = vi
+      .fn()
+      .mockResolvedValueOnce('4321\n4322\n')
+      .mockResolvedValueOnce('')
+
+    await terminatePublicationSystemdUnit(
+      'erniesg-publication-test',
+      runSystemctl,
+      readCgroup,
+    )
+
+    expect(commands[0]).toEqual([
+      'kill',
+      '--kill-whom=all',
+      '--signal=SIGKILL',
+      'erniesg-publication-test.service',
+    ])
+    expect(commands[1]).toEqual(['stop', 'erniesg-publication-test.service'])
+    expect(
+      commands
+        .filter(([command]) => command === 'show')
+        .every((args) => args.at(-1) === 'erniesg-publication-test.service'),
+    ).toBe(true)
+    expect(shows).toBe(3)
+    expect(readCgroup).toHaveBeenCalledWith(
+      '/sys/fs/cgroup/system.slice/erniesg-publication-test.service/cgroup.procs',
+      'utf8',
     )
   })
 
@@ -658,6 +769,132 @@ describe('publication systemd process-tree boundary', () => {
     expect(await publicationResidue(fixture.root)).toEqual([])
   })
 
+  systemdTimeoutIntegration(
+    'coordinator timeout: kills an ignore-TERM child and grandchild before cleanup',
+    async () => {
+      const root = await mkdtemp(resolve('.publication-systemd-timeout-'))
+      const stagingDirectory = resolve(root, '.publication-stage-timeout')
+      const requestPath = resolve(stagingDirectory, 'offline-request.json')
+      const pidsPath = resolve(stagingDirectory, 'pids.jsonl')
+      const delayedPath = resolve(stagingDirectory, 'delayed-output.txt')
+      const mainPath = resolve(root, 'timeout-main.mjs')
+      const childPath = resolve(root, 'timeout-child.mjs')
+      const grandchildPath = resolve(root, 'timeout-grandchild.mjs')
+      try {
+        await mkdir(stagingDirectory, { mode: 0o700 })
+        await writeFile(requestPath, '{}\n', { mode: 0o600 })
+        await writeFile(
+          grandchildPath,
+          [
+            "import { appendFileSync, readFileSync } from 'node:fs'",
+            'const [pidsPath, delayedPath] = process.argv.slice(2)',
+            "const hostPid = Number(readFileSync('/proc/self/status', 'utf8').match(/^NSpid:\\s+(\\d+)/m)?.[1])",
+            "process.on('SIGTERM', () => {})",
+            "appendFileSync(pidsPath, `${JSON.stringify({ role: 'grandchild', pid: hostPid, namespacePid: process.pid })}\\n`)",
+            "setTimeout(() => appendFileSync(delayedPath, 'grandchild\\n'), 2500)",
+            'setInterval(() => {}, 1000)',
+          ].join('\n'),
+        )
+        await writeFile(
+          childPath,
+          [
+            "import { spawn } from 'node:child_process'",
+            "import { appendFileSync, readFileSync } from 'node:fs'",
+            'const [grandchildPath, pidsPath, delayedPath] = process.argv.slice(2)',
+            "const hostPid = Number(readFileSync('/proc/self/status', 'utf8').match(/^NSpid:\\s+(\\d+)/m)?.[1])",
+            "process.on('SIGTERM', () => {})",
+            "appendFileSync(pidsPath, `${JSON.stringify({ role: 'child', pid: hostPid, namespacePid: process.pid })}\\n`)",
+            "spawn('/usr/bin/node', [grandchildPath, pidsPath, delayedPath], { stdio: 'ignore' })",
+            "setTimeout(() => appendFileSync(delayedPath, 'child\\n'), 2500)",
+            'setInterval(() => {}, 1000)',
+          ].join('\n'),
+        )
+        await writeFile(
+          mainPath,
+          [
+            "import { spawn } from 'node:child_process'",
+            "import { appendFileSync, readFileSync } from 'node:fs'",
+            'const [childPath, grandchildPath, pidsPath, delayedPath] = process.argv.slice(2)',
+            "const hostPid = Number(readFileSync('/proc/self/status', 'utf8').match(/^NSpid:\\s+(\\d+)/m)?.[1])",
+            "process.on('SIGTERM', () => {})",
+            "appendFileSync(pidsPath, `${JSON.stringify({ role: 'main', pid: hostPid, namespacePid: process.pid })}\\n`)",
+            "spawn('/usr/bin/node', [childPath, grandchildPath, pidsPath, delayedPath], { stdio: 'ignore' })",
+            "setTimeout(() => appendFileSync(delayedPath, 'main\\n'), 2500)",
+            'setInterval(() => {}, 1000)',
+          ].join('\n'),
+        )
+        const uid = process.getuid?.()
+        const gid = process.getgid?.()
+        if (uid === undefined || gid === undefined)
+          throw new Error('The systemd timeout smoke requires a POSIX caller')
+        const invocation = {
+          ...buildPublicationSystemdInvocation({
+            publicationRoot: root,
+            stagingDirectory,
+            requestPath,
+            requestSha256: sha256(await readFile(requestPath)),
+            runtimeReadOnlyPaths: [],
+            uid,
+            gid,
+            unitName: createPublicationUnitName(),
+          }),
+          timeoutMilliseconds: 1_000,
+        }
+        const helperIndex = invocation.args.findIndex((argument) =>
+          argument.endsWith('/tools/publication-offline-render.mjs'),
+        )
+        expect(helperIndex).toBeGreaterThan(0)
+        invocation.args.splice(
+          helperIndex,
+          invocation.args.length - helperIndex,
+          mainPath,
+          childPath,
+          grandchildPath,
+          pidsPath,
+          delayedPath,
+        )
+
+        await expect(
+          runPublicationSystemdInvocation(invocation),
+        ).rejects.toThrow(/exceeded 1000ms/)
+        const processes = (await readFile(pidsPath, 'utf8'))
+          .trim()
+          .split('\n')
+          .map(
+            (line) =>
+              JSON.parse(line) as {
+                role: string
+                pid: number
+                namespacePid: number
+              },
+          )
+        expect(processes.map(({ role }) => role).sort()).toEqual([
+          'child',
+          'grandchild',
+          'main',
+        ])
+        expect(
+          processes.map(({ namespacePid }) => namespacePid).sort(),
+        ).toEqual([1, 2, 3])
+        for (const { pid } of processes)
+          await expect(access(`/proc/${pid}`)).rejects.toMatchObject({
+            code: 'ENOENT',
+          })
+        await new Promise((accept) => setTimeout(accept, 2_750))
+        await expect(access(delayedPath)).rejects.toMatchObject({
+          code: 'ENOENT',
+        })
+        await rm(stagingDirectory, { recursive: true })
+        await expect(access(stagingDirectory)).rejects.toMatchObject({
+          code: 'ENOENT',
+        })
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
+
   systemdIntegration(
     'coordinator smoke: renders nested assets and proves physical filesystem and network confinement',
     async () => {
@@ -706,6 +943,8 @@ describe('publication systemd process-tree boundary', () => {
           ])
         await writeFile(outsidePath, '<svg></svg>')
         const outsideLink = resolve(root, 'outside-link.svg')
+        const hostProcessRootEscape = `/proc/${process.pid}/root${outsidePath}`
+        const unitProcessRootEscape = `/proc/1/root${outsidePath}`
         await symlink(outsidePath, outsideLink)
         await copyFile(
           'public/fonts/Geist-Regular.ttf',
@@ -772,7 +1011,12 @@ describe('publication systemd process-tree boundary', () => {
               ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
               : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
           title: 'Boundary fixture',
-          filesystemDiagnosticPaths: [outsidePath, outsideLink],
+          filesystemDiagnosticPaths: [
+            outsidePath,
+            outsideLink,
+            hostProcessRootEscape,
+            unitProcessRootEscape,
+          ],
           networkDiagnostic: {
             tcpIpv4Port: tcp4Port,
             tcpIpv6Port: tcp6Port,
@@ -825,6 +1069,8 @@ describe('publication systemd process-tree boundary', () => {
         expect(proof.filesystemDiagnostics).toEqual([
           { path: outsidePath, inaccessible: true },
           { path: outsideLink, inaccessible: true },
+          { path: hostProcessRootEscape, inaccessible: true },
+          { path: unitProcessRootEscape, inaccessible: true },
         ])
         await new Promise((accept) => setTimeout(accept, 50))
         expect(tcpCounts).toEqual({ ipv4: 0, ipv6: 0 })

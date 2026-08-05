@@ -30,6 +30,8 @@ import { PDFDocument } from 'pdf-lib'
 export const PUBLICATION_BOUNDARY_EXECUTABLES = {
   sudo: '/usr/bin/sudo',
   systemdRun: '/usr/bin/systemd-run',
+  systemctl: '/usr/bin/systemctl',
+  unshare: '/usr/bin/unshare',
   setpriv: '/usr/bin/setpriv',
   env: '/usr/bin/env',
   node: '/usr/bin/node',
@@ -51,6 +53,7 @@ const PUBLICATION_RUNTIME_PATHS = {
 } as const
 const UNIT_RUNTIME_SECONDS = 120
 const INVOCATION_TIMEOUT_MILLISECONDS = 135_000
+const UNIT_CLEANUP_TIMEOUT_MILLISECONDS = 10_000
 const MAX_PROOF_BYTES = 64 * 1024
 const MAX_PDF_BYTES = 512 * 1024 * 1024
 const FIXED_DATE = new Date('2000-01-01T00:00:00.000Z')
@@ -132,6 +135,16 @@ export class PublicationSystemdError extends Error {
   exitCode?: number
   signal?: NodeJS.Signals
 }
+
+type PublicationSystemctlResult = {
+  code: number | null
+  stdout: string
+  stderr: string
+}
+
+type PublicationSystemctlRunner = (
+  args: string[],
+) => Promise<PublicationSystemctlResult>
 
 function isPathInside(root: string, path: string) {
   const child = relative(root, path)
@@ -749,11 +762,12 @@ export function buildPublicationSystemdInvocation({
     'PrivateNetwork=yes',
     'NoNewPrivileges=yes',
     'AmbientCapabilities=',
-    'CapabilityBoundingSet=CAP_SETUID CAP_SETGID',
+    'CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SYS_ADMIN',
     'PrivateDevices=yes',
     'PrivateTmp=yes',
     'ProtectSystem=strict',
     'ProtectHome=tmpfs',
+    'ProtectProc=invisible',
     'TemporaryFileSystem=/:ro',
     'BindReadOnlyPaths=/usr',
     'BindReadOnlyPaths=-/lib',
@@ -811,12 +825,19 @@ export function buildPublicationSystemdInvocation({
     ...properties.map((property) => `--property=${property}`),
     `--working-directory=${publicationRoot}`,
     '--',
+    PUBLICATION_BOUNDARY_EXECUTABLES.unshare,
+    '--pid',
+    '--fork',
+    '--kill-child=SIGKILL',
+    '--mount-proc=/proc',
+    '--propagation=private',
     PUBLICATION_BOUNDARY_EXECUTABLES.setpriv,
     `--reuid=${uid}`,
     `--regid=${gid}`,
     '--clear-groups',
     '--inh-caps=-all',
     '--ambient-caps=-all',
+    '--bounding-set=-all',
     '--no-new-privs',
     PUBLICATION_BOUNDARY_EXECUTABLES.env,
     '-i',
@@ -843,49 +864,189 @@ export function buildPublicationSystemdInvocation({
 export async function runPublicationSystemdInvocation(
   invocation: PublicationSystemdInvocation,
   spawnProcess: typeof spawn = spawn,
+  terminateUnit: (invocation: PublicationSystemdInvocation) => Promise<void> = (
+    failedInvocation,
+  ) => terminatePublicationSystemdUnit(failedInvocation.unitName),
 ) {
-  await new Promise<void>((accept, reject) => {
-    let timedOut = false
-    const child = spawnProcess(invocation.command, invocation.args, {
-      cwd: invocation.publicationRoot,
-      env: invocation.environment,
-      shell: false,
-      stdio: 'inherit',
+  const child = spawnProcess(invocation.command, invocation.args, {
+    cwd: invocation.publicationRoot,
+    env: invocation.environment,
+    shell: false,
+    stdio: 'inherit',
+  })
+  let timeout: NodeJS.Timeout | undefined
+  const outcome = new Promise<void>((accept, reject) => {
+    child.once('error', reject)
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        accept()
+        return
+      }
+      const error = new PublicationSystemdError(
+        code === null
+          ? `systemd-run terminated by signal ${signal ?? 'unknown'}`
+          : `systemd-run exited with status ${code}`,
+      )
+      if (code !== null) error.exitCode = code
+      if (signal) error.signal = signal
+      reject(error)
     })
-    const timeout = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGTERM')
-    }, invocation.timeoutMilliseconds)
-    const finish = (result: () => void) => {
-      clearTimeout(timeout)
-      result()
-    }
-    child.once('error', (error) => finish(() => reject(error)))
-    child.once('exit', (code, signal) =>
-      finish(() => {
-        if (timedOut) {
-          reject(
-            new Error(
-              `systemd-run exceeded ${invocation.timeoutMilliseconds}ms`,
-            ),
-          )
-          return
-        }
-        if (code === 0) {
-          accept()
-          return
-        }
-        const error = new PublicationSystemdError(
-          code === null
-            ? `systemd-run terminated by signal ${signal ?? 'unknown'}`
-            : `systemd-run exited with status ${code}`,
-        )
-        if (code !== null) error.exitCode = code
-        if (signal) error.signal = signal
-        reject(error)
-      }),
+  })
+  const watchdog = new Promise<never>((_accept, reject) => {
+    timeout = setTimeout(
+      () =>
+        reject(
+          new Error(`systemd-run exceeded ${invocation.timeoutMilliseconds}ms`),
+        ),
+      invocation.timeoutMilliseconds,
     )
   })
+  try {
+    await Promise.race([outcome, watchdog])
+  } catch (error) {
+    child.kill('SIGKILL')
+    try {
+      await terminateUnit(invocation)
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Publication unit ${invocation.unitName} failed and could not be proven inactive`,
+      )
+    }
+    throw error
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function runPublicationSystemctlCommand(
+  args: string[],
+): Promise<PublicationSystemctlResult> {
+  return new Promise((accept, reject) => {
+    const child = spawn(
+      PUBLICATION_BOUNDARY_EXECUTABLES.sudo,
+      ['-n', PUBLICATION_BOUNDARY_EXECUTABLES.systemctl, ...args],
+      {
+        env: { PATH: '/usr/bin', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' },
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    let stdout = ''
+    let stderr = ''
+    const maximumOutput = 64 * 1024
+    const append = (current: string, chunk: Buffer | string) => {
+      const next = `${current}${String(chunk)}`
+      if (Buffer.byteLength(next) > maximumOutput) {
+        child.kill('SIGKILL')
+        reject(new Error('systemctl returned excessive output'))
+      }
+      return next
+    }
+    child.stdout?.on('data', (chunk) => (stdout = append(stdout, chunk)))
+    child.stderr?.on('data', (chunk) => (stderr = append(stderr, chunk)))
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error('systemctl command timed out'))
+    }, UNIT_CLEANUP_TIMEOUT_MILLISECONDS)
+    child.once('error', (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+    child.once('exit', (code) => {
+      clearTimeout(timeout)
+      accept({ code, stdout, stderr })
+    })
+  })
+}
+
+function systemctlProperties(output: string) {
+  return new Map(
+    output
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const separator = line.indexOf('=')
+        return separator < 0
+          ? [line, '']
+          : [line.slice(0, separator), line.slice(separator + 1)]
+      }),
+  )
+}
+
+export async function terminatePublicationSystemdUnit(
+  unitName: string,
+  runSystemctl: PublicationSystemctlRunner = runPublicationSystemctlCommand,
+  readCgroup: typeof readFile = readFile,
+) {
+  if (!/^[a-z0-9-]+$/.test(unitName) || unitName.length > 63)
+    throw new Error('Publication systemd unit name is invalid')
+  const serviceName = `${unitName}.service`
+  await runSystemctl([
+    'kill',
+    '--kill-whom=all',
+    '--signal=SIGKILL',
+    serviceName,
+  ]).catch(() => ({ code: null, stdout: '', stderr: '' }))
+  await runSystemctl(['stop', serviceName]).catch(() => ({
+    code: null,
+    stdout: '',
+    stderr: '',
+  }))
+  const deadline = Date.now() + UNIT_CLEANUP_TIMEOUT_MILLISECONDS
+  let observedDrained = false
+  while (Date.now() < deadline) {
+    const status = await runSystemctl([
+      'show',
+      '--property=LoadState',
+      '--property=ActiveState',
+      '--property=SubState',
+      '--property=ControlGroup',
+      '--property=MainPID',
+      serviceName,
+    ])
+    const properties = systemctlProperties(status.stdout)
+    if (
+      properties.get('LoadState') === 'not-found' ||
+      (status.code !== 0 && /not[- ]found|not loaded/iu.test(status.stderr))
+    )
+      return
+    const controlGroup = properties.get('ControlGroup') ?? ''
+    let cgroupEmpty = !controlGroup
+    if (controlGroup) {
+      if (
+        !controlGroup.startsWith('/') ||
+        controlGroup.includes('/../') ||
+        controlGroup.includes('\0')
+      )
+        throw new Error('Publication unit returned an unsafe control group')
+      const cgroupPath = resolve(
+        '/sys/fs/cgroup',
+        `.${controlGroup}`,
+        'cgroup.procs',
+      )
+      try {
+        cgroupEmpty = (await readCgroup(cgroupPath, 'utf8')).trim() === ''
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+          cgroupEmpty = true
+        else throw error
+      }
+    }
+    if (
+      cgroupEmpty &&
+      ['inactive', 'failed'].includes(properties.get('ActiveState') ?? '') &&
+      (properties.get('MainPID') ?? '0') === '0'
+    )
+      observedDrained = true
+    await new Promise((accept) => setTimeout(accept, 25))
+  }
+  throw new Error(
+    observedDrained
+      ? `Publication unit ${serviceName} drained but was not collected`
+      : `Publication unit ${serviceName} still has an active process or cgroup`,
+  )
 }
 
 export async function runPublicationIsolatedRender(

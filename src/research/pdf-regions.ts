@@ -115,6 +115,43 @@ export const PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE = Object.freeze(
   ].sort(),
 )
 
+export const PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE = Object.freeze(
+  [
+    'exact-source-sequence-adjacency',
+    'explicit-fragment-lineage',
+    'same-page-column-flow',
+    'same-page-column-geometry',
+  ].sort(),
+)
+
+export function pdfSourceColumnFlowStartsWithCjkNumericContinuation(
+  continuationText: string,
+) {
+  return /^\p{N}+(?:[,.]\p{N}+)*(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u.test(
+    continuationText.trimStart(),
+  )
+}
+
+export function pdfSourceColumnFlowJoinOutcome(
+  language: string | null,
+  continuationText: string,
+  continuationRun: PdfSourceRun,
+) {
+  const hasSourceWhitespace =
+    continuationRun.sourceWhitespaceBefore === 'pdf-text-item' &&
+    continuationRun.sourceWhitespacePredecessorIndex !== undefined
+  if (hasSourceWhitespace) {
+    return { outcome: 'space' as const, separator: ' ' as const }
+  }
+  const cjkScript =
+    /^[^\p{L}\p{N}]*(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u.test(
+      continuationText,
+    ) || pdfSourceColumnFlowStartsWithCjkNumericContinuation(continuationText)
+  return cjkScript
+    ? { outcome: 'no-space' as const, separator: '' as const }
+    : { outcome: 'space' as const, separator: ' ' as const }
+}
+
 export function canonicalPdfSourceSemanticFlowEvidence(
   evidence: readonly string[],
 ) {
@@ -2411,6 +2448,87 @@ function captionLineFontSize(line: PdfTextLine) {
   return line.fontSize
 }
 
+export function captionFontFamily(fontName: string) {
+  const normalized = fontName.trim().toLocaleLowerCase()
+  if (/^[a-z][a-z0-9]*_d\d+_f\d+$/u.test(normalized)) {
+    return normalized.replace(/[^a-z0-9]+/gu, '')
+  }
+  return normalized
+    .replace(/^[a-z]{6}\+/iu, '')
+    .replace(/mt$/iu, '')
+    .replace(/ps(?=[-+_,.\s]|$)/iu, '')
+    .replace(
+      /(?:[-+_,.\s]*(?:bold|black|demi(?:bold)?|semibold|medium|regular|roman|book|italic|ital|oblique|obl))+$/iu,
+      '',
+    )
+    .replace(
+      /(?:[-+_,.\s]+(?:reguital|medi|regu|bdit|bdi|bi|bd|it|reg|rm|md|med|lt|sb))+$/iu,
+      '',
+    )
+    .replace(/\d+$/u, '')
+    .replace(/[^a-z0-9]+/gu, '')
+}
+
+function captionLineDominantFontFamily(line: PdfTextLine) {
+  const counts = new Map<string, number>()
+  for (const run of line.runs) {
+    const textLength = run.text.replace(/\s/gu, '').length
+    if (textLength === 0) continue
+    const family = captionFontFamily(run.fontName)
+    if (!family) continue
+    counts.set(family, (counts.get(family) ?? 0) + textLength)
+  }
+  return (
+    [...counts.entries()].sort(
+      ([leftFamily, leftCount], [rightFamily, rightCount]) =>
+        rightCount - leftCount || leftFamily.localeCompare(rightFamily),
+    )[0]?.[0] ?? null
+  )
+}
+
+function captionTypographyCompatible(
+  seed: PdfTextLine,
+  candidate: PdfTextLine,
+) {
+  return (
+    captionLineDominantFontFamily(seed) ===
+    captionLineDominantFontFamily(candidate)
+  )
+}
+
+function captionLaneCompatible(
+  seed: PdfTextLine,
+  previous: PdfTextLine,
+  candidate: PdfTextLine,
+) {
+  const boundary =
+    seed.sourceCaptionLaneBoundary ?? previous.sourceCaptionLaneBoundary
+  const side = seed.sourceCaptionLaneSide ?? previous.sourceCaptionLaneSide
+  if (boundary === undefined || side === undefined) return true
+  if (
+    (candidate.sourceCaptionLaneBoundary !== undefined &&
+      Math.abs(candidate.sourceCaptionLaneBoundary - boundary) > 0.002) ||
+    (candidate.sourceCaptionLaneSide !== undefined &&
+      candidate.sourceCaptionLaneSide !== side)
+  ) {
+    return false
+  }
+  const left = candidate.x
+  const right = candidate.x + candidate.width
+  const tolerance = 0.004
+  if (candidate.sourceCaptionLaneSide === undefined) {
+    if (side === 'left' && right > boundary - tolerance) return false
+    if (side === 'right' && left < boundary + tolerance) return false
+  }
+  if (left < boundary - tolerance && right > boundary + tolerance) {
+    return false
+  }
+  const center = left + candidate.width / 2
+  return side === 'left'
+    ? center <= boundary + tolerance
+    : center >= boundary - tolerance
+}
+
 function completesQuotedCaptionExpression(
   previous: ClassifiedLine,
   candidate: ClassifiedLine,
@@ -2428,8 +2546,15 @@ function captionContinuationGeometry(
   seed: ClassifiedLine,
   previous: ClassifiedLine,
   candidate: ClassifiedLine,
+  enforceCaptionLane = true,
 ) {
   if (candidate.captionLaneSplitAmbiguous) return false
+  if (
+    (enforceCaptionLane && !captionLaneCompatible(seed, previous, candidate)) ||
+    !captionTypographyCompatible(seed, candidate)
+  ) {
+    return false
+  }
   const candidateProseWordCount =
     candidate.text.match(/\p{L}{2,}/gu)?.length ?? 0
   const equationClassifiedCaptionProse =
@@ -2570,15 +2695,20 @@ function splitSourceCaptionLaneContinuations(lines: ClassifiedLine[]) {
             sourceCaptionLaneBoundary: pair.boundary,
             sourceCaptionLaneSide: 'right' as const,
           }
-          return captionContinuationGeometry(pair.left, leftPrevious, left) &&
-            captionContinuationGeometry(pair.right, rightPrevious, right)
+          return captionContinuationGeometry(
+            pair.left,
+            leftPrevious,
+            left,
+            false,
+          ) &&
+            captionContinuationGeometry(pair.right, rightPrevious, right, false)
             ? [{ line, left, right }]
             : []
         })
         if (boundaries.length !== 1) {
           if (
-            captionContinuationGeometry(pair.left, leftPrevious, line) ||
-            captionContinuationGeometry(pair.right, rightPrevious, line)
+            captionContinuationGeometry(pair.left, leftPrevious, line, false) ||
+            captionContinuationGeometry(pair.right, rightPrevious, line, false)
           ) {
             line.captionLaneSplitAmbiguous = true
           }

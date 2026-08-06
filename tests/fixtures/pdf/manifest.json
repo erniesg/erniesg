@@ -81,12 +81,15 @@
     },
     {
       "file": "source-output-checkpoints.pdf",
-      "sha256": "2265f0d49304011feb8c972bf24bf5b93db099180d4fa270826e19df23c2de30",
+      "sha256": "11d53d6972016822309632eac08b50dd2990dd84e9a801101cccc447aa216bea",
       "features": [
         "source-output-checkpoints",
         "source-flowchart",
         "caption-boundary",
         "prose-continuity",
+        "cross-page-prose-continuity",
+        "hyphen-resolution",
+        "markup-non-promotion",
         "pseudocode-block",
         "furniture-exclusion"
       ]

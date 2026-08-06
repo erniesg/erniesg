@@ -34,6 +34,7 @@ import {
   synthesizeRecoveredBibliographyClassifications,
 } from './pdf-layout'
 import { PDF_HYPHEN_LEXICAL_MODEL } from './pdf-hyphenation'
+import { pdfBodySourceOrderExtremaByPage } from './pdf-regions'
 import { assessPdfCompleteness } from './pdf-quality'
 import {
   canonicalTextIntegrityIssues,
@@ -835,6 +836,168 @@ describe('PDF semantic reconstruction', () => {
         'exact-source-sequence-adjacency',
         'same-page-column-flow',
       ]),
+    })
+  })
+
+  describe('cross-page prose continuity', () => {
+    const onPage = (region: PdfPageRegion, page: number): PdfPageRegion => ({
+      ...region,
+      page,
+      box: { ...region.box, page },
+      lines: region.lines.map((line) => ({
+        ...line,
+        box: { ...line.box, page },
+        runs: line.runs.map((sourceRun) => ({ ...sourceRun, page })),
+      })),
+    })
+    const pageBreakPair = (label: string, tailSequence = 40) => ({
+      target: onPage(
+        sourceFlowRegion({
+          id: `${label}-target`,
+          column: 'right',
+          text: 'The measured drift therefore continues toward the',
+          x: 0.515,
+          y: 0.82,
+          sourceSequenceIndex: tailSequence,
+        }),
+        1,
+      ),
+      continuation: onPage(
+        sourceFlowRegion({
+          id: `${label}-continuation`,
+          column: 'left',
+          text: 'stationary regime described in the next section.',
+          x: 0.09,
+          y: 0.1,
+          sourceSequenceIndex: 1,
+        }),
+        2,
+      ),
+    })
+    const runningHead = (label: string) =>
+      onPage(
+        sourceFlowRegion({
+          id: `${label}-running-head`,
+          column: 'left',
+          text: 'Continuous prose reconstruction',
+          x: 0.09,
+          y: 0.03,
+          sourceSequenceIndex: 0,
+        }),
+        2,
+      )
+    const asFurniture = (region: PdfPageRegion): PdfPageRegion => ({
+      ...region,
+      column: 'span',
+      furniture: {
+        classification: 'repeated-text',
+        band: 'top',
+        pages: [1, 2],
+        boxes: [{ ...region.box }],
+        evidence: ['repeated-normalized-text'],
+      },
+    })
+    const joinAcrossPageBreak = async (
+      target: PdfPageRegion,
+      continuation: PdfPageRegion,
+      sourceRegions: PdfPageRegion[],
+    ) => {
+      const blocks = [target, continuation].map((region) => ({
+        type: 'paragraph' as const,
+        region,
+        text: region.text,
+        confidence: 1,
+      }))
+      const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+        []
+      await mergeProseContinuations(blocks, {
+        sourceSemanticFlowBoundaryDecisions,
+        bodySourceOrderExtremaByPage:
+          pdfBodySourceOrderExtremaByPage(sourceRegions),
+      })
+      return { blocks, sourceSemanticFlowBoundaryDecisions }
+    }
+
+    it('records a proven page-break join in the semantic-flow ledger', async () => {
+      const { target, continuation } = pageBreakPair('proven-page-break')
+      const { blocks, sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(target, continuation, [target, continuation])
+
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].text).toBe(
+        'The measured drift therefore continues toward the stationary regime described in the next section.',
+      )
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+      expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+        page: 1,
+        topology: 'cross-page-column',
+        outcome: 'space',
+        evidence: [
+          'cross-page-column-geometry',
+          'explicit-fragment-lineage',
+          'furniture-excluded-page-boundary',
+          'page-head-source-order-extremum',
+          'page-tail-source-order-extremum',
+        ],
+      })
+    })
+
+    it('keeps an intervening running head out of the joined paragraph', async () => {
+      // Issue 042 classifies the running head as furniture, so it is not body
+      // source order. The sentence therefore stays adjacent across the page
+      // break and the head never enters the paragraph.
+      const { target, continuation } = pageBreakPair('furniture-page-break')
+      const head = runningHead('furniture-page-break')
+      const { blocks, sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(target, continuation, [
+          target,
+          asFurniture(head),
+          continuation,
+        ])
+
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].text).not.toContain('Continuous prose reconstruction')
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+      expect(sourceSemanticFlowBoundaryDecisions[0].topology).toBe(
+        'cross-page-column',
+      )
+    })
+
+    it('refuses to prove a page-break join across unaccounted source text', async () => {
+      // The same page-two text, this time with no furniture evidence, is body
+      // source order the sentence would have to jump over. The prose may still
+      // be joined by the weaker unmarked-continuation heuristic, but nothing is
+      // written to the ledger, so the join is never claimed as proven.
+      const { target, continuation } = pageBreakPair('unaccounted-page-break')
+      const head = runningHead('unaccounted-page-break')
+      const { sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(target, continuation, [
+          target,
+          head,
+          continuation,
+        ])
+
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(0)
+    })
+
+    it('refuses to prove a page-break join from a mid-page tail', async () => {
+      const { target, continuation } = pageBreakPair('mid-page-tail')
+      const midPageTail: PdfPageRegion = {
+        ...target,
+        box: { ...target.box, y: 0.2 },
+        lines: target.lines.map((line) => ({
+          ...line,
+          box: { ...line.box, y: 0.2 },
+          runs: line.runs.map((sourceRun) => ({ ...sourceRun, y: 0.2 })),
+        })),
+      }
+      const { sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(midPageTail, continuation, [
+          midPageTail,
+          continuation,
+        ])
+
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(0)
     })
   })
 

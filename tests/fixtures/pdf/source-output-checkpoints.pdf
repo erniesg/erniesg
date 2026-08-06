@@ -4,7 +4,7 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
@@ -19,7 +19,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 6 0 R >>
 endobj
 6 0 obj
-<< /Length 542 >>
+<< /Length 666 >>
 stream
 BT
 /F2 20 Tf
@@ -65,19 +65,74 @@ BT
 72 250 Td
 (Figure 1 caption stays below the source flowchart.) Tj
 ET
+BT
+/F1 12 Tf
+72 120 Td
+(A second result sentence runs off the bottom of this) Tj
+ET
+BT
+/F1 12 Tf
+72 100 Td
+(page and) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 448 >>
+stream
+BT
+/F1 9 Tf
+72 760 Td
+(Source/output checkpoint fixture) Tj
+ET
+BT
+/F1 12 Tf
+72 700 Td
+(continues at the top of the next one without losing) Tj
+ET
+BT
+/F1 12 Tf
+72 680 Td
+(its clause.) Tj
+ET
+BT
+/F1 12 Tf
+72 620 Td
+(The high-resolution photo-) Tj
+ET
+BT
+/F1 12 Tf
+72 600 Td
+(graph is attested elsewhere as photograph.) Tj
+ET
+BT
+/F1 12 Tf
+72 540 Td
+(## Not a heading and **not bold** and {placeholder}) Tj
+ET
+BT
+/F1 12 Tf
+72 520 Td
+(stay literal.) Tj
+ET
 endstream
 endobj
 xref
-0 7
+0 9
 0000000000 65535 f 
 0000000046 00000 n 
 0000000095 00000 n 
-0000000152 00000 n 
-0000000222 00000 n 
-0000000446 00000 n 
-0000000608 00000 n 
+0000000158 00000 n 
+0000000228 00000 n 
+0000000452 00000 n 
+0000000614 00000 n 
+0000001331 00000 n 
+0000001467 00000 n 
 trailer
-<< /Size 7 /Root 1 0 R >>
+<< /Size 9 /Root 1 0 R >>
 startxref
-1201
+1966
 %%EOF

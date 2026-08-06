@@ -404,6 +404,95 @@ function captionSourceLaneMatchesBox(
     : center >= lane.boundary - tolerance
 }
 
+const COMPOSITE_CAPTION_LANE_EVIDENCE = [
+  'connected-native-scaffold',
+  'caption-bounded-native-scaffold',
+  'caption-bounded-semantic-envelope',
+  'caption-bounded-reused-layer-grid-scaffold',
+  'headless-composite-raster',
+  'headless-composite-svg',
+] as const
+
+function compositeCandidateMayCrossCaptionLane(
+  caption: PdfPageRegion,
+  candidate: VisualCandidate,
+) {
+  if (
+    candidate.kind !== 'figure' ||
+    !candidate.evidence?.some((item) =>
+      COMPOSITE_CAPTION_LANE_EVIDENCE.includes(
+        item as (typeof COMPOSITE_CAPTION_LANE_EVIDENCE)[number],
+      ),
+    )
+  ) {
+    return false
+  }
+  const scope = candidate.renderBox ?? candidate.sourceBoxes[0]
+  return Boolean(
+    scope &&
+    horizontalOverlapRatio(caption.box, scope) >= 0.35 &&
+    candidate.sourceBoxes.some(
+      (sourceBox) => horizontalOverlapRatio(caption.box, sourceBox) >= 0.35,
+    ),
+  )
+}
+
+function captionLaneScopedRenderBox(
+  caption: PdfPageRegion,
+  candidate: VisualCandidate,
+) {
+  const lane = caption.sourceCaptionLane
+  if (
+    !lane ||
+    !candidate.renderBox ||
+    !candidate.sourceBoxes.some(
+      (sourceBox) =>
+        !captionSourceLaneMatchesBox(caption, sourceBox, candidate.column),
+    ) ||
+    !compositeCandidateMayCrossCaptionLane(caption, candidate)
+  ) {
+    return candidate.renderBox
+  }
+  const laneLeft = lane.side === 'left' ? 0 : lane.boundary
+  const laneRight = lane.side === 'left' ? lane.boundary : 1
+  const left = Math.max(candidate.renderBox.x, laneLeft)
+  const right = Math.min(
+    candidate.renderBox.x + candidate.renderBox.width,
+    laneRight,
+  )
+  if (right <= left) return candidate.renderBox
+  return {
+    ...candidate.renderBox,
+    x: rounded(left),
+    width: rounded(right - left),
+  }
+}
+
+type SourceHorizontalBounds = { left: number; right: number }
+
+function captionLaneHorizontalBounds(
+  caption: PdfPageRegion,
+): SourceHorizontalBounds | undefined {
+  const lane = caption.sourceCaptionLane
+  if (!lane) return undefined
+  const boundary = Math.max(0, Math.min(1, lane.boundary))
+  return lane.side === 'left'
+    ? { left: 0, right: boundary }
+    : { left: boundary, right: 1 }
+}
+
+function sourceBoxWithinHorizontalBounds(
+  sourceBox: NormalizedSourceBox,
+  horizontalBounds: SourceHorizontalBounds | undefined,
+) {
+  return (
+    !horizontalBounds ||
+    (sourceBox.x >= horizontalBounds.left - SOURCE_CROP_CONTAINMENT_TOLERANCE &&
+      sourceBox.x + sourceBox.width <=
+        horizontalBounds.right + SOURCE_CROP_CONTAINMENT_TOLERANCE)
+  )
+}
+
 function narrowCaptionClaimsOneColumn(
   left: PdfPageRegion,
   right: PdfPageRegion,
@@ -1272,6 +1361,12 @@ function owningCaptionForBox(
   return captions
     .filter((candidate) => {
       if (candidate.page !== box.page || candidate.box.y < box.y) return false
+      if (
+        candidate.sourceCaptionLane &&
+        !captionSourceLaneMatchesBox(candidate, box, 'span')
+      ) {
+        return false
+      }
       const overlap = Math.max(
         0,
         Math.min(candidate.box.x + candidate.box.width, box.x + box.width) -
@@ -2789,12 +2884,18 @@ function availableRegionsForTable(
   })
 }
 
-function paddedUnionBox(boxes: NormalizedSourceBox[]) {
+function paddedUnionBox(
+  boxes: NormalizedSourceBox[],
+  horizontalBounds?: SourceHorizontalBounds,
+) {
   const padding = 0.004
-  const left = Math.max(0, Math.min(...boxes.map((box) => box.x)) - padding)
+  const left = Math.max(
+    horizontalBounds?.left ?? 0,
+    Math.min(...boxes.map((box) => box.x)) - padding,
+  )
   const top = Math.max(0, Math.min(...boxes.map((box) => box.y)) - padding)
   const right = Math.min(
-    1,
+    horizontalBounds?.right ?? 1,
     Math.max(...boxes.map((box) => box.x + box.width)) + padding,
   )
   const bottom = Math.min(
@@ -3361,6 +3462,7 @@ function neighborBoundedCropBoxes(
   regions: PdfPageRegion[],
   desiredPadding: number,
   neighborGapFraction = 0.25,
+  horizontalBounds?: SourceHorizontalBounds,
 ) {
   const padded = paddedEquationCropBox(sourceBox, desiredPadding)
   const desired = {
@@ -3462,9 +3564,15 @@ function neighborBoundedCropBoxes(
           (nearestRight - (sourceBox.x + sourceBox.width)) * neighborGapFraction
         : null,
   }
-  const left = bounds.left ?? desired.left
+  const left = Math.max(
+    horizontalBounds?.left ?? 0,
+    bounds.left ?? desired.left,
+  )
   const top = bounds.top ?? desired.top
-  const right = bounds.right ?? desired.right
+  const right = Math.min(
+    horizontalBounds?.right ?? 1,
+    bounds.right ?? desired.right,
+  )
   const bottom = bounds.bottom ?? desired.bottom
   return [
     {
@@ -4883,6 +4991,112 @@ function sourceLineageWithinRenderScope(
   }
 }
 
+function projectFigureLineageToAcceptedSourceCrop(
+  candidate: VisualCandidate,
+  sourceCrop: PdfVisualAsset,
+  sourceCropBox: NormalizedSourceBox,
+  caption: PdfPageRegion,
+  regions: readonly PdfPageRegion[],
+) {
+  const sourceRegionIds = candidate.sourceRegionIds.filter((sourceRegionId) => {
+    const sourceRegion = regions.find((region) => region.id === sourceRegionId)
+    return Boolean(
+      sourceRegion && intersectSourceBox(sourceCropBox, sourceRegion.box),
+    )
+  })
+  const sourceObjectIds = [...sourceCrop.sourceObjectIds]
+  const sourceBoxes = sourceCrop.sourceBoxes.map((sourceBox) => ({
+    ...sourceBox,
+  }))
+  const syntheticPanelRecovery = sourceObjectIds.some((sourceObjectId) =>
+    sourceObjectId.startsWith('source-panel:'),
+  )
+  if (!caption.sourceCaptionLane) {
+    if (!syntheticPanelRecovery) {
+      return {
+        sourceObjectIds,
+        sourceBoxes,
+        sourceRegionIds,
+        sourceLineIds: candidate.sourceLineIds,
+        sourceText: candidate.sourceText,
+      }
+    }
+    const retainedSourceLineIds = new Set(
+      regions.flatMap((region) =>
+        sourceRegionIds.includes(region.id)
+          ? region.lines.flatMap((line) =>
+              intersectSourceBox(sourceCropBox, line.box) ? [line.id] : [],
+            )
+          : [],
+      ),
+    )
+    return {
+      sourceObjectIds,
+      sourceBoxes,
+      sourceRegionIds,
+      sourceLineIds: candidate.sourceLineIds?.filter((sourceLineId) =>
+        retainedSourceLineIds.has(sourceLineId),
+      ),
+      sourceText: regions
+        .filter((region) => sourceRegionIds.includes(region.id))
+        .flatMap((region) =>
+          region.lines.filter((line) => retainedSourceLineIds.has(line.id)),
+        )
+        .map((line) => line.text)
+        .join(' '),
+    }
+  }
+
+  const explicitSourceLineIds = candidate.sourceLineIds?.length
+    ? new Set(candidate.sourceLineIds)
+    : null
+  const horizontalBounds = captionLaneHorizontalBounds(caption)
+  const retainedTextRegionIds = new Set<string>()
+  const retainedSourceLineIds: string[] = []
+  const retainedSourceText: string[] = []
+  const seenSourceLineIds = new Set<string>()
+  for (const sourceRegionId of sourceRegionIds) {
+    const sourceRegion = regions.find((region) => region.id === sourceRegionId)
+    if (!sourceRegion || sourceRegion.lines.length === 0) continue
+    for (const line of sourceRegion.lines) {
+      if (
+        seenSourceLineIds.has(line.id) ||
+        (explicitSourceLineIds && !explicitSourceLineIds.has(line.id)) ||
+        !line.text.trim() ||
+        !fullyContainsBox(
+          sourceCropBox,
+          line.box,
+          SOURCE_CROP_CONTAINMENT_TOLERANCE,
+        ) ||
+        !sourceBoxWithinHorizontalBounds(line.box, horizontalBounds)
+      ) {
+        continue
+      }
+      seenSourceLineIds.add(line.id)
+      retainedTextRegionIds.add(sourceRegionId)
+      retainedSourceLineIds.push(line.id)
+      retainedSourceText.push(line.text)
+    }
+  }
+  return {
+    sourceObjectIds,
+    sourceBoxes,
+    sourceRegionIds: sourceRegionIds.filter((sourceRegionId) => {
+      const sourceRegion = regions.find(
+        (region) => region.id === sourceRegionId,
+      )
+      return Boolean(
+        sourceRegion &&
+        (sourceRegion.lines.length === 0 ||
+          sourceRegion.nativeObjectIds.length > 0 ||
+          retainedTextRegionIds.has(sourceRegionId)),
+      )
+    }),
+    sourceLineIds: retainedSourceLineIds,
+    sourceText: retainedSourceText.join(' '),
+  }
+}
+
 function renderScopeContainsCompleteFigureLineage(
   candidate: VisualCandidate,
   sourceCropBox: NormalizedSourceBox,
@@ -5341,6 +5555,7 @@ function captionTextBoundedFigureRetryBox(
   candidate: VisualCandidate,
   boundedSourceBox: NormalizedSourceBox,
   captionBox: NormalizedSourceBox,
+  horizontalBounds?: SourceHorizontalBounds,
 ) {
   if (
     candidate.kind !== 'figure' ||
@@ -5370,27 +5585,25 @@ function captionTextBoundedFigureRetryBox(
     ),
   )
   const bottom = boundedSourceBox.y + boundedSourceBox.height
-  const left =
-    nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
-      ? captionBox.x
-      : rounded(
-          Math.max(
-            0,
-            Math.min(...overlayBoxes.map((sourceBox) => sourceBox.x)) -
-              CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
-          ),
-        )
-  const right =
-    nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
-      ? captionBox.x + captionBox.width
-      : rounded(
-          Math.min(
-            1,
-            Math.max(
-              ...overlayBoxes.map((sourceBox) => sourceBox.x + sourceBox.width),
-            ) + CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
-          ),
-        )
+  const left = rounded(
+    Math.max(
+      horizontalBounds?.left ?? 0,
+      nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+        ? captionBox.x
+        : Math.min(...overlayBoxes.map((sourceBox) => sourceBox.x)) -
+            CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
+    ),
+  )
+  const right = rounded(
+    Math.min(
+      horizontalBounds?.right ?? 1,
+      nativeObjectCount >= MIN_DENSE_NATIVE_SCAFFOLD_FRAGMENT_COUNT
+        ? captionBox.x + captionBox.width
+        : Math.max(
+            ...overlayBoxes.map((sourceBox) => sourceBox.x + sourceBox.width),
+          ) + CAPTION_BOUNDED_PANEL_HORIZONTAL_EDGE_RETRY_PADDING,
+    ),
+  )
   if (
     top <= boundedSourceBox.y + SOURCE_CROP_CONTAINMENT_TOLERANCE ||
     top >= bottom ||
@@ -5418,6 +5631,7 @@ function captionBoundedPanelRecoveryBoxes(
   regions: readonly PdfPageRegion[],
   objectKinds: ReadonlyMap<string, PdfNativeObject['kind']>,
   pageCropFailureEvidence: string | undefined,
+  horizontalBounds?: SourceHorizontalBounds,
 ) {
   const captionBox = caption.box
   const evidence = new Set(candidate.evidence ?? [])
@@ -5493,7 +5707,7 @@ function captionBoundedPanelRecoveryBoxes(
 
   const left = rounded(
     Math.max(
-      0,
+      horizontalBounds?.left ?? 0,
       Math.min(
         captionBox.x + CAPTION_BOUNDED_PANEL_EDGE_RETRY_PADDING,
         Math.min(...overlayBoxes.map((box) => box.x)) -
@@ -5506,7 +5720,7 @@ function captionBoundedPanelRecoveryBoxes(
   )
   const right = rounded(
     Math.min(
-      1,
+      horizontalBounds?.right ?? 1,
       Math.max(
         captionBox.x +
           captionBox.width -
@@ -6196,6 +6410,17 @@ function candidateScore(
   ) {
     return null
   }
+  if (
+    caption.sourceCaptionLane &&
+    (candidate.sourceBoxes.length === 0 ||
+      (candidate.sourceBoxes.some(
+        (sourceBox) =>
+          !captionSourceLaneMatchesBox(caption, sourceBox, candidate.column),
+      ) &&
+        !compositeCandidateMayCrossCaptionLane(caption, candidate)))
+  ) {
+    return null
+  }
   const nativeSourceBoxes = candidate.sourceObjectIds
     .map((sourceObjectId, index) =>
       sourceObjectId.startsWith(TEXT_OVERLAY_PREFIX)
@@ -6442,11 +6667,20 @@ function matchCandidate(
   const best = scored[0]
   const ambiguous =
     Boolean(best) && Boolean(scored[1]) && best.score - scored[1].score < 0.08
+  const provedCompositeCaptionLane = Boolean(
+    best &&
+    caption.sourceCaptionLane &&
+    compositeCandidateMayCrossCaptionLane(caption, best.candidate),
+  )
   return {
     scored,
     best,
     ambiguous,
-    matched: Boolean(best) && best.score >= 0.72 && !ambiguous,
+    matched:
+      Boolean(best) &&
+      (best.score >= 0.72 ||
+        (provedCompositeCaptionLane && best.score >= 0.7)) &&
+      !ambiguous,
   }
 }
 
@@ -10039,6 +10273,7 @@ export async function reconstructPdfVisuals({
   const consumedRegionIds = new Set<string>()
   const consumedLineIds = new Set<string>()
   const consumedSourceObjectIds = new Set<string>()
+  const consumedSourceObjectScopes = new Map<string, NormalizedSourceBox[]>()
   const relationships: PdfVisualRelationship[] = []
 
   for (const [captionIndex, caption] of captions.entries()) {
@@ -10580,15 +10815,68 @@ export async function reconstructPdfVisuals({
     const sourcePageCropVetoed = Boolean(
       matchedCandidate?.sourcePageCropBlockedByReadingOrderText,
     )
-    const best = matchedCandidate
+    const nativeCandidate = matchedCandidate
       ? nativeOnlyFigureCandidate(matchedCandidate, regions, objectAssetIds)
       : undefined
+    // Crop recovery narrows source lineage for one caption. Keep that
+    // working copy isolated from the shared candidate pool so a later
+    // caption can still evaluate the original full-width composite scope.
+    const best = nativeCandidate
+      ? {
+          ...nativeCandidate,
+          sourceRegionIds: [...nativeCandidate.sourceRegionIds],
+          sourceLineIds: nativeCandidate.sourceLineIds
+            ? [...nativeCandidate.sourceLineIds]
+            : undefined,
+          sourceObjectIds: [...nativeCandidate.sourceObjectIds],
+          assetIds: [...nativeCandidate.assetIds],
+          sourceBoxes: nativeCandidate.sourceBoxes.map((sourceBox) => ({
+            ...sourceBox,
+          })),
+          renderBox: nativeCandidate.renderBox
+            ? { ...nativeCandidate.renderBox }
+            : undefined,
+          textOwnershipBox: nativeCandidate.textOwnershipBox
+            ? { ...nativeCandidate.textOwnershipBox }
+            : undefined,
+          evidence: nativeCandidate.evidence
+            ? [...nativeCandidate.evidence]
+            : undefined,
+        }
+      : undefined
+    const laneScopedRenderBox =
+      best && best.kind === 'figure'
+        ? captionLaneScopedRenderBox(caption, best)
+        : best?.renderBox
+    const laneHorizontalBounds =
+      best?.kind === 'figure' && laneScopedRenderBox
+        ? captionLaneHorizontalBounds(caption)
+        : undefined
+    const figureOwnershipScope =
+      best?.kind === 'figure'
+        ? laneScopedRenderBox
+          ? paddedUnionBox([laneScopedRenderBox], laneHorizontalBounds)
+          : (best.renderBox ?? best.sourceBoxes[0])
+        : null
+    const figureOwnershipSourceObjectIds =
+      best?.kind === 'figure' ? [...best.sourceObjectIds] : []
     const figureLineageConflictsPriorOwnership =
       best?.kind === 'figure' &&
-      (best.sourceObjectIds.some((sourceObjectId) =>
-        consumedSourceObjectIds.has(sourceObjectId),
-      ) ||
-        containedFigureOverlayLineage(best, regions).some((overlay) =>
+      (best.sourceObjectIds.some((sourceObjectId) => {
+        if (!consumedSourceObjectIds.has(sourceObjectId)) return false
+        const priorScopes = consumedSourceObjectScopes.get(sourceObjectId)
+        if (!figureOwnershipScope || !priorScopes || priorScopes.length === 0) {
+          return true
+        }
+        return priorScopes.some((priorScope) =>
+          materiallyOverlappingSourceBoxes(priorScope, figureOwnershipScope),
+        )
+      }) ||
+        containedFigureOverlayLineage(best, regions, {
+          ...(figureOwnershipScope
+            ? { containmentBox: figureOwnershipScope }
+            : {}),
+        }).some((overlay) =>
           overlay.lineIds.some((lineId) => consumedLineIds.has(lineId)),
         ))
     if (
@@ -10599,7 +10887,7 @@ export async function reconstructPdfVisuals({
       result.best.evidence.push('cross-type-source-lineage-conflict')
     }
     const boundedCropBaseBox =
-      best?.renderBox ??
+      laneScopedRenderBox ??
       (best?.kind === 'table' && best.sourceBoxes.length === 1
         ? { ...best.sourceBoxes[0] }
         : null)
@@ -10616,7 +10904,10 @@ export async function reconstructPdfVisuals({
           )
         : null
     const initialTableCropBox = best
-      ? paddedUnionBox(best.renderBox ? [best.renderBox] : best.sourceBoxes)
+      ? paddedUnionBox(
+          laneScopedRenderBox ? [laneScopedRenderBox] : best.sourceBoxes,
+          laneHorizontalBounds,
+        )
       : null
     const captionBoundedTextSlabEnvelope = Boolean(
       best?.kind === 'table' &&
@@ -10778,6 +11069,7 @@ export async function reconstructPdfVisuals({
           best,
           boundedCropBaseBox,
           caption.box,
+          laneHorizontalBounds,
         )
         const retryLineage =
           retryBox &&
@@ -10859,6 +11151,7 @@ export async function reconstructPdfVisuals({
             regions,
             padding,
             0.75,
+            laneHorizontalBounds,
           )
           for (const retryBox of retryBoxes) {
             if (
@@ -11090,6 +11383,10 @@ export async function reconstructPdfVisuals({
       }
       if (
         sourceCrop &&
+        sourceBoxWithinHorizontalBounds(
+          sourceCrop.sourceCropBox ?? compositeSourceBox!,
+          laneHorizontalBounds,
+        ) &&
         completeSourcePageCropAsset(
           sourceCrop,
           best.kind,
@@ -11112,19 +11409,34 @@ export async function reconstructPdfVisuals({
           result.best!.evidence.push('source-page-crop-source-ink-tightened')
         }
         mergeAsset(assetStore, sourceCrop)
-        best.sourceObjectIds = [...scopedSourceLineage.sourceObjectIds]
-        best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
-          ...box,
-        }))
-        best.sourceRegionIds = best.sourceRegionIds.filter((sourceRegionId) => {
-          const sourceRegion = regions.find(
-            (region) => region.id === sourceRegionId,
+        if (best.kind === 'figure') {
+          Object.assign(
+            best,
+            projectFigureLineageToAcceptedSourceCrop(
+              best,
+              sourceCrop,
+              compositeSourceBox,
+              caption,
+              regions,
+            ),
           )
-          return Boolean(
-            sourceRegion &&
-            intersectSourceBox(compositeSourceBox!, sourceRegion.box),
+        } else {
+          best.sourceObjectIds = [...scopedSourceLineage.sourceObjectIds]
+          best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
+            ...box,
+          }))
+          best.sourceRegionIds = best.sourceRegionIds.filter(
+            (sourceRegionId) => {
+              const sourceRegion = regions.find(
+                (region) => region.id === sourceRegionId,
+              )
+              return Boolean(
+                sourceRegion &&
+                intersectSourceBox(compositeSourceBox!, sourceRegion.box),
+              )
+            },
           )
-        })
+        }
         best.assetIds = [sourceCrop.id]
         retainedPageCrop = sourceCrop
         result.best!.evidence = result.best!.evidence.filter(
@@ -11165,6 +11477,7 @@ export async function reconstructPdfVisuals({
         regions,
         objectKinds,
         pageCropFailureEvidence,
+        laneHorizontalBounds,
       )
       const sourceObjectId = `source-panel:${caption.id}`
       for (const recovery of panelRecoveryBoxes) {
@@ -11183,6 +11496,10 @@ export async function reconstructPdfVisuals({
         })
         if (
           retryCrop &&
+          sourceBoxWithinHorizontalBounds(
+            retryCrop.sourceCropBox ?? recovery.sourceBox,
+            laneHorizontalBounds,
+          ) &&
           completeSourcePageCropAsset(
             retryCrop,
             'figure',
@@ -11200,10 +11517,16 @@ export async function reconstructPdfVisuals({
             sourceBoxes: retryCrop.sourceBoxes.map((box) => ({ ...box })),
             clipped: !sameSourceBox(compositeSourceBox, recovery.sourceBox),
           }
-          best.sourceObjectIds = [...scopedSourceLineage.sourceObjectIds]
-          best.sourceBoxes = scopedSourceLineage.sourceBoxes.map((box) => ({
-            ...box,
-          }))
+          Object.assign(
+            best,
+            projectFigureLineageToAcceptedSourceCrop(
+              best,
+              retryCrop,
+              compositeSourceBox,
+              caption,
+              regions,
+            ),
+          )
           best.assetIds = [retryCrop.id]
           best.nativeEnvelopeIncomplete = false
           retainedPageCrop = retryCrop
@@ -11317,6 +11640,10 @@ export async function reconstructPdfVisuals({
       (Boolean(
         retainedPageCrop &&
         compositeSourceBox &&
+        sourceBoxWithinHorizontalBounds(
+          compositeSourceBox,
+          laneHorizontalBounds,
+        ) &&
         completeSourcePageCropAsset(
           retainedPageCrop,
           best!.kind,
@@ -11431,8 +11758,27 @@ export async function reconstructPdfVisuals({
       result.best.evidence.push('unresolved-bounded-table-text-owned')
     }
     if (status === 'matched') {
-      for (const sourceObjectId of best!.sourceObjectIds) {
+      const finalFigureOwnershipScope =
+        best!.kind === 'figure' && retainedPageCrop && compositeSourceBox
+          ? compositeSourceBox
+          : figureOwnershipScope
+      const consumedRelationshipSourceObjectIds =
+        best!.kind === 'figure'
+          ? [
+              ...new Set([
+                ...figureOwnershipSourceObjectIds,
+                ...best!.sourceObjectIds,
+              ]),
+            ]
+          : best!.sourceObjectIds
+      for (const sourceObjectId of consumedRelationshipSourceObjectIds) {
         consumedSourceObjectIds.add(sourceObjectId)
+        if (finalFigureOwnershipScope && best!.kind === 'figure') {
+          const priorScopes =
+            consumedSourceObjectScopes.get(sourceObjectId) ?? []
+          priorScopes.push({ ...finalFigureOwnershipScope })
+          consumedSourceObjectScopes.set(sourceObjectId, priorScopes)
+        }
       }
       if (label.kind === 'table' || label.kind === 'equation') {
         if (

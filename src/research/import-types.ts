@@ -105,8 +105,9 @@ export type PdfSourceSemanticFlowBoundaryDecision = {
   page: number
   rotation: number
   method: 'pdf-text' | 'ocr'
-  topology: 'inline-stacked-fragment' | 'lexical-hyphen'
-  outcome: 'no-space' | 'discretionary-hyphen-delete' | 'hard-hyphen-retain'
+  topology: 'inline-stacked-fragment' | 'lexical-hyphen' | 'same-page-column'
+  outcome:
+    'no-space' | 'space' | 'discretionary-hyphen-delete' | 'hard-hyphen-retain'
   from: PdfSourceSemanticFlowBoundaryEndpoint
   to: PdfSourceSemanticFlowBoundaryEndpoint
   evidence: string[]

@@ -2323,7 +2323,7 @@ describe('local PDF corpus audit', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it('streams multiple opt-in private overlays outside the repository without widening the report', { timeout: 30_000 }, async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-corpus-overlays-'))

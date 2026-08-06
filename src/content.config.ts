@@ -20,12 +20,21 @@ const blog = defineCollection({
         ),
       date: z.coerce.date(),
       image: image().optional(),
+      imageAlt: z
+        .string()
+        .min(
+          1,
+          'Authored alternative text is required when a hero image is used.',
+        )
+        .optional(),
       tags: z.array(z.string()).optional(),
       authors: z.array(z.string()).optional(),
       lang: z.enum(['en', 'zh', 'ko', 'ja']).optional(),
       translationKey: z.string().optional(),
       translationStatus: z.enum(['machine', 'edited', 'final']).optional(),
-      translationSource: z.enum(['codex', 'human', 'imported-legacy']).optional(),
+      translationSource: z
+        .enum(['codex', 'human', 'imported-legacy'])
+        .optional(),
       draft: z.boolean().optional(),
     }),
 })

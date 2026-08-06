@@ -66,6 +66,8 @@ export type PublicationSystemdInvocation = {
   publicationRoot: string
   timeoutMilliseconds: number
   unitName: string
+  identityName: string
+  controlGroup: string
 }
 
 export type PublicationIsolatedRenderRequest = {
@@ -95,7 +97,9 @@ export type PublicationNetworkDiagnostic = {
 
 type PublicationIsolatedRenderDependencies = {
   verifyExecutables?: typeof verifyPublicationBoundaryExecutables
-  runInvocation?: typeof runPublicationSystemdInvocation
+  runInvocation?: (
+    invocation: PublicationSystemdInvocation,
+  ) => Promise<{ proof: string } | void>
   normalizePdf?: typeof normalizePublicationPdf
   createRuntimeAttestations?: typeof createPublicationRuntimeAttestations
   verifyRuntimeAttestations?: typeof verifyPublicationRuntimeAttestations
@@ -156,6 +160,27 @@ type PublicationSystemctlResult = {
 type PublicationSystemctlRunner = (
   args: string[],
 ) => Promise<PublicationSystemctlResult>
+
+export type PublicationUnitLease = {
+  serviceName: string
+  invocationId: string
+  controlGroup: string
+}
+
+export type PublicationUnitObservation =
+  | { kind: 'not-found' }
+  | {
+      kind: 'loaded'
+      lease: PublicationUnitLease
+      activeState: string
+      subState: string
+      mainPid: number
+    }
+
+export type PublicationUnitLifecycle = {
+  phase: 'unseen' | 'pinned' | 'drained' | 'collected'
+  lease?: PublicationUnitLease
+}
 
 function isPathInside(root: string, path: string) {
   const child = relative(root, path)
@@ -755,6 +780,24 @@ async function createPrivateStagingDirectory(parent: string) {
   throw new Error('Unable to create a private publication staging directory')
 }
 
+async function exposePublicationSourceSnapshot(
+  root: string,
+  entries: Array<{ path: string }>,
+) {
+  const directories = new Set([root])
+  for (const entry of entries) {
+    const path = resolve(root, ...entry.path.split('/'))
+    await chmod(path, 0o444)
+    let parent = dirname(path)
+    while (isPathInside(root, parent)) {
+      directories.add(parent)
+      if (parent === root) break
+      parent = dirname(parent)
+    }
+  }
+  await Promise.all([...directories].map((path) => chmod(path, 0o755)))
+}
+
 type OpenedRegularFile = {
   bytes: Uint8Array
   device: number
@@ -874,8 +917,11 @@ async function normalizePublicationPdf(
 
 const PROOF_FIELDS = [
   'browserVersion',
+  'cgroup',
+  'childCgroups',
   'childMountNamespaces',
   'childNetworkNamespaces',
+  'childPidNamespaces',
   'environmentSha256',
   'event',
   'filesystemDiagnostics',
@@ -884,6 +930,7 @@ const PROOF_FIELDS = [
   'mountNamespace',
   'networkDiagnostic',
   'networkNamespace',
+  'nspid',
   'nodeVersion',
   'outputByteLength',
   'outputSha256',
@@ -891,6 +938,7 @@ const PROOF_FIELDS = [
   'rendererVersion',
   'requestSha256',
   'runtimeEntries',
+  'pidNamespace',
   'sourceSha256',
   'uid',
   'version',
@@ -958,6 +1006,7 @@ function validateIsolationProof({
     )
   const networkNamespace = record.networkNamespace
   const mountNamespace = record.mountNamespace
+  const pidNamespace = record.pidNamespace
   if (
     record.version !== 1 ||
     record.event !== 'publication-isolation-proof' ||
@@ -966,8 +1015,14 @@ function validateIsolationProof({
     record.rendererVersion !== authenticatedRequest.expectedRendererVersion ||
     record.browserVersion !== authenticatedRequest.expectedBrowserVersion ||
     record.nodeVersion !== authenticatedRequest.expectedNodeVersion ||
-    record.uid !== authenticatedRequest.expectedUid ||
-    record.gid !== authenticatedRequest.expectedGid ||
+    !Number.isSafeInteger(record.uid) ||
+    (record.uid as number) < 61_184 ||
+    (record.uid as number) > 65_519 ||
+    record.uid === authenticatedRequest.expectedUid ||
+    !Number.isSafeInteger(record.gid) ||
+    (record.gid as number) < 61_184 ||
+    (record.gid as number) > 65_519 ||
+    record.gid === authenticatedRequest.expectedGid ||
     record.environmentSha256 !==
       authenticatedRequest.expectedEnvironmentSha256 ||
     record.outputSha256 !== sha256(renderedPdf.bytes) ||
@@ -979,6 +1034,10 @@ function validateIsolationProof({
     networkNamespace === authenticatedRequest.hostNetworkNamespace ||
     !/^mnt:\[\d+\]$/.test(String(mountNamespace)) ||
     mountNamespace === authenticatedRequest.hostMountNamespace ||
+    !/^pid:\[\d+\]$/.test(String(pidNamespace)) ||
+    pidNamespace === authenticatedRequest.hostPidNamespace ||
+    JSON.stringify(record.nspid) !== JSON.stringify([1]) ||
+    record.cgroup !== authenticatedRequest.expectedControlGroup ||
     JSON.stringify(record.interfaces) !== JSON.stringify(['lo']) ||
     !exactNamespaceChildren(
       record.childNetworkNamespaces,
@@ -990,6 +1049,13 @@ function validateIsolationProof({
       mountNamespace,
       /^mnt:\[\d+\]$/,
     ) ||
+    !exactNamespaceChildren(
+      record.childPidNamespaces,
+      pidNamespace,
+      /^pid:\[\d+\]$/,
+    ) ||
+    JSON.stringify(record.childCgroups) !==
+      JSON.stringify([authenticatedRequest.expectedControlGroup]) ||
     JSON.stringify(record.networkDiagnostic) !==
       JSON.stringify(
         expectedNetworkDiagnosticProof(authenticatedRequest.networkDiagnostic),
@@ -1020,6 +1086,13 @@ export function createPublicationUnitName(
   const name = `erniesg-publication-${pid}-${randomToken}`
   if (name.length > 63) throw new Error('Publication unit name is too long')
   return name
+}
+
+export function createPublicationIdentityName(unitName: string) {
+  const token = unitName.match(/-([a-f0-9]{16})$/)?.[1]
+  if (!token)
+    throw new Error('Publication unit cannot derive a kernel identity')
+  return `epub-${token}`
 }
 
 export function assertPublicationBoundaryRuntime({
@@ -1075,6 +1148,7 @@ export function buildPublicationSystemdInvocation({
   uid,
   gid,
   unitName = createPublicationUnitName(),
+  identityName = createPublicationIdentityName(unitName),
 }: {
   publicationRoot: string
   stagingDirectory: string
@@ -1084,6 +1158,7 @@ export function buildPublicationSystemdInvocation({
   uid: number
   gid: number
   unitName?: string
+  identityName?: string
 }): PublicationSystemdInvocation {
   assertPublicationBoundaryRuntime({ platform: 'linux', uid, gid })
   if (
@@ -1114,10 +1189,22 @@ export function buildPublicationSystemdInvocation({
     throw new Error('Publication request digest must be SHA-256')
   if (!/^[a-z0-9-]+$/.test(unitName) || unitName.length > 63)
     throw new Error('Publication systemd unit name is invalid')
+  if (
+    !/^epub-[a-f0-9]{16}$/.test(identityName) ||
+    identityName !== createPublicationIdentityName(unitName)
+  )
+    throw new Error('Publication dynamic identity name is invalid')
+  const controlGroup = `/system.slice/${unitName}.service`
 
   const properties = [
     'Type=exec',
+    'Slice=system.slice',
     'PrivateNetwork=yes',
+    'DynamicUser=yes',
+    `User=${identityName}`,
+    `Group=${identityName}`,
+    'SetLoginEnvironment=no',
+    'PrivateUsers=yes',
     'NoNewPrivileges=yes',
     'AmbientCapabilities=',
     'CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SYS_ADMIN',
@@ -1138,6 +1225,7 @@ export function buildPublicationSystemdInvocation({
     'BindReadOnlyPaths=-/etc/group',
     'BindReadOnlyPaths=-/etc/localtime',
     'BindReadOnlyPaths=-/var/cache/fontconfig',
+    'BindReadOnlyPaths=/run/systemd/userdb/io.systemd.DynamicUser',
     `BindPaths=${systemdPathListItem(stagingDirectory)}`,
     `ReadWritePaths=${systemdPathListItem(stagingDirectory)}`,
     `BindReadOnlyPaths=${systemdPathListItem(publicationRoot)}`,
@@ -1184,15 +1272,15 @@ export function buildPublicationSystemdInvocation({
     ...properties.map((property) => `--property=${property}`),
     `--working-directory=${publicationRoot}`,
     '--',
-    PUBLICATION_BOUNDARY_EXECUTABLES.unshare,
+    `!${PUBLICATION_BOUNDARY_EXECUTABLES.unshare}`,
     '--pid',
     '--fork',
     '--kill-child=SIGKILL',
     '--mount-proc=/proc',
     '--propagation=private',
     PUBLICATION_BOUNDARY_EXECUTABLES.setpriv,
-    `--reuid=${uid}`,
-    `--regid=${gid}`,
+    `--reuid=${identityName}`,
+    `--regid=${identityName}`,
     '--clear-groups',
     '--inh-caps=-all',
     '--ambient-caps=-all',
@@ -1217,26 +1305,50 @@ export function buildPublicationSystemdInvocation({
     publicationRoot,
     timeoutMilliseconds: INVOCATION_TIMEOUT_MILLISECONDS,
     unitName,
+    identityName,
+    controlGroup,
   }
 }
 
 export async function runPublicationSystemdInvocation(
   invocation: PublicationSystemdInvocation,
   spawnProcess: typeof spawn = spawn,
-  terminateUnit: (invocation: PublicationSystemdInvocation) => Promise<void> = (
-    failedInvocation,
-  ) => terminatePublicationSystemdUnit(failedInvocation.unitName),
+  terminateUnit: (
+    invocation: PublicationSystemdInvocation,
+    lease?: PublicationUnitLease,
+  ) => Promise<void> = (failedInvocation, lease) =>
+    terminatePublicationSystemdUnit(
+      failedInvocation.unitName,
+      undefined,
+      undefined,
+      lease,
+    ),
+  monitorUnit: typeof monitorPublicationSystemdUnit = monitorPublicationSystemdUnit,
 ) {
   const child = spawnProcess(invocation.command, invocation.args, {
     cwd: invocation.publicationRoot,
     env: invocation.environment,
     shell: false,
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  })
+  let proofOutput = ''
+  let proofOutputError: Error | undefined
+  child.stdout?.setEncoding('utf8')
+  child.stdout?.on('data', (chunk) => {
+    proofOutput += String(chunk)
+    if (Buffer.byteLength(proofOutput) > MAX_PROOF_BYTES) {
+      proofOutputError = new Error('Publication proof output is excessive')
+      child.kill('SIGKILL')
+    }
   })
   let timeout: NodeJS.Timeout | undefined
   const outcome = new Promise<void>((accept, reject) => {
     child.once('error', reject)
     child.once('exit', (code, signal) => {
+      if (proofOutputError) {
+        reject(proofOutputError)
+        return
+      }
       if (code === 0) {
         accept()
         return
@@ -1260,13 +1372,37 @@ export async function runPublicationSystemdInvocation(
       invocation.timeoutMilliseconds,
     )
   })
+  let pinnedLease: PublicationUnitLease | undefined
+  let lifecycleCompleted = false
+  const lifecycle = monitorUnit(invocation, (lease) => {
+    pinnedLease = lease
+  }).then((proof) => {
+    lifecycleCompleted = true
+    return proof
+  })
   try {
-    await Promise.race([outcome, watchdog])
+    const [, lifecycleProof] = await Promise.all([
+      Promise.race([outcome, watchdog]),
+      lifecycle,
+    ])
+    const proofLines = proofOutput.trim().split('\n').filter(Boolean)
+    if (proofLines.length !== 1)
+      throw new Error('Publication unit returned ambiguous proof output')
+    return { proof: proofLines[0], lifecycle: lifecycleProof }
   } catch (error) {
     child.kill('SIGKILL')
+    if (lifecycleCompleted) throw error
     try {
-      await terminateUnit(invocation)
+      await terminateUnit(invocation, pinnedLease)
     } catch (cleanupError) {
+      const collected = await Promise.race([
+        lifecycle.then(
+          () => true,
+          () => false,
+        ),
+        new Promise<false>((accept) => setTimeout(() => accept(false), 25)),
+      ])
+      if (collected) throw error
       throw new AggregateError(
         [error, cleanupError],
         `Publication unit ${invocation.unitName} failed and could not be proven inactive`,
@@ -1319,29 +1455,380 @@ async function runPublicationSystemctlCommand(
   })
 }
 
-function systemctlProperties(output: string) {
-  return new Map(
-    output
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const separator = line.indexOf('=')
-        return separator < 0
-          ? [line, '']
-          : [line.slice(0, separator), line.slice(separator + 1)]
-      }),
+const UNIT_OBSERVATION_FIELDS = [
+  'ActiveState',
+  'ControlGroup',
+  'DynamicUser',
+  'Group',
+  'Id',
+  'InvocationID',
+  'LoadState',
+  'MainPID',
+  'Slice',
+  'SubState',
+  'User',
+] as const
+
+export function parsePublicationUnitObservation(
+  expectedServiceName: string,
+  result: PublicationSystemctlResult,
+): PublicationUnitObservation {
+  const lines = result.stdout.trim().split('\n').filter(Boolean)
+  const values = new Map<string, string>()
+  for (const line of lines) {
+    const separator = line.indexOf('=')
+    if (separator < 1) throw new Error('Publication unit status is malformed')
+    const name = line.slice(0, separator)
+    if (values.has(name))
+      throw new Error(`Publication unit status duplicates ${name}`)
+    values.set(name, line.slice(separator + 1))
+  }
+  if (
+    result.code !== 0 &&
+    /not[- ]found|not loaded/iu.test(result.stderr) &&
+    lines.length === 0
   )
+    return { kind: 'not-found' }
+  if (
+    JSON.stringify([...values.keys()].sort()) !==
+    JSON.stringify([...UNIT_OBSERVATION_FIELDS].sort())
+  )
+    throw new Error('Publication unit status fields are incomplete')
+  if (values.get('Id') !== expectedServiceName)
+    throw new Error('Publication unit status returned the wrong service')
+  if (values.get('LoadState') === 'not-found') return { kind: 'not-found' }
+  if (values.get('LoadState') !== 'loaded')
+    throw new Error('Publication unit did not remain loaded')
+  const invocationId = values.get('InvocationID') ?? ''
+  const expectedControlGroup = `/system.slice/${expectedServiceName}`
+  const expectedIdentityName = createPublicationIdentityName(
+    expectedServiceName.slice(0, -'.service'.length),
+  )
+  const controlGroup = values.get('ControlGroup') ?? ''
+  const mainPidText = values.get('MainPID') ?? ''
+  if (
+    !/^[a-f0-9]{32}$/.test(invocationId) ||
+    controlGroup !== expectedControlGroup ||
+    values.get('DynamicUser') !== 'yes' ||
+    values.get('User') !== expectedIdentityName ||
+    values.get('Group') !== expectedIdentityName ||
+    values.get('Slice') !== 'system.slice' ||
+    !/^\d+$/.test(mainPidText)
+  )
+    throw new Error('Publication unit identity is invalid')
+  const mainPid = Number(mainPidText)
+  if (!Number.isSafeInteger(mainPid))
+    throw new Error('Publication unit main PID is invalid')
+  return {
+    kind: 'loaded',
+    lease: { serviceName: expectedServiceName, invocationId, controlGroup },
+    activeState: values.get('ActiveState') ?? '',
+    subState: values.get('SubState') ?? '',
+    mainPid,
+  }
+}
+
+function populatedCgroupValue(events: string) {
+  const values = events
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .filter((line) => line.startsWith('populated '))
+  if (values.length !== 1 || !/^populated [01]$/.test(values[0]))
+    throw new Error('Publication cgroup populated state is ambiguous')
+  return values[0] === 'populated 1'
+}
+
+export function advancePublicationUnitLifecycle(
+  lifecycle: PublicationUnitLifecycle,
+  observation: PublicationUnitObservation,
+  cgroupEvents?: string,
+): PublicationUnitLifecycle {
+  if (lifecycle.phase === 'collected') return lifecycle
+  if (observation.kind === 'not-found') {
+    if (lifecycle.phase !== 'drained')
+      throw new Error('Publication unit disappeared before a proven drain')
+    return { ...lifecycle, phase: 'collected' }
+  }
+  if (
+    lifecycle.lease &&
+    (observation.lease.invocationId !== lifecycle.lease.invocationId ||
+      observation.lease.controlGroup !== lifecycle.lease.controlGroup ||
+      observation.lease.serviceName !== lifecycle.lease.serviceName)
+  )
+    throw new Error('Publication unit identity changed during execution')
+  const lease = lifecycle.lease ?? observation.lease
+  if (cgroupEvents === undefined)
+    throw new Error('Publication unit cgroup state is unavailable')
+  const populated = populatedCgroupValue(cgroupEvents)
+  const terminal = ['inactive', 'failed'].includes(observation.activeState)
+  if (terminal && observation.mainPid === 0 && !populated)
+    return { phase: 'drained', lease }
+  if (lifecycle.phase === 'drained')
+    throw new Error('Publication unit repopulated after a proven drain')
+  return { phase: 'pinned', lease }
+}
+
+function publicationUnitShowArguments(serviceName: string) {
+  return [
+    'show',
+    ...UNIT_OBSERVATION_FIELDS.map((field) => `--property=${field}`),
+    serviceName,
+  ]
+}
+
+function publicationProcStatusValue(status: string, name: string) {
+  const value = status.match(new RegExp(`^${name}:\\s*(.+)$`, 'mu'))?.[1]
+  if (!value) throw new Error(`Publication process status is missing ${name}`)
+  return value.trim()
+}
+
+function publicationProcessStartTime(statLine: string) {
+  const fields = statLine.slice(statLine.lastIndexOf(')') + 2).split(/\s+/u)
+  const startTime = fields[19]
+  if (!/^\d+$/.test(startTime ?? ''))
+    throw new Error('Publication process start time is invalid')
+  return startTime
+}
+
+export async function inspectPublicationCgroupMembership(
+  lease: PublicationUnitLease,
+  readCgroup: typeof readFile = readFile,
+  inspectCgroup: typeof lstat = lstat,
+  listCgroup: typeof readdir = readdir,
+) {
+  const root = resolve('/sys/fs/cgroup', `.${lease.controlGroup}`)
+  const eventsPath = resolve(root, 'cgroup.events')
+  const procsPath = resolve(root, 'cgroup.procs')
+  const [beforeMetadata, beforeEvents, beforeProcs, children] =
+    await Promise.all([
+      inspectCgroup(root),
+      readCgroup(eventsPath, 'utf8'),
+      readCgroup(procsPath, 'utf8'),
+      listCgroup(root, { withFileTypes: true }),
+    ])
+  if (
+    !beforeMetadata.isDirectory() ||
+    beforeMetadata.isSymbolicLink() ||
+    children.some((entry) => entry.isDirectory())
+  )
+    throw new Error('Publication cgroup closure is not exact')
+  const pids = beforeProcs.trim().split(/\s+/u).filter(Boolean).sort()
+  if (
+    pids.some((pid) => !/^\d+$/.test(pid)) ||
+    new Set(pids).size !== pids.length
+  )
+    throw new Error('Publication cgroup membership is ambiguous')
+  const members = await Promise.all(
+    pids.map(async (pid) => {
+      const [cgroup, status, statLine] = await Promise.all([
+        readCgroup(`/proc/${pid}/cgroup`, 'utf8'),
+        readCgroup(`/proc/${pid}/status`, 'utf8'),
+        readCgroup(`/proc/${pid}/stat`, 'utf8'),
+      ])
+      if (cgroup.trim() !== `0::${lease.controlGroup}`)
+        throw new Error(`Publication process ${pid} escaped its exact cgroup`)
+      const startTime = publicationProcessStartTime(statLine)
+      const uid = publicationProcStatusValue(status, 'Uid')
+        .split(/\s+/u)
+        .map(Number)
+      const gid = publicationProcStatusValue(status, 'Gid')
+        .split(/\s+/u)
+        .map(Number)
+      const nspid = publicationProcStatusValue(status, 'NSpid')
+        .split(/\s+/u)
+        .map(Number)
+      if (
+        uid.length !== 4 ||
+        gid.length !== 4 ||
+        nspid.some((value) => !Number.isSafeInteger(value) || value < 1)
+      )
+        throw new Error(`Publication process ${pid} identity is ambiguous`)
+      return { pid, startTime, uid, gid, nspid }
+    }),
+  )
+  const [afterMetadata, afterEvents, afterProcs, afterStartTimes] =
+    await Promise.all([
+      inspectCgroup(root),
+      readCgroup(eventsPath, 'utf8'),
+      readCgroup(procsPath, 'utf8'),
+      Promise.all(
+        members.map(({ pid }) =>
+          readCgroup(`/proc/${pid}/stat`, 'utf8').then(
+            publicationProcessStartTime,
+          ),
+        ),
+      ),
+    ])
+  const afterPids = afterProcs.trim().split(/\s+/u).filter(Boolean).sort()
+  if (
+    afterMetadata.dev !== beforeMetadata.dev ||
+    afterMetadata.ino !== beforeMetadata.ino ||
+    beforeEvents !== afterEvents ||
+    JSON.stringify(pids) !== JSON.stringify(afterPids) ||
+    members.some(({ startTime }, index) => startTime !== afterStartTimes[index])
+  )
+    throw new Error('Publication cgroup changed while it was sampled')
+  if (populatedCgroupValue(beforeEvents) && pids.length === 0)
+    throw new Error('Publication cgroup is populated without visible members')
+  const payload = members.filter(({ uid }) => uid.every((value) => value !== 0))
+  const supervisors = members.filter(({ uid }) =>
+    uid.some((value) => value === 0),
+  )
+  if (
+    populatedCgroupValue(beforeEvents) &&
+    (payload.length === 0 ||
+      supervisors.some(
+        ({ uid, gid, nspid }) =>
+          !uid.every((value) => value === 0) ||
+          !gid.every((value) => value === 0) ||
+          nspid.length !== 1,
+      ) ||
+      !payload.some(({ nspid }) => nspid.length > 1 && nspid.at(-1) === 1) ||
+      payload.some(
+        ({ uid, gid, nspid }) =>
+          !uid.every(
+            (value) => value === uid[0] && value >= 61_184 && value <= 65_519,
+          ) ||
+          !gid.every(
+            (value) => value === gid[0] && value >= 61_184 && value <= 65_519,
+          ) ||
+          nspid.length < 2,
+      ) ||
+      new Set(payload.map(({ uid }) => uid[0])).size !== 1 ||
+      new Set(payload.map(({ gid }) => gid[0])).size !== 1)
+  )
+    throw new Error('Publication payload identity is incomplete or ambiguous')
+  return {
+    events: beforeEvents,
+    members,
+    payloadPids: payload.map(({ pid }) => pid),
+    cgroupDevice: beforeMetadata.dev,
+    cgroupInode: beforeMetadata.ino,
+  }
+}
+
+export async function monitorPublicationSystemdUnit(
+  invocation: PublicationSystemdInvocation,
+  onPinned: (lease: PublicationUnitLease) => void = () => undefined,
+  runSystemctl: PublicationSystemctlRunner = runPublicationSystemctlCommand,
+  readCgroup: typeof readFile = readFile,
+) {
+  const serviceName = `${invocation.unitName}.service`
+  const deadline = Date.now() + INVOCATION_TIMEOUT_MILLISECONDS
+  const pinDeadline = Date.now() + UNIT_CLEANUP_TIMEOUT_MILLISECONDS
+  let lifecycle: PublicationUnitLifecycle = { phase: 'unseen' }
+  let announcedLease = false
+  let observedPayload = false
+  let cgroupIdentity: { device: number; inode: number } | undefined
+  const observedProcessStartTimes = new Map<string, string>()
+  let incoherentSamples = 0
+  while (Date.now() < deadline) {
+    const observation = parsePublicationUnitObservation(
+      serviceName,
+      await runSystemctl(publicationUnitShowArguments(serviceName)),
+    )
+    if (observation.kind === 'not-found' && lifecycle.phase === 'unseen') {
+      if (Date.now() >= pinDeadline)
+        throw new Error('Publication unit could not be pinned before execution')
+      await new Promise((accept) => setTimeout(accept, 10))
+      continue
+    }
+    let cgroupEvents: string | undefined
+    if (observation.kind === 'loaded') {
+      try {
+        const sample = await inspectPublicationCgroupMembership(
+          observation.lease,
+          readCgroup,
+        )
+        if (
+          cgroupIdentity &&
+          (sample.cgroupDevice !== cgroupIdentity.device ||
+            sample.cgroupInode !== cgroupIdentity.inode)
+        )
+          throw new Error(
+            'Publication cgroup identity changed during execution',
+          )
+        cgroupIdentity ??= {
+          device: sample.cgroupDevice,
+          inode: sample.cgroupInode,
+        }
+        for (const member of sample.members) {
+          const priorStartTime = observedProcessStartTimes.get(member.pid)
+          if (priorStartTime && priorStartTime !== member.startTime)
+            throw new Error(
+              `Publication cgroup PID ${member.pid} was reused during execution`,
+            )
+          observedProcessStartTimes.set(member.pid, member.startTime)
+        }
+        cgroupEvents = sample.events
+        if (sample.payloadPids.length > 0) observedPayload = true
+      } catch (error) {
+        if (
+          /changed while it was sampled/u.test(String(error)) ||
+          /payload identity is incomplete|populated without visible members/u.test(
+            String(error),
+          ) ||
+          ['ENOENT', 'ESRCH'].includes(
+            (error as NodeJS.ErrnoException).code ?? '',
+          )
+        ) {
+          incoherentSamples += 1
+          if (incoherentSamples <= 16) continue
+          throw new Error(
+            `Publication cgroup sampling remained incomplete: ${String(error)}`,
+          )
+        }
+        throw error
+      }
+      incoherentSamples = 0
+    }
+    lifecycle = advancePublicationUnitLifecycle(
+      lifecycle,
+      observation,
+      cgroupEvents,
+    )
+    if (lifecycle.lease && !announcedLease) {
+      announcedLease = true
+      onPinned(lifecycle.lease)
+    }
+    if (lifecycle.phase === 'collected') {
+      if (!observedPayload)
+        throw new Error('Publication unit never exposed a coherent payload')
+      return lifecycle
+    }
+    await new Promise((accept) => setTimeout(accept, 10))
+  }
+  throw new Error('Publication unit lifecycle proof timed out')
 }
 
 export async function terminatePublicationSystemdUnit(
   unitName: string,
   runSystemctl: PublicationSystemctlRunner = runPublicationSystemctlCommand,
   readCgroup: typeof readFile = readFile,
+  lease?: PublicationUnitLease,
 ) {
   if (!/^[a-z0-9-]+$/.test(unitName) || unitName.length > 63)
     throw new Error('Publication systemd unit name is invalid')
   const serviceName = `${unitName}.service`
+  if (
+    !lease ||
+    lease.serviceName !== serviceName ||
+    lease.controlGroup !== `/system.slice/${serviceName}`
+  )
+    throw new Error(
+      'Publication unit cannot be terminated without its exact lease',
+    )
+  const preflight = parsePublicationUnitObservation(
+    serviceName,
+    await runSystemctl(publicationUnitShowArguments(serviceName)),
+  )
+  if (
+    preflight.kind !== 'loaded' ||
+    preflight.lease.invocationId !== lease.invocationId ||
+    preflight.lease.controlGroup !== lease.controlGroup
+  )
+    throw new Error('Publication unit changed before exact-unit termination')
   await runSystemctl([
     'kill',
     '--kill-whom=all',
@@ -1354,57 +1841,33 @@ export async function terminatePublicationSystemdUnit(
     stderr: '',
   }))
   const deadline = Date.now() + UNIT_CLEANUP_TIMEOUT_MILLISECONDS
-  let observedDrained = false
+  let lifecycle: PublicationUnitLifecycle = { phase: 'pinned', lease }
   while (Date.now() < deadline) {
-    const status = await runSystemctl([
-      'show',
-      '--property=LoadState',
-      '--property=ActiveState',
-      '--property=SubState',
-      '--property=ControlGroup',
-      '--property=MainPID',
+    const observation = parsePublicationUnitObservation(
       serviceName,
-    ])
-    const properties = systemctlProperties(status.stdout)
-    if (
-      properties.get('LoadState') === 'not-found' ||
-      (status.code !== 0 && /not[- ]found|not loaded/iu.test(status.stderr))
+      await runSystemctl(publicationUnitShowArguments(serviceName)),
     )
-      return
-    const controlGroup = properties.get('ControlGroup') ?? ''
-    let cgroupEmpty = !controlGroup
-    if (controlGroup) {
-      if (
-        !controlGroup.startsWith('/') ||
-        controlGroup.includes('/../') ||
-        controlGroup.includes('\0')
-      )
-        throw new Error('Publication unit returned an unsafe control group')
-      const cgroupPath = resolve(
-        '/sys/fs/cgroup',
-        `.${controlGroup}`,
-        'cgroup.procs',
-      )
-      try {
-        cgroupEmpty = (await readCgroup(cgroupPath, 'utf8')).trim() === ''
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-          cgroupEmpty = true
-        else throw error
-      }
-    }
-    if (
-      cgroupEmpty &&
-      ['inactive', 'failed'].includes(properties.get('ActiveState') ?? '') &&
-      (properties.get('MainPID') ?? '0') === '0'
+    const cgroupEvents =
+      observation.kind === 'loaded'
+        ? await readCgroup(
+            resolve(
+              '/sys/fs/cgroup',
+              `.${lease.controlGroup}`,
+              'cgroup.events',
+            ),
+            'utf8',
+          )
+        : undefined
+    lifecycle = advancePublicationUnitLifecycle(
+      lifecycle,
+      observation,
+      cgroupEvents,
     )
-      observedDrained = true
+    if (lifecycle.phase === 'collected') return
     await new Promise((accept) => setTimeout(accept, 25))
   }
   throw new Error(
-    observedDrained
-      ? `Publication unit ${serviceName} drained but was not collected`
-      : `Publication unit ${serviceName} still has an active process or cgroup`,
+    `Publication unit ${serviceName} was not drained and collected`,
   )
 }
 
@@ -1477,25 +1940,36 @@ export async function runPublicationIsolatedRender(
     dependencies.createRuntimeAttestations ??
     createPublicationRuntimeAttestations
   )(request, browserPath)
-  const [hostNetworkNamespace, hostMountNamespace] = await Promise.all([
-    readlink('/proc/self/ns/net'),
-    readlink('/proc/self/ns/mnt'),
-  ])
+  const unitName = createPublicationUnitName()
+  const identityName = createPublicationIdentityName(unitName)
+  const expectedControlGroup = `/system.slice/${unitName}.service`
+  const [hostNetworkNamespace, hostMountNamespace, hostPidNamespace] =
+    await Promise.all([
+      readlink('/proc/self/ns/net'),
+      readlink('/proc/self/ns/mnt'),
+      readlink('/proc/self/ns/pid'),
+    ])
   const stagingDirectory = await createPrivateStagingDirectory(outputParent)
   const requestPath = resolve(stagingDirectory, 'request.json')
-  const proofPath = resolve(stagingDirectory, 'proof.json')
-  const renderedPath = resolve(stagingDirectory, 'rendered.pdf')
+  const mailboxDirectory = resolve(stagingDirectory, 'mailbox')
+  const renderedPath = resolve(mailboxDirectory, 'rendered.pdf')
   const normalizedPath = resolve(stagingDirectory, 'normalized.pdf')
   const sourceRoot = resolve(stagingDirectory, 'source')
   try {
     const sourceSnapshot = await (
       dependencies.createSourceSnapshot ?? createPublicationSourceSnapshot
     )(publicationRoot, inputPath, sourceRoot)
+    await exposePublicationSourceSnapshot(
+      sourceSnapshot.root,
+      sourceSnapshot.sourceEntries,
+    )
+    await mkdir(mailboxDirectory, { mode: 0o733 })
+    await chmod(mailboxDirectory, 0o733)
     const expectedEnvironmentSha256 = environmentSha256(
       childEnvironment(sourceSnapshot.root),
     )
     const authenticatedRequest = {
-      version: 3,
+      version: 5,
       renderer: request.renderer,
       publicationRoot: sourceSnapshot.root,
       stagingDirectory,
@@ -1512,16 +1986,21 @@ export async function runPublicationIsolatedRender(
       expectedEnvironmentSha256,
       expectedUid: uid!,
       expectedGid: gid!,
+      expectedUnitName: unitName,
+      expectedIdentityName: identityName,
+      expectedControlGroup,
       hostNetworkNamespace,
       hostMountNamespace,
-      proofPath,
+      hostPidNamespace,
       runtimeEntries,
       networkDiagnostic,
       filesystemDiagnosticPaths,
     }
     const serialized = `${JSON.stringify(authenticatedRequest)}\n`
     const requestSha256 = sha256(serialized)
-    await writeFile(requestPath, serialized, { flag: 'wx', mode: 0o600 })
+    await writeFile(requestPath, serialized, { flag: 'wx', mode: 0o444 })
+    await chmod(requestPath, 0o444)
+    await chmod(stagingDirectory, 0o711)
     const invocation = buildPublicationSystemdInvocation({
       publicationRoot: sourceSnapshot.root,
       stagingDirectory,
@@ -1530,29 +2009,31 @@ export async function runPublicationIsolatedRender(
       runtimeReadOnlyPaths: publicationRuntimeReadOnlyPaths(runtimeEntries),
       uid: uid!,
       gid: gid!,
+      unitName,
+      identityName,
     })
     await (
       dependencies.verifyRuntimeAttestations ??
       verifyPublicationRuntimeAttestations
     )(runtimeEntries)
-    await (dependencies.runInvocation ?? runPublicationSystemdInvocation)(
-      invocation,
-    )
+    const invocationResult = await (
+      dependencies.runInvocation ?? runPublicationSystemdInvocation
+    )(invocation)
+    await chmod(stagingDirectory, 0o700)
     await (
       dependencies.verifyRuntimeAttestations ??
       verifyPublicationRuntimeAttestations
     )(runtimeEntries)
-    const [proofFile, renderedPdf] = await Promise.all([
-      readOpenedRegularFile(proofPath, MAX_PROOF_BYTES, 'Publication proof'),
-      readOpenedRegularFile(
-        renderedPath,
-        MAX_PDF_BYTES,
-        'Rendered publication PDF',
-      ),
-    ])
+    const renderedPdf = await readOpenedRegularFile(
+      renderedPath,
+      MAX_PDF_BYTES,
+      'Rendered publication PDF',
+    )
     let proof: unknown
     try {
-      proof = JSON.parse(Buffer.from(proofFile.bytes).toString('utf8'))
+      if (!invocationResult?.proof)
+        throw new Error('Publication proof output is missing')
+      proof = JSON.parse(invocationResult.proof)
     } catch (error) {
       throw new Error(`Publication proof is not valid JSON: ${String(error)}`)
     }
@@ -1564,12 +2045,13 @@ export async function runPublicationIsolatedRender(
     })
     await Promise.all([
       rm(requestPath, { force: true }),
-      rm(proofPath, { force: true }),
       rm(sourceRoot, { recursive: true, force: true }),
     ])
     if (
       JSON.stringify((await readdir(stagingDirectory)).sort()) !==
-      JSON.stringify(['rendered.pdf'])
+        JSON.stringify(['mailbox']) ||
+      JSON.stringify(await readdir(mailboxDirectory)) !==
+        JSON.stringify(['rendered.pdf'])
     )
       throw new Error('Publication staging directory contains unexpected files')
     await (dependencies.normalizePdf ?? normalizePublicationPdf)(
@@ -1585,6 +2067,7 @@ export async function runPublicationIsolatedRender(
     )
     await PDFDocument.load(normalizedPdf.bytes)
     await rm(renderedPath)
+    await rm(mailboxDirectory, { recursive: true })
     if (
       JSON.stringify(await readdir(stagingDirectory)) !==
       JSON.stringify(['normalized.pdf'])

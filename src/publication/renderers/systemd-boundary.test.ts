@@ -8,6 +8,7 @@ import {
   access,
   chmod,
   copyFile,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
@@ -29,13 +30,17 @@ import {
 import { publicationPlaywrightExecutableCandidates } from './vivliostyle'
 import {
   PUBLICATION_BOUNDARY_EXECUTABLES,
+  advancePublicationUnitLifecycle,
   assertPublicationBoundaryRuntime,
   attestPublicationRuntimeForest,
   attestPublicationRuntimeFile,
   buildPublicationSystemdInvocation,
   createPublicationRuntimeAttestations,
   createPublicationUnitName,
+  inspectPublicationCgroupMembership,
+  monitorPublicationSystemdUnit,
   publicationRuntimeReadOnlyPaths,
+  parsePublicationUnitObservation,
   runPublicationIsolatedRender,
   runPublicationSystemdInvocation,
   terminatePublicationSystemdUnit,
@@ -53,6 +58,7 @@ const invocationInput = {
   uid: 1000,
   gid: 1000,
   unitName: 'erniesg-publication-test-0123456789abcdef',
+  identityName: 'epub-0123456789abcdef',
 }
 
 const systemdIntegration =
@@ -198,18 +204,23 @@ function isolationProof(
     rendererVersion: request.expectedRendererVersion,
     browserVersion: request.expectedBrowserVersion,
     nodeVersion: request.expectedNodeVersion,
-    uid: request.expectedUid,
-    gid: request.expectedGid,
+    uid: 62_000,
+    gid: 62_000,
     environmentSha256: request.expectedEnvironmentSha256,
     outputSha256: sha256(output),
     outputByteLength: output.byteLength,
     sourceSha256: request.sourceSha256,
     runtimeEntries: request.runtimeEntries,
+    cgroup: request.expectedControlGroup,
+    pidNamespace: 'pid:[987654321]',
+    nspid: [1],
     networkNamespace: 'net:[987654321]',
     mountNamespace: 'mnt:[987654321]',
     interfaces: ['lo'],
     childNetworkNamespaces: ['net:[987654321]'],
     childMountNamespaces: ['mnt:[987654321]'],
+    childPidNamespaces: ['pid:[987654321]'],
+    childCgroups: [request.expectedControlGroup],
     networkDiagnostic: request.networkDiagnostic ? { passed: true } : null,
     filesystemDiagnostics: (request.filesystemDiagnosticPaths ?? []).map(
       (path: string) => ({ path, inaccessible: true }),
@@ -244,6 +255,76 @@ const testRuntimeAttestationDependencies = {
   verifyRuntimeAttestations: async () => undefined,
 }
 
+function fakeUnitMonitor(
+  invocation: ReturnType<typeof buildPublicationSystemdInvocation>,
+) {
+  return async (
+    _invocation: typeof invocation,
+    onPinned: (lease: {
+      serviceName: string
+      invocationId: string
+      controlGroup: string
+    }) => void = () => undefined,
+  ) => {
+    const lease = {
+      serviceName: `${invocation.unitName}.service`,
+      invocationId: 'a'.repeat(32),
+      controlGroup: invocation.controlGroup,
+    }
+    onPinned(lease)
+    return { phase: 'collected' as const, lease }
+  }
+}
+
+function fakePinnedUnitMonitor(
+  invocation: ReturnType<typeof buildPublicationSystemdInvocation>,
+) {
+  return async (
+    _invocation: typeof invocation,
+    onPinned: (lease: {
+      serviceName: string
+      invocationId: string
+      controlGroup: string
+    }) => void = () => undefined,
+  ) => {
+    onPinned({
+      serviceName: `${invocation.unitName}.service`,
+      invocationId: 'a'.repeat(32),
+      controlGroup: invocation.controlGroup,
+    })
+    return new Promise<never>(() => undefined)
+  }
+}
+
+function unitStatus(overrides: Partial<Record<string, string>> = {}): {
+  code: number
+  stdout: string
+  stderr: string
+} {
+  const values = {
+    Id: 'erniesg-publication-test-0123456789abcdef.service',
+    InvocationID: 'a'.repeat(32),
+    LoadState: 'loaded',
+    ActiveState: 'active',
+    SubState: 'running',
+    ControlGroup:
+      '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+    DynamicUser: 'yes',
+    User: 'epub-0123456789abcdef',
+    Group: 'epub-0123456789abcdef',
+    Slice: 'system.slice',
+    MainPID: '4321',
+    ...overrides,
+  }
+  return {
+    code: 0,
+    stdout: `${Object.entries(values)
+      .map(([name, value]) => `${name}=${value}`)
+      .join('\n')}\n`,
+    stderr: '',
+  }
+}
+
 describe('publication systemd process-tree boundary', () => {
   it('builds one shell-free, bounded, privilege-dropping system service', () => {
     const invocation = buildPublicationSystemdInvocation(invocationInput)
@@ -260,6 +341,11 @@ describe('publication systemd process-tree boundary', () => {
         '--expand-environment=no',
         '--property=Type=exec',
         '--property=PrivateNetwork=yes',
+        '--property=DynamicUser=yes',
+        '--property=User=epub-0123456789abcdef',
+        '--property=Group=epub-0123456789abcdef',
+        '--property=SetLoginEnvironment=no',
+        '--property=PrivateUsers=yes',
         '--property=NoNewPrivileges=yes',
         '--property=AmbientCapabilities=',
         '--property=CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SYS_ADMIN',
@@ -271,6 +357,7 @@ describe('publication systemd process-tree boundary', () => {
         '--property=TemporaryFileSystem=/:ro',
         '--property=BindReadOnlyPaths=/usr',
         '--property=BindReadOnlyPaths=/tmp/publication\\x20root/.publication-stage-test/source',
+        '--property=BindReadOnlyPaths=/run/systemd/userdb/io.systemd.DynamicUser',
         '--property=BindReadOnlyPaths=/tmp/publication\\x20runtime/entrypoint.js',
         '--property=BindPaths=/tmp/publication\\x20root/.publication-stage-test',
         '--property=ReadWritePaths=/tmp/publication\\x20root/.publication-stage-test',
@@ -283,15 +370,15 @@ describe('publication systemd process-tree boundary', () => {
         '--property=SendSIGKILL=yes',
         '--property=RuntimeMaxSec=120s',
         '--working-directory=/tmp/publication root/.publication-stage-test/source',
-        '/usr/bin/unshare',
+        '!/usr/bin/unshare',
         '--pid',
         '--fork',
         '--kill-child=SIGKILL',
         '--mount-proc=/proc',
         '--propagation=private',
         '/usr/bin/setpriv',
-        '--reuid=1000',
-        '--regid=1000',
+        '--reuid=epub-0123456789abcdef',
+        '--regid=epub-0123456789abcdef',
         '--clear-groups',
         '--inh-caps=-all',
         '--ambient-caps=-all',
@@ -344,7 +431,12 @@ describe('publication systemd process-tree boundary', () => {
         PUBLICATION_BOUNDARY_EXECUTABLES,
       )) {
         if (name === 'systemctl') continue
-        expect(completeArgv).toContain(executable)
+        expect(
+          completeArgv.some(
+            (argument) =>
+              argument === executable || argument === `!${executable}`,
+          ),
+        ).toBe(true)
       }
       expect(PUBLICATION_BOUNDARY_EXECUTABLES.systemctl).toBe(
         '/usr/bin/systemctl',
@@ -385,6 +477,203 @@ describe('publication systemd process-tree boundary', () => {
       for (const name of Object.keys(process.env)) delete process.env[name]
       Object.assign(process.env, originalEnvironment)
     }
+  })
+
+  it('pins an exact systemd invocation and rejects ambiguous unit identity', () => {
+    const serviceName = 'erniesg-publication-test-0123456789abcdef.service'
+    expect(
+      parsePublicationUnitObservation(serviceName, unitStatus()),
+    ).toMatchObject({
+      kind: 'loaded',
+      lease: {
+        serviceName,
+        invocationId: 'a'.repeat(32),
+        controlGroup:
+          '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+      },
+      mainPid: 4321,
+    })
+
+    const missing = unitStatus()
+    missing.stdout = missing.stdout
+      .split('\n')
+      .filter((line) => !line.startsWith('InvocationID='))
+      .join('\n')
+    expect(() => parsePublicationUnitObservation(serviceName, missing)).toThrow(
+      /fields are incomplete/i,
+    )
+    const duplicate = unitStatus()
+    duplicate.stdout += 'MainPID=9\n'
+    expect(() =>
+      parsePublicationUnitObservation(serviceName, duplicate),
+    ).toThrow(/duplicates MainPID/i)
+    for (const candidate of [
+      unitStatus({ Id: 'other.service' }),
+      unitStatus({ InvocationID: 'invalid' }),
+      unitStatus({ ControlGroup: '/system.slice/other.service' }),
+      unitStatus({ MainPID: '-1' }),
+      unitStatus({ DynamicUser: 'no' }),
+      unitStatus({ User: 'shared-user' }),
+      unitStatus({ Slice: 'other.slice' }),
+    ])
+      expect(() =>
+        parsePublicationUnitObservation(serviceName, candidate),
+      ).toThrow(/wrong service|identity is invalid/i)
+  })
+
+  it('requires exact cgroup drain before accepting unit collection', () => {
+    const serviceName = 'erniesg-publication-test-0123456789abcdef.service'
+    const active = parsePublicationUnitObservation(serviceName, unitStatus())
+    const pinned = advancePublicationUnitLifecycle(
+      { phase: 'unseen' },
+      active,
+      'populated 1\nfrozen 0\n',
+    )
+    expect(pinned.phase).toBe('pinned')
+    expect(() =>
+      advancePublicationUnitLifecycle(
+        { phase: 'unseen' },
+        { kind: 'not-found' },
+      ),
+    ).toThrow(/before a proven drain/i)
+
+    const terminalPopulated = parsePublicationUnitObservation(
+      serviceName,
+      unitStatus({ ActiveState: 'failed', SubState: 'failed', MainPID: '0' }),
+    )
+    expect(
+      advancePublicationUnitLifecycle(
+        pinned,
+        terminalPopulated,
+        'populated 1\n',
+      ).phase,
+    ).toBe('pinned')
+    const drained = advancePublicationUnitLifecycle(
+      pinned,
+      terminalPopulated,
+      'populated 0\n',
+    )
+    expect(drained.phase).toBe('drained')
+    expect(
+      advancePublicationUnitLifecycle(drained, { kind: 'not-found' }).phase,
+    ).toBe('collected')
+
+    const changed = parsePublicationUnitObservation(
+      serviceName,
+      unitStatus({ InvocationID: 'b'.repeat(32) }),
+    )
+    expect(() =>
+      advancePublicationUnitLifecycle(pinned, changed, 'populated 1\n'),
+    ).toThrow(/identity changed/i)
+    expect(() =>
+      advancePublicationUnitLifecycle(
+        pinned,
+        active,
+        'populated 0\npopulated 1\n',
+      ),
+    ).toThrow(/ambiguous/i)
+  })
+
+  it('coherently binds reparented payload members to one exact cgroup', async () => {
+    const lease = {
+      serviceName: 'erniesg-publication-test-0123456789abcdef.service',
+      invocationId: 'a'.repeat(32),
+      controlGroup:
+        '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+    }
+    const cgroupRoot =
+      '/sys/fs/cgroup/system.slice/erniesg-publication-test-0123456789abcdef.service'
+    const statLine = (pid: string, startTime: string) =>
+      `${pid} (node) ${['S', ...Array(18).fill('0'), startTime].join(' ')}\n`
+    const status = (uid: number, gid: number, nspid: string) =>
+      `Uid:\t${[uid, uid, uid, uid].join('\t')}\nGid:\t${[gid, gid, gid, gid].join('\t')}\nNSpid:\t${nspid}\n`
+    const values = new Map<string, string>([
+      [`${cgroupRoot}/cgroup.events`, 'populated 1\nfrozen 0\n'],
+      [`${cgroupRoot}/cgroup.procs`, '10\n11\n12\n'],
+      ['/proc/10/cgroup', `0::${lease.controlGroup}\n`],
+      ['/proc/10/status', status(0, 0, '10')],
+      ['/proc/10/stat', statLine('10', '100')],
+      ['/proc/11/cgroup', `0::${lease.controlGroup}\n`],
+      ['/proc/11/status', status(62_000, 62_000, '11\t1')],
+      ['/proc/11/stat', statLine('11', '101')],
+      ['/proc/12/cgroup', `0::${lease.controlGroup}\n`],
+      ['/proc/12/status', status(62_000, 62_000, '12\t2')],
+      ['/proc/12/stat', statLine('12', '102')],
+    ])
+    const read = vi.fn(async (path: string) => {
+      const value = values.get(path)
+      if (value === undefined)
+        throw Object.assign(new Error(path), { code: 'ENOENT' })
+      return value
+    }) as unknown as typeof readFile
+    const inspect = vi.fn(async () => ({
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+      dev: 1,
+      ino: 2,
+    })) as unknown as typeof lstat
+    const list = vi.fn(async () => []) as unknown as typeof readdir
+
+    const proof = await inspectPublicationCgroupMembership(
+      lease,
+      read,
+      inspect,
+      list,
+    )
+    expect(proof.members.map(({ pid }) => pid)).toEqual(['10', '11', '12'])
+
+    values.set('/proc/12/cgroup', '0::/system.slice/escaped.service\n')
+    await expect(
+      inspectPublicationCgroupMembership(lease, read, inspect, list),
+    ).rejects.toThrow(/escaped its exact cgroup/i)
+    values.set('/proc/12/cgroup', `0::${lease.controlGroup}\n`)
+    values.delete('/proc/12/status')
+    await expect(
+      inspectPublicationCgroupMembership(lease, read, inspect, list),
+    ).rejects.toThrow(/proc\/12\/status|ENOENT/)
+    values.set('/proc/12/status', status(62_000, 62_000, '12\t2'))
+    let metadataReads = 0
+    const replacedCgroup = vi.fn(async () => ({
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+      dev: 1,
+      ino: metadataReads++ === 0 ? 2 : 3,
+    })) as unknown as typeof lstat
+    await expect(
+      inspectPublicationCgroupMembership(lease, read, replacedCgroup, list),
+    ).rejects.toThrow(/changed while it was sampled/i)
+  })
+
+  it('rejects cgroup churn instead of accepting an incomplete sample', async () => {
+    const lease = {
+      serviceName: 'erniesg-publication-test-0123456789abcdef.service',
+      invocationId: 'a'.repeat(32),
+      controlGroup:
+        '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+    }
+    let procsReads = 0
+    const read = vi.fn(async (path: string) => {
+      if (path.endsWith('/cgroup.events')) return 'populated 1\n'
+      if (path.endsWith('/cgroup.procs'))
+        return procsReads++ === 0 ? '11\n' : '11\n12\n'
+      if (path === '/proc/11/cgroup') return `0::${lease.controlGroup}\n`
+      if (path === '/proc/11/status')
+        return 'Uid:\t62000\t62000\t62000\t62000\nGid:\t62000\t62000\t62000\t62000\nNSpid:\t11\t1\n'
+      if (path === '/proc/11/stat')
+        return `11 (node) ${['S', ...Array(18).fill('0'), '100'].join(' ')}\n`
+      throw new Error(path)
+    }) as unknown as typeof readFile
+    const inspect = vi.fn(async () => ({
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+      dev: 1,
+      ino: 2,
+    })) as unknown as typeof lstat
+    const list = vi.fn(async () => []) as unknown as typeof readdir
+
+    await expect(
+      inspectPublicationCgroupMembership(lease, read, inspect, list),
+    ).rejects.toThrow(/changed while it was sampled/i)
   })
 
   it('generates a unique bounded systemd unit name', () => {
@@ -573,10 +862,11 @@ describe('publication systemd process-tree boundary', () => {
             await authenticatedInvocationRequest(invocation)
           await writeFile(fixture.browserPath, '#!/bin/true\n', { mode: 0o700 })
           await writeFile(String(request.outputPath), rawPdf)
-          await writeFile(
-            String(request.proofPath),
-            `${JSON.stringify(isolationProof(request, requestSha256, rawPdf))}\n`,
-          )
+          return {
+            proof: JSON.stringify(
+              isolationProof(request, requestSha256, rawPdf),
+            ),
+          }
         },
       }),
     ).rejects.toThrow(/runtime attestation changed/i)
@@ -648,18 +938,59 @@ describe('publication systemd process-tree boundary', () => {
     const terminateUnit = vi.fn(async () => undefined)
 
     await expect(
-      runPublicationSystemdInvocation(invocation, spawnProcess, terminateUnit),
+      runPublicationSystemdInvocation(
+        invocation,
+        spawnProcess,
+        terminateUnit,
+        fakePinnedUnitMonitor(invocation),
+      ),
     ).rejects.toMatchObject({ exitCode: 37 })
-    expect(terminateUnit).toHaveBeenCalledWith(invocation)
+    expect(terminateUnit).toHaveBeenCalledWith(
+      invocation,
+      expect.objectContaining({ invocationId: 'a'.repeat(32) }),
+    )
     expect(spawnProcess).toHaveBeenCalledWith(
       '/usr/bin/sudo',
       invocation.args,
       expect.objectContaining({
         env: invocation.environment,
         shell: false,
-        stdio: 'inherit',
+        stdio: ['ignore', 'pipe', 'inherit'],
       }),
     )
+  })
+
+  it('accepts process proof only from the bounded systemd output pipe', async () => {
+    const stdout = new EventEmitter() as EventEmitter & {
+      setEncoding: ReturnType<typeof vi.fn>
+    }
+    stdout.setEncoding = vi.fn()
+    const child = new EventEmitter() as EventEmitter & {
+      kill: ReturnType<typeof vi.fn>
+      stdout: typeof stdout
+    }
+    child.kill = vi.fn()
+    child.stdout = stdout
+    const spawnProcess = vi.fn(() => {
+      queueMicrotask(() => {
+        stdout.emit('data', '{"event":"proof"}\n')
+        child.emit('exit', 0, null)
+      })
+      return child as never
+    })
+    const invocation = buildPublicationSystemdInvocation(invocationInput)
+    const terminateUnit = vi.fn(async () => undefined)
+
+    await expect(
+      runPublicationSystemdInvocation(
+        invocation,
+        spawnProcess,
+        terminateUnit,
+        fakeUnitMonitor(invocation),
+      ),
+    ).resolves.toMatchObject({ proof: '{"event":"proof"}' })
+    expect(terminateUnit).not.toHaveBeenCalled()
+    expect(stdout.setEncoding).toHaveBeenCalledWith('utf8')
   })
 
   it('drains the exact unit when the systemd-run wrapper reports an error', async () => {
@@ -675,10 +1006,18 @@ describe('publication systemd process-tree boundary', () => {
     const invocation = buildPublicationSystemdInvocation(invocationInput)
 
     await expect(
-      runPublicationSystemdInvocation(invocation, spawnProcess, terminateUnit),
+      runPublicationSystemdInvocation(
+        invocation,
+        spawnProcess,
+        terminateUnit,
+        fakePinnedUnitMonitor(invocation),
+      ),
     ).rejects.toThrow('spawn failed')
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
-    expect(terminateUnit).toHaveBeenCalledWith(invocation)
+    expect(terminateUnit).toHaveBeenCalledWith(
+      invocation,
+      expect.objectContaining({ invocationId: 'a'.repeat(32) }),
+    )
   })
 
   it('kills and drains the exact unit without waiting for an ignore-TERM wrapper', async () => {
@@ -696,12 +1035,20 @@ describe('publication systemd process-tree boundary', () => {
     const started = Date.now()
 
     await expect(
-      runPublicationSystemdInvocation(invocation, spawnProcess, terminateUnit),
+      runPublicationSystemdInvocation(
+        invocation,
+        spawnProcess,
+        terminateUnit,
+        fakePinnedUnitMonitor(invocation),
+      ),
     ).rejects.toThrow(/exceeded 5ms/)
     clearTimeout(lateExit)
     expect(Date.now() - started).toBeLessThan(150)
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
-    expect(terminateUnit).toHaveBeenCalledWith(invocation)
+    expect(terminateUnit).toHaveBeenCalledWith(
+      invocation,
+      expect.objectContaining({ invocationId: 'a'.repeat(32) }),
+    )
   })
 
   it('kills every process in the exact unit and waits for cgroup drain and collection', async () => {
@@ -711,43 +1058,63 @@ describe('publication systemd process-tree boundary', () => {
       commands.push(args)
       if (args[0] !== 'show') return { code: 0, stdout: '', stderr: '' }
       shows += 1
-      return {
-        code: 0,
-        stdout:
-          shows === 1
-            ? 'LoadState=loaded\nActiveState=deactivating\nSubState=stop-sigkill\nControlGroup=/system.slice/erniesg-publication-test.service\nMainPID=4321\n'
-            : shows === 2
-              ? 'LoadState=loaded\nActiveState=failed\nSubState=failed\nControlGroup=/system.slice/erniesg-publication-test.service\nMainPID=0\n'
-              : 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\nMainPID=0\n',
-        stderr: '',
-      }
+      return shows === 1
+        ? unitStatus({
+            ActiveState: 'deactivating',
+            SubState: 'stop-sigkill',
+          })
+        : shows === 2
+          ? unitStatus({
+              ActiveState: 'failed',
+              SubState: 'failed',
+              MainPID: '0',
+            })
+          : unitStatus({
+              InvocationID: '',
+              LoadState: 'not-found',
+              ActiveState: 'inactive',
+              SubState: 'dead',
+              ControlGroup: '',
+              MainPID: '0',
+            })
     })
-    const readCgroup = vi
-      .fn()
-      .mockResolvedValueOnce('4321\n4322\n')
-      .mockResolvedValueOnce('')
+    const readCgroup = vi.fn().mockResolvedValueOnce('populated 0\nfrozen 0\n')
+
+    const lease = {
+      serviceName: 'erniesg-publication-test-0123456789abcdef.service',
+      invocationId: 'a'.repeat(32),
+      controlGroup:
+        '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+    }
 
     await terminatePublicationSystemdUnit(
-      'erniesg-publication-test',
+      'erniesg-publication-test-0123456789abcdef',
       runSystemctl,
       readCgroup,
+      lease,
     )
 
-    expect(commands[0]).toEqual([
+    expect(commands[1]).toEqual([
       'kill',
       '--kill-whom=all',
       '--signal=SIGKILL',
-      'erniesg-publication-test.service',
+      'erniesg-publication-test-0123456789abcdef.service',
     ])
-    expect(commands[1]).toEqual(['stop', 'erniesg-publication-test.service'])
+    expect(commands[2]).toEqual([
+      'stop',
+      'erniesg-publication-test-0123456789abcdef.service',
+    ])
     expect(
       commands
         .filter(([command]) => command === 'show')
-        .every((args) => args.at(-1) === 'erniesg-publication-test.service'),
+        .every(
+          (args) =>
+            args.at(-1) === 'erniesg-publication-test-0123456789abcdef.service',
+        ),
     ).toBe(true)
     expect(shows).toBe(3)
     expect(readCgroup).toHaveBeenCalledWith(
-      '/sys/fs/cgroup/system.slice/erniesg-publication-test.service/cgroup.procs',
+      '/sys/fs/cgroup/system.slice/erniesg-publication-test-0123456789abcdef.service/cgroup.events',
       'utf8',
     )
   })
@@ -764,15 +1131,15 @@ describe('publication systemd process-tree boundary', () => {
       runInvocation: async (invocation) => {
         const { request, requestSha256, serialized } =
           await authenticatedInvocationRequest(invocation)
+        expect(request).not.toHaveProperty('proofPath')
         rendererOutputPath = String(request.outputPath)
         expect(serialized).not.toContain(fixture.outputPath)
         expect(await readFile(fixture.outputPath)).toEqual(fixture.original)
         events.push('render')
         await writeFile(rendererOutputPath, rawPdf)
-        await writeFile(
-          String(request.proofPath),
-          `${JSON.stringify(isolationProof(request, requestSha256, rawPdf))}\n`,
-        )
+        return {
+          proof: JSON.stringify(isolationProof(request, requestSha256, rawPdf)),
+        }
       },
       normalizePdf: async (renderedPath, normalizedPath) => {
         events.push('normalize')
@@ -788,7 +1155,7 @@ describe('publication systemd process-tree boundary', () => {
     })
 
     expect(rendererOutputPath).not.toBe(fixture.outputPath)
-    expect(dirname(dirname(rendererOutputPath))).toBe(fixture.root)
+    expect(dirname(dirname(dirname(rendererOutputPath)))).toBe(fixture.root)
     expect(basename(rendererOutputPath)).toBe('rendered.pdf')
     expect(events).toEqual(['render', 'normalize'])
     expect(sha256(await readFile(fixture.outputPath))).not.toBe(
@@ -868,19 +1235,13 @@ describe('publication systemd process-tree boundary', () => {
                 : Buffer.from(validPdf)
             await writeFile(String(request.outputPath), output)
             if (failure === 'missing proof') return
-            if (failure === 'invalid proof') {
-              await writeFile(String(request.proofPath), '{invalid json')
-              return
-            }
+            if (failure === 'invalid proof') return { proof: '{invalid json' }
             const proof = isolationProof(request, requestSha256, output)
             if (failure === 'digest mismatch')
               proof.outputSha256 = '0'.repeat(64)
             if (failure === 'runtime proof mismatch')
               proof.runtimeEntries = [{ injected: true }]
-            await writeFile(
-              String(request.proofPath),
-              `${JSON.stringify(proof)}\n`,
-            )
+            return { proof: JSON.stringify(proof) }
           },
           normalizePdf,
         },
@@ -952,15 +1313,19 @@ describe('publication systemd process-tree boundary', () => {
     async () => {
       const root = await mkdtemp(resolve('.publication-systemd-timeout-'))
       const stagingDirectory = resolve(root, '.publication-stage-timeout')
+      const sourceRoot = resolve(stagingDirectory, 'source')
       const requestPath = resolve(stagingDirectory, 'offline-request.json')
       const pidsPath = resolve(stagingDirectory, 'pids.jsonl')
       const delayedPath = resolve(stagingDirectory, 'delayed-output.txt')
-      const mainPath = resolve(root, 'timeout-main.mjs')
-      const childPath = resolve(root, 'timeout-child.mjs')
-      const grandchildPath = resolve(root, 'timeout-grandchild.mjs')
+      const mainPath = resolve(sourceRoot, 'timeout-main.mjs')
+      const childPath = resolve(sourceRoot, 'timeout-child.mjs')
+      const grandchildPath = resolve(sourceRoot, 'timeout-grandchild.mjs')
       try {
-        await mkdir(stagingDirectory, { mode: 0o700 })
-        await writeFile(requestPath, '{}\n', { mode: 0o600 })
+        await mkdir(sourceRoot, { recursive: true, mode: 0o755 })
+        await chmod(stagingDirectory, 0o733)
+        await writeFile(requestPath, '{}\n', { mode: 0o444 })
+        await writeFile(pidsPath, '', { mode: 0o666 })
+        await writeFile(delayedPath, '', { mode: 0o666 })
         await writeFile(
           grandchildPath,
           [
@@ -1001,13 +1366,18 @@ describe('publication systemd process-tree boundary', () => {
             'setInterval(() => {}, 1000)',
           ].join('\n'),
         )
+        await Promise.all(
+          [sourceRoot, mainPath, childPath, grandchildPath].map((path) =>
+            chmod(path, path === sourceRoot ? 0o755 : 0o444),
+          ),
+        )
         const uid = process.getuid?.()
         const gid = process.getgid?.()
         if (uid === undefined || gid === undefined)
           throw new Error('The systemd timeout smoke requires a POSIX caller')
         const invocation = {
           ...buildPublicationSystemdInvocation({
-            publicationRoot: root,
+            publicationRoot: sourceRoot,
             stagingDirectory,
             requestPath,
             requestSha256: sha256(await readFile(requestPath)),
@@ -1059,9 +1429,7 @@ describe('publication systemd process-tree boundary', () => {
             code: 'ENOENT',
           })
         await new Promise((accept) => setTimeout(accept, 2_750))
-        await expect(access(delayedPath)).rejects.toMatchObject({
-          code: 'ENOENT',
-        })
+        await expect(readFile(delayedPath, 'utf8')).resolves.toBe('')
         await rm(stagingDirectory, { recursive: true })
         await expect(access(stagingDirectory)).rejects.toMatchObject({
           code: 'ENOENT',
@@ -1176,36 +1544,112 @@ describe('publication systemd process-tree boundary', () => {
           })
           expectedBrowserVersion = PUBLICATION_TOOLCHAIN.browser.browserVersion
         }
-        const proof = (await runPublicationIsolatedRender({
-          renderer,
-          publicationRoot: root,
-          inputPath: htmlPath,
-          outputPath,
-          size: 'A4',
-          browserPath,
-          expectedBrowserVersion,
-          expectedRendererVersion:
-            renderer === 'vivliostyle-cli'
-              ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
-              : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
-          title: 'Boundary fixture',
-          filesystemDiagnosticPaths: [
-            outsidePath,
-            outsideLink,
-            hostProcessRootEscape,
-            unitProcessRootEscape,
-          ],
-          networkDiagnostic: {
-            tcpIpv4Port: tcp4Port,
-            tcpIpv6Port: tcp6Port,
-            httpIpv4Port: http4Port,
-            httpIpv6Port: http6Port,
-            websocketIpv4Port: http4Port,
-            websocketIpv6Port: http6Port,
-            udpIpv4Port: udp4Port,
-            udpIpv6Port: udp6Port,
+        let hostAliasProbe: Promise<void> | undefined
+        const proof = (await runPublicationIsolatedRender(
+          {
+            renderer,
+            publicationRoot: root,
+            inputPath: htmlPath,
+            outputPath,
+            size: 'A4',
+            browserPath,
+            expectedBrowserVersion,
+            expectedRendererVersion:
+              renderer === 'vivliostyle-cli'
+                ? PUBLICATION_TOOLCHAIN.vivliostyleCli.version
+                : PUBLICATION_TOOLCHAIN.browser.compatibility.version,
+            title: 'Boundary fixture',
+            filesystemDiagnosticPaths: [
+              outsidePath,
+              outsideLink,
+              hostProcessRootEscape,
+              unitProcessRootEscape,
+            ],
+            networkDiagnostic: {
+              tcpIpv4Port: tcp4Port,
+              tcpIpv6Port: tcp6Port,
+              httpIpv4Port: http4Port,
+              httpIpv6Port: http6Port,
+              websocketIpv4Port: http4Port,
+              websocketIpv6Port: http6Port,
+              udpIpv4Port: udp4Port,
+              udpIpv6Port: udp6Port,
+            },
           },
-        })) as {
+          {
+            runInvocation: (invocation) =>
+              runPublicationSystemdInvocation(
+                invocation,
+                undefined,
+                undefined,
+                (monitoredInvocation, onPinned) =>
+                  monitorPublicationSystemdUnit(
+                    monitoredInvocation,
+                    (lease) => {
+                      onPinned?.(lease)
+                      hostAliasProbe = (async () => {
+                        const deadline = Date.now() + 5_000
+                        let payloadPid: string | undefined
+                        while (Date.now() < deadline && !payloadPid) {
+                          const pids = (
+                            await readFile(
+                              resolve(
+                                '/sys/fs/cgroup',
+                                `.${lease.controlGroup}`,
+                                'cgroup.procs',
+                              ),
+                              'utf8',
+                            )
+                          )
+                            .trim()
+                            .split(/\s+/u)
+                            .filter(Boolean)
+                          for (const pid of pids) {
+                            const status = await readFile(
+                              `/proc/${pid}/status`,
+                              'utf8',
+                            ).catch(() => '')
+                            const uid = Number(
+                              status.match(/^Uid:\s+(\d+)/mu)?.[1],
+                            )
+                            const nspid =
+                              status
+                                .match(/^NSpid:\s+(.+)$/mu)?.[1]
+                                .trim()
+                                .split(/\s+/u) ?? []
+                            if (
+                              uid !== process.getuid?.() &&
+                              nspid.length > 1
+                            ) {
+                              payloadPid = pid
+                              break
+                            }
+                          }
+                          if (!payloadPid)
+                            await new Promise((accept) =>
+                              setTimeout(accept, 10),
+                            )
+                        }
+                        if (!payloadPid)
+                          throw new Error(
+                            'Dynamic publication payload PID was not observable',
+                          )
+                        const alias = `/proc/${payloadPid}/root/tmp`
+                        await expect(access(alias)).rejects.toMatchObject({
+                          code: 'EACCES',
+                        })
+                        await expect(
+                          writeFile(
+                            `${alias}/host-same-uid-mutation-probe`,
+                            'hostile',
+                          ),
+                        ).rejects.toMatchObject({ code: 'EACCES' })
+                      })()
+                    },
+                  ),
+              ),
+          },
+        )) as {
           networkNamespace: string
           mountNamespace: string
           childNetworkNamespaces: string[]
@@ -1219,6 +1663,8 @@ describe('publication systemd process-tree boundary', () => {
             inaccessible: boolean
           }>
         }
+        expect(hostAliasProbe).toBeDefined()
+        await hostAliasProbe
         expect(proof.childNetworkNamespaces.length).toBeGreaterThan(0)
         expect(
           proof.childNetworkNamespaces.every(

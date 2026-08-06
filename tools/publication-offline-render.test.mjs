@@ -118,13 +118,12 @@ function requestFor(root, renderer = 'playwright-chromium') {
     'node_modules/.cache/publication-browsers/playwright/chromium-1228/chrome-linux/chrome',
   )
   return {
-    version: 3,
+    version: 5,
     renderer,
     publicationRoot: root,
     stagingDirectory,
     inputPath: resolve(root, 'index.html'),
     outputPath: resolve(stagingDirectory, 'publication.pdf'),
-    proofPath: resolve(stagingDirectory, 'isolation-proof.json'),
     ...sourceManifest(),
     size: 'A4',
     browserPath,
@@ -139,6 +138,11 @@ function requestFor(root, renderer = 'playwright-chromium') {
     expectedGid: 1000,
     hostNetworkNamespace: 'net:[100]',
     hostMountNamespace: 'mnt:[100]',
+    hostPidNamespace: 'pid:[100]',
+    expectedUnitName: 'erniesg-publication-test-0123456789abcdef',
+    expectedControlGroup:
+      '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+    expectedIdentityName: 'epub-0123456789abcdef',
     runtimeEntries: fakeRuntimeEntries(renderer, browserPath),
     networkDiagnostic: null,
     filesystemDiagnosticPaths: [],
@@ -195,7 +199,7 @@ describe('offline publication render helper', () => {
     const digest = createHash('sha256').update(serialized).digest('hex')
 
     expect(authenticatePublicationRequest(serialized, digest)).toMatchObject({
-      version: 3,
+      version: 5,
       renderer: 'playwright-chromium',
       publicationRoot: root,
     })
@@ -598,37 +602,64 @@ describe('offline publication render helper', () => {
   it('attests a distinct loopback-only namespace, caller identity, and empty capabilities', () => {
     const root = '/tmp/publication-root'
     const environment = publicationChildEnvironment(root)
-    const proof = assertIsolationSnapshot(
-      {
-        networkNamespace: 'net:[200]',
-        mountNamespace: 'mnt:[200]',
-        interfaces: [{ name: 'lo', up: true }],
-        ipv4RouteInterfaces: ['lo'],
-        ipv6RouteInterfaces: ['lo'],
-        uid: 1000,
-        gid: 1000,
-        groups: [1000],
-        capabilities: {
-          inheritable: '0000000000000000',
-          permitted: '0000000000000000',
-          effective: '0000000000000000',
-          ambient: '0000000000000000',
-        },
-        noNewPrivileges: true,
-        cwd: root,
-        environment,
-        childNetworkNamespaces: ['net:[200]', 'net:[200]'],
-        childMountNamespaces: ['mnt:[200]', 'mnt:[200]'],
+    const snapshot = {
+      networkNamespace: 'net:[200]',
+      mountNamespace: 'mnt:[200]',
+      pidNamespace: 'pid:[200]',
+      nspid: [1],
+      cgroup: '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+      interfaces: [{ name: 'lo', up: true }],
+      ipv4RouteInterfaces: ['lo'],
+      ipv6RouteInterfaces: ['lo'],
+      uid: 62000,
+      gid: 62000,
+      groups: [62000],
+      capabilities: {
+        inheritable: '0000000000000000',
+        permitted: '0000000000000000',
+        effective: '0000000000000000',
+        ambient: '0000000000000000',
       },
-      requestFor(root),
-    )
+      noNewPrivileges: true,
+      cwd: root,
+      environment,
+      childNetworkNamespaces: ['net:[200]', 'net:[200]'],
+      childMountNamespaces: ['mnt:[200]', 'mnt:[200]'],
+      childPidNamespaces: ['pid:[200]', 'pid:[200]'],
+      childCgroups: [
+        '/system.slice/erniesg-publication-test-0123456789abcdef.service',
+      ],
+    }
+    const request = requestFor(root)
+    const proof = assertIsolationSnapshot(snapshot, request)
     expect(proof).toMatchObject({
       networkNamespace: 'net:[200]',
       mountNamespace: 'mnt:[200]',
+      pidNamespace: 'pid:[200]',
+      cgroup: '/system.slice/erniesg-publication-test-0123456789abcdef.service',
       interfaces: ['lo'],
       childNetworkNamespaces: ['net:[200]'],
       childMountNamespaces: ['mnt:[200]'],
+      childPidNamespaces: ['pid:[200]'],
     })
+    expect(() =>
+      assertIsolationSnapshot(
+        { ...snapshot, childPidNamespaces: ['pid:[300]'] },
+        request,
+      ),
+    ).toThrow(/escaped the private PID namespace/i)
+    expect(() =>
+      assertIsolationSnapshot(
+        { ...snapshot, childCgroups: ['/system.slice/escaped.service'] },
+        request,
+      ),
+    ).toThrow(/escaped the transient-unit cgroup/i)
+    expect(() =>
+      assertIsolationSnapshot(
+        { ...snapshot, uid: request.expectedUid },
+        request,
+      ),
+    ).toThrow(/distinct kernel identity/i)
 
     expect(() =>
       assertIsolationSnapshot(
@@ -667,6 +698,8 @@ describe('offline publication render helper', () => {
       const proof = {
         networkNamespace: 'net:[200]',
         mountNamespace: 'mnt:[200]',
+        pidNamespace: 'pid:[200]',
+        cgroup: request.expectedControlGroup,
       }
       await executePublicationRenderRequest(request, {
         attestIsolation: async () => {
@@ -752,6 +785,8 @@ describe('offline publication render helper', () => {
         attestIsolation: async () => ({
           networkNamespace: 'net:[200]',
           mountNamespace: 'mnt:[200]',
+          pidNamespace: 'pid:[200]',
+          cgroup: request.expectedControlGroup,
         }),
         verifyRuntimeEntries: async () => undefined,
         validateResources: async (snapshotRequest) => {
@@ -801,13 +836,22 @@ describe('offline publication render helper', () => {
     const root = await localPublicationFixture()
     const request = requestFor(root)
     request.filesystemDiagnosticPaths = [resolve(root, 'missing-sentinel')]
-    const [networkNamespace, mountNamespace] = await Promise.all([
-      readlink('/proc/self/ns/net'),
-      readlink('/proc/self/ns/mnt'),
-    ])
+    const [networkNamespace, mountNamespace, pidNamespace, cgroupText] =
+      await Promise.all([
+        readlink('/proc/self/ns/net'),
+        readlink('/proc/self/ns/mnt'),
+        readlink('/proc/self/ns/pid'),
+        readFile('/proc/self/cgroup', 'utf8'),
+      ])
+    const cgroup = cgroupText.trim().slice(3)
 
     const result = await executePublicationRenderRequest(request, {
-      attestIsolation: async () => ({ networkNamespace, mountNamespace }),
+      attestIsolation: async () => ({
+        networkNamespace,
+        mountNamespace,
+        pidNamespace,
+        cgroup,
+      }),
       verifyRuntimeEntries: async () => undefined,
       validateResources: async () => undefined,
       verifyRenderer: async () => request.expectedRendererVersion,
@@ -820,6 +864,8 @@ describe('offline publication render helper', () => {
     ])
     expect(result.childNetworkNamespaces).toContain(networkNamespace)
     expect(result.childMountNamespaces).toContain(mountNamespace)
+    expect(result.childPidNamespaces).toContain(pidNamespace)
+    expect(result.childCgroups).toContain(cgroup)
   })
 
   it('uses a fresh service-worker-blocked context and closes it before returning', async () => {

@@ -189,18 +189,21 @@ process.stdout.write(JSON.stringify({ filesystemDiagnostics, networkDiagnostic }
 const REQUEST_FIELDS = [
   'browserPath',
   'expectedBrowserVersion',
+  'expectedControlGroup',
   'expectedEnvironmentSha256',
   'expectedGid',
+  'expectedIdentityName',
   'expectedNodeVersion',
   'expectedRendererVersion',
   'expectedUid',
+  'expectedUnitName',
   'filesystemDiagnosticPaths',
   'hostMountNamespace',
   'hostNetworkNamespace',
+  'hostPidNamespace',
   'inputPath',
   'networkDiagnostic',
   'outputPath',
-  'proofPath',
   'publicationRoot',
   'renderer',
   'runtimeEntries',
@@ -227,7 +230,7 @@ function assertRenderRequest(request) {
     throw new Error(`Unexpected request field: ${unexpected.join(', ')}`)
   if (missing.length)
     throw new Error(`Missing request field: ${missing.join(', ')}`)
-  if (request.version !== 3)
+  if (request.version !== 5)
     throw new Error('Unsupported publication render request version')
   if (!['vivliostyle-cli', 'playwright-chromium'].includes(request.renderer))
     throw new Error('Unsupported publication renderer request')
@@ -238,7 +241,6 @@ function assertRenderRequest(request) {
     'stagingDirectory',
     'inputPath',
     'outputPath',
-    'proofPath',
     'browserPath',
   ])
     if (typeof request[field] !== 'string' || !isAbsolute(request[field]))
@@ -254,12 +256,7 @@ function assertRenderRequest(request) {
     )
   if (!isPathInside(request.stagingDirectory, request.outputPath))
     throw new Error('Publication PDF must be inside private staging')
-  if (!isPathInside(request.stagingDirectory, request.proofPath))
-    throw new Error('Publication proof must be inside private staging')
-  if (
-    isPathInside(request.publicationRoot, request.outputPath) ||
-    isPathInside(request.publicationRoot, request.proofPath)
-  )
+  if (isPathInside(request.publicationRoot, request.outputPath))
     throw new Error('Publication output must be outside the source snapshot')
   if (!isPathInside(BROWSER_CACHE, request.browserPath))
     throw new Error('Publication browser must be inside the pinned cache')
@@ -267,8 +264,6 @@ function assertRenderRequest(request) {
     throw new Error('Publication input must be HTML')
   if (extname(request.outputPath).toLowerCase() !== '.pdf')
     throw new Error('Publication output must be PDF')
-  if (extname(request.proofPath).toLowerCase() !== '.json')
-    throw new Error('Publication proof must be JSON')
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(request.expectedBrowserVersion))
     throw new Error('Expected browser version is invalid')
   if (!/^\d+\.\d+\.\d+$/.test(request.expectedRendererVersion))
@@ -288,6 +283,18 @@ function assertRenderRequest(request) {
     throw new Error('Host network namespace identity is invalid')
   if (!/^mnt:\[\d+\]$/.test(request.hostMountNamespace))
     throw new Error('Host mount namespace identity is invalid')
+  if (!/^pid:\[\d+\]$/.test(request.hostPidNamespace))
+    throw new Error('Host PID namespace identity is invalid')
+  if (
+    !/^erniesg-publication-[a-z0-9-]+$/.test(request.expectedUnitName) ||
+    request.expectedUnitName.length > 63 ||
+    !/^epub-[a-f0-9]{16}$/.test(request.expectedIdentityName) ||
+    request.expectedIdentityName !==
+      `epub-${request.expectedUnitName.slice(-16)}` ||
+    request.expectedControlGroup !==
+      `/system.slice/${request.expectedUnitName}.service`
+  )
+    throw new Error('Expected publication unit identity is invalid')
   assertSourceEntries(request)
   assertRuntimeEntries(request)
   if (
@@ -1340,6 +1347,14 @@ export function assertIsolationSnapshot(snapshot, request) {
   )
     throw new Error('Helper remained in the host mount namespace')
   if (
+    snapshot.pidNamespace === request.hostPidNamespace ||
+    !/^pid:\[\d+\]$/.test(snapshot.pidNamespace) ||
+    JSON.stringify(snapshot.nspid) !== JSON.stringify([1])
+  )
+    throw new Error('Helper did not become PID 1 in a private PID namespace')
+  if (snapshot.cgroup !== request.expectedControlGroup)
+    throw new Error('Helper escaped the expected transient-unit cgroup')
+  if (
     snapshot.interfaces.length !== 1 ||
     snapshot.interfaces[0].name !== 'lo' ||
     !snapshot.interfaces[0].up
@@ -1354,14 +1369,17 @@ export function assertIsolationSnapshot(snapshot, request) {
   )
     throw new Error('Private network namespace contains a non-loopback route')
   if (
-    snapshot.uid !== request.expectedUid ||
-    snapshot.gid !== request.expectedGid
+    !Number.isSafeInteger(snapshot.uid) ||
+    snapshot.uid < 61_184 ||
+    snapshot.uid > 65_519 ||
+    snapshot.uid === request.expectedUid ||
+    !Number.isSafeInteger(snapshot.gid) ||
+    snapshot.gid < 61_184 ||
+    snapshot.gid > 65_519 ||
+    snapshot.gid === request.expectedGid
   )
-    throw new Error('Helper did not run as the expected caller identity')
-  if (
-    snapshot.groups.length !== 1 ||
-    snapshot.groups[0] !== request.expectedGid
-  )
+    throw new Error('Helper did not run under a distinct kernel identity')
+  if (snapshot.groups.length !== 1 || snapshot.groups[0] !== snapshot.gid)
     throw new Error('Helper retained supplementary groups')
   if (
     !Object.values(snapshot.capabilities).every(normalizedHexIsZero) ||
@@ -1399,12 +1417,25 @@ export function assertIsolationSnapshot(snapshot, request) {
     )
   )
     throw new Error('A renderer descendant escaped the private mount namespace')
+  if (
+    snapshot.childPidNamespaces.some(
+      (identity) => identity !== snapshot.pidNamespace,
+    )
+  )
+    throw new Error('A renderer descendant escaped the private PID namespace')
+  if (snapshot.childCgroups.some((identity) => identity !== snapshot.cgroup))
+    throw new Error('A renderer descendant escaped the transient-unit cgroup')
   return {
     networkNamespace: snapshot.networkNamespace,
     mountNamespace: snapshot.mountNamespace,
+    pidNamespace: snapshot.pidNamespace,
+    nspid: snapshot.nspid,
+    cgroup: snapshot.cgroup,
     interfaces: snapshot.interfaces.map(({ name }) => name),
     childNetworkNamespaces: [...new Set(snapshot.childNetworkNamespaces)],
     childMountNamespaces: [...new Set(snapshot.childMountNamespaces)],
+    childPidNamespaces: [...new Set(snapshot.childPidNamespaces)],
+    childCgroups: [...new Set(snapshot.childCgroups)],
   }
 }
 
@@ -1418,19 +1449,25 @@ async function readIsolationSnapshot(
   request,
   childNetworkNamespaces = [],
   childMountNamespaces = [],
+  childPidNamespaces = [],
+  childCgroups = [],
 ) {
   const [
     networkNamespace,
     mountNamespace,
+    pidNamespace,
     interfaceNames,
     status,
+    cgroupText,
     ipv4Routes,
     ipv6Routes,
   ] = await Promise.all([
     readlink('/proc/self/ns/net'),
     readlink('/proc/self/ns/mnt'),
+    readlink('/proc/self/ns/pid'),
     readdir('/sys/class/net'),
     readFile('/proc/self/status', 'utf8'),
+    readFile('/proc/self/cgroup', 'utf8'),
     readFile('/proc/net/route', 'utf8'),
     readFile('/proc/net/ipv6_route', 'utf8').catch(() => ''),
   ])
@@ -1457,9 +1494,17 @@ async function readIsolationSnapshot(
     .split('\n')
     .map((line) => line.trim().split(/\s+/u).at(-1))
     .filter(Boolean)
+  const cgroupLines = cgroupText.trim().split('\n').filter(Boolean)
+  if (cgroupLines.length !== 1 || !cgroupLines[0].startsWith('0::/'))
+    throw new Error('Helper cgroup identity is unavailable or ambiguous')
   return {
     networkNamespace,
     mountNamespace,
+    pidNamespace,
+    nspid: statusValue(status, 'NSpid')
+      .split(/\s+/u)
+      .map((value) => Number.parseInt(value, 10)),
+    cgroup: cgroupLines[0].slice(3),
     interfaces,
     ipv4RouteInterfaces,
     ipv6RouteInterfaces,
@@ -1477,6 +1522,8 @@ async function readIsolationSnapshot(
     environment: { ...process.env },
     childNetworkNamespaces,
     childMountNamespaces,
+    childPidNamespaces,
+    childCgroups,
   }
 }
 
@@ -1487,7 +1534,7 @@ async function attestIsolation(request) {
   })
 }
 
-async function descendantPids(parentPid) {
+async function descendantPids(parentPid, observedPids = new Set()) {
   const entries = (await readdir('/proc', { withFileTypes: true })).filter(
     (entry) => entry.isDirectory() && /^\d+$/.test(entry.name),
   )
@@ -1497,8 +1544,15 @@ async function descendantPids(parentPid) {
       try {
         const status = await readFile(`/proc/${entry.name}/status`, 'utf8')
         parents.set(Number(entry.name), Number(statusValue(status, 'PPid')))
-      } catch {
-        // The process ended between directory enumeration and status read.
+      } catch (error) {
+        if (
+          observedPids.has(Number(entry.name)) &&
+          ['ENOENT', 'ESRCH'].includes(error?.code)
+        )
+          return
+        throw new Error(
+          `Renderer process sampling was incomplete for PID ${entry.name}: ${String(error)}`,
+        )
       }
     }),
   )
@@ -1522,19 +1576,43 @@ async function descendantPids(parentPid) {
 function monitorRendererNamespaces(
   expectedNetworkNamespace,
   expectedMountNamespace,
+  expectedPidNamespace,
+  expectedCgroup,
+  scanPrivatePidNamespace,
 ) {
   const observedNetwork = new Set()
   const observedMount = new Set()
+  const observedPid = new Set()
+  const observedCgroup = new Set()
+  const observedProcesses = new Map()
   let failure
   const observePid = async (pid) => {
     if (!pid) return
     try {
-      const [networkIdentity, mountIdentity] = await Promise.all([
-        readlink(`/proc/${pid}/ns/net`),
-        readlink(`/proc/${pid}/ns/mnt`),
-      ])
+      const [networkIdentity, mountIdentity, pidIdentity, cgroupText, stat] =
+        await Promise.all([
+          readlink(`/proc/${pid}/ns/net`),
+          readlink(`/proc/${pid}/ns/mnt`),
+          readlink(`/proc/${pid}/ns/pid`),
+          readFile(`/proc/${pid}/cgroup`, 'utf8'),
+          readFile(`/proc/${pid}/stat`, 'utf8'),
+        ])
+      const statFields = stat.slice(stat.lastIndexOf(')') + 2).split(/\s+/u)
+      const startTime = statFields[19]
+      if (!/^\d+$/u.test(startTime))
+        throw new Error(`Renderer descendant ${pid} has invalid start time`)
+      const priorStartTime = observedProcesses.get(pid)
+      if (priorStartTime && priorStartTime !== startTime)
+        throw new Error(`Renderer descendant PID ${pid} was reused`)
+      observedProcesses.set(pid, startTime)
+      const cgroupLines = cgroupText.trim().split('\n').filter(Boolean)
+      if (cgroupLines.length !== 1 || !cgroupLines[0].startsWith('0::/'))
+        throw new Error(`Renderer descendant ${pid} has ambiguous cgroup state`)
+      const cgroupIdentity = cgroupLines[0].slice(3)
       observedNetwork.add(networkIdentity)
       observedMount.add(mountIdentity)
+      observedPid.add(pidIdentity)
+      observedCgroup.add(cgroupIdentity)
       if (networkIdentity !== expectedNetworkNamespace)
         failure = new Error(
           `Renderer descendant ${pid} entered unexpected network namespace ${networkIdentity}`,
@@ -1543,26 +1621,52 @@ function monitorRendererNamespaces(
         failure = new Error(
           `Renderer descendant ${pid} entered unexpected mount namespace ${mountIdentity}`,
         )
-    } catch {
-      // A short-lived child can exit before its namespace link is read.
+      if (pidIdentity !== expectedPidNamespace)
+        failure = new Error(
+          `Renderer descendant ${pid} entered unexpected PID namespace ${pidIdentity}`,
+        )
+      if (cgroupIdentity !== expectedCgroup)
+        failure = new Error(
+          `Renderer descendant ${pid} entered unexpected cgroup ${cgroupIdentity}`,
+        )
+    } catch (error) {
+      if (
+        observedProcesses.has(pid) &&
+        ['ENOENT', 'ESRCH'].includes(error?.code)
+      )
+        return
+      failure = new Error(
+        `Renderer process sampling was incomplete for PID ${pid}: ${String(error)}`,
+      )
     }
   }
   const scan = async () => {
-    for (const pid of await descendantPids(process.pid)) await observePid(pid)
+    if (!scanPrivatePidNamespace) return
+    for (const pid of await descendantPids(
+      process.pid,
+      new Set(observedProcesses.keys()),
+    ))
+      await observePid(pid)
   }
-  const interval = setInterval(
-    () => void scan().catch((error) => (failure = error)),
-    10,
-  )
+  let pendingScan = Promise.resolve()
+  const queueScan = () => {
+    pendingScan = pendingScan.then(scan).catch((error) => {
+      failure = error
+    })
+  }
+  const interval = setInterval(queueScan, 10)
   return {
     observePid,
     async stop() {
       clearInterval(interval)
+      await pendingScan
       await scan()
       if (failure) throw failure
       return {
         network: [...observedNetwork],
         mount: [...observedMount],
+        pid: [...observedPid],
+        cgroup: [...observedCgroup],
       }
     },
   }
@@ -1858,9 +1962,14 @@ export async function executePublicationRenderRequest(
   const monitor = monitorRendererNamespaces(
     initialSnapshot.networkNamespace,
     initialSnapshot.mountNamespace,
+    initialSnapshot.pidNamespace,
+    initialSnapshot.cgroup,
+    JSON.stringify(initialSnapshot.nspid) === JSON.stringify([1]),
   )
   let childNetworkNamespaces = []
   let childMountNamespaces = []
+  let childPidNamespaces = []
+  let childCgroups = []
   let rendererVersion
   let browserVersion
   let diagnostics = { filesystemDiagnostics: [], networkDiagnostic: null }
@@ -1878,12 +1987,16 @@ export async function executePublicationRenderRequest(
       const observedNamespaces = await monitor.stop()
       childNetworkNamespaces = observedNamespaces.network
       childMountNamespaces = observedNamespaces.mount
+      childPidNamespaces = observedNamespaces.pid
+      childCgroups = observedNamespaces.cgroup
       if (initialSnapshot.interfaces)
         assertIsolationSnapshot(
           {
             ...initialSnapshot,
             childNetworkNamespaces,
             childMountNamespaces,
+            childPidNamespaces,
+            childCgroups,
           },
           request,
         )
@@ -1895,6 +2008,8 @@ export async function executePublicationRenderRequest(
     ...initialSnapshot,
     childNetworkNamespaces,
     childMountNamespaces,
+    childPidNamespaces,
+    childCgroups,
     rendererVersion,
     browserVersion,
     ...diagnostics,
@@ -1963,6 +2078,7 @@ async function main() {
   )
     throw new Error('Authenticated request file is outside private staging')
   const proof = await executePublicationRenderRequest(request)
+  await chmod(request.outputPath, 0o444)
   const output = await readBoundedRegularFile(
     request.outputPath,
     512 * 1024 * 1024,
@@ -1983,18 +2099,19 @@ async function main() {
     outputByteLength: output.byteLength,
     sourceSha256: request.sourceSha256,
     runtimeEntries: request.runtimeEntries,
+    cgroup: proof.cgroup,
     networkNamespace: proof.networkNamespace,
     mountNamespace: proof.mountNamespace,
+    pidNamespace: proof.pidNamespace,
+    nspid: proof.nspid,
     interfaces: proof.interfaces.map(({ name }) => name),
     childNetworkNamespaces: [...new Set(proof.childNetworkNamespaces)].sort(),
     childMountNamespaces: [...new Set(proof.childMountNamespaces)].sort(),
+    childPidNamespaces: [...new Set(proof.childPidNamespaces)].sort(),
+    childCgroups: [...new Set(proof.childCgroups)].sort(),
     networkDiagnostic: proof.networkDiagnostic,
     filesystemDiagnostics: proof.filesystemDiagnostics,
   }
-  await writeFile(request.proofPath, `${JSON.stringify(proofRecord)}\n`, {
-    flag: 'wx',
-    mode: 0o600,
-  })
   process.stdout.write(`${JSON.stringify(proofRecord)}\n`)
 }
 

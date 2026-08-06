@@ -4575,13 +4575,17 @@ export async function mergeProseContinuations(
         (crossesOwnedFloat && !sourceProvenFloatBoundary) ||
         (citationYearContinuation && !sourceProvenCitationBoundary) ||
         !sourceProvenHyphenDecision ||
-        // This is the only site that admits uncased scripts. Every same-page
-        // continuation reaching it has already passed `sourceBoundaryProven`,
-        // and the cross-page ones have passed the float, citation and hyphen
-        // proofs above, so the weak leading-character signal is corroborated
-        // here in a way it is not at the other call sites.
+        // Admit uncased scripts only when source-proven same-page column flow
+        // actually holds, not merely when the guards above did not fire. Those
+        // guards are conditional implications whose antecedents can all be
+        // false at once: `(samePageContinuation && !sourceBoundaryProven)`
+        // binds only on the same page, and `sourceProvenHyphenDecision` is
+        // unconditionally true with no trailing hyphen. A cross-page pair with
+        // no float, no citation year and no hyphen therefore satisfies all of
+        // them vacuously, with zero source proof — and `\p{Lo}` would then
+        // match unconditionally, because every Han block starts with one.
         (!likelyUnmarkedCrossPageContinuation(target, continuation, {
-          admitUncasedScripts: true,
+          admitUncasedScripts: sourceProvenSamePageColumnFlow,
         }) &&
           !(
             sourceProvenFloatBoundary &&

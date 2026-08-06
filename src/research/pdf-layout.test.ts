@@ -838,6 +838,60 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
+  it('refuses an unproven cross-page uncased continuation', async () => {
+    // The cross-page path reaches the uncased admission with no source proof
+    // at all: the same-page guard binds only on the same page, and the hyphen
+    // guard is unconditionally true with no trailing hyphen, so a cross-page
+    // pair with no float, no citation year and no hyphen satisfies all of them
+    // vacuously. `\p{Lo}` would then match unconditionally, because every Han
+    // block begins with one. The admission is therefore conditioned on
+    // source-proven same-page column flow actually holding, and this pins it.
+    const onPage = (region: PdfPageRegion, page: number): PdfPageRegion => ({
+      ...region,
+      page,
+      box: { ...region.box, page },
+      lines: region.lines.map((line) => ({
+        ...line,
+        box: { ...line.box, page },
+        runs: line.runs.map((sourceRun) => ({ ...sourceRun, page })),
+      })),
+    })
+    const target = onPage(
+      sourceFlowRegion({
+        id: 'unproven-cross-page-cjk-target',
+        column: 'left',
+        text: '研究结果继续',
+        x: 0.09,
+        y: 0.82,
+        sourceSequenceIndex: 700,
+      }),
+      1,
+    )
+    const continuation = onPage(
+      sourceFlowRegion({
+        id: 'unproven-cross-page-cjk-continuation',
+        column: 'left',
+        text: '在下一页完成',
+        x: 0.09,
+        y: 0.1,
+        sourceSequenceIndex: 701,
+      }),
+      2,
+    )
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+
+    await mergeProseContinuations(blocks, { language: 'zh' })
+
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].text).toBe('研究结果继续')
+    expect(blocks[1].text).toBe('在下一页完成')
+  })
+
   it('refuses an uncased column continuation when source-sequence adjacency is absent', async () => {
     // `\p{Lo}` is admitted only where source-proven column flow corroborates it.
     // A lowercase leading letter is strong evidence in a cased script; an

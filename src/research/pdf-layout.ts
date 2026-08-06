@@ -3556,17 +3556,34 @@ function recordUncertainBibliographyBoundary(
   })
 }
 
+// A lowercase leading letter is the cased-script signal that a block continues
+// an unfinished sentence. Uncased scripts have no such signal: Han, Arabic and
+// Hebrew letters are all `\p{Lo}`, so `\p{Ll}` is never true for them and this
+// evidence is simply unavailable.
+const PDF_UNMARKED_CONTINUATION_LEAD = /^\p{Ll}/u
+// Admitting `\p{Lo}` restores the signal for uncased scripts, but it admits
+// *every* uncased-script block, which is far weaker evidence than a lowercase
+// letter is in a cased script. It is therefore opt-in per call site rather
+// than shared: source-proven column flow independently establishes that the
+// two blocks are the same column of the same page pair, which is the
+// corroboration that makes the weaker leading-character test safe to use.
+const PDF_UNMARKED_CONTINUATION_LEAD_WITH_UNCASED = /^(?:\p{Ll}|\p{Lo})/u
+
 function likelyUnmarkedCrossPageContinuation(
   target: RegionBlock,
   continuation: RegionBlock,
+  { admitUncasedScripts = false }: { admitUncasedScripts?: boolean } = {},
 ) {
   const previousText = target.text.trimEnd()
   const continuationText = continuation.text.trimStart()
+  const leadingLetter = admitUncasedScripts
+    ? PDF_UNMARKED_CONTINUATION_LEAD_WITH_UNCASED
+    : PDF_UNMARKED_CONTINUATION_LEAD
   return Boolean(
     previousText &&
     continuationText &&
     !PDF_SENTENCE_END_WITH_CLOSING.test(previousText) &&
-    (/^(?:\p{Ll}|\p{Lo})/u.test(continuationText) ||
+    (leadingLetter.test(continuationText) ||
       detachedScholarlyReferenceContinuation(previousText, continuationText) ||
       detachedCitationYearContinuation(previousText, continuationText) ||
       detachedNumericProseContinuation(previousText, continuationText) ||
@@ -4081,7 +4098,13 @@ function sourceProvenSamePageColumnFlowBoundary(
     !sourceColumnsAreOrdered ||
     /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) ||
     detachedCitationYearContinuation(target.text, continuation.text) ||
-    !likelyUnmarkedCrossPageContinuation(target, continuation) ||
+    // Source-proven column flow: the checks above have already established that
+    // these two blocks are the same column of the same page, in reading order,
+    // with no omitted source between them. That is what corroborates the weaker
+    // uncased leading-character signal here.
+    !likelyUnmarkedCrossPageContinuation(target, continuation, {
+      admitUncasedScripts: true,
+    }) ||
     hasOmittedSourceBetweenBlocks(target, continuation)
   ) {
     return false
@@ -4552,7 +4575,14 @@ export async function mergeProseContinuations(
         (crossesOwnedFloat && !sourceProvenFloatBoundary) ||
         (citationYearContinuation && !sourceProvenCitationBoundary) ||
         !sourceProvenHyphenDecision ||
-        (!likelyUnmarkedCrossPageContinuation(target, continuation) &&
+        // This is the only site that admits uncased scripts. Every same-page
+        // continuation reaching it has already passed `sourceBoundaryProven`,
+        // and the cross-page ones have passed the float, citation and hyphen
+        // proofs above, so the weak leading-character signal is corroborated
+        // here in a way it is not at the other call sites.
+        (!likelyUnmarkedCrossPageContinuation(target, continuation, {
+          admitUncasedScripts: true,
+        }) &&
           !(
             sourceProvenFloatBoundary &&
             (scholarlyLabelFloatContinuation(target.text, continuation.text) ||

@@ -2364,7 +2364,7 @@ describe('local PDF corpus audit', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  }, 15_000)
+  })
 
   it('refuses corpus overlay output anywhere inside the repository', () => {
     const result = spawnSync(

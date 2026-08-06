@@ -838,6 +838,47 @@ describe('PDF semantic reconstruction', () => {
     })
   })
 
+  it('refuses an uncased column continuation when source-sequence adjacency is absent', async () => {
+    // `\p{Lo}` is admitted only where source-proven column flow corroborates it.
+    // A lowercase leading letter is strong evidence in a cased script; an
+    // uncased leading character is not evidence at all on its own, because
+    // every Han block begins with one. This pins the corroboration: same
+    // fixture as the joining case, with the source-sequence adjacency broken.
+    const target = sourceFlowRegion({
+      id: 'unproven-cjk-column-flow-target',
+      column: 'left',
+      text: '研究结果继续',
+      x: 0.09,
+      y: 0.82,
+      sourceSequenceIndex: 600,
+    })
+    const continuation = sourceFlowRegion({
+      id: 'unproven-cjk-column-flow-continuation',
+      column: 'right',
+      text: '在下一栏完成',
+      x: 0.515,
+      y: 0.1,
+      sourceSequenceIndex: 640,
+    })
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      language: 'zh',
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].text).toBe('研究结果继续')
+    expect(blocks[1].text).toBe('在下一栏完成')
+  })
+
   it('joins a numeric Chinese column continuation without inventing a source space', async () => {
     const target = sourceFlowRegion({
       id: 'numeric-cjk-column-flow-target',

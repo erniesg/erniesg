@@ -40,6 +40,8 @@
             "figure-present",
             "caption-boundary",
             "prose-continuity",
+            "hyphen-resolution",
+            "markup-non-promotion",
             "heading-level",
             "table-structure",
             "code-block-structure",

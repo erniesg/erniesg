@@ -3725,9 +3725,12 @@ function isSourceSemanticFlowBoundaryManifestRecord(value: unknown) {
     typeof value.rotation === 'number' &&
     Number.isFinite(value.rotation) &&
     ['pdf-text', 'ocr'].includes(value.method as string) &&
-    ['inline-stacked-fragment', 'lexical-hyphen', 'same-page-column'].includes(
-      value.topology as string,
-    ) &&
+    [
+      'inline-stacked-fragment',
+      'lexical-hyphen',
+      'same-page-column',
+      'cross-page-column',
+    ].includes(value.topology as string) &&
     [
       'no-space',
       'space',

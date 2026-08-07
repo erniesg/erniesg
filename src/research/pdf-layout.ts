@@ -80,8 +80,10 @@ export { visualCanonicalNodeId } from './pdf-visuals'
 import {
   canonicalPdfSourceSemanticFlowEvidence,
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+  PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE,
+  pdfSourceColumnFlowJoinOutcome,
   pdfSourceFragmentId,
   pdfSourceSemanticFlowBoundaryDecisionId,
   pdfSourceSemanticFlowRunSha256,
@@ -2071,6 +2073,131 @@ function parsedOrderedListMarker(value: string) {
   }
 }
 
+type SourceMarkupShape = {
+  heading: boolean
+  emphasis: boolean
+  template: boolean
+  orderedList: boolean
+}
+
+function sourceMarkupShape(value: string): SourceMarkupShape {
+  const trimmed = value.trim()
+  return {
+    heading: /^#{1,6}\s+/u.test(trimmed),
+    emphasis: /^(?:\*\*(?=\S)[\s\S]*\*\*|__(?=\S)[\s\S]*__)$/u.test(trimmed),
+    template: /^\{[A-Za-z_][A-Za-z0-9_.-]*\}$/u.test(trimmed),
+    orderedList:
+      /^(?:(?:\d+(?:\.\d+){0,3})[.)]|\(\s*\d{1,3}\s*\)|\[\s*\d{1,4}\s*\])\s+\S/u.test(
+        trimmed,
+      ),
+  }
+}
+
+function orderedMarkerHasIndependentEvidence(
+  blockIndex: number,
+  blocks: readonly RegionBlock[],
+  marker: NonNullable<ReturnType<typeof parsedOrderedListMarker>>,
+  bodySize: number,
+) {
+  const block = blocks[blockIndex]
+  if (!block) return false
+  const visibleRuns = block.region.lines.flatMap((line) =>
+    line.runs.filter((run) => run.text.trim()),
+  )
+  const firstLine = block.region.lines.find((line) => line.text.trim())
+  const firstLineRuns = firstLine?.runs.filter((run) => run.text.trim()) ?? []
+  const markerRunSeparated = Boolean(
+    firstLineRuns.length > 1 &&
+    firstLineRuns[0].text.trim() === marker.markerText,
+  )
+  const largestFont = Math.max(
+    ...block.region.lines.map((line) => line.fontSize),
+    bodySize,
+  )
+  const emphasizedShare =
+    visibleRuns.reduce(
+      (total, run) =>
+        total +
+        (run.bold || fontNameIndicatesEmphasizedFace(run.fontName)
+          ? run.text.trim().length
+          : 0),
+      0,
+    ) /
+    Math.max(
+      1,
+      visibleRuns.reduce((total, run) => total + run.text.trim().length, 0),
+    )
+  if (
+    markerRunSeparated ||
+    largestFont >= bodySize * 1.12 ||
+    emphasizedShare >= 0.6
+  ) {
+    return true
+  }
+
+  const preceding = blocks[blockIndex - 1]
+  if (preceding?.type === 'paragraph' && preceding.list?.ordered) {
+    return true
+  }
+  if (
+    preceding?.type === 'paragraph' &&
+    /:\s*$/u.test(preceding.text.trimEnd()) &&
+    block.region.box.x > preceding.region.box.x + 0.012
+  ) {
+    return true
+  }
+  if (
+    preceding?.type === 'paragraph' &&
+    block.region.page >= preceding.region.page &&
+    block.region.box.x >= preceding.region.box.x + 0.05
+  ) {
+    return true
+  }
+
+  const peerEvidence = blocks.some((candidate, candidateIndex) => {
+    if (candidateIndex === blockIndex || candidate.type !== 'paragraph') {
+      return false
+    }
+    const parsedPeer = parsedOrderedListMarker(candidate.text)
+    const peer =
+      parsedPeer ??
+      (candidate.type === 'paragraph' &&
+      candidate.list?.ordered &&
+      candidate.list.markerText &&
+      candidate.list.ordinal !== undefined
+        ? {
+            markerText: candidate.list.markerText,
+            markerStyle: candidate.list.markerStyle,
+            ordinal: candidate.list.ordinal,
+          }
+        : null)
+    if (!peer) return false
+    const samePage = candidate.region.page === block.region.page
+    const adjacentPage =
+      candidate.region.page + 1 === block.region.page &&
+      candidate.region.column === block.region.column &&
+      Math.abs(candidate.region.box.x - block.region.box.x) <= 0.05
+    if (!samePage && !adjacentPage) return false
+    const sameStyle = peer.markerStyle === marker.markerStyle
+    const ordinalSequence =
+      sameStyle &&
+      Math.abs(peer.ordinal - marker.ordinal) === 1 &&
+      (adjacentPage ||
+        (candidate.region.column === block.region.column &&
+          Math.abs(candidate.region.box.x - block.region.box.x) <= 0.05 &&
+          Math.abs(candidate.region.box.y - block.region.box.y) <= 0.2))
+    const oppositeColumnRow =
+      candidate.region.column !== block.region.column &&
+      Math.abs(candidate.region.box.y - block.region.box.y) <= 0.035
+    const nestedGeometry =
+      candidate.region.column === block.region.column &&
+      candidate.region.box.x > block.region.box.x + 0.012 &&
+      Math.abs(candidate.region.box.y - block.region.box.y) <= 0.12
+    return ordinalSequence || oppositeColumnRow || nestedGeometry
+  })
+  return peerEvidence
+}
+
 function ambiguousParenthesizedRomanListMarker(
   marker: ReturnType<typeof parsedOrderedListMarker>,
 ) {
@@ -2659,8 +2786,9 @@ function sourceSemanticFlowBoundaryCandidate(
   const baselineGap = Math.abs(fromMetrics.baseline - toMetrics.baseline)
   if (
     fontRatio > 1.5 ||
-    baselineGap >
-      Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4)
+    (topology !== 'same-page-column' &&
+      baselineGap >
+        Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4))
   ) {
     return null
   }
@@ -2671,20 +2799,28 @@ function sourceSemanticFlowBoundaryCandidate(
       toLine.sourceFragmentLineage.sourceLineId &&
     /^[,.;:!?%)}\]]/u.test(continuation.text.trimStart()),
   )
+  const noSpaceSamePageColumnTransition =
+    topology === 'same-page-column' &&
+    outcome === 'no-space' &&
+    to.run.sourceWhitespaceBefore !== 'pdf-text-item'
   if (
-    (outcome === 'no-space') !== exactStackedPunctuationTransition ||
+    (outcome === 'no-space' &&
+      !exactStackedPunctuationTransition &&
+      !noSpaceSamePageColumnTransition) ||
     (outcome === 'space' && exactStackedPunctuationTransition)
   ) {
     return null
   }
   const evidence = canonicalPdfSourceSemanticFlowEvidence(
-    exactStackedPunctuationTransition
-      ? PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
-      : outcome === 'space' &&
-          to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
-          to.run.sourceWhitespacePredecessorIndex === maximumFromSequence
-        ? PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE
-        : PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+    topology === 'same-page-column'
+      ? PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE
+      : exactStackedPunctuationTransition
+        ? PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
+        : outcome === 'space' &&
+            to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
+            to.run.sourceWhitespacePredecessorIndex === maximumFromSequence
+          ? PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE
+          : PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
   )
   const decision: SourceSemanticFlowBoundaryCandidate = {
     page: from.run.page,
@@ -2860,18 +2996,27 @@ function appendBlockContinuation(
             targetLineage?.fragment === 'cross-gutter-right'
           ? 'cross-gutter-to-span'
           : requestedTopology
+  const recordableTopology =
+    inferredTopology === 'inline-stacked-fragment' ||
+    inferredTopology === 'lexical-hyphen' ||
+    inferredTopology === 'same-page-column'
+      ? inferredTopology
+      : null
   const semanticFlowDecision =
     semanticDeletionDecision ??
-    (inferredTopology &&
-    semanticFlowOutcome !== 'space' &&
+    (recordableTopology &&
     semanticFlowOutcome !== 'unresolved' &&
-    (inferredTopology === 'inline-stacked-fragment' ||
-      inferredTopology === 'lexical-hyphen')
+    (recordableTopology === 'same-page-column'
+      ? semanticFlowOutcome === 'space' || semanticFlowOutcome === 'no-space'
+      : semanticFlowOutcome !== 'space'
+        ? recordableTopology === 'inline-stacked-fragment' ||
+          recordableTopology === 'lexical-hyphen'
+        : false)
       ? sourceSemanticFlowBoundaryDecision(
           target,
           continuation,
           semanticFlowOutcome,
-          inferredTopology,
+          recordableTopology,
         )
       : null)
   if (
@@ -3485,6 +3630,9 @@ function provenBibliographyContinuation(
   return null
 }
 
+const PDF_SENTENCE_END_WITH_CLOSING =
+  /\p{Sentence_Terminal}(?:["'’”\p{Close_Punctuation}\p{Final_Punctuation}]*)$/u
+
 const UNCERTAIN_BIBLIOGRAPHY_BOUNDARY_MESSAGE =
   'The bibliography item boundary is uncertain because a plausible markerless continuation lacks source-contiguous same-flow or adjacent-page geometry.'
 
@@ -3541,8 +3689,8 @@ function likelyUnmarkedCrossPageContinuation(
   return Boolean(
     previousText &&
     continuationText &&
-    !/[.!?](?:["'’”\])}]*)$/u.test(previousText) &&
-    (/^\p{Ll}/u.test(continuationText) ||
+    !PDF_SENTENCE_END_WITH_CLOSING.test(previousText) &&
+    (/^(?:\p{Ll}|\p{Lo})/u.test(continuationText) ||
       detachedScholarlyReferenceContinuation(previousText, continuationText) ||
       detachedCitationYearContinuation(previousText, continuationText) ||
       detachedNumericProseContinuation(previousText, continuationText) ||
@@ -3982,12 +4130,102 @@ export function sourceProvenRunFragmentToSpanBoundary(
   )
 }
 
+function sourceColumnFlowJoin(
+  continuation: RegionBlock,
+  language: string | null,
+) {
+  const continuationHeadLine = blockSourceSegments(
+    continuation,
+  )[0]?.region.lines.find((line) => line.text.trim())
+  const continuationHeadRun = continuationHeadLine?.runs.find((run) =>
+    run.text.trim(),
+  )
+  return continuationHeadRun
+    ? pdfSourceColumnFlowJoinOutcome(
+        language,
+        continuation.text.trimStart(),
+        continuationHeadRun,
+      )
+    : null
+}
+
+function sourceProvenSamePageColumnFlowBoundary(
+  target: RegionBlock,
+  continuation: RegionBlock,
+  language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
+) {
+  const targetTailSegment = blockSourceSegments(target).at(-1)
+  const continuationHeadSegment = blockSourceSegments(continuation)[0]
+  const targetTailLine = targetTailSegment?.region.lines
+    .filter((line) => line.text.trim())
+    .at(-1)
+  const continuationHeadLine = continuationHeadSegment?.region.lines.find(
+    (line) => line.text.trim(),
+  )
+  const rtl =
+    baseDirection === 'rtl' ||
+    (baseDirection !== 'ltr' &&
+      baseDirection !== 'unknown' &&
+      (language ? rtlLanguage(language) : false))
+  const sourceColumnsMatch = rtl
+    ? targetTailSegment?.region.column === 'right' &&
+      continuationHeadSegment?.region.column === 'left'
+    : targetTailSegment?.region.column === 'left' &&
+      continuationHeadSegment?.region.column === 'right'
+  const sourceColumnsAreOrdered = rtl
+    ? Boolean(
+        targetTailLine &&
+        continuationHeadLine &&
+        continuationHeadLine.box.x + continuationHeadLine.box.width <=
+          targetTailLine.box.x + 0.01,
+      )
+    : Boolean(
+        targetTailLine &&
+        continuationHeadLine &&
+        targetTailLine.box.x + targetTailLine.box.width <=
+          continuationHeadLine.box.x + 0.01,
+      )
+  if (
+    !targetTailSegment ||
+    !continuationHeadSegment ||
+    !targetTailLine ||
+    !continuationHeadLine ||
+    targetTailSegment.region.page !== continuationHeadSegment.region.page ||
+    !sourceColumnsMatch ||
+    targetTailLine.box.y + targetTailLine.box.height < 0.65 ||
+    continuationHeadLine.box.y > 0.35 ||
+    !sourceColumnsAreOrdered ||
+    /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) ||
+    detachedCitationYearContinuation(target.text, continuation.text) ||
+    !likelyUnmarkedCrossPageContinuation(target, continuation) ||
+    hasOmittedSourceBetweenBlocks(target, continuation)
+  ) {
+    return false
+  }
+  const fontRatio =
+    Math.max(targetTailLine.fontSize, continuationHeadLine.fontSize) /
+    Math.max(
+      1,
+      Math.min(targetTailLine.fontSize, continuationHeadLine.fontSize),
+    )
+  if (fontRatio > 1.12) return false
+  const candidate = sourceSemanticFlowBoundaryCandidate(
+    target,
+    continuation,
+    sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space',
+    'same-page-column',
+  )
+  return candidate !== null
+}
+
 function sourceProvenSamePageParagraphBoundary(
   target: RegionBlock,
   continuation: RegionBlock,
   hardHyphenLexicon: ReadonlySet<string>,
   unhyphenatedLexicon: ReadonlySet<string>,
   language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
 ) {
   const targetTailSegment = blockSourceSegments(target).at(-1)
   const continuationHeadSegment = blockSourceSegments(continuation)[0]
@@ -4001,6 +4239,15 @@ function sourceProvenSamePageParagraphBoundary(
     targetTailSegment?.region ?? target.region,
     continuationHeadSegment?.region ?? continuation.region,
   )
+  const sourceProvenColumnFlowBoundary = sourceProvenSamePageColumnFlowBoundary(
+    target,
+    continuation,
+    language,
+    baseDirection,
+  )
+  const sourceColumnFlowOutcome = sourceProvenColumnFlowBoundary
+    ? (sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space')
+    : 'space'
   const targetLineage = targetTailLine?.sourceFragmentLineage
   const continuationLineage = continuationHeadLine?.sourceFragmentLineage
   const explicitFragmentFamilyBoundary = Boolean(
@@ -4039,14 +4286,16 @@ function sourceProvenSamePageParagraphBoundary(
   const semanticFlowBoundary = sourceSemanticFlowBoundaryCandidate(
     target,
     continuation,
-    'space',
+    sourceColumnFlowOutcome,
     explicitFragmentFamilyBoundary
       ? 'inline-stacked-fragment'
       : runFragmentToSpanBoundary
         ? 'cross-gutter-to-span'
         : sourceAttestedCitationYearBoundary
           ? 'same-column-citation-year'
-          : 'lexical-hyphen',
+          : sourceProvenColumnFlowBoundary
+            ? 'same-page-column'
+            : 'lexical-hyphen',
   )
   if (
     !targetTailSegment ||
@@ -4057,11 +4306,13 @@ function sourceProvenSamePageParagraphBoundary(
     targetTailSegment.region.page !== continuationHeadSegment.region.page ||
     (targetTailSegment.region.column !==
       continuationHeadSegment.region.column &&
-      !runFragmentToSpanBoundary) ||
+      !runFragmentToSpanBoundary &&
+      !sourceProvenColumnFlowBoundary) ||
     (!runFragmentToSpanBoundary &&
       !explicitFragmentFamilyBoundary &&
       !sourceAttestedHyphenBoundary &&
-      !sourceAttestedCitationYearBoundary) ||
+      !sourceAttestedCitationYearBoundary &&
+      !sourceProvenColumnFlowBoundary) ||
     hasOmittedSourceBetweenBlocks(target, continuation) ||
     semanticFlowBoundary === null
   ) {
@@ -4081,7 +4332,7 @@ function sourceProvenSamePageParagraphBoundary(
       Math.min(targetTailLine.fontSize, continuationHeadLine.fontSize),
     )
   if (fontRatio > 1.12) return false
-  if (runFragmentToSpanBoundary) return true
+  if (runFragmentToSpanBoundary || sourceProvenColumnFlowBoundary) return true
   const dominantBaselineAdvance =
     continuationMetrics.baseline - targetMetrics.baseline
   const sourceProvenDominantBaselineAdvance =
@@ -4213,6 +4464,7 @@ export async function mergeProseContinuations(
     hardHyphenLexicon = new Set<string>(),
     unhyphenatedLexicon = new Set<string>(),
     language = null,
+    baseDirection = null,
     diagnostics = [],
     canonicalFloatScopes = [],
     canonicalHyphenBoundaryDecisions = [],
@@ -4222,6 +4474,7 @@ export async function mergeProseContinuations(
     hardHyphenLexicon?: ReadonlySet<string>
     unhyphenatedLexicon?: ReadonlySet<string>
     language?: string | null
+    baseDirection?: ResearchPaper['baseDirection'] | null
     diagnostics?: ReconstructionDiagnostic[]
     canonicalFloatScopes?: CanonicalFloatScopeEvidence[]
     canonicalHyphenBoundaryDecisions?: PdfCanonicalHyphenBoundaryDecision[]
@@ -4321,7 +4574,21 @@ export async function mergeProseContinuations(
           hardHyphenLexicon,
           unhyphenatedLexicon,
           language,
+          baseDirection,
         )
+      const sourceProvenSamePageColumnFlow =
+        continuation?.type === 'paragraph' &&
+        interveningOwnedCaptions.length === 0 &&
+        sourceProvenSamePageColumnFlowBoundary(
+          target,
+          continuation,
+          language,
+          baseDirection,
+        )
+      const samePageColumnFlowJoin =
+        sourceProvenSamePageColumnFlow && continuation?.type === 'paragraph'
+          ? sourceColumnFlowJoin(continuation, language)
+          : null
       const sourceProvenFloatBoundary =
         crossesOwnedFloat &&
         (sourceProvenPageBoundary ||
@@ -4440,20 +4707,24 @@ export async function mergeProseContinuations(
       appendBlockContinuation(
         target,
         continuation,
-        hyphenJoin.separator,
-        hyphenJoin.hyphenBoundary
-          ? {
-              context: 'canonical-flow-continuation',
-              ...hyphenJoin.hyphenBoundary,
-              decisions: canonicalHyphenBoundaryDecisions,
-            }
-          : null,
+        samePageColumnFlowJoin?.separator ?? hyphenJoin.separator,
+        samePageColumnFlowJoin
+          ? null
+          : hyphenJoin.hyphenBoundary
+            ? {
+                context: 'canonical-flow-continuation',
+                ...hyphenJoin.hyphenBoundary,
+                decisions: canonicalHyphenBoundaryDecisions,
+              }
+            : null,
         sourceSemanticFlowBoundaryDecisions,
         citationYearContinuation
           ? target.region.column === continuation.region.column
             ? 'same-column-citation-year'
             : 'cross-column-citation-year'
-          : null,
+          : sourceProvenSamePageColumnFlow
+            ? 'same-page-column'
+            : null,
       )
       blocks.splice(continuationIndex, 1)
     }
@@ -5839,10 +6110,22 @@ async function blocksFromRegions(
           /^[A-Z](?:\.\d+)+\.?\s+\p{Lu}/u.test(region.text.trim()) ||
           sequencedLetteredHeadingRegions.has(region) ||
           namedSectionPrefix)
+      const markup = sourceMarkupShape(region.text)
+      const sourceMarkupHasIndependentEvidence =
+        !Object.values(markup).some(Boolean) ||
+        representativeFontSize >= bodySize * 1.12 ||
+        emphasizedCharacters >= Math.max(1, visibleCharacters * 0.6) ||
+        sourceStyledLetteredHeading ||
+        sourceStyledNamedBoundaryHeading ||
+        namedSectionHeading ||
+        numberedSectionHeading ||
+        sequencedNumberedHeadingRegions.has(region) ||
+        sequencedLetteredHeadingRegions.has(region)
       const heading =
         !probableFirstPageAuthorLine &&
         !appendixContentsEntry &&
         !probableTabularColumnHeader &&
+        sourceMarkupHasIndependentEvidence &&
         headingBoundaryEvidence &&
         (namedSectionHeading ||
           numberedSectionHeading ||
@@ -6088,6 +6371,17 @@ async function blocksFromRegions(
       activeList = undefined
       lastListBlock = undefined
       continue
+    }
+    if (
+      ordered &&
+      !orderedMarkerHasIndependentEvidence(
+        blockIndex,
+        blocks,
+        ordered,
+        bodySize,
+      )
+    ) {
+      ordered = null
     }
     if (!activeList && ambiguousParenthesizedRomanListMarker(ordered)) {
       const nextBlock = blocks[blockIndex + 1]
@@ -11072,6 +11366,7 @@ export async function reconstructPageAnalyses({
     hardHyphenLexicon: inlineHardHyphenLexicon(sourceRegionLines),
     unhyphenatedLexicon: inlineUnhyphenatedLexicon(sourceRegionLines),
     language: publicationMetadata.language,
+    baseDirection: publicationMetadata.baseDirection,
     diagnostics,
     canonicalFloatScopes,
     canonicalHyphenBoundaryDecisions,

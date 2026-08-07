@@ -7,7 +7,9 @@ import {
   evaluateReadingOrder,
   hasAcceptedCycle,
   noteLabelFromText,
+  pdfSourceColumnFlowJoinOutcome,
   proseDominantPdfMathSource,
+  captionFontFamily,
   reconstructPageRegions,
   splitRunBackedCrossGutterProse,
   sourceProvenDominantBaselineSequentialWrap,
@@ -516,6 +518,18 @@ async function reconstruct(pages: PdfPageAnalysis[], hash = '7') {
 }
 
 describe('deterministic scholarly page regions', () => {
+  it('uses the continuation script instead of the document language for column spacing', () => {
+    const continuationRun = run(1, 'the model', 0.5, 0.2, 0.12)
+    continuationRun.sourceSequenceIndex = 2
+
+    expect(
+      pdfSourceColumnFlowJoinOutcome('zh', 'the model', continuationRun),
+    ).toEqual({ outcome: 'space', separator: ' ' })
+    expect(
+      pdfSourceColumnFlowJoinOutcome('zh', '模型', continuationRun),
+    ).toEqual({ outcome: 'no-space', separator: '' })
+  })
+
   it('keeps a source-bracketed bold fraction atom out of its preceding prose region', () => {
     const sourcePage = detachedDisplayFractionAtomPage()
     const result = reconstructPageRegions([sourcePage])
@@ -5290,6 +5304,100 @@ describe('deterministic scholarly page regions', () => {
         ]),
       }),
     ])
+  })
+
+  it('requires the dominant caption font family instead of an incidental shared run', async () => {
+    const seed = {
+      ...run(1, 'Figure 6. A', 0.09, 0.2, 0.22, 9, 0.011),
+      fontName: 'CaptionSerif-BoldMT',
+    }
+    const seedShared = {
+      ...run(1, 'zz', 0.32, 0.2, 0.02, 9, 0.011),
+      fontName: 'SharedSymbol',
+    }
+    const candidate = {
+      ...run(1, 'continued', 0.09, 0.214, 0.2, 9, 0.011),
+      fontName: 'BodySans-Regular',
+    }
+    const candidateShared = {
+      ...run(1, 'zz', 0.3, 0.214, 0.02, 9, 0.011),
+      fontName: 'SharedSymbol',
+    }
+    const result = await reconstruct([
+      page(1, [seed, seedShared, candidate, candidateShared]),
+    ])
+    const caption = result.regions.find((region) => region.kind === 'caption')
+    expect(caption).toBeDefined()
+    expect(caption?.text).toContain('Figure 6.')
+    expect(caption?.text).not.toContain('continued')
+    expect(
+      result.paper.nodes.some(
+        (node) => node.type === 'paragraph' && node.text.includes('continued'),
+      ),
+    ).toBe(true)
+  })
+
+  it('normalizes PostScript MT suffixes when matching caption font families', async () => {
+    const seed = {
+      ...run(
+        1,
+        'Figure 7. A caption continues across lines',
+        0.09,
+        0.2,
+        0.7,
+        9,
+        0.011,
+      ),
+      fontName: 'Arial-BoldMT',
+    }
+    const candidate = {
+      ...run(1, 'with the same family.', 0.09, 0.214, 0.3, 9, 0.011),
+      fontName: 'ArialMT',
+    }
+    const result = await reconstruct([page(1, [seed, candidate])])
+    expect(
+      result.regions.find((region) => region.kind === 'caption')?.text,
+    ).toContain('with the same family.')
+  })
+
+  it('normalizes PostScript PS markers independently of style suffixes', async () => {
+    const seed = {
+      ...run(
+        1,
+        'Figure 8. A caption continues across lines',
+        0.09,
+        0.2,
+        0.7,
+        9,
+        0.011,
+      ),
+      fontName: 'TimesNewRomanPS-BoldMT',
+    }
+    const candidate = {
+      ...run(1, 'with the same family.', 0.09, 0.214, 0.3, 9, 0.011),
+      fontName: 'TimesNewRomanPSMT',
+    }
+    const result = await reconstruct([page(1, [seed, candidate])])
+    expect(
+      result.regions.find((region) => region.kind === 'caption')?.text,
+    ).toContain('with the same family.')
+  })
+
+  it('preserves opaque PDF.js font IDs and recognizes abbreviated style suffixes', () => {
+    expect(captionFontFamily('g_d0_f1')).toBe('gd0f1')
+    expect(captionFontFamily('g_d0_f1')).not.toBe(captionFontFamily('g_d0_f2'))
+    expect(captionFontFamily('HelveticaNeueLTStd-Bd')).toBe(
+      captionFontFamily('HelveticaNeueLTStd-Regular'),
+    )
+    expect(captionFontFamily('MinionPro-It')).toBe(
+      captionFontFamily('MinionPro-Regular'),
+    )
+    expect(captionFontFamily('NimbusRomNo9L-Medi')).toBe(
+      captionFontFamily('NimbusRomNo9L-Regu'),
+    )
+    expect(captionFontFamily('NimbusRomNo9L-ReguItal')).toBe(
+      captionFontFamily('NimbusRomNo9L-Ital'),
+    )
   })
 
   it('keeps caption continuations together when opposite-column prose interleaves by y', async () => {

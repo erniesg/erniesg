@@ -3725,12 +3725,15 @@ function isSourceSemanticFlowBoundaryManifestRecord(value: unknown) {
     typeof value.rotation === 'number' &&
     Number.isFinite(value.rotation) &&
     ['pdf-text', 'ocr'].includes(value.method as string) &&
-    ['inline-stacked-fragment', 'lexical-hyphen'].includes(
+    ['inline-stacked-fragment', 'lexical-hyphen', 'same-page-column'].includes(
       value.topology as string,
     ) &&
-    ['no-space', 'discretionary-hyphen-delete', 'hard-hyphen-retain'].includes(
-      value.outcome as string,
-    ) &&
+    [
+      'no-space',
+      'space',
+      'discretionary-hyphen-delete',
+      'hard-hyphen-retain',
+    ].includes(value.outcome as string) &&
     isSourceSemanticFlowBoundaryManifestEndpoint(value.from) &&
     isSourceSemanticFlowBoundaryManifestEndpoint(value.to) &&
     isSortedUniqueSha256Array(value.evidenceSha256s, true)

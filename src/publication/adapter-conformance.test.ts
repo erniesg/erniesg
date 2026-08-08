@@ -52,8 +52,8 @@ describe('publication source adapter conformance', () => {
         ),
       )
       await copyFile(
-        resolve('tests/fixtures/publication/astro/fixture-image.svg'),
-        resolve(entryRoot, 'fixture-image.svg'),
+        resolve('public/favicon-16x16.png'),
+        resolve(entryRoot, 'fixture-image.png'),
       )
       const astro = await adaptAstroBlogEntry({
         entryId: 'payload-equivalent',

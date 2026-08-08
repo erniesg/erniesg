@@ -35,8 +35,8 @@ export async function publicationAdapterConformance(argv = process.argv.slice(2)
     ),
   )
   await copyFile(
-    resolve('tests/fixtures/publication/astro/fixture-image.svg'),
-    resolve(entryRoot, 'fixture-image.svg'),
+    resolve('public/favicon-16x16.png'),
+    resolve(entryRoot, 'fixture-image.png'),
   )
 
   const astro = await adaptAstroBlogEntry({

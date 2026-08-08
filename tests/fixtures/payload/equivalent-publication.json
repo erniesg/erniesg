@@ -48,10 +48,10 @@
   "uploads": [
     {
       "id": "fixture-image",
-      "filename": "fixture-image.svg",
-      "mimeType": "image/svg+xml",
-      "alt": "A small geometric test card",
-      "data": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDY0IDQwIj4KICA8dGl0bGU+QSBzbWFsbCBnZW9tZXRyaWMgdGVzdCBjYXJkPC90aXRsZT4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNDAiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxMiIgZmlsbD0iIzIyMiIvPgogIDxwYXRoIGQ9Ik0zOCA4aDE4djI0SDM4eiIgZmlsbD0iIzc3NyIvPgo8L3N2Zz4K"
+      "filename": "fixture-image.png",
+      "mimeType": "image/png",
+      "alt": "A small monochrome test mark",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAAmJLR0QA/4ePzL8AAAAJcEhZcwAACxMAAAsTAQCanBgAAAAHdElNRQfoCQ0HNB/61GFkAAAAeUlEQVQoz4WRIRLCUAwFN7+pwfQQneEAHTQCh+y9egYkthJXUf2njtsUgsA2ybPZeclspBphFADDImBnotL4wJeV1yVoaBg513IMSH7k5kyMjh5Rbg6wc+dJW0iiLMEKBWXITX548KZEwByLKlw5VUf1X1TyLBDEA35Rzxw1wypWpgAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNC0wOS0xM1QwNzo1MjozMSswMDowMAA5Ye4AAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjQtMDktMTNUMDc6NTI6MzErMDA6MDBxZNlSAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC"
     }
   ]
 }

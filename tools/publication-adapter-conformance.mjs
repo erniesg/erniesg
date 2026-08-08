@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -33,6 +33,10 @@ export async function publicationAdapterConformance(argv = process.argv.slice(2)
       resolve('tests/fixtures/publication/astro/payload-equivalent.mdx'),
       'utf8',
     ),
+  )
+  await copyFile(
+    resolve('tests/fixtures/publication/astro/fixture-image.svg'),
+    resolve(entryRoot, 'fixture-image.svg'),
   )
 
   const astro = await adaptAstroBlogEntry({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import publication from '../../../tests/fixtures/payload/publication.json'
 import mapping from '../../../tests/fixtures/payload/mapping.json'
+import { publicationGraphToHtml } from '../renderers/vivliostyle'
 import { adaptPayloadLexical, adaptPayloadLexicalEditions, payloadMappingPolicySchema } from './payload-lexical'
 
 function strictFixture(children: unknown[], extra: Record<string, unknown> = {}) {
@@ -176,6 +177,26 @@ describe('Payload Lexical publication adapter', () => {
         { start: 7, end: 8, hardBreak: true },
       ],
     })
+  })
+
+  it('accepts and ignores Lexical default start on unordered lists', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([
+        {
+          type: 'list',
+          listType: 'bullet',
+          start: 1,
+          children: [
+            {
+              type: 'listitem',
+              children: [{ type: 'text', text: 'Bullet item' }],
+            },
+          ],
+        },
+      ]),
+    )
+    expect(result.graph.nodes[0]).toMatchObject({ type: 'list', ordered: false })
+    expect(result.graph.nodes[0]).not.toHaveProperty('start')
   })
 
   it('fails closed for unknown nodes and executable mapping data', () => {
@@ -676,6 +697,39 @@ describe('Payload Lexical publication adapter', () => {
     ).toThrow(/Payload upload id same is duplicated at uploads\[1\]/)
   })
 
+  it('rejects aggregate decoded upload bytes above the export byte bound', () => {
+    const first = Buffer.alloc(50_000_001, 1).toString('base64')
+    const second = Buffer.alloc(50_000_000, 2).toString('base64')
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture(
+          [
+            { type: 'upload', value: 'first' },
+            { type: 'upload', value: 'second' },
+          ],
+          {
+            uploads: [
+              {
+                id: 'first',
+                filename: 'first.png',
+                mimeType: 'image/png',
+                alt: 'First image',
+                data: first,
+              },
+              {
+                id: 'second',
+                filename: 'second.png',
+                mimeType: 'image/png',
+                alt: 'Second image',
+                data: second,
+              },
+            ],
+          },
+        ),
+      ),
+    ).toThrow(/Payload export exceeds cumulative byte bound.*children\[1\]/i)
+  })
+
   it('validates intrinsic upload metadata before missing-byte and same-hash shortcuts', () => {
     const completeUpload = {
       id: 'asset',
@@ -828,6 +882,31 @@ describe('Payload Lexical publication adapter', () => {
     ).toThrow(/media kind video contradicts application\/pdf.*children\[0\]/i)
   })
 
+  it('uses the missing-upload title as an accessible source fallback', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([{ type: 'upload', value: 'remote' }], {
+        uploads: [
+          {
+            id: 'remote',
+            filename: 'remote.png',
+            mimeType: 'image/png',
+          },
+        ],
+      }),
+    )
+    expect(result.graph.nodes[0]).toMatchObject({
+      type: 'figure',
+      sourceText: 'Missing local asset: remote.png',
+      accessibility: {
+        decorative: false,
+        alternativeText: 'remote.png',
+      },
+    })
+    expect(publicationGraphToHtml(result.graph, new Map(), 'phone-webpub')).toContain(
+      'aria-label="remote.png"',
+    )
+  })
+
   it('preserves scalar configured prose and object-map upload identity without precedence loss', () => {
     const scalarBlock = adaptPayloadLexical(
       strictFixture([
@@ -972,6 +1051,25 @@ describe('Payload Lexical publication adapter', () => {
         },
       }),
     ).toThrow(/Payload mapping key citation cannot be both a block and relationship/)
+  })
+
+  it('rejects a relationship collection name without a target record', () => {
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture([
+          {
+            type: 'paragraph',
+            children: [
+              {
+                type: 'relationship',
+                relationTo: 'posts',
+                label: 'Missing post',
+              },
+            ],
+          },
+        ]),
+      ),
+    ).toThrow(/Payload relationship is missing target.*children\[0\]\.children\[0\]/)
   })
 
   it('requires typed metadata, roots, prose fields, and supported mark combinations', () => {

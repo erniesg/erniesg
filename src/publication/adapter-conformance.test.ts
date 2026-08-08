@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -50,6 +50,10 @@ describe('publication source adapter conformance', () => {
           resolve('tests/fixtures/publication/astro/payload-equivalent.mdx'),
           'utf8',
         ),
+      )
+      await copyFile(
+        resolve('tests/fixtures/publication/astro/fixture-image.svg'),
+        resolve(entryRoot, 'fixture-image.svg'),
       )
       const astro = await adaptAstroBlogEntry({
         entryId: 'payload-equivalent',

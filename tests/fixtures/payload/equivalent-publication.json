@@ -12,6 +12,7 @@
       "children": [
         { "type": "heading", "id": "payload-parity-fixture", "tag": "h1", "children": [{ "type": "text", "text": "Payload parity fixture" }] },
         { "type": "paragraph", "id": "paragraph-1", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
+        { "type": "upload", "id": "fixture-figure", "value": "fixture-image" },
         { "type": "paragraph", "id": "paragraph-2", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
         { "type": "paragraph", "id": "paragraph-3", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
         { "type": "paragraph", "id": "paragraph-4", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
@@ -44,5 +45,13 @@
       ]
     }
   },
-  "uploads": []
+  "uploads": [
+    {
+      "id": "fixture-image",
+      "filename": "fixture-image.svg",
+      "mimeType": "image/svg+xml",
+      "alt": "A small geometric test card",
+      "data": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDY0IDQwIj4KICA8dGl0bGU+QSBzbWFsbCBnZW9tZXRyaWMgdGVzdCBjYXJkPC90aXRsZT4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNDAiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxMiIgZmlsbD0iIzIyMiIvPgogIDxwYXRoIGQ9Ik0zOCA4aDE4djI0SDM4eiIgZmlsbD0iIzc3NyIvPgo8L3N2Zz4K"
+    }
+  ]
 }

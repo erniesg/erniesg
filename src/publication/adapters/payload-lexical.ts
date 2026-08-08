@@ -539,8 +539,10 @@ function relationshipValues(
   const config = state.mapping.relationships[type] ?? (relationType ? state.mapping.relationships[relationType] : undefined)
   if (!config && type !== 'relationship') return undefined
   if (nodeChildren(node, location).length) throw new Error(`Payload relationship children are unsupported at ${location}`)
-  const target = relationId(config?.target ? readPath(node, config.target) : (node.value ?? node.target ?? node.relationTo ?? node.fields))
-  if (!target) return undefined
+  const target = relationId(
+    config?.target ? readPath(node, config.target) : (node.value ?? node.target ?? node.fields),
+  )
+  if (!target) throw new Error(`Payload relationship is missing target at ${location}`)
   const rawLabel = config?.label ? readPath(node, config.label) : (node.label ?? node.text)
   if (config?.label && rawLabel === undefined) throw new Error(`Payload relationship label is missing at ${location}`)
   if (rawLabel !== undefined && (typeof rawLabel !== 'string' || !rawLabel.trim())) throw new Error(`Payload relationship label is empty or invalid at ${location}`)
@@ -666,6 +668,7 @@ type AdapterState = {
   nodes: PublicationNode[]
   assets: AssetDescriptor[]
   assetBytes: Map<string, Uint8Array>
+  assetByteLength: number
   assetOriginBySha: Map<string, { location: string; intrinsic: IntrinsicAssetMetadata }>
   uploads: Map<string, JsonObject>
   diagnostics: AdapterDiagnostic[]
@@ -820,8 +823,11 @@ function addAsset(state: AdapterState, upload: JsonObject, path: string, accessi
       throw new Error(`Payload uploads at ${prior?.location ?? 'unknown'} and ${location} share bytes but disagree on intrinsic metadata`)
     return existing.id
   }
+  const aggregateByteLength = state.assetByteLength + bytes.byteLength
+  if (aggregateByteLength > MAX_EXPORT_BYTES)
+    throw new Error(`Payload export exceeds cumulative byte bound at ${location}`)
   const descriptor: AssetDescriptor = {
-    id: `asset-${hash.slice(0, 20)}`,
+    id: `asset-${hash.slice(0, 16)}`,
     sha256: hash,
     byteLength: bytes.byteLength,
     ...intrinsic,
@@ -829,6 +835,7 @@ function addAsset(state: AdapterState, upload: JsonObject, path: string, accessi
   }
   state.assets.push(descriptor)
   state.assetBytes.set(descriptor.id, bytes)
+  state.assetByteLength = aggregateByteLength
   state.assetOriginBySha.set(hash, { location, intrinsic })
   return descriptor.id
 }
@@ -957,7 +964,7 @@ function addUploadNode(state: AdapterState, node: LexicalNode, path: string, res
     sourceText: assetId ? undefined : `Missing local asset: ${title}`,
     accessibility: {
       decorative: false,
-      ...(alt ? { alternativeText: alt } : {}),
+      alternativeText: alt ?? title,
     },
   } as PublicationNode
 }
@@ -1101,7 +1108,11 @@ function listOrdering(node: LexicalNode, location: string) {
   }
   if (new Set(declarations).size > 1) throw new Error(`Payload list ordering declarations conflict at ${location}`)
   const ordered = declarations[0] ?? false
-  if (node.start !== undefined && (!ordered || !Number.isInteger(node.start) || Number(node.start) < 1)) throw new Error(`Payload list start is invalid at ${location}`)
+  if (
+    node.start !== undefined &&
+    (!Number.isInteger(node.start) || Number(node.start) < 1 || (!ordered && node.start !== 1))
+  )
+    throw new Error(`Payload list start is invalid at ${location}`)
   return ordered
 }
 
@@ -1122,7 +1133,7 @@ function addList(state: AdapterState, node: LexicalNode, path: string): Publicat
     ...commonNode(state, listIdentity.id, listIdentity.origin, path),
     type: 'list',
     ordered,
-    ...(node.start !== undefined ? { start: Number(node.start) } : {}),
+    ...(ordered && node.start !== undefined ? { start: Number(node.start) } : {}),
     itemIds,
   } as PublicationNode
   const result: PublicationNode[] = [list]
@@ -1259,6 +1270,7 @@ function buildState(document: JsonObject, mapping: PayloadMappingPolicy, request
     nodes: [],
     assets: [],
     assetBytes: new Map(),
+    assetByteLength: 0,
     assetOriginBySha: new Map(),
     uploads: indexUploads(mappedValue(document, mapping, 'uploads'), 'uploads'),
     diagnostics: [],

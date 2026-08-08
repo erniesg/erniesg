@@ -11,6 +11,9 @@ eligible:
   head_branch_patterns:
     - "codex/issue-*-rucksack"
     - "claude/issue-*-rucksack"
+    - "codex/*"
+    - "claude/*"
+    - "coordinator/*"
   automatic_path_patterns:
     - "docs/**"
     - "tests/**"

@@ -7,7 +7,7 @@ depends-on: 027,028
 
 ## Provider
 
-vm-codex
+claude
 
 ## Goal
 

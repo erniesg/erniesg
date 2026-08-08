@@ -671,6 +671,69 @@ describe('Payload Lexical publication adapter', () => {
     ).toThrow(/executable/)
   })
 
+  it('links each list item only to its direct child list', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([
+        {
+          type: 'list',
+          id: 'list-1',
+          children: [
+            {
+              type: 'listitem',
+              id: 'item-1',
+              children: [
+                { type: 'text', text: 'Level one' },
+                {
+                  type: 'list',
+                  id: 'list-2',
+                  children: [
+                    {
+                      type: 'listitem',
+                      id: 'item-2',
+                      children: [
+                        { type: 'text', text: 'Level two' },
+                        {
+                          type: 'list',
+                          id: 'list-3',
+                          children: [
+                            {
+                              type: 'listitem',
+                              id: 'item-3',
+                              children: [
+                                { type: 'text', text: 'Level three' },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+    )
+    const item = (id: string) =>
+      result.graph.nodes.find(
+        (node) => node.type === 'list-item' && node.id === id,
+      )
+    expect(item('item-1')).toMatchObject({ childListIds: ['list-2'] })
+    expect(item('item-2')).toMatchObject({ childListIds: ['list-3'] })
+    expect(item('item-3')).toMatchObject({ childListIds: [] })
+
+    const html = publicationGraphToHtml(
+      result.graph,
+      new Map(),
+      'phone-webpub',
+    )
+    const renderedIds = [...html.matchAll(/\sid="([^"]+)"/gu)].map(
+      (match) => match[1],
+    )
+    expect(new Set(renderedIds).size).toBe(renderedIds.length)
+  })
+
   it('validates mapping and upload collections before adapting content', () => {
     const document = strictFixture([{ type: 'paragraph', children: [{ type: 'text', text: 'Body' }] }])
     for (const version of [1, '1', '1.0', '1.0.0']) {
@@ -881,6 +944,30 @@ describe('Payload Lexical publication adapter', () => {
       ),
     ).toThrow(/media kind video contradicts application\/pdf.*children\[0\]/i)
   })
+
+  it.each(['audio', 'video'] as const)(
+    'fails closed when %s media has no embedded bytes',
+    (mediaKind) => {
+      expect(() =>
+        adaptPayloadLexical(
+          strictFixture([{ type: 'media', kind: mediaKind, value: 'remote' }], {
+            uploads: [
+              {
+                id: 'remote',
+                filename: mediaKind === 'audio' ? 'remote.mp3' : 'remote.mp4',
+                mimeType: mediaKind === 'audio' ? 'audio/mpeg' : 'video/mp4',
+                alt: `Remote ${mediaKind}`,
+              },
+            ],
+          }),
+        ),
+      ).toThrow(
+        new RegExp(
+          `Payload ${mediaKind} media has no embedded bytes.*children\\[0\\]`,
+        ),
+      )
+    },
+  )
 
   it('uses the missing-upload title as an accessible source fallback', () => {
     const result = adaptPayloadLexical(
@@ -1520,6 +1607,130 @@ describe('Payload Lexical publication adapter', () => {
     expect(result.graph.nodes.find((node) => node.type === 'reference')).toMatchObject({ href: '#target-1' })
   })
 
+  it('maps Payload LinkFeature document targets before requiring an external URL', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([
+        {
+          type: 'paragraph',
+          children: [
+            {
+              type: 'link',
+              fields: {
+                doc: { relationTo: 'posts', value: 'target-post' },
+                linkType: 'internal',
+              },
+              children: [
+                { type: 'text', text: 'Read ' },
+                { type: 'text', text: 'the post', format: 'bold' },
+              ],
+            },
+          ],
+        },
+      ]),
+      {
+        relationships: {
+          link: {
+            target: 'fields.doc.value',
+            role: 'cross-reference',
+          },
+        },
+      },
+    )
+    const paragraph = result.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    expect(paragraph).toMatchObject({
+      type: 'paragraph',
+      text: 'Read the post',
+      inlineRuns: expect.arrayContaining([
+        expect.objectContaining({
+          start: 5,
+          end: 13,
+          bold: true,
+        }),
+        expect.objectContaining({
+          start: 0,
+          end: 13,
+          href: '#target-post',
+          semanticRole: 'cross-reference',
+          targetIds: ['target-post'],
+        }),
+      ]),
+    })
+    expect(result.graph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'target-post', type: 'reference' }),
+      ]),
+    )
+  })
+
+  it('keeps external links when a link relationship mapping is configured', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([
+        {
+          type: 'paragraph',
+          children: [
+            {
+              type: 'link',
+              url: 'https://example.com/external',
+              children: [{ type: 'text', text: 'External link' }],
+            },
+          ],
+        },
+      ]),
+      {
+        relationships: {
+          link: {
+            target: 'fields.doc.value',
+            role: 'cross-reference',
+          },
+        },
+      },
+    )
+    expect(result.graph.nodes[0]).toMatchObject({
+      type: 'paragraph',
+      inlineRuns: [
+        expect.objectContaining({ href: 'https://example.com/external' }),
+      ],
+    })
+  })
+
+  it('rejects nested link producers inside mapped Payload document links', () => {
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture([
+          {
+            type: 'paragraph',
+            children: [
+              {
+                type: 'link',
+                fields: { doc: { value: 'target-post' } },
+                children: [
+                  {
+                    type: 'citation',
+                    value: 'nested-target',
+                    label: 'Nested citation',
+                  },
+                ],
+              },
+            ],
+          },
+        ]),
+        {
+          relationships: {
+            link: {
+              target: 'fields.doc.value',
+              role: 'cross-reference',
+            },
+            citation: { role: 'citation' },
+          },
+        },
+      ),
+    ).toThrow(
+      /Payload link-producing node citation cannot be nested inside a link.*children\[0\]\.children\[0\]/,
+    )
+  })
+
   it('keeps inline relationship anchors distinct from their target node ids', () => {
     const result = adaptPayloadLexical(
       {
@@ -1593,24 +1804,6 @@ describe('Payload Lexical publication adapter', () => {
     })
     expect(remoteOnly.assetBundle.descriptor.assets).toEqual([])
     expect(remoteOnly.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'missing-asset' })]))
-    const missingMedia = adaptPayloadLexical({
-      id: 'missing-media',
-      title: 'Missing media',
-      content: {
-        root: {
-          children: [{ type: 'media', value: 'missing-video' }],
-        },
-      },
-      uploads: [
-        {
-          id: 'missing-video',
-          filename: 'missing.mp4',
-          mimeType: 'video/mp4',
-          alt: 'Missing video',
-        },
-      ],
-    })
-    expect(missingMedia.diagnostics.filter((diagnostic) => diagnostic.code === 'missing-asset')).toHaveLength(1)
     const editions = adaptPayloadLexicalEditions(publication, mapping)
     expect(editions.map((edition) => edition.graph.edition.locale)).toEqual(['en', 'fr'])
     expect(editions[1].graph.metadata.title).toBe('Fixture de parité Payload')

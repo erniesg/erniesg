@@ -92,6 +92,65 @@ describe('publication source adapter conformance', () => {
     }
   })
 
+  it('normalizes internal fragment hrefs with their canonical target ids', () => {
+    const left = adaptPayloadLexical(
+      {
+        id: 'fragment-normalization',
+        title: 'Fragment normalization',
+        content: {
+          root: {
+            children: [
+              {
+                type: 'paragraph',
+                children: [
+                  {
+                    type: 'citation',
+                    value: 'left-target',
+                    label: 'Inline target',
+                  },
+                ],
+              },
+              {
+                type: 'relationship',
+                value: 'left-target',
+                label: 'Block target',
+              },
+            ],
+          },
+        },
+      },
+      { relationships: { citation: { role: 'cross-reference' } } },
+    ).graph
+    const right = structuredClone(left)
+    for (const node of right.nodes) {
+      if (node.id === 'left-target') node.id = 'right-target'
+      if ('targetIds' in node)
+        node.targetIds = node.targetIds.map((id) =>
+          id === 'left-target' ? 'right-target' : id,
+        )
+      if ('href' in node && node.href === '#left-target')
+        node.href = '#right-target'
+      if ('inlineRuns' in node && node.inlineRuns) {
+        node.inlineRuns = node.inlineRuns.map((run) => ({
+          ...run,
+          ...(run.href === '#left-target' ? { href: '#right-target' } : {}),
+          ...(run.targetIds
+            ? {
+                targetIds: run.targetIds.map((id) =>
+                  id === 'left-target' ? 'right-target' : id,
+                ),
+              }
+            : {}),
+        }))
+      }
+    }
+
+    expect(comparePublicationSemanticSubset(left, right)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(left)).toBe(
+      canonicalPublicationSubsetSha256(right),
+    )
+  })
+
   it('allows only source provenance and source hashes to differ in output receipts', () => {
     const shared = {
       version: '1.0.0',

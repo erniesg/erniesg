@@ -21,6 +21,8 @@ export function canonicalPublicationSubset(
   const parsed = graph
   const idMap = new Map(parsed.nodes.map((node, index) => [node.id, `node-${index + 1}`]))
   const normalizeTarget = (target: string) => idMap.get(target) ?? target
+  const normalizeHref = (href: string) =>
+    href.startsWith('#') ? `#${normalizeTarget(href.slice(1))}` : href
   const normalizeNode = (node: PublicationNode) => {
     const { provenance: _provenance, edition: nodeEdition, id: _id, ...rest } = node
     const edition = {
@@ -41,9 +43,11 @@ export function canonicalPublicationSubset(
     if ('parentId' in node) normalized.parentId = normalizeTarget(node.parentId)
     if ('backlinkIds' in node) normalized.backlinkIds = node.backlinkIds.map(normalizeTarget)
     if ('targetIds' in node) normalized.targetIds = node.targetIds.map(normalizeTarget)
+    if ('href' in node && node.href) normalized.href = normalizeHref(node.href)
     if ('inlineRuns' in node && node.inlineRuns) {
       normalized.inlineRuns = node.inlineRuns.map((run) => ({
         ...run,
+        ...(run.href ? { href: normalizeHref(run.href) } : {}),
         ...(run.annotationId ? { annotationId: normalizeTarget(run.annotationId) } : {}),
         ...(run.relationshipId ? { relationshipId: normalizeTarget(run.relationshipId) } : {}),
         ...(run.targetIds ? { targetIds: run.targetIds.map(normalizeTarget) } : {}),

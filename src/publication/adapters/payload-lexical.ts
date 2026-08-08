@@ -526,6 +526,7 @@ function relationshipValues(
   node: LexicalNode,
   type: string,
   location: string,
+  options: { allowChildren?: boolean } = {},
 ):
   | {
       target: string
@@ -538,7 +539,7 @@ function relationshipValues(
   const relationType = typeof rawRelationType === 'string' ? rawRelationType : undefined
   const config = state.mapping.relationships[type] ?? (relationType ? state.mapping.relationships[relationType] : undefined)
   if (!config && type !== 'relationship') return undefined
-  if (nodeChildren(node, location).length) throw new Error(`Payload relationship children are unsupported at ${location}`)
+  if (!options.allowChildren && nodeChildren(node, location).length) throw new Error(`Payload relationship children are unsupported at ${location}`)
   const target = relationId(
     config?.target ? readPath(node, config.target) : (node.value ?? node.target ?? node.fields),
   )
@@ -727,7 +728,12 @@ function appendInline(state: AdapterState, children: LexicalNode[], path: string
     const marks = Object.fromEntries(Object.entries(style).filter(([key]) => !['start', 'end'].includes(key))) as Partial<PublicationInlineRun>
     if (Object.keys(marks).length) inlineRuns.push({ start, end: text.length, ...marks })
   }
-  const visit = (node: LexicalNode, current: Partial<PublicationInlineRun>, nodePath: string) => {
+  const visit = (
+    node: LexicalNode,
+    current: Partial<PublicationInlineRun>,
+    nodePath: string,
+    insideLink = false,
+  ) => {
     const type = normalizeNodeType(node)
     if (type === 'text' || type === 'linebreak') {
       const location = sourceLocation(state.sourceId, nodePath)
@@ -750,20 +756,57 @@ function appendInline(state: AdapterState, children: LexicalNode[], path: string
       return
     }
     if (type === 'link' || type === 'autolink') {
-      if (current.href)
+      if (current.href || insideLink)
         throw new Error(
           `Payload link-producing node ${type} cannot be nested inside a link at ${sourceLocation(state.sourceId, nodePath)}`,
         )
-      const href = hrefValue(node, sourceLocation(state.sourceId, nodePath))
+      const location = sourceLocation(state.sourceId, nodePath)
+      const href = hrefValue(node, location)
+      const configuredRelationship = href
+        ? undefined
+        : relationshipValues(state, node, type, location, {
+            allowChildren: true,
+          })
+      if (configuredRelationship) {
+        const { target, role } = configuredRelationship
+        const targetNodeId = graphSafeRelationshipTarget(target, location)
+        const anchorBase = `relationship-${digest(`${state.sourceId}|${nodePath}|${targetNodeId}`).slice(0, 20)}`
+        let relationshipId = anchorBase
+        let suffix = 1
+        while (relationshipId === targetNodeId || state.usedIds.has(relationshipId)) relationshipId = `${anchorBase}-${suffix++}`
+        state.usedIds.add(relationshipId)
+        const labelStart = text.length
+        nodeChildren(node, location).forEach((child, index) =>
+          visit(
+            child,
+            current,
+            `${nodePath}.children[${index}]`,
+            true,
+          ),
+        )
+        const label = text.slice(labelStart)
+        if (!label.trim()) throw new Error(`Payload link is empty at ${location}`)
+        inlineRuns.push({
+          start: labelStart,
+          end: text.length,
+          ...current,
+          relationshipId,
+          semanticRole: role,
+          targetIds: [targetNodeId],
+          href: `#${targetNodeId}`,
+        })
+        state.pendingReferences.set(targetNodeId, { label, role })
+        return
+      }
       if (!href) throw new Error(`Payload link is missing href at ${sourceLocation(state.sourceId, nodePath)}`)
       const labelStart = text.length
-      nodeChildren(node, sourceLocation(state.sourceId, nodePath)).forEach((child, index) => visit(child, { ...current, href }, `${nodePath}.children[${index}]`))
+      nodeChildren(node, sourceLocation(state.sourceId, nodePath)).forEach((child, index) => visit(child, { ...current, href }, `${nodePath}.children[${index}]`, true))
       if (!text.slice(labelStart).trim()) throw new Error(`Payload link is empty at ${sourceLocation(state.sourceId, nodePath)}`)
       return
     }
     const configuredRelationship = relationshipValues(state, node, type, sourceLocation(state.sourceId, nodePath))
     if (configuredRelationship) {
-      if (current.href)
+      if (current.href || insideLink)
         throw new Error(
           `Payload link-producing node ${type} cannot be nested inside a link at ${sourceLocation(state.sourceId, nodePath)}`,
         )
@@ -1075,6 +1118,10 @@ function addMediaNode(state: AdapterState, node: LexicalNode, path: string): Pub
   const alt = uploadAlternativeText(node, upload, location)
   assertLocalizedUploadAlternative(state, node, upload, path, alt)
   const assetId = upload ? addAsset(state, upload, path, alt) : undefined
+  if (!assetId && (mediaKind === 'audio' || mediaKind === 'video'))
+    throw new Error(
+      `Payload ${mediaKind} media has no embedded bytes at ${location}`,
+    )
   if (!assetId) return addUploadNode(state, node, path, { upload, assetId })
   if (!alt) throw new Error(`Payload media requires non-empty alternative text at ${location}`)
   const identity = nodeId(state, node, path, 'media')
@@ -1148,10 +1195,14 @@ function addList(state: AdapterState, node: LexicalNode, path: string): Publicat
     })
     const inline = appendInline(state, itemChildren, itemPath, {}, { skipTopLevelLists: true })
     const childLists: PublicationNode[] = []
+    const childListIds: string[] = []
     itemChildren.forEach((child, childIndex) => {
-      if (normalizeNodeType(child) === 'list') childLists.push(...addList(state, child, `${itemPath}.children[${childIndex}]`))
+      if (normalizeNodeType(child) === 'list') {
+        const nestedNodes = addList(state, child, `${itemPath}.children[${childIndex}]`)
+        childListIds.push(nestedNodes[0]!.id)
+        childLists.push(...nestedNodes)
+      }
     })
-    const childListIds = childLists.filter((candidate) => candidate.type === 'list').map((candidate) => candidate.id)
     const itemFields = isObject(item.fields) ? item.fields : undefined
     const directText = optionalProse(item.text ?? itemFields?.text, 'listitem text', sourceLocation(state.sourceId, itemPath))
     if (inline.text && directText) throw new Error(`Payload listitem has conflicting inline and direct text at ${sourceLocation(state.sourceId, itemPath)}`)

@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "fields": {
+    "id": "id",
+    "title": "title",
+    "description": "description",
+    "authors": "authors",
+    "locale": "locale",
+    "status": "status",
+    "version": "version",
+    "content": "content",
+    "uploads": "uploads",
+    "locales": "localeVariants",
+    "keywords": "keywords"
+  },
+  "blocks": { "callout": "aside" },
+  "relationships": {
+    "citation": { "target": "value", "label": "label", "role": "citation" }
+  },
+  "fallbackLocale": "en"
+}

@@ -16,7 +16,9 @@ import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
 import { PDFDocument } from 'pdf-lib'
 import { chromium } from 'playwright'
+import { canonicalPublicationSubsetSha256 } from '../adapter-conformance'
 import { serializeAssetBundle } from '../asset-bundle'
+import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../output-contract'
 import type {
   PublicationGraph,
   PublicationInlineRun,
@@ -106,11 +108,7 @@ export type PublicationReceipt = {
   version: '1.0.0'
   source: { graphSha256: string; assetBundleSha256: string }
   profiles: typeof PROFILE_DETAILS
-  policyVersions: {
-    renderer: '1.0.0'
-    semanticHtml: '1.0.0'
-    accessibility: '1.0.0'
-  }
+  policyVersions: typeof PUBLICATION_OUTPUT_POLICY_VERSIONS
   toolchain: ReturnType<typeof publicationToolchainForRuntime>
   repository: { commit: string; dirty: boolean }
   artifacts: ArtifactReceipt[]
@@ -165,6 +163,7 @@ function inlineHtml(
       if (active.some((run) => run.inlineCode)) value = `<code>${value}</code>`
       if (active.some((run) => run.italic)) value = `<em>${value}</em>`
       if (active.some((run) => run.bold)) value = `<strong>${value}</strong>`
+      if (active.some((run) => run.underline)) value = `<u>${value}</u>`
       if (active.some((run) => run.strikethrough)) value = `<del>${value}</del>`
       const verticalAlign = active.find((run) => run.verticalAlign)
       if (verticalAlign?.verticalAlign === 'superscript')
@@ -877,7 +876,7 @@ async function createEpub(
     `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title${generatedLanguage}>${escapeHtml(navigationLabels.title)}</title></head><body><nav epub:type="toc"${generatedLanguage} aria-label="${escapeHtml(navigationLabels.toc)}"><h1${generatedLanguage}>${escapeHtml(navigationLabels.contents)}</h1>${renderEpubToc(headings)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml"${generatedLanguage}>${escapeHtml(navigationLabels.article)}</a></li></ol></nav></body></html>`,
     zipOptions(),
   )
-  const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`
+  const identifier = `urn:sha256:${canonicalPublicationSubsetSha256(bundle)}`
   zip.file(
     'EPUB/package.opf',
     `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title>${contributorMetadata}<dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>${accessModeMetadata}${accessModeSufficientMetadata}${accessibilityFeatureMetadata}</metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
@@ -1187,11 +1186,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
         assetBundleSha256: sha256(serializeAssetBundle(bundle.assetBundle)),
       },
       profiles: PROFILE_DETAILS,
-      policyVersions: {
-        renderer: '1.0.0',
-        semanticHtml: '1.0.0',
-        accessibility: '1.0.0',
-      },
+      policyVersions: PUBLICATION_OUTPUT_POLICY_VERSIONS,
       toolchain: publicationToolchainForRuntime(),
       repository,
       artifacts,

@@ -3,6 +3,8 @@ import {
   type PublicationSourceAdapter,
   type PublicationSourceResult,
 } from './source-adapter'
+import { astroPublicationAdapter } from './adapters/astro'
+import { payloadLexicalSourceAdapter } from './adapters/payload-lexical'
 
 export type PublicationBundle = PublicationSourceResult
 
@@ -47,4 +49,10 @@ export async function buildRegisteredPublication(
 ) {
   const bundle = await registry.resolve(request.adapterId, request.locator)
   return renderer.render(bundle, request)
+}
+
+export function createDefaultPublicationAdapterRegistry() {
+  return new PublicationAdapterRegistry()
+    .register(astroPublicationAdapter)
+    .register(payloadLexicalSourceAdapter)
 }

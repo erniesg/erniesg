@@ -32,6 +32,46 @@ describe('publication:build CLI', () => {
     ).toThrow(/Unknown/)
   })
 
+  it('accepts a local Payload export and versioned mapping without an Astro entry', () => {
+    expect(
+      parsePublicationBuildArgs([
+        '--adapter',
+        'payload',
+        '--input',
+        'tests/fixtures/payload/publication.json',
+        '--mapping',
+        'tests/fixtures/payload/mapping.json',
+        '--output',
+        '.agent/evidence/payload-publication',
+      ]),
+    ).toEqual({
+      adapter: 'payload-lexical',
+      input: 'tests/fixtures/payload/publication.json',
+      mapping: 'tests/fixtures/payload/mapping.json',
+      output: '.agent/evidence/payload-publication',
+    })
+    expect(() =>
+      parsePublicationBuildArgs([
+        '--adapter',
+        'payload',
+        '--entry',
+        'astro-only',
+        '--output',
+        'output',
+      ]),
+    ).toThrow(/Payload.*--input/)
+    expect(() =>
+      parsePublicationBuildArgs([
+        '--adapter',
+        'astro',
+        '--input',
+        'payload.json',
+        '--output',
+        'output',
+      ]),
+    ).toThrow(/Astro.*--entry/)
+  })
+
   it('binds route parity to the exact canonical route bytes', () => {
     expect(publicationRouteHtmlDigest('<html>route</html>')).toMatch(
       /^[a-f0-9]{64}$/,

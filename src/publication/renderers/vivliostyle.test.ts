@@ -162,7 +162,13 @@ describe('Vivliostyle publication renderer boundary', () => {
               text: 'read this\n',
               inlineRuns: [
                 { start: 0, end: 5, href: 'https://example.com/' },
-                { start: 5, end: 9, href: 'https://example.com/', bold: true },
+                {
+                  start: 5,
+                  end: 9,
+                  href: 'https://example.com/',
+                  bold: true,
+                  underline: true,
+                },
                 { start: 9, end: 10, hardBreak: true },
               ],
             }
@@ -177,7 +183,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
     const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
     expect(html.match(/href="https:\/\/example\.com\//g)).toHaveLength(1)
-    expect(html).toContain('<strong>this</strong>')
+    expect(html).toContain('<u><strong>this</strong></u>')
     expect(html).toContain('</a><br>')
     expect(html).toContain('<br>')
   })

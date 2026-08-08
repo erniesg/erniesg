@@ -4,9 +4,9 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
+import { canonicalPublicationSubsetSha256 } from '../src/publication/adapter-conformance.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
-import { PublicationAdapterRegistry } from '../src/publication/adapter-registry.ts'
-import { astroPublicationAdapter } from '../src/publication/adapters/astro.ts'
+import { createDefaultPublicationAdapterRegistry } from '../src/publication/adapter-registry.ts'
 import {
   PUBLICATION_PROFILES,
   vivliostyleRenderer,
@@ -17,18 +17,63 @@ export function parsePublicationBuildArgs(argv) {
   const options = {}
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index]
-    if (!['--adapter', '--entry', '--output'].includes(option))
+    if (
+      ![
+        '--adapter',
+        '--entry',
+        '--input',
+        '--mapping',
+        '--output',
+      ].includes(option)
+    )
       throw new Error(`Unknown publication:build option: ${option}`)
     const value = argv[++index]
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${option}`)
     options[option.slice(2)] = value
   }
-  if (!options.adapter || !options.entry || !options.output)
+  if (!options.adapter || !options.output)
     throw new Error(
-      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory>',
+      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory> | --adapter payload --input <json> [--mapping <json>] --output <directory>',
     )
+  if (options.adapter === 'payload') options.adapter = 'payload-lexical'
+  if (options.adapter === 'astro') {
+    if (!options.entry)
+      throw new Error('Astro publication builds require --entry <blog-id>')
+    if (options.input || options.mapping)
+      throw new Error('Astro publication builds do not accept Payload input or mapping files')
+  } else if (options.adapter === 'payload-lexical') {
+    if (!options.input)
+      throw new Error('Payload publication builds require --input <json>')
+    if (options.entry)
+      throw new Error('Payload publication builds do not accept an Astro --entry')
+  } else {
+    throw new Error(`Unsupported publication source adapter: ${options.adapter}`)
+  }
   return options
+}
+
+export function publicationSourceReceipt(bundle, routeParity) {
+  return {
+    adapterId: bundle.provenance.adapterId,
+    adapterVersion: bundle.provenance.adapterVersion,
+    sourceType: bundle.provenance.sourceType,
+    sourceId: bundle.provenance.sourceId,
+    ...(bundle.provenance.sourceRevision
+      ? { sourceRevision: bundle.provenance.sourceRevision }
+      : {}),
+    ...(bundle.provenance.mappingVersion
+      ? { mappingVersion: bundle.provenance.mappingVersion }
+      : {}),
+    graphSha256: createHash('sha256')
+      .update(serializePublicationGraph(bundle.graph))
+      .digest('hex'),
+    assetBundleSha256: createHash('sha256')
+      .update(serializeAssetBundle(bundle.assetBundle))
+      .digest('hex'),
+    canonicalSubsetSha256: canonicalPublicationSubsetSha256(bundle),
+    routeParity,
+  }
 }
 
 function collectElements(node, result = { headings: [], images: [] }) {
@@ -435,28 +480,55 @@ export async function writeRouteParity(entry, output, bundle, repository) {
   )
 }
 
+export async function bindPublicationSourceReceipt(output, bundle, routeParity) {
+  const receiptPath = resolve(output, 'publication-receipt.json')
+  const receipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+  const source = publicationSourceReceipt(bundle, routeParity)
+  if (
+    receipt.source?.graphSha256 !== source.graphSha256 ||
+    receipt.source?.assetBundleSha256 !== source.assetBundleSha256
+  )
+    throw new Error('Publication renderer receipt does not match its source bundle')
+  receipt.source = source
+  receipt.repository = publicationRepositoryForCurrentCheckout()
+  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
+  return receipt
+}
+
 export async function publicationBuild(argv = process.argv.slice(2)) {
   const options = parsePublicationBuildArgs(argv)
-  const registry = new PublicationAdapterRegistry().register(
-    astroPublicationAdapter,
-  )
-  const bundle = await registry.resolve(options.adapter, {
-    entryId: options.entry,
-  })
+  const registry = createDefaultPublicationAdapterRegistry()
+  const locator =
+    options.adapter === 'astro'
+      ? { entryId: options.entry }
+      : {
+          document: JSON.parse(await readFile(resolve(options.input), 'utf8')),
+          ...(options.mapping
+            ? {
+                mapping: JSON.parse(
+                  await readFile(resolve(options.mapping), 'utf8'),
+                ),
+              }
+            : {}),
+        }
+  const bundle = await registry.resolve(options.adapter, locator)
   const receipt = await vivliostyleRenderer.render(bundle, {
     outputDirectory: options.output,
     profiles: PUBLICATION_PROFILES,
   })
-  const receiptPath = resolve(options.output, 'publication-receipt.json')
-  const currentReceipt = JSON.parse(await readFile(receiptPath, 'utf8'))
-  const repository = publicationRepositoryForCurrentCheckout()
-  currentReceipt.repository = repository
-  await writeFile(receiptPath, `${JSON.stringify(currentReceipt, null, 2)}\n`)
-  await writeRouteParity(options.entry, options.output, bundle, repository)
+  const boundReceipt = await bindPublicationSourceReceipt(
+    options.output,
+    bundle,
+    options.adapter === 'astro'
+      ? 'astro-canonical-route'
+      : 'not-applicable',
+  )
+  if (options.adapter === 'astro')
+    await writeRouteParity(options.entry, options.output, bundle, boundReceipt.repository)
   process.stdout.write(
     `Publication matrix built at ${resolve(options.output)} (${receipt.artifacts.length} artifacts)\n`,
   )
-  return { ...receipt, repository }
+  return boundReceipt
 }
 
 if (

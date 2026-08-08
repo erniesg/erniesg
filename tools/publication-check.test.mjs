@@ -13,12 +13,16 @@ import {
   assertPdfTextItemGeometry,
   assertPdfWidowOrphanRequirements,
   accessibilityLabel,
+  assertPublicationReceiptSourceBinding,
+  assertPublicationReceiptMappingVersion,
+  assertPublicationReceiptPolicyVersions,
   checkWebPubReceipt,
   normalizePdfSearchableText,
   normalizePdfVerificationText,
   orderPdfTextRequirements,
   publicationPdfLinkRequirements,
   publicationPdfLinkRequirementsForProfile,
+  publicationReceiptRequiresCanonicalRouteParity,
   parsePublicationCheckArgs,
   publicationPdfTextRequirements,
   pdfAnnotationTarget,
@@ -45,6 +49,155 @@ describe('publication:check CLI', () => {
         'phone-webpub,eink-epub',
       ]),
     ).toThrow(/exactly/)
+  })
+
+  it('derives canonical Astro route parity from source identity and isolates conformance mode', () => {
+    expect(
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'astro',
+          sourceType: 'astro',
+          routeParity: 'astro-canonical-route',
+        },
+      }),
+    ).toBe(true)
+    expect(
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'payload-lexical',
+          sourceType: 'payload',
+          routeParity: 'not-applicable',
+        },
+      }),
+    ).toBe(false)
+    expect(() =>
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'astro',
+          sourceType: 'astro',
+          routeParity: 'not-applicable',
+        },
+      }),
+    ).toThrow(/Astro.*canonical route parity/)
+    expect(
+      publicationReceiptRequiresCanonicalRouteParity(
+        {
+          source: {
+            adapterId: 'astro',
+            sourceType: 'astro',
+            routeParity: 'adapter-conformance',
+          },
+        },
+        { context: 'adapter-conformance' },
+      ),
+    ).toBe(false)
+    expect(() =>
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'astro',
+          sourceType: 'astro',
+          routeParity: 'adapter-conformance',
+        },
+      }),
+    ).toThrow(/internal adapter-conformance/)
+  })
+
+  it('fails closed on stale renderer, transformation, or checker receipt policies', () => {
+    const receipt = {
+      version: '1.0.0',
+      policyVersions: {
+        renderer: '1.0.0',
+        semanticHtml: '1.0.0',
+        accessibility: '1.0.0',
+        transformationPolicy: '1.0.0',
+        publicationCheck: '1.0.0',
+      },
+    }
+    expect(() => assertPublicationReceiptPolicyVersions(receipt)).not.toThrow()
+    expect(() =>
+      assertPublicationReceiptPolicyVersions({
+        ...receipt,
+        policyVersions: {
+          ...receipt.policyVersions,
+          transformationPolicy: undefined,
+        },
+      }),
+    ).toThrow(/policy versions/)
+    expect(() =>
+      assertPublicationReceiptPolicyVersions({
+        ...receipt,
+        policyVersions: {
+          ...receipt.policyVersions,
+          publicationCheck: '2.0.0',
+        },
+      }),
+    ).toThrow(/policy versions/)
+  })
+
+  it('pins Payload mapping receipts to the canonical accepted policy version', () => {
+    const receipt = {
+      source: {
+        adapterId: 'payload-lexical',
+        sourceType: 'payload',
+        mappingVersion: '1.0.0',
+      },
+    }
+    expect(() => assertPublicationReceiptMappingVersion(receipt)).not.toThrow()
+    expect(() =>
+      assertPublicationReceiptMappingVersion({
+        ...receipt,
+        source: { ...receipt.source, mappingVersion: '99.0.0' },
+      }),
+    ).toThrow(/Payload mapping version is missing or stale/)
+    expect(() =>
+      assertPublicationReceiptMappingVersion({
+        source: { adapterId: 'astro', sourceType: 'astro' },
+      }),
+    ).not.toThrow()
+  })
+
+  it('binds receipt source identity and revision to every graph node', () => {
+    const receipt = {
+      source: {
+        adapterId: 'astro',
+        sourceType: 'astro',
+        sourceId: 'blog:fixture',
+        sourceRevision: 'revision-1',
+      },
+    }
+    const graph = {
+      nodes: [
+        {
+          provenance: {
+            adapterId: 'astro',
+            sourceId: 'blog:fixture',
+            sourceRevision: 'revision-1',
+          },
+        },
+      ],
+    }
+    expect(() => assertPublicationReceiptSourceBinding(receipt, graph)).not.toThrow()
+    expect(() =>
+      assertPublicationReceiptSourceBinding(
+        { ...receipt, source: { ...receipt.source, sourceId: 'blog:other' } },
+        graph,
+      ),
+    ).toThrow(/source id binding/)
+    expect(() =>
+      assertPublicationReceiptSourceBinding(
+        {
+          ...receipt,
+          source: { ...receipt.source, sourceRevision: 'revision-2' },
+        },
+        graph,
+      ),
+    ).toThrow(/source revision binding/)
+    expect(() =>
+      assertPublicationReceiptSourceBinding(
+        { ...receipt, source: { ...receipt.source, sourceType: 'payload' } },
+        graph,
+      ),
+    ).toThrow(/source type.*adapter/i)
   })
 
   it('validates every PDF page against the selected profile geometry', async () => {
@@ -146,6 +299,16 @@ describe('publication:check CLI', () => {
         `${'!'.repeat(40)}After punctuation HardBreak`,
       ),
     ).toEqual(['After punctuation', 'Hard\nBreak'])
+    expect(
+      orderPdfTextRequirements(
+        ['Section one', 'This configured block remains an aside.', 'Section one'],
+        'Section one This configured block remains an aside. Section one',
+      ),
+    ).toEqual([
+      'Section one',
+      'This configured block remains an aside.',
+      'Section one',
+    ])
     expect(
       orderPdfTextRequirements(['A\nB', 'X'], 'a b c d e f g h i j AB X'),
     ).toEqual(['A\nB', 'X'])
@@ -262,6 +425,14 @@ describe('publication:check CLI', () => {
         'parent item',
       ]),
     ).not.toThrow()
+    const repeatedLocations = [...'ABA'].map(() => ({ page: 1, line: 1 }))
+    expect(() =>
+      assertPdfWidowOrphanRequirements('ABA', repeatedLocations, [
+        'A',
+        'B',
+        'A',
+      ]),
+    ).not.toThrow()
   })
 
   it('requires every authored link to have a matching PDF annotation', () => {
@@ -280,6 +451,11 @@ describe('publication:check CLI', () => {
         [{ target: 'https://example.com/' }, { target: '#target' }],
         required,
       ),
+    ).not.toThrow()
+    expect(() =>
+      assertPdfLinkAnnotations([{ url: 'https://example.com/' }], [
+        'https://example.com',
+      ]),
     ).not.toThrow()
     expect(() =>
       assertPdfLinkAnnotations([{ target: 'https://example.com/' }], required),

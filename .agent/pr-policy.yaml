@@ -27,6 +27,7 @@ review:
   independent_reviewers:
     - codex-code-review
     - human-maintainer
+    - rucksack-erniesg
 risk:
   low_risk_paths:
     - "docs/**"

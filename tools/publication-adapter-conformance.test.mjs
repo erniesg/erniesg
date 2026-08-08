@@ -3,7 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parsePublicationAdapterConformanceArgs } from './publication-adapter-conformance.mjs'
+import { vivliostyleRenderer } from '../src/publication/renderers/vivliostyle.ts'
+import {
+  parsePublicationAdapterConformanceArgs,
+  publicationAdapterConformance,
+} from './publication-adapter-conformance.mjs'
 
 describe('publication adapter output conformance CLI', () => {
   it('requires one explicit new output directory', () => {
@@ -24,6 +28,31 @@ describe('publication adapter output conformance CLI', () => {
     )
     expect(result.status).toBe(1)
     expect(result.stderr).toMatch(/Usage: publication-adapter-conformance/)
+  })
+
+  it('passes canonical graphs to the renderer after semantic comparison', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-adapter-conformance-boundary-'),
+    )
+    const output = resolve(temporaryRoot, 'output')
+    const renderedNodeIds = []
+    const originalRender = vivliostyleRenderer.render
+    vivliostyleRenderer.render = async (bundle) => {
+      renderedNodeIds.push(bundle.graph.nodes.map((node) => node.id))
+      if (renderedNodeIds.length === 2) throw new Error('render-boundary-captured')
+      return undefined
+    }
+    try {
+      await expect(
+        publicationAdapterConformance(['--output', output]),
+      ).rejects.toThrow('render-boundary-captured')
+      expect(renderedNodeIds).toHaveLength(2)
+      expect(renderedNodeIds[0][0]).toBe('node-1')
+      expect(renderedNodeIds[1][0]).toBe('node-1')
+    } finally {
+      vivliostyleRenderer.render = originalRender
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
   })
 
   it('stages the complete Astro fixture through the real CLI matrix', async () => {

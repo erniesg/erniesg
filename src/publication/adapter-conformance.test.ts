@@ -19,6 +19,7 @@ import {
   comparePublicationSemanticSubset,
   sourceReceiptHashes,
 } from './adapter-conformance'
+import { publicationGraphSchema } from './schema'
 import { createPublicationContractReceipt } from './source-adapter'
 
 describe('publication source adapter conformance', () => {
@@ -145,6 +146,73 @@ describe('publication source adapter conformance', () => {
       }
     }
 
+    expect(comparePublicationSemanticSubset(left, right)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(left)).toBe(
+      canonicalPublicationSubsetSha256(right),
+    )
+  })
+
+  it('canonicalizes relationship anchors separately from publication node ids', () => {
+    const graphWithFootnote = (documentId: string) => {
+      const graph = adaptPayloadLexical(
+        {
+          id: documentId,
+          title: 'Relationship anchor normalization',
+          content: {
+            root: {
+              children: [
+                {
+                  type: 'paragraph',
+                  id: 'paragraph',
+                  children: [
+                    {
+                      type: 'citation',
+                      value: 'target-note',
+                      label: 'Footnote',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        { relationships: { citation: { role: 'cross-reference' } } },
+      ).graph
+      const paragraph = graph.nodes.find((node) => node.type === 'paragraph')
+      const relationshipId =
+        paragraph?.type === 'paragraph'
+          ? paragraph.inlineRuns?.[0]?.relationshipId
+          : undefined
+      const targetIndex = graph.nodes.findIndex((node) => node.id === 'target-note')
+      const target = graph.nodes[targetIndex]
+      if (!relationshipId || target?.type !== 'reference')
+        throw new Error('relationship anchor regression setup failed')
+      const {
+        type: _type,
+        targetIds: _targetIds,
+        href: _href,
+        ...targetBase
+      } = target
+      graph.nodes[targetIndex] = {
+        ...targetBase,
+        type: 'note',
+        noteKind: 'footnote',
+        label: '1',
+        backlinkIds: [relationshipId],
+        text: 'Footnote',
+      }
+      return publicationGraphSchema.parse(graph)
+    }
+
+    const left = graphWithFootnote('anchor-left')
+    const right = graphWithFootnote('anchor-right')
+    const relationshipId = (graph: typeof left) => {
+      const paragraph = graph.nodes.find((node) => node.type === 'paragraph')
+      return paragraph?.type === 'paragraph'
+        ? paragraph.inlineRuns?.[0]?.relationshipId
+        : undefined
+    }
+    expect(relationshipId(left)).not.toBe(relationshipId(right))
     expect(comparePublicationSemanticSubset(left, right)).toBe(true)
     expect(canonicalPublicationSubsetSha256(left)).toBe(
       canonicalPublicationSubsetSha256(right),

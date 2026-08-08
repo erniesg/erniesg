@@ -10,7 +10,7 @@
     "root": {
       "type": "root",
       "children": [
-        { "type": "heading", "id": "payload-parity-fixture", "tag": "h1", "children": [{ "type": "text", "text": "Payload parity fixture" }] },
+        { "type": "heading", "id": "payload-heading", "tag": "h1", "children": [{ "type": "text", "text": "Payload parity fixture" }] },
         { "type": "paragraph", "id": "paragraph-1", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
         { "type": "upload", "id": "figure-2", "value": "fixture-image" },
         { "type": "paragraph", "id": "paragraph-3", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },

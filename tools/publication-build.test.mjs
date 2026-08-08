@@ -1,9 +1,14 @@
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { vivliostyleRenderer } from '../src/publication/renderers/vivliostyle.ts'
 import {
   parsePublicationBuildArgs,
   canonicalRouteBodyFingerprint,
   consumeRouteImageIndex,
   publicationGraphBodyFingerprint,
+  publicationBuild,
   publicationReceiptDigest,
   publicationRouteHtmlDigest,
 } from './publication-build.mjs'
@@ -145,5 +150,37 @@ describe('publication:build CLI', () => {
     expect(
       consumeRouteImageIndex(images, usedIndexes, 'Repeated image', 'figurea'),
     ).toBe(-1)
+  })
+
+  it('removes stale Astro route-parity evidence when reusing an output for Payload', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-build-reused-output-'),
+    )
+    const output = resolve(temporaryRoot, 'output')
+    const staleParity = resolve(output, 'astro-route-parity.json')
+    const originalRender = vivliostyleRenderer.render
+    vivliostyleRenderer.render = async () => {
+      throw new Error('render-boundary-captured')
+    }
+    try {
+      await mkdir(output)
+      await writeFile(staleParity, '{"stale":true}\n')
+      await expect(
+        publicationBuild([
+          '--adapter',
+          'payload',
+          '--input',
+          'tests/fixtures/payload/equivalent-publication.json',
+          '--mapping',
+          'tests/fixtures/payload/mapping.json',
+          '--output',
+          output,
+        ]),
+      ).rejects.toThrow('render-boundary-captured')
+      await expect(access(staleParity)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      vivliostyleRenderer.render = originalRender
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
   })
 })

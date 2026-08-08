@@ -237,11 +237,17 @@ function canonicalLocale(value: unknown, field = 'locale') {
   return locale
 }
 
-function sourceSafeId(value: string) {
-  return value.replace(/[^A-Za-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '') || 'document'
-}
-
 const GRAPH_SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
+
+function sourceSafeId(value: string) {
+  if (GRAPH_SAFE_ID_PATTERN.test(value)) return value
+  const sanitized = value
+    .replace(/[^A-Za-z0-9._:-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+/u, '')
+  const suffix = digest(value).slice(0, 16)
+  const prefix = (sanitized || 'document').slice(0, 256 - suffix.length - 1)
+  return `${prefix}-${suffix}`
+}
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
@@ -261,7 +267,12 @@ function digest(value: Uint8Array | string) {
 /** Stable id derivation is public so anchor tests and tooling can prove the
  * structural-path/content-digest rule without invoking the adapter. */
 export function derivePayloadNodeId(documentId: string, structuralPath: string, node: unknown) {
-  return `derived-${sourceSafeId(documentId)}-${digest(`${documentId}|${structuralPath}|${stableStringify(node)}`).slice(0, 20)}`
+  const suffix = digest(`${documentId}|${structuralPath}|${stableStringify(node)}`).slice(0, 20)
+  const documentPrefix = sourceSafeId(documentId).slice(
+    0,
+    256 - 'derived--'.length - suffix.length,
+  )
+  return `derived-${documentPrefix}-${suffix}`
 }
 
 function sourceLocation(sourceId: string, path: string) {
@@ -374,17 +385,15 @@ function uploadCrop(upload: JsonObject, location: string) {
   }
 }
 
-type IntrinsicAssetMetadata = Pick<AssetDescriptor, 'mediaType' | 'fileName' | 'width' | 'height' | 'focalPoint' | 'crop'>
+type IntrinsicAssetMetadata = Pick<AssetDescriptor, 'mediaType' | 'width' | 'height' | 'focalPoint' | 'crop'>
 
 function uploadIntrinsicMetadata(upload: JsonObject, location: string): IntrinsicAssetMetadata {
-  const fileName = uploadFileName(upload, location)
   const width = optionalUploadDimension(upload.width, 'width', location)
   const height = optionalUploadDimension(upload.height, 'height', location)
   const focalPoint = uploadFocalPoint(upload, location)
   const crop = uploadCrop(upload, location)
   return {
     mediaType: mediaTypeFor(upload, location),
-    ...(fileName ? { fileName } : {}),
     ...(width ? { width } : {}),
     ...(height ? { height } : {}),
     ...(focalPoint ? { focalPoint } : {}),
@@ -480,6 +489,23 @@ function textValue(node: LexicalNode, location: string) {
   const value = node.text !== undefined ? node.text : node.value
   if (typeof value !== 'string' || value.length === 0) throw new Error(`Payload text node requires non-empty string text at ${location}`)
   return value
+}
+
+function codeTextFromChildren(node: LexicalNode, location: string) {
+  const children = nodeChildren(node, location)
+  if (!children.length) return undefined
+  return children
+    .map((child, index) => {
+      const type = normalizeNodeType(child)
+      const childLocation = `${location}.children[${index}]`
+      if (type === 'linebreak') return '\n'
+      if (type === 'text' || type === 'code-highlight')
+        return textValue(child, childLocation)
+      throw new Error(
+        `Unsupported Payload code child ${type || 'unknown'} at ${childLocation}`,
+      )
+    })
+    .join('')
 }
 
 function normalizeNodeType(node: LexicalNode) {
@@ -638,7 +664,15 @@ function normalizeInput(input: unknown, mappingArgument?: unknown): { document: 
     if (typeof value !== 'string' || !value.trim()) throw new Error('Payload requested locale must be a non-empty string')
     return value
   }
-  if (isObject(input.document)) {
+  const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(input, key)
+  const outerHasDocumentIdentity = ['id', '_id', 'title', 'name'].some(hasOwn)
+  const outerHasDocumentContent = ['content', 'body', 'richText'].some(hasOwn)
+  const explicitDocumentWrapper = input.mapping !== undefined
+  if (
+    isObject(input.document) &&
+    (explicitDocumentWrapper ||
+      (!outerHasDocumentIdentity && !outerHasDocumentContent))
+  ) {
     document = input.document
     mapping = mapping ?? input.mapping
     locale = requestedLocale(input.locale)
@@ -847,6 +881,7 @@ function addAsset(state: AdapterState, upload: JsonObject, path: string, accessi
   const id = uploadId(upload)
   if (!id) throw new Error(`Payload upload is missing id at ${sourceLocation(state.sourceId, path)}`)
   const location = sourceLocation(state.sourceId, path)
+  const fileName = uploadFileName(upload, location)
   const intrinsic = uploadIntrinsicMetadata(upload, location)
   const bytes = decodeBytes(upload.bytes ?? upload.data ?? upload.buffer ?? upload.base64, location)
   if (!bytes) {
@@ -864,6 +899,10 @@ function addAsset(state: AdapterState, upload: JsonObject, path: string, accessi
     const prior = state.assetOriginBySha.get(hash)
     if (!prior || stableStringify(prior.intrinsic) !== stableStringify(intrinsic))
       throw new Error(`Payload uploads at ${prior?.location ?? 'unknown'} and ${location} share bytes but disagree on intrinsic metadata`)
+    const retainedFileName = [existing.fileName, fileName]
+      .filter((value): value is string => Boolean(value))
+      .sort()[0]
+    if (retainedFileName) existing.fileName = retainedFileName
     return existing.id
   }
   const aggregateByteLength = state.assetByteLength + bytes.byteLength
@@ -874,6 +913,7 @@ function addAsset(state: AdapterState, upload: JsonObject, path: string, accessi
     sha256: hash,
     byteLength: bytes.byteLength,
     ...intrinsic,
+    ...(fileName ? { fileName } : {}),
     accessibilityLabel,
   }
   state.assets.push(descriptor)
@@ -1231,7 +1271,13 @@ function addBlock(state: AdapterState, node: LexicalNode, path: string): Publica
     const identity = nodeId(state, node, path, 'code')
     const fields = isObject(node.fields) ? node.fields : undefined
     const location = sourceLocation(state.sourceId, path)
-    const rawCode = node.code ?? node.text ?? node.value ?? fields?.code ?? fields?.text
+    const rawCode =
+      codeTextFromChildren(node, location) ??
+      node.code ??
+      node.text ??
+      node.value ??
+      fields?.code ??
+      fields?.text
     if (typeof rawCode !== 'string' || !rawCode.trim()) throw new Error(`Payload code must be a non-empty string at ${location}`)
     const language = optionalProse(node.language ?? fields?.language, 'code language', location)
     return [

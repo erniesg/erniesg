@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
@@ -497,6 +497,8 @@ export async function bindPublicationSourceReceipt(output, bundle, routeParity) 
 
 export async function publicationBuild(argv = process.argv.slice(2)) {
   const options = parsePublicationBuildArgs(argv)
+  if (options.adapter !== 'astro')
+    await rm(resolve(options.output, 'astro-route-parity.json'), { force: true })
   const registry = createDefaultPublicationAdapterRegistry()
   const locator =
     options.adapter === 'astro'

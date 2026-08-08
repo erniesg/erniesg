@@ -2,6 +2,7 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
+  canonicalPublicationSourceResult,
   comparePublicationOutputReceipts,
   comparePublicationSemanticSubset,
 } from '../src/publication/adapter-conformance.ts'
@@ -56,25 +57,27 @@ export async function publicationAdapterConformance(argv = process.argv.slice(2)
   )
   if (!comparePublicationSemanticSubset(astro, payload))
     throw new Error('Equivalent Astro and Payload fixtures have different canonical semantics')
+  const canonicalAstro = canonicalPublicationSourceResult(astro)
+  const canonicalPayload = canonicalPublicationSourceResult(payload)
 
   const astroOutput = resolve(root, 'astro-output')
   const payloadOutput = resolve(root, 'payload-output')
-  await vivliostyleRenderer.render(astro, {
+  await vivliostyleRenderer.render(canonicalAstro, {
     outputDirectory: astroOutput,
     profiles: PUBLICATION_PROFILES,
   })
-  await vivliostyleRenderer.render(payload, {
+  await vivliostyleRenderer.render(canonicalPayload, {
     outputDirectory: payloadOutput,
     profiles: PUBLICATION_PROFILES,
   })
   const astroReceipt = await bindPublicationSourceReceipt(
     astroOutput,
-    astro,
+    canonicalAstro,
     'adapter-conformance',
   )
   const payloadReceipt = await bindPublicationSourceReceipt(
     payloadOutput,
-    payload,
+    canonicalPayload,
     'adapter-conformance',
   )
   const matrix = PUBLICATION_PROFILES.join(',')

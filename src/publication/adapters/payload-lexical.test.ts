@@ -92,6 +92,67 @@ describe('Payload Lexical publication adapter', () => {
     expect(inserted.graph.nodes[1].id).not.toBe(first.graph.nodes[0].id)
   })
 
+  it('keeps sanitized document identities collision-resistant', () => {
+    const identities = ['a/b', 'a b', '!!!'].map((id) => {
+      const result = adaptPayloadLexical({
+        id,
+        title: 'Collision-resistant identity',
+        content: {
+          root: {
+            children: [
+              {
+                type: 'paragraph',
+                children: [{ type: 'text', text: 'Body' }],
+              },
+            ],
+          },
+        },
+      })
+      return {
+        graphId: result.graph.id,
+        sourceId: result.provenance.sourceId,
+        nodeId: result.graph.nodes[0].id,
+      }
+    })
+    expect(new Set(identities.map(({ graphId }) => graphId)).size).toBe(3)
+    expect(new Set(identities.map(({ sourceId }) => sourceId)).size).toBe(3)
+    expect(new Set(identities.map(({ nodeId }) => nodeId)).size).toBe(3)
+    expect(
+      identities.every(({ graphId }) =>
+        /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(graphId),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not reinterpret an ordinary object-valued document field as an adapter wrapper', () => {
+    const result = adaptPayloadLexical({
+      id: 'ordinary-document-field',
+      title: 'Ordinary document field',
+      locale: 'en',
+      document: { relationTo: 'legal-documents', value: 'terms' },
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'Body remains authoritative.' }],
+            },
+          ],
+        },
+      },
+    })
+    expect(result.graph).toMatchObject({
+      id: 'ordinary-document-field',
+      metadata: { title: 'Ordinary document field' },
+      nodes: [
+        expect.objectContaining({
+          type: 'paragraph',
+          text: 'Body remains authoritative.',
+        }),
+      ],
+    })
+  })
+
   it('records Payload draft state as working publication metadata', () => {
     const result = adaptPayloadLexical({
       id: 'draft-publication',
@@ -849,6 +910,38 @@ describe('Payload Lexical publication adapter', () => {
     ).toThrow(/uploads at .*children\[0\].* and .*children\[1\].*share bytes but disagree on intrinsic metadata/i)
   })
 
+  it('deduplicates renamed copies of identical bytes with a deterministic filename', () => {
+    const adaptNames = (names: [string, string]) =>
+      adaptPayloadLexical(
+        strictFixture(
+          [
+            { type: 'upload', value: 'first' },
+            { type: 'upload', value: 'second' },
+          ],
+          {
+            uploads: names.map((filename, index) => ({
+              id: index === 0 ? 'first' : 'second',
+              filename,
+              mimeType: 'image/png',
+              data: 'AQIDBA==',
+              alt: 'Shared image',
+            })),
+          },
+        ),
+      )
+
+    const forward = adaptNames(['z-copy.png', 'a-original.png'])
+    const reverse = adaptNames(['a-original.png', 'z-copy.png'])
+    expect(forward.assetBundle.descriptor.assets).toHaveLength(1)
+    expect(reverse.assetBundle.descriptor.assets).toHaveLength(1)
+    expect(forward.assetBundle.descriptor.assets[0].fileName).toBe(
+      'a-original.png',
+    )
+    expect(reverse.assetBundle.descriptor.assets[0].fileName).toBe(
+      'a-original.png',
+    )
+  })
+
   it('requires accessible, renderer-compatible upload and media semantics', () => {
     const bytes = 'AQIDBA=='
     expect(() =>
@@ -1344,6 +1437,27 @@ describe('Payload Lexical publication adapter', () => {
         { blocks: { section: 'heading' } },
       ),
     ).toThrow(/Payload heading has invalid level or tag.*children\[0\]/)
+  })
+
+  it('collects standard Lexical code text children and line breaks', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([
+        {
+          type: 'code',
+          language: 'typescript',
+          children: [
+            { type: 'code-highlight', text: 'const answer = 42' },
+            { type: 'linebreak' },
+            { type: 'text', text: 'return answer' },
+          ],
+        },
+      ]),
+    )
+    expect(result.graph.nodes[0]).toMatchObject({
+      type: 'code',
+      language: 'typescript',
+      code: 'const answer = 42\nreturn answer',
+    })
   })
 
   it('keeps localized contributor prose separate and validates locale declarations', () => {

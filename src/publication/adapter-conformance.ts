@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { serializePublicationGraph, type PublicationGraph, type PublicationNode } from './schema'
+import { publicationGraphSchema, serializePublicationGraph, type PublicationGraph, type PublicationNode } from './schema'
 import { serializeAssetBundle } from './asset-bundle'
 import type { PublicationSourceResult } from './source-adapter'
 
@@ -20,7 +20,22 @@ export function canonicalPublicationSubset(
   const graph = 'graph' in value ? value.graph : value
   const parsed = graph
   const idMap = new Map(parsed.nodes.map((node, index) => [node.id, `node-${index + 1}`]))
+  const relationshipIds = parsed.nodes.flatMap((node) =>
+    'inlineRuns' in node && node.inlineRuns
+      ? node.inlineRuns.flatMap((run) =>
+          run.relationshipId ? [run.relationshipId] : [],
+        )
+      : [],
+  )
+  const relationshipIdMap = new Map(
+    [...new Set(relationshipIds)].map((id, index) => [
+      id,
+      `relationship-${index + 1}`,
+    ]),
+  )
   const normalizeTarget = (target: string) => idMap.get(target) ?? target
+  const normalizeRelationshipId = (id: string) =>
+    relationshipIdMap.get(id) ?? id
   const normalizeHref = (href: string) =>
     href.startsWith('#') ? `#${normalizeTarget(href.slice(1))}` : href
   const normalizeNode = (node: PublicationNode) => {
@@ -41,7 +56,8 @@ export function canonicalPublicationSubset(
     if ('childListIds' in node) normalized.childListIds = node.childListIds.map(normalizeTarget)
     if ('captionId' in node && node.captionId) normalized.captionId = normalizeTarget(node.captionId)
     if ('parentId' in node) normalized.parentId = normalizeTarget(node.parentId)
-    if ('backlinkIds' in node) normalized.backlinkIds = node.backlinkIds.map(normalizeTarget)
+    if ('backlinkIds' in node)
+      normalized.backlinkIds = node.backlinkIds.map(normalizeRelationshipId)
     if ('targetIds' in node) normalized.targetIds = node.targetIds.map(normalizeTarget)
     if ('href' in node && node.href) normalized.href = normalizeHref(node.href)
     if ('inlineRuns' in node && node.inlineRuns) {
@@ -49,7 +65,9 @@ export function canonicalPublicationSubset(
         ...run,
         ...(run.href ? { href: normalizeHref(run.href) } : {}),
         ...(run.annotationId ? { annotationId: normalizeTarget(run.annotationId) } : {}),
-        ...(run.relationshipId ? { relationshipId: normalizeTarget(run.relationshipId) } : {}),
+        ...(run.relationshipId
+          ? { relationshipId: normalizeRelationshipId(run.relationshipId) }
+          : {}),
         ...(run.targetIds ? { targetIds: run.targetIds.map(normalizeTarget) } : {}),
       }))
     }
@@ -85,6 +103,29 @@ export function comparePublicationSemanticSubset(
   right: PublicationGraph | PublicationSourceResult,
 ) {
   return serializeCanonicalPublicationSubset(left) === serializeCanonicalPublicationSubset(right)
+}
+
+/** Build a renderer-safe graph from the canonical semantic subset while
+ * retaining source provenance for receipt binding and checker attestation. */
+export function canonicalPublicationGraph(
+  value: PublicationGraph | PublicationSourceResult,
+): PublicationGraph {
+  const graph = 'graph' in value ? value.graph : value
+  const canonical = canonicalPublicationSubset(graph)
+  return publicationGraphSchema.parse({
+    ...canonical,
+    edition: { id: 'edition', ...canonical.edition },
+    nodes: canonical.nodes.map((node, index) => ({
+      ...node,
+      provenance: graph.nodes[index]!.provenance,
+    })),
+  })
+}
+
+export function canonicalPublicationSourceResult(
+  value: PublicationSourceResult,
+): PublicationSourceResult {
+  return { ...value, graph: canonicalPublicationGraph(value) }
 }
 
 type JsonRecord = Record<string, unknown>

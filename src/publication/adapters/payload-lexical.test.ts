@@ -14,6 +14,15 @@ function strictFixture(children: unknown[], extra: Record<string, unknown> = {})
   }
 }
 
+function capturedError(callback: () => unknown) {
+  try {
+    callback()
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
 describe('Payload Lexical publication adapter', () => {
   it('maps typed Lexical content, marks, blocks, relationships, and assets', async () => {
     const result = adaptPayloadLexical(publication, mapping)
@@ -732,6 +741,73 @@ describe('Payload Lexical publication adapter', () => {
     ).toThrow(/executable/)
   })
 
+  it('allows harmless JSON-authored keys while retaining value and prototype safety', () => {
+    const plainBody = [
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Plain authored JSON.' }],
+      },
+    ]
+    const body = [
+      {
+        type: 'paragraph',
+        hooks: 'narrative hooks',
+        resolver: 'story resolution',
+        callback: 'a callback in quoted prose',
+        function: 'mathematical function',
+        execute: 'an authored command name',
+        children: [{ type: 'text', text: 'Harmless authored JSON.' }],
+      },
+    ]
+    const harmlessError = capturedError(() =>
+      adaptPayloadLexical(
+        strictFixture(body, {
+          hooks: ['setup', 'payoff'],
+          resolver: { description: 'ordinary export metadata' },
+          callback: 'quoted source material',
+          function: 'f(x)',
+          execute: false,
+        }),
+      ),
+    )
+    const executableErrors = [
+      () => 'run',
+      Symbol('unsafe'),
+      1n,
+    ].map((value) =>
+      capturedError(() =>
+        adaptPayloadLexical(
+          strictFixture(plainBody, { authoredMetadata: { value } }),
+        ),
+      ),
+    )
+    const unsafePrototype = strictFixture(plainBody)
+    Object.defineProperty(unsafePrototype, '__proto__', {
+      enumerable: true,
+      value: 'must remain forbidden',
+    })
+
+    expect({
+      harmlessError,
+      executableErrors,
+      prototypeError: capturedError(() =>
+        adaptPayloadLexical(unsafePrototype),
+      ),
+      strictMappingError: capturedError(() =>
+        adaptPayloadLexical(strictFixture(plainBody), { hooks: 'run-this' }),
+      ),
+    }).toEqual({
+      harmlessError: undefined,
+      executableErrors: [
+        expect.stringMatching(/executable value/i),
+        expect.stringMatching(/executable value/i),
+        expect.stringMatching(/executable value/i),
+      ],
+      prototypeError: expect.stringMatching(/unsafe key __proto__/i),
+      strictMappingError: expect.stringMatching(/hooks/i),
+    })
+  })
+
   it('links each list item only to its direct child list', () => {
     const result = adaptPayloadLexical(
       strictFixture([
@@ -1439,6 +1515,93 @@ describe('Payload Lexical publication adapter', () => {
     ).toThrow(/Payload heading has invalid level or tag.*children\[0\]/)
   })
 
+  it('skips blank Lexical paragraphs before reserving ids without weakening node validation', () => {
+    let retainedNodes: unknown
+    try {
+      retainedNodes = adaptPayloadLexical(
+        strictFixture([
+          { type: 'paragraph', id: 'body', children: [] },
+          {
+            type: 'paragraph',
+            id: 'body',
+            children: [{ type: 'text', text: 'Retained body.' }],
+          },
+          { type: 'paragraph', children: [{ type: 'linebreak' }] },
+          { type: 'paragraph', children: [] },
+        ]),
+      ).graph.nodes.map((node) => ({
+        id: node.id,
+        type: node.type,
+        text: node.type === 'paragraph' ? node.text : undefined,
+      }))
+    } catch (error) {
+      retainedNodes = error instanceof Error ? error.message : String(error)
+    }
+
+    expect({
+      retainedNodes,
+      allBlankError: capturedError(() =>
+        adaptPayloadLexical(
+          strictFixture([
+            { type: 'paragraph', children: [] },
+            { type: 'paragraph', children: [{ type: 'linebreak' }] },
+          ]),
+        ),
+      ),
+      emptyHeadingError: capturedError(() =>
+        adaptPayloadLexical(strictFixture([{ type: 'heading', children: [] }])),
+      ),
+      emptyQuoteError: capturedError(() =>
+        adaptPayloadLexical(strictFixture([{ type: 'quote', children: [] }])),
+      ),
+      emptyListItemError: capturedError(() =>
+        adaptPayloadLexical(
+          strictFixture([
+            {
+              type: 'list',
+              children: [{ type: 'listitem', children: [] }],
+            },
+          ]),
+        ),
+      ),
+      emptyMappedParagraphError: capturedError(() =>
+        adaptPayloadLexical(
+          strictFixture([
+            {
+              type: 'block',
+              fields: { blockType: 'notice', children: [] },
+            },
+          ]),
+          { blocks: { notice: 'paragraph' } },
+        ),
+      ),
+      malformedTextError: capturedError(() =>
+        adaptPayloadLexical(
+          strictFixture([
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: '' }],
+            },
+          ]),
+        ),
+      ),
+    }).toEqual({
+      retainedNodes: [
+        { id: 'body', type: 'paragraph', text: 'Retained body.' },
+      ],
+      allBlankError: expect.stringMatching(/Payload Lexical content is empty/i),
+      emptyHeadingError: expect.stringMatching(/Payload heading is empty/i),
+      emptyQuoteError: expect.stringMatching(/Payload quote is empty/i),
+      emptyListItemError: expect.stringMatching(/Payload listitem is empty/i),
+      emptyMappedParagraphError: expect.stringMatching(
+        /Payload paragraph is empty/i,
+      ),
+      malformedTextError: expect.stringMatching(
+        /Payload text node requires non-empty string text/i,
+      ),
+    })
+  })
+
   it('collects standard Lexical code text children and line breaks', () => {
     const result = adaptPayloadLexical(
       strictFixture([
@@ -1776,6 +1939,76 @@ describe('Payload Lexical publication adapter', () => {
         expect.objectContaining({ id: 'target-post', type: 'reference' }),
       ]),
     )
+  })
+
+  it('prefers internal LinkFeature targets when URL fields are null or blank', () => {
+    const internalHrefs = [null, '', '   '].map((url) => {
+      try {
+        const result = adaptPayloadLexical(
+          strictFixture([
+            {
+              type: 'paragraph',
+              children: [
+                {
+                  type: 'link',
+                  fields: {
+                    doc: { relationTo: 'posts', value: 'target-post' },
+                    linkType: 'internal',
+                    url,
+                  },
+                  children: [{ type: 'text', text: 'Internal post' }],
+                },
+              ],
+            },
+          ]),
+          {
+            relationships: {
+              link: {
+                target: 'fields.doc.value',
+                role: 'cross-reference',
+              },
+            },
+          },
+        )
+        const paragraph = result.graph.nodes.find(
+          (node) => node.type === 'paragraph',
+        )
+        return paragraph?.type === 'paragraph'
+          ? paragraph.inlineRuns?.find((run) => run.targetIds?.[0] === 'target-post')
+              ?.href
+          : undefined
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error)
+      }
+    })
+    const malformedExternalErrors = ['', '   ', { href: '/not-a-string' }].map(
+      (url) =>
+        capturedError(() =>
+          adaptPayloadLexical(
+            strictFixture([
+              {
+                type: 'paragraph',
+                children: [
+                  {
+                    type: 'link',
+                    fields: { url },
+                    children: [{ type: 'text', text: 'External link' }],
+                  },
+                ],
+              },
+            ]),
+          ),
+        ),
+    )
+
+    expect({ internalHrefs, malformedExternalErrors }).toEqual({
+      internalHrefs: ['#target-post', '#target-post', '#target-post'],
+      malformedExternalErrors: [
+        expect.stringMatching(/link is missing href/i),
+        expect.stringMatching(/link is missing href/i),
+        expect.stringMatching(/link href must be a non-empty string/i),
+      ],
+    })
   })
 
   it('keeps external links when a link relationship mapping is configured', () => {

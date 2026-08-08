@@ -128,7 +128,6 @@ function assertSafeJson(value: unknown, path = '$', depth = 0): void {
   if (!isObject(value)) return
   for (const [key, child] of Object.entries(value)) {
     if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error(`Payload export contains unsafe key ${key} at ${path}`)
-    if (/^(?:hook|hooks|resolver|resolvers|callback|callbacks|function|execute)$/iu.test(key)) throw new Error(`Payload export cannot contain executable mapping key ${key} at ${path}`)
     assertSafeJson(child, `${path}.${key}`, depth + 1)
   }
 }
@@ -515,9 +514,9 @@ function normalizeNodeType(node: LexicalNode) {
 function hrefValue(node: LexicalNode, location: string) {
   const fields = isObject(node.fields) ? node.fields : undefined
   const href = node.url ?? node.href ?? fields?.url ?? fields?.href
-  if (href === undefined) return undefined
-  if (typeof href !== 'string' || !href.trim()) throw new Error(`Payload link href must be a non-empty string at ${location}`)
-  return href.trim()
+  if (href === undefined || href === null) return undefined
+  if (typeof href !== 'string') throw new Error(`Payload link href must be a non-empty string at ${location}`)
+  return href.trim() || undefined
 }
 
 function lexicalRoot(value: unknown): LexicalNode[] {
@@ -968,9 +967,44 @@ function headingLevel(node: LexicalNode, location: string) {
   return level ?? 2
 }
 
+function isBlankParagraph(node: LexicalNode, location: string) {
+  const fields = isObject(node.fields) ? node.fields : undefined
+  const rawContent = fields?.content
+  const directValues = [
+    node.text,
+    fields?.text,
+    Array.isArray(rawContent) || isObject(rawContent) ? undefined : rawContent,
+  ]
+  if (directValues.some((value) => value !== undefined && value !== null))
+    return false
+  const children = nodeChildren(node, location)
+  if (!children.length) return true
+  return children.every((child, index) => {
+    const type = normalizeNodeType(child)
+    const childLocation = `${location}.children[${index}]`
+    if (type === 'linebreak') {
+      formatFlags(child.format, childLocation)
+      return true
+    }
+    if (type === 'text') {
+      formatFlags(child.format, childLocation)
+      return !textValue(child, childLocation).trim()
+    }
+    return false
+  })
+}
+
+function addTextNode(state: AdapterState, node: LexicalNode, path: string, type: 'paragraph'): PublicationNode | undefined
+function addTextNode(state: AdapterState, node: LexicalNode, path: string, type: 'heading' | 'quote' | 'aside'): PublicationNode
 function addTextNode(state: AdapterState, node: LexicalNode, path: string, type: 'paragraph' | 'heading' | 'quote' | 'aside') {
-  const identity = nodeId(state, node, path, type)
   const location = sourceLocation(state.sourceId, path)
+  if (
+    type === 'paragraph' &&
+    normalizeNodeType(node) === 'paragraph' &&
+    isBlankParagraph(node, location)
+  )
+    return undefined
+  const identity = nodeId(state, node, path, type)
   const inline = appendInline(state, nodeChildren(node, location), path)
   const fields = isObject(node.fields) ? node.fields : undefined
   const directText = optionalProse(node.text ?? fields?.text, `${type} text`, location)
@@ -1263,7 +1297,10 @@ function addList(state: AdapterState, node: LexicalNode, path: string): Publicat
 
 function addBlock(state: AdapterState, node: LexicalNode, path: string): PublicationNode[] {
   const type = normalizeNodeType(node)
-  if (type === 'paragraph') return [addTextNode(state, node, path, 'paragraph')]
+  if (type === 'paragraph') {
+    const paragraph = addTextNode(state, node, path, 'paragraph')
+    return paragraph ? [paragraph] : []
+  }
   if (type === 'heading') return [addTextNode(state, node, path, 'heading')]
   if (type === 'quote' || type === 'blockquote') return [addTextNode(state, node, path, 'quote')]
   if (type === 'list') return addList(state, node, path)
@@ -1332,7 +1369,11 @@ function addBlock(state: AdapterState, node: LexicalNode, path: string): Publica
     throw new Error(`Payload configured block type must be a non-empty string at ${sourceLocation(state.sourceId, path)}`)
   const configuredName = type === 'block' && typeof rawConfiguredName === 'string' ? rawConfiguredName : type
   const mapped = (configuredName ? state.mapping.blocks[configuredName] : undefined) ?? state.mapping.blocks[type]
-  if (mapped === 'paragraph' || mapped === 'heading' || mapped === 'quote' || mapped === 'aside') return [addTextNode(state, node, path, mapped)]
+  if (mapped === 'paragraph') {
+    const paragraph = addTextNode(state, node, path, mapped)
+    return paragraph ? [paragraph] : []
+  }
+  if (mapped === 'heading' || mapped === 'quote' || mapped === 'aside') return [addTextNode(state, node, path, mapped)]
   if (mapped === 'figure') return [addUploadNode(state, node, path)]
   if (mapped === 'media') return [addMediaNode(state, node, path)]
   if (mapped === 'table') return [addTableNode(state, node, path)]
@@ -1404,6 +1445,7 @@ function buildResult(state: AdapterState): PublicationSourceResult {
   const rootNodes = lexicalRoot(content)
   if (!rootNodes.length) throw new Error(`Payload Lexical content is empty at ${sourceLocation(state.sourceId, 'content.root')}`)
   for (const [index, node] of rootNodes.entries()) state.nodes.push(...addBlock(state, node, `content.root.children[${index}]`))
+  if (!state.nodes.length) throw new Error(`Payload Lexical content is empty at ${sourceLocation(state.sourceId, 'content.root')}`)
   for (const [targetId, info] of state.pendingReferences) {
     if (state.nodes.some((node) => node.id === targetId)) continue
     const identity = nodeId(state, { id: targetId, type: 'reference' }, `relationship.${targetId}`, 'reference')

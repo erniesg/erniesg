@@ -12,8 +12,7 @@
       "children": [
         { "type": "heading", "id": "payload-parity-fixture", "tag": "h1", "children": [{ "type": "text", "text": "Payload parity fixture" }] },
         { "type": "paragraph", "id": "paragraph-1", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
-        { "type": "upload", "id": "fixture-figure", "value": "fixture-image" },
-        { "type": "paragraph", "id": "paragraph-2", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
+        { "type": "upload", "id": "figure-2", "value": "fixture-image" },
         { "type": "paragraph", "id": "paragraph-3", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
         { "type": "paragraph", "id": "paragraph-4", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
         { "type": "paragraph", "id": "paragraph-5", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
@@ -41,7 +40,8 @@
         { "type": "paragraph", "id": "paragraph-27", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
         { "type": "paragraph", "id": "paragraph-28", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
         { "type": "paragraph", "id": "paragraph-29", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
-        { "type": "paragraph", "id": "paragraph-30", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] }
+        { "type": "paragraph", "id": "paragraph-30", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] },
+        { "type": "paragraph", "id": "paragraph-31", "children": [{ "type": "text", "text": "Deterministic source adapters preserve authored meaning, stable identifiers, accessible media, and reproducible publication receipts across every supported output profile." }] }
       ]
     }
   },

@@ -1,4 +1,4 @@
-import { access, cp, mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { access, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -845,20 +845,45 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toBe(false)
   })
 
-  it('removes stale WebPub and layout assets before a new publication', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-clean-'))
-    const webpub = resolve(root, 'phone-webpub')
-    await mkdir(resolve(webpub, 'assets'), { recursive: true })
-    const stale = resolve(webpub, 'assets', 'stale.svg')
-    await (await import('node:fs/promises')).writeFile(stale, 'stale')
-    await prepareWebPubDirectory(webpub)
-    await expect(access(stale)).rejects.toMatchObject({ code: 'ENOENT' })
+  it('refuses to reuse pre-existing WebPub and layout asset directories', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-exclusive-'))
+    try {
+      const webpub = resolve(root, 'phone-webpub')
+      await mkdir(resolve(webpub, 'assets'), { recursive: true })
+      await expect(prepareWebPubDirectory(webpub)).rejects.toMatchObject({
+        code: 'EEXIST',
+      })
 
-    const layout = resolve(root, 'layout-assets')
-    await mkdir(layout, { recursive: true })
-    const staleLayout = resolve(layout, 'stale.svg')
-    await (await import('node:fs/promises')).writeFile(staleLayout, 'stale')
-    await preparePublicationAssetDirectory(layout)
-    await expect(access(staleLayout)).rejects.toMatchObject({ code: 'ENOENT' })
+      const layout = resolve(root, 'layout-assets')
+      await mkdir(layout)
+      await expect(
+        preparePublicationAssetDirectory(layout),
+      ).rejects.toMatchObject({ code: 'EEXIST' })
+
+      const fresh = resolve(root, 'fresh-assets')
+      await preparePublicationAssetDirectory(fresh)
+      await expect(access(fresh)).resolves.toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
+
+  it('refuses a pre-existing render target directory', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-render-target-'))
+    try {
+      const target = resolve(root, 'render-output')
+      await mkdir(target)
+      const bundle = await adaptAstroBlogEntry({
+        entryId: 'moving-to-cloudflare-with-astro',
+      })
+      await expect(
+        vivliostyleRenderer.render(bundle, {
+          outputDirectory: target,
+          profiles: [...PUBLICATION_PROFILES],
+        }),
+      ).rejects.toThrow(/already exists/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

@@ -1,6 +1,13 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
@@ -51,6 +58,49 @@ export function parsePublicationBuildArgs(argv) {
     throw new Error(`Unsupported publication source adapter: ${options.adapter}`)
   }
   return options
+}
+
+export async function createPublicationStagingDirectory(finalOutput) {
+  const parent = dirname(resolve(finalOutput))
+  await mkdir(parent, { recursive: true })
+  // mkdtemp gives the staging root an unpredictable name and mode 0700, so no
+  // other principal can pre-place or insert entries for the build to follow.
+  return mkdtemp(resolve(parent, '.publication-staging-'))
+}
+
+function publicationPublishError(error, finalOutput) {
+  if (error?.code === 'EXDEV')
+    // The staging directory lives next to the publish target, so a
+    // cross-device rename only happens when the target itself is a mount
+    // point. Copying into a possibly hostile directory is never a fallback.
+    return new Error(
+      `Publication output ${finalOutput} cannot be published with an atomic rename (cross-device); failing closed instead of degrading to a copy`,
+    )
+  return error
+}
+
+export async function publishPublicationOutput(stagedOutput, finalOutput) {
+  const final = resolve(finalOutput)
+  const retired = resolve(
+    dirname(final),
+    `.publication-retired-${randomBytes(8).toString('hex')}`,
+  )
+  let hasPrevious = true
+  try {
+    await rename(final, retired)
+  } catch (error) {
+    if (error?.code === 'ENOENT') hasPrevious = false
+    else throw publicationPublishError(error, final)
+  }
+  try {
+    // Replace, never merge: the completed staging result is swapped in
+    // wholesale with a single atomic rename.
+    await rename(stagedOutput, final)
+  } catch (error) {
+    if (hasPrevious) await rename(retired, final).catch(() => {})
+    throw publicationPublishError(error, final)
+  }
+  if (hasPrevious) await rm(retired, { recursive: true, force: true })
 }
 
 export function publicationSourceReceipt(bundle, routeParity) {
@@ -477,6 +527,8 @@ export async function writeRouteParity(entry, output, bundle, repository) {
       null,
       2,
     )}\n`,
+    // Exclusive creation inside the invocation-owned staging directory.
+    { flag: 'wx' },
   )
 }
 
@@ -491,14 +543,14 @@ export async function bindPublicationSourceReceipt(output, bundle, routeParity) 
     throw new Error('Publication renderer receipt does not match its source bundle')
   receipt.source = source
   receipt.repository = publicationRepositoryForCurrentCheckout()
+  // In-place update of a receipt this invocation created inside its private
+  // staging directory; the bound result is then published atomically.
   await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
   return receipt
 }
 
 export async function publicationBuild(argv = process.argv.slice(2)) {
   const options = parsePublicationBuildArgs(argv)
-  if (options.adapter !== 'astro')
-    await rm(resolve(options.output, 'astro-route-parity.json'), { force: true })
   const registry = createDefaultPublicationAdapterRegistry()
   const locator =
     options.adapter === 'astro'
@@ -514,21 +566,35 @@ export async function publicationBuild(argv = process.argv.slice(2)) {
             : {}),
         }
   const bundle = await registry.resolve(options.adapter, locator)
-  const receipt = await vivliostyleRenderer.render(bundle, {
-    outputDirectory: options.output,
-    profiles: PUBLICATION_PROFILES,
-  })
-  const boundReceipt = await bindPublicationSourceReceipt(
-    options.output,
-    bundle,
-    options.adapter === 'astro'
-      ? 'astro-canonical-route'
-      : 'not-applicable',
-  )
-  if (options.adapter === 'astro')
-    await writeRouteParity(options.entry, options.output, bundle, boundReceipt.repository)
+  const finalOutput = resolve(options.output)
+  // The whole build writes into a private invocation-owned staging directory
+  // and only ever touches the caller-supplied output path through one final
+  // atomic swap, so a reused (possibly attacker-seeded) output directory is
+  // never followed into, merged into, or partially mutated.
+  const staging = await createPublicationStagingDirectory(finalOutput)
+  let receipt
+  let boundReceipt
+  try {
+    const stagedOutput = resolve(staging, 'output')
+    receipt = await vivliostyleRenderer.render(bundle, {
+      outputDirectory: stagedOutput,
+      profiles: PUBLICATION_PROFILES,
+    })
+    boundReceipt = await bindPublicationSourceReceipt(
+      stagedOutput,
+      bundle,
+      options.adapter === 'astro'
+        ? 'astro-canonical-route'
+        : 'not-applicable',
+    )
+    if (options.adapter === 'astro')
+      await writeRouteParity(options.entry, stagedOutput, bundle, boundReceipt.repository)
+    await publishPublicationOutput(stagedOutput, finalOutput)
+  } finally {
+    await rm(staging, { recursive: true, force: true })
+  }
   process.stdout.write(
-    `Publication matrix built at ${resolve(options.output)} (${receipt.artifacts.length} artifacts)\n`,
+    `Publication matrix built at ${finalOutput} (${receipt.artifacts.length} artifacts)\n`,
   )
   return boundReceipt
 }

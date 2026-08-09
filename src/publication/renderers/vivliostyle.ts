@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
+import { constants as fsConstants } from 'node:fs'
 import {
   access,
   chmod,
@@ -7,10 +8,9 @@ import {
   mkdir,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from 'node:fs/promises'
-import { basename, extname, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
@@ -45,6 +45,10 @@ export const PUBLICATION_PROFILES = [
 export type PublicationProfile = (typeof PUBLICATION_PROFILES)[number]
 
 const FIXED_DATE = new Date('2000-01-01T00:00:00.000Z')
+// Every file this renderer creates is opened with O_EXCL semantics so a
+// pre-existing entry (symlink, hard link, FIFO, or regular file) is never
+// followed, truncated, or blocked on — creation fails closed instead.
+const EXCLUSIVE_WRITE = { flag: 'wx' } as const
 const PUBLICATION_BROWSER_CACHE = resolve(
   'node_modules/.cache/publication-browsers',
 )
@@ -523,6 +527,7 @@ async function writeAssets(
     await writeFile(
       resolve(directory, fileName),
       await bundle.assetBundle.resolveBytes(descriptor),
+      EXCLUSIVE_WRITE,
     )
     paths.set(descriptor.id, `${prefix}${fileName}`)
   }
@@ -551,8 +556,10 @@ export async function prepareWebPubDirectory(directory: string) {
 }
 
 export async function preparePublicationAssetDirectory(directory: string) {
-  await rm(directory, { recursive: true, force: true })
-  await mkdir(directory, { recursive: true })
+  // Exclusive creation: renders only ever write into directories this
+  // invocation created itself, so a reused (possibly attacker-seeded) path
+  // fails closed with EEXIST instead of being cleared and written into.
+  await mkdir(directory)
 }
 
 async function createWebPub(
@@ -563,22 +570,26 @@ async function createWebPub(
   const root = resolve(outputDirectory, 'phone-webpub')
   await prepareWebPubDirectory(root)
   const assetPaths = await writeAssets(bundle, resolve(root, 'assets'))
-  await writeFile(resolve(root, 'publication.css'), css)
+  await writeFile(resolve(root, 'publication.css'), css, EXCLUSIVE_WRITE)
   await copyFile(
     resolve('public/fonts/Geist-Regular.ttf'),
     resolve(root, 'Geist-Regular.ttf'),
+    fsConstants.COPYFILE_EXCL,
   )
   await copyFile(
     resolve('public/fonts/Geist-Bold.ttf'),
     resolve(root, 'Geist-Bold.ttf'),
+    fsConstants.COPYFILE_EXCL,
   )
   await copyFile(
     resolve('public/fonts/GeistMono-Regular.ttf'),
     resolve(root, 'GeistMono-Regular.ttf'),
+    fsConstants.COPYFILE_EXCL,
   )
   await writeFile(
     resolve(root, 'index.html'),
     publicationGraphToHtml(bundle.graph, assetPaths, 'phone-webpub'),
+    EXCLUSIVE_WRITE,
   )
   await writeFile(
     resolve(root, 'publication.json'),
@@ -600,6 +611,7 @@ async function createWebPub(
       null,
       2,
     )}\n`,
+    EXCLUSIVE_WRITE,
   )
   return root
 }
@@ -890,6 +902,7 @@ async function createEpub(
       compressionOptions: { level: 9 },
       platform: 'UNIX',
     }),
+    EXCLUSIVE_WRITE,
   )
 }
 
@@ -913,6 +926,10 @@ type PdfRenderer = Extract<
   'vivliostyle-cli' | 'playwright-chromium'
 >
 
+// PDF bytes are first written by the pinned browser or Vivliostyle CLI, which
+// cannot take O_EXCL flags; both only ever target paths inside the fresh
+// invocation-owned render directory created above, and this normalization
+// rewrites that same invocation-created file in place.
 async function normalizePdf(
   path: string,
   title: string,
@@ -1115,20 +1132,34 @@ export const vivliostyleRenderer: PublicationRenderer = {
         `Publication output matrix must be exactly: ${PUBLICATION_PROFILES.join(',')}`,
       )
     const output = resolve(request.outputDirectory)
-    await mkdir(output, { recursive: true })
+    await mkdir(dirname(output), { recursive: true })
+    try {
+      // Exclusive creation: the render target must be a fresh directory this
+      // invocation owns. Builds stage into a private directory and publish
+      // atomically, so a reused target is always a policy violation.
+      await mkdir(output)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'EEXIST')
+        throw new Error(
+          `Publication render target already exists: ${output}; renders only write into a fresh invocation-owned directory`,
+        )
+      throw error
+    }
     await writeFile(
       resolve(output, 'publication-graph.json'),
       `${JSON.stringify(bundle.graph, null, 2)}\n`,
+      EXCLUSIVE_WRITE,
     )
     await writeFile(
       resolve(output, 'asset-bundle.json'),
       `${JSON.stringify(bundle.assetBundle.descriptor, null, 2)}\n`,
+      EXCLUSIVE_WRITE,
     )
     const css = await readFile(
       resolve('src/styles/publication/publication.css'),
       'utf8',
     )
-    await writeFile(resolve(output, 'publication.css'), css)
+    await writeFile(resolve(output, 'publication.css'), css, EXCLUSIVE_WRITE)
     const webpub = await createWebPub(bundle, output, css)
     const epub = resolve(output, 'eink.epub')
     await createEpub(bundle, epub, css)
@@ -1142,7 +1173,11 @@ export const vivliostyleRenderer: PublicationRenderer = {
       'Geist-Bold.ttf',
       'GeistMono-Regular.ttf',
     ])
-      await copyFile(resolve('public/fonts', font), resolve(output, font))
+      await copyFile(
+        resolve('public/fonts', font),
+        resolve(output, font),
+        fsConstants.COPYFILE_EXCL,
+      )
     const pdfArtifacts: ArtifactReceipt[] = []
     for (const [profile, size] of [
       ['a5-pdf', 'A5'],
@@ -1152,6 +1187,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
       await writeFile(
         htmlPath,
         publicationGraphToHtml(bundle.graph, layoutAssets, profile),
+        EXCLUSIVE_WRITE,
       )
       const path = resolve(output, `${profile}.pdf`)
       const renderer = await createPdf(htmlPath, path, size)
@@ -1194,6 +1230,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
     await writeFile(
       resolve(output, 'publication-receipt.json'),
       `${JSON.stringify(receipt, null, 2)}\n`,
+      EXCLUSIVE_WRITE,
     )
     return receipt
   },

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import {
   access,
@@ -282,6 +283,91 @@ describe('publication:build CLI', () => {
       expect((await readdir(temporaryRoot)).sort()).toEqual(['output'])
     } finally {
       vivliostyleRenderer.render = originalRender
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects unignored repository outputs before staging but allows ignored and external outputs', async () => {
+    // Unique test-owned names: nothing pre-existing can live at these paths,
+    // so the test only ever removes what it created itself.
+    const unique = randomBytes(6).toString('hex')
+    const repositoryOutput = resolve(
+      `.publication-build-unignored-output-${unique}`,
+    )
+    const ignoredOutput = resolve(
+      `.agent/evidence/publication-build-output-policy-${unique}`,
+    )
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-build-output-policy-'),
+    )
+    const externalOutput = resolve(temporaryRoot, 'output')
+    const repositoryLink = resolve(temporaryRoot, 'repository-link')
+    const linkedRepositoryOutput = resolve(
+      repositoryLink,
+      `.publication-build-linked-output-${unique}`,
+    )
+    const linkedRepositoryTarget = resolve(
+      `.publication-build-linked-output-${unique}`,
+    )
+    const staleRepositoryParity = resolve(
+      repositoryOutput,
+      'astro-route-parity.json',
+    )
+    const originalRender = vivliostyleRenderer.render
+    const renderedOutputs = []
+    vivliostyleRenderer.render = async (_bundle, request) => {
+      renderedOutputs.push(resolve(request.outputDirectory))
+      throw new Error('render-boundary-captured')
+    }
+    try {
+      await mkdir(repositoryOutput)
+      await writeFile(staleRepositoryParity, '{"sentinel":true}\n')
+      await symlink(resolve('.'), repositoryLink, 'dir')
+      await expect(
+        publicationBuild(payloadBuildArgs(repositoryOutput)),
+      ).rejects.toThrow(/repository-local publication output.*ignored/i)
+      await expect(
+        publicationBuild(payloadBuildArgs(linkedRepositoryOutput)),
+      ).rejects.toThrow(/repository-local publication output.*ignored/i)
+      expect(renderedOutputs).toEqual([])
+      await expect(readFile(staleRepositoryParity, 'utf8')).resolves.toBe(
+        '{"sentinel":true}\n',
+      )
+      await expect(access(linkedRepositoryTarget)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+
+      await expect(
+        publicationBuild(payloadBuildArgs(ignoredOutput)),
+      ).rejects.toThrow('render-boundary-captured')
+      await expect(
+        publicationBuild(payloadBuildArgs(externalOutput)),
+      ).rejects.toThrow('render-boundary-captured')
+      expect(renderedOutputs).toHaveLength(2)
+      // Renders target invocation-owned staging directories next to the
+      // authorized output, never the output path itself.
+      for (const [rendered, finalOutput] of [
+        [renderedOutputs[0], ignoredOutput],
+        [renderedOutputs[1], externalOutput],
+      ]) {
+        expect(rendered).not.toBe(finalOutput)
+        const stagingRoot = dirname(rendered)
+        expect(basename(stagingRoot)).toMatch(/^\.publication-staging-/)
+        expect(dirname(stagingRoot)).toBe(dirname(finalOutput))
+        // All-or-nothing: the failed builds published nothing and cleaned
+        // their staging directories.
+        await expect(access(stagingRoot)).rejects.toMatchObject({
+          code: 'ENOENT',
+        })
+        await expect(access(finalOutput)).rejects.toMatchObject({
+          code: 'ENOENT',
+        })
+      }
+    } finally {
+      vivliostyleRenderer.render = originalRender
+      await rm(repositoryOutput, { recursive: true, force: true })
+      await rm(ignoredOutput, { recursive: true, force: true })
+      await rm(linkedRepositoryTarget, { recursive: true, force: true })
       await rm(temporaryRoot, { recursive: true, force: true })
     }
   })

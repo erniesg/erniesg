@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { vivliostyleRenderer } from '../src/publication/renderers/vivliostyle.ts'
 import {
@@ -52,6 +53,50 @@ describe('publication adapter output conformance CLI', () => {
     } finally {
       vivliostyleRenderer.render = originalRender
       await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an unignored repository output before staging but allows ignored evidence', async () => {
+    // Unique test-owned names: nothing pre-existing can live at these paths,
+    // so the test only ever removes what it created itself.
+    const unique = randomBytes(6).toString('hex')
+    const output = resolve(`.publication-conformance-unignored-${unique}`)
+    const ignoredOutput = resolve(
+      `.agent/evidence/publication-conformance-output-policy-${unique}`,
+    )
+    const originalRender = vivliostyleRenderer.render
+    const renderedOutputs = []
+    vivliostyleRenderer.render = async (_bundle, request) => {
+      renderedOutputs.push(resolve(request.outputDirectory))
+      throw new Error('render-boundary-captured')
+    }
+    try {
+      await expect(
+        publicationAdapterConformance(['--output', output]),
+      ).rejects.toThrow(/repository-local publication output.*ignored/i)
+      expect(renderedOutputs).toEqual([])
+      await expect(access(output)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      await expect(
+        publicationAdapterConformance(['--output', ignoredOutput]),
+      ).rejects.toThrow('render-boundary-captured')
+      expect(renderedOutputs).toHaveLength(1)
+      // The render targeted an invocation-owned staging directory next to
+      // the authorized output, and the failed run published nothing and
+      // cleaned up both staging and its empty reservation.
+      const stagingRoot = dirname(renderedOutputs[0])
+      expect(basename(stagingRoot)).toMatch(/^\.publication-staging-/)
+      expect(dirname(stagingRoot)).toBe(dirname(ignoredOutput))
+      await expect(access(stagingRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(access(ignoredOutput)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      vivliostyleRenderer.render = originalRender
+      await rm(output, { recursive: true, force: true })
+      await rm(ignoredOutput, { recursive: true, force: true })
     }
   })
 

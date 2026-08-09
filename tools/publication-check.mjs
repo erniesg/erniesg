@@ -87,6 +87,18 @@ export function publicationReceiptRequiresCanonicalRouteParity(
   return false
 }
 
+export function assertPublicationPdfPageCountPolicy(
+  a5Pages,
+  a4Pages,
+  requiresCanonicalRouteParity,
+) {
+  if (!requiresCanonicalRouteParity) return
+  assert(
+    a5Pages > a4Pages,
+    `A5 profile must produce more pages than A4 (${a5Pages} vs ${a4Pages})`,
+  )
+}
+
 async function run(command, args) {
   let stdout = ''
   let stderr = ''
@@ -985,6 +997,8 @@ export async function publicationCheck(
   const receiptBytes = await readFile(resolve(root, 'publication-receipt.json'))
   const receipt = JSON.parse(receiptBytes.toString('utf8'))
   assertPublicationReceiptPolicyVersions(receipt)
+  const requiresCanonicalRouteParity =
+    publicationReceiptRequiresCanonicalRouteParity(receipt, execution)
   const assetBundle = JSON.parse(
     await readFile(resolve(root, 'asset-bundle.json'), 'utf8'),
   )
@@ -1005,7 +1019,10 @@ export async function publicationCheck(
   )
   assert(
     receipt.source?.canonicalSubsetSha256 ===
-      canonicalPublicationSubsetSha256(graph),
+      canonicalPublicationSubsetSha256({
+        graph,
+        assetBundle: { descriptor: assetBundle },
+      }),
     'Canonical publication semantics changed from the source receipt',
   )
   assertPublicationReceiptSourceBinding(receipt, graph)
@@ -1136,9 +1153,10 @@ export async function publicationCheck(
     Number.isInteger(a4Artifact.pageCount) && a4Artifact.pageCount === a4Pages,
     'A4 receipt pageCount does not match the checked PDF',
   )
-  assert(
-    a5Pages > a4Pages,
-    `A5 profile must produce more pages than A4 (${a5Pages} vs ${a4Pages})`,
+  assertPublicationPdfPageCountPolicy(
+    a5Pages,
+    a4Pages,
+    requiresCanonicalRouteParity,
   )
   assert(
     receipt.profiles['a5-pdf'].figurePlacement !==
@@ -1152,7 +1170,7 @@ export async function publicationCheck(
         ?.renderer === expectedPdfRenderer,
       `${profile} receipt renderer does not match the ${process.arch} policy (${expectedPdfRenderer})`,
     )
-  if (!publicationReceiptRequiresCanonicalRouteParity(receipt, execution)) {
+  if (!requiresCanonicalRouteParity) {
     process.stdout.write(
       `Publication matrix passed structural, accessibility, EPUBCheck, and PDF checks at ${root}\n`,
     )

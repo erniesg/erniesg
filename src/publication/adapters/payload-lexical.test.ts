@@ -162,6 +162,58 @@ describe('Payload Lexical publication adapter', () => {
     })
   })
 
+  it('distinguishes the documented wrapper from ordinary document, data, and doc fields', () => {
+    const body = {
+      root: {
+        children: [
+          {
+            type: 'paragraph',
+            children: [{ type: 'text', text: 'Mapped body.' }],
+          },
+        ],
+      },
+    }
+    const fieldMapping = {
+      fields: {
+        id: 'metadata.identifier',
+        title: 'metadata.heading',
+        content: 'richTextValue',
+      },
+    }
+    const ordinary = (alias: 'document' | 'data' | 'doc') => ({
+      metadata: {
+        identifier: `ordinary-${alias}`,
+        heading: `Ordinary ${alias}`,
+      },
+      richTextValue: body,
+      [alias]: { id: 'related-record', title: 'Related record' },
+    })
+
+    for (const alias of ['document', 'data', 'doc'] as const) {
+      const result = adaptPayloadLexical(ordinary(alias), fieldMapping)
+      expect(result.graph).toMatchObject({
+        id: `ordinary-${alias}`,
+        metadata: { title: `Ordinary ${alias}` },
+        nodes: [
+          expect.objectContaining({
+            type: 'paragraph',
+            text: 'Mapped body.',
+          }),
+        ],
+      })
+    }
+
+    const wrapped = adaptPayloadLexical({
+      document: ordinary('data'),
+      mapping: fieldMapping,
+      locale: 'en',
+    })
+    expect(wrapped.graph).toMatchObject({
+      id: 'ordinary-data',
+      metadata: { title: 'Ordinary data' },
+    })
+  })
+
   it('records Payload draft state as working publication metadata', () => {
     const result = adaptPayloadLexical({
       id: 'draft-publication',
@@ -1137,6 +1189,47 @@ describe('Payload Lexical publication adapter', () => {
       )
     },
   )
+
+  it('fails closed on missing interactive bytes while retaining image fallback', () => {
+    const missingUploads = [
+      {
+        id: 'interactive',
+        fileName: 'interactive.html',
+        mediaType: 'text/html',
+        alt: 'Interactive explainer',
+      },
+      {
+        id: 'image',
+        fileName: 'image.png',
+        mediaType: 'image/png',
+        alt: 'Static image fallback',
+      },
+    ]
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture(
+          [{ type: 'media', kind: 'interactive', value: 'interactive' }],
+          { uploads: missingUploads },
+        ),
+      ),
+    ).toThrow(/Payload interactive media has no embedded bytes/i)
+
+    const image = adaptPayloadLexical(
+      strictFixture([{ type: 'media', kind: 'image', value: 'image' }], {
+        uploads: missingUploads,
+      }),
+    )
+    expect(image.graph.nodes[0]).toMatchObject({
+      type: 'figure',
+      assetIds: [],
+      sourceText: 'Missing local asset: Static image fallback',
+    })
+    expect(image.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'missing-asset' }),
+      ]),
+    )
+  })
 
   it('uses the missing-upload title as an accessible source fallback', () => {
     const result = adaptPayloadLexical(
@@ -2245,6 +2338,27 @@ describe('Payload Lexical publication adapter', () => {
         localeVariants: ['invalid'],
       }),
     ).toThrow(/Payload locale variant.*must be an object/)
+    expect(
+      adaptPayloadLexicalEditions({
+        ...linkedDocument,
+        localeVariants: [
+          {
+            code: 'fr',
+            title: 'Édition française codée',
+            content: {
+              root: {
+                children: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Français codé' }],
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      }).map((edition) => edition.graph.edition.locale),
+    ).toEqual(['en', 'fr'])
     const fallback = adaptPayloadLexical({
       document: publication,
       mapping: { ...mapping, fallbackLocale: 'en' },
@@ -2253,5 +2367,79 @@ describe('Payload Lexical publication adapter', () => {
     expect(fallback.graph.edition.locale).toBe('en')
     expect(fallback.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'locale-fallback' })]))
     expect(fallback.graph.nodes[0].provenance.evidence).toContain('locale-fallback:de->en')
+  })
+
+  it('keeps authored base locale separate from requested mapping locale', () => {
+    const localized = {
+      metadata: { locale: 'en' },
+      id: 'requested-locale',
+      title: 'English title',
+      richText: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'English body' }],
+            },
+          ],
+        },
+      },
+      translations: {
+        items: [
+          {
+            metadata: { locale: 'fr' },
+            title: 'Titre français',
+            richText: {
+              root: {
+                children: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Corps français' }],
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    }
+    const localizedMapping = {
+      fields: {
+        locale: 'metadata.locale',
+        content: 'richText',
+        locales: 'translations.items',
+      },
+      locale: 'fr',
+      fallbackLocale: 'en',
+    }
+
+    const requested = adaptPayloadLexical(localized, localizedMapping)
+    expect(requested.graph.edition.locale).toBe('fr')
+    expect(requested.graph.metadata.title).toBe('Titre français')
+    expect(requested.graph.nodes[0]).toMatchObject({
+      locale: 'fr',
+      type: 'paragraph',
+      text: 'Corps français',
+    })
+    expect(
+      adaptPayloadLexicalEditions(localized, localizedMapping).map(
+        (edition) => edition.graph.edition.locale,
+      ),
+    ).toEqual(['en', 'fr'])
+
+    const fallback = adaptPayloadLexical({
+      document: localized,
+      mapping: localizedMapping,
+      locale: 'de',
+    })
+    expect(fallback.graph.edition.locale).toBe('en')
+    expect(fallback.graph.nodes[0]).toMatchObject({
+      locale: 'en',
+      type: 'paragraph',
+      text: 'English body',
+    })
+    expect(fallback.graph.nodes[0].provenance.evidence).toContain(
+      'locale-fallback:de->en',
+    )
   })
 })

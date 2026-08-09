@@ -13,6 +13,7 @@ import {
   assertPdfTextItemGeometry,
   assertPdfWidowOrphanRequirements,
   accessibilityLabel,
+  assertPublicationPdfPageCountPolicy,
   assertPublicationReceiptSourceBinding,
   assertPublicationReceiptMappingVersion,
   assertPublicationReceiptPolicyVersions,
@@ -100,6 +101,18 @@ describe('publication:check CLI', () => {
         },
       }),
     ).toThrow(/internal adapter-conformance/)
+  })
+
+  it('scopes A5 page expansion to the canonical Astro corpus', () => {
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(2, 1, true),
+    ).not.toThrow()
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(1, 1, false),
+    ).not.toThrow()
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(1, 1, true),
+    ).toThrow(/A5 profile must produce more pages than A4/)
   })
 
   it('fails closed on stale renderer, transformation, or checker receipt policies', () => {

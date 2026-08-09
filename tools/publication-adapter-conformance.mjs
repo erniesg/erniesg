@@ -7,7 +7,7 @@ import {
   rmdir,
   writeFile,
 } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   canonicalPublicationSourceResult,
@@ -21,6 +21,7 @@ import {
   vivliostyleRenderer,
 } from '../src/publication/renderers/vivliostyle.ts'
 import {
+  assertPublicationOutputDirectory,
   bindPublicationSourceReceipt,
   createPublicationStagingDirectory,
   publishPublicationOutput,
@@ -35,10 +36,13 @@ export function parsePublicationAdapterConformanceArgs(argv) {
 
 export async function publicationAdapterConformance(argv = process.argv.slice(2)) {
   const options = parsePublicationAdapterConformanceArgs(argv)
-  const root = resolve(options.output)
+  // Repository-local outputs must already be git-ignored before anything —
+  // staging included — is created for them.
+  const root = assertPublicationOutputDirectory(options.output)
   // Reserve the caller's new output directory up front (this still fails
   // closed on a reused path), then assemble everything inside a private
   // invocation-owned staging directory and publish it with one atomic swap.
+  await mkdir(dirname(root), { recursive: true })
   await mkdir(root)
   const staging = await createPublicationStagingDirectory(root)
   let astroReceipt

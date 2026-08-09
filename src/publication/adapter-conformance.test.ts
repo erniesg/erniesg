@@ -14,11 +14,14 @@ import {
   payloadLexicalSourceAdapter,
 } from './adapters/payload-lexical'
 import {
+  canonicalPublicationGraph,
+  canonicalPublicationSourceResult,
   canonicalPublicationSubsetSha256,
   comparePublicationOutputReceipts,
   comparePublicationSemanticSubset,
   sourceReceiptHashes,
 } from './adapter-conformance'
+import type { AssetDescriptor } from './asset-bundle'
 import { publicationGraphSchema } from './schema'
 import { createPublicationContractReceipt } from './source-adapter'
 
@@ -213,6 +216,332 @@ describe('publication source adapter conformance', () => {
         : undefined
     }
     expect(relationshipId(left)).not.toBe(relationshipId(right))
+    expect(comparePublicationSemanticSubset(left, right)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(left)).toBe(
+      canonicalPublicationSubsetSha256(right),
+    )
+  })
+
+  it('canonicalizes content-addressed asset semantics but excludes source filenames', async () => {
+    const payloadWithFileName = (fileName: string) =>
+      adaptPayloadLexical({
+        id: 'asset-semantics',
+        title: 'Asset semantics',
+        content: {
+          root: {
+            children: [{ type: 'upload', value: 'diagram' }],
+          },
+        },
+        uploads: [
+          {
+            id: 'diagram',
+            fileName,
+            mediaType: 'image/png',
+            width: 16,
+            height: 12,
+            focalPoint: { x: 0.25, y: 0.75 },
+            crop: { x: 1, y: 2, width: 10, height: 8, unit: 'px' },
+            alt: 'Semantic diagram',
+            data: 'AQIDBA==',
+          },
+        ],
+      })
+    const original = payloadWithFileName('diagram-original.png')
+    const renamed = payloadWithFileName('diagram-renamed.png')
+    const originalDescriptor = original.assetBundle.descriptor.assets[0]!
+    const withDescriptor = (
+      descriptor: typeof originalDescriptor,
+    ): typeof original => ({
+      ...original,
+      assetBundle: {
+        ...original.assetBundle,
+        descriptor: {
+          ...original.assetBundle.descriptor,
+          assets: [descriptor],
+        },
+      },
+    })
+    const changedSemantics = [
+      { ...originalDescriptor, sha256: 'f'.repeat(64) },
+      { ...originalDescriptor, byteLength: originalDescriptor.byteLength + 1 },
+      { ...originalDescriptor, mediaType: 'image/webp' },
+      { ...originalDescriptor, width: 17 },
+      { ...originalDescriptor, height: 13 },
+      { ...originalDescriptor, focalPoint: { x: 0.5, y: 0.75 } },
+      {
+        ...originalDescriptor,
+        crop: { ...originalDescriptor.crop!, width: 9 },
+      },
+    ]
+
+    expect(comparePublicationSemanticSubset(original, renamed)).toBe(true)
+    expect(
+      comparePublicationSemanticSubset(
+        original,
+        withDescriptor({
+          ...originalDescriptor,
+          accessibilityLabel: 'Source-specific asset label',
+        }),
+      ),
+    ).toBe(true)
+    expect(canonicalPublicationSubsetSha256(original)).toBe(
+      canonicalPublicationSubsetSha256(renamed),
+    )
+    const canonicalOriginal = canonicalPublicationSourceResult(original)
+    expect(canonicalOriginal.assetBundle.descriptor).toEqual(
+      canonicalPublicationSourceResult(renamed).assetBundle.descriptor,
+    )
+    expect(
+      canonicalPublicationGraph(original).nodes.find(
+        (node) => node.type === 'figure',
+      ),
+    ).toMatchObject({ assetIds: [originalDescriptor.id] })
+    await expect(
+      canonicalOriginal.assetBundle.resolveBytes(
+        canonicalOriginal.assetBundle.descriptor.assets[0]!,
+      ),
+    ).resolves.toEqual(new Uint8Array([1, 2, 3, 4]))
+    for (const descriptor of changedSemantics)
+      expect(
+        comparePublicationSemanticSubset(
+          original,
+          withDescriptor(descriptor),
+        ),
+      ).toBe(false)
+  })
+
+  it('remaps reordered source asset ids and delegates canonical byte resolution', async () => {
+    const source = adaptPayloadLexical({
+      id: 'asset-order',
+      title: 'Asset order',
+      content: {
+        root: {
+          children: [
+            { type: 'upload', value: 'first' },
+            { type: 'upload', value: 'second' },
+          ],
+        },
+      },
+      uploads: [
+        {
+          id: 'first',
+          fileName: 'first.png',
+          mediaType: 'image/png',
+          alt: 'First',
+          data: 'AQ==',
+        },
+        {
+          id: 'second',
+          fileName: 'second.png',
+          mediaType: 'image/png',
+          alt: 'Second',
+          data: 'Ag==',
+        },
+      ],
+    })
+    const originalAssets = source.assetBundle.descriptor.assets
+    const renamedAssets = originalAssets.map((asset, index) => ({
+      ...asset,
+      id: `source-asset-${index + 1}`,
+      fileName: `source-name-${index + 1}.png`,
+    }))
+    const renamedByOriginalId = new Map(
+      originalAssets.map((asset, index) => [asset.id, renamedAssets[index]!.id]),
+    )
+    const originalBySha = new Map(
+      originalAssets.map((asset) => [asset.sha256, asset]),
+    )
+    const reordered = {
+      ...source,
+      graph: publicationGraphSchema.parse({
+        ...source.graph,
+        nodes: source.graph.nodes.map((node) => ({
+          ...node,
+          ...(node.type === 'figure'
+            ? {
+                assetIds: node.assetIds.map(
+                  (assetId) => renamedByOriginalId.get(assetId) ?? assetId,
+                ),
+              }
+            : {}),
+          variants: node.variants.map((variant) => ({
+            ...variant,
+            ...(variant.assetId
+              ? {
+                  assetId:
+                    renamedByOriginalId.get(variant.assetId) ?? variant.assetId,
+                }
+              : {}),
+          })),
+        })),
+      }),
+      assetBundle: {
+        descriptor: {
+          ...source.assetBundle.descriptor,
+          assets: [...renamedAssets].reverse(),
+        },
+        resolveBytes: async (descriptor: AssetDescriptor) =>
+          source.assetBundle.resolveBytes(originalBySha.get(descriptor.sha256)!),
+      },
+    }
+
+    expect(comparePublicationSemanticSubset(source, reordered)).toBe(true)
+    const canonical = canonicalPublicationSourceResult(reordered)
+    const bytes = await Promise.all(
+      canonical.assetBundle.descriptor.assets.map((descriptor) =>
+        canonical.assetBundle.resolveBytes(descriptor),
+      ),
+    )
+    expect(bytes.map((value) => [...value]).sort()).toEqual([[1], [2]])
+  })
+
+  it('walks nested lists and captions by ownership instead of flat storage order', () => {
+    const adapted = adaptPayloadLexical({
+      id: 'structural-ownership',
+      title: 'Structural ownership',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'list',
+              id: 'outer-list',
+              children: [
+                {
+                  type: 'listitem',
+                  id: 'outer-item',
+                  children: [
+                    { type: 'text', text: 'Outer item' },
+                    {
+                      type: 'list',
+                      id: 'inner-list',
+                      children: [
+                        {
+                          type: 'listitem',
+                          id: 'inner-item',
+                          children: [{ type: 'text', text: 'Inner item' }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            { type: 'upload', id: 'figure', title: 'Missing figure' },
+          ],
+        },
+      },
+    }).graph
+    const figureIndex = adapted.nodes.findIndex((node) => node.id === 'figure')
+    const figure = adapted.nodes[figureIndex]!
+    if (figure.type !== 'figure')
+      throw new Error('structural ownership regression setup failed')
+    const {
+      id: _figureId,
+      type: _figureType,
+      title: _figureTitle,
+      assetIds: _figureAssetIds,
+      captionId: _figureCaptionId,
+      sourceText: _figureSourceText,
+      inlineRuns: _figureInlineRuns,
+      ...captionBase
+    } = figure
+    const caption = {
+      ...captionBase,
+      id: 'figure-caption',
+      type: 'caption' as const,
+      parentId: figure.id,
+      text: 'Owned caption',
+      inlineRuns: [],
+    }
+    const left = publicationGraphSchema.parse({
+      ...adapted,
+      nodes: [
+        ...adapted.nodes.slice(0, figureIndex),
+        { ...figure, captionId: caption.id },
+        caption,
+      ],
+    })
+    const byId = new Map(left.nodes.map((node) => [node.id, node]))
+    const right = publicationGraphSchema.parse({
+      ...left,
+      nodes: [
+        byId.get('outer-list'),
+        byId.get('figure'),
+        byId.get('figure-caption'),
+        byId.get('inner-item'),
+        byId.get('inner-list'),
+        byId.get('outer-item'),
+      ],
+    })
+
+    expect(comparePublicationSemanticSubset(left, right)).toBe(true)
+    const canonicalLeft = canonicalPublicationGraph(left)
+    const canonicalRight = canonicalPublicationGraph(right)
+    expect(canonicalRight.nodes.map((node) => node.type)).toEqual(
+      canonicalLeft.nodes.map((node) => node.type),
+    )
+    expect(
+      canonicalRight.nodes.map((node) => node.provenance.evidence[0]),
+    ).toEqual(
+      canonicalLeft.nodes.map((node) => node.provenance.evidence[0]),
+    )
+  })
+
+  it('normalizes table cell anchors and their header relationships', () => {
+    const left = adaptPayloadLexical(
+      {
+        id: 'table-anchors',
+        title: 'Table anchors',
+        content: {
+          root: {
+            children: [
+              {
+                type: 'paragraph',
+                children: [
+                  {
+                    type: 'link',
+                    url: '#left-header',
+                    children: [{ type: 'text', text: 'Jump to header' }],
+                  },
+                ],
+              },
+              {
+                type: 'table',
+                rows: [
+                  {
+                    cells: [
+                      {
+                        id: 'left-header',
+                        text: 'Header',
+                        headerScope: 'column',
+                      },
+                      {
+                        id: 'left-cell',
+                        text: 'Value',
+                        headerIds: ['left-header'],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { blocks: { table: 'table' } },
+    ).graph
+    const right = structuredClone(left)
+    const table = right.nodes.find((node) => node.type === 'table')
+    if (table?.type !== 'table')
+      throw new Error('table anchor regression setup failed')
+    table.rows[0]!.cells[0]!.id = 'right-header'
+    table.rows[0]!.cells[1]!.id = 'right-cell'
+    table.rows[0]!.cells[1]!.headerIds = ['right-header']
+    const paragraph = right.nodes.find((node) => node.type === 'paragraph')
+    if (paragraph?.type !== 'paragraph' || !paragraph.inlineRuns?.[0])
+      throw new Error('table anchor link regression setup failed')
+    paragraph.inlineRuns[0].href = '#right-header'
+
     expect(comparePublicationSemanticSubset(left, right)).toBe(true)
     expect(canonicalPublicationSubsetSha256(left)).toBe(
       canonicalPublicationSubsetSha256(right),

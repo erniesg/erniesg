@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
+import { existsSync, realpathSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -8,7 +9,14 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
 import { canonicalPublicationSubsetSha256 } from '../src/publication/adapter-conformance.ts'
@@ -58,6 +66,53 @@ export function parsePublicationBuildArgs(argv) {
     throw new Error(`Unsupported publication source adapter: ${options.adapter}`)
   }
   return options
+}
+
+function resolveThroughExistingAncestor(value) {
+  let ancestor = resolve(value)
+  const unresolved = []
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor)
+    if (parent === ancestor) break
+    unresolved.unshift(basename(ancestor))
+    ancestor = parent
+  }
+  return resolve(realpathSync(ancestor), ...unresolved)
+}
+
+export function assertPublicationOutputDirectory(output) {
+  const repositoryRoot = resolveThroughExistingAncestor(
+    execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+    }).trim(),
+  )
+  const candidate = resolve(output)
+  const policyCandidate = resolveThroughExistingAncestor(candidate)
+  const repositoryRelative = relative(repositoryRoot, policyCandidate)
+  const repositoryLocal =
+    repositoryRelative === '' ||
+    (!repositoryRelative.startsWith(`..${sep}`) &&
+      repositoryRelative !== '..' &&
+      !isAbsolute(repositoryRelative))
+  if (!repositoryLocal) return candidate
+  let ignored = false
+  if (repositoryRelative) {
+    try {
+      execFileSync(
+        'git',
+        ['check-ignore', '--quiet', '--no-index', '--', policyCandidate],
+        { stdio: 'ignore' },
+      )
+      ignored = true
+    } catch {
+      ignored = false
+    }
+  }
+  if (!ignored)
+    throw new Error(
+      `Repository-local publication output must be ignored before generation: ${candidate}`,
+    )
+  return candidate
 }
 
 export async function createPublicationStagingDirectory(finalOutput) {
@@ -551,6 +606,9 @@ export async function bindPublicationSourceReceipt(output, bundle, routeParity) 
 
 export async function publicationBuild(argv = process.argv.slice(2)) {
   const options = parsePublicationBuildArgs(argv)
+  // Repository-local outputs must already be git-ignored before anything —
+  // staging included — is created for them.
+  const finalOutput = assertPublicationOutputDirectory(options.output)
   const registry = createDefaultPublicationAdapterRegistry()
   const locator =
     options.adapter === 'astro'
@@ -566,7 +624,6 @@ export async function publicationBuild(argv = process.argv.slice(2)) {
             : {}),
         }
   const bundle = await registry.resolve(options.adapter, locator)
-  const finalOutput = resolve(options.output)
   // The whole build writes into a private invocation-owned staging directory
   // and only ever touches the caller-supplied output path through one final
   // atomic swap, so a reused (possibly attacker-seeded) output directory is

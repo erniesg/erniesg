@@ -612,16 +612,25 @@ function sourceIdFor(documentId: string, locale: string) {
   return `payload:${sourceSafeId(documentId)}:${sourceSafeId(locale)}`
 }
 
+function authoredLocale(document: JsonObject, mapping: PayloadMappingPolicy) {
+  return canonicalLocale(mappedValue(document, mapping, 'locale') ?? 'en')
+}
+
 function localeVariantEntries(document: JsonObject, mapping: PayloadMappingPolicy) {
   const locales = mappedValue(document, mapping, 'locales')
   const entries: Array<{ locale: string; value: JsonObject }> = []
   const seen = new Set<string>()
-  const baseLocale = pickLocale(document, mapping)
+  const baseLocale = authoredLocale(document, mapping)
   const add = (rawLocale: unknown, value: unknown, location: string) => {
     if (!isObject(value)) throw new Error(`Payload locale variant at ${location} must be an object`)
     if (typeof rawLocale !== 'string' || !rawLocale.trim()) throw new Error(`Payload locale variant at ${location} is missing a locale`)
     const locale = canonicalLocale(rawLocale)
-    const declaredValues = [value.locale, value.language, value.code].filter((candidate) => candidate !== undefined)
+    const configuredLocale = mapping.fields.locale
+    const declaredValues = (
+      configuredLocale
+        ? [readPath(value, configuredLocale)]
+        : [value.locale, value.language, value.code]
+    ).filter((candidate) => candidate !== undefined)
     for (const declared of declaredValues) {
       const declaredLocale = canonicalLocale(declared, `${location} locale`)
       if (declaredLocale !== locale) throw new Error(`Payload locale variant at ${location} declares ${declaredLocale}, which conflicts with map key ${locale}`)
@@ -633,7 +642,11 @@ function localeVariantEntries(document: JsonObject, mapping: PayloadMappingPolic
   if (locales === undefined) return entries
   if (Array.isArray(locales)) {
     for (const [index, item] of locales.entries()) {
-      const itemLocale = isObject(item) ? (item.locale ?? item.language ?? item.code) : undefined
+      const itemLocale = isObject(item)
+        ? mapping.fields.locale
+          ? mappedValue(item, mapping, 'locale')
+          : (item.locale ?? item.language ?? item.code)
+        : undefined
       add(itemLocale, item, `locales[${index}]`)
     }
   } else if (isObject(locales)) {
@@ -648,7 +661,7 @@ function getVariant(document: JsonObject, mapping: PayloadMappingPolicy, locale:
 
 function pickLocale(document: JsonObject, mapping: PayloadMappingPolicy, requested?: string) {
   const configured = requested ?? mapping.locale
-  const raw = configured ?? mappedValue(document, mapping, 'locale') ?? 'en'
+  const raw = configured ?? authoredLocale(document, mapping)
   return canonicalLocale(raw)
 }
 
@@ -663,27 +676,12 @@ function normalizeInput(input: unknown, mappingArgument?: unknown): { document: 
     if (typeof value !== 'string' || !value.trim()) throw new Error('Payload requested locale must be a non-empty string')
     return value
   }
-  const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(input, key)
-  const outerHasDocumentIdentity = ['id', '_id', 'title', 'name'].some(hasOwn)
-  const outerHasDocumentContent = ['content', 'body', 'richText'].some(hasOwn)
-  const explicitDocumentWrapper = input.mapping !== undefined
-  if (
+  const wrapperKeys = new Set(['document', 'mapping', 'locale'])
+  const documentedWrapper =
     isObject(input.document) &&
-    (explicitDocumentWrapper ||
-      (!outerHasDocumentIdentity && !outerHasDocumentContent))
-  ) {
+    Object.keys(input).every((key) => wrapperKeys.has(key))
+  if (documentedWrapper) {
     document = input.document
-    mapping = mapping ?? input.mapping
-    locale = requestedLocale(input.locale)
-  } else if (
-    isObject(input.data) &&
-    (input.mapping !== undefined || (input.document === undefined && !('id' in input) && !('title' in input) && ('content' in input.data || 'title' in input.data || 'id' in input.data)))
-  ) {
-    document = input.data
-    mapping = mapping ?? input.mapping
-    locale = requestedLocale(input.locale)
-  } else if (isObject(input.doc) && input.document === undefined && !('id' in input)) {
-    document = input.doc
     mapping = mapping ?? input.mapping
     locale = requestedLocale(input.locale)
   }
@@ -1192,7 +1190,12 @@ function addMediaNode(state: AdapterState, node: LexicalNode, path: string): Pub
   const alt = uploadAlternativeText(node, upload, location)
   assertLocalizedUploadAlternative(state, node, upload, path, alt)
   const assetId = upload ? addAsset(state, upload, path, alt) : undefined
-  if (!assetId && (mediaKind === 'audio' || mediaKind === 'video'))
+  if (
+    !assetId &&
+    (mediaKind === 'audio' ||
+      mediaKind === 'video' ||
+      mediaKind === 'interactive')
+  )
     throw new Error(
       `Payload ${mediaKind} media has no embedded bytes at ${location}`,
     )
@@ -1514,13 +1517,15 @@ function buildResult(state: AdapterState): PublicationSourceResult {
 export function adaptPayloadLexical(input: unknown, mappingArgument?: unknown): PublicationSourceResult {
   const normalized = normalizeInput(input, mappingArgument)
   const state = buildState(normalized.document, normalized.mapping, normalized.locale)
-  const requestedLocale = canonicalLocale(normalized.locale ?? state.locale)
+  const baseLocale = authoredLocale(normalized.document, normalized.mapping)
+  const requestedLocale = canonicalLocale(
+    normalized.locale ?? normalized.mapping.locale ?? baseLocale,
+  )
   const availableVariant = getVariant(normalized.document, normalized.mapping, state.locale)
-  if (!availableVariant && requestedLocale !== pickLocale(normalized.document, normalized.mapping)) {
+  if (!availableVariant && requestedLocale !== baseLocale) {
     const fallback = normalized.mapping.fallbackLocale
     if (!fallback) throw new Error(`Payload locale ${requestedLocale} is unavailable; configure an explicit fallbackLocale`)
     const fallbackLocale = canonicalLocale(fallback, 'fallbackLocale')
-    const baseLocale = pickLocale(normalized.document, normalized.mapping)
     if (fallbackLocale !== baseLocale && !getVariant(normalized.document, normalized.mapping, fallbackLocale)) throw new Error(`Payload fallback locale ${fallbackLocale} is unavailable`)
     state.locale = fallbackLocale
     state.fallbackFrom = requestedLocale
@@ -1539,7 +1544,7 @@ export function adaptPayloadLexical(input: unknown, mappingArgument?: unknown): 
 /** Build every declared locale as separate linked editions. */
 export function adaptPayloadLexicalEditions(input: unknown, mappingArgument?: unknown): PublicationSourceResult[] {
   const normalized = normalizeInput(input, mappingArgument)
-  const values: string[] = [pickLocale(normalized.document, normalized.mapping)]
+  const values: string[] = [authoredLocale(normalized.document, normalized.mapping)]
   values.push(...localeVariantEntries(normalized.document, normalized.mapping).map((entry) => entry.locale))
   const results = [...new Set(values)].map((locale) =>
     adaptPayloadLexical({

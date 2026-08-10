@@ -175,6 +175,63 @@ function run(
   }
 }
 
+function sourceFlowRegion({
+  id,
+  column,
+  text,
+  x,
+  y,
+  sourceSequenceIndex,
+  whitespaceBefore,
+}: {
+  id: string
+  column: 'left' | 'right'
+  text: string
+  x: number
+  y: number
+  sourceSequenceIndex: number
+  whitespaceBefore?: number
+}): PdfPageRegion {
+  const sourceRun: PdfSourceRun =
+    whitespaceBefore === undefined
+      ? {
+          ...run(1, text, x, y, 0.385),
+          sourceSequenceIndex,
+        }
+      : {
+          ...run(1, text, x, y, 0.385),
+          sourceSequenceIndex,
+          sourceWhitespaceBefore: 'pdf-text-item',
+          sourceWhitespacePredecessorIndex: whitespaceBefore,
+        }
+  return {
+    id,
+    page: 1,
+    kind: 'body',
+    column,
+    text,
+    confidence: 1,
+    box: { ...sourceRun },
+    lines: [
+      {
+        id: `${id}-line`,
+        text,
+        fontSize: sourceRun.fontSize,
+        box: { ...sourceRun },
+        runs: [sourceRun],
+        sourceFragmentLineage: {
+          algorithm: 'source-run-fragment-v1',
+          sourceLineId: `${id}-source-line`,
+          fragment: 'whole',
+          sourceSequenceIndexes: [sourceSequenceIndex],
+        },
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+}
+
 function mathRun(
   text: string,
   x: number,
@@ -516,6 +573,314 @@ describe('PDF semantic reconstruction', () => {
     })
 
     expect(sourceProvenRunFragmentToSpanBoundary(right, span)).toBe(true)
+  })
+
+  it('joins a source-adjacent sentence across the bottom-to-top column boundary', async () => {
+    const makeRegion = (
+      id: string,
+      column: 'left' | 'right',
+      text: string,
+      x: number,
+      y: number,
+      sourceSequenceIndex: number,
+      whitespaceBefore?: number,
+    ): PdfPageRegion => {
+      const sourceRun: PdfSourceRun =
+        whitespaceBefore === undefined
+          ? {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+            }
+          : {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+              sourceWhitespaceBefore: 'pdf-text-item',
+              sourceWhitespacePredecessorIndex: whitespaceBefore,
+            }
+      return {
+        id,
+        page: 1,
+        kind: 'body',
+        column,
+        text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `${id}-line`,
+            text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: `${id}-source-line`,
+              fragment: 'whole',
+              sourceSequenceIndexes: [sourceSequenceIndex],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }
+    }
+    const target = makeRegion(
+      'column-flow-target',
+      'left',
+      'The sentence continues toward the',
+      0.09,
+      0.82,
+      100,
+    )
+    const continuation = makeRegion(
+      'column-flow-continuation',
+      'right',
+      'next column boundary with source proof.',
+      0.515,
+      0.1,
+      101,
+      100,
+    )
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe(
+      'The sentence continues toward the next column boundary with source proof.',
+    )
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      topology: 'same-page-column',
+      outcome: 'space',
+      evidence: expect.arrayContaining([
+        'exact-source-sequence-adjacency',
+        'same-page-column-flow',
+      ]),
+    })
+    expect(sourceSemanticFlowBoundaryDecisions[0].evidence).toContain(
+      'same-page-column-geometry',
+    )
+    expect(sourceSemanticFlowBoundaryDecisions[0].evidence).not.toContain(
+      'font-baseline-compatible',
+    )
+  })
+
+  it('joins an uncased-script sentence across the bottom-to-top column boundary', async () => {
+    const makeRegion = (
+      id: string,
+      column: 'left' | 'right',
+      text: string,
+      x: number,
+      y: number,
+      sourceSequenceIndex: number,
+      whitespaceBefore?: number,
+    ): PdfPageRegion => {
+      const sourceRun: PdfSourceRun =
+        whitespaceBefore === undefined
+          ? {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+            }
+          : {
+              ...run(1, text, x, y, 0.385),
+              sourceSequenceIndex,
+              sourceWhitespaceBefore: 'pdf-text-item',
+              sourceWhitespacePredecessorIndex: whitespaceBefore,
+            }
+      return {
+        id,
+        page: 1,
+        kind: 'body',
+        column,
+        text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `${id}-line`,
+            text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: `${id}-source-line`,
+              fragment: 'whole',
+              sourceSequenceIndexes: [sourceSequenceIndex],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: true,
+      }
+    }
+    const target = makeRegion(
+      'uncased-column-flow-target',
+      'left',
+      'البيانات تستمر نحو',
+      0.09,
+      0.82,
+      200,
+    )
+    const continuation = makeRegion(
+      'uncased-column-flow-continuation',
+      'right',
+      'العلمية في العمود التالي',
+      0.515,
+      0.1,
+      201,
+      200,
+    )
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('البيانات تستمر نحو العلمية في العمود التالي')
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+  })
+
+  it.each(['。', '！', '？', '؟', '۔'])(
+    'does not join uncased text after the Unicode sentence terminator %s',
+    async (terminator) => {
+      const target = sourceFlowRegion({
+        id: `unicode-terminal-target-${terminator}`,
+        column: 'left',
+        text: `研究結果${terminator}`,
+        x: 0.09,
+        y: 0.82,
+        sourceSequenceIndex: 300,
+      })
+      const continuation = sourceFlowRegion({
+        id: `unicode-terminal-continuation-${terminator}`,
+        column: 'right',
+        text: '次の段落が始まる',
+        x: 0.515,
+        y: 0.1,
+        sourceSequenceIndex: 301,
+        whitespaceBefore: 300,
+      })
+      const blocks = [target, continuation].map((region) => ({
+        type: 'paragraph' as const,
+        region,
+        text: region.text,
+        confidence: 1,
+      }))
+
+      await mergeProseContinuations(blocks, {
+        sourceSemanticFlowBoundaryDecisions: [],
+      })
+
+      expect(blocks).toHaveLength(2)
+    },
+  )
+
+  it('joins a Chinese column continuation without inventing a source space', async () => {
+    const target = sourceFlowRegion({
+      id: 'cjk-column-flow-target',
+      column: 'left',
+      text: '研究结果继续',
+      x: 0.09,
+      y: 0.82,
+      sourceSequenceIndex: 500,
+    })
+    const continuation = sourceFlowRegion({
+      id: 'cjk-column-flow-continuation',
+      column: 'right',
+      text: '在下一栏完成',
+      x: 0.515,
+      y: 0.1,
+      sourceSequenceIndex: 501,
+    })
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      language: 'zh',
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('研究结果继续在下一栏完成')
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      topology: 'same-page-column',
+      outcome: 'no-space',
+      evidence: expect.arrayContaining([
+        'exact-source-sequence-adjacency',
+        'same-page-column-flow',
+      ]),
+    })
+  })
+
+  it('respects proven RTL column order before joining uncased prose', async () => {
+    const target = sourceFlowRegion({
+      id: 'rtl-column-flow-target',
+      column: 'right',
+      text: 'البيانات تستمر نحو',
+      x: 0.515,
+      y: 0.82,
+      sourceSequenceIndex: 400,
+    })
+    const continuation = sourceFlowRegion({
+      id: 'rtl-column-flow-continuation',
+      column: 'left',
+      text: 'العلمية في العمود التالي',
+      x: 0.09,
+      y: 0.1,
+      sourceSequenceIndex: 401,
+      whitespaceBefore: 400,
+    })
+    const blocks = [target, continuation].map((region) => ({
+      type: 'paragraph' as const,
+      region,
+      text: region.text,
+      confidence: 1,
+    }))
+    const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+      []
+
+    await mergeProseContinuations(blocks, {
+      language: 'ar',
+      baseDirection: 'rtl',
+      sourceSemanticFlowBoundaryDecisions,
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('البيانات تستمر نحو العلمية في العمود التالي')
+    expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+    expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+      topology: 'same-page-column',
+      evidence: expect.arrayContaining([
+        'same-page-column-flow',
+        'same-page-column-geometry',
+      ]),
+    })
   })
 
   it('does not treat an unrelated right-column block as lineage for a following span', () => {
@@ -4802,6 +5167,45 @@ describe('PDF semantic reconstruction', () => {
     expect(
       result.paper.nodes.filter((node) => node.type === 'heading'),
     ).toEqual([])
+  })
+
+  it('keeps markup-shaped body prose as literal text without independent evidence', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(
+            1,
+            'Ordinary body prose establishes the source typography.',
+            0.1,
+            0.1,
+            0.72,
+          ),
+          run(1, '# Literal heading syntax stays prose.', 0.1, 0.2, 0.72),
+          run(1, '** Literal emphasis syntax stays prose. **', 0.1, 0.3, 0.72),
+          run(1, '{placeholder}', 0.1, 0.4, 0.24),
+          run(1, '1. Literal numbered syntax stays prose.', 0.1, 0.5, 0.72),
+        ]),
+      ],
+      sourceHash: 'm'.repeat(64),
+      fileName: 'literal-markup-prose.pdf',
+      byteLength: 4096,
+    })
+
+    const prose = result.paper.nodes.filter(
+      (node): node is Extract<ResearchNode, { type: 'paragraph' }> =>
+        node.type === 'paragraph',
+    )
+    expect(result.paper.nodes.some((node) => node.type === 'heading')).toBe(
+      false,
+    )
+    expect(prose.map((node) => node.text)).toEqual([
+      'Ordinary body prose establishes the source typography.',
+      '# Literal heading syntax stays prose.',
+      '** Literal emphasis syntax stays prose. **',
+      '{placeholder}',
+      '1. Literal numbered syntax stays prose.',
+    ])
+    expect(prose.every((node) => node.list === undefined)).toBe(true)
   })
 
   it('keeps a flowing parenthesized enumeration as prose when only a wrapped middle marker starts a region', async () => {

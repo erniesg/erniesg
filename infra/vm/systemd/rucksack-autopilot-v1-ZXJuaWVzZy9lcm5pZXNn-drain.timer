@@ -5,6 +5,7 @@ Documentation=man:systemd.timer(5)
 
 [Timer]
 OnBootSec=5m
+OnActiveSec=5m
 OnUnitActiveSec=30m
 Persistent=true
 RandomizedDelaySec=5m

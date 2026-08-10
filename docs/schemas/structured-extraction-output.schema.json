@@ -76,6 +76,24 @@
         "captionNodeId": { "$ref": "#/$defs/id" },
         "altText": { "type": "string" },
         "altTextSource": { "const": "caption" },
+        "noteTargetNodeId": { "$ref": "#/$defs/id" },
+        "noteTargetNodeIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "citationTargetNodeIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "backlinks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "relationships": { "$ref": "#/$defs/relationships" },
+        "links": { "$ref": "#/$defs/relationships" },
         "provenance": {
           "type": "object",
           "additionalProperties": false,
@@ -133,6 +151,30 @@
               }
             }
           }
+        }
+      }
+    },
+    "relationships": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "noteTargetNodeId": { "$ref": "#/$defs/id" },
+        "noteTargetNodeIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "citationTargetNodeIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "backlinks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
         }
       }
     }

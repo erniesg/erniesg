@@ -91,6 +91,17 @@ export type ExtractionBakeoffArm = {
   ) => ExtractionBakeoffArmResult | Promise<ExtractionBakeoffArmResult>
 }
 
+/**
+ * A caller may provide a durable implementation (for example, a receipt
+ * backed store) when the held-out boundary must survive process restarts. The
+ * default store is scoped to the corpus object and therefore still prevents a
+ * second score within one runner process without imposing global test state.
+ */
+export type ExtractionBakeoffScoreOnceStore = {
+  has(key: string): boolean
+  add(key: string): unknown
+}
+
 export type ExtractionBakeoffVerification = {
   status: 'passed' | 'failed'
   issueCodes: string[]
@@ -108,6 +119,7 @@ export type ExtractionBakeoffCaseScore = {
   sourceRecall: number
   assetRecall: number
   boilerplateContamination: number
+  headingLevelRecall: number
   verification: ExtractionBakeoffVerification
 }
 
@@ -189,6 +201,10 @@ const FORBIDDEN_GROUND_TRUTH_KEYS = new Set([
   'reviewerlabel',
   'targetbox',
 ])
+const defaultScoreOnceStores = new WeakMap<
+  object,
+  ExtractionBakeoffScoreOnceStore
+>()
 
 function finiteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -239,10 +255,21 @@ function unique(values: readonly string[]) {
   return new Set(values).size === values.length
 }
 
+function scoreOnceStoreFor(corpus: ExtractionBakeoffCorpus) {
+  const existing = defaultScoreOnceStores.get(corpus)
+  if (existing) return existing
+  const store = new Set<string>()
+  defaultScoreOnceStores.set(corpus, store)
+  return store
+}
+
 function validateCase(
   caseInput: ExtractionBakeoffCase,
   document: ExtractionBakeoffDocument,
 ) {
+  const sourceRunIds = new Set(document.context.sourceRuns.map(({ id }) => id))
+  const assetIds = new Set(document.context.sourceAssets.map(({ id }) => id))
+  const boilerplateRunIds = new Set(document.context.boilerplateRunIds ?? [])
   if (
     !SAFE_ID.test(caseInput.id) ||
     caseInput.documentId !== document.id ||
@@ -254,7 +281,19 @@ function validateCase(
     ) ||
     !unique(caseInput.expectedAssetIds ?? []) ||
     !unique(caseInput.expectedSourceRunIds ?? []) ||
-    !unique(caseInput.expectedExcludedBoilerplateRunIds ?? [])
+    !unique(caseInput.expectedExcludedBoilerplateRunIds ?? []) ||
+    (caseInput.expectedHeadingLevels ?? []).some(
+      (level) => !Number.isSafeInteger(level) || level < 1 || level > 6,
+    ) ||
+    (caseInput.expectedSourceRunIds ?? []).some(
+      (sourceRunId) => !sourceRunIds.has(sourceRunId),
+    ) ||
+    (caseInput.expectedAssetIds ?? []).some(
+      (assetId) => !assetIds.has(assetId),
+    ) ||
+    (caseInput.expectedExcludedBoilerplateRunIds ?? []).some(
+      (sourceRunId) => !boilerplateRunIds.has(sourceRunId),
+    )
   ) {
     throw new Error(`INVALID_EXTRACTION_BAKEOFF_CASE:${caseInput.id}`)
   }
@@ -269,6 +308,20 @@ export function validateExtractionBakeoffCorpus(
     throw new Error('EXTRACTION_BAKEOFF_REQUIRES_DEVELOPMENT_AND_HELD_OUT')
   }
   const documents = [...corpus.development, ...corpus.heldOut]
+  for (const document of corpus.development) {
+    if (document.split !== 'development') {
+      throw new Error(
+        `EXTRACTION_BAKEOFF_SPLIT_MISMATCH:development:${document.id}`,
+      )
+    }
+  }
+  for (const document of corpus.heldOut) {
+    if (document.split !== 'held-out') {
+      throw new Error(
+        `EXTRACTION_BAKEOFF_SPLIT_MISMATCH:held-out:${document.id}`,
+      )
+    }
+  }
   if (!unique(documents.map(({ id }) => id)))
     throw new Error('DUPLICATE_EXTRACTION_BAKEOFF_DOCUMENT')
   for (const document of documents) {
@@ -282,7 +335,20 @@ export function validateExtractionBakeoffCorpus(
     }
     if (
       !SHA256.test(document.context.sourceSha256) ||
-      document.cases.length === 0
+      document.cases.length === 0 ||
+      (document.context.pageCount !== undefined &&
+        (!Number.isSafeInteger(document.context.pageCount) ||
+          document.context.pageCount < 1))
+    ) {
+      throw new Error(`INVALID_EXTRACTION_BAKEOFF_DOCUMENT:${document.id}`)
+    }
+    const sourceRunIds = new Set(
+      document.context.sourceRuns.map(({ id }) => id),
+    )
+    if (
+      (document.context.boilerplateRunIds ?? []).some(
+        (sourceRunId) => !sourceRunIds.has(sourceRunId),
+      )
     ) {
       throw new Error(`INVALID_EXTRACTION_BAKEOFF_DOCUMENT:${document.id}`)
     }
@@ -397,16 +463,33 @@ function scoreCase(
   const bodyRuns = [...actualRuns].filter((id) => boilerplate.has(id)).length
   const boilerplateContamination =
     boilerplate.size === 0 ? 0 : ratio(bodyRuns, boilerplate.size)
+  const expectedHeadingLevels = caseInput.expectedHeadingLevels ?? []
+  const actualHeadingLevels = nodes
+    .filter(({ type }) => type === 'heading')
+    .map(({ level }) => level ?? 0)
+  const headingLevelRecall =
+    expectedHeadingLevels.length === 0
+      ? 1
+      : ratio(
+          expectedHeadingLevels.filter(
+            (level, index) => actualHeadingLevels[index] === level,
+          ).length,
+          expectedHeadingLevels.length,
+        )
   // A failed verifier and a degenerate/no-object answer are both zero. The
   // precision term keeps "every line is a heading" below a useful answer.
+  const scoreComponents = [
+    typePrecision,
+    typeRecall,
+    sourceRecall,
+    assetRecall,
+    1 - boilerplateContamination,
+    ...(expectedHeadingLevels.length > 0 ? [headingLevelRecall] : []),
+  ]
   const score =
     verification.status === 'passed' && nodes.length > 0
-      ? (typePrecision +
-          typeRecall +
-          sourceRecall +
-          assetRecall +
-          (1 - boilerplateContamination)) /
-        5
+      ? scoreComponents.reduce((sum, value) => sum + value, 0) /
+        scoreComponents.length
       : 0
   return {
     caseId: caseInput.id,
@@ -419,6 +502,7 @@ function scoreCase(
     sourceRecall,
     assetRecall,
     boilerplateContamination,
+    headingLevelRecall,
     verification,
   }
 }
@@ -490,6 +574,53 @@ function disqualifiedDocumentResult(
   }
 }
 
+function failedDocumentResult(
+  document: ExtractionBakeoffDocument,
+  issueCode = 'adapter-failure',
+): ExtractionBakeoffDocumentResult {
+  const verification: ExtractionBakeoffVerification = {
+    status: 'failed',
+    issueCodes: [issueCode],
+    issueCount: 1,
+  }
+  return {
+    documentId: document.id,
+    split: document.split,
+    layout: document.layout,
+    status: 'failed',
+    verification,
+    outputHash: null,
+    byteStable: false,
+    latencyMsPerPage: null,
+    costUsdPerPage: null,
+    caseScores: document.cases.map((caseInput) =>
+      scoreCase(caseInput, null, verification),
+    ),
+  }
+}
+
+function caseState(
+  result: ExtractionBakeoffDocumentResult | undefined,
+  stratum: string,
+  layout: StructuredExtractionLayout,
+) {
+  if (!result) return 'missing'
+  const relevant = result.caseScores
+    .filter((score) => score.stratum === stratum && score.layout === layout)
+    .map((score) => ({
+      caseId: score.caseId,
+      score: score.score,
+      typePrecision: score.typePrecision,
+      typeRecall: score.typeRecall,
+      sourceRecall: score.sourceRecall,
+      assetRecall: score.assetRecall,
+      boilerplateContamination: score.boilerplateContamination,
+      headingLevelRecall: score.headingLevelRecall,
+      verification: score.verification,
+    }))
+  return stableJson({ status: result.status, relevant })
+}
+
 function heldOutContaminationCode(error: unknown) {
   return error instanceof Error &&
     error.message.startsWith('HELD_OUT_CONTAMINATION')
@@ -498,10 +629,12 @@ function heldOutContaminationCode(error: unknown) {
 }
 
 function pageCount(context: StructuredExtractionContext) {
+  if (context.pageCount !== undefined) return context.pageCount
   return Math.max(
     1,
     ...context.sourceRuns.map(({ page }) => page),
     ...context.sourceAssets.map(({ page }) => page),
+    ...(context.pageRenditions ?? []).map(({ page }) => page),
   )
 }
 
@@ -588,14 +721,13 @@ function comparisons(
       ),
     ].sort()
     const disagreementDocumentIds = documentIds.filter((documentId) => {
-      const states = EXTRACTION_BAKEOFF_ARMS.map((arm) => {
-        const result = results[arm].find(
-          ({ documentId: id }) => id === documentId,
-        )
-        return result
-          ? `${result.status}\u0000${result.outputHash ?? 'none'}\u0000${result.byteStable}`
-          : 'missing'
-      })
+      const states = EXTRACTION_BAKEOFF_ARMS.map((arm) =>
+        caseState(
+          results[arm].find(({ documentId: id }) => id === documentId),
+          stratum,
+          layout,
+        ),
+      )
       return new Set(states).size > 1
     })
     return {
@@ -617,10 +749,12 @@ export async function runExtractionBakeoff({
   corpus,
   arms,
   includeDevelopment = false,
+  scoreOnceStore,
 }: {
   corpus: ExtractionBakeoffCorpus
   arms: readonly ExtractionBakeoffArm[]
   includeDevelopment?: boolean
+  scoreOnceStore?: ExtractionBakeoffScoreOnceStore
 }): Promise<ExtractionBakeoffReport> {
   const corpusReceipt = validateExtractionBakeoffCorpus(corpus)
   if (
@@ -642,50 +776,80 @@ export async function runExtractionBakeoff({
     'llm-grounded': [],
   } as Record<ExtractionBakeoffArmId, ExtractionBakeoffDocumentResult[]>
   const identityRunKeys = new Set<string>()
+  const heldOutScoreOnceStore = scoreOnceStore ?? scoreOnceStoreFor(corpus)
   const documents = includeDevelopment
     ? [...corpus.development, ...corpus.heldOut]
     : corpus.heldOut
 
   for (const arm of arms) {
+    let dynamicallyContaminated = false
     for (const document of documents) {
-      const runKey = `${structuredExtractionHash(arm.identity)}\u0000${document.id}`
-      if (document.split === 'held-out' && identityRunKeys.has(runKey))
-        throw new Error(
-          `HELD_OUT_SCORED_MORE_THAN_ONCE:${arm.id}:${document.id}`,
-        )
-      const inputArm =
-        arm.id === 'geometric-baseline' ? 'geometric-baseline' : arm.id
+      const runKey = `${corpusReceipt.heldOutIdentitySha256}\u0000${structuredExtractionHash(arm.identity)}\u0000${document.id}`
       if (document.split === 'held-out') {
         if (!identityValid(arm.identity))
           throw new Error(`INVALID_EXTRACTION_MODEL_IDENTITY:${arm.id}`)
+        if (identityRunKeys.has(runKey) || heldOutScoreOnceStore.has(runKey)) {
+          throw new Error(
+            `HELD_OUT_SCORED_MORE_THAN_ONCE:${arm.id}:${document.id}`,
+          )
+        }
+        // Reserve the receipt before invoking the adapter. A failed or
+        // contaminated attempt is still a held-out score and cannot be
+        // silently retried under the same candidate identity.
+        identityRunKeys.add(runKey)
+        heldOutScoreOnceStore.add(runKey)
+      }
+      if (document.split === 'held-out' && dynamicallyContaminated) {
+        resultByArm[arm.id].push(
+          disqualifiedDocumentResult(document, 'held-out-contamination'),
+        )
+        continue
+      }
+      const inputArm =
+        arm.id === 'geometric-baseline' ? 'geometric-baseline' : arm.id
+      if (document.split === 'held-out') {
         const staticContamination =
           !arm.tunedOn.every((value) => value === 'development') ||
           Boolean(arm.usedHeldOutForTuning)
         if (staticContamination) {
+          dynamicallyContaminated = true
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, 'held-out-contamination'),
           )
-          identityRunKeys.add(runKey)
           continue
         }
       }
-      const firstInput = modelInputForStructuredExtraction(
-        document.context,
-        inputArm,
-      )
-      const first = await arm.run(firstInput)
-      if (!first || typeof first !== 'object')
-        throw new Error(`INVALID_EXTRACTION_ARM_RESULT:${arm.id}`)
+      let first: ExtractionBakeoffArmResult
+      try {
+        const firstInput = modelInputForStructuredExtraction(
+          document.context,
+          inputArm,
+        )
+        const firstResult = await arm.run(firstInput)
+        if (!firstResult || typeof firstResult !== 'object') {
+          resultByArm[arm.id].push(
+            failedDocumentResult(document, 'invalid-arm-result'),
+          )
+          continue
+        }
+        first = firstResult
+      } catch {
+        resultByArm[arm.id].push(failedDocumentResult(document))
+        continue
+      }
       if (document.split === 'held-out') {
         try {
           assertNoHeldOutContamination(arm, first.proposal, document.split)
         } catch (error) {
           const issueCode = heldOutContaminationCode(error)
-          if (!issueCode) throw error
+          if (!issueCode) {
+            resultByArm[arm.id].push(failedDocumentResult(document))
+            continue
+          }
+          dynamicallyContaminated = true
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, issueCode),
           )
-          identityRunKeys.add(runKey)
           continue
         }
       }
@@ -693,23 +857,37 @@ export async function runExtractionBakeoff({
         document.context,
         first.proposal,
       )
-      const secondInput = modelInputForStructuredExtraction(
-        document.context,
-        inputArm,
-      )
-      const second = await arm.run(secondInput)
-      if (!second || typeof second !== 'object')
-        throw new Error(`INVALID_EXTRACTION_ARM_RESULT:${arm.id}`)
+      let second: ExtractionBakeoffArmResult
+      try {
+        const secondInput = modelInputForStructuredExtraction(
+          document.context,
+          inputArm,
+        )
+        const secondResult = await arm.run(secondInput)
+        if (!secondResult || typeof secondResult !== 'object') {
+          resultByArm[arm.id].push(
+            failedDocumentResult(document, 'invalid-arm-result'),
+          )
+          continue
+        }
+        second = secondResult
+      } catch {
+        resultByArm[arm.id].push(failedDocumentResult(document))
+        continue
+      }
       if (document.split === 'held-out') {
         try {
           assertNoHeldOutContamination(arm, second.proposal, document.split)
         } catch (error) {
           const issueCode = heldOutContaminationCode(error)
-          if (!issueCode) throw error
+          if (!issueCode) {
+            resultByArm[arm.id].push(failedDocumentResult(document))
+            continue
+          }
+          dynamicallyContaminated = true
           resultByArm[arm.id].push(
             disqualifiedDocumentResult(document, issueCode),
           )
-          identityRunKeys.add(runKey)
           continue
         }
       }
@@ -728,15 +906,27 @@ export async function runExtractionBakeoff({
         byteStable,
       )
       const metrics = first.metrics
-      if (!metrics) throw new Error(`MISSING_EXTRACTION_RUN_METRICS:${arm.id}`)
+      if (!metrics) {
+        resultByArm[arm.id].push(
+          failedDocumentResult(document, 'missing-run-metrics'),
+        )
+        continue
+      }
+      const expectedPages = pageCount(document.context)
       if (
         !finiteNonNegative(metrics.latencyMs) ||
         !finiteNonNegative(metrics.costUsd) ||
         (metrics.pageCount !== undefined &&
-          (!Number.isSafeInteger(metrics.pageCount) || metrics.pageCount < 1))
-      )
-        throw new Error(`INVALID_EXTRACTION_RUN_METRICS:${arm.id}`)
-      const pages = metrics.pageCount ?? pageCount(document.context)
+          (!Number.isSafeInteger(metrics.pageCount) ||
+            metrics.pageCount < 1 ||
+            metrics.pageCount !== expectedPages))
+      ) {
+        resultByArm[arm.id].push(
+          failedDocumentResult(document, 'invalid-run-metrics'),
+        )
+        continue
+      }
+      const pages = expectedPages
       const output =
         firstVerification.status === 'passed' &&
         secondVerification.status === 'passed' &&
@@ -752,7 +942,9 @@ export async function runExtractionBakeoff({
           ? byteStable
             ? 'passed'
             : 'disqualified'
-          : 'failed'
+          : firstVerification.status !== secondVerification.status
+            ? 'disqualified'
+            : 'failed'
       resultByArm[arm.id].push({
         documentId: document.id,
         split: document.split,
@@ -765,7 +957,6 @@ export async function runExtractionBakeoff({
         costUsdPerPage: metrics.costUsd / pages,
         caseScores,
       })
-      if (document.split === 'held-out') identityRunKeys.add(runKey)
     }
   }
 
@@ -796,9 +987,7 @@ export async function runExtractionBakeoff({
         return {
           arm,
           result,
-          state: result
-            ? `${result.status}\u0000${result.outputHash ?? 'none'}\u0000${result.byteStable}`
-            : 'missing',
+          state: caseState(result, row.stratum, row.layout),
         }
       })
       if (new Set(states.map(({ state }) => state)).size === 1) return []
@@ -818,7 +1007,7 @@ export async function runExtractionBakeoff({
           arms: matches,
           reason: states.some(({ result }) => result?.status !== 'passed')
             ? ('verification' as const)
-            : ('structure' as const),
+            : ('score' as const),
         },
       ]
     })
@@ -857,6 +1046,13 @@ export function createExtractionArchitectureDecision({
   report: ExtractionBakeoffReport
   decisionId?: string
 }): ExtractionArchitectureDecision {
+  const { reportSha256, ...reportWithoutHash } = report
+  if (
+    !SHA256.test(reportSha256) ||
+    structuredExtractionHash(reportWithoutHash) !== reportSha256
+  ) {
+    throw new Error('INVALID_EXTRACTION_BAKEOFF_REPORT_HASH')
+  }
   const perStratum: Record<string, ExtractionBakeoffArmId | 'tie' | 'pending'> =
     {}
   for (const row of report.comparison) {

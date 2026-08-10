@@ -751,6 +751,9 @@
   .publication-adjudication-options button small {
     @apply line-clamp-2 font-normal text-muted-foreground;
   }
+  .publication-candidate-preview {
+    @apply max-h-24 w-auto rounded-sm border border-foreground/20 bg-white;
+  }
   .publication-preview-blocked {
     @apply opacity-60;
   }

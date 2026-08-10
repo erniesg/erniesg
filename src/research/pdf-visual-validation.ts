@@ -193,7 +193,7 @@ function mediaExtensions(mediaType: PdfVisualAsset['mediaType']) {
   return ['xhtml']
 }
 
-function validAssetContent(asset: PdfVisualAsset) {
+export function validAssetContent(asset: PdfVisualAsset) {
   const contentSha256 = sha256(asset.bytes)
   const sourceExclusionMaskIdentity = asset.sourceCropBox
     ? pdfSourceExclusionMaskIdentity(
@@ -267,7 +267,7 @@ function validAssetContent(asset: PdfVisualAsset) {
   )
 }
 
-function validAssetShape(
+export function validAssetShape(
   asset: PdfVisualAsset,
   relationshipKind: PdfVisualRelationship['kind'],
 ) {

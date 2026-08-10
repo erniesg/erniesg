@@ -296,6 +296,52 @@ describe('PDF visual association graph', () => {
     )
   })
 
+  it('names the exact relationship every unresolved visual blocker belongs to', async () => {
+    const sourceBox = box(0.2, 0.08, 0.6, 0.2)
+    const sourceObjectId = 'addressable-blocker-source'
+    const result = await reconstructPdfVisuals({
+      pages: [
+        page(
+          [
+            {
+              id: sourceObjectId,
+              page: 1,
+              kind: 'image',
+              box: sourceBox,
+              confidence: 1,
+              assetId: `asset-${sourceObjectId}`,
+              role: 'semantic',
+            },
+          ],
+          1,
+          [sourcePreservedSvgAsset(sourceObjectId, sourceBox)],
+        ),
+      ],
+      regions: [
+        objectRegion('addressable-blocker-object', sourceObjectId, sourceBox),
+        captionRegion(
+          'Figure: Explicit caption with source geometry.',
+          box(0.2, 0.32, 0.6, 0.03),
+        ),
+      ],
+    })
+
+    const blockers = result.diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.code === 'AMBIGUOUS_VISUAL_MATCH' ||
+        diagnostic.code === 'UNRESOLVED_VISUAL_OBJECT',
+    )
+    expect(blockers.length).toBeGreaterThan(0)
+    for (const blocker of blockers) {
+      const relationship = result.relationships.find(
+        (candidate) => candidate.id === blocker.relationshipId,
+      )
+      expect(relationship).toBeDefined()
+      expect(relationship!.status).not.toBe('matched')
+      expect(blocker.target?.markerId).toBe(relationship!.id)
+    }
+  })
+
   it('does not emit a duplicate table relationship for an unstyled prose cross-reference misclassified as a caption', async () => {
     const falseCaptionBox = {
       ...box(0.52, 0.18, 0.36, 0.08),

@@ -16,9 +16,11 @@ import {
   MAX_EQUATION_TRANSCRIPT_LENGTH,
   MAX_HUMAN_DECISION_FILE_BYTES,
   parseHumanDecisionFile,
+  createVisualMatchDecision,
   readingOrderCandidates,
   serializeHumanDecisionFile,
   upsertHumanDecision,
+  visualMatchAdjudicationCandidates,
   type HumanDecisionFile,
 } from '../../research/decision-record'
 import {
@@ -37,6 +39,7 @@ import type {
   DocumentReconstruction,
   HumanAdjudicationRecord,
   PdfReconstruction,
+  PdfVisualAsset,
   ReconstructionDiagnostic,
 } from '../../research/import-types'
 import { DocxImportError, PdfImportError } from '../../research/import-types'
@@ -280,6 +283,58 @@ function AdjudicationControls({
     )
   }
 
+  if (
+    diagnostic.code === 'AMBIGUOUS_VISUAL_MATCH' ||
+    diagnostic.code === 'UNRESOLVED_VISUAL_OBJECT'
+  ) {
+    const relationship = result.visualRelationships.find(
+      (candidate) =>
+        candidate.id === target.markerId &&
+        candidate.id === diagnostic.relationshipId,
+    )
+    const candidates = relationship
+      ? visualMatchAdjudicationCandidates(result, relationship.id)
+      : []
+    if (!relationship || candidates.length === 0) return null
+    return (
+      <div className="publication-adjudication-options">
+        {candidates.map((candidate) => (
+          <button
+            key={candidate.candidateId}
+            type="button"
+            aria-label={`Accept visual candidate ${candidate.candidateId} for ${relationship.id}`}
+            onClick={() =>
+              onDecision(
+                createVisualMatchDecision(
+                  result,
+                  relationship.id,
+                  candidate.candidateId,
+                ),
+              )
+            }
+          >
+            Accept visual candidate
+            <small>
+              {candidate.score.toFixed(2)} ·{' '}
+              {candidate.sourceObjectIds.join(', ')} ·{' '}
+              {candidate.evidence.join(' · ')}
+            </small>
+            {candidate.assetIds.map((assetId) => {
+              const asset = result.assets.find((item) => item.id === assetId)
+              return asset ? (
+                <VisualCandidatePreview
+                  key={assetId}
+                  asset={asset}
+                  label={`${relationship.label} candidate ${assetId}`}
+                />
+              ) : null
+            })}
+          </button>
+        ))}
+      </div>
+    )
+  }
+
   if (diagnostic.code === 'AMBIGUOUS_READING_ORDER') {
     return (
       <div className="publication-adjudication-options">
@@ -321,6 +376,34 @@ function AdjudicationControls({
     )
   }
   return null
+}
+
+/**
+ * Candidate previews are rendered from the local asset bytes already held in
+ * the reconstruction. Nothing is uploaded and no URL outlives the card.
+ */
+function VisualCandidatePreview({
+  asset,
+  label,
+}: {
+  asset: PdfVisualAsset
+  label: string
+}) {
+  const [href, setHref] = useState<string | undefined>()
+  useEffect(() => {
+    if (typeof URL.createObjectURL !== 'function') return
+    const objectUrl = URL.createObjectURL(
+      new Blob([asset.bytes.slice()], { type: asset.mediaType }),
+    )
+    setHref(objectUrl)
+    return () => {
+      URL.revokeObjectURL(objectUrl)
+      setHref(undefined)
+    }
+  }, [asset.bytes, asset.mediaType])
+  return href ? (
+    <img className="publication-candidate-preview" src={href} alt={label} />
+  ) : null
 }
 
 export function EquationTranscriptAdjudicationCard({

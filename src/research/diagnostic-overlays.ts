@@ -83,7 +83,10 @@ function categoryFor(
   }
   if (
     code === 'INCOMPLETE_ASSET_COVERAGE' ||
-    code === 'UNRESOLVED_SEMANTIC_OBJECTS'
+    code === 'UNRESOLVED_SEMANTIC_OBJECTS' ||
+    code === 'AMBIGUOUS_VISUAL_MATCH' ||
+    code === 'UNRESOLVED_VISUAL_OBJECT' ||
+    code === 'UNREFERENCED_VISUAL_ASSET'
   ) {
     return 'asset'
   }

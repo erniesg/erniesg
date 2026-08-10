@@ -8,9 +8,12 @@ import {
   MAX_EQUATION_TRANSCRIPT_LENGTH,
   MAX_HUMAN_DECISION_FILE_BYTES,
   parseHumanDecisionFile,
+  createVisualMatchDecision,
   readingOrderCandidates,
   serializeHumanDecisionFile,
   upsertHumanDecision,
+  visualMatchAdjudicationCandidates,
+  visualMatchCandidateId,
 } from './decision-record'
 import { verifyEquationTranscriptAdjudication } from './equation-transcript-adjudication'
 import {
@@ -33,7 +36,7 @@ import { reconstructPageAnalyses } from './pdf-layout'
 import { reconstructPdf } from './pdf'
 import { assessPdfCompleteness } from './pdf-quality'
 import { internalReferenceIntegrityIssues } from './publication-integrity'
-import { createSourcePageCropAsset } from './visual-assets'
+import { createPngAsset, createSourcePageCropAsset } from './visual-assets'
 import type { ResearchPaper } from './schema'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 
@@ -445,6 +448,229 @@ function equationTranscriptDecision(
     relationship.id,
     SYNTHETIC_LATEX_TRANSCRIPT,
   )
+}
+
+const SYNTHETIC_VISUAL_RELATIONSHIP_ID = 'visual-relationship-0001'
+const SYNTHETIC_VISUAL_CAPTION_NODE_ID = 'caption-001-figure-1'
+
+async function syntheticFigureAsset(sourceObjectId: string, x: number) {
+  const width = 8
+  const height = 8
+  const pixels = new Uint8Array(width * height * 4).fill(255)
+  for (let index = 0; index < pixels.length; index += 4) {
+    pixels[index] = Math.round(x * 200)
+    pixels[index + 1] = 0
+    pixels[index + 2] = 0
+  }
+  return createPngAsset({
+    sourceObjectId,
+    sourceBox: {
+      page: 1,
+      x,
+      y: 0.32,
+      width: 0.24,
+      height: 0.18,
+      rotation: 0,
+      method: 'pdf-object',
+    },
+    width,
+    height,
+    colorSpace: 'rgba',
+    pixels,
+  })
+}
+
+/**
+ * A caption with two similarly scored, fully rendered figure candidates. The
+ * deterministic matcher cannot pick one, so the document stays blocked on a
+ * single AMBIGUOUS_VISUAL_MATCH until a human names a candidate.
+ */
+async function ambiguousVisualMatchReconstruction() {
+  const base = await unresolvedLineJoinReconstruction()
+  const captionRun = run('Figure 1. Synthetic visual adjudication.', 0.1, 0.6, 0.5)
+  const assets = await Promise.all([
+    syntheticFigureAsset('image-p001-001', 0.1),
+    syntheticFigureAsset('image-p001-002', 0.6),
+  ])
+  const captionRegion = {
+    id: 'synthetic-visual-caption-region',
+    page: 1,
+    kind: 'caption',
+    column: 'single',
+    text: captionRun.text,
+    confidence: 1,
+    box: { ...captionRun },
+    lines: [
+      {
+        id: 'synthetic-visual-caption-line',
+        text: captionRun.text,
+        fontSize: captionRun.fontSize,
+        box: { ...captionRun },
+        runs: [{ ...captionRun }],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  } satisfies PdfPageRegion
+  const figureRegions: PdfPageRegion[] = assets.map((asset, index) => ({
+    id: `synthetic-visual-source-region-${index + 1}`,
+    page: 1,
+    kind: 'figure',
+    column: 'single',
+    text: '',
+    confidence: 0.9,
+    box: { ...asset.sourceBoxes[0] },
+    lines: [],
+    nativeObjectIds: [...asset.sourceObjectIds],
+    includedInReadingOrder: true,
+  }))
+  const candidates = assets.map((asset, index) => ({
+    sourceRegionIds: [figureRegions[index].id],
+    sourceObjectIds: [...asset.sourceObjectIds],
+    assetIds: [asset.id],
+    score: 0.61,
+    evidence: ['bounded-source-geometry', 'caption-proximity'],
+    sourceBoxes: asset.sourceBoxes.map((box) => ({ ...box })),
+  }))
+  const relationship = {
+    id: SYNTHETIC_VISUAL_RELATIONSHIP_ID,
+    kind: 'figure',
+    label: 'Figure 1',
+    captionRegionId: captionRegion.id,
+    sourceRegionIds: [],
+    sourceLineIds: [],
+    sourceObjectIds: [],
+    assetIds: [],
+    status: 'ambiguous',
+    confidence: 0.61,
+    evidence: ['bounded-source-geometry'],
+    candidates,
+    sourceBoxes: [{ ...captionRegion.box }],
+    sourceText: '',
+    altText: captionRegion.text,
+    altTextSource: 'caption',
+    canonicalNodeId: null,
+    captionNodeId: null,
+  } satisfies PdfVisualRelationship
+  const paper: ResearchPaper = {
+    ...base.paper,
+    id: 'synthetic-visual-paper',
+    title: 'Synthetic visual adjudication fixture',
+    subtitle: 'Owner-local adjudication test',
+    abstract: 'Synthetic test content.',
+    nodes: [
+      {
+        id: SYNTHETIC_VISUAL_CAPTION_NODE_ID,
+        type: 'caption',
+        text: captionRegion.text,
+        source: 'synthetic-visual-fixture',
+      },
+    ],
+  }
+  const page = {
+    page: 1,
+    kind: 'born-digital',
+    width: 612,
+    height: 792,
+    rotation: 0,
+    textCharacters: captionRun.text.length,
+    imageCount: assets.length,
+    objects: assets.map((asset) => ({
+      id: asset.sourceObjectIds[0],
+      page: 1,
+      kind: 'image' as const,
+      box: { ...asset.sourceBoxes[0] },
+      confidence: 1,
+      assetId: asset.id,
+    })),
+    assets,
+    runs: [captionRun],
+  } satisfies PdfPageAnalysis
+  const regions = [captionRegion, ...figureRegions]
+  const readingOrder = {
+    schemaVersion: '1.0.0',
+    regionIds: regions.map((region) => region.id),
+    order: regions.map((region) => region.id),
+    edges: [],
+    resolutions: [],
+    acyclic: true,
+    evaluation: {
+      schemaVersion: '1.0.0',
+      algorithm: 'deterministic-geometry-v1',
+      mode: 'deterministic-only',
+      regionCount: regions.length,
+      acceptedEdgeCount: 0,
+      unresolvedEdgeCount: 0,
+      cycleRate: 0,
+      orderAccuracy: null,
+      provider: null,
+      modelVersion: null,
+      latencyMs: 0,
+      costUsd: 0,
+      reviewRequired: false,
+    },
+  } satisfies PdfReadingOrderGraph
+  const provenance = {
+    [SYNTHETIC_VISUAL_CAPTION_NODE_ID]: {
+      confidence: 1,
+      pages: [1],
+      regionIds: [captionRegion.id],
+      boxes: [{ ...captionRegion.box }],
+      links: [],
+    },
+  }
+  const blocker: ReconstructionDiagnostic = {
+    code: 'AMBIGUOUS_VISUAL_MATCH',
+    severity: 'error',
+    page: 1,
+    message: 'Figure 1 retains 2 similarly scored visual candidates for review.',
+    sourceBoxes: [
+      { ...captionRegion.box },
+      ...candidates.flatMap((candidate) => candidate.sourceBoxes),
+    ],
+    relationshipId: relationship.id,
+    target: {
+      regionIds: [captionRegion.id, ...figureRegions.map((region) => region.id)],
+      markerId: relationship.id,
+    },
+  }
+  const assessment = assessPdfCompleteness({
+    pages: [page],
+    sourceSha256: base.source.sha256,
+    paper,
+    diagnostics: [blocker],
+    readingOrder,
+    regions,
+    visualRelationships: [relationship],
+    assets,
+    citationRelationships: [],
+    noteRelationships: [],
+    provenance,
+    lineBoundaryDecisions: [],
+    unresolvedCorruptingJoinCount: 0,
+    structurallyConsumedLineBoundaryCount: 0,
+    policy: base.readiness.policy,
+  })
+  return {
+    ...base,
+    paper,
+    pages: [page],
+    regions,
+    lineBoundaryDecisions: [],
+    unresolvedCorruptingJoinCount: 0,
+    structurallyConsumedLineBoundaryCount: 0,
+    readingOrder,
+    noteRelationships: [],
+    citationRelationships: [],
+    crossReferenceRelationships: [],
+    visualRelationships: [relationship],
+    assets,
+    provenance,
+    diagnostics: assessment.diagnostics,
+    semanticSignals: assessment.semanticSignals,
+    completeness: assessment.completeness,
+    readiness: assessment.readiness,
+  } satisfies PdfReconstruction
 }
 
 function targeted(
@@ -1507,5 +1733,327 @@ describe('human adjudication decision records', () => {
     expect(() =>
       parseHumanDecisionFile(' '.repeat(MAX_HUMAN_DECISION_FILE_BYTES + 1)),
     ).toThrow(/exceeds/i)
+  })
+})
+
+describe('visual match adjudication', () => {
+  it('derives candidate identity from source and asset ids, not list order', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const candidates = visualMatchAdjudicationCandidates(base, relationship.id)
+
+    expect(candidates).toHaveLength(2)
+    for (const candidate of candidates) {
+      expect(candidate.candidateId).toMatch(/^visual-candidate-[a-f0-9]{24}$/)
+    }
+    expect(new Set(candidates.map((item) => item.candidateId)).size).toBe(2)
+
+    const reordered = {
+      ...base,
+      visualRelationships: [
+        {
+          ...relationship,
+          candidates: [...relationship.candidates].reverse(),
+        },
+      ],
+    }
+    expect(
+      visualMatchAdjudicationCandidates(reordered, relationship.id).map(
+        (item) => item.candidateId,
+      ),
+    ).toEqual(candidates.map((item) => item.candidateId))
+    for (const candidate of relationship.candidates) {
+      expect(visualMatchCandidateId(relationship.id, candidate)).toBe(
+        visualMatchCandidateId(relationship.id, {
+          sourceRegionIds: [...candidate.sourceRegionIds].reverse(),
+          sourceObjectIds: [...candidate.sourceObjectIds].reverse(),
+          assetIds: [...candidate.assetIds].reverse(),
+        }),
+      )
+    }
+  })
+
+  it('refuses candidates whose complete exportable asset payload is missing', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const withoutSecondAsset = {
+      ...base,
+      assets: base.assets.filter((asset) => asset.id !== base.assets[1].id),
+    }
+
+    expect(
+      visualMatchAdjudicationCandidates(
+        withoutSecondAsset,
+        relationship.id,
+      ).map((item) => item.assetIds),
+    ).toEqual([[base.assets[0].id]])
+
+    const corrupted = {
+      ...base,
+      assets: base.assets.map((asset, index) =>
+        index === 0 ? { ...asset, sha256: 'f'.repeat(64) } : asset,
+      ),
+    }
+    expect(
+      visualMatchAdjudicationCandidates(corrupted, relationship.id).map(
+        (item) => item.assetIds,
+      ),
+    ).toEqual([[base.assets[1].id]])
+  })
+
+  it('records only ids and codes in the sidecar', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const [candidate] = visualMatchAdjudicationCandidates(
+      base,
+      relationship.id,
+    )
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      createVisualMatchDecision(base, relationship.id, candidate.candidateId),
+    )
+    const json = serializeHumanDecisionFile(file)
+
+    expect(JSON.parse(json)).toMatchObject({
+      schemaVersion: '1.3.0',
+      decisions: [
+        {
+          diagnosticCode: 'AMBIGUOUS_VISUAL_MATCH',
+          resolution: {
+            type: 'accept-visual-match',
+            relationshipId: relationship.id,
+            candidateId: candidate.candidateId,
+            confidence: 1,
+            evidence: [
+              'bounded-source-candidate',
+              'complete-exportable-asset',
+              'owner-local-adjudication',
+            ],
+          },
+        },
+      ],
+    })
+    expect(json).not.toContain('Synthetic visual adjudication')
+    expect(json).not.toContain('Figure 1.')
+    expect(json).not.toContain('data:')
+  })
+
+  it('materializes the canonical figure the deterministic matcher would have built', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const [candidate] = visualMatchAdjudicationCandidates(
+      base,
+      relationship.id,
+    )
+    expect(base.readiness.ready).toBe(false)
+    expect(base.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'AMBIGUOUS_VISUAL_MATCH' }),
+      ]),
+    )
+
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      createVisualMatchDecision(base, relationship.id, candidate.candidateId),
+    )
+    const result = applyHumanDecisionFile(base, file)
+    const resolved = result.visualRelationships[0]
+
+    expect(resolved.status).toBe('matched')
+    expect(resolved.assetIds).toEqual(candidate.assetIds)
+    expect(resolved.sourceObjectIds).toEqual(candidate.sourceObjectIds)
+    expect(resolved.visualMatchAdjudication).toMatchObject({
+      schemaVersion: '1.0.0',
+      source: 'owner-local-adjudication',
+      diagnosticCode: 'AMBIGUOUS_VISUAL_MATCH',
+      candidateId: candidate.candidateId,
+    })
+    const canonical = result.paper.nodes.find(
+      (node) => node.id === resolved.canonicalNodeId,
+    )
+    expect(canonical).toMatchObject({
+      type: 'figure',
+      objectType: 'figure',
+      relationships: {
+        caption: SYNTHETIC_VISUAL_CAPTION_NODE_ID,
+        assets: candidate.assetIds,
+      },
+    })
+    expect(result.provenance[resolved.canonicalNodeId!]).toMatchObject({
+      regionIds: candidate.sourceRegionIds,
+      pages: [1],
+    })
+    expect(result.completeness.exportedAssetCount).toBe(
+      base.completeness.exportedAssetCount + 1,
+    )
+    expect(result.completeness.sourceAssetCount).toBe(
+      base.completeness.sourceAssetCount,
+    )
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'AMBIGUOUS_VISUAL_MATCH' }),
+      ]),
+    )
+    expect(result.readiness.blockingDiagnosticCodes).not.toContain(
+      'AMBIGUOUS_VISUAL_MATCH',
+    )
+    expect(result.completeness.assetCoverage).toBe(1)
+    expect(result.completeness.relationshipCoverage).toBe(1)
+    // Only this blocker clears: every unrelated diagnostic survives untouched.
+    expect(
+      result.readiness.blockingDiagnosticCodes.filter(
+        (code) => code !== 'AMBIGUOUS_VISUAL_MATCH',
+      ),
+    ).toEqual(
+      base.readiness.blockingDiagnosticCodes.filter(
+        (code) =>
+          code !== 'AMBIGUOUS_VISUAL_MATCH' &&
+          code !== 'INCOMPLETE_ASSET_COVERAGE' &&
+          code !== 'INCOMPLETE_RELATIONSHIP_COVERAGE' &&
+          code !== 'UNRESOLVED_SEMANTIC_OBJECTS',
+      ),
+    )
+    expect(result.humanAdjudications).toMatchObject({
+      schemaVersion: '1.3.0',
+      stale: [],
+      countsByDiagnosticCode: { AMBIGUOUS_VISUAL_MATCH: 1 },
+      visualRelationships: [
+        {
+          relationshipId: relationship.id,
+          diagnosticCode: 'AMBIGUOUS_VISUAL_MATCH',
+          candidateId: candidate.candidateId,
+          canonicalNodeId: resolved.canonicalNodeId,
+        },
+      ],
+    })
+  })
+
+  it('replays the same sidecar to an identical graph', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const [candidate] = visualMatchAdjudicationCandidates(
+      base,
+      relationship.id,
+    )
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      createVisualMatchDecision(base, relationship.id, candidate.candidateId),
+    )
+    const replayed = parseHumanDecisionFile(serializeHumanDecisionFile(file))
+
+    expect(applyHumanDecisionFile(base, replayed)).toEqual(
+      applyHumanDecisionFile(base, file),
+    )
+  })
+
+  it('reports a changed candidate set as a stale decision', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const [candidate] = visualMatchAdjudicationCandidates(
+      base,
+      relationship.id,
+    )
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      createVisualMatchDecision(base, relationship.id, candidate.candidateId),
+    )
+    const drifted = {
+      ...base,
+      visualRelationships: [
+        {
+          ...relationship,
+          candidates: relationship.candidates.map((item) => ({
+            ...item,
+            score: item.score + 0.01,
+          })),
+        },
+      ],
+    } satisfies PdfReconstruction
+    const result = applyHumanDecisionFile(drifted, file)
+
+    expect(result.humanAdjudications.applied).toEqual([])
+    expect(result.humanAdjudications.stale[0].reason).toBe(
+      'resolution-no-longer-legal',
+    )
+    expect(result.visualRelationships[0].status).toBe('ambiguous')
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'STALE_HUMAN_DECISION' }),
+        expect.objectContaining({ code: 'AMBIGUOUS_VISUAL_MATCH' }),
+      ]),
+    )
+  })
+
+  it('refuses a decision that names an asset outside the candidate set', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const [candidate, other] = visualMatchAdjudicationCandidates(
+      base,
+      relationship.id,
+    )
+    const decision = createVisualMatchDecision(
+      base,
+      relationship.id,
+      candidate.candidateId,
+    )
+    const forged = parseHumanDecisionFile({
+      schemaVersion: '1.3.0',
+      documentSha256: base.source.sha256,
+      decisions: [
+        {
+          ...decision,
+          resolution: {
+            ...decision.resolution,
+            assetIds: [...other.assetIds],
+            assetSha256: [...other.assetSha256],
+          },
+        },
+      ],
+    })
+    const result = applyHumanDecisionFile(base, forged)
+
+    expect(result.humanAdjudications.applied).toEqual([])
+    expect(result.humanAdjudications.stale[0].reason).toBe(
+      'resolution-no-longer-legal',
+    )
+    expect(result.visualRelationships[0].status).toBe('ambiguous')
+    expect(result.readiness.blockingDiagnosticCodes).toContain(
+      'AMBIGUOUS_VISUAL_MATCH',
+    )
+  })
+
+  it('distinguishes adjudicated visual relationships in the EPUB export manifest', async () => {
+    const base = await ambiguousVisualMatchReconstruction()
+    const relationship = base.visualRelationships[0]
+    const [candidate] = visualMatchAdjudicationCandidates(
+      base,
+      relationship.id,
+    )
+    const result = applyHumanDecisionFile(
+      base,
+      upsertHumanDecision(
+        createHumanDecisionFile(base.source.sha256),
+        createVisualMatchDecision(base, relationship.id, candidate.candidateId),
+      ),
+    )
+    const epub = await buildReadableEpub(result.paper, result)
+    const manifest = inspectEpub(epub.bytes).manifest as unknown as {
+      humanAdjudications: Record<string, any>
+    }
+
+    expect(manifest.humanAdjudications.visualRelationships).toMatchObject({
+      deterministicMatchCount: 0,
+      adjudicatedMatchCount: 1,
+      countsByDiagnosticCode: { AMBIGUOUS_VISUAL_MATCH: 1 },
+    })
+    expect(
+      manifest.humanAdjudications.visualRelationships.adjudicated[0],
+    ).toMatchObject({
+      relationshipId: relationship.id,
+      candidateId: candidate.candidateId,
+    })
+    expect(JSON.stringify(manifest.humanAdjudications)).not.toContain(
+      'Synthetic visual adjudication',
+    )
   })
 })

@@ -5940,12 +5940,28 @@ export async function reconstructPdfVisuals({
   const consumedRegionIds = new Set<string>()
   const consumedLineIds = new Set<string>()
   const relationships: PdfVisualRelationship[] = []
+  // Visual diagnostics are emitted before relationship ids are final. Keep the
+  // pairing so each blocker can name the exact relationship a human decision
+  // must target once ids settle.
+  const visualStatusDiagnostics = new Map<
+    PdfVisualRelationship,
+    ReconstructionDiagnostic
+  >()
+  const bindVisualStatusDiagnostic = (
+    diagnostic: ReconstructionDiagnostic,
+  ) => {
+    diagnostics.push(diagnostic)
+    return (relationship: PdfVisualRelationship) => {
+      visualStatusDiagnostics.set(relationship, diagnostic)
+      return relationship
+    }
+  }
 
   for (const [captionIndex, caption] of captions.entries()) {
     const captionLabel = captionLabels.get(caption)!
     if (captionLabel.status === 'unparseable') {
       const evidence = ['unparseable-scholarly-label']
-      diagnostics.push({
+      const bindUnparseableDiagnostic = bindVisualStatusDiagnostic({
         code: 'UNRESOLVED_VISUAL_OBJECT',
         severity: 'error',
         page: caption.page,
@@ -5976,6 +5992,7 @@ export async function reconstructPdfVisuals({
         canonicalNodeId: null,
         captionNodeId: null,
       })
+      bindUnparseableDiagnostic(relationships[relationships.length - 1])
       continue
     }
     const label: ParsedPdfScholarlyVisualLabel & { sequence: string } = {
@@ -6980,35 +6997,36 @@ export async function reconstructPdfVisuals({
         consumedRegionIds.add(sourceRegionId)
       }
     }
-    if (status !== 'matched') {
-      diagnostics.push({
-        code:
-          status === 'ambiguous'
-            ? 'AMBIGUOUS_VISUAL_MATCH'
-            : 'UNRESOLVED_VISUAL_OBJECT',
-        severity: 'error',
-        page: caption.page,
-        message:
-          status === 'ambiguous'
-            ? `${label.label} retains ${result.scored.length} similarly scored visual candidates for review.`
-            : `${label.label} has no source visual candidate above the deterministic confidence threshold.`,
-        sourceBoxes: [
-          caption.box,
-          ...result.scored.flatMap(
-            (candidate) => candidate.candidate.sourceBoxes,
-          ),
-        ],
-        target: {
-          regionIds: [
-            caption.id,
-            ...result.scored.flatMap(
-              (candidate) => candidate.candidate.sourceRegionIds,
-            ),
-          ],
-          markerId: null,
-        },
-      })
-    }
+    const bindStatusDiagnostic =
+      status === 'matched'
+        ? null
+        : bindVisualStatusDiagnostic({
+            code:
+              status === 'ambiguous'
+                ? 'AMBIGUOUS_VISUAL_MATCH'
+                : 'UNRESOLVED_VISUAL_OBJECT',
+            severity: 'error',
+            page: caption.page,
+            message:
+              status === 'ambiguous'
+                ? `${label.label} retains ${result.scored.length} similarly scored visual candidates for review.`
+                : `${label.label} has no source visual candidate above the deterministic confidence threshold.`,
+            sourceBoxes: [
+              caption.box,
+              ...result.scored.flatMap(
+                (candidate) => candidate.candidate.sourceBoxes,
+              ),
+            ],
+            target: {
+              regionIds: [
+                caption.id,
+                ...result.scored.flatMap(
+                  (candidate) => candidate.candidate.sourceRegionIds,
+                ),
+              ],
+              markerId: null,
+            },
+          })
     const noCandidateEvidence = tableScopeResolution
       ? [
           'bounded-table-scope-unresolved',
@@ -7057,6 +7075,7 @@ export async function reconstructPdfVisuals({
       canonicalNodeId: null,
       captionNodeId: null,
     })
+    bindStatusDiagnostic?.(relationships[relationships.length - 1])
   }
 
   const preformattedCountByPage = new Map<number, number>()
@@ -7840,7 +7859,7 @@ export async function reconstructPdfVisuals({
       captionNodeId: null,
     })
     if (!cropMatched) {
-      diagnostics.push({
+      bindVisualStatusDiagnostic({
         code: 'UNRESOLVED_VISUAL_OBJECT',
         severity: 'error',
         page: source.page,
@@ -7856,7 +7875,7 @@ export async function reconstructPdfVisuals({
           regionIds: sources.map((region) => region.id),
           markerId: null,
         },
-      })
+      })(relationships[relationships.length - 1])
     }
   }
 
@@ -7890,6 +7909,10 @@ export async function reconstructPdfVisuals({
   })
   for (const [index, relationship] of relationships.entries()) {
     relationship.id = `visual-relationship-${String(index + 1).padStart(4, '0')}`
+  }
+  for (const [relationship, diagnostic] of visualStatusDiagnostics) {
+    diagnostic.relationshipId = relationship.id
+    if (diagnostic.target) diagnostic.target.markerId = relationship.id
   }
 
   const directlyReferencedObjectIds = new Set(

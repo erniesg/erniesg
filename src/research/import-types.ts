@@ -485,12 +485,23 @@ export type PdfEquationTranscriptAdjudication = {
   sourceCropAssetSha256: string
 }
 
+export type PdfVisualMatchAdjudication = {
+  schemaVersion: '1.0.0'
+  source: 'owner-local-adjudication'
+  diagnosticCode: 'AMBIGUOUS_VISUAL_MATCH' | 'UNRESOLVED_VISUAL_OBJECT'
+  candidateId: string
+  relationshipFingerprintSha256: string
+  assetIds: string[]
+  assetSha256: string[]
+}
+
 export type PdfVisualRelationship = {
   id: string
   kind: 'figure' | 'table' | 'equation'
   semanticKind?: 'algorithm' | 'code'
   preformatted?: PdfPreformattedSource
   equationTranscriptAdjudication?: PdfEquationTranscriptAdjudication
+  visualMatchAdjudication?: PdfVisualMatchAdjudication
   label: string
   captionRegionId: string
   sourceRegionIds: string[]
@@ -704,6 +715,20 @@ export type HumanAdjudicationResolution =
       confidence: 1
       evidence: Array<'exact-source-page-crop' | 'owner-local-adjudication'>
     }
+  | {
+      type: 'accept-visual-match'
+      relationshipId: string
+      relationshipFingerprintSha256: string
+      candidateId: string
+      assetIds: string[]
+      assetSha256: string[]
+      confidence: 1
+      evidence: Array<
+        | 'bounded-source-candidate'
+        | 'complete-exportable-asset'
+        | 'owner-local-adjudication'
+      >
+    }
   | { type: 'dismiss' }
 
 export type HumanAdjudicationRecord = {
@@ -715,10 +740,19 @@ export type HumanAdjudicationRecord = {
   resolution: HumanAdjudicationResolution
 }
 
+export type HumanAdjudicatedVisualRelationship = {
+  relationshipId: string
+  diagnosticCode: 'AMBIGUOUS_VISUAL_MATCH' | 'UNRESOLVED_VISUAL_OBJECT'
+  candidateId: string
+  canonicalNodeId: string
+  assetIds: string[]
+}
+
 export type HumanAdjudicationProvenance = {
-  schemaVersion: '1.0.0' | '1.1.0' | '1.2.0'
+  schemaVersion: '1.0.0' | '1.1.0' | '1.2.0' | '1.3.0'
   documentSha256: string
   applied: HumanAdjudicationRecord[]
+  visualRelationships?: HumanAdjudicatedVisualRelationship[]
   stale: Array<
     HumanAdjudicationRecord & {
       reason:

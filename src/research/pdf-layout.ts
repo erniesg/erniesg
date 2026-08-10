@@ -7028,6 +7028,79 @@ type CanonicalVisualDraft = {
   source: string
 }
 
+type CanonicalVisualFigureNode = Extract<ResearchNode, { type: 'figure' }>
+
+/**
+ * The single canonical figure/caption/assets materializer. The deterministic
+ * matcher and the human-adjudication applier both go through this so an
+ * accepted candidate produces exactly the graph the matcher would have built.
+ */
+export function materializeCanonicalVisualNode({
+  relationship,
+  canonicalNodeId,
+  captionNodeId,
+  captionEnvelope,
+  lineageBoxes,
+  source,
+  links = [],
+  table,
+  sourceText,
+  inlineRuns = [],
+}: {
+  relationship: PdfVisualRelationship
+  canonicalNodeId: string
+  captionNodeId: string
+  captionEnvelope: NormalizedSourceBox
+  lineageBoxes: NormalizedSourceBox[]
+  source: string
+  links?: NodeSourceEvidence['links']
+  table?: CanonicalVisualFigureNode['table']
+  sourceText?: string
+  inlineRuns?: NonNullable<CanonicalVisualFigureNode['inlineRuns']>
+}): { node: ResearchNode; provenance: NodeSourceEvidence } {
+  relationship.canonicalNodeId = canonicalNodeId
+  relationship.captionNodeId = captionNodeId
+  relationship.sourceBoxes = [captionEnvelope, ...lineageBoxes]
+  const node: ResearchNode = {
+    id: canonicalNodeId,
+    type: 'figure',
+    objectType: relationship.kind,
+    ...(table ? { table } : {}),
+    ...(sourceText ? { sourceText } : {}),
+    ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
+    title: relationship.altText,
+    relationships: {
+      caption: captionNodeId,
+      assets: relationship.assetIds,
+    },
+    source,
+  }
+  return {
+    node,
+    provenance: {
+      confidence: relationship.confidence,
+      pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],
+      regionIds: [...relationship.sourceRegionIds],
+      boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
+      links: [...links],
+    },
+  }
+}
+
+export function canonicalVisualNodeId(
+  relationship: PdfVisualRelationship,
+  page: number,
+) {
+  return visualCanonicalNodeId(relationship, page)
+}
+
+export function canonicalVisualLineageBoxes(
+  relationship: PdfVisualRelationship,
+  assetsById: ReadonlyMap<string, PdfVisualAsset>,
+) {
+  return visualLineageBoxes(relationship, assetsById)
+}
+
 export function orderCanonicalVisualPairs(
   nodes: ResearchNode[],
   pairs: readonly {
@@ -8973,25 +9046,13 @@ export async function reconstructPageAnalyses({
             : [],
         )
       : []
-    const node: ResearchNode = {
-      id: draft.id,
-      type: 'figure',
-      objectType: relationship.kind,
-      ...(table ? { table } : {}),
-      ...(sourceText ? { sourceText } : {}),
-      ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
-      title: relationship.altText,
-      relationships: {
-        caption: draft.captionBlock.nodeId,
-        assets: relationship.assetIds,
-      },
+    const materialized = materializeCanonicalVisualNode({
+      relationship,
+      canonicalNodeId: draft.id,
+      captionNodeId: draft.captionBlock.nodeId,
+      captionEnvelope: draft.captionEnvelope,
+      lineageBoxes: draft.lineageBoxes,
       source: draft.source,
-    }
-    provenance[draft.id] = {
-      confidence: relationship.confidence,
-      pages: [...new Set(relationship.sourceBoxes.map((box) => box.page))],
-      regionIds: [...relationship.sourceRegionIds],
-      boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
       links: embeddedLinks.filter(
         (link) =>
           link.box !== null &&
@@ -9007,7 +9068,12 @@ export async function reconstructPageAnalyses({
               ),
             ),
       ),
-    }
+      ...(table ? { table } : {}),
+      ...(sourceText ? { sourceText } : {}),
+      inlineRuns,
+    })
+    const node = materialized.node
+    provenance[draft.id] = materialized.provenance
     const captionIndex = nodes.findIndex(
       (candidate) => candidate.id === draft.captionBlock.nodeId,
     )

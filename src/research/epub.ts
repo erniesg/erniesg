@@ -2905,6 +2905,14 @@ function manifestHumanAdjudications(reconstruction: PdfReconstruction) {
   const applied = reconstruction.humanAdjudications.applied.map(
     manifestAdjudicationRecord,
   )
+  const adjudicatedVisuals =
+    reconstruction.humanAdjudications.visualRelationships ?? []
+  const deterministicVisualMatchCount =
+    reconstruction.visualRelationships.filter(
+      (relationship) =>
+        relationship.status === 'matched' &&
+        !relationship.visualMatchAdjudication,
+    ).length
   return {
     schemaVersion: reconstruction.humanAdjudications.schemaVersion,
     privacy: 'equation-transcripts-sha256-only',
@@ -2912,6 +2920,21 @@ function manifestHumanAdjudications(reconstruction: PdfReconstruction) {
     staleCount: reconstruction.humanAdjudications.stale.length,
     countsByDiagnosticCode:
       reconstruction.humanAdjudications.countsByDiagnosticCode,
+    // Human-adjudicated visual relationships are named separately from the
+    // deterministic matches so a reader can tell which figures were repaired.
+    visualRelationships: {
+      deterministicMatchCount: deterministicVisualMatchCount,
+      adjudicatedMatchCount: adjudicatedVisuals.length,
+      countsByDiagnosticCode: adjudicatedVisuals.reduce<Record<string, number>>(
+        (counts, entry) => {
+          counts[entry.diagnosticCode] =
+            (counts[entry.diagnosticCode] ?? 0) + 1
+          return counts
+        },
+        {},
+      ),
+      adjudicated: adjudicatedVisuals,
+    },
     appliedReceiptSha256: sha256Sync(strToU8(JSON.stringify(applied))),
     applied,
   }

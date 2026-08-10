@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type {
+  HumanAdjudicatedVisualRelationship,
   HumanAdjudicationRecord,
   PdfReconstruction,
   ReconstructionDiagnostic,
@@ -13,16 +14,45 @@ import {
   buildPdfLineJoinReviewContext,
   replayPdfRegionLineText,
 } from './pdf-lines'
+import {
+  canonicalVisualLineageBoxes,
+  canonicalVisualNodeId,
+  captionProvenanceEnvelope,
+  materializeCanonicalVisualNode,
+  orderCanonicalVisualPairs,
+} from './pdf-layout'
+import { validatedPdfVisualRelationships } from './pdf-visual-validation'
+import {
+  VISUAL_MATCH_ADJUDICATION_EVIDENCE,
+  VISUAL_MATCH_DIAGNOSTIC_CODES,
+  visualCaptionBinding,
+  visualMatchAdjudicationCandidate,
+  type VisualMatchDiagnosticCode,
+} from './visual-match-adjudication'
 import { sha256HexSync } from './sha256-sync'
 
 export {
   equationTranscriptDecisionBinding,
   type EquationTranscriptDecisionBinding,
 } from './equation-transcript-adjudication'
+export {
+  VISUAL_MATCH_DECISION_SCHEMA_VERSION,
+  visualMatchAdjudicationCandidate,
+  visualMatchAdjudicationCandidates,
+  visualMatchCandidateId,
+  type VisualMatchCandidateBinding,
+} from './visual-match-adjudication'
 
 export const HUMAN_DECISION_SCHEMA_VERSION = '1.2.0' as const
+/**
+ * Visual-match resolutions are the only v1.3.0 feature. A sidecar is only
+ * raised to v1.3.0 when it actually carries one, so existing v1.2.0 sidecars
+ * keep replaying — and exporting — byte-identically.
+ */
+export const VISUAL_HUMAN_DECISION_SCHEMA_VERSION = '1.3.0' as const
 const LEGACY_HUMAN_DECISION_SCHEMA_VERSION = '1.0.0' as const
 const LINE_JOIN_HUMAN_DECISION_SCHEMA_VERSION = '1.1.0' as const
+const MAX_VISUAL_DECISION_ASSETS = 64
 export const MAX_HUMAN_DECISION_FILE_BYTES = 1024 * 1024
 export const MAX_EQUATION_TRANSCRIPT_LENGTH = 8192
 const MAX_HUMAN_DECISIONS = 1000
@@ -52,6 +82,8 @@ const diagnosticCodeSchema = z.enum([
   'INCOMPLETE_ASSET_COVERAGE',
   'INCOMPLETE_RELATIONSHIP_COVERAGE',
   'UNRESOLVED_SEMANTIC_OBJECTS',
+  'AMBIGUOUS_VISUAL_MATCH',
+  'UNRESOLVED_VISUAL_OBJECT',
   'STALE_HUMAN_DECISION',
 ])
 
@@ -133,6 +165,22 @@ const resolutionSchema = z.discriminatedUnion('type', [
       ]),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('accept-visual-match'),
+      relationshipId: stableIdSchema,
+      relationshipFingerprintSha256: sha256Schema,
+      candidateId: stableIdSchema,
+      assetIds: z.array(stableIdSchema).min(1).max(MAX_VISUAL_DECISION_ASSETS),
+      assetSha256: z.array(sha256Schema).min(1).max(MAX_VISUAL_DECISION_ASSETS),
+      confidence: z.literal(1),
+      evidence: z.tuple([
+        z.literal('bounded-source-candidate'),
+        z.literal('complete-exportable-asset'),
+        z.literal('owner-local-adjudication'),
+      ]),
+    })
+    .strict(),
   z.object({ type: z.literal('dismiss') }).strict(),
 ])
 
@@ -186,6 +234,51 @@ export const humanAdjudicationRecordSchema = z
             'Equation transcript targets must identify the exact visual relationship and its source regions.',
         })
       }
+    } else if (decision.resolution.type === 'accept-visual-match') {
+      const resolution = decision.resolution
+      if (
+        !VISUAL_MATCH_DIAGNOSTIC_CODES.includes(
+          decision.diagnosticCode as VisualMatchDiagnosticCode,
+        )
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['diagnosticCode'],
+          message:
+            'Visual match resolutions apply only to ambiguous or unresolved visual diagnostics.',
+        })
+      }
+      if (decision.target.markerId !== resolution.relationshipId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['target'],
+          message:
+            'Visual match targets must identify the exact visual relationship.',
+        })
+      }
+      if (
+        resolution.assetIds.length !== resolution.assetSha256.length ||
+        new Set(resolution.assetIds).size !== resolution.assetIds.length
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['resolution', 'assetIds'],
+          message:
+            'Visual match resolutions must name unique assets with one digest each.',
+        })
+      }
+    } else if (
+      VISUAL_MATCH_DIAGNOSTIC_CODES.includes(
+        decision.diagnosticCode as VisualMatchDiagnosticCode,
+      ) &&
+      decision.resolution.type !== 'dismiss'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['resolution'],
+        message:
+          'Visual diagnostics require an explicit visual match resolution.',
+      })
     } else if (decision.diagnosticCode === 'UNRESOLVED_CORRUPTING_JOIN') {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -209,6 +302,7 @@ export const humanDecisionFileSchema = z
       z.literal(LEGACY_HUMAN_DECISION_SCHEMA_VERSION),
       z.literal(LINE_JOIN_HUMAN_DECISION_SCHEMA_VERSION),
       z.literal(HUMAN_DECISION_SCHEMA_VERSION),
+      z.literal(VISUAL_HUMAN_DECISION_SCHEMA_VERSION),
     ]),
     documentSha256: z.string().regex(/^[a-f0-9]{64}$/),
     decisions: z.array(humanAdjudicationRecordSchema).max(MAX_HUMAN_DECISIONS),
@@ -239,6 +333,7 @@ export const humanDecisionFileSchema = z
       }
       if (
         file.schemaVersion !== HUMAN_DECISION_SCHEMA_VERSION &&
+        file.schemaVersion !== VISUAL_HUMAN_DECISION_SCHEMA_VERSION &&
         decision.resolution.type === 'accept-equation-transcript'
       ) {
         context.addIssue({
@@ -246,6 +341,16 @@ export const humanDecisionFileSchema = z
           path: ['decisions', index, 'resolution'],
           message:
             'Equation transcript resolutions require decision schema v1.2.0.',
+        })
+      }
+      if (
+        file.schemaVersion !== VISUAL_HUMAN_DECISION_SCHEMA_VERSION &&
+        decision.resolution.type === 'accept-visual-match'
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['decisions', index, 'resolution'],
+          message: 'Visual match resolutions require decision schema v1.3.0.',
         })
       }
     }
@@ -316,6 +421,14 @@ function normalizedRecord(
         evidence: [...decision.resolution.evidence],
       }
     }
+    if (decision.resolution.type === 'accept-visual-match') {
+      return {
+        ...decision.resolution,
+        assetIds: [...decision.resolution.assetIds],
+        assetSha256: [...decision.resolution.assetSha256],
+        evidence: [...decision.resolution.evidence],
+      }
+    }
     return { ...decision.resolution }
   })()
   return {
@@ -379,10 +492,15 @@ export function upsertHumanDecision(
   return humanDecisionFileSchema.parse({
     ...file,
     schemaVersion:
-      normalized.resolution.type === 'resolve-line-join' ||
-      normalized.resolution.type === 'accept-equation-transcript'
-        ? HUMAN_DECISION_SCHEMA_VERSION
-        : file.schemaVersion,
+      normalized.resolution.type === 'accept-visual-match' ||
+      file.decisions.some(
+        (candidate) => candidate.resolution.type === 'accept-visual-match',
+      )
+        ? VISUAL_HUMAN_DECISION_SCHEMA_VERSION
+        : normalized.resolution.type === 'resolve-line-join' ||
+            normalized.resolution.type === 'accept-equation-transcript'
+          ? HUMAN_DECISION_SCHEMA_VERSION
+          : file.schemaVersion,
     decisions: [
       ...file.decisions.filter(
         (candidate) => decisionKey(candidate) !== decisionKey(normalized),
@@ -453,6 +571,73 @@ export function createEquationTranscriptDecision(
       evidence: ['exact-source-page-crop', 'owner-local-adjudication'],
     },
   }) as EquationTranscriptDecision
+}
+
+export type VisualMatchDecision = Omit<
+  HumanAdjudicationRecord,
+  'diagnosticCode' | 'resolution'
+> & {
+  diagnosticCode: VisualMatchDiagnosticCode
+  resolution: Extract<
+    HumanAdjudicationRecord['resolution'],
+    { type: 'accept-visual-match' }
+  >
+}
+
+function visualMatchDiagnostic(
+  reconstruction: PdfReconstruction,
+  relationshipId: string,
+) {
+  const matches = reconstruction.diagnostics.filter(
+    (diagnostic) =>
+      VISUAL_MATCH_DIAGNOSTIC_CODES.includes(
+        diagnostic.code as VisualMatchDiagnosticCode,
+      ) &&
+      diagnostic.relationshipId === relationshipId &&
+      diagnostic.target?.markerId === relationshipId,
+  )
+  return matches.length === 1 ? matches[0] : null
+}
+
+/**
+ * Build the one legal decision that accepts an already-emitted, complete
+ * visual candidate. Nothing free-form reaches the sidecar: only the exact
+ * relationship, candidate, and asset identities the reconstruction holds.
+ */
+export function createVisualMatchDecision(
+  reconstruction: PdfReconstruction,
+  relationshipId: string,
+  candidateId: string,
+): VisualMatchDecision {
+  const binding = visualMatchAdjudicationCandidate(
+    reconstruction,
+    relationshipId,
+    candidateId,
+  )
+  const diagnostic = visualMatchDiagnostic(reconstruction, relationshipId)
+  if (!binding || !diagnostic?.target) {
+    throw new Error(
+      'Visual match decision is not legal for the current reconstruction.',
+    )
+  }
+  return humanAdjudicationRecordSchema.parse({
+    diagnosticCode: diagnostic.code,
+    target: {
+      regionIds: [...diagnostic.target.regionIds],
+      markerId: relationshipId,
+    },
+    resolution: {
+      type: 'accept-visual-match',
+      relationshipId,
+      relationshipFingerprintSha256: binding.relationshipFingerprintSha256,
+      candidateId,
+      assetIds: [...binding.assetIds],
+      assetSha256: [...binding.assetSha256],
+      confidence: 1,
+      evidence: [...VISUAL_MATCH_ADJUDICATION_EVIDENCE],
+    },
+  }) as VisualMatchDecision
+
 }
 
 export function readingOrderCandidates(
@@ -1129,6 +1314,136 @@ function updateEquationTranscript(
   return true
 }
 
+/**
+ * Promote a human-accepted candidate through the same canonical materializer
+ * the deterministic matcher uses, then re-verify the result with the ordinary
+ * visual validator. A repair that would not have been a legal deterministic
+ * match is refused rather than half-applied.
+ */
+function applyVisualMatch(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+): HumanAdjudicatedVisualRelationship | null {
+  if (decision.resolution.type !== 'accept-visual-match') return null
+  const resolution = decision.resolution
+  const binding = visualMatchAdjudicationCandidate(
+    reconstruction,
+    resolution.relationshipId,
+    resolution.candidateId,
+  )
+  if (
+    !binding ||
+    binding.relationshipFingerprintSha256 !==
+      resolution.relationshipFingerprintSha256 ||
+    !sameValues(binding.assetIds, resolution.assetIds) ||
+    !sameValues(binding.assetSha256, resolution.assetSha256)
+  ) {
+    return null
+  }
+  const relationship = reconstruction.visualRelationships.find(
+    (candidate) => candidate.id === resolution.relationshipId,
+  )
+  if (!relationship) return null
+  const caption = visualCaptionBinding(reconstruction, relationship)
+  if (!caption) return null
+  // Mirror the deterministic draft: prefer the verified caption provenance
+  // envelope and fall back to the classified caption region box.
+  const captionEnvelope =
+    captionProvenanceEnvelope(
+      caption.evidence,
+      caption.captionRegion.id,
+      caption.captionRegion.box,
+    ) ?? {
+      ...caption.captionRegion.box,
+    }
+
+  relationship.status = 'matched'
+  relationship.sourceRegionIds = [...binding.sourceRegionIds]
+  relationship.sourceObjectIds = [...binding.sourceObjectIds]
+  relationship.assetIds = [...binding.assetIds]
+  relationship.confidence = binding.score
+  relationship.evidence = [
+    ...new Set([
+      ...binding.evidence,
+      ...VISUAL_MATCH_ADJUDICATION_EVIDENCE,
+    ]),
+  ]
+  relationship.visualMatchAdjudication = {
+    schemaVersion: '1.0.0',
+    source: 'owner-local-adjudication',
+    diagnosticCode: decision.diagnosticCode as VisualMatchDiagnosticCode,
+    candidateId: binding.candidateId,
+    relationshipFingerprintSha256: binding.relationshipFingerprintSha256,
+    assetIds: [...binding.assetIds],
+    assetSha256: [...binding.assetSha256],
+  }
+
+  const lineageBoxes = canonicalVisualLineageBoxes(
+    relationship,
+    new Map(reconstruction.assets.map((asset) => [asset.id, asset] as const)),
+  )
+  if (!lineageBoxes) return null
+  const canonicalNodeId = canonicalVisualNodeId(
+    relationship,
+    captionEnvelope.page,
+  )
+  if (
+    reconstruction.paper.nodes.some((node) => node.id === canonicalNodeId) ||
+    reconstruction.provenance[canonicalNodeId]
+  ) {
+    return null
+  }
+  const materialized = materializeCanonicalVisualNode({
+    relationship,
+    canonicalNodeId,
+    captionNodeId: caption.captionNodeId,
+    captionEnvelope,
+    lineageBoxes,
+    source: `pdf:${reconstruction.source.sha256.slice(0, 16)}#page=${captionEnvelope.page}`,
+  })
+  reconstruction.provenance[canonicalNodeId] = materialized.provenance
+  const captionIndex = reconstruction.paper.nodes.findIndex(
+    (node) => node.id === caption.captionNodeId,
+  )
+  reconstruction.paper.nodes.splice(
+    captionIndex < 0 ? reconstruction.paper.nodes.length : captionIndex,
+    0,
+    materialized.node,
+  )
+  orderCanonicalVisualPairs(
+    reconstruction.paper.nodes,
+    [
+      {
+        page: captionEnvelope.page,
+        column: caption.captionRegion.column,
+        sourceBox: captionEnvelope,
+        visualNodeId: canonicalNodeId,
+        captionNodeId: caption.captionNodeId,
+      },
+    ],
+    reconstruction.crossReferenceRelationships,
+    [],
+    reconstruction.provenance,
+  )
+  const validated = validatedPdfVisualRelationships({
+    paper: reconstruction.paper,
+    provenance: reconstruction.provenance,
+    relationships: reconstruction.visualRelationships,
+    assets: reconstruction.assets,
+    regions: reconstruction.regions,
+  })
+  if (!validated.some((candidate) => candidate.id === relationship.id)) {
+    return null
+  }
+  return {
+    relationshipId: relationship.id,
+    diagnosticCode: relationship.visualMatchAdjudication.diagnosticCode,
+    candidateId: binding.candidateId,
+    canonicalNodeId,
+    assetIds: [...relationship.assetIds],
+  }
+}
+
 function legalDismissal(diagnostic: ReconstructionDiagnostic) {
   return diagnostic.severity !== 'error'
 }
@@ -1147,11 +1462,46 @@ export function applyHumanDecisionFile(
   )
   const applied: HumanAdjudicationRecord[] = []
   const stale: PdfReconstruction['humanAdjudications']['stale'] = []
+  const adjudicatedVisualRelationships: HumanAdjudicatedVisualRelationship[] =
+    []
 
   for (const rawDecision of file.decisions) {
     const decision = normalizedRecord(rawDecision)
     if (file.documentSha256 !== result.source.sha256) {
       stale.push({ ...decision, reason: 'document-sha256-mismatch' })
+      continue
+    }
+    if (decision.resolution.type === 'accept-visual-match') {
+      const resolution = decision.resolution
+      const diagnostic = decisionDiagnostics.find(
+        (candidate) =>
+          candidate.code === decision.diagnosticCode &&
+          candidate.relationshipId === resolution.relationshipId &&
+          candidate.target &&
+          sameTarget(candidate.target, decision.target),
+      )
+      // Materialize on a copy so a repair that fails the ordinary visual
+      // validator leaves the reconstruction byte-identical instead of
+      // half-adjudicated.
+      const attempt = diagnostic ? structuredClone(result) : null
+      const receipt = attempt ? applyVisualMatch(attempt, decision) : null
+      if (!attempt || !receipt) {
+        stale.push({
+          ...decision,
+          reason: diagnostic
+            ? 'resolution-no-longer-legal'
+            : 'diagnostic-target-missing',
+        })
+        continue
+      }
+      result.paper = attempt.paper
+      result.provenance = attempt.provenance
+      result.visualRelationships = attempt.visualRelationships
+      result.diagnostics = result.diagnostics.filter(
+        (candidate) => candidate !== diagnostic,
+      )
+      adjudicatedVisualRelationships.push(receipt)
+      applied.push(decision)
       continue
     }
     if (decision.resolution.type === 'resolve-line-join') {
@@ -1258,6 +1608,14 @@ export function applyHumanDecisionFile(
     schemaVersion: file.schemaVersion,
     documentSha256: result.source.sha256,
     applied,
+    ...(adjudicatedVisualRelationships.length > 0
+      ? {
+          visualRelationships: adjudicatedVisualRelationships.sort(
+            (left, right) =>
+              left.relationshipId.localeCompare(right.relationshipId),
+          ),
+        }
+      : {}),
     stale,
     countsByDiagnosticCode,
   }

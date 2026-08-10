@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { furnitureContaminationCountFromReconstruction } from './srt-source-output-evidence.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const tool = fileURLToPath(
@@ -68,5 +69,29 @@ describe('source/output evidence privacy boundary', () => {
     expect(`${result.stdout}${result.stderr}`).toContain(
       'PRIVATE_STRUCT_REQUIRED',
     )
+  })
+
+  it('derives the furniture checkpoint counter from reconstruction evidence', () => {
+    expect(
+      furnitureContaminationCountFromReconstruction({
+        completeness: { furnitureContaminationCount: 3 },
+        regions: [],
+      }),
+    ).toBe(3)
+    expect(
+      furnitureContaminationCountFromReconstruction({
+        regions: [
+          {
+            furniture: { classification: 'repeated-text' },
+            includedInReadingOrder: true,
+          },
+          {
+            furniture: { classification: 'repeated-text' },
+            includedInReadingOrder: false,
+          },
+          { includedInReadingOrder: true },
+        ],
+      }),
+    ).toBe(1)
   })
 })

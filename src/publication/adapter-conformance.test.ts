@@ -155,6 +155,45 @@ describe('publication source adapter conformance', () => {
     )
   })
 
+  it('canonicalizes adjacent equivalent inline runs across source segmentation', () => {
+    const segmented = adaptPayloadLexical({
+      id: 'segmented-inline-runs',
+      title: 'Segmented inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [
+                { type: 'text', text: 'a', format: 'bold' },
+                { type: 'text', text: 'b', format: 'bold' },
+              ],
+            },
+          ],
+        },
+      },
+    })
+    const combined = adaptPayloadLexical({
+      id: 'combined-inline-runs',
+      title: 'Segmented inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'ab', format: 'bold' }],
+            },
+          ],
+        },
+      },
+    })
+
+    expect(comparePublicationSemanticSubset(segmented, combined)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(segmented)).toBe(
+      canonicalPublicationSubsetSha256(combined),
+    )
+  })
+
   it('canonicalizes relationship anchors separately from publication node ids', () => {
     const graphWithFootnote = (documentId: string) => {
       const graph = adaptPayloadLexical(

@@ -14,10 +14,11 @@ import {
   stat,
   symlink,
   writeFile,
+  rename,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
 import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import {
@@ -32,10 +33,12 @@ import {
   publicationGraphBodyFingerprint,
   publicationBuild,
   publicationReceiptDigest,
+  publicationRepositoryForCurrentCheckout,
   publicationRouteHtmlDigest,
   publicationSourceReceipt,
   publishPublicationOutput,
 } from './publication-build.mjs'
+import * as publicationBuildTools from './publication-build.mjs'
 
 const SENTINEL = 'sentinel-untouched\n'
 
@@ -309,6 +312,10 @@ describe('publication:build CLI', () => {
     const linkedRepositoryTarget = resolve(
       `.publication-build-linked-output-${unique}`,
     )
+    const repositorySymlinkOutput = resolve(
+      `.agent/evidence/publication-build-symlink-output-${unique}`,
+    )
+    const externalSymlinkTarget = resolve(temporaryRoot, 'external-target')
     const staleRepositoryParity = resolve(
       repositoryOutput,
       'astro-route-parity.json',
@@ -323,12 +330,18 @@ describe('publication:build CLI', () => {
       await mkdir(repositoryOutput)
       await writeFile(staleRepositoryParity, '{"sentinel":true}\n')
       await symlink(resolve('.'), repositoryLink, 'dir')
+      await mkdir(externalSymlinkTarget)
+      await writeFile(resolve(externalSymlinkTarget, 'sentinel.txt'), 'kept\n')
+      await symlink(externalSymlinkTarget, repositorySymlinkOutput, 'dir')
       await expect(
         publicationBuild(payloadBuildArgs(repositoryOutput)),
       ).rejects.toThrow(/repository-local publication output.*ignored/i)
       await expect(
         publicationBuild(payloadBuildArgs(linkedRepositoryOutput)),
       ).rejects.toThrow(/repository-local publication output.*ignored/i)
+      await expect(
+        publicationBuild(payloadBuildArgs(repositorySymlinkOutput)),
+      ).rejects.toThrow(/publication output path.*symbolic link/i)
       expect(renderedOutputs).toEqual([])
       await expect(readFile(staleRepositoryParity, 'utf8')).resolves.toBe(
         '{"sentinel":true}\n',
@@ -336,6 +349,10 @@ describe('publication:build CLI', () => {
       await expect(access(linkedRepositoryTarget)).rejects.toMatchObject({
         code: 'ENOENT',
       })
+      expect((await lstat(repositorySymlinkOutput)).isSymbolicLink()).toBe(true)
+      await expect(
+        readFile(resolve(externalSymlinkTarget, 'sentinel.txt'), 'utf8'),
+      ).resolves.toBe('kept\n')
 
       await expect(
         publicationBuild(payloadBuildArgs(ignoredOutput)),
@@ -368,8 +385,37 @@ describe('publication:build CLI', () => {
       await rm(repositoryOutput, { recursive: true, force: true })
       await rm(ignoredOutput, { recursive: true, force: true })
       await rm(linkedRepositoryTarget, { recursive: true, force: true })
+      await rm(repositorySymlinkOutput, { force: true })
       await rm(temporaryRoot, { recursive: true, force: true })
     }
+  })
+
+  it('keeps opaque Payload document identities in source receipts', () => {
+    const rawId = ['github', '_pat_', 'R'.repeat(24)].join('')
+    const bundle = canonicalPublicationSourceResult(
+      adaptPayloadLexical({
+        id: rawId,
+        title: 'Opaque receipt identity',
+        locale: 'en',
+        content: {
+          root: {
+            type: 'root',
+            children: [
+              {
+                type: 'paragraph',
+                children: [{ type: 'text', text: 'Body' }],
+              },
+            ],
+          },
+        },
+      }),
+    )
+
+    const receipt = publicationSourceReceipt(bundle, 'not-applicable')
+    expect(JSON.stringify(receipt)).not.toContain(rawId)
+    expect(receipt.sourceId).toMatch(
+      /^payload:document-[a-f0-9]{64}:en$/,
+    )
   })
 })
 
@@ -389,7 +435,7 @@ describe('publication staging and publish helpers', () => {
     }
   })
 
-  it('retires a symlinked publish target instead of following it', async () => {
+  it('rejects a symlinked publish target without following or replacing it', async () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-publish-helper-'),
     )
@@ -402,17 +448,396 @@ describe('publication staging and publish helpers', () => {
       const staged = resolve(temporaryRoot, 'staged')
       await mkdir(staged)
       await writeFile(resolve(staged, 'artifact.txt'), 'published\n')
-      await publishPublicationOutput(staged, finalOutput)
-      const published = await lstat(finalOutput)
-      expect(published.isSymbolicLink()).toBe(false)
-      expect(published.isDirectory()).toBe(true)
-      expect(await readFile(resolve(finalOutput, 'artifact.txt'), 'utf8')).toBe(
+      await expect(
+        publishPublicationOutput(staged, finalOutput),
+      ).rejects.toThrow(/publication output path.*symbolic link/i)
+      expect((await lstat(finalOutput)).isSymbolicLink()).toBe(true)
+      expect(await readFile(resolve(staged, 'artifact.txt'), 'utf8')).toBe(
         'published\n',
       )
       expect(await readFile(resolve(elsewhere, 'keep.txt'), 'utf8')).toBe(
         'kept\n',
       )
     } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('does not replace a symlink raced into an initially absent target', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-publish-absent-race-'),
+    )
+    try {
+      const elsewhere = resolve(temporaryRoot, 'elsewhere')
+      await mkdir(elsewhere)
+      await writeFile(resolve(elsewhere, 'keep.txt'), 'kept\n')
+      const finalOutput = resolve(temporaryRoot, 'final')
+      const staged = resolve(temporaryRoot, 'staged')
+      await mkdir(staged)
+      await writeFile(resolve(staged, 'artifact.txt'), 'candidate\n')
+      let publishCalls = 0
+
+      await expect(
+        publishPublicationOutput(staged, finalOutput, {
+          atomicPublishNew: async (candidate, live) => {
+            publishCalls += 1
+            await symlink(elsewhere, live)
+            expect(
+              publicationBuildTools.atomicPublishNewPublicationPath,
+            ).toBeTypeOf('function')
+            await publicationBuildTools.atomicPublishNewPublicationPath(
+              candidate,
+              live,
+            )
+          },
+        }),
+      ).rejects.toThrow(/atomic publication no-replace failed/i)
+
+      expect(publishCalls).toBe(1)
+      expect((await lstat(finalOutput)).isSymbolicLink()).toBe(true)
+      await expect(
+        readFile(resolve(elsewhere, 'keep.txt'), 'utf8'),
+      ).resolves.toBe('kept\n')
+      await expect(
+        readFile(resolve(staged, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('candidate\n')
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('atomically restores a symlink substituted during existing-target exchange', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-publish-existing-race-'),
+    )
+    try {
+      const finalOutput = resolve(temporaryRoot, 'final')
+      const staged = resolve(temporaryRoot, 'staged')
+      const previous = resolve(temporaryRoot, 'previous')
+      const elsewhere = resolve(temporaryRoot, 'elsewhere')
+      await mkdir(finalOutput)
+      await mkdir(staged)
+      await mkdir(elsewhere)
+      await writeFile(resolve(finalOutput, 'artifact.txt'), 'previous\n')
+      await writeFile(resolve(staged, 'artifact.txt'), 'candidate\n')
+      await writeFile(resolve(elsewhere, 'keep.txt'), 'kept\n')
+      let exchangeCalls = 0
+
+      await expect(
+        publishPublicationOutput(staged, finalOutput, {
+          atomicExchange: async (candidate, live) => {
+            exchangeCalls += 1
+            if (exchangeCalls === 1) {
+              await rename(live, previous)
+              await symlink(elsewhere, live)
+            }
+            await publicationBuildTools.atomicExchangePublicationPaths(
+              candidate,
+              live,
+            )
+          },
+        }),
+      ).rejects.toThrow(/publication output identity changed/i)
+
+      expect(exchangeCalls).toBe(2)
+      expect((await lstat(finalOutput)).isSymbolicLink()).toBe(true)
+      await expect(
+        readFile(resolve(elsewhere, 'keep.txt'), 'utf8'),
+      ).resolves.toBe('kept\n')
+      await expect(
+        readFile(resolve(staged, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('candidate\n')
+      await expect(
+        readFile(resolve(previous, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('previous\n')
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects adjacent unsafe-range same-type identities that collide as Numbers', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-publish-unsafe-identity-'),
+    )
+    const finalOutput = resolve(temporaryRoot, 'final')
+    const staged = resolve(temporaryRoot, 'staged')
+    const originalFsPromises = await import('node:fs/promises')
+    const identityModes = []
+    let exchangeCalls = 0
+    const previousIdentity = {
+      dev: 9_007_199_254_740_992n,
+      ino: 9_007_199_254_740_992n,
+    }
+    const substitutedIdentity = {
+      dev: 9_007_199_254_740_993n,
+      ino: 9_007_199_254_740_993n,
+    }
+    const candidateIdentity = {
+      dev: 9_007_199_254_740_996n,
+      ino: 9_007_199_254_740_996n,
+    }
+    const withIdentity = (stats, identity, bigint) => {
+      const result = Object.assign(
+        Object.create(Object.getPrototypeOf(stats)),
+        stats,
+      )
+      result.dev = bigint ? identity.dev : Number(identity.dev)
+      result.ino = bigint ? identity.ino : Number(identity.ino)
+      return result
+    }
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      lstat: async (path, options) => {
+        const stats = await originalFsPromises.lstat(path, options)
+        const resolvedPath = resolve(path)
+        if (resolvedPath !== finalOutput && resolvedPath !== staged)
+          return stats
+        const bigint = options?.bigint === true
+        identityModes.push(bigint)
+        const identity =
+          exchangeCalls === 0
+            ? resolvedPath === staged
+              ? candidateIdentity
+              : previousIdentity
+            : exchangeCalls === 1
+              ? resolvedPath === finalOutput
+                ? candidateIdentity
+                : substitutedIdentity
+              : resolvedPath === finalOutput
+                ? substitutedIdentity
+                : candidateIdentity
+        return withIdentity(stats, identity, bigint)
+      },
+    }))
+
+    try {
+      await mkdir(finalOutput)
+      await mkdir(staged)
+      await writeFile(resolve(finalOutput, 'artifact.txt'), 'previous\n')
+      await writeFile(resolve(staged, 'artifact.txt'), 'candidate\n')
+      const { publishPublicationOutput: publishWithMockedIdentity } =
+        await import('./publication-build.mjs')
+
+      await expect(
+        publishWithMockedIdentity(staged, finalOutput, {
+          atomicExchange: async () => {
+            exchangeCalls += 1
+          },
+        }),
+      ).rejects.toThrow(/publication output identity changed/i)
+
+      expect(exchangeCalls).toBe(2)
+      expect(identityModes).toEqual([true, true, true, true, true, true])
+      await expect(
+        readFile(resolve(staged, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('candidate\n')
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('sanitizes and preserves identity-mismatch and restoration failures', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-publish-mismatch-recovery-'),
+    )
+    try {
+      const finalOutput = resolve(temporaryRoot, 'final')
+      const staged = resolve(temporaryRoot, 'staged')
+      const previous = resolve(temporaryRoot, 'previous')
+      const elsewhere = resolve(temporaryRoot, 'elsewhere')
+      const rawMarker = ['github', '_pat_', 'S'.repeat(24)].join('')
+      await mkdir(finalOutput)
+      await mkdir(staged)
+      await mkdir(elsewhere)
+      await writeFile(resolve(finalOutput, 'artifact.txt'), 'previous\n')
+      await writeFile(resolve(staged, 'artifact.txt'), 'candidate\n')
+      let exchangeCalls = 0
+
+      const error = await publishPublicationOutput(staged, finalOutput, {
+        atomicExchange: async (candidate, live) => {
+          exchangeCalls += 1
+          if (exchangeCalls === 1) {
+            await rename(live, previous)
+            await symlink(elsewhere, live)
+            await publicationBuildTools.atomicExchangePublicationPaths(
+              candidate,
+              live,
+            )
+            return
+          }
+          throw new Error(
+            `restore failed for ${rawMarker} at ${temporaryRoot}`,
+            { cause: { rawMarker, temporaryRoot } },
+          )
+        },
+      }).then(
+        () => undefined,
+        (value) => value,
+      )
+
+      expect(error).toBeInstanceOf(AggregateError)
+      expect(error.message).toBe(
+        'Atomic publication replacement failed and restoration also failed',
+      )
+      expect(error.errors.map((value) => value.message)).toEqual([
+        'Publication output identity changed during atomic replacement',
+        'Atomic publication restoration failed',
+      ])
+      expect(error.cause).toBeUndefined()
+      expect(error.errors.every((value) => value.cause === undefined)).toBe(
+        true,
+      )
+      expect(
+        JSON.stringify({
+          message: error.message,
+          cause: error.cause,
+          errors: error.errors.map((value) => ({
+            message: value.message,
+            cause: value.cause,
+            code: value.code,
+          })),
+        }),
+      ).not.toMatch(new RegExp(`${rawMarker}|${temporaryRoot}`, 'u'))
+      expect(exchangeCalls).toBe(2)
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the previous output addressable and unchanged when an atomic exchange fails', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-publish-exchange-failure-'),
+    )
+    try {
+      const finalOutput = resolve(temporaryRoot, 'final')
+      const staged = resolve(temporaryRoot, 'staged')
+      await mkdir(finalOutput)
+      await mkdir(staged)
+      await writeFile(resolve(finalOutput, 'artifact.txt'), 'previous\n')
+      await writeFile(resolve(staged, 'artifact.txt'), 'candidate\n')
+      let exchangeCalls = 0
+
+      await expect(
+        publishPublicationOutput(staged, finalOutput, {
+          atomicExchange: async () => {
+            exchangeCalls += 1
+            await expect(
+              readFile(resolve(finalOutput, 'artifact.txt'), 'utf8'),
+            ).resolves.toBe('previous\n')
+            throw new Error('injected atomic exchange failure')
+          },
+        }),
+      ).rejects.toThrow(/injected atomic exchange failure/)
+      expect(exchangeCalls).toBe(1)
+      await expect(
+        readFile(resolve(finalOutput, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('previous\n')
+      await expect(
+        readFile(resolve(staged, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('candidate\n')
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves both the exchange and restoration errors when recovery also fails', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-publish-restoration-failure-'),
+    )
+    try {
+      const finalOutput = resolve(temporaryRoot, 'final')
+      const staged = resolve(temporaryRoot, 'staged')
+      await mkdir(finalOutput)
+      await mkdir(staged)
+      await writeFile(resolve(finalOutput, 'artifact.txt'), 'previous\n')
+      await writeFile(resolve(staged, 'artifact.txt'), 'candidate\n')
+      let exchangeCalls = 0
+
+      const error = await publishPublicationOutput(staged, finalOutput, {
+        atomicExchange: async (candidate, live) => {
+          exchangeCalls += 1
+          if (exchangeCalls === 1) {
+            const held = resolve(temporaryRoot, 'held')
+            await rename(candidate, held)
+            await rename(live, candidate)
+            await rename(held, live)
+            throw new Error('injected exchange completion error')
+          }
+          throw new Error('injected restoration failure')
+        },
+      }).then(
+        () => undefined,
+        (value) => value,
+      )
+
+      expect(error).toBeInstanceOf(AggregateError)
+      expect(error.message).toBe(
+        'Atomic publication replacement failed and restoration also failed',
+      )
+      expect(error.errors.map((value) => value.message)).toEqual([
+        'Atomic publication exchange reported failure after completion',
+        'Atomic publication restoration failed',
+      ])
+      expect(error.cause).toBeUndefined()
+      expect(error.errors.every((value) => value.cause === undefined)).toBe(
+        true,
+      )
+      expect(exchangeCalls).toBe(2)
+      await expect(
+        readFile(resolve(finalOutput, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('candidate\n')
+      await expect(
+        readFile(resolve(staged, 'artifact.txt'), 'utf8'),
+      ).resolves.toBe('previous\n')
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('excludes invocation-owned staging roots from repository cleanliness evidence', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-exclusion-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, '.gitignore'), 'output/\n')
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      const nestedDirectory = resolve(temporaryRoot, 'nested')
+      await mkdir(nestedDirectory)
+      await writeFile(resolve(nestedDirectory, '.gitkeep'), '')
+      execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const staging = resolve(temporaryRoot, '.publication-staging-owned')
+      await mkdir(staging)
+      await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+      process.chdir(nestedDirectory)
+
+      expect(publicationRepositoryForCurrentCheckout([staging])).toEqual({
+        commit: execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: temporaryRoot,
+          encoding: 'utf8',
+        }).trim(),
+        dirty: false,
+      })
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'changed\n')
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        true,
+      )
+    } finally {
+      process.chdir(previousDirectory)
       await rm(temporaryRoot, { recursive: true, force: true })
     }
   })

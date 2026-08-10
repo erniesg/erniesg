@@ -29,7 +29,9 @@ describe('Payload Lexical publication adapter', () => {
     expect(result.provenance).toMatchObject({
       adapterId: 'payload-lexical',
       sourceType: 'payload',
-      sourceId: 'payload:payload-equivalent:en',
+      sourceId: expect.stringMatching(
+        /^payload:document-[a-f0-9]{64}:en$/,
+      ),
       mappingVersion: '1.0.0',
     })
     expect(result.graph.metadata).toMatchObject({
@@ -133,6 +135,91 @@ describe('Payload Lexical publication adapter', () => {
     ).toBe(true)
   })
 
+  it('makes every string document id opaque before output and diagnostic construction', () => {
+    const credentialShapedIds = [
+      ['github', '_pat_', 'A'.repeat(24)].join(''),
+      ['gh', 'p_', 'B'.repeat(24)].join(''),
+      ['s', 'k-', 'C'.repeat(24)].join(''),
+      ['s', 'k_live_', 'D'.repeat(20)].join(''),
+      ['gl', 'pat-', 'E'.repeat(24)].join(''),
+      ['npm', '_', 'F'.repeat(24)].join(''),
+      ['xo', 'xb-', 'G'.repeat(24)].join(''),
+      ['AK', 'IA', '1'.repeat(16)].join(''),
+      [
+        'https://hooks.',
+        'slack.com/services/',
+        'A'.repeat(8),
+        '/',
+        'B'.repeat(8),
+        '/',
+        'C'.repeat(24),
+      ].join(''),
+      [
+        'https://discord',
+        '.com/api/webhooks/',
+        '1'.repeat(10),
+        '/',
+        'D'.repeat(24),
+      ].join(''),
+      ['article?', 'to', 'ken=', 'synthetic-secret-marker'].join(''),
+    ]
+
+    for (const rawId of credentialShapedIds) {
+      const result = adaptPayloadLexical({
+        document: strictFixture(
+          [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'Body' }],
+            },
+          ],
+          { id: rawId, locale: 'en' },
+        ),
+        locale: 'fr',
+        mapping: { fallbackLocale: 'en' },
+      })
+
+      const serialized = JSON.stringify({
+        graph: result.graph,
+        provenance: result.provenance,
+        diagnostics: result.diagnostics,
+      })
+      expect(serialized).not.toContain(rawId)
+      expect(result.graph.id).toMatch(/^document-[a-f0-9]{64}$/)
+      expect(result.provenance.sourceId).toMatch(
+        /^payload:document-[a-f0-9]{64}:en$/,
+      )
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          sourceId: expect.stringMatching(
+            /^payload:document-[a-f0-9]{64}:en$/,
+          ),
+        }),
+      ])
+
+      const thrown = (() => {
+        try {
+          adaptPayloadLexical(
+            strictFixture([{ type: 'unsupported-review-node' }], {
+              id: rawId,
+            }),
+          )
+          return undefined
+        } catch (error) {
+          return error
+        }
+      })()
+      expect(thrown).toBeInstanceOf(Error)
+      expect(
+        JSON.stringify({
+          name: (thrown as Error).name,
+          message: (thrown as Error).message,
+          cause: (thrown as Error & { cause?: unknown }).cause,
+        }),
+      ).not.toContain(rawId)
+    }
+  })
+
   it('does not reinterpret an ordinary object-valued document field as an adapter wrapper', () => {
     const result = adaptPayloadLexical({
       id: 'ordinary-document-field',
@@ -151,7 +238,7 @@ describe('Payload Lexical publication adapter', () => {
       },
     })
     expect(result.graph).toMatchObject({
-      id: 'ordinary-document-field',
+      id: expect.stringMatching(/^document-[a-f0-9]{64}$/),
       metadata: { title: 'Ordinary document field' },
       nodes: [
         expect.objectContaining({
@@ -192,7 +279,7 @@ describe('Payload Lexical publication adapter', () => {
     for (const alias of ['document', 'data', 'doc'] as const) {
       const result = adaptPayloadLexical(ordinary(alias), fieldMapping)
       expect(result.graph).toMatchObject({
-        id: `ordinary-${alias}`,
+        id: expect.stringMatching(/^document-[a-f0-9]{64}$/),
         metadata: { title: `Ordinary ${alias}` },
         nodes: [
           expect.objectContaining({
@@ -209,7 +296,7 @@ describe('Payload Lexical publication adapter', () => {
       locale: 'en',
     })
     expect(wrapped.graph).toMatchObject({
-      id: 'ordinary-data',
+      id: expect.stringMatching(/^document-[a-f0-9]{64}$/),
       metadata: { title: 'Ordinary data' },
     })
   })
@@ -980,6 +1067,103 @@ describe('Payload Lexical publication adapter', () => {
         ),
       ),
     ).toThrow(/Payload export exceeds cumulative byte bound.*children\[1\]/i)
+  })
+
+  it('rejects oversized encoded uploads before invoking the base64 decoder', () => {
+    const encoded = 'A'.repeat(133_333_336)
+    const originalFrom = Buffer.from
+    let decoderCalled = false
+    Buffer.from = ((value: unknown, ...args: unknown[]) => {
+      if (value === encoded) {
+        decoderCalled = true
+        throw new Error('base64 decoder was invoked')
+      }
+      return originalFrom(value as never, ...(args as never[]))
+    }) as typeof Buffer.from
+    try {
+      expect(() =>
+        adaptPayloadLexical(
+          strictFixture([{ type: 'upload', value: 'oversized' }], {
+            uploads: [
+              {
+                id: 'oversized',
+                filename: 'oversized.png',
+                mimeType: 'image/png',
+                alt: 'Oversized image',
+                data: encoded,
+              },
+            ],
+          }),
+        ),
+      ).toThrow(/Payload upload exceeds encoded byte bound.*children\[0\]/i)
+      expect(decoderCalled).toBe(false)
+    } finally {
+      Buffer.from = originalFrom
+    }
+  })
+
+  it('never enumerates typed upload bytes and hashes only their exact slice for revisions', () => {
+    const adaptBytes = (backing: Uint8Array) =>
+      adaptPayloadLexical(
+        strictFixture([{ type: 'upload', value: 'typed' }], {
+          uploads: [
+            {
+              id: 'typed',
+              filename: 'typed.png',
+              mimeType: 'image/png',
+              alt: 'Typed bytes',
+              bytes: new Uint8Array(
+                backing.buffer,
+                backing.byteOffset + 1,
+                4,
+              ),
+            },
+          ],
+        }),
+      )
+    const originalKeys = Object.keys
+    Object.keys = ((value: object) => {
+      if (ArrayBuffer.isView(value))
+        throw new Error('typed-array properties must not be enumerated')
+      return originalKeys(value)
+    }) as typeof Object.keys
+
+    try {
+      const first = adaptBytes(new Uint8Array([9, 1, 2, 3, 4, 9]))
+      const sameSlice = adaptBytes(new Uint8Array([7, 1, 2, 3, 4, 8]))
+      const changedSlice = adaptBytes(new Uint8Array([7, 1, 2, 3, 5, 8]))
+
+      expect(first.assetBundle.descriptor.assets[0]).toMatchObject({
+        byteLength: 4,
+        mediaType: 'image/png',
+      })
+      expect(sameSlice.provenance.sourceRevision).toBe(
+        first.provenance.sourceRevision,
+      )
+      expect(changedSlice.provenance.sourceRevision).not.toBe(
+        first.provenance.sourceRevision,
+      )
+    } finally {
+      Object.keys = originalKeys
+    }
+  })
+
+  it('rejects unsupported ArrayBuffer view types before revision serialization', () => {
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture([{ type: 'upload', value: 'typed' }], {
+          uploads: [
+            {
+              id: 'typed',
+              filename: 'typed.png',
+              mimeType: 'image/png',
+              alt: 'Typed bytes',
+              bytes: new Uint16Array([1, 2, 3, 4]),
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/unsupported byte view type.*uploads\[0\]\.bytes/i)
   })
 
   it('validates intrinsic upload metadata before missing-byte and same-hash shortcuts', () => {

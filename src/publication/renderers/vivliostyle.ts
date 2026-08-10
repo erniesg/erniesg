@@ -10,7 +10,7 @@ import {
   readdir,
   writeFile,
 } from 'node:fs/promises'
-import { basename, dirname, extname, relative, resolve, sep } from 'node:path'
+import { basename, dirname, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
@@ -538,9 +538,22 @@ export function publicationAssetFileExtension(
   fileName: string | undefined,
   mediaType: string,
 ) {
-  const candidate = extname(fileName ?? '').toLocaleLowerCase()
-  if (/^\.[a-z0-9]+$/u.test(candidate)) return candidate
-  const subtype = mediaType.split('/')[1]?.split(/[+;]/u)[0] ?? ''
+  void fileName
+  const normalizedMediaType = mediaType.split(';', 1)[0]!.toLocaleLowerCase()
+  const canonicalExtensions: Record<string, string> = {
+    'application/pdf': '.pdf',
+    'audio/mpeg': '.mp3',
+    'image/avif': '.avif',
+    'image/gif': '.gif',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/svg+xml': '.svg',
+    'image/webp': '.webp',
+    'video/mp4': '.mp4',
+  }
+  const canonical = canonicalExtensions[normalizedMediaType]
+  if (canonical) return canonical
+  const subtype = normalizedMediaType.split('/')[1]?.split('+', 1)[0] ?? ''
   return /^[a-z0-9]+$/iu.test(subtype)
     ? `.${subtype.toLocaleLowerCase()}`
     : '.bin'

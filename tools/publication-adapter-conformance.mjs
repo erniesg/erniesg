@@ -34,20 +34,26 @@ export function parsePublicationAdapterConformanceArgs(argv) {
   return { output: argv[1] }
 }
 
-export async function publicationAdapterConformance(argv = process.argv.slice(2)) {
+export async function publicationAdapterConformance(
+  argv = process.argv.slice(2),
+  execution = {},
+) {
   const options = parsePublicationAdapterConformanceArgs(argv)
-  // Repository-local outputs must already be git-ignored before anything —
-  // staging included — is created for them.
+  // Repository-local final outputs must already be git-ignored. Invocation-owned
+  // staging is excluded explicitly from the clean-source receipt evidence.
   const root = assertPublicationOutputDirectory(options.output)
   // Reserve the caller's new output directory up front (this still fails
   // closed on a reused path), then assemble everything inside a private
   // invocation-owned staging directory and publish it with one atomic swap.
   await mkdir(dirname(root), { recursive: true })
   await mkdir(root)
-  const staging = await createPublicationStagingDirectory(root)
+  let staging
   let astroReceipt
   let payloadReceipt
   try {
+    staging = await (
+      execution.createStagingDirectory ?? createPublicationStagingDirectory
+    )(root)
     const contentRoot = resolve(staging, 'astro-source')
     const entryRoot = resolve(contentRoot, 'payload-equivalent')
     await mkdir(entryRoot, { recursive: true })
@@ -99,14 +105,19 @@ export async function publicationAdapterConformance(argv = process.argv.slice(2)
       astroOutput,
       canonicalAstro,
       'adapter-conformance',
+      [staging],
     )
     payloadReceipt = await bindPublicationSourceReceipt(
       payloadOutput,
       canonicalPayload,
       'adapter-conformance',
+      [staging],
     )
     const matrix = PUBLICATION_PROFILES.join(',')
-    const checkerContext = { context: 'adapter-conformance' }
+    const checkerContext = {
+      context: 'adapter-conformance',
+      cleanlinessExclusions: [staging],
+    }
     await publicationCheck(
       ['--input', astroOutput, '--matrix', matrix],
       checkerContext,
@@ -126,7 +137,7 @@ export async function publicationAdapterConformance(argv = process.argv.slice(2)
     await rmdir(root).catch(() => {})
     throw error
   } finally {
-    await rm(staging, { recursive: true, force: true })
+    if (staging) await rm(staging, { recursive: true, force: true })
   }
   process.stdout.write(
     `Astro/Payload publication output receipts conform at ${root} (${PUBLICATION_PROFILES.length} artifacts each)\n`,

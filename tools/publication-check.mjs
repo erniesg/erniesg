@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -23,6 +23,7 @@ import { publicationPdfRendererForArchitecture } from '../src/publication/toolch
 import {
   canonicalRouteBodyFingerprint,
   publicationGraphBodyFingerprint,
+  publicationRepositoryForCurrentCheckout,
 } from './publication-build.mjs'
 
 export function parsePublicationCheckArgs(argv) {
@@ -453,6 +454,30 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
 
 export function publicationPdfLinkRequirements(graph) {
   return publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')
+}
+
+export function publicationPdfImageAssetRequirements(
+  graph,
+  profile = 'a5-pdf',
+) {
+  const assetIds = []
+  const seen = new Set()
+  for (const original of graph.nodes ?? []) {
+    const node = publicationNodeForProfile(original, profile)
+    if (node.requirement === 'optional') continue
+    const renderedAssetIds =
+      node.type === 'figure' && node.assetIds.length > 0
+        ? node.assetIds
+        : node.type === 'media' && node.mediaKind === 'image'
+          ? [node.assetId]
+          : []
+    for (const assetId of renderedAssetIds) {
+      if (seen.has(assetId)) continue
+      seen.add(assetId)
+      assetIds.push(assetId)
+    }
+  }
+  return assetIds
 }
 
 export function publicationPdfLinkRequirementsForProfile(
@@ -1032,12 +1057,11 @@ export async function publicationCheck(
     'Publication source provenance is missing from its receipt',
   )
   assertPublicationReceiptMappingVersion(receipt)
-  const currentCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim()
-  const currentDirty =
-    execFileSync('git', ['status', '--short'], { encoding: 'utf8' }).trim()
-      .length > 0
+  const currentRepository = publicationRepositoryForCurrentCheckout(
+    execution.cleanlinessExclusions,
+  )
+  const currentCommit = currentRepository.commit
+  const currentDirty = currentRepository.dirty
   assert(
     receipt.repository?.commit === currentCommit,
     'Publication receipt is bound to a different checked-out commit',
@@ -1107,13 +1131,10 @@ export async function publicationCheck(
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requiredImageCount: pdfNodes
-      .filter((node) => node.requirement !== 'optional')
-      .filter(
-        (node) =>
-          (node.type === 'figure' && node.assetIds.length > 0) ||
-          (node.type === 'media' && node.mediaKind === 'image'),
-      ).length,
+    requiredImageCount: publicationPdfImageAssetRequirements(
+      graph,
+      'a5-pdf',
+    ).length,
     requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
     widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
   }

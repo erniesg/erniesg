@@ -21,6 +21,7 @@ import {
   normalizePdfSearchableText,
   normalizePdfVerificationText,
   orderPdfTextRequirements,
+  publicationPdfImageAssetRequirements,
   publicationPdfLinkRequirements,
   publicationPdfLinkRequirementsForProfile,
   publicationReceiptRequiresCanonicalRouteParity,
@@ -716,6 +717,44 @@ describe('publication:check CLI', () => {
       'Body text',
       'repeat',
       'repeat',
+    ])
+  })
+
+  it('counts required PDF images by distinct rendered asset identity', () => {
+    const graph = {
+      nodes: [
+        {
+          type: 'figure',
+          requirement: 'required',
+          assetIds: ['shared-image', 'second-image'],
+          variants: [],
+        },
+        {
+          type: 'figure',
+          requirement: 'required',
+          assetIds: ['shared-image'],
+          variants: [],
+        },
+        {
+          type: 'media',
+          mediaKind: 'image',
+          requirement: 'required',
+          assetId: 'second-image',
+          variants: [],
+        },
+        {
+          type: 'media',
+          mediaKind: 'image',
+          requirement: 'optional',
+          assetId: 'optional-image',
+          variants: [],
+        },
+      ],
+    }
+
+    expect(publicationPdfImageAssetRequirements(graph, 'a5-pdf')).toEqual([
+      'shared-image',
+      'second-image',
     ])
   })
 

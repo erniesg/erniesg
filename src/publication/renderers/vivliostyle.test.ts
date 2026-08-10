@@ -803,6 +803,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(publicationAssetFileExtension('photo.JPG', 'image/jpeg')).toBe(
       '.jpg',
     )
+    expect(publicationAssetFileExtension('cover.html', 'image/png')).toBe(
+      '.png',
+    )
   })
 
   it('derives XML-safe, unique EPUB manifest ids from asset ids', () => {

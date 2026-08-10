@@ -56,6 +56,25 @@ describe('publication adapter output conformance CLI', () => {
     }
   })
 
+  it('removes its reserved output root when staging creation fails', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-adapter-conformance-staging-failure-'),
+    )
+    const output = resolve(temporaryRoot, 'output')
+    try {
+      await expect(
+        publicationAdapterConformance(['--output', output], {
+          createStagingDirectory: async () => {
+            throw new Error('injected staging creation failure')
+          },
+        }),
+      ).rejects.toThrow(/injected staging creation failure/)
+      await expect(access(output)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
   it('rejects an unignored repository output before staging but allows ignored evidence', async () => {
     // Unique test-owned names: nothing pre-existing can live at these paths,
     // so the test only ever removes what it created itself.

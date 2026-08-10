@@ -37,6 +37,14 @@ export const publicationContractReceiptSchema = z
         targetProfile: z.literal(TARGET_PROFILE_VERSION),
       })
       .strict(),
+    source: z
+      .object({
+        adapterId: z.string().min(1).max(256),
+        sourceType: z.enum(['astro', 'payload', 'docx', 'pdf', 'research-paper']),
+        mappingVersion: z.string().min(1).max(128).optional(),
+      })
+      .strict()
+      .optional(),
     toolchain: z
       .object({
         node: z.string().min(1).max(256),
@@ -111,6 +119,7 @@ export const adapterProvenanceSchema = z
     sourceType: z.enum(['astro', 'payload', 'docx', 'pdf', 'research-paper']),
     sourceId: safeSourceIdSchema,
     sourceRevision: safeSourceIdSchema.pipe(z.string().max(256)).optional(),
+    mappingVersion: z.string().min(1).max(128).optional(),
   })
   .strict()
 
@@ -152,6 +161,13 @@ export function createPublicationContractReceipt(
       transformationPolicy: TRANSFORMATION_POLICY_VERSION,
       sourceAdapter: PUBLICATION_SOURCE_ADAPTER_VERSION,
       targetProfile: TARGET_PROFILE_VERSION,
+    },
+    source: {
+      adapterId: result.provenance.adapterId,
+      sourceType: result.provenance.sourceType,
+      ...(result.provenance.mappingVersion
+        ? { mappingVersion: result.provenance.mappingVersion }
+        : {}),
     },
     toolchain: environment.toolchain,
     repository: environment.repository,

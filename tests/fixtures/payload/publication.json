@@ -1,0 +1,67 @@
+{
+  "id": "payload-equivalent",
+  "title": "Payload parity fixture",
+  "description": "A deterministic local Payload export used by the publication compiler.",
+  "authors": [{ "name": "Ada Lovelace" }],
+  "locale": "en",
+  "status": "published",
+  "version": "payload-fixture-v1",
+  "keywords": ["publication", "lexical"],
+  "uploads": [
+    {
+      "id": "fixture-image",
+      "filename": "fixture.svg",
+      "mimeType": "image/svg+xml",
+      "alt": "A small blue publication mark",
+      "width": 24,
+      "height": 24,
+      "focalPoint": { "x": 0.5, "y": 0.5 },
+      "data": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSIjMTQ0N2U2Ii8+PC9zdmc+"
+    }
+  ],
+  "content": {
+    "root": {
+      "type": "root",
+      "children": [
+        {
+          "type": "heading",
+          "id": "intro",
+          "tag": "h1",
+          "children": [{ "type": "text", "text": "Payload parity fixture", "format": 1 }]
+        },
+        {
+          "type": "paragraph",
+          "children": [
+            { "type": "text", "text": "Bold and " , "format": 1 },
+            { "type": "text", "text": "italic", "format": 2 },
+            { "type": "text", "text": " text with " },
+            { "type": "link", "url": "https://example.com", "children": [{ "type": "text", "text": "a link" }] },
+            { "type": "text", "text": "." }
+          ]
+        },
+        {
+          "type": "quote",
+          "children": [{ "type": "text", "text": "Meaning survives a source change." }]
+        },
+        {
+          "type": "list",
+          "listType": "bullet",
+          "children": [
+            { "type": "listitem", "children": [{ "type": "text", "text": "First item" }] },
+            { "type": "listitem", "children": [{ "type": "text", "text": "Second item" }] }
+          ]
+        },
+        { "type": "upload", "id": "figure-1", "value": "fixture-image", "alt": "A small blue publication mark", "title": "Fixture image" },
+        { "type": "relationship", "id": "citation-1", "value": "section-1", "label": "Section one", "role": "cross-reference" },
+        { "type": "callout", "children": [{ "type": "text", "text": "This configured block remains an aside." }] }
+      ]
+    }
+  },
+  "localeVariants": {
+    "fr": {
+      "title": "Fixture de parité Payload",
+      "description": "Une variante locale explicite.",
+      "content": { "root": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "text": "Une édition française distincte." }] }] } }
+    }
+  }
+}

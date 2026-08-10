@@ -79,6 +79,11 @@ export const publicationInlineRunSchema = z
     end: z.number().int().positive(),
     bold: z.boolean().optional(),
     italic: z.boolean().optional(),
+    /** Lexical's inline marks are retained instead of being flattened. */
+    underline: z.boolean().optional(),
+    strikethrough: z.boolean().optional(),
+    inlineCode: z.boolean().optional(),
+    hardBreak: z.boolean().optional(),
     href: safeUrlSchema.optional(),
     annotationId: idSchema.optional(),
     verticalAlign: z.enum(['superscript', 'subscript']).optional(),
@@ -96,12 +101,16 @@ export const publicationInlineRunSchema = z
   })
   .strict()
 
+export type PublicationInlineRun = z.infer<typeof publicationInlineRunSchema>
+
 const provenanceSchema = z
   .object({
     adapterId: idSchema,
     sourceId: safeSourceValueSchema,
     sourceRevision: safeSourceValueSchema.pipe(z.string().max(256)).optional(),
     evidence: z.array(safeSourceValueSchema).max(256).default([]),
+    /** True when the source did not provide a stable id and the adapter derived one. */
+    idOrigin: z.enum(['source', 'derived']).optional(),
   })
   .strict()
 
@@ -126,7 +135,7 @@ const variantSchema = z
   .object({
     kind: z.enum(['compact', 'monochrome', 'static']),
     assetId: idSchema.optional(),
-    text: textSchema.optional(),
+    text: nonEmptyTextSchema.optional(),
     reviewed: z.boolean(),
   })
   .strict()
@@ -159,6 +168,13 @@ const textContent = {
 }
 
 const relationshipArray = z.array(idSchema).max(10_000)
+const uniqueRelationshipArray = relationshipArray.min(1).superRefine((ids, context) => {
+  if (new Set(ids).size !== ids.length)
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Relationship ids must be unique',
+    })
+})
 const headingNode = nodeBase
   .extend({
     type: z.literal('heading'),
@@ -173,14 +189,21 @@ const listNode = nodeBase
   .extend({
     type: z.literal('list'),
     ordered: z.boolean(),
-    start: z.number().int().positive().optional(),
-    itemIds: relationshipArray.min(1),
+    start: z.number().int().nonnegative().optional(),
+    itemIds: uniqueRelationshipArray,
   })
   .strict()
 const listItemNode = nodeBase
   .extend({
     type: z.literal('list-item'),
     parentListId: idSchema,
+    childListIds: relationshipArray.superRefine((ids, context) => {
+      if (new Set(ids).size !== ids.length)
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Nested list relationship ids must be unique',
+        })
+    }).default([]),
     ...textContent,
   })
   .strict()
@@ -318,7 +341,7 @@ function relationshipTargets(node: z.infer<typeof publicationNodeSchema>) {
     case 'list':
       return node.itemIds
     case 'list-item':
-      return [node.parentListId]
+      return [node.parentListId, ...node.childListIds]
     case 'figure':
       return node.captionId ? [node.captionId] : []
     case 'caption':
@@ -354,6 +377,7 @@ export const publicationGraphSchema = z
   .superRefine((graph, context) => {
     const ids = new Set<string>()
     const nodesById = new Map<string, z.infer<typeof publicationNodeSchema>>()
+    const inlineRelationshipIds = new Set<string>()
     graph.nodes.forEach((node, index) => {
       if (ids.has(node.id)) {
         context.addIssue({
@@ -372,6 +396,9 @@ export const publicationGraphSchema = z
         })
       }
       if ('inlineRuns' in node && node.inlineRuns) {
+        node.inlineRuns.forEach((run) => {
+          if (run.relationshipId) inlineRelationshipIds.add(run.relationshipId)
+        })
         const content = 'text' in node ? node.text : (node.sourceText ?? '')
         node.inlineRuns.forEach((run, runIndex) => {
           if (run.start >= run.end || run.end > content.length) {
@@ -424,6 +451,9 @@ export const publicationGraphSchema = z
         node.rows.forEach((row, rowIndex) => {
           row.cells.forEach((cell, cellIndex) => {
             cell.headerIds?.forEach((headerId, headerIndex) => {
+              const targetCell = node.rows
+                .flatMap((candidateRow) => candidateRow.cells)
+                .find((candidateCell) => candidateCell.id === headerId)
               if (!cellIds.has(headerId)) {
                 context.addIssue({
                   code: z.ZodIssueCode.custom,
@@ -439,6 +469,21 @@ export const publicationGraphSchema = z
                   ],
                   message: `Dangling table header relationship: ${headerId}`,
                 })
+              } else if (!targetCell?.headerScope) {
+                context.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: [
+                    'nodes',
+                    index,
+                    'rows',
+                    rowIndex,
+                    'cells',
+                    cellIndex,
+                    'headerIds',
+                    headerIndex,
+                  ],
+                  message: 'Table header relationships must target header cells',
+                })
               }
             })
           })
@@ -447,7 +492,7 @@ export const publicationGraphSchema = z
     })
     graph.nodes.forEach((node, index) => {
       relationshipTargets(node).forEach((target, relationshipIndex) => {
-        if (!ids.has(target)) {
+        if (!ids.has(target) && !(node.type === 'note' && inlineRelationshipIds.has(target))) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['nodes', index, 'relationships', relationshipIndex],
@@ -480,6 +525,18 @@ export const publicationGraphSchema = z
           message: 'List-item parent must be a list',
         })
       }
+      if (node.type === 'list-item') {
+        node.childListIds.forEach((childId, relationshipIndex) => {
+          const child = nodesById.get(childId)
+          if (child && child.type !== 'list') {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['nodes', index, 'childListIds', relationshipIndex],
+              message: 'Nested list relationship must target a list',
+            })
+          }
+        })
+      }
       if (node.type === 'caption') {
         const parent = nodesById.get(node.parentId)
         if (
@@ -491,6 +548,13 @@ export const publicationGraphSchema = z
             path: ['nodes', index, 'parentId'],
             message:
               'Caption parent must be a figure, table, equation, or media node',
+          })
+        }
+        if (parent && (!('captionId' in parent) || parent.captionId !== node.id)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes', index, 'parentId'],
+            message: 'Caption relationships must be reciprocal',
           })
         }
       }
@@ -508,6 +572,50 @@ export const publicationGraphSchema = z
         }
       }
     })
+    const nestedOwners = new Map<string, string>()
+    const nestedEdges = new Map<string, string[]>()
+    graph.nodes.forEach((node) => {
+      if (node.type !== 'list-item') return
+      for (const childId of node.childListIds) {
+        const child = nodesById.get(childId)
+        if (!child || child.type !== 'list') continue
+        const owner = nestedOwners.get(childId)
+        if (owner && owner !== node.id)
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes'],
+            message: `Nested list ${childId} has multiple owners (${owner}, ${node.id})`,
+          })
+        nestedOwners.set(childId, node.id)
+        const edges = nestedEdges.get(node.parentListId) ?? []
+        if (childId === node.parentListId)
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['nodes'],
+            message: `Nested list relationship cycles through ${childId}`,
+          })
+        edges.push(childId)
+        nestedEdges.set(node.parentListId, edges)
+      }
+    })
+    const visiting = new Set<string>()
+    const visited = new Set<string>()
+    const visitList = (listId: string) => {
+      if (visiting.has(listId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['nodes'],
+          message: `Nested list relationship cycle detected at ${listId}`,
+        })
+        return
+      }
+      if (visited.has(listId)) return
+      visiting.add(listId)
+      for (const childId of nestedEdges.get(listId) ?? []) visitList(childId)
+      visiting.delete(listId)
+      visited.add(listId)
+    }
+    for (const node of graph.nodes) if (node.type === 'list') visitList(node.id)
   })
 
 export type PublicationGraph = z.infer<typeof publicationGraphSchema>

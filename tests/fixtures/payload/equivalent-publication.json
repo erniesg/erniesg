@@ -1,0 +1,19 @@
+{
+  "id": "payload-equivalent",
+  "title": "Payload parity fixture",
+  "description": "A deterministic local Payload export used by the publication compiler.",
+  "authors": ["Ada Lovelace"],
+  "locale": "en",
+  "status": "published",
+  "version": "payload-fixture-v1",
+  "content": {
+    "root": {
+      "type": "root",
+      "children": [
+        { "type": "heading", "id": "intro", "tag": "h1", "children": [{ "type": "text", "text": "Payload parity fixture" }] },
+        { "type": "paragraph", "children": [{ "type": "text", "text": "A canonical paragraph." }] }
+      ]
+    }
+  },
+  "uploads": []
+}

@@ -31,6 +31,25 @@ export const assetDescriptorSchema = z
       })
       .optional(),
     accessibilityLabel: z.string().min(1).max(100_000).optional(),
+    width: z.number().int().positive().max(1_000_000).optional(),
+    height: z.number().int().positive().max(1_000_000).optional(),
+    focalPoint: z
+      .object({
+        x: z.number().finite().min(0).max(1),
+        y: z.number().finite().min(0).max(1),
+      })
+      .strict()
+      .optional(),
+    crop: z
+      .object({
+        x: z.number().finite().nonnegative(),
+        y: z.number().finite().nonnegative(),
+        width: z.number().finite().positive(),
+        height: z.number().finite().positive(),
+        unit: z.enum(['px', 'percent']).default('px'),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 

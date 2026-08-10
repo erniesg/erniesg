@@ -17,6 +17,8 @@
     "build:astro": "astro check && astro build",
     "build:production": "PUBLIC_RESEARCH_RELEASE=production npm run build:astro && PUBLIC_RESEARCH_RELEASE=production node tools/deployment/apply-release-gate.mjs",
     "build:staging": "PUBLIC_RESEARCH_RELEASE=staging npm run build:astro",
+    "publication:build": "node tools/publication-build.mjs",
+    "publication:check": "node tools/publication-check.mjs",
     "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "srt:checkpoint-evidence": "playwright install chromium && node tools/srt-source-output-evidence.mjs",
     "preview": "astro preview",

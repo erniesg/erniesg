@@ -79,6 +79,7 @@ export const publicationInlineRunSchema = z
     end: z.number().int().positive(),
     bold: z.boolean().optional(),
     italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
     inlineCode: z.boolean().optional(),
     strikethrough: z.boolean().optional(),
     hardBreak: z.boolean().optional(),
@@ -116,6 +117,7 @@ const provenanceSchema = z
     sourceId: safeSourceValueSchema,
     sourceRevision: safeSourceValueSchema.pipe(z.string().max(256)).optional(),
     evidence: z.array(safeSourceValueSchema).max(256).default([]),
+    idOrigin: z.enum(['source', 'derived']).optional(),
   })
   .strict()
 

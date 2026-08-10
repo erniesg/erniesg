@@ -1,12 +1,27 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'parse5'
+import { canonicalPublicationSubsetSha256 } from '../src/publication/adapter-conformance.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
-import { PublicationAdapterRegistry } from '../src/publication/adapter-registry.ts'
-import { astroPublicationAdapter } from '../src/publication/adapters/astro.ts'
+import { createDefaultPublicationAdapterRegistry } from '../src/publication/adapter-registry.ts'
 import {
   PUBLICATION_PROFILES,
   vivliostyleRenderer,
@@ -17,18 +32,422 @@ export function parsePublicationBuildArgs(argv) {
   const options = {}
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index]
-    if (!['--adapter', '--entry', '--output'].includes(option))
+    if (
+      ![
+        '--adapter',
+        '--entry',
+        '--input',
+        '--mapping',
+        '--output',
+      ].includes(option)
+    )
       throw new Error(`Unknown publication:build option: ${option}`)
     const value = argv[++index]
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${option}`)
     options[option.slice(2)] = value
   }
-  if (!options.adapter || !options.entry || !options.output)
+  if (!options.adapter || !options.output)
     throw new Error(
-      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory>',
+      'Usage: publication:build --adapter astro --entry <blog-id> --output <directory> | --adapter payload --input <json> [--mapping <json>] --output <directory>',
     )
+  if (options.adapter === 'payload') options.adapter = 'payload-lexical'
+  if (options.adapter === 'astro') {
+    if (!options.entry)
+      throw new Error('Astro publication builds require --entry <blog-id>')
+    if (options.input || options.mapping)
+      throw new Error('Astro publication builds do not accept Payload input or mapping files')
+  } else if (options.adapter === 'payload-lexical') {
+    if (!options.input)
+      throw new Error('Payload publication builds require --input <json>')
+    if (options.entry)
+      throw new Error('Payload publication builds do not accept an Astro --entry')
+  } else {
+    throw new Error(`Unsupported publication source adapter: ${options.adapter}`)
+  }
   return options
+}
+
+export function assertAtomicPublicationPlatform(platform) {
+  if (platform === 'linux' || platform === 'darwin') return
+  const error = new Error(
+    'Atomic directory publication is unsupported on this platform',
+  )
+  error.code = 'ENOTSUP'
+  throw error
+}
+
+function resolveThroughExistingAncestor(value) {
+  let ancestor = resolve(value)
+  const unresolved = []
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor)
+    if (parent === ancestor) break
+    unresolved.unshift(basename(ancestor))
+    ancestor = parent
+  }
+  return resolve(realpathSync(ancestor), ...unresolved)
+}
+
+export function assertPublicationOutputDirectory(output) {
+  const repositoryRoot = resolveThroughExistingAncestor(
+    execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+    }).trim(),
+  )
+  const candidate = resolve(output)
+  const candidateRepositoryRelative = relative(repositoryRoot, candidate)
+  const candidateRepositoryLocal =
+    candidateRepositoryRelative === '' ||
+    (!candidateRepositoryRelative.startsWith(`..${sep}`) &&
+      candidateRepositoryRelative !== '..' &&
+      !isAbsolute(candidateRepositoryRelative))
+  if (
+    candidateRepositoryLocal &&
+    existsSync(candidate) &&
+    lstatSync(candidate).isSymbolicLink()
+  )
+    throw new Error(
+      `Repository-local publication output path cannot be a symbolic link: ${candidate}`,
+    )
+  const policyCandidate = resolveThroughExistingAncestor(candidate)
+  const repositoryRelative = relative(repositoryRoot, policyCandidate)
+  const repositoryLocal =
+    repositoryRelative === '' ||
+    (!repositoryRelative.startsWith(`..${sep}`) &&
+      repositoryRelative !== '..' &&
+      !isAbsolute(repositoryRelative))
+  if (!repositoryLocal) return candidate
+  let ignored = false
+  if (repositoryRelative) {
+    try {
+      execFileSync(
+        'git',
+        ['check-ignore', '--quiet', '--no-index', '--', policyCandidate],
+        { stdio: 'ignore' },
+      )
+      ignored = true
+    } catch {
+      ignored = false
+    }
+  }
+  if (!ignored)
+    throw new Error(
+      `Repository-local publication output must be ignored before generation: ${candidate}`,
+    )
+  return candidate
+}
+
+export async function createPublicationStagingDirectory(finalOutput) {
+  const parent = dirname(resolve(finalOutput))
+  await mkdir(parent, { recursive: true })
+  // mkdtemp gives the staging root an unpredictable name and mode 0700, so no
+  // other principal can pre-place or insert entries for the build to follow.
+  return mkdtemp(resolve(parent, '.publication-staging-'))
+}
+
+function publicationPublishError(error) {
+  if (error?.code === 'EXDEV')
+    // The staging directory lives next to the publish target, so a
+    // cross-device rename only happens when the target itself is a mount
+    // point. Copying into a possibly hostile directory is never a fallback.
+    return new Error(
+      'Publication output cannot be published with an atomic rename (cross-device); failing closed instead of degrading to a copy',
+    )
+  return error
+}
+
+function publicationRecoveryError(error, message) {
+  const sanitized = new Error(message)
+  if (typeof error?.code === 'string') sanitized.code = error.code
+  return sanitized
+}
+
+const ATOMIC_RENAME_SCRIPT = String.raw`
+import ctypes
+import os
+import sys
+
+operation = sys.argv[1]
+left_path = os.fsencode(os.path.abspath(sys.argv[2]))
+right_path = os.fsencode(os.path.abspath(sys.argv[3]))
+libc = ctypes.CDLL(None, use_errno=True)
+
+def split_path(path):
+    parent, name = os.path.split(path)
+    if not name:
+        raise OSError(22, 'atomic rename requires a basename')
+    return parent, name
+
+def open_parent(parent):
+    flags = os.O_RDONLY
+    flags |= getattr(os, 'O_CLOEXEC', 0)
+    flags |= getattr(os, 'O_DIRECTORY', 0)
+    flags |= getattr(os, 'O_NOFOLLOW', 0)
+    return os.open(parent, flags)
+
+left_parent, left = split_path(left_path)
+right_parent, right = split_path(right_path)
+left_directory = open_parent(left_parent)
+try:
+    right_directory = os.dup(left_directory) if right_parent == left_parent else open_parent(right_parent)
+    try:
+        if sys.platform.startswith('linux'):
+            rename = getattr(libc, 'renameat2', None)
+            if rename is None:
+                raise OSError(38, 'renameat2 is unavailable')
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            rename.restype = ctypes.c_int
+            flag = 2 if operation == 'exchange' else 1 if operation == 'no-replace' else None
+            if flag is None:
+                raise OSError(22, 'unsupported atomic rename operation')
+            result = rename(left_directory, left, right_directory, right, flag)
+        elif sys.platform == 'darwin':
+            rename = getattr(libc, 'renameatx_np', None)
+            if rename is None:
+                raise OSError(38, 'renameatx_np is unavailable')
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            rename.restype = ctypes.c_int
+            flag = 2 if operation == 'exchange' else 4 if operation == 'no-replace' else None
+            if flag is None:
+                raise OSError(22, 'unsupported atomic rename operation')
+            result = rename(left_directory, left, right_directory, right, flag)
+        else:
+            raise OSError(95, 'atomic rename is unsupported on this platform')
+
+        if result != 0:
+            error_number = ctypes.get_errno()
+            raise OSError(error_number, os.strerror(error_number))
+    finally:
+        os.close(right_directory)
+finally:
+    os.close(left_directory)
+`
+
+function atomicRenameFailure(error, message) {
+  const failure = new Error(message)
+  const errorNumber = Number(
+    String(error?.stderr ?? '').match(/\[Errno (\d+)\]/u)?.[1],
+  )
+  if (errorNumber === 17) failure.code = 'EEXIST'
+  if (errorNumber === 18) failure.code = 'EXDEV'
+  if (errorNumber === 38) failure.code = 'ENOSYS'
+  if (errorNumber === 95) failure.code = 'ENOTSUP'
+  return failure
+}
+
+function atomicRenamePublicationPaths(operation, left, right, message) {
+  try {
+    execFileSync(
+      'python3',
+      [
+        '-c',
+        ATOMIC_RENAME_SCRIPT,
+        operation,
+        resolve(left),
+        resolve(right),
+      ],
+      { stdio: 'pipe' },
+    )
+  } catch (error) {
+    throw atomicRenameFailure(error, message)
+  }
+}
+
+export async function atomicExchangePublicationPaths(left, right) {
+  atomicRenamePublicationPaths(
+    'exchange',
+    left,
+    right,
+    'Atomic publication path exchange failed',
+  )
+}
+
+export async function atomicPublishNewPublicationPath(staged, final) {
+  atomicRenamePublicationPaths(
+    'no-replace',
+    staged,
+    final,
+    'Atomic publication no-replace failed',
+  )
+}
+
+function fileIdentityType(identity) {
+  if (identity.isSymbolicLink()) return 'symbolic-link'
+  if (identity.isDirectory()) return 'directory'
+  if (identity.isFile()) return 'file'
+  if (identity.isBlockDevice()) return 'block-device'
+  if (identity.isCharacterDevice()) return 'character-device'
+  if (identity.isFIFO()) return 'fifo'
+  if (identity.isSocket()) return 'socket'
+  return 'unknown'
+}
+
+function sameFileIdentity(left, right) {
+  return Boolean(
+    left &&
+      right &&
+      left.dev === right.dev &&
+      left.ino === right.ino &&
+      fileIdentityType(left) === fileIdentityType(right),
+  )
+}
+
+async function pathIdentity(path) {
+  try {
+    return await lstat(path, { bigint: true })
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+async function restorePublicationExchange(
+  exchange,
+  staged,
+  final,
+  expectedFinalIdentity,
+  expectedStagedIdentity,
+) {
+  await exchange(staged, final)
+  const [finalIdentity, stagedIdentity] = await Promise.all([
+    pathIdentity(final),
+    pathIdentity(staged),
+  ])
+  if (
+    !sameFileIdentity(finalIdentity, expectedFinalIdentity) ||
+    !sameFileIdentity(stagedIdentity, expectedStagedIdentity)
+  )
+    throw new Error(
+      'Atomic publication restoration identity verification failed',
+    )
+}
+
+function publicationRecoveryAggregate(
+  primaryError,
+  primaryMessage,
+  restorationError,
+) {
+  return new AggregateError(
+    [
+      publicationRecoveryError(primaryError, primaryMessage),
+      publicationRecoveryError(
+        restorationError,
+        'Atomic publication restoration failed',
+      ),
+    ],
+    'Atomic publication replacement failed and restoration also failed',
+  )
+}
+
+export async function publishPublicationOutput(
+  stagedOutput,
+  finalOutput,
+  operations = {},
+) {
+  const final = resolve(finalOutput)
+  const staged = resolve(stagedOutput)
+  const exchange =
+    operations.atomicExchange ?? atomicExchangePublicationPaths
+  const publishNew =
+    operations.atomicPublishNew ?? atomicPublishNewPublicationPath
+  const candidateIdentity = await lstat(staged, { bigint: true })
+  const previousIdentity = await pathIdentity(final)
+  if (!previousIdentity) {
+    await publishNew(staged, final).catch((error) => {
+      throw publicationPublishError(error)
+    })
+    const finalIdentity = await pathIdentity(final)
+    if (!sameFileIdentity(finalIdentity, candidateIdentity))
+      throw new Error(
+        'Publication output identity changed during atomic publication',
+      )
+    return
+  }
+  if (previousIdentity.isSymbolicLink())
+    throw new Error('Publication output path cannot be a symbolic link')
+  try {
+    // RENAME_EXCHANGE/RENAME_SWAP keeps the stable publication path bound to
+    // either the complete previous tree or the complete candidate tree.
+    await exchange(staged, final)
+  } catch (error) {
+    const finalAfterFailure = await pathIdentity(final)
+    const stagedAfterFailure = await pathIdentity(staged)
+    const exchangeCompleted =
+      sameFileIdentity(finalAfterFailure, candidateIdentity) &&
+      sameFileIdentity(stagedAfterFailure, previousIdentity)
+    if (!exchangeCompleted) throw publicationPublishError(error)
+    try {
+      await restorePublicationExchange(
+        exchange,
+        staged,
+        final,
+        previousIdentity,
+        candidateIdentity,
+      )
+    } catch (restorationError) {
+      throw publicationRecoveryAggregate(
+        error,
+        'Atomic publication exchange reported failure after completion',
+        restorationError,
+      )
+    }
+    throw publicationPublishError(error)
+  }
+  const [finalAfterExchange, stagedAfterExchange] = await Promise.all([
+    pathIdentity(final),
+    pathIdentity(staged),
+  ])
+  if (
+    !sameFileIdentity(finalAfterExchange, candidateIdentity) ||
+    !sameFileIdentity(stagedAfterExchange, previousIdentity)
+  ) {
+    const identityError = new Error(
+      'Publication output identity changed during atomic replacement',
+    )
+    try {
+      await restorePublicationExchange(
+        exchange,
+        staged,
+        final,
+        stagedAfterExchange,
+        finalAfterExchange,
+      )
+    } catch (restorationError) {
+      throw publicationRecoveryAggregate(
+        identityError,
+        identityError.message,
+        restorationError,
+      )
+    }
+    throw identityError
+  }
+  // After exchange the old publication lives at the private staging path;
+  // removing it cannot make the stable final path disappear.
+  await rm(staged, { recursive: true, force: true })
+}
+
+export function publicationSourceReceipt(bundle, routeParity) {
+  return {
+    adapterId: bundle.provenance.adapterId,
+    adapterVersion: bundle.provenance.adapterVersion,
+    sourceType: bundle.provenance.sourceType,
+    sourceId: bundle.provenance.sourceId,
+    ...(bundle.provenance.sourceRevision
+      ? { sourceRevision: bundle.provenance.sourceRevision }
+      : {}),
+    ...(bundle.provenance.mappingVersion
+      ? { mappingVersion: bundle.provenance.mappingVersion }
+      : {}),
+    graphSha256: createHash('sha256')
+      .update(serializePublicationGraph(bundle.graph))
+      .digest('hex'),
+    assetBundleSha256: createHash('sha256')
+      .update(serializeAssetBundle(bundle.assetBundle))
+      .digest('hex'),
+    canonicalSubsetSha256: canonicalPublicationSubsetSha256(bundle),
+    routeParity,
+  }
 }
 
 function collectElements(node, result = { headings: [], images: [] }) {
@@ -307,14 +726,31 @@ export function publicationReceiptDigest(receipt) {
   return createHash('sha256').update(receipt).digest('hex')
 }
 
-export function publicationRepositoryForCurrentCheckout() {
+export function publicationRepositoryForCurrentCheckout(excludedPaths = []) {
+  const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    encoding: 'utf8',
+  }).trim()
+  const exclusions = excludedPaths
+    .map((path) => relative(repositoryRoot, resolve(path)).split(sep).join('/'))
+    .filter(
+      (path) =>
+        path &&
+        path !== '..' &&
+        !path.startsWith('../') &&
+        !isAbsolute(path),
+    )
+    .map((path) => `:(exclude,top)${path}`)
   return {
     commit: execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: repositoryRoot,
       encoding: 'utf8',
     }).trim(),
     dirty:
-      execFileSync('git', ['status', '--short'], { encoding: 'utf8' }).trim()
-        .length > 0,
+      execFileSync(
+        'git',
+        ['status', '--short', '--untracked-files=all', '--', '.', ...exclusions],
+        { cwd: repositoryRoot, encoding: 'utf8' },
+      ).trim().length > 0,
   }
 }
 
@@ -432,31 +868,87 @@ export async function writeRouteParity(entry, output, bundle, repository) {
       null,
       2,
     )}\n`,
+    // Exclusive creation inside the invocation-owned staging directory.
+    { flag: 'wx' },
   )
 }
 
-export async function publicationBuild(argv = process.argv.slice(2)) {
+export async function bindPublicationSourceReceipt(
+  output,
+  bundle,
+  routeParity,
+  cleanlinessExclusions = [],
+) {
+  const receiptPath = resolve(output, 'publication-receipt.json')
+  const receipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+  const source = publicationSourceReceipt(bundle, routeParity)
+  if (
+    receipt.source?.graphSha256 !== source.graphSha256 ||
+    receipt.source?.assetBundleSha256 !== source.assetBundleSha256
+  )
+    throw new Error('Publication renderer receipt does not match its source bundle')
+  receipt.source = source
+  receipt.repository = publicationRepositoryForCurrentCheckout(
+    cleanlinessExclusions,
+  )
+  // In-place update of a receipt this invocation created inside its private
+  // staging directory; the bound result is then published atomically.
+  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
+  return receipt
+}
+
+export async function publicationBuild(argv = process.argv.slice(2), runtime = {}) {
   const options = parsePublicationBuildArgs(argv)
-  const registry = new PublicationAdapterRegistry().register(
-    astroPublicationAdapter,
-  )
-  const bundle = await registry.resolve(options.adapter, {
-    entryId: options.entry,
-  })
-  const receipt = await vivliostyleRenderer.render(bundle, {
-    outputDirectory: options.output,
-    profiles: PUBLICATION_PROFILES,
-  })
-  const receiptPath = resolve(options.output, 'publication-receipt.json')
-  const currentReceipt = JSON.parse(await readFile(receiptPath, 'utf8'))
-  const repository = publicationRepositoryForCurrentCheckout()
-  currentReceipt.repository = repository
-  await writeFile(receiptPath, `${JSON.stringify(currentReceipt, null, 2)}\n`)
-  await writeRouteParity(options.entry, options.output, bundle, repository)
+  assertAtomicPublicationPlatform(runtime.platform ?? process.platform)
+  // Repository-local final outputs must already be git-ignored. Invocation-owned
+  // staging is excluded explicitly from the clean-source receipt evidence.
+  const finalOutput = assertPublicationOutputDirectory(options.output)
+  const registry = createDefaultPublicationAdapterRegistry()
+  const locator =
+    options.adapter === 'astro'
+      ? { entryId: options.entry }
+      : {
+          document: JSON.parse(await readFile(resolve(options.input), 'utf8')),
+          ...(options.mapping
+            ? {
+                mapping: JSON.parse(
+                  await readFile(resolve(options.mapping), 'utf8'),
+                ),
+              }
+            : {}),
+        }
+  const bundle = await registry.resolve(options.adapter, locator)
+  // The whole build writes into a private invocation-owned staging directory
+  // and only ever touches the caller-supplied output path through one final
+  // atomic swap, so a reused (possibly attacker-seeded) output directory is
+  // never followed into, merged into, or partially mutated.
+  const staging = await createPublicationStagingDirectory(finalOutput)
+  let receipt
+  let boundReceipt
+  try {
+    const stagedOutput = resolve(staging, 'output')
+    receipt = await vivliostyleRenderer.render(bundle, {
+      outputDirectory: stagedOutput,
+      profiles: PUBLICATION_PROFILES,
+    })
+    boundReceipt = await bindPublicationSourceReceipt(
+      stagedOutput,
+      bundle,
+      options.adapter === 'astro'
+        ? 'astro-canonical-route'
+        : 'not-applicable',
+      [staging],
+    )
+    if (options.adapter === 'astro')
+      await writeRouteParity(options.entry, stagedOutput, bundle, boundReceipt.repository)
+    await publishPublicationOutput(stagedOutput, finalOutput)
+  } finally {
+    await rm(staging, { recursive: true, force: true })
+  }
   process.stdout.write(
-    `Publication matrix built at ${resolve(options.output)} (${receipt.artifacts.length} artifacts)\n`,
+    `Publication matrix built at ${finalOutput} (${receipt.artifacts.length} artifacts)\n`,
   )
-  return { ...receipt, repository }
+  return boundReceipt
 }
 
 if (

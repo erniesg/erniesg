@@ -4,6 +4,13 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
+import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
+import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
+import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
+import {
+  publicationGraphSchema,
+  serializePublicationGraph,
+} from '../src/publication/schema.ts'
 import {
   assertPdfPageGeometry,
   assertPdfCropBox,
@@ -13,12 +20,18 @@ import {
   assertPdfTextItemGeometry,
   assertPdfWidowOrphanRequirements,
   accessibilityLabel,
+  assertPublicationPdfPageCountPolicy,
+  assertPublicationReceiptSourceBinding,
+  assertPublicationReceiptMappingVersion,
+  assertPublicationReceiptPolicyVersions,
   checkWebPubReceipt,
   normalizePdfSearchableText,
   normalizePdfVerificationText,
   orderPdfTextRequirements,
+  publicationPdfImageAssetRequirements,
   publicationPdfLinkRequirements,
   publicationPdfLinkRequirementsForProfile,
+  publicationReceiptRequiresCanonicalRouteParity,
   parsePublicationCheckArgs,
   publicationPdfTextRequirements,
   pdfAnnotationTarget,
@@ -45,6 +58,167 @@ describe('publication:check CLI', () => {
         'phone-webpub,eink-epub',
       ]),
     ).toThrow(/exactly/)
+  })
+
+  it('derives canonical Astro route parity from source identity and isolates conformance mode', () => {
+    expect(
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'astro',
+          sourceType: 'astro',
+          routeParity: 'astro-canonical-route',
+        },
+      }),
+    ).toBe(true)
+    expect(
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'payload-lexical',
+          sourceType: 'payload',
+          routeParity: 'not-applicable',
+        },
+      }),
+    ).toBe(false)
+    expect(() =>
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'astro',
+          sourceType: 'astro',
+          routeParity: 'not-applicable',
+        },
+      }),
+    ).toThrow(/Astro.*canonical route parity/)
+    expect(
+      publicationReceiptRequiresCanonicalRouteParity(
+        {
+          source: {
+            adapterId: 'astro',
+            sourceType: 'astro',
+            routeParity: 'adapter-conformance',
+          },
+        },
+        { context: 'adapter-conformance' },
+      ),
+    ).toBe(false)
+    expect(() =>
+      publicationReceiptRequiresCanonicalRouteParity({
+        source: {
+          adapterId: 'astro',
+          sourceType: 'astro',
+          routeParity: 'adapter-conformance',
+        },
+      }),
+    ).toThrow(/internal adapter-conformance/)
+  })
+
+  it('scopes A5 page expansion to the canonical Astro corpus', () => {
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(2, 1, true),
+    ).not.toThrow()
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(1, 1, false),
+    ).not.toThrow()
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(1, 1, true),
+    ).toThrow(/A5 profile must produce more pages than A4/)
+  })
+
+  it('fails closed on stale renderer, transformation, or checker receipt policies', () => {
+    const receipt = {
+      version: '1.0.0',
+      policyVersions: {
+        renderer: '1.0.0',
+        semanticHtml: '1.0.0',
+        accessibility: '1.0.0',
+        transformationPolicy: '1.0.0',
+        publicationCheck: '1.0.0',
+      },
+    }
+    expect(() => assertPublicationReceiptPolicyVersions(receipt)).not.toThrow()
+    expect(() =>
+      assertPublicationReceiptPolicyVersions({
+        ...receipt,
+        policyVersions: {
+          ...receipt.policyVersions,
+          transformationPolicy: undefined,
+        },
+      }),
+    ).toThrow(/policy versions/)
+    expect(() =>
+      assertPublicationReceiptPolicyVersions({
+        ...receipt,
+        policyVersions: {
+          ...receipt.policyVersions,
+          publicationCheck: '2.0.0',
+        },
+      }),
+    ).toThrow(/policy versions/)
+  })
+
+  it('pins Payload mapping receipts to the canonical accepted policy version', () => {
+    const receipt = {
+      source: {
+        adapterId: 'payload-lexical',
+        sourceType: 'payload',
+        mappingVersion: '1.0.0',
+      },
+    }
+    expect(() => assertPublicationReceiptMappingVersion(receipt)).not.toThrow()
+    expect(() =>
+      assertPublicationReceiptMappingVersion({
+        ...receipt,
+        source: { ...receipt.source, mappingVersion: '99.0.0' },
+      }),
+    ).toThrow(/Payload mapping version is missing or stale/)
+    expect(() =>
+      assertPublicationReceiptMappingVersion({
+        source: { adapterId: 'astro', sourceType: 'astro' },
+      }),
+    ).not.toThrow()
+  })
+
+  it('binds receipt source identity and revision to every graph node', () => {
+    const receipt = {
+      source: {
+        adapterId: 'astro',
+        sourceType: 'astro',
+        sourceId: 'blog:fixture',
+        sourceRevision: 'revision-1',
+      },
+    }
+    const graph = {
+      nodes: [
+        {
+          provenance: {
+            adapterId: 'astro',
+            sourceId: 'blog:fixture',
+            sourceRevision: 'revision-1',
+          },
+        },
+      ],
+    }
+    expect(() => assertPublicationReceiptSourceBinding(receipt, graph)).not.toThrow()
+    expect(() =>
+      assertPublicationReceiptSourceBinding(
+        { ...receipt, source: { ...receipt.source, sourceId: 'blog:other' } },
+        graph,
+      ),
+    ).toThrow(/source id binding/)
+    expect(() =>
+      assertPublicationReceiptSourceBinding(
+        {
+          ...receipt,
+          source: { ...receipt.source, sourceRevision: 'revision-2' },
+        },
+        graph,
+      ),
+    ).toThrow(/source revision binding/)
+    expect(() =>
+      assertPublicationReceiptSourceBinding(
+        { ...receipt, source: { ...receipt.source, sourceType: 'payload' } },
+        graph,
+      ),
+    ).toThrow(/source type.*adapter/i)
   })
 
   it('validates every PDF page against the selected profile geometry', async () => {
@@ -146,6 +320,16 @@ describe('publication:check CLI', () => {
         `${'!'.repeat(40)}After punctuation HardBreak`,
       ),
     ).toEqual(['After punctuation', 'Hard\nBreak'])
+    expect(
+      orderPdfTextRequirements(
+        ['Section one', 'This configured block remains an aside.', 'Section one'],
+        'Section one This configured block remains an aside. Section one',
+      ),
+    ).toEqual([
+      'Section one',
+      'This configured block remains an aside.',
+      'Section one',
+    ])
     expect(
       orderPdfTextRequirements(['A\nB', 'X'], 'a b c d e f g h i j AB X'),
     ).toEqual(['A\nB', 'X'])
@@ -262,6 +446,14 @@ describe('publication:check CLI', () => {
         'parent item',
       ]),
     ).not.toThrow()
+    const repeatedLocations = [...'ABA'].map(() => ({ page: 1, line: 1 }))
+    expect(() =>
+      assertPdfWidowOrphanRequirements('ABA', repeatedLocations, [
+        'A',
+        'B',
+        'A',
+      ]),
+    ).not.toThrow()
   })
 
   it('requires every authored link to have a matching PDF annotation', () => {
@@ -282,6 +474,11 @@ describe('publication:check CLI', () => {
       ),
     ).not.toThrow()
     expect(() =>
+      assertPdfLinkAnnotations([{ url: 'https://example.com/' }], [
+        'https://example.com',
+      ]),
+    ).not.toThrow()
+    expect(() =>
       assertPdfLinkAnnotations([{ target: 'https://example.com/' }], required),
     ).toThrow(/requires 2/)
     expect(() =>
@@ -297,6 +494,77 @@ describe('publication:check CLI', () => {
     expect(() =>
       assertPdfLinkAnnotations([{ dest: 'target' }], ['#target']),
     ).not.toThrow()
+  })
+
+  it('matches PDF requirements to rendered link ranges without crossing breaks or blocks', () => {
+    const source = adaptPayloadLexical({
+      id: 'link-boundaries',
+      title: 'Link boundaries',
+      locale: 'en',
+      content: {
+        root: {
+          type: 'root',
+          children: [
+            {
+              type: 'paragraph',
+              children: [
+                {
+                  type: 'link',
+                  url: 'https://example.com/formatted',
+                  children: [
+                    { type: 'text', text: 'Read ' },
+                    { type: 'text', text: 'more', format: 'bold' },
+                  ],
+                },
+                {
+                  type: 'link',
+                  url: 'https://example.com/adjacent',
+                  children: [{ type: 'text', text: 'one' }],
+                },
+                {
+                  type: 'link',
+                  url: 'https://example.com/adjacent',
+                  children: [{ type: 'text', text: 'two' }],
+                },
+                {
+                  type: 'link',
+                  url: 'https://example.com/break',
+                  children: [
+                    { type: 'text', text: 'up' },
+                    { type: 'linebreak' },
+                    { type: 'text', text: 'down' },
+                  ],
+                },
+              ],
+            },
+            {
+              type: 'paragraph',
+              children: [
+                {
+                  type: 'link',
+                  url: 'https://example.com/adjacent',
+                  children: [{ type: 'text', text: 'block' }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    })
+    const canonical = canonicalPublicationSourceResult(source)
+    const graph = publicationGraphSchema.parse(
+      JSON.parse(serializePublicationGraph(canonical.graph)),
+    )
+    for (const profile of PUBLICATION_PROFILES) {
+      expect(publicationPdfLinkRequirementsForProfile(graph, profile)).toEqual([
+        'https://example.com/formatted',
+        'https://example.com/adjacent',
+        'https://example.com/adjacent',
+        'https://example.com/break',
+        'https://example.com/break',
+        'https://example.com/adjacent',
+      ])
+    }
   })
 
   it('requires target-only cross-references in PDF link requirements', () => {
@@ -527,6 +795,44 @@ describe('publication:check CLI', () => {
       'Body text',
       'repeat',
       'repeat',
+    ])
+  })
+
+  it('counts required PDF images by distinct rendered asset identity', () => {
+    const graph = {
+      nodes: [
+        {
+          type: 'figure',
+          requirement: 'required',
+          assetIds: ['shared-image', 'second-image'],
+          variants: [],
+        },
+        {
+          type: 'figure',
+          requirement: 'required',
+          assetIds: ['shared-image'],
+          variants: [],
+        },
+        {
+          type: 'media',
+          mediaKind: 'image',
+          requirement: 'required',
+          assetId: 'second-image',
+          variants: [],
+        },
+        {
+          type: 'media',
+          mediaKind: 'image',
+          requirement: 'optional',
+          assetId: 'optional-image',
+          variants: [],
+        },
+      ],
+    }
+
+    expect(publicationPdfImageAssetRequirements(graph, 'a5-pdf')).toEqual([
+      'shared-image',
+      'second-image',
     ])
   })
 

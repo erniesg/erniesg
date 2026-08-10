@@ -1,4 +1,4 @@
-import { access, cp, mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { access, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -142,7 +142,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
   })
 
-  it('coalesces styled link runs and preserves hard-break markup', async () => {
+  it('renders one anchor per link range without crossing hard breaks', async () => {
     const contentRoot = await fixtureCollection('synthetic-publication')
     const bundle = await adaptAstroBlogEntry({
       entryId: 'synthetic-publication',
@@ -159,11 +159,35 @@ describe('Vivliostyle publication renderer boundary', () => {
         node.id === paragraph.id
           ? {
               ...node,
-              text: 'read this\n',
+              text: 'read thisonetwoup\ndown',
               inlineRuns: [
-                { start: 0, end: 5, href: 'https://example.com/' },
-                { start: 5, end: 9, href: 'https://example.com/', bold: true },
-                { start: 9, end: 10, hardBreak: true },
+                {
+                  start: 0,
+                  end: 9,
+                  href: 'https://example.com/formatted',
+                },
+                {
+                  start: 5,
+                  end: 9,
+                  bold: true,
+                  underline: true,
+                },
+                {
+                  start: 9,
+                  end: 12,
+                  href: 'https://example.com/adjacent',
+                },
+                {
+                  start: 12,
+                  end: 15,
+                  href: 'https://example.com/adjacent',
+                },
+                {
+                  start: 15,
+                  end: 22,
+                  href: 'https://example.com/break',
+                },
+                { start: 17, end: 18, hardBreak: true },
               ],
             }
           : node,
@@ -176,10 +200,22 @@ describe('Vivliostyle publication renderer boundary', () => {
       ]),
     )
     const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
-    expect(html.match(/href="https:\/\/example\.com\//g)).toHaveLength(1)
-    expect(html).toContain('<strong>this</strong>')
-    expect(html).toContain('</a><br>')
-    expect(html).toContain('<br>')
+    expect(
+      html.match(/href="https:\/\/example\.com\/formatted"/g),
+    ).toHaveLength(1)
+    expect(html.match(/href="https:\/\/example\.com\/adjacent"/g)).toHaveLength(
+      2,
+    )
+    expect(html.match(/href="https:\/\/example\.com\/break"/g)).toHaveLength(2)
+    expect(html).toContain(
+      '<a href="https://example.com/formatted">read <u><strong>this</strong></u></a>',
+    )
+    expect(html).toContain(
+      '<a href="https://example.com/adjacent">one</a><a href="https://example.com/adjacent">two</a>',
+    )
+    expect(html).toContain(
+      '<a href="https://example.com/break">up</a><br><a href="https://example.com/break">down</a>',
+    )
   })
 
   it('rejects hard-break runs that cover authored text', async () => {
@@ -797,6 +833,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     expect(publicationAssetFileExtension('photo.JPG', 'image/jpeg')).toBe(
       '.jpg',
     )
+    expect(publicationAssetFileExtension('cover.html', 'image/png')).toBe(
+      '.png',
+    )
   })
 
   it('derives XML-safe, unique EPUB manifest ids from asset ids', () => {
@@ -839,20 +878,45 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toBe(false)
   })
 
-  it('removes stale WebPub and layout assets before a new publication', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-clean-'))
-    const webpub = resolve(root, 'phone-webpub')
-    await mkdir(resolve(webpub, 'assets'), { recursive: true })
-    const stale = resolve(webpub, 'assets', 'stale.svg')
-    await (await import('node:fs/promises')).writeFile(stale, 'stale')
-    await prepareWebPubDirectory(webpub)
-    await expect(access(stale)).rejects.toMatchObject({ code: 'ENOENT' })
+  it('refuses to reuse pre-existing WebPub and layout asset directories', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-exclusive-'))
+    try {
+      const webpub = resolve(root, 'phone-webpub')
+      await mkdir(resolve(webpub, 'assets'), { recursive: true })
+      await expect(prepareWebPubDirectory(webpub)).rejects.toMatchObject({
+        code: 'EEXIST',
+      })
 
-    const layout = resolve(root, 'layout-assets')
-    await mkdir(layout, { recursive: true })
-    const staleLayout = resolve(layout, 'stale.svg')
-    await (await import('node:fs/promises')).writeFile(staleLayout, 'stale')
-    await preparePublicationAssetDirectory(layout)
-    await expect(access(staleLayout)).rejects.toMatchObject({ code: 'ENOENT' })
+      const layout = resolve(root, 'layout-assets')
+      await mkdir(layout)
+      await expect(
+        preparePublicationAssetDirectory(layout),
+      ).rejects.toMatchObject({ code: 'EEXIST' })
+
+      const fresh = resolve(root, 'fresh-assets')
+      await preparePublicationAssetDirectory(fresh)
+      await expect(access(fresh)).resolves.toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
+
+  it('refuses a pre-existing render target directory', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-render-target-'))
+    try {
+      const target = resolve(root, 'render-output')
+      await mkdir(target)
+      const bundle = await adaptAstroBlogEntry({
+        entryId: 'moving-to-cloudflare-with-astro',
+      })
+      await expect(
+        vivliostyleRenderer.render(bundle, {
+          outputDirectory: target,
+          profiles: [...PUBLICATION_PROFILES],
+        }),
+      ).rejects.toThrow(/already exists/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

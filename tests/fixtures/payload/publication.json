@@ -1,0 +1,98 @@
+{
+  "id": "payload-equivalent",
+  "title": "Payload parity fixture",
+  "description": "A deterministic local Payload export used by the publication compiler.",
+  "authors": [{ "name": "Ada Lovelace" }],
+  "locale": "en",
+  "status": "published",
+  "version": "payload-fixture-v1",
+  "keywords": ["publication", "lexical"],
+  "uploads": [
+    {
+      "id": "fixture-image",
+      "filename": "fixture.png",
+      "mimeType": "image/png",
+      "alt": "A small blue publication mark",
+      "width": 24,
+      "height": 24,
+      "focalPoint": { "x": 0.5, "y": 0.5 },
+      "crop": { "x": 0, "y": 0, "width": 24, "height": 24, "unit": "px" },
+      "data": "iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAJUlEQVR4nGMQcX/2n5aYYdSCUQtGLRi1YNSCUQtGLRi1YGhYAABWNhBMOJikZQAAAABJRU5ErkJggg=="
+    }
+  ],
+  "content": {
+    "root": {
+      "type": "root",
+      "children": [
+        {
+          "type": "heading",
+          "id": "intro",
+          "tag": "h1",
+          "children": [{ "type": "text", "text": "Payload parity fixture", "format": 1 }]
+        },
+        {
+          "type": "paragraph",
+          "children": [
+            { "type": "text", "text": "Bold and " , "format": 1 },
+            { "type": "text", "text": "italic", "format": 2 },
+            { "type": "text", "text": " text with " },
+            { "type": "link", "url": "https://example.com", "children": [{ "type": "text", "text": "a link" }] },
+            { "type": "text", "text": "." }
+          ]
+        },
+        {
+          "type": "quote",
+          "children": [{ "type": "text", "text": "Meaning survives a source change." }]
+        },
+        {
+          "type": "list",
+          "listType": "bullet",
+          "children": [
+            { "type": "listitem", "children": [{ "type": "text", "text": "First item" }] },
+            { "type": "listitem", "children": [{ "type": "text", "text": "Second item" }] }
+          ]
+        },
+        { "type": "upload", "id": "figure-1", "value": "fixture-image", "title": "Fixture image" },
+        { "type": "relationship", "id": "citation-1", "value": "section-1", "label": "Section one", "role": "cross-reference" },
+        { "type": "callout", "children": [{ "type": "text", "text": "This configured block remains an aside." }] },
+        { "type": "paragraph", "id": "pagination-proof-1", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-2", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-3", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-4", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-5", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-6", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-7", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-8", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-9", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-10", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-11", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-12", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-13", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-14", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-15", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-16", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-17", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-18", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-19", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-20", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-21", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-22", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-23", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-24", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-25", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-26", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-27", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-28", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-29", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] },
+        { "type": "paragraph", "id": "pagination-proof-30", "children": [{ "type": "text", "text": "Deterministic Payload pagination keeps source semantics selectable and reproducible across every supported publication profile." }] }
+      ]
+    }
+  },
+  "localeVariants": {
+    "fr": {
+      "title": "Fixture de parité Payload",
+      "description": "Une variante locale explicite.",
+      "content": { "root": { "type": "root", "children": [{ "type": "paragraph", "children": [{ "type": "text", "text": "Une édition française distincte." }] }] } }
+    }
+  }
+}

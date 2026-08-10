@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
+import { constants as fsConstants } from 'node:fs'
 import {
   access,
   chmod,
@@ -7,16 +8,17 @@ import {
   mkdir,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from 'node:fs/promises'
-import { basename, extname, relative, resolve, sep } from 'node:path'
+import { basename, dirname, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
 import { PDFDocument } from 'pdf-lib'
 import { chromium } from 'playwright'
+import { canonicalPublicationSubsetSha256 } from '../adapter-conformance'
 import { serializeAssetBundle } from '../asset-bundle'
+import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../output-contract'
 import type {
   PublicationGraph,
   PublicationInlineRun,
@@ -43,6 +45,10 @@ export const PUBLICATION_PROFILES = [
 export type PublicationProfile = (typeof PUBLICATION_PROFILES)[number]
 
 const FIXED_DATE = new Date('2000-01-01T00:00:00.000Z')
+// Every file this renderer creates is opened with O_EXCL semantics so a
+// pre-existing entry (symlink, hard link, FIFO, or regular file) is never
+// followed, truncated, or blocked on — creation fails closed instead.
+const EXCLUSIVE_WRITE = { flag: 'wx' } as const
 const PUBLICATION_BROWSER_CACHE = resolve(
   'node_modules/.cache/publication-browsers',
 )
@@ -106,11 +112,7 @@ export type PublicationReceipt = {
   version: '1.0.0'
   source: { graphSha256: string; assetBundleSha256: string }
   profiles: typeof PROFILE_DETAILS
-  policyVersions: {
-    renderer: '1.0.0'
-    semanticHtml: '1.0.0'
-    accessibility: '1.0.0'
-  }
+  policyVersions: typeof PUBLICATION_OUTPUT_POLICY_VERSIONS
   toolchain: ReturnType<typeof publicationToolchainForRuntime>
   repository: { commit: string; dirty: boolean }
   artifacts: ArtifactReceipt[]
@@ -128,10 +130,27 @@ function escapeHtml(value: string) {
     .replaceAll('"', '&quot;')
 }
 
-function inlineHtml(
+type InlineHtmlSegment = {
+  value: string
+  link?: PublicationInlineRun
+}
+
+function inlineRunProducesLink(run: PublicationInlineRun) {
+  return (
+    Boolean(run.href) ||
+    ((run.semanticRole === 'citation' ||
+      run.semanticRole === 'cross-reference') &&
+      Boolean(run.targetIds?.length))
+  )
+}
+
+function inlineLinkHref(link: PublicationInlineRun) {
+  return link.href ?? `#${link.targetIds?.[0] ?? ''}`
+}
+
+function inlineHtmlSegments(
   text: string,
   runs: PublicationInlineRun[] = [],
-  targetNodes?: Map<string, PublicationNode>,
 ) {
   for (const run of runs) {
     if (!run.hardBreak) continue
@@ -157,48 +176,72 @@ function inlineHtml(
       const end = points[index + 1]
       const active = runs.filter((run) => run.start <= start && run.end >= end)
       let value = escapeHtml(text.slice(start, end))
-      if (active.some((run) => run.hardBreak))
-        value = value.replaceAll('\n', '<br>')
+      const hardBreak = active.some((run) => run.hardBreak)
+      if (hardBreak) value = value.replaceAll('\n', '<br>')
       if (!value) return undefined
       if (active.some((run) => run.compactMathAtom))
         value = `<span class="math">${value}</span>`
       if (active.some((run) => run.inlineCode)) value = `<code>${value}</code>`
       if (active.some((run) => run.italic)) value = `<em>${value}</em>`
       if (active.some((run) => run.bold)) value = `<strong>${value}</strong>`
+      if (active.some((run) => run.underline)) value = `<u>${value}</u>`
       if (active.some((run) => run.strikethrough)) value = `<del>${value}</del>`
       const verticalAlign = active.find((run) => run.verticalAlign)
       if (verticalAlign?.verticalAlign === 'superscript')
         value = `<sup>${value}</sup>`
       else if (verticalAlign?.verticalAlign === 'subscript')
         value = `<sub>${value}</sub>`
-      const link = active.find(
-        (run) =>
-          Boolean(run.href) ||
-          ((run.semanticRole === 'citation' ||
-            run.semanticRole === 'cross-reference') &&
-            Boolean(run.targetIds?.length)),
-      )
+      const link = hardBreak
+        ? undefined
+        : active.find((run) => inlineRunProducesLink(run))
       return { value, link }
     })
-    .filter(Boolean) as Array<{
-    value: string
-    link?: PublicationInlineRun
-  }>
-  const linkHref = (link: PublicationInlineRun) =>
-    link.href ?? `#${link.targetIds?.[0] ?? ''}`
-  const linkKey = (link?: PublicationInlineRun) =>
-    link
-      ? JSON.stringify([
-          linkHref(link),
-          link.relationshipId,
-          link.semanticRole,
-          link.targetIds,
-        ])
-      : ''
-  const linkAttributes = (link: PublicationInlineRun) =>
+    .filter(Boolean) as InlineHtmlSegment[]
+  return segments
+}
+
+function groupedInlineHtmlSegments(segments: InlineHtmlSegment[]) {
+  const groups: InlineHtmlSegment[] = []
+  for (let index = 0; index < segments.length;) {
+    const segment = segments[index]!
+    if (!segment.link) {
+      groups.push(segment)
+      index += 1
+      continue
+    }
+    let value = segment.value
+    let end = index + 1
+    while (end < segments.length && segments[end]!.link === segment.link) {
+      value += segments[end]!.value
+      end += 1
+    }
+    groups.push({ value, link: segment.link })
+    index = end
+  }
+  return groups
+}
+
+export function publicationInlineLinkTargets(
+  text: string,
+  runs: PublicationInlineRun[] = [],
+) {
+  return groupedInlineHtmlSegments(inlineHtmlSegments(text, runs)).flatMap(
+    (segment) => (segment.link ? [inlineLinkHref(segment.link)] : []),
+  )
+}
+
+function inlineHtml(
+  text: string,
+  runs: PublicationInlineRun[] = [],
+  targetNodes?: Map<string, PublicationNode>,
+) {
+  const linkAttributes = (
+    link: PublicationInlineRun,
+    includeRelationshipId: boolean,
+  ) =>
     [
-      `href="${escapeHtml(linkHref(link))}"`,
-      ...(link.relationshipId
+      `href="${escapeHtml(inlineLinkHref(link))}"`,
+      ...(includeRelationshipId && link.relationshipId
         ? [`id="${escapeHtml(link.relationshipId)}"`]
         : []),
       ...(link.semanticRole === 'cross-reference' &&
@@ -216,22 +259,14 @@ function inlineHtml(
         : []),
     ].join(' ')
   let html = ''
-  for (let index = 0; index < segments.length;) {
-    const segment = segments[index]!
+  const renderedLinks = new Set<PublicationInlineRun>()
+  for (const segment of groupedInlineHtmlSegments(inlineHtmlSegments(text, runs))) {
     if (!segment.link) {
       html += segment.value
-      index += 1
       continue
     }
-    const key = linkKey(segment.link)
-    let value = segment.value
-    let end = index + 1
-    while (end < segments.length && linkKey(segments[end]!.link) === key) {
-      value += segments[end]!.value
-      end += 1
-    }
-    html += `<a ${linkAttributes(segment.link)}>${value}</a>`
-    index = end
+    html += `<a ${linkAttributes(segment.link, !renderedLinks.has(segment.link))}>${segment.value}</a>`
+    renderedLinks.add(segment.link)
   }
   return html
 }
@@ -524,6 +559,7 @@ async function writeAssets(
     await writeFile(
       resolve(directory, fileName),
       await bundle.assetBundle.resolveBytes(descriptor),
+      EXCLUSIVE_WRITE,
     )
     paths.set(descriptor.id, `${prefix}${fileName}`)
   }
@@ -534,9 +570,22 @@ export function publicationAssetFileExtension(
   fileName: string | undefined,
   mediaType: string,
 ) {
-  const candidate = extname(fileName ?? '').toLocaleLowerCase()
-  if (/^\.[a-z0-9]+$/u.test(candidate)) return candidate
-  const subtype = mediaType.split('/')[1]?.split(/[+;]/u)[0] ?? ''
+  void fileName
+  const normalizedMediaType = mediaType.split(';', 1)[0]!.toLocaleLowerCase()
+  const canonicalExtensions: Record<string, string> = {
+    'application/pdf': '.pdf',
+    'audio/mpeg': '.mp3',
+    'image/avif': '.avif',
+    'image/gif': '.gif',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/svg+xml': '.svg',
+    'image/webp': '.webp',
+    'video/mp4': '.mp4',
+  }
+  const canonical = canonicalExtensions[normalizedMediaType]
+  if (canonical) return canonical
+  const subtype = normalizedMediaType.split('/')[1]?.split('+', 1)[0] ?? ''
   return /^[a-z0-9]+$/iu.test(subtype)
     ? `.${subtype.toLocaleLowerCase()}`
     : '.bin'
@@ -552,8 +601,10 @@ export async function prepareWebPubDirectory(directory: string) {
 }
 
 export async function preparePublicationAssetDirectory(directory: string) {
-  await rm(directory, { recursive: true, force: true })
-  await mkdir(directory, { recursive: true })
+  // Exclusive creation: renders only ever write into directories this
+  // invocation created itself, so a reused (possibly attacker-seeded) path
+  // fails closed with EEXIST instead of being cleared and written into.
+  await mkdir(directory)
 }
 
 async function createWebPub(
@@ -564,22 +615,26 @@ async function createWebPub(
   const root = resolve(outputDirectory, 'phone-webpub')
   await prepareWebPubDirectory(root)
   const assetPaths = await writeAssets(bundle, resolve(root, 'assets'))
-  await writeFile(resolve(root, 'publication.css'), css)
+  await writeFile(resolve(root, 'publication.css'), css, EXCLUSIVE_WRITE)
   await copyFile(
     resolve('public/fonts/Geist-Regular.ttf'),
     resolve(root, 'Geist-Regular.ttf'),
+    fsConstants.COPYFILE_EXCL,
   )
   await copyFile(
     resolve('public/fonts/Geist-Bold.ttf'),
     resolve(root, 'Geist-Bold.ttf'),
+    fsConstants.COPYFILE_EXCL,
   )
   await copyFile(
     resolve('public/fonts/GeistMono-Regular.ttf'),
     resolve(root, 'GeistMono-Regular.ttf'),
+    fsConstants.COPYFILE_EXCL,
   )
   await writeFile(
     resolve(root, 'index.html'),
     publicationGraphToHtml(bundle.graph, assetPaths, 'phone-webpub'),
+    EXCLUSIVE_WRITE,
   )
   await writeFile(
     resolve(root, 'publication.json'),
@@ -601,6 +656,7 @@ async function createWebPub(
       null,
       2,
     )}\n`,
+    EXCLUSIVE_WRITE,
   )
   return root
 }
@@ -877,7 +933,7 @@ async function createEpub(
     `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${bundle.graph.edition.locale}"><head><title${generatedLanguage}>${escapeHtml(navigationLabels.title)}</title></head><body><nav epub:type="toc"${generatedLanguage} aria-label="${escapeHtml(navigationLabels.toc)}"><h1${generatedLanguage}>${escapeHtml(navigationLabels.contents)}</h1>${renderEpubToc(headings)}</nav><nav epub:type="landmarks" hidden=""><ol><li><a epub:type="bodymatter" href="content.xhtml"${generatedLanguage}>${escapeHtml(navigationLabels.article)}</a></li></ol></nav></body></html>`,
     zipOptions(),
   )
-  const identifier = `urn:sha256:${sha256(serializePublicationGraph(bundle.graph))}`
+  const identifier = `urn:sha256:${canonicalPublicationSubsetSha256(bundle)}`
   zip.file(
     'EPUB/package.opf',
     `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${bundle.graph.edition.locale}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${identifier}</dc:identifier><dc:title>${escapeHtml(bundle.graph.metadata.title)}</dc:title>${contributorMetadata}<dc:language>${bundle.graph.edition.locale}</dc:language><meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>${accessModeMetadata}${accessModeSufficientMetadata}${accessibilityFeatureMetadata}</metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="css" href="publication.css" media-type="text/css"/><item id="font-sans" href="fonts/Geist-Regular.ttf" media-type="font/ttf"/><item id="font-sans-bold" href="fonts/Geist-Bold.ttf" media-type="font/ttf"/><item id="font-mono" href="fonts/GeistMono-Regular.ttf" media-type="font/ttf"/>${assetItems.join('')}</manifest><spine><itemref idref="content"/></spine></package>`,
@@ -891,6 +947,7 @@ async function createEpub(
       compressionOptions: { level: 9 },
       platform: 'UNIX',
     }),
+    EXCLUSIVE_WRITE,
   )
 }
 
@@ -914,6 +971,10 @@ type PdfRenderer = Extract<
   'vivliostyle-cli' | 'playwright-chromium'
 >
 
+// PDF bytes are first written by the pinned browser or Vivliostyle CLI, which
+// cannot take O_EXCL flags; both only ever target paths inside the fresh
+// invocation-owned render directory created above, and this normalization
+// rewrites that same invocation-created file in place.
 async function normalizePdf(
   path: string,
   title: string,
@@ -1116,20 +1177,34 @@ export const vivliostyleRenderer: PublicationRenderer = {
         `Publication output matrix must be exactly: ${PUBLICATION_PROFILES.join(',')}`,
       )
     const output = resolve(request.outputDirectory)
-    await mkdir(output, { recursive: true })
+    await mkdir(dirname(output), { recursive: true })
+    try {
+      // Exclusive creation: the render target must be a fresh directory this
+      // invocation owns. Builds stage into a private directory and publish
+      // atomically, so a reused target is always a policy violation.
+      await mkdir(output)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'EEXIST')
+        throw new Error(
+          `Publication render target already exists: ${output}; renders only write into a fresh invocation-owned directory`,
+        )
+      throw error
+    }
     await writeFile(
       resolve(output, 'publication-graph.json'),
       `${JSON.stringify(bundle.graph, null, 2)}\n`,
+      EXCLUSIVE_WRITE,
     )
     await writeFile(
       resolve(output, 'asset-bundle.json'),
       `${JSON.stringify(bundle.assetBundle.descriptor, null, 2)}\n`,
+      EXCLUSIVE_WRITE,
     )
     const css = await readFile(
       resolve('src/styles/publication/publication.css'),
       'utf8',
     )
-    await writeFile(resolve(output, 'publication.css'), css)
+    await writeFile(resolve(output, 'publication.css'), css, EXCLUSIVE_WRITE)
     const webpub = await createWebPub(bundle, output, css)
     const epub = resolve(output, 'eink.epub')
     await createEpub(bundle, epub, css)
@@ -1143,7 +1218,11 @@ export const vivliostyleRenderer: PublicationRenderer = {
       'Geist-Bold.ttf',
       'GeistMono-Regular.ttf',
     ])
-      await copyFile(resolve('public/fonts', font), resolve(output, font))
+      await copyFile(
+        resolve('public/fonts', font),
+        resolve(output, font),
+        fsConstants.COPYFILE_EXCL,
+      )
     const pdfArtifacts: ArtifactReceipt[] = []
     for (const [profile, size] of [
       ['a5-pdf', 'A5'],
@@ -1153,6 +1232,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
       await writeFile(
         htmlPath,
         publicationGraphToHtml(bundle.graph, layoutAssets, profile),
+        EXCLUSIVE_WRITE,
       )
       const path = resolve(output, `${profile}.pdf`)
       const renderer = await createPdf(htmlPath, path, size)
@@ -1187,11 +1267,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
         assetBundleSha256: sha256(serializeAssetBundle(bundle.assetBundle)),
       },
       profiles: PROFILE_DETAILS,
-      policyVersions: {
-        renderer: '1.0.0',
-        semanticHtml: '1.0.0',
-        accessibility: '1.0.0',
-      },
+      policyVersions: PUBLICATION_OUTPUT_POLICY_VERSIONS,
       toolchain: publicationToolchainForRuntime(),
       repository,
       artifacts,
@@ -1199,6 +1275,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
     await writeFile(
       resolve(output, 'publication-receipt.json'),
       `${JSON.stringify(receipt, null, 2)}\n`,
+      EXCLUSIVE_WRITE,
     )
     return receipt
   },

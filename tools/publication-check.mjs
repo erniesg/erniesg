@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -8,18 +8,23 @@ import JSZip from 'jszip'
 import { parse } from 'parse5'
 import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { canonicalPublicationSubsetSha256 } from '../src/publication/adapter-conformance.ts'
+import { PAYLOAD_MAPPING_POLICY_VERSION } from '../src/publication/adapters/payload-lexical.ts'
 import {
   PUBLICATION_PROFILES,
   publicationAssetFileExtension,
+  publicationInlineLinkTargets,
   publicationNodeForProfile,
 } from '../src/publication/renderers/vivliostyle.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
+import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../src/publication/output-contract.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
 import { serializePublicationGraph } from '../src/publication/schema.ts'
 import { publicationPdfRendererForArchitecture } from '../src/publication/toolchain.ts'
 import {
   canonicalRouteBodyFingerprint,
   publicationGraphBodyFingerprint,
+  publicationRepositoryForCurrentCheckout,
 } from './publication-build.mjs'
 
 export function parsePublicationCheckArgs(argv) {
@@ -48,6 +53,54 @@ export function parsePublicationCheckArgs(argv) {
   return { input: options.input, matrix }
 }
 
+export function publicationReceiptRequiresCanonicalRouteParity(
+  receipt,
+  options = {},
+) {
+  const source = receipt?.source
+  const adapterId = source?.adapterId
+  const sourceType = source?.sourceType
+  const policy = source?.routeParity
+  if (typeof adapterId !== 'string' || typeof sourceType !== 'string')
+    throw new Error('Publication receipt has no recognized source identity')
+
+  const isAstro = adapterId === 'astro'
+  if (isAstro !== (sourceType === 'astro'))
+    throw new Error('Publication receipt has an inconsistent Astro source identity')
+
+  if (policy === 'adapter-conformance') {
+    if (options.context !== 'adapter-conformance')
+      throw new Error(
+        'Publication receipt uses the internal adapter-conformance route-parity policy outside its checker context',
+      )
+    return false
+  }
+  if (options.context === 'adapter-conformance')
+    throw new Error(
+      'Adapter conformance checks require the internal adapter-conformance route-parity policy',
+    )
+  if (isAstro) {
+    if (policy !== 'astro-canonical-route')
+      throw new Error('Astro publication receipt must require canonical route parity')
+    return true
+  }
+  if (policy !== 'not-applicable')
+    throw new Error('Non-Astro publication receipt has no recognized route-parity policy')
+  return false
+}
+
+export function assertPublicationPdfPageCountPolicy(
+  a5Pages,
+  a4Pages,
+  requiresCanonicalRouteParity,
+) {
+  if (!requiresCanonicalRouteParity) return
+  assert(
+    a5Pages > a4Pages,
+    `A5 profile must produce more pages than A4 (${a5Pages} vs ${a4Pages})`,
+  )
+}
+
 async function run(command, args) {
   let stdout = ''
   let stderr = ''
@@ -66,6 +119,65 @@ async function run(command, args) {
 
 function assert(value, message) {
   if (!value) throw new Error(message)
+}
+
+export function assertPublicationReceiptPolicyVersions(receipt) {
+  const actual = receipt?.policyVersions
+  const expected = PUBLICATION_OUTPUT_POLICY_VERSIONS
+  assert(
+    receipt?.version === '1.0.0' &&
+      actual &&
+      typeof actual === 'object' &&
+      Object.keys(actual).length === Object.keys(expected).length &&
+      Object.entries(expected).every(([key, value]) => actual[key] === value),
+    'Publication receipt has stale or incomplete policy versions',
+  )
+}
+
+export function assertPublicationReceiptMappingVersion(receipt) {
+  if (receipt?.source?.sourceType !== 'payload') return
+  assert(
+    receipt.source?.adapterId === 'payload-lexical' &&
+      receipt.source?.mappingVersion === PAYLOAD_MAPPING_POLICY_VERSION,
+    'Payload mapping version is missing or stale in its receipt',
+  )
+}
+
+const PUBLICATION_SOURCE_TYPE_BY_ADAPTER = Object.freeze({
+  astro: 'astro',
+  'payload-lexical': 'payload',
+})
+
+export function assertPublicationReceiptSourceBinding(receipt, graph) {
+  const source = receipt?.source
+  const expectedSourceType =
+    PUBLICATION_SOURCE_TYPE_BY_ADAPTER[source?.adapterId]
+  assert(
+    typeof expectedSourceType === 'string' &&
+      source?.sourceType === expectedSourceType,
+    'Publication receipt source type does not match its registered adapter',
+  )
+  assert(
+    Array.isArray(graph?.nodes) &&
+      graph.nodes.every(
+        (node) => node.provenance?.adapterId === source.adapterId,
+      ),
+    'Publication source adapter binding is missing or inconsistent',
+  )
+  assert(
+    typeof source.sourceId === 'string' &&
+      source.sourceId.length > 0 &&
+      graph.nodes.every(
+        (node) => node.provenance?.sourceId === source.sourceId,
+      ),
+    'Publication source id binding is missing or inconsistent',
+  )
+  assert(
+    graph.nodes.every(
+      (node) => node.provenance?.sourceRevision === source.sourceRevision,
+    ),
+    'Publication source revision binding is missing or inconsistent',
+  )
 }
 
 function sha256(value) {
@@ -232,14 +344,9 @@ export function assertPdfWidowOrphanRequirements(
   minimumLines = 3,
 ) {
   const normalized = normalizePdfVerificationText(searchableText)
-  const firstOccurrence = (requiredText) => {
-    const expected = normalizePdfVerificationText(requiredText)
-    if (!expected) return Number.MAX_SAFE_INTEGER
-    const start = normalized.indexOf(expected)
-    return start < 0 ? Number.MAX_SAFE_INTEGER : start
-  }
-  const orderedRequiredTexts = [...(requiredTexts ?? [])].sort(
-    (left, right) => firstOccurrence(left) - firstOccurrence(right),
+  const orderedRequiredTexts = orderPdfTextRequirements(
+    requiredTexts,
+    searchableText,
   )
   let cursor = 0
   for (const requiredText of orderedRequiredTexts) {
@@ -292,35 +399,86 @@ export function orderPdfTextRequirements(requiredTexts, renderedText) {
   }
   normalizedOffsetByRawIndex[renderedTextWithCollapsedWhitespace.length] =
     normalizedOffset
-  const renderedTextPosition = (value) => {
+  const renderedTextPosition = (value, minimumNormalizedOffset = 0) => {
     const rawValue = String(value ?? '').trim()
     const rawExpected = rawValue.replace(/\s+/gu, ' ')
     const rawExpectedWithoutLineBreaks = rawValue
       .replace(/[\r\n]+/gu, '')
       .replace(/\s+/gu, ' ')
+    let exactPosition = Number.MAX_SAFE_INTEGER
     for (const exactExpected of new Set([
       rawExpected,
       rawExpectedWithoutLineBreaks,
     ])) {
-      const exactIndex = exactExpected
+      let exactIndex = exactExpected
         ? renderedTextWithCollapsedWhitespace.indexOf(exactExpected)
         : -1
-      if (exactIndex >= 0)
-        return normalizedOffsetByRawIndex[exactIndex] ?? Number.MAX_SAFE_INTEGER
+      while (exactIndex >= 0) {
+        const normalizedIndex =
+          normalizedOffsetByRawIndex[exactIndex] ?? Number.MAX_SAFE_INTEGER
+        if (normalizedIndex >= minimumNormalizedOffset) {
+          exactPosition = Math.min(exactPosition, normalizedIndex)
+          break
+        }
+        exactIndex = renderedTextWithCollapsedWhitespace.indexOf(
+          exactExpected,
+          exactIndex + 1,
+        )
+      }
     }
+    if (exactPosition < Number.MAX_SAFE_INTEGER) return exactPosition
     const expected = normalizePdfVerificationText(value)
     const normalizedIndex = expected
-      ? normalizedRenderedText.indexOf(expected)
+      ? normalizedRenderedText.indexOf(expected, minimumNormalizedOffset)
       : -1
     return normalizedIndex < 0 ? Number.MAX_SAFE_INTEGER : normalizedIndex
   }
-  return [...(requiredTexts ?? [])].sort((left, right) => {
-    return renderedTextPosition(left) - renderedTextPosition(right)
-  })
+  const nextNormalizedOffset = new Map()
+  return [...(requiredTexts ?? [])]
+    .map((value, index) => {
+      const key = normalizePdfVerificationText(value)
+      const position = renderedTextPosition(
+        value,
+        nextNormalizedOffset.get(key) ?? 0,
+      )
+      if (position < Number.MAX_SAFE_INTEGER)
+        nextNormalizedOffset.set(key, position + key.length)
+      return { value, index, position }
+    })
+    .sort((left, right) =>
+      left.position === right.position
+        ? left.index - right.index
+        : left.position - right.position,
+    )
+    .map(({ value }) => value)
 }
 
 export function publicationPdfLinkRequirements(graph) {
   return publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')
+}
+
+export function publicationPdfImageAssetRequirements(
+  graph,
+  profile = 'a5-pdf',
+) {
+  const assetIds = []
+  const seen = new Set()
+  for (const original of graph.nodes ?? []) {
+    const node = publicationNodeForProfile(original, profile)
+    if (node.requirement === 'optional') continue
+    const renderedAssetIds =
+      node.type === 'figure' && node.assetIds.length > 0
+        ? node.assetIds
+        : node.type === 'media' && node.mediaKind === 'image'
+          ? [node.assetId]
+          : []
+    for (const assetId of renderedAssetIds) {
+      if (seen.has(assetId)) continue
+      seen.add(assetId)
+      assetIds.push(assetId)
+    }
+  }
+  return assetIds
 }
 
 export function publicationPdfLinkRequirementsForProfile(
@@ -330,14 +488,24 @@ export function publicationPdfLinkRequirementsForProfile(
   const links = []
   for (const node of graph.nodes) {
     const selected = publicationNodeForProfile(node, profile)
-    for (const run of selected.inlineRuns ?? []) {
-      if (run.href) links.push(run.href)
-      else if (
-        (run.semanticRole === 'citation' ||
-          run.semanticRole === 'cross-reference') &&
-        run.targetIds?.length
+    const runs = selected.inlineRuns ?? []
+    if (
+      typeof selected.text === 'string' &&
+      runs.every(
+        (run) => Number.isInteger(run.start) && Number.isInteger(run.end),
       )
-        links.push(`#${run.targetIds[0]}`)
+    ) {
+      links.push(...publicationInlineLinkTargets(selected.text, runs))
+    } else {
+      for (const run of runs) {
+        if (run.href) links.push(run.href)
+        else if (
+          (run.semanticRole === 'citation' ||
+            run.semanticRole === 'cross-reference') &&
+          run.targetIds?.length
+        )
+          links.push(`#${run.targetIds[0]}`)
+      }
     }
     if (selected.type === 'reference' && selected.href)
       links.push(selected.href)
@@ -358,7 +526,12 @@ export function assertPdfLinkAnnotations(annotations, requiredLinks) {
     const index = remaining.findIndex((annotation) => {
       if (!annotation || typeof annotation !== 'object') return false
       const target = pdfAnnotationTarget(annotation)
-      return target === required
+      if (target === required) return true
+      try {
+        return new URL(target).href === new URL(required).href
+      } catch {
+        return false
+      }
     })
     assert(index >= 0, `PDF is missing a link annotation for ${required}`)
     remaining.splice(index, 1)
@@ -848,7 +1021,10 @@ export async function checkPdf(
   return pdf.getPageCount()
 }
 
-export async function publicationCheck(argv = process.argv.slice(2)) {
+export async function publicationCheck(
+  argv = process.argv.slice(2),
+  execution = {},
+) {
   const options = parsePublicationCheckArgs(argv)
   const root = resolve(options.input)
   const graph = publicationGraphSchema.parse(
@@ -856,6 +1032,9 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
   )
   const receiptBytes = await readFile(resolve(root, 'publication-receipt.json'))
   const receipt = JSON.parse(receiptBytes.toString('utf8'))
+  assertPublicationReceiptPolicyVersions(receipt)
+  const requiresCanonicalRouteParity =
+    publicationReceiptRequiresCanonicalRouteParity(receipt, execution)
   const assetBundle = JSON.parse(
     await readFile(resolve(root, 'asset-bundle.json'), 'utf8'),
   )
@@ -874,12 +1053,26 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
       sha256(serializeAssetBundle(assetBundle)),
     'Asset bundle changed from its receipt',
   )
-  const currentCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim()
-  const currentDirty =
-    execFileSync('git', ['status', '--short'], { encoding: 'utf8' }).trim()
-      .length > 0
+  assert(
+    receipt.source?.canonicalSubsetSha256 ===
+      canonicalPublicationSubsetSha256({
+        graph,
+        assetBundle: { descriptor: assetBundle },
+      }),
+    'Canonical publication semantics changed from the source receipt',
+  )
+  assertPublicationReceiptSourceBinding(receipt, graph)
+  assert(
+    receipt.source?.adapterVersion === '1.0.0' &&
+      typeof receipt.source?.sourceId === 'string',
+    'Publication source provenance is missing from its receipt',
+  )
+  assertPublicationReceiptMappingVersion(receipt)
+  const currentRepository = publicationRepositoryForCurrentCheckout(
+    execution.cleanlinessExclusions,
+  )
+  const currentCommit = currentRepository.commit
+  const currentDirty = currentRepository.dirty
   assert(
     receipt.repository?.commit === currentCommit,
     'Publication receipt is bound to a different checked-out commit',
@@ -949,13 +1142,10 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requiredImageCount: pdfNodes
-      .filter((node) => node.requirement !== 'optional')
-      .filter(
-        (node) =>
-          (node.type === 'figure' && node.assetIds.length > 0) ||
-          (node.type === 'media' && node.mediaKind === 'image'),
-      ).length,
+    requiredImageCount: publicationPdfImageAssetRequirements(
+      graph,
+      'a5-pdf',
+    ).length,
     requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
     widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
   }
@@ -995,9 +1185,10 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
     Number.isInteger(a4Artifact.pageCount) && a4Artifact.pageCount === a4Pages,
     'A4 receipt pageCount does not match the checked PDF',
   )
-  assert(
-    a5Pages > a4Pages,
-    `A5 profile must produce more pages than A4 (${a5Pages} vs ${a4Pages})`,
+  assertPublicationPdfPageCountPolicy(
+    a5Pages,
+    a4Pages,
+    requiresCanonicalRouteParity,
   )
   assert(
     receipt.profiles['a5-pdf'].figurePlacement !==
@@ -1011,6 +1202,12 @@ export async function publicationCheck(argv = process.argv.slice(2)) {
         ?.renderer === expectedPdfRenderer,
       `${profile} receipt renderer does not match the ${process.arch} policy (${expectedPdfRenderer})`,
     )
+  if (!requiresCanonicalRouteParity) {
+    process.stdout.write(
+      `Publication matrix passed structural, accessibility, EPUBCheck, and PDF checks at ${root}\n`,
+    )
+    return { a5Pages, a4Pages }
+  }
   const parity = JSON.parse(
     await readFile(resolve(root, 'astro-route-parity.json'), 'utf8'),
   )

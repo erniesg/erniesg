@@ -329,6 +329,7 @@ async function createFixtureStructDocument({
   fileName,
   page,
   asset,
+  furnitureContaminationCount,
 }) {
   const figureAsset = await cropFixtureFigure(asset)
   const sourceEvidence = evidence(
@@ -564,7 +565,7 @@ async function createFixtureStructDocument({
         structRelationshipCount: 0,
         structDiagnosticCount: 0,
         structTextCharacterCount: textCharacterCount,
-        furnitureContaminationCount: 0,
+        furnitureContaminationCount,
       },
       generatedSha256: sourceHash,
     },
@@ -679,12 +680,13 @@ async function createViteModules() {
     server: { middlewareMode: true, watch: null },
   })
   try {
-    const [checkpoints, struct, targets] = await Promise.all([
+    const [checkpoints, struct, targets, pdf] = await Promise.all([
       vite.ssrLoadModule('/src/research/source-output-checkpoints.ts'),
       vite.ssrLoadModule('/src/research/epub.ts'),
       vite.ssrLoadModule('/src/research/targets.ts'),
+      vite.ssrLoadModule('/src/research/pdf.ts'),
     ])
-    return { vite, checkpoints, struct, targets }
+    return { vite, checkpoints, struct, targets, pdf }
   } catch (error) {
     await vite.close()
     throw error
@@ -699,6 +701,16 @@ function reviewerConclusion(checkpoint, result) {
   return result.status === 'passed'
     ? `Pass: inspect the ${checkpoint.property} claim in this source/after pair.`
     : `Fail: ${result.reason ?? 'the named property is not proven'}`
+}
+
+export function furnitureContaminationCountFromReconstruction(reconstruction) {
+  const reported = reconstruction?.completeness?.furnitureContaminationCount
+  if (Number.isInteger(reported) && reported >= 0) return reported
+  return (reconstruction?.regions ?? []).reduce(
+    (count, region) =>
+      count + (region?.furniture && region.includedInReadingOrder ? 1 : 0),
+    0,
+  )
 }
 
 function assertStructMatchesSource(
@@ -772,6 +784,13 @@ async function run(options) {
       checkpoints[0].page,
       1200,
     )
+    const reconstruction = privacy.defaultFixture
+      ? await modules.pdf.reconstructPdf(
+          new File([sourceBytes], basename(options.document), {
+            type: 'application/pdf',
+          }),
+        )
+      : null
     const fallback = privacy.defaultFixture
       ? await createFixtureStructDocument({
           sourceHash,
@@ -780,6 +799,8 @@ async function run(options) {
           fileName: basename(options.document),
           page: checkpoints[0].page,
           asset: sourceAsset,
+          furnitureContaminationCount:
+            furnitureContaminationCountFromReconstruction(reconstruction),
         })
       : null
     const document = await loadStructDocument(options.struct, fallback)

@@ -6674,6 +6674,157 @@ describe('deterministic scholarly page regions', () => {
     expect(first.regions).toEqual(second.regions)
   })
 
+  it('splits an unproven margin run before it can fuse with a first-page title', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Body prose establishes the page font.', 0.12, 0.2, 0.72, 10),
+        run(
+          1,
+          'A one-off margin sentence remains reviewable.',
+          0.1,
+          0.03,
+          0.3,
+          8,
+        ),
+        run(1, 'Synthetic title block', 0.41, 0.03, 0.16, 14),
+      ]),
+    ])
+
+    expect(result.regions.map((region) => region.text)).toEqual(
+      expect.arrayContaining([
+        'A one-off margin sentence remains reviewable.',
+        'Synthetic title block',
+      ]),
+    )
+    expect(result.furnitureReviewCount).toBe(1)
+  })
+
+  it('does not attach repeated furniture evidence to protected numbered headings', () => {
+    const headingPage = (pageNumber: number, ordinal: number) =>
+      page(pageNumber, [
+        {
+          ...run(pageNumber, `A.${ordinal}.`, 0.1, 0.08, 0.05, 14),
+          fontName: 'Synthetic-Bold',
+          bold: true,
+        },
+        {
+          ...run(
+            pageNumber,
+            `Repeated Section ${ordinal}`,
+            0.155,
+            0.08,
+            0.5,
+            14,
+          ),
+          fontName: 'Synthetic-Bold',
+          bold: true,
+        },
+        run(
+          pageNumber,
+          `Body prose on page ${pageNumber} remains canonical.`,
+          0.12,
+          0.2,
+          0.72,
+          10,
+        ),
+      ])
+    const result = reconstructPageRegions([
+      page(1, [
+        {
+          ...run(1, 'A. Parent Heading', 0.12, 0.04, 0.3, 14),
+          fontName: 'Synthetic-Bold',
+          bold: true,
+        },
+        run(1, 'Body prose on page 1 remains canonical.', 0.12, 0.2, 0.72, 10),
+      ]),
+      headingPage(2, 1),
+      headingPage(3, 2),
+      headingPage(4, 3),
+    ])
+
+    const headings = result.regions.filter(
+      (region) =>
+        region.text.startsWith('A.') &&
+        region.text.includes('Repeated Section'),
+    )
+    expect(headings).toHaveLength(3)
+    expect(headings.every((region) => region.furniture === undefined)).toBe(
+      true,
+    )
+    expect(headings.every((region) => region.includedInReadingOrder)).toBe(true)
+  })
+
+  it('keeps short unproven margin lines on the bounded header/footer path', () => {
+    const result = reconstructPageRegions([
+      page(1, [
+        run(1, 'Body prose establishes the page font.', 0.12, 0.2, 0.72, 10),
+        run(1, 'Tiny', 0.2, 0.03, 0.04, 8),
+      ]),
+    ])
+
+    expect(result.regions.find((region) => region.text === 'Tiny')).toMatchObject(
+      {
+        kind: 'header',
+        confidence: 0.78,
+        includedInReadingOrder: false,
+      },
+    )
+  })
+
+  it('protects a narrow first-page title-block run from repeated-margin promotion', () => {
+    const title = (pageNumber: number) =>
+      page(pageNumber, [
+        run(pageNumber, 'Narrow title block', 0.44, 0.09, 0.1, 8),
+        run(
+          pageNumber,
+          `Body prose on page ${pageNumber} remains canonical.`,
+          0.12,
+          0.2,
+          0.72,
+          10,
+        ),
+      ])
+    const result = reconstructPageRegions([title(1), title(2)])
+
+    const titleRegions = result.regions.filter(
+      (region) => region.text === 'Narrow title block',
+    )
+    expect(titleRegions).toHaveLength(2)
+    expect(
+      titleRegions.every(
+        (region) =>
+          region.kind === 'body' &&
+          region.includedInReadingOrder &&
+          region.furniture === undefined,
+      ),
+    ).toBe(true)
+  })
+
+  it('recognizes newly assigned Unicode decimal digit ranges in incrementing folios', () => {
+    const folio = (index: number) => String.fromCodePoint(0x10d40 + index)
+    const result = reconstructPageRegions(
+      [1, 2, 3].map((pageNumber, index) =>
+        page(pageNumber, [
+          run(
+            pageNumber,
+            `Body prose on page ${pageNumber} remains canonical.`,
+            0.12,
+            0.2,
+            0.72,
+            10,
+          ),
+          run(pageNumber, folio(index), 0.48, 0.95, 0.03, 8),
+        ]),
+      ),
+    )
+
+    const folios = result.regions.filter((region) =>
+      [folio(0), folio(1), folio(2)].includes(region.text),
+    )
+    expect(folios).toHaveLength(3)
+    expect(folios.every((region) => region.kind === 'page-number')).toBe(true)
+  })
+
   it('defers overlapping repeated numeral bands to the footnote stratum', () => {
     const result = reconstructPageRegions([
       page(1, [

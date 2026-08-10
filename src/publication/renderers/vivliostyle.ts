@@ -10,7 +10,7 @@ import {
   readdir,
   writeFile,
 } from 'node:fs/promises'
-import { basename, dirname, extname, relative, resolve, sep } from 'node:path'
+import { basename, dirname, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
@@ -130,10 +130,27 @@ function escapeHtml(value: string) {
     .replaceAll('"', '&quot;')
 }
 
-function inlineHtml(
+type InlineHtmlSegment = {
+  value: string
+  link?: PublicationInlineRun
+}
+
+function inlineRunProducesLink(run: PublicationInlineRun) {
+  return (
+    Boolean(run.href) ||
+    ((run.semanticRole === 'citation' ||
+      run.semanticRole === 'cross-reference') &&
+      Boolean(run.targetIds?.length))
+  )
+}
+
+function inlineLinkHref(link: PublicationInlineRun) {
+  return link.href ?? `#${link.targetIds?.[0] ?? ''}`
+}
+
+function inlineHtmlSegments(
   text: string,
   runs: PublicationInlineRun[] = [],
-  targetNodes?: Map<string, PublicationNode>,
 ) {
   for (const run of runs) {
     if (!run.hardBreak) continue
@@ -159,8 +176,8 @@ function inlineHtml(
       const end = points[index + 1]
       const active = runs.filter((run) => run.start <= start && run.end >= end)
       let value = escapeHtml(text.slice(start, end))
-      if (active.some((run) => run.hardBreak))
-        value = value.replaceAll('\n', '<br>')
+      const hardBreak = active.some((run) => run.hardBreak)
+      if (hardBreak) value = value.replaceAll('\n', '<br>')
       if (!value) return undefined
       if (active.some((run) => run.compactMathAtom))
         value = `<span class="math">${value}</span>`
@@ -174,34 +191,57 @@ function inlineHtml(
         value = `<sup>${value}</sup>`
       else if (verticalAlign?.verticalAlign === 'subscript')
         value = `<sub>${value}</sub>`
-      const link = active.find(
-        (run) =>
-          Boolean(run.href) ||
-          ((run.semanticRole === 'citation' ||
-            run.semanticRole === 'cross-reference') &&
-            Boolean(run.targetIds?.length)),
-      )
+      const link = hardBreak
+        ? undefined
+        : active.find((run) => inlineRunProducesLink(run))
       return { value, link }
     })
-    .filter(Boolean) as Array<{
-    value: string
-    link?: PublicationInlineRun
-  }>
-  const linkHref = (link: PublicationInlineRun) =>
-    link.href ?? `#${link.targetIds?.[0] ?? ''}`
-  const linkKey = (link?: PublicationInlineRun) =>
-    link
-      ? JSON.stringify([
-          linkHref(link),
-          link.relationshipId,
-          link.semanticRole,
-          link.targetIds,
-        ])
-      : ''
-  const linkAttributes = (link: PublicationInlineRun) =>
+    .filter(Boolean) as InlineHtmlSegment[]
+  return segments
+}
+
+function groupedInlineHtmlSegments(segments: InlineHtmlSegment[]) {
+  const groups: InlineHtmlSegment[] = []
+  for (let index = 0; index < segments.length;) {
+    const segment = segments[index]!
+    if (!segment.link) {
+      groups.push(segment)
+      index += 1
+      continue
+    }
+    let value = segment.value
+    let end = index + 1
+    while (end < segments.length && segments[end]!.link === segment.link) {
+      value += segments[end]!.value
+      end += 1
+    }
+    groups.push({ value, link: segment.link })
+    index = end
+  }
+  return groups
+}
+
+export function publicationInlineLinkTargets(
+  text: string,
+  runs: PublicationInlineRun[] = [],
+) {
+  return groupedInlineHtmlSegments(inlineHtmlSegments(text, runs)).flatMap(
+    (segment) => (segment.link ? [inlineLinkHref(segment.link)] : []),
+  )
+}
+
+function inlineHtml(
+  text: string,
+  runs: PublicationInlineRun[] = [],
+  targetNodes?: Map<string, PublicationNode>,
+) {
+  const linkAttributes = (
+    link: PublicationInlineRun,
+    includeRelationshipId: boolean,
+  ) =>
     [
-      `href="${escapeHtml(linkHref(link))}"`,
-      ...(link.relationshipId
+      `href="${escapeHtml(inlineLinkHref(link))}"`,
+      ...(includeRelationshipId && link.relationshipId
         ? [`id="${escapeHtml(link.relationshipId)}"`]
         : []),
       ...(link.semanticRole === 'cross-reference' &&
@@ -219,22 +259,14 @@ function inlineHtml(
         : []),
     ].join(' ')
   let html = ''
-  for (let index = 0; index < segments.length;) {
-    const segment = segments[index]!
+  const renderedLinks = new Set<PublicationInlineRun>()
+  for (const segment of groupedInlineHtmlSegments(inlineHtmlSegments(text, runs))) {
     if (!segment.link) {
       html += segment.value
-      index += 1
       continue
     }
-    const key = linkKey(segment.link)
-    let value = segment.value
-    let end = index + 1
-    while (end < segments.length && linkKey(segments[end]!.link) === key) {
-      value += segments[end]!.value
-      end += 1
-    }
-    html += `<a ${linkAttributes(segment.link)}>${value}</a>`
-    index = end
+    html += `<a ${linkAttributes(segment.link, !renderedLinks.has(segment.link))}>${segment.value}</a>`
+    renderedLinks.add(segment.link)
   }
   return html
 }
@@ -538,9 +570,22 @@ export function publicationAssetFileExtension(
   fileName: string | undefined,
   mediaType: string,
 ) {
-  const candidate = extname(fileName ?? '').toLocaleLowerCase()
-  if (/^\.[a-z0-9]+$/u.test(candidate)) return candidate
-  const subtype = mediaType.split('/')[1]?.split(/[+;]/u)[0] ?? ''
+  void fileName
+  const normalizedMediaType = mediaType.split(';', 1)[0]!.toLocaleLowerCase()
+  const canonicalExtensions: Record<string, string> = {
+    'application/pdf': '.pdf',
+    'audio/mpeg': '.mp3',
+    'image/avif': '.avif',
+    'image/gif': '.gif',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/svg+xml': '.svg',
+    'image/webp': '.webp',
+    'video/mp4': '.mp4',
+  }
+  const canonical = canonicalExtensions[normalizedMediaType]
+  if (canonical) return canonical
+  const subtype = normalizedMediaType.split('/')[1]?.split('+', 1)[0] ?? ''
   return /^[a-z0-9]+$/iu.test(subtype)
     ? `.${subtype.toLocaleLowerCase()}`
     : '.bin'

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { access, mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -31,6 +31,47 @@ describe('publication adapter output conformance CLI', () => {
     expect(result.stderr).toMatch(/Usage: publication-adapter-conformance/)
   })
 
+  it('rejects unsupported win32 before reads, directories, or rendering', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-adapter-conformance-win32-preflight-'),
+    )
+    const outputParent = resolve(temporaryRoot, 'must-not-be-created')
+    const output = resolve(outputParent, 'private-output-marker')
+    const originalCwd = process.cwd()
+    const originalRender = vivliostyleRenderer.render
+    let renderCalls = 0
+    vivliostyleRenderer.render = async () => {
+      renderCalls += 1
+      throw new Error('renderer must not run on an unsupported platform')
+    }
+    try {
+      // The empty working directory has no repository or conformance fixtures.
+      // A preflight that runs after policy resolution or input reads would fail
+      // with a different error before reaching the platform contract.
+      process.chdir(temporaryRoot)
+      const error = await publicationAdapterConformance(
+        ['--output', output],
+        { platform: 'win32' },
+      ).then(
+        () => undefined,
+        (failure) => failure,
+      )
+      expect(error).toMatchObject({ code: 'ENOTSUP' })
+      expect(error?.message).toBe(
+        'Atomic directory publication is unsupported on this platform',
+      )
+      expect(error?.message).not.toContain('win32')
+      expect(error?.message).not.toContain(output)
+      expect(renderCalls).toBe(0)
+      await expect(access(outputParent)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readdir(temporaryRoot)).toEqual([])
+    } finally {
+      process.chdir(originalCwd)
+      vivliostyleRenderer.render = originalRender
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
   it('passes canonical graphs to the renderer after semantic comparison', async () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-adapter-conformance-boundary-'),
@@ -52,6 +93,25 @@ describe('publication adapter output conformance CLI', () => {
       expect(renderedNodeIds[1][0]).toBe('node-1')
     } finally {
       vivliostyleRenderer.render = originalRender
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('removes its reserved output root when staging creation fails', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-adapter-conformance-staging-failure-'),
+    )
+    const output = resolve(temporaryRoot, 'output')
+    try {
+      await expect(
+        publicationAdapterConformance(['--output', output], {
+          createStagingDirectory: async () => {
+            throw new Error('injected staging creation failure')
+          },
+        }),
+      ).rejects.toThrow(/injected staging creation failure/)
+      await expect(access(output)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
   })

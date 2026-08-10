@@ -120,6 +120,10 @@ function isObject(value: unknown): value is JsonObject {
 function assertSafeJson(value: unknown, path = '$', depth = 0): void {
   if (depth > MAX_DEPTH) throw new Error(`Payload export exceeds maximum depth at ${path}`)
   if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') throw new Error(`Payload export contains executable value at ${path}`)
+  if (ArrayBuffer.isView(value)) {
+    boundedByteView(value, path)
+    return
+  }
   if (Array.isArray(value)) {
     if (value.length > MAX_CHILDREN) throw new Error(`Payload export exceeds collection bound at ${path}`)
     value.forEach((child, index) => assertSafeJson(child, `${path}[${index}]`, depth + 1))
@@ -209,8 +213,14 @@ function requiredProse(value: unknown, field: string, location = 'metadata') {
   return text
 }
 
+function opaquePayloadDocumentId(value: string) {
+  return `document-${digest(value)}`
+}
+
 function requiredPayloadId(value: unknown) {
-  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'string' && value.trim()) {
+    return opaquePayloadDocumentId(value.trim())
+  }
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   throw new Error('Payload publication id must be a non-empty string or number')
 }
@@ -248,12 +258,30 @@ function sourceSafeId(value: string) {
   return `${prefix}-${suffix}`
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+function boundedByteView(value: ArrayBufferView, path: string): Uint8Array {
+  if (!(value instanceof Uint8Array))
+    throw new Error(`Payload upload has unsupported byte view type at ${path}`)
+  if (value.byteLength > MAX_EXPORT_BYTES)
+    throw new Error(`Payload upload exceeds byte bound at ${path}`)
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+}
+
+function stableStringify(value: unknown, path = '$'): string {
+  if (ArrayBuffer.isView(value)) {
+    const bytes = boundedByteView(value, path)
+    return `{"$byteView":{"type":"Uint8Array","byteLength":${bytes.byteLength},"sha256":"${digest(bytes)}"}}`
+  }
+  if (Array.isArray(value))
+    return `[${value
+      .map((child, index) => stableStringify(child, `${path}[${index}]`))
+      .join(',')}]`
   if (isObject(value)) {
     return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${stableStringify(value[key], `${path}.${key}`)}`,
+      )
       .join(',')}}`
   }
   return JSON.stringify(value) ?? 'null'
@@ -266,8 +294,20 @@ function digest(value: Uint8Array | string) {
 /** Stable id derivation is public so anchor tests and tooling can prove the
  * structural-path/content-digest rule without invoking the adapter. */
 export function derivePayloadNodeId(documentId: string, structuralPath: string, node: unknown) {
+  return derivePayloadNodeIdFromOpaque(
+    opaquePayloadDocumentId(documentId),
+    structuralPath,
+    node,
+  )
+}
+
+function derivePayloadNodeIdFromOpaque(
+  documentId: string,
+  structuralPath: string,
+  node: unknown,
+) {
   const suffix = digest(`${documentId}|${structuralPath}|${stableStringify(node)}`).slice(0, 20)
-  const documentPrefix = sourceSafeId(documentId).slice(
+  const documentPrefix = documentId.slice(
     0,
     256 - 'derived--'.length - suffix.length,
   )
@@ -280,14 +320,26 @@ function sourceLocation(sourceId: string, path: string) {
 
 function decodeBytes(value: unknown, path: string): Uint8Array | undefined {
   if (value === undefined || value === null) return undefined
-  if (value instanceof Uint8Array) return value.byteLength ? new Uint8Array(value) : undefined
+  if (value instanceof Uint8Array) {
+    if (value.byteLength > MAX_EXPORT_BYTES)
+      throw new Error(`Payload upload exceeds byte bound at ${path}`)
+    return value.byteLength ? new Uint8Array(value) : undefined
+  }
   if (Array.isArray(value) && value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) return value.length ? new Uint8Array(value as number[]) : undefined
   if (typeof value !== 'string') throw new Error(`Payload upload bytes at ${path} must be base64 or byte array`)
   const encoded = value.trim()
-  if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new Error(`Payload upload bytes at ${path} are not valid base64`)
-  const bytes = Uint8Array.from(Buffer.from(encoded, 'base64'))
-  if (bytes.length > MAX_EXPORT_BYTES) throw new Error(`Payload upload exceeds byte bound at ${path}`)
-  return bytes
+  if (!encoded || encoded.length % 4 !== 0)
+    throw new Error(`Payload upload bytes at ${path} are not valid base64`)
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0
+  const decodedLength = (encoded.length / 4) * 3 - padding
+  if (decodedLength > MAX_EXPORT_BYTES)
+    throw new Error(`Payload upload exceeds encoded byte bound at ${path}`)
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+    throw new Error(`Payload upload bytes at ${path} are not valid base64`)
+  const decoded = Buffer.from(encoded, 'base64')
+  return decoded.byteLength
+    ? new Uint8Array(decoded.buffer, decoded.byteOffset, decoded.byteLength)
+    : undefined
 }
 
 function mediaTypeFor(upload: JsonObject, location: string): string {
@@ -720,7 +772,7 @@ function nodeId(state: AdapterState, node: LexicalNode, path: string, kind: stri
     return { id: explicit, origin: 'source' as const }
   }
   void kind
-  const id = derivePayloadNodeId(state.documentId, path, node)
+  const id = derivePayloadNodeIdFromOpaque(state.documentId, path, node)
   let candidate = id
   let suffix = 1
   while (state.usedIds.has(candidate)) candidate = `${id}-${suffix++}`
@@ -831,8 +883,9 @@ function appendInline(state: AdapterState, children: LexicalNode[], path: string
       }
       if (!href) throw new Error(`Payload link is missing href at ${sourceLocation(state.sourceId, nodePath)}`)
       const labelStart = text.length
-      nodeChildren(node, sourceLocation(state.sourceId, nodePath)).forEach((child, index) => visit(child, { ...current, href }, `${nodePath}.children[${index}]`, true))
+      nodeChildren(node, sourceLocation(state.sourceId, nodePath)).forEach((child, index) => visit(child, current, `${nodePath}.children[${index}]`, true))
       if (!text.slice(labelStart).trim()) throw new Error(`Payload link is empty at ${sourceLocation(state.sourceId, nodePath)}`)
+      inlineRuns.push({ start: labelStart, end: text.length, ...current, href })
       return
     }
     const configuredRelationship = relationshipValues(state, node, type, sourceLocation(state.sourceId, nodePath))

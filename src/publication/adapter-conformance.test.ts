@@ -22,7 +22,14 @@ import {
   sourceReceiptHashes,
 } from './adapter-conformance'
 import type { AssetDescriptor } from './asset-bundle'
-import { publicationGraphSchema } from './schema'
+import {
+  publicationGraphSchema,
+  serializePublicationGraph,
+} from './schema'
+import {
+  PUBLICATION_PROFILES,
+  publicationGraphToHtml,
+} from './renderers/vivliostyle'
 import { createPublicationContractReceipt } from './source-adapter'
 
 describe('publication source adapter conformance', () => {
@@ -153,6 +160,224 @@ describe('publication source adapter conformance', () => {
     expect(canonicalPublicationSubsetSha256(left)).toBe(
       canonicalPublicationSubsetSha256(right),
     )
+  })
+
+  it('canonicalizes adjacent equivalent inline runs across source segmentation', () => {
+    const segmented = adaptPayloadLexical({
+      id: 'segmented-inline-runs',
+      title: 'Segmented inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [
+                { type: 'text', text: 'a', format: 'bold' },
+                { type: 'text', text: 'b', format: 'bold' },
+              ],
+            },
+          ],
+        },
+      },
+    })
+    const combined = adaptPayloadLexical({
+      id: 'combined-inline-runs',
+      title: 'Segmented inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'ab', format: 'bold' }],
+            },
+          ],
+        },
+      },
+    })
+
+    expect(comparePublicationSemanticSubset(segmented, combined)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(segmented)).toBe(
+      canonicalPublicationSubsetSha256(combined),
+    )
+    const canonical = canonicalPublicationSourceResult(segmented)
+    const paragraph = canonical.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    expect(paragraph).toMatchObject({
+      type: 'paragraph',
+      inlineRuns: [{ start: 0, end: 2, bold: true }],
+    })
+  })
+
+  it('preserves authored link boundaries through canonical serialization in every profile', () => {
+    const canonical = canonicalPublicationSourceResult(
+      adaptPayloadLexical({
+        id: 'canonical-link-boundaries',
+        title: 'Canonical link boundaries',
+        content: {
+          root: {
+            type: 'root',
+            children: [
+              {
+                type: 'paragraph',
+                children: [
+                  {
+                    type: 'link',
+                    url: 'https://example.com/formatted',
+                    children: [
+                      { type: 'text', text: 'Read ' },
+                      { type: 'text', text: 'more', format: 'bold' },
+                    ],
+                  },
+                  {
+                    type: 'link',
+                    url: 'https://example.com/adjacent',
+                    children: [{ type: 'text', text: 'one' }],
+                  },
+                  {
+                    type: 'link',
+                    url: 'https://example.com/adjacent',
+                    children: [{ type: 'text', text: 'two' }],
+                  },
+                  {
+                    type: 'link',
+                    url: 'https://example.com/break',
+                    children: [
+                      { type: 'text', text: 'up' },
+                      { type: 'linebreak' },
+                      { type: 'text', text: 'down' },
+                    ],
+                  },
+                ],
+              },
+              {
+                type: 'paragraph',
+                children: [
+                  {
+                    type: 'link',
+                    url: 'https://example.com/adjacent',
+                    children: [{ type: 'text', text: 'block' }],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    )
+    const graph = publicationGraphSchema.parse(
+      JSON.parse(serializePublicationGraph(canonical.graph)),
+    )
+    const firstParagraph = graph.nodes.find(
+      (node) => node.type === 'paragraph' && node.text === 'Read moreonetwoup\ndown',
+    )
+    if (!firstParagraph || firstParagraph.type !== 'paragraph')
+      throw new Error('canonical link boundary regression setup failed')
+    const linkRuns = firstParagraph.inlineRuns?.filter((run) => run.href) ?? []
+    expect(linkRuns).toEqual([
+      {
+        start: 0,
+        end: 9,
+        href: 'https://example.com/formatted',
+      },
+      {
+        start: 9,
+        end: 12,
+        href: 'https://example.com/adjacent',
+      },
+      {
+        start: 12,
+        end: 15,
+        href: 'https://example.com/adjacent',
+      },
+      {
+        start: 15,
+        end: 22,
+        href: 'https://example.com/break',
+      },
+    ])
+    expect(linkRuns[1]).not.toBe(linkRuns[2])
+    expect(firstParagraph.inlineRuns).toContainEqual({
+      start: 5,
+      end: 9,
+      bold: true,
+    })
+
+    for (const profile of PUBLICATION_PROFILES) {
+      const html = publicationGraphToHtml(graph, new Map(), profile)
+      expect(
+        html.match(/href="https:\/\/example\.com\/formatted"/g),
+      ).toHaveLength(1)
+      expect(
+        html.match(/href="https:\/\/example\.com\/adjacent"/g),
+      ).toHaveLength(3)
+      expect(
+        html.match(/href="https:\/\/example\.com\/break"/g),
+      ).toHaveLength(2)
+    }
+  })
+
+  it('preserves adjacent target-only cross-reference ranges through canonicalization', () => {
+    const adapted = adaptPayloadLexical(
+      {
+        id: 'canonical-target-only-boundaries',
+        title: 'Canonical target-only boundaries',
+        content: {
+          root: {
+            children: [
+              {
+                type: 'paragraph',
+                children: [
+                  { type: 'citation', value: 'target', label: 'a' },
+                  { type: 'citation', value: 'target', label: 'b' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { relationships: { citation: { role: 'cross-reference' } } },
+    )
+    const graph = publicationGraphSchema.parse({
+      ...adapted.graph,
+      nodes: adapted.graph.nodes.map((node) =>
+        node.type === 'paragraph'
+          ? {
+              ...node,
+              inlineRuns: node.inlineRuns?.map((run) =>
+                run.semanticRole === 'cross-reference'
+                  ? {
+                      start: run.start,
+                      end: run.end,
+                      semanticRole: run.semanticRole,
+                      targetIds: run.targetIds,
+                    }
+                  : run,
+              ),
+            }
+          : node,
+      ),
+    })
+    const canonical = canonicalPublicationSourceResult({ ...adapted, graph })
+    const paragraph = canonical.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (!paragraph || paragraph.type !== 'paragraph')
+      throw new Error('target-only link boundary regression setup failed')
+    const runs =
+      paragraph.inlineRuns?.filter(
+        (run) => run.semanticRole === 'cross-reference',
+      ) ?? []
+    expect(runs).toHaveLength(2)
+    expect(runs[0]).toMatchObject({ start: 0, end: 1 })
+    expect(runs[1]).toMatchObject({ start: 1, end: 2 })
+    expect(runs[0]).not.toBe(runs[1])
+
+    const target = `#${runs[0]?.targetIds?.[0]}`
+    for (const profile of PUBLICATION_PROFILES) {
+      const html = publicationGraphToHtml(canonical.graph, new Map(), profile)
+      expect(html.split(`href="${target}"`)).toHaveLength(3)
+    }
   })
 
   it('canonicalizes relationship anchors separately from publication node ids', () => {

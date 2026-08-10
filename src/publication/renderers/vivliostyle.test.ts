@@ -142,7 +142,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     )
   })
 
-  it('coalesces styled link runs and preserves hard-break markup', async () => {
+  it('renders one anchor per link range without crossing hard breaks', async () => {
     const contentRoot = await fixtureCollection('synthetic-publication')
     const bundle = await adaptAstroBlogEntry({
       entryId: 'synthetic-publication',
@@ -159,17 +159,35 @@ describe('Vivliostyle publication renderer boundary', () => {
         node.id === paragraph.id
           ? {
               ...node,
-              text: 'read this\n',
+              text: 'read thisonetwoup\ndown',
               inlineRuns: [
-                { start: 0, end: 5, href: 'https://example.com/' },
+                {
+                  start: 0,
+                  end: 9,
+                  href: 'https://example.com/formatted',
+                },
                 {
                   start: 5,
                   end: 9,
-                  href: 'https://example.com/',
                   bold: true,
                   underline: true,
                 },
-                { start: 9, end: 10, hardBreak: true },
+                {
+                  start: 9,
+                  end: 12,
+                  href: 'https://example.com/adjacent',
+                },
+                {
+                  start: 12,
+                  end: 15,
+                  href: 'https://example.com/adjacent',
+                },
+                {
+                  start: 15,
+                  end: 22,
+                  href: 'https://example.com/break',
+                },
+                { start: 17, end: 18, hardBreak: true },
               ],
             }
           : node,
@@ -182,10 +200,22 @@ describe('Vivliostyle publication renderer boundary', () => {
       ]),
     )
     const html = publicationGraphToHtml(graph, paths, 'phone-webpub')
-    expect(html.match(/href="https:\/\/example\.com\//g)).toHaveLength(1)
-    expect(html).toContain('<u><strong>this</strong></u>')
-    expect(html).toContain('</a><br>')
-    expect(html).toContain('<br>')
+    expect(
+      html.match(/href="https:\/\/example\.com\/formatted"/g),
+    ).toHaveLength(1)
+    expect(html.match(/href="https:\/\/example\.com\/adjacent"/g)).toHaveLength(
+      2,
+    )
+    expect(html.match(/href="https:\/\/example\.com\/break"/g)).toHaveLength(2)
+    expect(html).toContain(
+      '<a href="https://example.com/formatted">read <u><strong>this</strong></u></a>',
+    )
+    expect(html).toContain(
+      '<a href="https://example.com/adjacent">one</a><a href="https://example.com/adjacent">two</a>',
+    )
+    expect(html).toContain(
+      '<a href="https://example.com/break">up</a><br><a href="https://example.com/break">down</a>',
+    )
   })
 
   it('rejects hard-break runs that cover authored text', async () => {
@@ -802,6 +832,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toBe('.svg')
     expect(publicationAssetFileExtension('photo.JPG', 'image/jpeg')).toBe(
       '.jpg',
+    )
+    expect(publicationAssetFileExtension('cover.html', 'image/png')).toBe(
+      '.png',
     )
   })
 

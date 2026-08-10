@@ -103,6 +103,47 @@ function canonicalAssetProjection(value: PublicationSemanticInput) {
   }
 }
 
+function canonicalInlineRunProducesLink(run: Record<string, unknown>) {
+  return Boolean(
+    run.href ||
+      ((run.semanticRole === 'citation' ||
+        run.semanticRole === 'cross-reference') &&
+        Array.isArray(run.targetIds) &&
+        run.targetIds.length),
+  )
+}
+
+function canonicalInlineRuns(
+  runs: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const result: Array<Record<string, unknown>> = []
+  for (const run of runs) {
+    const previous = result.at(-1)
+    const { start: _start, end: _end, ...semantics } = run
+    const previousSemantics = previous
+      ? Object.fromEntries(
+          Object.entries(previous).filter(
+            ([key]) => key !== 'start' && key !== 'end',
+          ),
+        )
+      : undefined
+    if (
+      previous &&
+      previous.end === run.start &&
+      !previous.hardBreak &&
+      !run.hardBreak &&
+      !canonicalInlineRunProducesLink(previous) &&
+      !canonicalInlineRunProducesLink(run) &&
+      stableJson(previousSemantics) === stableJson(semantics)
+    ) {
+      previous.end = run.end
+      continue
+    }
+    result.push({ ...run })
+  }
+  return result
+}
+
 /**
  * Remove adapter/source identity while retaining the meaning graph.  Node
  * identifiers are normalized by structural reading order so equivalent Astro
@@ -202,15 +243,17 @@ function canonicalProjection(value: PublicationSemanticInput) {
       }))
     }
     if ('inlineRuns' in node && node.inlineRuns) {
-      normalized.inlineRuns = node.inlineRuns.map((run) => ({
-        ...run,
-        ...(run.href ? { href: normalizeHref(run.href) } : {}),
-        ...(run.annotationId ? { annotationId: normalizeTarget(run.annotationId) } : {}),
-        ...(run.relationshipId
-          ? { relationshipId: normalizeRelationshipId(run.relationshipId) }
-          : {}),
-        ...(run.targetIds ? { targetIds: run.targetIds.map(normalizeTarget) } : {}),
-      }))
+      normalized.inlineRuns = canonicalInlineRuns(
+        node.inlineRuns.map((run) => ({
+          ...run,
+          ...(run.href ? { href: normalizeHref(run.href) } : {}),
+          ...(run.annotationId ? { annotationId: normalizeTarget(run.annotationId) } : {}),
+          ...(run.relationshipId
+            ? { relationshipId: normalizeRelationshipId(run.relationshipId) }
+            : {}),
+          ...(run.targetIds ? { targetIds: run.targetIds.map(normalizeTarget) } : {}),
+        })),
+      )
     }
     return normalized
   }

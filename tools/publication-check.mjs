@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -13,6 +13,7 @@ import { PAYLOAD_MAPPING_POLICY_VERSION } from '../src/publication/adapters/payl
 import {
   PUBLICATION_PROFILES,
   publicationAssetFileExtension,
+  publicationInlineLinkTargets,
   publicationNodeForProfile,
 } from '../src/publication/renderers/vivliostyle.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
@@ -23,6 +24,7 @@ import { publicationPdfRendererForArchitecture } from '../src/publication/toolch
 import {
   canonicalRouteBodyFingerprint,
   publicationGraphBodyFingerprint,
+  publicationRepositoryForCurrentCheckout,
 } from './publication-build.mjs'
 
 export function parsePublicationCheckArgs(argv) {
@@ -455,6 +457,30 @@ export function publicationPdfLinkRequirements(graph) {
   return publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf')
 }
 
+export function publicationPdfImageAssetRequirements(
+  graph,
+  profile = 'a5-pdf',
+) {
+  const assetIds = []
+  const seen = new Set()
+  for (const original of graph.nodes ?? []) {
+    const node = publicationNodeForProfile(original, profile)
+    if (node.requirement === 'optional') continue
+    const renderedAssetIds =
+      node.type === 'figure' && node.assetIds.length > 0
+        ? node.assetIds
+        : node.type === 'media' && node.mediaKind === 'image'
+          ? [node.assetId]
+          : []
+    for (const assetId of renderedAssetIds) {
+      if (seen.has(assetId)) continue
+      seen.add(assetId)
+      assetIds.push(assetId)
+    }
+  }
+  return assetIds
+}
+
 export function publicationPdfLinkRequirementsForProfile(
   graph,
   profile = 'a5-pdf',
@@ -462,14 +488,24 @@ export function publicationPdfLinkRequirementsForProfile(
   const links = []
   for (const node of graph.nodes) {
     const selected = publicationNodeForProfile(node, profile)
-    for (const run of selected.inlineRuns ?? []) {
-      if (run.href) links.push(run.href)
-      else if (
-        (run.semanticRole === 'citation' ||
-          run.semanticRole === 'cross-reference') &&
-        run.targetIds?.length
+    const runs = selected.inlineRuns ?? []
+    if (
+      typeof selected.text === 'string' &&
+      runs.every(
+        (run) => Number.isInteger(run.start) && Number.isInteger(run.end),
       )
-        links.push(`#${run.targetIds[0]}`)
+    ) {
+      links.push(...publicationInlineLinkTargets(selected.text, runs))
+    } else {
+      for (const run of runs) {
+        if (run.href) links.push(run.href)
+        else if (
+          (run.semanticRole === 'citation' ||
+            run.semanticRole === 'cross-reference') &&
+          run.targetIds?.length
+        )
+          links.push(`#${run.targetIds[0]}`)
+      }
     }
     if (selected.type === 'reference' && selected.href)
       links.push(selected.href)
@@ -1032,12 +1068,11 @@ export async function publicationCheck(
     'Publication source provenance is missing from its receipt',
   )
   assertPublicationReceiptMappingVersion(receipt)
-  const currentCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim()
-  const currentDirty =
-    execFileSync('git', ['status', '--short'], { encoding: 'utf8' }).trim()
-      .length > 0
+  const currentRepository = publicationRepositoryForCurrentCheckout(
+    execution.cleanlinessExclusions,
+  )
+  const currentCommit = currentRepository.commit
+  const currentDirty = currentRepository.dirty
   assert(
     receipt.repository?.commit === currentCommit,
     'Publication receipt is bound to a different checked-out commit',
@@ -1107,13 +1142,10 @@ export async function publicationCheck(
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requiredImageCount: pdfNodes
-      .filter((node) => node.requirement !== 'optional')
-      .filter(
-        (node) =>
-          (node.type === 'figure' && node.assetIds.length > 0) ||
-          (node.type === 'media' && node.mediaKind === 'image'),
-      ).length,
+    requiredImageCount: publicationPdfImageAssetRequirements(
+      graph,
+      'a5-pdf',
+    ).length,
     requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
     widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
   }

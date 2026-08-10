@@ -4,6 +4,13 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
+import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
+import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
+import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
+import {
+  publicationGraphSchema,
+  serializePublicationGraph,
+} from '../src/publication/schema.ts'
 import {
   assertPdfPageGeometry,
   assertPdfCropBox,
@@ -21,6 +28,7 @@ import {
   normalizePdfSearchableText,
   normalizePdfVerificationText,
   orderPdfTextRequirements,
+  publicationPdfImageAssetRequirements,
   publicationPdfLinkRequirements,
   publicationPdfLinkRequirementsForProfile,
   publicationReceiptRequiresCanonicalRouteParity,
@@ -488,6 +496,77 @@ describe('publication:check CLI', () => {
     ).not.toThrow()
   })
 
+  it('matches PDF requirements to rendered link ranges without crossing breaks or blocks', () => {
+    const source = adaptPayloadLexical({
+      id: 'link-boundaries',
+      title: 'Link boundaries',
+      locale: 'en',
+      content: {
+        root: {
+          type: 'root',
+          children: [
+            {
+              type: 'paragraph',
+              children: [
+                {
+                  type: 'link',
+                  url: 'https://example.com/formatted',
+                  children: [
+                    { type: 'text', text: 'Read ' },
+                    { type: 'text', text: 'more', format: 'bold' },
+                  ],
+                },
+                {
+                  type: 'link',
+                  url: 'https://example.com/adjacent',
+                  children: [{ type: 'text', text: 'one' }],
+                },
+                {
+                  type: 'link',
+                  url: 'https://example.com/adjacent',
+                  children: [{ type: 'text', text: 'two' }],
+                },
+                {
+                  type: 'link',
+                  url: 'https://example.com/break',
+                  children: [
+                    { type: 'text', text: 'up' },
+                    { type: 'linebreak' },
+                    { type: 'text', text: 'down' },
+                  ],
+                },
+              ],
+            },
+            {
+              type: 'paragraph',
+              children: [
+                {
+                  type: 'link',
+                  url: 'https://example.com/adjacent',
+                  children: [{ type: 'text', text: 'block' }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    })
+    const canonical = canonicalPublicationSourceResult(source)
+    const graph = publicationGraphSchema.parse(
+      JSON.parse(serializePublicationGraph(canonical.graph)),
+    )
+    for (const profile of PUBLICATION_PROFILES) {
+      expect(publicationPdfLinkRequirementsForProfile(graph, profile)).toEqual([
+        'https://example.com/formatted',
+        'https://example.com/adjacent',
+        'https://example.com/adjacent',
+        'https://example.com/break',
+        'https://example.com/break',
+        'https://example.com/adjacent',
+      ])
+    }
+  })
+
   it('requires target-only cross-references in PDF link requirements', () => {
     const graph = {
       nodes: [
@@ -716,6 +795,44 @@ describe('publication:check CLI', () => {
       'Body text',
       'repeat',
       'repeat',
+    ])
+  })
+
+  it('counts required PDF images by distinct rendered asset identity', () => {
+    const graph = {
+      nodes: [
+        {
+          type: 'figure',
+          requirement: 'required',
+          assetIds: ['shared-image', 'second-image'],
+          variants: [],
+        },
+        {
+          type: 'figure',
+          requirement: 'required',
+          assetIds: ['shared-image'],
+          variants: [],
+        },
+        {
+          type: 'media',
+          mediaKind: 'image',
+          requirement: 'required',
+          assetId: 'second-image',
+          variants: [],
+        },
+        {
+          type: 'media',
+          mediaKind: 'image',
+          requirement: 'optional',
+          assetId: 'optional-image',
+          variants: [],
+        },
+      ],
+    }
+
+    expect(publicationPdfImageAssetRequirements(graph, 'a5-pdf')).toEqual([
+      'shared-image',
+      'second-image',
     ])
   })
 

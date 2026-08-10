@@ -40,8 +40,10 @@ The report schema is
 The runner passes no ground-truth labels to an adapter, permits tuning only on
 `development`, scores each held-out candidate identity once, and rejects a
 proposal carrying `gold`, `expected`, reviewer labels, or equivalent fields.
-The second invocation for a fixed source, identity, and prompt is compared to
-the first; a byte-unstable candidate is disqualified.
+A caller-owned score-once receipt store prevents a second invocation for the
+same held-out source and candidate identity; within one invocation, the second
+deterministic check is compared byte-for-byte with the first and an unstable
+candidate is disqualified.
 
 ## Decision record
 
@@ -60,3 +62,23 @@ stratum, and any unverified span, model-authored alt text, or model-authored
 asset geometry disqualifies it regardless of aggregate score. If arms win
 different strata, the report is presented for an explicit hybrid decision
 instead of silently selecting a global winner.
+
+## Post-merge review repair triage (issue 134)
+
+All 17 findings from the post-merge review were reproduced as confirmed defects
+and repaired on the follow-up head:
+
+- the corpus validator binds each document to its development/held-out array and
+  checks every case label against source runs, assets, and declared boilerplate;
+- code materialization preserves source whitespace; table and figure nodes are
+  required to carry semantic cells, deterministic assets, and captions;
+- heading levels participate in case scores; source order is monotonic across
+  nodes; report hashes are checked before decisions; and page denominators come
+  from the context;
+- held-out score-once keys can be supplied through a durable caller-owned store
+  (with a corpus-scoped process fallback), while contaminated arms stop before
+  later held-out documents and adapter failures become isolated failed rows;
+- authored inputs omit deterministic boilerplate labels while both arms receive
+  the shared page renditions; disagreement states are scoped to the current
+  stratum/case; non-figure alt text is rejected; and note/citation targets with
+  reciprocal backlinks are represented in the structured contract.

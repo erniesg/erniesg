@@ -246,11 +246,152 @@ describe('source-backed structured extraction verifier', () => {
     const input = modelInputForStructuredExtraction(context(), 'llm-grounded')
     expect(input.provenArtifacts).toHaveLength(1)
     expect(input).not.toHaveProperty('groundTruth')
+    expect(
+      modelInputForStructuredExtraction(context(), 'llm-authored'),
+    ).not.toHaveProperty('boilerplateRunIds')
+    const withRendition = context()
+    withRendition.pageRenditions = [
+      { page: 1, reference: 'owner-local-page-1' },
+    ]
+    expect(
+      modelInputForStructuredExtraction(withRendition, 'llm-authored')
+        .pageRenditions,
+    ).toEqual([{ page: 1, reference: 'owner-local-page-1' }])
     const first = verifyStructuredExtraction(context(), validProposal())
     const second = verifyStructuredExtraction(
       context(),
       structuredClone(validProposal()),
     )
     expect(first).toEqual(second)
+  })
+
+  it('preserves source whitespace for code nodes', () => {
+    const input = context()
+    input.sourceRuns.push({
+      id: 'code-run',
+      text: '  if (ready) {\n    return true\n  }',
+      page: 2,
+      order: 8,
+    })
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'code',
+      type: 'code',
+      sourceRunIds: ['code-run'],
+    })
+    const result = verifyStructuredExtraction(input, candidate)
+
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      expect(result.output.nodes.at(-1)?.text).toBe(
+        '  if (ready) {\n    return true\n  }',
+      )
+    }
+  })
+
+  it('requires semantic cells and deterministic assets for object nodes', () => {
+    const table = validProposal()
+    table.nodes.push({
+      id: 'table-without-cells',
+      type: 'table',
+      sourceRunIds: ['table-head'],
+    })
+    const missingTable = verifyStructuredExtraction(context(), table)
+    expect(missingTable.status).toBe('failed')
+    if (missingTable.status === 'failed') {
+      expect(missingTable.issues.map(({ code }) => code)).toContain(
+        'invalid-table',
+      )
+    }
+
+    const figure = validProposal()
+    figure.nodes.push({
+      id: 'figure-without-asset',
+      type: 'figure',
+      sourceRunIds: ['figure-run'],
+    })
+    const missingFigureAsset = verifyStructuredExtraction(context(), figure)
+    expect(missingFigureAsset.status).toBe('failed')
+    if (missingFigureAsset.status === 'failed') {
+      expect(missingFigureAsset.issues.map(({ code }) => code)).toContain(
+        'unknown-asset',
+      )
+    }
+
+    const figureWithoutCaption = validProposal()
+    delete figureWithoutCaption.nodes[2]!.captionNodeId
+    const missingFigureCaption = verifyStructuredExtraction(
+      context(),
+      figureWithoutCaption,
+    )
+    expect(missingFigureCaption.status).toBe('failed')
+    if (missingFigureCaption.status === 'failed') {
+      expect(missingFigureCaption.issues.map(({ code }) => code)).toContain(
+        'missing-caption',
+      )
+    }
+  })
+
+  it('rejects non-figure alt text and cross-node source reordering', () => {
+    const altText = validProposal()
+    altText.nodes[0]!.altText = 'invented'
+    altText.nodes[0]!.altTextSource = 'model'
+    const altTextResult = verifyStructuredExtraction(context(), altText)
+    expect(altTextResult.status).toBe('failed')
+
+    const reordered = validProposal()
+    reordered.nodes[0]!.sourceRunIds = ['body-run']
+    reordered.nodes[0]!.text = 'A continuous paragraph.'
+    reordered.nodes[1]!.sourceRunIds = ['title-run']
+    reordered.nodes[1]!.text = 'A source-backed title'
+    const orderResult = verifyStructuredExtraction(context(), reordered)
+    expect(orderResult.status).toBe('failed')
+    if (orderResult.status === 'failed') {
+      expect(orderResult.issues.map(({ code }) => code)).toContain(
+        'unverified-span',
+      )
+    }
+  })
+
+  it('preserves source-backed note and citation links with reciprocal backlinks', () => {
+    const input = context()
+    input.sourceRuns.push(
+      { id: 'note-marker', text: '1', page: 2, order: 8 },
+      { id: 'note-body', text: 'A note.', page: 2, order: 9 },
+      { id: 'citation-marker', text: '[1]', page: 2, order: 10 },
+      { id: 'reference', text: 'A reference.', page: 2, order: 11 },
+    )
+    const candidate = validProposal()
+    candidate.nodes.push(
+      {
+        id: 'note-marker',
+        type: 'paragraph',
+        sourceRunIds: ['note-marker'],
+        relationships: { noteTargetNodeId: 'note-body' },
+      },
+      {
+        id: 'note-body',
+        type: 'footnote',
+        sourceRunIds: ['note-body'],
+        relationships: { backlinks: ['note-marker'] },
+      },
+      {
+        id: 'citation-marker',
+        type: 'paragraph',
+        sourceRunIds: ['citation-marker'],
+        citationTargetNodeIds: ['reference'],
+      },
+      {
+        id: 'reference',
+        type: 'reference',
+        sourceRunIds: ['reference'],
+        backlinks: ['citation-marker'],
+      },
+    )
+    const result = verifyStructuredExtraction(input, candidate)
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      expect(result.output.nodes.at(-1)?.backlinks).toEqual(['citation-marker'])
+    }
   })
 })

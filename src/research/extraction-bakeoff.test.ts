@@ -4,6 +4,7 @@ import {
   createExtractionArchitectureDecision,
   EXTRACTION_BAKEOFF_STRATA,
   runExtractionBakeoff,
+  validateExtractionBakeoffCorpus,
   type ExtractionBakeoffArm,
   type ExtractionBakeoffCorpus,
 } from './extraction-bakeoff'
@@ -156,6 +157,46 @@ describe('extraction architecture bake-off', () => {
     expect(createExtractionArchitectureDecision({ report }).reportSha256).toBe(
       report.reportSha256,
     )
+  })
+
+  it('scores expected heading levels as part of sectioning quality', async () => {
+    const inputCorpus = corpus()
+    for (const document of [
+      ...inputCorpus.development,
+      ...inputCorpus.heldOut,
+    ]) {
+      const sectioningCase = document.cases.find(
+        ({ stratum }) => stratum === 'sectioning',
+      )!
+      sectioningCase.expectedNodeTypes = ['heading', 'paragraph']
+      sectioningCase.expectedHeadingLevels = [2]
+    }
+
+    const withHeadingLevel =
+      (level: number) => (input: StructuredExtractionContext) => {
+        const output = proposal(input)
+        output.nodes[0] = {
+          ...output.nodes[0]!,
+          type: 'heading',
+          level,
+        }
+        return output
+      }
+    const correctHeadingLevel = arm('geometric-baseline', withHeadingLevel(2))
+    const wrongHeadingLevel = arm('llm-authored', withHeadingLevel(1))
+    const report = await runExtractionBakeoff({
+      corpus: inputCorpus,
+      arms: [correctHeadingLevel, wrongHeadingLevel, arm('llm-grounded')],
+    })
+    const sectionScore = report.arms[
+      'llm-authored'
+    ].documents[0]!.caseScores.find(({ stratum }) => stratum === 'sectioning')!
+    const correctScore = report.arms[
+      'geometric-baseline'
+    ].documents[0]!.caseScores.find(({ stratum }) => stratum === 'sectioning')!
+
+    expect(sectionScore.headingLevelRecall).toBe(0)
+    expect(sectionScore.score).toBeLessThan(correctScore.score)
   })
 
   it('disqualifies a byte-unstable candidate rather than publishing the first result', async () => {
@@ -331,5 +372,170 @@ describe('extraction architecture bake-off', () => {
 
     expect(decision.owner).toBe('pending')
     expect(decision.humanDecisionRequired).toBe(true)
+  })
+
+  it('scopes disagreements to the active stratum instead of whole documents', async () => {
+    const inputCorpus = corpus()
+    for (const document of [
+      ...inputCorpus.development,
+      ...inputCorpus.heldOut,
+    ]) {
+      const sectioningCase = document.cases.find(
+        ({ stratum }) => stratum === 'sectioning',
+      )!
+      sectioningCase.expectedNodeTypes = ['paragraph']
+      sectioningCase.expectedSourceRunIds = [`${document.id}-body`]
+    }
+    const alternateTitleType = arm('llm-authored', (input) => {
+      const output = proposal(input)
+      output.nodes[0] = { ...output.nodes[0]!, type: 'author' }
+      return output
+    })
+    const report = await runExtractionBakeoff({
+      corpus: inputCorpus,
+      arms: [
+        arm('geometric-baseline'),
+        alternateTitleType,
+        arm('llm-grounded'),
+      ],
+    })
+    const sectioning = report.comparison.find(
+      ({ stratum, layout }) =>
+        stratum === 'sectioning' && layout === 'one-column',
+    )!
+    const prose = report.comparison.find(
+      ({ stratum, layout }) =>
+        stratum === 'prose-continuity' && layout === 'one-column',
+    )!
+
+    expect(sectioning.disagreementDocumentIds).not.toContain('heldout-one')
+    expect(prose.disagreementDocumentIds).toContain('heldout-one')
+  })
+
+  it('binds documents to the split array and validates case references', () => {
+    const mismatchedSplit = corpus()
+    mismatchedSplit.heldOut[0]!.split = 'development'
+    expect(() => validateExtractionBakeoffCorpus(mismatchedSplit)).toThrow(
+      'EXTRACTION_BAKEOFF_SPLIT_MISMATCH',
+    )
+
+    const unknownLabel = corpus()
+    unknownLabel.heldOut[0]!.cases[0]!.expectedSourceRunIds = ['missing-run']
+    expect(() => validateExtractionBakeoffCorpus(unknownLabel)).toThrow(
+      'INVALID_EXTRACTION_BAKEOFF_CASE',
+    )
+  })
+
+  it('rejects a mutated report before deriving an architecture decision', async () => {
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [
+        arm('geometric-baseline'),
+        arm('llm-authored'),
+        arm('llm-grounded'),
+      ],
+    })
+    const mutated = structuredClone(report)
+    mutated.comparison[0]!.scores['llm-authored'] = 0
+    expect(() =>
+      createExtractionArchitectureDecision({ report: mutated }),
+    ).toThrow('INVALID_EXTRACTION_BAKEOFF_REPORT_HASH')
+  })
+
+  it('uses a caller-persisted score-once store and benchmark page denominator', async () => {
+    const inputCorpus = corpus()
+    const scoreOnceStore = new Set<string>()
+    const arms = [
+      arm('geometric-baseline'),
+      arm('llm-authored'),
+      arm('llm-grounded'),
+    ]
+    await runExtractionBakeoff({
+      corpus: inputCorpus,
+      arms,
+      scoreOnceStore,
+    })
+    await expect(
+      runExtractionBakeoff({
+        corpus: inputCorpus,
+        arms,
+        scoreOnceStore,
+      }),
+    ).rejects.toThrow('HELD_OUT_SCORED_MORE_THAN_ONCE')
+
+    const badMetrics = arm('llm-authored')
+    badMetrics.run = (input) => ({
+      proposal: proposal(input),
+      metrics: { latencyMs: 12, costUsd: 0.02, pageCount: 99 },
+    })
+    const report = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), badMetrics, arm('llm-grounded')],
+    })
+    expect(report.arms['llm-authored'].documents[0]!.status).toBe('failed')
+    expect(
+      report.arms['llm-authored'].documents[0]!.verification.issueCodes,
+    ).toContain('invalid-run-metrics')
+
+    const benchmarkContextCorpus = corpus()
+    Object.assign(benchmarkContextCorpus.heldOut[0]!.context, {
+      pageCount: 3,
+    })
+    const benchmarkPages = arm('llm-authored')
+    benchmarkPages.run = (input) => ({
+      proposal: proposal(input),
+      metrics: { latencyMs: 12, costUsd: 0.02, pageCount: 3 },
+    })
+    const benchmarkReport = await runExtractionBakeoff({
+      corpus: benchmarkContextCorpus,
+      arms: [arm('geometric-baseline'), benchmarkPages, arm('llm-grounded')],
+    })
+    expect(
+      benchmarkReport.arms['llm-authored'].documents[0]!.latencyMsPerPage,
+    ).toBe(4)
+  })
+
+  it('isolates adapter failures and stops a contaminated arm', async () => {
+    const throwing = arm('llm-authored')
+    throwing.run = () => {
+      throw new Error('provider timeout')
+    }
+    const failureReport = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), throwing, arm('llm-grounded')],
+    })
+    expect(
+      failureReport.arms['llm-authored'].documents.every(
+        ({ status }) => status === 'failed',
+      ),
+    ).toBe(true)
+    expect(
+      failureReport.arms['geometric-baseline'].documents.every(
+        ({ status }) => status === 'passed',
+      ),
+    ).toBe(true)
+
+    const contaminated = arm('llm-authored')
+    let invocations = 0
+    contaminated.run = (input) => {
+      invocations += 1
+      return {
+        proposal: {
+          ...proposal(input),
+          expected: ['held-out-label'],
+        },
+        metrics: { latencyMs: 12, costUsd: 0.02 },
+      }
+    }
+    const contaminationReport = await runExtractionBakeoff({
+      corpus: corpus(),
+      arms: [arm('geometric-baseline'), contaminated, arm('llm-grounded')],
+    })
+    expect(invocations).toBe(1)
+    expect(
+      contaminationReport.arms['llm-authored'].documents.every(
+        ({ status }) => status === 'disqualified',
+      ),
+    ).toBe(true)
   })
 })

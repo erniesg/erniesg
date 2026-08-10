@@ -30,15 +30,33 @@ const content = [
   textLine('keep the named property visible', 108, 506),
   'q\n360 0 0 160 126 300 cm\n/Im1 Do\nQ',
   textLine('Figure 1 caption stays below the source flowchart.', 72, 250, 10),
+  textLine('A second result sentence runs off the bottom of this', 72, 120),
+  textLine('page and', 72, 100),
+].join('\n')
+
+// Page two carries the halves of the sentence, the word, and the literal text
+// that issue 043's page-join, hyphen-resolution, and markup non-promotion
+// checkpoints name. The running head repeats page one's title so that furniture
+// exclusion has something to exclude between the two halves.
+const secondPageContent = [
+  textLine('Source/output checkpoint fixture', 72, 760, 9),
+  textLine('continues at the top of the next one without losing', 72, 700),
+  textLine('its clause.', 72, 680),
+  textLine('The high-resolution photo-', 72, 620),
+  textLine('graph is attested elsewhere as photograph.', 72, 600),
+  textLine('## Not a heading and **not bold** and {placeholder}', 72, 540),
+  textLine('stay literal.', 72, 520),
 ].join('\n')
 
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
-  '<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
+  '<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>',
   '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   imageObject(),
   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 6 0 R >>',
   `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> >> /Contents 8 0 R >>',
+  `<< /Length ${Buffer.byteLength(secondPageContent)} >>\nstream\n${secondPageContent}\nendstream`,
 ]
 
 let pdf = '%PDF-1.4\n% synthetic fixture owned by erniesg\n'

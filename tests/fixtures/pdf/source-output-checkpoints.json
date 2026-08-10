@@ -35,6 +35,48 @@
       }
     },
     {
+      "id": "fidelity-page-2-prose-continuity",
+      "document": "source-output-checkpoints.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "prose-continuity",
+      "criterion": "The sentence split by the page break is one continuous prose block in the rendition.",
+      "source": {
+        "feature": "text",
+        "text": "continues at the top of the next one"
+      },
+      "output": {
+        "feature": "prose",
+        "text": "A second result sentence runs off the bottom of this page and continues at the top of the next one without losing its clause."
+      }
+    },
+    {
+      "id": "fidelity-page-2-hyphen-resolution",
+      "document": "source-output-checkpoints.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "hyphen-resolution",
+      "criterion": "The discretionary line-end hyphen resolves to the attested joined word and the printed fragment never reaches the reader.",
+      "source": { "feature": "text", "text": "photo-" },
+      "output": {
+        "feature": "prose",
+        "text": "The high-resolution photograph is attested elsewhere as photograph."
+      }
+    },
+    {
+      "id": "fidelity-page-2-markup-non-promotion",
+      "document": "source-output-checkpoints.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "markup-non-promotion",
+      "criterion": "Source text that merely looks like Markdown stays prose characters and is never promoted to heading, emphasis, or list structure.",
+      "source": { "feature": "text", "text": "## Not a heading" },
+      "output": {
+        "feature": "prose",
+        "text": "## Not a heading and **not bold** and {placeholder} stay literal."
+      }
+    },
+    {
       "id": "fidelity-page-1-code-block-structure",
       "document": "source-output-checkpoints.pdf",
       "page": 1,

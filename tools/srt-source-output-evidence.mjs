@@ -388,12 +388,24 @@ async function createFixtureStructDocument({
       evidence: blockEvidence,
     },
   ]
+  // Issue 043 prose claims: a sentence the source split across a page break, a
+  // discretionary hyphen resolved to its attested joined form, and source text
+  // that merely looks like markup and must stay literal.
+  const pageJoinProse =
+    'A second result sentence runs off the bottom of this page and continues at the top of the next one without losing its clause.'
+  const hyphenResolutionProse =
+    'The high-resolution photograph is attested elsewhere as photograph.'
+  const literalMarkupProse =
+    '## Not a heading and **not bold** and {placeholder} stay literal.'
   const textCharacterCount = [
     'Checkpoint paper',
     'The result sentence continues across a column break.',
     'Figure 1. Source flowchart',
     'Table 1. Validated checkpoint values remain structured.',
     'for each source line:\n  compare source and rendition\n  keep the named property visible',
+    pageJoinProse,
+    hyphenResolutionProse,
+    literalMarkupProse,
     ...cells.map(({ text }) => text),
   ].reduce((total, value) => total + value.length, 0)
   const figureEvidence = {
@@ -485,6 +497,36 @@ async function createFixtureStructDocument({
         inline: [],
         evidence: blockEvidence,
       },
+      {
+        id: 'checkpoint-page-join-prose',
+        kind: 'paragraph',
+        text: pageJoinProse,
+        page,
+        order: 5,
+        column: 'single',
+        inline: [],
+        evidence: blockEvidence,
+      },
+      {
+        id: 'checkpoint-hyphen-prose',
+        kind: 'paragraph',
+        text: hyphenResolutionProse,
+        page,
+        order: 6,
+        column: 'single',
+        inline: [],
+        evidence: blockEvidence,
+      },
+      {
+        id: 'checkpoint-markup-prose',
+        kind: 'paragraph',
+        text: literalMarkupProse,
+        page,
+        order: 7,
+        column: 'single',
+        inline: [],
+        evidence: blockEvidence,
+      },
     ],
     assets: [
       {
@@ -514,6 +556,9 @@ async function createFixtureStructDocument({
           'checkpoint-figure',
           'checkpoint-table',
           'checkpoint-code',
+          'checkpoint-page-join-prose',
+          'checkpoint-hyphen-prose',
+          'checkpoint-markup-prose',
         ],
         columns: [
           {
@@ -525,6 +570,9 @@ async function createFixtureStructDocument({
               'checkpoint-figure',
               'checkpoint-table',
               'checkpoint-code',
+              'checkpoint-page-join-prose',
+              'checkpoint-hyphen-prose',
+              'checkpoint-markup-prose',
             ],
           },
         ],
@@ -540,14 +588,14 @@ async function createFixtureStructDocument({
     receipt: {
       schemaVersion: '0.1.0',
       sourceSha256: sourceHash,
-      blockCount: 5,
+      blockCount: 8,
       assetCount: 1,
       relationshipCount: 0,
       diagnosticCount: 0,
       textCharacterCount,
       conservation: {
-        sourceNodeCount: 5,
-        accountedSourceNodeCount: 5,
+        sourceNodeCount: 8,
+        accountedSourceNodeCount: 8,
         sourceRegionCount: 1,
         accountedSourceRegionCount: 1,
         sourceAnnotationCount: 0,
@@ -559,7 +607,7 @@ async function createFixtureStructDocument({
         sourceDiagnosticCount: 0,
         accountedSourceDiagnosticCount: 0,
         sourceTextCharacterCount: textCharacterCount,
-        structBlockCount: 5,
+        structBlockCount: 8,
         structAssetCount: 1,
         structRelationshipCount: 0,
         structDiagnosticCount: 0,

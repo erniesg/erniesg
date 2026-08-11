@@ -2226,6 +2226,20 @@ describe('deterministic PDF benchmark comparison', () => {
     ).not.toThrow()
   })
 
+  it('accepts ambiguous citation relationships in benchmark evidence', () => {
+    const baseline = report([document()])
+    const structure = baseline.documents[0].structure
+    structure.citationRelationshipGraph[0].status = 'ambiguous'
+    structure.citationRelationshipCounts = { ambiguous: 1 }
+    structure.citationRelationshipGraphSha256 = canonicalJsonHash(
+      structure.citationRelationshipGraph,
+    )
+
+    expect(() =>
+      comparePdfBenchmarkReports(baseline, structuredClone(baseline)),
+    ).not.toThrow()
+  })
+
   it('rejects missing, malformed, stale, or inconsistent citation graph evidence', () => {
     const baseline = report([document()])
     const missing = structuredClone(baseline)

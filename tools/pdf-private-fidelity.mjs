@@ -1921,7 +1921,7 @@ function validPrivateCitationGraph(value) {
           'sourceBoxes',
         ]) &&
         SHA256_PATTERN.test(relationship.id) &&
-        ['matched', 'unresolved'].includes(relationship.status) &&
+        ['matched', 'ambiguous', 'unresolved'].includes(relationship.status) &&
         [
           'bracketed-bibliography-citation',
           'author-year-bibliography-citation',

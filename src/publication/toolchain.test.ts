@@ -19,7 +19,10 @@ describe('publication toolchain manifest', () => {
       browser: {
         revision: '150.0.7871.115',
         browserVersion: '150.0.7871.115',
-        compatibility: { arm64Revision: '1228' },
+        compatibility: {
+          arm64Revision: '1228',
+          arm64BrowserVersion: '149.0.7827.55',
+        },
       },
       rendererPolicy: {
         x64: { pdf: 'vivliostyle-cli' },

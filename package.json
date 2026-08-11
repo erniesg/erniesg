@@ -12,7 +12,7 @@
     "dev": "astro dev",
     "start": "astro dev",
     "pretest": "npm run srt:checkpoint-evidence && npm run srt:overlay-evidence",
-    "test": "vitest run --exclude 'tests/e2e/**'",
+    "test": "vitest run --exclude 'tests/e2e/**' --maxWorkers=1",
     "test:e2e": "playwright test",
     "build": "npm run build:production",
     "build:astro": "astro check && astro build",

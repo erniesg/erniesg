@@ -229,7 +229,14 @@ function contributorName(value: unknown, location: string) {
   if (typeof value === 'string' && value.trim()) return value.trim()
   if (isObject(value)) {
     const candidates = ['name', 'fullName', 'displayName'].filter((key) => value[key] !== undefined).map((key) => value[key])
-    if (candidates.length === 1 && typeof candidates[0] === 'string' && candidates[0].trim()) return candidates[0].trim()
+    // Payload collections commonly retain redundant canonical and display
+    // name fields; accept them only when every populated value agrees after
+    // trimming, and keep rejecting conflicts, empty values, and non-strings.
+    const names = new Set(candidates.map((candidate) => (typeof candidate === 'string' ? candidate.trim() : undefined)))
+    if (candidates.length && names.size === 1) {
+      const [name] = names
+      if (name) return name
+    }
   }
   throw new Error(`Payload author must be a non-empty string or named author object at ${location}`)
 }
@@ -342,12 +349,7 @@ function decodeBytes(value: unknown, path: string): Uint8Array | undefined {
     : undefined
 }
 
-function mediaTypeFor(upload: JsonObject, location: string): string {
-  const direct = upload.mimeType ?? upload.mimetype ?? upload.mediaType
-  if (direct !== undefined) {
-    if (typeof direct !== 'string' || !/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/u.test(direct)) throw new Error(`Payload upload has invalid media type at ${location}`)
-    return direct.toLowerCase()
-  }
+function inferredFilenameMediaType(upload: JsonObject, location: string): string | undefined {
   const rawFilename = upload.filename ?? upload.fileName ?? upload.name
   if (rawFilename !== undefined && typeof rawFilename !== 'string') throw new Error(`Payload upload filename must be a string at ${location}`)
   const filename = rawFilename ?? ''
@@ -364,7 +366,16 @@ function mediaTypeFor(upload: JsonObject, location: string): string {
     mp4: 'video/mp4',
     pdf: 'application/pdf',
   }
-  return (extension && types[extension]) || 'application/octet-stream'
+  return extension ? types[extension] : undefined
+}
+
+function mediaTypeFor(upload: JsonObject, location: string): string {
+  const direct = upload.mimeType ?? upload.mimetype ?? upload.mediaType
+  if (direct !== undefined) {
+    if (typeof direct !== 'string' || !/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/u.test(direct)) throw new Error(`Payload upload has invalid media type at ${location}`)
+    return direct.toLowerCase()
+  }
+  return inferredFilenameMediaType(upload, location) ?? 'application/octet-stream'
 }
 
 function optionalUploadDimension(value: unknown, field: string, location: string) {
@@ -593,8 +604,33 @@ function relationId(value: unknown): string | undefined {
   return undefined
 }
 
+const UPLOAD_REFERENCE_ID_ALIASES = [
+  'id',
+  '_id',
+  'key',
+  'value',
+  'target',
+] as const
+
+function uploadReferenceId(value: unknown, location: string): string | undefined {
+  if (!isObject(value)) return relationId(value)
+  const ids = UPLOAD_REFERENCE_ID_ALIASES.flatMap((key) => {
+    const candidate = value[key]
+    if (candidate === undefined) return []
+    if (typeof candidate !== 'string' && typeof candidate !== 'number')
+      throw new Error(`Payload upload reference has invalid ${key} identity at ${location}`)
+    return [String(candidate)]
+  })
+  if (new Set(ids).size > 1)
+    throw new Error(`Payload upload reference identity aliases conflict at ${location}`)
+  return ids[0]
+}
+
 function graphSafeRelationshipTarget(target: string, location: string) {
-  if (!GRAPH_SAFE_ID_PATTERN.test(target)) throw new Error(`Payload relationship target ${target} is not a graph-safe id at ${location}`)
+  // An untrusted relationship target can carry secret material, and this
+  // message reaches CLI stderr and CI logs; report only the safe source
+  // location and an opaque digest, never the raw value.
+  if (!GRAPH_SAFE_ID_PATTERN.test(target)) throw new Error(`Payload relationship target (sha256:${digest(target).slice(0, 16)}) is not a graph-safe id at ${location}`)
   return target
 }
 
@@ -978,13 +1014,80 @@ function rawUploadValue(node: LexicalNode) {
   return node.value ?? node.upload ?? node.asset ?? fields?.upload ?? fields?.asset ?? node.id
 }
 
-function uploadFor(state: AdapterState, node: LexicalNode): JsonObject | undefined {
+// Field families the reference and the indexed record can each spell several
+// ways. When the reference declares any spelling of a family, the indexed
+// spellings are dropped so the reference value deterministically wins.
+const UPLOAD_REFERENCE_FIELD_GROUPS: readonly (readonly string[])[] = [
+  UPLOAD_REFERENCE_ID_ALIASES,
+  ['mimeType', 'mimetype', 'mediaType'],
+  ['focalPoint', 'focalX', 'focalY'],
+  ['bytes', 'data', 'buffer', 'base64'],
+  ['filename', 'fileName', 'name'],
+  ['alt', 'altText', 'alternativeText'],
+]
+
+function uploadReferenceConflicts(raw: JsonObject, indexed: JsonObject, location: string): string[] {
+  const conflicts: string[] = []
+  const directMediaType = (upload: JsonObject) => upload.mimeType ?? upload.mimetype ?? upload.mediaType
+  const declaredMediaType = (upload: JsonObject) =>
+    directMediaType(upload) !== undefined
+      ? mediaTypeFor(upload, location)
+      : inferredFilenameMediaType(upload, location)
+  const rawMediaType = declaredMediaType(raw)
+  const indexedMediaType = declaredMediaType(indexed)
+  if (rawMediaType && indexedMediaType && rawMediaType !== indexedMediaType) conflicts.push('media type')
+  for (const dimension of ['width', 'height'] as const) {
+    if (raw[dimension] !== undefined && indexed[dimension] !== undefined && optionalUploadDimension(raw[dimension], dimension, location) !== optionalUploadDimension(indexed[dimension], dimension, location)) conflicts.push(dimension)
+  }
+  const declaresFocal = (upload: JsonObject) => upload.focalPoint !== undefined || upload.focalX !== undefined || upload.focalY !== undefined
+  if (declaresFocal(raw) && declaresFocal(indexed) && stableStringify(uploadFocalPoint(raw, location)) !== stableStringify(uploadFocalPoint(indexed, location))) conflicts.push('focal point')
+  if (raw.crop !== undefined && indexed.crop !== undefined && stableStringify(uploadCrop(raw, location)) !== stableStringify(uploadCrop(indexed, location))) conflicts.push('crop')
+  const declaredBytes = (upload: JsonObject) => upload.bytes ?? upload.data ?? upload.buffer ?? upload.base64
+  if (declaredBytes(raw) !== undefined && declaredBytes(indexed) !== undefined) {
+    const left = decodeBytes(declaredBytes(raw), location)
+    const right = decodeBytes(declaredBytes(indexed), location)
+    if ((left && digest(left)) !== (right && digest(right))) conflicts.push('bytes')
+  }
+  return conflicts
+}
+
+/**
+ * Merge an object upload reference with its indexed top-level upload record.
+ * The indexed record supplies every field the reference omits; explicit
+ * reference fields take deterministic precedence; conflicting identities,
+ * intrinsic metadata, or bytes fail closed.
+ */
+function mergedUploadReference(raw: JsonObject, id: string, indexed: JsonObject, location: string): JsonObject {
+  const indexedUpload = `(sha256:${digest(id).slice(0, 16)})`
+  for (const key of UPLOAD_REFERENCE_ID_ALIASES) {
+    const value = raw[key]
+    if (value === undefined) continue
+    if ((typeof value !== 'string' && typeof value !== 'number') || String(value) !== id)
+      throw new Error(`Payload upload reference identity conflicts with indexed upload ${indexedUpload} at ${location}`)
+  }
+  const conflicts = uploadReferenceConflicts(raw, indexed, location)
+  if (conflicts.length) throw new Error(`Payload upload reference disagrees with indexed upload ${indexedUpload} on ${conflicts.join(', ')} at ${location}`)
+  const base = { ...indexed }
+  for (const group of UPLOAD_REFERENCE_FIELD_GROUPS) {
+    if (group.some((key) => raw[key] !== undefined)) for (const key of group) delete base[key]
+  }
+  return { ...base, ...raw, id }
+}
+
+function uploadFor(state: AdapterState, node: LexicalNode, path: string): JsonObject | undefined {
   const raw = rawUploadValue(node)
-  const id = relationId(raw)
-  if (isObject(raw)) return raw
-  const upload = id ? state.uploads.get(id) : undefined
-  if (!upload || state.variantUploadIds === undefined || state.variantUploadIds.has(String(id))) return upload
-  return withoutLocalizedUploadText(upload)
+  const location = sourceLocation(state.sourceId, path)
+  const id = uploadReferenceId(raw, location)
+  const indexed = id ? state.uploads.get(id) : undefined
+  const localized =
+    indexed && state.variantUploadIds !== undefined && !state.variantUploadIds.has(String(id))
+      ? withoutLocalizedUploadText(indexed)
+      : indexed
+  if (isObject(raw)) {
+    if (!localized || !id) return raw
+    return mergedUploadReference(raw, id, localized, location)
+  }
+  return localized
 }
 
 function uploadAlternativeText(node: LexicalNode, upload: JsonObject | undefined, location: string) {
@@ -1105,7 +1208,7 @@ function addTextNode(state: AdapterState, node: LexicalNode, path: string, type:
 
 function addUploadNode(state: AdapterState, node: LexicalNode, path: string, resolved?: { upload?: JsonObject; assetId?: string }): PublicationNode {
   const identity = nodeId(state, node, path, 'figure')
-  const upload = resolved ? resolved.upload : uploadFor(state, node)
+  const upload = resolved ? resolved.upload : uploadFor(state, node, path)
   const fields = isObject(node.fields) ? node.fields : undefined
   const location = sourceLocation(state.sourceId, path)
   const alt = uploadAlternativeText(node, upload, location)
@@ -1219,7 +1322,7 @@ function addEquationNode(state: AdapterState, node: LexicalNode, path: string): 
 
 function addMediaNode(state: AdapterState, node: LexicalNode, path: string): PublicationNode {
   const location = sourceLocation(state.sourceId, path)
-  const upload = uploadFor(state, node)
+  const upload = uploadFor(state, node, path)
   const mediaType = upload ? mediaTypeFor(upload, location) : undefined
   const rawKind = node.mediaKind ?? node.kind ?? (isObject(node.fields) ? node.fields.kind : undefined)
   const inferredKind = mediaType?.startsWith('image/') ? 'image' : mediaType?.startsWith('audio/') ? 'audio' : mediaType?.startsWith('video/') ? 'video' : undefined

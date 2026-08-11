@@ -135,6 +135,86 @@ describe('publication:build CLI', () => {
     ).toThrow(/Astro.*--entry/)
   })
 
+  it(
+    'never lets an unsafe relationship target cross the CLI stderr boundary',
+    { timeout: 120_000 },
+    async () => {
+      const sentinel = 'unsafe-target?credential=redact-me'
+      const temporaryRoot = await mkdtemp(
+        resolve(tmpdir(), 'publication-build-redacted-target-'),
+      )
+      const input = resolve(temporaryRoot, 'unsafe-relationship.json')
+      const mappingPath = resolve(temporaryRoot, 'mapping.json')
+      const output = resolve(temporaryRoot, 'output')
+      try {
+        await writeFile(
+          input,
+          `${JSON.stringify({
+            id: 'unsafe-relationship-cli',
+            title: 'Unsafe relationship',
+            content: {
+              root: {
+                children: [
+                  {
+                    type: 'paragraph',
+                    children: [
+                      { type: 'citation', value: sentinel, label: 'Sentinel' },
+                    ],
+                  },
+                ],
+              },
+            },
+          })}\n`,
+        )
+        await writeFile(
+          mappingPath,
+          `${JSON.stringify({
+            relationships: { citation: { role: 'citation' } },
+          })}\n`,
+        )
+        const failure = await new Promise((resolveRun) => {
+          try {
+            execFileSync(
+              process.execPath,
+              [
+                resolve('node_modules/tsx/dist/cli.mjs'),
+                resolve('tools/publication-build.mjs'),
+                '--adapter',
+                'payload',
+                '--input',
+                input,
+                '--mapping',
+                mappingPath,
+                '--output',
+                output,
+              ],
+              { encoding: 'utf8', stdio: 'pipe' },
+            )
+            resolveRun(undefined)
+          } catch (error) {
+            resolveRun(error)
+          }
+        })
+        expect(failure).toBeDefined()
+        expect(failure.status).not.toBe(0)
+        const stdout = String(failure.stdout ?? '')
+        const stderr = String(failure.stderr ?? '')
+        expect(stderr).toMatch(
+          /Payload relationship target \(sha256:[0-9a-f]{16}\) is not a graph-safe id/,
+        )
+        for (const stream of [stdout, stderr]) {
+          expect(stream).not.toContain(sentinel)
+          expect(stream).not.toContain('credential')
+          expect(stream).not.toContain('redact-me')
+          expect(stream).not.toContain('unsafe-target')
+        }
+        await expect(access(output)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await rm(temporaryRoot, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('binds route parity to the exact canonical route bytes', () => {
     expect(publicationRouteHtmlDigest('<html>route</html>')).toMatch(
       /^[a-f0-9]{64}$/,
@@ -268,6 +348,59 @@ describe('publication:build CLI', () => {
       })
       expect(await readdir(temporaryRoot)).toEqual([])
     } finally {
+      vivliostyleRenderer.render = originalRender
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('verifies the python3 atomic-rename runtime before adapter, staging, or renderer work', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-build-python-preflight-'),
+    )
+    const outputParent = resolve(temporaryRoot, 'must-not-be-created')
+    const output = resolve(outputParent, 'output')
+    const neverReadInput = resolve(temporaryRoot, 'never-read.json')
+    const originalRender = vivliostyleRenderer.render
+    let renderCalls = 0
+    vivliostyleRenderer.render = async () => {
+      renderCalls += 1
+      throw new Error('renderer must not run without the python3 runtime')
+    }
+    const originalPath = process.env.PATH
+    try {
+      process.env.PATH = resolve(temporaryRoot, 'empty-path-entry')
+      const error = await publicationBuild(
+        [
+          '--adapter',
+          'payload',
+          '--input',
+          neverReadInput,
+          '--output',
+          output,
+        ],
+        { platform: process.platform },
+      ).then(
+        () => undefined,
+        (failure) => failure,
+      )
+      process.env.PATH = originalPath
+      expect(error).toMatchObject({ code: 'ENOENT' })
+      expect(error?.message).toBe(
+        'Atomic directory publication requires a python3 runtime on PATH; install python3 before running publication builds',
+      )
+      expect(error?.message).not.toContain(output)
+      expect(renderCalls).toBe(0)
+      // The missing input file was never read, so adapter resolution did not
+      // start; no staging directory or output parent was ever created.
+      await expect(access(neverReadInput)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(access(outputParent)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      expect(await readdir(temporaryRoot)).toEqual([])
+    } finally {
+      process.env.PATH = originalPath
       vivliostyleRenderer.render = originalRender
       await rm(temporaryRoot, { recursive: true, force: true })
     }

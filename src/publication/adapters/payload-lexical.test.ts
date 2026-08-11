@@ -324,6 +324,31 @@ describe('Payload Lexical publication adapter', () => {
     })
   })
 
+  it('accepts redundant author name fields whose trimmed values agree', () => {
+    const body = [
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Author body' }],
+      },
+    ]
+    const agreed = adaptPayloadLexical(
+      strictFixture(body, {
+        authors: [{ name: 'Ada', displayName: ' Ada ', fullName: 'Ada' }],
+      }),
+    )
+    expect(agreed.graph.metadata.contributors).toEqual(['Ada'])
+    for (const conflicting of [
+      { name: 'Ada', displayName: 'Grace' },
+      { name: 'Ada', fullName: 'Ada', displayName: '   ' },
+      { name: 'Ada', fullName: 42 },
+      { displayName: '' },
+    ]) {
+      expect(() =>
+        adaptPayloadLexical(strictFixture(body, { authors: [conflicting] })),
+      ).toThrow(/Payload author must be a non-empty string or named author object at authors\[0\]/)
+    }
+  })
+
   it('preserves quote attribution', () => {
     const result = adaptPayloadLexical({
       id: 'attributed-quote',
@@ -830,7 +855,7 @@ describe('Payload Lexical publication adapter', () => {
           },
         },
       ),
-    ).toThrow(/Payload relationship target a b is not a graph-safe id.*children\[0\]/)
+    ).toThrow(/Payload relationship target \(sha256:[0-9a-f]{16}\) is not a graph-safe id.*children\[0\]/)
     expect(() =>
       adaptPayloadLexical({
         id: 'interleaved-nested-list',
@@ -1489,6 +1514,253 @@ describe('Payload Lexical publication adapter', () => {
     })
   })
 
+  it('resolves object upload references through the indexed uploads', () => {
+    const uploads = {
+      pic: {
+        filename: 'pic.png',
+        mimeType: 'image/png',
+        data: 'AQIDBA==',
+        alt: 'Mapped picture',
+        width: 24,
+        height: 24,
+      },
+    }
+    const scalar = adaptPayloadLexical(
+      strictFixture([{ type: 'upload', value: 'pic' }], { uploads }),
+    )
+    const objectReference = adaptPayloadLexical(
+      strictFixture([{ type: 'upload', value: { id: 'pic' } }], { uploads }),
+    )
+    expect(objectReference.diagnostics).toEqual([])
+    expect(objectReference.assetBundle.descriptor.assets).toHaveLength(1)
+    expect(objectReference.assetBundle.descriptor.assets).toEqual(
+      scalar.assetBundle.descriptor.assets,
+    )
+    const scalarFigure = scalar.graph.nodes[0]
+    const objectFigure = objectReference.graph.nodes[0]
+    expect(objectFigure).toMatchObject({
+      type: 'figure',
+      accessibility: { alternativeText: 'Mapped picture' },
+    })
+    expect('assetIds' in objectFigure ? objectFigure.assetIds : []).toEqual(
+      'assetIds' in scalarFigure ? scalarFigure.assetIds : undefined,
+    )
+
+    const overridden = adaptPayloadLexical(
+      strictFixture(
+        [{ type: 'upload', value: { id: 'pic', alt: 'Object alternative' } }],
+        { uploads },
+      ),
+    )
+    expect(overridden.graph.nodes[0]).toMatchObject({
+      type: 'figure',
+      accessibility: { alternativeText: 'Object alternative' },
+    })
+
+    for (const conflicting of [
+      { id: 'pic', mimeType: 'image/jpeg' },
+      { id: 'pic', width: 48 },
+      { id: 'pic', _id: 'other' },
+      { id: 'pic', data: 'BQYHCA==' },
+    ]) {
+      expect(() =>
+        adaptPayloadLexical(
+          strictFixture([{ type: 'upload', value: conflicting }], { uploads }),
+        ),
+      ).toThrow(
+        /Payload upload reference (?:identity aliases conflict|(?:identity conflicts with|disagrees with) indexed upload \(sha256:[a-f0-9]{16}\)).*children\[0\]/,
+      )
+    }
+
+    expect(() =>
+      adaptPayloadLexical({
+        document: {
+          id: 'localized-object-upload',
+          title: 'English title',
+          locale: 'en',
+          uploads: [
+            {
+              id: 'pic',
+              filename: 'pic.png',
+              mimeType: 'image/png',
+              data: 'AQIDBA==',
+              alt: 'English alternative',
+            },
+          ],
+          content: {
+            root: { children: [{ type: 'upload', value: { id: 'pic' } }] },
+          },
+          localeVariants: {
+            fr: {
+              title: 'Titre français',
+              content: {
+                root: { children: [{ type: 'upload', value: { id: 'pic' } }] },
+              },
+            },
+          },
+        },
+        locale: 'fr',
+      }),
+    ).toThrow(/Payload locale fr upload pic is missing localized alternative text.*children\[0\]/)
+  })
+
+  it('redacts indexed upload ids from object-reference conflict errors', () => {
+    const unsafeId = 'https://uploads.example/pic?credential=redact-me'
+    let failure: unknown
+    try {
+      adaptPayloadLexical(
+        strictFixture([{ type: 'upload', value: { id: unsafeId, width: 48 } }], {
+          uploads: {
+            [unsafeId]: {
+              filename: 'pic.png',
+              mimeType: 'image/png',
+              data: 'AQIDBA==',
+              width: 24,
+            },
+          },
+        }),
+      )
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(Error)
+    expect(String(failure)).not.toContain(unsafeId)
+    expect(String(failure)).not.toContain('credential=redact-me')
+    expect(String(failure)).toMatch(/indexed upload \(sha256:[a-f0-9]{16}\)/)
+  })
+
+  it('rejects conflicts across value and target upload id aliases', () => {
+    const uploads = {
+      pic: {
+        filename: 'pic.png',
+        mimeType: 'image/png',
+        data: 'AQIDBA==',
+      },
+    }
+
+    for (const value of [
+      { id: 'pic', value: 'other' },
+      { value: 'pic', target: 'other' },
+    ]) {
+      expect(() =>
+        adaptPayloadLexical(
+          strictFixture([{ type: 'upload', value }], { uploads }),
+        ),
+      ).toThrow(/Payload upload reference identity (?:aliases conflict|conflicts with indexed upload)/)
+    }
+  })
+
+  it('validates conflicting upload aliases before selecting an indexed record', () => {
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture(
+          [
+            {
+              type: 'upload',
+              value: { id: 'not-indexed', value: 'pic' },
+            },
+          ],
+          {
+            uploads: {
+              pic: {
+                mimeType: 'image/png',
+                data: 'AQIDBA==',
+                alt: 'Mapped picture',
+              },
+            },
+          },
+        ),
+      ),
+    ).toThrow(/Payload upload reference identity aliases conflict.*children\[0\]/)
+  })
+
+  it('canonicalizes value and target upload references to the indexed map id', () => {
+    const uploads = {
+      pic: {
+        mimeType: 'image/png',
+        data: 'AQIDBA==',
+        alt: 'Mapped picture',
+      },
+    }
+
+    for (const value of [{ value: 'pic' }, { target: 'pic' }]) {
+      const result = adaptPayloadLexical(
+        strictFixture([{ type: 'upload', value }], { uploads }),
+      )
+      expect(result.diagnostics).toEqual([])
+      expect(result.assetBundle.descriptor.assets).toHaveLength(1)
+      expect(result.graph.nodes[0]).toMatchObject({
+        type: 'figure',
+        assetIds: [expect.any(String)],
+        accessibility: { alternativeText: 'Mapped picture' },
+      })
+    }
+  })
+
+  it('resolves key upload references through the indexed map id', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([{ type: 'upload', value: { key: 'pic' } }], {
+        uploads: {
+          pic: {
+            mimeType: 'image/png',
+            data: 'AQIDBA==',
+            alt: 'Mapped picture',
+          },
+        },
+      }),
+    )
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.assetBundle.descriptor.assets).toHaveLength(1)
+    expect(result.graph.nodes[0]).toMatchObject({
+      type: 'figure',
+      assetIds: [expect.any(String)],
+      accessibility: { alternativeText: 'Mapped picture' },
+    })
+  })
+
+  it('rejects direct media types that conflict with indexed filename inference', () => {
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture(
+          [{ type: 'upload', value: { id: 'pic', mimeType: 'image/jpeg' } }],
+          {
+            uploads: {
+              pic: {
+                filename: 'pic.png',
+                data: 'AQIDBA==',
+                alt: 'Mapped picture',
+              },
+            },
+          },
+        ),
+      ),
+    ).toThrow(/disagrees with indexed upload .* on media type/)
+  })
+
+  it('allows unknown filename extensions to inherit an indexed media type', () => {
+    const result = adaptPayloadLexical(
+      strictFixture(
+        [{ type: 'upload', value: { id: 'pic', filename: 'hero' } }],
+        {
+          uploads: {
+            pic: {
+              mimeType: 'image/png',
+              data: 'AQIDBA==',
+              alt: 'Mapped picture',
+            },
+          },
+        },
+      ),
+    )
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.assetBundle.descriptor.assets).toMatchObject([
+      { mediaType: 'image/png' },
+    ])
+  })
+
   it('fails closed for table and relationship semantics the graph cannot preserve', () => {
     const tableDocument = (cell: Record<string, unknown>) =>
       strictFixture([
@@ -1603,6 +1875,38 @@ describe('Payload Lexical publication adapter', () => {
         ]),
       ),
     ).toThrow(/Payload relationship is missing target.*children\[0\]\.children\[0\]/)
+  })
+
+  it('redacts unsafe relationship targets from thrown diagnostics', () => {
+    const sentinel = 'unsafe-target?credential=redact-me'
+    const message = capturedError(() =>
+      adaptPayloadLexical(
+        {
+          id: 'unsafe-relationship-target',
+          title: 'Unsafe relationship target',
+          content: {
+            root: {
+              children: [
+                {
+                  type: 'paragraph',
+                  children: [
+                    { type: 'citation', value: sentinel, label: 'Sentinel' },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        { relationships: { citation: { role: 'citation' } } },
+      ),
+    )
+    expect(message).toMatch(
+      /Payload relationship target \(sha256:[0-9a-f]{16}\) is not a graph-safe id.*children\[0\]\.children\[0\]/,
+    )
+    expect(message).not.toContain(sentinel)
+    expect(message).not.toContain('credential')
+    expect(message).not.toContain('redact-me')
+    expect(message).not.toContain('unsafe-target')
   })
 
   it('requires typed metadata, roots, prose fields, and supported mark combinations', () => {
@@ -2159,6 +2463,26 @@ describe('Payload Lexical publication adapter', () => {
     )
     expect(result.graph.nodes.map((node) => node.type)).toEqual(['aside', 'table', 'reference', 'reference'])
     expect(result.graph.nodes.find((node) => node.type === 'reference')).toMatchObject({ href: '#target-1' })
+  })
+
+  it('keeps upload-only key aliases out of relationship target resolution', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([
+        {
+          type: 'citation',
+          value: { key: 'lexical-key', value: 'target-1' },
+          label: 'A citation',
+        },
+      ]),
+      { relationships: { citation: { role: 'cross-reference' } } },
+    )
+
+    expect(result.graph.nodes.find((node) => node.type === 'reference')).toMatchObject({
+      href: '#target-1',
+    })
+    expect(result.graph.nodes.some((node) => node.id === 'lexical-key')).toBe(
+      false,
+    )
   })
 
   it('maps Payload LinkFeature document targets before requiring an external URL', () => {

@@ -16,6 +16,7 @@ import {
 import {
   canonicalPublicationGraph,
   canonicalPublicationSourceResult,
+  canonicalPublicationSubset,
   canonicalPublicationSubsetSha256,
   comparePublicationOutputReceipts,
   comparePublicationSemanticSubset,
@@ -207,6 +208,230 @@ describe('publication source adapter conformance', () => {
       type: 'paragraph',
       inlineRuns: [{ start: 0, end: 2, bold: true }],
     })
+  })
+
+  it('canonicalizes overlapping inline runs independently of array order', () => {
+    const base = adaptPayloadLexical({
+      id: 'ordered-inline-runs',
+      title: 'Ordered inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'abcdef' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const bold = { start: 0, end: 4, bold: true }
+    const italic = { start: 2, end: 6, italic: true }
+    const left = withRuns([bold, italic])
+    const right = withRuns([italic, bold])
+
+    expect(comparePublicationSemanticSubset(left, right)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(left)).toBe(
+      canonicalPublicationSubsetSha256(right),
+    )
+    const canonicalRuns = (graph: typeof left) => {
+      const paragraph = canonicalPublicationSubset(graph).nodes.find(
+        (node) => node.type === 'paragraph',
+      )
+      return paragraph?.inlineRuns
+    }
+    expect(canonicalRuns(right)).toEqual([bold, italic])
+    expect(canonicalRuns(left)).toEqual(canonicalRuns(right))
+  })
+
+  it('preserves authored order for overlapping vertical-align runs', () => {
+    const base = adaptPayloadLexical({
+      id: 'ordered-vertical-align-runs',
+      title: 'Ordered vertical align runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'xy' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const superscript = {
+      start: 0,
+      end: 2,
+      verticalAlign: 'superscript',
+    }
+    const subscript = { start: 0, end: 2, verticalAlign: 'subscript' }
+    const superscriptFirst = withRuns([superscript, subscript])
+    const subscriptFirst = withRuns([subscript, superscript])
+
+    expect(
+      comparePublicationSemanticSubset(superscriptFirst, subscriptFirst),
+    ).toBe(false)
+    expect(canonicalPublicationSubsetSha256(superscriptFirst)).not.toBe(
+      canonicalPublicationSubsetSha256(subscriptFirst),
+    )
+    const canonicalRuns = (graph: typeof superscriptFirst) => {
+      const paragraph = canonicalPublicationSubset(graph).nodes.find(
+        (node) => node.type === 'paragraph',
+      )
+      return paragraph?.inlineRuns
+    }
+    expect(canonicalRuns(superscriptFirst)).toEqual([superscript])
+    expect(canonicalRuns(subscriptFirst)).toEqual([subscript])
+  })
+
+  it('canonicalizes non-overlapping vertical-align runs independently of array order', () => {
+    const base = adaptPayloadLexical({
+      id: 'non-overlapping-vertical-align-runs',
+      title: 'Non-overlapping vertical align runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'abcd' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const superscript = {
+      start: 0,
+      end: 1,
+      verticalAlign: 'superscript',
+    }
+    const subscript = { start: 2, end: 3, verticalAlign: 'subscript' }
+    const superscriptFirst = withRuns([superscript, subscript])
+    const subscriptFirst = withRuns([subscript, superscript])
+
+    expect(
+      comparePublicationSemanticSubset(superscriptFirst, subscriptFirst),
+    ).toBe(true)
+    expect(canonicalPublicationSubsetSha256(superscriptFirst)).toBe(
+      canonicalPublicationSubsetSha256(subscriptFirst),
+    )
+    const canonicalRuns = (graph: typeof superscriptFirst) => {
+      const paragraph = canonicalPublicationSubset(graph).nodes.find(
+        (node) => node.type === 'paragraph',
+      )
+      return paragraph?.inlineRuns
+    }
+    expect(canonicalRuns(subscriptFirst)).toEqual([superscript, subscript])
+    expect(canonicalRuns(superscriptFirst)).toEqual(
+      canonicalRuns(subscriptFirst),
+    )
+  })
+
+  it('folds adjacent equivalent vertical-align runs', () => {
+    const base = adaptPayloadLexical({
+      id: 'adjacent-vertical-align-runs',
+      title: 'Adjacent vertical align runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'ab' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const combined = withRuns([
+      { start: 0, end: 2, verticalAlign: 'superscript' },
+    ])
+    const segmented = withRuns([
+      { start: 0, end: 1, verticalAlign: 'superscript' },
+      { start: 1, end: 2, verticalAlign: 'superscript' },
+    ])
+
+    expect(comparePublicationSemanticSubset(segmented, combined)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(segmented)).toBe(
+      canonicalPublicationSubsetSha256(combined),
+    )
+    const paragraph = canonicalPublicationSubset(segmented).nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    expect(paragraph?.inlineRuns).toEqual([
+      { start: 0, end: 2, verticalAlign: 'superscript' },
+    ])
+  })
+
+  it('folds adjacent equivalent runs even when an overlapping style separates them', () => {
+    const base = adaptPayloadLexical({
+      id: 'interleaved-inline-runs',
+      title: 'Interleaved inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'abcd' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const combined = withRuns([
+      { start: 0, end: 4, bold: true },
+      { start: 0, end: 4, italic: true },
+    ])
+    const segmented = withRuns([
+      { start: 0, end: 2, bold: true },
+      { start: 0, end: 4, italic: true },
+      { start: 2, end: 4, bold: true },
+    ])
+
+    expect(comparePublicationSemanticSubset(segmented, combined)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(segmented)).toBe(
+      canonicalPublicationSubsetSha256(combined),
+    )
+    const paragraph = canonicalPublicationSubset(segmented).nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    expect(paragraph?.inlineRuns).toEqual([
+      { start: 0, end: 4, bold: true },
+      { start: 0, end: 4, italic: true },
+    ])
   })
 
   it('preserves authored link boundaries through canonical serialization in every profile', () => {

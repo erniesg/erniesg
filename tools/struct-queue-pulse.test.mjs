@@ -560,3 +560,108 @@ describe('STRUCT queue pulse resumability', () => {
     expect(systemctlCalls.some((args) => args.includes('unmask'))).toBe(false)
   })
 })
+
+// --- VM drain snapshot fidelity (erniesg/erniesg#158) -----------------------
+//
+// The generated drain unit self-refreshes its installed copy from the
+// checked-in snapshots under infra/vm/systemd, so a snapshot that drifts from
+// the rucksack generator becomes the installed unit on the next drain pass.
+// This suite regenerates each generator-owned snapshot from rucksack source
+// and fails loudly on any byte difference.
+//
+// This repository has no vendored copy of rucksack and no established test
+// dependency on it, so the generator is imported from a local rucksack
+// checkout instead:
+//   1. RUCKSACK_SRC, when set, must point at a rucksack checkout root.
+//   2. Otherwise the conventional sibling checkout ../rucksack is used (the
+//      dev workspace and the trusted VM both keep erniesg and rucksack side
+//      by side under the same parent directory).
+// Hosted CI has neither, so the suite skips cleanly there; the fidelity gate
+// runs wherever a rucksack checkout exists (trusted VM and dev machines).
+// RUCKSACK_PYTHON may pin the interpreter; otherwise the first of
+// python3.12/python3.11/python3 that is >= 3.11 (rucksack's floor) is used.
+
+const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+const rucksackSrc = process.env.RUCKSACK_SRC ?? join(repoRoot, '..', 'rucksack')
+const rucksackAutopilotSource = join(
+  rucksackSrc,
+  'src',
+  'rucksack',
+  'autopilot.py',
+)
+
+const findRucksackPython = () => {
+  const candidates = process.env.RUCKSACK_PYTHON
+    ? [process.env.RUCKSACK_PYTHON]
+    : ['python3.12', 'python3.11', 'python3']
+  for (const candidate of candidates) {
+    const probe = spawnSync(
+      candidate,
+      ['-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'],
+      { encoding: 'utf8' },
+    )
+    if (probe.status === 0) return candidate
+  }
+  return null
+}
+
+const rucksackPython = existsSync(rucksackAutopilotSource)
+  ? findRucksackPython()
+  : null
+const generatorUnavailable = !existsSync(rucksackAutopilotSource)
+  ? `no rucksack checkout at ${rucksackSrc}; set RUCKSACK_SRC`
+  : rucksackPython === null
+    ? 'no Python >= 3.11 for the rucksack generator; set RUCKSACK_PYTHON'
+    : null
+
+const generateUnit = (call) => {
+  // -I (isolated mode) keeps the working directory and PYTHONPATH out of
+  // sys.path so a stray rucksack package elsewhere cannot shadow the checkout.
+  const script = [
+    'import sys',
+    `sys.path.insert(0, ${JSON.stringify(join(rucksackSrc, 'src'))})`,
+    'from rucksack import autopilot',
+    `sys.stdout.write(autopilot.${call})`,
+  ].join('\n')
+  const result = spawnSync(rucksackPython, ['-I', '-c', script], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  })
+  if (result.status !== 0) {
+    throw new Error(
+      `rucksack generator failed for ${call}: ${result.stderr || result.error}`,
+    )
+  }
+  return result.stdout
+}
+
+// Every generator-owned snapshot under infra/vm/systemd with the exact
+// (repo, provider) generator call that `rucksack vm autopilot install-timer`
+// resolves for this repo (.agent/autopilot.yaml: provider vm-codex, issue_dir
+// docs/issues; --max-workers 1). The .d drop-in tree and the repo pulse units
+// are repo-owned policy, not generator output, and are intentionally absent.
+const drainSnapshots = [
+  {
+    file: 'infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.service',
+    call: 'vm_autopilot_drain_service(repo="erniesg/erniesg", provider="vm-codex")',
+  },
+  {
+    file: 'infra/vm/systemd/rucksack-autopilot-v1-ZXJuaWVzZy9lcm5pZXNn-drain.timer',
+    call: 'vm_autopilot_drain_timer(repo="erniesg/erniesg")',
+  },
+]
+
+describe.skipIf(generatorUnavailable !== null)(
+  `VM drain snapshots match the rucksack generator${
+    generatorUnavailable ? ` (skipped: ${generatorUnavailable})` : ''
+  }`,
+  () => {
+    it.each(drainSnapshots)(
+      '$file matches its generator output',
+      ({ file, call }) => {
+        const snapshot = readFileSync(join(repoRoot, file), 'utf8')
+        expect(snapshot).toBe(generateUnit(call))
+      },
+    )
+  },
+)

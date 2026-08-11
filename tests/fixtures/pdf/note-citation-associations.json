@@ -1,16 +1,16 @@
 {
   "schemaVersion": "1.0.0",
   "fixture": "tests/fixtures/pdf/note-citation-associations.pdf",
-  "fixtureSha256": "3ddd450ba69511292d13f1ee1db82b65a9eff36eb708816c97550cb2185990f9",
+  "fixtureSha256": "ad651f79b7257d3ecc3356ecee0f9c307f55d9777aa21e94444f663c303c0426",
   "baselineRef": "769d19836560d43cb67a4b4d7ca11bceb0a4121a",
   "baselineCounters": {
-    "expectedAssociations": 8,
+    "expectedAssociations": 10,
     "matchedAssociations": 5,
     "ambiguousAssociations": 1,
-    "unresolvedAssociations": 2,
+    "unresolvedAssociations": 4,
     "falseLinkCount": 0,
-    "resolvedAssociationRate": 0.625,
-    "verifiedAssociationRate": 0.75
+    "resolvedAssociationRate": 0.5,
+    "verifiedAssociationRate": 0.6
   },
   "associations": [
     {
@@ -35,6 +35,30 @@
       "anchorOwner": "paragraph",
       "targetLabels": ["*"],
       "targetTextIncludes": ["Symbol footnote body."],
+      "targetKind": "footnote"
+    },
+    {
+      "id": "arabic-indic-footnote",
+      "kind": "note",
+      "label": "1",
+      "expectedStatus": "matched",
+      "page": 3,
+      "sourceIncludes": "Arabic-Indic U+0661 note marker appears at right.",
+      "anchorOwner": "paragraph",
+      "targetLabels": ["1"],
+      "targetTextIncludes": ["Arabic-Indic note body."],
+      "targetKind": "endnote"
+    },
+    {
+      "id": "nested-label-6-footnote",
+      "kind": "note",
+      "label": "6",
+      "expectedStatus": "matched",
+      "page": 1,
+      "sourceIncludes": "Numeric footnote body contains nested marker",
+      "anchorOwner": "footnote",
+      "targetLabels": ["6"],
+      "targetTextIncludes": ["Nested footnote body."],
       "targetKind": "footnote"
     },
     {
@@ -97,7 +121,7 @@
       "kind": "note",
       "label": "7",
       "expectedStatus": "ambiguous",
-      "page": 3,
+      "page": 4,
       "sourceIncludes": "A genuinely ambiguous claim has note reference 7.",
       "anchorOwner": "paragraph",
       "minimumCandidateCount": 2

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { renditionSourceForCheckpoint } from './srt-source-output-evidence.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const tool = fileURLToPath(
@@ -48,15 +49,25 @@ function privateFixture() {
 }
 
 describe('source/output evidence privacy boundary', () => {
+  it.each([
+    'marker-to-body',
+    'citation-to-entry',
+    'in-float-marker',
+    'dangling-link-verifier',
+  ])('routes %s through the PDF reconstruction', (property) => {
+    expect(renditionSourceForCheckpoint(property, true)).toBe(
+      'pdf-reconstruction',
+    )
+  })
+
   it('renders repository prose checkpoints from the PDF reconstruction path', () => {
     const directory = mkdtempSync(join(tmpdir(), 'srt-checkpoint-test-'))
     temporaryDirectories.push(directory)
     const output = join(directory, 'evidence')
-    const result = spawnSync(
-      process.execPath,
-      [tool, '--output', output],
-      { cwd: root, encoding: 'utf8' },
-    )
+    const result = spawnSync(process.execPath, [tool, '--output', output], {
+      cwd: root,
+      encoding: 'utf8',
+    })
 
     expect(result.status).toBe(0)
     const manifest = JSON.parse(

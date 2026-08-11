@@ -4,6 +4,7 @@ const { mkdirSync, writeFileSync, existsSync, readFileSync, statSync } = require
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
+const { validAssociationAudit } = require("./tools/association-audit-receipt.cjs");
 
 const allLanes = [
   {
@@ -57,52 +58,6 @@ function safeBranch(value) {
 
 function textHash(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function validAuditCounters(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const countKeys = [
-    "expectedAssociations",
-    "matchedAssociations",
-    "ambiguousAssociations",
-    "unresolvedAssociations",
-    "falseLinkCount",
-  ];
-  const rateKeys = ["resolvedAssociationRate", "verifiedAssociationRate"];
-  if (countKeys.some((key) => !Number.isInteger(value[key]) || value[key] < 0)) return false;
-  if (rateKeys.some((key) => !Number.isFinite(value[key]) || value[key] < 0 || value[key] > 1)) return false;
-  return value.matchedAssociations
-    + value.ambiguousAssociations
-    + value.unresolvedAssociations
-    + value.falseLinkCount === value.expectedAssociations;
-}
-
-function validAssociationAudit(value) {
-  return Boolean(
-    value
-      && typeof value === "object"
-      && !Array.isArray(value)
-      && value.status === "passed"
-      && typeof value.fixture === "string"
-      && /^[a-f0-9]{64}$/.test(value.fixtureSha256 || "")
-      && /^[a-f0-9]{40}$/.test(value.baselineRef || "")
-      && validAuditCounters(value.before)
-      && validAuditCounters(value.after)
-      && value.after.unresolvedAssociations === 0
-      && value.after.falseLinkCount === 0
-      && value.after.verifiedAssociationRate === 1
-      && Array.isArray(value.checkpoints)
-      && value.checkpoints.length === 5
-      && new Set(value.checkpoints.map((checkpoint) => checkpoint && checkpoint.checkpointId)).size === 5
-      && value.checkpoints.every(
-        (checkpoint) => checkpoint && typeof checkpoint.checkpointId === "string" && checkpoint.status === "passed"
-      )
-      && Array.isArray(value.associations)
-      && value.associations.length === value.after.expectedAssociations
-      && value.diagnosticCounts
-      && typeof value.diagnosticCounts === "object"
-      && !Array.isArray(value.diagnosticCounts)
-  );
 }
 
 function splitList(value) {

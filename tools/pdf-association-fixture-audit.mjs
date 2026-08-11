@@ -90,10 +90,46 @@ async function reconstructAndAudit(groundTruth, fixtureBytes) {
         },
       })
     })
+    const expectedAssociationCount =
+      reconstruction.semanticSignals.citations +
+      reconstruction.semanticSignals.footnoteReferences
+    const resolvedAssociationCount =
+      expectedAssociationCount -
+      reconstruction.completeness.unresolvedObjects.citations -
+      reconstruction.completeness.unresolvedObjects.footnoteReferences
+    const completeness = {
+      expectedAssociationCount,
+      resolvedAssociationCount,
+      associationCoverage:
+        expectedAssociationCount === 0
+          ? 0
+          : Math.round(
+              (resolvedAssociationCount / expectedAssociationCount) * 100_000,
+            ) / 100_000,
+      expectedRelationshipCount:
+        reconstruction.completeness.expectedRelationshipCount,
+      resolvedRelationshipCount:
+        reconstruction.completeness.resolvedRelationshipCount,
+      relationshipCoverage: reconstruction.completeness.relationshipCoverage,
+      unresolvedObjects: reconstruction.completeness.unresolvedObjects,
+    }
+    const readiness = {
+      ready: reconstruction.readiness.ready,
+      status: reconstruction.readiness.status,
+      blockingDiagnosticCodes: reconstruction.readiness.blockingDiagnosticCodes,
+    }
+    const countersAgreeWithReconstruction =
+      audit.counters.expectedAssociations ===
+        completeness.expectedAssociationCount &&
+      audit.counters.matchedAssociations ===
+        completeness.resolvedAssociationCount &&
+      audit.counters.resolvedAssociationRate ===
+        completeness.associationCoverage
     const passed =
       audit.counters.falseLinkCount === 0 &&
       audit.counters.unresolvedAssociations === 0 &&
       audit.counters.verifiedAssociationRate === 1 &&
+      countersAgreeWithReconstruction &&
       checkpoints.every((checkpoint) => checkpoint.status === 'passed')
     return {
       schemaVersion: '1.0.0',
@@ -106,6 +142,8 @@ async function reconstructAndAudit(groundTruth, fixtureBytes) {
       checkpoints,
       associations: audit.associations,
       diagnosticCounts: audit.diagnosticCounts,
+      completeness,
+      readiness,
     }
   } finally {
     await vite.close()

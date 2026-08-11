@@ -212,6 +212,7 @@ function createPdf(pageDefinitions, { language } = {}) {
     ),
   ].sort()
   const fontIds = new Map(fontNames.map((name) => [name, reserve()]))
+  const arabicIndicToUnicodeId = fontNames.includes('F5') ? reserve() : null
   const pageIds = pageDefinitions.map(() => reserve())
   const contentIds = pageDefinitions.map(() => reserve())
   const pageImages = pageDefinitions.map(
@@ -254,7 +255,29 @@ function createPdf(pageDefinitions, { language } = {}) {
   for (const [name, id] of fontIds) {
     set(
       id,
-      `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFonts[name] ?? 'Helvetica'} >>`,
+      `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFonts[name] ?? 'Helvetica'}${name === 'F5' && arabicIndicToUnicodeId ? ` /ToUnicode ${arabicIndicToUnicodeId} 0 R` : ''} >>`,
+    )
+  }
+  if (arabicIndicToUnicodeId) {
+    const cmap = `/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /ArabicIndicOne def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfchar
+<31> <0661>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end`
+    set(
+      arabicIndicToUnicodeId,
+      `<< /Length ${cmap.length} >>\nstream\n${cmap}\nendstream`,
     )
   }
 
@@ -840,46 +863,18 @@ const fixtures = {
         { text: '*', x: 258, y: 610, size: 7 },
         { text: '.', x: 263, y: 606 },
         {
-          text: 'Arabic-Indic U+0661 note marker appears at right.',
-          x: 54,
-          y: 560,
-        },
-        {
-          text: 'Arabic-Indic U+0661 note body marker appears at left.',
-          x: 82,
-          y: 506,
-        },
-        {
-          text: '1. Numeric footnote body contains nested marker',
-          x: 54,
+          text: '1. Numeric footnote body contains nested marker [6]',
+          x: 240,
           y: 112,
           size: 8,
         },
-        { text: '6', x: 268, y: 116, size: 6 },
-        { text: '.', x: 273, y: 112, size: 8 },
         {
           text: '6. Nested footnote body.',
-          x: 54,
+          x: 240,
           y: 90,
           size: 8,
         },
         { text: '* Symbol footnote body.', x: 54, y: 68, size: 8 },
-      ],
-      images: [
-        {
-          x: 330,
-          y: 548,
-          width: 14,
-          height: 18,
-          raster: arabicIndicOne,
-        },
-        {
-          x: 54,
-          y: 496,
-          width: 14,
-          height: 18,
-          raster: arabicIndicOne,
-        },
       ],
     },
     {
@@ -940,6 +935,48 @@ const fixtures = {
     {
       lines: [
         {
+          text: 'Endnotes',
+          x: 54,
+          y: 748,
+          size: 18,
+          font: 'F2',
+        },
+        { text: 'Arabic-Indic note association', x: 54, y: 716, size: 14 },
+        {
+          text: 'Arabic-Indic U+0661 note marker appears at right.',
+          x: 54,
+          y: 650,
+        },
+        { text: '1', x: 297, y: 654, size: 7, font: 'F5' },
+        { text: '.', x: 302, y: 650 },
+        {
+          text: 'Arabic-Indic note body.',
+          x: 66,
+          y: 72,
+          size: 8,
+        },
+        { text: '1', x: 54, y: 72, size: 8, font: 'F5' },
+        { text: '.', x: 60, y: 72, size: 8 },
+        {
+          text: '3. Repository-owned endnote body begins here.',
+          x: 54,
+          y: 150,
+        },
+        {
+          text: 'Additional endnote detail preserves complete source evidence.',
+          x: 54,
+          y: 125,
+        },
+        {
+          text: 'The note remains local and deterministic for this fixture.',
+          x: 54,
+          y: 100,
+        },
+      ],
+    },
+    {
+      lines: [
+        {
           text: 'Genuinely ambiguous duplicate-label note',
           x: 54,
           y: 748,
@@ -966,26 +1003,6 @@ const fixtures = {
           x: 330,
           y: 72,
           size: 7,
-        },
-      ],
-    },
-    {
-      lines: [
-        { text: 'Endnotes', x: 54, y: 700, size: 16, font: 'F2' },
-        {
-          text: '3. Repository-owned endnote body begins here.',
-          x: 54,
-          y: 650,
-        },
-        {
-          text: 'Additional endnote detail preserves complete source evidence.',
-          x: 54,
-          y: 625,
-        },
-        {
-          text: 'The note remains local and deterministic for this fixture.',
-          x: 54,
-          y: 600,
         },
       ],
     },

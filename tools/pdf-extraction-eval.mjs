@@ -52,7 +52,10 @@ const SAFE_DIAGNOSTIC = /^[A-Z][A-Z0-9_]{2,63}$/
 const MAX_JSON_BYTES = 32 * 1024 * 1024
 const ABSTENTION_SCORE = 0.25
 const DEGENERATE_SCORE = 0
-const REVIEW_STATUSES = Object.freeze(['review-required', 'two-reviewer-agreed'])
+const REVIEW_STATUSES = Object.freeze([
+  'review-required',
+  'two-reviewer-agreed',
+])
 const REVIEW_EVIDENCE_VALIDATED = Symbol('pdfExtractionReviewEvidenceValidated')
 
 function isRecord(value) {
@@ -195,9 +198,7 @@ function isNormalizedBox(value) {
     value[2] > 0 &&
     value[2] <= 1 &&
     value[3] > 0 &&
-    value[3] <= 1 &&
-    value[0] + value[2] <= 1 &&
-    value[1] + value[3] <= 1
+    value[3] <= 1
   )
 }
 
@@ -903,13 +904,16 @@ async function validateReviewEvidenceFiles(value, identity) {
     (review) => review.reviewStatus === 'two-reviewer-agreed',
   )
   if (agreed.length === 0) return
-  if (reviewValues.some((review) => review.reviewStatus === 'review-required')) {
+  if (
+    reviewValues.some((review) => review.reviewStatus === 'review-required')
+  ) {
     invalid('PDF_EXTRACTION_REVIEW_INCOMPLETE')
   }
   const evidence = agreed[0].reviewEvidence
   if (
     agreed.some(
-      (review) => canonicalJson(review.reviewEvidence) !== canonicalJson(evidence),
+      (review) =>
+        canonicalJson(review.reviewEvidence) !== canonicalJson(evidence),
     )
   ) {
     invalid('PDF_EXTRACTION_REVIEW_EVIDENCE_BINDING_MISMATCH')
@@ -944,6 +948,14 @@ async function validateReviewEvidenceFiles(value, identity) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
     }
   }
+  if (
+    !uniqueBy(
+      rosterArtifact.value.reviewers,
+      (reviewer) => reviewer.identityEvidenceSha256,
+    )
+  ) {
+    invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+  }
   const rosterIds = new Set(
     rosterArtifact.value.reviewers.map((reviewer) => reviewer.reviewerId),
   )
@@ -962,7 +974,8 @@ async function validateReviewEvidenceFiles(value, identity) {
       'candidateOutputConsultedForLabel',
       'decisions',
     ]) ||
-    decisionArtifact.value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
+    decisionArtifact.value.schemaVersion !==
+      PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
     decisionArtifact.value.kind !== 'pdf-extraction-source-only-decisions' ||
     decisionArtifact.value.evalSetId !== identity.id ||
     decisionArtifact.value.evalSetSha256 !== identity.evalSetSha256 ||
@@ -1390,6 +1403,7 @@ function proseScore(expected, prediction) {
 function boilerplateScore(expected, prediction) {
   if (!isRecord(prediction)) return degenerateResult()
   const counters = prediction.contamination
+  const excluded = predictionArray(prediction, 'excluded')
   if (
     !isRecord(counters) ||
     !exactKeys(counters, [
@@ -1402,22 +1416,59 @@ function boilerplateScore(expected, prediction) {
     return degenerateResult('MISSING_BOILERPLATE_COUNTERS')
   }
   if (
-    counters.excludedCount > expected.bodyLineCount ||
-    counters.excludedCount > expected.bodyLineCount * 0.75
+    !excluded ||
+    excluded.some(
+      (item) =>
+        !isRecord(item) ||
+        !exactKeys(item, ['id', 'sourcePage', 'kind']) ||
+        !SAFE_ID.test(item.id ?? '') ||
+        !Number.isSafeInteger(item.sourcePage) ||
+        item.sourcePage < 1 ||
+        !['running-head', 'page-number'].includes(item.kind),
+    ) ||
+    !uniqueBy(
+      excluded,
+      (item) => `${item.id}\0${item.sourcePage}\0${item.kind}`,
+    )
+  ) {
+    return degenerateResult('MISSING_BOILERPLATE_IDENTITIES')
+  }
+  if (
+    excluded.length > expected.bodyLineCount ||
+    excluded.length > expected.bodyLineCount * 0.75
   ) {
     return degenerateResult('DEGENERATE_EXCLUDING_EVERY_LINE')
   }
-  if (counters.excludedCount !== expected.excluded.length) {
-    return diagnosticResult(0, 'scored', ['INCOMPLETE_BOILERPLATE_EXCLUSION'], {
-      expectedExcluded: expected.excluded.length,
-      predictedExcluded: counters.excludedCount,
-    })
+  const identity = (item) => `${item.id}\0${item.sourcePage}\0${item.kind}`
+  const expectedKeys = new Set(expected.excluded.map(identity))
+  const predictedKeys = new Set(excluded.map(identity))
+  const missed = expected.excluded.filter(
+    (item) => !predictedKeys.has(identity(item)),
+  )
+  if (
+    counters.excludedCount !== excluded.length ||
+    counters.runningHeadContaminationCount !==
+      missed.filter((item) => item.kind === 'running-head').length ||
+    counters.pageNumberContaminationCount !==
+      missed.filter((item) => item.kind === 'page-number').length
+  ) {
+    return degenerateResult('INVALID_BOILERPLATE_COUNTERS')
   }
-  const contamination =
-    counters.runningHeadContaminationCount +
-    counters.pageNumberContaminationCount
-  const score = contamination === 0 ? 1 : 0
-  return diagnosticResult(score, 'scored', [], { contamination })
+  const matched = excluded.filter((item) =>
+    expectedKeys.has(identity(item)),
+  ).length
+  const score =
+    expected.excluded.length === 0 && excluded.length === 0
+      ? 1
+      : f1(matched, expected.excluded.length, excluded.length)
+  const diagnostics =
+    matched === expected.excluded.length && matched === excluded.length
+      ? []
+      : ['INCOMPLETE_BOILERPLATE_EXCLUSION']
+  return diagnosticResult(score, 'scored', diagnostics, {
+    expectedExcluded: expected.excluded.length,
+    predictedExcluded: excluded.length,
+  })
 }
 
 function relationshipScore(expected, prediction) {
@@ -1432,9 +1483,16 @@ function relationshipScore(expected, prediction) {
     return degenerateResult('DEGENERATE_DUPLICATE_FOOTNOTE_RELATIONSHIP')
   }
   if (
-    new Set(expected.references.map((reference) => reference.bodyId)).size > 1 &&
+    new Set(expected.references.map((reference) => reference.bodyId)).size >
+      1 &&
     relationships.length > 1 &&
-    new Set(relationships.map((item) => item?.bodyId)).size === 1
+    new Set(relationships.map((item) => item?.bodyId)).size === 1 &&
+    relationships.some((item) => {
+      const expectedReference = expected.references.find(
+        (reference) => reference.id === item?.referenceId,
+      )
+      return expectedReference && expectedReference.bodyId !== item?.bodyId
+    })
   ) {
     return degenerateResult('DEGENERATE_SINGLE_FOOTNOTE_OWNER')
   }
@@ -1580,8 +1638,9 @@ export function createAbstainingPdfExtractionCandidate(evalSet, provider) {
  */
 export function comparePdfExtractionProviders(evalSet, providers) {
   const identity = validatePdfExtractionEvalSet(evalSet)
+  const reviewValues = reviewValuesForEvalSet(evalSet)
   if (
-    reviewValuesForEvalSet(evalSet).some(
+    reviewValues.some(
       (review) => review.reviewStatus === 'two-reviewer-agreed',
     ) &&
     evalSet[REVIEW_EVIDENCE_VALIDATED] !== true
@@ -1653,9 +1712,7 @@ export function comparePdfExtractionProviders(evalSet, providers) {
         providerRows.push(row)
       }
     }
-    const hasScoredOutput = providerRows.some(
-      (row) => row.scoredCaseCount > 0,
-    )
+    const hasScoredOutput = providerRows.some((row) => row.scoredCaseCount > 0)
     providerSummaries.push({
       providerId: candidate.provider.id,
       providerKind: candidate.provider.kind,
@@ -1672,11 +1729,23 @@ export function comparePdfExtractionProviders(evalSet, providers) {
   const hasScoredOutput = providerSummaries.some(
     (provider) => provider.score !== null,
   )
+  const reviewsComplete =
+    reviewValues.every(
+      (review) => review.reviewStatus === 'two-reviewer-agreed',
+    ) && evalSet[REVIEW_EVIDENCE_VALIDATED] === true
+  const reviewBlocksComparison = hasScoredOutput && !reviewsComplete
+  if (reviewBlocksComparison) {
+    for (const provider of providerSummaries) provider.score = null
+  }
   const reportWithoutHash = {
     schemaVersion: PDF_EXTRACTION_EVAL_REPORT_SCHEMA_VERSION,
     privacy: PDF_EXTRACTION_EVAL_REPORT_PRIVACY,
-    status: hasScoredOutput ? 'comparison' : 'reported-only',
-    diagnosticCodes: hasScoredOutput ? [] : ['NO_SCORED_PROVIDER_OUTPUT'],
+    status: hasScoredOutput && reviewsComplete ? 'comparison' : 'reported-only',
+    diagnosticCodes: reviewBlocksComparison
+      ? ['PDF_EXTRACTION_REVIEW_INCOMPLETE']
+      : hasScoredOutput
+        ? []
+        : ['NO_SCORED_PROVIDER_OUTPUT'],
     evalSet: {
       id: identity.id,
       schemaVersion: identity.schemaVersion,

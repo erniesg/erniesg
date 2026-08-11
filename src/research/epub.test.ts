@@ -3007,13 +3007,15 @@ describe('EPUB 3 export', () => {
         title: 'Unresolved table with note',
         objectType: 'table',
         table: {
-          columns: [{ id: 'column-1', label: 'Value' }],
           rows: [
             {
               cells: [
                 {
                   id: 'cell-1',
                   text: 'Value6',
+                  rowSpan: 1,
+                  columnSpan: 1,
+                  headerScope: null,
                   noteReferences: [
                     {
                       id: 'suppressed-table-cell-note-reference-6',

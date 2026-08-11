@@ -160,6 +160,26 @@ describe('STRUCT canonical document graph', () => {
     expect(renderPublicationXhtml(graph)).toContain(`href="#${target.id}"`)
   })
 
+  it('preserves semantic inline targets without a relationship entry', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const source = graph.blocks[0]
+    const target = graph.blocks[1]
+    source.text = 'See target'
+    source.inline = [
+      {
+        start: 4,
+        end: source.text.length,
+        relationshipId: 'detached-cross-reference',
+        semanticRole: 'cross-reference',
+        targetIds: [target.id],
+      },
+    ]
+
+    expect(renderPublicationXhtml(graph)).toContain(
+      `<a id="detached-cross-reference" href="#${target.id}" data-semantic-role="cross-reference" data-relationship-id="detached-cross-reference" data-target-ids="${target.id}">target</a>`,
+    )
+  })
+
   it('round-trips matched footnotes and endnotes with typed links and backlinks', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const noteRelationships = graph.relationships.filter(
@@ -415,6 +435,82 @@ describe('STRUCT canonical document graph', () => {
         )!.id,
       ],
     })
+  })
+
+  it('keeps equal table-cell note markers on distinct relationships', async () => {
+    const reconstruction = await structuredDocx()
+    const tableNode = reconstruction.paper.nodes.find(
+      (node) => node.type === 'figure' && node.table,
+    )
+    const noteTemplate = reconstruction.noteRelationships.find(
+      (relationship) =>
+        relationship.status === 'matched' && relationship.targetNoteId,
+    )
+    if (!tableNode || tableNode.type !== 'figure' || !tableNode.table) {
+      throw new Error('The structured DOCX fixture must contain a table')
+    }
+    if (!noteTemplate?.targetNoteId) {
+      throw new Error('The structured DOCX fixture must contain a matched note')
+    }
+
+    const tableCellNotes = [
+      { row: 1, column: 0, id: 'table-cell-note-one' },
+      { row: 2, column: 0, id: 'table-cell-note-two' },
+    ].map(({ row, column, id }) => {
+      const cell = tableNode.table!.rows[row].cells[column]
+      cell.text = '1'
+      cell.noteReferences = [
+        {
+          id,
+          label: '1',
+          target: noteTemplate.targetNoteId!,
+          start: 0,
+          end: 1,
+          confidence: 1,
+        },
+      ]
+      return {
+        ...noteTemplate,
+        id,
+        label: '1',
+        referenceStart: 0,
+        referenceEnd: 1,
+        canonicalAnchor: {
+          kind: 'node' as const,
+          nodeId: `${tableNode.id}:table:${cell.id ?? `${row}:${column}`}`,
+          start: 0,
+          end: 1,
+        },
+      }
+    })
+    reconstruction.noteRelationships.push(...tableCellNotes)
+
+    const graph = buildStructDocument(reconstruction)
+    const tableBlock = graph.blocks.find((block) => block.kind === 'table')!
+    const relationshipIds = tableBlock
+      .table!.cells.filter(
+        (cell) => cell.column === 0 && (cell.row === 1 || cell.row === 2),
+      )
+      .map(
+        (cell) =>
+          cell.inline.find((run) => run.semanticRole === 'note-reference')!
+            .relationshipId!,
+      )
+
+    expect(new Set(relationshipIds).size).toBe(2)
+    const cellRelationships = graph.relationships.filter((relationship) =>
+      relationshipIds.includes(relationship.id),
+    )
+    expect(cellRelationships).toHaveLength(2)
+    expect(
+      cellRelationships.every(
+        (relationship) => relationship.from === tableBlock.id,
+      ),
+    ).toBe(true)
+    const xhtml = renderPublicationXhtml(graph)
+    for (const relationshipId of relationshipIds) {
+      expect(xhtml.split(` id="${relationshipId}"`)).toHaveLength(2)
+    }
   })
 
   it('translates STRUCT fragment targets without rewriting explicit external links', async () => {

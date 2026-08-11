@@ -338,6 +338,7 @@ export function buildStructDocument(
   const pdf = isPdf(reconstruction)
   const provenance = reconstruction.provenance ?? {}
   const sourceToStructId = new Map<string, string>()
+  const tableCellAnchorIds = new Set<string>()
   const fallbackRegionIds = new Set<string>()
   for (const [sourcePosition, node] of reconstruction.paper.nodes.entries()) {
     const evidence = boxEvidence(provenance[node.id], node.id)
@@ -352,10 +353,9 @@ export function buildStructDocument(
     if (node.type === 'figure' && node.table) {
       node.table.rows.forEach((row, rowIndex) => {
         row.cells.forEach((cell, cellIndex) => {
-          sourceToStructId.set(
-            `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
-            blockId,
-          )
+          const tableCellAnchorId = `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`
+          sourceToStructId.set(tableCellAnchorId, blockId)
+          tableCellAnchorIds.add(tableCellAnchorId)
         })
       })
     }
@@ -389,13 +389,20 @@ export function buildStructDocument(
     note.canonicalAnchor?.kind === 'node'
       ? resolveEndpoint(note.canonicalAnchor.nodeId)
       : resolveEndpoint(note.referenceRegionId)
+  const noteIdentityOwner = (
+    note: DocumentReconstruction['noteRelationships'][number],
+  ) =>
+    note.canonicalAnchor?.kind === 'node' &&
+    tableCellAnchorIds.has(note.canonicalAnchor.nodeId)
+      ? `${noteOwner(note)}:${note.canonicalAnchor.nodeId}`
+      : noteOwner(note)
   const sourceRelationshipIds = new Map<string, string>()
   for (const note of reconstruction.noteRelationships) {
     sourceRelationshipIds.set(
       note.id,
       structId(
         'relationship',
-        `${reconstruction.source.sha256}:note:${noteOwner(note)}:${note.referenceStart}:${note.referenceEnd}:${note.label}`,
+        `${reconstruction.source.sha256}:note:${noteIdentityOwner(note)}:${note.referenceStart}:${note.referenceEnd}:${note.label}`,
       ),
     )
   }

@@ -2099,6 +2099,29 @@ describe('private PDF fidelity runner', () => {
     }
   })
 
+  it('accepts ambiguous citation relationships in private fidelity evidence', () => {
+    const baseline = fidelityReceipt({
+      transformReconstruction(value) {
+        value.citationRelationships = [
+          citationRelationship({ status: 'ambiguous' }),
+        ]
+        return value
+      },
+    })
+
+    expect(baseline.runs[0].reconstruction.structure).toMatchObject({
+      citationRelationshipCount: 1,
+      citationRelationshipCounts: { ambiguous: 1 },
+    })
+    expect(() =>
+      comparePrivateFidelityReceipts(
+        baseline,
+        structuredClone(baseline),
+        acceptedBaselineSha256(baseline),
+      ),
+    ).not.toThrow()
+  })
+
   it('rejects missing or malformed private citation graph evidence', () => {
     const baseline = fidelityReceipt({
       transformReconstruction(value) {

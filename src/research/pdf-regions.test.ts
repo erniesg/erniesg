@@ -6772,8 +6772,10 @@ describe('deterministic scholarly page regions', () => {
     const second = reconstructPageRegions(pages)
     const furniture = first.regions.filter((region) => region.furniture)
     expect(
-      furniture.filter((region) => region.kind === 'page-number'),
-    ).toHaveLength(9)
+      furniture
+        .filter((region) => region.kind === 'page-number')
+        .flatMap((region) => region.text.split(/\s+/u)),
+    ).toEqual(['١', '१', 'I', '٢', '२', 'II', '٣', '३', 'III'])
     expect(
       furniture.some(
         (region) =>
@@ -6789,6 +6791,45 @@ describe('deterministic scholarly page regions', () => {
       ),
     ).toBe(true)
     expect(first.regions).toEqual(second.regions)
+  })
+
+  it('keeps raised Unicode note markers linked while margin numerals remain furniture', async () => {
+    const result = await reconstruct([
+      page(1, [
+        run(1, 'Unicode note geometry', 0.12, 0.08, 0.68, 18),
+        run(1, 'Ada Researcher', 0.12, 0.14, 0.3, 11),
+        run(1, 'Abstract', 0.12, 0.21, 0.22, 14),
+        run(
+          1,
+          'The abstract establishes a source-backed multilingual fixture.',
+          0.12,
+          0.26,
+          0.72,
+        ),
+        run(1, 'Arabic-Indic evidence', 0.12, 0.38, 0.3, 10),
+        run(1, '١', 0.425, 0.374, 0.009, 6, 0.009),
+        run(1, 'Devanagari evidence', 0.12, 0.46, 0.3, 10),
+        run(1, '२', 0.425, 0.454, 0.009, 6, 0.009),
+        run(1, '١. Arabic-Indic note body.', 0.12, 0.82, 0.72, 7),
+        run(1, '२. Devanagari note body.', 0.12, 0.86, 0.72, 7),
+      ]),
+    ])
+
+    expect(
+      result.noteRelationships.map((relationship) => ({
+        label: relationship.label,
+        status: relationship.status,
+        sourceText: result.regions
+          .find((region) => region.id === relationship.referenceRegionId)
+          ?.text.slice(
+            relationship.referenceStart,
+            relationship.referenceEnd,
+          ),
+      })),
+    ).toEqual([
+      { label: '1', status: 'matched', sourceText: '١' },
+      { label: '2', status: 'matched', sourceText: '२' },
+    ])
   })
 
   it('defers overlapping repeated numeral bands to the footnote stratum', () => {

@@ -349,12 +349,7 @@ function decodeBytes(value: unknown, path: string): Uint8Array | undefined {
     : undefined
 }
 
-function mediaTypeFor(upload: JsonObject, location: string): string {
-  const direct = upload.mimeType ?? upload.mimetype ?? upload.mediaType
-  if (direct !== undefined) {
-    if (typeof direct !== 'string' || !/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/u.test(direct)) throw new Error(`Payload upload has invalid media type at ${location}`)
-    return direct.toLowerCase()
-  }
+function inferredFilenameMediaType(upload: JsonObject, location: string): string | undefined {
   const rawFilename = upload.filename ?? upload.fileName ?? upload.name
   if (rawFilename !== undefined && typeof rawFilename !== 'string') throw new Error(`Payload upload filename must be a string at ${location}`)
   const filename = rawFilename ?? ''
@@ -371,7 +366,16 @@ function mediaTypeFor(upload: JsonObject, location: string): string {
     mp4: 'video/mp4',
     pdf: 'application/pdf',
   }
-  return (extension && types[extension]) || 'application/octet-stream'
+  return extension ? types[extension] : undefined
+}
+
+function mediaTypeFor(upload: JsonObject, location: string): string {
+  const direct = upload.mimeType ?? upload.mimetype ?? upload.mediaType
+  if (direct !== undefined) {
+    if (typeof direct !== 'string' || !/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/u.test(direct)) throw new Error(`Payload upload has invalid media type at ${location}`)
+    return direct.toLowerCase()
+  }
+  return inferredFilenameMediaType(upload, location) ?? 'application/octet-stream'
 }
 
 function optionalUploadDimension(value: unknown, field: string, location: string) {
@@ -594,7 +598,7 @@ function lexicalRoot(value: unknown): LexicalNode[] {
 function relationId(value: unknown): string | undefined {
   if (typeof value === 'string' || typeof value === 'number') return String(value)
   if (isObject(value)) {
-    const id = value.id ?? value._id ?? value.value ?? value.target
+    const id = value.id ?? value._id ?? value.key ?? value.value ?? value.target
     return typeof id === 'string' || typeof id === 'number' ? String(id) : undefined
   }
   return undefined
@@ -1003,12 +1007,13 @@ const UPLOAD_REFERENCE_FIELD_GROUPS: readonly (readonly string[])[] = [
 function uploadReferenceConflicts(raw: JsonObject, indexed: JsonObject, location: string): string[] {
   const conflicts: string[] = []
   const directMediaType = (upload: JsonObject) => upload.mimeType ?? upload.mimetype ?? upload.mediaType
-  const declaresMediaType = (upload: JsonObject) =>
-    directMediaType(upload) !== undefined ||
-    upload.filename !== undefined ||
-    upload.fileName !== undefined ||
-    upload.name !== undefined
-  if (declaresMediaType(raw) && declaresMediaType(indexed) && mediaTypeFor(raw, location) !== mediaTypeFor(indexed, location)) conflicts.push('media type')
+  const declaredMediaType = (upload: JsonObject) =>
+    directMediaType(upload) !== undefined
+      ? mediaTypeFor(upload, location)
+      : inferredFilenameMediaType(upload, location)
+  const rawMediaType = declaredMediaType(raw)
+  const indexedMediaType = declaredMediaType(indexed)
+  if (rawMediaType && indexedMediaType && rawMediaType !== indexedMediaType) conflicts.push('media type')
   for (const dimension of ['width', 'height'] as const) {
     if (raw[dimension] !== undefined && indexed[dimension] !== undefined && optionalUploadDimension(raw[dimension], dimension, location) !== optionalUploadDimension(indexed[dimension], dimension, location)) conflicts.push(dimension)
   }

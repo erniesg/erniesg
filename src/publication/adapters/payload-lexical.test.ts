@@ -1674,6 +1674,28 @@ describe('Payload Lexical publication adapter', () => {
     }
   })
 
+  it('resolves key upload references through the indexed map id', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([{ type: 'upload', value: { key: 'pic' } }], {
+        uploads: {
+          pic: {
+            mimeType: 'image/png',
+            data: 'AQIDBA==',
+            alt: 'Mapped picture',
+          },
+        },
+      }),
+    )
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.assetBundle.descriptor.assets).toHaveLength(1)
+    expect(result.graph.nodes[0]).toMatchObject({
+      type: 'figure',
+      assetIds: [expect.any(String)],
+      accessibility: { alternativeText: 'Mapped picture' },
+    })
+  })
+
   it('rejects direct media types that conflict with indexed filename inference', () => {
     expect(() =>
       adaptPayloadLexical(
@@ -1691,6 +1713,28 @@ describe('Payload Lexical publication adapter', () => {
         ),
       ),
     ).toThrow(/disagrees with indexed upload .* on media type/)
+  })
+
+  it('allows unknown filename extensions to inherit an indexed media type', () => {
+    const result = adaptPayloadLexical(
+      strictFixture(
+        [{ type: 'upload', value: { id: 'pic', filename: 'hero' } }],
+        {
+          uploads: {
+            pic: {
+              mimeType: 'image/png',
+              data: 'AQIDBA==',
+              alt: 'Mapped picture',
+            },
+          },
+        },
+      ),
+    )
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.assetBundle.descriptor.assets).toMatchObject([
+      { mediaType: 'image/png' },
+    ])
   })
 
   it('fails closed for table and relationship semantics the graph cannot preserve', () => {

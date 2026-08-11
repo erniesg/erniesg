@@ -298,6 +298,55 @@ describe('publication source adapter conformance', () => {
     expect(canonicalRuns(subscriptFirst)).toEqual([subscript, superscript])
   })
 
+  it('canonicalizes non-overlapping vertical-align runs independently of array order', () => {
+    const base = adaptPayloadLexical({
+      id: 'non-overlapping-vertical-align-runs',
+      title: 'Non-overlapping vertical align runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'abcd' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const superscript = {
+      start: 0,
+      end: 1,
+      verticalAlign: 'superscript',
+    }
+    const subscript = { start: 2, end: 3, verticalAlign: 'subscript' }
+    const superscriptFirst = withRuns([superscript, subscript])
+    const subscriptFirst = withRuns([subscript, superscript])
+
+    expect(
+      comparePublicationSemanticSubset(superscriptFirst, subscriptFirst),
+    ).toBe(true)
+    expect(canonicalPublicationSubsetSha256(superscriptFirst)).toBe(
+      canonicalPublicationSubsetSha256(subscriptFirst),
+    )
+    const canonicalRuns = (graph: typeof superscriptFirst) => {
+      const paragraph = canonicalPublicationSubset(graph).nodes.find(
+        (node) => node.type === 'paragraph',
+      )
+      return paragraph?.inlineRuns
+    }
+    expect(canonicalRuns(subscriptFirst)).toEqual([superscript, subscript])
+    expect(canonicalRuns(superscriptFirst)).toEqual(
+      canonicalRuns(subscriptFirst),
+    )
+  })
+
   it('folds adjacent equivalent runs even when an overlapping style separates them', () => {
     const base = adaptPayloadLexical({
       id: 'interleaved-inline-runs',

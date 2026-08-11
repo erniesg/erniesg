@@ -1089,7 +1089,10 @@ async function validateReviewEvidenceFiles(value, identity) {
     }
   }
   Object.defineProperty(value, REVIEW_EVIDENCE_VALIDATED, {
-    value: identity.evalSetSha256,
+    value: Object.freeze({
+      evalSetSha256: identity.evalSetSha256,
+      reviewValuesSha256: canonicalHash(reviewValuesForEvalSet(value)),
+    }),
     enumerable: false,
     configurable: true,
   })
@@ -1101,6 +1104,15 @@ function reviewValuesForEvalSet(value) {
     ...value.strata.map((item) => item.groundTruth),
     ...value.cases.map((item) => item.source.groundTruth.review),
   ]
+}
+
+function hasValidatedReviewEvidence(value, identity) {
+  const marker = value[REVIEW_EVIDENCE_VALIDATED]
+  return (
+    isRecord(marker) &&
+    marker.evalSetSha256 === identity.evalSetSha256 &&
+    marker.reviewValuesSha256 === canonicalHash(reviewValuesForEvalSet(value))
+  )
 }
 
 export async function validatePdfExtractionEvalSetFiles(value) {
@@ -1533,6 +1545,15 @@ function relationshipScore(expected, prediction) {
   if (!uniqueBy(relationshipKeys, (key) => key)) {
     return degenerateResult('DEGENERATE_DUPLICATE_FOOTNOTE_RELATIONSHIP')
   }
+  const expectedKeys = new Set(
+    expected.references.map(
+      (reference) =>
+        `${reference.id}\0${reference.bodyId}\0${reference.marker}`,
+    ),
+  )
+  if (relationshipKeys.some((key) => !expectedKeys.has(key))) {
+    return degenerateResult('DEGENERATE_DANGLING_FOOTNOTE_RELATIONSHIP')
+  }
   if (
     new Set(expected.references.map((reference) => reference.bodyId)).size >
       1 &&
@@ -1551,12 +1572,6 @@ function relationshipScore(expected, prediction) {
   ) {
     return degenerateResult('DEGENERATE_SINGLE_FOOTNOTE_OWNER')
   }
-  const expectedKeys = new Set(
-    expected.references.map(
-      (reference) =>
-        `${reference.id}\0${reference.bodyId}\0${reference.marker}`,
-    ),
-  )
   const matched = relationships.filter((relationship) =>
     expectedKeys.has(
       `${relationship?.referenceId}\0${relationship?.bodyId}\0${relationship?.marker}`,
@@ -1698,7 +1713,7 @@ export function comparePdfExtractionProviders(evalSet, providers) {
     reviewValues.some(
       (review) => review.reviewStatus === 'two-reviewer-agreed',
     ) &&
-    evalSet[REVIEW_EVIDENCE_VALIDATED] !== identity.evalSetSha256
+    !hasValidatedReviewEvidence(evalSet, identity)
   ) {
     invalid('PDF_EXTRACTION_REVIEW_EVIDENCE_NOT_VERIFIED')
   }
@@ -1791,7 +1806,7 @@ export function comparePdfExtractionProviders(evalSet, providers) {
   const reviewsComplete =
     reviewValues.every(
       (review) => review.reviewStatus === 'two-reviewer-agreed',
-    ) && evalSet[REVIEW_EVIDENCE_VALIDATED] === identity.evalSetSha256
+    ) && hasValidatedReviewEvidence(evalSet, identity)
   const reviewBlocksComparison = comparisonAttempted && !reviewsComplete
   if (reviewBlocksComparison) {
     for (const provider of providerSummaries) {

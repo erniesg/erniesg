@@ -655,6 +655,54 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     ).toMatchObject({ degenerateCaseCount: 1, scoredCaseCount: 0 })
   })
 
+  it('keeps a mixed correct and dangling footnote result degenerate', async () => {
+    const evalSet = await readEvalSet()
+    await verifyEvalSet(evalSet)
+    const footnoteCase = evalSet.cases.find((item) =>
+      item.id.endsWith('.footnote-resolution'),
+    )
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const output = candidate.cases.find(
+      (item) => item.caseId === footnoteCase.id,
+    )
+    const expected = footnoteCase.source.groundTruth.references[0]
+    output.status = 'scored'
+    output.prediction = {
+      relationships: [
+        {
+          referenceId: expected.id,
+          bodyId: expected.bodyId,
+          marker: expected.marker,
+        },
+        {
+          referenceId: 'unknown-reference',
+          bodyId: 'unknown-body',
+          marker: 'x',
+        },
+      ],
+    }
+    output.diagnostics = []
+
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'footnote-resolution' &&
+          row.layout === footnoteCase.layout,
+      ),
+    ).toMatchObject({
+      degenerateCaseCount: 1,
+      scoredCaseCount: 0,
+      diagnostics: expect.arrayContaining([
+        'DEGENERATE_DANGLING_FOOTNOTE_RELATIONSHIP',
+      ]),
+    })
+  })
+
   it('includes abstained rows in sparse provider aggregates', async () => {
     const evalSet = await readEvalSet()
     const directory = await mkdtemp('.tmp-pdf-extraction-aggregate-')
@@ -799,6 +847,41 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
         kind: 'candidate',
         version: 'candidate-a-v1',
       })
+
+      expect(() => comparePdfExtractionProviders(evalSet, [candidate])).toThrow(
+        'PDF_EXTRACTION_REVIEW_EVIDENCE_NOT_VERIFIED',
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates verified review evidence when its hashes change', async () => {
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-review-snapshot-')
+    try {
+      await attachVerifiedReviews(evalSet, directory)
+      for (const review of [
+        ...evalSet.documents.map((item) => item.groundTruthReview),
+        ...evalSet.strata.map((item) => item.groundTruth),
+        ...evalSet.cases.map((item) => item.source.groundTruth.review),
+      ]) {
+        review.reviewEvidence.decisionSha256 = 'e'.repeat(64)
+      }
+      const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+        id: 'candidate-a',
+        kind: 'candidate',
+        version: 'candidate-a-v1',
+      })
+      const tableCase = candidate.cases.find((item) =>
+        item.caseId.endsWith('.table-structure'),
+      )
+      const expectedTable = evalSet.cases.find((item) =>
+        item.id.endsWith('.table-structure'),
+      ).source.groundTruth.tables[0]
+      tableCase.status = 'scored'
+      tableCase.prediction = { tables: [{ ...expectedTable }] }
+      tableCase.diagnostics = []
 
       expect(() => comparePdfExtractionProviders(evalSet, [candidate])).toThrow(
         'PDF_EXTRACTION_REVIEW_EVIDENCE_NOT_VERIFIED',

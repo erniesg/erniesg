@@ -2458,6 +2458,44 @@ describe('PDF semantic signal detection', () => {
       expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
     })
 
+    it('does not let an unvalidated matched visual hide intervening body source', () => {
+      const { decision, paper, provenance, orderedRegions, head } =
+        crossPageFixture({ runningHeadIsFurniture: false })
+      const forgedRelationship: PdfVisualRelationship = {
+        id: 'forged-cross-page-table',
+        kind: 'table',
+        label: 'Table 99',
+        captionRegionId: head.id,
+        sourceRegionIds: [head.id],
+        sourceLineIds: [head.lines[0].id],
+        sourceObjectIds: [],
+        assetIds: [],
+        status: 'matched',
+        confidence: 1,
+        evidence: ['forged-test-relationship'],
+        candidates: [],
+        sourceBoxes: [{ ...head.box }],
+        sourceText: head.text,
+        altText: 'Forged table',
+        altTextSource: 'caption',
+        canonicalNodeId: null,
+        captionNodeId: null,
+      }
+
+      const result = provenanceTextConservation({
+        allRegions: [orderedRegions[0], head, orderedRegions[1]],
+        orderedRegions,
+        paper,
+        provenance,
+        visualRelationships: [forgedRelationship],
+        validatedVisualRelationships: [],
+        lineBoundaryDecisions: [],
+        sourceSemanticFlowBoundaryDecisions: [decision],
+      })
+
+      expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
+    })
+
     it('rejects a canonical cross-page paragraph with no boundary decision', () => {
       const { paper, provenance, orderedRegions } = crossPageFixture({
         runningHeadIsFurniture: true,

@@ -942,6 +942,7 @@ function validatedSourceSemanticFlowBoundaryDecision(
   rightRegion: PdfPageRegion,
   allRegions: readonly PdfPageRegion[],
   visualRelationships: readonly PdfVisualRelationship[],
+  validatedNonProseRelationships: readonly PdfVisualRelationship[],
   lineBoundaryDecisions: readonly PdfLineBoundaryDecision[],
   decisions: readonly PdfSourceSemanticFlowBoundaryDecision[],
   hardHyphenLexicon: ReadonlySet<string>,
@@ -1031,7 +1032,7 @@ function validatedSourceSemanticFlowBoundaryDecision(
   )
   const crossPage = decision.topology === 'cross-page-column'
   const accountedNonProseRegionIds = new Set(
-    visualRelationships.flatMap((relationship) =>
+    validatedNonProseRelationships.flatMap((relationship) =>
       relationship.status === 'matched' && relationship.kind !== 'equation'
         ? [relationship.captionRegionId, ...relationship.sourceRegionIds]
         : [],
@@ -1408,6 +1409,7 @@ type SourceSemanticFlowBoundaryLedgerAudit = {
 function auditSourceSemanticFlowBoundaryLedger({
   allRegions,
   visualRelationships,
+  validatedNonProseRelationships,
   lineBoundaryDecisions,
   decisions,
   hardHyphenLexicon,
@@ -1417,6 +1419,7 @@ function auditSourceSemanticFlowBoundaryLedger({
 }: {
   allRegions: readonly PdfPageRegion[]
   visualRelationships: readonly PdfVisualRelationship[]
+  validatedNonProseRelationships: readonly PdfVisualRelationship[]
   lineBoundaryDecisions: readonly PdfLineBoundaryDecision[]
   decisions: readonly PdfSourceSemanticFlowBoundaryDecision[]
   hardHyphenLexicon: ReadonlySet<string>
@@ -1462,6 +1465,7 @@ function auditSourceSemanticFlowBoundaryLedger({
       toOwners[0],
       allRegions,
       visualRelationships,
+      validatedNonProseRelationships,
       lineBoundaryDecisions,
       [decision],
       hardHyphenLexicon,
@@ -2090,6 +2094,7 @@ export function provenanceTextConservation({
   paper,
   provenance,
   visualRelationships,
+  validatedVisualRelationships,
   assets,
   pages,
   lineBoundaryDecisions,
@@ -2100,6 +2105,7 @@ export function provenanceTextConservation({
   paper: ResearchPaper
   provenance: Record<string, NodeSourceEvidence>
   visualRelationships?: PdfVisualRelationship[]
+  validatedVisualRelationships?: PdfVisualRelationship[]
   assets?: PdfVisualAsset[]
   pages?: readonly PdfPageAnalysis[]
   lineBoundaryDecisions: readonly PdfLineBoundaryDecision[]
@@ -2112,6 +2118,7 @@ export function provenanceTextConservation({
   const semanticFlowBoundaryLedger = auditSourceSemanticFlowBoundaryLedger({
     allRegions,
     visualRelationships: visualRelationships ?? [],
+    validatedNonProseRelationships: validatedVisualRelationships ?? [],
     lineBoundaryDecisions,
     decisions: sourceSemanticFlowBoundaryDecisions,
     hardHyphenLexicon,
@@ -3758,6 +3765,7 @@ export function assessPdfCompleteness({
         paper,
         provenance,
         visualRelationships,
+        validatedVisualRelationships,
         assets,
         pages,
         lineBoundaryDecisions: lineBoundaryDecisions ?? [],

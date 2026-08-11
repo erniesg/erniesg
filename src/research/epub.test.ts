@@ -2073,6 +2073,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(citationPaper)
 
     expect(content).toContain('href="#reference-1"')
+    expect(content).toContain('href="#reference-2"')
     expect(content).toContain('href="#reference-3"')
     expect(content).toContain(
       'data-target-ids="reference-1 reference-2 reference-3"',
@@ -2082,7 +2083,7 @@ describe('EPUB 3 export', () => {
       '[<em><a href="#reference-1" epub:type="biblioref" role="doc-biblioref">1</a>–<a href="#reference-3" epub:type="biblioref" role="doc-biblioref">3</a></em>]',
     )
     expect(content.match(/>1<\/a>–<a[^>]*>3<\/a>/g)).toHaveLength(1)
-    expect(content).not.toContain('additional-biblioref')
+    expect(content).toContain('class="additional-biblioref"')
   })
 
   it('maps mixed singleton and numeric-range citation labels without inventing visible text', () => {
@@ -2128,15 +2129,15 @@ describe('EPUB 3 export', () => {
 
     expect(content).toContain('href="#reference-16"')
     expect(content).toContain('href="#reference-38"')
+    expect(content).toContain('href="#reference-39"')
     expect(content).toContain('href="#reference-40"')
-    expect(content).not.toContain('href="#reference-39"')
     expect(content).toContain(
       'data-target-ids="reference-16 reference-38 reference-39 reference-40"',
     )
     expect(content).toContain(
       '[<a href="#reference-16" epub:type="biblioref" role="doc-biblioref">16</a>, <a href="#reference-38" epub:type="biblioref" role="doc-biblioref">38</a>–<a href="#reference-40" epub:type="biblioref" role="doc-biblioref">40</a>]',
     )
-    expect(content).not.toContain('additional-biblioref')
+    expect(content).toContain('class="additional-biblioref"')
   })
 
   it('fails closed when a mixed numeric citation range cannot account for every target', () => {
@@ -2300,7 +2301,9 @@ describe('EPUB 3 export', () => {
 
       expect(content).toContain('href="#equation-4.17"')
       expect(content).toContain('href="#equation-4.19"')
-      expect(content).not.toContain('href="#equation-4.18"')
+      expect(content).toContain(
+        'href="#equation-4.18" class="additional-cross-reference"',
+      )
       expect(content).toContain(
         'data-target-ids="equation-4.17 equation-4.18 equation-4.19"',
       )
@@ -3490,6 +3493,11 @@ describe('EPUB 3 export', () => {
         markup:
           "<a href='missing-document.xhtml#missing-fragment'>missing document</a>",
         expected: /dangling internal reference missing-document\.xhtml/i,
+      },
+      {
+        markup:
+          "<a xmlns:xlink='http://www.w3.org/1999/xlink' xlink:href='#missing-namespaced-fragment'>missing namespaced fragment</a>",
+        expected: /dangling internal reference #missing-namespaced-fragment/i,
       },
       {
         markup: "<img src='assets/missing.png' alt='missing' />",

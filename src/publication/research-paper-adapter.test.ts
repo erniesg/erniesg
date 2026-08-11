@@ -35,5 +35,27 @@ describe('ResearchPaper compatibility adapter', () => {
         affiliations: ['Example University'],
       }),
     ).toThrow(/does not support/)
+
+    const paragraph = paper.nodes.find((node) => node.type === 'paragraph')!
+    expect(() =>
+      researchPaperToPublicationGraph({
+        ...paper,
+        nodes: paper.nodes.map((node) =>
+          node.id === paragraph.id
+            ? {
+                ...node,
+                inlineRuns: [
+                  {
+                    start: 0,
+                    end: 1,
+                    relationshipId: 'ambiguous-note',
+                    semanticRole: 'note-reference' as const,
+                  },
+                ],
+              }
+            : node,
+        ),
+      }),
+    ).toThrow(/unsupported embedded note references/)
   })
 })

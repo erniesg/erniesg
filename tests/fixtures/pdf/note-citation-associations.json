@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "1.0.0",
+  "checkpoints": [
+    {
+      "id": "associations-page-1-marker-to-body",
+      "document": "note-citation-associations.pdf",
+      "page": 1,
+      "profile": "paperPro",
+      "property": "marker-to-body",
+      "criterion": "The numeric note marker links to its verified semantic note body, and the body links back to that exact marker.",
+      "source": {
+        "feature": "structure",
+        "text": "A numeric claim carries footnote marker"
+      },
+      "output": {
+        "feature": "relationship",
+        "relationship": {
+          "kind": "note",
+          "markerText": "1",
+          "targetText": "Numeric footnote body contains nested marker"
+        }
+      }
+    },
+    {
+      "id": "associations-page-2-citation-to-entry",
+      "document": "note-citation-associations.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "citation-to-entry",
+      "criterion": "The visible author-year citation links to its verified entry in the semantic bibliography.",
+      "source": {
+        "feature": "structure",
+        "text": "Example et al. (2024) confirms the author-year claim."
+      },
+      "output": {
+        "feature": "relationship",
+        "relationship": {
+          "kind": "citation",
+          "markerText": "Example et al. (2024)",
+          "targetText": "Repository-owned author-year evidence."
+        }
+      }
+    },
+    {
+      "id": "associations-page-2-caption-citation",
+      "document": "note-citation-associations.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "in-float-marker",
+      "criterion": "The citation inside Figure 1's caption remains linked to reference entry 2.",
+      "source": {
+        "feature": "structure",
+        "text": "Figure 1. Caption citation [2] remains associated."
+      },
+      "output": {
+        "feature": "relationship",
+        "relationship": {
+          "kind": "citation",
+          "markerText": "[2]",
+          "targetText": "Caption association evidence.",
+          "container": "caption"
+        }
+      }
+    },
+    {
+      "id": "associations-page-2-table-cell-note",
+      "document": "note-citation-associations.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "in-float-marker",
+      "criterion": "The note marker inside the table cell links to its verified semantic note body and backlink.",
+      "source": {
+        "feature": "structure",
+        "text": "A note marker inside a table cell remains associated."
+      },
+      "output": {
+        "feature": "relationship",
+        "relationship": {
+          "kind": "note",
+          "markerText": "4",
+          "targetText": "Table cell note body.",
+          "container": "table-cell"
+        }
+      }
+    },
+    {
+      "id": "associations-page-2-dangling-link-verifier",
+      "document": "note-citation-associations.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "dangling-link-verifier",
+      "criterion": "Every internal href in the generated rendition resolves to exactly one emitted target.",
+      "source": {
+        "feature": "structure",
+        "text": "Prior evidence [1-3, 5] supports the range and group claim."
+      },
+      "output": {
+        "feature": "internal-links"
+      }
+    }
+  ]
+}

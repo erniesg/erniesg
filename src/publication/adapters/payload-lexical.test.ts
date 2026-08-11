@@ -855,7 +855,7 @@ describe('Payload Lexical publication adapter', () => {
           },
         },
       ),
-    ).toThrow(/Payload relationship target a b is not a graph-safe id.*children\[0\]/)
+    ).toThrow(/Payload relationship target \(sha256:[0-9a-f]{16}\) is not a graph-safe id.*children\[0\]/)
     expect(() =>
       adaptPayloadLexical({
         id: 'interleaved-nested-list',
@@ -1628,6 +1628,38 @@ describe('Payload Lexical publication adapter', () => {
         ]),
       ),
     ).toThrow(/Payload relationship is missing target.*children\[0\]\.children\[0\]/)
+  })
+
+  it('redacts unsafe relationship targets from thrown diagnostics', () => {
+    const sentinel = 'unsafe-target?credential=redact-me'
+    const message = capturedError(() =>
+      adaptPayloadLexical(
+        {
+          id: 'unsafe-relationship-target',
+          title: 'Unsafe relationship target',
+          content: {
+            root: {
+              children: [
+                {
+                  type: 'paragraph',
+                  children: [
+                    { type: 'citation', value: sentinel, label: 'Sentinel' },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        { relationships: { citation: { role: 'citation' } } },
+      ),
+    )
+    expect(message).toMatch(
+      /Payload relationship target \(sha256:[0-9a-f]{16}\) is not a graph-safe id.*children\[0\]\.children\[0\]/,
+    )
+    expect(message).not.toContain(sentinel)
+    expect(message).not.toContain('credential')
+    expect(message).not.toContain('redact-me')
+    expect(message).not.toContain('unsafe-target')
   })
 
   it('requires typed metadata, roots, prose fields, and supported mark combinations', () => {

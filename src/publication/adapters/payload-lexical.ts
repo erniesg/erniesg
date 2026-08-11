@@ -601,7 +601,10 @@ function relationId(value: unknown): string | undefined {
 }
 
 function graphSafeRelationshipTarget(target: string, location: string) {
-  if (!GRAPH_SAFE_ID_PATTERN.test(target)) throw new Error(`Payload relationship target ${target} is not a graph-safe id at ${location}`)
+  // An untrusted relationship target can carry secret material, and this
+  // message reaches CLI stderr and CI logs; report only the safe source
+  // location and an opaque digest, never the raw value.
+  if (!GRAPH_SAFE_ID_PATTERN.test(target)) throw new Error(`Payload relationship target (sha256:${digest(target).slice(0, 16)}) is not a graph-safe id at ${location}`)
   return target
 }
 

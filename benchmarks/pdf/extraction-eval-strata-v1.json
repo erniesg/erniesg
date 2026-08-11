@@ -279,9 +279,9 @@
       },
       "metric": {
         "id": "boilerplate-contamination-rate",
-        "name": "running-head and page-number contamination",
-        "unit": "zero-contamination-indicator",
-        "formula": "1 iff both contamination counters are zero and excludedCount is bounded; otherwise 0",
+        "name": "source-reviewed furniture exclusion",
+        "unit": "identity-f1",
+        "formula": "F1 over exact source-reviewed furniture identities; contamination counters must equal unmatched reviewed identities",
         "scoreRange": [0, 1],
         "abstentionScore": 0.25,
         "degenerateScore": 0,
@@ -292,10 +292,12 @@
         "id": "boilerplate-exclusion-degenerate-answer-guard",
         "rejects": [
           "missing-contamination-counters",
+          "missing-source-reviewed-furniture-identities",
+          "inconsistent-contamination-counters",
           "excluding-most-body-lines",
           "running-head-or-page-number-left-in-body-flow"
         ],
-        "detection": "Over-exclusion and contamination both score zero; an explicit abstention scores 0.25.",
+        "detection": "Missing identities, inconsistent counters, any reviewed furniture left in body flow, or over-exclusion score zero; complete furniture removal with extra exclusions receives identity F1 and an explicit abstention scores 0.25.",
         "score": 0,
         "abstentionScore": 0.25,
         "failClosed": true
@@ -434,12 +436,7 @@
                   "text": "12"
                 }
               ],
-              "box": [
-                0.117647,
-                0.555556,
-                0.24183,
-                0.055556
-              ],
+              "box": [0.117647, 0.555556, 0.24183, 0.055556],
               "sourceRegionIds": [
                 "pdf-to-epub-fidelity-table-structure-table-1-region"
               ],
@@ -506,12 +503,7 @@
                   "text": "10"
                 }
               ],
-              "box": [
-                0.117647,
-                0.689394,
-                0.163399,
-                0.037879
-              ],
+              "box": [0.117647, 0.689394, 0.163399, 0.037879],
               "sourceRegionIds": [
                 "structured-scientific-table-structure-table-1-region"
               ],
@@ -673,12 +665,7 @@
               "kind": "display-equation",
               "bounded": true,
               "captionRelationship": "caption-of",
-              "box": [
-                0.359477,
-                0.719697,
-                0.310458,
-                0.060606
-              ],
+              "box": [0.359477, 0.719697, 0.310458, 0.060606],
               "sourceRegionIds": [
                 "pdf-to-epub-fidelity-display-equation-equation-1-region"
               ],
@@ -714,12 +701,7 @@
               "kind": "display-equation",
               "bounded": true,
               "captionRelationship": "caption-of",
-              "box": [
-                0.367647,
-                0.805556,
-                0.269608,
-                0.05303
-              ],
+              "box": [0.367647, 0.805556, 0.269608, 0.05303],
               "sourceRegionIds": [
                 "structured-scientific-display-equation-equation-1-region"
               ],
@@ -755,12 +737,7 @@
               "kind": "figure-or-diagram",
               "bounded": true,
               "captionRelationship": "caption-of",
-              "box": [
-                0.294118,
-                0.166667,
-                0.408497,
-                0.189394
-              ],
+              "box": [0.294118, 0.166667, 0.408497, 0.189394],
               "sourceRegionIds": [
                 "pdf-to-epub-fidelity-figure-diagram-figure-1-region"
               ],
@@ -796,12 +773,7 @@
               "kind": "figure-or-diagram",
               "bounded": true,
               "captionRelationship": "caption-of",
-              "box": [
-                0.359477,
-                0.280303,
-                0.424837,
-                0.138889
-              ],
+              "box": [0.359477, 0.280303, 0.424837, 0.138889],
               "sourceRegionIds": [
                 "structured-scientific-figure-diagram-figure-1-region"
               ],
@@ -816,12 +788,7 @@
               "kind": "figure-or-diagram",
               "bounded": true,
               "captionRelationship": "caption-of",
-              "box": [
-                0.392157,
-                0.494949,
-                0.245098,
-                0.088384
-              ],
+              "box": [0.392157, 0.494949, 0.245098, 0.088384],
               "sourceRegionIds": [
                 "structured-scientific-figure-diagram-figure-2-region"
               ],

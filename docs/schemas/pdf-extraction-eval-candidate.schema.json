@@ -43,6 +43,10 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
+    "diagnostic": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+    },
     "case": {
       "type": "object",
       "additionalProperties": false,
@@ -55,7 +59,7 @@
         },
         "diagnostics": {
           "type": "array",
-          "items": { "$ref": "#/$defs/id" }
+          "items": { "$ref": "#/$defs/diagnostic" }
         }
       },
       "allOf": [

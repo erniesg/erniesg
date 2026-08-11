@@ -47,6 +47,7 @@
       "pattern": "^[a-f0-9]{64}$"
     },
     "box": {
+      "$comment": "The four entries retain the v1 contract: normalized left, top, width, and height. Width and height must be positive. Runtime validation additionally enforces left + width <= 1 and top + height <= 1 because standard JSON Schema cannot compare array entries.",
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
@@ -85,10 +86,7 @@
         },
         "parserOutputConsulted": { "const": false },
         "reviewEvidence": {
-          "oneOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/reviewEvidence" }
-          ]
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/reviewEvidence" }]
         }
       },
       "oneOf": [
@@ -111,7 +109,12 @@
     "reviewEvidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rosterPath", "rosterSha256", "decisionPath", "decisionSha256"],
+      "required": [
+        "rosterPath",
+        "rosterSha256",
+        "decisionPath",
+        "decisionSha256"
+      ],
       "properties": {
         "rosterPath": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" },
         "rosterSha256": { "$ref": "#/$defs/sha256" },

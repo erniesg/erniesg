@@ -15,7 +15,9 @@ import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const PDF_EXTRACTION_EVAL_SCHEMA_VERSION = '1.0.0'
+export const PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION = '1.1.0'
 export const PDF_EXTRACTION_EVAL_REPORT_SCHEMA_VERSION = '1.0.0'
+const PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION = '1.0.0'
 export const PDF_EXTRACTION_EVAL_PRIVACY =
   'repository-fixture-identities-source-reviewed-no-private-inputs'
 export const PDF_EXTRACTION_EVAL_REPORT_PRIVACY =
@@ -52,7 +54,10 @@ const SAFE_DIAGNOSTIC = /^[A-Z][A-Z0-9_]{2,63}$/
 const MAX_JSON_BYTES = 32 * 1024 * 1024
 const ABSTENTION_SCORE = 0.25
 const DEGENERATE_SCORE = 0
-const REVIEW_STATUSES = Object.freeze(['review-required', 'two-reviewer-agreed'])
+const REVIEW_STATUSES = Object.freeze([
+  'review-required',
+  'two-reviewer-agreed',
+])
 const REVIEW_EVIDENCE_VALIDATED = Symbol('pdfExtractionReviewEvidenceValidated')
 
 function isRecord(value) {
@@ -199,6 +204,10 @@ function isNormalizedBox(value) {
     value[0] + value[2] <= 1 &&
     value[1] + value[3] <= 1
   )
+}
+
+function normalizedBoxArea(value) {
+  return isNormalizedBox(value) ? value[2] * value[3] : 0
 }
 
 function validateSourceBinding(value, code) {
@@ -903,13 +912,16 @@ async function validateReviewEvidenceFiles(value, identity) {
     (review) => review.reviewStatus === 'two-reviewer-agreed',
   )
   if (agreed.length === 0) return
-  if (reviewValues.some((review) => review.reviewStatus === 'review-required')) {
+  if (
+    reviewValues.some((review) => review.reviewStatus === 'review-required')
+  ) {
     invalid('PDF_EXTRACTION_REVIEW_INCOMPLETE')
   }
   const evidence = agreed[0].reviewEvidence
   if (
     agreed.some(
-      (review) => canonicalJson(review.reviewEvidence) !== canonicalJson(evidence),
+      (review) =>
+        canonicalJson(review.reviewEvidence) !== canonicalJson(evidence),
     )
   ) {
     invalid('PDF_EXTRACTION_REVIEW_EVIDENCE_BINDING_MISMATCH')
@@ -918,35 +930,71 @@ async function validateReviewEvidenceFiles(value, identity) {
     evidence.rosterPath,
     'PDF_EXTRACTION_REVIEW_ROSTER_FILE',
   )
+  const roster = rosterArtifact.value
   if (
     sha256(rosterArtifact.bytes) !== evidence.rosterSha256 ||
-    !exactKeys(rosterArtifact.value, [
-      'schemaVersion',
-      'kind',
-      'evalSetId',
-      'reviewers',
-    ]) ||
-    rosterArtifact.value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
-    rosterArtifact.value.kind !== 'pdf-extraction-reviewer-roster' ||
-    rosterArtifact.value.evalSetId !== identity.id ||
-    !Array.isArray(rosterArtifact.value.reviewers) ||
-    rosterArtifact.value.reviewers.length < 2 ||
-    !uniqueBy(rosterArtifact.value.reviewers, (reviewer) => reviewer.reviewerId)
+    !exactKeys(roster, ['schemaVersion', 'kind', 'evalSetId', 'reviewers']) ||
+    ![
+      PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION,
+      PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION,
+    ].includes(roster.schemaVersion) ||
+    roster.kind !== 'pdf-extraction-reviewer-roster' ||
+    roster.evalSetId !== identity.id
   ) {
     invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
   }
-  for (const reviewer of rosterArtifact.value.reviewers) {
+  let reviewerEntries
+  if (
+    roster.schemaVersion === PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION
+  ) {
     if (
-      !exactKeys(reviewer, ['reviewerId', 'identityEvidenceSha256']) ||
-      !SAFE_ID.test(reviewer.reviewerId ?? '') ||
-      !SHA256.test(reviewer.identityEvidenceSha256 ?? '')
+      !Array.isArray(roster.reviewers) ||
+      roster.reviewers.length < 2 ||
+      !uniqueBy(roster.reviewers, (reviewer) => reviewer.reviewerId) ||
+      roster.reviewers.some(
+        (reviewer) =>
+          !exactKeys(reviewer, ['reviewerId', 'identityEvidenceSha256']) ||
+          !SAFE_ID.test(reviewer.reviewerId ?? '') ||
+          !SHA256.test(reviewer.identityEvidenceSha256 ?? ''),
+      )
     ) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
     }
+    reviewerEntries = roster.reviewers.map((reviewer) => [
+      reviewer.identityEvidenceSha256,
+      reviewer.reviewerId,
+    ])
+  } else {
+    if (
+      !isRecord(roster.reviewers) ||
+      Object.keys(roster.reviewers).length < 2 ||
+      Object.entries(roster.reviewers).some(
+        ([identityEvidenceSha256, reviewerId]) =>
+          !SHA256.test(identityEvidenceSha256) ||
+          typeof reviewerId !== 'string' ||
+          !SAFE_ID.test(reviewerId) ||
+          SHA256.test(reviewerId),
+      )
+    ) {
+      invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+    }
+    reviewerEntries = Object.entries(roster.reviewers)
   }
-  const rosterIds = new Set(
-    rosterArtifact.value.reviewers.map((reviewer) => reviewer.reviewerId),
-  )
+  const rosterIdentities = new Set(reviewerEntries.map(([hash]) => hash))
+  const identityHashesByAlias = new Map()
+  for (const [hash, alias] of reviewerEntries) {
+    const hashes = identityHashesByAlias.get(alias) ?? []
+    hashes.push(hash)
+    identityHashesByAlias.set(alias, hashes)
+  }
+  const resolveReviewerReference = (reference) => {
+    if (
+      roster.schemaVersion === PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION
+    ) {
+      return identityHashesByAlias.has(reference) ? reference : null
+    }
+    return rosterIdentities.has(reference) ? reference : null
+  }
   const decisionArtifact = await readRepositoryJson(
     evidence.decisionPath,
     'PDF_EXTRACTION_REVIEW_DECISION_FILE',
@@ -962,7 +1010,7 @@ async function validateReviewEvidenceFiles(value, identity) {
       'candidateOutputConsultedForLabel',
       'decisions',
     ]) ||
-    decisionArtifact.value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
+    decisionArtifact.value.schemaVersion !== roster.schemaVersion ||
     decisionArtifact.value.kind !== 'pdf-extraction-source-only-decisions' ||
     decisionArtifact.value.evalSetId !== identity.id ||
     decisionArtifact.value.evalSetSha256 !== identity.evalSetSha256 ||
@@ -993,7 +1041,13 @@ async function validateReviewEvidenceFiles(value, identity) {
       !Array.isArray(decision.reviewers) ||
       decision.reviewers.length < 2 ||
       !uniqueBy(decision.reviewers, (reviewer) => reviewer) ||
-      !decision.reviewers.every((reviewer) => rosterIds.has(reviewer)) ||
+      decision.reviewers.some(
+        (reviewer) => resolveReviewerReference(reviewer) === null,
+      ) ||
+      !uniqueBy(
+        decision.reviewers.map(resolveReviewerReference),
+        (reviewer) => reviewer,
+      ) ||
       decision.decision !== 'agreed' ||
       !SHA256.test(decision.decisionSha256 ?? '')
     ) {
@@ -1013,7 +1067,11 @@ async function validateReviewEvidenceFiles(value, identity) {
     ]),
   )
   for (const review of agreed) {
-    if (review.reviewers.some((reviewer) => !rosterIds.has(reviewer))) {
+    const resolvedReviewers = review.reviewers.map(resolveReviewerReference)
+    if (
+      resolvedReviewers.some((reviewer) => reviewer === null) ||
+      !uniqueBy(resolvedReviewers, (reviewer) => reviewer)
+    ) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
     }
   }
@@ -1022,14 +1080,19 @@ async function validateReviewEvidenceFiles(value, identity) {
     const caseReview = item.source.groundTruth.review
     if (
       !decision ||
-      canonicalJson([...caseReview.reviewers].sort()) !==
-        canonicalJson([...decision.reviewers].sort())
+      canonicalJson(
+        caseReview.reviewers.map(resolveReviewerReference).sort(),
+      ) !==
+        canonicalJson(decision.reviewers.map(resolveReviewerReference).sort())
     ) {
       invalid('PDF_EXTRACTION_REVIEW_DECISION_MISMATCH')
     }
   }
   Object.defineProperty(value, REVIEW_EVIDENCE_VALIDATED, {
-    value: true,
+    value: Object.freeze({
+      evalSetSha256: identity.evalSetSha256,
+      reviewValuesSha256: canonicalHash(reviewValuesForEvalSet(value)),
+    }),
     enumerable: false,
     configurable: true,
   })
@@ -1041,6 +1104,15 @@ function reviewValuesForEvalSet(value) {
     ...value.strata.map((item) => item.groundTruth),
     ...value.cases.map((item) => item.source.groundTruth.review),
   ]
+}
+
+function hasValidatedReviewEvidence(value, identity) {
+  const marker = value[REVIEW_EVIDENCE_VALIDATED]
+  return (
+    isRecord(marker) &&
+    marker.evalSetSha256 === identity.evalSetSha256 &&
+    marker.reviewValuesSha256 === canonicalHash(reviewValuesForEvalSet(value))
+  )
 }
 
 export async function validatePdfExtractionEvalSetFiles(value) {
@@ -1164,6 +1236,8 @@ function predictionArray(prediction, key) {
 function sourceBindingMatches(expected, candidate) {
   return (
     hasValidSourceBinding(candidate) &&
+    normalizedBoxArea(expected.box) > 0 &&
+    normalizedBoxArea(candidate.box) > 0 &&
     canonicalJson(candidate.box) === canonicalJson(expected.box) &&
     canonicalJson(candidate.sourceRegionIds) ===
       canonicalJson(expected.sourceRegionIds) &&
@@ -1176,6 +1250,7 @@ function hasValidSourceBinding(value) {
   return (
     isRecord(value) &&
     isNormalizedBox(value.box) &&
+    normalizedBoxArea(value.box) > 0 &&
     Array.isArray(value.sourceRegionIds) &&
     value.sourceRegionIds.length > 0 &&
     uniqueBy(value.sourceRegionIds, (id) => id) &&
@@ -1233,8 +1308,7 @@ function tableScore(expected, prediction) {
   if (
     predictedTables.some(
       (table) =>
-        table?.pageWide === true ||
-        (Array.isArray(table?.box) && table.box[2] * table.box[3] > 0.8),
+        table?.pageWide === true || normalizedBoxArea(table?.box) > 0.8,
     )
   ) {
     return degenerateResult('DEGENERATE_PAGE_WIDE_GRID')
@@ -1318,8 +1392,7 @@ function objectScore(expected, prediction, key, degenerateCode) {
   if (
     objects.some(
       (object) =>
-        object?.pageWide === true ||
-        (Array.isArray(object?.box) && object.box[2] * object.box[3] > 0.9),
+        object?.pageWide === true || normalizedBoxArea(object?.box) > 0.9,
     )
   ) {
     return degenerateResult(degenerateCode)
@@ -1390,6 +1463,7 @@ function proseScore(expected, prediction) {
 function boilerplateScore(expected, prediction) {
   if (!isRecord(prediction)) return degenerateResult()
   const counters = prediction.contamination
+  const excluded = predictionArray(prediction, 'excluded')
   if (
     !isRecord(counters) ||
     !exactKeys(counters, [
@@ -1402,22 +1476,62 @@ function boilerplateScore(expected, prediction) {
     return degenerateResult('MISSING_BOILERPLATE_COUNTERS')
   }
   if (
-    counters.excludedCount > expected.bodyLineCount ||
-    counters.excludedCount > expected.bodyLineCount * 0.75
+    !excluded ||
+    excluded.some(
+      (item) =>
+        !isRecord(item) ||
+        !exactKeys(item, ['id', 'sourcePage', 'kind']) ||
+        !SAFE_ID.test(item.id ?? '') ||
+        !Number.isSafeInteger(item.sourcePage) ||
+        item.sourcePage < 1 ||
+        !['running-head', 'page-number'].includes(item.kind),
+    ) ||
+    !uniqueBy(
+      excluded,
+      (item) => `${item.id}\0${item.sourcePage}\0${item.kind}`,
+    )
+  ) {
+    return degenerateResult('MISSING_BOILERPLATE_IDENTITIES')
+  }
+  if (
+    excluded.length > expected.bodyLineCount ||
+    excluded.length > expected.bodyLineCount * 0.75
   ) {
     return degenerateResult('DEGENERATE_EXCLUDING_EVERY_LINE')
   }
-  if (counters.excludedCount !== expected.excluded.length) {
-    return diagnosticResult(0, 'scored', ['INCOMPLETE_BOILERPLATE_EXCLUSION'], {
-      expectedExcluded: expected.excluded.length,
-      predictedExcluded: counters.excludedCount,
-    })
+  const identity = (item) => `${item.id}\0${item.sourcePage}\0${item.kind}`
+  const expectedKeys = new Set(expected.excluded.map(identity))
+  const predictedKeys = new Set(excluded.map(identity))
+  const missed = expected.excluded.filter(
+    (item) => !predictedKeys.has(identity(item)),
+  )
+  if (
+    counters.excludedCount !== excluded.length ||
+    counters.runningHeadContaminationCount !==
+      missed.filter((item) => item.kind === 'running-head').length ||
+    counters.pageNumberContaminationCount !==
+      missed.filter((item) => item.kind === 'page-number').length
+  ) {
+    return degenerateResult('INVALID_BOILERPLATE_COUNTERS')
   }
-  const contamination =
-    counters.runningHeadContaminationCount +
-    counters.pageNumberContaminationCount
-  const score = contamination === 0 ? 1 : 0
-  return diagnosticResult(score, 'scored', [], { contamination })
+  if (missed.length > 0) {
+    return degenerateResult('RUNNING_HEAD_OR_PAGE_NUMBER_LEFT_IN_BODY_FLOW')
+  }
+  const matched = excluded.filter((item) =>
+    expectedKeys.has(identity(item)),
+  ).length
+  const score =
+    expected.excluded.length === 0 && excluded.length === 0
+      ? 1
+      : f1(matched, expected.excluded.length, excluded.length)
+  const diagnostics =
+    matched === expected.excluded.length && matched === excluded.length
+      ? []
+      : ['INCOMPLETE_BOILERPLATE_EXCLUSION']
+  return diagnosticResult(score, 'scored', diagnostics, {
+    expectedExcluded: expected.excluded.length,
+    predictedExcluded: excluded.length,
+  })
 }
 
 function relationshipScore(expected, prediction) {
@@ -1431,19 +1545,33 @@ function relationshipScore(expected, prediction) {
   if (!uniqueBy(relationshipKeys, (key) => key)) {
     return degenerateResult('DEGENERATE_DUPLICATE_FOOTNOTE_RELATIONSHIP')
   }
-  if (
-    new Set(expected.references.map((reference) => reference.bodyId)).size > 1 &&
-    relationships.length > 1 &&
-    new Set(relationships.map((item) => item?.bodyId)).size === 1
-  ) {
-    return degenerateResult('DEGENERATE_SINGLE_FOOTNOTE_OWNER')
-  }
   const expectedKeys = new Set(
     expected.references.map(
       (reference) =>
         `${reference.id}\0${reference.bodyId}\0${reference.marker}`,
     ),
   )
+  if (relationshipKeys.some((key) => !expectedKeys.has(key))) {
+    return degenerateResult('DEGENERATE_DANGLING_FOOTNOTE_RELATIONSHIP')
+  }
+  if (
+    new Set(expected.references.map((reference) => reference.bodyId)).size >
+      1 &&
+    relationships.length > 1 &&
+    new Set(relationships.map((item) => item?.bodyId)).size === 1 &&
+    relationships.some((item) => {
+      const expectedReference = expected.references.find(
+        (reference) => reference.id === item?.referenceId,
+      )
+      return (
+        !expectedReference ||
+        expectedReference.bodyId !== item?.bodyId ||
+        expectedReference.marker !== item?.marker
+      )
+    })
+  ) {
+    return degenerateResult('DEGENERATE_SINGLE_FOOTNOTE_OWNER')
+  }
   const matched = relationships.filter((relationship) =>
     expectedKeys.has(
       `${relationship?.referenceId}\0${relationship?.bodyId}\0${relationship?.marker}`,
@@ -1580,11 +1708,12 @@ export function createAbstainingPdfExtractionCandidate(evalSet, provider) {
  */
 export function comparePdfExtractionProviders(evalSet, providers) {
   const identity = validatePdfExtractionEvalSet(evalSet)
+  const reviewValues = reviewValuesForEvalSet(evalSet)
   if (
-    reviewValuesForEvalSet(evalSet).some(
+    reviewValues.some(
       (review) => review.reviewStatus === 'two-reviewer-agreed',
     ) &&
-    evalSet[REVIEW_EVIDENCE_VALIDATED] !== true
+    !hasValidatedReviewEvidence(evalSet, identity)
   ) {
     invalid('PDF_EXTRACTION_REVIEW_EVIDENCE_NOT_VERIFIED')
   }
@@ -1598,11 +1727,15 @@ export function comparePdfExtractionProviders(evalSet, providers) {
   const strata = stratumById(evalSet)
   const rows = []
   const providerSummaries = []
+  let comparisonAttempted = false
   for (const candidate of providers) {
     validateCandidateProvider(
       candidate,
       identity,
       'INVALID_PDF_EXTRACTION_CANDIDATE',
+    )
+    comparisonAttempted ||= candidate.cases.some(
+      (item) => item.status === 'scored',
     )
     const outputMap = new Map(
       candidate.cases.map((item) => [item.caseId, item]),
@@ -1653,9 +1786,7 @@ export function comparePdfExtractionProviders(evalSet, providers) {
         providerRows.push(row)
       }
     }
-    const hasScoredOutput = providerRows.some(
-      (row) => row.scoredCaseCount > 0,
-    )
+    const hasScoredOutput = providerRows.some((row) => row.scoredCaseCount > 0)
     providerSummaries.push({
       providerId: candidate.provider.id,
       providerKind: candidate.provider.kind,
@@ -1672,11 +1803,33 @@ export function comparePdfExtractionProviders(evalSet, providers) {
   const hasScoredOutput = providerSummaries.some(
     (provider) => provider.score !== null,
   )
+  const reviewsComplete =
+    reviewValues.every(
+      (review) => review.reviewStatus === 'two-reviewer-agreed',
+    ) && hasValidatedReviewEvidence(evalSet, identity)
+  const reviewBlocksComparison = comparisonAttempted && !reviewsComplete
+  if (reviewBlocksComparison) {
+    for (const provider of providerSummaries) {
+      provider.score = null
+      provider.diagnosticCodes = []
+    }
+    for (const row of rows) {
+      row.scoredCaseCount = 0
+      row.abstainedCaseCount = 0
+      row.degenerateCaseCount = 0
+      row.score = null
+      row.diagnostics = []
+    }
+  }
   const reportWithoutHash = {
     schemaVersion: PDF_EXTRACTION_EVAL_REPORT_SCHEMA_VERSION,
     privacy: PDF_EXTRACTION_EVAL_REPORT_PRIVACY,
-    status: hasScoredOutput ? 'comparison' : 'reported-only',
-    diagnosticCodes: hasScoredOutput ? [] : ['NO_SCORED_PROVIDER_OUTPUT'],
+    status: hasScoredOutput && reviewsComplete ? 'comparison' : 'reported-only',
+    diagnosticCodes: reviewBlocksComparison
+      ? ['PDF_EXTRACTION_REVIEW_INCOMPLETE']
+      : hasScoredOutput
+        ? []
+        : ['NO_SCORED_PROVIDER_OUTPUT'],
     evalSet: {
       id: identity.id,
       schemaVersion: identity.schemaVersion,

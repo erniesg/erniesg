@@ -29,4 +29,12 @@ describe('PDF citation surface parsing', () => {
       expect(parsePdfCitationSurface(value)).toBeNull()
     },
   )
+
+  it('bounds explicit citation lists to the same 32-target limit as ranges', () => {
+    const bounded = `[${Array.from({ length: 32 }, (_, index) => index + 1).join(', ')}]`
+    const oversized = `[${Array.from({ length: 33 }, (_, index) => index + 1).join(', ')}]`
+
+    expect(parsePdfCitationSurface(bounded)?.identities).toHaveLength(32)
+    expect(parsePdfCitationSurface(oversized)).toBeNull()
+  })
 })

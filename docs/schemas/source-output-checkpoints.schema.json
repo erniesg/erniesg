@@ -45,7 +45,11 @@
             "heading-level",
             "table-structure",
             "code-block-structure",
-            "furniture-exclusion"
+            "furniture-exclusion",
+            "marker-to-body",
+            "citation-to-entry",
+            "in-float-marker",
+            "dangling-link-verifier"
           ]
         },
         "criterion": { "type": "string", "minLength": 1 },
@@ -72,11 +76,21 @@
       "required": ["feature"],
       "properties": {
         "feature": {
-          "enum": ["figure", "caption", "prose", "heading", "table", "code"]
+          "enum": [
+            "figure",
+            "caption",
+            "prose",
+            "heading",
+            "table",
+            "code",
+            "relationship",
+            "internal-links"
+          ]
         },
         "text": { "type": "string", "minLength": 1 },
         "level": { "type": "integer", "minimum": 1, "maximum": 6 },
-        "semanticFlow": { "$ref": "#/$defs/semanticFlowExpectation" }
+        "semanticFlow": { "$ref": "#/$defs/semanticFlowExpectation" },
+        "relationship": { "$ref": "#/$defs/relationshipExpectation" }
       }
     },
     "semanticFlowExpectation": {
@@ -89,6 +103,17 @@
         },
         "fromPage": { "type": "integer", "minimum": 1 },
         "outcome": { "enum": ["space", "no-space"] }
+      }
+    },
+    "relationshipExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "markerText", "targetText"],
+      "properties": {
+        "kind": { "enum": ["note", "citation"] },
+        "markerText": { "type": "string", "minLength": 1 },
+        "targetText": { "type": "string", "minLength": 1 },
+        "container": { "enum": ["caption", "table-cell"] }
       }
     }
   }

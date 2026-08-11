@@ -421,6 +421,19 @@ function document({
   }
 }
 
+function currentCitationReceiptDocument(options = {}) {
+  const current = document({ ...options, currentStructure: true })
+  current.structure.schemaVersion = '1.7.0'
+  for (const relationship of current.structure.citationRelationshipGraph) {
+    relationship.candidateNodeIds = []
+    relationship.evidenceSha256s = ['6'.repeat(64)]
+  }
+  current.structure.citationRelationshipGraphSha256 = canonicalJsonHash(
+    current.structure.citationRelationshipGraph,
+  )
+  return current
+}
+
 function report(documents) {
   const ready = documents.filter((document) => document.readiness?.ready).length
   const reviewRequired = documents.filter(
@@ -555,6 +568,12 @@ function v18Report(documents) {
   current.schemaVersion = '1.8.0'
   current.reportSchema = 'docs/schemas/pdf-corpus-audit-v1.8.schema.json'
   return current
+}
+
+function v110Report(documents) {
+  return createCorpusReport(documents, policy, {
+    executionProvenance: executionProvenance(),
+  })
 }
 
 describe('deterministic PDF benchmark comparison', () => {
@@ -968,6 +987,8 @@ describe('deterministic PDF benchmark comparison', () => {
         executionProvenance: executionProvenance(),
       }),
     )
+    valid.schemaVersion = '1.9.0'
+    valid.reportSchema = 'docs/schemas/pdf-corpus-audit-v1.9.schema.json'
     expect(valid).toMatchObject({
       schemaVersion: '1.9.0',
       reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
@@ -2226,8 +2247,29 @@ describe('deterministic PDF benchmark comparison', () => {
     ).not.toThrow()
   })
 
+  it('accepts ambiguous citation relationships in benchmark evidence', () => {
+    const baseline = v110Report([currentCitationReceiptDocument()])
+    const structure = baseline.documents[0].structure
+    structure.citationRelationshipGraph[0].status = 'ambiguous'
+    structure.citationRelationshipGraph[0].targetNodeIds = []
+    structure.citationRelationshipGraph[0].candidateNodeIds = [
+      '4'.repeat(64),
+      '5'.repeat(64),
+    ]
+    structure.citationRelationshipCounts = { ambiguous: 1 }
+    structure.citationRelationshipGraphSha256 = canonicalJsonHash(
+      structure.citationRelationshipGraph,
+    )
+
+    expect(() =>
+      comparePdfBenchmarkReports(baseline, structuredClone(baseline), {
+        corpusReportSchemaPolicy: 'v1.10-only',
+      }),
+    ).not.toThrow()
+  })
+
   it('rejects missing, malformed, stale, or inconsistent citation graph evidence', () => {
-    const baseline = report([document()])
+    const baseline = v110Report([currentCitationReceiptDocument()])
     const missing = structuredClone(baseline)
     delete missing.documents[0].structure.citationRelationshipGraph
     const malformed = structuredClone(baseline)
@@ -2238,11 +2280,48 @@ describe('deterministic PDF benchmark comparison', () => {
       'f'.repeat(64)
     const inconsistentCount = structuredClone(baseline)
     inconsistentCount.documents[0].structure.citationRelationshipCount = 2
-
-    for (const invalid of [missing, malformed, staleHash, inconsistentCount]) {
-      expect(() => comparePdfBenchmarkReports(invalid, baseline)).toThrow(
-        'INVALID_BENCHMARK_REPORT',
+    const staleAmbiguousTarget = structuredClone(baseline)
+    staleAmbiguousTarget.documents[0].structure.citationRelationshipGraph[0] = {
+      ...staleAmbiguousTarget.documents[0].structure
+        .citationRelationshipGraph[0],
+      status: 'ambiguous',
+      candidateNodeIds: ['4'.repeat(64), '5'.repeat(64)],
+    }
+    staleAmbiguousTarget.documents[0].structure.citationRelationshipCounts = {
+      ambiguous: 1,
+    }
+    staleAmbiguousTarget.documents[0].structure.citationRelationshipGraphSha256 =
+      canonicalJsonHash(
+        staleAmbiguousTarget.documents[0].structure.citationRelationshipGraph,
       )
+    const staleUnresolvedTarget = structuredClone(baseline)
+    staleUnresolvedTarget.documents[0].structure.citationRelationshipGraph[0] =
+      {
+        ...staleUnresolvedTarget.documents[0].structure
+          .citationRelationshipGraph[0],
+        status: 'unresolved',
+      }
+    staleUnresolvedTarget.documents[0].structure.citationRelationshipCounts = {
+      unresolved: 1,
+    }
+    staleUnresolvedTarget.documents[0].structure.citationRelationshipGraphSha256 =
+      canonicalJsonHash(
+        staleUnresolvedTarget.documents[0].structure.citationRelationshipGraph,
+      )
+
+    for (const invalid of [
+      missing,
+      malformed,
+      staleHash,
+      inconsistentCount,
+      staleAmbiguousTarget,
+      staleUnresolvedTarget,
+    ]) {
+      expect(() =>
+        comparePdfBenchmarkReports(invalid, baseline, {
+          corpusReportSchemaPolicy: 'v1.10-only',
+        }),
+      ).toThrow('INVALID_BENCHMARK_REPORT')
     }
   })
 

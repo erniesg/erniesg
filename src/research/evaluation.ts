@@ -84,6 +84,15 @@ function relationshipEdgesForPaper(paper: ResearchPaper) {
         predicate: 'caption',
         target: node.relationships.caption,
       })
+      for (const reference of node.table?.rows.flatMap((row) =>
+        row.cells.flatMap((cell) => cell.noteReferences ?? []),
+      ) ?? []) {
+        edges.push({
+          source: node.id,
+          predicate: 'noteTargets',
+          target: reference.target,
+        })
+      }
     }
     if ('noteReferences' in node) {
       for (const reference of node.noteReferences ?? []) {
@@ -135,6 +144,26 @@ function edgeKey(edge: RelationshipEdge) {
   return `${edge.source}\u0000${edge.predicate}\u0000${edge.target}`
 }
 
+function relationshipEdgeCounts(edges: readonly RelationshipEdge[]) {
+  const counts = new Map<string, number>()
+  for (const edge of edges) {
+    const key = edgeKey(edge)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return counts
+}
+
+function preservedRelationshipEdgeCount(
+  expected: ReadonlyMap<string, number>,
+  actual: ReadonlyMap<string, number>,
+) {
+  let preserved = 0
+  for (const [key, expectedCount] of expected) {
+    preserved += Math.min(expectedCount, actual.get(key) ?? 0)
+  }
+  return preserved
+}
+
 function ratio(preserved: number, expected: number) {
   return expected === 0 ? 1 : preserved / expected
 }
@@ -160,7 +189,7 @@ function checkedAnnotationFailures(
 export function evaluateSrt(input: EvaluationInput) {
   const manifest = validateLayoutManifest(input.manifest, input.paper)
   const expectedEdges = relationshipEdgesForPaper(input.paper)
-  const expectedEdgeKeys = new Set(expectedEdges.map(edgeKey))
+  const expectedEdgeCounts = relationshipEdgeCounts(expectedEdges)
   const expectedNodeIds = new Set(input.paper.nodes.map((node) => node.id))
   const expectedAnnotationIds = new Set(
     input.annotations.map((annotation) => annotation.id),
@@ -198,12 +227,13 @@ export function evaluateSrt(input: EvaluationInput) {
         entry.contentHash === canonicalNodeContentHash(node)
       )
     }).length
-    const actualEdgeKeys = new Set(
-      relationshipEdgesForRendition(rendition).map(edgeKey),
+    const actualEdgeCounts = relationshipEdgeCounts(
+      relationshipEdgesForRendition(rendition),
     )
-    const preservedEdges = [...expectedEdgeKeys].filter((edge) =>
-      actualEdgeKeys.has(edge),
-    ).length
+    const preservedEdges = preservedRelationshipEdgeCount(
+      expectedEdgeCounts,
+      actualEdgeCounts,
+    )
     const geometry = geometryByTarget.get(target)
     if (!geometry) {
       throw new Error(`Geometry evidence omitted ${target}`)

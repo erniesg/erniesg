@@ -5,6 +5,7 @@ import type {
   PdfCitationRelationship,
   PdfLineBoundaryDecision,
   PdfNoteRelationship,
+  PdfNoteMarkerClassification,
   NodeSourceEvidence,
   NormalizedSourceBox,
   PdfPageAnalysis,
@@ -38,7 +39,14 @@ import {
   type PdfHyphenBoundaryProof,
 } from './pdf-hyphenation'
 import { unprovedInlineMathAtomNodeIds } from './pdf-inline-script-integrity'
-import { classifyPdfNoteMarkers } from './pdf-note-classifier'
+import {
+  classifyPdfNoteMarkers,
+  pdfAlternateAuthorYearKeyFromBoundary,
+  pdfAuthorYearKey,
+  pdfBibliographyAuthorYearKey,
+} from './pdf-note-classifier'
+import { parsePdfCitationSurface } from './pdf-citation-surface'
+import { normalizedNoteLabel } from './note-label'
 import {
   canonicalPdfSourceSemanticFlowEvidence,
   pdfBodySourceOrderExtremaByPage,
@@ -63,6 +71,7 @@ import type { ResearchNode, ResearchPaper } from './schema'
 import {
   canonicalTextIntegrityIssues,
   internalReferenceIntegrityIssues,
+  validMatchedSemanticNoteRelationshipIds,
 } from './publication-integrity'
 import { parsePdfScholarlyVisualLabel } from './pdf-scholarly-label'
 import { isStrictSemanticTable } from './semantic-table'
@@ -1039,7 +1048,9 @@ function validatedSourceSemanticFlowBoundaryDecision(
     ),
   )
   const accountedNonProseBetweenBoundary = [...accountedNonProseRegionIds]
-    .flatMap((regionId) => allRegions.filter((region) => region.id === regionId))
+    .flatMap((regionId) =>
+      allRegions.filter((region) => region.id === regionId),
+    )
     .some((region) =>
       region.lines.some((line) =>
         line.runs.some(
@@ -1341,7 +1352,11 @@ function sourceProvenSamePageColumnFlowBoundary(
   return fontRatio <= 1.12
 }
 
-const PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR = new Set(['right', 'single', 'span'])
+const PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR = new Set([
+  'right',
+  'single',
+  'span',
+])
 const PDF_CROSS_PAGE_FLOW_HEAD_COLUMNS_LTR = new Set(['left', 'single', 'span'])
 
 function sourceProvenDetachedCitationYearContinuation(
@@ -1349,9 +1364,7 @@ function sourceProvenDetachedCitationYearContinuation(
   rightText: string,
 ) {
   return (
-    /\b\p{Lu}[\p{L}'’.-]*(?:\s+et\s+al\.)?,\s*$/u.test(
-      leftText.trimEnd(),
-    ) &&
+    /\b\p{Lu}[\p{L}'’.-]*(?:\s+et\s+al\.)?,\s*$/u.test(leftText.trimEnd()) &&
     /^(?:18|19|20)\d{2}[a-z]?(?=[,;:)])/u.test(rightText.trimStart())
   )
 }
@@ -3080,16 +3093,182 @@ export function hasResolvedEquationTranscript(
   )
 }
 
+function hasValidMatchedCitationEvidence({
+  relationship,
+  sourceClassification,
+  sourceRegion,
+  nodesById,
+  anchorSourceRuns,
+  lineBoundaryDecisions,
+}: {
+  relationship: PdfCitationRelationship
+  sourceClassification: PdfNoteMarkerClassification | undefined
+  sourceRegion: PdfPageRegion | undefined
+  nodesById: ReadonlyMap<string, ResearchNode>
+  anchorSourceRuns?: readonly {
+    regionId: string
+    box: NormalizedSourceBox
+  }[]
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[]
+}) {
+  if (
+    !sourceClassification ||
+    !sourceRegion ||
+    !sourceClassification.accepted ||
+    sourceClassification.disposition !== 'citation' ||
+    sourceClassification.id !== relationship.id ||
+    sourceClassification.label !== relationship.label ||
+    sourceClassification.taxonomy !== relationship.taxonomy ||
+    sourceClassification.referenceRegionId !== relationship.referenceRegionId ||
+    sourceClassification.start !== relationship.referenceStart ||
+    sourceClassification.end !== relationship.referenceEnd ||
+    !relationship.sourceBoxes.some((box) =>
+      sameNormalizedSourceBox(box, sourceClassification.sourceBox),
+    )
+  ) {
+    return false
+  }
+  const sourceText = sourceRegion.text.slice(
+    relationship.referenceStart,
+    relationship.referenceEnd,
+  )
+  if (!sourceText) return false
+  const surface =
+    relationship.labels.length === 1
+      ? {
+          identities: [...relationship.labels],
+          links: [
+            {
+              identityIndex: 0,
+              start: 0,
+              end: sourceText.length,
+            },
+          ],
+        }
+      : parsePdfCitationSurface(sourceText)
+  if (
+    !surface ||
+    surface.identities.length !== relationship.labels.length ||
+    surface.identities.some(
+      (identity, index) => identity !== relationship.labels[index],
+    )
+  ) {
+    return false
+  }
+  const targetEvidence = relationship.targets ?? []
+  if (targetEvidence.length !== surface.links.length) return false
+  const anchoredSourceBoxes = [
+    ...relationship.sourceBoxes,
+    ...targetEvidence.flatMap((target) => target.sourceBoxes),
+  ]
+  if (
+    anchorSourceRuns &&
+    (anchorSourceRuns.length === 0 ||
+      anchoredSourceBoxes.length === 0 ||
+      anchoredSourceBoxes.some(
+        (box) =>
+          !anchorSourceRuns.some(
+            (run) =>
+              run.regionId === relationship.referenceRegionId &&
+              materiallyOverlappingSourceBoxes(box, run.box),
+          ),
+      ))
+  ) {
+    return false
+  }
+  for (const [index, link] of surface.links.entries()) {
+    const target = targetEvidence[index]
+    const label = relationship.labels[link.identityIndex]
+    const targetNodeId = relationship.targetNodeIds[link.identityIndex]
+    if (
+      !target ||
+      target.label !== label ||
+      target.targetNodeId !== targetNodeId ||
+      target.referenceStart !== relationship.referenceStart + link.start ||
+      target.referenceEnd !== relationship.referenceStart + link.end ||
+      !target.evidence.includes('ordered-citation-label-target-cardinality') ||
+      !target.evidence.includes('exact-replayed-source-run-range') ||
+      !target.evidence.includes('target-specific-source-geometry') ||
+      target.sourceBoxes.length === 0 ||
+      target.sourceBoxes.some(
+        (box) =>
+          !sourceRegion.lines.some((line) =>
+            line.runs.some((run) => materiallyOverlappingSourceBoxes(box, run)),
+          ),
+      )
+    ) {
+      return false
+    }
+  }
+  return relationship.targetNodeIds.every((targetNodeId, index) => {
+    const target = nodesById.get(targetNodeId)
+    if (
+      target?.type !== 'paragraph' ||
+      target.list?.numberingId !== 'references'
+    ) {
+      return false
+    }
+    const label = relationship.labels[index]
+    if (relationship.taxonomy === 'author-year-bibliography-citation') {
+      const targetKey = pdfBibliographyAuthorYearKey(target.text)
+      if (targetKey === label) return true
+      const sourceLink = surface.links.find(
+        (link) => link.identityIndex === index,
+      )
+      const citationText = sourceLink
+        ? sourceText.slice(sourceLink.start, sourceLink.end)
+        : ''
+      const firstSurname = citationText.match(
+        /^\s*(\p{Lu}[\p{L}\p{M}'’.-]*)/u,
+      )?.[1]
+      const year = label.match(/:((?:18|19|20)\d{2}[a-z]?)$/u)?.[1]
+      const surnameOffset = firstSurname
+        ? citationText.indexOf(firstSurname)
+        : -1
+      if (
+        !relationship.evidence.includes(
+          'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+        ) ||
+        !sourceLink ||
+        !firstSurname ||
+        !year ||
+        surnameOffset < 0 ||
+        pdfAuthorYearKey(firstSurname, year) !== label
+      ) {
+        return false
+      }
+      return (
+        targetKey ===
+        pdfAlternateAuthorYearKeyFromBoundary(
+          sourceRegion,
+          lineBoundaryDecisions,
+          firstSurname,
+          year,
+          relationship.referenceStart + sourceLink.start + surnameOffset,
+        )
+      )
+    }
+    const normalizedLabel = normalizedNoteLabel(label)
+    return (
+      target.list.ordinal?.toString() === normalizedLabel ||
+      normalizedNoteLabel(target.list.markerText ?? '') === normalizedLabel
+    )
+  })
+}
+
 function relationshipCounts(
   paper: ResearchPaper,
   signals: PdfSemanticSignals,
   pages: readonly PdfPageAnalysis[],
   visualRelationships?: PdfVisualRelationship[],
   citationRelationships?: PdfCitationRelationship[],
+  noteRelationships?: PdfNoteRelationship[],
   provenance?: Record<string, NodeSourceEvidence>,
   assets: PdfVisualAsset[] = [],
   regions?: readonly PdfPageRegion[],
   equationTranscriptContext?: EquationTranscriptContext,
+  readingOrder?: PdfReadingOrderGraph,
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[] = [],
 ) {
   const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]))
@@ -3191,17 +3370,66 @@ function relationshipCounts(
   )
   const noteReferences = [
     ...(paper.authorNotes ?? []),
-    ...paper.nodes.flatMap((node) =>
-      'noteReferences' in node && node.noteReferences
+    ...paper.nodes.flatMap((node) => [
+      ...('noteReferences' in node && node.noteReferences
         ? node.noteReferences
-        : [],
-    ),
+        : []),
+      ...(node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row) =>
+            row.cells.flatMap((cell) => cell.noteReferences ?? []),
+          )
+        : []),
+    ]),
   ]
-  const resolvedNoteReferences = noteReferences.filter((reference) =>
-    noteIds.has(reference.target),
+  const validNoteRelationshipIds =
+    noteRelationships === undefined
+      ? null
+      : validMatchedSemanticNoteRelationshipIds(paper, noteRelationships, {
+          regions: regions ?? [],
+          provenance: provenance ?? {},
+        })
+  const resolvedNoteReferences = noteReferences.filter(
+    (reference) =>
+      noteIds.has(reference.target) &&
+      (validNoteRelationshipIds === null ||
+        validNoteRelationshipIds.has(reference.id)),
   )
   const resolvedNotes = new Set(
     resolvedNoteReferences.map((reference) => reference.target),
+  )
+  const tableCellOwners = new Map(
+    paper.nodes.flatMap((node) =>
+      node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row, rowIndex) =>
+            row.cells.map(
+              (cell, cellIndex) =>
+                [
+                  `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}` as string,
+                  {
+                    text: cell.text,
+                    inlineRuns: cell.inlineRuns,
+                    provenanceNodeId: node.id,
+                    sourceRuns: cell.sourceRuns ?? [],
+                  },
+                ] as const,
+            ),
+          )
+        : [],
+    ),
+  )
+  const sourceRegionsById = new Map(
+    (regions ?? []).map((region) => [region.id, region] as const),
+  )
+  const sourceCitationClassificationsById = new Map(
+    classifyPdfNoteMarkers(
+      [...(regions ?? [])],
+      readingOrder?.order,
+      lineBoundaryDecisions,
+    ).classifications.flatMap((classification) =>
+      classification.disposition === 'citation'
+        ? [[classification.id, classification] as const]
+        : [],
+    ),
   )
   const resolvedCitations = (citationRelationships ?? []).filter(
     (relationship) => {
@@ -3214,40 +3442,52 @@ function relationshipCounts(
         return false
       }
       const node = nodesById.get(anchor.nodeId)
-      const anchorText =
-        node?.type === 'figure'
+      const tableCellOwner = tableCellOwners.get(anchor.nodeId)
+      const anchorText = tableCellOwner
+        ? tableCellOwner.text
+        : node?.type === 'figure'
           ? (node.sourceText ?? '')
           : node && 'text' in node
             ? node.text
             : ''
+      const inlineRuns = tableCellOwner?.inlineRuns ?? node?.inlineRuns
+      const provenanceNodeId = tableCellOwner?.provenanceNodeId ?? node?.id
       if (
-        !node ||
-        (node.type !== 'heading' &&
-          node.type !== 'paragraph' &&
-          node.type !== 'quote' &&
+        (!node && !tableCellOwner) ||
+        (!tableCellOwner &&
+          node?.type !== 'heading' &&
+          node?.type !== 'paragraph' &&
+          node?.type !== 'quote' &&
+          node?.type !== 'caption' &&
           !(
-            node.type === 'figure' &&
+            node?.type === 'figure' &&
             node.objectType === 'table' &&
             node.sourceText
           )) ||
         anchor.start < 0 ||
         anchor.start >= anchor.end ||
         anchor.end > anchorText.length ||
-        !relationship.targetNodeIds.every((targetId) => {
-          const target = nodesById.get(targetId)
-          return (
-            target?.type === 'paragraph' &&
-            target.list?.numberingId === 'references'
-          )
+        !hasValidMatchedCitationEvidence({
+          relationship,
+          sourceClassification: sourceCitationClassificationsById.get(
+            relationship.id,
+          ),
+          sourceRegion: sourceRegionsById.get(relationship.referenceRegionId),
+          nodesById,
+          lineBoundaryDecisions,
+          ...(tableCellOwner
+            ? { anchorSourceRuns: tableCellOwner.sourceRuns }
+            : {}),
         }) ||
-        !provenance?.[node.id]?.regionIds.includes(
+        !provenanceNodeId ||
+        !provenance?.[provenanceNodeId]?.regionIds.includes(
           relationship.referenceRegionId,
         )
       ) {
         return false
       }
       return Boolean(
-        node.inlineRuns?.some(
+        inlineRuns?.some(
           (run) =>
             run.relationshipId === relationship.id &&
             run.semanticRole === 'citation' &&
@@ -3842,10 +4082,13 @@ export function assessPdfCompleteness({
       ? undefined
       : validatedVisualRelationships,
     citationRelationships,
+    noteRelationships,
     provenance,
     assets,
-    regions,
+    allSourceRegions,
     equationTranscriptContext,
+    readingOrder,
+    lineBoundaryDecisions,
   )
   const unresolvedObjects = {
     assets: Math.max(sourceAssetCount - exportedAssetCount, 0),
@@ -4239,6 +4482,12 @@ export function assessPdfCompleteness({
   const internalReferenceIssues = internalReferenceIntegrityIssues(
     paper,
     noteRelationships,
+    noteRelationships === undefined
+      ? undefined
+      : {
+          regions: allSourceRegions,
+          provenance: provenance ?? {},
+        },
   )
   if (internalReferenceIssues.length > 0) {
     const regionIds = [

@@ -9,10 +9,10 @@ import {
   OWNER_EQUATION_TRANSCRIPT_EVIDENCE,
 } from './equation-transcript-adjudication'
 import { assessPdfCompleteness } from './pdf-quality'
+import { MAX_CITATION_TARGETS_PER_RELATIONSHIP } from './pdf-citation-surface'
 import {
   buildPdfLineJoinReviewContext,
   replayPdfRegionLineRanges,
-  replayPdfRegionLineText,
 } from './pdf-lines'
 import {
   materializeCanonicalVisualNode,
@@ -693,6 +693,52 @@ function updateNoteRelationship(
     return false
   }
 
+  const referenceNode = reconstruction.paper.nodes.find((node) =>
+    reconstruction.provenance[node.id]?.regionIds.includes(
+      relationship.referenceRegionId,
+    ),
+  )
+  const tableCellAnchors =
+    referenceNode?.type === 'figure' && referenceNode.table
+      ? referenceNode.table.rows.flatMap((row, rowIndex) =>
+          row.cells.flatMap((cell, cellIndex) => {
+            const noteReference = cell.noteReferences?.find(
+              (reference) => reference.id === relationship.id,
+            )
+            const inlineRun = cell.inlineRuns?.find(
+              (run) => run.relationshipId === relationship.id,
+            )
+            if (!noteReference && !inlineRun) return []
+            if (
+              noteReference &&
+              inlineRun &&
+              (noteReference.start !== inlineRun.start ||
+                noteReference.end !== inlineRun.end)
+            ) {
+              return []
+            }
+            const range = noteReference ?? inlineRun!
+            return [
+              {
+                cell,
+                nodeId: `${referenceNode.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+                start: range.start,
+                end: range.end,
+              },
+            ]
+          }),
+        )
+      : []
+  const tableCellAnchor =
+    tableCellAnchors.length === 1 ? tableCellAnchors[0] : null
+  if (
+    referenceNode?.type === 'figure' &&
+    referenceNode.table &&
+    !tableCellAnchor
+  ) {
+    return false
+  }
+
   let targetNoteId: string | null = null
   let citationTargetIds: string[] | undefined
   if (decision.resolution.type === 'accept-note-match') {
@@ -711,10 +757,16 @@ function updateNoteRelationship(
     relationship.evidence = [...candidate.evidence, 'human-adjudication']
     relationship.sourceBoxes = [...candidate.sourceBoxes]
   } else if (decision.resolution.type === 'reclassify-citation') {
+    const labels = relationship.label.split(',').filter(Boolean)
+    if (
+      labels.length === 0 ||
+      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    ) {
+      return false
+    }
     relationship.targetNoteId = null
     relationship.status = 'citation'
     relationship.evidence = [...relationship.evidence, 'human-adjudication']
-    const labels = relationship.label.split(',').filter(Boolean)
     const bibliographyTargets = new Map<string, string>()
     for (const node of reconstruction.paper.nodes) {
       if (
@@ -730,10 +782,16 @@ function updateNoteRelationship(
         bibliographyTargets.set(label, node.id)
       }
     }
-    citationTargetIds = labels.flatMap((label) => {
+    const retainedCitationCandidateNodeIds = labels.flatMap((label) => {
       const target = bibliographyTargets.get(label)
       return target ? [target] : []
     })
+    const uniqueCitationCandidateNodeIds = [
+      ...new Set(retainedCitationCandidateNodeIds),
+    ]
+    const citationMatched =
+      uniqueCitationCandidateNodeIds.length === labels.length
+    citationTargetIds = citationMatched ? uniqueCitationCandidateNodeIds : []
     const replacesCitation = reconstruction.citationRelationships.some(
       (candidate) => candidate.id === relationship.id,
     )
@@ -745,11 +803,11 @@ function updateNoteRelationship(
       referenceStart: relationship.referenceStart,
       referenceEnd: relationship.referenceEnd,
       taxonomy: 'human-reclassified-citation' as const,
-      targetNodeIds: [...new Set(citationTargetIds)],
-      status:
-        citationTargetIds.length === labels.length
-          ? ('matched' as const)
-          : ('unresolved' as const),
+      targetNodeIds: citationTargetIds,
+      ...(!citationMatched && uniqueCitationCandidateNodeIds.length > 0
+        ? { candidateNodeIds: uniqueCitationCandidateNodeIds }
+        : {}),
+      status: citationMatched ? ('matched' as const) : ('unresolved' as const),
       canonicalAnchor: null,
       confidence: relationship.confidence,
       evidence: [...relationship.evidence],
@@ -802,11 +860,6 @@ function updateNoteRelationship(
     return false
   }
 
-  const referenceNode = reconstruction.paper.nodes.find((node) =>
-    reconstruction.provenance[node.id]?.regionIds.includes(
-      relationship.referenceRegionId,
-    ),
-  )
   for (const node of reconstruction.paper.nodes) {
     if ('noteReferences' in node && node.noteReferences) {
       node.noteReferences = node.noteReferences.filter(
@@ -819,13 +872,36 @@ function updateNoteRelationship(
         (backlink) => backlink !== relationship.id,
       )
     }
+    if (node.type === 'figure' && node.table) {
+      for (const row of node.table.rows) {
+        for (const cell of row.cells) {
+          if (cell.noteReferences) {
+            cell.noteReferences = cell.noteReferences.filter(
+              (reference) => reference.id !== relationship.id,
+            )
+            if (cell.noteReferences.length === 0) delete cell.noteReferences
+          }
+          if (cell.inlineRuns) {
+            cell.inlineRuns = cell.inlineRuns.flatMap((run) => {
+              if (run.relationshipId !== relationship.id) return [run]
+              const {
+                relationshipId: _relationshipId,
+                semanticRole: _semanticRole,
+                targetIds: _targetIds,
+                ...retained
+              } = run
+              return Object.keys(retained).length > 2 ? [retained] : []
+            })
+            if (cell.inlineRuns.length === 0) delete cell.inlineRuns
+          }
+        }
+      }
+    }
   }
   if (
     decision.resolution.type === 'reclassify-citation' &&
     referenceNode &&
-    (referenceNode.type === 'heading' ||
-      referenceNode.type === 'paragraph' ||
-      referenceNode.type === 'quote')
+    referenceNode.type !== 'figure'
   ) {
     const semanticRun = {
       start: relationship.referenceStart,
@@ -837,21 +913,37 @@ function updateNoteRelationship(
     const existing = referenceNode.inlineRuns?.find(
       (run) => run.start === semanticRun.start && run.end === semanticRun.end,
     )
-    if (existing) Object.assign(existing, semanticRun)
-    else {
+    if (existing) {
+      Object.assign(existing, semanticRun)
+      if (!citationTargetIds?.length) delete existing.targetIds
+    } else {
       referenceNode.inlineRuns = [
         ...(referenceNode.inlineRuns ?? []),
         semanticRun,
       ].sort((left, right) => left.start - right.start || left.end - right.end)
     }
   }
-  if (
-    targetNoteId &&
-    referenceNode &&
-    (referenceNode.type === 'heading' ||
-      referenceNode.type === 'paragraph' ||
-      referenceNode.type === 'quote')
-  ) {
+  if (decision.resolution.type === 'reclassify-citation' && tableCellAnchor) {
+    tableCellAnchor.cell.inlineRuns = [
+      ...(tableCellAnchor.cell.inlineRuns ?? []),
+      {
+        start: tableCellAnchor.start,
+        end: tableCellAnchor.end,
+        relationshipId: relationship.id,
+        semanticRole: 'citation' as const,
+        ...(citationTargetIds?.length ? { targetIds: citationTargetIds } : {}),
+      },
+    ].sort(
+      (left, right) =>
+        left.start - right.start ||
+        left.end - right.end ||
+        String(left.relationshipId ?? '').localeCompare(
+          String(right.relationshipId ?? ''),
+        ),
+    )
+  }
+  let projectedNoteReference = false
+  if (targetNoteId && referenceNode && referenceNode.type !== 'figure') {
     referenceNode.noteReferences = [
       ...(referenceNode.noteReferences ?? []),
       {
@@ -866,6 +958,32 @@ function updateNoteRelationship(
       (left, right) =>
         left.start - right.start || left.id.localeCompare(right.id),
     )
+    projectedNoteReference = true
+  }
+  if (targetNoteId && tableCellAnchor) {
+    tableCellAnchor.cell.noteReferences = [
+      ...(tableCellAnchor.cell.noteReferences ?? []),
+      {
+        id: relationship.id,
+        label: relationship.label,
+        target: targetNoteId,
+        start: tableCellAnchor.start,
+        end: tableCellAnchor.end,
+        confidence: relationship.confidence,
+      },
+    ].sort(
+      (left, right) =>
+        left.start - right.start || left.id.localeCompare(right.id),
+    )
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: tableCellAnchor.nodeId,
+      start: tableCellAnchor.start,
+      end: tableCellAnchor.end,
+    }
+    projectedNoteReference = true
+  }
+  if (targetNoteId && projectedNoteReference) {
     const target = reconstruction.paper.nodes.find(
       (node) => node.id === targetNoteId && node.type === 'footnote',
     )

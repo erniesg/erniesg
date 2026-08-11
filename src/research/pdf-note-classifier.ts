@@ -6,11 +6,14 @@ import type {
   PdfPageRegion,
 } from './import-types'
 import { replayPdfRegionLineRanges } from './pdf-lines'
-import { normalizedNoteLabel, noteLabelFromText } from './pdf-regions'
+import { normalizedNoteLabel, noteLabelsFromMarkerText } from './note-label'
+import { noteLabelFromText } from './pdf-regions'
+import { MAX_CITATION_TARGETS_PER_RELATIONSHIP } from './pdf-citation-surface'
 
 export const PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD = 0.85
 export const PDF_NOTE_CITATION_DENSITY_THRESHOLD = 2
 const PDF_MINIMUM_SEMANTIC_MARKER_FONT_SIZE = 5
+const CITATION_TARGET_LIMIT_EXCEEDED = 'citation-target-limit-exceeded'
 
 type MarkerSyntax =
   | 'explicit-note-language'
@@ -56,10 +59,8 @@ const REFERENCE_HEADING =
 const REFERENCE_SECTION_END =
   /^(?:appendix\b|acknowledg(?:e)?ments?\b|supplement(?:ary)?\b|author contributions?\b|data availability\b)/i
 const BODY_SECTION_HEADING = /^(?:abstract|introduction)\b/i
-const NOTE_TOKEN_SOURCE = String.raw`(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])`
 const AUTHOR_YEAR_SURNAME_SOURCE = String.raw`\p{Lu}[\p{L}\p{M}'’.-]*`
 const AUTHOR_YEAR_SOURCE = String.raw`(?:18|19|20)\d{2}[a-z]?`
-const MAX_EXPANDED_CITATION_RANGE = 100
 
 function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
@@ -250,36 +251,7 @@ function isTitlePageAffiliationDeclaration(
   )
 }
 
-export function noteLabelsFromMarkerText(value: string) {
-  const labels: string[] = []
-  const pattern = new RegExp(
-    `(${NOTE_TOKEN_SOURCE})(?:\\s*[–—-]\\s*(${NOTE_TOKEN_SOURCE}))?`,
-    'gu',
-  )
-  const add = (label: string) => {
-    if (label && !labels.includes(label)) labels.push(label)
-  }
-  for (const match of value.matchAll(pattern)) {
-    const first = normalizedNoteLabel(match[1])
-    const last = match[2] ? normalizedNoteLabel(match[2]) : null
-    const firstOrdinal = /^\d+$/.test(first) ? Number(first) : null
-    const lastOrdinal = last && /^\d+$/.test(last) ? Number(last) : null
-    if (
-      firstOrdinal !== null &&
-      lastOrdinal !== null &&
-      lastOrdinal >= firstOrdinal &&
-      lastOrdinal - firstOrdinal <= MAX_EXPANDED_CITATION_RANGE
-    ) {
-      for (let ordinal = firstOrdinal; ordinal <= lastOrdinal; ordinal += 1) {
-        add(String(ordinal))
-      }
-      continue
-    }
-    add(first)
-    if (last) add(last)
-  }
-  return labels
-}
+export { noteLabelsFromMarkerText } from './note-label'
 
 function isMathematicalBracket(text: string, start: number) {
   if (/^\[\s*0\s*,\s*1\s*\]/u.test(text.slice(start))) return true
@@ -447,8 +419,15 @@ function markerCandidates(
     syntax: MarkerSyntax,
     box = sourceBox(region),
   ) => {
-    const labels = rawLabels.map(normalizedNoteLabel).filter(Boolean)
-    if (labels.length === 0 || start < 0 || end <= start) return
+    const normalizedLabels = rawLabels.map(normalizedNoteLabel).filter(Boolean)
+    if (normalizedLabels.length === 0 || start < 0 || end <= start) {
+      return
+    }
+    const targetLimitExceeded =
+      normalizedLabels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    const labels = targetLimitExceeded
+      ? [CITATION_TARGET_LIMIT_EXCEEDED]
+      : normalizedLabels
     const overlappingIndex = found.findIndex(
       (candidate) =>
         Math.max(candidate.start, start) < Math.min(candidate.end, end),
@@ -472,11 +451,12 @@ function markerCandidates(
       end,
       syntax,
       sourceBox: box,
+      evidence: targetLimitExceeded ? [CITATION_TARGET_LIMIT_EXCEEDED] : [],
     })
   }
 
   const explicit =
-    /\b(?:footnote|note)\s+(?:(?:reference|marker)\s+)?(\d{1,3}|[*∗†‡§])(?=\s|[.,;:)\]]|$)/giu
+    /\b(?:footnote|note)\s+(?:(?:reference|marker)\s+)?(\p{Nd}{1,3}|[*∗†‡§])(?=\s|[.,;:)\]]|$)/giu
   for (const match of region.text.matchAll(explicit)) {
     const label = match[1]
     const start = (match.index ?? 0) + match[0].lastIndexOf(label)
@@ -484,7 +464,7 @@ function markerCandidates(
   }
 
   const bracketed =
-    /\[\s*((?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])(?:\s*(?:[,;]|[–—-])\s*(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§]))*)\s*\]/gu
+    /\[\s*((?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])(?:\s*(?:[,;]|[–—-])\s*(?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§]))*)\s*\]/gu
   for (const match of region.text.matchAll(bracketed)) {
     const start = match.index ?? 0
     if (isMathematicalBracket(region.text, start)) continue
@@ -549,9 +529,11 @@ function markerCandidates(
       const raw = run.text.trim().replace(/\s+/g, ' ')
       const label = normalizedNoteLabel(raw)
       const geometryLabels = noteLabelsFromMarkerText(raw)
-      const geometryParts = [...raw.matchAll(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\d{1,3}/gu)]
+      const geometryParts = [
+        ...raw.matchAll(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\p{Nd}{1,3}/gu),
+      ]
       const geometryResidue = raw
-        .replace(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\d{1,3}/gu, '')
+        .replace(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\p{Nd}{1,3}/gu, '')
         .replace(/[\s,;˒]/gu, '')
       const rawPosition = lineText.indexOf(raw, runTextCursor)
       const labelPosition =
@@ -921,16 +903,26 @@ function authorYearMarkerCandidates(
     end: number,
     evidence: string[] = [],
   ) => {
-    if (labels.length === 0 || start < 0 || end <= start) return
+    if (labels.length === 0 || start < 0 || end <= start) {
+      return
+    }
+    const targetLimitExceeded =
+      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    const boundedLabels = targetLimitExceeded
+      ? [CITATION_TARGET_LIMIT_EXCEEDED]
+      : labels
     found.push({
-      label: labels.join(','),
-      labels,
+      label: boundedLabels.join(','),
+      labels: boundedLabels,
       region,
       start,
       end,
       syntax: 'author-year-syntax',
       sourceBox: sourceBox(region),
-      evidence,
+      evidence: [
+        ...evidence,
+        ...(targetLimitExceeded ? [CITATION_TARGET_LIMIT_EXCEEDED] : []),
+      ],
     })
   }
   const comparisonKey = (
@@ -1076,7 +1068,13 @@ function classification(
     confidence: rounded(confidence),
     threshold: PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
     accepted: confidence >= PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
-    evidence: [...new Set([candidate.syntax, ...evidence])],
+    evidence: [
+      ...new Set([
+        candidate.syntax,
+        ...(candidate.evidence ?? []),
+        ...evidence,
+      ]),
+    ],
     sourceBox: candidate.sourceBox,
   }
 }
@@ -1226,11 +1224,49 @@ export function classifyPdfNoteMarkers(
       (region.kind === 'footnote' || region.kind === 'endnote') &&
       !bibliographyRegionIds.has(region.id),
   )
+  const compoundNoteDefinitionsByRegionId = new Map(
+    noteBodies.flatMap((region) => {
+      const compound = splitPdfCompoundAffiliationNote(
+        region,
+        lineBoundaryDecisions,
+      )
+      return compound ? [[region.id, compound] as const] : []
+    }),
+  )
   const repeatedNameTokens = repeatedRenderedNameTokens(orderedRegions)
   const ordinaryCandidates = orderedRegions
-    .filter((region) => region.kind === 'body' || region.kind === 'spanning')
+    .filter((region) =>
+      ['body', 'spanning', 'caption', 'footnote', 'endnote', 'figure'].includes(
+        region.kind,
+      ),
+    )
     .flatMap((region) =>
-      markerCandidates(region, lineBoundaryDecisions, repeatedNameTokens),
+      markerCandidates(
+        region,
+        lineBoundaryDecisions,
+        repeatedNameTokens,
+      ).filter((candidate) => {
+        if (region.kind !== 'footnote' && region.kind !== 'endnote') {
+          return true
+        }
+        const compound = compoundNoteDefinitionsByRegionId.get(region.id)
+        const siblingDefinition = compound?.affiliations.some(
+          (segment) =>
+            candidate.start === segment.sourceStart &&
+            candidate.end === segment.sourceStart + segment.markerText.length &&
+            candidate.labels.length === 1 &&
+            candidate.labels[0] === normalizedNoteLabel(segment.label),
+        )
+        if (siblingDefinition) return false
+        const definitionLabel = noteLabelFromText(region.text)
+        const definitionPrefix = region.text.slice(0, candidate.start)
+        return !(
+          definitionLabel &&
+          /^\s*(?:(?:footnote|note)\s+)?$/iu.test(definitionPrefix) &&
+          normalizedNoteLabel(candidate.label) ===
+            normalizedNoteLabel(definitionLabel)
+        )
+      }),
     )
   const authorYearCandidates =
     referenceHeadingIndex < 0
@@ -1238,8 +1274,14 @@ export function classifyPdfNoteMarkers(
       : orderedRegions
           .filter(
             (region) =>
-              (region.kind === 'body' || region.kind === 'spanning') &&
-              !bibliographyRegionIds.has(region.id),
+              [
+                'body',
+                'spanning',
+                'caption',
+                'footnote',
+                'endnote',
+                'figure',
+              ].includes(region.kind) && !bibliographyRegionIds.has(region.id),
           )
           .flatMap((region) =>
             authorYearMarkerCandidates(
@@ -1421,13 +1463,17 @@ export function classifyPdfNoteMarkers(
       bibliographyLabelCounts.get(candidate.labels[0]) === 1
     const citationDensityThresholdMet =
       citationMarkerDensity >= PDF_NOTE_CITATION_DENSITY_THRESHOLD
+    const citationTargetLimitExceeded =
+      'evidence' in candidate &&
+      candidate.evidence?.includes(CITATION_TARGET_LIMIT_EXCEEDED) === true
     const citationEvidence =
       referenceHeadingIndex >= 0 &&
-      (citationDensityThresholdMet ||
-        uniqueExactSingletonBibliographyCitation) &&
-      (matchingBodies.length === 0 ||
-        multiLabelBracketedCitation ||
-        exactBracketedBibliographyCitation)
+      (citationTargetLimitExceeded ||
+        ((citationDensityThresholdMet ||
+          uniqueExactSingletonBibliographyCitation) &&
+          (matchingBodies.length === 0 ||
+            multiLabelBracketedCitation ||
+            exactBracketedBibliographyCitation)))
     if (citationEvidence && candidate.syntax === 'bracketed-numeric-syntax') {
       return classification(
         candidate,
@@ -1436,14 +1482,16 @@ export function classifyPdfNoteMarkers(
         0.98,
         [
           'reference-list-section-detected',
-          ...(citationDensityThresholdMet
-            ? [
-                `citation-marker-density-at-least-${PDF_NOTE_CITATION_DENSITY_THRESHOLD}`,
-              ]
-            : [
-                'unique-exact-bibliography-label-target',
-                'singleton-citation-density-bypass',
-              ]),
+          ...(citationTargetLimitExceeded
+            ? [CITATION_TARGET_LIMIT_EXCEEDED]
+            : citationDensityThresholdMet
+              ? [
+                  `citation-marker-density-at-least-${PDF_NOTE_CITATION_DENSITY_THRESHOLD}`,
+                ]
+              : [
+                  'unique-exact-bibliography-label-target',
+                  'singleton-citation-density-bypass',
+                ]),
           ...(matchingBodies.length === 0
             ? ['no-footnote-band', 'no-matching-note-body']
             : exactBracketedBibliographyCitation

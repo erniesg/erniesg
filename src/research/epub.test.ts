@@ -2073,6 +2073,7 @@ describe('EPUB 3 export', () => {
     const content = renderPublicationXhtml(citationPaper)
 
     expect(content).toContain('href="#reference-1"')
+    expect(content).toContain('href="#reference-2"')
     expect(content).toContain('href="#reference-3"')
     expect(content).toContain(
       'data-target-ids="reference-1 reference-2 reference-3"',
@@ -2082,7 +2083,7 @@ describe('EPUB 3 export', () => {
       '[<em><a href="#reference-1" epub:type="biblioref" role="doc-biblioref">1</a>–<a href="#reference-3" epub:type="biblioref" role="doc-biblioref">3</a></em>]',
     )
     expect(content.match(/>1<\/a>–<a[^>]*>3<\/a>/g)).toHaveLength(1)
-    expect(content).not.toContain('additional-biblioref')
+    expect(content).toContain('class="additional-biblioref"')
   })
 
   it('maps mixed singleton and numeric-range citation labels without inventing visible text', () => {
@@ -2128,15 +2129,15 @@ describe('EPUB 3 export', () => {
 
     expect(content).toContain('href="#reference-16"')
     expect(content).toContain('href="#reference-38"')
+    expect(content).toContain('href="#reference-39"')
     expect(content).toContain('href="#reference-40"')
-    expect(content).not.toContain('href="#reference-39"')
     expect(content).toContain(
       'data-target-ids="reference-16 reference-38 reference-39 reference-40"',
     )
     expect(content).toContain(
       '[<a href="#reference-16" epub:type="biblioref" role="doc-biblioref">16</a>, <a href="#reference-38" epub:type="biblioref" role="doc-biblioref">38</a>–<a href="#reference-40" epub:type="biblioref" role="doc-biblioref">40</a>]',
     )
-    expect(content).not.toContain('additional-biblioref')
+    expect(content).toContain('class="additional-biblioref"')
   })
 
   it('fails closed when a mixed numeric citation range cannot account for every target', () => {
@@ -2300,7 +2301,9 @@ describe('EPUB 3 export', () => {
 
       expect(content).toContain('href="#equation-4.17"')
       expect(content).toContain('href="#equation-4.19"')
-      expect(content).not.toContain('href="#equation-4.18"')
+      expect(content).toContain(
+        'href="#equation-4.18" class="additional-cross-reference"',
+      )
       expect(content).toContain(
         'data-target-ids="equation-4.17 equation-4.18 equation-4.19"',
       )
@@ -2876,6 +2879,346 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('emits footnote backlinks for note-reference anchors rendered inside associated captions', async () => {
+    const notePaper = structuredClone(paper)
+    notePaper.nodes = [
+      {
+        id: 'captioned-figure',
+        type: 'figure',
+        title: 'Captioned figure',
+        relationships: { caption: 'caption-with-note' },
+        source: 'synthetic-caption-note',
+      },
+      {
+        id: 'caption-with-note',
+        type: 'caption',
+        text: 'Figure caption 6.',
+        noteReferences: [
+          {
+            id: 'caption-note-reference-6',
+            label: '6',
+            target: 'caption-note-6',
+            start: 15,
+            end: 16,
+            confidence: 1,
+          },
+        ],
+        source: 'synthetic-caption-note',
+      },
+      {
+        id: 'caption-note-6',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '6',
+        text: 'A note referenced from the caption.',
+        relationships: { backlinks: ['caption-note-reference-6'] },
+        source: 'synthetic-caption-note',
+      },
+    ]
+
+    const epub = await buildEpub(notePaper)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(content).toContain(
+      'id="caption-note-reference-6" href="#caption-note-6"',
+    )
+    expect(content).toContain('href="#caption-note-reference-6"')
+  })
+
+  it('omits a caption-note backlink when an unresolved visual suppresses its reference anchor', () => {
+    const notePaper = structuredClone(paper)
+    notePaper.nodes = [
+      {
+        id: 'unresolved-captioned-figure',
+        type: 'figure',
+        title: 'Unresolved captioned figure',
+        relationships: { caption: 'unresolved-caption-with-note' },
+        source: 'synthetic-unresolved-caption-note',
+      },
+      {
+        id: 'unresolved-caption-with-note',
+        type: 'caption',
+        text: 'Figure caption 6.',
+        noteReferences: [
+          {
+            id: 'suppressed-caption-note-reference-6',
+            label: '6',
+            target: 'suppressed-caption-note-6',
+            start: 15,
+            end: 16,
+            confidence: 1,
+          },
+        ],
+        source: 'synthetic-unresolved-caption-note',
+      },
+      {
+        id: 'suppressed-caption-note-6',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '6',
+        text: 'A note whose caption reference cannot render.',
+        relationships: { backlinks: ['suppressed-caption-note-reference-6'] },
+        source: 'synthetic-unresolved-caption-note',
+      },
+    ]
+
+    const content = renderPublicationXhtml(notePaper, {
+      reconstruction: {
+        readiness: { ready: false },
+        visualRelationships: [
+          {
+            id: 'unresolved-caption-visual',
+            kind: 'figure',
+            label: 'Figure 1',
+            captionRegionId: 'source-caption-region',
+            sourceRegionIds: [],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: ['unresolved-visual-text-owned'],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: '',
+            altText: 'Unresolved captioned figure',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'unresolved-caption-with-note',
+          },
+        ],
+        assets: [],
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain(
+      'id="unresolved-caption-with-note" data-canonical-id="unresolved-caption-with-note" hidden="hidden"',
+    )
+    expect(content).not.toContain('id="suppressed-caption-note-reference-6"')
+    expect(content).not.toContain('href="#suppressed-caption-note-reference-6"')
+  })
+
+  it('scopes table-cell note relationships to rendered semantic tables', async () => {
+    const notePaper = structuredClone(paper)
+    notePaper.nodes = [
+      {
+        id: 'unresolved-table-with-note',
+        type: 'figure',
+        title: 'Unresolved table with note',
+        objectType: 'table',
+        table: {
+          rows: [
+            {
+              cells: [
+                {
+                  id: 'cell-1',
+                  text: 'Value6',
+                  rowSpan: 1,
+                  columnSpan: 1,
+                  headerScope: null,
+                  noteReferences: [
+                    {
+                      id: 'suppressed-table-cell-note-reference-6',
+                      label: '6',
+                      target: 'suppressed-table-cell-note-6',
+                      start: 5,
+                      end: 6,
+                      confidence: 1,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        relationships: { caption: 'unresolved-table-caption' },
+        source: 'synthetic-unresolved-table-note',
+      },
+      {
+        id: 'unresolved-table-caption',
+        type: 'caption',
+        text: 'Table caption 6.',
+        source: 'synthetic-unresolved-table-note',
+      },
+      {
+        id: 'suppressed-table-cell-note-6',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '6',
+        text: 'A note whose table-cell reference cannot render.',
+        relationships: {
+          backlinks: ['suppressed-table-cell-note-reference-6'],
+        },
+        source: 'synthetic-unresolved-table-note',
+      },
+    ]
+    const semanticTableAsset = {
+      id: 'semantic-table-asset',
+      href: 'assets/semantic-table.xhtml',
+      mediaType: 'application/xhtml+xml',
+      kind: 'table',
+      rendition: 'semantic-table',
+      sha256: 'a'.repeat(64),
+      bytes: new Uint8Array([1]),
+      width: 100,
+      height: 40,
+      resolutionDpi: 96,
+      sourceObjectIds: [],
+      sourceBoxes: [],
+    } satisfies PublicationAsset
+
+    const omittedCrossReferencePaper = structuredClone(notePaper)
+    const omittedTable = omittedCrossReferencePaper.nodes.find(
+      (node) => node.id === 'unresolved-table-with-note',
+    )
+    if (omittedTable?.type !== 'figure' || !omittedTable.table) {
+      throw new Error('Missing omitted-table fixture')
+    }
+    const omittedCell = omittedTable.table.rows[0].cells[0]
+    delete omittedCell.noteReferences
+    omittedCell.inlineRuns = [
+      {
+        start: 0,
+        end: omittedCell.text.length,
+        semanticRole: 'cross-reference',
+        relationshipId: 'omitted-table-cell-cross-reference',
+        targetIds: ['unresolved-table-caption'],
+      },
+    ]
+    omittedCrossReferencePaper.nodes = omittedCrossReferencePaper.nodes.filter(
+      (node) => node.id !== 'suppressed-table-cell-note-6',
+    )
+    const omittedCrossReferenceContent = renderPublicationXhtml(
+      omittedCrossReferencePaper,
+    )
+    expect(omittedCrossReferenceContent).not.toContain(
+      'omitted-table-cell-cross-reference',
+    )
+    await expect(buildEpub(omittedCrossReferencePaper)).resolves.toBeDefined()
+
+    expect(() => renderPublicationXhtml(notePaper)).toThrow(
+      /note-backlink.*suppressed-table-cell-note-reference-6/u,
+    )
+    expect(() =>
+      renderPublicationXhtml(notePaper, {
+        reconstruction: {
+          readiness: { ready: false },
+          visualRelationships: [
+            {
+              id: 'unresolved-table-visual',
+              kind: 'table',
+              label: 'Table 1',
+              captionRegionId: 'source-table-caption-region',
+              sourceRegionIds: [],
+              sourceObjectIds: [],
+              assetIds: [],
+              status: 'unresolved',
+              confidence: 1,
+              evidence: ['unresolved-visual-text-owned'],
+              candidates: [],
+              sourceBoxes: [],
+              sourceText: '',
+              altText: 'Unresolved table with note',
+              altTextSource: 'caption',
+              canonicalNodeId: null,
+              captionNodeId: 'unresolved-table-caption',
+            },
+          ],
+          assets: [],
+        } as unknown as PdfReconstruction,
+      }),
+    ).toThrow(/note-backlink.*suppressed-table-cell-note-reference-6/u)
+
+    expect(() =>
+      renderPublicationXhtml(notePaper, {
+        reconstruction: {
+          readiness: { ready: false },
+          visualRelationships: [
+            {
+              id: 'preformatted-table-visual',
+              kind: 'table',
+              semanticKind: 'code',
+              label: 'Table 1',
+              captionRegionId: 'source-table-caption-region',
+              sourceRegionIds: ['source-table-region'],
+              sourceLineIds: ['source-table-line'],
+              sourceObjectIds: [],
+              assetIds: ['semantic-table-asset'],
+              status: 'matched',
+              confidence: 1,
+              evidence: ['source-preformatted-block'],
+              preformatted: {
+                status: 'proved',
+                evidence: ['exact-single-run-line-text'],
+                lines: [
+                  {
+                    text: 'Value6',
+                    sourceRegionId: 'source-table-region',
+                    sourceLineId: 'source-table-line',
+                    sourceBox: {
+                      page: 1,
+                      x: 0.1,
+                      y: 0.1,
+                      width: 0.2,
+                      height: 0.02,
+                      rotation: 0,
+                      method: 'pdf-text',
+                    },
+                    sourceRunBoxes: [],
+                  },
+                ],
+              },
+              candidates: [],
+              sourceBoxes: [],
+              sourceText: 'Value6',
+              altText: 'Unresolved table with note',
+              altTextSource: 'caption',
+              canonicalNodeId: 'unresolved-table-with-note',
+              captionNodeId: 'unresolved-table-caption',
+            },
+          ],
+          assets: [semanticTableAsset],
+        } as unknown as PdfReconstruction,
+      }),
+    ).toThrow(/note-backlink.*suppressed-table-cell-note-reference-6/u)
+
+    const semanticTableContent = renderPublicationXhtml(notePaper, {
+      reconstruction: {
+        readiness: { ready: true },
+        visualRelationships: [
+          {
+            id: 'semantic-table-visual',
+            kind: 'table',
+            label: 'Table 1',
+            captionRegionId: 'source-table-caption-region',
+            sourceRegionIds: ['source-table-region'],
+            sourceObjectIds: [],
+            assetIds: [semanticTableAsset.id],
+            status: 'matched',
+            confidence: 1,
+            evidence: ['source-semantic-table'],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: 'Value6',
+            altText: 'Semantic table with note',
+            altTextSource: 'caption',
+            canonicalNodeId: 'unresolved-table-with-note',
+            captionNodeId: 'unresolved-table-caption',
+          },
+        ],
+        assets: [semanticTableAsset],
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(semanticTableContent).toContain('class="semantic-table-wrapper"')
+    expect(semanticTableContent).toContain(
+      'id="suppressed-table-cell-note-reference-6"',
+    )
+    expect(semanticTableContent).toContain(
+      'href="#suppressed-table-cell-note-reference-6"',
+    )
+  })
+
   it('rejects a canonical note backlink with no rendered reference anchor', async () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [
@@ -3123,6 +3466,20 @@ describe('EPUB 3 export', () => {
 
     await expect(buildEpub(notePaper, reconstruction)).rejects.toThrow(
       /note-anchor-mismatch/u,
+    )
+  })
+
+  it('rejects a matched note whose exact canonical anchor has no source evidence', () => {
+    const { notePaper, reconstruction } = staleNoteAnchorFixture()
+    reconstruction.noteRelationships[0].canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'stale-anchor-claim',
+      start: 6,
+      end: 7,
+    }
+
+    expect(() => renderPublicationXhtml(notePaper, { reconstruction })).toThrow(
+      /invalid-source-note-anchor/u,
     )
   })
 
@@ -3492,6 +3849,11 @@ describe('EPUB 3 export', () => {
         expected: /dangling internal reference missing-document\.xhtml/i,
       },
       {
+        markup:
+          "<a xmlns:xlink='http://www.w3.org/1999/xlink' xlink:href='#missing-namespaced-fragment'>missing namespaced fragment</a>",
+        expected: /dangling internal reference #missing-namespaced-fragment/i,
+      },
+      {
         markup: "<img src='assets/missing.png' alt='missing' />",
         expected: /dangling asset reference assets\/missing\.png/i,
       },
@@ -3516,6 +3878,49 @@ describe('EPUB 3 export', () => {
       expect(() => inspectEpub(rezipEpub(tampered))).toThrow(candidate.expected)
     }
   })
+
+  it.each([
+    ['supplement.xhtml/', 'supplement.xhtml'],
+    ['chapters//supplement.xhtml', 'chapters/supplement.xhtml'],
+  ])(
+    'does not alias internal href %s to packaged document %s',
+    async (href, packagedHref) => {
+      const epub = await buildEpub(paper)
+      const files = unzipSync(epub.bytes)
+      const packaged = strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Supplement</title></head><body><p>Different exact path.</p></body></html>`)
+      const manifest = JSON.parse(strFromU8(files['EPUB/export.json']))
+      manifest.assets.push({
+        id: 'path-alias-supplement',
+        href: packagedHref,
+        mediaType: 'application/xhtml+xml',
+        sha256: await sha256Hex(packaged),
+      })
+      const tampered = {
+        ...files,
+        'EPUB/export.json': strToU8(`${JSON.stringify(manifest)}\n`),
+        'EPUB/package.opf': strToU8(
+          strFromU8(files['EPUB/package.opf']).replace(
+            '</manifest>',
+            `<item id="path-alias-supplement" href="${packagedHref}" media-type="application/xhtml+xml" /></manifest>`,
+          ),
+        ),
+        'EPUB/content.xhtml': strToU8(
+          strFromU8(files['EPUB/content.xhtml']).replace(
+            '</main>',
+            `<a href="${href}">Broken alias</a></main>`,
+          ),
+        ),
+        [`EPUB/${packagedHref}`]: packaged,
+      }
+
+      expect(() => inspectEpub(rezipEpub(tampered))).toThrow(
+        new RegExp(
+          `dangling internal reference ${href.replaceAll('/', '\\/')}`,
+        ),
+      )
+    },
+  )
 
   it('rejects hidden duplicate canonical citation text in serialized XHTML', async () => {
     const citationPaper = structuredClone(paper)

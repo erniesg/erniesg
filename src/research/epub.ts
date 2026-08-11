@@ -143,10 +143,79 @@ function isCompactScrollableTableImage({
   )
 }
 
+function isSemanticTableAsset(asset: PublicationAsset | undefined) {
+  return asset?.mediaType === 'application/xhtml+xml' && asset.kind === 'table'
+}
+
+function semanticTableAssetForRenderedNode({
+  node,
+  visual,
+  assets,
+}: {
+  node: ResearchNode | undefined
+  visual: PublicationVisualRelationship
+  assets: ReadonlyMap<string, PublicationAsset>
+}) {
+  const rendersPreformattedLines =
+    visual.preformatted !== undefined &&
+    visual.evidence.includes('source-preformatted-block') &&
+    visual.preformatted.lines.length > 0
+  if (
+    rendersPreformattedLines ||
+    visual.kind !== 'table' ||
+    node?.type !== 'figure' ||
+    !node.table
+  ) {
+    return undefined
+  }
+  return visual.assetIds
+    .map((assetId) => assets.get(assetId))
+    .find(isSemanticTableAsset)
+}
+
+function renderedSemanticTableNodeIdsForPublication({
+  paper,
+  visualRelationships,
+  assets,
+}: {
+  paper: ResearchPaper
+  visualRelationships: ReadonlyMap<string, PublicationVisualRelationship>
+  assets: ReadonlyMap<string, PublicationAsset>
+}) {
+  return new Set(
+    [...visualRelationships.entries()].flatMap(([nodeId, relationship]) =>
+      semanticTableAssetForRenderedNode({
+        node: paper.nodes.find((node) => node.id === nodeId),
+        visual: relationship,
+        assets,
+      })
+        ? [nodeId]
+        : [],
+    ),
+  )
+}
+
 function isDocxReconstruction(
   reconstruction: DocumentReconstruction,
 ): reconstruction is DocxReconstruction {
   return reconstruction.source.format === 'docx'
+}
+
+function noteRelationshipSourceEvidence(
+  reconstruction: DocumentReconstruction | undefined,
+) {
+  if (
+    !reconstruction ||
+    !Array.isArray(reconstruction.noteRelationships) ||
+    reconstruction.source?.format === 'docx'
+  ) {
+    return undefined
+  }
+  const pdf = reconstruction as PdfReconstruction
+  return {
+    regions: Array.isArray(pdf.regions) ? pdf.regions : [],
+    provenance: pdf.provenance ?? {},
+  }
 }
 
 function hasCompletePdfAssessmentEvidence(
@@ -624,17 +693,58 @@ function validatePdfCrossReferenceEvidence({
       (target) => `${target.kind}:${target.label}:${target.nodeId}`,
     ),
   )
-  const sourceParagraphRegionIds = new Set(
+  const sourceCrossReferenceRegionIds = new Set(
     paper.nodes.flatMap((node) =>
-      node.type === 'paragraph' && node.list?.numberingId !== 'references'
+      (node.type === 'paragraph' && node.list?.numberingId !== 'references') ||
+      node.type === 'caption' ||
+      node.type === 'footnote'
         ? (reconstruction.provenance[node.id]?.regionIds ?? [])
         : [],
     ),
   )
+  const visualDefinitionEndsByRegionId = new Map<string, number>()
+  for (const relationship of reconstruction.visualRelationships) {
+    const captionRegion = relationship.captionRegionId
+      ? regionById.get(relationship.captionRegionId)
+      : undefined
+    if (!captionRegion) continue
+    const definition = parsePdfScholarlyVisualLabel(captionRegion.text, {
+      context: 'caption',
+    })
+    const canonical = parsePdfScholarlyVisualLabel(relationship.label, {
+      context: 'reference',
+    })
+    if (
+      definition?.status !== 'parsed' ||
+      canonical?.status !== 'parsed' ||
+      definition.kind !== canonical.kind ||
+      definition.identifier !== canonical.identifier
+    ) {
+      continue
+    }
+    visualDefinitionEndsByRegionId.set(
+      captionRegion.id,
+      Math.max(
+        visualDefinitionEndsByRegionId.get(captionRegion.id) ?? 0,
+        definition.consumedEnd,
+      ),
+    )
+  }
   const redetectedRelationships = resolvePdfScholarlyCrossReferences({
-    regions: reconstruction.regions.filter((region) =>
-      sourceParagraphRegionIds.has(region.id),
-    ),
+    regions: reconstruction.regions.flatMap((region) => {
+      if (!sourceCrossReferenceRegionIds.has(region.id)) return []
+      const definitionEnd = visualDefinitionEndsByRegionId.get(region.id)
+      return [
+        definitionEnd
+          ? {
+              ...region,
+              text:
+                region.text.slice(0, definitionEnd).replace(/\S/gu, ' ') +
+                region.text.slice(definitionEnd),
+            }
+          : region,
+      ]
+    }),
     canonicalTargets,
   })
   const relationshipsById = new Map(
@@ -1580,6 +1690,7 @@ function renderTextWithNoteReferences(
     semanticRole?:
       | 'citation'
       | 'cross-reference'
+      | 'note-reference'
       | 'affiliation-marker'
       | 'bibliography-entry'
     targetIds?: string[]
@@ -1795,7 +1906,15 @@ function renderTextWithNoteReferences(
             `EPUB_SEMANTIC_LINK_ALIGNMENT: Citation ${relationshipId} has ${targets.length} canonical targets but its visible labels cannot be mapped one-to-one without duplicating text.`,
           )
         }
-        return `<span${idAttribute(relationshipId)} data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}">${links}</span>`
+        const linkedTargets = new Set(ranges.map((range) => range.target))
+        const additionalTargets = targets
+          .filter((target) => !linkedTargets.has(target))
+          .map((target) => {
+            const identifier = scholarlyTargetKinds.get(target)?.identifier
+            return `<a href="#${attribute(target)}" epub:type="biblioref" role="doc-biblioref" class="additional-biblioref">Additional citation target ${text(identifier ?? target)}</a>`
+          })
+          .join('')
+        return `<span${idAttribute(relationshipId)} data-semantic-role="citation" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}">${links}${additionalTargets}</span>`
       }
       if (wrapper.semanticRole === 'cross-reference' && targets.length > 0) {
         if (targets.length === 1) {
@@ -1820,7 +1939,15 @@ function renderTextWithNoteReferences(
             `EPUB_SEMANTIC_LINK_ALIGNMENT: Cross-reference ${relationshipId} has ${targets.length} canonical targets but its visible labels cannot be mapped one-to-one without duplicating text.`,
           )
         }
-        return `<span${idAttribute(relationshipId)} data-semantic-role="cross-reference" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}">${links}</span>`
+        const linkedTargets = new Set(ranges.map((range) => range.target))
+        const additionalTargets = targets
+          .filter((target) => !linkedTargets.has(target))
+          .map((target) => {
+            const identifier = scholarlyTargetKinds.get(target)?.identifier
+            return `<a href="#${attribute(target)}" class="additional-cross-reference">Additional cross-reference target ${text(identifier ?? target)}</a>`
+          })
+          .join('')
+        return `<span${idAttribute(relationshipId)} data-semantic-role="cross-reference" data-relationship-id="${attribute(relationshipId)}" data-target-ids="${attribute(targets.join(' '))}">${links}${additionalTargets}</span>`
       }
       return `<span${idAttribute(relationshipId)} data-semantic-role="${attribute(wrapper.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}>${html}</span>`
     })
@@ -1907,7 +2034,7 @@ function renderSemanticTable(
             const columnSpan =
               cell.columnSpan > 1 ? ` colspan="${cell.columnSpan}"` : ''
             const rowSpan = cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''
-            return `<${tag} id="${attribute(cellId)}"${scope}${headers}${columnSpan}${rowSpan}>${renderTextWithNoteReferences(cell.text, undefined, cell.inlineRuns, scholarlyTargetKinds)}</${tag}>`
+            return `<${tag} id="${attribute(cellId)}"${scope}${headers}${columnSpan}${rowSpan}>${renderTextWithNoteReferences(cell.text, cell.noteReferences, cell.inlineRuns, scholarlyTargetKinds)}</${tag}>`
           })
           .join('')}</tr>`
       })
@@ -2126,7 +2253,7 @@ function renderNode(
       ...(node.inlineRuns ?? []),
       ...literalExternalHyperlinkRuns(node.text),
     ]
-    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label" data-semantic-ledger-ignore="true">${text(node.markerText ?? node.label)} </span>${renderTextWithNoteReferences(node.text, undefined, inlineRuns, scholarlyTargetKinds)}${backlinks ? ` ${backlinks}` : ''}</aside>`
+    return `<aside id="${id}" data-canonical-id="${id}" epub:type="footnote" role="doc-${node.kind}" data-note-kind="${node.kind}" class="publication-note"><span class="note-label" data-semantic-ledger-ignore="true">${text(node.markerText ?? node.label)} </span>${renderTextWithNoteReferences(node.text, node.noteReferences, inlineRuns, scholarlyTargetKinds)}${backlinks ? ` ${backlinks}` : ''}</aside>`
   }
   if (node.type === 'figure') {
     const caption = captions.get(node.relationships.caption)
@@ -2196,11 +2323,11 @@ function renderNode(
         .filter((visualAsset): visualAsset is PublicationAsset =>
           Boolean(visualAsset),
         )
-      const semanticTableAsset = visualAssets.find(
-        (visualAsset) =>
-          visualAsset.mediaType === 'application/xhtml+xml' &&
-          visualAsset.kind === 'table',
-      )
+      const semanticTableAsset = semanticTableAssetForRenderedNode({
+        node,
+        visual,
+        assets,
+      })
       const renderedVisualAssets = visualAssets
         .map((visualAsset) => {
           const href = attribute(visualAsset.href)
@@ -2285,7 +2412,7 @@ function renderNode(
       const renderedCaption = caption
         ? syntheticEquationCaption
           ? `<figcaption id="${captionId}" data-canonical-id="${captionId}" class="synthetic-equation-caption" aria-hidden="true"></figcaption>`
-          : `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceAlgorithm ? ' class="algorithm-source-caption visually-hidden"' : sourceCode && visual.evidence.includes('fallback-source-line-caption') ? ' class="code-source-caption visually-hidden"' : generatedEquationLabel ? ' class="equation-number-caption visually-hidden"' : sourceEquationCaption ? ' class="equation-source-text"' : ''}>${generatedEquationLabel ? text(generatedEquationLabel) : renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>`
+          : `<figcaption id="${captionId}" data-canonical-id="${captionId}"${sourceAlgorithm ? ' class="algorithm-source-caption visually-hidden"' : sourceCode && visual.evidence.includes('fallback-source-line-caption') ? ' class="code-source-caption visually-hidden"' : generatedEquationLabel ? ' class="equation-number-caption visually-hidden"' : sourceEquationCaption ? ' class="equation-source-text"' : ''}>${generatedEquationLabel ? text(generatedEquationLabel) : renderTextWithNoteReferences(caption.text, caption.noteReferences, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>`
         : ''
       return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" data-object-type="${visualObjectType}" role="group"${figureClass}>${renderedAssets}${renderedEquationTranscript}${sourceTranscript}${renderedCaption}</figure>`
     }
@@ -2296,7 +2423,7 @@ function renderNode(
           : ''
       }`
     }
-    return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${renderTextWithNoteReferences(caption.text, undefined, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>` : ''}</figure>`
+    return `<figure id="${id}" data-canonical-id="${id}" data-caption-id="${captionId}" role="group"><div class="figure-placeholder" role="img" aria-label="${attribute(node.title)}">${text(node.title)}</div>${caption ? `<figcaption id="${captionId}" data-canonical-id="${captionId}">${renderTextWithNoteReferences(caption.text, caption.noteReferences, caption.inlineRuns, scholarlyTargetKinds)}</figcaption>` : ''}</figure>`
   }
   return ''
 }
@@ -2374,7 +2501,6 @@ function renderResearchPublicationXhtml(
     visualAssets?: Map<string, PublicationAsset>
   } = {},
 ) {
-  assertPublicationIntegrity(paper, options.reconstruction?.noteRelationships)
   const duplicateVisualOwner = duplicateVisualRelationshipNodeOwnership(
     options.reconstruction?.visualRelationships ?? [],
   )
@@ -2517,19 +2643,55 @@ function renderResearchPublicationXhtml(
             : [node]
         })
       : sourceRenderableNodes
+  const renderedAssociatedCaptionIds = new Set(
+    paper.nodes.flatMap((node) =>
+      node.type === 'figure' &&
+      (visualRelationships.has(node.id) || !omitMissingVisuals)
+        ? [node.relationships.caption]
+        : [],
+    ),
+  )
+  const renderedSemanticTableNodeIds =
+    renderedSemanticTableNodeIdsForPublication({
+      paper,
+      visualRelationships,
+      assets,
+    })
+  assertPublicationIntegrity(
+    paper,
+    options.reconstruction?.noteRelationships,
+    noteRelationshipSourceEvidence(options.reconstruction),
+    { renderedSemanticTableNodeIds },
+  )
+  const renderedNoteReferenceOwnerNodes = [
+    ...renderableNodes,
+    ...paper.nodes.filter(
+      (node) =>
+        node.type === 'caption' && renderedAssociatedCaptionIds.has(node.id),
+    ),
+  ]
   const renderedNoteReferenceIds = new Set([
     ...renderableAuthorNoteReferences(paper).map((reference) =>
       stableId(reference.id),
     ),
-    ...renderableNodes.flatMap((node) =>
-      node.type === 'heading' ||
-      node.type === 'paragraph' ||
-      node.type === 'quote'
+    ...renderedNoteReferenceOwnerNodes.flatMap((node) => [
+      ...('noteReferences' in node
         ? validNoteReferences(node.text, node.noteReferences).map((reference) =>
             stableId(reference.id),
           )
-        : [],
-    ),
+        : []),
+      ...(node.type === 'figure' &&
+      node.table &&
+      renderedSemanticTableNodeIds.has(node.id)
+        ? node.table.rows.flatMap((row) =>
+            row.cells.flatMap((cell) =>
+              validNoteReferences(cell.text, cell.noteReferences).map(
+                (reference) => stableId(reference.id),
+              ),
+            ),
+          )
+        : []),
+    ]),
   ])
   const headingLevels = new Map<string, number>()
   let previousHeadingLevel = 1
@@ -2573,10 +2735,10 @@ function renderResearchPublicationXhtml(
         ? (() => {
             const unresolvedVisual = unresolvedVisuals.get(node.id)
             return sourceProvedUnresolvedTableCaptionIds.has(node.id)
-              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
+              ? `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns, scholarlyTargetKinds)}</aside>`
               : unresolvedVisual || omitMissingVisuals
                 ? `<span id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" hidden="hidden" aria-hidden="true"></span>`
-                : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, undefined, node.inlineRuns, scholarlyTargetKinds)}</aside>`
+                : `<aside id="${attribute(stableId(node.id))}" data-canonical-id="${attribute(stableId(node.id))}" class="orphan-caption">${renderTextWithNoteReferences(node.text, node.noteReferences, node.inlineRuns, scholarlyTargetKinds)}</aside>`
           })()
         : renderNode(
             node,
@@ -2776,7 +2938,7 @@ ${Array.from(
 .publication-list-item { margin: 0.35rem 0; }
 .publication-list-item.has-preserved-marker { list-style-type: none; }
 .publication-list-marker { display: inline-block; margin-inline-end: 0.4em; }
-.visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.visually-hidden, .additional-biblioref, .additional-cross-reference { position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .semantic-table-wrapper { max-width: 100%; overflow-x: auto; }
 .semantic-table-figure, .semantic-table-wrapper, .semantic-table-wrapper table { break-inside: auto; }
 .semantic-table-wrapper table { border-collapse: collapse; font-size: 0.86rem; line-height: 1.35; min-width: 0; table-layout: fixed; width: 100%; }
@@ -4059,8 +4221,11 @@ function tagAttributes(tag: string) {
 function xmlAttributeValues(value: string, name: string) {
   const values: string[] = []
   for (const match of value.matchAll(/<[^!?][^>]*>/g)) {
-    const attributeValue = tagAttributes(match[0]).get(name)
-    if (attributeValue !== undefined) values.push(attributeValue)
+    for (const [attributeName, attributeValue] of tagAttributes(match[0])) {
+      if (attributeName === name || attributeName.endsWith(`:${name}`)) {
+        values.push(attributeValue)
+      }
+    }
   }
   return values
 }
@@ -4135,16 +4300,40 @@ function assertSerializedXhtmlSemanticIntegrity(
     }
     relationshipIds.add(relationshipId)
     const inner = match[3]
+    const canonicalInner = inner.replace(
+      /<a\b([^>]*)>([^<]*)<\/a>/giu,
+      (link, rawAttributes: string, escapedLinkText: string) => {
+        const linkAttributes = tagAttributes(`<a${rawAttributes}>`)
+        const classes = new Set(
+          (linkAttributes.get('class') ?? '').split(/\s+/u).filter(Boolean),
+        )
+        if (
+          !classes.has('additional-biblioref') &&
+          !classes.has('additional-cross-reference')
+        ) {
+          return link
+        }
+        if (
+          !linkAttributes.get('href')?.startsWith('#') ||
+          !decodedXmlFragmentText(escapedLinkText).trim()
+        ) {
+          throw new Error(
+            `${documentName} contains an invalid additional semantic target link`,
+          )
+        }
+        return ''
+      },
+    )
     if (
       /class\s*=\s*(?:"[^"]*\bvisually-hidden\b|'[^']*\bvisually-hidden\b)/iu.test(
-        inner,
+        canonicalInner,
       )
     ) {
       throw new Error(
         `${documentName} contains hidden semantic text that duplicates canonical citation text`,
       )
     }
-    const visibleText = decodedXmlFragmentText(inner).trim()
+    const visibleText = decodedXmlFragmentText(canonicalInner).trim()
     if (!visibleText) {
       throw new Error(`${documentName} contains an empty semantic relationship`)
     }
@@ -4156,7 +4345,9 @@ function assertSerializedXhtmlSemanticIntegrity(
         `${documentName} contains unbounded scholarly destination text for semantic relationship ${relationshipId} (${visibleText.length} visible characters)`,
       )
     }
-    const childAnchors = [...inner.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/giu)]
+    const childAnchors = [
+      ...canonicalInner.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/giu),
+    ]
     const childTexts = childAnchors.map((anchor) =>
       decodedXmlFragmentText(anchor[1]).trim(),
     )
@@ -4582,7 +4773,7 @@ function resolvedPackageHref(currentDocument: string, reference: string) {
   const segments = reference ? [...base, ...reference.split('/')] : base
   const resolved: string[] = []
   for (const segment of segments) {
-    if (!segment || segment === '.') continue
+    if (segment === '.') continue
     if (segment === '..') {
       if (resolved.length === 0) return null
       resolved.pop()
@@ -5047,6 +5238,31 @@ function projectRenderableNoteRelationships(
     ).filter(retainReference)
     noteReferencesByNode.set(node.id, references)
   }
+  const noteReferencesByTableCell = new Map<
+    string,
+    Array<{
+      id: string
+      label: string
+      target: string
+      start: number
+      end: number
+      confidence: number
+    }>
+  >()
+  for (const node of paper.nodes) {
+    if (node.type !== 'figure' || !node.table) continue
+    node.table.rows.forEach((row, rowIndex) => {
+      row.cells.forEach((cell, cellIndex) => {
+        if (!cell.noteReferences) return
+        noteReferencesByTableCell.set(
+          `${node.id}:${rowIndex}:${cellIndex}`,
+          validNoteReferences(cell.text, cell.noteReferences).filter(
+            retainReference,
+          ),
+        )
+      })
+    })
+  }
 
   return {
     ...paper,
@@ -5055,6 +5271,9 @@ function projectRenderableNoteRelationships(
       if (node.type === 'footnote') {
         return {
           ...node,
+          ...(node.noteReferences
+            ? { noteReferences: noteReferencesByNode.get(node.id) ?? [] }
+            : {}),
           relationships: {
             ...node.relationships,
             backlinks: backlinksByTarget.get(node.id) ?? [],
@@ -5065,6 +5284,28 @@ function projectRenderableNoteRelationships(
         return {
           ...node,
           noteReferences: noteReferencesByNode.get(node.id) ?? [],
+        }
+      }
+      if (node.type === 'figure' && node.table) {
+        return {
+          ...node,
+          table: {
+            ...node.table,
+            rows: node.table.rows.map((row, rowIndex) => ({
+              ...row,
+              cells: row.cells.map((cell, cellIndex) =>
+                cell.noteReferences
+                  ? {
+                      ...cell,
+                      noteReferences:
+                        noteReferencesByTableCell.get(
+                          `${node.id}:${rowIndex}:${cellIndex}`,
+                        ) ?? [],
+                    }
+                  : cell,
+              ),
+            })),
+          },
         }
       }
       return node
@@ -5379,9 +5620,25 @@ async function buildEpubInternal(
   let publicationPdfAssessment:
     ReturnType<typeof assessPdfCompleteness> | undefined
   assertUniqueCanonicalNodeIds(renderPaper)
+  const preflightVisualRelationships = new Map(
+    (renderReconstruction?.visualRelationships ?? [])
+      .filter((relationship) => relationship.canonicalNodeId)
+      .map((relationship) => [relationship.canonicalNodeId!, relationship]),
+  )
+  const preflightAssets = new Map(
+    (renderReconstruction?.assets ?? []).map((asset) => [asset.id, asset]),
+  )
   assertPublicationIntegrity(
     renderPaper,
     renderReconstruction?.noteRelationships,
+    noteRelationshipSourceEvidence(renderReconstruction),
+    {
+      renderedSemanticTableNodeIds: renderedSemanticTableNodeIdsForPublication({
+        paper: renderPaper,
+        visualRelationships: preflightVisualRelationships,
+        assets: preflightAssets,
+      }),
+    },
   )
   if (renderReconstruction) {
     const validatedPdfRelationshipIds = isDocxReconstruction(

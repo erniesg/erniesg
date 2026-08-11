@@ -88,10 +88,15 @@ function ambiguousReconstruction() {
   })
 }
 
-async function unresolvedLineJoinReconstruction() {
+async function unresolvedLineJoinReconstruction(withNoteMarker = false) {
   const runs = [
     run('This source contains a scenar-', 0.1, 0.2, 0.24),
-    run('io that remains continuous prose.', 0.1, 0.225, 0.48),
+    run(
+      `io that remains continuous prose${withNoteMarker ? ' 1' : ''}.`,
+      0.1,
+      0.225,
+      0.48,
+    ),
   ]
   const page: PdfPageAnalysis = {
     page: 1,
@@ -109,6 +114,91 @@ async function unresolvedLineJoinReconstruction() {
     fileName: 'unresolved-line-join.pdf',
     byteLength: 2048,
   })
+}
+
+async function tableCellNoteAdjudicationReconstruction(
+  projection: 'unresolved-run' | 'matched-reference',
+) {
+  const base = await reconstructPdf(
+    await fixtureFile('adjudication-required.pdf'),
+  )
+  const relationship = base.noteRelationships.find(
+    (candidate) => candidate.candidates.length > 0,
+  )
+  if (!relationship) throw new Error('Missing ambiguous note relationship')
+  const diagnostic = base.diagnostics.find(
+    (candidate) => candidate.target?.markerId === relationship.id,
+  )
+  if (!diagnostic) throw new Error('Missing note diagnostic')
+  targeted(diagnostic)
+  const candidate = relationship.candidates[0]
+  const ownerIndex = base.paper.nodes.findIndex((node) =>
+    base.provenance[node.id]?.regionIds.includes(
+      relationship.referenceRegionId,
+    ),
+  )
+  const owner = base.paper.nodes[ownerIndex]
+  if (!owner) throw new Error('Missing canonical note owner')
+  const captionId = 'table-cell-adjudication-caption'
+  const cellText = `Metric ${relationship.label}`
+  const start = cellText.length - relationship.label.length
+  const cell = {
+    id: 'table-cell-adjudication-owner',
+    text: cellText,
+    headerScope: null,
+    columnSpan: 1,
+    rowSpan: 1,
+    ...(projection === 'unresolved-run'
+      ? {
+          inlineRuns: [
+            {
+              start,
+              end: cellText.length,
+              italic: true,
+              relationshipId: relationship.id,
+              semanticRole: 'note-reference' as const,
+            },
+          ],
+        }
+      : {
+          noteReferences: [
+            {
+              id: relationship.id,
+              label: relationship.label,
+              target: candidate.targetNoteId,
+              start,
+              end: cellText.length,
+              confidence: relationship.confidence,
+            },
+          ],
+        }),
+  }
+  base.paper.nodes[ownerIndex] = {
+    id: owner.id,
+    type: 'figure',
+    title: 'Source-backed adjudication table',
+    objectType: 'table',
+    sourceText: cellText,
+    table: { rows: [{ cells: [cell] }] },
+    relationships: { caption: captionId },
+    source: owner.source,
+  }
+  base.paper.nodes.push({
+    id: captionId,
+    type: 'caption',
+    text: 'Source-backed adjudication table',
+    source: owner.source,
+  })
+  base.provenance[captionId] = structuredClone(base.provenance[owner.id])
+  if (projection === 'matched-reference') {
+    const target = base.paper.nodes.find(
+      (node) => node.id === candidate.targetNoteId && node.type === 'footnote',
+    )
+    if (target?.type === 'footnote') {
+      target.relationships.backlinks.push(relationship.id)
+    }
+  }
+  return { base, relationship, diagnostic, candidate, ownerId: owner.id, start }
 }
 
 function lineJoinDecision(
@@ -1165,13 +1255,13 @@ describe('human adjudication decision records', () => {
   })
 
   it('shifts canonical note, citation, and scholarly-reference offsets after removing a wrap hyphen', async () => {
-    const base = await unresolvedLineJoinReconstruction()
+    const base = await unresolvedLineJoinReconstruction(true)
     const region = base.regions[0]
     const paragraph = base.paper.nodes[0]
     if (paragraph.type !== 'paragraph') {
       throw new Error('Expected a paragraph fixture')
     }
-    const noteStart = paragraph.text.indexOf('continuous')
+    const noteStart = paragraph.text.indexOf('1')
     const citationStart = paragraph.text.indexOf('remains')
     expect(noteStart).toBeGreaterThan(0)
     expect(citationStart).toBeGreaterThan(0)
@@ -1383,6 +1473,44 @@ describe('human adjudication decision records', () => {
         fileName: 'citation.pdf',
         byteLength: 1024,
       })
+      const partialCitationTargetId = 'partial-bibliography-target'
+      if (resolution === 'reclassify-citation') {
+        base.noteRelationships[0].label = '3,4'
+        const relationship = base.noteRelationships[0]
+        const referenceNode = base.paper.nodes.find(
+          (node) =>
+            (node.type === 'heading' ||
+              node.type === 'paragraph' ||
+              node.type === 'quote') &&
+            base.provenance[node.id]?.regionIds.includes(
+              relationship.referenceRegionId,
+            ),
+        )
+        if (!referenceNode) throw new Error('Missing citation reference node')
+        referenceNode.inlineRuns = [
+          {
+            start: relationship.referenceStart,
+            end: relationship.referenceEnd,
+            semanticRole: 'cross-reference',
+            relationshipId: relationship.id,
+            targetIds: ['stale-selected-target'],
+          },
+        ]
+        base.paper.nodes.push({
+          id: partialCitationTargetId,
+          type: 'paragraph',
+          text: '[3] A source-backed bibliography entry.',
+          source: 'synthetic-partial-bibliography-entry',
+          list: {
+            level: 1,
+            ordered: true,
+            numberingId: 'references',
+            markerStyle: 'decimal',
+            markerText: '[3]',
+            ordinal: 3,
+          },
+        })
+      }
       const diagnostic = base.diagnostics.find(
         (item) => item.code === 'UNRESOLVED_NOTE_REFERENCE',
       )!
@@ -1407,17 +1535,19 @@ describe('human adjudication decision records', () => {
           expect.objectContaining({
             id: result.noteRelationships[0].id,
             status: 'unresolved',
+            targetNodeIds: [],
+            candidateNodeIds: [partialCitationTargetId],
           }),
         ])
-        expect(
-          result.paper.nodes.flatMap((node) =>
+        const citationRun = result.paper.nodes
+          .flatMap((node) =>
             'inlineRuns' in node ? (node.inlineRuns ?? []) : [],
-          ),
-        ).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ semanticRole: 'citation' }),
-          ]),
+          )
+          .find((run) => run.semanticRole === 'citation')
+        expect(citationRun).toEqual(
+          expect.objectContaining({ semanticRole: 'citation' }),
         )
+        expect(citationRun).not.toHaveProperty('targetIds')
       }
       expect(result.humanAdjudications.applied).toHaveLength(1)
     },
@@ -1493,6 +1623,101 @@ describe('human adjudication decision records', () => {
       /UNPROVENANCED_RENDERED_UNIT/u,
     )
   })
+
+  it('projects an accepted note match into its owning table cell', async () => {
+    const { base, relationship, diagnostic, candidate, ownerId, start } =
+      await tableCellNoteAdjudicationReconstruction('unresolved-run')
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      {
+        diagnosticCode: diagnostic.code,
+        target: diagnostic.target!,
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      },
+    )
+
+    const result = applyHumanDecisionFile(base, file)
+    const figure = result.paper.nodes.find((node) => node.id === ownerId)
+    if (figure?.type !== 'figure' || !figure.table) {
+      throw new Error('Missing adjudicated table')
+    }
+    const cell = figure.table.rows[0].cells[0]
+
+    expect(cell.noteReferences).toEqual([
+      expect.objectContaining({
+        id: relationship.id,
+        target: candidate.targetNoteId,
+        start,
+        end: start + relationship.label.length,
+      }),
+    ])
+    expect(cell.inlineRuns).toEqual([
+      { start, end: start + relationship.label.length, italic: true },
+    ])
+    expect(
+      result.noteRelationships.find((item) => item.id === relationship.id),
+    ).toMatchObject({
+      status: 'matched',
+      canonicalAnchor: {
+        kind: 'node',
+        nodeId: `${ownerId}:table:table-cell-adjudication-owner`,
+        start,
+        end: start + relationship.label.length,
+      },
+    })
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          node.id === candidate.targetNoteId && node.type === 'footnote',
+      ),
+    ).toMatchObject({
+      relationships: { backlinks: expect.arrayContaining([relationship.id]) },
+    })
+    expect(result.humanAdjudications.stale).toEqual([])
+  })
+
+  it.each(['reclassify-citation', 'reclassify-plain-text'] as const)(
+    'removes stale table-cell note state for %s',
+    async (resolution) => {
+      const { base, relationship, diagnostic, ownerId } =
+        await tableCellNoteAdjudicationReconstruction('matched-reference')
+      const result = applyHumanDecisionFile(
+        base,
+        upsertHumanDecision(createHumanDecisionFile(base.source.sha256), {
+          diagnosticCode: diagnostic.code,
+          target: diagnostic.target!,
+          resolution: { type: resolution },
+        }),
+      )
+      const figure = result.paper.nodes.find((node) => node.id === ownerId)
+      if (figure?.type !== 'figure' || !figure.table) {
+        throw new Error('Missing adjudicated table')
+      }
+      const cell = figure.table.rows[0].cells[0]
+
+      expect(cell.noteReferences).toBeUndefined()
+      expect(
+        result.paper.nodes.flatMap((node) =>
+          node.type === 'footnote' ? node.relationships.backlinks : [],
+        ),
+      ).not.toContain(relationship.id)
+      if (resolution === 'reclassify-citation') {
+        expect(cell.inlineRuns).toEqual([
+          expect.objectContaining({
+            relationshipId: relationship.id,
+            semanticRole: 'citation',
+          }),
+        ])
+      } else {
+        expect(cell.inlineRuns).toBeUndefined()
+      }
+      expect(result.humanAdjudications.stale).toEqual([])
+    },
+  )
 
   it('preserves visual completeness when a sidecar is applied', async () => {
     const base = await reconstructPdf(

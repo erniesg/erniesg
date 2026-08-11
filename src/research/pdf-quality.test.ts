@@ -7764,6 +7764,96 @@ describe('PDF semantic signal detection', () => {
     )
   })
 
+  it('uses canonical note links only when relationship evidence is absent', () => {
+    const runs = [
+      run('Body text', 0.1, 0.2, 10, 0.16),
+      run('1', 0.262, 0.196, 6, 0.008, 0.009),
+      run('1. Note text', 0.1, 0.82, 7, 0.3, 0.012),
+    ]
+    const page: PdfPageAnalysis = {
+      page: 1,
+      kind: 'born-digital',
+      width: 612,
+      height: 792,
+      rotation: 0,
+      textCharacters: runs.reduce((total, item) => total + item.text.length, 0),
+      imageCount: 0,
+      runs,
+    }
+    const paper: ResearchPaper = {
+      id: 'paper',
+      version: '1.0.0',
+      status: 'working',
+      title: 'Paper',
+      subtitle: 'Test',
+      authors: ['Test'],
+      updated: '2026-07-14',
+      abstract: 'Test',
+      nodes: [
+        {
+          id: 'p-1',
+          type: 'paragraph',
+          text: 'Body text1',
+          noteReferences: [
+            {
+              id: 'note-reference-1',
+              label: '1',
+              target: 'note-1',
+              start: 9,
+              end: 10,
+              confidence: 1,
+            },
+          ],
+          source: 'test',
+        },
+        {
+          id: 'note-1',
+          type: 'footnote',
+          kind: 'footnote',
+          label: '1',
+          text: 'Note text',
+          relationships: { backlinks: ['note-reference-1'] },
+          source: 'test',
+        },
+      ],
+    }
+
+    const canonicalOnly = assessPdfCompleteness({
+      pages: [page],
+      paper,
+      diagnostics: [],
+    })
+    const explicitEmptyGraph = assessPdfCompleteness({
+      pages: [page],
+      paper,
+      diagnostics: [],
+      noteRelationships: [],
+    })
+
+    expect(canonicalOnly.semanticSignals).toMatchObject({
+      footnoteReferences: 1,
+      footnotes: 1,
+    })
+    expect(canonicalOnly.completeness).toMatchObject({
+      expectedRelationshipCount: 1,
+      resolvedRelationshipCount: 1,
+      relationshipCoverage: 1,
+      unresolvedObjects: {
+        footnoteReferences: 0,
+        footnotes: 0,
+      },
+    })
+    expect(explicitEmptyGraph.completeness).toMatchObject({
+      expectedRelationshipCount: 1,
+      resolvedRelationshipCount: 0,
+      relationshipCoverage: 0,
+      unresolvedObjects: {
+        footnoteReferences: 1,
+        footnotes: 1,
+      },
+    })
+  })
+
   it.each([
     { label: 'forbidden C0 control', text: '\u0012' },
     { label: 'Unicode replacement glyph', text: 'term \ufffd value' },

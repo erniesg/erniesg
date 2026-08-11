@@ -1,4 +1,11 @@
-import { strToU8, zipSync, type Zippable, type ZipOptions } from 'fflate'
+import {
+  strFromU8,
+  strToU8,
+  zipSync,
+  type Zippable,
+  type ZipOptions,
+} from 'fflate'
+import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { sha256HexSync } from './sha256'
 import { renderPublicationXhtml } from './xhtml'
 import type { StructDocument } from './types'
@@ -9,7 +16,8 @@ const EPUB_CSS = `body { font-family: serif; line-height: 1.5; margin: 5%; }
 img { display: block; height: auto; max-width: 100%; }
 table { border-collapse: collapse; width: 100%; }
 td, th { border: 1px solid currentColor; padding: 0.25rem; }
-figure { break-inside: avoid; margin: 1.5rem 0; }`
+figure { break-inside: avoid; margin: 1.5rem 0; }
+.visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }`
 
 function text(value: string) {
   return value
@@ -40,6 +48,119 @@ function slug(value: string) {
   )
 }
 
+function xhtmlAttributeValues(value: string, name: string) {
+  const values: string[] = []
+  const parsed = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    processEntities: false,
+  }).parse(value)
+  const visit = (node: unknown) => {
+    if (Array.isArray(node)) {
+      node.forEach(visit)
+      return
+    }
+    if (!node || typeof node !== 'object') return
+    for (const [key, child] of Object.entries(node)) {
+      const attributeName = key.startsWith('@_') ? key.slice(2) : null
+      if (attributeName === name || attributeName?.endsWith(`:${name}`)) {
+        values.push(String(child))
+      } else if (!key.startsWith('@_')) visit(child)
+    }
+  }
+  visit(parsed)
+  return values
+}
+
+function resolvedPackageHref(currentDocument: string, reference: string) {
+  if (
+    !reference ||
+    reference.startsWith('/') ||
+    reference.includes('\\') ||
+    reference.includes('?') ||
+    /[\u0000-\u001f\u007f]/u.test(reference)
+  ) {
+    return null
+  }
+  const base = currentDocument.split('/')
+  base.pop()
+  const resolved: string[] = []
+  for (const segment of [...base, ...reference.split('/')]) {
+    if (segment === '.') continue
+    if (segment === '..') {
+      if (resolved.length === 0) return null
+      resolved.pop()
+      continue
+    }
+    resolved.push(segment)
+  }
+  return resolved.join('/')
+}
+
+function assertXhtmlHrefIntegrity(
+  documents: ReadonlyMap<string, string>,
+  packagedHrefs: ReadonlySet<string>,
+) {
+  const idsByDocument = new Map(
+    [...documents].map(([href, value]) => {
+      if (XMLValidator.validate(value) !== true) {
+        throw new Error(`STRUCT EPUB ${href} is not well-formed XHTML`)
+      }
+      const ids = xhtmlAttributeValues(value, 'id')
+      if (new Set(ids).size !== ids.length) {
+        throw new Error(`STRUCT EPUB ${href} contains duplicate ids`)
+      }
+      return [href, new Set(ids)]
+    }),
+  )
+  for (const [documentHref, value] of documents) {
+    for (const href of xhtmlAttributeValues(value, 'href')) {
+      if (
+        href !== href.trim() ||
+        href.includes('\\') ||
+        /[\u0000-\u001f\u007f]/u.test(href)
+      ) {
+        throw new Error(`STRUCT EPUB ${documentHref} has unsafe href ${href}`)
+      }
+      const scheme = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)?.[1]
+      if (scheme) {
+        if (!['http', 'https', 'mailto'].includes(scheme.toLowerCase())) {
+          throw new Error(
+            `STRUCT EPUB ${documentHref} has unsafe href scheme in ${href}`,
+          )
+        }
+        continue
+      }
+      if (href.startsWith('//') || href.startsWith('/')) {
+        throw new Error(`STRUCT EPUB ${documentHref} has unsafe href ${href}`)
+      }
+      const hashIndex = href.indexOf('#')
+      const documentReference =
+        hashIndex === -1 ? href : href.slice(0, hashIndex)
+      const fragment = hashIndex === -1 ? null : href.slice(hashIndex + 1)
+      const targetDocument = documentReference
+        ? resolvedPackageHref(documentHref, documentReference)
+        : documentHref
+      if (!targetDocument) {
+        throw new Error(`STRUCT EPUB ${documentHref} has unsafe href ${href}`)
+      }
+      if (!packagedHrefs.has(targetDocument)) {
+        throw new Error(
+          `STRUCT EPUB ${documentHref} has dangling internal reference ${href}`,
+        )
+      }
+      if (
+        fragment !== null &&
+        (!fragment || !idsByDocument.get(targetDocument)?.has(fragment))
+      ) {
+        throw new Error(
+          `STRUCT EPUB ${documentHref} has dangling internal reference ${href}`,
+        )
+      }
+    }
+  }
+}
+
 /** Assemble a deterministic EPUB using only the canonical STRUCT contract. */
 export async function buildStructEpub(document: StructDocument) {
   const identifier = `urn:sha256:${document.receipt.generatedSha256}`
@@ -54,6 +175,46 @@ export async function buildStructEpub(document: StructDocument) {
     }
     return asset as typeof asset & { bytes: Uint8Array }
   })
+  const reservedIds = new Set([
+    'publication-id',
+    'nav',
+    'content',
+    'styles',
+    'struct',
+  ])
+  const reservedHrefs = new Set([
+    'package.opf',
+    'nav.xhtml',
+    'content.xhtml',
+    'styles.css',
+    'struct.json',
+  ])
+  const assetIds = new Set<string>()
+  const assetHrefs = new Set<string>()
+  for (const asset of assets) {
+    if (
+      reservedIds.has(asset.id) ||
+      assetIds.has(asset.id) ||
+      !/^[A-Za-z_][A-Za-z0-9_.-]*$/u.test(asset.id)
+    ) {
+      throw new Error(
+        `STRUCT EPUB asset id is duplicate or reserved: ${asset.id}`,
+      )
+    }
+    if (
+      reservedHrefs.has(asset.href) ||
+      assetHrefs.has(asset.href) ||
+      asset.href !== asset.href.trim() ||
+      /[\s#:]/u.test(asset.href) ||
+      resolvedPackageHref('content.xhtml', asset.href) !== asset.href
+    ) {
+      throw new Error(
+        `STRUCT EPUB asset href is duplicate, reserved, or unsafe: ${asset.href}`,
+      )
+    }
+    assetIds.add(asset.id)
+    assetHrefs.add(asset.href)
+  }
   const assetItems = assets
     .map(
       (asset) =>
@@ -84,6 +245,7 @@ export async function buildStructEpub(document: StructDocument) {
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${attribute(language)}"><head><title>Contents</title></head><body><nav epub:type="toc"><h1>Contents</h1><ol><li><a href="content.xhtml">${text(document.metadata.title)}</a></li>${headings.map((block) => `<li><a href="content.xhtml#${attribute(block.id)}">${text(block.text)}</a></li>`).join('')}</ol></nav></body></html>
 `
+  const content = renderPublicationXhtml(document)
   const archive: Zippable = {
     mimetype: entry(EPUB_MIMETYPE, 0),
     'META-INF/container.xml': entry(
@@ -91,7 +253,7 @@ export async function buildStructEpub(document: StructDocument) {
     ),
     'EPUB/package.opf': entry(packageDocument),
     'EPUB/nav.xhtml': entry(nav),
-    'EPUB/content.xhtml': entry(renderPublicationXhtml(document)),
+    'EPUB/content.xhtml': entry(content),
     'EPUB/styles.css': entry(EPUB_CSS),
     'EPUB/struct.json': entry(
       `${JSON.stringify({
@@ -104,6 +266,23 @@ export async function buildStructEpub(document: StructDocument) {
       assets.map((asset) => [`EPUB/${asset.href}`, binaryEntry(asset.bytes)]),
     ),
   }
+  const xhtmlDocuments = new Map<string, string>([
+    ['nav.xhtml', nav],
+    ['content.xhtml', content],
+  ])
+  for (const asset of assets) {
+    if (asset.mediaType === 'application/xhtml+xml') {
+      xhtmlDocuments.set(asset.href, strFromU8(asset.bytes))
+    }
+  }
+  assertXhtmlHrefIntegrity(
+    xhtmlDocuments,
+    new Set(
+      Object.keys(archive)
+        .filter((href) => href.startsWith('EPUB/'))
+        .map((href) => href.slice('EPUB/'.length)),
+    ),
+  )
   const bytes = zipSync(archive)
   return {
     bytes,

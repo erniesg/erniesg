@@ -686,6 +686,8 @@ export type PdfCitationRelationship = {
     | 'human-reclassified-citation'
   >
   targetNodeIds: string[]
+  /** Every source-backed alternative retained when target identity is non-unique. */
+  candidateNodeIds?: string[]
   targets?: Array<{
     label: string
     targetNodeId: string
@@ -694,7 +696,7 @@ export type PdfCitationRelationship = {
     sourceBoxes: NormalizedSourceBox[]
     evidence: string[]
   }>
-  status: 'matched' | 'unresolved'
+  status: 'matched' | 'ambiguous' | 'unresolved'
   canonicalAnchor: {
     nodeId: string
     start: number

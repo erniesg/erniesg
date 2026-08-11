@@ -24,6 +24,16 @@ rows must belong to the canonical table figure's exact hidden transcript, link
 to the two repository-owned bibliography entries, and never leak into duplicate
 visible prose.
 
+`note-citation-associations.pdf` is the generated issue-106 association corpus.
+Its five source pages visibly cover numeric and symbol footnotes, an endnote,
+an Arabic-Indic numeral marker drawn with a repository-owned bitmap glyph, a
+numeric citation range and group, an author-year citation, a citation inside a
+figure caption, a note marker inside a table cell, a nested marker inside a
+footnote body, and a deliberately tied pair of duplicate-label note bodies. The
+fixture is intentionally broader than the currently passing reconstruction
+slice so unresolved or ambiguous cases remain measurable instead of being
+silently replaced with invented links.
+
 `pdf-to-epub-fidelity.pdf` is the integrated, redistributable upload-to-EPUB
 benchmark. It combines a unique title, continuous prose with both discretionary
 and authored hyphens, mixed inline font semantics, a safe link annotation,

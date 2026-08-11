@@ -173,6 +173,15 @@ describe('headless PDF export', () => {
     await pipeline?.close()
   })
 
+  it('preserves schema diagnostics for failures unrelated to citation cardinality', () => {
+    expect(reportValidator({})).toBe(false)
+    expect(reportValidator.errors).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ keyword: 'citationTargetState' }),
+      ]),
+    )
+  })
+
   it('defaults to globally bounded document concurrency and timeout values and rejects unsafe values', () => {
     const base = ['paper.pdf', '--out', '/tmp/pdf-export-timeout-test']
     expect(parseArguments(base).concurrency).toBe(DEFAULT_DOCUMENT_CONCURRENCY)
@@ -786,9 +795,7 @@ fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
         waitForProcessExit(observation.workerPid),
         waitForProcessExit(observation.grandchildPid),
       ])
-      expect(basename(observation.cacheDirectory)).toMatch(
-        /^srt-pdf-vite-/,
-      )
+      expect(basename(observation.cacheDirectory)).toMatch(/^srt-pdf-vite-/)
       expect(observation.cacheDirectory).toBe(
         join(
           observation.stagingDirectory,
@@ -1572,8 +1579,8 @@ fs.appendFileSync(path, 'epubcheck-' + completed + '-end\\n')
       expect(secondResult.status, secondResult.stderr).toBe(0)
       const report = JSON.parse(firstResult.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.9.0',
-        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+        schemaVersion: '1.10.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
         executionProvenance: {
           implementation: {
             gitCommit: expect.stringMatching(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
@@ -1773,8 +1780,8 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(result.status, result.stderr).toBe(1)
       const report = JSON.parse(result.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.9.0',
-        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+        schemaVersion: '1.10.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
         summary: {
           documents: 1,
           ready: 0,
@@ -1818,8 +1825,8 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
       expect(result.status, result.stderr).toBe(1)
       const report = JSON.parse(result.stdout)
       expect(report).toMatchObject({
-        schemaVersion: '1.9.0',
-        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+        schemaVersion: '1.10.0',
+        reportSchema: 'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
         summary: {
           documents: 1,
           ready: 0,
@@ -1913,6 +1920,47 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
         }),
       ])
       expect(reportValidator(report), reportValidator.errors).toBe(true)
+      const partialMatchedReport = structuredClone(report)
+      Object.assign(partialMatchedReport.documents[0].structure, {
+        citationRelationshipCount: 1,
+        citationRelationshipCounts: { matched: 1 },
+        citationRelationshipGraph: [
+          {
+            id: '1'.repeat(64),
+            status: 'matched',
+            taxonomy: 'bracketed-bibliography-citation',
+            referenceRegionId: '2'.repeat(64),
+            referenceStart: 0,
+            referenceEnd: 3,
+            labels: ['3'.repeat(64), '4'.repeat(64)],
+            targetNodeIds: ['5'.repeat(64)],
+            candidateNodeIds: [],
+            canonicalAnchor: null,
+            evidenceSha256s: ['6'.repeat(64)],
+            sourceBoxes: [
+              {
+                page: 1,
+                x: 0.1,
+                y: 0.1,
+                width: 0.1,
+                height: 0.02,
+                rotation: 0,
+                method: 'pdf-text',
+              },
+            ],
+          },
+        ],
+        citationRelationshipGraphSha256: '7'.repeat(64),
+      })
+      expect(reportValidator(partialMatchedReport)).toBe(false)
+      const frozenV19Report = structuredClone(report)
+      frozenV19Report.schemaVersion = '1.9.0'
+      frozenV19Report.reportSchema =
+        'docs/schemas/pdf-corpus-audit-v1.9.schema.json'
+      frozenV19Report.documents[0].structure.schemaVersion = '1.6.0'
+      expect(reportValidator(frozenV19Report), reportValidator.errors).toBe(
+        true,
+      )
       const frozenV18Report = structuredClone(report)
       frozenV18Report.schemaVersion = '1.8.0'
       frozenV18Report.reportSchema =
@@ -1967,7 +2015,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           '--out',
           comparison,
           '--corpus-report-schema-policy',
-          'v1.9-only',
+          'v1.10-only',
           '--require-identical-artifacts',
           '--require-identical-structure',
         ],
@@ -2013,7 +2061,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
           '--out',
           cleanComparison,
           '--corpus-report-schema-policy',
-          'v1.9-only',
+          'v1.10-only',
           '--require-identical-artifacts',
           '--require-identical-structure',
         ],

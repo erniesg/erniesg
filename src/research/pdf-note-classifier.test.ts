@@ -20,6 +20,7 @@ import {
   classifyPdfNoteMarkers,
   pdfAlternateAuthorYearKeyFromBoundary,
   PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
+  splitPdfCompoundAffiliationNote,
 } from './pdf-note-classifier'
 import { assessPdfCompleteness } from './pdf-quality'
 
@@ -909,6 +910,94 @@ describe('scholarly note-marker taxonomy', () => {
         disposition: 'plain-text',
       },
     ])
+  })
+
+  it('reduces the reviewed six compound-affiliation relationships to four canonical segments', () => {
+    const texts = [
+      '1 Alpha Institute',
+      '2 Beta Laboratory',
+      '3 Gamma University',
+      '4 Delta Center',
+    ]
+    const lines = texts.map((text, index) => {
+      const y = 0.82 + index * 0.018
+      const marker = noteRun(text[0], 0.12, y - 0.003, 0.008, 7, 0.009)
+      const prose = noteRun(text.slice(1), 0.13, y, 0.4, 10, 0.014)
+      return {
+        id: `compound-line-${index + 1}`,
+        text,
+        fontSize: 10,
+        box: {
+          page: 1,
+          x: 0.12,
+          y: y - 0.003,
+          width: 0.41,
+          height: 0.017,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [marker, prose],
+      }
+    })
+    const compoundRegion: PdfPageRegion = {
+      id: 'reviewed-compound-affiliations',
+      page: 1,
+      kind: 'footnote',
+      column: 'single',
+      text: texts.join(' '),
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.12,
+        y: 0.817,
+        width: 0.41,
+        height: 0.075,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines,
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const boundaries: PdfLineBoundaryDecision[] = lines
+      .slice(0, -1)
+      .map((line, index) => ({
+        id: `compound-boundary-${index + 1}`,
+        page: 1,
+        regionId: compoundRegion.id,
+        fromLineId: line.id,
+        toLineId: lines[index + 1].id,
+        outcome: 'space',
+        evidence: ['ordinary-wrap'],
+      }))
+
+    const compound = splitPdfCompoundAffiliationNote(compoundRegion, boundaries)
+    expect(compound?.affiliations.map(({ label }) => label)).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+    ])
+
+    const reviewedBefore = [
+      ...compound!.affiliations,
+      compound!.affiliations[1],
+      compound!.affiliations[2],
+    ]
+    expect(reviewedBefore).toHaveLength(6)
+    expect(new Set(reviewedBefore.map(({ label }) => label)).size).toBe(4)
+
+    const classified = classifyPdfNoteMarkers(
+      [compoundRegion],
+      [compoundRegion.id],
+      boundaries,
+    )
+    expect(classified.noteBodyRegionIds).toHaveLength(4)
+    expect(
+      classified.classifications.filter(
+        ({ referenceRegionId }) => referenceRegionId === compoundRegion.id,
+      ),
+    ).toEqual([])
   })
 
   it('recognizes an affiliation declaration line inside a merged author and contact region', () => {
@@ -2422,7 +2511,7 @@ describe('scholarly note-marker taxonomy', () => {
     ])
   })
 
-  it('leaves missing and duplicate author-year keys unresolved instead of guessing', async () => {
+  it('leaves missing author-year keys unresolved and duplicate keys ambiguous', async () => {
     const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
     fixture.name = 'ambiguous and missing author-year targets'
     fixture.pages[0].runs[2].text =
@@ -2439,8 +2528,12 @@ describe('scholarly note-marker taxonomy', () => {
     expect(result.citationRelationships).toEqual([
       expect.objectContaining({
         labels: ['ahn:2024'],
-        status: 'unresolved',
+        status: 'ambiguous',
         targetNodeIds: [],
+        candidateNodeIds: [
+          expect.stringMatching(/^p-/),
+          expect.stringMatching(/^p-/),
+        ],
         evidence: expect.arrayContaining([
           'bibliography-author-year-target-ambiguous',
         ]),
@@ -2748,6 +2841,45 @@ describe('scholarly note-marker taxonomy', () => {
         wrongBibliographyRelationships,
       ),
     )
+
+    const wrongExistingBibliographyPaper = structuredClone(result.paper)
+    const wrongExistingBibliographyRelationships = structuredClone(
+      result.citationRelationships,
+    )
+    const wrongExistingBibliographyRelationship =
+      wrongExistingBibliographyRelationships.find(
+        (candidate) => candidate.id === relationship.id,
+      )!
+    const wrongExistingBibliography = wrongExistingBibliographyPaper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.list?.numberingId === 'references' &&
+        !relationship.targetNodeIds.includes(node.id),
+    )!
+    wrongExistingBibliographyRelationship.targetNodeIds = [
+      wrongExistingBibliography.id,
+    ]
+    const wrongExistingCitationOwner =
+      wrongExistingBibliographyPaper.nodes.find(
+        (node) => node.id === relationship.canonicalAnchor?.nodeId,
+      )!
+    if (
+      wrongExistingCitationOwner.type !== 'heading' &&
+      wrongExistingCitationOwner.type !== 'paragraph' &&
+      wrongExistingCitationOwner.type !== 'quote'
+    ) {
+      throw new Error('INLINE_CAPABLE_NODE_REQUIRED')
+    }
+    wrongExistingCitationOwner.inlineRuns!.find(
+      (run) => run.relationshipId === relationship.id,
+    )!.targetIds = [wrongExistingBibliography.id]
+    expectOneUnresolvedCitation(
+      reassess(
+        wrongExistingBibliographyPaper,
+        result.provenance,
+        wrongExistingBibliographyRelationships,
+      ),
+    )
   })
 
   it('blocks a target-matched citation without an inline-capable canonical anchor', async () => {
@@ -2836,6 +2968,39 @@ describe('scholarly note-marker taxonomy', () => {
     expect(citationRun?.targetIds).toHaveLength(3)
   })
 
+  it('retains an unresolved citation obligation when a range exceeds the 32-target receipt bound', async () => {
+    const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
+    fixture.pages[0].runs[2].text =
+      'Prior work [1–33] exceeds the bounded citation target receipt.'
+    fixture.pages[0].runs[3].text = 'Later work confirms the result.'
+
+    const result = await reconstruct(fixture, '4')
+
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        status: 'unresolved',
+        targetNodeIds: [],
+        evidence: expect.arrayContaining(['citation-target-limit-exceeded']),
+      }),
+    ])
+    expect(result.citationRelationships[0].labels.length).toBeLessThanOrEqual(
+      32,
+    )
+    expect(
+      result.citationRelationships[0].candidateNodeIds?.length ?? 0,
+    ).toBeLessThanOrEqual(32)
+    expect(result.completeness.expectedInlineSpanCount).toBe(1)
+    expect(result.completeness.mappedInlineSpanCount).toBe(1)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_CITATION_REFERENCE',
+          relationshipId: result.citationRelationships[0].id,
+        }),
+      ]),
+    )
+  })
+
   it('keeps a numeric citation range blocked when its middle target is missing', async () => {
     const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
     fixture.pages[0].runs[2].text =
@@ -2849,7 +3014,8 @@ describe('scholarly note-marker taxonomy', () => {
       expect.objectContaining({
         labels: ['1', '2', '3'],
         status: 'unresolved',
-        targetNodeIds: [
+        targetNodeIds: [],
+        candidateNodeIds: [
           expect.stringMatching(/^p-/),
           expect.stringMatching(/^p-/),
         ],
@@ -2998,6 +3164,55 @@ describe('scholarly note-marker taxonomy', () => {
       note?.type === 'footnote' ? note.relationships.backlinks : undefined,
     ).toEqual([relationship?.id])
     expect(result.completeness.unresolvedObjects.footnoteReferences).toBe(0)
+
+    const staleNoteRelationships = structuredClone(result.noteRelationships)
+    const staleRelationship = staleNoteRelationships.find(
+      (candidate) => candidate.id === relationship?.id,
+    )
+    if (!staleRelationship) throw new Error('missing stale note relationship')
+    staleRelationship.referenceRegionId = 'missing-source-note-region'
+    const staleAssessment = assessPdfCompleteness({
+      pages: result.pages,
+      paper: result.paper,
+      diagnostics: [],
+      regions: result.regions,
+      readingOrder: result.readingOrder,
+      provenance: result.provenance,
+      visualRelationships: result.visualRelationships,
+      assets: result.assets,
+      citationRelationships: result.citationRelationships,
+      noteRelationships: staleNoteRelationships,
+      lineBoundaryDecisions: result.lineBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisions:
+        result.sourceSemanticFlowBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisionCount:
+        result.sourceSemanticFlowBoundaryDecisionCount,
+      canonicalHyphenBoundaryDecisions: result.canonicalHyphenBoundaryDecisions,
+      canonicalHyphenBoundaryDecisionCount:
+        result.canonicalHyphenBoundaryDecisionCount,
+      unresolvedCorruptingJoinCount: result.unresolvedCorruptingJoinCount,
+      structurallyConsumedLineBoundaryCount:
+        result.structurallyConsumedLineBoundaryCount,
+      inlineSpanLedger: {
+        expected: result.completeness.expectedInlineSpanCount,
+        mapped: result.completeness.mappedInlineSpanCount,
+      },
+      hyperlinkLedger: {
+        expected: result.completeness.expectedHyperlinkCount,
+        mapped: result.completeness.mappedHyperlinkCount,
+      },
+      sourceSha256: result.source.sha256,
+    })
+
+    expect(staleAssessment.completeness.resolvedRelationshipCount).toBe(
+      result.completeness.resolvedRelationshipCount - 1,
+    )
+    expect(
+      staleAssessment.completeness.unresolvedObjects.footnoteReferences,
+    ).toBe(1)
+    expect(staleAssessment.readiness.blockingDiagnosticCodes).toContain(
+      'DANGLING_EPUB_INTERNAL_REFERENCE',
+    )
   })
 
   it('anchors a source-backed raised title note on its canonical title heading', async () => {

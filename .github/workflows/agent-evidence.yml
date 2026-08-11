@@ -40,7 +40,7 @@ jobs:
           GITHUB_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           RUCKSACK_EXPECTED_REPOSITORY: ${{ github.repository }}
           RUCKSACK_EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
-          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONDONTWRITEBYTECODE: '1'
         run: |
           set -euo pipefail
           if [ -L .agent ] || [ -L .agent/evidence ]; then
@@ -80,6 +80,7 @@ jobs:
             elif ! EXPECTED_HEAD_SHA="$GITHUB_HEAD_SHA" EXPECTED_REPOSITORY="$RUCKSACK_EXPECTED_REPOSITORY" EXPECTED_BRANCH="$RUCKSACK_EXPECTED_BRANCH" EVIDENCE_STATUS="$status" CANONICAL_MANIFEST="$manifest" node - "$candidate" <<'RUCKSACK_VALIDATE_MANIFEST'
           const fs = require("node:fs");
           const path = require("node:path");
+          const { createHash } = require("node:crypto");
 
           const manifestPath = process.argv[2];
           const expectedHead = String(process.env.EXPECTED_HEAD_SHA || "").trim().toLowerCase();
@@ -89,7 +90,7 @@ jobs:
           const canonicalPath = String(process.env.CANONICAL_MANIFEST || "");
           const controlCharacters = /[\u0000-\u001f\u007f\u2028\u2029]/;
           const allowedLaneIds = new Set([
-            "lint", "build", "type-check", "unit", "test", "e2e",
+            "association-audit", "lint", "build", "type-check", "unit", "test", "e2e",
             "rust-check", "rust-test", "python-test",
           ]);
           // The documented exit taxonomy, rendered from rucksack.evidence_taxonomy so the
@@ -160,6 +161,149 @@ jobs:
             return candidate;
           }
 
+          function auditRate(value) {
+            return Number(value.toFixed(5));
+          }
+
+          function validateAuditCounters(value, expected, location) {
+            const keys = [
+              "expectedAssociations", "matchedAssociations", "ambiguousAssociations",
+              "unresolvedAssociations", "falseLinkCount", "resolvedAssociationRate",
+              "verifiedAssociationRate",
+            ];
+            exactKeys(value, keys, [], location);
+            keys.slice(0, 5).forEach((key) => nonNegativeInteger(value[key], `${location}.${key}`));
+            if (
+              value.matchedAssociations + value.ambiguousAssociations
+                + value.unresolvedAssociations + value.falseLinkCount
+              !== value.expectedAssociations
+            ) fail(`${location} counters do not conserve the expected denominator`);
+            if (
+              value.resolvedAssociationRate !== auditRate(value.matchedAssociations / value.expectedAssociations)
+              || value.verifiedAssociationRate !== auditRate(
+                (value.matchedAssociations + value.ambiguousAssociations) / value.expectedAssociations
+              )
+            ) fail(`${location} rates do not match its counters`);
+            keys.forEach((key) => {
+              if (value[key] !== expected[key]) fail(`${location}.${key} does not match the reviewed fixture contract`);
+            });
+          }
+
+          function validateAssociationAudit(value) {
+            const location = "manifest.association_audit";
+            exactKeys(value, [
+              "schemaVersion", "status", "fixture", "fixtureSha256", "baselineRef",
+              "before", "after", "checkpoints", "associations", "diagnosticCounts",
+              "completeness", "readiness",
+            ], [], location);
+            if (value.schemaVersion !== "1.0.0" || value.status !== "passed") {
+              fail(`${location} must be a passed 1.0.0 receipt`);
+            }
+            const fixture = "tests/fixtures/pdf/note-citation-associations.pdf";
+            if (value.fixture !== fixture) fail(`${location}.fixture is not the reviewed fixture`);
+            const fixtureHash = createHash("sha256").update(fs.readFileSync(fixture)).digest("hex");
+            if (value.fixtureSha256 !== fixtureHash) fail(`${location}.fixtureSha256 does not match fixture bytes`);
+            if (value.baselineRef !== "769d19836560d43cb67a4b4d7ca11bceb0a4121a") {
+              fail(`${location}.baselineRef is not the reviewed baseline`);
+            }
+            const before = {
+              expectedAssociations: 10, matchedAssociations: 5, ambiguousAssociations: 1,
+              unresolvedAssociations: 4, falseLinkCount: 0,
+              resolvedAssociationRate: 0.5, verifiedAssociationRate: 0.6,
+            };
+            const after = {
+              expectedAssociations: 10, matchedAssociations: 9, ambiguousAssociations: 1,
+              unresolvedAssociations: 0, falseLinkCount: 0,
+              resolvedAssociationRate: 0.9, verifiedAssociationRate: 1,
+            };
+            validateAuditCounters(value.before, before, `${location}.before`);
+            validateAuditCounters(value.after, after, `${location}.after`);
+
+            const checkpointIds = [
+              "associations-page-1-marker-to-body", "associations-page-2-citation-to-entry",
+              "associations-page-2-caption-citation", "associations-page-2-table-cell-note",
+              "associations-page-2-dangling-link-verifier",
+            ];
+            if (!Array.isArray(value.checkpoints) || value.checkpoints.length !== checkpointIds.length) {
+              fail(`${location}.checkpoints must contain the five reviewed checkpoints`);
+            }
+            value.checkpoints.forEach((checkpoint, index) => {
+              exactKeys(checkpoint, ["checkpointId", "status"], [], `${location}.checkpoints[${index}]`);
+              if (checkpoint.checkpointId !== checkpointIds[index] || checkpoint.status !== "passed") {
+                fail(`${location}.checkpoints[${index}] does not match the reviewed checkpoint`);
+              }
+            });
+
+            const associations = [
+              ["numeric-footnote", "note", "matched"], ["symbol-footnote", "note", "matched"],
+              ["arabic-indic-footnote", "note", "matched"], ["nested-label-6-footnote", "note", "matched"],
+              ["numeric-citation-range", "citation", "matched"], ["author-year-citation", "citation", "matched"],
+              ["cross-page-endnote", "note", "matched"], ["caption-citation", "citation", "matched"],
+              ["table-cell-note", "note", "matched"], ["ambiguous-duplicate-note", "note", "ambiguous"],
+            ];
+            if (!Array.isArray(value.associations) || value.associations.length !== associations.length) {
+              fail(`${location}.associations must contain the ten reviewed associations`);
+            }
+            value.associations.forEach((association, index) => {
+              const itemLocation = `${location}.associations[${index}]`;
+              exactKeys(association, [
+                "id", "kind", "expectedStatus", "observedStatus", "outcome", "reason",
+              ], [], itemLocation);
+              const [id, kind, status] = associations[index];
+              const reason = status === "matched" ? "verified-target-and-owner" : "source-ambiguity-retained";
+              if (
+                association.id !== id || association.kind !== kind
+                || association.expectedStatus !== status || association.observedStatus !== status
+                || association.outcome !== status || association.reason !== reason
+              ) fail(`${itemLocation} does not match the reviewed association`);
+            });
+
+            if (!isRecord(value.diagnosticCounts) || Object.keys(value.diagnosticCounts).length > 200) {
+              fail(`${location}.diagnosticCounts must be a bounded object`);
+            }
+            Object.entries(value.diagnosticCounts).forEach(([code, count]) => {
+              if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(code)) fail(`${location}.diagnosticCounts has an invalid code`);
+              nonNegativeInteger(count, `${location}.diagnosticCounts.${code}`);
+            });
+
+            exactKeys(value.completeness, [
+              "expectedAssociationCount", "resolvedAssociationCount", "associationCoverage",
+              "expectedRelationshipCount", "resolvedRelationshipCount", "relationshipCoverage",
+              "unresolvedObjects",
+            ], [], `${location}.completeness`);
+            const completeness = value.completeness;
+            if (
+              completeness.expectedAssociationCount !== value.after.expectedAssociations
+              || completeness.resolvedAssociationCount !== value.after.matchedAssociations
+              || completeness.associationCoverage !== value.after.resolvedAssociationRate
+            ) fail(`${location}.completeness does not agree with the audit counters`);
+            nonNegativeInteger(completeness.expectedRelationshipCount, `${location}.completeness.expectedRelationshipCount`);
+            nonNegativeInteger(completeness.resolvedRelationshipCount, `${location}.completeness.resolvedRelationshipCount`);
+            if (
+              completeness.expectedRelationshipCount < completeness.resolvedRelationshipCount
+              || completeness.resolvedRelationshipCount < completeness.resolvedAssociationCount
+              || completeness.relationshipCoverage !== auditRate(
+                completeness.resolvedRelationshipCount / completeness.expectedRelationshipCount
+              )
+            ) fail(`${location}.completeness relationship counters are inconsistent`);
+            const unresolvedKeys = [
+              "assets", "captions", "tables", "equations", "citations", "footnoteReferences", "footnotes",
+            ];
+            exactKeys(completeness.unresolvedObjects, unresolvedKeys, [], `${location}.completeness.unresolvedObjects`);
+            unresolvedKeys.forEach((key) => nonNegativeInteger(
+              completeness.unresolvedObjects[key], `${location}.completeness.unresolvedObjects.${key}`
+            ));
+
+            exactKeys(value.readiness, ["ready", "status", "blockingDiagnosticCodes"], [], `${location}.readiness`);
+            if (value.readiness.ready !== false || value.readiness.status !== "review-required") {
+              fail(`${location}.readiness must retain the reviewed ambiguity`);
+            }
+            const codes = stringArray(value.readiness.blockingDiagnosticCodes, `${location}.readiness.blockingDiagnosticCodes`);
+            if (codes.length === 0 || codes.length > 50 || codes.some((code) => !/^[A-Z][A-Z0-9_]{0,127}$/.test(code))) {
+              fail(`${location}.readiness.blockingDiagnosticCodes is invalid`);
+            }
+          }
+
           if (!manifestPath) fail("manifest path is required");
           if (!canonicalPath || controlCharacters.test(canonicalPath)) fail("canonical manifest path is invalid");
           if (!/^[0-9a-f]{40}$/.test(expectedHead)) fail("expected event head must be a full commit SHA");
@@ -194,7 +338,7 @@ jobs:
             [
               "schema_version", "run_id", "repo", "branch", "commit", "dirty",
               "started_at", "ended_at", "duration_ms", "agent_version", "invocation",
-              "lanes_run", "runner", "lanes", "artifacts", "result", "required_failures",
+              "lanes_run", "runner", "lanes", "association_audit", "artifacts", "result", "required_failures",
             ],
             ["blocked_reason", "blocked_class", "caveats"],
             "manifest",
@@ -261,6 +405,21 @@ jobs:
             }
           });
           if (new Set(laneIds).size !== laneIds.length) fail("manifest lane ids must be unique");
+
+          const associationLanes = manifest.lanes.filter((lane) => lane.id === "association-audit");
+          if (associationLanes.length !== 1) {
+            fail("manifest must contain exactly one association-audit lane");
+          }
+          const associationLane = associationLanes[0];
+          if (
+            associationLane.required !== true
+            || associationLane.command !== "node tools/pdf-association-fixture-audit.mjs"
+            || associationLane.status !== "passed"
+            || associationLane.exit_code !== 0
+          ) {
+            fail("manifest association-audit lane must be required and pass the exact audited command");
+          }
+          validateAssociationAudit(manifest.association_audit);
 
           const lanesRun = stringArray(manifest.lanes_run, "manifest.lanes_run");
           if (JSON.stringify(lanesRun) !== JSON.stringify(laneIds)) {

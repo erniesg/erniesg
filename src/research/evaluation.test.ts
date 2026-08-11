@@ -7,11 +7,10 @@ import {
   type GeometryEvidence,
 } from './evaluation'
 import { buildLayoutManifest } from './manifest'
-import { researchPaperSchema } from './schema'
+import { researchPaperSchema, type ResearchPaper } from './schema'
 import { TARGET_PROFILE_IDS, type TargetProfileId } from './targets'
 
 const paper = researchPaperSchema.parse(rawPaper)
-const annotations = createDemoAnnotations(paper)
 const manifest = buildLayoutManifest(paper)
 
 const timings = Object.fromEntries(
@@ -51,11 +50,15 @@ function geometry(): GeometryEvidence {
   }
 }
 
-function evaluate(geometryEvidence = geometry()) {
+function evaluatePaper(
+  paperInput: ResearchPaper,
+  manifestInput = buildLayoutManifest(paperInput),
+  geometryEvidence = geometry(),
+) {
   return evaluateSrt({
-    paper,
-    manifest,
-    annotations,
+    paper: paperInput,
+    manifest: manifestInput,
+    annotations: createDemoAnnotations(paperInput),
     geometry: geometryEvidence,
     timings,
     runtime: {
@@ -75,6 +78,54 @@ function evaluate(geometryEvidence = geometry()) {
       sha256: 'a'.repeat(64),
     },
   })
+}
+
+function evaluate(geometryEvidence = geometry()) {
+  return evaluatePaper(paper, manifest, geometryEvidence)
+}
+
+function paperWithTableCellNote() {
+  const withNote = structuredClone(paper)
+  const figure = withNote.nodes.find((node) => node.type === 'figure')
+  if (!figure || figure.type !== 'figure') {
+    throw new Error('Fixture lacks a figure node')
+  }
+  figure.objectType = 'table'
+  figure.table = {
+    rows: [
+      {
+        cells: [
+          {
+            id: 'cell-metric',
+            text: 'Metric1',
+            headerScope: null,
+            columnSpan: 1,
+            rowSpan: 1,
+            noteReferences: [
+              {
+                id: 'cell-note-reference',
+                label: '1',
+                target: 'cell-note',
+                start: 6,
+                end: 7,
+                confidence: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+  withNote.nodes.push({
+    id: 'cell-note',
+    type: 'footnote',
+    kind: 'footnote',
+    label: '1',
+    text: 'Source-backed table note.',
+    relationships: { backlinks: ['cell-note-reference'] },
+    source: 'fixture:table-note',
+  })
+  return researchPaperSchema.parse(withNote)
 }
 
 describe('SRT engineering evaluation', () => {
@@ -101,6 +152,78 @@ describe('SRT engineering evaluation', () => {
       result.targets.find((target) => target.target === 'paperProMove')
         ?.fallbacks,
     ).toMatchObject({ composition: 1, pagination: 0, total: 1 })
+  })
+
+  it('counts nested table-cell note edges in relationship preservation', () => {
+    const baseline = evaluate()
+    const result = evaluatePaper(paperWithTableCellNote())
+
+    expect(result.subject.canonicalRelationships).toBe(
+      baseline.subject.canonicalRelationships + 2,
+    )
+    for (const [index, target] of result.targets.entries()) {
+      expect(target.relationshipPreservation).toEqual({
+        preserved:
+          baseline.targets[index].relationshipPreservation.preserved + 2,
+        expected: baseline.targets[index].relationshipPreservation.expected + 2,
+        ratio: 1,
+      })
+    }
+  })
+
+  it('preserves repeated table-cell note edges to the same target', () => {
+    const repeated = structuredClone(paperWithTableCellNote())
+    const figure = repeated.nodes.find((node) => node.type === 'figure')
+    const note = repeated.nodes.find((node) => node.id === 'cell-note')
+    if (
+      !figure ||
+      figure.type !== 'figure' ||
+      !figure.table ||
+      !note ||
+      note.type !== 'footnote'
+    ) {
+      throw new Error('Fixture lacks a table-cell note topology')
+    }
+    figure.table.rows[0].cells.push({
+      id: 'cell-metric-repeat',
+      text: 'Repeat1',
+      headerScope: null,
+      columnSpan: 1,
+      rowSpan: 1,
+      noteReferences: [
+        {
+          id: 'cell-note-reference-repeat',
+          label: '1',
+          target: note.id,
+          start: 6,
+          end: 7,
+          confidence: 1,
+        },
+      ],
+    })
+    note.relationships.backlinks.push('cell-note-reference-repeat')
+    const repeatedPaper = researchPaperSchema.parse(repeated)
+    const repeatedManifest = buildLayoutManifest(repeatedPaper)
+    const baseline = evaluate()
+    const result = evaluatePaper(repeatedPaper, repeatedManifest)
+
+    for (const rendition of repeatedManifest.renditions) {
+      expect(
+        rendition.entries.find((entry) => entry.canonicalId === figure.id)
+          ?.relationships.noteTargets,
+      ).toEqual([note.id, note.id])
+    }
+    expect(result.subject.canonicalRelationships).toBe(
+      baseline.subject.canonicalRelationships + 4,
+    )
+    for (const [index, target] of result.targets.entries()) {
+      expect(target.relationshipPreservation).toEqual({
+        preserved:
+          baseline.targets[index].relationshipPreservation.preserved + 4,
+        expected: baseline.targets[index].relationshipPreservation.expected + 4,
+        ratio: 1,
+      })
+    }
   })
 
   it('reports measured browser failures rather than hiding them', () => {

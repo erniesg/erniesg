@@ -47,6 +47,20 @@ const GLYPHS = {
 }
 
 const CJK_GLYPHS = {
+  // Arabic-Indic digit one. This tiny repository-owned bitmap lets the
+  // association fixture visibly carry a non-Latin numeral without depending
+  // on a host font or embedding a third-party typeface.
+  '١': [
+    '000011000',
+    '000111000',
+    '001011000',
+    '000011000',
+    '000011000',
+    '000011000',
+    '000011000',
+    '000011000',
+    '000111000',
+  ],
   本: [
     '000010000',
     '111111111',
@@ -198,6 +212,7 @@ function createPdf(pageDefinitions, { language } = {}) {
     ),
   ].sort()
   const fontIds = new Map(fontNames.map((name) => [name, reserve()]))
+  const arabicIndicToUnicodeId = fontNames.includes('F5') ? reserve() : null
   const pageIds = pageDefinitions.map(() => reserve())
   const contentIds = pageDefinitions.map(() => reserve())
   const pageImages = pageDefinitions.map(
@@ -240,7 +255,29 @@ function createPdf(pageDefinitions, { language } = {}) {
   for (const [name, id] of fontIds) {
     set(
       id,
-      `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFonts[name] ?? 'Helvetica'} >>`,
+      `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFonts[name] ?? 'Helvetica'}${name === 'F5' && arabicIndicToUnicodeId ? ` /ToUnicode ${arabicIndicToUnicodeId} 0 R` : ''} >>`,
+    )
+  }
+  if (arabicIndicToUnicodeId) {
+    const cmap = `/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /ArabicIndicOne def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfchar
+<31> <0661>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end`
+    set(
+      arabicIndicToUnicodeId,
+      `<< /Length ${cmap.length} >>\nstream\n${cmap}\nendstream`,
     )
   }
 
@@ -793,6 +830,207 @@ const fixtures = {
       ],
     },
   ],
+  'note-citation-associations.pdf': [
+    {
+      lines: [
+        {
+          text: 'Deterministic note and citation association fixture',
+          x: 54,
+          y: 748,
+          size: 20,
+          font: 'F2',
+        },
+        { text: 'Repository Fixture Authors', x: 54, y: 716, size: 12 },
+        { text: 'Abstract', x: 54, y: 680, size: 14, font: 'F2' },
+        {
+          text: 'A numeric claim carries footnote marker',
+          x: 54,
+          y: 640,
+        },
+        { text: '1', x: 263, y: 644, size: 7 },
+        { text: '.', x: 268, y: 640 },
+        {
+          text: 'A symbol claim carries footnote marker',
+          x: 54,
+          y: 606,
+        },
+        { text: '*', x: 258, y: 610, size: 7 },
+        { text: '.', x: 263, y: 606 },
+        {
+          text: '1. Numeric footnote body contains nested marker [6]',
+          x: 240,
+          y: 112,
+          size: 8,
+        },
+        {
+          text: '6. Nested footnote body.',
+          x: 240,
+          y: 90,
+          size: 8,
+        },
+        { text: '* Symbol footnote body.', x: 54, y: 68, size: 8 },
+      ],
+    },
+    {
+      lines: [
+        {
+          text: 'Scholarly citations and in-float markers',
+          x: 54,
+          y: 748,
+          size: 18,
+          font: 'F2',
+        },
+        {
+          text: 'Prior evidence [1-3, 5] supports the range and group claim.',
+          x: 54,
+          y: 700,
+        },
+        {
+          text: 'Example et al. (2024) confirms the author-year claim.',
+          x: 54,
+          y: 670,
+        },
+        {
+          text: 'A separate claim has note reference 3.',
+          x: 54,
+          y: 640,
+        },
+        {
+          text: 'Figure 1. Caption citation [2] remains associated.',
+          x: 120,
+          y: 410,
+          font: 'F3',
+        },
+        {
+          text: 'Table 1. A note marker inside a table cell remains associated.',
+          x: 54,
+          y: 238,
+          font: 'F3',
+        },
+        { text: 'Measure', x: 72, y: 306, font: 'F2' },
+        { text: 'Evidence', x: 260, y: 306, font: 'F2' },
+        { text: 'Cell note', x: 72, y: 292 },
+        { text: 'Note ', x: 260, y: 292 },
+        { text: '4', x: 285, y: 296, size: 7 },
+        { text: 'Control', x: 72, y: 268 },
+        { text: 'None', x: 260, y: 268 },
+        { text: '4. Table cell note body.', x: 54, y: 70, size: 8 },
+      ],
+      images: [
+        {
+          x: 180,
+          y: 448,
+          width: 190,
+          height: 72,
+          raster: structuredFigureTwo,
+        },
+      ],
+    },
+    {
+      lines: [
+        {
+          text: 'Endnotes',
+          x: 54,
+          y: 748,
+          size: 18,
+          font: 'F2',
+        },
+        { text: 'Arabic-Indic note association', x: 54, y: 716, size: 14 },
+        {
+          text: 'Arabic-Indic U+0661 note marker appears at right.',
+          x: 54,
+          y: 650,
+        },
+        { text: '1', x: 297, y: 654, size: 7, font: 'F5' },
+        { text: '.', x: 302, y: 650 },
+        {
+          text: 'Arabic-Indic note body.',
+          x: 66,
+          y: 72,
+          size: 8,
+        },
+        { text: '1', x: 54, y: 72, size: 8, font: 'F5' },
+        { text: '.', x: 60, y: 72, size: 8 },
+        {
+          text: '3. Repository-owned endnote body begins here.',
+          x: 54,
+          y: 150,
+        },
+        {
+          text: 'Additional endnote detail preserves complete source evidence.',
+          x: 54,
+          y: 125,
+        },
+        {
+          text: 'The note remains local and deterministic for this fixture.',
+          x: 54,
+          y: 100,
+        },
+      ],
+    },
+    {
+      lines: [
+        {
+          text: 'Genuinely ambiguous duplicate-label note',
+          x: 54,
+          y: 748,
+          size: 18,
+          font: 'F2',
+        },
+        { text: 'Left context preserves a column.', x: 54, y: 650 },
+        { text: 'Right context preserves a column.', x: 330, y: 650 },
+        { text: 'Left evidence remains independent.', x: 54, y: 620 },
+        { text: 'Right evidence remains independent.', x: 330, y: 620 },
+        {
+          text: 'A genuinely ambiguous claim has note reference 7.',
+          x: 118,
+          y: 400,
+        },
+        {
+          text: '7. Left candidate note body.',
+          x: 54,
+          y: 72,
+          size: 7,
+        },
+        {
+          text: '7. Right candidate note body.',
+          x: 330,
+          y: 72,
+          size: 7,
+        },
+      ],
+    },
+    {
+      lines: [
+        { text: 'References', x: 54, y: 748, size: 16, font: 'F2' },
+        {
+          text: '[1] A. Fixture. Numeric association evidence. Local Press, 2024.',
+          x: 54,
+          y: 710,
+        },
+        {
+          text: '[2] B. Fixture. Caption association evidence. Local Press, 2024.',
+          x: 54,
+          y: 680,
+        },
+        {
+          text: '[3] C. Fixture. Range association evidence. Local Press, 2024.',
+          x: 54,
+          y: 650,
+        },
+        {
+          text: '[5] D. Fixture. Group association evidence. Local Press, 2024.',
+          x: 54,
+          y: 620,
+        },
+        {
+          text: 'Example, A., and Fixture, B. (2024). Repository-owned author-year evidence.',
+          x: 54,
+          y: 580,
+        },
+      ],
+    },
+  ],
   'pdf-to-epub-fidelity.pdf': [
     {
       lines: [
@@ -1160,6 +1398,7 @@ const fixtures = {
 
 const selectedFixtures = new Set(process.argv.slice(2))
 const fixtureOptions = {
+  'note-citation-associations.pdf': { language: 'en-US' },
   'pdf-to-epub-fidelity.pdf': { language: 'en-US' },
 }
 for (const [name, pages] of Object.entries(fixtures)) {

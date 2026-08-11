@@ -23,6 +23,10 @@ export const SOURCE_OUTPUT_CHECKPOINT_PROPERTIES = [
   'table-structure',
   'code-block-structure',
   'furniture-exclusion',
+  'marker-to-body',
+  'citation-to-entry',
+  'in-float-marker',
+  'dangling-link-verifier',
 ] as const
 
 export type SourceOutputCheckpointProperty =
@@ -39,6 +43,8 @@ export const SOURCE_OUTPUT_RENDITION_FEATURES = [
   'heading',
   'table',
   'code',
+  'relationship',
+  'internal-links',
 ] as const
 
 export type SourceOutputRenditionFeature =
@@ -60,12 +66,22 @@ const semanticFlowExpectationSchema = z
   })
   .strict()
 
+const relationshipExpectationSchema = z
+  .object({
+    kind: z.enum(['note', 'citation']),
+    markerText: z.string().min(1),
+    targetText: z.string().min(1),
+    container: z.enum(['caption', 'table-cell']).optional(),
+  })
+  .strict()
+
 const renditionExpectationSchema = z
   .object({
     feature: z.enum(SOURCE_OUTPUT_RENDITION_FEATURES),
     text: z.string().min(1).optional(),
     level: z.number().int().min(1).max(6).optional(),
     semanticFlow: semanticFlowExpectationSchema.optional(),
+    relationship: relationshipExpectationSchema.optional(),
   })
   .strict()
 
@@ -105,6 +121,9 @@ export type CheckpointValidationIssue = {
     | 'property-feature-mismatch'
     | 'property-source-feature-mismatch'
     | 'missing-semantic-flow-expectation'
+    | 'missing-relationship-expectation'
+    | 'relationship-kind-mismatch'
+    | 'missing-relationship-container'
   message: string
 }
 
@@ -135,6 +154,12 @@ function expectedRenditionFeature(
       return 'code'
     case 'furniture-exclusion':
       return 'prose'
+    case 'marker-to-body':
+    case 'citation-to-entry':
+    case 'in-float-marker':
+      return 'relationship'
+    case 'dangling-link-verifier':
+      return 'internal-links'
   }
 }
 
@@ -154,6 +179,11 @@ function expectedSourceFeature(
     case 'code-block-structure':
       return 'structure'
     case 'furniture-exclusion':
+      return 'structure'
+    case 'marker-to-body':
+    case 'citation-to-entry':
+    case 'in-float-marker':
+    case 'dangling-link-verifier':
       return 'structure'
   }
 }
@@ -227,6 +257,53 @@ export function validateSourceOutputCheckpointSet(
           'prose-continuity must name the source-proven semantic-flow boundary it expects.',
       })
     }
+
+    if (
+      ['marker-to-body', 'citation-to-entry', 'in-float-marker'].includes(
+        checkpoint.property,
+      ) &&
+      checkpoint.output.relationship === undefined
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'missing-relationship-expectation',
+        message: `${checkpoint.property} must name its marker, relationship kind, and target text.`,
+      })
+    }
+    if (
+      checkpoint.property === 'marker-to-body' &&
+      checkpoint.output.relationship !== undefined &&
+      checkpoint.output.relationship.kind !== 'note'
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'relationship-kind-mismatch',
+        message: 'marker-to-body must inspect a note relationship.',
+      })
+    }
+    if (
+      checkpoint.property === 'citation-to-entry' &&
+      checkpoint.output.relationship !== undefined &&
+      checkpoint.output.relationship.kind !== 'citation'
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'relationship-kind-mismatch',
+        message: 'citation-to-entry must inspect a citation relationship.',
+      })
+    }
+    if (
+      checkpoint.property === 'in-float-marker' &&
+      checkpoint.output.relationship !== undefined &&
+      checkpoint.output.relationship.container === undefined
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'missing-relationship-container',
+        message:
+          'in-float-marker must name either a caption or table-cell container.',
+      })
+    }
   }
   return issues
 }
@@ -274,6 +351,7 @@ export type RenditionCheckpointObservation = {
   profile: TargetProfileId
   width: number
   html: string
+  packagedDocuments?: Readonly<Record<string, string>>
   semanticFlowBoundaryLedgerValid?: boolean
   semanticFlowBoundaryDecisions?: readonly Pick<
     PdfSourceSemanticFlowBoundaryDecision,
@@ -321,6 +399,391 @@ function tagContents(html: string, tag: string) {
     contents.push(match[1] ?? '')
   }
   return contents
+}
+
+function decodedHtmlAttribute(value: string) {
+  return value.replace(
+    /&(?:#(\d+)|#x([\da-f]+)|amp|lt|gt|quot|apos);/gi,
+    (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
+      if (decimal !== undefined) {
+        const codePoint = Number(decimal)
+        return Number.isSafeInteger(codePoint) && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : entity
+      }
+      if (hexadecimal !== undefined) {
+        const codePoint = Number.parseInt(hexadecimal, 16)
+        return Number.isSafeInteger(codePoint) && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : entity
+      }
+      const values: Record<string, string> = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&apos;': "'",
+      }
+      return values[entity.toLowerCase()] ?? entity
+    },
+  )
+}
+
+function htmlAttribute(attributes: string, name: string) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = attributes.match(
+    new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'),
+  )
+  const value = match?.[1] ?? match?.[2]
+  return value === undefined ? undefined : decodedHtmlAttribute(value)
+}
+
+type HtmlOpeningElement = {
+  tag: string
+  attributes: string
+  start: number
+  end: number
+  id?: string
+  href?: string
+}
+
+type HtmlAnchor = HtmlOpeningElement & {
+  tag: 'a'
+  innerHtml: string
+  fullHtml: string
+}
+
+function htmlWithoutExecutableText(html: string) {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+}
+
+function htmlOpeningElements(html: string) {
+  const structuralHtml = htmlWithoutExecutableText(html)
+  const matcher = /<([a-z][\w:-]*)\b([^>]*)>/gi
+  const elements: HtmlOpeningElement[] = []
+  for (const match of structuralHtml.matchAll(matcher)) {
+    const attributes = match[2] ?? ''
+    elements.push({
+      tag: (match[1] ?? '').toLowerCase(),
+      attributes,
+      start: match.index,
+      end: match.index + match[0].length,
+      ...(htmlAttribute(attributes, 'id') !== undefined
+        ? { id: htmlAttribute(attributes, 'id') }
+        : {}),
+      ...(htmlAttribute(attributes, 'href') !== undefined
+        ? { href: htmlAttribute(attributes, 'href') }
+        : {}),
+    })
+  }
+  return { html: structuralHtml, elements }
+}
+
+function htmlAnchors(html: string): HtmlAnchor[] {
+  const structuralHtml = htmlWithoutExecutableText(html)
+  const matcher = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi
+  return [...structuralHtml.matchAll(matcher)].map((match) => {
+    const attributes = match[1] ?? ''
+    return {
+      tag: 'a',
+      attributes,
+      start: match.index,
+      end: match.index + match[0].length,
+      innerHtml: match[2] ?? '',
+      fullHtml: match[0],
+      ...(htmlAttribute(attributes, 'id') !== undefined
+        ? { id: htmlAttribute(attributes, 'id') }
+        : {}),
+      ...(htmlAttribute(attributes, 'href') !== undefined
+        ? { href: htmlAttribute(attributes, 'href') }
+        : {}),
+    }
+  })
+}
+
+const EPUB_CONTENT_DOCUMENT = 'content.xhtml'
+
+function resolvedDocumentHref(
+  reference: string,
+  currentDocumentHref = EPUB_CONTENT_DOCUMENT,
+) {
+  if (
+    reference.startsWith('/') ||
+    reference.includes('\\') ||
+    reference.includes('?') ||
+    /[\u0000-\u001f\u007f]/u.test(reference)
+  ) {
+    return null
+  }
+  const base = currentDocumentHref.split('/')
+  base.pop()
+  const resolved: string[] = []
+  for (const segment of [...base, ...reference.split('/')]) {
+    if (segment === '.') continue
+    if (segment === '..') {
+      if (resolved.length === 0) return null
+      resolved.pop()
+      continue
+    }
+    resolved.push(segment)
+  }
+  return resolved.join('/')
+}
+
+function internalHrefTarget(
+  href: string | undefined,
+  currentDocumentHref = EPUB_CONTENT_DOCUMENT,
+) {
+  if (!href) return null
+  const scheme = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)?.[1]
+  if (scheme || href.startsWith('//')) return null
+  if (href !== href.trim()) {
+    return { reason: `Internal href ${href} is unsafe.` }
+  }
+  const hashIndex = href.indexOf('#')
+  const documentReference = hashIndex === -1 ? href : href.slice(0, hashIndex)
+  const targetDocument = documentReference
+    ? resolvedDocumentHref(documentReference, currentDocumentHref)
+    : currentDocumentHref
+  if (!targetDocument) return { reason: `Internal href ${href} is unsafe.` }
+  if (hashIndex === -1) {
+    return { reason: null, documentHref: targetDocument, targetId: null }
+  }
+  try {
+    return {
+      reason: null,
+      documentHref: targetDocument,
+      targetId: decodeURIComponent(href.slice(hashIndex + 1)),
+    }
+  } catch {
+    return { reason: `Internal href ${href} has an invalid fragment.` }
+  }
+}
+
+function internalTarget(
+  href: string | undefined,
+  currentDocumentHref = EPUB_CONTENT_DOCUMENT,
+) {
+  const target = internalHrefTarget(href, currentDocumentHref)
+  return target?.reason === null && target.targetId !== null
+    ? { documentHref: target.documentHref, targetId: target.targetId }
+    : null
+}
+
+function internalTargetId(href: string | undefined) {
+  return internalTarget(href)?.targetId ?? null
+}
+
+function elementInnerHtml(html: string, element: HtmlOpeningElement) {
+  if (/\/\s*>$/u.test(html.slice(element.start, element.end))) return ''
+  const closing = new RegExp(`<\\/${element.tag}\\s*>`, 'gi')
+  closing.lastIndex = element.end
+  const match = closing.exec(html)
+  return match ? html.slice(element.end, match.index) : ''
+}
+
+function internalLinkIntegrityFailure(
+  html: string,
+  packagedDocuments: Readonly<Record<string, string>> = {},
+) {
+  const documents = new Map(Object.entries(packagedDocuments))
+  documents.set(EPUB_CONTENT_DOCUMENT, html)
+  const documentGraphs = new Map(
+    [...documents].map(([documentHref, documentHtml]) => {
+      const graph = htmlOpeningElements(documentHtml)
+      const ids = new Map<string, HtmlOpeningElement[]>()
+      for (const element of graph.elements) {
+        if (element.id === undefined) continue
+        const owners = ids.get(element.id) ?? []
+        owners.push(element)
+        ids.set(element.id, owners)
+      }
+      return [documentHref, { ...graph, ids }]
+    }),
+  )
+  const current = documentGraphs.get(EPUB_CONTENT_DOCUMENT)!
+  const { html: structuralHtml, elements, ids } = current
+  const links = [...documentGraphs].flatMap(([documentHref, graph]) =>
+    graph.elements.flatMap((element) => {
+      const target = internalHrefTarget(element.href, documentHref)
+      if (target === null) return []
+      if (
+        target.reason === null &&
+        target.documentHref !== documentHref &&
+        element.tag !== 'a'
+      ) {
+        return []
+      }
+      return [{ documentHref, element, target }]
+    }),
+  )
+  const outcome = (reason: string | null) => ({
+    reason,
+    structuralHtml,
+    elements,
+    ids,
+    links,
+    documentGraphs,
+  })
+  if (links.length === 0) {
+    return outcome('The rendition contains no internal href to verify.')
+  }
+  for (const link of links) {
+    if (link.target.reason !== null) {
+      return outcome(link.target.reason)
+    }
+    const targetGraph = documentGraphs.get(link.target.documentHref)
+    if (!targetGraph) {
+      return outcome(
+        `Internal href ${link.element.href} has no packaged document ${link.target.documentHref}.`,
+      )
+    }
+    if (link.target.targetId === null) continue
+    if (!link.target.targetId) {
+      return outcome(
+        'The rendition contains an empty or invalid internal href.',
+      )
+    }
+    const targets = targetGraph.ids.get(link.target.targetId) ?? []
+    if (targets.length !== 1) {
+      return outcome(
+        targets.length === 0
+          ? `Internal href #${link.target.targetId} has no target.`
+          : `Internal href #${link.target.targetId} has ${targets.length} targets; exactly one is required.`,
+      )
+    }
+  }
+  return outcome(null)
+}
+
+function hasToken(value: string | undefined, token: string) {
+  return value?.split(/\s+/u).includes(token) ?? false
+}
+
+function relationshipIntegrityFailure(
+  checkpoint: SourceOutputCheckpoint,
+  rendition: RenditionCheckpointObservation,
+) {
+  const expected = checkpoint.output.relationship
+  if (!expected) return 'The checkpoint has no relationship expectation.'
+  const graph = internalLinkIntegrityFailure(
+    rendition.html,
+    rendition.packagedDocuments,
+  )
+  if (graph.reason) return graph.reason
+  const anchors = htmlAnchors(graph.structuralHtml)
+  const candidates = anchors.filter((anchor) => {
+    const type = htmlAttribute(anchor.attributes, 'epub:type')
+    const role = htmlAttribute(anchor.attributes, 'role')
+    const semanticType = expected.kind === 'note' ? 'noteref' : 'biblioref'
+    const semanticRole =
+      expected.kind === 'note' ? 'doc-noteref' : 'doc-biblioref'
+    return (
+      hasToken(type, semanticType) &&
+      hasToken(role, semanticRole) &&
+      normalizedText(anchor.innerHtml) === normalizedText(expected.markerText)
+    )
+  })
+  const isInsideExpectedContainer = (anchor: HtmlAnchor) => {
+    if (!expected.container) return true
+    const tags =
+      expected.container === 'caption' ? ['figcaption'] : ['td', 'th']
+    return tags.some((tag) =>
+      tagContents(graph.structuralHtml, tag).some((content) =>
+        content.includes(anchor.fullHtml),
+      ),
+    )
+  }
+  const relationshipTarget = (anchor: HtmlAnchor) => {
+    const endpoint = internalTarget(anchor.href)
+    if (!endpoint) return null
+    const document = graph.documentGraphs.get(endpoint.documentHref)
+    const targets = document?.ids.get(endpoint.targetId) ?? []
+    if (!document || targets.length !== 1) return null
+    const target = targets[0]
+    return {
+      documentHref: endpoint.documentHref,
+      document,
+      target,
+      targetHtml: elementInnerHtml(document.html, target),
+    }
+  }
+  const matchingTargetCandidates = candidates.filter((anchor) => {
+    const resolvedTarget = relationshipTarget(anchor)
+    if (!resolvedTarget) return false
+    if (
+      !normalizedText(resolvedTarget.targetHtml).includes(
+        normalizedText(expected.targetText),
+      )
+    ) {
+      return false
+    }
+    return isInsideExpectedContainer(anchor)
+  })
+  const narrowedCandidates =
+    candidates.length === 1 ? candidates : matchingTargetCandidates
+  if (narrowedCandidates.length !== 1) {
+    return `Expected exactly one ${expected.kind} link for marker ${expected.markerText} targeting the expected body; found ${matchingTargetCandidates.length}.`
+  }
+  const anchor = narrowedCandidates[0]
+  const endpoint = internalTarget(anchor.href)
+  if (!endpoint) return `Marker ${expected.markerText} has no internal target.`
+  const resolvedTarget = relationshipTarget(anchor)
+  if (!resolvedTarget)
+    return `Marker ${expected.markerText} has no unique target.`
+  const { documentHref, document, target, targetHtml } = resolvedTarget
+  if (
+    !normalizedText(targetHtml).includes(normalizedText(expected.targetText))
+  ) {
+    return `Marker ${expected.markerText} does not target the expected body text.`
+  }
+  if (expected.kind === 'note') {
+    const targetType = htmlAttribute(target.attributes, 'epub:type')
+    const targetRole = htmlAttribute(target.attributes, 'role')
+    if (
+      target.tag !== 'aside' ||
+      !hasToken(targetType, 'footnote') ||
+      !['doc-footnote', 'doc-endnote'].some((role) =>
+        hasToken(targetRole, role),
+      )
+    ) {
+      return `Marker ${expected.markerText} does not target a semantic note body.`
+    }
+    if (!anchor.id || graph.ids.get(anchor.id)?.length !== 1) {
+      return `Note marker ${expected.markerText} has no unique backlink target id.`
+    }
+    const backlink = htmlAnchors(targetHtml).find((candidate) => {
+      const backlinkTarget = internalTarget(candidate.href, documentHref)
+      return (
+        backlinkTarget?.documentHref === EPUB_CONTENT_DOCUMENT &&
+        backlinkTarget.targetId === anchor.id &&
+        hasToken(htmlAttribute(candidate.attributes, 'class'), 'note-backlink')
+      )
+    })
+    if (!backlink) {
+      return `Note body for marker ${expected.markerText} has no verified backlink.`
+    }
+  } else {
+    const targetOpening = document.html.slice(target.start, target.end)
+    const bibliographyOwners = document.elements.filter(
+      (element) =>
+        ['ol', 'ul'].includes(element.tag) &&
+        htmlAttribute(element.attributes, 'data-numbering-id') ===
+          'references' &&
+        elementInnerHtml(document.html, element).includes(targetOpening),
+    )
+    if (bibliographyOwners.length !== 1) {
+      return `Citation marker ${expected.markerText} does not target one bibliography entry.`
+    }
+  }
+  if (expected.container) {
+    if (!isInsideExpectedContainer(anchor)) {
+      return `Marker ${expected.markerText} is not inside the expected ${expected.container} container.`
+    }
+  }
+  return null
 }
 
 function hasHeading(html: string, level?: number) {
@@ -459,8 +922,9 @@ function unresolvedHyphenFragment(
 
 function outputFeaturePresent(
   checkpoint: SourceOutputCheckpoint,
-  html: string,
+  rendition: RenditionCheckpointObservation,
 ) {
+  const html = rendition.html
   switch (checkpoint.output.feature) {
     case 'figure':
       return hasFigure(checkpoint, html)
@@ -474,6 +938,15 @@ function outputFeaturePresent(
       return hasTableContent(checkpoint, html)
     case 'code':
       return hasCodeContent(checkpoint, html)
+    case 'relationship':
+      return htmlAnchors(html).some(
+        (anchor) => internalTargetId(anchor.href) !== null,
+      )
+    case 'internal-links':
+      return (
+        internalLinkIntegrityFailure(html, rendition.packagedDocuments).links
+          .length > 0
+      )
   }
 }
 
@@ -542,7 +1015,7 @@ export function evaluateSourceOutputCheckpoint(
       reason: 'The generated rendition is empty.',
     }
   }
-  if (!outputFeaturePresent(checkpoint, observation.rendition.html)) {
+  if (!outputFeaturePresent(checkpoint, observation.rendition)) {
     return {
       checkpointId: checkpoint.id,
       status: 'failed',
@@ -559,6 +1032,36 @@ export function evaluateSourceOutputCheckpoint(
       checkpointId: checkpoint.id,
       status: 'failed',
       reason: 'The source page does not contain the named source text.',
+    }
+  }
+  if (
+    ['marker-to-body', 'citation-to-entry', 'in-float-marker'].includes(
+      checkpoint.property,
+    )
+  ) {
+    const failure = relationshipIntegrityFailure(
+      checkpoint,
+      observation.rendition,
+    )
+    if (failure) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: failure,
+      }
+    }
+  }
+  if (checkpoint.property === 'dangling-link-verifier') {
+    const failure = internalLinkIntegrityFailure(
+      observation.rendition.html,
+      observation.rendition.packagedDocuments,
+    ).reason
+    if (failure) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: failure,
+      }
     }
   }
   if (checkpoint.output.semanticFlow) {

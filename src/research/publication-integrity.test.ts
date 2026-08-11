@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { PdfNoteRelationship } from './import-types'
+import type {
+  NodeSourceEvidence,
+  NormalizedSourceBox,
+  PdfNoteRelationship,
+  PdfPageRegion,
+} from './import-types'
 import {
   assertPublicationIntegrity,
   internalReferenceIntegrityIssues,
   isBoundedScholarlyReferenceText,
+  validMatchedSemanticNoteRelationshipIds,
 } from './publication-integrity'
 import { assessPdfCompleteness } from './pdf-quality'
 import type { ResearchPaper } from './schema'
@@ -112,6 +118,84 @@ function relationshipFixture(): AnchoredNoteRelationship[] {
   ]
 }
 
+function sourceBox(
+  x: number,
+  y: number,
+  width: number,
+  height = 0.02,
+): NormalizedSourceBox {
+  return {
+    page: 1,
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    method: 'pdf-text',
+  }
+}
+
+function sourceRegion(
+  id: string,
+  text: string,
+  box: NormalizedSourceBox,
+): PdfPageRegion {
+  return {
+    id,
+    page: box.page,
+    kind: 'body',
+    column: 'single',
+    text,
+    confidence: 1,
+    box,
+    lines: [
+      {
+        id: `${id}-line`,
+        text,
+        fontSize: 10,
+        box,
+        runs: [
+          {
+            ...box,
+            text,
+            fontName: 'Body',
+            fontSize: 10,
+            confidence: 1,
+          },
+        ],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+}
+
+function sourceEvidenceFixture() {
+  const relationships = relationshipFixture()
+  const claimBox = sourceBox(0.1, 0.2, 0.3)
+  const authorBox = sourceBox(0.1, 0.1, 0.3)
+  relationships[0].sourceBoxes = [sourceBox(0.16, 0.2, 0.01)]
+  relationships[1].sourceBoxes = [sourceBox(0.37, 0.1, 0.01)]
+  return {
+    relationships,
+    sourceEvidence: {
+      regions: [
+        sourceRegion('source-claim', 'A1 B2', claimBox),
+        sourceRegion('source-authors', 'Ada Example*', authorBox),
+      ],
+      provenance: {
+        claim: {
+          confidence: 1,
+          pages: [1],
+          regionIds: ['source-claim'],
+          boxes: [claimBox],
+          links: [],
+        },
+      } satisfies Record<string, NodeSourceEvidence>,
+    },
+  }
+}
+
 function issueDetails(
   paper: ResearchPaper,
   relationships?: readonly AnchoredNoteRelationship[],
@@ -141,6 +225,349 @@ describe('exact semantic note-anchor integrity', () => {
     }
 
     expect(issueDetails(paper, relationships)).toContain('note-anchor-mismatch')
+  })
+
+  it('accepts exact node and author source evidence without inventing author provenance', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ),
+    ).toEqual([])
+    expect(() =>
+      assertPublicationIntegrity(paperFixture(), relationships, sourceEvidence),
+    ).not.toThrow()
+  })
+
+  it('accepts a bounded bracketed source marker for the same canonical label', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    const claimRegion = sourceEvidence.regions[0]
+    claimRegion.text = 'A[1] B2'
+    claimRegion.lines[0].text = claimRegion.text
+    claimRegion.lines[0].runs[0].text = claimRegion.text
+    relationships[0].referenceStart = 1
+    relationships[0].referenceEnd = 4
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ),
+    ).toEqual([])
+  })
+
+  it.each([
+    { marker: '[1; 2]', label: '1,2' },
+    { marker: '[1–3]', label: '1,2,3' },
+    { marker: '†', label: '†' },
+    { marker: '¹˒²', label: '1,2' },
+  ])('accepts the fully bounded note marker $marker', ({ marker, label }) => {
+    const paper = paperFixture()
+    const claim = paper.nodes[0]
+    const note = paper.nodes[1]
+    if (claim.type !== 'paragraph' || note.type !== 'footnote') {
+      throw new Error('missing canonical note fixture')
+    }
+    claim.text = `A${label} B`
+    claim.noteReferences![0].label = label
+    claim.noteReferences![0].start = 1
+    claim.noteReferences![0].end = 1 + label.length
+    note.label = label
+
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    const relationship = relationships[0]
+    relationship.label = label
+    relationship.referenceStart = 0
+    relationship.referenceEnd = marker.length
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'claim',
+      start: 1,
+      end: 1 + label.length,
+    }
+    const claimRegion = sourceEvidence.regions[0]
+    claimRegion.text = marker
+    claimRegion.lines[0].text = marker
+    claimRegion.lines[0].runs[0].text = marker
+
+    expect(
+      internalReferenceIntegrityIssues(paper, relationships, sourceEvidence),
+    ).toEqual([])
+  })
+
+  it.each(['[1] trailing prose', 'leading prose [1]'])(
+    'rejects a source span containing prose around marker %s',
+    (marker) => {
+      const { relationships, sourceEvidence } = sourceEvidenceFixture()
+      const claimRegion = sourceEvidence.regions[0]
+      claimRegion.text = marker
+      claimRegion.lines[0].text = marker
+      claimRegion.lines[0].runs[0].text = marker
+      relationships[0].referenceStart = 0
+      relationships[0].referenceEnd = marker.length
+
+      expect(
+        internalReferenceIntegrityIssues(
+          paperFixture(),
+          relationships,
+          sourceEvidence,
+        ).map((issue) => issue.detail),
+      ).toContain('invalid-source-note-anchor')
+      expect(
+        validMatchedSemanticNoteRelationshipIds(
+          paperFixture(),
+          relationships,
+          sourceEvidence,
+        ).has(relationships[0].id),
+      ).toBe(false)
+    },
+  )
+
+  it('rejects matched note evidence whose source region does not exist', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    relationships[0].referenceRegionId = 'missing-source-claim'
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
+  })
+
+  it.each([
+    {
+      label: 'out-of-range source offset',
+      mutate: (relationship: AnchoredNoteRelationship) => {
+        relationship.referenceEnd = 99
+      },
+    },
+    {
+      label: 'source label mismatch',
+      mutate: (relationship: AnchoredNoteRelationship) => {
+        relationship.label = '9'
+      },
+    },
+  ])('rejects a matched note with a $label', ({ mutate }) => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    mutate(relationships[0])
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
+  })
+
+  it.each([
+    {
+      label: 'missing source box',
+      sourceBoxes: [],
+    },
+    {
+      label: 'zero-area source box',
+      sourceBoxes: [sourceBox(0.16, 0.2, 0)],
+    },
+    {
+      label: 'non-overlapping source box',
+      sourceBoxes: [sourceBox(0.8, 0.8, 0.01)],
+    },
+  ])('rejects a matched note with a $label', ({ sourceBoxes }) => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    relationships[0].sourceBoxes = sourceBoxes
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
+  })
+
+  it('rejects a source region absent from the canonical owner provenance', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    sourceEvidence.provenance.claim.regionIds = ['source-authors']
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
+  })
+
+  it('binds a table note anchor to the exact source cell when labels repeat', () => {
+    const markerBox = sourceBox(0.2, 0.4, 0.01)
+    const tableBox = sourceBox(0.1, 0.4, 0.7)
+    const leftCellBox = sourceBox(0.1, 0.4, 0.2)
+    const rightCellBox = sourceBox(0.55, 0.4, 0.2)
+    const reference = {
+      id: 'table-note-reference',
+      label: '1',
+      target: 'table-note',
+      start: 4,
+      end: 5,
+      confidence: 1,
+    }
+    const paper: ResearchPaper = {
+      ...paperFixture(),
+      authorNotes: undefined,
+      nodes: [
+        {
+          id: 'table-node',
+          type: 'figure',
+          title: 'Table 1.',
+          objectType: 'table',
+          table: {
+            rows: [
+              {
+                cells: [
+                  {
+                    id: 'cell-left',
+                    text: 'Left1',
+                    headerScope: null,
+                    columnSpan: 1,
+                    rowSpan: 1,
+                    sourceRuns: [
+                      {
+                        regionId: 'table-source',
+                        lineId: 'table-line',
+                        runIndex: 0,
+                        text: 'Left1',
+                        box: leftCellBox,
+                      },
+                    ],
+                    noteReferences: [reference],
+                  },
+                  {
+                    id: 'cell-right',
+                    text: 'Right1',
+                    headerScope: null,
+                    columnSpan: 1,
+                    rowSpan: 1,
+                    sourceRuns: [
+                      {
+                        regionId: 'table-source',
+                        lineId: 'table-line',
+                        runIndex: 1,
+                        text: 'Right1',
+                        box: rightCellBox,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          relationships: { caption: 'table-caption' },
+          source: 'test',
+        },
+        {
+          id: 'table-caption',
+          type: 'caption',
+          text: 'Table 1.',
+          source: 'test',
+        },
+        {
+          id: 'table-note',
+          type: 'footnote',
+          kind: 'footnote',
+          label: '1',
+          text: 'The table note.',
+          relationships: { backlinks: ['table-note-reference'] },
+          source: 'test',
+        },
+      ],
+    }
+    const relationship: AnchoredNoteRelationship = {
+      ...relationshipFixture()[0],
+      id: 'table-note-reference',
+      referenceRegionId: 'table-source',
+      referenceStart: 4,
+      referenceEnd: 5,
+      targetNoteId: 'table-note',
+      canonicalAnchor: {
+        kind: 'node',
+        nodeId: 'table-node:table:cell-left',
+        start: 4,
+        end: 5,
+      },
+      sourceBoxes: [markerBox],
+    }
+    const sourceEvidence = {
+      regions: [sourceRegion('table-source', 'Left1 Right1', tableBox)],
+      provenance: {
+        'table-node': {
+          confidence: 1,
+          pages: [1],
+          regionIds: ['table-source'],
+          boxes: [tableBox],
+          links: [],
+        },
+      } satisfies Record<string, NodeSourceEvidence>,
+    }
+
+    expect(
+      internalReferenceIntegrityIssues(paper, [relationship], sourceEvidence),
+    ).toEqual([])
+
+    const table = paper.nodes[0]
+    if (table.type !== 'figure' || !table.table) {
+      throw new Error('missing table fixture')
+    }
+    reference.start = 0
+    reference.end = 1
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'table-node:table:cell-left',
+      start: 0,
+      end: 1,
+    }
+
+    expect(
+      internalReferenceIntegrityIssues(paper, [relationship], sourceEvidence),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ detail: 'note-anchor-mismatch' }),
+      ]),
+    )
+    expect(
+      validMatchedSemanticNoteRelationshipIds(
+        paper,
+        [relationship],
+        sourceEvidence,
+      ).has(relationship.id),
+    ).toBe(false)
+
+    reference.start = 4
+    reference.end = 5
+    table.table.rows[0].cells[0].noteReferences = undefined
+    table.table.rows[0].cells[1].noteReferences = [
+      { ...reference, start: 5, end: 6 },
+    ]
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'table-node:table:cell-right',
+      start: 5,
+      end: 6,
+    }
+
+    expect(
+      internalReferenceIntegrityIssues(paper, [relationship], sourceEvidence),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ detail: 'invalid-source-note-anchor' }),
+      ]),
+    )
   })
 
   it('rejects a matched author relationship owned by a different author', () => {
@@ -356,6 +783,79 @@ describe('exact semantic note-anchor integrity', () => {
     expect(internalReferenceIntegrityIssues(paper, [unresolved])).toEqual([])
   })
 
+  it('excludes table-cell notes when their semantic table is not rendered', () => {
+    const paper = paperFixture()
+    paper.status = 'working'
+    paper.authorNotes = undefined
+    paper.nodes = [
+      {
+        id: 'table-with-note',
+        type: 'figure',
+        title: 'Table with note',
+        objectType: 'table',
+        table: {
+          rows: [
+            {
+              cells: [
+                {
+                  id: 'cell-1',
+                  text: 'Value1',
+                  headerScope: null,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                  noteReferences: [
+                    {
+                      id: 'table-note-reference',
+                      label: '1',
+                      target: 'table-note',
+                      start: 5,
+                      end: 6,
+                      confidence: 1,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        relationships: { caption: 'table-caption' },
+        source: 'test',
+      },
+      {
+        id: 'table-caption',
+        type: 'caption',
+        text: 'Table 1.',
+        source: 'test',
+      },
+      {
+        id: 'table-note',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '1',
+        text: 'The table note.',
+        relationships: { backlinks: ['table-note-reference'] },
+        source: 'test',
+      },
+    ]
+
+    expect(
+      internalReferenceIntegrityIssues(paper, undefined, undefined, {
+        renderedSemanticTableNodeIds: new Set(),
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        sourceId: 'table-note',
+        targetId: 'table-note-reference',
+        relationship: 'note-backlink',
+      }),
+    )
+    expect(
+      internalReferenceIntegrityIssues(paper, undefined, undefined, {
+        renderedSemanticTableNodeIds: new Set(['table-with-note']),
+      }),
+    ).toEqual([])
+  })
+
   it('feeds exact note-anchor failures into the publication-readiness gate', () => {
     const relationships = relationshipFixture()
     relationships[0].canonicalAnchor = {
@@ -458,6 +958,75 @@ describe('scholarly cross-reference integrity', () => {
     expect(() => assertPublicationIntegrity(paper)).toThrow(
       /unbounded-scholarly-reference-text/u,
     )
+  })
+
+  it('rejects a table-cell cross-reference run that absorbs unrelated prose', () => {
+    const paper = paperFixture()
+    paper.status = 'working'
+    paper.authorNotes = undefined
+    paper.nodes = [
+      {
+        id: 'section-1',
+        type: 'heading',
+        level: 1,
+        text: 'Section 1',
+        source: 'test',
+      },
+      {
+        id: 'table-1',
+        type: 'figure',
+        title: 'Table 1',
+        objectType: 'table',
+        table: {
+          rows: [
+            {
+              cells: [
+                {
+                  text: 'ordinary prose',
+                  headerScope: null,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                  inlineRuns: [
+                    {
+                      start: 0,
+                      end: 14,
+                      semanticRole: 'cross-reference',
+                      relationshipId: 'cross-reference-section-1',
+                      targetIds: ['section-1'],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        relationships: { caption: 'table-1-caption' },
+        source: 'test',
+      },
+      {
+        id: 'table-1-caption',
+        type: 'caption',
+        text: 'Table 1.',
+        source: 'test',
+      },
+    ]
+
+    expect(internalReferenceIntegrityIssues(paper)).toContainEqual(
+      expect.objectContaining({
+        sourceId: 'cross-reference-section-1',
+        targetId: 'section-1',
+        relationship: 'semantic-reference-text',
+        detail: 'unbounded-scholarly-reference-text',
+      }),
+    )
+    expect(() => assertPublicationIntegrity(paper)).toThrow(
+      /unbounded-scholarly-reference-text/u,
+    )
+    expect(
+      internalReferenceIntegrityIssues(paper, undefined, undefined, {
+        renderedSemanticTableNodeIds: new Set(),
+      }),
+    ).toEqual([])
   })
 
   it('accepts an exact scholarly range token as one bounded semantic run', () => {

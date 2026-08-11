@@ -22,7 +22,7 @@ import {
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createServer } from 'vite'
 import { chromium } from '@playwright/test'
-import { unzipSync } from 'fflate'
+import { strFromU8, unzipSync } from 'fflate'
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 
@@ -45,7 +45,20 @@ const PDF_RECONSTRUCTION_PROPERTIES = new Set([
   'hyphen-resolution',
   'markup-non-promotion',
   'furniture-exclusion',
+  'marker-to-body',
+  'citation-to-entry',
+  'in-float-marker',
+  'dangling-link-verifier',
 ])
+
+export function renditionSourceForCheckpoint(
+  property,
+  reconstructionAvailable,
+) {
+  return reconstructionAvailable && PDF_RECONSTRUCTION_PROPERTIES.has(property)
+    ? 'pdf-reconstruction'
+    : 'struct-document'
+}
 
 const IMAGE_OPERATORS = new Set([
   pdfjs.OPS.paintImageMaskXObject,
@@ -679,6 +692,13 @@ async function renderRendition({
       ? await buildEpub(document, profile)
       : await buildEpub(document)
   const archive = unzipSync(epub.bytes)
+  const packagedDocuments = Object.fromEntries(
+    Object.entries(archive).flatMap(([name, bytes]) =>
+      name.startsWith('EPUB/') && name.endsWith('.xhtml')
+        ? [[name.slice('EPUB/'.length), strFromU8(bytes)]]
+        : [],
+    ),
+  )
   const unpacked = await mkdtemp(join(root, 'rendition-'))
   await writeArchive(archive, unpacked)
   const page = await browser.newPage({
@@ -719,6 +739,7 @@ async function renderRendition({
     )
     return {
       html,
+      packagedDocuments,
       bytes,
       width: Math.max(1, Math.round(profile.preview.widthCssPx)),
       height: Math.max(1, renderedHeight),
@@ -868,11 +889,10 @@ async function run(options) {
       await mkdir(join(options.output, 'pairs'), { recursive: true })
       for (const checkpoint of checkpoints) {
         const profile = modules.targets.getTargetProfile(checkpoint.profile)
-        const renditionSource =
-          reconstruction &&
-          PDF_RECONSTRUCTION_PROPERTIES.has(checkpoint.property)
-            ? 'pdf-reconstruction'
-            : 'struct-document'
+        const renditionSource = renditionSourceForCheckpoint(
+          checkpoint.property,
+          Boolean(reconstruction),
+        )
         const pairKey = `${checkpoint.page}\0${checkpoint.profile}\0${renditionSource}`
         let pair = byPair.get(pairKey)
         if (!pair) {
@@ -905,13 +925,13 @@ async function run(options) {
               furnitureContaminationCount:
                 renditionSource === 'pdf-reconstruction'
                   ? reconstruction.completeness.furnitureContaminationCount
-                  : document.receipt?.conservation
-                      ?.furnitureContaminationCount,
+                  : document.receipt?.conservation?.furnitureContaminationCount,
             },
             rendition: {
               profile: checkpoint.profile,
               width: pair.rendition.width,
               html: pair.rendition.html,
+              packagedDocuments: pair.rendition.packagedDocuments,
               semanticFlowBoundaryLedgerValid:
                 renditionSource === 'pdf-reconstruction'
                   ? !reconstruction.diagnostics.some(

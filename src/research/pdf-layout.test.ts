@@ -11,6 +11,7 @@ import type {
   NodeSourceEvidence,
   NormalizedSourceBox,
   PdfCanonicalHyphenBoundaryDecision,
+  PdfNoteRelationship,
   PdfPageAnalysis,
   PdfPageRegion,
   PdfScholarlyCrossReferenceRelationship,
@@ -25,6 +26,7 @@ import {
   canonicalVisualSourceTranscript,
   mergeProseContinuations,
   orderCanonicalVisualPairs,
+  placeMatchedCanonicalNotes,
   reconstructPageAnalyses,
   retainUniqueMonotoneSourceRunAssignment,
   retainUniqueSourceRunAssignmentWithAliases,
@@ -48,6 +50,178 @@ import {
   createSourcePageCropAsset,
 } from './visual-assets'
 import type { ResearchNode } from './schema'
+
+function placementNote(id: string): ResearchNode {
+  return {
+    id,
+    type: 'footnote',
+    kind: 'footnote',
+    label: id,
+    text: `Source note ${id}.`,
+    relationships: { backlinks: [] },
+    source: 'pdf:test#page=1',
+  }
+}
+
+function matchedNotePlacement(
+  id: string,
+  ownerId: string,
+  targetNoteId: string,
+): PdfNoteRelationship {
+  return {
+    id,
+    label: id,
+    referenceRegionId: `region-${id}`,
+    referenceStart: 0,
+    referenceEnd: 1,
+    targetNoteId,
+    status: 'matched',
+    canonicalAnchor: {
+      kind: 'node',
+      nodeId: ownerId,
+      start: 0,
+      end: 1,
+    },
+    confidence: 1,
+    threshold: 0.72,
+    evidence: ['test'],
+    candidates: [],
+    sourceBoxes: [],
+  }
+}
+
+describe('matched canonical note placement', () => {
+  it('preserves a self-referencing note at its source position', () => {
+    const nodes: ResearchNode[] = [
+      visualOrderParagraph('before', 'Before.'),
+      placementNote('note-self'),
+      visualOrderParagraph('after', 'After.'),
+    ]
+
+    placeMatchedCanonicalNotes(nodes, [
+      matchedNotePlacement('reference-self', 'note-self', 'note-self'),
+    ])
+
+    expect(nodes.map((node) => node.id)).toEqual([
+      'before',
+      'note-self',
+      'after',
+    ])
+  })
+
+  it('preserves cyclic notes in physical source order', () => {
+    const nodes: ResearchNode[] = [
+      visualOrderParagraph('before', 'Before.'),
+      placementNote('note-b'),
+      visualOrderParagraph('between', 'Between.'),
+      placementNote('note-a'),
+      visualOrderParagraph('after', 'After.'),
+    ]
+
+    placeMatchedCanonicalNotes(nodes, [
+      matchedNotePlacement('reference-a-to-b', 'note-a', 'note-b'),
+      matchedNotePlacement('reference-b-to-a', 'note-b', 'note-a'),
+    ])
+
+    expect(nodes.map((node) => node.id)).toEqual([
+      'before',
+      'note-b',
+      'between',
+      'note-a',
+      'after',
+    ])
+  })
+
+  it('rejects a matched self-reference inside a canonical note', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Self-referencing note', 0.1, 0.08, 0.5, 18),
+          run(1, 'Abstract', 0.1, 0.22, 0.2, 16),
+          run(1, 'Ordinary body prose.', 0.1, 0.3, 0.5, 10),
+          run(1, '1 First note body; see note 1.', 0.1, 0.82, 0.4, 7),
+        ]),
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'self-referencing-note.pdf',
+      byteLength: 4096,
+    })
+
+    const footnotes = result.paper.nodes.filter(
+      (node) => node.type === 'footnote',
+    )
+    const rejected = result.noteRelationships.filter((relationship) =>
+      relationship.evidence.includes('cyclic-note-reference-rejected'),
+    )
+    expect(footnotes).toHaveLength(1)
+    expect(rejected).toEqual([
+      expect.objectContaining({ status: 'unresolved', targetNoteId: null }),
+    ])
+    expect(rejected[0].canonicalAnchor).toMatchObject({
+      kind: 'node',
+      nodeId: footnotes[0].id,
+    })
+    expect(footnotes[0].relationships.backlinks).not.toContain(rejected[0].id)
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_NOTE_REFERENCE',
+          relationshipId: rejected[0].id,
+          message: expect.stringContaining('cyclic note relationship'),
+        }),
+      ]),
+    )
+  })
+
+  it('demotes a matched note cycle without dropping either source note', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Cyclic nested notes', 0.1, 0.08, 0.5, 18),
+          run(1, 'Abstract', 0.1, 0.22, 0.2, 16),
+          run(1, 'Ordinary body prose.', 0.1, 0.3, 0.5, 10),
+          run(1, '1 First note body; see note 2.', 0.1, 0.82, 0.34, 7),
+          run(1, '2 Second note body; see note 1.', 0.1, 0.89, 0.35, 7),
+        ]),
+      ],
+      sourceHash: 'c'.repeat(64),
+      fileName: 'cyclic-nested-notes.pdf',
+      byteLength: 4096,
+    })
+
+    const footnotes = result.paper.nodes.filter(
+      (node) => node.type === 'footnote',
+    )
+    const footnoteIds = new Set(footnotes.map((node) => node.id))
+    const rejected = result.noteRelationships.filter((relationship) =>
+      relationship.evidence.includes('cyclic-note-reference-rejected'),
+    )
+    expect(footnotes).toHaveLength(2)
+    expect(
+      footnotes
+        .map((node) => node.text)
+        .filter((text) => /(?:First|Second) note body/u.test(text)),
+    ).toHaveLength(2)
+    expect(rejected).toHaveLength(2)
+    expect(
+      rejected.every(
+        (relationship) =>
+          relationship.status === 'unresolved' &&
+          relationship.targetNoteId === null &&
+          relationship.canonicalAnchor?.kind === 'node' &&
+          footnoteIds.has(relationship.canonicalAnchor.nodeId),
+      ),
+    ).toBe(true)
+    expect(
+      footnotes.flatMap((note) => note.relationships.backlinks),
+    ).not.toEqual(expect.arrayContaining(rejected.map((item) => item.id)))
+    expect(result.readiness.ready).toBe(false)
+  })
+})
 
 describe('generated continuous-prose PDF fixture', () => {
   let result: Awaited<ReturnType<typeof reconstructPdf>>
@@ -108,9 +282,7 @@ describe('generated continuous-prose PDF fixture', () => {
       expect.arrayContaining([
         expect.objectContaining({
           outcome: 'removed-discretionary-hyphen',
-          evidence: expect.arrayContaining([
-            'same-document-unhyphenated-word',
-          ]),
+          evidence: expect.arrayContaining(['same-document-unhyphenated-word']),
         }),
         expect.objectContaining({
           outcome: 'preserved-lexical-hyphen',
@@ -1190,9 +1362,14 @@ describe('PDF semantic reconstruction', () => {
         2,
       )
       const { blocks, sourceSemanticFlowBoundaryDecisions } =
-        await joinAcrossPageBreak(target, continuation, [target, continuation], {
-          hardHyphenLexicon: new Set(['long-form']),
-        })
+        await joinAcrossPageBreak(
+          target,
+          continuation,
+          [target, continuation],
+          {
+            hardHyphenLexicon: new Set(['long-form']),
+          },
+        )
 
       expect(blocks).toHaveLength(1)
       expect(blocks[0].text).toBe(
@@ -5884,13 +6061,7 @@ describe('PDF semantic reconstruction', () => {
             0.2,
             0.5,
           ),
-          run(
-            1,
-            'then verify the rendered checkpoint.',
-            0.128,
-            0.222,
-            0.44,
-          ),
+          run(1, 'then verify the rendered checkpoint.', 0.128, 0.222, 0.44),
           run(
             1,
             'An independent paragraph follows the completed instruction.',
@@ -5932,13 +6103,7 @@ describe('PDF semantic reconstruction', () => {
             0.1,
             0.72,
           ),
-          run(
-            1,
-            '1. Introduction',
-            0.1,
-            0.2,
-            0.72,
-          ),
+          run(1, '1. Introduction', 0.1, 0.2, 0.72),
         ]),
       ],
       sourceHash: 'n'.repeat(64),
@@ -7629,6 +7794,42 @@ describe('PDF semantic reconstruction', () => {
     expect(result.provenance[references[0].id].boxes).not.toEqual(
       result.provenance[references[1].id].boxes,
     )
+  })
+
+  it('keeps a partially missing citation cluster unresolved', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Citation Study', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+          run(
+            1,
+            'Prior work [1, 2] establishes the baseline.',
+            0.1,
+            0.24,
+            0.72,
+          ),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[1] First competing reference.', 0.1, 0.22, 0.72),
+          run(2, '[1] Second competing reference.', 0.1, 0.3, 0.72),
+        ]),
+      ],
+      sourceHash: '1'.repeat(64),
+      fileName: 'partially-missing-citation-cluster.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        labels: ['1', '2'],
+        status: 'unresolved',
+        targetNodeIds: [],
+        candidateNodeIds: [expect.any(String), expect.any(String)],
+        evidence: expect.arrayContaining(['bibliography-label-target-missing']),
+      }),
+    ])
   })
 
   it('keeps citation-led body prose outside the bibliography list scope', async () => {
@@ -9586,6 +9787,56 @@ describe('PDF semantic reconstruction', () => {
           decision.regionId === classification?.referenceRegionId,
       ),
     ).toHaveLength(1)
+
+    if (!relationship?.canonicalAnchor || !lampleTarget) {
+      throw new Error('missing matched Lam-ple citation fixture')
+    }
+    const wrongTarget = references.find((node) => node.id !== lampleTarget.id)
+    const tamperedPaper = structuredClone(result.paper)
+    const tamperedRelationships = structuredClone(result.citationRelationships)
+    const tamperedRelationship = tamperedRelationships.find(
+      ({ id }) => id === relationship.id,
+    )
+    const tamperedAnchorOwner = tamperedPaper.nodes.find(
+      ({ id }) => id === relationship.canonicalAnchor?.nodeId,
+    )
+    const tamperedInlineRun =
+      tamperedAnchorOwner && 'inlineRuns' in tamperedAnchorOwner
+        ? tamperedAnchorOwner.inlineRuns?.find(
+            ({ relationshipId }) => relationshipId === relationship.id,
+          )
+        : undefined
+    if (
+      !wrongTarget ||
+      !tamperedRelationship?.targets?.[0] ||
+      !tamperedInlineRun
+    ) {
+      throw new Error('missing adversarial author-year target fixture')
+    }
+    tamperedRelationship.targetNodeIds = [wrongTarget.id]
+    tamperedRelationship.targets[0].targetNodeId = wrongTarget.id
+    tamperedInlineRun.targetIds = [wrongTarget.id]
+
+    const tamperedCompleteness = assessPdfCompleteness({
+      pages: result.pages,
+      paper: tamperedPaper,
+      diagnostics: [],
+      regions: result.regions,
+      readingOrder: result.readingOrder,
+      provenance: result.provenance,
+      visualRelationships: result.visualRelationships,
+      assets: result.assets,
+      citationRelationships: tamperedRelationships,
+      noteRelationships: result.noteRelationships,
+      lineBoundaryDecisions: result.lineBoundaryDecisions,
+      inlineSpanLedger: {
+        expected: result.completeness.expectedInlineSpanCount,
+        mapped: result.completeness.mappedInlineSpanCount,
+      },
+    })
+    expect(tamperedCompleteness.completeness.unresolvedObjects.citations).toBe(
+      1,
+    )
   })
 
   it('keeps missing, duplicate, and preserved Lam-ple alternates unresolved', async () => {
@@ -17177,16 +17428,32 @@ describe('PDF semantic reconstruction', () => {
       const figureBox: NormalizedSourceBox = {
         page: 1,
         x: 0.2,
-        y: 0.18,
+        y: 0.32,
         width: 0.6,
-        height: 0.28,
+        height: 0.2,
         rotation: 0,
         method: 'pdf-object',
       }
       const sourcePage = page(1, [
         run(1, 'Visual cross references', 0.1, 0.05, 0.7, 20),
-        run(1, `${figureLabel}. Source-backed result.`, 0.18, 0.49, 0.64, 8),
-        run(1, `See ${figureLabel} for the result.`, 0.1, 0.62, 0.72),
+        run(1, 'Ada Researcher', 0.1, 0.11, 0.3, 11),
+        run(1, 'Abstract', 0.1, 0.17, 0.24, 14),
+        run(
+          1,
+          'This abstract establishes a complete source-backed visual fixture.',
+          0.1,
+          0.22,
+          0.72,
+        ),
+        run(
+          1,
+          `${figureLabel}. Source-backed result; compare ${figureLabel}.`,
+          0.18,
+          0.55,
+          0.64,
+          8,
+        ),
+        run(1, `See ${figureLabel} for the result.`, 0.1, 0.64, 0.72),
       ])
       sourcePage.imageCount = 1
       sourcePage.objects = [
@@ -17220,9 +17487,28 @@ describe('PDF semantic reconstruction', () => {
       const visual = result.visualRelationships.find(
         (relationship) => relationship.label === figureLabel,
       )
-      const crossReference = result.crossReferenceRelationships.find(
+      const crossReferences = result.crossReferenceRelationships.filter(
         (relationship) => relationship.text === figureLabel,
       )
+      const crossReference = crossReferences.find(
+        (relationship) =>
+          result.regions.find(
+            (region) => region.id === relationship.referenceRegionId,
+          )?.kind === 'body',
+      )
+      const captionCrossReference = crossReferences.find(
+        (relationship) =>
+          result.regions.find(
+            (region) => region.id === relationship.referenceRegionId,
+          )?.kind === 'caption',
+      )
+
+      expect(result.crossReferenceRelationships).toHaveLength(2)
+      expect(
+        result.regions.find(
+          (region) => region.id === crossReference?.referenceRegionId,
+        )?.kind,
+      ).toBe('body')
 
       expect(visual).toMatchObject({
         status: 'matched',
@@ -17237,6 +17523,16 @@ describe('PDF semantic reconstruction', () => {
           end: 4 + figureLabel.length,
         },
       })
+      expect(captionCrossReference).toMatchObject({
+        status: 'matched',
+        targetNodeIds: [visual?.canonicalNodeId],
+        canonicalAnchor: {
+          nodeId: visual?.captionNodeId,
+          start: expect.any(Number),
+          end: expect.any(Number),
+        },
+      })
+      expect(captionCrossReference?.referenceStart).toBeGreaterThan(0)
       const owner = result.paper.nodes.find(
         (node) => node.id === crossReference?.canonicalAnchor?.nodeId,
       )
@@ -17253,6 +17549,9 @@ describe('PDF semantic reconstruction', () => {
           }),
         ]),
       )
+      await expect(buildEpub(result.paper, result)).resolves.toMatchObject({
+        mode: 'publication',
+      })
     },
   )
 

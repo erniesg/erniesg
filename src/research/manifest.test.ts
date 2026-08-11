@@ -24,6 +24,50 @@ function cloneManifest() {
   return structuredClone(buildLayoutManifest(paper))
 }
 
+function paperWithTableCellNote() {
+  const withNote = structuredClone(paper)
+  const figure = withNote.nodes.find((node) => node.type === 'figure')
+  if (!figure || figure.type !== 'figure') {
+    throw new Error('Fixture lacks a figure node')
+  }
+  figure.objectType = 'table'
+  figure.table = {
+    rows: [
+      {
+        cells: [
+          {
+            id: 'cell-metric',
+            text: 'Metric1',
+            headerScope: null,
+            columnSpan: 1,
+            rowSpan: 1,
+            noteReferences: [
+              {
+                id: 'cell-note-reference',
+                label: '1',
+                target: 'cell-note',
+                start: 6,
+                end: 7,
+                confidence: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+  withNote.nodes.push({
+    id: 'cell-note',
+    type: 'footnote',
+    kind: 'footnote',
+    label: '1',
+    text: 'Source-backed table note.',
+    relationships: { backlinks: ['cell-note-reference'] },
+    source: 'fixture:table-note',
+  })
+  return researchPaperSchema.parse(withNote)
+}
+
 function invariantCodes(error: unknown) {
   if (!(error instanceof ManifestInvariantError)) throw error
   return error.issues.map((issue) => issue.code)
@@ -76,6 +120,25 @@ describe('SRT layout manifest contract', () => {
         expect(entry.paginationFallback).toEqual(paginatedNode.fallback)
       }
     }
+  })
+
+  it('records nested table-cell note targets in every rendition', () => {
+    const withNote = paperWithTableCellNote()
+    const manifest = buildLayoutManifest(withNote)
+
+    for (const rendition of manifest.renditions) {
+      expect(
+        rendition.entries.find((entry) => entry.canonicalId === 'fig-pipeline')
+          ?.relationships,
+      ).toMatchObject({ noteTargets: ['cell-note'] })
+    }
+
+    delete manifest.renditions[0].entries.find(
+      (entry) => entry.canonicalId === 'fig-pipeline',
+    )!.relationships.noteTargets
+    expect(() => validateLayoutManifest(manifest, withNote)).toThrow(
+      /RELATIONSHIP_MISMATCH/,
+    )
   })
 
   it('composes four materially distinct renditions without changing canonical identity', () => {

@@ -4,8 +4,14 @@ const { mkdirSync, writeFileSync, existsSync, readFileSync, statSync } = require
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
+const { validAssociationAudit } = require("./tools/association-audit-receipt.cjs");
 
 const allLanes = [
+  {
+    "id": "association-audit",
+    "command": "node tools/pdf-association-fixture-audit.mjs",
+    "required": true
+  },
   {
     "id": "build",
     "command": "npm run build",
@@ -186,6 +192,7 @@ const gitBranch = safeBranch(process.env.GITHUB_HEAD_REF)
 const dirty = sh("git status --short").stdout.trim().length > 0;
 const startedAt = new Date();
 const results = [];
+let associationAudit = null;
 const selection = parseSelection(invocation.argv);
 const largeFiles = largeUntrackedEvidence();
 
@@ -210,6 +217,7 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
       node: process.version,
     },
     lanes: [],
+    association_audit: null,
     artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
     caveats: largeFiles.caveats,
     result: "blocked",
@@ -223,13 +231,26 @@ const lanes = selection.lanes;
 for (const lane of lanes) {
   const laneStart = Date.now();
   const proc = sh(lane.command);
-  const output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
+  let exitCode = proc.status ?? 1;
+  let output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
+  if (lane.id === "association-audit" && exitCode === 0) {
+    try {
+      const candidate = JSON.parse(proc.stdout || "");
+      if (!validAssociationAudit(candidate)) {
+        throw new Error("audit output failed manifest receipt validation");
+      }
+      associationAudit = candidate;
+    } catch (error) {
+      exitCode = 1;
+      output += `\n[agent-evidence] invalid association audit receipt: ${redact(error.message)}\n`;
+    }
+  }
   const logPath = join(outDir, "logs", `${lane.id}.log`);
   writeFileSync(logPath, output);
   results.push({
     ...lane,
-    status: proc.status === 0 ? "passed" : "failed",
-    exit_code: proc.status ?? 1,
+    status: exitCode === 0 ? "passed" : "failed",
+    exit_code: exitCode,
     duration_ms: Date.now() - laneStart,
     log_path: logPath,
   });
@@ -258,6 +279,7 @@ const manifest = {
     node: process.version,
   },
   lanes: results,
+  association_audit: associationAudit,
   artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
   caveats: largeFiles.caveats,
   result: requiredFailures.length === 0 ? "passed" : "failed",

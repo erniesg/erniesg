@@ -1,5 +1,23 @@
-import type { PdfNoteRelationship } from './import-types'
+import type {
+  NodeSourceEvidence,
+  NormalizedSourceBox,
+  PdfNoteRelationship,
+  PdfPageRegion,
+} from './import-types'
+import {
+  normalizedNoteLabel,
+  noteLabelsFromBoundedMarkerText,
+} from './note-label'
 import type { ResearchNode, ResearchPaper } from './schema'
+
+export type NoteRelationshipSourceEvidence = {
+  regions: readonly PdfPageRegion[]
+  provenance: Readonly<Record<string, NodeSourceEvidence>>
+}
+
+export type PublicationIntegrityRenderContext = {
+  renderedSemanticTableNodeIds: ReadonlySet<string>
+}
 
 export type CanonicalTextIntegrityIssue = {
   code: 'EPUB_TEXT_SANITIZATION_LOSS'
@@ -57,7 +75,7 @@ export function isBoundedScholarlyReferenceText(value: string) {
   const prefix = trimmed.match(SCHOLARLY_REFERENCE_PREFIX)?.[0]
   return Boolean(
     prefix &&
-      BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS.test(trimmed.slice(prefix.length)),
+    BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS.test(trimmed.slice(prefix.length)),
   )
 }
 
@@ -159,28 +177,35 @@ type RenderedNoteReference =
   | {
       kind: 'node'
       id: string
+      label: string
       target: string
       nodeId: string
       start: number
       end: number
+      markerText: string
     }
   | {
       kind: 'author'
       id: string
+      label: string
       target: string
       author: string
     }
 
-function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
+function renderedNoteReferences(
+  paper: ResearchPaper,
+  renderContext?: PublicationIntegrityRenderContext,
+): RenderedNoteReference[] {
   return [
     ...renderableAuthorNoteReferences(paper).map((reference) => ({
       kind: 'author' as const,
       id: reference.id,
+      label: reference.label,
       target: reference.target,
       author: reference.author,
     })),
-    ...paper.nodes.flatMap((node) =>
-      'noteReferences' in node
+    ...paper.nodes.flatMap((node) => [
+      ...('noteReferences' in node
         ? (node.noteReferences ?? [])
             .filter((reference) =>
               validNoteReferenceRange(node.text, reference),
@@ -188,13 +213,38 @@ function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
             .map((reference) => ({
               kind: 'node' as const,
               id: reference.id,
+              label: reference.label,
               target: reference.target,
               nodeId: node.id,
               start: reference.start,
               end: reference.end,
+              markerText: node.text.slice(reference.start, reference.end),
             }))
-        : [],
-    ),
+        : []),
+      ...(node.type === 'figure' &&
+      node.table &&
+      (!renderContext ||
+        renderContext.renderedSemanticTableNodeIds.has(node.id))
+        ? node.table.rows.flatMap((row, rowIndex) =>
+            row.cells.flatMap((cell, cellIndex) =>
+              (cell.noteReferences ?? [])
+                .filter((reference) =>
+                  validNoteReferenceRange(cell.text, reference),
+                )
+                .map((reference) => ({
+                  kind: 'node' as const,
+                  id: reference.id,
+                  label: reference.label,
+                  target: reference.target,
+                  nodeId: `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+                  start: reference.start,
+                  end: reference.end,
+                  markerText: cell.text.slice(reference.start, reference.end),
+                })),
+            ),
+          )
+        : []),
+    ]),
   ]
 }
 
@@ -256,9 +306,222 @@ function noteAnchorCollisionIssues(
   return issues
 }
 
+function boxesOverlap(left: NormalizedSourceBox, right: NormalizedSourceBox) {
+  return (
+    left.page === right.page &&
+    Math.max(left.x, right.x) <
+      Math.min(left.x + left.width, right.x + right.width) &&
+    Math.max(left.y, right.y) <
+      Math.min(left.y + left.height, right.y + right.height)
+  )
+}
+
+function validSourceBox(box: NormalizedSourceBox) {
+  return (
+    Number.isSafeInteger(box.page) &&
+    box.page >= 1 &&
+    [box.x, box.y, box.width, box.height, box.rotation].every((value) =>
+      Number.isFinite(value),
+    ) &&
+    box.width > 0 &&
+    box.height > 0 &&
+    ['pdf-text', 'pdf-object', 'pdf-link', 'ocr'].includes(box.method)
+  )
+}
+
+function sourceLineBoxesForRange(
+  region: PdfPageRegion,
+  start: number,
+  end: number,
+) {
+  const boxes: NormalizedSourceBox[] = []
+  let cursor = 0
+  for (const line of region.lines) {
+    const lineStart = region.text.indexOf(line.text, cursor)
+    if (lineStart < 0) continue
+    const lineEnd = lineStart + line.text.length
+    cursor = lineEnd
+    if (Math.max(start, lineStart) < Math.min(end, lineEnd)) {
+      boxes.push(line.box)
+    }
+  }
+  return boxes
+}
+
+function tableCellProvenanceOwners(paper: ResearchPaper) {
+  return new Map(
+    paper.nodes.flatMap((node) =>
+      node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row, rowIndex) =>
+            row.cells.map(
+              (cell, cellIndex) =>
+                [
+                  `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}` as string,
+                  {
+                    provenanceNodeId: node.id,
+                    sourceRuns: cell.sourceRuns ?? [],
+                  },
+                ] as const,
+            ),
+          )
+        : [],
+    ),
+  )
+}
+
+function hasValidNoteRelationshipSourceEvidence(
+  paper: ResearchPaper,
+  relationship: PdfNoteRelationship,
+  sourceEvidence: NoteRelationshipSourceEvidence,
+) {
+  const region = sourceEvidence.regions.find(
+    (candidate) => candidate.id === relationship.referenceRegionId,
+  )
+  const sourceLabels = region
+    ? noteLabelsFromBoundedMarkerText(
+        region.text.slice(
+          relationship.referenceStart,
+          relationship.referenceEnd,
+        ),
+      )
+    : null
+  if (
+    !region ||
+    relationship.referenceStart < 0 ||
+    relationship.referenceStart >= relationship.referenceEnd ||
+    relationship.referenceEnd > region.text.length ||
+    sourceLabels?.join(',') !== normalizedNoteLabel(relationship.label) ||
+    relationship.sourceBoxes.length === 0 ||
+    relationship.sourceBoxes.some(
+      (box) =>
+        !validSourceBox(box) ||
+        !sourceEvidence.regions.some((candidate) =>
+          boxesOverlap(box, candidate.box),
+        ),
+    )
+  ) {
+    return false
+  }
+  const exactLineBoxes = sourceLineBoxesForRange(
+    region,
+    relationship.referenceStart,
+    relationship.referenceEnd,
+  )
+  if (
+    exactLineBoxes.length === 0 ||
+    !relationship.sourceBoxes.some((box) =>
+      exactLineBoxes.some((lineBox) => boxesOverlap(box, lineBox)),
+    )
+  ) {
+    return false
+  }
+
+  const anchor = relationship.canonicalAnchor
+  if (anchor?.kind === 'author') {
+    return paper.authors.includes(anchor.author)
+  }
+  if (anchor?.kind !== 'node') return false
+  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
+  if (nodesById.has(anchor.nodeId)) {
+    return Boolean(
+      sourceEvidence.provenance[anchor.nodeId]?.regionIds.includes(
+        relationship.referenceRegionId,
+      ),
+    )
+  }
+  const cellOwner = tableCellProvenanceOwners(paper).get(anchor.nodeId)
+  if (
+    !cellOwner ||
+    !sourceEvidence.provenance[cellOwner.provenanceNodeId]?.regionIds.includes(
+      relationship.referenceRegionId,
+    )
+  ) {
+    return false
+  }
+  const referenceSourceBoxes = relationship.sourceBoxes.filter((box) =>
+    exactLineBoxes.some((lineBox) => boxesOverlap(box, lineBox)),
+  )
+  const exactCellSourceRuns = cellOwner.sourceRuns.filter(
+    (run) => run.regionId === relationship.referenceRegionId,
+  )
+  return (
+    referenceSourceBoxes.length > 0 &&
+    exactCellSourceRuns.length > 0 &&
+    referenceSourceBoxes.every((box) =>
+      exactCellSourceRuns.some((run) => boxesOverlap(box, run.box)),
+    )
+  )
+}
+
+function relationshipMatchesRenderedReference(
+  relationship: PdfNoteRelationship,
+  reference: RenderedNoteReference,
+) {
+  const anchor = relationship.canonicalAnchor
+  const canonicalLabels =
+    reference.kind === 'node'
+      ? noteLabelsFromBoundedMarkerText(reference.markerText)
+      : null
+  return (
+    relationship.targetNoteId === reference.target &&
+    normalizedNoteLabel(relationship.label) ===
+      normalizedNoteLabel(reference.label) &&
+    (anchor?.kind === 'node' && reference.kind === 'node'
+      ? anchor.nodeId === reference.nodeId &&
+        anchor.start === reference.start &&
+        anchor.end === reference.end &&
+        canonicalLabels?.join(',') === normalizedNoteLabel(reference.label)
+      : anchor?.kind === 'author' && reference.kind === 'author'
+        ? anchor.author === reference.author
+        : false)
+  )
+}
+
+export function validMatchedSemanticNoteRelationshipIds(
+  paper: ResearchPaper,
+  noteRelationships: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
+) {
+  const referencesById = groupById(renderedNoteReferences(paper))
+  const matchedRelationshipsById = groupById(
+    noteRelationships.filter(
+      (relationship) => relationship.status === 'matched',
+    ),
+  )
+  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
+  const validIds = new Set<string>()
+  for (const [id, relationships] of matchedRelationshipsById) {
+    const references = referencesById.get(id) ?? []
+    if (relationships.length !== 1 || references.length !== 1) continue
+    const relationship = relationships[0]
+    const reference = references[0]
+    const target = relationship.targetNoteId
+      ? nodesById.get(relationship.targetNoteId)
+      : undefined
+    if (
+      !relationshipMatchesRenderedReference(relationship, reference) ||
+      target?.type !== 'footnote' ||
+      target.relationships.backlinks.filter((backlink) => backlink === id)
+        .length !== 1 ||
+      (sourceEvidence !== undefined &&
+        !hasValidNoteRelationshipSourceEvidence(
+          paper,
+          relationship,
+          sourceEvidence,
+        ))
+    ) {
+      continue
+    }
+    validIds.add(id)
+  }
+  return validIds
+}
+
 function semanticNoteRelationshipIntegrityIssues(
+  paper: ResearchPaper,
   references: readonly RenderedNoteReference[],
   noteRelationships: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
 ) {
   const issues: InternalReferenceIntegrityIssue[] = []
   const referencesById = groupById(references)
@@ -303,15 +566,7 @@ function semanticNoteRelationshipIntegrityIssues(
     }
 
     const anchor = relationship.canonicalAnchor
-    const exactAnchor =
-      anchor?.kind === 'node' && reference.kind === 'node'
-        ? anchor.nodeId === reference.nodeId &&
-          anchor.start === reference.start &&
-          anchor.end === reference.end
-        : anchor?.kind === 'author' && reference.kind === 'author'
-          ? anchor.author === reference.author
-          : false
-    if (!exactAnchor) {
+    if (!relationshipMatchesRenderedReference(relationship, reference)) {
       issues.push({
         code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
         sourceId: relationship.id,
@@ -342,7 +597,13 @@ function semanticNoteRelationshipIntegrityIssues(
   for (const relationship of matchedRelationships) {
     if (
       relationship.referenceStart < 0 ||
-      relationship.referenceStart >= relationship.referenceEnd
+      relationship.referenceStart >= relationship.referenceEnd ||
+      (sourceEvidence !== undefined &&
+        !hasValidNoteRelationshipSourceEvidence(
+          paper,
+          relationship,
+          sourceEvidence,
+        ))
     ) {
       issues.push({
         code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
@@ -398,10 +659,12 @@ function semanticNoteRelationshipIntegrityIssues(
 export function internalReferenceIntegrityIssues(
   paper: ResearchPaper,
   noteRelationships?: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
+  renderContext?: PublicationIntegrityRenderContext,
 ): InternalReferenceIntegrityIssue[] {
   const issues: InternalReferenceIntegrityIssue[] = []
   const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
-  const renderedReferences = renderedNoteReferences(paper)
+  const renderedReferences = renderedNoteReferences(paper, renderContext)
   const referencesById = groupById(renderedReferences)
 
   for (const node of paper.nodes) {
@@ -456,6 +719,58 @@ export function internalReferenceIntegrityIssues(
                   ? 'citation-target'
                   : 'cross-reference-target',
             })
+          }
+        }
+      }
+    }
+    if (
+      node.type === 'figure' &&
+      node.table &&
+      (!renderContext ||
+        renderContext.renderedSemanticTableNodeIds.has(node.id))
+    ) {
+      for (const cell of node.table.rows.flatMap((row) => row.cells)) {
+        for (const run of cell.inlineRuns ?? []) {
+          if (
+            run.semanticRole === 'cross-reference' &&
+            run.relationshipId &&
+            run.start >= 0 &&
+            run.start < run.end &&
+            run.end <= cell.text.length &&
+            !isBoundedScholarlyReferenceText(
+              cell.text.slice(run.start, run.end),
+            )
+          ) {
+            issues.push({
+              code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+              sourceId: run.relationshipId,
+              targetId: run.targetIds?.[0] ?? cell.id ?? node.id,
+              relationship: 'semantic-reference-text',
+              detail: 'unbounded-scholarly-reference-text',
+            })
+          }
+          if (
+            (run.semanticRole !== 'citation' &&
+              run.semanticRole !== 'cross-reference') ||
+            !run.targetIds?.length ||
+            run.start < 0 ||
+            run.start >= run.end ||
+            run.end > cell.text.length
+          ) {
+            continue
+          }
+          for (const targetId of run.targetIds) {
+            if (!nodesById.has(targetId)) {
+              issues.push({
+                code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+                sourceId: run.relationshipId ?? cell.id ?? node.id,
+                targetId,
+                relationship:
+                  run.semanticRole === 'citation'
+                    ? 'citation-target'
+                    : 'cross-reference-target',
+              })
+            }
           }
         }
       }
@@ -532,8 +847,10 @@ export function internalReferenceIntegrityIssues(
   if (noteRelationships !== undefined) {
     issues.push(
       ...semanticNoteRelationshipIntegrityIssues(
+        paper,
         renderedReferences,
         noteRelationships,
+        sourceEvidence,
       ),
     )
   } else {
@@ -564,6 +881,8 @@ export function internalReferenceIntegrityIssues(
 export function assertPublicationIntegrity(
   paper: ResearchPaper,
   noteRelationships?: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
+  renderContext?: PublicationIntegrityRenderContext,
 ) {
   const textIssues = canonicalTextIntegrityIssues(paper)
   if (textIssues.length > 0) {
@@ -575,6 +894,8 @@ export function assertPublicationIntegrity(
   const referenceIssues = internalReferenceIntegrityIssues(
     paper,
     noteRelationships,
+    sourceEvidence,
+    renderContext,
   )
   if (referenceIssues.length > 0) {
     const first = referenceIssues[0]

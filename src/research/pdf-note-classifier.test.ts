@@ -2422,7 +2422,7 @@ describe('scholarly note-marker taxonomy', () => {
     ])
   })
 
-  it('leaves missing and duplicate author-year keys unresolved instead of guessing', async () => {
+  it('leaves missing author-year keys unresolved and duplicate keys ambiguous', async () => {
     const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
     fixture.name = 'ambiguous and missing author-year targets'
     fixture.pages[0].runs[2].text =
@@ -2439,8 +2439,12 @@ describe('scholarly note-marker taxonomy', () => {
     expect(result.citationRelationships).toEqual([
       expect.objectContaining({
         labels: ['ahn:2024'],
-        status: 'unresolved',
+        status: 'ambiguous',
         targetNodeIds: [],
+        candidateNodeIds: [
+          expect.stringMatching(/^p-/),
+          expect.stringMatching(/^p-/),
+        ],
         evidence: expect.arrayContaining([
           'bibliography-author-year-target-ambiguous',
         ]),
@@ -2849,7 +2853,8 @@ describe('scholarly note-marker taxonomy', () => {
       expect.objectContaining({
         labels: ['1', '2', '3'],
         status: 'unresolved',
-        targetNodeIds: [
+        targetNodeIds: [],
+        candidateNodeIds: [
           expect.stringMatching(/^p-/),
           expect.stringMatching(/^p-/),
         ],

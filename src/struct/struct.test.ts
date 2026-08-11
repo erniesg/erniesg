@@ -15,6 +15,8 @@ import {
   buildEpub as buildPublicEpub,
   renderPublicationXhtml as renderPublicXhtml,
 } from '../research/epub'
+import { reconstructPageAnalyses } from '../research/pdf-layout'
+import { ambiguousNoteMarkerFixture } from '../../tests/fixtures/note-marker-fixtures'
 
 async function structuredDocx() {
   const bytes = await readFile(
@@ -156,6 +158,256 @@ describe('STRUCT canonical document graph', () => {
       inline: [{ start: 0, end: 10, targetIds: [target.id] }],
     }
     expect(renderPublicationXhtml(graph)).toContain(`href="#${target.id}"`)
+  })
+
+  it('round-trips matched footnotes and endnotes with typed links and backlinks', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const noteRelationships = graph.relationships.filter(
+      (relationship) =>
+        relationship.kind === 'footnote' || relationship.kind === 'endnote',
+    )
+    const noteRuns = graph.blocks.flatMap((block) =>
+      block.inline.filter((inline) => inline.semanticRole === 'note-reference'),
+    )
+
+    expect(noteRelationships.map((relationship) => relationship.kind)).toEqual(
+      expect.arrayContaining(['footnote', 'endnote']),
+    )
+    expect(noteRuns).toHaveLength(2)
+    expect(
+      noteRuns.every((run) =>
+        noteRelationships.some(
+          (relationship) => relationship.id === run.relationshipId,
+        ),
+      ),
+    ).toBe(true)
+
+    const xhtml = renderPublicationXhtml(graph)
+    for (const relationship of noteRelationships) {
+      expect(xhtml).toContain(
+        `id="${relationship.id}" href="#${relationship.to[0]}" epub:type="noteref" role="doc-noteref"`,
+      )
+      expect(xhtml).toContain(
+        `href="#${relationship.id}" class="note-backlink"`,
+      )
+    }
+    expect(xhtml).toContain('role="doc-footnote"')
+    expect(xhtml).toContain('role="doc-endnote"')
+  })
+
+  it('retains every ambiguous note candidate without creating a false link', async () => {
+    const reconstruction = await reconstructPageAnalyses({
+      pages: ambiguousNoteMarkerFixture.pages,
+      sourceHash: 'a'.repeat(64),
+      fileName: 'ambiguous-note-marker.pdf',
+      byteLength: 4096,
+      metadata: {},
+    })
+    const sourceRelationship = reconstruction.noteRelationships.find(
+      (candidate) => candidate.status === 'ambiguous',
+    )!
+
+    const graph = buildStructDocument(reconstruction)
+    const ambiguous = graph.relationships.find(
+      (candidate) =>
+        candidate.status === 'ambiguous' && candidate.kind === 'footnote',
+    )!
+    expect(ambiguous.to).toEqual([])
+    expect(ambiguous.candidates).toHaveLength(2)
+    expect(ambiguous.candidates?.map((candidate) => candidate.target)).toEqual(
+      expect.arrayContaining(
+        sourceRelationship.candidates.map(
+          (candidate) =>
+            graph.blocks.find((block) =>
+              block.evidence.sourceIds.includes(candidate.targetNoteId),
+            )!.id,
+        ),
+      ),
+    )
+    expect(
+      ambiguous.candidates?.every(
+        (candidate) =>
+          candidate.evidence.signals?.includes('label-exact') === true &&
+          candidate.evidence.boxes.length >= 2 &&
+          candidate.evidence.sourceIds.length >= 3,
+      ),
+    ).toBe(true)
+
+    const owner = graph.blocks.find((block) => block.id === ambiguous.from)!
+    expect(
+      graph.blocks.filter((block) => block.id === ambiguous.from),
+    ).toHaveLength(1)
+    const marker = owner.inline.find(
+      (inline) => inline.relationshipId === ambiguous.id,
+    )!
+    expect(marker).toMatchObject({
+      semanticRole: 'note-reference',
+    })
+    expect(marker.targetIds ?? []).toEqual([])
+    expect(owner.text.slice(marker.start, marker.end)).toBe(ambiguous.label)
+
+    const xhtml = renderPublicationXhtml(graph)
+    expect(xhtml).toContain(
+      `<span id="${ambiguous.id}" data-semantic-role="note-reference"`,
+    )
+    expect(xhtml).not.toContain(`<a id="${ambiguous.id}"`)
+    for (const candidate of ambiguous.candidates ?? []) {
+      expect(xhtml).not.toContain(`href="#${candidate.target}"`)
+    }
+  })
+
+  it('anchors every target represented by a grouped STRUCT citation', async () => {
+    const graph = buildStructDocument(await structuredDocx())
+    const source = graph.blocks[1]
+    const targets = graph.blocks.slice(2, 5).map((block) => block.id)
+    const relationshipId = 'struct-relationship-grouped-citation'
+    source.text = '[1–3]'
+    source.inline = [
+      {
+        start: 0,
+        end: source.text.length,
+        relationshipId,
+        semanticRole: 'citation',
+        targetIds: targets,
+      },
+    ]
+    graph.relationships.push({
+      id: relationshipId,
+      kind: 'citation',
+      from: source.id,
+      to: targets,
+      label: '1,2,3',
+      status: 'matched',
+      confidence: 1,
+      evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+    })
+
+    const xhtml = renderPublicationXhtml(graph)
+    for (const target of targets) {
+      expect(xhtml).toContain(`href="#${target}"`)
+    }
+    expect(xhtml).toContain(
+      `[<a href="#${targets[0]}" epub:type="biblioref" role="doc-biblioref">1</a>–<a href="#${targets[2]}" epub:type="biblioref" role="doc-biblioref">3</a>]`,
+    )
+    expect(xhtml).not.toContain(`href="#${targets[0]}">[1–3]</a>`)
+    expect(xhtml).toContain('epub:type="biblioref" role="doc-biblioref"')
+  })
+
+  it('keeps styled Unicode ranges and author-year groups visibly linked', async () => {
+    const unicodeGraph = buildStructDocument(await structuredDocx())
+    const unicodeSource = unicodeGraph.blocks[1]
+    const unicodeTargets = unicodeGraph.blocks.slice(2, 5).map(({ id }) => id)
+    unicodeSource.text = '[١–٣]'
+    unicodeSource.inline = [
+      {
+        start: 0,
+        end: unicodeSource.text.length,
+        relationshipId: 'styled-unicode-range',
+        semanticRole: 'citation',
+        targetIds: unicodeTargets,
+      },
+      { start: 1, end: 2, bold: true },
+    ]
+    unicodeGraph.relationships.push({
+      id: 'styled-unicode-range',
+      kind: 'citation',
+      from: unicodeSource.id,
+      to: unicodeTargets,
+      label: '1,2,3',
+      status: 'matched',
+      confidence: 1,
+      evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+    })
+    const unicodeXhtml = renderPublicationXhtml(unicodeGraph)
+    expect(unicodeXhtml).toContain(
+      `<strong><a href="#${unicodeTargets[0]}" epub:type="biblioref" role="doc-biblioref">١</a></strong>`,
+    )
+    expect(unicodeXhtml).toContain(
+      `href="#${unicodeTargets[2]}" epub:type="biblioref" role="doc-biblioref">٣</a>`,
+    )
+    expect(unicodeXhtml).toContain(
+      `href="#${unicodeTargets[1]}" epub:type="biblioref" role="doc-biblioref" class="additional-semantic-reference"`,
+    )
+
+    const authorYearGraph = buildStructDocument(await structuredDocx())
+    const authorYearSource = authorYearGraph.blocks[1]
+    const authorYearTargets = authorYearGraph.blocks
+      .slice(2, 4)
+      .map(({ id }) => id)
+    authorYearSource.text = '(Smith, 2020; Jones, 2021)'
+    authorYearSource.inline = [
+      {
+        start: 0,
+        end: authorYearSource.text.length,
+        relationshipId: 'author-year-group',
+        semanticRole: 'citation',
+        targetIds: authorYearTargets,
+      },
+    ]
+    authorYearGraph.relationships.push({
+      id: 'author-year-group',
+      kind: 'citation',
+      from: authorYearSource.id,
+      to: authorYearTargets,
+      label: 'smith:2020,jones:2021',
+      status: 'matched',
+      confidence: 1,
+      evidence: { confidence: 1, pages: [], boxes: [], sourceIds: [] },
+    })
+    const authorYearXhtml = renderPublicationXhtml(authorYearGraph)
+    expect(authorYearXhtml).toContain(
+      `href="#${authorYearTargets[0]}" epub:type="biblioref" role="doc-biblioref">2020</a>`,
+    )
+    expect(authorYearXhtml).toContain(
+      `href="#${authorYearTargets[1]}" epub:type="biblioref" role="doc-biblioref">2021</a>`,
+    )
+    expect(authorYearXhtml).not.toContain('Additional citation target')
+  })
+
+  it('preserves typed bibliography and table-cell relationship metadata', async () => {
+    const reconstruction = await structuredDocx()
+    const listNode = reconstruction.paper.nodes.find(
+      (node) => node.type === 'paragraph' && node.list,
+    )
+    if (!listNode || listNode.type !== 'paragraph' || !listNode.list) {
+      throw new Error('The structured DOCX fixture must contain a list item')
+    }
+    listNode.list.numberingId = 'references'
+    const tableNode = reconstruction.paper.nodes.find(
+      (node) => node.type === 'figure' && node.table,
+    )
+    if (!tableNode || tableNode.type !== 'figure' || !tableNode.table) {
+      throw new Error('The structured DOCX fixture must contain a table')
+    }
+    const cell = tableNode.table.rows[0].cells[0]
+    cell.inlineRuns = [
+      {
+        start: 0,
+        end: Math.min(1, cell.text.length),
+        relationshipId: 'cell-citation',
+        semanticRole: 'citation',
+        targetIds: [listNode.id],
+      },
+    ]
+
+    const graph = buildStructDocument(reconstruction)
+    expect(
+      graph.blocks.find((block) =>
+        block.evidence.sourceIds.includes(listNode.id),
+      )?.attributes,
+    ).toMatchObject({ bibliographyEntry: true })
+    expect(
+      graph.blocks.find((block) => block.kind === 'table')?.table?.cells[0]
+        .inline[0],
+    ).toMatchObject({
+      relationshipId: 'cell-citation',
+      semanticRole: 'citation',
+      targetIds: [
+        graph.blocks.find((block) =>
+          block.evidence.sourceIds.includes(listNode.id),
+        )!.id,
+      ],
+    })
   })
 
   it('translates STRUCT fragment targets without rewriting explicit external links', async () => {

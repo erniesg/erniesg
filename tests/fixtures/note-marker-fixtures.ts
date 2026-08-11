@@ -189,6 +189,35 @@ export const decisiveNoteMarkerFixtures: NoteMarkerFixture[] = [
     ],
     expectedTaxonomies: ['endnote-reference'],
   },
+  {
+    name: 'Arabic-Indic decimal footnote marker',
+    pages: [
+      page(1, [
+        run(1, 'A claim with a localized footnote', 0.1, 0.24, 0.4),
+        run(1, '١', 0.505, 0.236, 0.008, 6, 0.009),
+        run(1, '١. Localized note body.', 0.1, 0.82, 0.72, 7),
+      ]),
+    ],
+    expectedTaxonomies: ['footnote-reference'],
+  },
+  {
+    name: 'Adlam decimal footnote marker',
+    pages: [
+      page(1, [
+        run(1, 'A claim with an Adlam-number footnote', 0.1, 0.24, 0.4),
+        run(1, String.fromCodePoint(0x1e951), 0.505, 0.236, 0.008, 6, 0.009),
+        run(
+          1,
+          `${String.fromCodePoint(0x1e951)}. Adlam-number note body.`,
+          0.1,
+          0.82,
+          0.72,
+          7,
+        ),
+      ]),
+    ],
+    expectedTaxonomies: ['footnote-reference'],
+  },
 ]
 
 export const ambiguousNoteMarkerFixture: NoteMarkerFixture = {

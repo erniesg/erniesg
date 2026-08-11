@@ -5705,6 +5705,61 @@ describe('PDF semantic reconstruction', () => {
     expect(prose.every((node) => node.list === undefined)).toBe(true)
   })
 
+  it('preserves a singleton numbered item from its source hanging indent', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(
+            1,
+            'Ordinary body prose establishes the source typography.',
+            0.1,
+            0.1,
+            0.72,
+          ),
+          run(
+            1,
+            '1. Calibrate the source-backed threshold before export,',
+            0.1,
+            0.2,
+            0.5,
+          ),
+          run(
+            1,
+            'then verify the rendered checkpoint.',
+            0.128,
+            0.222,
+            0.44,
+          ),
+          run(
+            1,
+            'An independent paragraph follows the completed instruction.',
+            0.1,
+            0.31,
+            0.72,
+          ),
+        ]),
+      ],
+      sourceHash: 'h'.repeat(64),
+      fileName: 'singleton-hanging-indent-item.pdf',
+      byteLength: 4096,
+    })
+
+    const item = result.paper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.text.startsWith('Calibrate the source-backed threshold'),
+    )
+    expect(item).toMatchObject({
+      text: 'Calibrate the source-backed threshold before export, then verify the rendered checkpoint.',
+      list: {
+        ordered: true,
+        markerStyle: 'decimal',
+        markerText: '1.',
+        ordinal: 1,
+      },
+    })
+  })
+
   it('does not promote a markup-shaped section phrase without source styling', async () => {
     const result = await reconstructPageAnalyses({
       pages: [

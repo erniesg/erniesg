@@ -2099,6 +2099,60 @@ function sourceMarkupShape(value: string): SourceMarkupShape {
   }
 }
 
+function orderedMarkerHasWithinBlockHangingIndent(
+  block: RegionBlock,
+  marker: NonNullable<ReturnType<typeof parsedOrderedListMarker>>,
+) {
+  const visibleLines = block.region.lines.filter((line) => line.text.trim())
+  if (visibleLines.length < 2) return false
+  const firstLine = visibleLines[0]
+  const continuationLine = visibleLines[1]
+  const firstLineRuns = firstLine.runs.filter((run) => run.text.trim())
+  const continuationRuns = continuationLine.runs.filter((run) =>
+    run.text.trim(),
+  )
+  if (firstLineRuns.length === 0 || continuationRuns.length === 0) {
+    return false
+  }
+
+  const firstLineMarker = parsedOrderedListMarker(firstLine.text)
+  if (
+    !firstLineMarker ||
+    firstLineMarker.markerText !== marker.markerText ||
+    firstLineMarker.itemText.length === 0
+  ) {
+    return false
+  }
+  const markerRun = firstLineRuns[0]
+  const markerRunText = markerRun.text.trimStart()
+  if (!markerRunText.startsWith(marker.markerText)) return false
+  const markerStartX = markerRun.x
+  const contentStartX =
+    markerRunText === marker.markerText && firstLineRuns.length > 1
+      ? firstLineRuns[1].x
+      : markerRun.x +
+        markerRun.width *
+          (firstLineMarker.contentStart /
+            Math.max(Array.from(markerRun.text).length, 1))
+  const continuationStartX = Math.min(...continuationRuns.map((run) => run.x))
+  const verticalGap =
+    continuationLine.box.y - (firstLine.box.y + firstLine.box.height)
+  const fontRatio =
+    Math.max(firstLine.fontSize, continuationLine.fontSize) /
+    Math.max(1, Math.min(firstLine.fontSize, continuationLine.fontSize))
+  return (
+    contentStartX - markerStartX >= 0.012 &&
+    Math.abs(continuationStartX - contentStartX) <= 0.012 &&
+    verticalGap >= -0.004 &&
+    verticalGap <=
+      Math.max(
+        0.03,
+        Math.max(firstLine.box.height, continuationLine.box.height) * 2,
+      ) &&
+    fontRatio <= 1.12
+  )
+}
+
 function orderedMarkerHasIndependentEvidence(
   blockIndex: number,
   blocks: readonly RegionBlock[],
@@ -2116,6 +2170,8 @@ function orderedMarkerHasIndependentEvidence(
     firstLineRuns.length > 1 &&
     firstLineRuns[0].text.trim() === marker.markerText,
   )
+  const withinBlockHangingIndent =
+    orderedMarkerHasWithinBlockHangingIndent(block, marker)
   const largestFont = Math.max(
     ...block.region.lines.map((line) => line.fontSize),
     bodySize,
@@ -2135,6 +2191,7 @@ function orderedMarkerHasIndependentEvidence(
     )
   if (
     markerRunSeparated ||
+    withinBlockHangingIndent ||
     largestFont >= bodySize * 1.12 ||
     emphasizedShare >= 0.6
   ) {

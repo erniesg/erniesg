@@ -9,6 +9,7 @@ import {
   hasActionableRecovery,
   recoverySummary,
 } from './recovery'
+import type { PdfReconstruction } from '../research/import-types'
 import type { StructBlock } from './types'
 import { reconstructDocx } from '../research/docx-import'
 import {
@@ -512,6 +513,145 @@ describe('STRUCT canonical document graph', () => {
       expect(xhtml.split(` id="${relationshipId}"`)).toHaveLength(2)
     }
   })
+
+  it.each(['citation', 'cross-reference'] as const)(
+    'keeps equal table-cell %s markers on distinct relationships',
+    async (kind) => {
+      const reconstruction =
+        (await structuredDocx()) as unknown as PdfReconstruction
+      delete (reconstruction.source as { format?: string }).format
+      reconstruction.citationRelationships = []
+      reconstruction.crossReferenceRelationships = []
+      const tableNode = reconstruction.paper.nodes.find(
+        (node) => node.type === 'figure' && node.table,
+      )
+      const targetNode = reconstruction.paper.nodes.find(
+        (node) => node.type === 'heading',
+      )
+      if (!tableNode || tableNode.type !== 'figure' || !tableNode.table) {
+        throw new Error('The structured DOCX fixture must contain a table')
+      }
+      if (!targetNode) {
+        throw new Error('The structured DOCX fixture must contain a heading')
+      }
+
+      const relationships = [
+        { row: 1, column: 0, id: `table-cell-${kind}-one` },
+        { row: 2, column: 0, id: `table-cell-${kind}-two` },
+      ].map(({ row, column, id }) => {
+        const cell = tableNode.table!.rows[row].cells[column]
+        const marker = kind === 'citation' ? '[1]' : 'Fig'
+        const cellAnchorId = `${tableNode.id}:table:${cell.id ?? `${row}:${column}`}`
+        cell.text = marker
+        cell.inlineRuns = [
+          {
+            start: 0,
+            end: marker.length,
+            relationshipId: id,
+            semanticRole: kind,
+            targetIds: [targetNode.id],
+          },
+        ]
+        return {
+          id,
+          cellAnchorId,
+          marker,
+          sourceBox: {
+            page: 1,
+            x: 0.1,
+            y: 0.1 + row * 0.1,
+            width: 0.1,
+            height: 0.02,
+            rotation: 0,
+            method: 'pdf-text' as const,
+          },
+        }
+      })
+      if (kind === 'citation') {
+        reconstruction.citationRelationships = relationships.map(
+          ({ id, cellAnchorId, marker, sourceBox }) => ({
+            id,
+            label: marker,
+            labels: ['1'],
+            referenceRegionId: `${id}-region`,
+            referenceStart: 0,
+            referenceEnd: marker.length,
+            taxonomy: 'bracketed-bibliography-citation',
+            targetNodeIds: [targetNode.id],
+            status: 'matched',
+            canonicalAnchor: {
+              nodeId: cellAnchorId,
+              start: 0,
+              end: marker.length,
+            },
+            confidence: 1,
+            evidence: ['fixture'],
+            sourceBoxes: [sourceBox],
+          }),
+        )
+      } else {
+        reconstruction.crossReferenceRelationships = relationships.map(
+          ({ id, cellAnchorId, marker, sourceBox }) => ({
+            id,
+            kind: 'section',
+            text: marker,
+            labels: [marker],
+            referenceRegionId: `${id}-region`,
+            referenceStart: 0,
+            referenceEnd: marker.length,
+            targets: [
+              {
+                kind: 'section',
+                label: marker,
+                referenceStart: 0,
+                referenceEnd: marker.length,
+                status: 'matched',
+                candidateNodeIds: [targetNode.id],
+                targetNodeId: targetNode.id,
+                evidence: ['fixture'],
+              },
+            ],
+            targetNodeIds: [targetNode.id],
+            status: 'matched',
+            canonicalAnchor: {
+              nodeId: cellAnchorId,
+              start: 0,
+              end: marker.length,
+            },
+            confidence: 1,
+            evidence: ['fixture'],
+            sourceBoxes: [sourceBox],
+          }),
+        )
+      }
+
+      const graph = buildStructDocument(reconstruction)
+      const tableBlock = graph.blocks.find((block) => block.kind === 'table')!
+      const relationshipIds = tableBlock
+        .table!.cells.filter(
+          (cell) => cell.column === 0 && (cell.row === 1 || cell.row === 2),
+        )
+        .map(
+          (cell) =>
+            cell.inline.find((run) => run.semanticRole === kind)!
+              .relationshipId!,
+        )
+
+      expect(new Set(relationshipIds).size).toBe(2)
+      expect(
+        graph.relationships
+          .filter((relationship) => relationshipIds.includes(relationship.id))
+          .every((relationship) => relationship.from === tableBlock.id),
+      ).toBe(true)
+      const xhtml = renderPublicationXhtml(graph)
+      for (const relationshipId of relationshipIds) {
+        expect(xhtml.split(` id="${relationshipId}"`)).toHaveLength(2)
+      }
+      await expect(buildStructEpub(graph)).resolves.toMatchObject({
+        mediaType: 'application/epub+zip',
+      })
+    },
+  )
 
   it('translates STRUCT fragment targets without rewriting explicit external links', async () => {
     const graph = buildStructDocument(await structuredDocx())

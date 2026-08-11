@@ -383,19 +383,33 @@ export function buildStructDocument(
     }
   }
   const resolveEndpoint = (id: string) => sourceToStructId.get(id) ?? id
+  const relationshipOwner = (
+    canonicalAnchor: { nodeId: string } | null | undefined,
+    fallbackId: string,
+  ) => resolveEndpoint(canonicalAnchor?.nodeId ?? fallbackId)
+  const relationshipIdentityOwner = (
+    canonicalAnchor: { nodeId: string } | null | undefined,
+    fallbackId: string,
+  ) => {
+    const owner = relationshipOwner(canonicalAnchor, fallbackId)
+    return canonicalAnchor && tableCellAnchorIds.has(canonicalAnchor.nodeId)
+      ? `${owner}:${canonicalAnchor.nodeId}`
+      : owner
+  }
   const noteOwner = (
     note: DocumentReconstruction['noteRelationships'][number],
   ) =>
-    note.canonicalAnchor?.kind === 'node'
-      ? resolveEndpoint(note.canonicalAnchor.nodeId)
-      : resolveEndpoint(note.referenceRegionId)
+    relationshipOwner(
+      note.canonicalAnchor?.kind === 'node' ? note.canonicalAnchor : null,
+      note.referenceRegionId,
+    )
   const noteIdentityOwner = (
     note: DocumentReconstruction['noteRelationships'][number],
   ) =>
-    note.canonicalAnchor?.kind === 'node' &&
-    tableCellAnchorIds.has(note.canonicalAnchor.nodeId)
-      ? `${noteOwner(note)}:${note.canonicalAnchor.nodeId}`
-      : noteOwner(note)
+    relationshipIdentityOwner(
+      note.canonicalAnchor?.kind === 'node' ? note.canonicalAnchor : null,
+      note.referenceRegionId,
+    )
   const sourceRelationshipIds = new Map<string, string>()
   for (const note of reconstruction.noteRelationships) {
     sourceRelationshipIds.set(
@@ -408,8 +422,9 @@ export function buildStructDocument(
   }
   if (pdf) {
     for (const citation of reconstruction.citationRelationships) {
-      const owner = resolveEndpoint(
-        citation.canonicalAnchor?.nodeId ?? citation.referenceRegionId,
+      const owner = relationshipIdentityOwner(
+        citation.canonicalAnchor,
+        citation.referenceRegionId,
       )
       sourceRelationshipIds.set(
         citation.id,
@@ -420,9 +435,9 @@ export function buildStructDocument(
       )
     }
     for (const crossReference of reconstruction.crossReferenceRelationships) {
-      const owner = resolveEndpoint(
-        crossReference.canonicalAnchor?.nodeId ??
-          crossReference.referenceRegionId,
+      const owner = relationshipIdentityOwner(
+        crossReference.canonicalAnchor,
+        crossReference.referenceRegionId,
       )
       sourceRelationshipIds.set(
         crossReference.id,

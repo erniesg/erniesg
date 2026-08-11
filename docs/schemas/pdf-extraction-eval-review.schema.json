@@ -28,7 +28,7 @@
         "kind": { "const": "pdf-extraction-reviewer-roster" },
         "evalSetId": { "$ref": "#/$defs/id" },
         "reviewers": {
-          "description": "Map from authoritative reviewer identity-evidence hashes to non-authoritative reviewer aliases. Object keys make duplicate identity evidence structurally unrepresentable.",
+          "description": "Map from authoritative reviewer identity-evidence hashes to non-authoritative display aliases. Decisions and completed eval reviews reference only the hash keys, so aliases need not participate in identity resolution.",
           "type": "object",
           "minProperties": 2,
           "propertyNames": { "$ref": "#/$defs/sha256" },
@@ -76,7 +76,7 @@
                 "type": "array",
                 "minItems": 2,
                 "uniqueItems": true,
-                "items": { "$ref": "#/$defs/id" }
+                "items": { "$ref": "#/$defs/sha256" }
               },
               "decision": { "const": "agreed" },
               "decisionSha256": { "$ref": "#/$defs/sha256" }

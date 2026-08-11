@@ -998,9 +998,7 @@ async function validateReviewEvidenceFiles(value, identity) {
       const legacyHashes = identityHashesByAlias.get(reference)
       return legacyHashes?.length === 1 ? legacyHashes[0] : null
     }
-    if (rosterIdentities.has(reference)) return reference
-    const hashes = identityHashesByAlias.get(reference)
-    return hashes?.length === 1 ? hashes[0] : null
+    return rosterIdentities.has(reference) ? reference : null
   }
   const decisionArtifact = await readRepositoryJson(
     evidence.decisionPath,

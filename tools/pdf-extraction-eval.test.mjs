@@ -30,6 +30,9 @@ async function attachVerifiedReviews(
 ) {
   const reviewerHashA = 'a'.repeat(64)
   const reviewerHashB = 'b'.repeat(64)
+  const reviewerReferences = legacy
+    ? [reviewerA, reviewerB]
+    : [reviewerHashA, reviewerHashB]
   const rosterPath = join(directory, 'roster.json')
   const decisionPath = join(directory, 'decisions.json')
   const reviews = [
@@ -39,7 +42,7 @@ async function attachVerifiedReviews(
   ]
   for (const review of reviews) {
     review.reviewStatus = 'two-reviewer-agreed'
-    review.reviewers = [reviewerA, reviewerB]
+    review.reviewers = reviewerReferences
     review.reviewEvidence = {
       rosterPath,
       rosterSha256: '0'.repeat(64),
@@ -70,7 +73,7 @@ async function attachVerifiedReviews(
     decisions: evalSet.cases.map((item) => ({
       caseId: item.id,
       sourceSha256: documentById.get(item.documentId).sha256,
-      reviewers: [reviewerA, reviewerB],
+      reviewers: reviewerReferences,
       decision: 'agreed',
       decisionSha256: 'd'.repeat(64),
     })),
@@ -1071,7 +1074,37 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     }
   })
 
-  it('publishes resolvable reviewer aliases in both review schemas', async () => {
+  it('publishes authoritative hash-only v1.1 decision references', async () => {
+    const schema = JSON.parse(
+      await readFile(
+        'docs/schemas/pdf-extraction-eval-review.schema.json',
+        'utf8',
+      ),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    const decision = {
+      schemaVersion: '1.1.0',
+      kind: 'pdf-extraction-source-only-decisions',
+      evalSetId: 'fixture-eval',
+      evalSetSha256: 'c'.repeat(64),
+      sourceOnly: true,
+      candidateOutputConsultedForLabel: false,
+      decisions: [
+        {
+          caseId: 'fixture-case',
+          sourceSha256: 'd'.repeat(64),
+          reviewers: ['shared-alias', 'reviewer-b'],
+          decision: 'agreed',
+          decisionSha256: 'e'.repeat(64),
+        },
+      ],
+    }
+    expect(validate(decision)).toBe(false)
+    decision.decisions[0].reviewers = ['a'.repeat(64), 'b'.repeat(64)]
+    expect(validate(decision)).toBe(true)
+  })
+
+  it('publishes authoritative v1.1 and legacy-compatible eval references', async () => {
     const reviewSchema = JSON.parse(
       await readFile(
         'docs/schemas/pdf-extraction-eval-review.schema.json',
@@ -1106,7 +1139,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
         },
       ],
     }
-    expect(validateReview(decision)).toBe(true)
+    expect(validateReview(decision)).toBe(false)
     decision.decisions[0].reviewers = reviewerHashes
     expect(validateReview(decision)).toBe(true)
 

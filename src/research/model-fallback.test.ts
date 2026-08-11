@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   MODEL_FALLBACK_DECISION_CLASSES,
   MODEL_FALLBACK_REFERENCE_FIXTURES,
+  type ModelFallbackCandidate,
   ModelFallbackLedger,
   ModelConsultationGate,
   createReferenceDistillationLedger,
+  validateModelConsultationReceipt,
   verifyModelDecisionProposal,
 } from './model-fallback'
 
@@ -35,6 +37,23 @@ describe('model fallback consultation gate', () => {
     })
   })
 
+  it('preserves the disabled path without consultation-only provenance inputs', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      model: { identity: modelIdentity, consult },
+    })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+      sourceSha256: undefined,
+      inputs: { optionalEvidence: undefined } as never,
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('MODEL_ASSISTANCE_DISABLED')
+    expect(consult).not.toHaveBeenCalled()
+  })
+
   it('refuses an enabled provider without a complete supplied identity', async () => {
     const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
     const gate = new ModelConsultationGate({
@@ -48,6 +67,55 @@ describe('model fallback consultation gate', () => {
     expect(result.diagnostic).toBe('MODEL_IDENTITY_REQUIRED')
     expect(result.provenance).toBeNull()
     expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('uses a supplied identity with a bare consultation client', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { consult },
+      modelIdentity,
+    })
+
+    const result = await gate.decide(MODEL_FALLBACK_REFERENCE_FIXTURES[0]!)
+
+    expect(result.status).toBe('consulted')
+    expect(result.provenance?.model).toEqual(modelIdentity)
+    expect(consult).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a non-string model identity at the boundary', () => {
+    expect(
+      () =>
+        new ModelConsultationGate({
+          enabled: true,
+          model: {
+            identity: { ...modelIdentity, providerId: 7 as never },
+            consult: () => ({ candidateId: 'caption-figure-1' }),
+          },
+        }),
+    ).toThrow('INVALID_MODEL_IDENTITY')
+  })
+
+  it('preserves the receiver for class-based consultation clients', async () => {
+    class RecordedClient {
+      readonly identity = modelIdentity
+      readonly candidateId = 'caption-figure-1'
+
+      consult() {
+        return { candidateId: this.candidateId }
+      }
+    }
+
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: new RecordedClient(),
+    })
+
+    const result = await gate.decide(MODEL_FALLBACK_REFERENCE_FIXTURES[0]!)
+
+    expect(result.status).toBe('consulted')
+    expect(result.choice).toEqual({ candidateId: 'caption-figure-1' })
   })
 
   it('records the request before consulting and persists candidate-constrained provenance', async () => {
@@ -129,15 +197,374 @@ describe('model fallback consultation gate', () => {
     expect(result.provenance?.status).toBe('rejected')
   })
 
+  it('rejects contradictory nested candidate references', () => {
+    expect(
+      verifyModelDecisionProposal(MODEL_FALLBACK_REFERENCE_FIXTURES[1]!, {
+        candidateId: 'note-body-1',
+        choice: { candidateId: 'note-body-2' },
+      }),
+    ).toMatchObject({
+      status: 'rejected',
+      code: 'CONFLICTING_MODEL_CHOICE',
+    })
+  })
+
+  it('rejects contradictory nested association references', () => {
+    expect(
+      verifyModelDecisionProposal(MODEL_FALLBACK_REFERENCE_FIXTURES[0]!, {
+        candidateId: 'caption-figure-1',
+        associationId: 'figure-1',
+        association: { id: 'figure-2' },
+      }),
+    ).toMatchObject({
+      status: 'rejected',
+      code: 'CONFLICTING_MODEL_ASSOCIATION',
+    })
+  })
+
+  it('rejects fields outside the exact nested association reference', () => {
+    expect(
+      verifyModelDecisionProposal(MODEL_FALLBACK_REFERENCE_FIXTURES[0]!, {
+        candidateId: 'caption-figure-1',
+        association: {
+          id: 'figure-1',
+          destination: 'model-authored-destination',
+        },
+      } as never),
+    ).toMatchObject({
+      status: 'rejected',
+      code: 'MODEL_PROPOSAL_UNKNOWN_FIELD',
+    })
+  })
+
+  it('rejects hidden fields outside the exact model proposal contract', () => {
+    const hiddenText = Object.defineProperty(
+      { candidateId: 'caption-figure-1' },
+      'text',
+      { value: 'hidden model-authored text' },
+    )
+    const hiddenAssociationField = {
+      candidateId: 'caption-figure-1',
+      association: Object.defineProperty({ id: 'figure-1' }, 'destination', {
+        value: 'hidden destination',
+      }),
+    }
+    const symbolField = Object.assign(
+      { candidateId: 'caption-figure-1' },
+      { [Symbol('hidden')]: true },
+    )
+
+    for (const proposal of [hiddenText, hiddenAssociationField, symbolField]) {
+      expect(
+        verifyModelDecisionProposal(
+          MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+          proposal,
+        ),
+      ).toMatchObject({ status: 'rejected' })
+    }
+  })
+
+  it('keeps arbitrary deterministic metadata on candidate associations', async () => {
+    const consult = vi.fn(() => ({
+      candidateId: 'caption-figure-1',
+      associationId: 'figure-1',
+    }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    const result = await gate.decide({
+      ...point,
+      candidates: point.candidates.map((candidate) =>
+        candidate.id === 'caption-figure-1'
+          ? {
+              id: candidate.id,
+              association: {
+                id: 'figure-1',
+                kind: 'figure',
+                confidence: 1,
+              },
+            }
+          : candidate,
+      ),
+    })
+
+    expect(result.status).toBe('consulted')
+    expect(result.choice).toEqual({
+      candidateId: 'caption-figure-1',
+      associationId: 'figure-1',
+    })
+  })
+
+  it('rejects contradictory association aliases in deterministic candidates', async () => {
+    const consult = vi.fn(() => ({
+      candidateId: 'caption-figure-1',
+      associationId: 'figure-1',
+    }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    const result = await gate.decide({
+      ...point,
+      candidates: point.candidates.map((candidate) =>
+        candidate.id === 'caption-figure-1'
+          ? {
+              id: candidate.id,
+              associationId: 'figure-1',
+              association: { id: 'figure-2' },
+            }
+          : candidate,
+      ),
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_MODEL_CANDIDATE_SET')
+    expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when an unselected candidate association accessor throws', async () => {
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    const candidates = point.candidates.map((candidate) => ({ ...candidate }))
+    Object.defineProperty(candidates[1]!, 'association', {
+      enumerable: true,
+      get() {
+        throw new Error('association getter invoked')
+      },
+    })
+    const gate = new ModelConsultationGate()
+
+    const result = await gate.decide({
+      ...point,
+      candidates,
+      status: 'deterministic',
+      insufficientEvidence: false,
+      deterministicChoice: 'caption-figure-1',
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('CONFLICTING_CANDIDATE_ASSOCIATION')
+  })
+
+  it.each([
+    { name: 'missing', candidate: {} },
+    { name: 'non-string', candidate: { id: 123 } },
+  ])(
+    'rejects a $name deterministic candidate id without consulting',
+    async ({ candidate }) => {
+      const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+      const gate = new ModelConsultationGate({
+        enabled: true,
+        model: { identity: modelIdentity, consult },
+      })
+
+      const result = await gate.decide({
+        ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+        candidates: [candidate] as never,
+      })
+
+      expect(result.status).toBe('review-required')
+      expect(result.diagnostic).toBe('INVALID_MODEL_CANDIDATE_SET')
+      expect(consult).not.toHaveBeenCalled()
+    },
+  )
+
+  it('rejects a sparse candidate array before consulting', async () => {
+    const candidates = new Array<ModelFallbackCandidate>(2)
+    candidates[1] = { id: 'caption-figure-1', associationId: 'figure-1' }
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: { identity: modelIdentity, consult },
+    })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+      candidates,
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_MODEL_CANDIDATE_SET')
+    expect(consult).not.toHaveBeenCalled()
+    expect(ledger.recordsFor()).toEqual([])
+  })
+
+  it('rejects hidden candidate-array state before consulting', async () => {
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    const candidates = point.candidates.map((candidate) => ({ ...candidate }))
+    Object.defineProperty(candidates, 'hidden', { value: 'not committed' })
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    const result = await gate.decide({ ...point, candidates })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_MODEL_CANDIDATE_SET')
+    expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed supplied source hash without consulting', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+      sourceSha256: 'not-a-source-digest',
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_SOURCE_SHA256')
+    expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('requires a source hash before model consultation', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+      sourceSha256: undefined,
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('SOURCE_SHA256_REQUIRED')
+    expect(consult).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { field: 'documentId', value: '' },
+    { field: 'decisionId', value: '' },
+    { field: 'decisionClass', value: '' },
+  ])(
+    'rejects an invalid $field before consulting',
+    async ({ field, value }) => {
+      const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+      const gate = new ModelConsultationGate({
+        enabled: true,
+        model: { identity: modelIdentity, consult },
+      })
+
+      const result = await gate.decide({
+        ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+        [field]: value,
+      })
+
+      expect(result.status).toBe('review-required')
+      expect(result.diagnostic).toBe('INVALID_MODEL_DECISION_POINT')
+      expect(consult).not.toHaveBeenCalled()
+    },
+  )
+
+  it('requires an explicit insufficient-evidence signal before consulting', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+    const { insufficientEvidence: _omitted, ...point } =
+      MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    const result = await gate.decide(point)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('NO_CANDIDATE_CHOICE')
+    expect(consult).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      name: 'non-JSON input',
+      patch: { inputs: { value: undefined } },
+      diagnostic: 'INVALID_MODEL_DECISION_INPUTS',
+    },
+    {
+      name: 'non-JSON candidate metadata',
+      patch: {
+        candidates: [
+          {
+            id: 'caption-figure-1',
+            associationId: 'figure-1',
+            value: undefined,
+          },
+        ],
+      },
+      diagnostic: 'INVALID_MODEL_CANDIDATE_SET',
+    },
+    {
+      name: 'empty candidate association id',
+      patch: {
+        candidates: [{ id: 'caption-figure-1', associationId: '' }],
+      },
+      diagnostic: 'INVALID_MODEL_CANDIDATE_SET',
+    },
+  ])('rejects $name before consulting', async ({ patch, diagnostic }) => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+      ...patch,
+    } as never)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe(diagnostic)
+    expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('rejects hidden and accessor-backed consultation inputs', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+    const evidence = ['bounded']
+    Object.defineProperty(evidence, 'hidden', { value: 'not committed' })
+    const accessorInputs = Object.defineProperty({}, 'value', {
+      enumerable: true,
+      get() {
+        throw new Error('must not invoke untrusted accessors')
+      },
+    })
+
+    for (const inputs of [{ evidence }, accessorInputs]) {
+      const result = await gate.decide({
+        ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+        inputs,
+      })
+      expect(result.status).toBe('review-required')
+      expect(result.diagnostic).toBe('INVALID_MODEL_DECISION_INPUTS')
+    }
+    expect(consult).not.toHaveBeenCalled()
+  })
+
   it('rejects fields outside the exact provider response wrapper', async () => {
     const gate = new ModelConsultationGate({
       enabled: true,
       model: {
         identity: modelIdentity,
-        consult: () => ({
-          proposal: { candidateId: 'caption-figure-1' },
-          text: 'model-authored wrapper content',
-        }) as never,
+        consult: () =>
+          ({
+            proposal: { candidateId: 'caption-figure-1' },
+            text: 'model-authored wrapper content',
+          }) as never,
       },
     })
 
@@ -177,6 +604,299 @@ describe('model fallback consultation gate', () => {
     ).toHaveLength(2)
   })
 
+  it('does not let a provider mutate the request used for byte stability', async () => {
+    const ledger = new ModelFallbackLedger()
+    let invocation = 0
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => {
+          invocation += 1
+          if (invocation === 2) request.promptHash = 'f'.repeat(64)
+          return {
+            candidateId: invocation === 1 ? 'note-body-1' : 'note-body-2',
+          }
+        },
+      },
+    })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[1]!
+
+    expect((await gate.decide(point)).status).toBe('consulted')
+    const second = await gate.decide(point)
+
+    expect(second.status).toBe('review-required')
+    expect(second.diagnostic).toBe('BYTE_STABILITY_MISMATCH')
+    expect(
+      validateModelConsultationReceipt(ledger.receiptFor(point.documentId)),
+    ).toBe(true)
+  })
+
+  it('verifies provider output against the pre-call candidate snapshot', async () => {
+    const ledger = new ModelFallbackLedger()
+    const reference = MODEL_FALLBACK_REFERENCE_FIXTURES[1]!
+    const point = {
+      ...reference,
+      candidates: reference.candidates.map((candidate) => ({ ...candidate })),
+    }
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          ;(point.candidates as ModelFallbackCandidate[]).splice(
+            0,
+            point.candidates.length,
+            { id: 'invented-after-request' },
+          )
+          return { candidateId: 'invented-after-request' }
+        },
+      },
+    })
+
+    const result = await gate.decide(point)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('OUT_OF_CANDIDATE_SET')
+    expect(result.provenance?.candidateIds).toEqual([
+      'note-body-1',
+      'note-body-2',
+    ])
+    expect(
+      validateModelConsultationReceipt(ledger.receiptFor(point.documentId)),
+    ).toBe(true)
+  })
+
+  it('uses the pre-call identity snapshot for outcomes and metrics', async () => {
+    const ledger = new ModelFallbackLedger()
+    const reference = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    const point = {
+      ...reference,
+      candidates: reference.candidates.map((candidate) => ({ ...candidate })),
+    }
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          point.documentId = 'mutated-document'
+          point.decisionId = 'mutated-decision'
+          return { candidateId: 'caption-figure-1' }
+        },
+      },
+    })
+
+    const result = await gate.decide(point)
+
+    expect(result).toMatchObject({
+      status: 'consulted',
+      documentId: reference.documentId,
+      decisionId: reference.decisionId,
+    })
+    expect(ledger.decisionsFor()).toMatchObject([
+      {
+        documentId: reference.documentId,
+        decisionId: reference.decisionId,
+      },
+    ])
+    expect(
+      validateModelConsultationReceipt(ledger.receiptFor(reference.documentId)),
+    ).toBe(true)
+  })
+
+  it('closes both records for concurrent identical consultations', async () => {
+    const ledger = new ModelFallbackLedger()
+    let release!: () => void
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const consult = vi.fn(async () => {
+      await barrier
+      return { candidateId: 'caption-figure-1' }
+    })
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: { identity: modelIdentity, consult },
+    })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    const first = gate.decide(point)
+    const second = gate.decide(point)
+    await vi.waitFor(() => expect(consult).toHaveBeenCalledTimes(2))
+    release()
+    const outcomes = await Promise.all([first, second])
+
+    expect(outcomes.map(({ status }) => status)).toEqual([
+      'consulted',
+      'consulted',
+    ])
+    expect(ledger.recordsFor().map(({ status }) => status)).toEqual([
+      'accepted',
+      'accepted',
+    ])
+    expect(
+      validateModelConsultationReceipt(ledger.receiptFor(point.documentId)),
+    ).toBe(true)
+  })
+
+  it.each(['request hook', 'provider method getter', 'response getter'])(
+    'closes provenance when the %s throws',
+    async (failurePoint) => {
+      const ledger = new ModelFallbackLedger()
+      let model: unknown = {
+        identity: modelIdentity,
+        consult: () => ({ candidateId: 'caption-figure-1' }),
+      }
+      let onRequest: (() => void) | undefined
+      if (failurePoint === 'request hook') {
+        onRequest = () => {
+          throw new Error('request hook failed')
+        }
+      } else if (failurePoint === 'provider method getter') {
+        model = Object.defineProperty({ identity: modelIdentity }, 'consult', {
+          get() {
+            throw new Error('provider method lookup failed')
+          },
+        })
+      } else {
+        model = {
+          identity: modelIdentity,
+          consult: () =>
+            Object.defineProperty({}, 'proposal', {
+              enumerable: true,
+              get() {
+                throw new Error('response processing failed')
+              },
+            }) as never,
+        }
+      }
+      const gate = new ModelConsultationGate({
+        enabled: true,
+        ledger,
+        model: model as never,
+        onRequest,
+      })
+      const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+      const result = await gate.decide(point)
+
+      expect(result.status).toBe('review-required')
+      expect(result.diagnostic).toBe('MODEL_PROVIDER_ERROR')
+      expect(ledger.recordsFor()).toMatchObject([
+        { status: 'failed', failureCode: 'MODEL_PROVIDER_ERROR' },
+      ])
+      expect(
+        validateModelConsultationReceipt(ledger.receiptFor(point.documentId)),
+      ).toBe(true)
+    },
+  )
+
+  it('fails closed when one document id is reused for another source', async () => {
+    const ledger = new ModelFallbackLedger()
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: { identity: modelIdentity, consult },
+    })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    expect((await gate.decide(point)).status).toBe('consulted')
+    const second = await gate.decide({
+      ...point,
+      decisionId: 'caption-other-source',
+      sourceSha256: 'f'.repeat(64),
+    })
+
+    expect(second.status).toBe('review-required')
+    expect(second.diagnostic).toBe('DOCUMENT_SOURCE_HASH_MISMATCH')
+    expect(consult).toHaveBeenCalledOnce()
+    expect(
+      validateModelConsultationReceipt(ledger.receiptFor(point.documentId)),
+    ).toBe(true)
+  })
+
+  it.each(['consultation-first', 'deterministic-first'] as const)(
+    'prevents a deterministic decision from mixing document sources (%s)',
+    async (order) => {
+      const ledger = new ModelFallbackLedger()
+      const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+      const gate = new ModelConsultationGate({
+        enabled: true,
+        ledger,
+        model: { identity: modelIdentity, consult },
+      })
+      const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+      const consultedPoint = {
+        ...point,
+        sourceSha256:
+          order === 'consultation-first' ? 'a'.repeat(64) : 'b'.repeat(64),
+      }
+      const deterministicPoint = {
+        ...point,
+        decisionId: 'caption-deterministic-source',
+        sourceSha256:
+          order === 'consultation-first' ? 'b'.repeat(64) : 'a'.repeat(64),
+        status: 'deterministic' as const,
+        insufficientEvidence: false,
+        deterministicChoice: 'caption-figure-1',
+      }
+
+      const first = await gate.decide(
+        order === 'consultation-first' ? consultedPoint : deterministicPoint,
+      )
+      const second = await gate.decide(
+        order === 'consultation-first' ? deterministicPoint : consultedPoint,
+      )
+
+      expect(first.status).toBe(
+        order === 'consultation-first' ? 'consulted' : 'deterministic',
+      )
+      expect(second.status).toBe('review-required')
+      expect(second.diagnostic).toBe('DOCUMENT_SOURCE_HASH_MISMATCH')
+      expect(ledger.decisionsFor()).toHaveLength(1)
+      expect(consult).toHaveBeenCalledTimes(
+        order === 'consultation-first' ? 1 : 0,
+      )
+    },
+  )
+
+  it('keeps prototype-named decision classes in consultation metrics', () => {
+    const ledger = new ModelFallbackLedger()
+    const objectConstructor = Object as unknown as Record<string, unknown>
+
+    try {
+      ledger.recordDecision({
+        documentId: 'document-1',
+        decisionId: 'decision-1',
+        decisionClass: 'constructor',
+        outcome: 'consulted',
+        consulted: true,
+      })
+
+      const metrics = ledger.metrics()
+      expect(metrics).toMatchObject({
+        totalDecisionCount: 1,
+        totalConsultationCount: 1,
+        consultationRate: 1,
+      })
+      expect(Object.hasOwn(metrics.byDecisionClass, 'constructor')).toBe(true)
+      expect(metrics.byDecisionClass.constructor).toEqual({
+        decisionCount: 1,
+        consultationCount: 1,
+        consultationRate: 1,
+      })
+    } finally {
+      delete objectConstructor.decisionCount
+      delete objectConstructor.consultationCount
+      delete objectConstructor.consultationRate
+    }
+  })
+
   it('does not consult when deterministic evidence is sufficient', async () => {
     const consult = vi.fn(() => ({ candidateId: 'order-a-b' }))
     const gate = new ModelConsultationGate({
@@ -191,6 +911,58 @@ describe('model fallback consultation gate', () => {
     const result = await gate.decide(point)
     expect(result.status).toBe('deterministic')
     expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('preserves a deterministic choice without consultation-only provenance inputs', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'order-a-b' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+    const point = {
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[2]!,
+      sourceSha256: undefined,
+      inputs: { optionalEvidence: undefined } as never,
+      status: 'deterministic' as const,
+      deterministicChoice: 'order-a-b',
+    }
+
+    const result = await gate.decide(point)
+
+    expect(result.status).toBe('deterministic')
+    expect(result.choice).toEqual({ candidateId: 'order-a-b' })
+    expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid decision identity before a deterministic outcome', async () => {
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({ ledger })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[2]!,
+      documentId: '',
+      status: 'deterministic',
+      deterministicChoice: 'order-a-b',
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_MODEL_DECISION_POINT')
+    expect(ledger.decisionsFor()).toEqual([])
+  })
+
+  it('does not record invalid identity when candidates are also invalid', async () => {
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({ ledger })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[0]!,
+      documentId: '',
+      candidates: [],
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_MODEL_DECISION_POINT')
+    expect(ledger.decisionsFor()).toEqual([])
   })
 
   it('fails closed without consulting when sufficient evidence has no choice', async () => {
@@ -244,8 +1016,240 @@ describe('model fallback consultation gate', () => {
     expect(future.status).toBe('deterministic')
     expect(future.choice).toEqual({ candidateId: 'caption-figure-2' })
     expect(ledger.metrics(point.documentId)).toMatchObject({
-      totalConsultationCount: 0,
+      totalConsultationCount: 1,
     })
+  })
+
+  it('refuses to retire a learned fixture to a different choice', async () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: {
+        identity: modelIdentity,
+        consult: () => ({ candidateId: 'caption-figure-1' }),
+      },
+    })
+    expect((await gate.decide(point)).status).toBe('consulted')
+
+    expect(() =>
+      ledger.retireDecisionClass(
+        point.decisionClass,
+        () => 'caption-figure-2',
+        'contradictory-rule-v1',
+      ),
+    ).toThrow('DISTILLATION_RULE_DISAGREES_WITH_MODEL_PATH')
+    expect(ledger.distillation.entry(point.decisionClass)).toMatchObject({
+      retired: false,
+      consultationCount: 1,
+      fixtures: [
+        { modelPath: { choice: { candidateId: 'caption-figure-1' } } },
+      ],
+    })
+  })
+
+  it('refuses retirement while a same-class consultation is pending', async () => {
+    const ledger = new ModelFallbackLedger()
+    let release!: () => void
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const consult = vi.fn(async () => {
+      await barrier
+      return { candidateId: 'caption-figure-1' }
+    })
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ledger,
+      model: { identity: modelIdentity, consult },
+    })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    const pending = gate.decide(point)
+    await vi.waitFor(() => expect(consult).toHaveBeenCalledOnce())
+
+    expect(() =>
+      ledger.retireDecisionClass(
+        point.decisionClass,
+        () => 'caption-figure-1',
+        'racing-rule-v1',
+      ),
+    ).toThrow('DISTILLATION_PENDING_CONSULTATION')
+    release()
+    expect((await pending).status).toBe('consulted')
+  })
+
+  it('fails closed when a distilled rule throws on a future decision', async () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    ledger.distillation.registerFixture(point)
+    ledger.retireDecisionClass(point.decisionClass, (candidate) => {
+      if (candidate.decisionId !== point.decisionId)
+        throw new Error('fixture did not cover this input')
+      return 'caption-figure-1'
+    })
+    const gate = new ModelConsultationGate({ ledger })
+
+    const result = await gate.decide({
+      ...point,
+      decisionId: 'caption-future',
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('DISTILLATION_RULE_ERROR')
+    expect(ledger.distillation.entry(point.decisionClass)).toMatchObject({
+      retired: false,
+      fixtureCount: 2,
+      consultationCount: 1,
+    })
+  })
+
+  it('does not let a distillation rule mutate a fixture before verification', () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    ledger.distillation.registerFixture(point)
+
+    expect(() =>
+      ledger.retireDecisionClass(point.decisionClass, (fixturePoint) => {
+        ;(fixturePoint.candidates as ModelFallbackCandidate[]).push({
+          id: 'invented-by-rule',
+        })
+        return 'invented-by-rule'
+      }),
+    ).toThrow('DISTILLATION_RULE_DOES_NOT_RESOLVE_FIXTURE')
+    expect(ledger.distillation.entry(point.decisionClass)).toMatchObject({
+      retired: false,
+      consultationCount: 1,
+    })
+  })
+
+  it('exposes only fixture-committed evidence to a distillation rule', () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    ledger.distillation.registerFixture({ ...point, reason: 'covered' })
+
+    expect(() =>
+      ledger.retireDecisionClass(
+        point.decisionClass,
+        (fixturePoint) =>
+          fixturePoint.reason === 'covered' ? 'caption-figure-1' : null,
+        'reason-dependent-rule-v1',
+      ),
+    ).toThrow('DISTILLATION_RULE_DOES_NOT_RESOLVE_FIXTURE')
+    expect(ledger.distillation.entry(point.decisionClass)).toMatchObject({
+      retired: false,
+      consultationCount: 1,
+    })
+  })
+
+  it('rejects noncanonical distillation evidence before hashing a fixture', () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    expect(() =>
+      ledger.distillation.registerFixture({
+        ...point,
+        inputs: { flag: undefined } as never,
+      }),
+    ).toThrow('INVALID_DISTILLATION_FIXTURE')
+    expect(ledger.distillation.fixturesFor()).toEqual([])
+  })
+
+  it('applies a retired rule to fixtures registered later', () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    ledger.distillation.registerFixture(point)
+    ledger.retireDecisionClass(
+      point.decisionClass,
+      () => 'caption-figure-1',
+      'caption-rule-v1',
+    )
+
+    const fixture = ledger.distillation.registerFixture({
+      ...point,
+      decisionId: 'caption-after-retirement',
+    })
+
+    expect(fixture).toMatchObject({
+      resolution: 'deterministic-decided',
+      deterministicRuleId: 'caption-rule-v1',
+      modelPath: { choice: { candidateId: 'caption-figure-1' } },
+    })
+    expect(ledger.distillation.consultationCount(point.decisionClass)).toBe(0)
+    expect(ledger.distillation.entry(point.decisionClass)).toMatchObject({
+      retired: true,
+      consultationCount: 0,
+    })
+  })
+
+  it('reopens a retired class when a later fixture is not covered', () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    ledger.distillation.registerFixture(point)
+    ledger.retireDecisionClass(
+      point.decisionClass,
+      (candidate) =>
+        candidate.decisionId === point.decisionId ? 'caption-figure-1' : null,
+      'narrow-caption-rule-v1',
+    )
+
+    const fixture = ledger.distillation.registerFixture({
+      ...point,
+      decisionId: 'caption-not-covered',
+    })
+
+    expect(fixture.resolution).toBe('model-consulted')
+    expect(ledger.distillation.entry(point.decisionClass)).toMatchObject({
+      retired: false,
+      fixtureCount: 2,
+      consultationCount: 1,
+    })
+  })
+
+  it('does not apply the reference rule to contradictory association aliases', async () => {
+    const ledger = createReferenceDistillationLedger()
+    const gate = new ModelConsultationGate({ distillation: ledger })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    const result = await gate.decide({
+      ...point,
+      decisionId: 'caption-contradictory-aliases',
+      candidates: point.candidates.map((candidate) =>
+        candidate.id === 'caption-figure-1'
+          ? {
+              ...candidate,
+              association: { id: 'figure-2' },
+            }
+          : candidate,
+      ),
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toMatch(/^DISTILLED_RULE_/u)
+    expect(ledger.entry(point.decisionClass).retired).toBe(false)
+  })
+
+  it('reopens a distilled class for contradictory aliases on an unselected candidate', async () => {
+    const ledger = createReferenceDistillationLedger()
+    const gate = new ModelConsultationGate({ distillation: ledger })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    const result = await gate.decide({
+      ...point,
+      decisionId: 'caption-unselected-contradictory-aliases',
+      candidates: point.candidates.map((candidate) =>
+        candidate.id === 'caption-figure-2'
+          ? {
+              ...candidate,
+              association: { id: 'figure-3' },
+            }
+          : candidate,
+      ),
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toMatch(/^DISTILLED_RULE_/u)
+    expect(ledger.entry(point.decisionClass).retired).toBe(false)
   })
 
   it('ships the three reference classes as distillation fixtures', () => {
@@ -258,5 +1262,12 @@ describe('model fallback consultation gate', () => {
         MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
       ].sort(),
     )
+    expect(
+      ledger.entry(MODEL_FALLBACK_DECISION_CLASSES.captionAssociation),
+    ).toMatchObject({
+      retired: true,
+      deterministicRuleId: 'caption-association-by-figure-id-v1',
+      consultationCount: 0,
+    })
   })
 })

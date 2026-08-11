@@ -120,7 +120,7 @@ export type ModelConsultationRecordStatus =
 export type ModelConsultationRecord = {
   schemaVersion: typeof MODEL_FALLBACK_SCHEMA_VERSION
   requestId: string
-  fixtureId?: string
+  fixtureId: string
   documentId: string
   decisionId: string
   decisionClass: ModelFallbackDecisionClass
@@ -303,6 +303,76 @@ function finiteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+function boundedId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+}
+
+function ownDataKeys(value: object): string[] | null {
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return null
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== 'string')) return null
+    const stringKeys = keys as string[]
+    for (const key of stringKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+        return null
+    }
+    return stringKeys
+  } catch {
+    return null
+  }
+}
+
+function isCanonicalJsonValue(
+  value: unknown,
+  ancestors = new Set<object>(),
+): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean')
+    return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (!value || typeof value !== 'object' || ancestors.has(value)) return false
+
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      const keys = Reflect.ownKeys(value)
+      if (
+        keys.length !== value.length + 1 ||
+        keys.some((key) => typeof key !== 'string') ||
+        !keys.includes('length')
+      )
+        return false
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (
+          !descriptor?.enumerable ||
+          !Object.hasOwn(descriptor, 'value') ||
+          !isCanonicalJsonValue(descriptor.value, ancestors)
+        )
+          return false
+      }
+      return true
+    }
+
+    const keys = ownDataKeys(value)
+    if (!keys) return false
+    return keys.every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      return (
+        descriptor !== undefined &&
+        Object.hasOwn(descriptor, 'value') &&
+        isCanonicalJsonValue(descriptor.value, ancestors)
+      )
+    })
+  } catch {
+    return false
+  } finally {
+    ancestors.delete(value)
+  }
+}
+
 function normalizedIdentity(identity: ModelIdentity | undefined) {
   const providerId = identity?.providerId ?? identity?.provider
   const modelId = identity?.modelId ?? identity?.id
@@ -310,6 +380,10 @@ function normalizedIdentity(identity: ModelIdentity | undefined) {
   const modelDigest = identity?.modelDigest ?? identity?.digest
   if (!providerId || !modelId || !modelVersion || !modelDigest) return undefined
   if (
+    typeof providerId !== 'string' ||
+    typeof modelId !== 'string' ||
+    typeof modelVersion !== 'string' ||
+    typeof modelDigest !== 'string' ||
     !SAFE_ID.test(providerId) ||
     !SAFE_ID.test(modelId) ||
     !SAFE_ID.test(modelVersion) ||
@@ -321,20 +395,112 @@ function normalizedIdentity(identity: ModelIdentity | undefined) {
 }
 
 function normalizedSourceHash(point: ModelFallbackDecisionPoint) {
-  const sourceSha256 = point.sourceSha256 ?? hash(point.inputs)
-  return HASH.test(sourceSha256) ? sourceSha256 : hash(sourceSha256)
+  if (point.sourceSha256 === undefined)
+    throw new Error('SOURCE_SHA256_REQUIRED')
+  if (typeof point.sourceSha256 !== 'string' || !HASH.test(point.sourceSha256))
+    throw new Error('INVALID_SOURCE_SHA256')
+  return point.sourceSha256
 }
 
 function candidateIds(candidates: readonly ModelFallbackCandidate[]) {
   if (
+    !Array.isArray(candidates) ||
     candidates.length === 0 ||
-    candidates.some((candidate) => !candidate || !SAFE_ID.test(candidate.id))
+    Array.from(
+      { length: candidates.length },
+      (_, index) => !Object.hasOwn(candidates, index),
+    ).some(Boolean) ||
+    candidates.some(
+      (candidate) =>
+        !candidate ||
+        typeof candidate !== 'object' ||
+        Array.isArray(candidate) ||
+        typeof candidate.id !== 'string' ||
+        !SAFE_ID.test(candidate.id),
+    )
   )
     throw new Error('INVALID_MODEL_CANDIDATE_SET')
   const ids = candidates.map(({ id }) => id)
   if (new Set(ids).size !== ids.length)
     throw new Error('DUPLICATE_MODEL_CANDIDATE_ID')
   return ids
+}
+
+function normalizedFixturePoint(
+  point: ModelFallbackDecisionPoint,
+): ModelFallbackDecisionPoint {
+  if (
+    !point ||
+    typeof point !== 'object' ||
+    Array.isArray(point) ||
+    !ownDataKeys(point) ||
+    !boundedId(point.documentId) ||
+    !boundedId(point.decisionId) ||
+    !boundedId(point.decisionClass) ||
+    !receiptRecord(point.inputs) ||
+    !isCanonicalJsonValue(point.inputs) ||
+    !isCanonicalJsonValue(point.candidates)
+  )
+    throw new Error('INVALID_DISTILLATION_FIXTURE')
+  try {
+    candidateIds(point.candidates)
+  } catch {
+    throw new Error('INVALID_DISTILLATION_FIXTURE')
+  }
+  let sourceSha256: string
+  try {
+    sourceSha256 = normalizedSourceHash(point)
+  } catch {
+    throw new Error('INVALID_DISTILLATION_FIXTURE')
+  }
+  return {
+    documentId: point.documentId,
+    decisionId: point.decisionId,
+    decisionClass: point.decisionClass,
+    sourceSha256,
+    inputs: clone(point.inputs),
+    candidates: point.candidates.map((candidate) => clone(candidate)),
+  }
+}
+
+function candidateAssociation(candidate: ModelFallbackCandidate) {
+  try {
+    const associationId = candidate.associationId
+    const association = candidate.association
+    const nestedAssociationId =
+      typeof association === 'string'
+        ? association
+        : association !== null &&
+            typeof association === 'object' &&
+            !Array.isArray(association)
+          ? (association as { id?: unknown }).id
+          : undefined
+    if (associationId !== undefined && !boundedId(associationId))
+      return { valid: false as const }
+    if (association !== undefined && !boundedId(nestedAssociationId))
+      return { valid: false as const }
+    if (
+      associationId !== undefined &&
+      nestedAssociationId !== undefined &&
+      associationId !== nestedAssociationId
+    )
+      return { valid: false as const }
+    return {
+      valid: true as const,
+      id: (associationId ?? nestedAssociationId) as string | undefined,
+    }
+  } catch {
+    return { valid: false as const }
+  }
+}
+
+function validConsultationCandidates(
+  candidates: readonly ModelFallbackCandidate[],
+) {
+  return (
+    isCanonicalJsonValue(candidates) &&
+    candidates.every((candidate) => candidateAssociation(candidate).valid)
+  )
 }
 
 function isOpenDecision(point: ModelFallbackDecisionPoint) {
@@ -348,10 +514,7 @@ function isOpenDecision(point: ModelFallbackDecisionPoint) {
   if (point.evidenceStatus === 'insufficient') return true
   if (point.status === 'insufficient-evidence' || point.status === 'ambiguous')
     return true
-  return (
-    point.deterministicChoice === undefined ||
-    point.deterministicChoice === null
-  )
+  return false
 }
 
 function candidateChoice(
@@ -365,6 +528,17 @@ function candidateChoice(
       message: 'The decision has no candidate choice.',
     }
   const ids = candidateIds(point.candidates)
+  if (
+    !point.candidates.every(
+      (candidate) => candidateAssociation(candidate).valid,
+    )
+  )
+    return {
+      status: 'rejected',
+      code: 'CONFLICTING_CANDIDATE_ASSOCIATION',
+      message:
+        'The deterministic candidate set has contradictory associations.',
+    }
   const candidateId = typeof value === 'string' ? value : value.candidateId
   if (!candidateId || !ids.includes(candidateId))
     return {
@@ -374,6 +548,13 @@ function candidateChoice(
         'The selected candidate was not produced by the deterministic layer.',
     }
   const candidate = point.candidates.find(({ id }) => id === candidateId)!
+  const association = candidateAssociation(candidate)
+  if (!association.valid)
+    return {
+      status: 'rejected',
+      code: 'CONFLICTING_CANDIDATE_ASSOCIATION',
+      message: 'The deterministic candidate has contradictory associations.',
+    }
   const choice: ModelFallbackChoice = {
     candidateId,
     ...(typeof value === 'string'
@@ -386,19 +567,9 @@ function candidateChoice(
           ...(value.label === undefined ? {} : { label: value.label }),
         }),
   }
-  const candidateAssociation =
-    typeof candidate.associationId === 'string'
-      ? candidate.associationId
-      : typeof candidate.association === 'string'
-        ? candidate.association
-        : candidate.association &&
-            typeof candidate.association === 'object' &&
-            typeof (candidate.association as { id?: unknown }).id === 'string'
-          ? (candidate.association as { id: string }).id
-          : undefined
   if (
     choice.associationId !== undefined &&
-    choice.associationId !== candidateAssociation
+    choice.associationId !== association.id
   )
     return {
       status: 'rejected',
@@ -429,8 +600,11 @@ function forbiddenKey(value: unknown, path = ''): string | null {
     return null
   }
   if (!value || typeof value !== 'object') return null
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+  const keys = ownDataKeys(value)
+  if (!keys) return null
+  for (const key of keys) {
     if (forbiddenModelField(key)) return `${path}.${key}`
+    const child = Object.getOwnPropertyDescriptor(value, key)?.value
     const found = forbiddenKey(child, `${path}.${key}`)
     if (found) return found
   }
@@ -438,19 +612,37 @@ function forbiddenKey(value: unknown, path = ''): string | null {
 }
 
 function proposalAndMetrics(response: ModelDecisionResponse) {
-  if (
-    response &&
-    typeof response === 'object' &&
-    !Array.isArray(response) &&
-    'proposal' in response
-  ) {
+  if (response && typeof response === 'object' && !Array.isArray(response)) {
+    const responseKeys = ownDataKeys(response)
+    if (!responseKeys) throw new Error('INVALID_MODEL_RESPONSE_SHAPE')
+    if (!responseKeys.includes('proposal')) {
+      if (
+        !responseKeys.includes('costUsd') &&
+        !responseKeys.includes('latencyMs')
+      )
+        return {
+          proposal: response as ModelDecisionProposal,
+          costUsd: 0,
+          latencyMs: null,
+        }
+      const {
+        costUsd = 0,
+        latencyMs = null,
+        ...proposal
+      } = response as Record<string, unknown>
+      return {
+        proposal: proposal as ModelDecisionProposal,
+        costUsd,
+        latencyMs,
+      }
+    }
     const wrapper = response as {
       proposal: ModelDecisionProposal
       costUsd?: unknown
       latencyMs?: unknown
     }
     const allowed = new Set(['proposal', 'costUsd', 'latencyMs'])
-    const unknown = Object.keys(response).find((key) => !allowed.has(key))
+    const unknown = responseKeys.find((key) => !allowed.has(key))
     if (unknown)
       return {
         proposal: null,
@@ -466,23 +658,6 @@ function proposalAndMetrics(response: ModelDecisionResponse) {
       proposal: wrapper.proposal,
       costUsd: wrapper.costUsd ?? 0,
       latencyMs: wrapper.latencyMs ?? null,
-    }
-  }
-  if (
-    response &&
-    typeof response === 'object' &&
-    !Array.isArray(response) &&
-    ('costUsd' in response || 'latencyMs' in response)
-  ) {
-    const {
-      costUsd = 0,
-      latencyMs = null,
-      ...proposal
-    } = response as Record<string, unknown>
-    return {
-      proposal: proposal as ModelDecisionProposal,
-      costUsd,
-      latencyMs,
     }
   }
   return {
@@ -540,35 +715,81 @@ export function verifyModelDecisionProposal(
     'order',
     'label',
   ])
-  const unknown = Object.keys(proposal).find((key) => !allowed.has(key))
+  const proposalKeys = ownDataKeys(proposal)
+  const unknown = proposalKeys?.find((key) => !allowed.has(key))
+  if (!proposalKeys)
+    return {
+      status: 'rejected',
+      code: 'MODEL_PROPOSAL_UNKNOWN_FIELD',
+      message: 'Model output must contain only enumerable data fields.',
+    }
   if (unknown)
     return {
       status: 'rejected',
       code: 'MODEL_PROPOSAL_UNKNOWN_FIELD',
       message: `Model output field ${unknown} is not part of the candidate reference contract.`,
     }
+  if (proposal.choice !== undefined && typeof proposal.choice !== 'string') {
+    if (
+      !proposal.choice ||
+      typeof proposal.choice !== 'object' ||
+      Array.isArray(proposal.choice) ||
+      ownDataKeys(proposal.choice)?.some((key) => key !== 'candidateId') !==
+        false
+    )
+      return {
+        status: 'rejected',
+        code: 'MODEL_PROPOSAL_UNKNOWN_FIELD',
+        message: 'A nested model choice may contain only candidateId.',
+      }
+    if (typeof proposal.choice.candidateId !== 'string')
+      return {
+        status: 'rejected',
+        code: 'INVALID_MODEL_PROPOSAL',
+        message: 'A nested model choice must identify a candidate id.',
+      }
+  }
   if (
-    proposal.choice &&
-    typeof proposal.choice === 'object' &&
-    Object.keys(proposal.choice).some((key) => key !== 'candidateId')
-  )
-    return {
-      status: 'rejected',
-      code: 'MODEL_PROPOSAL_UNKNOWN_FIELD',
-      message: 'A nested model choice may contain only candidateId.',
-    }
-  let candidateId = proposal.candidateId
-  if (candidateId === undefined && proposal.choice !== undefined) {
-    candidateId =
-      typeof proposal.choice === 'string'
-        ? proposal.choice
-        : proposal.choice?.candidateId
+    proposal.association !== undefined &&
+    typeof proposal.association !== 'string'
+  ) {
+    if (
+      !proposal.association ||
+      typeof proposal.association !== 'object' ||
+      Array.isArray(proposal.association) ||
+      ownDataKeys(proposal.association)?.some((key) => key !== 'id') !== false
+    )
+      return {
+        status: 'rejected',
+        code: 'MODEL_PROPOSAL_UNKNOWN_FIELD',
+        message: 'A nested model association may contain only id.',
+      }
+    if (typeof proposal.association.id !== 'string')
+      return {
+        status: 'rejected',
+        code: 'INVALID_MODEL_PROPOSAL',
+        message: 'A nested model association must identify an association id.',
+      }
   }
   if (
     proposal.candidateId !== undefined &&
-    proposal.choice !== undefined &&
-    typeof proposal.choice === 'string' &&
-    proposal.candidateId !== proposal.choice
+    typeof proposal.candidateId !== 'string'
+  )
+    return {
+      status: 'rejected',
+      code: 'INVALID_MODEL_PROPOSAL',
+      message: 'Model output must identify a candidate id.',
+    }
+  let candidateId = proposal.candidateId
+  const nestedCandidateId =
+    typeof proposal.choice === 'string'
+      ? proposal.choice
+      : proposal.choice?.candidateId
+  if (candidateId === undefined) candidateId = nestedCandidateId
+  if (
+    proposal.candidateId !== undefined &&
+    nestedCandidateId !== undefined &&
+    proposal.candidateId !== nestedCandidateId
   )
     return {
       status: 'rejected',
@@ -581,11 +802,21 @@ export function verifyModelDecisionProposal(
       code: 'INVALID_MODEL_PROPOSAL',
       message: 'Model output must identify a candidate id.',
     }
-  const associationId =
-    proposal.associationId ??
-    (typeof proposal.association === 'string'
+  const nestedAssociationId =
+    typeof proposal.association === 'string'
       ? proposal.association
-      : proposal.association?.id)
+      : proposal.association?.id
+  if (
+    proposal.associationId !== undefined &&
+    nestedAssociationId !== undefined &&
+    proposal.associationId !== nestedAssociationId
+  )
+    return {
+      status: 'rejected',
+      code: 'CONFLICTING_MODEL_ASSOCIATION',
+      message: 'Model output contains two different association ids.',
+    }
+  const associationId = proposal.associationId ?? nestedAssociationId
   if (associationId !== undefined && typeof associationId !== 'string')
     return {
       status: 'rejected',
@@ -637,6 +868,20 @@ function modelRequest(point: ModelFallbackDecisionPoint): ModelDecisionRequest {
   }
 }
 
+function decisionPointFromRequest(
+  request: ModelDecisionRequest,
+): ModelFallbackDecisionPoint {
+  return {
+    documentId: request.documentId,
+    decisionId: request.decisionId,
+    decisionClass: request.decisionClass,
+    sourceSha256: request.sourceSha256,
+    inputs: request.inputs,
+    candidates: request.candidates,
+    insufficientEvidence: true,
+  }
+}
+
 function requestId(
   request: ModelDecisionRequest,
   identity: NormalizedModelIdentity,
@@ -652,24 +897,23 @@ function requestId(
 
 function metric(
   events: readonly ModelDecisionMetricEvent[],
-  retired: (decisionClass: string) => boolean,
 ): ModelConsultationMetrics {
-  const byDecisionClass: Record<string, ModelConsultationMetric> = {}
+  const metricsByDecisionClass = new Map<string, ModelConsultationMetric>()
   for (const event of events) {
-    const current = byDecisionClass[event.decisionClass] ?? {
+    const current = metricsByDecisionClass.get(event.decisionClass) ?? {
       decisionCount: 0,
       consultationCount: 0,
       consultationRate: 0,
     }
     current.decisionCount += 1
-    if (event.consulted && !retired(event.decisionClass))
-      current.consultationCount += 1
+    if (event.consulted) current.consultationCount += 1
     current.consultationRate =
       current.decisionCount === 0
         ? 0
         : current.consultationCount / current.decisionCount
-    byDecisionClass[event.decisionClass] = current
+    metricsByDecisionClass.set(event.decisionClass, current)
   }
+  const byDecisionClass = Object.fromEntries(metricsByDecisionClass)
   const totalDecisionCount = events.length
   const totalConsultationCount = Object.values(byDecisionClass).reduce(
     (sum, value) => sum + value.consultationCount,
@@ -689,52 +933,70 @@ function metric(
 /** Distillation state is intentionally separate from model provenance. */
 export class DistillationLedger {
   private readonly fixtures = new Map<string, InternalFixture>()
+  private readonly pendingConsultations = new Map<string, number>()
   private readonly rules = new Map<
     string,
     { id: string; rule: ModelFallbackDeterministicRule }
   >()
 
   registerFixture(point: ModelFallbackDecisionPoint): ModelFallbackFixture {
-    const sourceSha256 = normalizedSourceHash(point)
-    const id = `fixture-${hash({
-      documentId: point.documentId,
-      decisionId: point.decisionId,
-      decisionClass: point.decisionClass,
-      sourceSha256,
-      inputs: point.inputs,
-      candidates: point.candidates,
-    }).slice(0, 24)}`
+    const fixturePoint = normalizedFixturePoint(point)
+    const sourceSha256 = fixturePoint.sourceSha256!
+    const id = `fixture-${hash(fixturePoint).slice(0, 24)}`
     const existing = this.fixtures.get(id)
     if (existing) return clone(existing)
     const fixture: InternalFixture = {
       schemaVersion: MODEL_FALLBACK_SCHEMA_VERSION,
       id,
-      documentId: point.documentId,
-      decisionId: point.decisionId,
-      decisionClass: point.decisionClass,
+      documentId: fixturePoint.documentId,
+      decisionId: fixturePoint.decisionId,
+      decisionClass: fixturePoint.decisionClass,
       sourceSha256,
       ambiguity: {
         reason:
           point.reason ??
           'deterministic evidence left multiple candidates open',
-        inputs: clone(point.inputs),
-        candidateIds: point.candidates.map(
+        inputs: clone(fixturePoint.inputs),
+        candidateIds: fixturePoint.candidates.map(
           ({ id: candidateId }) => candidateId,
         ),
       },
-      candidates: point.candidates.map((candidate) => clone(candidate)),
+      candidates: fixturePoint.candidates.map((candidate) => clone(candidate)),
       modelPath: { status: 'model-consulted', choice: null },
       rejectionPath: {
         status: 'review-required',
         diagnosticCode: 'MODEL_ASSISTANCE_DISABLED',
       },
       resolution: 'model-consulted',
-      point: {
-        ...point,
-        sourceSha256,
-        inputs: clone(point.inputs),
-        candidates: point.candidates.map((candidate) => clone(candidate)),
-      },
+      point: fixturePoint,
+    }
+    const installedRule = this.rules.get(fixturePoint.decisionClass)
+    if (installedRule) {
+      let resolved: ModelFallbackChoice | string | null = null
+      let failureCode: string | null = null
+      try {
+        resolved = installedRule.rule(clone(fixture.point))
+      } catch {
+        failureCode = 'DISTILLATION_RULE_ERROR'
+      }
+      const result = failureCode
+        ? null
+        : verifyModelDecisionProposal(fixture.point, resolved)
+      if (!result || result.status !== 'accepted') {
+        failureCode ??= `DISTILLATION_RULE_${result?.code ?? 'ERROR'}`
+        this.rules.delete(fixturePoint.decisionClass)
+        fixture.rejectionPath = {
+          status: 'review-required',
+          diagnosticCode: failureCode,
+        }
+      } else {
+        fixture.resolution = 'deterministic-decided'
+        fixture.deterministicRuleId = installedRule.id
+        fixture.modelPath = {
+          status: 'model-consulted',
+          choice: result.choice,
+        }
+      }
     }
     this.fixtures.set(id, fixture)
     return clone(fixture)
@@ -758,6 +1020,45 @@ export class DistillationLedger {
     fixture.rejectionPath = { status: 'review-required', diagnosticCode }
   }
 
+  markConsultationPending(fixtureId: string) {
+    if (!this.fixtures.has(fixtureId))
+      throw new Error(`UNKNOWN_DISTILLATION_FIXTURE:${fixtureId}`)
+    this.pendingConsultations.set(
+      fixtureId,
+      (this.pendingConsultations.get(fixtureId) ?? 0) + 1,
+    )
+  }
+
+  markConsultationComplete(fixtureId: string) {
+    const count = this.pendingConsultations.get(fixtureId) ?? 0
+    if (count <= 1) this.pendingConsultations.delete(fixtureId)
+    else this.pendingConsultations.set(fixtureId, count - 1)
+  }
+
+  recordUncoveredFixture(
+    point: ModelFallbackDecisionPoint,
+    diagnosticCode: string,
+  ) {
+    const installedRule = this.rules.get(point.decisionClass)
+    this.rules.delete(point.decisionClass)
+    try {
+      const fixture = this.registerFixture(point)
+      const stored = this.fixtures.get(fixture.id)
+      if (stored) {
+        stored.resolution = 'model-consulted'
+        delete stored.deterministicRuleId
+        stored.rejectionPath = {
+          status: 'review-required',
+          diagnosticCode,
+        }
+      }
+      return stored ? clone(stored) : fixture
+    } catch (error) {
+      if (installedRule) this.rules.set(point.decisionClass, installedRule)
+      throw error
+    }
+  }
+
   /**
    * Install and validate a deterministic rule against every generated
    * ambiguity fixture. A class cannot be called retired while one fixture is
@@ -773,13 +1074,31 @@ export class DistillationLedger {
     )
     if (fixtures.length === 0)
       throw new Error(`DISTILLATION_REQUIRES_FIXTURE:${decisionClass}`)
+    if (
+      fixtures.some(
+        (fixture) => (this.pendingConsultations.get(fixture.id) ?? 0) > 0,
+      )
+    )
+      throw new Error(`DISTILLATION_PENDING_CONSULTATION:${decisionClass}`)
     const resolutions = new Map<string, ModelFallbackChoice>()
     for (const fixture of fixtures) {
-      const resolved = rule(fixture.point)
+      let resolved: ModelFallbackChoice | string | null
+      try {
+        resolved = rule(clone(fixture.point))
+      } catch {
+        throw new Error(`DISTILLATION_RULE_ERROR:${fixture.id}`)
+      }
       const result = verifyModelDecisionProposal(fixture.point, resolved)
       if (result.status !== 'accepted')
         throw new Error(
           `DISTILLATION_RULE_DOES_NOT_RESOLVE_FIXTURE:${fixture.id}:${result.code}`,
+        )
+      if (
+        fixture.modelPath.choice &&
+        stableJson(fixture.modelPath.choice) !== stableJson(result.choice)
+      )
+        throw new Error(
+          `DISTILLATION_RULE_DISAGREES_WITH_MODEL_PATH:${fixture.id}`,
         )
       resolutions.set(fixture.id, result.choice)
     }
@@ -787,10 +1106,11 @@ export class DistillationLedger {
     for (const fixture of fixtures) {
       fixture.resolution = 'deterministic-decided'
       fixture.deterministicRuleId = ruleId
-      fixture.modelPath = {
-        status: 'model-consulted',
-        choice: resolutions.get(fixture.id) ?? null,
-      }
+      if (!fixture.modelPath.choice)
+        fixture.modelPath = {
+          status: 'model-consulted',
+          choice: resolutions.get(fixture.id) ?? null,
+        }
     }
     return this.entry(decisionClass)
   }
@@ -832,7 +1152,9 @@ export class DistillationLedger {
       fixtureIds: fixtures.map(({ id }) => id).sort(),
       fixtures,
       fixtureCount: fixtures.length,
-      consultationCount: retired ? 0 : fixtures.length,
+      consultationCount: fixtures.filter(
+        ({ resolution }) => resolution === 'model-consulted',
+      ).length,
       retired,
       deterministicRuleId: this.rules.get(decisionClass)?.id ?? null,
     }
@@ -860,6 +1182,7 @@ export class DistillationLedger {
 export class ModelFallbackLedger {
   private readonly records: ModelConsultationRecord[] = []
   private readonly decisions: ModelDecisionMetricEvent[] = []
+  private readonly documentSources = new Map<string, string>()
   readonly distillation: DistillationLedger
 
   constructor(distillation = new DistillationLedger()) {
@@ -870,10 +1193,27 @@ export class ModelFallbackLedger {
     this.decisions.push(clone(event))
   }
 
+  bindDocumentSource(documentId: string, sourceSha256: unknown) {
+    if (typeof sourceSha256 !== 'string' || !HASH.test(sourceSha256))
+      return true
+    const existing = this.documentSources.get(documentId)
+    if (existing === undefined) {
+      this.documentSources.set(documentId, sourceSha256)
+      return true
+    }
+    return existing === sourceSha256
+  }
+
   beginConsultation(
     request: ModelDecisionRequest,
     model: NormalizedModelIdentity,
   ) {
+    if (this.distillation.isRetired(request.decisionClass))
+      throw new Error(
+        `DISTILLED_CLASS_MAY_NOT_CONSULT:${request.decisionClass}`,
+      )
+    if (!this.bindDocumentSource(request.documentId, request.sourceSha256))
+      throw new Error('DOCUMENT_SOURCE_HASH_MISMATCH')
     const fixture = this.distillation.registerFixture({
       documentId: request.documentId,
       decisionId: request.decisionId,
@@ -903,6 +1243,7 @@ export class ModelFallbackLedger {
       costUsd: 0,
       latencyMs: null,
     }
+    this.distillation.markConsultationPending(fixture.id)
     this.records.push(record)
     return record.requestId
   }
@@ -914,8 +1255,9 @@ export class ModelFallbackLedger {
       'status' | 'choice' | 'costUsd' | 'latencyMs'
     > & { failureCode?: string },
   ) {
-    const index = this.records.findLastIndex(
-      ({ requestId: candidate }) => candidate === requestIdValue,
+    const index = this.records.findIndex(
+      ({ requestId: candidate, status }) =>
+        candidate === requestIdValue && status === 'pending',
     )
     if (index < 0) throw new Error('UNKNOWN_MODEL_CONSULTATION_REQUEST')
     this.records[index] = {
@@ -927,15 +1269,7 @@ export class ModelFallbackLedger {
       ...(patch.failureCode ? { failureCode: patch.failureCode } : {}),
     }
     const record = this.records[index]!
-    const fixture = record.fixtureId
-      ? this.distillation.fixture(record.fixtureId)
-      : this.distillation
-          .fixturesFor(record.decisionClass)
-          .find(
-            (candidate) =>
-              candidate.documentId === record.documentId &&
-              candidate.decisionId === record.decisionId,
-          )
+    const fixture = this.distillation.fixture(record.fixtureId)
     if (fixture) {
       if (patch.status === 'accepted')
         this.distillation.recordModelPath(fixture.id, patch.choice)
@@ -945,6 +1279,7 @@ export class ModelFallbackLedger {
           patch.failureCode ?? 'MODEL_REVIEW_REQUIRED',
         )
     }
+    this.distillation.markConsultationComplete(record.fixtureId)
     return clone(record)
   }
 
@@ -994,24 +1329,16 @@ export class ModelFallbackLedger {
       sourceSha256,
       consultations,
       decisions,
-      metrics: metric(decisions, (decisionClass) =>
-        this.distillation.isRetired(decisionClass),
-      ),
+      metrics: metric(decisions),
     }
   }
 
   metrics(documentId?: string) {
-    return metric(
-      this.decisionsFor(documentId ? { documentId } : {}),
-      (decisionClass) => this.distillation.isRetired(decisionClass),
-    )
+    return metric(this.decisionsFor(documentId ? { documentId } : {}))
   }
 
   consultationCount(decisionClass?: string, documentId?: string) {
-    const records = this.recordsFor({ documentId, decisionClass }).filter(
-      ({ status }) => status === 'accepted',
-    )
-    return this.distillation.isRetired(decisionClass ?? '') ? 0 : records.length
+    return this.recordsFor({ documentId, decisionClass }).length
   }
 
   retireDecisionClass(
@@ -1061,11 +1388,8 @@ export class ModelConsultationGate {
       options.ledger ??
       new ModelFallbackLedger(options.distillation ?? new DistillationLedger())
     this.model = options.model
-    this.identity = options.model
-      ? normalizedIdentity(options.model.identity)
-      : options.modelIdentity
-        ? normalizedIdentity(options.modelIdentity)
-        : undefined
+    const identity = options.model?.identity ?? options.modelIdentity
+    this.identity = identity ? normalizedIdentity(identity) : undefined
     this.onRequest = options.onRequest
   }
 
@@ -1090,14 +1414,19 @@ export class ModelConsultationGate {
     }
   }
 
-  private reviewOutcome(point: ModelFallbackDecisionPoint, diagnostic: string) {
-    this.ledger.recordDecision({
-      documentId: point.documentId,
-      decisionId: point.decisionId,
-      decisionClass: point.decisionClass,
-      outcome: 'review-required',
-      consulted: false,
-    })
+  private reviewOutcome(
+    point: ModelFallbackDecisionPoint,
+    diagnostic: string,
+    record = true,
+  ) {
+    if (record)
+      this.ledger.recordDecision({
+        documentId: point.documentId,
+        decisionId: point.decisionId,
+        decisionClass: point.decisionClass,
+        outcome: 'review-required',
+        consulted: false,
+      })
     return {
       status: 'review-required' as const,
       documentId: point.documentId,
@@ -1112,6 +1441,14 @@ export class ModelConsultationGate {
   async decide(
     point: ModelFallbackDecisionPoint,
   ): Promise<ModelDecisionOutcome> {
+    if (
+      !boundedId(point.documentId) ||
+      !boundedId(point.decisionId) ||
+      !boundedId(point.decisionClass)
+    )
+      return this.reviewOutcome(point, 'INVALID_MODEL_DECISION_POINT', false)
+    if (!this.ledger.bindDocumentSource(point.documentId, point.sourceSha256))
+      return this.reviewOutcome(point, 'DOCUMENT_SOURCE_HASH_MISMATCH', false)
     try {
       candidateIds(point.candidates)
     } catch (error) {
@@ -1129,10 +1466,34 @@ export class ModelConsultationGate {
 
     const distilled = this.ledger.distillation.ruleFor(point.decisionClass)
     if (distilled) {
-      const checked = candidateChoice(point, distilled(point))
+      const distilledPoint = clone(point)
+      let distilledChoice: ModelFallbackChoice | string | null
+      try {
+        distilledChoice = distilled(clone(distilledPoint))
+      } catch {
+        try {
+          this.ledger.distillation.recordUncoveredFixture(
+            distilledPoint,
+            'DISTILLATION_RULE_ERROR',
+          )
+        } catch {
+          // The decision still fails closed if its fixture cannot be recorded.
+        }
+        return this.reviewOutcome(point, 'DISTILLATION_RULE_ERROR')
+      }
+      const checked = candidateChoice(distilledPoint, distilledChoice)
       if (checked.status === 'accepted')
         return this.deterministicOutcome(point, checked.choice)
-      return this.reviewOutcome(point, `DISTILLED_RULE_${checked.code}`)
+      const diagnostic = `DISTILLED_RULE_${checked.code}`
+      try {
+        this.ledger.distillation.recordUncoveredFixture(
+          distilledPoint,
+          diagnostic,
+        )
+      } catch {
+        // The decision still fails closed if its fixture cannot be recorded.
+      }
+      return this.reviewOutcome(point, diagnostic)
     }
 
     if (!this.enabled)
@@ -1141,40 +1502,36 @@ export class ModelConsultationGate {
       return this.reviewOutcome(point, 'MODEL_PROVIDER_UNAVAILABLE')
     if (!this.identity)
       return this.reviewOutcome(point, 'MODEL_IDENTITY_REQUIRED')
-    const request = modelRequest(point)
-    const requestIdValue = this.ledger.beginConsultation(request, this.identity)
-    // The callback and pending receipt entry happen before the provider call.
-    this.onRequest?.(clone(request))
-    const consult =
-      this.model.consult ?? this.model.propose ?? this.model.choose
-    if (!consult) {
-      const provenance = this.ledger.completeConsultation(requestIdValue, {
-        status: 'failed',
-        choice: null,
-        costUsd: 0,
-        latencyMs: null,
-        failureCode: 'MODEL_PROVIDER_UNAVAILABLE',
-      })
-      this.ledger.recordDecision({
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
-        outcome: 'consulted',
-        consulted: true,
-      })
-      return {
-        status: 'review-required',
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
-        choice: null,
-        provenance,
-        diagnostic: 'MODEL_PROVIDER_UNAVAILABLE',
-      }
-    }
-    let response: ModelDecisionResponse
+    if (!receiptRecord(point.inputs) || !isCanonicalJsonValue(point.inputs))
+      return this.reviewOutcome(point, 'INVALID_MODEL_DECISION_INPUTS')
+    if (!validConsultationCandidates(point.candidates))
+      return this.reviewOutcome(point, 'INVALID_MODEL_CANDIDATE_SET')
     try {
-      response = await consult(request)
+      normalizedSourceHash(point)
+    } catch (error) {
+      return this.reviewOutcome(
+        point,
+        error instanceof Error ? error.message : 'INVALID_SOURCE_SHA256',
+      )
+    }
+    const request = modelRequest(point)
+    const requestPoint = decisionPointFromRequest(request)
+    let requestIdValue: string
+    try {
+      requestIdValue = this.ledger.beginConsultation(request, this.identity)
+    } catch (error) {
+      return this.reviewOutcome(
+        point,
+        error instanceof Error
+          ? error.message
+          : 'MODEL_CONSULTATION_RECORD_ERROR',
+      )
+    }
+    let consult: ModelConsultationClient['consult']
+    try {
+      // The callback and pending receipt entry happen before the provider call.
+      this.onRequest?.(clone(request))
+      consult = this.model.consult ?? this.model.propose ?? this.model.choose
     } catch {
       const provenance = this.ledger.completeConsultation(requestIdValue, {
         status: 'failed',
@@ -1184,25 +1541,81 @@ export class ModelConsultationGate {
         failureCode: 'MODEL_PROVIDER_ERROR',
       })
       this.ledger.recordDecision({
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         outcome: 'consulted',
         consulted: true,
       })
       return {
         status: 'review-required',
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         choice: null,
         provenance,
         diagnostic: 'MODEL_PROVIDER_ERROR',
       }
     }
-    const { proposal, costUsd, latencyMs, rejection } =
-      proposalAndMetrics(response)
-    const verified = rejection ?? verifyModelDecisionProposal(point, proposal)
+    if (!consult) {
+      const provenance = this.ledger.completeConsultation(requestIdValue, {
+        status: 'failed',
+        choice: null,
+        costUsd: 0,
+        latencyMs: null,
+        failureCode: 'MODEL_PROVIDER_UNAVAILABLE',
+      })
+      this.ledger.recordDecision({
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
+        outcome: 'consulted',
+        consulted: true,
+      })
+      return {
+        status: 'review-required',
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
+        choice: null,
+        provenance,
+        diagnostic: 'MODEL_PROVIDER_UNAVAILABLE',
+      }
+    }
+    let processed: ReturnType<typeof proposalAndMetrics>
+    let verified: ModelProposalVerification
+    try {
+      const response = await consult.call(this.model, clone(request))
+      processed = proposalAndMetrics(response)
+      verified =
+        processed.rejection ??
+        verifyModelDecisionProposal(requestPoint, processed.proposal)
+    } catch {
+      const provenance = this.ledger.completeConsultation(requestIdValue, {
+        status: 'failed',
+        choice: null,
+        costUsd: 0,
+        latencyMs: null,
+        failureCode: 'MODEL_PROVIDER_ERROR',
+      })
+      this.ledger.recordDecision({
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
+        outcome: 'consulted',
+        consulted: true,
+      })
+      return {
+        status: 'review-required',
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
+        choice: null,
+        provenance,
+        diagnostic: 'MODEL_PROVIDER_ERROR',
+      }
+    }
+    const { costUsd, latencyMs } = processed
     if (
       !finiteNonNegative(costUsd) ||
       (latencyMs !== null && !finiteNonNegative(latencyMs))
@@ -1215,17 +1628,17 @@ export class ModelConsultationGate {
         failureCode: 'INVALID_MODEL_COST',
       })
       this.ledger.recordDecision({
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         outcome: 'consulted',
         consulted: true,
       })
       return {
         status: 'review-required',
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         choice: null,
         provenance,
         diagnostic: 'INVALID_MODEL_COST',
@@ -1240,17 +1653,17 @@ export class ModelConsultationGate {
         failureCode: verified.code,
       })
       this.ledger.recordDecision({
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         outcome: 'consulted',
         consulted: true,
       })
       return {
         status: 'review-required',
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         choice: null,
         provenance,
         diagnostic: verified.code,
@@ -1269,17 +1682,17 @@ export class ModelConsultationGate {
         failureCode: 'BYTE_STABILITY_MISMATCH',
       })
       this.ledger.recordDecision({
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         outcome: 'consulted',
         consulted: true,
       })
       return {
         status: 'review-required',
-        documentId: point.documentId,
-        decisionId: point.decisionId,
-        decisionClass: point.decisionClass,
+        documentId: requestPoint.documentId,
+        decisionId: requestPoint.decisionId,
+        decisionClass: requestPoint.decisionClass,
         choice: null,
         provenance,
         diagnostic: 'BYTE_STABILITY_MISMATCH',
@@ -1292,17 +1705,17 @@ export class ModelConsultationGate {
       latencyMs,
     })
     this.ledger.recordDecision({
-      documentId: point.documentId,
-      decisionId: point.decisionId,
-      decisionClass: point.decisionClass,
+      documentId: requestPoint.documentId,
+      decisionId: requestPoint.decisionId,
+      decisionClass: requestPoint.decisionClass,
       outcome: 'consulted',
       consulted: true,
     })
     return {
       status: 'consulted',
-      documentId: point.documentId,
-      decisionId: point.decisionId,
-      decisionClass: point.decisionClass,
+      documentId: requestPoint.documentId,
+      decisionId: requestPoint.decisionId,
+      decisionClass: requestPoint.decisionClass,
       choice: verified.choice,
       provenance,
     }
@@ -1370,6 +1783,8 @@ export const modelConsultationRate = buildModelConsultationMetrics
 export function serializeModelConsultationReceipt(
   receipt: ModelFallbackReceipt,
 ) {
+  if (!validateModelConsultationReceipt(receipt))
+    throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
   return `${stableJson(receipt)}\n`
 }
 
@@ -1400,18 +1815,15 @@ function receiptHash(value: unknown) {
 function validReceiptChoice(value: unknown) {
   if (!receiptRecord(value)) return false
   if (
-    !exactReceiptKeys(value, ['candidateId'], [
-      'associationId',
-      'order',
-      'label',
-    ]) ||
+    !exactReceiptKeys(
+      value,
+      ['candidateId'],
+      ['associationId', 'order', 'label'],
+    ) ||
     !receiptId(value.candidateId)
   )
     return false
-  if (
-    Object.hasOwn(value, 'associationId') &&
-    !receiptId(value.associationId)
-  )
+  if (Object.hasOwn(value, 'associationId') && !receiptId(value.associationId))
     return false
   if (
     Object.hasOwn(value, 'order') &&
@@ -1452,6 +1864,7 @@ function validReceiptConsultation(value: unknown) {
       [
         'schemaVersion',
         'requestId',
+        'fixtureId',
         'documentId',
         'decisionId',
         'decisionClass',
@@ -1467,24 +1880,25 @@ function validReceiptConsultation(value: unknown) {
         'costUsd',
         'latencyMs',
       ],
-      ['fixtureId', 'failureCode'],
+      ['failureCode'],
     )
   )
     return false
   if (
     value.schemaVersion !== MODEL_FALLBACK_SCHEMA_VERSION ||
     !receiptHash(value.requestId) ||
+    !receiptId(value.fixtureId) ||
     !receiptId(value.documentId) ||
     !receiptId(value.decisionId) ||
     !receiptId(value.decisionClass) ||
     !receiptHash(value.sourceSha256) ||
     !receiptRecord(value.inputs) ||
+    !isCanonicalJsonValue(value.inputs) ||
     !receiptHash(value.inputsHash) ||
     !validReceiptModel(value.model) ||
     !receiptHash(value.promptHash) ||
     !finiteNonNegative(value.costUsd) ||
-    (value.latencyMs !== null && !finiteNonNegative(value.latencyMs)) ||
-    (Object.hasOwn(value, 'fixtureId') && !receiptId(value.fixtureId))
+    (value.latencyMs !== null && !finiteNonNegative(value.latencyMs))
   )
     return false
 
@@ -1492,9 +1906,18 @@ function validReceiptConsultation(value: unknown) {
     return false
   const candidateIdsFromCandidates: string[] = []
   for (const candidate of value.candidates) {
-    if (!receiptRecord(candidate) || !receiptId(candidate.id)) return false
+    if (
+      !receiptRecord(candidate) ||
+      !receiptId(candidate.id) ||
+      !isCanonicalJsonValue(candidate)
+    )
+      return false
     candidateIdsFromCandidates.push(candidate.id)
   }
+  if (
+    !validConsultationCandidates(value.candidates as ModelFallbackCandidate[])
+  )
+    return false
   if (!Array.isArray(value.candidateIds)) return false
   const recordedCandidateIds = value.candidateIds
   if (
@@ -1505,6 +1928,42 @@ function validReceiptConsultation(value: unknown) {
     candidateIdsFromCandidates.some(
       (candidateId, index) => candidateId !== recordedCandidateIds[index],
     )
+  )
+    return false
+
+  const request: ModelDecisionRequest = {
+    schemaVersion: MODEL_FALLBACK_SCHEMA_VERSION,
+    documentId: value.documentId as string,
+    decisionId: value.decisionId as string,
+    decisionClass: value.decisionClass as string,
+    sourceSha256: value.sourceSha256 as string,
+    inputs: value.inputs,
+    candidates: value.candidates as ModelFallbackCandidate[],
+    promptHash: value.promptHash as string,
+  }
+  const expectedPromptHash = hash({
+    schemaVersion: request.schemaVersion,
+    documentId: request.documentId,
+    decisionId: request.decisionId,
+    decisionClass: request.decisionClass,
+    sourceSha256: request.sourceSha256,
+    inputs: request.inputs,
+    candidates: request.candidates,
+  })
+  const expectedFixtureId = `fixture-${hash({
+    documentId: request.documentId,
+    decisionId: request.decisionId,
+    decisionClass: request.decisionClass,
+    sourceSha256: request.sourceSha256,
+    inputs: request.inputs,
+    candidates: request.candidates,
+  }).slice(0, 24)}`
+  if (
+    value.inputsHash !== hash(request.inputs) ||
+    value.promptHash !== expectedPromptHash ||
+    value.requestId !==
+      requestId(request, value.model as NormalizedModelIdentity) ||
+    value.fixtureId !== expectedFixtureId
   )
     return false
 
@@ -1520,12 +1979,12 @@ function validReceiptConsultation(value: unknown) {
       if (!Object.hasOwn(choice, key)) continue
       const candidateValue =
         key === 'associationId'
-          ? candidate.associationId ??
+          ? (candidate.associationId ??
             (typeof candidate.association === 'string'
               ? candidate.association
               : receiptRecord(candidate.association)
                 ? candidate.association.id
-                : undefined)
+                : undefined))
           : candidate[key]
       if (choice[key] !== candidateValue) return false
     }
@@ -1533,9 +1992,7 @@ function validReceiptConsultation(value: unknown) {
   }
   if (value.status === 'pending') return value.choice === null && !hasFailure
   if (value.status === 'rejected' || value.status === 'failed')
-    return (
-      value.choice === null && hasFailure && receiptId(value.failureCode)
-    )
+    return value.choice === null && hasFailure && receiptId(value.failureCode)
   return false
 }
 
@@ -1555,6 +2012,7 @@ function validReceiptDecision(value: unknown) {
     typeof value.consulted !== 'boolean'
   )
     return false
+
   if (value.outcome === 'consulted') return value.consulted
   return (
     (value.outcome === 'deterministic' ||
@@ -1590,7 +2048,7 @@ function validReceiptMetric(value: unknown) {
 export function validateModelConsultationReceipt(
   receipt: unknown,
 ): receipt is ModelFallbackReceipt {
-  if (!receiptRecord(receipt)) return false
+  if (!receiptRecord(receipt) || !isCanonicalJsonValue(receipt)) return false
   if (
     !exactReceiptKeys(receipt, [
       'schemaVersion',
@@ -1621,6 +2079,49 @@ export function validateModelConsultationReceipt(
       (decision) => decision.documentId !== receipt.documentId,
     ) ||
     (receipt.consultations.length > 0 && receipt.sourceSha256 === null)
+  )
+    return false
+
+  const acceptedChoiceByRequestId = new Map<string, string>()
+  for (const consultation of receipt.consultations) {
+    if (consultation.status !== 'accepted') continue
+    const serializedChoice = stableJson(consultation.choice)
+    const priorChoice = acceptedChoiceByRequestId.get(consultation.requestId)
+    if (priorChoice !== undefined && priorChoice !== serializedChoice)
+      return false
+    acceptedChoiceByRequestId.set(consultation.requestId, serializedChoice)
+  }
+
+  const decisionKey = (value: {
+    documentId: string
+    decisionId: string
+    decisionClass: string
+  }) => stableJson([value.documentId, value.decisionId, value.decisionClass])
+  const consultationCounts = new Map<string, number>()
+  for (const consultation of receipt.consultations) {
+    if (consultation.status === 'pending') continue
+    const key = decisionKey(consultation)
+    consultationCounts.set(key, (consultationCounts.get(key) ?? 0) + 1)
+  }
+  const consultedDecisionCounts = new Map<string, number>()
+  for (const decision of receipt.decisions) {
+    if (!decision.consulted) continue
+    const key = decisionKey(decision)
+    consultedDecisionCounts.set(
+      key,
+      (consultedDecisionCounts.get(key) ?? 0) + 1,
+    )
+  }
+  const consultationKeys = [
+    ...new Set([
+      ...consultationCounts.keys(),
+      ...consultedDecisionCounts.keys(),
+    ]),
+  ]
+  if (
+    consultationKeys.some(
+      (key) => consultationCounts.get(key) !== consultedDecisionCounts.get(key),
+    )
   )
     return false
 
@@ -1664,7 +2165,7 @@ export function validateModelConsultationReceipt(
     const events = decisionsByClass.get(decisionClass) ?? []
     if (
       typedMetric.decisionCount !== events.length ||
-      typedMetric.consultationCount >
+      typedMetric.consultationCount !==
         events.filter(({ consulted }) => consulted).length
     )
       return false
@@ -1672,7 +2173,8 @@ export function validateModelConsultationReceipt(
     consultationTotal += typedMetric.consultationCount
   }
 
-  const expectedRate = decisionTotal === 0 ? 0 : consultationTotal / decisionTotal
+  const expectedRate =
+    decisionTotal === 0 ? 0 : consultationTotal / decisionTotal
   return (
     metrics.totalDecisionCount === decisionTotal &&
     metrics.totalDecisionCount === receipt.decisions.length &&
@@ -1725,10 +2227,37 @@ export const MODEL_FALLBACK_REFERENCE_FIXTURES: readonly ModelFallbackDecisionPo
     },
   ])
 
+export const MODEL_FALLBACK_REFERENCE_RULE_ID =
+  'caption-association-by-figure-id-v1' as const
+
+/**
+ * Reference distillation: when exactly one caption candidate carries the
+ * deterministically proven figure id, no model consultation is needed.
+ */
+export const resolveCaptionAssociationByFigureId: ModelFallbackDeterministicRule =
+  (point) => {
+    if (
+      point.decisionClass !==
+        MODEL_FALLBACK_DECISION_CLASSES.captionAssociation ||
+      typeof point.inputs.figureId !== 'string'
+    )
+      return null
+    const matching = point.candidates.filter((candidate) => {
+      const association = candidateAssociation(candidate)
+      return association.valid && association.id === point.inputs.figureId
+    })
+    return matching.length === 1 ? matching[0]!.id : null
+  }
+
 export function createReferenceDistillationLedger() {
   const ledger = new DistillationLedger()
   for (const fixture of MODEL_FALLBACK_REFERENCE_FIXTURES)
     ledger.registerFixture(fixture)
+  ledger.retireClass(
+    MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
+    resolveCaptionAssociationByFigureId,
+    MODEL_FALLBACK_REFERENCE_RULE_ID,
+  )
   return ledger
 }
 
@@ -1737,9 +2266,12 @@ export function attachModelConsultationReceipt<T extends object>(
   ledger: ModelFallbackLedger,
   documentId: string,
 ) {
+  const modelConsultations = createModelConsultationReceipt(ledger, documentId)
+  if (!validateModelConsultationReceipt(modelConsultations))
+    throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
   return {
     ...receipt,
-    modelConsultations: createModelConsultationReceipt(ledger, documentId),
+    modelConsultations,
   }
 }
 

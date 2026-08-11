@@ -17,18 +17,21 @@ export const PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION = '1.6.0'
 export const PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION = '1.7.0'
 export const PDF_BENCHMARK_COMPARISON_V18_SCHEMA_VERSION = '1.8.0'
 export const PDF_BENCHMARK_COMPARISON_V19_SCHEMA_VERSION = '1.9.0'
+export const PDF_BENCHMARK_COMPARISON_V110_SCHEMA_VERSION = '1.10.0'
 
 const CORPUS_REPORT_SCHEMA_POLICY_V15 = 'v1.5-only'
 const CORPUS_REPORT_SCHEMA_POLICY_V15_V16 = 'v1.5-v1.6-compatible'
 const CORPUS_REPORT_SCHEMA_POLICY_V17 = 'v1.7-only'
 const CORPUS_REPORT_SCHEMA_POLICY_V18 = 'v1.8-only'
 const CORPUS_REPORT_SCHEMA_POLICY_V19 = 'v1.9-only'
+const CORPUS_REPORT_SCHEMA_POLICY_V110 = 'v1.10-only'
 const CORPUS_REPORT_SCHEMAS = Object.freeze({
   '1.5.0': 'docs/schemas/pdf-corpus-audit.schema.json',
   '1.6.0': 'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
   '1.7.0': 'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
   '1.8.0': 'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
   '1.9.0': 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+  '1.10.0': 'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
 })
 
 const LEGACY_METRICS = Object.freeze(
@@ -266,7 +269,8 @@ function validateCorpusReportSchemaPolicy(value) {
     value !== CORPUS_REPORT_SCHEMA_POLICY_V15_V16 &&
     value !== CORPUS_REPORT_SCHEMA_POLICY_V17 &&
     value !== CORPUS_REPORT_SCHEMA_POLICY_V18 &&
-    value !== CORPUS_REPORT_SCHEMA_POLICY_V19
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V19 &&
+    value !== CORPUS_REPORT_SCHEMA_POLICY_V110
   ) {
     throw new Error('INVALID_CORPUS_REPORT_SCHEMA_POLICY')
   }
@@ -275,7 +279,8 @@ function validateCorpusReportSchemaPolicy(value) {
 
 function comparisonMetricsForSchemaPolicy(corpusReportSchemaPolicy) {
   return corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V18 ||
-    corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V19
+    corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V19 ||
+    corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V110
     ? V18_METRICS
     : LEGACY_METRICS
 }
@@ -497,25 +502,31 @@ function validCanonicalAnchor(value) {
   )
 }
 
-function validCitationRelationshipGraph(value) {
+function validCitationRelationshipGraph(value, legacy = false) {
+  const keys = [
+    'id',
+    'status',
+    'taxonomy',
+    'referenceRegionId',
+    'referenceStart',
+    'referenceEnd',
+    'labels',
+    'targetNodeIds',
+    ...(legacy ? [] : ['candidateNodeIds']),
+    'canonicalAnchor',
+    ...(legacy ? [] : ['evidenceSha256s']),
+    'sourceBoxes',
+  ]
   return (
     Array.isArray(value) &&
     value.every(
       (relationship) =>
-        hasExactKeys(relationship, [
-          'id',
-          'status',
-          'taxonomy',
-          'referenceRegionId',
-          'referenceStart',
-          'referenceEnd',
-          'labels',
-          'targetNodeIds',
-          'canonicalAnchor',
-          'sourceBoxes',
-        ]) &&
+        hasExactKeys(relationship, keys) &&
         SHA256_PATTERN.test(String(relationship.id ?? '')) &&
-        ['matched', 'ambiguous', 'unresolved'].includes(relationship.status) &&
+        (legacy
+          ? ['matched', 'unresolved']
+          : ['matched', 'ambiguous', 'unresolved']
+        ).includes(relationship.status) &&
         [
           'bracketed-bibliography-citation',
           'author-year-bibliography-citation',
@@ -529,6 +540,16 @@ function validCitationRelationshipGraph(value) {
         relationship.referenceEnd > relationship.referenceStart &&
         validHashArray(relationship.labels, { nonempty: true }) &&
         validHashArray(relationship.targetNodeIds) &&
+        (legacy ||
+          (validHashArray(relationship.candidateNodeIds) &&
+            validHashArray(relationship.evidenceSha256s, { nonempty: true }) &&
+            (relationship.status === 'matched'
+              ? relationship.targetNodeIds.length ===
+                  relationship.labels.length &&
+                relationship.candidateNodeIds.length === 0
+              : relationship.targetNodeIds.length === 0 &&
+                (relationship.status !== 'ambiguous' ||
+                  relationship.candidateNodeIds.length > 1)))) &&
         validCanonicalAnchor(relationship.canonicalAnchor) &&
         Array.isArray(relationship.sourceBoxes) &&
         relationship.sourceBoxes.length > 0 &&
@@ -960,7 +981,8 @@ function validCanonicalHyphenDeletionLedger(structure, legacy = false) {
 }
 
 function validateStructure(structure, allowHistoricalV14 = false) {
-  const current = structure?.schemaVersion === '1.6.0'
+  const current = structure?.schemaVersion === '1.7.0'
+  const legacyV16 = structure?.schemaVersion === '1.6.0'
   const legacyV15 = structure?.schemaVersion === '1.5.0'
   const historical = allowHistoricalV14 && structure?.schemaVersion === '1.4.0'
   const canonicalHyphenFields = [
@@ -982,9 +1004,9 @@ function validateStructure(structure, allowHistoricalV14 = false) {
       'lineTransitionLedgerSha256',
       'unresolvedCorruptingJoinCount',
       'structurallyConsumedLineBoundaryCount',
-      ...(current || legacyV15 ? canonicalHyphenFields : []),
+      ...(current || legacyV16 || legacyV15 ? canonicalHyphenFields : []),
     ]) ||
-    (!current && !legacyV15 && !historical) ||
+    (!current && !legacyV16 && !legacyV15 && !historical) ||
     STRUCTURE_COUNT_FIELDS.some(
       (field) => !isNonNegativeInteger(structure[field]),
     ) ||
@@ -1000,7 +1022,10 @@ function validateStructure(structure, allowHistoricalV14 = false) {
       structure.visualRelationshipCount ||
     countMapTotal(structure.noteRelationshipCounts) !==
       structure.noteRelationshipCount ||
-    !validCitationRelationshipGraph(structure.citationRelationshipGraph) ||
+    !validCitationRelationshipGraph(
+      structure.citationRelationshipGraph,
+      !current,
+    ) ||
     structure.citationRelationshipGraph.length !==
       structure.citationRelationshipCount ||
     canonicalJson(structure.citationRelationshipCounts) !==
@@ -1022,6 +1047,7 @@ function validateStructure(structure, allowHistoricalV14 = false) {
       canonicalJsonHash(structure.crossReferenceRelationshipGraph) ||
     countMapTotal(structure.assetCounts) !== structure.assetCount ||
     (current && !validCanonicalHyphenDeletionLedger(structure)) ||
+    (legacyV16 && !validCanonicalHyphenDeletionLedger(structure)) ||
     (legacyV15 && !validCanonicalHyphenDeletionLedger(structure, true))
   ) {
     invalidReport()
@@ -1443,8 +1469,10 @@ function validateReport(report, corpusReportSchemaPolicy) {
       (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V18 &&
         report.schemaVersion === '1.8.0') ||
       (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V19 &&
-        report.schemaVersion === '1.9.0'))
-  const provenanceKeys = ['1.7.0', '1.8.0', '1.9.0'].includes(
+        report.schemaVersion === '1.9.0') ||
+      (corpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V110 &&
+        report.schemaVersion === '1.10.0'))
+  const provenanceKeys = ['1.7.0', '1.8.0', '1.9.0', '1.10.0'].includes(
     report?.schemaVersion,
   )
     ? ['executionProvenance']
@@ -1461,7 +1489,7 @@ function validateReport(report, corpusReportSchemaPolicy) {
   ) {
     invalidReport()
   }
-  if (['1.7.0', '1.8.0', '1.9.0'].includes(report.schemaVersion)) {
+  if (['1.7.0', '1.8.0', '1.9.0', '1.10.0'].includes(report.schemaVersion)) {
     validateExecutionProvenance(report.executionProvenance)
   }
   if (Object.hasOwn(report, 'corpusContract')) {
@@ -1512,7 +1540,9 @@ function validateReport(report, corpusReportSchemaPolicy) {
     ]
     const optionalAuditedKeys = [
       'exports',
-      ...(['1.6.0', '1.7.0', '1.8.0', '1.9.0'].includes(report.schemaVersion)
+      ...(['1.6.0', '1.7.0', '1.8.0', '1.9.0', '1.10.0'].includes(
+        report.schemaVersion,
+      )
         ? ['ocr']
         : []),
     ]
@@ -1581,6 +1611,12 @@ function validateReport(report, corpusReportSchemaPolicy) {
     if (
       report.schemaVersion === '1.9.0' &&
       document.structure.schemaVersion !== '1.6.0'
+    ) {
+      invalidReport()
+    }
+    if (
+      report.schemaVersion === '1.10.0' &&
+      document.structure.schemaVersion !== '1.7.0'
     ) {
       invalidReport()
     }
@@ -2059,6 +2095,7 @@ export function comparePdfBenchmarkReports(
     CORPUS_REPORT_SCHEMA_POLICY_V17,
     CORPUS_REPORT_SCHEMA_POLICY_V18,
     CORPUS_REPORT_SCHEMA_POLICY_V19,
+    CORPUS_REPORT_SCHEMA_POLICY_V110,
   ].includes(validatedCorpusReportSchemaPolicy)
   const exactHeadEvidencePassed =
     !provenanceSchemaPolicy ||
@@ -2088,15 +2125,18 @@ export function comparePdfBenchmarkReports(
     schemaVersion:
       validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V15_V16
         ? PDF_BENCHMARK_COMPARISON_OCR_SCHEMA_VERSION
-        : validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V19
-          ? PDF_BENCHMARK_COMPARISON_V19_SCHEMA_VERSION
+        : validatedCorpusReportSchemaPolicy === CORPUS_REPORT_SCHEMA_POLICY_V110
+          ? PDF_BENCHMARK_COMPARISON_V110_SCHEMA_VERSION
           : validatedCorpusReportSchemaPolicy ===
-              CORPUS_REPORT_SCHEMA_POLICY_V18
-            ? PDF_BENCHMARK_COMPARISON_V18_SCHEMA_VERSION
+              CORPUS_REPORT_SCHEMA_POLICY_V19
+            ? PDF_BENCHMARK_COMPARISON_V19_SCHEMA_VERSION
             : validatedCorpusReportSchemaPolicy ===
-                CORPUS_REPORT_SCHEMA_POLICY_V17
-              ? PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION
-              : PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
+                CORPUS_REPORT_SCHEMA_POLICY_V18
+              ? PDF_BENCHMARK_COMPARISON_V18_SCHEMA_VERSION
+              : validatedCorpusReportSchemaPolicy ===
+                  CORPUS_REPORT_SCHEMA_POLICY_V17
+                ? PDF_BENCHMARK_COMPARISON_PROVENANCE_SCHEMA_VERSION
+                : PDF_BENCHMARK_COMPARISON_SCHEMA_VERSION,
     privacy: 'basenames-hashes-metrics-artifact-invariants-only',
     ...(baselineCorpusContract
       ? { corpusContract: baselineCorpusContract }
@@ -2152,7 +2192,7 @@ export function comparePdfBenchmarkReports(
 }
 
 function usage() {
-  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--corpus-report-schema-policy <v1.5-only|v1.5-v1.6-compatible|v1.7-only|v1.8-only|v1.9-only>] [--require-identical-artifacts] [--require-identical-structure]\n'
+  return 'Usage: node tools/pdf-benchmark-compare.mjs <baseline-corpus-audit.json> <candidate-corpus-audit.json> [--out <comparison.json>] [--tolerance <metric>=<value>]... [--corpus-report-schema-policy <v1.5-only|v1.5-v1.6-compatible|v1.7-only|v1.8-only|v1.9-only|v1.10-only>] [--require-identical-artifacts] [--require-identical-structure]\n'
 }
 
 function parseArguments(arguments_) {

@@ -2300,9 +2300,16 @@ function noteLineClassificationEvidence(
   // remain eligible because a genuine footnote may place its marker on a line
   // of its own.
   const decimalTabularContent = /^[-+]?\d+[.,]\d/u.test(normalized)
+  const isolatedMarginFolio =
+    substantiveRuns.length > 0 &&
+    substantiveRuns.every((run) =>
+      marginTextIsNumeralOnly(run.text.normalize('NFKC').trim()),
+    ) &&
+    (line.y <= 0.08 || line.y + line.height >= 0.92)
   const renderedFootnote =
     label !== null &&
     !decimalTabularContent &&
+    !isolatedMarginFolio &&
     !monospacedNumberedContent &&
     !numberedBodyListLines.has(line) &&
     !numberedBodySectionHeading(normalized) &&

@@ -11,8 +11,6 @@ eligible:
   head_branch_patterns:
     - "codex/*"
     - "claude/*"
-    - "codex/*"
-    - "claude/*"
     - "coordinator/*"
   automatic_path_patterns:
     - "docs/**"

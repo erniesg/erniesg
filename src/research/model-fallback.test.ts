@@ -114,6 +114,28 @@ describe('model fallback consultation gate', () => {
     expect(result.provenance?.status).toBe('rejected')
   })
 
+  it('rejects fields outside the exact provider response wrapper', async () => {
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: {
+        identity: modelIdentity,
+        consult: () => ({
+          proposal: { candidateId: 'caption-figure-1' },
+          text: 'model-authored wrapper content',
+        }) as never,
+      },
+    })
+
+    const result = await gate.decide(MODEL_FALLBACK_REFERENCE_FIXTURES[0]!)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('MODEL_RESPONSE_UNKNOWN_FIELD')
+    expect(result.provenance).toMatchObject({
+      status: 'rejected',
+      failureCode: 'MODEL_RESPONSE_UNKNOWN_FIELD',
+    })
+  })
+
   it('names a byte-stability mismatch when the same request changes choice', async () => {
     const ledger = new ModelFallbackLedger()
     let invocation = 0

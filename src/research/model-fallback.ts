@@ -449,6 +449,19 @@ function proposalAndMetrics(response: ModelDecisionResponse) {
       costUsd?: unknown
       latencyMs?: unknown
     }
+    const allowed = new Set(['proposal', 'costUsd', 'latencyMs'])
+    const unknown = Object.keys(response).find((key) => !allowed.has(key))
+    if (unknown)
+      return {
+        proposal: null,
+        costUsd: 0,
+        latencyMs: null,
+        rejection: {
+          status: 'rejected' as const,
+          code: 'MODEL_RESPONSE_UNKNOWN_FIELD',
+          message: `Model response wrapper field ${unknown} is not part of the provider contract.`,
+        },
+      }
     return {
       proposal: wrapper.proposal,
       costUsd: wrapper.costUsd ?? 0,
@@ -1185,8 +1198,9 @@ export class ModelConsultationGate {
         diagnostic: 'MODEL_PROVIDER_ERROR',
       }
     }
-    const { proposal, costUsd, latencyMs } = proposalAndMetrics(response)
-    const verified = verifyModelDecisionProposal(point, proposal)
+    const { proposal, costUsd, latencyMs, rejection } =
+      proposalAndMetrics(response)
+    const verified = rejection ?? verifyModelDecisionProposal(point, proposal)
     if (
       !finiteNonNegative(costUsd) ||
       (latencyMs !== null && !finiteNonNegative(latencyMs))

@@ -2972,7 +2972,7 @@ function appendBlockContinuation(
     number,
     PdfBodySourceOrderExtremum
   > = new Map(),
-  requireSemanticFlowDecision = false,
+  requiredSemanticFlowDecision: PdfSourceSemanticFlowBoundaryDecision | null = null,
 ) {
   const targetTailLine = blockSourceSegments(target).at(-1)?.region.lines.at(-1)
   const continuationHeadLine =
@@ -3095,7 +3095,7 @@ function appendBlockContinuation(
     inferredTopology === 'cross-page-column'
       ? inferredTopology
       : null
-  const semanticFlowDecision =
+  const derivedSemanticFlowDecision =
     semanticDeletionDecision ??
     (recordableTopology &&
     semanticFlowOutcome !== 'unresolved' &&
@@ -3116,9 +3116,24 @@ function appendBlockContinuation(
           bodySourceOrderExtremaByPage,
         )
       : null)
-  if (requireSemanticFlowDecision && semanticFlowDecision === null) {
+  const requiredBoundaryAlreadyExists =
+    requiredSemanticFlowDecision !== null &&
+    sourceSemanticFlowBoundaryDecisions.some(
+      (decision) =>
+        decision.from.regionId === requiredSemanticFlowDecision.from.regionId &&
+        decision.from.lineId === requiredSemanticFlowDecision.from.lineId &&
+        decision.to.regionId === requiredSemanticFlowDecision.to.regionId &&
+        decision.to.lineId === requiredSemanticFlowDecision.to.lineId,
+    )
+  if (
+    requiredSemanticFlowDecision !== null &&
+    (derivedSemanticFlowDecision?.id !== requiredSemanticFlowDecision.id ||
+      requiredBoundaryAlreadyExists)
+  ) {
     return false
   }
+  const semanticFlowDecision =
+    requiredSemanticFlowDecision ?? derivedSemanticFlowDecision
   if (deletionApplied && deletionDecision) {
     hyphenDeletion!.decisions.push(deletionDecision)
   }
@@ -4922,16 +4937,18 @@ export async function mergeProseContinuations(
           blockSourceSegments(continuation)[0]?.region.page
       const crossPageContinuation =
         continuation?.type === 'paragraph' && !samePageContinuation
+      const crossPageHyphenVerdict =
+        crossPageContinuation &&
+        lowercaseHyphenContinuation &&
+        hyphenJoin.hyphenBoundary
+          ? sourceSemanticFlowHyphenVerdict(hyphenJoin.hyphenBoundary.proof)
+          : 'unresolved'
       const crossPageSemanticFlowOutcome =
         crossPageContinuation && continuation?.type === 'paragraph'
           ? lowercaseHyphenContinuation && hyphenJoin.hyphenBoundary
-            ? sourceSemanticFlowHyphenVerdict(
-                hyphenJoin.hyphenBoundary.proof,
-              ) === 'remove'
+            ? crossPageHyphenVerdict === 'remove'
               ? 'discretionary-hyphen-delete'
-              : sourceSemanticFlowHyphenVerdict(
-                    hyphenJoin.hyphenBoundary.proof,
-                  ) === 'preserve'
+              : crossPageHyphenVerdict === 'preserve'
                 ? 'hard-hyphen-retain'
                 : null
             : (sourceColumnFlowJoin(continuation, language)?.outcome ??
@@ -5034,7 +5051,7 @@ export async function mergeProseContinuations(
               ? 'same-page-column'
               : null,
         bodySourceOrderExtremaByPage,
-        crossPageContinuation,
+        crossPageSemanticFlowDecision,
       )
       if (!appended) break
       blocks.splice(continuationIndex, 1)

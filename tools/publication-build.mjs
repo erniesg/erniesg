@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -746,31 +746,141 @@ export function publicationReceiptDigest(receipt) {
   return createHash('sha256').update(receipt).digest('hex')
 }
 
+function canonicalMacOSTemporaryPath(value) {
+  const candidate = resolve(value)
+  if (process.platform !== 'darwin') return candidate
+  for (const [aliasRoot, canonicalRoot] of [
+    ['/var', '/private/var'],
+    ['/tmp', '/private/tmp'],
+  ]) {
+    if (
+      candidate !== aliasRoot &&
+      !candidate.startsWith(`${aliasRoot}${sep}`)
+    )
+      continue
+    try {
+      const alias = lstatSync(aliasRoot)
+      if (
+        !alias.isSymbolicLink() ||
+        alias.uid !== 0 ||
+        realpathSync(aliasRoot) !== canonicalRoot
+      )
+        return candidate
+    } catch {
+      return candidate
+    }
+    return resolve(canonicalRoot, relative(aliasRoot, candidate))
+  }
+  return candidate
+}
+
+function currentEffectiveUserId() {
+  if (typeof process.geteuid === 'function') return process.geteuid()
+  if (typeof process.getuid === 'function') return process.getuid()
+  return undefined
+}
+
+function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
+  const repositoryIdentity = canonicalMacOSTemporaryPath(repositoryRoot)
+  const candidate = resolve(excludedPath)
+  const candidateIdentity = canonicalMacOSTemporaryPath(candidate)
+  const repositoryRelative = relative(repositoryIdentity, candidateIdentity)
+    .split(sep)
+    .join('/')
+  if (
+    repositoryRelative === '..' ||
+    repositoryRelative.startsWith('../') ||
+    isAbsolute(repositoryRelative)
+  )
+    return undefined
+  const rejected = { rejected: true }
+  if (
+    !repositoryRelative ||
+    String(excludedPath).split(/[\\/]+/u).includes('..')
+  )
+    return rejected
+  let entry
+  try {
+    // Only the root-owned macOS temporary aliases above may change a path's
+    // spelling. Any other symlink, missing target, or mount boundary fails
+    // closed and remains visible to `git status`.
+    entry = lstatSync(candidate, { bigint: true })
+    const privateMode = entry.mode & 0o777n
+    const effectiveUserId = currentEffectiveUserId()
+    if (
+      realpathSync(repositoryRoot) !== repositoryIdentity ||
+      realpathSync(candidate) !== candidateIdentity ||
+      !entry.isDirectory() ||
+      statSync(repositoryIdentity, { bigint: true }).dev !== entry.dev ||
+      (effectiveUserId !== undefined &&
+        (entry.uid !== BigInt(effectiveUserId) || privateMode !== 0o700n))
+    )
+      return rejected
+  } catch {
+    return rejected
+  }
+  return {
+    rejected: false,
+    pathspec: `:(exclude,top,literal)${repositoryRelative}`,
+    candidate,
+    candidateIdentity,
+    identity: {
+      dev: entry.dev,
+      ino: entry.ino,
+      uid: entry.uid,
+      gid: entry.gid,
+      mode: entry.mode,
+    },
+  }
+}
+
+function publicationCleanlinessExclusionIsCurrent(exclusion) {
+  try {
+    if (realpathSync(exclusion.candidate) !== exclusion.candidateIdentity)
+      return false
+    const entry = lstatSync(exclusion.candidate, { bigint: true })
+    const effectiveUserId = currentEffectiveUserId()
+    return (
+      entry.isDirectory() &&
+      (effectiveUserId === undefined ||
+        entry.uid === BigInt(effectiveUserId)) &&
+      entry.dev === exclusion.identity.dev &&
+      entry.ino === exclusion.identity.ino &&
+      entry.uid === exclusion.identity.uid &&
+      entry.gid === exclusion.identity.gid &&
+      entry.mode === exclusion.identity.mode
+    )
+  } catch {
+    return false
+  }
+}
+
 export function publicationRepositoryForCurrentCheckout(excludedPaths = []) {
   const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
     encoding: 'utf8',
   }).trim()
-  const exclusions = excludedPaths
-    .map((path) => relative(repositoryRoot, resolve(path)).split(sep).join('/'))
-    .filter(
-      (path) =>
-        path &&
-        path !== '..' &&
-        !path.startsWith('../') &&
-        !isAbsolute(path),
-    )
-    .map((path) => `:(exclude,top)${path}`)
+  const requestedExclusions = excludedPaths
+    .map((path) => publicationCleanlinessExclusion(repositoryRoot, path))
+    .filter(Boolean)
+  const exclusionReceipts = requestedExclusions.filter(
+    ({ rejected }) => !rejected,
+  )
+  const exclusions = exclusionReceipts.map(({ pathspec }) => pathspec)
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  }).trim()
+  const status = execFileSync(
+    'git',
+    ['status', '--short', '--untracked-files=all', '--', '.', ...exclusions],
+    { cwd: repositoryRoot, encoding: 'utf8' },
+  ).trim()
   return {
-    commit: execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-    }).trim(),
+    commit,
     dirty:
-      execFileSync(
-        'git',
-        ['status', '--short', '--untracked-files=all', '--', '.', ...exclusions],
-        { cwd: repositoryRoot, encoding: 'utf8' },
-      ).trim().length > 0,
+      status.length > 0 ||
+      requestedExclusions.some(({ rejected }) => rejected) ||
+      !exclusionReceipts.every(publicationCleanlinessExclusionIsCurrent),
   }
 }
 

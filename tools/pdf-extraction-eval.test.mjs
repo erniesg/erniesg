@@ -22,10 +22,12 @@ async function readEvalSet() {
 async function attachVerifiedReviews(
   evalSet,
   directory,
-  { legacy = false } = {},
+  {
+    legacy = false,
+    reviewerA = 'fixture-reviewer-a',
+    reviewerB = 'fixture-reviewer-b',
+  } = {},
 ) {
-  const reviewerA = 'fixture-reviewer-a'
-  const reviewerB = 'fixture-reviewer-b'
   const reviewerHashA = 'a'.repeat(64)
   const reviewerHashB = 'b'.repeat(64)
   const rosterPath = join(directory, 'roster.json')
@@ -974,6 +976,86 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     expect(validate(roster)).toBe(true)
   })
 
+  it('publishes the accepted legacy v1.0 review contract', async () => {
+    const schema = JSON.parse(
+      await readFile(
+        'docs/schemas/pdf-extraction-eval-review-1.0.0.schema.json',
+        'utf8',
+      ),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    const roster = {
+      schemaVersion: '1.0.0',
+      kind: 'pdf-extraction-reviewer-roster',
+      evalSetId: 'fixture-eval',
+      reviewers: [
+        {
+          reviewerId: 'reviewer-a',
+          identityEvidenceSha256: 'a'.repeat(64),
+        },
+        {
+          reviewerId: 'reviewer-b',
+          identityEvidenceSha256: 'b'.repeat(64),
+        },
+      ],
+    }
+    expect(validate(roster)).toBe(true)
+
+    expect(
+      validate({
+        schemaVersion: '1.0.0',
+        kind: 'pdf-extraction-source-only-decisions',
+        evalSetId: 'fixture-eval',
+        evalSetSha256: 'c'.repeat(64),
+        sourceOnly: true,
+        candidateOutputConsultedForLabel: false,
+        decisions: [
+          {
+            caseId: 'fixture-case',
+            sourceSha256: 'd'.repeat(64),
+            reviewers: ['reviewer-a', 'reviewer-b'],
+            decision: 'agreed',
+            decisionSha256: 'e'.repeat(64),
+          },
+        ],
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects v1.1 reviewer aliases that collide with identity hash keys', async () => {
+    const schema = JSON.parse(
+      await readFile(
+        'docs/schemas/pdf-extraction-eval-review.schema.json',
+        'utf8',
+      ),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    const reviewerHashA = 'a'.repeat(64)
+    const reviewerHashB = 'b'.repeat(64)
+    const roster = {
+      schemaVersion: '1.1.0',
+      kind: 'pdf-extraction-reviewer-roster',
+      evalSetId: 'fixture-eval',
+      reviewers: {
+        [reviewerHashA]: reviewerHashB,
+        [reviewerHashB]: 'reviewer-b',
+      },
+    }
+    expect(validate(roster)).toBe(false)
+
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-hash-alias-')
+    try {
+      await expect(
+        attachVerifiedReviews(evalSet, directory, {
+          reviewerA: reviewerHashB,
+        }),
+      ).rejects.toThrow('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('publishes resolvable reviewer aliases in both review schemas', async () => {
     const reviewSchema = JSON.parse(
       await readFile(
@@ -1028,7 +1110,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     expect(validateEvalSet(evalSet)).toBe(true)
   })
 
-  it('enforces page-contained endpoint boxes without perfect-scoring zero area', async () => {
+  it('preserves v1 left-top-width-height boxes and rejects invalid extents', async () => {
     const evalSet = await readEvalSet()
     const tableCase = evalSet.cases.find((item) =>
       item.id.endsWith('.table-structure'),
@@ -1041,46 +1123,50 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     )
     const validate = new Ajv2020({ strict: false }).compile(schema)
 
-    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 1.6, 0.5]
+    expect(schema.$id).toBe(
+      'https://ernie.sg/schemas/pdf-extraction-eval-strata-1.0.0.json',
+    )
+    expect(schema.$defs.box.$comment).toContain('left, top, width, and height')
+
+    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 0.3, 0.5]
+    expect(validate(evalSet)).toBe(true)
+    expect(() => validatePdfExtractionEvalSet(evalSet)).toThrow(
+      'INVALID_PDF_EXTRACTION_EVAL_SET',
+    )
+
+    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 0, 0.5]
     expect(validate(evalSet)).toBe(false)
     expect(() => validatePdfExtractionEvalSet(evalSet)).toThrow(
       'INVALID_PDF_EXTRACTION_EVAL_SET',
     )
 
-    for (const box of [
-      [0.8, 0, 0.8, 0.5],
-      [0.8, 0.5, 0.2, 0.1],
-    ]) {
-      tableCase.source.groundTruth.tables[0].box = box
-      expect(validate(evalSet)).toBe(true)
-      expect(() => validatePdfExtractionEvalSet(evalSet)).not.toThrow()
-      const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
-        id: 'candidate-a',
-        kind: 'candidate',
-        version: 'candidate-a-v1',
-      })
-      const output = candidate.cases.find(
-        (item) => item.caseId === tableCase.id,
-      )
-      output.status = 'scored'
-      output.prediction = {
-        tables: [{ ...tableCase.source.groundTruth.tables[0] }],
-      }
-      output.diagnostics = []
-      const report = comparePdfExtractionProviders(evalSet, [candidate])
-      expect(
-        report.rows.find(
-          (row) =>
-            row.stratum === 'table-structure' &&
-            row.layout === tableCase.layout,
-        ),
-      ).toMatchObject({
-        score: 0,
-        scoredCaseCount: 0,
-        degenerateCaseCount: 1,
-        diagnostics: ['MISSING_TABLE_GEOMETRY_OR_LINEAGE'],
-      })
+    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 0.2, 0.5]
+    expect(validate(evalSet)).toBe(true)
+    expect(() => validatePdfExtractionEvalSet(evalSet)).not.toThrow()
+    await verifyEvalSet(evalSet)
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const output = candidate.cases.find((item) => item.caseId === tableCase.id)
+    output.status = 'scored'
+    output.prediction = {
+      tables: [{ ...tableCase.source.groundTruth.tables[0] }],
     }
+    output.diagnostics = []
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'table-structure' && row.layout === tableCase.layout,
+      ),
+    ).toMatchObject({
+      score: 1,
+      scoredCaseCount: 1,
+      degenerateCaseCount: 0,
+      diagnostics: [],
+    })
   })
 
   it('refuses regex-only prose continuity evidence', async () => {

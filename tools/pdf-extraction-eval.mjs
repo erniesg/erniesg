@@ -192,15 +192,21 @@ function isNormalizedBox(value) {
     Array.isArray(value) &&
     value.length === 4 &&
     value.every((item) => typeof item === 'number' && Number.isFinite(item)) &&
-    value.every((item) => item >= 0 && item <= 1)
+    value[0] >= 0 &&
+    value[0] < 1 &&
+    value[1] >= 0 &&
+    value[1] < 1 &&
+    value[2] > 0 &&
+    value[2] <= 1 &&
+    value[3] > 0 &&
+    value[3] <= 1 &&
+    value[0] + value[2] <= 1 &&
+    value[1] + value[3] <= 1
   )
 }
 
 function normalizedBoxArea(value) {
-  if (!isNormalizedBox(value) || value[2] <= value[0] || value[3] <= value[1]) {
-    return 0
-  }
-  return (value[2] - value[0]) * (value[3] - value[1])
+  return isNormalizedBox(value) ? value[2] * value[3] : 0
 }
 
 function validateSourceBinding(value, code) {
@@ -967,7 +973,8 @@ async function validateReviewEvidenceFiles(value, identity) {
         ([identityEvidenceSha256, reviewerId]) =>
           !SHA256.test(identityEvidenceSha256) ||
           typeof reviewerId !== 'string' ||
-          !SAFE_ID.test(reviewerId),
+          !SAFE_ID.test(reviewerId) ||
+          SHA256.test(reviewerId),
       )
     ) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')

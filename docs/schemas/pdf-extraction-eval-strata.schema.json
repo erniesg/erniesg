@@ -47,15 +47,15 @@
       "pattern": "^[a-f0-9]{64}$"
     },
     "box": {
-      "$comment": "The four entries are normalized left, top, right, and bottom page endpoints. Bounding every endpoint to [0, 1] makes page containment enforceable in standard JSON Schema; scoring additionally requires right > left and bottom > top, otherwise the source binding is degenerate.",
+      "$comment": "The four entries retain the v1 contract: normalized left, top, width, and height. Width and height must be positive. Runtime validation additionally enforces left + width <= 1 and top + height <= 1 because standard JSON Schema cannot compare array entries.",
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
       "prefixItems": [
-        { "type": "number", "minimum": 0, "maximum": 1 },
-        { "type": "number", "minimum": 0, "maximum": 1 },
-        { "type": "number", "minimum": 0, "maximum": 1 },
-        { "type": "number", "minimum": 0, "maximum": 1 }
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
       ],
       "items": false
     },

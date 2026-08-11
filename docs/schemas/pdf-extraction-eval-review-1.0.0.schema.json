@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ernie.sg/schemas/pdf-extraction-eval-review-1.1.0.json",
-  "title": "Source-only extraction evaluation review evidence",
-  "description": "Roster and decision artifacts bind reviewer identities and labels without exposing private source content or consulting candidate output.",
+  "$id": "https://ernie.sg/schemas/pdf-extraction-eval-review-1.0.0.json",
+  "title": "Legacy v1 source-only extraction evaluation review evidence",
+  "description": "Published compatibility contract for schemaVersion 1.0.0 roster and decision artifacts. Runtime validation additionally requires unique reviewerId and identityEvidenceSha256 values across the legacy roster array.",
   "oneOf": [{ "$ref": "#/$defs/roster" }, { "$ref": "#/$defs/decisions" }],
   "$defs": {
     "id": {
@@ -13,26 +13,28 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
-    "alias": {
-      "allOf": [
-        { "$ref": "#/$defs/id" },
-        { "not": { "$ref": "#/$defs/sha256" } }
-      ]
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewerId", "identityEvidenceSha256"],
+      "properties": {
+        "reviewerId": { "$ref": "#/$defs/id" },
+        "identityEvidenceSha256": { "$ref": "#/$defs/sha256" }
+      }
     },
     "roster": {
       "type": "object",
       "additionalProperties": false,
       "required": ["schemaVersion", "kind", "evalSetId", "reviewers"],
       "properties": {
-        "schemaVersion": { "const": "1.1.0" },
+        "schemaVersion": { "const": "1.0.0" },
         "kind": { "const": "pdf-extraction-reviewer-roster" },
         "evalSetId": { "$ref": "#/$defs/id" },
         "reviewers": {
-          "description": "Map from authoritative reviewer identity-evidence hashes to non-authoritative reviewer aliases. Object keys make duplicate identity evidence structurally unrepresentable.",
-          "type": "object",
-          "minProperties": 2,
-          "propertyNames": { "$ref": "#/$defs/sha256" },
-          "additionalProperties": { "$ref": "#/$defs/alias" }
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/reviewer" }
         }
       }
     },
@@ -49,7 +51,7 @@
         "decisions"
       ],
       "properties": {
-        "schemaVersion": { "const": "1.1.0" },
+        "schemaVersion": { "const": "1.0.0" },
         "kind": { "const": "pdf-extraction-source-only-decisions" },
         "evalSetId": { "$ref": "#/$defs/id" },
         "evalSetSha256": { "$ref": "#/$defs/sha256" },

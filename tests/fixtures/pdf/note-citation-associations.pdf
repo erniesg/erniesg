@@ -124,7 +124,7 @@ Q
 endstream
 endobj
 12 0 obj
-<< /Length 939 >>
+<< /Length 852 >>
 stream
 BT
 /F2 18 Tf
@@ -153,17 +153,17 @@ BT
 ET
 BT
 /F3 11 Tf
-54 350 Td
+54 238 Td
 (Table 1. A note marker inside a table cell remains associated.) Tj
 ET
 BT
 /F2 11 Tf
-72 320 Td
+72 306 Td
 (Measure) Tj
 ET
 BT
 /F2 11 Tf
-260 320 Td
+260 306 Td
 (Evidence) Tj
 ET
 BT
@@ -199,17 +199,6 @@ ET
 q
 190 0 0 72 180 448 cm
 /Im1 Do
-Q
-q
-0.8 w
-54 250 306 85 re
-54 307 m
-360 307 l
-54 280 m
-360 280 l
-240 250 m
-240 335 l
-S
 Q
 endstream
 endobj
@@ -351,14 +340,14 @@ xref
 0000001074 00000 n 
 0000001224 00000 n 
 0000002213 00000 n 
-0000003204 00000 n 
-0000003791 00000 n 
-0000004142 00000 n 
-0000004724 00000 n 
-0000005051 00000 n 
-0000005378 00000 n 
+0000003117 00000 n 
+0000003704 00000 n 
+0000004055 00000 n 
+0000004637 00000 n 
+0000004964 00000 n 
+0000005291 00000 n 
 trailer
 << /Size 19 /Root 1 0 R >>
 startxref
-6434
+6347
 %%EOF

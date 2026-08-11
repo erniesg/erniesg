@@ -6,6 +6,15 @@ const ANCHOR_OWNERS = new Set([
   'footnote',
   'table-cell',
 ])
+const COUNTER_KEYS = [
+  'expectedAssociations',
+  'matchedAssociations',
+  'ambiguousAssociations',
+  'unresolvedAssociations',
+  'falseLinkCount',
+  'resolvedAssociationRate',
+  'verifiedAssociationRate',
+]
 
 function nonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0
@@ -17,6 +26,38 @@ function stringArray(value) {
     value.length > 0 &&
     value.every(nonEmptyString) &&
     new Set(value).size === value.length
+  )
+}
+
+function validCounters(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (
+    COUNTER_KEYS.some(
+      (key) => typeof value[key] !== 'number' || !Number.isFinite(value[key]),
+    )
+  ) {
+    return false
+  }
+  const countKeys = COUNTER_KEYS.slice(0, 5)
+  if (
+    countKeys.some((key) => !Number.isInteger(value[key]) || value[key] < 0)
+  ) {
+    return false
+  }
+  if (
+    value.resolvedAssociationRate < 0 ||
+    value.resolvedAssociationRate > 1 ||
+    value.verifiedAssociationRate < 0 ||
+    value.verifiedAssociationRate > 1
+  ) {
+    return false
+  }
+  return (
+    value.matchedAssociations +
+      value.ambiguousAssociations +
+      value.unresolvedAssociations +
+      value.falseLinkCount ===
+    value.expectedAssociations
   )
 }
 
@@ -33,6 +74,25 @@ export function validateAssociationGroundTruth(value) {
     value.associations.length === 0
   ) {
     throw new Error('Association ground truth header is invalid')
+  }
+  if (!validCounters(value.baselineCounters)) {
+    throw new Error('Association ground truth baseline counters are invalid')
+  }
+  if (
+    !Array.isArray(value.checkpoints) ||
+    value.checkpoints.length !== 5 ||
+    value.checkpoints.some(
+      (checkpoint) =>
+        !checkpoint ||
+        typeof checkpoint !== 'object' ||
+        Array.isArray(checkpoint) ||
+        !nonEmptyString(checkpoint.id),
+    ) ||
+    new Set(value.checkpoints.map((checkpoint) => checkpoint.id)).size !== 5
+  ) {
+    throw new Error(
+      'Association ground truth must contain five unique checkpoints',
+    )
   }
 
   const ids = new Set()

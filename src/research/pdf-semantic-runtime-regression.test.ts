@@ -181,6 +181,90 @@ describe('PDF semantic runtime regressions', () => {
     }
   })
 
+  it('removes verified targets when a table citation cannot be projected uniquely', async () => {
+    const tableCell = (
+      text: string,
+      x: number,
+      y: number,
+      fontName = 'Table',
+    ) => sourceRun(1, text, x, y, 0.16, 8, fontName)
+    const result = await reconstruct(
+      [
+        page(1, [
+          sourceRun(
+            1,
+            'Ambiguous table citation geometry',
+            0.1,
+            0.04,
+            0.72,
+            18,
+            'Heading',
+          ),
+          tableCell('System', 0.12, 0.14, 'TableBold'),
+          tableCell('Score', 0.4, 0.14, 'TableBold'),
+          tableCell('Evidence', 0.67, 0.14, 'TableBold'),
+          tableCell('Baseline', 0.12, 0.19),
+          tableCell('71', 0.4, 0.19),
+          tableCell('[1] and [1]', 0.67, 0.19),
+          tableCell('Method A', 0.12, 0.24),
+          tableCell('82', 0.4, 0.24),
+          tableCell('[1]', 0.67, 0.24),
+          tableCell('Method B', 0.12, 0.29),
+          tableCell('84', 0.4, 0.29),
+          tableCell('[2]', 0.67, 0.29),
+          tableCell('Aggregate', 0.12, 0.34),
+          tableCell('90', 0.4, 0.34),
+          tableCell('Verified', 0.67, 0.34),
+          sourceRun(
+            1,
+            'Table 1. Source-backed benchmark results.',
+            0.12,
+            0.4,
+            0.68,
+            10,
+            'Caption',
+          ),
+        ]),
+        page(2, [
+          sourceRun(2, 'References', 0.1, 0.1, 0.3, 16, 'Heading'),
+          sourceRun(2, '[1] Synthetic reference alpha.', 0.1, 0.18),
+          sourceRun(2, '[2] Synthetic reference beta.', 0.1, 0.24),
+        ]),
+      ],
+      {
+        rasterizeFigure: async (input) =>
+          createSourcePageCropAsset({
+            kind: input.kind === 'figure' ? 'raster' : input.kind,
+            cropBox: input.sourceBox,
+            sourceObjectIds: input.sourceObjectIds,
+            sourceBoxes: input.sourceBoxes,
+            width: 710,
+            height: 168,
+            pixels: new Uint8Array(710 * 168 * 4).fill(88),
+          }),
+      },
+    )
+    const unmapped = result.citationRelationships.find((relationship) =>
+      relationship.evidence.includes('canonical-table-cell-anchor-non-unique'),
+    )
+    expect(unmapped).toMatchObject({
+      status: 'unresolved',
+      targetNodeIds: [],
+      candidateNodeIds: [expect.any(String)],
+      targets: [],
+      canonicalAnchor: null,
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNMAPPED_CITATION_ANCHOR',
+          relationshipId: unmapped?.id,
+          message: expect.stringContaining('one source-backed table cell'),
+        }),
+      ]),
+    )
+  })
+
   it('anchors a table citation after an exact discretionary-hyphen replay', async () => {
     const tableLine = (text: string, y: number) =>
       sourceRun(1, text, 0.12, y, 0.68, 8, 'TableSerif')

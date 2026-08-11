@@ -12807,6 +12807,15 @@ export async function reconstructPageAnalyses({
           (candidate) => candidate.id === run.relationshipId,
         )
         if (citation?.status !== 'matched') continue
+        citation.candidateNodeIds = [
+          ...new Set([
+            ...(citation.candidateNodeIds ?? []),
+            ...citation.targetNodeIds,
+          ]),
+        ]
+        citation.targetNodeIds = []
+        citation.targets = []
+        citation.canonicalAnchor = null
         citation.status = 'unresolved'
         citation.evidence.push('canonical-table-cell-anchor-non-unique')
         inlineSpanLedger.mapped = Math.max(0, inlineSpanLedger.mapped - 1)

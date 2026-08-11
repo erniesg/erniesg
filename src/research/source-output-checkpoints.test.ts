@@ -942,6 +942,28 @@ describe('source/output checkpoints', () => {
       status: 'failed',
       reason: expect.stringContaining('has no target'),
     })
+    expect(
+      evaluateRelative(
+        '<p id="claim"><a href="chapters/supplement.xhtml#entry">Prior evidence</a></p>',
+        {
+          'chapters/supplement.xhtml':
+            '<section id="entry">Supplement <a href="../content.xhtml#claim">Return to claim</a></section>',
+        },
+      ),
+    ).toEqual({ checkpointId: 'dangling-link-verifier', status: 'passed' })
+    expect(
+      evaluateRelative(
+        '<p><a href="chapters/supplement.xhtml#entry">Prior evidence</a></p>',
+        {
+          'chapters/supplement.xhtml':
+            '<section id="entry">Supplement <a href="#missing">Missing detail</a></section>',
+        },
+      ),
+    ).toMatchObject({
+      checkpointId: 'dangling-link-verifier',
+      status: 'failed',
+      reason: expect.stringContaining('has no target'),
+    })
     for (const href of ['supplement.xhtml#missing', 'missing.xhtml']) {
       expect(
         evaluateRelative(

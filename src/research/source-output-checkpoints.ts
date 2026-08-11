@@ -508,7 +508,10 @@ function htmlAnchors(html: string): HtmlAnchor[] {
 
 const EPUB_CONTENT_DOCUMENT = 'content.xhtml'
 
-function resolvedDocumentHref(reference: string) {
+function resolvedDocumentHref(
+  reference: string,
+  currentDocumentHref = EPUB_CONTENT_DOCUMENT,
+) {
   if (
     reference.startsWith('/') ||
     reference.includes('\\') ||
@@ -517,7 +520,7 @@ function resolvedDocumentHref(reference: string) {
   ) {
     return null
   }
-  const base = EPUB_CONTENT_DOCUMENT.split('/')
+  const base = currentDocumentHref.split('/')
   base.pop()
   const resolved: string[] = []
   for (const segment of [...base, ...reference.split('/')]) {
@@ -532,7 +535,10 @@ function resolvedDocumentHref(reference: string) {
   return resolved.join('/')
 }
 
-function internalHrefTarget(href: string | undefined) {
+function internalHrefTarget(
+  href: string | undefined,
+  currentDocumentHref = EPUB_CONTENT_DOCUMENT,
+) {
   if (!href) return null
   const scheme = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)?.[1]
   if (scheme || href.startsWith('//')) return null
@@ -542,8 +548,8 @@ function internalHrefTarget(href: string | undefined) {
   const hashIndex = href.indexOf('#')
   const documentReference = hashIndex === -1 ? href : href.slice(0, hashIndex)
   const targetDocument = documentReference
-    ? resolvedDocumentHref(documentReference)
-    : EPUB_CONTENT_DOCUMENT
+    ? resolvedDocumentHref(documentReference, currentDocumentHref)
+    : currentDocumentHref
   if (!targetDocument) return { reason: `Internal href ${href} is unsafe.` }
   if (hashIndex === -1) {
     return { reason: null, documentHref: targetDocument, targetId: null }
@@ -597,18 +603,20 @@ function internalLinkIntegrityFailure(
   )
   const current = documentGraphs.get(EPUB_CONTENT_DOCUMENT)!
   const { html: structuralHtml, elements, ids } = current
-  const links = elements.flatMap((element) => {
-    const target = internalHrefTarget(element.href)
-    if (target === null) return []
-    if (
-      target.reason === null &&
-      target.documentHref !== EPUB_CONTENT_DOCUMENT &&
-      element.tag !== 'a'
-    ) {
-      return []
-    }
-    return [{ element, target }]
-  })
+  const links = [...documentGraphs].flatMap(([documentHref, graph]) =>
+    graph.elements.flatMap((element) => {
+      const target = internalHrefTarget(element.href, documentHref)
+      if (target === null) return []
+      if (
+        target.reason === null &&
+        target.documentHref !== documentHref &&
+        element.tag !== 'a'
+      ) {
+        return []
+      }
+      return [{ documentHref, element, target }]
+    }),
+  )
   const outcome = (reason: string | null) => ({
     reason,
     structuralHtml,

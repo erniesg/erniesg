@@ -149,6 +149,23 @@ function isDocxReconstruction(
   return reconstruction.source.format === 'docx'
 }
 
+function noteRelationshipSourceEvidence(
+  reconstruction: DocumentReconstruction | undefined,
+) {
+  if (
+    !reconstruction ||
+    !Array.isArray(reconstruction.noteRelationships) ||
+    reconstruction.source?.format === 'docx'
+  ) {
+    return undefined
+  }
+  const pdf = reconstruction as PdfReconstruction
+  return {
+    regions: Array.isArray(pdf.regions) ? pdf.regions : [],
+    provenance: pdf.provenance ?? {},
+  }
+}
+
 function hasCompletePdfAssessmentEvidence(
   reconstruction: PdfReconstruction,
 ): boolean {
@@ -2433,7 +2450,11 @@ function renderResearchPublicationXhtml(
     visualAssets?: Map<string, PublicationAsset>
   } = {},
 ) {
-  assertPublicationIntegrity(paper, options.reconstruction?.noteRelationships)
+  assertPublicationIntegrity(
+    paper,
+    options.reconstruction?.noteRelationships,
+    noteRelationshipSourceEvidence(options.reconstruction),
+  )
   const duplicateVisualOwner = duplicateVisualRelationshipNodeOwnership(
     options.reconstruction?.visualRelationships ?? [],
   )
@@ -5542,6 +5563,7 @@ async function buildEpubInternal(
   assertPublicationIntegrity(
     renderPaper,
     renderReconstruction?.noteRelationships,
+    noteRelationshipSourceEvidence(renderReconstruction),
   )
   if (renderReconstruction) {
     const validatedPdfRelationshipIds = isDocxReconstruction(

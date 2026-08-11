@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { PdfNoteRelationship } from './import-types'
+import type {
+  NodeSourceEvidence,
+  NormalizedSourceBox,
+  PdfNoteRelationship,
+  PdfPageRegion,
+} from './import-types'
 import {
   assertPublicationIntegrity,
   internalReferenceIntegrityIssues,
@@ -112,6 +117,84 @@ function relationshipFixture(): AnchoredNoteRelationship[] {
   ]
 }
 
+function sourceBox(
+  x: number,
+  y: number,
+  width: number,
+  height = 0.02,
+): NormalizedSourceBox {
+  return {
+    page: 1,
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    method: 'pdf-text',
+  }
+}
+
+function sourceRegion(
+  id: string,
+  text: string,
+  box: NormalizedSourceBox,
+): PdfPageRegion {
+  return {
+    id,
+    page: box.page,
+    kind: 'body',
+    column: 'single',
+    text,
+    confidence: 1,
+    box,
+    lines: [
+      {
+        id: `${id}-line`,
+        text,
+        fontSize: 10,
+        box,
+        runs: [
+          {
+            ...box,
+            text,
+            fontName: 'Body',
+            fontSize: 10,
+            confidence: 1,
+          },
+        ],
+      },
+    ],
+    nativeObjectIds: [],
+    includedInReadingOrder: true,
+  }
+}
+
+function sourceEvidenceFixture() {
+  const relationships = relationshipFixture()
+  const claimBox = sourceBox(0.1, 0.2, 0.3)
+  const authorBox = sourceBox(0.1, 0.1, 0.3)
+  relationships[0].sourceBoxes = [sourceBox(0.16, 0.2, 0.01)]
+  relationships[1].sourceBoxes = [sourceBox(0.37, 0.1, 0.01)]
+  return {
+    relationships,
+    sourceEvidence: {
+      regions: [
+        sourceRegion('source-claim', 'A1 B2', claimBox),
+        sourceRegion('source-authors', 'Ada Example*', authorBox),
+      ],
+      provenance: {
+        claim: {
+          confidence: 1,
+          pages: [1],
+          regionIds: ['source-claim'],
+          boxes: [claimBox],
+          links: [],
+        },
+      } satisfies Record<string, NodeSourceEvidence>,
+    },
+  }
+}
+
 function issueDetails(
   paper: ResearchPaper,
   relationships?: readonly AnchoredNoteRelationship[],
@@ -141,6 +224,99 @@ describe('exact semantic note-anchor integrity', () => {
     }
 
     expect(issueDetails(paper, relationships)).toContain('note-anchor-mismatch')
+  })
+
+  it('accepts exact node and author source evidence without inventing author provenance', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ),
+    ).toEqual([])
+    expect(() =>
+      assertPublicationIntegrity(paperFixture(), relationships, sourceEvidence),
+    ).not.toThrow()
+  })
+
+  it('rejects matched note evidence whose source region does not exist', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    relationships[0].referenceRegionId = 'missing-source-claim'
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
+  })
+
+  it.each([
+    {
+      label: 'out-of-range source offset',
+      mutate: (relationship: AnchoredNoteRelationship) => {
+        relationship.referenceEnd = 99
+      },
+    },
+    {
+      label: 'source label mismatch',
+      mutate: (relationship: AnchoredNoteRelationship) => {
+        relationship.label = '9'
+      },
+    },
+  ])('rejects a matched note with a $label', ({ mutate }) => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    mutate(relationships[0])
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
+  })
+
+  it.each([
+    {
+      label: 'missing source box',
+      sourceBoxes: [],
+    },
+    {
+      label: 'zero-area source box',
+      sourceBoxes: [sourceBox(0.16, 0.2, 0)],
+    },
+    {
+      label: 'non-overlapping source box',
+      sourceBoxes: [sourceBox(0.8, 0.8, 0.01)],
+    },
+  ])('rejects a matched note with a $label', ({ sourceBoxes }) => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    relationships[0].sourceBoxes = sourceBoxes
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
+  })
+
+  it('rejects a source region absent from the canonical owner provenance', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    sourceEvidence.provenance.claim.regionIds = ['source-authors']
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ).map((issue) => issue.detail),
+    ).toContain('invalid-source-note-anchor')
   })
 
   it('rejects a matched author relationship owned by a different author', () => {

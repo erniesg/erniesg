@@ -1,5 +1,16 @@
-import type { PdfNoteRelationship } from './import-types'
+import type {
+  NodeSourceEvidence,
+  NormalizedSourceBox,
+  PdfNoteRelationship,
+  PdfPageRegion,
+} from './import-types'
+import { normalizedNoteLabel } from './note-label'
 import type { ResearchNode, ResearchPaper } from './schema'
+
+export type NoteRelationshipSourceEvidence = {
+  regions: readonly PdfPageRegion[]
+  provenance: Readonly<Record<string, NodeSourceEvidence>>
+}
 
 export type CanonicalTextIntegrityIssue = {
   code: 'EPUB_TEXT_SANITIZATION_LOSS'
@@ -159,6 +170,7 @@ type RenderedNoteReference =
   | {
       kind: 'node'
       id: string
+      label: string
       target: string
       nodeId: string
       start: number
@@ -167,6 +179,7 @@ type RenderedNoteReference =
   | {
       kind: 'author'
       id: string
+      label: string
       target: string
       author: string
     }
@@ -176,6 +189,7 @@ function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
     ...renderableAuthorNoteReferences(paper).map((reference) => ({
       kind: 'author' as const,
       id: reference.id,
+      label: reference.label,
       target: reference.target,
       author: reference.author,
     })),
@@ -188,6 +202,7 @@ function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
             .map((reference) => ({
               kind: 'node' as const,
               id: reference.id,
+              label: reference.label,
               target: reference.target,
               nodeId: node.id,
               start: reference.start,
@@ -204,6 +219,7 @@ function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
                 .map((reference) => ({
                   kind: 'node' as const,
                   id: reference.id,
+                  label: reference.label,
                   target: reference.target,
                   nodeId: `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
                   start: reference.start,
@@ -274,9 +290,188 @@ function noteAnchorCollisionIssues(
   return issues
 }
 
+function boxesOverlap(left: NormalizedSourceBox, right: NormalizedSourceBox) {
+  return (
+    left.page === right.page &&
+    Math.max(left.x, right.x) <
+      Math.min(left.x + left.width, right.x + right.width) &&
+    Math.max(left.y, right.y) <
+      Math.min(left.y + left.height, right.y + right.height)
+  )
+}
+
+function validSourceBox(box: NormalizedSourceBox) {
+  return (
+    Number.isSafeInteger(box.page) &&
+    box.page >= 1 &&
+    [box.x, box.y, box.width, box.height, box.rotation].every((value) =>
+      Number.isFinite(value),
+    ) &&
+    box.width > 0 &&
+    box.height > 0 &&
+    ['pdf-text', 'pdf-object', 'pdf-link', 'ocr'].includes(box.method)
+  )
+}
+
+function sourceLineBoxesForRange(
+  region: PdfPageRegion,
+  start: number,
+  end: number,
+) {
+  const boxes: NormalizedSourceBox[] = []
+  let cursor = 0
+  for (const line of region.lines) {
+    const lineStart = region.text.indexOf(line.text, cursor)
+    if (lineStart < 0) continue
+    const lineEnd = lineStart + line.text.length
+    cursor = lineEnd
+    if (Math.max(start, lineStart) < Math.min(end, lineEnd)) {
+      boxes.push(line.box)
+    }
+  }
+  return boxes
+}
+
+function tableCellProvenanceOwnerIds(paper: ResearchPaper) {
+  return new Map<string, string>(
+    paper.nodes.flatMap((node) =>
+      node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row, rowIndex) =>
+            row.cells.map(
+              (cell, cellIndex) =>
+                [
+                  `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+                  node.id,
+                ] as const,
+            ),
+          )
+        : [],
+    ),
+  )
+}
+
+function hasValidNoteRelationshipSourceEvidence(
+  paper: ResearchPaper,
+  relationship: PdfNoteRelationship,
+  sourceEvidence: NoteRelationshipSourceEvidence,
+) {
+  const region = sourceEvidence.regions.find(
+    (candidate) => candidate.id === relationship.referenceRegionId,
+  )
+  if (
+    !region ||
+    relationship.referenceStart < 0 ||
+    relationship.referenceStart >= relationship.referenceEnd ||
+    relationship.referenceEnd > region.text.length ||
+    normalizedNoteLabel(
+      region.text.slice(relationship.referenceStart, relationship.referenceEnd),
+    ) !== normalizedNoteLabel(relationship.label) ||
+    relationship.sourceBoxes.length === 0 ||
+    relationship.sourceBoxes.some(
+      (box) =>
+        !validSourceBox(box) ||
+        !sourceEvidence.regions.some((candidate) =>
+          boxesOverlap(box, candidate.box),
+        ),
+    )
+  ) {
+    return false
+  }
+  const exactLineBoxes = sourceLineBoxesForRange(
+    region,
+    relationship.referenceStart,
+    relationship.referenceEnd,
+  )
+  if (
+    exactLineBoxes.length === 0 ||
+    !relationship.sourceBoxes.some((box) =>
+      exactLineBoxes.some((lineBox) => boxesOverlap(box, lineBox)),
+    )
+  ) {
+    return false
+  }
+
+  const anchor = relationship.canonicalAnchor
+  if (anchor?.kind === 'author') {
+    return paper.authors.includes(anchor.author)
+  }
+  if (anchor?.kind !== 'node') return false
+  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
+  const provenanceOwnerId = nodesById.has(anchor.nodeId)
+    ? anchor.nodeId
+    : tableCellProvenanceOwnerIds(paper).get(anchor.nodeId)
+  return Boolean(
+    provenanceOwnerId &&
+    sourceEvidence.provenance[provenanceOwnerId]?.regionIds.includes(
+      relationship.referenceRegionId,
+    ),
+  )
+}
+
+function relationshipMatchesRenderedReference(
+  relationship: PdfNoteRelationship,
+  reference: RenderedNoteReference,
+) {
+  const anchor = relationship.canonicalAnchor
+  return (
+    relationship.targetNoteId === reference.target &&
+    normalizedNoteLabel(relationship.label) ===
+      normalizedNoteLabel(reference.label) &&
+    (anchor?.kind === 'node' && reference.kind === 'node'
+      ? anchor.nodeId === reference.nodeId &&
+        anchor.start === reference.start &&
+        anchor.end === reference.end
+      : anchor?.kind === 'author' && reference.kind === 'author'
+        ? anchor.author === reference.author
+        : false)
+  )
+}
+
+export function validMatchedSemanticNoteRelationshipIds(
+  paper: ResearchPaper,
+  noteRelationships: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
+) {
+  const referencesById = groupById(renderedNoteReferences(paper))
+  const matchedRelationshipsById = groupById(
+    noteRelationships.filter(
+      (relationship) => relationship.status === 'matched',
+    ),
+  )
+  const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
+  const validIds = new Set<string>()
+  for (const [id, relationships] of matchedRelationshipsById) {
+    const references = referencesById.get(id) ?? []
+    if (relationships.length !== 1 || references.length !== 1) continue
+    const relationship = relationships[0]
+    const reference = references[0]
+    const target = relationship.targetNoteId
+      ? nodesById.get(relationship.targetNoteId)
+      : undefined
+    if (
+      !relationshipMatchesRenderedReference(relationship, reference) ||
+      target?.type !== 'footnote' ||
+      target.relationships.backlinks.filter((backlink) => backlink === id)
+        .length !== 1 ||
+      (sourceEvidence !== undefined &&
+        !hasValidNoteRelationshipSourceEvidence(
+          paper,
+          relationship,
+          sourceEvidence,
+        ))
+    ) {
+      continue
+    }
+    validIds.add(id)
+  }
+  return validIds
+}
+
 function semanticNoteRelationshipIntegrityIssues(
+  paper: ResearchPaper,
   references: readonly RenderedNoteReference[],
   noteRelationships: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
 ) {
   const issues: InternalReferenceIntegrityIssue[] = []
   const referencesById = groupById(references)
@@ -321,15 +516,7 @@ function semanticNoteRelationshipIntegrityIssues(
     }
 
     const anchor = relationship.canonicalAnchor
-    const exactAnchor =
-      anchor?.kind === 'node' && reference.kind === 'node'
-        ? anchor.nodeId === reference.nodeId &&
-          anchor.start === reference.start &&
-          anchor.end === reference.end
-        : anchor?.kind === 'author' && reference.kind === 'author'
-          ? anchor.author === reference.author
-          : false
-    if (!exactAnchor) {
+    if (!relationshipMatchesRenderedReference(relationship, reference)) {
       issues.push({
         code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
         sourceId: relationship.id,
@@ -360,7 +547,13 @@ function semanticNoteRelationshipIntegrityIssues(
   for (const relationship of matchedRelationships) {
     if (
       relationship.referenceStart < 0 ||
-      relationship.referenceStart >= relationship.referenceEnd
+      relationship.referenceStart >= relationship.referenceEnd ||
+      (sourceEvidence !== undefined &&
+        !hasValidNoteRelationshipSourceEvidence(
+          paper,
+          relationship,
+          sourceEvidence,
+        ))
     ) {
       issues.push({
         code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
@@ -416,6 +609,7 @@ function semanticNoteRelationshipIntegrityIssues(
 export function internalReferenceIntegrityIssues(
   paper: ResearchPaper,
   noteRelationships?: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
 ): InternalReferenceIntegrityIssue[] {
   const issues: InternalReferenceIntegrityIssue[] = []
   const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
@@ -579,8 +773,10 @@ export function internalReferenceIntegrityIssues(
   if (noteRelationships !== undefined) {
     issues.push(
       ...semanticNoteRelationshipIntegrityIssues(
+        paper,
         renderedReferences,
         noteRelationships,
+        sourceEvidence,
       ),
     )
   } else {
@@ -611,6 +807,7 @@ export function internalReferenceIntegrityIssues(
 export function assertPublicationIntegrity(
   paper: ResearchPaper,
   noteRelationships?: readonly PdfNoteRelationship[],
+  sourceEvidence?: NoteRelationshipSourceEvidence,
 ) {
   const textIssues = canonicalTextIntegrityIssues(paper)
   if (textIssues.length > 0) {
@@ -622,6 +819,7 @@ export function assertPublicationIntegrity(
   const referenceIssues = internalReferenceIntegrityIssues(
     paper,
     noteRelationships,
+    sourceEvidence,
   )
   if (referenceIssues.length > 0) {
     const first = referenceIssues[0]

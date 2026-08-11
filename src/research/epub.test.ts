@@ -3248,6 +3248,20 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('rejects a matched note whose exact canonical anchor has no source evidence', () => {
+    const { notePaper, reconstruction } = staleNoteAnchorFixture()
+    reconstruction.noteRelationships[0].canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'stale-anchor-claim',
+      start: 6,
+      end: 7,
+    }
+
+    expect(() => renderPublicationXhtml(notePaper, { reconstruction })).toThrow(
+      /invalid-source-note-anchor/u,
+    )
+  })
+
   it('rejects a stale-ready equation whose export transcript no longer covers its source lines', async () => {
     const { reconstruction, equationRegion } =
       await staleEquationTranscriptFixture()

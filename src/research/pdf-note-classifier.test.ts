@@ -3092,6 +3092,55 @@ describe('scholarly note-marker taxonomy', () => {
       note?.type === 'footnote' ? note.relationships.backlinks : undefined,
     ).toEqual([relationship?.id])
     expect(result.completeness.unresolvedObjects.footnoteReferences).toBe(0)
+
+    const staleNoteRelationships = structuredClone(result.noteRelationships)
+    const staleRelationship = staleNoteRelationships.find(
+      (candidate) => candidate.id === relationship?.id,
+    )
+    if (!staleRelationship) throw new Error('missing stale note relationship')
+    staleRelationship.referenceRegionId = 'missing-source-note-region'
+    const staleAssessment = assessPdfCompleteness({
+      pages: result.pages,
+      paper: result.paper,
+      diagnostics: [],
+      regions: result.regions,
+      readingOrder: result.readingOrder,
+      provenance: result.provenance,
+      visualRelationships: result.visualRelationships,
+      assets: result.assets,
+      citationRelationships: result.citationRelationships,
+      noteRelationships: staleNoteRelationships,
+      lineBoundaryDecisions: result.lineBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisions:
+        result.sourceSemanticFlowBoundaryDecisions,
+      sourceSemanticFlowBoundaryDecisionCount:
+        result.sourceSemanticFlowBoundaryDecisionCount,
+      canonicalHyphenBoundaryDecisions: result.canonicalHyphenBoundaryDecisions,
+      canonicalHyphenBoundaryDecisionCount:
+        result.canonicalHyphenBoundaryDecisionCount,
+      unresolvedCorruptingJoinCount: result.unresolvedCorruptingJoinCount,
+      structurallyConsumedLineBoundaryCount:
+        result.structurallyConsumedLineBoundaryCount,
+      inlineSpanLedger: {
+        expected: result.completeness.expectedInlineSpanCount,
+        mapped: result.completeness.mappedInlineSpanCount,
+      },
+      hyperlinkLedger: {
+        expected: result.completeness.expectedHyperlinkCount,
+        mapped: result.completeness.mappedHyperlinkCount,
+      },
+      sourceSha256: result.source.sha256,
+    })
+
+    expect(staleAssessment.completeness.resolvedRelationshipCount).toBe(
+      result.completeness.resolvedRelationshipCount - 1,
+    )
+    expect(
+      staleAssessment.completeness.unresolvedObjects.footnoteReferences,
+    ).toBe(1)
+    expect(staleAssessment.readiness.blockingDiagnosticCodes).toContain(
+      'DANGLING_EPUB_INTERNAL_REFERENCE',
+    )
   })
 
   it('anchors a source-backed raised title note on its canonical title heading', async () => {

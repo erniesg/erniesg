@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 export const PDF_EXTRACTION_EVAL_SCHEMA_VERSION = '1.0.0'
 export const PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION = '1.1.0'
 export const PDF_EXTRACTION_EVAL_REPORT_SCHEMA_VERSION = '1.0.0'
+const PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION = '1.0.0'
 export const PDF_EXTRACTION_EVAL_PRIVACY =
   'repository-fixture-identities-source-reviewed-no-private-inputs'
 export const PDF_EXTRACTION_EVAL_REPORT_PRIVACY =
@@ -934,7 +935,7 @@ async function validateReviewEvidenceFiles(value, identity) {
     sha256(rosterArtifact.bytes) !== evidence.rosterSha256 ||
     !exactKeys(roster, ['schemaVersion', 'kind', 'evalSetId', 'reviewers']) ||
     ![
-      PDF_EXTRACTION_EVAL_SCHEMA_VERSION,
+      PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION,
       PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION,
     ].includes(roster.schemaVersion) ||
     roster.kind !== 'pdf-extraction-reviewer-roster' ||
@@ -943,7 +944,9 @@ async function validateReviewEvidenceFiles(value, identity) {
     invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
   }
   let reviewerEntries
-  if (roster.schemaVersion === PDF_EXTRACTION_EVAL_SCHEMA_VERSION) {
+  if (
+    roster.schemaVersion === PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION
+  ) {
     if (
       !Array.isArray(roster.reviewers) ||
       roster.reviewers.length < 2 ||
@@ -989,6 +992,12 @@ async function validateReviewEvidenceFiles(value, identity) {
     identityHashesByAlias.set(alias, hashes)
   }
   const resolveReviewerReference = (reference) => {
+    if (
+      roster.schemaVersion === PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION
+    ) {
+      const legacyHashes = identityHashesByAlias.get(reference)
+      return legacyHashes?.length === 1 ? legacyHashes[0] : null
+    }
     if (rosterIdentities.has(reference)) return reference
     const hashes = identityHashesByAlias.get(reference)
     return hashes?.length === 1 ? hashes[0] : null

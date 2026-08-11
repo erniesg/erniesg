@@ -851,6 +851,21 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     }
   })
 
+  it('keeps hash-shaped v1.0 reviewer IDs alias-bound', async () => {
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-review-v1-alias-')
+    try {
+      await expect(
+        attachVerifiedReviews(evalSet, directory, {
+          legacy: true,
+          reviewerA: 'b'.repeat(64),
+        }),
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('requires the manifest hash to match exact file-mode prediction bytes', async () => {
     const evalSet = await readEvalSet()
     const directory = await mkdtemp('.tmp-pdf-extraction-provider-')

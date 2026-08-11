@@ -3191,17 +3191,38 @@ function relationshipCounts(
   )
   const noteReferences = [
     ...(paper.authorNotes ?? []),
-    ...paper.nodes.flatMap((node) =>
-      'noteReferences' in node && node.noteReferences
+    ...paper.nodes.flatMap((node) => [
+      ...('noteReferences' in node && node.noteReferences
         ? node.noteReferences
-        : [],
-    ),
+        : []),
+      ...(node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row) =>
+            row.cells.flatMap((cell) => cell.noteReferences ?? []),
+          )
+        : []),
+    ]),
   ]
   const resolvedNoteReferences = noteReferences.filter((reference) =>
     noteIds.has(reference.target),
   )
   const resolvedNotes = new Set(
     resolvedNoteReferences.map((reference) => reference.target),
+  )
+  const tableCellOwners = new Map(
+    paper.nodes.flatMap((node) =>
+      node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row, rowIndex) =>
+            row.cells.map((cell, cellIndex) => [
+              `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+              {
+                text: cell.text,
+                inlineRuns: cell.inlineRuns,
+                provenanceNodeId: node.id,
+              },
+            ] as const),
+          )
+        : [],
+    ),
   )
   const resolvedCitations = (citationRelationships ?? []).filter(
     (relationship) => {
@@ -3214,19 +3235,25 @@ function relationshipCounts(
         return false
       }
       const node = nodesById.get(anchor.nodeId)
-      const anchorText =
-        node?.type === 'figure'
+      const tableCellOwner = tableCellOwners.get(anchor.nodeId)
+      const anchorText = tableCellOwner
+        ? tableCellOwner.text
+        : node?.type === 'figure'
           ? (node.sourceText ?? '')
           : node && 'text' in node
             ? node.text
             : ''
+      const inlineRuns = tableCellOwner?.inlineRuns ?? node?.inlineRuns
+      const provenanceNodeId = tableCellOwner?.provenanceNodeId ?? node?.id
       if (
-        !node ||
-        (node.type !== 'heading' &&
-          node.type !== 'paragraph' &&
-          node.type !== 'quote' &&
+        (!node && !tableCellOwner) ||
+        (!tableCellOwner &&
+          node?.type !== 'heading' &&
+          node?.type !== 'paragraph' &&
+          node?.type !== 'quote' &&
+          node?.type !== 'caption' &&
           !(
-            node.type === 'figure' &&
+            node?.type === 'figure' &&
             node.objectType === 'table' &&
             node.sourceText
           )) ||
@@ -3240,14 +3267,15 @@ function relationshipCounts(
             target.list?.numberingId === 'references'
           )
         }) ||
-        !provenance?.[node.id]?.regionIds.includes(
+        !provenanceNodeId ||
+        !provenance?.[provenanceNodeId]?.regionIds.includes(
           relationship.referenceRegionId,
         )
       ) {
         return false
       }
       return Boolean(
-        node.inlineRuns?.some(
+        inlineRuns?.some(
           (run) =>
             run.relationshipId === relationship.id &&
             run.semanticRole === 'citation' &&

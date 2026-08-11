@@ -17194,7 +17194,14 @@ describe('PDF semantic reconstruction', () => {
           0.22,
           0.72,
         ),
-        run(1, `${figureLabel}. Source-backed result.`, 0.18, 0.55, 0.64, 8),
+        run(
+          1,
+          `${figureLabel}. Source-backed result; compare ${figureLabel}.`,
+          0.18,
+          0.55,
+          0.64,
+          8,
+        ),
         run(1, `See ${figureLabel} for the result.`, 0.1, 0.64, 0.72),
       ])
       sourcePage.imageCount = 1
@@ -17229,11 +17236,23 @@ describe('PDF semantic reconstruction', () => {
       const visual = result.visualRelationships.find(
         (relationship) => relationship.label === figureLabel,
       )
-      const crossReference = result.crossReferenceRelationships.find(
+      const crossReferences = result.crossReferenceRelationships.filter(
         (relationship) => relationship.text === figureLabel,
       )
+      const crossReference = crossReferences.find(
+        (relationship) =>
+          result.regions.find(
+            (region) => region.id === relationship.referenceRegionId,
+          )?.kind === 'body',
+      )
+      const captionCrossReference = crossReferences.find(
+        (relationship) =>
+          result.regions.find(
+            (region) => region.id === relationship.referenceRegionId,
+          )?.kind === 'caption',
+      )
 
-      expect(result.crossReferenceRelationships).toHaveLength(1)
+      expect(result.crossReferenceRelationships).toHaveLength(2)
       expect(
         result.regions.find(
           (region) => region.id === crossReference?.referenceRegionId,
@@ -17253,6 +17272,16 @@ describe('PDF semantic reconstruction', () => {
           end: 4 + figureLabel.length,
         },
       })
+      expect(captionCrossReference).toMatchObject({
+        status: 'matched',
+        targetNodeIds: [visual?.canonicalNodeId],
+        canonicalAnchor: {
+          nodeId: visual?.captionNodeId,
+          start: expect.any(Number),
+          end: expect.any(Number),
+        },
+      })
+      expect(captionCrossReference?.referenceStart).toBeGreaterThan(0)
       const owner = result.paper.nodes.find(
         (node) => node.id === crossReference?.canonicalAnchor?.nodeId,
       )

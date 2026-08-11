@@ -624,17 +624,59 @@ function validatePdfCrossReferenceEvidence({
       (target) => `${target.kind}:${target.label}:${target.nodeId}`,
     ),
   )
-  const sourceParagraphRegionIds = new Set(
+  const sourceCrossReferenceRegionIds = new Set(
     paper.nodes.flatMap((node) =>
-      node.type === 'paragraph' && node.list?.numberingId !== 'references'
+      (node.type === 'paragraph' &&
+        node.list?.numberingId !== 'references') ||
+      node.type === 'caption' ||
+      node.type === 'footnote'
         ? (reconstruction.provenance[node.id]?.regionIds ?? [])
         : [],
     ),
   )
+  const visualDefinitionEndsByRegionId = new Map<string, number>()
+  for (const relationship of reconstruction.visualRelationships) {
+    const captionRegion = relationship.captionRegionId
+      ? regionById.get(relationship.captionRegionId)
+      : undefined
+    if (!captionRegion) continue
+    const definition = parsePdfScholarlyVisualLabel(captionRegion.text, {
+      context: 'caption',
+    })
+    const canonical = parsePdfScholarlyVisualLabel(relationship.label, {
+      context: 'reference',
+    })
+    if (
+      definition?.status !== 'parsed' ||
+      canonical?.status !== 'parsed' ||
+      definition.kind !== canonical.kind ||
+      definition.identifier !== canonical.identifier
+    ) {
+      continue
+    }
+    visualDefinitionEndsByRegionId.set(
+      captionRegion.id,
+      Math.max(
+        visualDefinitionEndsByRegionId.get(captionRegion.id) ?? 0,
+        definition.consumedEnd,
+      ),
+    )
+  }
   const redetectedRelationships = resolvePdfScholarlyCrossReferences({
-    regions: reconstruction.regions.filter((region) =>
-      sourceParagraphRegionIds.has(region.id),
-    ),
+    regions: reconstruction.regions.flatMap((region) => {
+      if (!sourceCrossReferenceRegionIds.has(region.id)) return []
+      const definitionEnd = visualDefinitionEndsByRegionId.get(region.id)
+      return [
+        definitionEnd
+          ? {
+              ...region,
+              text:
+                region.text.slice(0, definitionEnd).replace(/\S/gu, ' ') +
+                region.text.slice(definitionEnd),
+            }
+          : region,
+      ]
+    }),
     canonicalTargets,
   })
   const relationshipsById = new Map(
@@ -2534,11 +2576,17 @@ function renderResearchPublicationXhtml(
             : [node]
         })
       : sourceRenderableNodes
+  const renderedNoteReferenceOwnerNodes = [
+    ...renderableNodes,
+    ...paper.nodes.filter(
+      (node) => node.type === 'caption' && associatedCaptions.has(node.id),
+    ),
+  ]
   const renderedNoteReferenceIds = new Set([
     ...renderableAuthorNoteReferences(paper).map((reference) =>
       stableId(reference.id),
     ),
-    ...renderableNodes.flatMap((node) => [
+    ...renderedNoteReferenceOwnerNodes.flatMap((node) => [
       ...('noteReferences' in node
         ? validNoteReferences(node.text, node.noteReferences).map((reference) =>
             stableId(reference.id),

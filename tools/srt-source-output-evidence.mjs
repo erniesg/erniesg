@@ -22,7 +22,7 @@ import {
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createServer } from 'vite'
 import { chromium } from '@playwright/test'
-import { unzipSync } from 'fflate'
+import { strFromU8, unzipSync } from 'fflate'
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 
@@ -692,6 +692,13 @@ async function renderRendition({
       ? await buildEpub(document, profile)
       : await buildEpub(document)
   const archive = unzipSync(epub.bytes)
+  const packagedDocuments = Object.fromEntries(
+    Object.entries(archive).flatMap(([name, bytes]) =>
+      name.startsWith('EPUB/') && name.endsWith('.xhtml')
+        ? [[name.slice('EPUB/'.length), strFromU8(bytes)]]
+        : [],
+    ),
+  )
   const unpacked = await mkdtemp(join(root, 'rendition-'))
   await writeArchive(archive, unpacked)
   const page = await browser.newPage({
@@ -732,6 +739,7 @@ async function renderRendition({
     )
     return {
       html,
+      packagedDocuments,
       bytes,
       width: Math.max(1, Math.round(profile.preview.widthCssPx)),
       height: Math.max(1, renderedHeight),
@@ -923,6 +931,7 @@ async function run(options) {
               profile: checkpoint.profile,
               width: pair.rendition.width,
               html: pair.rendition.html,
+              packagedDocuments: pair.rendition.packagedDocuments,
               semanticFlowBoundaryLedgerValid:
                 renditionSource === 'pdf-reconstruction'
                   ? !reconstruction.diagnostics.some(

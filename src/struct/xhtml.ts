@@ -85,6 +85,8 @@ function groupedCitationLinks(
   labels: readonly string[],
   targets: readonly string[],
   epubRole: string,
+  sourceValue = value,
+  sourceOffset = 0,
 ) {
   if (
     labels.length !== targets.length ||
@@ -95,7 +97,7 @@ function groupedCitationLinks(
   const targetByLabel = new Map(
     labels.map((label, index) => [label, targets[index]] as const),
   )
-  const ranges = [...value.matchAll(/[\p{Nd}⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu)].flatMap(
+  const ranges = [...sourceValue.matchAll(/[\p{Nd}⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu)].flatMap(
     (match) => {
       const target = targetByLabel.get(normalizedNumericToken(match[0]))
       const start = match.index ?? -1
@@ -105,12 +107,12 @@ function groupedCitationLinks(
     },
   )
   const linkedTargets = new Set(ranges.map((range) => range.target))
-  for (const match of value.matchAll(/\b(?:18|19|20)\d{2}[a-z]?\b/giu)) {
+  for (const match of sourceValue.matchAll(/\b(?:18|19|20)\d{2}[a-z]?\b/giu)) {
     const start = match.index ?? -1
     if (start < 0) continue
     const year = match[0].toLocaleLowerCase()
     const prefix = foldedCitationText(
-      value.slice(Math.max(0, start - 96), start),
+      sourceValue.slice(Math.max(0, start - 96), start),
     )
     const candidates = labels.flatMap((label, index) => {
       const separator = label.lastIndexOf(':')
@@ -139,9 +141,23 @@ function groupedCitationLinks(
   ) {
     return { html: text(value), linkedTargets: new Set<string>() }
   }
+  const segmentEnd = sourceOffset + value.length
+  const segmentRanges = ranges.flatMap((range) => {
+    const start = Math.max(range.start, sourceOffset)
+    const end = Math.min(range.end, segmentEnd)
+    return start < end
+      ? [
+          {
+            start: start - sourceOffset,
+            end: end - sourceOffset,
+            target: range.target,
+          },
+        ]
+      : []
+  })
   let cursor = 0
   let html = ''
-  for (const range of ranges) {
+  for (const range of segmentRanges) {
     html += text(value.slice(cursor, range.start))
     html += `<a href="#${attribute(range.target)}"${epubRole}>${text(value.slice(range.start, range.end))}</a>`
     cursor = range.end
@@ -234,7 +250,14 @@ function renderInline(
               .filter(Boolean)
             const grouped =
               semanticRun.semanticRole === 'citation'
-                ? groupedCitationLinks(segmentValue, labels, targets, epubRole)
+                ? groupedCitationLinks(
+                    segmentValue,
+                    labels,
+                    targets,
+                    epubRole,
+                    value.slice(semanticRun.start, semanticRun.end),
+                    start - semanticRun.start,
+                  )
                 : { html: text(segmentValue), linkedTargets: new Set<string>() }
             const visibleTargets =
               semanticRun.semanticRole === 'citation'

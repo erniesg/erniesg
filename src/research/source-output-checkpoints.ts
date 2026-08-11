@@ -351,6 +351,7 @@ export type RenditionCheckpointObservation = {
   profile: TargetProfileId
   width: number
   html: string
+  packagedDocuments?: Readonly<Record<string, string>>
   semanticFlowBoundaryLedgerValid?: boolean
   semanticFlowBoundaryDecisions?: readonly Pick<
     PdfSourceSemanticFlowBoundaryDecision,
@@ -505,13 +506,66 @@ function htmlAnchors(html: string): HtmlAnchor[] {
   })
 }
 
-function internalTargetId(href: string | undefined) {
-  if (!href?.startsWith('#')) return null
-  try {
-    return decodeURIComponent(href.slice(1))
-  } catch {
-    return ''
+const EPUB_CONTENT_DOCUMENT = 'content.xhtml'
+
+function resolvedDocumentHref(reference: string) {
+  if (
+    reference.startsWith('/') ||
+    reference.includes('\\') ||
+    reference.includes('?') ||
+    /[\u0000-\u001f\u007f]/u.test(reference)
+  ) {
+    return null
   }
+  const base = EPUB_CONTENT_DOCUMENT.split('/')
+  base.pop()
+  const resolved: string[] = []
+  for (const segment of [...base, ...reference.split('/')]) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      if (resolved.length === 0) return null
+      resolved.pop()
+      continue
+    }
+    resolved.push(segment)
+  }
+  return resolved.join('/')
+}
+
+function internalHrefTarget(href: string | undefined) {
+  if (!href) return null
+  const scheme = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)?.[1]
+  if (scheme || href.startsWith('//')) return null
+  if (href !== href.trim()) {
+    return { reason: `Internal href ${href} is unsafe.` }
+  }
+  const hashIndex = href.indexOf('#')
+  const documentReference = hashIndex === -1 ? href : href.slice(0, hashIndex)
+  const targetDocument = documentReference
+    ? resolvedDocumentHref(documentReference)
+    : EPUB_CONTENT_DOCUMENT
+  if (!targetDocument) return { reason: `Internal href ${href} is unsafe.` }
+  if (hashIndex === -1) {
+    return { reason: null, documentHref: targetDocument, targetId: null }
+  }
+  try {
+    return {
+      reason: null,
+      documentHref: targetDocument,
+      targetId: decodeURIComponent(href.slice(hashIndex + 1)),
+    }
+  } catch {
+    return { reason: `Internal href ${href} has an invalid fragment.` }
+  }
+}
+
+function internalTargetId(href: string | undefined) {
+  const target = internalHrefTarget(href)
+  return target?.reason === null &&
+    target.documentHref === EPUB_CONTENT_DOCUMENT &&
+    target.targetId !== null
+    ? target.targetId
+    : null
 }
 
 function elementInnerHtml(html: string, element: HtmlOpeningElement) {
@@ -522,53 +576,75 @@ function elementInnerHtml(html: string, element: HtmlOpeningElement) {
   return match ? html.slice(element.end, match.index) : ''
 }
 
-function internalLinkIntegrityFailure(html: string) {
-  const { html: structuralHtml, elements } = htmlOpeningElements(html)
-  const ids = new Map<string, HtmlOpeningElement[]>()
-  for (const element of elements) {
-    if (element.id === undefined) continue
-    const owners = ids.get(element.id) ?? []
-    owners.push(element)
-    ids.set(element.id, owners)
-  }
+function internalLinkIntegrityFailure(
+  html: string,
+  packagedDocuments: Readonly<Record<string, string>> = {},
+) {
+  const documents = new Map(Object.entries(packagedDocuments))
+  documents.set(EPUB_CONTENT_DOCUMENT, html)
+  const documentGraphs = new Map(
+    [...documents].map(([documentHref, documentHtml]) => {
+      const graph = htmlOpeningElements(documentHtml)
+      const ids = new Map<string, HtmlOpeningElement[]>()
+      for (const element of graph.elements) {
+        if (element.id === undefined) continue
+        const owners = ids.get(element.id) ?? []
+        owners.push(element)
+        ids.set(element.id, owners)
+      }
+      return [documentHref, { ...graph, ids }]
+    }),
+  )
+  const current = documentGraphs.get(EPUB_CONTENT_DOCUMENT)!
+  const { html: structuralHtml, elements, ids } = current
   const links = elements.flatMap((element) => {
-    const targetId = internalTargetId(element.href)
-    return targetId === null ? [] : [{ element, targetId }]
+    const target = internalHrefTarget(element.href)
+    if (target === null) return []
+    if (
+      target.reason === null &&
+      target.documentHref !== EPUB_CONTENT_DOCUMENT &&
+      element.tag !== 'a'
+    ) {
+      return []
+    }
+    return [{ element, target }]
+  })
+  const outcome = (reason: string | null) => ({
+    reason,
+    structuralHtml,
+    elements,
+    ids,
+    links,
   })
   if (links.length === 0) {
-    return {
-      reason: 'The rendition contains no internal href to verify.',
-      structuralHtml,
-      elements,
-      ids,
-      links,
-    }
+    return outcome('The rendition contains no internal href to verify.')
   }
   for (const link of links) {
-    if (!link.targetId) {
-      return {
-        reason: 'The rendition contains an empty or invalid internal href.',
-        structuralHtml,
-        elements,
-        ids,
-        links,
-      }
+    if (link.target.reason !== null) {
+      return outcome(link.target.reason)
     }
-    const targets = ids.get(link.targetId) ?? []
+    const targetGraph = documentGraphs.get(link.target.documentHref)
+    if (!targetGraph) {
+      return outcome(
+        `Internal href ${link.element.href} has no packaged document ${link.target.documentHref}.`,
+      )
+    }
+    if (link.target.targetId === null) continue
+    if (!link.target.targetId) {
+      return outcome(
+        'The rendition contains an empty or invalid internal href.',
+      )
+    }
+    const targets = targetGraph.ids.get(link.target.targetId) ?? []
     if (targets.length !== 1) {
-      return {
-        reason:
-          targets.length === 0
-            ? `Internal href #${link.targetId} has no target.`
-            : `Internal href #${link.targetId} has ${targets.length} targets; exactly one is required.`,
-        structuralHtml,
-        elements,
-        ids,
-        links,
-      }
+      return outcome(
+        targets.length === 0
+          ? `Internal href #${link.target.targetId} has no target.`
+          : `Internal href #${link.target.targetId} has ${targets.length} targets; exactly one is required.`,
+      )
     }
   }
-  return { reason: null, structuralHtml, elements, ids, links }
+  return outcome(null)
 }
 
 function hasToken(value: string | undefined, token: string) {
@@ -577,11 +653,14 @@ function hasToken(value: string | undefined, token: string) {
 
 function relationshipIntegrityFailure(
   checkpoint: SourceOutputCheckpoint,
-  html: string,
+  rendition: RenditionCheckpointObservation,
 ) {
   const expected = checkpoint.output.relationship
   if (!expected) return 'The checkpoint has no relationship expectation.'
-  const graph = internalLinkIntegrityFailure(html)
+  const graph = internalLinkIntegrityFailure(
+    rendition.html,
+    rendition.packagedDocuments,
+  )
   if (graph.reason) return graph.reason
   const anchors = htmlAnchors(graph.structuralHtml)
   const candidates = anchors.filter((anchor) => {
@@ -596,10 +675,34 @@ function relationshipIntegrityFailure(
       normalizedText(anchor.innerHtml) === normalizedText(expected.markerText)
     )
   })
-  if (candidates.length !== 1) {
-    return `Expected exactly one ${expected.kind} link for marker ${expected.markerText}; found ${candidates.length}.`
+  const isInsideExpectedContainer = (anchor: HtmlAnchor) => {
+    if (!expected.container) return true
+    const tags =
+      expected.container === 'caption' ? ['figcaption'] : ['td', 'th']
+    return tags.some((tag) =>
+      tagContents(graph.structuralHtml, tag).some((content) =>
+        content.includes(anchor.fullHtml),
+      ),
+    )
   }
-  const anchor = candidates[0]
+  const matchingTargetCandidates = candidates.filter((anchor) => {
+    const targetId = internalTargetId(anchor.href)
+    const target = targetId ? graph.ids.get(targetId)?.[0] : undefined
+    if (!target) return false
+    const targetHtml = elementInnerHtml(graph.structuralHtml, target)
+    if (
+      !normalizedText(targetHtml).includes(normalizedText(expected.targetText))
+    ) {
+      return false
+    }
+    return isInsideExpectedContainer(anchor)
+  })
+  const narrowedCandidates =
+    candidates.length === 1 ? candidates : matchingTargetCandidates
+  if (narrowedCandidates.length !== 1) {
+    return `Expected exactly one ${expected.kind} link for marker ${expected.markerText} targeting the expected body; found ${matchingTargetCandidates.length}.`
+  }
+  const anchor = narrowedCandidates[0]
   const targetId = internalTargetId(anchor.href)
   if (!targetId) return `Marker ${expected.markerText} has no internal target.`
   const target = graph.ids.get(targetId)?.[0]
@@ -647,14 +750,7 @@ function relationshipIntegrityFailure(
     }
   }
   if (expected.container) {
-    const containerTags =
-      expected.container === 'caption' ? ['figcaption'] : ['td', 'th']
-    const insideExpectedContainer = containerTags.some((tag) =>
-      tagContents(graph.structuralHtml, tag).some((content) =>
-        content.includes(anchor.fullHtml),
-      ),
-    )
-    if (!insideExpectedContainer) {
+    if (!isInsideExpectedContainer(anchor)) {
       return `Marker ${expected.markerText} is not inside the expected ${expected.container} container.`
     }
   }
@@ -797,8 +893,9 @@ function unresolvedHyphenFragment(
 
 function outputFeaturePresent(
   checkpoint: SourceOutputCheckpoint,
-  html: string,
+  rendition: RenditionCheckpointObservation,
 ) {
+  const html = rendition.html
   switch (checkpoint.output.feature) {
     case 'figure':
       return hasFigure(checkpoint, html)
@@ -817,7 +914,10 @@ function outputFeaturePresent(
         (anchor) => internalTargetId(anchor.href) !== null,
       )
     case 'internal-links':
-      return internalLinkIntegrityFailure(html).links.length > 0
+      return (
+        internalLinkIntegrityFailure(html, rendition.packagedDocuments).links
+          .length > 0
+      )
   }
 }
 
@@ -886,7 +986,7 @@ export function evaluateSourceOutputCheckpoint(
       reason: 'The generated rendition is empty.',
     }
   }
-  if (!outputFeaturePresent(checkpoint, observation.rendition.html)) {
+  if (!outputFeaturePresent(checkpoint, observation.rendition)) {
     return {
       checkpointId: checkpoint.id,
       status: 'failed',
@@ -912,7 +1012,7 @@ export function evaluateSourceOutputCheckpoint(
   ) {
     const failure = relationshipIntegrityFailure(
       checkpoint,
-      observation.rendition.html,
+      observation.rendition,
     )
     if (failure) {
       return {
@@ -925,6 +1025,7 @@ export function evaluateSourceOutputCheckpoint(
   if (checkpoint.property === 'dangling-link-verifier') {
     const failure = internalLinkIntegrityFailure(
       observation.rendition.html,
+      observation.rendition.packagedDocuments,
     ).reason
     if (failure) {
       return {

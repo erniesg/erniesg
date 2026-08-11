@@ -7631,6 +7631,42 @@ describe('PDF semantic reconstruction', () => {
     )
   })
 
+  it('keeps a partially missing citation cluster unresolved', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'A Citation Study', 0.1, 0.08, 0.7, 22),
+          run(1, 'Abstract', 0.1, 0.16, 0.3, 16),
+          run(
+            1,
+            'Prior work [1, 2] establishes the baseline.',
+            0.1,
+            0.24,
+            0.72,
+          ),
+        ]),
+        page(2, [
+          run(2, 'References', 0.1, 0.1, 0.3, 16),
+          run(2, '[1] First competing reference.', 0.1, 0.22, 0.72),
+          run(2, '[1] Second competing reference.', 0.1, 0.3, 0.72),
+        ]),
+      ],
+      sourceHash: '1'.repeat(64),
+      fileName: 'partially-missing-citation-cluster.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        labels: ['1', '2'],
+        status: 'unresolved',
+        targetNodeIds: [],
+        candidateNodeIds: [expect.any(String), expect.any(String)],
+        evidence: expect.arrayContaining(['bibliography-label-target-missing']),
+      }),
+    ])
+  })
+
   it('keeps citation-led body prose outside the bibliography list scope', async () => {
     const citationLedText =
       '[298] learn coordinated representations using a Cauchy loss to strengthen robustness to outliers.'

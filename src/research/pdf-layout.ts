@@ -7402,12 +7402,11 @@ function buildCitationRelationships(
       })
       const missing = candidates.some((targets) => targets.length === 0)
       const ambiguous = candidates.some((targets) => targets.length > 1)
-      const status =
-        !missing && !ambiguous
-          ? 'matched'
-          : ambiguous
-            ? 'ambiguous'
-            : 'unresolved'
+      const status = missing
+        ? 'unresolved'
+        : ambiguous
+          ? 'ambiguous'
+          : 'matched'
       const targetNodeIds =
         status === 'matched' ? candidates.map((targets) => targets[0]) : []
       const candidateNodeIds = [...new Set(candidates.flat())]
@@ -7445,10 +7444,10 @@ function buildCitationRelationships(
                   'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
                 ]
               : []),
-            ...(ambiguous
-              ? ['bibliography-author-year-target-ambiguous']
-              : missing
-                ? ['bibliography-author-year-target-missing']
+            ...(missing
+              ? ['bibliography-author-year-target-missing']
+              : ambiguous
+                ? ['bibliography-author-year-target-ambiguous']
                 : ['bibliography-author-year-key-unique']),
           ],
           sourceBoxes: [{ ...classification.sourceBox }],
@@ -7460,12 +7459,7 @@ function buildCitationRelationships(
     )
     const missing = candidates.some((targets) => targets.length === 0)
     const ambiguous = candidates.some((targets) => targets.length > 1)
-    const status =
-      !missing && !ambiguous
-        ? 'matched'
-        : ambiguous
-          ? 'ambiguous'
-          : 'unresolved'
+    const status = missing ? 'unresolved' : ambiguous ? 'ambiguous' : 'matched'
     const targetNodeIds =
       status === 'matched' ? candidates.map((targets) => targets[0]) : []
     const candidateNodeIds = [...new Set(candidates.flat())]

@@ -632,6 +632,28 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     )
   })
 
+  it('binds verified review evidence to the exact evaluated identity', async () => {
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-review-identity-')
+    try {
+      await attachVerifiedReviews(evalSet, directory)
+      evalSet.cases.find((item) =>
+        item.id.endsWith('.table-structure'),
+      ).source.groundTruth.tables[0].cells[0].text = 'mutated-after-review'
+      const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+        id: 'candidate-a',
+        kind: 'candidate',
+        version: 'candidate-a-v1',
+      })
+
+      expect(() => comparePdfExtractionProviders(evalSet, [candidate])).toThrow(
+        'PDF_EXTRACTION_REVIEW_EVIDENCE_NOT_VERIFIED',
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('binds each case reviewer list to its corresponding decision', async () => {
     const evalSet = await readEvalSet()
     const directory = await mkdtemp('.tmp-pdf-extraction-review-')
@@ -844,12 +866,11 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     expect(validate(candidate)).toBe(true)
   })
 
-  it('aligns runtime box validation with the published normalized-component schema', async () => {
+  it('enforces page-contained endpoint boxes without perfect-scoring zero area', async () => {
     const evalSet = await readEvalSet()
     const tableCase = evalSet.cases.find((item) =>
       item.id.endsWith('.table-structure'),
     )
-    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 0.8, 0.5]
     const schema = JSON.parse(
       await readFile(
         'docs/schemas/pdf-extraction-eval-strata.schema.json',
@@ -858,8 +879,33 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     )
     const validate = new Ajv2020({ strict: false }).compile(schema)
 
+    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 1.6, 0.5]
+    expect(validate(evalSet)).toBe(false)
+    expect(() => validatePdfExtractionEvalSet(evalSet)).toThrow(
+      'INVALID_PDF_EXTRACTION_EVAL_SET',
+    )
+
+    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 0.8, 0.5]
     expect(validate(evalSet)).toBe(true)
     expect(() => validatePdfExtractionEvalSet(evalSet)).not.toThrow()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const output = candidate.cases.find((item) => item.caseId === tableCase.id)
+    output.status = 'scored'
+    output.prediction = {
+      tables: [{ ...tableCase.source.groundTruth.tables[0] }],
+    }
+    output.diagnostics = []
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'table-structure' && row.layout === tableCase.layout,
+      ).score,
+    ).toBe(0)
   })
 
   it('refuses regex-only prose continuity evidence', async () => {

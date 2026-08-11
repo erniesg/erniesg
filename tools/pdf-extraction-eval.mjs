@@ -191,15 +191,13 @@ function isNormalizedBox(value) {
     Array.isArray(value) &&
     value.length === 4 &&
     value.every((item) => typeof item === 'number' && Number.isFinite(item)) &&
-    value[0] >= 0 &&
-    value[0] < 1 &&
-    value[1] >= 0 &&
-    value[1] < 1 &&
-    value[2] > 0 &&
-    value[2] <= 1 &&
-    value[3] > 0 &&
-    value[3] <= 1
+    value.every((item) => item >= 0 && item <= 1)
   )
+}
+
+function normalizedBoxArea(value) {
+  if (!isNormalizedBox(value)) return 0
+  return Math.abs(value[2] - value[0]) * Math.abs(value[3] - value[1])
 }
 
 function validateSourceBinding(value, code) {
@@ -1042,7 +1040,7 @@ async function validateReviewEvidenceFiles(value, identity) {
     }
   }
   Object.defineProperty(value, REVIEW_EVIDENCE_VALIDATED, {
-    value: true,
+    value: identity.evalSetSha256,
     enumerable: false,
     configurable: true,
   })
@@ -1177,6 +1175,8 @@ function predictionArray(prediction, key) {
 function sourceBindingMatches(expected, candidate) {
   return (
     hasValidSourceBinding(candidate) &&
+    normalizedBoxArea(expected.box) > 0 &&
+    normalizedBoxArea(candidate.box) > 0 &&
     canonicalJson(candidate.box) === canonicalJson(expected.box) &&
     canonicalJson(candidate.sourceRegionIds) ===
       canonicalJson(expected.sourceRegionIds) &&
@@ -1246,8 +1246,7 @@ function tableScore(expected, prediction) {
   if (
     predictedTables.some(
       (table) =>
-        table?.pageWide === true ||
-        (Array.isArray(table?.box) && table.box[2] * table.box[3] > 0.8),
+        table?.pageWide === true || normalizedBoxArea(table?.box) > 0.8,
     )
   ) {
     return degenerateResult('DEGENERATE_PAGE_WIDE_GRID')
@@ -1331,8 +1330,7 @@ function objectScore(expected, prediction, key, degenerateCode) {
   if (
     objects.some(
       (object) =>
-        object?.pageWide === true ||
-        (Array.isArray(object?.box) && object.box[2] * object.box[3] > 0.9),
+        object?.pageWide === true || normalizedBoxArea(object?.box) > 0.9,
     )
   ) {
     return degenerateResult(degenerateCode)
@@ -1643,7 +1641,7 @@ export function comparePdfExtractionProviders(evalSet, providers) {
     reviewValues.some(
       (review) => review.reviewStatus === 'two-reviewer-agreed',
     ) &&
-    evalSet[REVIEW_EVIDENCE_VALIDATED] !== true
+    evalSet[REVIEW_EVIDENCE_VALIDATED] !== identity.evalSetSha256
   ) {
     invalid('PDF_EXTRACTION_REVIEW_EVIDENCE_NOT_VERIFIED')
   }
@@ -1732,7 +1730,7 @@ export function comparePdfExtractionProviders(evalSet, providers) {
   const reviewsComplete =
     reviewValues.every(
       (review) => review.reviewStatus === 'two-reviewer-agreed',
-    ) && evalSet[REVIEW_EVIDENCE_VALIDATED] === true
+    ) && evalSet[REVIEW_EVIDENCE_VALIDATED] === identity.evalSetSha256
   const reviewBlocksComparison = hasScoredOutput && !reviewsComplete
   if (reviewBlocksComparison) {
     for (const provider of providerSummaries) provider.score = null

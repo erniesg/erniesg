@@ -2576,10 +2576,19 @@ function renderResearchPublicationXhtml(
             : [node]
         })
       : sourceRenderableNodes
+  const renderedAssociatedCaptionIds = new Set(
+    paper.nodes.flatMap((node) =>
+      node.type === 'figure' &&
+      (visualRelationships.has(node.id) || !omitMissingVisuals)
+        ? [node.relationships.caption]
+        : [],
+    ),
+  )
   const renderedNoteReferenceOwnerNodes = [
     ...renderableNodes,
     ...paper.nodes.filter(
-      (node) => node.type === 'caption' && associatedCaptions.has(node.id),
+      (node) =>
+        node.type === 'caption' && renderedAssociatedCaptionIds.has(node.id),
     ),
   ]
   const renderedNoteReferenceIds = new Set([

@@ -2926,6 +2926,78 @@ describe('EPUB 3 export', () => {
     expect(content).toContain('href="#caption-note-reference-6"')
   })
 
+  it('omits a caption-note backlink when an unresolved visual suppresses its reference anchor', () => {
+    const notePaper = structuredClone(paper)
+    notePaper.nodes = [
+      {
+        id: 'unresolved-captioned-figure',
+        type: 'figure',
+        title: 'Unresolved captioned figure',
+        relationships: { caption: 'unresolved-caption-with-note' },
+        source: 'synthetic-unresolved-caption-note',
+      },
+      {
+        id: 'unresolved-caption-with-note',
+        type: 'caption',
+        text: 'Figure caption 6.',
+        noteReferences: [
+          {
+            id: 'suppressed-caption-note-reference-6',
+            label: '6',
+            target: 'suppressed-caption-note-6',
+            start: 15,
+            end: 16,
+            confidence: 1,
+          },
+        ],
+        source: 'synthetic-unresolved-caption-note',
+      },
+      {
+        id: 'suppressed-caption-note-6',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '6',
+        text: 'A note whose caption reference cannot render.',
+        relationships: { backlinks: ['suppressed-caption-note-reference-6'] },
+        source: 'synthetic-unresolved-caption-note',
+      },
+    ]
+
+    const content = renderPublicationXhtml(notePaper, {
+      reconstruction: {
+        readiness: { ready: false },
+        visualRelationships: [
+          {
+            id: 'unresolved-caption-visual',
+            kind: 'figure',
+            label: 'Figure 1',
+            captionRegionId: 'source-caption-region',
+            sourceRegionIds: [],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: ['unresolved-visual-text-owned'],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: '',
+            altText: 'Unresolved captioned figure',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'unresolved-caption-with-note',
+          },
+        ],
+        assets: [],
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain(
+      'id="unresolved-caption-with-note" data-canonical-id="unresolved-caption-with-note" hidden="hidden"',
+    )
+    expect(content).not.toContain('id="suppressed-caption-note-reference-6"')
+    expect(content).not.toContain('href="#suppressed-caption-note-reference-6"')
+  })
+
   it('rejects a canonical note backlink with no rendered reference anchor', async () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [

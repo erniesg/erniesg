@@ -988,13 +988,72 @@ function rawUploadValue(node: LexicalNode) {
   return node.value ?? node.upload ?? node.asset ?? fields?.upload ?? fields?.asset ?? node.id
 }
 
-function uploadFor(state: AdapterState, node: LexicalNode): JsonObject | undefined {
+// Field families the reference and the indexed record can each spell several
+// ways. When the reference declares any spelling of a family, the indexed
+// spellings are dropped so the reference value deterministically wins.
+const UPLOAD_REFERENCE_FIELD_GROUPS: readonly (readonly string[])[] = [
+  ['id', '_id', 'key'],
+  ['mimeType', 'mimetype', 'mediaType'],
+  ['focalPoint', 'focalX', 'focalY'],
+  ['bytes', 'data', 'buffer', 'base64'],
+  ['filename', 'fileName', 'name'],
+  ['alt', 'altText', 'alternativeText'],
+]
+
+function uploadReferenceConflicts(raw: JsonObject, indexed: JsonObject, location: string): string[] {
+  const conflicts: string[] = []
+  const directMediaType = (upload: JsonObject) => upload.mimeType ?? upload.mimetype ?? upload.mediaType
+  if (directMediaType(raw) !== undefined && directMediaType(indexed) !== undefined && mediaTypeFor(raw, location) !== mediaTypeFor(indexed, location)) conflicts.push('media type')
+  for (const dimension of ['width', 'height'] as const) {
+    if (raw[dimension] !== undefined && indexed[dimension] !== undefined && optionalUploadDimension(raw[dimension], dimension, location) !== optionalUploadDimension(indexed[dimension], dimension, location)) conflicts.push(dimension)
+  }
+  const declaresFocal = (upload: JsonObject) => upload.focalPoint !== undefined || upload.focalX !== undefined || upload.focalY !== undefined
+  if (declaresFocal(raw) && declaresFocal(indexed) && stableStringify(uploadFocalPoint(raw, location)) !== stableStringify(uploadFocalPoint(indexed, location))) conflicts.push('focal point')
+  if (raw.crop !== undefined && indexed.crop !== undefined && stableStringify(uploadCrop(raw, location)) !== stableStringify(uploadCrop(indexed, location))) conflicts.push('crop')
+  const declaredBytes = (upload: JsonObject) => upload.bytes ?? upload.data ?? upload.buffer ?? upload.base64
+  if (declaredBytes(raw) !== undefined && declaredBytes(indexed) !== undefined) {
+    const left = decodeBytes(declaredBytes(raw), location)
+    const right = decodeBytes(declaredBytes(indexed), location)
+    if ((left && digest(left)) !== (right && digest(right))) conflicts.push('bytes')
+  }
+  return conflicts
+}
+
+/**
+ * Merge an object upload reference with its indexed top-level upload record.
+ * The indexed record supplies every field the reference omits; explicit
+ * reference fields take deterministic precedence; conflicting identities,
+ * intrinsic metadata, or bytes fail closed.
+ */
+function mergedUploadReference(raw: JsonObject, id: string, indexed: JsonObject, location: string): JsonObject {
+  for (const key of ['id', '_id', 'key']) {
+    const value = raw[key]
+    if (value === undefined) continue
+    if ((typeof value !== 'string' && typeof value !== 'number') || String(value) !== id)
+      throw new Error(`Payload upload reference identity conflicts with indexed upload ${id} at ${location}`)
+  }
+  const conflicts = uploadReferenceConflicts(raw, indexed, location)
+  if (conflicts.length) throw new Error(`Payload upload reference disagrees with indexed upload ${id} on ${conflicts.join(', ')} at ${location}`)
+  const base = { ...indexed }
+  for (const group of UPLOAD_REFERENCE_FIELD_GROUPS) {
+    if (group.some((key) => raw[key] !== undefined)) for (const key of group) delete base[key]
+  }
+  return { ...base, ...raw }
+}
+
+function uploadFor(state: AdapterState, node: LexicalNode, path: string): JsonObject | undefined {
   const raw = rawUploadValue(node)
   const id = relationId(raw)
-  if (isObject(raw)) return raw
-  const upload = id ? state.uploads.get(id) : undefined
-  if (!upload || state.variantUploadIds === undefined || state.variantUploadIds.has(String(id))) return upload
-  return withoutLocalizedUploadText(upload)
+  const indexed = id ? state.uploads.get(id) : undefined
+  const localized =
+    indexed && state.variantUploadIds !== undefined && !state.variantUploadIds.has(String(id))
+      ? withoutLocalizedUploadText(indexed)
+      : indexed
+  if (isObject(raw)) {
+    if (!localized || !id) return raw
+    return mergedUploadReference(raw, id, localized, sourceLocation(state.sourceId, path))
+  }
+  return localized
 }
 
 function uploadAlternativeText(node: LexicalNode, upload: JsonObject | undefined, location: string) {
@@ -1115,7 +1174,7 @@ function addTextNode(state: AdapterState, node: LexicalNode, path: string, type:
 
 function addUploadNode(state: AdapterState, node: LexicalNode, path: string, resolved?: { upload?: JsonObject; assetId?: string }): PublicationNode {
   const identity = nodeId(state, node, path, 'figure')
-  const upload = resolved ? resolved.upload : uploadFor(state, node)
+  const upload = resolved ? resolved.upload : uploadFor(state, node, path)
   const fields = isObject(node.fields) ? node.fields : undefined
   const location = sourceLocation(state.sourceId, path)
   const alt = uploadAlternativeText(node, upload, location)
@@ -1229,7 +1288,7 @@ function addEquationNode(state: AdapterState, node: LexicalNode, path: string): 
 
 function addMediaNode(state: AdapterState, node: LexicalNode, path: string): PublicationNode {
   const location = sourceLocation(state.sourceId, path)
-  const upload = uploadFor(state, node)
+  const upload = uploadFor(state, node, path)
   const mediaType = upload ? mediaTypeFor(upload, location) : undefined
   const rawKind = node.mediaKind ?? node.kind ?? (isObject(node.fields) ? node.fields.kind : undefined)
   const inferredKind = mediaType?.startsWith('image/') ? 'image' : mediaType?.startsWith('audio/') ? 'audio' : mediaType?.startsWith('video/') ? 'video' : undefined

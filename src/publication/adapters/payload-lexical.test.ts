@@ -1514,6 +1514,96 @@ describe('Payload Lexical publication adapter', () => {
     })
   })
 
+  it('resolves object upload references through the indexed uploads', () => {
+    const uploads = {
+      pic: {
+        filename: 'pic.png',
+        mimeType: 'image/png',
+        data: 'AQIDBA==',
+        alt: 'Mapped picture',
+        width: 24,
+        height: 24,
+      },
+    }
+    const scalar = adaptPayloadLexical(
+      strictFixture([{ type: 'upload', value: 'pic' }], { uploads }),
+    )
+    const objectReference = adaptPayloadLexical(
+      strictFixture([{ type: 'upload', value: { id: 'pic' } }], { uploads }),
+    )
+    expect(objectReference.diagnostics).toEqual([])
+    expect(objectReference.assetBundle.descriptor.assets).toHaveLength(1)
+    expect(objectReference.assetBundle.descriptor.assets).toEqual(
+      scalar.assetBundle.descriptor.assets,
+    )
+    const scalarFigure = scalar.graph.nodes[0]
+    const objectFigure = objectReference.graph.nodes[0]
+    expect(objectFigure).toMatchObject({
+      type: 'figure',
+      accessibility: { alternativeText: 'Mapped picture' },
+    })
+    expect('assetIds' in objectFigure ? objectFigure.assetIds : []).toEqual(
+      'assetIds' in scalarFigure ? scalarFigure.assetIds : undefined,
+    )
+
+    const overridden = adaptPayloadLexical(
+      strictFixture(
+        [{ type: 'upload', value: { id: 'pic', alt: 'Object alternative' } }],
+        { uploads },
+      ),
+    )
+    expect(overridden.graph.nodes[0]).toMatchObject({
+      type: 'figure',
+      accessibility: { alternativeText: 'Object alternative' },
+    })
+
+    for (const conflicting of [
+      { id: 'pic', mimeType: 'image/jpeg' },
+      { id: 'pic', width: 48 },
+      { id: 'pic', _id: 'other' },
+      { id: 'pic', data: 'BQYHCA==' },
+    ]) {
+      expect(() =>
+        adaptPayloadLexical(
+          strictFixture([{ type: 'upload', value: conflicting }], { uploads }),
+        ),
+      ).toThrow(
+        /Payload upload reference (?:identity conflicts with|disagrees with) indexed upload pic.*children\[0\]/,
+      )
+    }
+
+    expect(() =>
+      adaptPayloadLexical({
+        document: {
+          id: 'localized-object-upload',
+          title: 'English title',
+          locale: 'en',
+          uploads: [
+            {
+              id: 'pic',
+              filename: 'pic.png',
+              mimeType: 'image/png',
+              data: 'AQIDBA==',
+              alt: 'English alternative',
+            },
+          ],
+          content: {
+            root: { children: [{ type: 'upload', value: { id: 'pic' } }] },
+          },
+          localeVariants: {
+            fr: {
+              title: 'Titre français',
+              content: {
+                root: { children: [{ type: 'upload', value: { id: 'pic' } }] },
+              },
+            },
+          },
+        },
+        locale: 'fr',
+      }),
+    ).toThrow(/Payload locale fr upload pic is missing localized alternative text.*children\[0\]/)
+  })
+
   it('fails closed for table and relationship semantics the graph cannot preserve', () => {
     const tableDocument = (cell: Record<string, unknown>) =>
       strictFixture([

@@ -63,6 +63,7 @@ import type { ResearchNode, ResearchPaper } from './schema'
 import {
   canonicalTextIntegrityIssues,
   internalReferenceIntegrityIssues,
+  validMatchedSemanticNoteRelationshipIds,
 } from './publication-integrity'
 import { parsePdfScholarlyVisualLabel } from './pdf-scholarly-label'
 import { isStrictSemanticTable } from './semantic-table'
@@ -3086,6 +3087,7 @@ function relationshipCounts(
   pages: readonly PdfPageAnalysis[],
   visualRelationships?: PdfVisualRelationship[],
   citationRelationships?: PdfCitationRelationship[],
+  noteRelationships?: PdfNoteRelationship[],
   provenance?: Record<string, NodeSourceEvidence>,
   assets: PdfVisualAsset[] = [],
   regions?: readonly PdfPageRegion[],
@@ -3202,8 +3204,16 @@ function relationshipCounts(
         : []),
     ]),
   ]
-  const resolvedNoteReferences = noteReferences.filter((reference) =>
-    noteIds.has(reference.target),
+  const validNoteRelationshipIds = noteRelationships
+    ? validMatchedSemanticNoteRelationshipIds(paper, noteRelationships, {
+        regions: regions ?? [],
+        provenance: provenance ?? {},
+      })
+    : new Set<string>()
+  const resolvedNoteReferences = noteReferences.filter(
+    (reference) =>
+      noteIds.has(reference.target) &&
+      validNoteRelationshipIds.has(reference.id),
   )
   const resolvedNotes = new Set(
     resolvedNoteReferences.map((reference) => reference.target),
@@ -3873,9 +3883,10 @@ export function assessPdfCompleteness({
       ? undefined
       : validatedVisualRelationships,
     citationRelationships,
+    noteRelationships,
     provenance,
     assets,
-    regions,
+    allSourceRegions,
     equationTranscriptContext,
   )
   const unresolvedObjects = {
@@ -4270,6 +4281,12 @@ export function assessPdfCompleteness({
   const internalReferenceIssues = internalReferenceIntegrityIssues(
     paper,
     noteRelationships,
+    noteRelationships === undefined
+      ? undefined
+      : {
+          regions: allSourceRegions,
+          provenance: provenance ?? {},
+        },
   )
   if (internalReferenceIssues.length > 0) {
     const regionIds = [

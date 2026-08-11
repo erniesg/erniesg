@@ -3827,6 +3827,49 @@ describe('EPUB 3 export', () => {
     }
   })
 
+  it.each([
+    ['supplement.xhtml/', 'supplement.xhtml'],
+    ['chapters//supplement.xhtml', 'chapters/supplement.xhtml'],
+  ])(
+    'does not alias internal href %s to packaged document %s',
+    async (href, packagedHref) => {
+      const epub = await buildEpub(paper)
+      const files = unzipSync(epub.bytes)
+      const packaged = strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Supplement</title></head><body><p>Different exact path.</p></body></html>`)
+      const manifest = JSON.parse(strFromU8(files['EPUB/export.json']))
+      manifest.assets.push({
+        id: 'path-alias-supplement',
+        href: packagedHref,
+        mediaType: 'application/xhtml+xml',
+        sha256: await sha256Hex(packaged),
+      })
+      const tampered = {
+        ...files,
+        'EPUB/export.json': strToU8(`${JSON.stringify(manifest)}\n`),
+        'EPUB/package.opf': strToU8(
+          strFromU8(files['EPUB/package.opf']).replace(
+            '</manifest>',
+            `<item id="path-alias-supplement" href="${packagedHref}" media-type="application/xhtml+xml" /></manifest>`,
+          ),
+        ),
+        'EPUB/content.xhtml': strToU8(
+          strFromU8(files['EPUB/content.xhtml']).replace(
+            '</main>',
+            `<a href="${href}">Broken alias</a></main>`,
+          ),
+        ),
+        [`EPUB/${packagedHref}`]: packaged,
+      }
+
+      expect(() => inspectEpub(rezipEpub(tampered))).toThrow(
+        new RegExp(
+          `dangling internal reference ${href.replaceAll('/', '\\/')}`,
+        ),
+      )
+    },
+  )
+
   it('rejects hidden duplicate canonical citation text in serialized XHTML', async () => {
     const citationPaper = structuredClone(paper)
     citationPaper.nodes = [

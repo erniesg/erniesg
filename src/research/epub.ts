@@ -4755,7 +4755,7 @@ function resolvedPackageHref(currentDocument: string, reference: string) {
   const segments = reference ? [...base, ...reference.split('/')] : base
   const resolved: string[] = []
   for (const segment of segments) {
-    if (!segment || segment === '.') continue
+    if (segment === '.') continue
     if (segment === '..') {
       if (resolved.length === 0) return null
       resolved.pop()

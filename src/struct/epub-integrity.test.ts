@@ -144,6 +144,44 @@ describe('STRUCT EPUB href integrity', () => {
   })
 
   it.each([
+    ['trailing slash', 'supplement.xhtml/', 'supplement.xhtml'],
+    [
+      'empty path segment',
+      'chapters//supplement.xhtml',
+      'chapters/supplement.xhtml',
+    ],
+  ])(
+    'does not alias a %s href to a different packaged document',
+    async (_label, href, packagedHref) => {
+      const document = documentWithHref(href)
+      document.assets.push({
+        id: `supplement-${document.assets.length}`,
+        kind: 'figure',
+        href: packagedHref,
+        mediaType: 'application/xhtml+xml',
+        sha256: 'd'.repeat(64),
+        width: 1,
+        height: 1,
+        bytes: new TextEncoder().encode(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Different exact path</p></body></html>',
+        ),
+        sourceObjectIds: ['fixture-supplement'],
+        evidence: {
+          confidence: 1,
+          pages: [1],
+          boxes: [],
+          sourceIds: ['fixture-supplement'],
+        },
+        fallback: 'asset',
+      })
+
+      await expect(buildStructEpub(document)).rejects.toThrow(
+        /dangling internal reference/i,
+      )
+    },
+  )
+
+  it.each([
     ['script URL', 'javascript:alert(1)'],
     ['embedded data URL', 'data:text/html,unsafe'],
     ['protocol-relative URL', '//example.test/reference'],

@@ -803,7 +803,7 @@ function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
     isAbsolute(repositoryRelative)
   )
     return undefined
-  return `:(exclude,top)${repositoryRelative}`
+  return `:(exclude,top,literal)${repositoryRelative}`
 }
 
 export function publicationRepositoryForCurrentCheckout(excludedPaths = []) {

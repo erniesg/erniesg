@@ -1137,6 +1137,42 @@ describe('publication staging and publish helpers', () => {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
   })
+
+  it('treats an owned staging path as a literal Git pathspec', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-literal-pathspec-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const staging = resolve(temporaryRoot, '.publication-staging-*')
+      await mkdir(staging)
+      await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+      await writeFile(
+        resolve(temporaryRoot, '.publication-staging-unrelated.txt'),
+        'must remain visible\n',
+      )
+      process.chdir(temporaryRoot)
+
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        true,
+      )
+    } finally {
+      process.chdir(previousDirectory)
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('publication output safety', () => {

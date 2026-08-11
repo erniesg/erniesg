@@ -143,6 +143,10 @@ function isCompactScrollableTableImage({
   )
 }
 
+function isSemanticTableAsset(asset: PublicationAsset | undefined) {
+  return asset?.mediaType === 'application/xhtml+xml' && asset.kind === 'table'
+}
+
 function isDocxReconstruction(
   reconstruction: DocumentReconstruction,
 ): reconstruction is DocxReconstruction {
@@ -643,8 +647,7 @@ function validatePdfCrossReferenceEvidence({
   )
   const sourceCrossReferenceRegionIds = new Set(
     paper.nodes.flatMap((node) =>
-      (node.type === 'paragraph' &&
-        node.list?.numberingId !== 'references') ||
+      (node.type === 'paragraph' && node.list?.numberingId !== 'references') ||
       node.type === 'caption' ||
       node.type === 'footnote'
         ? (reconstruction.provenance[node.id]?.regionIds ?? [])
@@ -2272,11 +2275,7 @@ function renderNode(
         .filter((visualAsset): visualAsset is PublicationAsset =>
           Boolean(visualAsset),
         )
-      const semanticTableAsset = visualAssets.find(
-        (visualAsset) =>
-          visualAsset.mediaType === 'application/xhtml+xml' &&
-          visualAsset.kind === 'table',
-      )
+      const semanticTableAsset = visualAssets.find(isSemanticTableAsset)
       const renderedVisualAssets = visualAssets
         .map((visualAsset) => {
           const href = attribute(visualAsset.href)
@@ -2605,6 +2604,16 @@ function renderResearchPublicationXhtml(
         : [],
     ),
   )
+  const renderedSemanticTableNodeIds = new Set(
+    [...visualRelationships.entries()].flatMap(([nodeId, relationship]) =>
+      relationship.kind === 'table' &&
+      relationship.assetIds.some((assetId) =>
+        isSemanticTableAsset(assets.get(assetId)),
+      )
+        ? [nodeId]
+        : [],
+    ),
+  )
   const renderedNoteReferenceOwnerNodes = [
     ...renderableNodes,
     ...paper.nodes.filter(
@@ -2622,7 +2631,9 @@ function renderResearchPublicationXhtml(
             stableId(reference.id),
           )
         : []),
-      ...(node.type === 'figure' && node.table
+      ...(node.type === 'figure' &&
+      node.table &&
+      renderedSemanticTableNodeIds.has(node.id)
         ? node.table.rows.flatMap((row) =>
             row.cells.flatMap((cell) =>
               validNoteReferences(cell.text, cell.noteReferences).map(

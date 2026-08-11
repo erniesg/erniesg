@@ -2998,6 +2998,96 @@ describe('EPUB 3 export', () => {
     expect(content).not.toContain('href="#suppressed-caption-note-reference-6"')
   })
 
+  it('omits a table-cell note backlink when an unresolved visual suppresses its reference anchor', () => {
+    const notePaper = structuredClone(paper)
+    notePaper.nodes = [
+      {
+        id: 'unresolved-table-with-note',
+        type: 'figure',
+        title: 'Unresolved table with note',
+        objectType: 'table',
+        table: {
+          columns: [{ id: 'column-1', label: 'Value' }],
+          rows: [
+            {
+              cells: [
+                {
+                  id: 'cell-1',
+                  text: 'Value6',
+                  noteReferences: [
+                    {
+                      id: 'suppressed-table-cell-note-reference-6',
+                      label: '6',
+                      target: 'suppressed-table-cell-note-6',
+                      start: 5,
+                      end: 6,
+                      confidence: 1,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        relationships: { caption: 'unresolved-table-caption' },
+        source: 'synthetic-unresolved-table-note',
+      },
+      {
+        id: 'unresolved-table-caption',
+        type: 'caption',
+        text: 'Table caption 6.',
+        source: 'synthetic-unresolved-table-note',
+      },
+      {
+        id: 'suppressed-table-cell-note-6',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '6',
+        text: 'A note whose table-cell reference cannot render.',
+        relationships: {
+          backlinks: ['suppressed-table-cell-note-reference-6'],
+        },
+        source: 'synthetic-unresolved-table-note',
+      },
+    ]
+
+    const content = renderPublicationXhtml(notePaper, {
+      reconstruction: {
+        readiness: { ready: false },
+        visualRelationships: [
+          {
+            id: 'unresolved-table-visual',
+            kind: 'table',
+            label: 'Table 1',
+            captionRegionId: 'source-table-caption-region',
+            sourceRegionIds: [],
+            sourceObjectIds: [],
+            assetIds: [],
+            status: 'unresolved',
+            confidence: 1,
+            evidence: ['unresolved-visual-text-owned'],
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: '',
+            altText: 'Unresolved table with note',
+            altTextSource: 'caption',
+            canonicalNodeId: null,
+            captionNodeId: 'unresolved-table-caption',
+          },
+        ],
+        assets: [],
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(content).toContain(
+      'id="unresolved-table-with-note" data-canonical-id="unresolved-table-with-note" hidden="hidden"',
+    )
+    expect(content).not.toContain('id="suppressed-table-cell-note-reference-6"')
+    expect(content).not.toContain(
+      'href="#suppressed-table-cell-note-reference-6"',
+    )
+  })
+
   it('rejects a canonical note backlink with no rendered reference anchor', async () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [

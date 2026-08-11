@@ -730,10 +730,16 @@ function updateNoteRelationship(
         bibliographyTargets.set(label, node.id)
       }
     }
-    citationTargetIds = labels.flatMap((label) => {
+    const retainedCitationCandidateNodeIds = labels.flatMap((label) => {
       const target = bibliographyTargets.get(label)
       return target ? [target] : []
     })
+    const uniqueCitationCandidateNodeIds = [
+      ...new Set(retainedCitationCandidateNodeIds),
+    ]
+    const citationMatched =
+      uniqueCitationCandidateNodeIds.length === labels.length
+    citationTargetIds = citationMatched ? uniqueCitationCandidateNodeIds : []
     const replacesCitation = reconstruction.citationRelationships.some(
       (candidate) => candidate.id === relationship.id,
     )
@@ -745,11 +751,11 @@ function updateNoteRelationship(
       referenceStart: relationship.referenceStart,
       referenceEnd: relationship.referenceEnd,
       taxonomy: 'human-reclassified-citation' as const,
-      targetNodeIds: [...new Set(citationTargetIds)],
-      status:
-        citationTargetIds.length === labels.length
-          ? ('matched' as const)
-          : ('unresolved' as const),
+      targetNodeIds: citationTargetIds,
+      ...(!citationMatched && uniqueCitationCandidateNodeIds.length > 0
+        ? { candidateNodeIds: uniqueCitationCandidateNodeIds }
+        : {}),
+      status: citationMatched ? ('matched' as const) : ('unresolved' as const),
       canonicalAnchor: null,
       confidence: relationship.confidence,
       evidence: [...relationship.evidence],

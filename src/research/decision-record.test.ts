@@ -1383,6 +1383,24 @@ describe('human adjudication decision records', () => {
         fileName: 'citation.pdf',
         byteLength: 1024,
       })
+      const partialCitationTargetId = 'partial-bibliography-target'
+      if (resolution === 'reclassify-citation') {
+        base.noteRelationships[0].label = '3,4'
+        base.paper.nodes.push({
+          id: partialCitationTargetId,
+          type: 'paragraph',
+          text: '[3] A source-backed bibliography entry.',
+          source: 'synthetic-partial-bibliography-entry',
+          list: {
+            level: 1,
+            ordered: true,
+            numberingId: 'references',
+            markerStyle: 'decimal',
+            markerText: '[3]',
+            ordinal: 3,
+          },
+        })
+      }
       const diagnostic = base.diagnostics.find(
         (item) => item.code === 'UNRESOLVED_NOTE_REFERENCE',
       )!
@@ -1407,17 +1425,19 @@ describe('human adjudication decision records', () => {
           expect.objectContaining({
             id: result.noteRelationships[0].id,
             status: 'unresolved',
+            targetNodeIds: [],
+            candidateNodeIds: [partialCitationTargetId],
           }),
         ])
-        expect(
-          result.paper.nodes.flatMap((node) =>
+        const citationRun = result.paper.nodes
+          .flatMap((node) =>
             'inlineRuns' in node ? (node.inlineRuns ?? []) : [],
-          ),
-        ).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ semanticRole: 'citation' }),
-          ]),
+          )
+          .find((run) => run.semanticRole === 'citation')
+        expect(citationRun).toEqual(
+          expect.objectContaining({ semanticRole: 'citation' }),
         )
+        expect(citationRun).not.toHaveProperty('targetIds')
       }
       expect(result.humanAdjudications.applied).toHaveLength(1)
     },

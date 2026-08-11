@@ -16,6 +16,7 @@ import {
 import {
   canonicalPublicationGraph,
   canonicalPublicationSourceResult,
+  canonicalPublicationSubset,
   canonicalPublicationSubsetSha256,
   comparePublicationOutputReceipts,
   comparePublicationSemanticSubset,
@@ -207,6 +208,47 @@ describe('publication source adapter conformance', () => {
       type: 'paragraph',
       inlineRuns: [{ start: 0, end: 2, bold: true }],
     })
+  })
+
+  it('canonicalizes overlapping inline runs independently of array order', () => {
+    const base = adaptPayloadLexical({
+      id: 'ordered-inline-runs',
+      title: 'Ordered inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'abcdef' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const bold = { start: 0, end: 4, bold: true }
+    const italic = { start: 2, end: 6, italic: true }
+    const left = withRuns([bold, italic])
+    const right = withRuns([italic, bold])
+
+    expect(comparePublicationSemanticSubset(left, right)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(left)).toBe(
+      canonicalPublicationSubsetSha256(right),
+    )
+    const canonicalRuns = (graph: typeof left) => {
+      const paragraph = canonicalPublicationSubset(graph).nodes.find(
+        (node) => node.type === 'paragraph',
+      )
+      return paragraph?.inlineRuns
+    }
+    expect(canonicalRuns(right)).toEqual([bold, italic])
+    expect(canonicalRuns(left)).toEqual(canonicalRuns(right))
   })
 
   it('preserves authored link boundaries through canonical serialization in every profile', () => {

@@ -113,19 +113,35 @@ function canonicalInlineRunProducesLink(run: Record<string, unknown>) {
   )
 }
 
+function canonicalInlineRunSemantics(run: Record<string, unknown>) {
+  const { start: _start, end: _end, ...semantics } = run
+  return semantics
+}
+
 function canonicalInlineRuns(
   runs: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
+  // The renderer evaluates active styles by range, so equivalent graphs may
+  // store the same effective intervals in different array orders. Sort by
+  // effective interval and stable semantics before adjacency folding so the
+  // canonical subset never depends on source array order, while links, hard
+  // breaks, and relationship anchors keep their authored boundaries.
+  const ordered = [...runs].sort((left, right) => {
+    const startOrder = Number(left.start) - Number(right.start)
+    if (startOrder) return startOrder
+    const endOrder = Number(left.end) - Number(right.end)
+    if (endOrder) return endOrder
+    return codeUnitCompare(
+      stableJson(canonicalInlineRunSemantics(left)),
+      stableJson(canonicalInlineRunSemantics(right)),
+    )
+  })
   const result: Array<Record<string, unknown>> = []
-  for (const run of runs) {
+  for (const run of ordered) {
     const previous = result.at(-1)
-    const { start: _start, end: _end, ...semantics } = run
+    const semantics = canonicalInlineRunSemantics(run)
     const previousSemantics = previous
-      ? Object.fromEntries(
-          Object.entries(previous).filter(
-            ([key]) => key !== 'start' && key !== 'end',
-          ),
-        )
+      ? canonicalInlineRunSemantics(previous)
       : undefined
     if (
       previous &&

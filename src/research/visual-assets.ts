@@ -215,7 +215,7 @@ export function isCanonicalPdfSourceCropAttempts(asset: PdfVisualAsset) {
             attempt.outcome.assetId.trim().length > 0 &&
             Boolean(
               asset.sourceCropBox &&
-                sourceCropContainsBox(request.sourceBox, asset.sourceCropBox),
+              sourceCropContainsBox(request.sourceBox, asset.sourceCropBox),
             ) &&
             (asset.rendition !== 'source-page-crop' ||
               (attempt.outcome.assetId === asset.id &&
@@ -1708,6 +1708,14 @@ export type CanonicalTable = {
         text: string
         box: NormalizedSourceBox
       }>
+      noteReferences?: Array<{
+        id: string
+        label: string
+        target: string
+        start: number
+        end: number
+        confidence: number
+      }>
       inlineRuns?: Array<{
         start: number
         end: number
@@ -1716,6 +1724,14 @@ export type CanonicalTable = {
         href?: string
         annotationId?: string
         verticalAlign?: 'superscript' | 'subscript'
+        relationshipId?: string
+        semanticRole?:
+          | 'citation'
+          | 'cross-reference'
+          | 'note-reference'
+          | 'affiliation-marker'
+          | 'bibliography-entry'
+        targetIds?: string[]
       }>
       inlineMapping?: {
         expected: number

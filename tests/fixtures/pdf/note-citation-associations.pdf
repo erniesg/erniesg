@@ -1,0 +1,364 @@
+%PDF-1.4
+% synthetic fixture owned by erniesg
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Lang (en-US) >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [6 0 R 7 0 R 8 0 R 9 0 R 10 0 R] /Count 5 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> /XObject << /Im1 16 0 R /Im2 17 0 R >> >> /Contents 11 0 R >>
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> /XObject << /Im1 18 0 R >> >> /Contents 12 0 R >>
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>  >> /Contents 13 0 R >>
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>  >> /Contents 14 0 R >>
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>  >> /Contents 15 0 R >>
+endobj
+11 0 obj
+<< /Length 937 >>
+stream
+BT
+/F2 20 Tf
+54 748 Td
+(Deterministic note and citation association fixture) Tj
+ET
+BT
+/F1 12 Tf
+54 716 Td
+(Repository Fixture Authors) Tj
+ET
+BT
+/F2 14 Tf
+54 680 Td
+(Abstract) Tj
+ET
+BT
+/F1 11 Tf
+54 640 Td
+(A numeric claim carries footnote marker) Tj
+ET
+BT
+/F1 7 Tf
+263 644 Td
+(1) Tj
+ET
+BT
+/F1 11 Tf
+268 640 Td
+(.) Tj
+ET
+BT
+/F1 11 Tf
+54 606 Td
+(A symbol claim carries footnote marker) Tj
+ET
+BT
+/F1 7 Tf
+258 610 Td
+(*) Tj
+ET
+BT
+/F1 11 Tf
+263 606 Td
+(.) Tj
+ET
+BT
+/F1 11 Tf
+54 560 Td
+(Arabic-Indic U+0661 note marker appears at right.) Tj
+ET
+BT
+/F1 11 Tf
+82 506 Td
+(Arabic-Indic U+0661 note body marker appears at left.) Tj
+ET
+BT
+/F1 8 Tf
+54 112 Td
+(1. Numeric footnote body contains nested marker) Tj
+ET
+BT
+/F1 6 Tf
+268 116 Td
+(6) Tj
+ET
+BT
+/F1 8 Tf
+273 112 Td
+(.) Tj
+ET
+BT
+/F1 8 Tf
+54 90 Td
+(6. Nested footnote body.) Tj
+ET
+BT
+/F1 8 Tf
+54 68 Td
+(* Symbol footnote body.) Tj
+ET
+q
+14 0 0 18 330 548 cm
+/Im1 Do
+Q
+q
+14 0 0 18 54 496 cm
+/Im2 Do
+Q
+endstream
+endobj
+12 0 obj
+<< /Length 939 >>
+stream
+BT
+/F2 18 Tf
+54 748 Td
+(Scholarly citations and in-float markers) Tj
+ET
+BT
+/F1 11 Tf
+54 700 Td
+(Prior evidence [1-3, 5] supports the range and group claim.) Tj
+ET
+BT
+/F1 11 Tf
+54 670 Td
+(Example et al. \(2024\) confirms the author-year claim.) Tj
+ET
+BT
+/F1 11 Tf
+54 640 Td
+(A separate claim has note reference 3.) Tj
+ET
+BT
+/F3 11 Tf
+120 410 Td
+(Figure 1. Caption citation [2] remains associated.) Tj
+ET
+BT
+/F3 11 Tf
+54 350 Td
+(Table 1. A note marker inside a table cell remains associated.) Tj
+ET
+BT
+/F2 11 Tf
+72 320 Td
+(Measure) Tj
+ET
+BT
+/F2 11 Tf
+260 320 Td
+(Evidence) Tj
+ET
+BT
+/F1 11 Tf
+72 292 Td
+(Cell note) Tj
+ET
+BT
+/F1 11 Tf
+260 292 Td
+(Note ) Tj
+ET
+BT
+/F1 7 Tf
+285 296 Td
+(4) Tj
+ET
+BT
+/F1 11 Tf
+72 268 Td
+(Control) Tj
+ET
+BT
+/F1 11 Tf
+260 268 Td
+(None) Tj
+ET
+BT
+/F1 8 Tf
+54 70 Td
+(4. Table cell note body.) Tj
+ET
+q
+190 0 0 72 180 448 cm
+/Im1 Do
+Q
+q
+0.8 w
+54 250 306 85 re
+54 307 m
+360 307 l
+54 280 m
+360 280 l
+240 250 m
+240 335 l
+S
+Q
+endstream
+endobj
+13 0 obj
+<< /Length 535 >>
+stream
+BT
+/F2 18 Tf
+54 748 Td
+(Genuinely ambiguous duplicate-label note) Tj
+ET
+BT
+/F1 11 Tf
+54 650 Td
+(Left context preserves a column.) Tj
+ET
+BT
+/F1 11 Tf
+330 650 Td
+(Right context preserves a column.) Tj
+ET
+BT
+/F1 11 Tf
+54 620 Td
+(Left evidence remains independent.) Tj
+ET
+BT
+/F1 11 Tf
+330 620 Td
+(Right evidence remains independent.) Tj
+ET
+BT
+/F1 11 Tf
+118 400 Td
+(A genuinely ambiguous claim has note reference 7.) Tj
+ET
+BT
+/F1 7 Tf
+54 72 Td
+(7. Left candidate note body.) Tj
+ET
+BT
+/F1 7 Tf
+330 72 Td
+(7. Right candidate note body.) Tj
+ET
+endstream
+endobj
+14 0 obj
+<< /Length 299 >>
+stream
+BT
+/F2 16 Tf
+54 700 Td
+(Endnotes) Tj
+ET
+BT
+/F1 11 Tf
+54 650 Td
+(3. Repository-owned endnote body begins here.) Tj
+ET
+BT
+/F1 11 Tf
+54 625 Td
+(Additional endnote detail preserves complete source evidence.) Tj
+ET
+BT
+/F1 11 Tf
+54 600 Td
+(The note remains local and deterministic for this fixture.) Tj
+ET
+endstream
+endobj
+15 0 obj
+<< /Length 530 >>
+stream
+BT
+/F2 16 Tf
+54 748 Td
+(References) Tj
+ET
+BT
+/F1 11 Tf
+54 710 Td
+([1] A. Fixture. Numeric association evidence. Local Press, 2024.) Tj
+ET
+BT
+/F1 11 Tf
+54 680 Td
+([2] B. Fixture. Caption association evidence. Local Press, 2024.) Tj
+ET
+BT
+/F1 11 Tf
+54 650 Td
+([3] C. Fixture. Range association evidence. Local Press, 2024.) Tj
+ET
+BT
+/F1 11 Tf
+54 620 Td
+([5] D. Fixture. Group association evidence. Local Press, 2024.) Tj
+ET
+BT
+/F1 11 Tf
+54 580 Td
+(Example, A., and Fixture, B. \(2024\). Repository-owned author-year evidence.) Tj
+ET
+endstream
+endobj
+16 0 obj
+<< /Type /XObject /Subtype /Image /Width 90 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length 139 >>
+stream
+789CEDCD311100300C03310AE54F3605E03B2F1D9A410F403F23BD762232995C4032999C605990C9E4F22293C96432994C2693C9643299BC5F4E904C264BD2C72E5AB0D272>
+endstream
+endobj
+17 0 obj
+<< /Type /XObject /Subtype /Image /Width 90 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length 139 >>
+stream
+789CEDCD311100300C03310AE54F3605E03B2F1D9A410F403F23BD762232995C4032999C605990C9E4F22293C96432994C2693C9643299BC5F4E904C264BD2C72E5AB0D272>
+endstream
+endobj
+18 0 obj
+<< /Type /XObject /Subtype /Image /Width 420 /Height 120 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length 867 >>
+stream
+789CEDD1CB6DC3301400C116D27F7DE923B91A063FA22D189B60E6E298A2C817EFCF0F000000C0DDBE49D1A84FA33E8DFA34EAD3A84FA33E8DFA34EAD3A84FA33E8DFA34EAD3A84FA33E8DFA34EAD3A84FA33E8DFA34EAD3A84FA33E8DFA34EAD3A84FA33E8DFA34EAD3A84FA33E8DFA4E1B7D3D993D7B5C7BDEB35B9F9D337AB69AE79DB967EF5C9DE374BE158D341AEDD9ADCFCE79E737389D7BF6CED5394EE75BD1E87F361A7D7F65FDB9C1C939BB79EE9EFBEE7B4F68A491461A6974FDCE57D7679FBB7376F3DC3DF7DDF79ED048238D34D2687CE7A3DD2C57D61FCF5AED3FB9F764EE2BCF46E7BD72FEF8575DD348238D34D268FCBF8EBE7F7A7D37CF6CDF6EFFABF79CDE7B42238D34D248A3EBB3FE9546ABBFDFB9E7F4DE131A69A491461A8DEF7C347BB65B5FB598ED1F3D5BCD333A7F74DFC91CABF366F3ADDEBB42238D66EB1A5DA7D1FF6BC4E769D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467D1AF569D4A7519F467DA34600000000EFF9052D954739>
+endstream
+endobj
+xref
+0 19
+0000000000 65535 f 
+0000000046 00000 n 
+0000000109 00000 n 
+0000000191 00000 n 
+0000000261 00000 n 
+0000000336 00000 n 
+0000000414 00000 n 
+0000000601 00000 n 
+0000000776 00000 n 
+0000000925 00000 n 
+0000001074 00000 n 
+0000001224 00000 n 
+0000002213 00000 n 
+0000003204 00000 n 
+0000003791 00000 n 
+0000004142 00000 n 
+0000004724 00000 n 
+0000005051 00000 n 
+0000005378 00000 n 
+trailer
+<< /Size 19 /Root 1 0 R >>
+startxref
+6434
+%%EOF

@@ -23,6 +23,10 @@ export const SOURCE_OUTPUT_CHECKPOINT_PROPERTIES = [
   'table-structure',
   'code-block-structure',
   'furniture-exclusion',
+  'marker-to-body',
+  'citation-to-entry',
+  'in-float-marker',
+  'dangling-link-verifier',
 ] as const
 
 export type SourceOutputCheckpointProperty =
@@ -39,6 +43,8 @@ export const SOURCE_OUTPUT_RENDITION_FEATURES = [
   'heading',
   'table',
   'code',
+  'relationship',
+  'internal-links',
 ] as const
 
 export type SourceOutputRenditionFeature =
@@ -60,12 +66,22 @@ const semanticFlowExpectationSchema = z
   })
   .strict()
 
+const relationshipExpectationSchema = z
+  .object({
+    kind: z.enum(['note', 'citation']),
+    markerText: z.string().min(1),
+    targetText: z.string().min(1),
+    container: z.enum(['caption', 'table-cell']).optional(),
+  })
+  .strict()
+
 const renditionExpectationSchema = z
   .object({
     feature: z.enum(SOURCE_OUTPUT_RENDITION_FEATURES),
     text: z.string().min(1).optional(),
     level: z.number().int().min(1).max(6).optional(),
     semanticFlow: semanticFlowExpectationSchema.optional(),
+    relationship: relationshipExpectationSchema.optional(),
   })
   .strict()
 
@@ -105,6 +121,9 @@ export type CheckpointValidationIssue = {
     | 'property-feature-mismatch'
     | 'property-source-feature-mismatch'
     | 'missing-semantic-flow-expectation'
+    | 'missing-relationship-expectation'
+    | 'relationship-kind-mismatch'
+    | 'missing-relationship-container'
   message: string
 }
 
@@ -135,6 +154,12 @@ function expectedRenditionFeature(
       return 'code'
     case 'furniture-exclusion':
       return 'prose'
+    case 'marker-to-body':
+    case 'citation-to-entry':
+    case 'in-float-marker':
+      return 'relationship'
+    case 'dangling-link-verifier':
+      return 'internal-links'
   }
 }
 
@@ -154,6 +179,11 @@ function expectedSourceFeature(
     case 'code-block-structure':
       return 'structure'
     case 'furniture-exclusion':
+      return 'structure'
+    case 'marker-to-body':
+    case 'citation-to-entry':
+    case 'in-float-marker':
+    case 'dangling-link-verifier':
       return 'structure'
   }
 }
@@ -225,6 +255,53 @@ export function validateSourceOutputCheckpointSet(
         code: 'missing-semantic-flow-expectation',
         message:
           'prose-continuity must name the source-proven semantic-flow boundary it expects.',
+      })
+    }
+
+    if (
+      ['marker-to-body', 'citation-to-entry', 'in-float-marker'].includes(
+        checkpoint.property,
+      ) &&
+      checkpoint.output.relationship === undefined
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'missing-relationship-expectation',
+        message: `${checkpoint.property} must name its marker, relationship kind, and target text.`,
+      })
+    }
+    if (
+      checkpoint.property === 'marker-to-body' &&
+      checkpoint.output.relationship !== undefined &&
+      checkpoint.output.relationship.kind !== 'note'
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'relationship-kind-mismatch',
+        message: 'marker-to-body must inspect a note relationship.',
+      })
+    }
+    if (
+      checkpoint.property === 'citation-to-entry' &&
+      checkpoint.output.relationship !== undefined &&
+      checkpoint.output.relationship.kind !== 'citation'
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'relationship-kind-mismatch',
+        message: 'citation-to-entry must inspect a citation relationship.',
+      })
+    }
+    if (
+      checkpoint.property === 'in-float-marker' &&
+      checkpoint.output.relationship !== undefined &&
+      checkpoint.output.relationship.container === undefined
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'missing-relationship-container',
+        message:
+          'in-float-marker must name either a caption or table-cell container.',
       })
     }
   }
@@ -321,6 +398,267 @@ function tagContents(html: string, tag: string) {
     contents.push(match[1] ?? '')
   }
   return contents
+}
+
+function decodedHtmlAttribute(value: string) {
+  return value.replace(
+    /&(?:#(\d+)|#x([\da-f]+)|amp|lt|gt|quot|apos);/gi,
+    (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
+      if (decimal !== undefined) {
+        const codePoint = Number(decimal)
+        return Number.isSafeInteger(codePoint) && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : entity
+      }
+      if (hexadecimal !== undefined) {
+        const codePoint = Number.parseInt(hexadecimal, 16)
+        return Number.isSafeInteger(codePoint) && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : entity
+      }
+      const values: Record<string, string> = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&apos;': "'",
+      }
+      return values[entity.toLowerCase()] ?? entity
+    },
+  )
+}
+
+function htmlAttribute(attributes: string, name: string) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = attributes.match(
+    new RegExp(
+      `(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`,
+      'i',
+    ),
+  )
+  const value = match?.[1] ?? match?.[2]
+  return value === undefined ? undefined : decodedHtmlAttribute(value)
+}
+
+type HtmlOpeningElement = {
+  tag: string
+  attributes: string
+  start: number
+  end: number
+  id?: string
+  href?: string
+}
+
+type HtmlAnchor = HtmlOpeningElement & {
+  tag: 'a'
+  innerHtml: string
+  fullHtml: string
+}
+
+function htmlWithoutExecutableText(html: string) {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+}
+
+function htmlOpeningElements(html: string) {
+  const structuralHtml = htmlWithoutExecutableText(html)
+  const matcher = /<([a-z][\w:-]*)\b([^>]*)>/gi
+  const elements: HtmlOpeningElement[] = []
+  for (const match of structuralHtml.matchAll(matcher)) {
+    const attributes = match[2] ?? ''
+    elements.push({
+      tag: (match[1] ?? '').toLowerCase(),
+      attributes,
+      start: match.index,
+      end: match.index + match[0].length,
+      ...(htmlAttribute(attributes, 'id') !== undefined
+        ? { id: htmlAttribute(attributes, 'id') }
+        : {}),
+      ...(htmlAttribute(attributes, 'href') !== undefined
+        ? { href: htmlAttribute(attributes, 'href') }
+        : {}),
+    })
+  }
+  return { html: structuralHtml, elements }
+}
+
+function htmlAnchors(html: string): HtmlAnchor[] {
+  const structuralHtml = htmlWithoutExecutableText(html)
+  const matcher = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi
+  return [...structuralHtml.matchAll(matcher)].map((match) => {
+    const attributes = match[1] ?? ''
+    return {
+      tag: 'a',
+      attributes,
+      start: match.index,
+      end: match.index + match[0].length,
+      innerHtml: match[2] ?? '',
+      fullHtml: match[0],
+      ...(htmlAttribute(attributes, 'id') !== undefined
+        ? { id: htmlAttribute(attributes, 'id') }
+        : {}),
+      ...(htmlAttribute(attributes, 'href') !== undefined
+        ? { href: htmlAttribute(attributes, 'href') }
+        : {}),
+    }
+  })
+}
+
+function internalTargetId(href: string | undefined) {
+  if (!href?.startsWith('#')) return null
+  try {
+    return decodeURIComponent(href.slice(1))
+  } catch {
+    return ''
+  }
+}
+
+function elementInnerHtml(html: string, element: HtmlOpeningElement) {
+  if (/\/\s*>$/u.test(html.slice(element.start, element.end))) return ''
+  const closing = new RegExp(`<\\/${element.tag}\\s*>`, 'gi')
+  closing.lastIndex = element.end
+  const match = closing.exec(html)
+  return match ? html.slice(element.end, match.index) : ''
+}
+
+function internalLinkIntegrityFailure(html: string) {
+  const { html: structuralHtml, elements } = htmlOpeningElements(html)
+  const ids = new Map<string, HtmlOpeningElement[]>()
+  for (const element of elements) {
+    if (element.id === undefined) continue
+    const owners = ids.get(element.id) ?? []
+    owners.push(element)
+    ids.set(element.id, owners)
+  }
+  const links = elements.flatMap((element) => {
+    const targetId = internalTargetId(element.href)
+    return targetId === null ? [] : [{ element, targetId }]
+  })
+  if (links.length === 0) {
+    return {
+      reason: 'The rendition contains no internal href to verify.',
+      structuralHtml,
+      elements,
+      ids,
+      links,
+    }
+  }
+  for (const link of links) {
+    if (!link.targetId) {
+      return {
+        reason: 'The rendition contains an empty or invalid internal href.',
+        structuralHtml,
+        elements,
+        ids,
+        links,
+      }
+    }
+    const targets = ids.get(link.targetId) ?? []
+    if (targets.length !== 1) {
+      return {
+        reason:
+          targets.length === 0
+            ? `Internal href #${link.targetId} has no target.`
+            : `Internal href #${link.targetId} has ${targets.length} targets; exactly one is required.`,
+        structuralHtml,
+        elements,
+        ids,
+        links,
+      }
+    }
+  }
+  return { reason: null, structuralHtml, elements, ids, links }
+}
+
+function hasToken(value: string | undefined, token: string) {
+  return value?.split(/\s+/u).includes(token) ?? false
+}
+
+function relationshipIntegrityFailure(
+  checkpoint: SourceOutputCheckpoint,
+  html: string,
+) {
+  const expected = checkpoint.output.relationship
+  if (!expected) return 'The checkpoint has no relationship expectation.'
+  const graph = internalLinkIntegrityFailure(html)
+  if (graph.reason) return graph.reason
+  const anchors = htmlAnchors(graph.structuralHtml)
+  const candidates = anchors.filter((anchor) => {
+    const type = htmlAttribute(anchor.attributes, 'epub:type')
+    const role = htmlAttribute(anchor.attributes, 'role')
+    const semanticType = expected.kind === 'note' ? 'noteref' : 'biblioref'
+    const semanticRole =
+      expected.kind === 'note' ? 'doc-noteref' : 'doc-biblioref'
+    return (
+      hasToken(type, semanticType) &&
+      hasToken(role, semanticRole) &&
+      normalizedText(anchor.innerHtml) === normalizedText(expected.markerText)
+    )
+  })
+  if (candidates.length !== 1) {
+    return `Expected exactly one ${expected.kind} link for marker ${expected.markerText}; found ${candidates.length}.`
+  }
+  const anchor = candidates[0]
+  const targetId = internalTargetId(anchor.href)
+  if (!targetId) return `Marker ${expected.markerText} has no internal target.`
+  const target = graph.ids.get(targetId)?.[0]
+  if (!target) return `Marker ${expected.markerText} has no unique target.`
+  const targetHtml = elementInnerHtml(graph.structuralHtml, target)
+  if (
+    !normalizedText(targetHtml).includes(normalizedText(expected.targetText))
+  ) {
+    return `Marker ${expected.markerText} does not target the expected body text.`
+  }
+  if (expected.kind === 'note') {
+    const targetType = htmlAttribute(target.attributes, 'epub:type')
+    const targetRole = htmlAttribute(target.attributes, 'role')
+    if (
+      target.tag !== 'aside' ||
+      !hasToken(targetType, 'footnote') ||
+      !['doc-footnote', 'doc-endnote'].some((role) =>
+        hasToken(targetRole, role),
+      )
+    ) {
+      return `Marker ${expected.markerText} does not target a semantic note body.`
+    }
+    if (!anchor.id || graph.ids.get(anchor.id)?.length !== 1) {
+      return `Note marker ${expected.markerText} has no unique backlink target id.`
+    }
+    const backlink = htmlAnchors(targetHtml).find(
+      (candidate) =>
+        internalTargetId(candidate.href) === anchor.id &&
+        hasToken(htmlAttribute(candidate.attributes, 'class'), 'note-backlink'),
+    )
+    if (!backlink) {
+      return `Note body for marker ${expected.markerText} has no verified backlink.`
+    }
+  } else {
+    const targetOpening = graph.structuralHtml.slice(target.start, target.end)
+    const bibliographyOwners = graph.elements.filter(
+      (element) =>
+        ['ol', 'ul'].includes(element.tag) &&
+        htmlAttribute(element.attributes, 'data-numbering-id') ===
+          'references' &&
+        elementInnerHtml(graph.structuralHtml, element).includes(targetOpening),
+    )
+    if (bibliographyOwners.length !== 1) {
+      return `Citation marker ${expected.markerText} does not target one bibliography entry.`
+    }
+  }
+  if (expected.container) {
+    const containerTags =
+      expected.container === 'caption' ? ['figcaption'] : ['td', 'th']
+    const insideExpectedContainer = containerTags.some((tag) =>
+      tagContents(graph.structuralHtml, tag).some((content) =>
+        content.includes(anchor.fullHtml),
+      ),
+    )
+    if (!insideExpectedContainer) {
+      return `Marker ${expected.markerText} is not inside the expected ${expected.container} container.`
+    }
+  }
+  return null
 }
 
 function hasHeading(html: string, level?: number) {
@@ -474,6 +812,12 @@ function outputFeaturePresent(
       return hasTableContent(checkpoint, html)
     case 'code':
       return hasCodeContent(checkpoint, html)
+    case 'relationship':
+      return htmlAnchors(html).some(
+        (anchor) => internalTargetId(anchor.href) !== null,
+      )
+    case 'internal-links':
+      return internalLinkIntegrityFailure(html).links.length > 0
   }
 }
 
@@ -559,6 +903,35 @@ export function evaluateSourceOutputCheckpoint(
       checkpointId: checkpoint.id,
       status: 'failed',
       reason: 'The source page does not contain the named source text.',
+    }
+  }
+  if (
+    ['marker-to-body', 'citation-to-entry', 'in-float-marker'].includes(
+      checkpoint.property,
+    )
+  ) {
+    const failure = relationshipIntegrityFailure(
+      checkpoint,
+      observation.rendition.html,
+    )
+    if (failure) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: failure,
+      }
+    }
+  }
+  if (checkpoint.property === 'dangling-link-verifier') {
+    const failure = internalLinkIntegrityFailure(
+      observation.rendition.html,
+    ).reason
+    if (failure) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: failure,
+      }
     }
   }
   if (checkpoint.output.semanticFlow) {

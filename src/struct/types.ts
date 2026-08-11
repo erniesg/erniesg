@@ -34,6 +34,8 @@ export type StructEvidence = {
   pages: number[]
   boxes: StructBox[]
   sourceIds: string[]
+  /** Stable extractor-independent reasons supporting this evidence. */
+  signals?: string[]
 }
 
 export type StructBlockKind =
@@ -87,7 +89,11 @@ export type StructInline = {
   verticalAlign?: 'superscript' | 'subscript'
   compactMathAtom?: boolean
   semanticRole?:
-    'citation' | 'cross-reference' | 'affiliation-marker' | 'bibliography-entry'
+    | 'citation'
+    | 'cross-reference'
+    | 'note-reference'
+    | 'affiliation-marker'
+    | 'bibliography-entry'
 }
 
 export type StructMetadata = {
@@ -102,6 +108,12 @@ export type StructMetadata = {
   updated?: string
   affiliations?: string[]
   authorAffiliations?: Array<{ author: string; label: string }>
+  authorNotes?: Array<{
+    id: string
+    author: string
+    label: string
+    target: string
+  }>
 }
 
 export type StructTableCell = {
@@ -172,6 +184,12 @@ export type StructRelationshipKind =
 export type StructRelationshipStatus =
   'matched' | 'ambiguous' | 'unresolved' | 'source-preserved'
 
+export type StructRelationshipCandidate = {
+  target: string
+  confidence: number
+  evidence: StructEvidence
+}
+
 export type StructRelationship = {
   id: string
   kind: StructRelationshipKind
@@ -181,6 +199,8 @@ export type StructRelationship = {
   status: StructRelationshipStatus
   confidence: number
   evidence: StructEvidence
+  /** Fail-closed alternatives retained when source evidence is non-unique. */
+  candidates?: StructRelationshipCandidate[]
 }
 
 export type StructDiagnosticSeverity = 'info' | 'warning' | 'error'

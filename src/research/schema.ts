@@ -70,6 +70,7 @@ const inlineRun = z
       .enum([
         'citation',
         'cross-reference',
+        'note-reference',
         'affiliation-marker',
         'bibliography-entry',
       ])
@@ -109,6 +110,17 @@ const semanticTableInlineRun = z
     href: z.string().min(1).optional(),
     annotationId: canonicalId.optional(),
     verticalAlign: z.enum(['superscript', 'subscript']).optional(),
+    relationshipId: canonicalId.optional(),
+    semanticRole: z
+      .enum([
+        'citation',
+        'cross-reference',
+        'note-reference',
+        'affiliation-marker',
+        'bibliography-entry',
+      ])
+      .optional(),
+    targetIds: z.array(canonicalId).optional(),
   })
   .strict()
 
@@ -176,6 +188,7 @@ const captionNode = canonicalNodeBase
   .extend({
     type: z.literal('caption'),
     text: z.string().min(1),
+    noteReferences: z.array(noteReference).optional(),
     inlineRuns: z.array(inlineRun).optional(),
   })
   .strict()
@@ -204,6 +217,7 @@ const figureNode = canonicalNodeBase
                         id: canonicalId.optional(),
                         headerIds: z.array(canonicalId).optional(),
                         sourceRuns: z.array(semanticTableSourceRun).optional(),
+                        noteReferences: z.array(noteReference).optional(),
                         inlineRuns: z.array(semanticTableInlineRun).optional(),
                         inlineMapping: z
                           .object({
@@ -239,6 +253,7 @@ const footnoteNode = canonicalNodeBase
     label: z.string().min(1),
     markerText: z.string().min(1).optional(),
     text: z.string().min(1),
+    noteReferences: z.array(noteReference).optional(),
     inlineRuns: z.array(inlineRun).optional(),
     relationships: z
       .object({
@@ -465,8 +480,71 @@ export const researchPaperSchema = researchPaperBaseSchema.superRefine(
         let invalidSpanTopology = false
         for (const [rowIndex, row] of node.table.rows.entries()) {
           let columnIndex = 0
-          for (const cell of row.cells) {
+          for (const [cellIndex, cell] of row.cells.entries()) {
             while (occupied[rowIndex][columnIndex]) columnIndex += 1
+            for (const [referenceIndex, reference] of (
+              cell.noteReferences ?? []
+            ).entries()) {
+              const path = [
+                'nodes',
+                index,
+                'table',
+                'rows',
+                rowIndex,
+                'cells',
+                cellIndex,
+                'noteReferences',
+                referenceIndex,
+              ]
+              if (noteReferenceIds.has(reference.id)) {
+                context.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: [...path, 'id'],
+                  message: `Duplicate note reference id: ${reference.id}`,
+                })
+              }
+              noteReferenceIds.add(reference.id)
+              noteReferenceTargets.set(reference.id, reference.target)
+              const target = paper.nodes.find(
+                (candidate) => candidate.id === reference.target,
+              )
+              if (!target || target.type !== 'footnote') {
+                context.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: [...path, 'target'],
+                  message: `Dangling note relationship: ${reference.target}`,
+                })
+              }
+              if (
+                reference.end > cell.text.length ||
+                reference.start >= reference.end
+              ) {
+                context.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path,
+                  message: `Invalid note reference text range: ${reference.start}-${reference.end}`,
+                })
+              }
+            }
+            for (const [runIndex, run] of (cell.inlineRuns ?? []).entries()) {
+              if (run.end > cell.text.length || run.start >= run.end) {
+                context.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: [
+                    'nodes',
+                    index,
+                    'table',
+                    'rows',
+                    rowIndex,
+                    'cells',
+                    cellIndex,
+                    'inlineRuns',
+                    runIndex,
+                  ],
+                  message: `Invalid inline run text range: ${run.start}-${run.end}`,
+                })
+              }
+            }
             for (
               let targetRow = rowIndex;
               targetRow < rowIndex + cell.rowSpan;

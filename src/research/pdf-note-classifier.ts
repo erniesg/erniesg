@@ -56,7 +56,7 @@ const REFERENCE_HEADING =
 const REFERENCE_SECTION_END =
   /^(?:appendix\b|acknowledg(?:e)?ments?\b|supplement(?:ary)?\b|author contributions?\b|data availability\b)/i
 const BODY_SECTION_HEADING = /^(?:abstract|introduction)\b/i
-const NOTE_TOKEN_SOURCE = String.raw`(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])`
+const NOTE_TOKEN_SOURCE = String.raw`(?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])`
 const AUTHOR_YEAR_SURNAME_SOURCE = String.raw`\p{Lu}[\p{L}\p{M}'’.-]*`
 const AUTHOR_YEAR_SOURCE = String.raw`(?:18|19|20)\d{2}[a-z]?`
 const MAX_EXPANDED_CITATION_RANGE = 100
@@ -476,7 +476,7 @@ function markerCandidates(
   }
 
   const explicit =
-    /\b(?:footnote|note)\s+(?:(?:reference|marker)\s+)?(\d{1,3}|[*∗†‡§])(?=\s|[.,;:)\]]|$)/giu
+    /\b(?:footnote|note)\s+(?:(?:reference|marker)\s+)?(\p{Nd}{1,3}|[*∗†‡§])(?=\s|[.,;:)\]]|$)/giu
   for (const match of region.text.matchAll(explicit)) {
     const label = match[1]
     const start = (match.index ?? 0) + match[0].lastIndexOf(label)
@@ -484,7 +484,7 @@ function markerCandidates(
   }
 
   const bracketed =
-    /\[\s*((?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])(?:\s*(?:[,;]|[–—-])\s*(?:\d{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§]))*)\s*\]/gu
+    /\[\s*((?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])(?:\s*(?:[,;]|[–—-])\s*(?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§]))*)\s*\]/gu
   for (const match of region.text.matchAll(bracketed)) {
     const start = match.index ?? 0
     if (isMathematicalBracket(region.text, start)) continue
@@ -549,9 +549,11 @@ function markerCandidates(
       const raw = run.text.trim().replace(/\s+/g, ' ')
       const label = normalizedNoteLabel(raw)
       const geometryLabels = noteLabelsFromMarkerText(raw)
-      const geometryParts = [...raw.matchAll(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\d{1,3}/gu)]
+      const geometryParts = [
+        ...raw.matchAll(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\p{Nd}{1,3}/gu),
+      ]
       const geometryResidue = raw
-        .replace(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\d{1,3}/gu, '')
+        .replace(/[*∗†‡§]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\p{Nd}{1,3}/gu, '')
         .replace(/[\s,;˒]/gu, '')
       const rawPosition = lineText.indexOf(raw, runTextCursor)
       const labelPosition =
@@ -1228,9 +1230,29 @@ export function classifyPdfNoteMarkers(
   )
   const repeatedNameTokens = repeatedRenderedNameTokens(orderedRegions)
   const ordinaryCandidates = orderedRegions
-    .filter((region) => region.kind === 'body' || region.kind === 'spanning')
+    .filter((region) =>
+      ['body', 'spanning', 'caption', 'footnote', 'endnote', 'figure'].includes(
+        region.kind,
+      ),
+    )
     .flatMap((region) =>
-      markerCandidates(region, lineBoundaryDecisions, repeatedNameTokens),
+      markerCandidates(
+        region,
+        lineBoundaryDecisions,
+        repeatedNameTokens,
+      ).filter((candidate) => {
+        if (region.kind !== 'footnote' && region.kind !== 'endnote') {
+          return true
+        }
+        const definitionLabel = noteLabelFromText(region.text)
+        const definitionPrefix = region.text.slice(0, candidate.start)
+        return !(
+          definitionLabel &&
+          /^\s*(?:(?:footnote|note)\s+)?$/iu.test(definitionPrefix) &&
+          normalizedNoteLabel(candidate.label) ===
+            normalizedNoteLabel(definitionLabel)
+        )
+      }),
     )
   const authorYearCandidates =
     referenceHeadingIndex < 0
@@ -1238,8 +1260,14 @@ export function classifyPdfNoteMarkers(
       : orderedRegions
           .filter(
             (region) =>
-              (region.kind === 'body' || region.kind === 'spanning') &&
-              !bibliographyRegionIds.has(region.id),
+              [
+                'body',
+                'spanning',
+                'caption',
+                'footnote',
+                'endnote',
+                'figure',
+              ].includes(region.kind) && !bibliographyRegionIds.has(region.id),
           )
           .flatMap((region) =>
             authorYearMarkerCandidates(

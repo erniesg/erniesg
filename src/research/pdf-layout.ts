@@ -166,7 +166,11 @@ type SemanticReferenceDraft = {
   start: number
   end: number
   semanticRole:
-    'citation' | 'cross-reference' | 'affiliation-marker' | 'bibliography-entry'
+    | 'citation'
+    | 'cross-reference'
+    | 'affiliation-marker'
+    | 'bibliography-entry'
+    | 'note-reference'
   targetIds?: string[]
 }
 
@@ -2088,9 +2092,7 @@ function sourceMarkupShape(value: string): SourceMarkupShape {
   const trimmed = value.trim()
   return {
     heading: /^#{1,6}\s+/u.test(trimmed),
-    emphasis: /^(?:\*\*(?=\S)[\s\S]*\*\*|__(?=\S)[\s\S]*__)$/u.test(
-      trimmed,
-    ),
+    emphasis: /^(?:\*\*(?=\S)[\s\S]*\*\*|__(?=\S)[\s\S]*__)$/u.test(trimmed),
     template: /^\{[A-Za-z_][A-Za-z0-9_.-]*\}$/u.test(trimmed),
     orderedList:
       /^(?:(?:\d+(?:\.\d+){0,3})[.)]|\(\s*\d{1,3}\s*\)|\[\s*\d{1,4}\s*\])\s+\S/u.test(
@@ -2170,8 +2172,10 @@ function orderedMarkerHasIndependentEvidence(
     firstLineRuns.length > 1 &&
     firstLineRuns[0].text.trim() === marker.markerText,
   )
-  const withinBlockHangingIndent =
-    orderedMarkerHasWithinBlockHangingIndent(block, marker)
+  const withinBlockHangingIndent = orderedMarkerHasWithinBlockHangingIndent(
+    block,
+    marker,
+  )
   const largestFont = Math.max(
     ...block.region.lines.map((line) => line.fontSize),
     bodySize,
@@ -3078,16 +3082,16 @@ function appendBlockContinuation(
           semanticFlowOutcome === 'hard-hyphen-retain'
         ? 'lexical-hyphen'
         : targetLineage &&
-          continuationLineage &&
-          targetLineage.sourceLineId === continuationLineage.sourceLineId &&
-          (targetLineage.fragment.startsWith('inline-stacked-') ||
-            continuationLineage.fragment.startsWith('inline-stacked-'))
-        ? 'inline-stacked-fragment'
-        : target.region.column === 'right' &&
-            continuation.region.column === 'span' &&
-            targetLineage?.fragment === 'cross-gutter-right'
-          ? 'cross-gutter-to-span'
-          : requestedTopology
+            continuationLineage &&
+            targetLineage.sourceLineId === continuationLineage.sourceLineId &&
+            (targetLineage.fragment.startsWith('inline-stacked-') ||
+              continuationLineage.fragment.startsWith('inline-stacked-'))
+          ? 'inline-stacked-fragment'
+          : target.region.column === 'right' &&
+              continuation.region.column === 'span' &&
+              targetLineage?.fragment === 'cross-gutter-right'
+            ? 'cross-gutter-to-span'
+            : requestedTopology
   const recordableTopology =
     inferredTopology === 'inline-stacked-fragment' ||
     inferredTopology === 'lexical-hyphen' ||
@@ -4368,7 +4372,11 @@ function sourceProvenSamePageColumnFlowBoundary(
   return candidate !== null
 }
 
-const PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR = new Set(['right', 'single', 'span'])
+const PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR = new Set([
+  'right',
+  'single',
+  'span',
+])
 const PDF_CROSS_PAGE_FLOW_HEAD_COLUMNS_LTR = new Set(['left', 'single', 'span'])
 
 /**
@@ -4386,10 +4394,7 @@ function sourceProvenCrossPageColumnFlowBoundary(
   continuation: RegionBlock,
   language: string | null,
   baseDirection: ResearchPaper['baseDirection'] | null,
-  bodySourceOrderExtremaByPage: ReadonlyMap<
-    number,
-    PdfBodySourceOrderExtremum
-  >,
+  bodySourceOrderExtremaByPage: ReadonlyMap<number, PdfBodySourceOrderExtremum>,
 ) {
   if (
     !sourceProvenCrossPageColumnGeometryBoundary(
@@ -4951,8 +4956,7 @@ export async function mergeProseContinuations(
               : crossPageHyphenVerdict === 'preserve'
                 ? 'hard-hyphen-retain'
                 : null
-            : (sourceColumnFlowJoin(continuation, language)?.outcome ??
-              'space')
+            : (sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space')
           : null
       const crossPageSemanticFlowDecision =
         crossPageContinuation &&
@@ -4971,8 +4975,7 @@ export async function mergeProseContinuations(
               bodySourceOrderExtremaByPage,
             )
           : null
-      const sourceProvenCrossPageJoin =
-        crossPageSemanticFlowDecision !== null
+      const sourceProvenCrossPageJoin = crossPageSemanticFlowDecision !== null
       if (
         continuation?.type !== 'paragraph' ||
         continuation.list ||
@@ -7291,7 +7294,7 @@ function buildCitationRelationships(
       blocksBySourceRegion.set(regionId, owners)
     }
   }
-  const bibliographyTargets = new Map<string, string>()
+  const bibliographyTargets = new Map<string, string[]>()
   for (const classification of classifications.filter(
     (candidate) => candidate.taxonomy === 'bibliography-entry',
   )) {
@@ -7317,8 +7320,9 @@ function buildCitationRelationships(
     )?.nodeId
     if (!target) continue
     for (const label of classification.label.split(',')) {
-      if (!bibliographyTargets.has(label))
-        bibliographyTargets.set(label, target)
+      const targets = bibliographyTargets.get(label) ?? []
+      if (!targets.includes(target)) targets.push(target)
+      bibliographyTargets.set(label, targets)
     }
   }
   const authorYearTargets = new Map<string, string[]>()
@@ -7398,9 +7402,15 @@ function buildCitationRelationships(
       })
       const missing = candidates.some((targets) => targets.length === 0)
       const ambiguous = candidates.some((targets) => targets.length > 1)
-      const status = !missing && !ambiguous ? 'matched' : 'unresolved'
+      const status =
+        !missing && !ambiguous
+          ? 'matched'
+          : ambiguous
+            ? 'ambiguous'
+            : 'unresolved'
       const targetNodeIds =
         status === 'matched' ? candidates.map((targets) => targets[0]) : []
+      const candidateNodeIds = [...new Set(candidates.flat())]
       const targets =
         status === 'matched'
           ? exactCitationTargetProvenance({
@@ -7421,6 +7431,9 @@ function buildCitationRelationships(
           referenceEnd: classification.end,
           taxonomy: classification.taxonomy,
           targetNodeIds,
+          ...(status !== 'matched' && candidateNodeIds.length > 0
+            ? { candidateNodeIds }
+            : {}),
           targets,
           status,
           canonicalAnchor: null,
@@ -7442,12 +7455,20 @@ function buildCitationRelationships(
         },
       ]
     }
-    const targetNodeIds = labels.flatMap((label) => {
-      const target = bibliographyTargets.get(label)
-      return target ? [target] : []
-    })
+    const candidates = labels.map(
+      (label) => bibliographyTargets.get(label) ?? [],
+    )
+    const missing = candidates.some((targets) => targets.length === 0)
+    const ambiguous = candidates.some((targets) => targets.length > 1)
     const status =
-      targetNodeIds.length === labels.length ? 'matched' : 'unresolved'
+      !missing && !ambiguous
+        ? 'matched'
+        : ambiguous
+          ? 'ambiguous'
+          : 'unresolved'
+    const targetNodeIds =
+      status === 'matched' ? candidates.map((targets) => targets[0]) : []
+    const candidateNodeIds = [...new Set(candidates.flat())]
     const targets =
       status === 'matched'
         ? exactCitationTargetProvenance({
@@ -7469,6 +7490,9 @@ function buildCitationRelationships(
         taxonomy:
           classification.taxonomy as PdfCitationRelationship['taxonomy'],
         targetNodeIds,
+        ...(status !== 'matched' && candidateNodeIds.length > 0
+          ? { candidateNodeIds }
+          : {}),
         targets,
         status,
         canonicalAnchor: null,
@@ -7477,7 +7501,9 @@ function buildCitationRelationships(
           ...classification.evidence,
           ...(status === 'matched'
             ? ['bibliography-label-target']
-            : ['bibliography-label-target-missing']),
+            : status === 'ambiguous'
+              ? ['bibliography-label-target-ambiguous']
+              : ['bibliography-label-target-missing']),
         ],
         sourceBoxes: [{ ...classification.sourceBox }],
       },
@@ -7485,9 +7511,29 @@ function buildCitationRelationships(
   })
 }
 
-function scoreNoteCandidate(reference: NoteReferenceDraft, note: RegionBlock) {
+function scoreNoteCandidate(
+  reference: NoteReferenceDraft,
+  note: RegionBlock,
+  sequenceEvidence: readonly string[],
+) {
   let score = 0.55
-  const evidence = ['label-exact']
+  const evidence = ['label-exact', ...sequenceEvidence]
+  if (sequenceEvidence.length > 0) score += 0.08
+  if (
+    reference.classification.evidence.includes('rendered-superscript-geometry')
+  ) {
+    evidence.push('typography-raised-marker')
+  } else if (
+    reference.classification.evidence.some((item) =>
+      ['superscript-syntax', 'superscript-cluster-syntax'].includes(item),
+    )
+  ) {
+    evidence.push('typography-superscript-glyph')
+  } else if (
+    reference.classification.evidence.includes('explicit-note-language')
+  ) {
+    evidence.push('typography-explicit-note-marker')
+  }
   if (reference.region.page === note.region.page) {
     score += 0.25
     evidence.push('same-page-scope')
@@ -7519,6 +7565,66 @@ function matchNotes(
   diagnostics: ReconstructionDiagnostic[],
 ) {
   const notes = blocks.filter((block) => block.type === 'footnote')
+  const sourceOrder = <Value extends { region: PdfPageRegion }>(
+    left: Value,
+    right: Value,
+  ) =>
+    left.region.page - right.region.page ||
+    left.region.box.y - right.region.box.y ||
+    left.region.box.x - right.region.box.x
+  const orderedReferences = [...references].sort(
+    (left, right) => sourceOrder(left, right) || left.start - right.start,
+  )
+  const orderedNotes = [...notes].sort(sourceOrder)
+  const numericOrdinal = (label: string | undefined) => {
+    const normalized = normalizedNoteLabel(label ?? '')
+    return /^\d+$/u.test(normalized) ? Number(normalized) : null
+  }
+  const sequenceEvidence = (
+    reference: NoteReferenceDraft,
+    note: RegionBlock,
+  ) => {
+    const ordinal = numericOrdinal(reference.label)
+    if (ordinal === null || ordinal !== numericOrdinal(note.noteLabel))
+      return []
+    const currentLabelCount = orderedNotes.filter(
+      (candidate) => numericOrdinal(candidate.noteLabel) === ordinal,
+    ).length
+    const referenceIndex = orderedReferences.indexOf(reference)
+    const noteIndex = orderedNotes.indexOf(note)
+    const previousReference = orderedReferences
+      .slice(0, referenceIndex)
+      .reverse()
+      .find((candidate) => numericOrdinal(candidate.label) !== null)
+    const previousNote = orderedNotes
+      .slice(0, noteIndex)
+      .reverse()
+      .find((candidate) => numericOrdinal(candidate.noteLabel) !== null)
+    const nextReference = orderedReferences
+      .slice(referenceIndex + 1)
+      .find((candidate) => numericOrdinal(candidate.label) !== null)
+    const nextNote = orderedNotes
+      .slice(noteIndex + 1)
+      .find((candidate) => numericOrdinal(candidate.noteLabel) !== null)
+    if (
+      numericOrdinal(previousReference?.label) === ordinal - 1 &&
+      numericOrdinal(previousNote?.noteLabel) === ordinal - 1
+    ) {
+      return ['numbering-sequence-previous-adjacency']
+    }
+    if (
+      numericOrdinal(nextReference?.label) === ordinal + 1 &&
+      numericOrdinal(nextNote?.noteLabel) === ordinal + 1
+    ) {
+      return ['numbering-sequence-next-adjacency']
+    }
+    return ordinal === 1 &&
+      currentLabelCount === 1 &&
+      !previousReference &&
+      !previousNote
+      ? ['numbering-sequence-start']
+      : []
+  }
   const relationships: PdfNoteRelationship[] = references.map((reference) => {
     const candidates = notes
       .filter(
@@ -7527,13 +7633,17 @@ function matchNotes(
           normalizedNoteLabel(reference.label),
       )
       .map((note) => {
-        const scored = scoreNoteCandidate(reference, note)
+        const scored = scoreNoteCandidate(
+          reference,
+          note,
+          sequenceEvidence(reference, note),
+        )
         return {
           targetNoteId: note.nodeId!,
           targetRegionId: note.region.id,
           score: scored.score,
           evidence: scored.evidence,
-          sourceBoxes: [reference.region.box, note.region.box],
+          sourceBoxes: [reference.classification.sourceBox, note.region.box],
         }
       })
       .sort(
@@ -9396,6 +9506,190 @@ export function canonicalTableWithApprovedHyperlinks(
   }
 }
 
+/**
+ * Project visual-transcript citations into their unique source-backed table
+ * cells. Repeated marker text remains unresolved unless target-specific
+ * source geometry selects exactly one cell.
+ */
+export function canonicalTableWithSemanticInlineRuns({
+  table,
+  sourceText,
+  inlineRuns,
+  citationRelationships,
+  noteReferences = [],
+}: {
+  table: CanonicalTable
+  sourceText: string
+  inlineRuns: readonly CanonicalInlineRun[]
+  citationRelationships: readonly PdfCitationRelationship[]
+  noteReferences?: readonly {
+    id: string
+    label: string
+    target: string | null
+    start: number
+    end: number
+    confidence: number
+    status: PdfNoteRelationship['status']
+    referenceRegionId: string
+    sourceBoxes: readonly NormalizedSourceBox[]
+  }[]
+}): CanonicalTable {
+  const citationsById = new Map(
+    citationRelationships.map((relationship) => [
+      relationship.id,
+      relationship,
+    ]),
+  )
+  const projections = inlineRuns.flatMap((run) => {
+    if (
+      run.semanticRole !== 'citation' ||
+      !run.relationshipId ||
+      run.start < 0 ||
+      run.start >= run.end ||
+      run.end > sourceText.length
+    ) {
+      return []
+    }
+    const relationship = citationsById.get(run.relationshipId)
+    if (!relationship) return []
+    const marker = sourceText.slice(run.start, run.end)
+    if (!marker) return []
+    const targetBoxes =
+      relationship.targets?.flatMap((target) => target.sourceBoxes) ?? []
+    const proofBoxes =
+      targetBoxes.length > 0 ? targetBoxes : relationship.sourceBoxes
+    const candidates = table.rows.flatMap((row, rowIndex) =>
+      row.cells.flatMap((cell, cellIndex) => {
+        const start = cell.text.indexOf(marker)
+        if (
+          start < 0 ||
+          cell.text.indexOf(marker, start + 1) >= 0 ||
+          !cell.sourceRuns?.length ||
+          proofBoxes.length === 0 ||
+          !proofBoxes.every((box) =>
+            cell.sourceRuns!.some(
+              (sourceRun) =>
+                sourceRun.regionId === relationship.referenceRegionId &&
+                boxesOverlap(box, sourceRun.box),
+            ),
+          )
+        ) {
+          return []
+        }
+        return [{ rowIndex, cellIndex, start, end: start + marker.length }]
+      }),
+    )
+    return candidates.length === 1 ? [{ run, ...candidates[0] }] : []
+  })
+  const projectedNotes = noteReferences.flatMap((reference) => {
+    if (
+      reference.start < 0 ||
+      reference.start >= reference.end ||
+      reference.end > sourceText.length ||
+      reference.sourceBoxes.length === 0
+    ) {
+      return []
+    }
+    const marker = sourceText.slice(reference.start, reference.end)
+    if (!marker) return []
+    const candidates = table.rows.flatMap((row, rowIndex) =>
+      row.cells.flatMap((cell, cellIndex) => {
+        const start = cell.text.indexOf(marker)
+        if (
+          start < 0 ||
+          cell.text.indexOf(marker, start + 1) >= 0 ||
+          !cell.sourceRuns?.length ||
+          !reference.sourceBoxes.every((box) =>
+            cell.sourceRuns!.some(
+              (sourceRun) =>
+                sourceRun.regionId === reference.referenceRegionId &&
+                boxesOverlap(box, sourceRun.box),
+            ),
+          )
+        ) {
+          return []
+        }
+        return [{ rowIndex, cellIndex, start, end: start + marker.length }]
+      }),
+    )
+    return candidates.length === 1 ? [{ reference, ...candidates[0] }] : []
+  })
+  if (projections.length === 0 && projectedNotes.length === 0) return table
+  return {
+    rows: table.rows.map((row, rowIndex) => ({
+      cells: row.cells.map((cell, cellIndex) => {
+        const semanticRuns = projections
+          .filter(
+            (projection) =>
+              projection.rowIndex === rowIndex &&
+              projection.cellIndex === cellIndex,
+          )
+          .map(({ run, start, end }) => ({ ...run, start, end }))
+        const cellNotes = projectedNotes.filter(
+          (projection) =>
+            projection.rowIndex === rowIndex &&
+            projection.cellIndex === cellIndex,
+        )
+        if (semanticRuns.length === 0 && cellNotes.length === 0) return cell
+        const matchedNotes = cellNotes.flatMap(({ reference, start, end }) =>
+          reference.status === 'matched' && reference.target
+            ? [
+                {
+                  id: reference.id,
+                  label: reference.label,
+                  target: reference.target,
+                  start,
+                  end,
+                  confidence: reference.confidence,
+                },
+              ]
+            : [],
+        )
+        const unresolvedNoteRuns = cellNotes.flatMap(
+          ({ reference, start, end }) =>
+            reference.status !== 'matched'
+              ? [
+                  {
+                    start,
+                    end,
+                    relationshipId: reference.id,
+                    semanticRole: 'note-reference' as const,
+                  },
+                ]
+              : [],
+        )
+        return {
+          ...cell,
+          ...(matchedNotes.length > 0
+            ? {
+                noteReferences: [
+                  ...(cell.noteReferences ?? []),
+                  ...matchedNotes,
+                ],
+              }
+            : {}),
+          ...(semanticRuns.length > 0 || unresolvedNoteRuns.length > 0
+            ? {
+                inlineRuns: [
+                  ...(cell.inlineRuns ?? []),
+                  ...semanticRuns,
+                  ...unresolvedNoteRuns,
+                ].sort(
+                  (left, right) =>
+                    left.start - right.start ||
+                    left.end - right.end ||
+                    String(left.relationshipId ?? '').localeCompare(
+                      String(right.relationshipId ?? ''),
+                    ),
+                ),
+              }
+            : {}),
+        }
+      }),
+    })),
+  }
+}
+
 function exactCanonicalNoteReferenceAnchor(
   reference: NoteReferenceDraft,
   canonicalBlocks: RegionBlock[],
@@ -9583,7 +9877,10 @@ function canonicalVisualTextOwner(
 
 function exactVisualCanonicalRangeForSource(
   owner: CanonicalVisualTextOwner,
-  relationship: PdfCitationRelationship,
+  relationship: Pick<
+    PdfCitationRelationship,
+    'referenceRegionId' | 'referenceStart' | 'referenceEnd' | 'sourceBoxes'
+  >,
   regionsById: ReadonlyMap<string, PdfPageRegion>,
 ) {
   if (
@@ -11787,7 +12084,6 @@ export async function reconstructPageAnalyses({
       renderedAuthorReferenceIds,
     ),
   }))
-  const noteRelationships = matchNotes(blocks, references, diagnostics)
   const visualAssetsById = new Map(
     visualResult.assets.map((asset) => [asset.id, asset] as const),
   )
@@ -11802,6 +12098,42 @@ export async function reconstructPageAnalyses({
     )
     if (draft) canonicalVisualDrafts.set(relationship.id, draft)
   }
+  const canonicalVisualTextOwners = visualResult.relationships.flatMap(
+    (relationship) => {
+      const draft = canonicalVisualDrafts.get(relationship.id)
+      if (!draft) return []
+      const owner = canonicalVisualTextOwner(
+        relationship,
+        draft.id,
+        regionResult.regions,
+        regionResult.lineBoundaryDecisions,
+      )
+      return owner ? [owner] : []
+    },
+  )
+  const canonicalVisualTextOwnersByNodeId = new Map(
+    canonicalVisualTextOwners.map((owner) => [owner.nodeId, owner] as const),
+  )
+  for (const reference of references) {
+    if (reference.canonicalAnchor !== null) continue
+    const candidates = canonicalVisualTextOwners.flatMap((owner) => {
+      const range = exactVisualCanonicalRangeForSource(
+        owner,
+        {
+          referenceRegionId: reference.region.id,
+          referenceStart: reference.start,
+          referenceEnd: reference.end,
+          sourceBoxes: [reference.classification.sourceBox],
+        },
+        regionMap,
+      )
+      return range ? [range] : []
+    })
+    if (candidates.length === 1) {
+      reference.canonicalAnchor = { kind: 'node', ...candidates[0] }
+    }
+  }
+  const noteRelationships = matchNotes(blocks, references, diagnostics)
   const canonicalCrossReferenceTargets = [
     ...canonicalHeadingCrossReferenceTargets(canonicalBlocks),
     ...canonicalVisualCrossReferenceTargets(visualResult.relationships),
@@ -11840,22 +12172,6 @@ export async function reconstructPageAnalyses({
   })
   await yieldPdfReconstructionTask(signal)
   diagnostics.push(...hyperlinkResolution.diagnostics)
-  const canonicalVisualTextOwners = visualResult.relationships.flatMap(
-    (relationship) => {
-      const draft = canonicalVisualDrafts.get(relationship.id)
-      if (!draft) return []
-      const owner = canonicalVisualTextOwner(
-        relationship,
-        draft.id,
-        regionResult.regions,
-        regionResult.lineBoundaryDecisions,
-      )
-      return owner ? [owner] : []
-    },
-  )
-  const canonicalVisualTextOwnersByNodeId = new Map(
-    canonicalVisualTextOwners.map((owner) => [owner.nodeId, owner] as const),
-  )
   for (const [
     relationshipIndex,
     relationship,
@@ -11867,14 +12183,19 @@ export async function reconstructPageAnalyses({
       await yieldPdfReconstructionTask(signal)
     }
     const candidates = canonicalBlocks.flatMap((block) => {
-      if (block.type !== 'heading' && block.type !== 'paragraph') return []
+      if (
+        !block.nodeId ||
+        !['heading', 'paragraph', 'caption', 'footnote'].includes(block.type)
+      ) {
+        return []
+      }
       const range = exactCanonicalRangeForSource(
         block,
         relationship.referenceRegionId,
         relationship.referenceStart,
         relationship.referenceEnd,
       )
-      return range && block.nodeId ? [{ nodeId: block.nodeId, ...range }] : []
+      return range ? [{ nodeId: block.nodeId, ...range }] : []
     })
     candidates.push(
       ...canonicalVisualTextOwners.flatMap((owner) => {
@@ -11890,13 +12211,16 @@ export async function reconstructPageAnalyses({
       candidates.length === 1 ? candidates[0] : null
   }
   for (const relationship of citationRelationships.filter(
-    (candidate) => candidate.status === 'unresolved',
+    (candidate) => candidate.status !== 'matched',
   )) {
+    const ambiguous = relationship.status === 'ambiguous'
     diagnostics.push({
       code: 'UNRESOLVED_CITATION_REFERENCE',
       severity: 'error',
       page: relationship.sourceBoxes[0]?.page,
-      message: `Citation marker ${relationship.id} has no complete bibliography-label target.`,
+      message: ambiguous
+        ? `Citation marker ${relationship.id} retains multiple bibliography targets for review.`
+        : `Citation marker ${relationship.id} has no complete bibliography-label target.`,
       sourceBoxes: relationship.sourceBoxes,
       relationshipId: relationship.id,
       target: {
@@ -11925,8 +12249,9 @@ export async function reconstructPageAnalyses({
   const crossReferenceRegions = new Map<string, PdfPageRegion>()
   for (const block of canonicalBlocks) {
     if (
-      block.type !== 'paragraph' ||
-      block.list?.numberingId === 'references'
+      !['heading', 'paragraph', 'caption', 'footnote'].includes(block.type) ||
+      (block.type === 'paragraph' &&
+        block.list?.numberingId === 'references')
     ) {
       continue
     }
@@ -11958,7 +12283,7 @@ export async function reconstructPageAnalyses({
     const candidates = canonicalBlocks.flatMap((block) => {
       if (
         !block.nodeId ||
-        (block.type !== 'heading' && block.type !== 'paragraph')
+        !['heading', 'paragraph', 'caption', 'footnote'].includes(block.type)
       ) {
         return []
       }
@@ -12037,6 +12362,27 @@ export async function reconstructPageAnalyses({
         : {}),
     })
     semanticReferencesByRegion.set(classification.referenceRegionId, values)
+  }
+  for (const relationship of noteRelationships) {
+    if (
+      relationship.status !== 'ambiguous' &&
+      relationship.status !== 'unresolved'
+    ) {
+      continue
+    }
+    const reference = references.find(
+      (candidate) => candidate.id === relationship.id,
+    )
+    if (reference?.canonicalAnchor?.kind !== 'node') continue
+    const values =
+      semanticReferencesByRegion.get(relationship.referenceRegionId) ?? []
+    values.push({
+      id: relationship.id,
+      start: relationship.referenceStart,
+      end: relationship.referenceEnd,
+      semanticRole: 'note-reference',
+    })
+    semanticReferencesByRegion.set(relationship.referenceRegionId, values)
   }
   for (const relationship of crossReferenceRelationships) {
     const values =
@@ -12121,39 +12467,6 @@ export async function reconstructPageAnalyses({
         })
       }
       const source = `pdf:${sourceHash.slice(0, 16)}#page=${block.region.page}`
-      if (block.type === 'footnote') {
-        const inlineMapping = block.suppressSourceInlineRuns
-          ? { runs: [], ledger: { expected: 0, mapped: 0 } }
-          : sourceInlineRuns(
-              block,
-              embeddedLinks,
-              hyperlinkResolution.mappings,
-              regionResult.lineBoundaryDecisions,
-              [],
-            )
-        inlineSpanLedger.expected += inlineMapping.ledger.expected
-        inlineSpanLedger.mapped += inlineMapping.ledger.mapped
-        const backlinks = noteRelationships
-          .filter(
-            (relationship) =>
-              relationship.status === 'matched' &&
-              relationship.targetNoteId === id,
-          )
-          .map((relationship) => relationship.id)
-        return {
-          id,
-          type: 'footnote' as const,
-          kind: block.noteKind!,
-          label: block.noteLabel!,
-          ...(block.noteMarkerText ? { markerText: block.noteMarkerText } : {}),
-          text: block.text,
-          ...(inlineMapping.runs.length > 0
-            ? { inlineRuns: inlineMapping.runs }
-            : {}),
-          relationships: { backlinks },
-          source,
-        }
-      }
       const sourceNoteReferences = [...matchedReferences.values()].flatMap(
         (relationship) => {
           const draft = referenceDrafts.get(relationship.id)!
@@ -12197,6 +12510,41 @@ export async function reconstructPageAnalyses({
           },
         ),
       )
+      if (block.type === 'footnote') {
+        const inlineMapping = block.suppressSourceInlineRuns
+          ? { runs: [], ledger: { expected: 0, mapped: 0 } }
+          : sourceInlineRuns(
+              block,
+              embeddedLinks,
+              hyperlinkResolution.mappings,
+              regionResult.lineBoundaryDecisions,
+              sourceNoteReferences,
+              semanticReferences,
+            )
+        inlineSpanLedger.expected += inlineMapping.ledger.expected
+        inlineSpanLedger.mapped += inlineMapping.ledger.mapped
+        const backlinks = noteRelationships
+          .filter(
+            (relationship) =>
+              relationship.status === 'matched' &&
+              relationship.targetNoteId === id,
+          )
+          .map((relationship) => relationship.id)
+        return {
+          id,
+          type: 'footnote' as const,
+          kind: block.noteKind!,
+          label: block.noteLabel!,
+          ...(block.noteMarkerText ? { markerText: block.noteMarkerText } : {}),
+          text: block.text,
+          ...(noteReferences.length > 0 ? { noteReferences } : {}),
+          ...(inlineMapping.runs.length > 0
+            ? { inlineRuns: inlineMapping.runs }
+            : {}),
+          relationships: { backlinks },
+          source,
+        }
+      }
       const inlineMapping = block.suppressSourceInlineRuns
         ? { runs: [], ledger: { expected: 0, mapped: 0 } }
         : sourceInlineRuns(
@@ -12226,6 +12574,7 @@ export async function reconstructPageAnalyses({
           id,
           type: 'caption' as const,
           text: block.text,
+          ...(noteReferences.length > 0 ? { noteReferences } : {}),
           ...(inlineRuns.length > 0 ? { inlineRuns } : {}),
           source,
         }
@@ -12323,6 +12672,48 @@ export async function reconstructPageAnalyses({
             : [],
         )
       : []
+    const visualNoteReferences = textOwner
+      ? noteRelationships.flatMap((note) => {
+          if (
+            note.status !== 'matched' &&
+            note.status !== 'ambiguous' &&
+            note.status !== 'unresolved'
+          ) {
+            return []
+          }
+          const reference = referenceDrafts.get(note.id)
+          const anchor = reference?.canonicalAnchor
+          if (
+            !reference ||
+            anchor?.kind !== 'node' ||
+            anchor.nodeId !== draft.id
+          ) {
+            return []
+          }
+          const exactSourceBoxes = exactSourceBoxesForCitationRange(
+            reference.region,
+            reference.start,
+            reference.end,
+            regionResult.lineBoundaryDecisions,
+          )
+          return [
+            {
+              id: note.id,
+              label: note.label,
+              target: note.targetNoteId,
+              start: anchor.start,
+              end: anchor.end,
+              confidence: note.confidence,
+              status: note.status,
+              referenceRegionId: note.referenceRegionId,
+              sourceBoxes:
+                exactSourceBoxes.length > 0
+                  ? exactSourceBoxes
+                  : [reference.classification.sourceBox],
+            },
+          ]
+        })
+      : []
     const inlineRuns = [
       ...sourceInlineMapping.runs,
       ...citationInlineRuns,
@@ -12333,14 +12724,119 @@ export async function reconstructPageAnalyses({
         Number(Boolean(left.relationshipId)) -
           Number(Boolean(right.relationshipId)),
     )
+    const semanticTable =
+      table && sourceText
+        ? canonicalTableWithSemanticInlineRuns({
+            table,
+            sourceText,
+            inlineRuns: citationInlineRuns,
+            citationRelationships,
+            noteReferences: visualNoteReferences,
+          })
+        : table
+    if (semanticTable) {
+      const projectedCitationIds = new Set(
+        semanticTable.rows.flatMap((row) =>
+          row.cells.flatMap((cell) =>
+            (cell.inlineRuns ?? []).flatMap((run) =>
+              run.semanticRole === 'citation' && run.relationshipId
+                ? [run.relationshipId]
+                : [],
+            ),
+          ),
+        ),
+      )
+      for (const run of citationInlineRuns) {
+        if (
+          !run.relationshipId ||
+          projectedCitationIds.has(run.relationshipId)
+        ) {
+          continue
+        }
+        const citation = citationRelationships.find(
+          (candidate) => candidate.id === run.relationshipId,
+        )
+        if (citation?.status !== 'matched') continue
+        citation.status = 'unresolved'
+        citation.evidence.push('canonical-table-cell-anchor-non-unique')
+        inlineSpanLedger.mapped = Math.max(0, inlineSpanLedger.mapped - 1)
+        diagnostics.push({
+          code: 'UNMAPPED_CITATION_ANCHOR',
+          severity: 'error',
+          page: citation.sourceBoxes[0]?.page,
+          message: `Citation marker ${citation.id} could not be assigned to one source-backed table cell.`,
+          sourceBoxes: citation.sourceBoxes,
+          relationshipId: citation.id,
+          target: {
+            regionIds: [citation.referenceRegionId],
+            markerId: citation.id,
+          },
+        })
+      }
+      const projectedNoteIds = new Set(
+        semanticTable.rows.flatMap((row) =>
+          row.cells.flatMap((cell) => [
+            ...(cell.noteReferences ?? []).map((reference) => reference.id),
+            ...(cell.inlineRuns ?? []).flatMap((run) =>
+              run.semanticRole === 'note-reference' && run.relationshipId
+                ? [run.relationshipId]
+                : [],
+            ),
+          ]),
+        ),
+      )
+      for (const reference of visualNoteReferences) {
+        if (
+          reference.status !== 'matched' ||
+          projectedNoteIds.has(reference.id)
+        ) {
+          continue
+        }
+        const note = noteRelationships.find(
+          (candidate) => candidate.id === reference.id,
+        )
+        if (note?.status !== 'matched') continue
+        note.status = 'unresolved'
+        note.targetNoteId = null
+        note.evidence.push('canonical-table-cell-anchor-non-unique')
+        diagnostics.push({
+          code: 'UNRESOLVED_NOTE_REFERENCE',
+          severity: 'error',
+          page: note.sourceBoxes[0]?.page,
+          message: `Note marker ${note.id} could not be assigned to one source-backed table cell.`,
+          sourceBoxes: note.sourceBoxes,
+          relationshipId: note.id,
+          target: {
+            regionIds: [note.referenceRegionId],
+            markerId: note.id,
+          },
+        })
+      }
+      semanticTable.rows.forEach((row, rowIndex) => {
+        row.cells.forEach((cell, cellIndex) => {
+          for (const reference of cell.noteReferences ?? []) {
+            const note = noteRelationships.find(
+              (relationship) => relationship.id === reference.id,
+            )
+            if (note?.status !== 'matched') continue
+            note.canonicalAnchor = {
+              kind: 'node',
+              nodeId: `${draft.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+              start: reference.start,
+              end: reference.end,
+            }
+          }
+        })
+      })
+    }
     const node: ResearchNode = materializeCanonicalVisualNode({
       relationship,
       id: draft.id,
       captionNodeId: draft.captionBlock.nodeId,
       source: draft.source,
-      table,
+      table: semanticTable,
       sourceText,
-      inlineRuns,
+      inlineRuns: table ? [] : inlineRuns,
     })
     const relationshipSourceRegions = relationship.sourceRegionIds
       .map((regionId) => regionMap.get(regionId))
@@ -12378,6 +12874,24 @@ export async function reconstructPageAnalyses({
     ]),
     ...trailingVisualNodes,
   ]
+  const matchedNoteRelationshipIds = new Set(
+    noteRelationships
+      .filter((relationship) => relationship.status === 'matched')
+      .map((relationship) => relationship.id),
+  )
+  nodes = nodes.map((node) =>
+    node.type === 'footnote'
+      ? {
+          ...node,
+          relationships: {
+            ...node.relationships,
+            backlinks: node.relationships.backlinks.filter((backlink) =>
+              matchedNoteRelationshipIds.has(backlink),
+            ),
+          },
+        }
+      : node,
+  )
 
   onProgress?.({
     phase: 'asset-packaging',

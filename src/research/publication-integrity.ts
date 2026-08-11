@@ -57,7 +57,7 @@ export function isBoundedScholarlyReferenceText(value: string) {
   const prefix = trimmed.match(SCHOLARLY_REFERENCE_PREFIX)?.[0]
   return Boolean(
     prefix &&
-      BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS.test(trimmed.slice(prefix.length)),
+    BOUNDED_SCHOLARLY_REFERENCE_IDENTIFIERS.test(trimmed.slice(prefix.length)),
   )
 }
 
@@ -179,8 +179,8 @@ function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
       target: reference.target,
       author: reference.author,
     })),
-    ...paper.nodes.flatMap((node) =>
-      'noteReferences' in node
+    ...paper.nodes.flatMap((node) => [
+      ...('noteReferences' in node
         ? (node.noteReferences ?? [])
             .filter((reference) =>
               validNoteReferenceRange(node.text, reference),
@@ -193,8 +193,26 @@ function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
               start: reference.start,
               end: reference.end,
             }))
-        : [],
-    ),
+        : []),
+      ...(node.type === 'figure' && node.table
+        ? node.table.rows.flatMap((row, rowIndex) =>
+            row.cells.flatMap((cell, cellIndex) =>
+              (cell.noteReferences ?? [])
+                .filter((reference) =>
+                  validNoteReferenceRange(cell.text, reference),
+                )
+                .map((reference) => ({
+                  kind: 'node' as const,
+                  id: reference.id,
+                  target: reference.target,
+                  nodeId: `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+                  start: reference.start,
+                  end: reference.end,
+                })),
+            ),
+          )
+        : []),
+    ]),
   ]
 }
 
@@ -456,6 +474,35 @@ export function internalReferenceIntegrityIssues(
                   ? 'citation-target'
                   : 'cross-reference-target',
             })
+          }
+        }
+      }
+    }
+    if (node.type === 'figure' && node.table) {
+      for (const cell of node.table.rows.flatMap((row) => row.cells)) {
+        for (const run of cell.inlineRuns ?? []) {
+          if (
+            (run.semanticRole !== 'citation' &&
+              run.semanticRole !== 'cross-reference') ||
+            !run.targetIds?.length ||
+            run.start < 0 ||
+            run.start >= run.end ||
+            run.end > cell.text.length
+          ) {
+            continue
+          }
+          for (const targetId of run.targetIds) {
+            if (!nodesById.has(targetId)) {
+              issues.push({
+                code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+                sourceId: run.relationshipId ?? cell.id ?? node.id,
+                targetId,
+                relationship:
+                  run.semanticRole === 'citation'
+                    ? 'citation-target'
+                    : 'cross-reference-target',
+              })
+            }
           }
         }
       }

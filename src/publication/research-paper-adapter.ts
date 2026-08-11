@@ -8,6 +8,7 @@ import {
   PUBLICATION_GRAPH_VERSION,
   publicationGraphSchema,
   type PublicationGraph,
+  type PublicationInlineRun,
   type PublicationNode,
 } from './schema'
 import {
@@ -56,7 +57,11 @@ function commonNode(
 }
 
 function assertSupportedNode(node: ResearchNode) {
-  if ('noteReferences' in node && node.noteReferences?.length) {
+  if (
+    ('noteReferences' in node && node.noteReferences?.length) ||
+    ('inlineRuns' in node &&
+      node.inlineRuns?.some((run) => run.semanticRole === 'note-reference'))
+  ) {
     throw new Error(
       `Research node ${node.id} uses unsupported embedded note references`,
     )
@@ -66,6 +71,11 @@ function assertSupportedNode(node: ResearchNode) {
       `Research node ${node.id} uses unsupported legacy list context`,
     )
   }
+}
+
+function supportedInlineRuns(node: ResearchNode) {
+  const runs = 'inlineRuns' in node ? node.inlineRuns : undefined
+  return runs as PublicationInlineRun[] | undefined
 }
 
 export function researchPaperToPublicationGraph(
@@ -91,6 +101,7 @@ export function researchPaperToPublicationGraph(
   const nodes = paper.nodes.map((node): PublicationNode => {
     assertSupportedNode(node)
     const common = commonNode(paper, node)
+    const inlineRuns = supportedInlineRuns(node)
     switch (node.type) {
       case 'heading':
         return {
@@ -98,21 +109,21 @@ export function researchPaperToPublicationGraph(
           type: 'heading',
           level: node.level,
           text: node.text,
-          inlineRuns: node.inlineRuns,
+          inlineRuns,
         }
       case 'paragraph':
         return {
           ...common,
           type: 'paragraph',
           text: node.text,
-          inlineRuns: node.inlineRuns,
+          inlineRuns,
         }
       case 'quote':
         return {
           ...common,
           type: 'quote',
           text: node.text,
-          inlineRuns: node.inlineRuns,
+          inlineRuns,
         }
       case 'caption': {
         const parentId = captionParents.get(node.id)
@@ -123,7 +134,7 @@ export function researchPaperToPublicationGraph(
           type: 'caption',
           parentId,
           text: node.text,
-          inlineRuns: node.inlineRuns,
+          inlineRuns,
         }
       }
       case 'footnote':
@@ -133,7 +144,7 @@ export function researchPaperToPublicationGraph(
           noteKind: node.kind,
           label: node.label,
           text: node.text,
-          inlineRuns: node.inlineRuns,
+          inlineRuns,
           backlinkIds: node.relationships.backlinks,
         }
       case 'figure':
@@ -151,7 +162,7 @@ export function researchPaperToPublicationGraph(
           type: 'figure',
           title: node.title,
           sourceText: node.sourceText,
-          inlineRuns: node.inlineRuns,
+          inlineRuns,
           assetIds: node.relationships.assets ?? [],
           captionId: node.relationships.caption,
         }

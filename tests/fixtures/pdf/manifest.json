@@ -56,6 +56,23 @@
       ]
     },
     {
+      "file": "note-citation-associations.pdf",
+      "sha256": "4df2e21676b8c09dce94e057e1f0bc196f83a36a8f98656969550458e0be976d",
+      "features": [
+        "numeric-footnote",
+        "symbol-footnote",
+        "endnote",
+        "non-latin-numeral-marker",
+        "numeric-citation-range",
+        "multi-citation-group",
+        "author-year-citation",
+        "citation-inside-caption",
+        "note-marker-inside-table-cell",
+        "nested-note-marker",
+        "ambiguous-duplicate-label-note"
+      ]
+    },
+    {
       "file": "pdf-to-epub-fidelity.pdf",
       "contract": "pdf-to-epub-fidelity.contract.json",
       "contractSha256": "7578b22d89f05d98b915639a85938df56cf696dd1dd9d82ea62c54ec9de1e294",

@@ -73,7 +73,7 @@
                 "type": "array",
                 "minItems": 2,
                 "uniqueItems": true,
-                "items": { "$ref": "#/$defs/id" }
+                "items": { "$ref": "#/$defs/sha256" }
               },
               "decision": { "const": "agreed" },
               "decisionSha256": { "$ref": "#/$defs/sha256" }

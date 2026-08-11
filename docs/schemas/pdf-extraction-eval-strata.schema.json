@@ -82,7 +82,7 @@
         "reviewers": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/id" }
+          "items": { "$ref": "#/$defs/sha256" }
         },
         "parserOutputConsulted": { "const": false },
         "reviewEvidence": {

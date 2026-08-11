@@ -257,7 +257,7 @@ function validateGroundTruthReview(value, code) {
     !REVIEW_STATUSES.includes(value.reviewStatus) ||
     !Array.isArray(value.reviewers) ||
     !uniqueBy(value.reviewers, (reviewer) => reviewer) ||
-    !value.reviewers.every((reviewer) => SAFE_ID.test(reviewer)) ||
+    !value.reviewers.every((reviewer) => SHA256.test(reviewer)) ||
     value.parserOutputConsulted !== false
   ) {
     invalid(code)

@@ -348,8 +348,8 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     const evalSet = await readEvalSet()
     evalSet.documents[0].groundTruthReview.reviewStatus = 'two-reviewer-agreed'
     evalSet.documents[0].groundTruthReview.reviewers = [
-      'fixture-reviewer-a',
-      'fixture-reviewer-b',
+      'a'.repeat(64),
+      'b'.repeat(64),
     ]
     evalSet.documents[0].groundTruthReview.reviewEvidence = null
     expect(() => validatePdfExtractionEvalSet(evalSet)).toThrow(
@@ -681,7 +681,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     ]
     for (const review of reviews) {
       review.reviewStatus = 'two-reviewer-agreed'
-      review.reviewers = ['fixture-reviewer-a', 'fixture-reviewer-b']
+      review.reviewers = ['a'.repeat(64), 'b'.repeat(64)]
       review.reviewEvidence = {
         rosterPath: 'docs/reviews/roster.json',
         rosterSha256: 'a'.repeat(64),
@@ -842,7 +842,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
         ...evalSet.cases.map((item) => item.source.groundTruth.review),
       ]) {
         review.reviewStatus = 'two-reviewer-agreed'
-        review.reviewers = ['fixture-reviewer-a', 'fixture-reviewer-b']
+        review.reviewers = ['a'.repeat(64), 'b'.repeat(64)]
         review.reviewEvidence = {
           rosterPath: 'docs/reviews/roster.json',
           rosterSha256: 'a'.repeat(64),
@@ -951,6 +951,60 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     expect(validate(roster)).toBe(false)
     roster.reviewers['b'.repeat(64)] = 'reviewer-b'
     expect(validate(roster)).toBe(true)
+  })
+
+  it('publishes hash-based reviewer references in both review schemas', async () => {
+    const reviewSchema = JSON.parse(
+      await readFile(
+        'docs/schemas/pdf-extraction-eval-review.schema.json',
+        'utf8',
+      ),
+    )
+    const evalSchema = JSON.parse(
+      await readFile(
+        'docs/schemas/pdf-extraction-eval-strata.schema.json',
+        'utf8',
+      ),
+    )
+    const ajv = new Ajv2020({ strict: false })
+    const validateReview = ajv.compile(reviewSchema)
+    const validateEvalSet = ajv.compile(evalSchema)
+    const reviewerHashes = ['a'.repeat(64), 'b'.repeat(64)]
+    const aliases = ['reviewer-a', 'reviewer-b']
+    const decision = {
+      schemaVersion: '1.1.0',
+      kind: 'pdf-extraction-source-only-decisions',
+      evalSetId: 'fixture-eval',
+      evalSetSha256: 'c'.repeat(64),
+      sourceOnly: true,
+      candidateOutputConsultedForLabel: false,
+      decisions: [
+        {
+          caseId: 'fixture-case',
+          sourceSha256: 'd'.repeat(64),
+          reviewers: aliases,
+          decision: 'agreed',
+          decisionSha256: 'e'.repeat(64),
+        },
+      ],
+    }
+    expect(validateReview(decision)).toBe(false)
+    decision.decisions[0].reviewers = reviewerHashes
+    expect(validateReview(decision)).toBe(true)
+
+    const evalSet = await readEvalSet()
+    const review = evalSet.documents[0].groundTruthReview
+    review.reviewStatus = 'two-reviewer-agreed'
+    review.reviewers = aliases
+    review.reviewEvidence = {
+      rosterPath: 'docs/reviews/roster.json',
+      rosterSha256: 'f'.repeat(64),
+      decisionPath: 'docs/reviews/decisions.json',
+      decisionSha256: '0'.repeat(64),
+    }
+    expect(validateEvalSet(evalSet)).toBe(false)
+    review.reviewers = reviewerHashes
+    expect(validateEvalSet(evalSet)).toBe(true)
   })
 
   it('enforces page-contained endpoint boxes without perfect-scoring zero area', async () => {

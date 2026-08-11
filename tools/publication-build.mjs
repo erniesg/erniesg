@@ -774,6 +774,12 @@ function canonicalMacOSTemporaryPath(value) {
   return candidate
 }
 
+function currentEffectiveUserId() {
+  if (typeof process.geteuid === 'function') return process.geteuid()
+  if (typeof process.getuid === 'function') return process.getuid()
+  return undefined
+}
+
 function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
   if (String(excludedPath).split(/[\\/]+/u).includes('..')) return undefined
   const repositoryIdentity = canonicalMacOSTemporaryPath(repositoryRoot)
@@ -786,13 +792,14 @@ function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
     // closed and remains visible to `git status`.
     entry = lstatSync(candidate)
     const privateMode = entry.mode & 0o777
+    const effectiveUserId = currentEffectiveUserId()
     if (
       realpathSync(repositoryRoot) !== repositoryIdentity ||
       realpathSync(candidate) !== candidateIdentity ||
       !entry.isDirectory() ||
       statSync(repositoryIdentity).dev !== entry.dev ||
-      (typeof process.getuid === 'function' &&
-        (entry.uid !== process.getuid() || privateMode !== 0o700))
+      (effectiveUserId !== undefined &&
+        (entry.uid !== effectiveUserId || privateMode !== 0o700))
     )
       return undefined
   } catch {
@@ -827,8 +834,10 @@ function publicationCleanlinessExclusionIsCurrent(exclusion) {
     if (realpathSync(exclusion.candidate) !== exclusion.candidateIdentity)
       return false
     const entry = lstatSync(exclusion.candidate)
+    const effectiveUserId = currentEffectiveUserId()
     return (
       entry.isDirectory() &&
+      (effectiveUserId === undefined || entry.uid === effectiveUserId) &&
       entry.dev === exclusion.identity.dev &&
       entry.ino === exclusion.identity.ino &&
       entry.uid === exclusion.identity.uid &&

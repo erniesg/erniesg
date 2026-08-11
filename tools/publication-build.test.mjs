@@ -1208,6 +1208,53 @@ describe('publication staging and publish helpers', () => {
     }
   })
 
+  it.runIf(
+    typeof process.getuid === 'function' &&
+      typeof process.geteuid === 'function',
+  )('binds staging ownership to the effective user ID', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-effective-owner-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const staging = resolve(temporaryRoot, '.publication-staging-owned')
+      await mkdir(staging, { mode: 0o700 })
+      await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+      const owner = (await stat(staging)).uid
+      process.chdir(temporaryRoot)
+
+      const realUid = vi.spyOn(process, 'getuid').mockReturnValue(owner + 1)
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        false,
+      )
+      realUid.mockRestore()
+
+      const effectiveUid = vi
+        .spyOn(process, 'geteuid')
+        .mockReturnValue(owner + 1)
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        true,
+      )
+      effectiveUid.mockRestore()
+    } finally {
+      vi.restoreAllMocks()
+      process.chdir(previousDirectory)
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
   it('fails closed when an owned staging directory changes during status collection', async () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-cleanliness-identity-change-'),

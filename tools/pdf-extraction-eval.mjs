@@ -257,7 +257,7 @@ function validateGroundTruthReview(value, code) {
     !REVIEW_STATUSES.includes(value.reviewStatus) ||
     !Array.isArray(value.reviewers) ||
     !uniqueBy(value.reviewers, (reviewer) => reviewer) ||
-    !value.reviewers.every((reviewer) => SHA256.test(reviewer)) ||
+    !value.reviewers.every((reviewer) => SAFE_ID.test(reviewer)) ||
     value.parserOutputConsulted !== false
   ) {
     invalid(code)
@@ -923,35 +923,69 @@ async function validateReviewEvidenceFiles(value, identity) {
     evidence.rosterPath,
     'PDF_EXTRACTION_REVIEW_ROSTER_FILE',
   )
+  const roster = rosterArtifact.value
   if (
     sha256(rosterArtifact.bytes) !== evidence.rosterSha256 ||
-    !exactKeys(rosterArtifact.value, [
-      'schemaVersion',
-      'kind',
-      'evalSetId',
-      'reviewers',
-    ]) ||
-    rosterArtifact.value.schemaVersion !==
-      PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION ||
-    rosterArtifact.value.kind !== 'pdf-extraction-reviewer-roster' ||
-    rosterArtifact.value.evalSetId !== identity.id ||
-    !isRecord(rosterArtifact.value.reviewers) ||
-    Object.keys(rosterArtifact.value.reviewers).length < 2
+    !exactKeys(roster, ['schemaVersion', 'kind', 'evalSetId', 'reviewers']) ||
+    ![
+      PDF_EXTRACTION_EVAL_SCHEMA_VERSION,
+      PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION,
+    ].includes(roster.schemaVersion) ||
+    roster.kind !== 'pdf-extraction-reviewer-roster' ||
+    roster.evalSetId !== identity.id
   ) {
     invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
   }
-  for (const [identityEvidenceSha256, reviewerId] of Object.entries(
-    rosterArtifact.value.reviewers,
-  )) {
+  let reviewerEntries
+  if (roster.schemaVersion === PDF_EXTRACTION_EVAL_SCHEMA_VERSION) {
     if (
-      !SHA256.test(identityEvidenceSha256) ||
-      typeof reviewerId !== 'string' ||
-      !SAFE_ID.test(reviewerId ?? '')
+      !Array.isArray(roster.reviewers) ||
+      roster.reviewers.length < 2 ||
+      !uniqueBy(roster.reviewers, (reviewer) => reviewer.reviewerId) ||
+      !uniqueBy(
+        roster.reviewers,
+        (reviewer) => reviewer.identityEvidenceSha256,
+      ) ||
+      roster.reviewers.some(
+        (reviewer) =>
+          !exactKeys(reviewer, ['reviewerId', 'identityEvidenceSha256']) ||
+          !SAFE_ID.test(reviewer.reviewerId ?? '') ||
+          !SHA256.test(reviewer.identityEvidenceSha256 ?? ''),
+      )
     ) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
     }
+    reviewerEntries = roster.reviewers.map((reviewer) => [
+      reviewer.identityEvidenceSha256,
+      reviewer.reviewerId,
+    ])
+  } else {
+    if (
+      !isRecord(roster.reviewers) ||
+      Object.keys(roster.reviewers).length < 2 ||
+      Object.entries(roster.reviewers).some(
+        ([identityEvidenceSha256, reviewerId]) =>
+          !SHA256.test(identityEvidenceSha256) ||
+          typeof reviewerId !== 'string' ||
+          !SAFE_ID.test(reviewerId),
+      )
+    ) {
+      invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
+    }
+    reviewerEntries = Object.entries(roster.reviewers)
   }
-  const rosterIds = new Set(Object.keys(rosterArtifact.value.reviewers))
+  const rosterIdentities = new Set(reviewerEntries.map(([hash]) => hash))
+  const identityHashesByAlias = new Map()
+  for (const [hash, alias] of reviewerEntries) {
+    const hashes = identityHashesByAlias.get(alias) ?? []
+    hashes.push(hash)
+    identityHashesByAlias.set(alias, hashes)
+  }
+  const resolveReviewerReference = (reference) => {
+    if (rosterIdentities.has(reference)) return reference
+    const hashes = identityHashesByAlias.get(reference)
+    return hashes?.length === 1 ? hashes[0] : null
+  }
   const decisionArtifact = await readRepositoryJson(
     evidence.decisionPath,
     'PDF_EXTRACTION_REVIEW_DECISION_FILE',
@@ -967,8 +1001,7 @@ async function validateReviewEvidenceFiles(value, identity) {
       'candidateOutputConsultedForLabel',
       'decisions',
     ]) ||
-    decisionArtifact.value.schemaVersion !==
-      PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION ||
+    decisionArtifact.value.schemaVersion !== roster.schemaVersion ||
     decisionArtifact.value.kind !== 'pdf-extraction-source-only-decisions' ||
     decisionArtifact.value.evalSetId !== identity.id ||
     decisionArtifact.value.evalSetSha256 !== identity.evalSetSha256 ||
@@ -999,7 +1032,13 @@ async function validateReviewEvidenceFiles(value, identity) {
       !Array.isArray(decision.reviewers) ||
       decision.reviewers.length < 2 ||
       !uniqueBy(decision.reviewers, (reviewer) => reviewer) ||
-      !decision.reviewers.every((reviewer) => rosterIds.has(reviewer)) ||
+      decision.reviewers.some(
+        (reviewer) => resolveReviewerReference(reviewer) === null,
+      ) ||
+      !uniqueBy(
+        decision.reviewers.map(resolveReviewerReference),
+        (reviewer) => reviewer,
+      ) ||
       decision.decision !== 'agreed' ||
       !SHA256.test(decision.decisionSha256 ?? '')
     ) {
@@ -1019,7 +1058,11 @@ async function validateReviewEvidenceFiles(value, identity) {
     ]),
   )
   for (const review of agreed) {
-    if (review.reviewers.some((reviewer) => !rosterIds.has(reviewer))) {
+    const resolvedReviewers = review.reviewers.map(resolveReviewerReference)
+    if (
+      resolvedReviewers.some((reviewer) => reviewer === null) ||
+      !uniqueBy(resolvedReviewers, (reviewer) => reviewer)
+    ) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
     }
   }
@@ -1028,8 +1071,10 @@ async function validateReviewEvidenceFiles(value, identity) {
     const caseReview = item.source.groundTruth.review
     if (
       !decision ||
-      canonicalJson([...caseReview.reviewers].sort()) !==
-        canonicalJson([...decision.reviewers].sort())
+      canonicalJson(
+        caseReview.reviewers.map(resolveReviewerReference).sort(),
+      ) !==
+        canonicalJson(decision.reviewers.map(resolveReviewerReference).sort())
     ) {
       invalid('PDF_EXTRACTION_REVIEW_DECISION_MISMATCH')
     }

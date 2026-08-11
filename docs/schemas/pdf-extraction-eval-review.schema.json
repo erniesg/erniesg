@@ -3,10 +3,7 @@
   "$id": "https://ernie.sg/schemas/pdf-extraction-eval-review-1.1.0.json",
   "title": "Source-only extraction evaluation review evidence",
   "description": "Roster and decision artifacts bind reviewer identities and labels without exposing private source content or consulting candidate output.",
-  "oneOf": [
-    { "$ref": "#/$defs/roster" },
-    { "$ref": "#/$defs/decisions" }
-  ],
+  "oneOf": [{ "$ref": "#/$defs/roster" }, { "$ref": "#/$defs/decisions" }],
   "$defs": {
     "id": {
       "type": "string",
@@ -73,7 +70,7 @@
                 "type": "array",
                 "minItems": 2,
                 "uniqueItems": true,
-                "items": { "$ref": "#/$defs/sha256" }
+                "items": { "$ref": "#/$defs/id" }
               },
               "decision": { "const": "agreed" },
               "decisionSha256": { "$ref": "#/$defs/sha256" }

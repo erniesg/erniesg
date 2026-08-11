@@ -19,9 +19,15 @@ async function readEvalSet() {
   return JSON.parse(await readFile(evalPath, 'utf8'))
 }
 
-async function attachVerifiedReviews(evalSet, directory) {
-  const reviewerA = 'a'.repeat(64)
-  const reviewerB = 'b'.repeat(64)
+async function attachVerifiedReviews(
+  evalSet,
+  directory,
+  { legacy = false } = {},
+) {
+  const reviewerA = 'fixture-reviewer-a'
+  const reviewerB = 'fixture-reviewer-b'
+  const reviewerHashA = 'a'.repeat(64)
+  const reviewerHashB = 'b'.repeat(64)
   const rosterPath = join(directory, 'roster.json')
   const decisionPath = join(directory, 'decisions.json')
   const reviews = [
@@ -40,18 +46,20 @@ async function attachVerifiedReviews(evalSet, directory) {
     }
   }
   const roster = {
-    schemaVersion: '1.1.0',
+    schemaVersion: legacy ? '1.0.0' : '1.1.0',
     kind: 'pdf-extraction-reviewer-roster',
     evalSetId: evalSet.id,
-    reviewers: {
-      [reviewerA]: 'fixture-reviewer-a',
-      [reviewerB]: 'fixture-reviewer-b',
-    },
+    reviewers: legacy
+      ? [
+          { reviewerId: reviewerA, identityEvidenceSha256: reviewerHashA },
+          { reviewerId: reviewerB, identityEvidenceSha256: reviewerHashB },
+        ]
+      : { [reviewerHashA]: reviewerA, [reviewerHashB]: reviewerB },
   }
   const identity = validatePdfExtractionEvalSet(evalSet)
   const documentById = new Map(evalSet.documents.map((item) => [item.id, item]))
   const decisionArtifact = {
-    schemaVersion: '1.1.0',
+    schemaVersion: legacy ? '1.0.0' : '1.1.0',
     kind: 'pdf-extraction-source-only-decisions',
     evalSetId: evalSet.id,
     evalSetSha256: identity.evalSetSha256,
@@ -806,9 +814,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       )
       await writeFile(rosterPath, missingIdentityRosterBytes)
       for (const review of reviews) {
-        review.reviewEvidence.rosterSha256 = sha256(
-          missingIdentityRosterBytes,
-        )
+        review.reviewEvidence.rosterSha256 = sha256(missingIdentityRosterBytes)
       }
       await expect(validatePdfExtractionEvalSetFiles(evalSet)).rejects.toThrow(
         'PDF_EXTRACTION_REVIEW_DECISION_MISMATCH',
@@ -826,6 +832,18 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       await expect(validatePdfExtractionEvalSetFiles(evalSet)).rejects.toThrow(
         'PDF_EXTRACTION_REVIEW_DECISION_MISMATCH',
       )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('continues to validate completed v1.0 review evidence', async () => {
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-review-v1-')
+    try {
+      await expect(
+        attachVerifiedReviews(evalSet, directory, { legacy: true }),
+      ).resolves.toBeUndefined()
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -938,7 +956,10 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
 
   it('publishes distinct reviewer identity evidence in the review schema', async () => {
     const schema = JSON.parse(
-      await readFile('docs/schemas/pdf-extraction-eval-review.schema.json', 'utf8'),
+      await readFile(
+        'docs/schemas/pdf-extraction-eval-review.schema.json',
+        'utf8',
+      ),
     )
     const validate = new Ajv2020({ strict: false }).compile(schema)
     const roster = {
@@ -953,7 +974,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     expect(validate(roster)).toBe(true)
   })
 
-  it('publishes hash-based reviewer references in both review schemas', async () => {
+  it('publishes resolvable reviewer aliases in both review schemas', async () => {
     const reviewSchema = JSON.parse(
       await readFile(
         'docs/schemas/pdf-extraction-eval-review.schema.json',
@@ -988,7 +1009,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
         },
       ],
     }
-    expect(validateReview(decision)).toBe(false)
+    expect(validateReview(decision)).toBe(true)
     decision.decisions[0].reviewers = reviewerHashes
     expect(validateReview(decision)).toBe(true)
 
@@ -1002,7 +1023,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       decisionPath: 'docs/reviews/decisions.json',
       decisionSha256: '0'.repeat(64),
     }
-    expect(validateEvalSet(evalSet)).toBe(false)
+    expect(validateEvalSet(evalSet)).toBe(true)
     review.reviewers = reviewerHashes
     expect(validateEvalSet(evalSet)).toBe(true)
   })

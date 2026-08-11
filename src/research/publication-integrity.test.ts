@@ -524,6 +524,32 @@ describe('exact semantic note-anchor integrity', () => {
     if (table.type !== 'figure' || !table.table) {
       throw new Error('missing table fixture')
     }
+    reference.start = 0
+    reference.end = 1
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'table-node:table:cell-left',
+      start: 0,
+      end: 1,
+    }
+
+    expect(
+      internalReferenceIntegrityIssues(paper, [relationship], sourceEvidence),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ detail: 'note-anchor-mismatch' }),
+      ]),
+    )
+    expect(
+      validMatchedSemanticNoteRelationshipIds(
+        paper,
+        [relationship],
+        sourceEvidence,
+      ).has(relationship.id),
+    ).toBe(false)
+
+    reference.start = 4
+    reference.end = 5
     table.table.rows[0].cells[0].noteReferences = undefined
     table.table.rows[0].cells[1].noteReferences = [
       { ...reference, start: 5, end: 6 },

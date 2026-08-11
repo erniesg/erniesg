@@ -182,6 +182,7 @@ type RenderedNoteReference =
       nodeId: string
       start: number
       end: number
+      markerText: string
     }
   | {
       kind: 'author'
@@ -217,6 +218,7 @@ function renderedNoteReferences(
               nodeId: node.id,
               start: reference.start,
               end: reference.end,
+              markerText: node.text.slice(reference.start, reference.end),
             }))
         : []),
       ...(node.type === 'figure' &&
@@ -237,6 +239,7 @@ function renderedNoteReferences(
                   nodeId: `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
                   start: reference.start,
                   end: reference.end,
+                  markerText: cell.text.slice(reference.start, reference.end),
                 })),
             ),
           )
@@ -455,6 +458,10 @@ function relationshipMatchesRenderedReference(
   reference: RenderedNoteReference,
 ) {
   const anchor = relationship.canonicalAnchor
+  const canonicalLabels =
+    reference.kind === 'node'
+      ? noteLabelsFromBoundedMarkerText(reference.markerText)
+      : null
   return (
     relationship.targetNoteId === reference.target &&
     normalizedNoteLabel(relationship.label) ===
@@ -462,7 +469,8 @@ function relationshipMatchesRenderedReference(
     (anchor?.kind === 'node' && reference.kind === 'node'
       ? anchor.nodeId === reference.nodeId &&
         anchor.start === reference.start &&
-        anchor.end === reference.end
+        anchor.end === reference.end &&
+        canonicalLabels?.join(',') === normalizedNoteLabel(reference.label)
       : anchor?.kind === 'author' && reference.kind === 'author'
         ? anchor.author === reference.author
         : false)

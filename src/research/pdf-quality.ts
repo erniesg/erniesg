@@ -41,6 +41,8 @@ import {
 import { unprovedInlineMathAtomNodeIds } from './pdf-inline-script-integrity'
 import {
   classifyPdfNoteMarkers,
+  pdfAlternateAuthorYearKeyFromBoundary,
+  pdfAuthorYearKey,
   pdfBibliographyAuthorYearKey,
 } from './pdf-note-classifier'
 import { parsePdfCitationSurface } from './pdf-citation-surface'
@@ -3097,6 +3099,7 @@ function hasValidMatchedCitationEvidence({
   sourceRegion,
   nodesById,
   anchorSourceRuns,
+  lineBoundaryDecisions,
 }: {
   relationship: PdfCitationRelationship
   sourceClassification: PdfNoteMarkerClassification | undefined
@@ -3106,6 +3109,7 @@ function hasValidMatchedCitationEvidence({
     regionId: string
     box: NormalizedSourceBox
   }[]
+  lineBoundaryDecisions: readonly PdfLineBoundaryDecision[]
 }) {
   if (
     !sourceClassification ||
@@ -3206,10 +3210,41 @@ function hasValidMatchedCitationEvidence({
     }
     const label = relationship.labels[index]
     if (relationship.taxonomy === 'author-year-bibliography-citation') {
-      return (
-        pdfBibliographyAuthorYearKey(target.text) === label ||
-        relationship.evidence.includes(
+      const targetKey = pdfBibliographyAuthorYearKey(target.text)
+      if (targetKey === label) return true
+      const sourceLink = surface.links.find(
+        (link) => link.identityIndex === index,
+      )
+      const citationText = sourceLink
+        ? sourceText.slice(sourceLink.start, sourceLink.end)
+        : ''
+      const firstSurname = citationText.match(
+        /^\s*(\p{Lu}[\p{L}\p{M}'’.-]*)/u,
+      )?.[1]
+      const year = label.match(/:((?:18|19|20)\d{2}[a-z]?)$/u)?.[1]
+      const surnameOffset = firstSurname
+        ? citationText.indexOf(firstSurname)
+        : -1
+      if (
+        !relationship.evidence.includes(
           'author-year-key-normalized-from-unresolved-line-boundary-hyphen',
+        ) ||
+        !sourceLink ||
+        !firstSurname ||
+        !year ||
+        surnameOffset < 0 ||
+        pdfAuthorYearKey(firstSurname, year) !== label
+      ) {
+        return false
+      }
+      return (
+        targetKey ===
+        pdfAlternateAuthorYearKeyFromBoundary(
+          sourceRegion,
+          lineBoundaryDecisions,
+          firstSurname,
+          year,
+          relationship.referenceStart + sourceLink.start + surnameOffset,
         )
       )
     }
@@ -3439,6 +3474,7 @@ function relationshipCounts(
           ),
           sourceRegion: sourceRegionsById.get(relationship.referenceRegionId),
           nodesById,
+          lineBoundaryDecisions,
           ...(tableCellOwner
             ? { anchorSourceRuns: tableCellOwner.sourceRuns }
             : {}),

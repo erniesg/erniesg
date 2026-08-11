@@ -9787,6 +9787,56 @@ describe('PDF semantic reconstruction', () => {
           decision.regionId === classification?.referenceRegionId,
       ),
     ).toHaveLength(1)
+
+    if (!relationship?.canonicalAnchor || !lampleTarget) {
+      throw new Error('missing matched Lam-ple citation fixture')
+    }
+    const wrongTarget = references.find((node) => node.id !== lampleTarget.id)
+    const tamperedPaper = structuredClone(result.paper)
+    const tamperedRelationships = structuredClone(result.citationRelationships)
+    const tamperedRelationship = tamperedRelationships.find(
+      ({ id }) => id === relationship.id,
+    )
+    const tamperedAnchorOwner = tamperedPaper.nodes.find(
+      ({ id }) => id === relationship.canonicalAnchor?.nodeId,
+    )
+    const tamperedInlineRun =
+      tamperedAnchorOwner && 'inlineRuns' in tamperedAnchorOwner
+        ? tamperedAnchorOwner.inlineRuns?.find(
+            ({ relationshipId }) => relationshipId === relationship.id,
+          )
+        : undefined
+    if (
+      !wrongTarget ||
+      !tamperedRelationship?.targets?.[0] ||
+      !tamperedInlineRun
+    ) {
+      throw new Error('missing adversarial author-year target fixture')
+    }
+    tamperedRelationship.targetNodeIds = [wrongTarget.id]
+    tamperedRelationship.targets[0].targetNodeId = wrongTarget.id
+    tamperedInlineRun.targetIds = [wrongTarget.id]
+
+    const tamperedCompleteness = assessPdfCompleteness({
+      pages: result.pages,
+      paper: tamperedPaper,
+      diagnostics: [],
+      regions: result.regions,
+      readingOrder: result.readingOrder,
+      provenance: result.provenance,
+      visualRelationships: result.visualRelationships,
+      assets: result.assets,
+      citationRelationships: tamperedRelationships,
+      noteRelationships: result.noteRelationships,
+      lineBoundaryDecisions: result.lineBoundaryDecisions,
+      inlineSpanLedger: {
+        expected: result.completeness.expectedInlineSpanCount,
+        mapped: result.completeness.mappedInlineSpanCount,
+      },
+    })
+    expect(tamperedCompleteness.completeness.unresolvedObjects.citations).toBe(
+      1,
+    )
   })
 
   it('keeps missing, duplicate, and preserved Lam-ple alternates unresolved', async () => {

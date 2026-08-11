@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import {
   auditAssociationReconstruction,
   validateAssociationGroundTruth,
@@ -288,25 +288,37 @@ test('agent evidence requires the audit and embeds the exact receipt', () => {
     /\[agent-evidence\] passed: (.+\/manifest\.json)\s*$/u,
   )
   assert.ok(manifestMatch, evidence.stdout)
-  const manifest = JSON.parse(readFileSync(resolve(manifestMatch[1]), 'utf8'))
-  assert.deepEqual(manifest.lanes_run, ['association-audit'])
-  assert.equal(manifest.lanes[0].required, true)
-  assert.equal(manifest.lanes[0].status, 'passed')
-  assert.equal(manifest.association_audit.status, 'passed')
-  assert.equal(manifest.association_audit.checkpoints.length, 5)
-  assert.deepEqual(
-    manifest.association_audit.before,
-    groundTruth.baselineCounters,
-  )
-  assert.deepEqual(manifest.association_audit.after, {
-    expectedAssociations: 10,
-    matchedAssociations: 9,
-    ambiguousAssociations: 1,
-    unresolvedAssociations: 0,
-    falseLinkCount: 0,
-    resolvedAssociationRate: 0.9,
-    verifiedAssociationRate: 1,
-  })
-  assert.equal(manifest.association_audit.completeness.associationCoverage, 0.9)
-  assert.equal(manifest.association_audit.readiness.ready, false)
+  const manifestPath = resolve(manifestMatch[1])
+  const evidenceDirectory = dirname(manifestPath)
+  const evidenceRoot = resolve('.agent/evidence')
+  const removable = dirname(evidenceDirectory) === evidenceRoot
+  try {
+    assert.equal(removable, true, 'nested evidence escaped its exact root')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    assert.deepEqual(manifest.lanes_run, ['association-audit'])
+    assert.equal(manifest.lanes[0].required, true)
+    assert.equal(manifest.lanes[0].status, 'passed')
+    assert.equal(manifest.association_audit.status, 'passed')
+    assert.equal(manifest.association_audit.checkpoints.length, 5)
+    assert.deepEqual(
+      manifest.association_audit.before,
+      groundTruth.baselineCounters,
+    )
+    assert.deepEqual(manifest.association_audit.after, {
+      expectedAssociations: 10,
+      matchedAssociations: 9,
+      ambiguousAssociations: 1,
+      unresolvedAssociations: 0,
+      falseLinkCount: 0,
+      resolvedAssociationRate: 0.9,
+      verifiedAssociationRate: 1,
+    })
+    assert.equal(
+      manifest.association_audit.completeness.associationCoverage,
+      0.9,
+    )
+    assert.equal(manifest.association_audit.readiness.ready, false)
+  } finally {
+    if (removable) rmSync(evidenceDirectory, { recursive: true, force: true })
+  }
 })

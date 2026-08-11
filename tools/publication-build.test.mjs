@@ -1208,6 +1208,43 @@ describe('publication staging and publish helpers', () => {
     }
   })
 
+  it('marks rejected repository-local ignored exclusions dirty', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-ignored-rejection-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, '.gitignore'), '.agent/evidence/\n')
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const staging = resolve(temporaryRoot, '.agent/evidence')
+      await mkdir(staging, { recursive: true, mode: 0o700 })
+      await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+      process.chdir(temporaryRoot)
+
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        false,
+      )
+      await chmod(staging, 0o777)
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        true,
+      )
+    } finally {
+      process.chdir(previousDirectory)
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
   it.runIf(
     typeof process.getuid === 'function' &&
       typeof process.geteuid === 'function',

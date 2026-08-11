@@ -781,10 +781,24 @@ function currentEffectiveUserId() {
 }
 
 function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
-  if (String(excludedPath).split(/[\\/]+/u).includes('..')) return undefined
   const repositoryIdentity = canonicalMacOSTemporaryPath(repositoryRoot)
   const candidate = resolve(excludedPath)
   const candidateIdentity = canonicalMacOSTemporaryPath(candidate)
+  const repositoryRelative = relative(repositoryIdentity, candidateIdentity)
+    .split(sep)
+    .join('/')
+  if (
+    repositoryRelative === '..' ||
+    repositoryRelative.startsWith('../') ||
+    isAbsolute(repositoryRelative)
+  )
+    return undefined
+  const rejected = { rejected: true }
+  if (
+    !repositoryRelative ||
+    String(excludedPath).split(/[\\/]+/u).includes('..')
+  )
+    return rejected
   let entry
   try {
     // Only the root-owned macOS temporary aliases above may change a path's
@@ -801,21 +815,12 @@ function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
       (effectiveUserId !== undefined &&
         (entry.uid !== BigInt(effectiveUserId) || privateMode !== 0o700n))
     )
-      return undefined
+      return rejected
   } catch {
-    return undefined
+    return rejected
   }
-  const repositoryRelative = relative(repositoryIdentity, candidateIdentity)
-    .split(sep)
-    .join('/')
-  if (
-    !repositoryRelative ||
-    repositoryRelative === '..' ||
-    repositoryRelative.startsWith('../') ||
-    isAbsolute(repositoryRelative)
-  )
-    return undefined
   return {
+    rejected: false,
     pathspec: `:(exclude,top,literal)${repositoryRelative}`,
     candidate,
     candidateIdentity,
@@ -854,9 +859,12 @@ export function publicationRepositoryForCurrentCheckout(excludedPaths = []) {
   const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
     encoding: 'utf8',
   }).trim()
-  const exclusionReceipts = excludedPaths
+  const requestedExclusions = excludedPaths
     .map((path) => publicationCleanlinessExclusion(repositoryRoot, path))
     .filter(Boolean)
+  const exclusionReceipts = requestedExclusions.filter(
+    ({ rejected }) => !rejected,
+  )
   const exclusions = exclusionReceipts.map(({ pathspec }) => pathspec)
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: repositoryRoot,
@@ -871,6 +879,7 @@ export function publicationRepositoryForCurrentCheckout(excludedPaths = []) {
     commit,
     dirty:
       status.length > 0 ||
+      requestedExclusions.some(({ rejected }) => rejected) ||
       !exclusionReceipts.every(publicationCleanlinessExclusionIsCurrent),
   }
 }

@@ -4,10 +4,7 @@ import {
   canonicalContentHash,
   canonicalNodeContentHash,
 } from './canonical-hash'
-import {
-  type ResearchNode,
-  type ResearchPaper,
-} from './schema'
+import { type ResearchNode, type ResearchPaper } from './schema'
 import {
   COMPOSITION_DECISION_CODES,
   COMPOSITION_POLICY_VERSION,
@@ -547,7 +544,18 @@ export class ManifestInvariantError extends Error {
 function relationshipsFor(
   node: ResearchNode,
 ): Record<string, string | string[]> {
-  if (node.type === 'figure') return { ...node.relationships }
+  if (node.type === 'figure') {
+    const noteTargets =
+      node.table?.rows.flatMap((row) =>
+        row.cells.flatMap((cell) =>
+          (cell.noteReferences ?? []).map((reference) => reference.target),
+        ),
+      ) ?? []
+    return {
+      ...node.relationships,
+      ...(noteTargets.length > 0 ? { noteTargets } : {}),
+    }
+  }
   if (node.type === 'footnote') {
     return node.relationships.backlinks.length > 0
       ? { backlinks: [...node.relationships.backlinks] }

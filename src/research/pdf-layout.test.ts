@@ -11,6 +11,7 @@ import type {
   NodeSourceEvidence,
   NormalizedSourceBox,
   PdfCanonicalHyphenBoundaryDecision,
+  PdfNoteRelationship,
   PdfPageAnalysis,
   PdfPageRegion,
   PdfScholarlyCrossReferenceRelationship,
@@ -25,6 +26,7 @@ import {
   canonicalVisualSourceTranscript,
   mergeProseContinuations,
   orderCanonicalVisualPairs,
+  placeMatchedCanonicalNotes,
   reconstructPageAnalyses,
   retainUniqueMonotoneSourceRunAssignment,
   retainUniqueSourceRunAssignmentWithAliases,
@@ -48,6 +50,178 @@ import {
   createSourcePageCropAsset,
 } from './visual-assets'
 import type { ResearchNode } from './schema'
+
+function placementNote(id: string): ResearchNode {
+  return {
+    id,
+    type: 'footnote',
+    kind: 'footnote',
+    label: id,
+    text: `Source note ${id}.`,
+    relationships: { backlinks: [] },
+    source: 'pdf:test#page=1',
+  }
+}
+
+function matchedNotePlacement(
+  id: string,
+  ownerId: string,
+  targetNoteId: string,
+): PdfNoteRelationship {
+  return {
+    id,
+    label: id,
+    referenceRegionId: `region-${id}`,
+    referenceStart: 0,
+    referenceEnd: 1,
+    targetNoteId,
+    status: 'matched',
+    canonicalAnchor: {
+      kind: 'node',
+      nodeId: ownerId,
+      start: 0,
+      end: 1,
+    },
+    confidence: 1,
+    threshold: 0.72,
+    evidence: ['test'],
+    candidates: [],
+    sourceBoxes: [],
+  }
+}
+
+describe('matched canonical note placement', () => {
+  it('preserves a self-referencing note at its source position', () => {
+    const nodes: ResearchNode[] = [
+      visualOrderParagraph('before', 'Before.'),
+      placementNote('note-self'),
+      visualOrderParagraph('after', 'After.'),
+    ]
+
+    placeMatchedCanonicalNotes(nodes, [
+      matchedNotePlacement('reference-self', 'note-self', 'note-self'),
+    ])
+
+    expect(nodes.map((node) => node.id)).toEqual([
+      'before',
+      'note-self',
+      'after',
+    ])
+  })
+
+  it('preserves cyclic notes in physical source order', () => {
+    const nodes: ResearchNode[] = [
+      visualOrderParagraph('before', 'Before.'),
+      placementNote('note-b'),
+      visualOrderParagraph('between', 'Between.'),
+      placementNote('note-a'),
+      visualOrderParagraph('after', 'After.'),
+    ]
+
+    placeMatchedCanonicalNotes(nodes, [
+      matchedNotePlacement('reference-a-to-b', 'note-a', 'note-b'),
+      matchedNotePlacement('reference-b-to-a', 'note-b', 'note-a'),
+    ])
+
+    expect(nodes.map((node) => node.id)).toEqual([
+      'before',
+      'note-b',
+      'between',
+      'note-a',
+      'after',
+    ])
+  })
+
+  it('rejects a matched self-reference inside a canonical note', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Self-referencing note', 0.1, 0.08, 0.5, 18),
+          run(1, 'Abstract', 0.1, 0.22, 0.2, 16),
+          run(1, 'Ordinary body prose.', 0.1, 0.3, 0.5, 10),
+          run(1, '1 First note body; see note 1.', 0.1, 0.82, 0.4, 7),
+        ]),
+      ],
+      sourceHash: 'b'.repeat(64),
+      fileName: 'self-referencing-note.pdf',
+      byteLength: 4096,
+    })
+
+    const footnotes = result.paper.nodes.filter(
+      (node) => node.type === 'footnote',
+    )
+    const rejected = result.noteRelationships.filter((relationship) =>
+      relationship.evidence.includes('cyclic-note-reference-rejected'),
+    )
+    expect(footnotes).toHaveLength(1)
+    expect(rejected).toEqual([
+      expect.objectContaining({ status: 'unresolved', targetNoteId: null }),
+    ])
+    expect(rejected[0].canonicalAnchor).toMatchObject({
+      kind: 'node',
+      nodeId: footnotes[0].id,
+    })
+    expect(footnotes[0].relationships.backlinks).not.toContain(rejected[0].id)
+    expect(result.readiness).toMatchObject({
+      ready: false,
+      status: 'review-required',
+    })
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_NOTE_REFERENCE',
+          relationshipId: rejected[0].id,
+          message: expect.stringContaining('cyclic note relationship'),
+        }),
+      ]),
+    )
+  })
+
+  it('demotes a matched note cycle without dropping either source note', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(1, 'Cyclic nested notes', 0.1, 0.08, 0.5, 18),
+          run(1, 'Abstract', 0.1, 0.22, 0.2, 16),
+          run(1, 'Ordinary body prose.', 0.1, 0.3, 0.5, 10),
+          run(1, '1 First note body; see note 2.', 0.1, 0.82, 0.34, 7),
+          run(1, '2 Second note body; see note 1.', 0.1, 0.89, 0.35, 7),
+        ]),
+      ],
+      sourceHash: 'c'.repeat(64),
+      fileName: 'cyclic-nested-notes.pdf',
+      byteLength: 4096,
+    })
+
+    const footnotes = result.paper.nodes.filter(
+      (node) => node.type === 'footnote',
+    )
+    const footnoteIds = new Set(footnotes.map((node) => node.id))
+    const rejected = result.noteRelationships.filter((relationship) =>
+      relationship.evidence.includes('cyclic-note-reference-rejected'),
+    )
+    expect(footnotes).toHaveLength(2)
+    expect(
+      footnotes
+        .map((node) => node.text)
+        .filter((text) => /(?:First|Second) note body/u.test(text)),
+    ).toHaveLength(2)
+    expect(rejected).toHaveLength(2)
+    expect(
+      rejected.every(
+        (relationship) =>
+          relationship.status === 'unresolved' &&
+          relationship.targetNoteId === null &&
+          relationship.canonicalAnchor?.kind === 'node' &&
+          footnoteIds.has(relationship.canonicalAnchor.nodeId),
+      ),
+    ).toBe(true)
+    expect(
+      footnotes.flatMap((note) => note.relationships.backlinks),
+    ).not.toEqual(expect.arrayContaining(rejected.map((item) => item.id)))
+    expect(result.readiness.ready).toBe(false)
+  })
+})
 
 describe('generated continuous-prose PDF fixture', () => {
   let result: Awaited<ReturnType<typeof reconstructPdf>>
@@ -108,9 +282,7 @@ describe('generated continuous-prose PDF fixture', () => {
       expect.arrayContaining([
         expect.objectContaining({
           outcome: 'removed-discretionary-hyphen',
-          evidence: expect.arrayContaining([
-            'same-document-unhyphenated-word',
-          ]),
+          evidence: expect.arrayContaining(['same-document-unhyphenated-word']),
         }),
         expect.objectContaining({
           outcome: 'preserved-lexical-hyphen',
@@ -1190,9 +1362,14 @@ describe('PDF semantic reconstruction', () => {
         2,
       )
       const { blocks, sourceSemanticFlowBoundaryDecisions } =
-        await joinAcrossPageBreak(target, continuation, [target, continuation], {
-          hardHyphenLexicon: new Set(['long-form']),
-        })
+        await joinAcrossPageBreak(
+          target,
+          continuation,
+          [target, continuation],
+          {
+            hardHyphenLexicon: new Set(['long-form']),
+          },
+        )
 
       expect(blocks).toHaveLength(1)
       expect(blocks[0].text).toBe(
@@ -5884,13 +6061,7 @@ describe('PDF semantic reconstruction', () => {
             0.2,
             0.5,
           ),
-          run(
-            1,
-            'then verify the rendered checkpoint.',
-            0.128,
-            0.222,
-            0.44,
-          ),
+          run(1, 'then verify the rendered checkpoint.', 0.128, 0.222, 0.44),
           run(
             1,
             'An independent paragraph follows the completed instruction.',
@@ -5932,13 +6103,7 @@ describe('PDF semantic reconstruction', () => {
             0.1,
             0.72,
           ),
-          run(
-            1,
-            '1. Introduction',
-            0.1,
-            0.2,
-            0.72,
-          ),
+          run(1, '1. Introduction', 0.1, 0.2, 0.72),
         ]),
       ],
       sourceHash: 'n'.repeat(64),

@@ -405,6 +405,145 @@ describe('exact semantic note-anchor integrity', () => {
     ).toContain('invalid-source-note-anchor')
   })
 
+  it('binds a table note anchor to the exact source cell when labels repeat', () => {
+    const markerBox = sourceBox(0.2, 0.4, 0.01)
+    const tableBox = sourceBox(0.1, 0.4, 0.7)
+    const leftCellBox = sourceBox(0.1, 0.4, 0.2)
+    const rightCellBox = sourceBox(0.55, 0.4, 0.2)
+    const reference = {
+      id: 'table-note-reference',
+      label: '1',
+      target: 'table-note',
+      start: 4,
+      end: 5,
+      confidence: 1,
+    }
+    const paper: ResearchPaper = {
+      ...paperFixture(),
+      authorNotes: undefined,
+      nodes: [
+        {
+          id: 'table-node',
+          type: 'figure',
+          title: 'Table 1.',
+          objectType: 'table',
+          table: {
+            rows: [
+              {
+                cells: [
+                  {
+                    id: 'cell-left',
+                    text: 'Left1',
+                    headerScope: null,
+                    columnSpan: 1,
+                    rowSpan: 1,
+                    sourceRuns: [
+                      {
+                        regionId: 'table-source',
+                        lineId: 'table-line',
+                        runIndex: 0,
+                        text: 'Left1',
+                        box: leftCellBox,
+                      },
+                    ],
+                    noteReferences: [reference],
+                  },
+                  {
+                    id: 'cell-right',
+                    text: 'Right1',
+                    headerScope: null,
+                    columnSpan: 1,
+                    rowSpan: 1,
+                    sourceRuns: [
+                      {
+                        regionId: 'table-source',
+                        lineId: 'table-line',
+                        runIndex: 1,
+                        text: 'Right1',
+                        box: rightCellBox,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          relationships: { caption: 'table-caption' },
+          source: 'test',
+        },
+        {
+          id: 'table-caption',
+          type: 'caption',
+          text: 'Table 1.',
+          source: 'test',
+        },
+        {
+          id: 'table-note',
+          type: 'footnote',
+          kind: 'footnote',
+          label: '1',
+          text: 'The table note.',
+          relationships: { backlinks: ['table-note-reference'] },
+          source: 'test',
+        },
+      ],
+    }
+    const relationship: AnchoredNoteRelationship = {
+      ...relationshipFixture()[0],
+      id: 'table-note-reference',
+      referenceRegionId: 'table-source',
+      referenceStart: 4,
+      referenceEnd: 5,
+      targetNoteId: 'table-note',
+      canonicalAnchor: {
+        kind: 'node',
+        nodeId: 'table-node:table:cell-left',
+        start: 4,
+        end: 5,
+      },
+      sourceBoxes: [markerBox],
+    }
+    const sourceEvidence = {
+      regions: [sourceRegion('table-source', 'Left1 Right1', tableBox)],
+      provenance: {
+        'table-node': {
+          confidence: 1,
+          pages: [1],
+          regionIds: ['table-source'],
+          boxes: [tableBox],
+          links: [],
+        },
+      } satisfies Record<string, NodeSourceEvidence>,
+    }
+
+    expect(
+      internalReferenceIntegrityIssues(paper, [relationship], sourceEvidence),
+    ).toEqual([])
+
+    const table = paper.nodes[0]
+    if (table.type !== 'figure' || !table.table) {
+      throw new Error('missing table fixture')
+    }
+    table.table.rows[0].cells[0].noteReferences = undefined
+    table.table.rows[0].cells[1].noteReferences = [
+      { ...reference, start: 5, end: 6 },
+    ]
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'table-node:table:cell-right',
+      start: 5,
+      end: 6,
+    }
+
+    expect(
+      internalReferenceIntegrityIssues(paper, [relationship], sourceEvidence),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ detail: 'invalid-source-note-anchor' }),
+      ]),
+    )
+  })
+
   it('rejects a matched author relationship owned by a different author', () => {
     const paper = paperFixture()
     const relationships = relationshipFixture()

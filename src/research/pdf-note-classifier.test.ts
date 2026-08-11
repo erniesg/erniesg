@@ -2841,6 +2841,45 @@ describe('scholarly note-marker taxonomy', () => {
         wrongBibliographyRelationships,
       ),
     )
+
+    const wrongExistingBibliographyPaper = structuredClone(result.paper)
+    const wrongExistingBibliographyRelationships = structuredClone(
+      result.citationRelationships,
+    )
+    const wrongExistingBibliographyRelationship =
+      wrongExistingBibliographyRelationships.find(
+        (candidate) => candidate.id === relationship.id,
+      )!
+    const wrongExistingBibliography = wrongExistingBibliographyPaper.nodes.find(
+      (node) =>
+        node.type === 'paragraph' &&
+        node.list?.numberingId === 'references' &&
+        !relationship.targetNodeIds.includes(node.id),
+    )!
+    wrongExistingBibliographyRelationship.targetNodeIds = [
+      wrongExistingBibliography.id,
+    ]
+    const wrongExistingCitationOwner =
+      wrongExistingBibliographyPaper.nodes.find(
+        (node) => node.id === relationship.canonicalAnchor?.nodeId,
+      )!
+    if (
+      wrongExistingCitationOwner.type !== 'heading' &&
+      wrongExistingCitationOwner.type !== 'paragraph' &&
+      wrongExistingCitationOwner.type !== 'quote'
+    ) {
+      throw new Error('INLINE_CAPABLE_NODE_REQUIRED')
+    }
+    wrongExistingCitationOwner.inlineRuns!.find(
+      (run) => run.relationshipId === relationship.id,
+    )!.targetIds = [wrongExistingBibliography.id]
+    expectOneUnresolvedCitation(
+      reassess(
+        wrongExistingBibliographyPaper,
+        result.provenance,
+        wrongExistingBibliographyRelationships,
+      ),
+    )
   })
 
   it('blocks a target-matched citation without an inline-capable canonical anchor', async () => {

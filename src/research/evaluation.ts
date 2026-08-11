@@ -84,6 +84,15 @@ function relationshipEdgesForPaper(paper: ResearchPaper) {
         predicate: 'caption',
         target: node.relationships.caption,
       })
+      for (const reference of node.table?.rows.flatMap((row) =>
+        row.cells.flatMap((cell) => cell.noteReferences ?? []),
+      ) ?? []) {
+        edges.push({
+          source: node.id,
+          predicate: 'noteTargets',
+          target: reference.target,
+        })
+      }
     }
     if ('noteReferences' in node) {
       for (const reference of node.noteReferences ?? []) {

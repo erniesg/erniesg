@@ -2229,14 +2229,54 @@ type NoteLineClassificationEvidence = {
   renderedFootnote: boolean
 }
 
+function hasCompactStandaloneNoteContinuation(
+  marker: PdfTextLine,
+  lines: readonly PdfTextLine[],
+  bodyFontSize: number,
+) {
+  const normalizedMarker = normalizedNoteLabel(marker.text)
+  if (
+    !/^\d{1,3}$/u.test(normalizedMarker) ||
+    !marginTextIsNumeralOnly(normalizedMarker)
+  ) {
+    return false
+  }
+  const markerBottom = marker.y + marker.height
+  const fontTolerance = Math.max(0.6, marker.fontSize * 0.08)
+  return lines.some((candidate) => {
+    if (candidate === marker || candidate.page !== marker.page) return false
+    const normalizedCandidate = normalizedNoteLabel(candidate.text)
+    const gap = candidate.y - markerBottom
+    return (
+      gap >= -0.002 &&
+      gap <= Math.max(0.012, marker.height) &&
+      Math.abs(candidate.x - marker.x) <= 0.04 &&
+      Math.abs(candidate.fontSize - marker.fontSize) <= fontTolerance &&
+      candidate.fontSize >= 5 &&
+      candidate.fontSize <= bodyFontSize * 0.9 + 0.01 &&
+      candidate.y + candidate.height >= 0.92 &&
+      !marginTextIsNumeralOnly(normalizedCandidate) &&
+      (normalizedCandidate.match(/\p{L}{2,}/gu)?.length ?? 0) >= 2
+    )
+  })
+}
+
 function noteLineClassificationEvidence(
   line: PdfTextLine,
   fontSize: number,
   lowerBand: number,
   numberedBodyListLines: ReadonlySet<PdfTextLine>,
+  pageLines: readonly PdfTextLine[],
 ): NoteLineClassificationEvidence {
   const normalized = normalizedNoteLabel(line.text)
-  const label = noteLabelFromText(normalized)
+  const standaloneNoteContinuation = hasCompactStandaloneNoteContinuation(
+    line,
+    pageLines,
+    fontSize,
+  )
+  const label =
+    noteLabelFromText(normalized) ??
+    (standaloneNoteContinuation ? normalized : null)
   const explicitFootnote = new RegExp(
     `^(?:footnote|note)\\s+${NOTE_LABEL}`,
     'i',
@@ -2262,7 +2302,8 @@ function noteLineClassificationEvidence(
     substantiveRuns.every((run) =>
       marginTextIsNumeralOnly(run.text.normalize('NFKC').trim()),
     ) &&
-    (line.y <= 0.08 || line.y + line.height >= 0.92)
+    (line.y <= 0.08 || line.y + line.height >= 0.92) &&
+    !standaloneNoteContinuation
   const renderedFootnote =
     label !== null &&
     !decimalTabularContent &&
@@ -2306,6 +2347,7 @@ function noteStratumRunKeys(lines: readonly PdfTextLine[]) {
       pageFontSize,
       lowerBand,
       numberedBodyListLines,
+      lines,
     )
     return evidence.explicitFootnote || evidence.renderedFootnote
   })
@@ -5873,6 +5915,7 @@ export function reconstructPageRegions(
           fontSize,
           lowerBand,
           numberedBodyListLines,
+          pageLines,
         )
         const { label, explicitFootnote, renderedFootnote } = noteEvidence
         const inlineStackedFragment = inlineStackedFragmentParts(line)

@@ -345,16 +345,19 @@ function sourceLineBoxesForRange(
   return boxes
 }
 
-function tableCellProvenanceOwnerIds(paper: ResearchPaper) {
-  return new Map<string, string>(
+function tableCellProvenanceOwners(paper: ResearchPaper) {
+  return new Map(
     paper.nodes.flatMap((node) =>
       node.type === 'figure' && node.table
         ? node.table.rows.flatMap((row, rowIndex) =>
             row.cells.map(
               (cell, cellIndex) =>
                 [
-                  `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
-                  node.id,
+                  `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}` as string,
+                  {
+                    provenanceNodeId: node.id,
+                    sourceRuns: cell.sourceRuns ?? [],
+                  },
                 ] as const,
             ),
           )
@@ -416,14 +419,34 @@ function hasValidNoteRelationshipSourceEvidence(
   }
   if (anchor?.kind !== 'node') return false
   const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
-  const provenanceOwnerId = nodesById.has(anchor.nodeId)
-    ? anchor.nodeId
-    : tableCellProvenanceOwnerIds(paper).get(anchor.nodeId)
-  return Boolean(
-    provenanceOwnerId &&
-    sourceEvidence.provenance[provenanceOwnerId]?.regionIds.includes(
+  if (nodesById.has(anchor.nodeId)) {
+    return Boolean(
+      sourceEvidence.provenance[anchor.nodeId]?.regionIds.includes(
+        relationship.referenceRegionId,
+      ),
+    )
+  }
+  const cellOwner = tableCellProvenanceOwners(paper).get(anchor.nodeId)
+  if (
+    !cellOwner ||
+    !sourceEvidence.provenance[cellOwner.provenanceNodeId]?.regionIds.includes(
       relationship.referenceRegionId,
-    ),
+    )
+  ) {
+    return false
+  }
+  const referenceSourceBoxes = relationship.sourceBoxes.filter((box) =>
+    exactLineBoxes.some((lineBox) => boxesOverlap(box, lineBox)),
+  )
+  const exactCellSourceRuns = cellOwner.sourceRuns.filter(
+    (run) => run.regionId === relationship.referenceRegionId,
+  )
+  return (
+    referenceSourceBoxes.length > 0 &&
+    exactCellSourceRuns.length > 0 &&
+    referenceSourceBoxes.every((box) =>
+      exactCellSourceRuns.some((run) => boxesOverlap(box, run.box)),
+    )
   )
 }
 

@@ -13,7 +13,6 @@ import { MAX_CITATION_TARGETS_PER_RELATIONSHIP } from './pdf-citation-surface'
 import {
   buildPdfLineJoinReviewContext,
   replayPdfRegionLineRanges,
-  replayPdfRegionLineText,
 } from './pdf-lines'
 import {
   materializeCanonicalVisualNode,
@@ -694,6 +693,52 @@ function updateNoteRelationship(
     return false
   }
 
+  const referenceNode = reconstruction.paper.nodes.find((node) =>
+    reconstruction.provenance[node.id]?.regionIds.includes(
+      relationship.referenceRegionId,
+    ),
+  )
+  const tableCellAnchors =
+    referenceNode?.type === 'figure' && referenceNode.table
+      ? referenceNode.table.rows.flatMap((row, rowIndex) =>
+          row.cells.flatMap((cell, cellIndex) => {
+            const noteReference = cell.noteReferences?.find(
+              (reference) => reference.id === relationship.id,
+            )
+            const inlineRun = cell.inlineRuns?.find(
+              (run) => run.relationshipId === relationship.id,
+            )
+            if (!noteReference && !inlineRun) return []
+            if (
+              noteReference &&
+              inlineRun &&
+              (noteReference.start !== inlineRun.start ||
+                noteReference.end !== inlineRun.end)
+            ) {
+              return []
+            }
+            const range = noteReference ?? inlineRun!
+            return [
+              {
+                cell,
+                nodeId: `${referenceNode.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+                start: range.start,
+                end: range.end,
+              },
+            ]
+          }),
+        )
+      : []
+  const tableCellAnchor =
+    tableCellAnchors.length === 1 ? tableCellAnchors[0] : null
+  if (
+    referenceNode?.type === 'figure' &&
+    referenceNode.table &&
+    !tableCellAnchor
+  ) {
+    return false
+  }
+
   let targetNoteId: string | null = null
   let citationTargetIds: string[] | undefined
   if (decision.resolution.type === 'accept-note-match') {
@@ -815,11 +860,6 @@ function updateNoteRelationship(
     return false
   }
 
-  const referenceNode = reconstruction.paper.nodes.find((node) =>
-    reconstruction.provenance[node.id]?.regionIds.includes(
-      relationship.referenceRegionId,
-    ),
-  )
   for (const node of reconstruction.paper.nodes) {
     if ('noteReferences' in node && node.noteReferences) {
       node.noteReferences = node.noteReferences.filter(
@@ -832,13 +872,36 @@ function updateNoteRelationship(
         (backlink) => backlink !== relationship.id,
       )
     }
+    if (node.type === 'figure' && node.table) {
+      for (const row of node.table.rows) {
+        for (const cell of row.cells) {
+          if (cell.noteReferences) {
+            cell.noteReferences = cell.noteReferences.filter(
+              (reference) => reference.id !== relationship.id,
+            )
+            if (cell.noteReferences.length === 0) delete cell.noteReferences
+          }
+          if (cell.inlineRuns) {
+            cell.inlineRuns = cell.inlineRuns.flatMap((run) => {
+              if (run.relationshipId !== relationship.id) return [run]
+              const {
+                relationshipId: _relationshipId,
+                semanticRole: _semanticRole,
+                targetIds: _targetIds,
+                ...retained
+              } = run
+              return Object.keys(retained).length > 2 ? [retained] : []
+            })
+            if (cell.inlineRuns.length === 0) delete cell.inlineRuns
+          }
+        }
+      }
+    }
   }
   if (
     decision.resolution.type === 'reclassify-citation' &&
     referenceNode &&
-    (referenceNode.type === 'heading' ||
-      referenceNode.type === 'paragraph' ||
-      referenceNode.type === 'quote')
+    referenceNode.type !== 'figure'
   ) {
     const semanticRun = {
       start: relationship.referenceStart,
@@ -860,13 +923,27 @@ function updateNoteRelationship(
       ].sort((left, right) => left.start - right.start || left.end - right.end)
     }
   }
-  if (
-    targetNoteId &&
-    referenceNode &&
-    (referenceNode.type === 'heading' ||
-      referenceNode.type === 'paragraph' ||
-      referenceNode.type === 'quote')
-  ) {
+  if (decision.resolution.type === 'reclassify-citation' && tableCellAnchor) {
+    tableCellAnchor.cell.inlineRuns = [
+      ...(tableCellAnchor.cell.inlineRuns ?? []),
+      {
+        start: tableCellAnchor.start,
+        end: tableCellAnchor.end,
+        relationshipId: relationship.id,
+        semanticRole: 'citation' as const,
+        ...(citationTargetIds?.length ? { targetIds: citationTargetIds } : {}),
+      },
+    ].sort(
+      (left, right) =>
+        left.start - right.start ||
+        left.end - right.end ||
+        String(left.relationshipId ?? '').localeCompare(
+          String(right.relationshipId ?? ''),
+        ),
+    )
+  }
+  let projectedNoteReference = false
+  if (targetNoteId && referenceNode && referenceNode.type !== 'figure') {
     referenceNode.noteReferences = [
       ...(referenceNode.noteReferences ?? []),
       {
@@ -881,6 +958,32 @@ function updateNoteRelationship(
       (left, right) =>
         left.start - right.start || left.id.localeCompare(right.id),
     )
+    projectedNoteReference = true
+  }
+  if (targetNoteId && tableCellAnchor) {
+    tableCellAnchor.cell.noteReferences = [
+      ...(tableCellAnchor.cell.noteReferences ?? []),
+      {
+        id: relationship.id,
+        label: relationship.label,
+        target: targetNoteId,
+        start: tableCellAnchor.start,
+        end: tableCellAnchor.end,
+        confidence: relationship.confidence,
+      },
+    ].sort(
+      (left, right) =>
+        left.start - right.start || left.id.localeCompare(right.id),
+    )
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: tableCellAnchor.nodeId,
+      start: tableCellAnchor.start,
+      end: tableCellAnchor.end,
+    }
+    projectedNoteReference = true
+  }
+  if (targetNoteId && projectedNoteReference) {
     const target = reconstruction.paper.nodes.find(
       (node) => node.id === targetNoteId && node.type === 'footnote',
     )

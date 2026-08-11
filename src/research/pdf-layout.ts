@@ -7724,6 +7724,64 @@ function matchNotes(
     }
   })
 
+  const noteNodeIds = new Set(notes.flatMap((note) => note.nodeId ?? []))
+  const matchedNoteEdges = relationships.flatMap((relationship) => {
+    const anchor = relationship.canonicalAnchor
+    return relationship.status === 'matched' &&
+      relationship.targetNoteId !== null &&
+      anchor?.kind === 'node' &&
+      noteNodeIds.has(anchor.nodeId)
+      ? [
+          {
+            relationship,
+            ownerNoteId: anchor.nodeId,
+            targetNoteId: relationship.targetNoteId,
+          },
+        ]
+      : []
+  })
+  const noteTargetsByOwner = new Map<string, Set<string>>()
+  for (const edge of matchedNoteEdges) {
+    const targets = noteTargetsByOwner.get(edge.ownerNoteId) ?? new Set()
+    targets.add(edge.targetNoteId)
+    noteTargetsByOwner.set(edge.ownerNoteId, targets)
+  }
+  const reachesNote = (
+    current: string,
+    target: string,
+    visited: Set<string>,
+  ): boolean => {
+    if (current === target) return true
+    if (visited.has(current)) return false
+    visited.add(current)
+    return [...(noteTargetsByOwner.get(current) ?? [])].some((next) =>
+      reachesNote(next, target, visited),
+    )
+  }
+  for (const edge of matchedNoteEdges) {
+    if (!reachesNote(edge.targetNoteId, edge.ownerNoteId, new Set<string>())) {
+      continue
+    }
+    edge.relationship.status = 'unresolved'
+    edge.relationship.targetNoteId = null
+    edge.relationship.evidence = [
+      ...edge.relationship.evidence,
+      'cyclic-note-reference-rejected',
+    ]
+    diagnostics.push({
+      code: 'UNRESOLVED_NOTE_REFERENCE',
+      severity: 'error',
+      page: edge.relationship.sourceBoxes[0]?.page,
+      message: `Note reference ${edge.relationship.id} would create a cyclic note relationship and remains unresolved.`,
+      relationshipId: edge.relationship.id,
+      sourceBoxes: edge.relationship.sourceBoxes,
+      target: {
+        regionIds: [edge.relationship.referenceRegionId],
+        markerId: edge.relationship.id,
+      },
+    })
+  }
+
   const referencedNotes = new Set(
     relationships.flatMap((relationship) =>
       relationship.status === 'matched'
@@ -11436,7 +11494,7 @@ export function orderCanonicalVisualPairs(
   }
 }
 
-function placeMatchedCanonicalNotes(
+export function placeMatchedCanonicalNotes(
   nodes: ResearchNode[],
   relationships: readonly PdfNoteRelationship[],
 ) {
@@ -11471,6 +11529,7 @@ function placeMatchedCanonicalNotes(
   }
 
   const moved = new Set<string>()
+  const ownerByNoteId = new Map<string, string>()
   const authorNotes: ResearchNode[] = []
   const notesAfterOwner = new Map<string, ResearchNode[]>()
   for (const [targetNoteId, targetRelationships] of matchedByTarget) {
@@ -11510,7 +11569,36 @@ function placeMatchedCanonicalNotes(
     const ownerNotes = notesAfterOwner.get(ownerId) ?? []
     ownerNotes.push(note)
     notesAfterOwner.set(ownerId, ownerNotes)
+    ownerByNoteId.set(note.id, ownerId)
     moved.add(note.id)
+  }
+
+  const cyclicNoteIds = new Set<string>()
+  for (const noteId of ownerByNoteId.keys()) {
+    const path: string[] = []
+    const pathIndexById = new Map<string, number>()
+    let currentId: string | undefined = noteId
+    while (currentId && ownerByNoteId.has(currentId)) {
+      const cycleStart = pathIndexById.get(currentId)
+      if (cycleStart !== undefined) {
+        for (const cyclicNoteId of path.slice(cycleStart)) {
+          cyclicNoteIds.add(cyclicNoteId)
+        }
+        break
+      }
+      pathIndexById.set(currentId, path.length)
+      path.push(currentId)
+      currentId = ownerByNoteId.get(currentId)
+    }
+  }
+  if (cyclicNoteIds.size > 0) {
+    for (const noteId of cyclicNoteIds) moved.delete(noteId)
+    for (const [ownerId, ownerNotes] of notesAfterOwner) {
+      notesAfterOwner.set(
+        ownerId,
+        ownerNotes.filter((note) => !cyclicNoteIds.has(note.id)),
+      )
+    }
   }
 
   const sourceOrder = (left: ResearchNode, right: ResearchNode) =>

@@ -110,7 +110,13 @@ export function validateAssociationGroundTruth(value) {
       association.page < 1 ||
       (!nonEmptyString(association.sourceIncludes) &&
         !stringArray(association.sourceEqualsAny)) ||
-      !ANCHOR_OWNERS.has(association.anchorOwner)
+      !ANCHOR_OWNERS.has(association.anchorOwner) ||
+      !nonEmptyString(association.anchorNodeId) ||
+      !Number.isInteger(association.anchorStart) ||
+      association.anchorStart < 0 ||
+      !Number.isInteger(association.anchorEnd) ||
+      association.anchorEnd <= association.anchorStart ||
+      !nonEmptyString(association.anchorText)
     ) {
       throw new Error('Association ground truth entry is invalid')
     }
@@ -186,6 +192,86 @@ function anchorOwner(reconstruction, relationship) {
     return 'paragraph'
   }
   return null
+}
+
+function boxesOverlap(left, right) {
+  return (
+    left?.page === right?.page &&
+    Math.min(left.x + left.width, right.x + right.width) >
+      Math.max(left.x, right.x) &&
+    Math.min(left.y + left.height, right.y + right.height) >
+      Math.max(left.y, right.y)
+  )
+}
+
+function tableCellByAnchorId(reconstruction, anchorNodeId) {
+  for (const node of reconstruction.paper.nodes) {
+    if (node.type !== 'figure' || !node.table) continue
+    for (const [rowIndex, row] of node.table.rows.entries()) {
+      for (const [cellIndex, cell] of row.cells.entries()) {
+        const nodeId = `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`
+        if (nodeId === anchorNodeId) return { cell, nodeId }
+      }
+    }
+  }
+  return null
+}
+
+function exactAnchorMatches(reconstruction, relationship, expected) {
+  const anchor = relationship.canonicalAnchor
+  if (
+    !anchor ||
+    anchor.kind === 'author' ||
+    anchor.nodeId !== expected.anchorNodeId ||
+    anchor.start !== expected.anchorStart ||
+    anchor.end !== expected.anchorEnd
+  ) {
+    return false
+  }
+  const region = sourceRegion(reconstruction, relationship)
+  if (
+    !region ||
+    !Number.isInteger(relationship.referenceStart) ||
+    !Number.isInteger(relationship.referenceEnd) ||
+    relationship.referenceStart < 0 ||
+    relationship.referenceStart >= relationship.referenceEnd ||
+    relationship.referenceEnd > region.text.length
+  ) {
+    return false
+  }
+  const sourceMarker = region.text.slice(
+    relationship.referenceStart,
+    relationship.referenceEnd,
+  )
+  const tableCell = tableCellByAnchorId(reconstruction, anchor.nodeId)
+  const owner = tableCell?.cell ?? nodeById(reconstruction, anchor.nodeId)
+  const ownerText = tableCell
+    ? tableCell.cell.text
+    : owner && 'text' in owner
+      ? owner.text
+      : owner?.sourceText
+  if (
+    typeof ownerText !== 'string' ||
+    anchor.end > ownerText.length ||
+    ownerText.slice(anchor.start, anchor.end) !== expected.anchorText ||
+    expected.anchorText !== sourceMarker
+  ) {
+    return false
+  }
+  if (tableCell) {
+    return Boolean(
+      tableCell.cell.sourceRuns?.some(
+        (run) =>
+          run.regionId === relationship.referenceRegionId &&
+          relationship.sourceBoxes?.some((box) => boxesOverlap(box, run.box)),
+      ),
+    )
+  }
+  return Boolean(
+    reconstruction.provenance?.[anchor.nodeId]?.regionIds?.includes(
+      relationship.referenceRegionId,
+    ),
+  )
 }
 
 function targetIds(relationship, kind) {
@@ -304,7 +390,8 @@ export function auditAssociationReconstruction(reconstruction, groundTruth) {
         targetIds(relationship, expected.kind).length === 0 &&
         candidateCount(relationship, expected.kind) >=
           expected.minimumCandidateCount &&
-        anchorOwner(reconstruction, relationship) === expected.anchorOwner
+        anchorOwner(reconstruction, relationship) === expected.anchorOwner &&
+        exactAnchorMatches(reconstruction, relationship, expected)
       ) {
         outcome = 'ambiguous'
         reason = 'source-ambiguity-retained'
@@ -319,7 +406,8 @@ export function auditAssociationReconstruction(reconstruction, groundTruth) {
         expected,
       )
       const correctOwner =
-        anchorOwner(reconstruction, relationship) === expected.anchorOwner
+        anchorOwner(reconstruction, relationship) === expected.anchorOwner &&
+        exactAnchorMatches(reconstruction, relationship, expected)
       if (correctTargets && correctOwner) {
         outcome = 'matched'
         reason = 'verified-target-and-owner'

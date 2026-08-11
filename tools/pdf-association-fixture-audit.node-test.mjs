@@ -5,7 +5,10 @@ import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { resolve } from 'node:path'
-import { validateAssociationGroundTruth } from './pdf-association-fixture-audit-lib.mjs'
+import {
+  auditAssociationReconstruction,
+  validateAssociationGroundTruth,
+} from './pdf-association-fixture-audit-lib.mjs'
 
 const require = createRequire(import.meta.url)
 const { validAssociationAudit } = require('./association-audit-receipt.cjs')
@@ -67,6 +70,106 @@ test('the association ground truth binds exact fixture, baseline, associations, 
       }),
     /baseline counters/u,
   )
+  assert.throws(
+    () =>
+      validateAssociationGroundTruth({
+        ...validated,
+        associations: validated.associations.map((association, index) =>
+          index === 0
+            ? { ...association, anchorNodeId: undefined }
+            : association,
+        ),
+      }),
+    /ground truth entry/u,
+  )
+})
+
+test('the association audit rejects a same-class owner and a stale anchor span', () => {
+  const expected = groundTruth.associations[0]
+  const ownerText = 'A numeric claim carries footnote marker 1.'
+  const regionId = 'page-001-region-004'
+  const reconstruction = {
+    regions: [
+      {
+        id: regionId,
+        page: 1,
+        text: ownerText,
+      },
+    ],
+    paper: {
+      nodes: [
+        {
+          id: expected.anchorNodeId,
+          type: 'paragraph',
+          text: ownerText,
+        },
+        {
+          id: 'wrong-paragraph-of-the-same-owner-class',
+          type: 'paragraph',
+          text: ownerText,
+        },
+        {
+          id: 'numeric-note-target',
+          type: 'footnote',
+          kind: 'footnote',
+          label: '1',
+          text: 'Numeric footnote body contains nested marker [6].',
+        },
+      ],
+    },
+    provenance: {
+      [expected.anchorNodeId]: { regionIds: [regionId] },
+      'wrong-paragraph-of-the-same-owner-class': { regionIds: [regionId] },
+    },
+    noteRelationships: [
+      {
+        id: 'numeric-note-relationship',
+        label: '1',
+        referenceRegionId: regionId,
+        referenceStart: expected.anchorStart,
+        referenceEnd: expected.anchorEnd,
+        targetNoteId: 'numeric-note-target',
+        status: 'matched',
+        canonicalAnchor: {
+          kind: 'node',
+          nodeId: expected.anchorNodeId,
+          start: expected.anchorStart,
+          end: expected.anchorEnd,
+        },
+        candidates: [],
+        sourceBoxes: [],
+      },
+    ],
+    citationRelationships: [],
+    diagnostics: [],
+  }
+  const expectedOnly = {
+    ...groundTruth,
+    associations: [expected],
+  }
+  const audit = (candidate) =>
+    auditAssociationReconstruction(candidate, expectedOnly).associations[0]
+
+  assert.deepEqual(audit(reconstruction), {
+    id: expected.id,
+    kind: 'note',
+    expectedStatus: 'matched',
+    observedStatus: 'matched',
+    outcome: 'matched',
+    reason: 'verified-target-and-owner',
+  })
+
+  const wrongOwner = structuredClone(reconstruction)
+  wrongOwner.noteRelationships[0].canonicalAnchor.nodeId =
+    'wrong-paragraph-of-the-same-owner-class'
+  assert.equal(audit(wrongOwner).outcome, 'false-link')
+  assert.equal(audit(wrongOwner).reason, 'incorrect-source-owner')
+
+  const wrongSpan = structuredClone(reconstruction)
+  wrongSpan.noteRelationships[0].canonicalAnchor.start -= 1
+  wrongSpan.noteRelationships[0].canonicalAnchor.end -= 1
+  assert.equal(audit(wrongSpan).outcome, 'false-link')
+  assert.equal(audit(wrongSpan).reason, 'incorrect-source-owner')
 })
 
 test('the executable audit emits five passing checkpoints and exact before/after counters', () => {

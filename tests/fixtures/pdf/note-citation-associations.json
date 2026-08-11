@@ -21,6 +21,10 @@
       "page": 1,
       "sourceIncludes": "A numeric claim carries footnote marker",
       "anchorOwner": "paragraph",
+      "anchorNodeId": "p-004-a-numeric-claim-carries-footnote-mar",
+      "anchorStart": 40,
+      "anchorEnd": 41,
+      "anchorText": "1",
       "targetLabels": ["1"],
       "targetTextIncludes": ["Numeric footnote body contains nested marker"],
       "targetKind": "footnote"
@@ -33,6 +37,10 @@
       "page": 1,
       "sourceIncludes": "A symbol claim carries footnote marker",
       "anchorOwner": "paragraph",
+      "anchorNodeId": "p-005-a-symbol-claim-carries-footnote-mark",
+      "anchorStart": 39,
+      "anchorEnd": 40,
+      "anchorText": "*",
       "targetLabels": ["*"],
       "targetTextIncludes": ["Symbol footnote body."],
       "targetKind": "footnote"
@@ -45,6 +53,10 @@
       "page": 3,
       "sourceIncludes": "Arabic-Indic U+0661 note marker appears at right.",
       "anchorOwner": "paragraph",
+      "anchorNodeId": "p-018-arabic-indic-u-0661-note-marker-appe",
+      "anchorStart": 49,
+      "anchorEnd": 50,
+      "anchorText": "١",
       "targetLabels": ["1"],
       "targetTextIncludes": ["Arabic-Indic note body."],
       "targetKind": "endnote"
@@ -57,6 +69,10 @@
       "page": 1,
       "sourceIncludes": "Numeric footnote body contains nested marker",
       "anchorOwner": "footnote",
+      "anchorNodeId": "fn-p001-1",
+      "anchorStart": 45,
+      "anchorEnd": 48,
+      "anchorText": "[6]",
       "targetLabels": ["6"],
       "targetTextIncludes": ["Nested footnote body."],
       "targetKind": "footnote"
@@ -69,6 +85,10 @@
       "page": 2,
       "sourceIncludes": "Prior evidence [1-3, 5]",
       "anchorOwner": "paragraph",
+      "anchorNodeId": "p-010-prior-evidence-1-3-5-supports-the-ra",
+      "anchorStart": 15,
+      "anchorEnd": 23,
+      "anchorText": "[1-3, 5]",
       "targetLabels": ["1", "2", "3", "5"]
     },
     {
@@ -79,6 +99,10 @@
       "page": 2,
       "sourceIncludes": "Example et al. (2024)",
       "anchorOwner": "paragraph",
+      "anchorNodeId": "p-011-example-et-al-2024-confirms-the-auth",
+      "anchorStart": 0,
+      "anchorEnd": 21,
+      "anchorText": "Example et al. (2024)",
       "targetTextIncludes": ["Repository-owned author-year evidence."]
     },
     {
@@ -89,6 +113,10 @@
       "page": 2,
       "sourceIncludes": "A separate claim has note reference 3.",
       "anchorOwner": "paragraph",
+      "anchorNodeId": "p-012-a-separate-claim-has-note-reference-",
+      "anchorStart": 36,
+      "anchorEnd": 37,
+      "anchorText": "3",
       "targetLabels": ["3"],
       "targetTextIncludes": ["Repository-owned endnote body begins here."],
       "targetKind": "endnote"
@@ -101,6 +129,10 @@
       "page": 2,
       "sourceIncludes": "Figure 1. Caption citation [2] remains associated.",
       "anchorOwner": "caption",
+      "anchorNodeId": "caption-013-figure-1-caption-citation-2-remains-",
+      "anchorStart": 27,
+      "anchorEnd": 30,
+      "anchorText": "[2]",
       "targetLabels": ["2"],
       "targetTextIncludes": ["Caption association evidence."]
     },
@@ -112,6 +144,10 @@
       "page": 2,
       "sourceEqualsAny": ["Note 4"],
       "anchorOwner": "table-cell",
+      "anchorNodeId": "visual-table-p002-table-1-table-p002-002-visual-relationship-0002:table:cell-r2-c2",
+      "anchorStart": 5,
+      "anchorEnd": 6,
+      "anchorText": "4",
       "targetLabels": ["4"],
       "targetTextIncludes": ["Table cell note body."],
       "targetKind": "footnote"
@@ -124,6 +160,10 @@
       "page": 4,
       "sourceIncludes": "A genuinely ambiguous claim has note reference 7.",
       "anchorOwner": "paragraph",
+      "anchorNodeId": "p-028-a-genuinely-ambiguous-claim-has-note",
+      "anchorStart": 47,
+      "anchorEnd": 48,
+      "anchorText": "7",
       "minimumCandidateCount": 2
     }
   ],

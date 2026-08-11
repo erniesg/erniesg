@@ -111,6 +111,91 @@ async function unresolvedLineJoinReconstruction() {
   })
 }
 
+async function tableCellNoteAdjudicationReconstruction(
+  projection: 'unresolved-run' | 'matched-reference',
+) {
+  const base = await reconstructPdf(
+    await fixtureFile('adjudication-required.pdf'),
+  )
+  const relationship = base.noteRelationships.find(
+    (candidate) => candidate.candidates.length > 0,
+  )
+  if (!relationship) throw new Error('Missing ambiguous note relationship')
+  const diagnostic = base.diagnostics.find(
+    (candidate) => candidate.target?.markerId === relationship.id,
+  )
+  if (!diagnostic) throw new Error('Missing note diagnostic')
+  targeted(diagnostic)
+  const candidate = relationship.candidates[0]
+  const ownerIndex = base.paper.nodes.findIndex((node) =>
+    base.provenance[node.id]?.regionIds.includes(
+      relationship.referenceRegionId,
+    ),
+  )
+  const owner = base.paper.nodes[ownerIndex]
+  if (!owner) throw new Error('Missing canonical note owner')
+  const captionId = 'table-cell-adjudication-caption'
+  const cellText = `Metric ${relationship.label}`
+  const start = cellText.length - relationship.label.length
+  const cell = {
+    id: 'table-cell-adjudication-owner',
+    text: cellText,
+    headerScope: null,
+    columnSpan: 1,
+    rowSpan: 1,
+    ...(projection === 'unresolved-run'
+      ? {
+          inlineRuns: [
+            {
+              start,
+              end: cellText.length,
+              italic: true,
+              relationshipId: relationship.id,
+              semanticRole: 'note-reference' as const,
+            },
+          ],
+        }
+      : {
+          noteReferences: [
+            {
+              id: relationship.id,
+              label: relationship.label,
+              target: candidate.targetNoteId,
+              start,
+              end: cellText.length,
+              confidence: relationship.confidence,
+            },
+          ],
+        }),
+  }
+  base.paper.nodes[ownerIndex] = {
+    id: owner.id,
+    type: 'figure',
+    title: 'Source-backed adjudication table',
+    objectType: 'table',
+    sourceText: cellText,
+    table: { rows: [{ cells: [cell] }] },
+    relationships: { caption: captionId },
+    source: owner.source,
+  }
+  base.paper.nodes.push({
+    id: captionId,
+    type: 'caption',
+    text: 'Source-backed adjudication table',
+    source: owner.source,
+  })
+  base.provenance[captionId] = structuredClone(base.provenance[owner.id])
+  if (projection === 'matched-reference') {
+    const target = base.paper.nodes.find(
+      (node) => node.id === candidate.targetNoteId && node.type === 'footnote',
+    )
+    if (target?.type === 'footnote') {
+      target.relationships.backlinks.push(relationship.id)
+    }
+  }
+  return { base, relationship, diagnostic, candidate, ownerId: owner.id, start }
+}
+
 function lineJoinDecision(
   base: Awaited<ReturnType<typeof unresolvedLineJoinReconstruction>>,
   outcome:
@@ -1533,6 +1618,101 @@ describe('human adjudication decision records', () => {
       /UNPROVENANCED_RENDERED_UNIT/u,
     )
   })
+
+  it('projects an accepted note match into its owning table cell', async () => {
+    const { base, relationship, diagnostic, candidate, ownerId, start } =
+      await tableCellNoteAdjudicationReconstruction('unresolved-run')
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      {
+        diagnosticCode: diagnostic.code,
+        target: diagnostic.target!,
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      },
+    )
+
+    const result = applyHumanDecisionFile(base, file)
+    const figure = result.paper.nodes.find((node) => node.id === ownerId)
+    if (figure?.type !== 'figure' || !figure.table) {
+      throw new Error('Missing adjudicated table')
+    }
+    const cell = figure.table.rows[0].cells[0]
+
+    expect(cell.noteReferences).toEqual([
+      expect.objectContaining({
+        id: relationship.id,
+        target: candidate.targetNoteId,
+        start,
+        end: start + relationship.label.length,
+      }),
+    ])
+    expect(cell.inlineRuns).toEqual([
+      { start, end: start + relationship.label.length, italic: true },
+    ])
+    expect(
+      result.noteRelationships.find((item) => item.id === relationship.id),
+    ).toMatchObject({
+      status: 'matched',
+      canonicalAnchor: {
+        kind: 'node',
+        nodeId: `${ownerId}:table:table-cell-adjudication-owner`,
+        start,
+        end: start + relationship.label.length,
+      },
+    })
+    expect(
+      result.paper.nodes.find(
+        (node) =>
+          node.id === candidate.targetNoteId && node.type === 'footnote',
+      ),
+    ).toMatchObject({
+      relationships: { backlinks: expect.arrayContaining([relationship.id]) },
+    })
+    expect(result.humanAdjudications.stale).toEqual([])
+  })
+
+  it.each(['reclassify-citation', 'reclassify-plain-text'] as const)(
+    'removes stale table-cell note state for %s',
+    async (resolution) => {
+      const { base, relationship, diagnostic, ownerId } =
+        await tableCellNoteAdjudicationReconstruction('matched-reference')
+      const result = applyHumanDecisionFile(
+        base,
+        upsertHumanDecision(createHumanDecisionFile(base.source.sha256), {
+          diagnosticCode: diagnostic.code,
+          target: diagnostic.target!,
+          resolution: { type: resolution },
+        }),
+      )
+      const figure = result.paper.nodes.find((node) => node.id === ownerId)
+      if (figure?.type !== 'figure' || !figure.table) {
+        throw new Error('Missing adjudicated table')
+      }
+      const cell = figure.table.rows[0].cells[0]
+
+      expect(cell.noteReferences).toBeUndefined()
+      expect(
+        result.paper.nodes.flatMap((node) =>
+          node.type === 'footnote' ? node.relationships.backlinks : [],
+        ),
+      ).not.toContain(relationship.id)
+      if (resolution === 'reclassify-citation') {
+        expect(cell.inlineRuns).toEqual([
+          expect.objectContaining({
+            relationshipId: relationship.id,
+            semanticRole: 'citation',
+          }),
+        ])
+      } else {
+        expect(cell.inlineRuns).toBeUndefined()
+      }
+      expect(result.humanAdjudications.stale).toEqual([])
+    },
+  )
 
   it('preserves visual completeness when a sidecar is applied', async () => {
     const base = await reconstructPdf(

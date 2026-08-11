@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderPublicationXhtml } from './epub'
 import type { PdfPageAnalysis, PdfSourceRun } from './import-types'
 import { reconstructPageAnalyses } from './pdf-layout'
+import { assessPdfCompleteness } from './pdf-quality'
 import { researchPaperSchema } from './schema'
 import { createSourcePageCropAsset } from './visual-assets'
 
@@ -179,6 +180,85 @@ describe('PDF semantic runtime regressions', () => {
     for (const citation of citations) {
       expect(xhtml).toContain(`data-relationship-id="${citation.id}"`)
     }
+
+    if (table?.type !== 'figure' || !table.table) {
+      throw new Error('missing canonical table fixture')
+    }
+    const tamperedPaper = structuredClone(result.paper)
+    const tamperedRelationships = structuredClone(result.citationRelationships)
+    const tamperedTable = tamperedPaper.nodes.find(
+      (node) => node.id === table.id && node.type === 'figure',
+    )
+    if (tamperedTable?.type !== 'figure' || !tamperedTable.table) {
+      throw new Error('missing tampered table fixture')
+    }
+    const cellOwners = tamperedTable.table.rows.flatMap((row, rowIndex) =>
+      row.cells.map((cell, cellIndex) => ({
+        cell,
+        nodeId: `${tamperedTable.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+      })),
+    )
+    const tamperedRelationship = tamperedRelationships.find(
+      (relationship) =>
+        relationship.labels.length === 1 &&
+        relationship.labels[0] === '1' &&
+        relationship.canonicalAnchor?.nodeId.startsWith(
+          `${tamperedTable.id}:table:`,
+        ),
+    )
+    const sourceCell = cellOwners.find(
+      ({ nodeId }) => nodeId === tamperedRelationship?.canonicalAnchor?.nodeId,
+    )?.cell
+    const wrongCellOwner = cellOwners.find(
+      ({ cell, nodeId }) =>
+        nodeId !== tamperedRelationship?.canonicalAnchor?.nodeId &&
+        cell.text.includes('[1-2]'),
+    )
+    const citationInlineRun = sourceCell?.inlineRuns?.find(
+      (run) => run.relationshipId === tamperedRelationship?.id,
+    )
+    if (
+      !tamperedRelationship ||
+      !sourceCell ||
+      !wrongCellOwner ||
+      !citationInlineRun
+    ) {
+      throw new Error('missing table citation tamper fixture')
+    }
+    sourceCell.inlineRuns = sourceCell.inlineRuns?.filter(
+      (run) => run.relationshipId !== tamperedRelationship.id,
+    )
+    const wrongStart = wrongCellOwner.cell.text.indexOf('1')
+    wrongCellOwner.cell.inlineRuns = [
+      ...(wrongCellOwner.cell.inlineRuns ?? []),
+      { ...citationInlineRun, start: wrongStart, end: wrongStart + 1 },
+    ]
+    tamperedRelationship.canonicalAnchor = {
+      nodeId: wrongCellOwner.nodeId,
+      start: wrongStart,
+      end: wrongStart + 1,
+    }
+    const tamperedAssessment = assessPdfCompleteness({
+      pages: result.pages,
+      paper: tamperedPaper,
+      diagnostics: [],
+      regions: result.regions,
+      readingOrder: result.readingOrder,
+      provenance: result.provenance,
+      visualRelationships: result.visualRelationships,
+      assets: result.assets,
+      citationRelationships: tamperedRelationships,
+      noteRelationships: result.noteRelationships,
+      lineBoundaryDecisions: result.lineBoundaryDecisions,
+      inlineSpanLedger: {
+        expected: result.completeness.expectedInlineSpanCount,
+        mapped: result.completeness.mappedInlineSpanCount,
+      },
+    })
+    expect(tamperedAssessment.completeness.unresolvedObjects.citations).toBe(1)
+    expect(tamperedAssessment.completeness.resolvedRelationshipCount).toBe(
+      result.completeness.resolvedRelationshipCount - 1,
+    )
   })
 
   it('removes verified targets when a table citation cannot be projected uniquely', async () => {

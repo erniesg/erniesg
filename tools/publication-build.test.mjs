@@ -1010,6 +1010,92 @@ describe('publication staging and publish helpers', () => {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
   })
+
+  it.runIf(process.platform === 'darwin')(
+    'canonicalizes root-owned /var and /tmp aliases for the repository and staging root',
+    async () => {
+      const previousDirectory = process.cwd()
+      for (const [aliasRoot, canonicalRoot] of [
+        [tmpdir(), `/private${tmpdir()}`],
+        ['/tmp', '/private/tmp'],
+      ]) {
+        const temporaryRoot = await mkdtemp(
+          resolve(aliasRoot, 'publication-cleanliness-macos-alias-'),
+        )
+        try {
+          expect(temporaryRoot.startsWith(`${aliasRoot}/`)).toBe(true)
+          expect(
+            execFileSync('python3', [
+              '-c',
+              'import os,sys; print(os.path.realpath(sys.argv[1]))',
+              temporaryRoot,
+            ], { encoding: 'utf8' }).trim().startsWith(`${canonicalRoot}/`),
+          ).toBe(true)
+          execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+          execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+            cwd: temporaryRoot,
+          })
+          execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+            cwd: temporaryRoot,
+          })
+          await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+          execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+          execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+            cwd: temporaryRoot,
+          })
+          const staging = resolve(temporaryRoot, '.publication-staging-owned')
+          await mkdir(staging)
+          await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+          process.chdir(temporaryRoot)
+
+          expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+            false,
+          )
+        } finally {
+          process.chdir(previousDirectory)
+          await rm(temporaryRoot, { recursive: true, force: true })
+        }
+      }
+    },
+  )
+
+  it('does not let a repository symlink masquerade as an owned staging root', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-symlink-exclusion-'),
+    )
+    const externalRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-external-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const stagingLink = resolve(
+        temporaryRoot,
+        '.publication-staging-attacker-link',
+      )
+      await symlink(externalRoot, stagingLink, 'dir')
+      process.chdir(temporaryRoot)
+
+      expect(
+        publicationRepositoryForCurrentCheckout([stagingLink]).dirty,
+      ).toBe(true)
+    } finally {
+      process.chdir(previousDirectory)
+      await rm(temporaryRoot, { recursive: true, force: true })
+      await rm(externalRoot, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('publication output safety', () => {

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -746,20 +746,72 @@ export function publicationReceiptDigest(receipt) {
   return createHash('sha256').update(receipt).digest('hex')
 }
 
+function canonicalMacOSTemporaryPath(value) {
+  const candidate = resolve(value)
+  if (process.platform !== 'darwin') return candidate
+  for (const [aliasRoot, canonicalRoot] of [
+    ['/var', '/private/var'],
+    ['/tmp', '/private/tmp'],
+  ]) {
+    if (
+      candidate !== aliasRoot &&
+      !candidate.startsWith(`${aliasRoot}${sep}`)
+    )
+      continue
+    try {
+      const alias = lstatSync(aliasRoot)
+      if (
+        !alias.isSymbolicLink() ||
+        alias.uid !== 0 ||
+        realpathSync(aliasRoot) !== canonicalRoot
+      )
+        return candidate
+    } catch {
+      return candidate
+    }
+    return resolve(canonicalRoot, relative(aliasRoot, candidate))
+  }
+  return candidate
+}
+
+function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
+  const repositoryIdentity = canonicalMacOSTemporaryPath(repositoryRoot)
+  const candidate = resolve(excludedPath)
+  const candidateIdentity = canonicalMacOSTemporaryPath(candidate)
+  try {
+    // Only the root-owned macOS temporary aliases above may change a path's
+    // spelling. Any other symlink, missing target, or mount boundary fails
+    // closed and remains visible to `git status`.
+    if (
+      realpathSync(repositoryRoot) !== repositoryIdentity ||
+      realpathSync(candidate) !== candidateIdentity ||
+      !lstatSync(candidate).isDirectory() ||
+      statSync(repositoryIdentity).dev !== statSync(candidateIdentity).dev
+    )
+      return undefined
+  } catch {
+    return undefined
+  }
+  const repositoryRelative = relative(repositoryIdentity, candidateIdentity)
+    .split(sep)
+    .join('/')
+  if (
+    !repositoryRelative ||
+    repositoryRelative === '..' ||
+    repositoryRelative.startsWith('../') ||
+    isAbsolute(repositoryRelative)
+  )
+    return undefined
+  return `:(exclude,top)${repositoryRelative}`
+}
+
 export function publicationRepositoryForCurrentCheckout(excludedPaths = []) {
   const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
     encoding: 'utf8',
   }).trim()
   const exclusions = excludedPaths
-    .map((path) => relative(repositoryRoot, resolve(path)).split(sep).join('/'))
-    .filter(
-      (path) =>
-        path &&
-        path !== '..' &&
-        !path.startsWith('../') &&
-        !isAbsolute(path),
-    )
-    .map((path) => `:(exclude,top)${path}`)
+    .map((path) => publicationCleanlinessExclusion(repositoryRoot, path))
+    .filter(Boolean)
   return {
     commit: execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repositoryRoot,

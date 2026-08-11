@@ -304,12 +304,11 @@ function finiteNonNegative(value: unknown): value is number {
 }
 
 function normalizedIdentity(identity: ModelIdentity | undefined) {
-  const providerId = identity?.providerId ?? identity?.provider ?? 'owner-local'
-  const modelId = identity?.modelId ?? identity?.id ?? 'recorded-stub'
-  const modelVersion = identity?.modelVersion ?? identity?.version ?? '1'
-  const suppliedDigest = identity?.modelDigest ?? identity?.digest
-  const modelDigest =
-    suppliedDigest ?? hash({ providerId, modelId, modelVersion })
+  const providerId = identity?.providerId ?? identity?.provider
+  const modelId = identity?.modelId ?? identity?.id
+  const modelVersion = identity?.modelVersion ?? identity?.version
+  const modelDigest = identity?.modelDigest ?? identity?.digest
+  if (!providerId || !modelId || !modelVersion || !modelDigest) return undefined
   if (
     !SAFE_ID.test(providerId) ||
     !SAFE_ID.test(modelId) ||
@@ -1138,8 +1137,10 @@ export class ModelConsultationGate {
 
     if (!this.enabled)
       return this.reviewOutcome(point, 'MODEL_ASSISTANCE_DISABLED')
-    if (!this.model || !this.identity)
+    if (!this.model)
       return this.reviewOutcome(point, 'MODEL_PROVIDER_UNAVAILABLE')
+    if (!this.identity)
+      return this.reviewOutcome(point, 'MODEL_IDENTITY_REQUIRED')
     const request = modelRequest(point)
     const requestIdValue = this.ledger.beginConsultation(request, this.identity)
     // The callback and pending receipt entry happen before the provider call.

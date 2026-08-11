@@ -35,6 +35,21 @@ describe('model fallback consultation gate', () => {
     })
   })
 
+  it('refuses an enabled provider without a complete supplied identity', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'caption-figure-1' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { consult },
+    })
+
+    const result = await gate.decide(MODEL_FALLBACK_REFERENCE_FIXTURES[0]!)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('MODEL_IDENTITY_REQUIRED')
+    expect(result.provenance).toBeNull()
+    expect(consult).not.toHaveBeenCalled()
+  })
+
   it('records the request before consulting and persists candidate-constrained provenance', async () => {
     const ledger = new ModelFallbackLedger()
     let requestObserved = false

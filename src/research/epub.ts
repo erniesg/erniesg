@@ -173,6 +173,28 @@ function semanticTableAssetForRenderedNode({
     .find(isSemanticTableAsset)
 }
 
+function renderedSemanticTableNodeIdsForPublication({
+  paper,
+  visualRelationships,
+  assets,
+}: {
+  paper: ResearchPaper
+  visualRelationships: ReadonlyMap<string, PublicationVisualRelationship>
+  assets: ReadonlyMap<string, PublicationAsset>
+}) {
+  return new Set(
+    [...visualRelationships.entries()].flatMap(([nodeId, relationship]) =>
+      semanticTableAssetForRenderedNode({
+        node: paper.nodes.find((node) => node.id === nodeId),
+        visual: relationship,
+        assets,
+      })
+        ? [nodeId]
+        : [],
+    ),
+  )
+}
+
 function isDocxReconstruction(
   reconstruction: DocumentReconstruction,
 ): reconstruction is DocxReconstruction {
@@ -2629,17 +2651,12 @@ function renderResearchPublicationXhtml(
         : [],
     ),
   )
-  const renderedSemanticTableNodeIds = new Set(
-    [...visualRelationships.entries()].flatMap(([nodeId, relationship]) =>
-      semanticTableAssetForRenderedNode({
-        node: paper.nodes.find((node) => node.id === nodeId),
-        visual: relationship,
-        assets,
-      })
-        ? [nodeId]
-        : [],
-    ),
-  )
+  const renderedSemanticTableNodeIds =
+    renderedSemanticTableNodeIdsForPublication({
+      paper,
+      visualRelationships,
+      assets,
+    })
   assertPublicationIntegrity(
     paper,
     options.reconstruction?.noteRelationships,
@@ -5603,10 +5620,25 @@ async function buildEpubInternal(
   let publicationPdfAssessment:
     ReturnType<typeof assessPdfCompleteness> | undefined
   assertUniqueCanonicalNodeIds(renderPaper)
+  const preflightVisualRelationships = new Map(
+    (renderReconstruction?.visualRelationships ?? [])
+      .filter((relationship) => relationship.canonicalNodeId)
+      .map((relationship) => [relationship.canonicalNodeId!, relationship]),
+  )
+  const preflightAssets = new Map(
+    (renderReconstruction?.assets ?? []).map((asset) => [asset.id, asset]),
+  )
   assertPublicationIntegrity(
     renderPaper,
     renderReconstruction?.noteRelationships,
     noteRelationshipSourceEvidence(renderReconstruction),
+    {
+      renderedSemanticTableNodeIds: renderedSemanticTableNodeIdsForPublication({
+        paper: renderPaper,
+        visualRelationships: preflightVisualRelationships,
+        assets: preflightAssets,
+      }),
+    },
   )
   if (renderReconstruction) {
     const validatedPdfRelationshipIds = isDocxReconstruction(

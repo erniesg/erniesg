@@ -692,7 +692,12 @@ export function internalReferenceIntegrityIssues(
         }
       }
     }
-    if (node.type === 'figure' && node.table) {
+    if (
+      node.type === 'figure' &&
+      node.table &&
+      (!renderContext ||
+        renderContext.renderedSemanticTableNodeIds.has(node.id))
+    ) {
       for (const cell of node.table.rows.flatMap((row) => row.cells)) {
         for (const run of cell.inlineRuns ?? []) {
           if (

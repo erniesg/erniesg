@@ -2998,7 +2998,7 @@ describe('EPUB 3 export', () => {
     expect(content).not.toContain('href="#suppressed-caption-note-reference-6"')
   })
 
-  it('scopes table-cell note relationships to rendered semantic tables', () => {
+  it('scopes table-cell note relationships to rendered semantic tables', async () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [
       {
@@ -3066,6 +3066,35 @@ describe('EPUB 3 export', () => {
       sourceObjectIds: [],
       sourceBoxes: [],
     } satisfies PublicationAsset
+
+    const omittedCrossReferencePaper = structuredClone(notePaper)
+    const omittedTable = omittedCrossReferencePaper.nodes.find(
+      (node) => node.id === 'unresolved-table-with-note',
+    )
+    if (omittedTable?.type !== 'figure' || !omittedTable.table) {
+      throw new Error('Missing omitted-table fixture')
+    }
+    const omittedCell = omittedTable.table.rows[0].cells[0]
+    delete omittedCell.noteReferences
+    omittedCell.inlineRuns = [
+      {
+        start: 0,
+        end: omittedCell.text.length,
+        semanticRole: 'cross-reference',
+        relationshipId: 'omitted-table-cell-cross-reference',
+        targetIds: ['unresolved-table-caption'],
+      },
+    ]
+    omittedCrossReferencePaper.nodes = omittedCrossReferencePaper.nodes.filter(
+      (node) => node.id !== 'suppressed-table-cell-note-6',
+    )
+    const omittedCrossReferenceContent = renderPublicationXhtml(
+      omittedCrossReferencePaper,
+    )
+    expect(omittedCrossReferenceContent).not.toContain(
+      'omitted-table-cell-cross-reference',
+    )
+    await expect(buildEpub(omittedCrossReferencePaper)).resolves.toBeDefined()
 
     expect(() => renderPublicationXhtml(notePaper)).toThrow(
       /note-backlink.*suppressed-table-cell-note-reference-6/u,

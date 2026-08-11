@@ -396,12 +396,6 @@ const multilingualScan = rasterText({
     { text: '究', x: 460, y: 470, scale: 8 },
   ],
 })
-const arabicIndicOne = rasterText({
-  width: 90,
-  height: 100,
-  lines: [],
-  marks: [{ text: '١', x: 6, y: 6, scale: 9 }],
-})
 const visualAdjudicationCandidate = rasterText({
   width: 280,
   height: 180,

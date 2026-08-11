@@ -15,7 +15,7 @@
       "package": "playwright",
       "version": "1.61.1",
       "arm64Revision": "1228",
-      "arm64BrowserVersion": "149.0.7827.0"
+      "arm64BrowserVersion": "149.0.7827.55"
     }
   },
   "rendererPolicy": {

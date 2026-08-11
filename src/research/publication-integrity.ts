@@ -4,7 +4,10 @@ import type {
   PdfNoteRelationship,
   PdfPageRegion,
 } from './import-types'
-import { normalizedNoteLabel } from './note-label'
+import {
+  normalizedNoteLabel,
+  noteLabelsFromMarkerText,
+} from './note-label'
 import type { ResearchNode, ResearchPaper } from './schema'
 
 export type NoteRelationshipSourceEvidence = {
@@ -363,9 +366,9 @@ function hasValidNoteRelationshipSourceEvidence(
     relationship.referenceStart < 0 ||
     relationship.referenceStart >= relationship.referenceEnd ||
     relationship.referenceEnd > region.text.length ||
-    normalizedNoteLabel(
+    noteLabelsFromMarkerText(
       region.text.slice(relationship.referenceStart, relationship.referenceEnd),
-    ) !== normalizedNoteLabel(relationship.label) ||
+    ).join(',') !== normalizedNoteLabel(relationship.label) ||
     relationship.sourceBoxes.length === 0 ||
     relationship.sourceBoxes.some(
       (box) =>

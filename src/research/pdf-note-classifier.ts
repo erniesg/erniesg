@@ -6,7 +6,11 @@ import type {
   PdfPageRegion,
 } from './import-types'
 import { replayPdfRegionLineRanges } from './pdf-lines'
-import { normalizedNoteLabel, noteLabelFromText } from './pdf-regions'
+import {
+  normalizedNoteLabel,
+  noteLabelsFromMarkerText,
+} from './note-label'
+import { noteLabelFromText } from './pdf-regions'
 
 export const PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD = 0.85
 export const PDF_NOTE_CITATION_DENSITY_THRESHOLD = 2
@@ -56,10 +60,8 @@ const REFERENCE_HEADING =
 const REFERENCE_SECTION_END =
   /^(?:appendix\b|acknowledg(?:e)?ments?\b|supplement(?:ary)?\b|author contributions?\b|data availability\b)/i
 const BODY_SECTION_HEADING = /^(?:abstract|introduction)\b/i
-const NOTE_TOKEN_SOURCE = String.raw`(?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])`
 const AUTHOR_YEAR_SURNAME_SOURCE = String.raw`\p{Lu}[\p{L}\p{M}'’.-]*`
 const AUTHOR_YEAR_SOURCE = String.raw`(?:18|19|20)\d{2}[a-z]?`
-const MAX_EXPANDED_CITATION_RANGE = 100
 
 function rounded(value: number) {
   return Math.round(value * 100_000) / 100_000
@@ -250,36 +252,7 @@ function isTitlePageAffiliationDeclaration(
   )
 }
 
-export function noteLabelsFromMarkerText(value: string) {
-  const labels: string[] = []
-  const pattern = new RegExp(
-    `(${NOTE_TOKEN_SOURCE})(?:\\s*[–—-]\\s*(${NOTE_TOKEN_SOURCE}))?`,
-    'gu',
-  )
-  const add = (label: string) => {
-    if (label && !labels.includes(label)) labels.push(label)
-  }
-  for (const match of value.matchAll(pattern)) {
-    const first = normalizedNoteLabel(match[1])
-    const last = match[2] ? normalizedNoteLabel(match[2]) : null
-    const firstOrdinal = /^\d+$/.test(first) ? Number(first) : null
-    const lastOrdinal = last && /^\d+$/.test(last) ? Number(last) : null
-    if (
-      firstOrdinal !== null &&
-      lastOrdinal !== null &&
-      lastOrdinal >= firstOrdinal &&
-      lastOrdinal - firstOrdinal <= MAX_EXPANDED_CITATION_RANGE
-    ) {
-      for (let ordinal = firstOrdinal; ordinal <= lastOrdinal; ordinal += 1) {
-        add(String(ordinal))
-      }
-      continue
-    }
-    add(first)
-    if (last) add(last)
-  }
-  return labels
-}
+export { noteLabelsFromMarkerText } from './note-label'
 
 function isMathematicalBracket(text: string, start: number) {
   if (/^\[\s*0\s*,\s*1\s*\]/u.test(text.slice(start))) return true

@@ -297,7 +297,7 @@
           "excluding-most-body-lines",
           "running-head-or-page-number-left-in-body-flow"
         ],
-        "detection": "Missing identities, inconsistent counters, or over-exclusion score zero; valid partial identity matches receive F1 and an explicit abstention scores 0.25.",
+        "detection": "Missing identities, inconsistent counters, any reviewed furniture left in body flow, or over-exclusion score zero; complete furniture removal with extra exclusions receives identity F1 and an explicit abstention scores 0.25.",
         "score": 0,
         "abstentionScore": 0.25,
         "failClosed": true

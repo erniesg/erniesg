@@ -951,10 +951,6 @@ async function validateReviewEvidenceFiles(value, identity) {
       !Array.isArray(roster.reviewers) ||
       roster.reviewers.length < 2 ||
       !uniqueBy(roster.reviewers, (reviewer) => reviewer.reviewerId) ||
-      !uniqueBy(
-        roster.reviewers,
-        (reviewer) => reviewer.identityEvidenceSha256,
-      ) ||
       roster.reviewers.some(
         (reviewer) =>
           !exactKeys(reviewer, ['reviewerId', 'identityEvidenceSha256']) ||
@@ -995,8 +991,7 @@ async function validateReviewEvidenceFiles(value, identity) {
     if (
       roster.schemaVersion === PDF_EXTRACTION_EVAL_LEGACY_REVIEW_SCHEMA_VERSION
     ) {
-      const legacyHashes = identityHashesByAlias.get(reference)
-      return legacyHashes?.length === 1 ? legacyHashes[0] : null
+      return identityHashesByAlias.has(reference) ? reference : null
     }
     return rosterIdentities.has(reference) ? reference : null
   }
@@ -1507,6 +1502,9 @@ function boilerplateScore(expected, prediction) {
   ) {
     return degenerateResult('INVALID_BOILERPLATE_COUNTERS')
   }
+  if (missed.length > 0) {
+    return degenerateResult('RUNNING_HEAD_OR_PAGE_NUMBER_LEFT_IN_BODY_FLOW')
+  }
   const matched = excluded.filter((item) =>
     expectedKeys.has(identity(item)),
   ).length
@@ -1714,11 +1712,15 @@ export function comparePdfExtractionProviders(evalSet, providers) {
   const strata = stratumById(evalSet)
   const rows = []
   const providerSummaries = []
+  let comparisonAttempted = false
   for (const candidate of providers) {
     validateCandidateProvider(
       candidate,
       identity,
       'INVALID_PDF_EXTRACTION_CANDIDATE',
+    )
+    comparisonAttempted ||= candidate.cases.some(
+      (item) => item.status === 'scored',
     )
     const outputMap = new Map(
       candidate.cases.map((item) => [item.caseId, item]),
@@ -1790,14 +1792,18 @@ export function comparePdfExtractionProviders(evalSet, providers) {
     reviewValues.every(
       (review) => review.reviewStatus === 'two-reviewer-agreed',
     ) && evalSet[REVIEW_EVIDENCE_VALIDATED] === identity.evalSetSha256
-  const reviewBlocksComparison = hasScoredOutput && !reviewsComplete
+  const reviewBlocksComparison = comparisonAttempted && !reviewsComplete
   if (reviewBlocksComparison) {
-    for (const provider of providerSummaries) provider.score = null
+    for (const provider of providerSummaries) {
+      provider.score = null
+      provider.diagnosticCodes = []
+    }
     for (const row of rows) {
       row.scoredCaseCount = 0
       row.abstainedCaseCount = 0
       row.degenerateCaseCount = 0
       row.score = null
+      row.diagnostics = []
     }
   }
   const reportWithoutHash = {

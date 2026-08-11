@@ -26,10 +26,10 @@ async function attachVerifiedReviews(
     legacy = false,
     reviewerA = 'fixture-reviewer-a',
     reviewerB = 'fixture-reviewer-b',
+    reviewerHashA = 'a'.repeat(64),
+    reviewerHashB = 'b'.repeat(64),
   } = {},
 ) {
-  const reviewerHashA = 'a'.repeat(64)
-  const reviewerHashB = 'b'.repeat(64)
   const reviewerReferences = legacy
     ? [reviewerA, reviewerB]
     : [reviewerHashA, reviewerHashB]
@@ -225,8 +225,45 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     ).toMatchObject({ score: null, scoredCaseCount: 0 })
   })
 
+  it('redacts degenerate scored attempts until every review is verified', async () => {
+    const evalSet = await readEvalSet()
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const tableCase = candidate.cases.find((item) =>
+      item.caseId.endsWith('.table-structure'),
+    )
+    tableCase.status = 'scored'
+    tableCase.prediction = { tables: [] }
+    tableCase.diagnostics = []
+
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    const row = report.rows.find(
+      (item) =>
+        item.stratum === 'table-structure' && item.layout === 'one-column',
+    )
+    expect(report).toMatchObject({
+      status: 'reported-only',
+      diagnosticCodes: ['PDF_EXTRACTION_REVIEW_INCOMPLETE'],
+    })
+    expect(report.providers[0]).toMatchObject({
+      score: null,
+      diagnosticCodes: [],
+    })
+    expect(row).toMatchObject({
+      score: null,
+      scoredCaseCount: 0,
+      abstainedCaseCount: 0,
+      degenerateCaseCount: 0,
+      diagnostics: [],
+    })
+  })
+
   it('scores abstention above guarded degenerate answers', async () => {
     const evalSet = await readEvalSet()
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -255,6 +292,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
 
   it('does not give metadata-only table or object predictions a perfect score', async () => {
     const evalSet = await readEvalSet()
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -427,6 +465,36 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
           row.layout === furnitureCase.layout,
       ),
     ).toMatchObject({ degenerateCaseCount: 0, scoredCaseCount: 1 })
+
+    output.prediction.excluded = [
+      { ...furnitureCase.source.groundTruth.excluded[0] },
+    ]
+    const missed = furnitureCase.source.groundTruth.excluded.slice(1)
+    output.prediction.contamination = {
+      runningHeadContaminationCount: missed.filter(
+        (item) => item.kind === 'running-head',
+      ).length,
+      pageNumberContaminationCount: missed.filter(
+        (item) => item.kind === 'page-number',
+      ).length,
+      excludedCount: 1,
+    }
+    report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'boilerplate-exclusion' &&
+          row.layout === furnitureCase.layout,
+      ),
+    ).toMatchObject({
+      score: 0.125,
+      degenerateCaseCount: 1,
+      scoredCaseCount: 0,
+      diagnostics: [
+        'CANDIDATE_ABSTAINED',
+        'RUNNING_HEAD_OR_PAGE_NUMBER_LEFT_IN_BODY_FLOW',
+      ],
+    })
   })
 
   it('scores valid many-to-one footnote references instead of treating them as degenerate', async () => {
@@ -551,6 +619,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       marker: '2',
       bodyId: 'footnote-2',
     })
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -651,6 +720,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
 
   it('fails closed on extra or invalid table cells', async () => {
     const evalSet = await readEvalSet()
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -862,6 +932,21 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
         attachVerifiedReviews(evalSet, directory, {
           legacy: true,
           reviewerA: 'b'.repeat(64),
+        }),
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves schema-valid duplicate v1.0 identity evidence hashes', async () => {
+    const evalSet = await readEvalSet()
+    const directory = await mkdtemp('.tmp-pdf-extraction-review-v1-duplicate-')
+    try {
+      await expect(
+        attachVerifiedReviews(evalSet, directory, {
+          legacy: true,
+          reviewerHashB: 'a'.repeat(64),
         }),
       ).resolves.toBeUndefined()
     } finally {

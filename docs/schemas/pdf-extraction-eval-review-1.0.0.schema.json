@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ernie.sg/schemas/pdf-extraction-eval-review-1.0.0.json",
   "title": "Legacy v1 source-only extraction evaluation review evidence",
-  "description": "Published compatibility contract for schemaVersion 1.0.0 roster and decision artifacts. Runtime validation additionally requires unique reviewerId and identityEvidenceSha256 values across the legacy roster array.",
+  "description": "Published compatibility contract for schemaVersion 1.0.0 roster and decision artifacts. Runtime validation preserves legacy reviewerId references and requires those IDs to be unique; schema-valid duplicate identityEvidenceSha256 values remain accepted for frozen v1 compatibility.",
   "oneOf": [{ "$ref": "#/$defs/roster" }, { "$ref": "#/$defs/decisions" }],
   "$defs": {
     "id": {

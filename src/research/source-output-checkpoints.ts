@@ -432,10 +432,7 @@ function decodedHtmlAttribute(value: string) {
 function htmlAttribute(attributes: string, name: string) {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const match = attributes.match(
-    new RegExp(
-      `(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`,
-      'i',
-    ),
+    new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'),
   )
   const value = match?.[1] ?? match?.[2]
   return value === undefined ? undefined : decodedHtmlAttribute(value)
@@ -524,7 +521,7 @@ function resolvedDocumentHref(
   base.pop()
   const resolved: string[] = []
   for (const segment of [...base, ...reference.split('/')]) {
-    if (!segment || segment === '.') continue
+    if (segment === '.') continue
     if (segment === '..') {
       if (resolved.length === 0) return null
       resolved.pop()
@@ -565,13 +562,18 @@ function internalHrefTarget(
   }
 }
 
-function internalTargetId(href: string | undefined) {
-  const target = internalHrefTarget(href)
-  return target?.reason === null &&
-    target.documentHref === EPUB_CONTENT_DOCUMENT &&
-    target.targetId !== null
-    ? target.targetId
+function internalTarget(
+  href: string | undefined,
+  currentDocumentHref = EPUB_CONTENT_DOCUMENT,
+) {
+  const target = internalHrefTarget(href, currentDocumentHref)
+  return target?.reason === null && target.targetId !== null
+    ? { documentHref: target.documentHref, targetId: target.targetId }
     : null
+}
+
+function internalTargetId(href: string | undefined) {
+  return internalTarget(href)?.targetId ?? null
 }
 
 function elementInnerHtml(html: string, element: HtmlOpeningElement) {
@@ -623,6 +625,7 @@ function internalLinkIntegrityFailure(
     elements,
     ids,
     links,
+    documentGraphs,
   })
   if (links.length === 0) {
     return outcome('The rendition contains no internal href to verify.')
@@ -693,13 +696,27 @@ function relationshipIntegrityFailure(
       ),
     )
   }
+  const relationshipTarget = (anchor: HtmlAnchor) => {
+    const endpoint = internalTarget(anchor.href)
+    if (!endpoint) return null
+    const document = graph.documentGraphs.get(endpoint.documentHref)
+    const targets = document?.ids.get(endpoint.targetId) ?? []
+    if (!document || targets.length !== 1) return null
+    const target = targets[0]
+    return {
+      documentHref: endpoint.documentHref,
+      document,
+      target,
+      targetHtml: elementInnerHtml(document.html, target),
+    }
+  }
   const matchingTargetCandidates = candidates.filter((anchor) => {
-    const targetId = internalTargetId(anchor.href)
-    const target = targetId ? graph.ids.get(targetId)?.[0] : undefined
-    if (!target) return false
-    const targetHtml = elementInnerHtml(graph.structuralHtml, target)
+    const resolvedTarget = relationshipTarget(anchor)
+    if (!resolvedTarget) return false
     if (
-      !normalizedText(targetHtml).includes(normalizedText(expected.targetText))
+      !normalizedText(resolvedTarget.targetHtml).includes(
+        normalizedText(expected.targetText),
+      )
     ) {
       return false
     }
@@ -711,11 +728,12 @@ function relationshipIntegrityFailure(
     return `Expected exactly one ${expected.kind} link for marker ${expected.markerText} targeting the expected body; found ${matchingTargetCandidates.length}.`
   }
   const anchor = narrowedCandidates[0]
-  const targetId = internalTargetId(anchor.href)
-  if (!targetId) return `Marker ${expected.markerText} has no internal target.`
-  const target = graph.ids.get(targetId)?.[0]
-  if (!target) return `Marker ${expected.markerText} has no unique target.`
-  const targetHtml = elementInnerHtml(graph.structuralHtml, target)
+  const endpoint = internalTarget(anchor.href)
+  if (!endpoint) return `Marker ${expected.markerText} has no internal target.`
+  const resolvedTarget = relationshipTarget(anchor)
+  if (!resolvedTarget)
+    return `Marker ${expected.markerText} has no unique target.`
+  const { documentHref, document, target, targetHtml } = resolvedTarget
   if (
     !normalizedText(targetHtml).includes(normalizedText(expected.targetText))
   ) {
@@ -736,22 +754,25 @@ function relationshipIntegrityFailure(
     if (!anchor.id || graph.ids.get(anchor.id)?.length !== 1) {
       return `Note marker ${expected.markerText} has no unique backlink target id.`
     }
-    const backlink = htmlAnchors(targetHtml).find(
-      (candidate) =>
-        internalTargetId(candidate.href) === anchor.id &&
-        hasToken(htmlAttribute(candidate.attributes, 'class'), 'note-backlink'),
-    )
+    const backlink = htmlAnchors(targetHtml).find((candidate) => {
+      const backlinkTarget = internalTarget(candidate.href, documentHref)
+      return (
+        backlinkTarget?.documentHref === EPUB_CONTENT_DOCUMENT &&
+        backlinkTarget.targetId === anchor.id &&
+        hasToken(htmlAttribute(candidate.attributes, 'class'), 'note-backlink')
+      )
+    })
     if (!backlink) {
       return `Note body for marker ${expected.markerText} has no verified backlink.`
     }
   } else {
-    const targetOpening = graph.structuralHtml.slice(target.start, target.end)
-    const bibliographyOwners = graph.elements.filter(
+    const targetOpening = document.html.slice(target.start, target.end)
+    const bibliographyOwners = document.elements.filter(
       (element) =>
         ['ol', 'ul'].includes(element.tag) &&
         htmlAttribute(element.attributes, 'data-numbering-id') ===
           'references' &&
-        elementInnerHtml(graph.structuralHtml, element).includes(targetOpening),
+        elementInnerHtml(document.html, element).includes(targetOpening),
     )
     if (bibliographyOwners.length !== 1) {
       return `Citation marker ${expected.markerText} does not target one bibliography entry.`

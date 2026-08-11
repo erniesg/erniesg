@@ -2879,6 +2879,53 @@ describe('EPUB 3 export', () => {
     )
   })
 
+  it('emits footnote backlinks for note-reference anchors rendered inside associated captions', async () => {
+    const notePaper = structuredClone(paper)
+    notePaper.nodes = [
+      {
+        id: 'captioned-figure',
+        type: 'figure',
+        title: 'Captioned figure',
+        relationships: { caption: 'caption-with-note' },
+        source: 'synthetic-caption-note',
+      },
+      {
+        id: 'caption-with-note',
+        type: 'caption',
+        text: 'Figure caption 6.',
+        noteReferences: [
+          {
+            id: 'caption-note-reference-6',
+            label: '6',
+            target: 'caption-note-6',
+            start: 15,
+            end: 16,
+            confidence: 1,
+          },
+        ],
+        source: 'synthetic-caption-note',
+      },
+      {
+        id: 'caption-note-6',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '6',
+        text: 'A note referenced from the caption.',
+        relationships: { backlinks: ['caption-note-reference-6'] },
+        source: 'synthetic-caption-note',
+      },
+    ]
+
+    const epub = await buildEpub(notePaper)
+    const { files } = inspectEpub(epub.bytes)
+    const content = strFromU8(files['EPUB/content.xhtml'])
+
+    expect(content).toContain(
+      'id="caption-note-reference-6" href="#caption-note-6"',
+    )
+    expect(content).toContain('href="#caption-note-reference-6"')
+  })
+
   it('rejects a canonical note backlink with no rendered reference anchor', async () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [

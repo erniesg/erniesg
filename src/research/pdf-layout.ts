@@ -12247,15 +12247,58 @@ export async function reconstructPageAnalyses({
     })
   }
   const crossReferenceRegions = new Map<string, PdfPageRegion>()
+  const visualDefinitionEndsByRegionId = new Map<string, number>()
+  for (const relationship of visualResult.relationships) {
+    const captionRegion = relationship.captionRegionId
+      ? regionMap.get(relationship.captionRegionId)
+      : undefined
+    if (!captionRegion) continue
+    const definition = parsePdfScholarlyVisualLabel(captionRegion.text, {
+      context: 'caption',
+    })
+    const canonical = parsePdfScholarlyVisualLabel(relationship.label, {
+      context: 'reference',
+    })
+    if (
+      definition?.status !== 'parsed' ||
+      canonical?.status !== 'parsed' ||
+      definition.kind !== canonical.kind ||
+      definition.identifier !== canonical.identifier
+    ) {
+      continue
+    }
+    visualDefinitionEndsByRegionId.set(
+      captionRegion.id,
+      Math.max(
+        visualDefinitionEndsByRegionId.get(captionRegion.id) ?? 0,
+        definition.consumedEnd,
+      ),
+    )
+  }
   for (const block of canonicalBlocks) {
     if (
-      block.type !== 'paragraph' ||
+      !['paragraph', 'caption', 'footnote'].includes(block.type) ||
       block.list?.numberingId === 'references'
     ) {
       continue
     }
     for (const segment of blockSourceSegments(block)) {
-      crossReferenceRegions.set(segment.region.id, segment.region)
+      const definitionEnd = visualDefinitionEndsByRegionId.get(
+        segment.region.id,
+      )
+      crossReferenceRegions.set(
+        segment.region.id,
+        definitionEnd
+          ? {
+              ...segment.region,
+              text:
+                segment.region.text
+                  .slice(0, definitionEnd)
+                  .replace(/\S/gu, ' ') +
+                segment.region.text.slice(definitionEnd),
+            }
+          : segment.region,
+      )
     }
   }
   const crossReferenceRelationships = resolvePdfScholarlyCrossReferences({
@@ -12772,6 +12815,27 @@ export async function reconstructPageAnalyses({
           },
         })
       }
+      semanticTable.rows.forEach((row, rowIndex) => {
+        row.cells.forEach((cell, cellIndex) => {
+          for (const run of cell.inlineRuns ?? []) {
+            if (
+              run.semanticRole !== 'citation' ||
+              !run.relationshipId
+            ) {
+              continue
+            }
+            const citation = citationRelationships.find(
+              (relationship) => relationship.id === run.relationshipId,
+            )
+            if (citation?.status !== 'matched') continue
+            citation.canonicalAnchor = {
+              nodeId: `${draft.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
+              start: run.start,
+              end: run.end,
+            }
+          }
+        })
+      })
       const projectedNoteIds = new Set(
         semanticTable.rows.flatMap((row) =>
           row.cells.flatMap((cell) => [

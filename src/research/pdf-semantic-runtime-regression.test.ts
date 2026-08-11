@@ -133,19 +133,31 @@ describe('PDF semantic runtime regressions', () => {
       type: 'figure',
       objectType: 'table',
       sourceText: expect.stringContaining('[1-2]'),
-      inlineRuns: expect.arrayContaining([
-        expect.objectContaining({
-          semanticRole: 'citation',
-          relationshipId: expect.any(String),
-        }),
-      ]),
+      table: {
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            cells: expect.arrayContaining([
+              expect.objectContaining({
+                inlineRuns: expect.arrayContaining([
+                  expect.objectContaining({
+                    semanticRole: 'citation',
+                    relationshipId: expect.any(String),
+                  }),
+                ]),
+              }),
+            ]),
+          }),
+        ]),
+      },
     })
     expect(citations).toHaveLength(3)
     expect(
       citations.every(
         (relationship) =>
           relationship.status === 'matched' &&
-          relationship.canonicalAnchor?.nodeId === table?.id,
+          relationship.canonicalAnchor?.nodeId.startsWith(
+            `${table?.id}:table:`,
+          ),
       ),
     ).toBe(true)
     expect(
@@ -490,7 +502,7 @@ describe('PDF semantic runtime regressions', () => {
       ...xhtml.matchAll(
         /<a\b[^>]*epub:type="biblioref"[^>]*>([\s\S]*?)<\/a>/gu,
       ),
-    ]
+    ].filter((match) => !match[0].includes('class="additional-biblioref"'))
 
     expect(anchors).toHaveLength(2)
     expect(anchors.every((match) => match[1].trim().length > 0)).toBe(true)

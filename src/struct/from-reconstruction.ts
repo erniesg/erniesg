@@ -338,7 +338,10 @@ export function buildStructDocument(
   const pdf = isPdf(reconstruction)
   const provenance = reconstruction.provenance ?? {}
   const sourceToStructId = new Map<string, string>()
-  const tableCellAnchorIds = new Set<string>()
+  const tableCellAnchorsByRelationshipId = new Map<
+    string,
+    { owner: string; tableNodeId: string; cellId: string }
+  >()
   const fallbackRegionIds = new Set<string>()
   for (const [sourcePosition, node] of reconstruction.paper.nodes.entries()) {
     const evidence = boxEvidence(provenance[node.id], node.id)
@@ -353,9 +356,21 @@ export function buildStructDocument(
     if (node.type === 'figure' && node.table) {
       node.table.rows.forEach((row, rowIndex) => {
         row.cells.forEach((cell, cellIndex) => {
-          const tableCellAnchorId = `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`
+          const cellId = cell.id ?? `${rowIndex}:${cellIndex}`
+          const tableCellAnchorId = `${node.id}:table:${cellId}`
           sourceToStructId.set(tableCellAnchorId, blockId)
-          tableCellAnchorIds.add(tableCellAnchorId)
+          for (const relationshipId of [
+            ...(cell.noteReferences ?? []).map((reference) => reference.id),
+            ...(cell.inlineRuns ?? []).flatMap((run) =>
+              run.relationshipId ? [run.relationshipId] : [],
+            ),
+          ]) {
+            tableCellAnchorsByRelationshipId.set(relationshipId, {
+              owner: blockId,
+              tableNodeId: node.id,
+              cellId,
+            })
+          }
         })
       })
     }
@@ -386,11 +401,15 @@ export function buildStructDocument(
   const relationshipOwner = (
     canonicalAnchor: { nodeId: string } | null | undefined,
     fallbackId: string,
-  ) => resolveEndpoint(canonicalAnchor?.nodeId ?? fallbackId)
+    sourceRelationshipId: string,
+  ) =>
+    tableCellAnchorsByRelationshipId.get(sourceRelationshipId)?.owner ??
+    resolveEndpoint(canonicalAnchor?.nodeId ?? fallbackId)
   const relationshipIdentity = ({
     kind,
     canonicalAnchor,
     fallbackId,
+    sourceRelationshipId,
     start,
     end,
     label,
@@ -398,17 +417,28 @@ export function buildStructDocument(
     kind: 'note' | 'citation' | 'cross-reference'
     canonicalAnchor: { nodeId: string } | null | undefined
     fallbackId: string
+    sourceRelationshipId: string
     start: number
     end: number
     label: string
   }) => {
-    const owner = relationshipOwner(canonicalAnchor, fallbackId)
-    return canonicalAnchor && tableCellAnchorIds.has(canonicalAnchor.nodeId)
+    const tableCellAnchor =
+      tableCellAnchorsByRelationshipId.get(sourceRelationshipId)
+    const owner = relationshipOwner(
+      canonicalAnchor,
+      fallbackId,
+      sourceRelationshipId,
+    )
+    return canonicalAnchor && tableCellAnchor
       ? JSON.stringify([
           reconstruction.source.sha256,
           kind,
-          owner,
-          canonicalAnchor.nodeId,
+          [
+            'table-cell',
+            owner,
+            tableCellAnchor.tableNodeId,
+            tableCellAnchor.cellId,
+          ],
           start,
           end,
           label,
@@ -421,6 +451,7 @@ export function buildStructDocument(
     relationshipOwner(
       note.canonicalAnchor?.kind === 'node' ? note.canonicalAnchor : null,
       note.referenceRegionId,
+      note.id,
     )
   const sourceRelationshipIds = new Map<string, string>()
   for (const note of reconstruction.noteRelationships) {
@@ -433,6 +464,7 @@ export function buildStructDocument(
           canonicalAnchor:
             note.canonicalAnchor?.kind === 'node' ? note.canonicalAnchor : null,
           fallbackId: note.referenceRegionId,
+          sourceRelationshipId: note.id,
           start: note.referenceStart,
           end: note.referenceEnd,
           label: note.label,
@@ -450,6 +482,7 @@ export function buildStructDocument(
             kind: 'citation',
             canonicalAnchor: citation.canonicalAnchor,
             fallbackId: citation.referenceRegionId,
+            sourceRelationshipId: citation.id,
             start: citation.referenceStart,
             end: citation.referenceEnd,
             label: citation.label,
@@ -466,6 +499,7 @@ export function buildStructDocument(
             kind: 'cross-reference',
             canonicalAnchor: crossReference.canonicalAnchor,
             fallbackId: crossReference.referenceRegionId,
+            sourceRelationshipId: crossReference.id,
             start: crossReference.referenceStart,
             end: crossReference.referenceEnd,
             label: crossReference.text,
@@ -864,8 +898,10 @@ export function buildStructDocument(
   if (pdf) {
     for (const citation of reconstruction.citationRelationships) {
       const candidateNodeIds = citation.candidateNodeIds ?? []
-      const owner = resolveEndpoint(
-        citation.canonicalAnchor?.nodeId ?? citation.referenceRegionId,
+      const owner = relationshipOwner(
+        citation.canonicalAnchor,
+        citation.referenceRegionId,
+        citation.id,
       )
       relationships.push({
         id: resolveRelationship(citation.id),
@@ -936,9 +972,10 @@ export function buildStructDocument(
       relationships.push({
         id: resolveRelationship(crossReference.id),
         kind: 'cross-reference',
-        from: resolveEndpoint(
-          crossReference.canonicalAnchor?.nodeId ??
-            crossReference.referenceRegionId,
+        from: relationshipOwner(
+          crossReference.canonicalAnchor,
+          crossReference.referenceRegionId,
+          crossReference.id,
         ),
         to: crossReference.targetNodeIds.map(resolveEndpoint),
         label: crossReference.text,

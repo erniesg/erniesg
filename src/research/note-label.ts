@@ -43,3 +43,37 @@ export function normalizedNoteLabel(value: string) {
     .join('')
     .trim()
 }
+
+const NOTE_TOKEN_SOURCE = String.raw`(?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])`
+const MAX_EXPANDED_NOTE_RANGE = 100
+
+export function noteLabelsFromMarkerText(value: string) {
+  const labels: string[] = []
+  const pattern = new RegExp(
+    `(${NOTE_TOKEN_SOURCE})(?:\\s*[–—-]\\s*(${NOTE_TOKEN_SOURCE}))?`,
+    'gu',
+  )
+  const add = (label: string) => {
+    if (label && !labels.includes(label)) labels.push(label)
+  }
+  for (const match of value.matchAll(pattern)) {
+    const first = normalizedNoteLabel(match[1])
+    const last = match[2] ? normalizedNoteLabel(match[2]) : null
+    const firstOrdinal = /^\d+$/.test(first) ? Number(first) : null
+    const lastOrdinal = last && /^\d+$/.test(last) ? Number(last) : null
+    if (
+      firstOrdinal !== null &&
+      lastOrdinal !== null &&
+      lastOrdinal >= firstOrdinal &&
+      lastOrdinal - firstOrdinal <= MAX_EXPANDED_NOTE_RANGE
+    ) {
+      for (let ordinal = firstOrdinal; ordinal <= lastOrdinal; ordinal += 1) {
+        add(String(ordinal))
+      }
+      continue
+    }
+    add(first)
+    if (last) add(last)
+  }
+  return labels
+}

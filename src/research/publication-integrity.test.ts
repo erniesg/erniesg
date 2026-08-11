@@ -241,6 +241,24 @@ describe('exact semantic note-anchor integrity', () => {
     ).not.toThrow()
   })
 
+  it('accepts a bounded bracketed source marker for the same canonical label', () => {
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    const claimRegion = sourceEvidence.regions[0]
+    claimRegion.text = 'A[1] B2'
+    claimRegion.lines[0].text = claimRegion.text
+    claimRegion.lines[0].runs[0].text = claimRegion.text
+    relationships[0].referenceStart = 1
+    relationships[0].referenceEnd = 4
+
+    expect(
+      internalReferenceIntegrityIssues(
+        paperFixture(),
+        relationships,
+        sourceEvidence,
+      ),
+    ).toEqual([])
+  })
+
   it('rejects matched note evidence whose source region does not exist', () => {
     const { relationships, sourceEvidence } = sourceEvidenceFixture()
     relationships[0].referenceRegionId = 'missing-source-claim'

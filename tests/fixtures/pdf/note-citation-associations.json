@@ -1,5 +1,108 @@
 {
   "schemaVersion": "1.0.0",
+  "fixture": "tests/fixtures/pdf/note-citation-associations.pdf",
+  "fixtureSha256": "3ddd450ba69511292d13f1ee1db82b65a9eff36eb708816c97550cb2185990f9",
+  "baselineRef": "769d19836560d43cb67a4b4d7ca11bceb0a4121a",
+  "baselineCounters": {
+    "expectedAssociations": 8,
+    "matchedAssociations": 5,
+    "ambiguousAssociations": 1,
+    "unresolvedAssociations": 2,
+    "falseLinkCount": 0,
+    "resolvedAssociationRate": 0.625,
+    "verifiedAssociationRate": 0.75
+  },
+  "associations": [
+    {
+      "id": "numeric-footnote",
+      "kind": "note",
+      "label": "1",
+      "expectedStatus": "matched",
+      "page": 1,
+      "sourceIncludes": "A numeric claim carries footnote marker",
+      "anchorOwner": "paragraph",
+      "targetLabels": ["1"],
+      "targetTextIncludes": ["Numeric footnote body contains nested marker"],
+      "targetKind": "footnote"
+    },
+    {
+      "id": "symbol-footnote",
+      "kind": "note",
+      "label": "*",
+      "expectedStatus": "matched",
+      "page": 1,
+      "sourceIncludes": "A symbol claim carries footnote marker",
+      "anchorOwner": "paragraph",
+      "targetLabels": ["*"],
+      "targetTextIncludes": ["Symbol footnote body."],
+      "targetKind": "footnote"
+    },
+    {
+      "id": "numeric-citation-range",
+      "kind": "citation",
+      "label": "1,2,3,5",
+      "expectedStatus": "matched",
+      "page": 2,
+      "sourceIncludes": "Prior evidence [1-3, 5]",
+      "anchorOwner": "paragraph",
+      "targetLabels": ["1", "2", "3", "5"]
+    },
+    {
+      "id": "author-year-citation",
+      "kind": "citation",
+      "label": "example:2024",
+      "expectedStatus": "matched",
+      "page": 2,
+      "sourceIncludes": "Example et al. (2024)",
+      "anchorOwner": "paragraph",
+      "targetTextIncludes": ["Repository-owned author-year evidence."]
+    },
+    {
+      "id": "cross-page-endnote",
+      "kind": "note",
+      "label": "3",
+      "expectedStatus": "matched",
+      "page": 2,
+      "sourceIncludes": "A separate claim has note reference 3.",
+      "anchorOwner": "paragraph",
+      "targetLabels": ["3"],
+      "targetTextIncludes": ["Repository-owned endnote body begins here."],
+      "targetKind": "endnote"
+    },
+    {
+      "id": "caption-citation",
+      "kind": "citation",
+      "label": "2",
+      "expectedStatus": "matched",
+      "page": 2,
+      "sourceIncludes": "Figure 1. Caption citation [2] remains associated.",
+      "anchorOwner": "caption",
+      "targetLabels": ["2"],
+      "targetTextIncludes": ["Caption association evidence."]
+    },
+    {
+      "id": "table-cell-note",
+      "kind": "note",
+      "label": "4",
+      "expectedStatus": "matched",
+      "page": 2,
+      "sourceEqualsAny": ["Note 4"],
+      "anchorOwner": "table-cell",
+      "targetLabels": ["4"],
+      "targetTextIncludes": ["Table cell note body."],
+      "targetKind": "footnote"
+    },
+    {
+      "id": "ambiguous-duplicate-note",
+      "kind": "note",
+      "label": "7",
+      "expectedStatus": "ambiguous",
+      "page": 3,
+      "sourceIncludes": "A genuinely ambiguous claim has note reference 7.",
+      "anchorOwner": "paragraph",
+      "minimumCandidateCount": 2
+    }
+  ],
   "checkpoints": [
     {
       "id": "associations-page-1-marker-to-body",

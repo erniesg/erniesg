@@ -7,6 +7,11 @@ const { createHash } = require("node:crypto");
 
 const allLanes = [
   {
+    "id": "association-audit",
+    "command": "node tools/pdf-association-fixture-audit.mjs",
+    "required": true
+  },
+  {
     "id": "build",
     "command": "npm run build",
     "required": true
@@ -52,6 +57,52 @@ function safeBranch(value) {
 
 function textHash(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function validAuditCounters(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const countKeys = [
+    "expectedAssociations",
+    "matchedAssociations",
+    "ambiguousAssociations",
+    "unresolvedAssociations",
+    "falseLinkCount",
+  ];
+  const rateKeys = ["resolvedAssociationRate", "verifiedAssociationRate"];
+  if (countKeys.some((key) => !Number.isInteger(value[key]) || value[key] < 0)) return false;
+  if (rateKeys.some((key) => !Number.isFinite(value[key]) || value[key] < 0 || value[key] > 1)) return false;
+  return value.matchedAssociations
+    + value.ambiguousAssociations
+    + value.unresolvedAssociations
+    + value.falseLinkCount === value.expectedAssociations;
+}
+
+function validAssociationAudit(value) {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && value.status === "passed"
+      && typeof value.fixture === "string"
+      && /^[a-f0-9]{64}$/.test(value.fixtureSha256 || "")
+      && /^[a-f0-9]{40}$/.test(value.baselineRef || "")
+      && validAuditCounters(value.before)
+      && validAuditCounters(value.after)
+      && value.after.unresolvedAssociations === 0
+      && value.after.falseLinkCount === 0
+      && value.after.verifiedAssociationRate === 1
+      && Array.isArray(value.checkpoints)
+      && value.checkpoints.length === 5
+      && new Set(value.checkpoints.map((checkpoint) => checkpoint && checkpoint.checkpointId)).size === 5
+      && value.checkpoints.every(
+        (checkpoint) => checkpoint && typeof checkpoint.checkpointId === "string" && checkpoint.status === "passed"
+      )
+      && Array.isArray(value.associations)
+      && value.associations.length === value.after.expectedAssociations
+      && value.diagnosticCounts
+      && typeof value.diagnosticCounts === "object"
+      && !Array.isArray(value.diagnosticCounts)
+  );
 }
 
 function splitList(value) {
@@ -186,6 +237,7 @@ const gitBranch = safeBranch(process.env.GITHUB_HEAD_REF)
 const dirty = sh("git status --short").stdout.trim().length > 0;
 const startedAt = new Date();
 const results = [];
+let associationAudit = null;
 const selection = parseSelection(invocation.argv);
 const largeFiles = largeUntrackedEvidence();
 
@@ -210,6 +262,7 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
       node: process.version,
     },
     lanes: [],
+    association_audit: null,
     artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
     caveats: largeFiles.caveats,
     result: "blocked",
@@ -223,13 +276,26 @@ const lanes = selection.lanes;
 for (const lane of lanes) {
   const laneStart = Date.now();
   const proc = sh(lane.command);
-  const output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
+  let exitCode = proc.status ?? 1;
+  let output = redact(`${proc.stdout || ""}${proc.stderr || ""}`);
+  if (lane.id === "association-audit" && exitCode === 0) {
+    try {
+      const candidate = JSON.parse(proc.stdout || "");
+      if (!validAssociationAudit(candidate)) {
+        throw new Error("audit output failed manifest receipt validation");
+      }
+      associationAudit = candidate;
+    } catch (error) {
+      exitCode = 1;
+      output += `\n[agent-evidence] invalid association audit receipt: ${redact(error.message)}\n`;
+    }
+  }
   const logPath = join(outDir, "logs", `${lane.id}.log`);
   writeFileSync(logPath, output);
   results.push({
     ...lane,
-    status: proc.status === 0 ? "passed" : "failed",
-    exit_code: proc.status ?? 1,
+    status: exitCode === 0 ? "passed" : "failed",
+    exit_code: exitCode,
     duration_ms: Date.now() - laneStart,
     log_path: logPath,
   });
@@ -258,6 +324,7 @@ const manifest = {
     node: process.version,
   },
   lanes: results,
+  association_audit: associationAudit,
   artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
   caveats: largeFiles.caveats,
   result: requiredFailures.length === 0 ? "passed" : "failed",

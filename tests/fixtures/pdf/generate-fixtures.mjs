@@ -915,11 +915,11 @@ const fixtures = {
         {
           text: 'Table 1. A note marker inside a table cell remains associated.',
           x: 54,
-          y: 350,
+          y: 238,
           font: 'F3',
         },
-        { text: 'Measure', x: 72, y: 320, font: 'F2' },
-        { text: 'Evidence', x: 260, y: 320, font: 'F2' },
+        { text: 'Measure', x: 72, y: 306, font: 'F2' },
+        { text: 'Evidence', x: 260, y: 306, font: 'F2' },
         { text: 'Cell note', x: 72, y: 292 },
         { text: 'Note ', x: 260, y: 292 },
         { text: '4', x: 285, y: 296, size: 7 },
@@ -935,9 +935,6 @@ const fixtures = {
           height: 72,
           raster: structuredFigureTwo,
         },
-      ],
-      commands: [
-        'q\n0.8 w\n54 250 306 85 re\n54 307 m\n360 307 l\n54 280 m\n360 280 l\n240 250 m\n240 335 l\nS\nQ',
       ],
     },
     {

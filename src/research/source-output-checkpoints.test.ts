@@ -19,7 +19,10 @@ const base = {
 
 describe('source/output checkpoints', () => {
   it('loads the note and citation association checkpoint set', () => {
-    const parsed = parseSourceOutputCheckpointSet(associationCheckpoints)
+    const parsed = parseSourceOutputCheckpointSet({
+      schemaVersion: associationCheckpoints.schemaVersion,
+      checkpoints: associationCheckpoints.checkpoints,
+    })
     expect(
       parsed.checkpoints.map((checkpoint) => checkpoint.property),
     ).toEqual([

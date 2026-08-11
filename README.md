@@ -45,6 +45,14 @@ npm run build
 npm run preview
 ```
 
+### Publication build runtime
+
+`npm run publication:build` publishes its output matrix with an atomic
+directory swap that shells out to `python3` (for the `renameat2` /
+`renameatx_np` syscalls). Supported Linux and macOS hosts therefore need
+`python3` on `PATH`; the build verifies this before any adapter, staging, or
+rendering work and fails with a dependency error when it is missing.
+
 ### PDF → EPUB human-review feedback
 
 The 20-paper review queue always writes a versioned, hash-bound receipt to

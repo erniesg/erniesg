@@ -77,6 +77,26 @@ export function assertAtomicPublicationPlatform(platform) {
   throw error
 }
 
+export function assertAtomicPublicationRuntime() {
+  // The final atomic publish shells out to python3 for renameat2/renameatx_np
+  // (see ATOMIC_RENAME_SCRIPT). The runtime is not declared in package.json
+  // engines, so probe it before any adapter resolution, staging, rendering,
+  // or output work instead of failing after the full profile matrix.
+  try {
+    execFileSync('python3', ['-c', 'import ctypes, os, sys'], {
+      stdio: 'ignore',
+    })
+  } catch {
+    // The probe failure detail can embed environment-specific paths; keep the
+    // dependency error actionable and sanitized.
+    const error = new Error(
+      'Atomic directory publication requires a python3 runtime on PATH; install python3 before running publication builds',
+    )
+    error.code = 'ENOENT'
+    throw error
+  }
+}
+
 function resolveThroughExistingAncestor(value) {
   let ancestor = resolve(value)
   const unresolved = []
@@ -900,6 +920,7 @@ export async function bindPublicationSourceReceipt(
 export async function publicationBuild(argv = process.argv.slice(2), runtime = {}) {
   const options = parsePublicationBuildArgs(argv)
   assertAtomicPublicationPlatform(runtime.platform ?? process.platform)
+  assertAtomicPublicationRuntime()
   // Repository-local final outputs must already be git-ignored. Invocation-owned
   // staging is excluded explicitly from the clean-source receipt evidence.
   const finalOutput = assertPublicationOutputDirectory(options.output)

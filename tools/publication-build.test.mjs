@@ -353,6 +353,59 @@ describe('publication:build CLI', () => {
     }
   })
 
+  it('verifies the python3 atomic-rename runtime before adapter, staging, or renderer work', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-build-python-preflight-'),
+    )
+    const outputParent = resolve(temporaryRoot, 'must-not-be-created')
+    const output = resolve(outputParent, 'output')
+    const neverReadInput = resolve(temporaryRoot, 'never-read.json')
+    const originalRender = vivliostyleRenderer.render
+    let renderCalls = 0
+    vivliostyleRenderer.render = async () => {
+      renderCalls += 1
+      throw new Error('renderer must not run without the python3 runtime')
+    }
+    const originalPath = process.env.PATH
+    try {
+      process.env.PATH = resolve(temporaryRoot, 'empty-path-entry')
+      const error = await publicationBuild(
+        [
+          '--adapter',
+          'payload',
+          '--input',
+          neverReadInput,
+          '--output',
+          output,
+        ],
+        { platform: process.platform },
+      ).then(
+        () => undefined,
+        (failure) => failure,
+      )
+      process.env.PATH = originalPath
+      expect(error).toMatchObject({ code: 'ENOENT' })
+      expect(error?.message).toBe(
+        'Atomic directory publication requires a python3 runtime on PATH; install python3 before running publication builds',
+      )
+      expect(error?.message).not.toContain(output)
+      expect(renderCalls).toBe(0)
+      // The missing input file was never read, so adapter resolution did not
+      // start; no staging directory or output parent was ever created.
+      await expect(access(neverReadInput)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(access(outputParent)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      expect(await readdir(temporaryRoot)).toEqual([])
+    } finally {
+      process.env.PATH = originalPath
+      vivliostyleRenderer.render = originalRender
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
   it('replaces a reused output directory wholesale instead of merging into it', async () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-build-replaced-reuse-'),

@@ -1373,17 +1373,311 @@ export function serializeModelConsultationReceipt(
   return `${stableJson(receipt)}\n`
 }
 
+function receiptRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function exactReceiptKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+) {
+  const allowed = new Set([...required, ...optional])
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    Object.keys(value).every((key) => allowed.has(key))
+  )
+}
+
+function receiptId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+}
+
+function receiptHash(value: unknown) {
+  return typeof value === 'string' && HASH.test(value)
+}
+
+function validReceiptChoice(value: unknown) {
+  if (!receiptRecord(value)) return false
+  if (
+    !exactReceiptKeys(value, ['candidateId'], [
+      'associationId',
+      'order',
+      'label',
+    ]) ||
+    !receiptId(value.candidateId)
+  )
+    return false
+  if (
+    Object.hasOwn(value, 'associationId') &&
+    !receiptId(value.associationId)
+  )
+    return false
+  if (
+    Object.hasOwn(value, 'order') &&
+    (typeof value.order !== 'number' || !Number.isFinite(value.order))
+  )
+    return false
+  return !Object.hasOwn(value, 'label') || typeof value.label === 'string'
+}
+
+function validReceiptModel(value: unknown) {
+  if (!receiptRecord(value)) return false
+  if (
+    !exactReceiptKeys(value, [
+      'providerId',
+      'modelId',
+      'modelVersion',
+      'modelDigest',
+    ])
+  )
+    return false
+  return (
+    typeof value.providerId === 'string' &&
+    SAFE_ID.test(value.providerId) &&
+    typeof value.modelId === 'string' &&
+    SAFE_ID.test(value.modelId) &&
+    typeof value.modelVersion === 'string' &&
+    SAFE_ID.test(value.modelVersion) &&
+    typeof value.modelDigest === 'string' &&
+    (HASH.test(value.modelDigest) || SAFE_ID.test(value.modelDigest))
+  )
+}
+
+function validReceiptConsultation(value: unknown) {
+  if (!receiptRecord(value)) return false
+  if (
+    !exactReceiptKeys(
+      value,
+      [
+        'schemaVersion',
+        'requestId',
+        'documentId',
+        'decisionId',
+        'decisionClass',
+        'sourceSha256',
+        'inputs',
+        'inputsHash',
+        'candidates',
+        'candidateIds',
+        'model',
+        'promptHash',
+        'status',
+        'choice',
+        'costUsd',
+        'latencyMs',
+      ],
+      ['fixtureId', 'failureCode'],
+    )
+  )
+    return false
+  if (
+    value.schemaVersion !== MODEL_FALLBACK_SCHEMA_VERSION ||
+    !receiptHash(value.requestId) ||
+    !receiptId(value.documentId) ||
+    !receiptId(value.decisionId) ||
+    !receiptId(value.decisionClass) ||
+    !receiptHash(value.sourceSha256) ||
+    !receiptRecord(value.inputs) ||
+    !receiptHash(value.inputsHash) ||
+    !validReceiptModel(value.model) ||
+    !receiptHash(value.promptHash) ||
+    !finiteNonNegative(value.costUsd) ||
+    (value.latencyMs !== null && !finiteNonNegative(value.latencyMs)) ||
+    (Object.hasOwn(value, 'fixtureId') && !receiptId(value.fixtureId))
+  )
+    return false
+
+  if (!Array.isArray(value.candidates) || value.candidates.length === 0)
+    return false
+  const candidateIdsFromCandidates: string[] = []
+  for (const candidate of value.candidates) {
+    if (!receiptRecord(candidate) || !receiptId(candidate.id)) return false
+    candidateIdsFromCandidates.push(candidate.id)
+  }
+  if (!Array.isArray(value.candidateIds)) return false
+  const recordedCandidateIds = value.candidateIds
+  if (
+    recordedCandidateIds.length === 0 ||
+    !recordedCandidateIds.every(receiptId) ||
+    new Set(recordedCandidateIds).size !== recordedCandidateIds.length ||
+    candidateIdsFromCandidates.length !== recordedCandidateIds.length ||
+    candidateIdsFromCandidates.some(
+      (candidateId, index) => candidateId !== recordedCandidateIds[index],
+    )
+  )
+    return false
+
+  const hasFailure = Object.hasOwn(value, 'failureCode')
+  if (value.status === 'accepted') {
+    if (hasFailure || !validReceiptChoice(value.choice)) return false
+    const choice = value.choice as Record<string, unknown>
+    const candidate = value.candidates.find(
+      (item) => (item as Record<string, unknown>).id === choice.candidateId,
+    ) as Record<string, unknown> | undefined
+    if (!candidate) return false
+    for (const key of ['associationId', 'order', 'label']) {
+      if (!Object.hasOwn(choice, key)) continue
+      const candidateValue =
+        key === 'associationId'
+          ? candidate.associationId ??
+            (typeof candidate.association === 'string'
+              ? candidate.association
+              : receiptRecord(candidate.association)
+                ? candidate.association.id
+                : undefined)
+          : candidate[key]
+      if (choice[key] !== candidateValue) return false
+    }
+    return true
+  }
+  if (value.status === 'pending') return value.choice === null && !hasFailure
+  if (value.status === 'rejected' || value.status === 'failed')
+    return (
+      value.choice === null && hasFailure && receiptId(value.failureCode)
+    )
+  return false
+}
+
+function validReceiptDecision(value: unknown) {
+  if (!receiptRecord(value)) return false
+  if (
+    !exactReceiptKeys(value, [
+      'documentId',
+      'decisionId',
+      'decisionClass',
+      'outcome',
+      'consulted',
+    ]) ||
+    !receiptId(value.documentId) ||
+    !receiptId(value.decisionId) ||
+    !receiptId(value.decisionClass) ||
+    typeof value.consulted !== 'boolean'
+  )
+    return false
+  if (value.outcome === 'consulted') return value.consulted
+  return (
+    (value.outcome === 'deterministic' ||
+      value.outcome === 'review-required') &&
+    !value.consulted
+  )
+}
+
+function validReceiptMetric(value: unknown) {
+  if (!receiptRecord(value)) return false
+  if (
+    !exactReceiptKeys(value, [
+      'decisionCount',
+      'consultationCount',
+      'consultationRate',
+    ]) ||
+    !Number.isInteger(value.decisionCount) ||
+    (value.decisionCount as number) < 0 ||
+    !Number.isInteger(value.consultationCount) ||
+    (value.consultationCount as number) < 0 ||
+    (value.consultationCount as number) > (value.decisionCount as number) ||
+    typeof value.consultationRate !== 'number' ||
+    !Number.isFinite(value.consultationRate)
+  )
+    return false
+  const expectedRate =
+    value.decisionCount === 0
+      ? 0
+      : (value.consultationCount as number) / (value.decisionCount as number)
+  return value.consultationRate === expectedRate
+}
+
 export function validateModelConsultationReceipt(
   receipt: unknown,
 ): receipt is ModelFallbackReceipt {
-  if (!receipt || typeof receipt !== 'object') return false
-  const value = receipt as Partial<ModelFallbackReceipt>
+  if (!receiptRecord(receipt)) return false
+  if (
+    !exactReceiptKeys(receipt, [
+      'schemaVersion',
+      'documentId',
+      'sourceSha256',
+      'consultations',
+      'decisions',
+      'metrics',
+    ]) ||
+    receipt.schemaVersion !== MODEL_FALLBACK_SCHEMA_VERSION ||
+    !receiptId(receipt.documentId) ||
+    (receipt.sourceSha256 !== null && !receiptHash(receipt.sourceSha256)) ||
+    !Array.isArray(receipt.consultations) ||
+    !receipt.consultations.every(validReceiptConsultation) ||
+    !Array.isArray(receipt.decisions) ||
+    !receipt.decisions.every(validReceiptDecision) ||
+    !receiptRecord(receipt.metrics)
+  )
+    return false
+
+  if (
+    receipt.consultations.some(
+      (consultation) =>
+        consultation.documentId !== receipt.documentId ||
+        consultation.sourceSha256 !== receipt.sourceSha256,
+    ) ||
+    receipt.decisions.some(
+      (decision) => decision.documentId !== receipt.documentId,
+    ) ||
+    (receipt.consultations.length > 0 && receipt.sourceSha256 === null)
+  )
+    return false
+
+  const metrics = receipt.metrics
+  if (
+    !exactReceiptKeys(metrics, [
+      'totalDecisionCount',
+      'totalConsultationCount',
+      'consultationRate',
+      'byDecisionClass',
+    ]) ||
+    !Number.isInteger(metrics.totalDecisionCount) ||
+    (metrics.totalDecisionCount as number) < 0 ||
+    !Number.isInteger(metrics.totalConsultationCount) ||
+    (metrics.totalConsultationCount as number) < 0 ||
+    typeof metrics.consultationRate !== 'number' ||
+    !Number.isFinite(metrics.consultationRate) ||
+    !receiptRecord(metrics.byDecisionClass)
+  )
+    return false
+
+  const decisionsByClass = new Map<string, ModelDecisionMetricEvent[]>()
+  for (const decision of receipt.decisions as ModelDecisionMetricEvent[]) {
+    const events = decisionsByClass.get(decision.decisionClass) ?? []
+    events.push(decision)
+    decisionsByClass.set(decision.decisionClass, events)
+  }
+  const classNames = [...decisionsByClass.keys()].sort()
+  if (
+    JSON.stringify(Object.keys(metrics.byDecisionClass).sort()) !==
+    JSON.stringify(classNames)
+  )
+    return false
+
+  let decisionTotal = 0
+  let consultationTotal = 0
+  for (const decisionClass of classNames) {
+    const classMetric = metrics.byDecisionClass[decisionClass]
+    if (!validReceiptMetric(classMetric)) return false
+    const typedMetric = classMetric as ModelConsultationMetric
+    const events = decisionsByClass.get(decisionClass) ?? []
+    if (
+      typedMetric.decisionCount !== events.length ||
+      typedMetric.consultationCount >
+        events.filter(({ consulted }) => consulted).length
+    )
+      return false
+    decisionTotal += typedMetric.decisionCount
+    consultationTotal += typedMetric.consultationCount
+  }
+
+  const expectedRate = decisionTotal === 0 ? 0 : consultationTotal / decisionTotal
   return (
-    value.schemaVersion === MODEL_FALLBACK_SCHEMA_VERSION &&
-    typeof value.documentId === 'string' &&
-    Array.isArray(value.consultations) &&
-    Array.isArray(value.decisions) &&
-    Boolean(value.metrics && typeof value.metrics === 'object')
+    metrics.totalDecisionCount === decisionTotal &&
+    metrics.totalDecisionCount === receipt.decisions.length &&
+    metrics.totalConsultationCount === consultationTotal &&
+    metrics.consultationRate === expectedRate
   )
 }
 

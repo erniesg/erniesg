@@ -42,9 +42,30 @@
         "label": { "type": "string" }
       }
     },
+    "candidate": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" }
+      },
+      "additionalProperties": true
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providerId", "modelId", "modelVersion", "modelDigest"],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/id" },
+        "modelId": { "$ref": "#/$defs/id" },
+        "modelVersion": { "$ref": "#/$defs/id" },
+        "modelDigest": {
+          "anyOf": [{ "$ref": "#/$defs/sha256" }, { "$ref": "#/$defs/id" }]
+        }
+      }
+    },
     "consultation": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": [
         "schemaVersion",
         "requestId",
@@ -73,17 +94,18 @@
         "sourceSha256": { "$ref": "#/$defs/sha256" },
         "inputs": { "type": "object" },
         "inputsHash": { "$ref": "#/$defs/sha256" },
-        "candidates": { "type": "array", "minItems": 1 },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/candidate" }
+        },
         "candidateIds": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/id" }
         },
-        "model": {
-          "type": "object",
-          "required": ["providerId", "modelId", "modelVersion", "modelDigest"]
-        },
+        "model": { "$ref": "#/$defs/model" },
         "promptHash": { "$ref": "#/$defs/sha256" },
         "status": { "enum": ["pending", "accepted", "rejected", "failed"] },
         "choice": {
@@ -93,8 +115,52 @@
         "latencyMs": {
           "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }]
         },
-        "failureCode": { "type": "string" }
-      }
+        "failureCode": { "$ref": "#/$defs/id" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "accepted" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "choice": { "$ref": "#/$defs/choice" } },
+            "not": {
+              "properties": {
+                "failureCode": { "$ref": "#/$defs/id" }
+              },
+              "required": ["failureCode"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "enum": ["rejected", "failed"] }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["failureCode"],
+            "properties": { "choice": { "type": "null" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "pending" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "choice": { "type": "null" } },
+            "not": {
+              "properties": {
+                "failureCode": { "$ref": "#/$defs/id" }
+              },
+              "required": ["failureCode"]
+            }
+          }
+        }
+      ]
     },
     "decision": {
       "type": "object",

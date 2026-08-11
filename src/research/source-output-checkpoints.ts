@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { PdfSourceSemanticFlowBoundaryDecision } from './import-types'
 import {
   getTargetProfile,
   TARGET_PROFILE_IDS,
@@ -16,6 +17,8 @@ export const SOURCE_OUTPUT_CHECKPOINT_PROPERTIES = [
   'figure-present',
   'caption-boundary',
   'prose-continuity',
+  'hyphen-resolution',
+  'markup-non-promotion',
   'heading-level',
   'table-structure',
   'code-block-structure',
@@ -49,11 +52,20 @@ const sourceExpectationSchema = z
   })
   .strict()
 
+const semanticFlowExpectationSchema = z
+  .object({
+    topology: z.enum(['same-page-column', 'cross-page-column']),
+    fromPage: z.number().int().positive(),
+    outcome: z.enum(['space', 'no-space']),
+  })
+  .strict()
+
 const renditionExpectationSchema = z
   .object({
     feature: z.enum(SOURCE_OUTPUT_RENDITION_FEATURES),
     text: z.string().min(1).optional(),
     level: z.number().int().min(1).max(6).optional(),
+    semanticFlow: semanticFlowExpectationSchema.optional(),
   })
   .strict()
 
@@ -92,6 +104,7 @@ export type CheckpointValidationIssue = {
     | 'duplicate-id'
     | 'property-feature-mismatch'
     | 'property-source-feature-mismatch'
+    | 'missing-semantic-flow-expectation'
   message: string
 }
 
@@ -111,6 +124,8 @@ function expectedRenditionFeature(
     case 'caption-boundary':
       return 'caption'
     case 'prose-continuity':
+    case 'hyphen-resolution':
+    case 'markup-non-promotion':
       return 'prose'
     case 'heading-level':
       return 'heading'
@@ -131,6 +146,8 @@ function expectedSourceFeature(
     case 'caption-boundary':
       return 'visual'
     case 'prose-continuity':
+    case 'hyphen-resolution':
+    case 'markup-non-promotion':
       return 'text'
     case 'heading-level':
     case 'table-structure':
@@ -198,6 +215,18 @@ export function validateSourceOutputCheckpointSet(
         message: `${checkpoint.property} must inspect source feature ${expectedSource}.`,
       })
     }
+
+    if (
+      checkpoint.property === 'prose-continuity' &&
+      checkpoint.output.semanticFlow === undefined
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'missing-semantic-flow-expectation',
+        message:
+          'prose-continuity must name the source-proven semantic-flow boundary it expects.',
+      })
+    }
   }
   return issues
 }
@@ -245,6 +274,11 @@ export type RenditionCheckpointObservation = {
   profile: TargetProfileId
   width: number
   html: string
+  semanticFlowBoundaryLedgerValid?: boolean
+  semanticFlowBoundaryDecisions?: readonly Pick<
+    PdfSourceSemanticFlowBoundaryDecision,
+    'page' | 'topology' | 'outcome'
+  >[]
 }
 
 export type SourceOutputCheckpointObservation = {
@@ -375,6 +409,54 @@ function hasProse(checkpoint: SourceOutputCheckpoint, html: string) {
   )
 }
 
+const MARKUP_PROMOTION_TAGS = [
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'strong',
+  'b',
+  'em',
+  'i',
+  'li',
+] as const
+
+/**
+ * Text that merely looks like markup must reach the reader as the characters
+ * the source printed. Finding the named text inside a heading, an emphasis run,
+ * or a list item proves the opposite: the rendition promoted it to structure
+ * the source never carried.
+ */
+function promotedMarkupStructure(
+  checkpoint: SourceOutputCheckpoint,
+  html: string,
+) {
+  const expected = normalizedText(checkpoint.output.text ?? '')
+  if (!expected) return null
+  return (
+    MARKUP_PROMOTION_TAGS.find((tag) =>
+      tagContents(html, tag).some((content) =>
+        normalizedText(content).includes(expected),
+      ),
+    ) ?? null
+  )
+}
+
+/**
+ * A discretionary line-end hyphen is resolved only when the split form no
+ * longer reaches the reader. The printed fragment is the source expectation, so
+ * its survival anywhere in the rendition is the failure the checkpoint names.
+ */
+function unresolvedHyphenFragment(
+  checkpoint: SourceOutputCheckpoint,
+  html: string,
+) {
+  const fragment = normalizedText(checkpoint.source.text ?? '')
+  return Boolean(fragment && normalizedText(html).includes(fragment))
+}
+
 function outputFeaturePresent(
   checkpoint: SourceOutputCheckpoint,
   html: string,
@@ -477,6 +559,55 @@ export function evaluateSourceOutputCheckpoint(
       checkpointId: checkpoint.id,
       status: 'failed',
       reason: 'The source page does not contain the named source text.',
+    }
+  }
+  if (checkpoint.output.semanticFlow) {
+    if (observation.rendition.semanticFlowBoundaryLedgerValid !== true) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason:
+          'The reconstruction did not provide a valid semantic-flow boundary ledger.',
+      }
+    }
+    const expected = checkpoint.output.semanticFlow
+    const matchingDecision =
+      observation.rendition.semanticFlowBoundaryDecisions?.some(
+        (decision) =>
+          decision.page === expected.fromPage &&
+          decision.topology === expected.topology &&
+          decision.outcome === expected.outcome,
+      ) ?? false
+    if (!matchingDecision) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: `The semantic-flow boundary ledger does not contain ${expected.topology} ${expected.outcome} proof from page ${expected.fromPage}.`,
+      }
+    }
+  }
+  if (checkpoint.property === 'markup-non-promotion') {
+    const promoted = promotedMarkupStructure(
+      checkpoint,
+      observation.rendition.html,
+    )
+    if (promoted) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: `Markup-shaped source text was promoted to <${promoted}> without source evidence.`,
+      }
+    }
+  }
+  if (
+    checkpoint.property === 'hyphen-resolution' &&
+    unresolvedHyphenFragment(checkpoint, observation.rendition.html)
+  ) {
+    return {
+      checkpointId: checkpoint.id,
+      status: 'failed',
+      reason:
+        'The rendition still carries the printed line-end hyphen fragment.',
     }
   }
   return { checkpointId: checkpoint.id, status: 'passed' }

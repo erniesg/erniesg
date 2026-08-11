@@ -38,6 +38,7 @@ import {
 import {
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
+  PDF_SOURCE_SEMANTIC_FLOW_CROSS_PAGE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   pdfSourceSemanticFlowBoundaryDecisionId,
   pdfSourceSemanticFlowRunSha256,
@@ -2280,6 +2281,238 @@ describe('PDF semantic signal detection', () => {
     })
 
     expect(result.semanticTextViolationNodeIds).toEqual([])
+  })
+
+  describe('cross-page-column ledger verification', () => {
+    const crossPageFixture = ({
+      runningHeadIsFurniture,
+    }: {
+      runningHeadIsFurniture: boolean
+    }) => {
+      const tailRun = {
+        ...run(
+          'The measured drift therefore continues toward the',
+          0.515,
+          0.82,
+          10,
+          0.385,
+        ),
+        sourceSequenceIndex: 40,
+      }
+      const headRun = {
+        ...run('Continuous prose reconstruction', 0.09, 0.03, 10, 0.385),
+        page: 2,
+        sourceSequenceIndex: 0,
+      }
+      const continuationRun = {
+        ...run(
+          'stationary regime described in the next section.',
+          0.09,
+          0.1,
+          10,
+          0.385,
+        ),
+        page: 2,
+        sourceSequenceIndex: 1,
+      }
+      const region = (
+        id: string,
+        sourceRun: PdfSourceRun,
+        column: PdfPageRegion['column'],
+        furniture = false,
+      ): PdfPageRegion => ({
+        id,
+        page: sourceRun.page,
+        kind: 'body',
+        column,
+        text: sourceRun.text,
+        confidence: 1,
+        box: { ...sourceRun },
+        lines: [
+          {
+            id: `${id}-line`,
+            text: sourceRun.text,
+            fontSize: sourceRun.fontSize,
+            box: { ...sourceRun },
+            runs: [sourceRun],
+            sourceFragmentLineage: {
+              algorithm: 'source-run-fragment-v1',
+              sourceLineId: `${id}-source-line`,
+              fragment: 'whole',
+              sourceSequenceIndexes: [sourceRun.sourceSequenceIndex!],
+            },
+          },
+        ],
+        nativeObjectIds: [],
+        includedInReadingOrder: !furniture,
+        ...(furniture
+          ? {
+              furniture: {
+                classification: 'repeated-text' as const,
+                band: 'top' as const,
+                pages: [1, 2],
+                boxes: [{ ...sourceRun }],
+                evidence: ['repeated-normalized-text'],
+              },
+            }
+          : {}),
+      })
+      const tail = region('cross-page-tail', tailRun, 'right')
+      const head = region(
+        'cross-page-running-head',
+        headRun,
+        runningHeadIsFurniture ? 'span' : 'left',
+        runningHeadIsFurniture,
+      )
+      const continuation = region(
+        'cross-page-continuation',
+        continuationRun,
+        'left',
+      )
+      const endpoint = (
+        target: PdfPageRegion,
+        sourceRun: PdfSourceRun,
+      ) => ({
+        regionId: target.id,
+        lineId: target.lines[0].id,
+        runIndex: 0,
+        sourceSequenceIndex: sourceRun.sourceSequenceIndex!,
+        sourceRunSha256: pdfSourceSemanticFlowRunSha256(sourceRun),
+        sourceFragmentId: `${target.id}-source-line:whole`,
+      })
+      const decision = sourceSemanticFlowDecision({
+        page: 1,
+        rotation: 0,
+        method: 'pdf-text',
+        topology: 'cross-page-column',
+        outcome: 'space',
+        from: endpoint(tail, tailRun),
+        to: endpoint(continuation, continuationRun),
+        evidence: [...PDF_SOURCE_SEMANTIC_FLOW_CROSS_PAGE_EVIDENCE],
+      })
+      const canonicalText = `${tailRun.text} ${continuationRun.text}`
+      const paper: ResearchPaper = {
+        id: 'cross-page-paper',
+        version: '1.0.0',
+        status: 'working',
+        title: '',
+        subtitle: 'Test',
+        authors: [],
+        updated: '2026-07-30',
+        abstract: 'Test',
+        nodes: [
+          {
+            id: 'cross-page-node',
+            type: 'paragraph',
+            text: canonicalText,
+            source: 'test',
+          },
+        ],
+      }
+      const orderedRegions = [tail, continuation]
+      const provenance: Record<string, NodeSourceEvidence> = {
+        'cross-page-node': {
+          confidence: 1,
+          pages: [1, 2],
+          regionIds: orderedRegions.map((target) => target.id),
+          boxes: orderedRegions.map((target) => ({ ...target.box })),
+          links: [],
+        },
+      }
+      return { decision, paper, provenance, orderedRegions, head }
+    }
+
+    it('accepts a page-break join whose only intervening source is furniture', () => {
+      const { decision, paper, provenance, orderedRegions, head } =
+        crossPageFixture({ runningHeadIsFurniture: true })
+
+      const result = provenanceTextConservation({
+        allRegions: [orderedRegions[0], head, orderedRegions[1]],
+        orderedRegions,
+        paper,
+        provenance,
+        lineBoundaryDecisions: [],
+        sourceSemanticFlowBoundaryDecisions: [decision],
+      })
+
+      expect(result.semanticFlowBoundaryLedgerValid).toBe(true)
+      expect(result.semanticTextViolationNodeIds).toEqual([])
+    })
+
+    it('rejects a page-break join that skips unaccounted body source', () => {
+      // Identical ledger entry, but the intervening page-two text carries no
+      // furniture evidence. The audit re-derives the page extrema itself, so a
+      // forged cross-page proof cannot survive without issue 042's evidence.
+      const { decision, paper, provenance, orderedRegions, head } =
+        crossPageFixture({ runningHeadIsFurniture: false })
+
+      const result = provenanceTextConservation({
+        allRegions: [orderedRegions[0], head, orderedRegions[1]],
+        orderedRegions,
+        paper,
+        provenance,
+        lineBoundaryDecisions: [],
+        sourceSemanticFlowBoundaryDecisions: [decision],
+      })
+
+      expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
+    })
+
+    it('does not let an unvalidated matched visual hide intervening body source', () => {
+      const { decision, paper, provenance, orderedRegions, head } =
+        crossPageFixture({ runningHeadIsFurniture: false })
+      const forgedRelationship: PdfVisualRelationship = {
+        id: 'forged-cross-page-table',
+        kind: 'table',
+        label: 'Table 99',
+        captionRegionId: head.id,
+        sourceRegionIds: [head.id],
+        sourceLineIds: [head.lines[0].id],
+        sourceObjectIds: [],
+        assetIds: [],
+        status: 'matched',
+        confidence: 1,
+        evidence: ['forged-test-relationship'],
+        candidates: [],
+        sourceBoxes: [{ ...head.box }],
+        sourceText: head.text,
+        altText: 'Forged table',
+        altTextSource: 'caption',
+        canonicalNodeId: null,
+        captionNodeId: null,
+      }
+
+      const result = provenanceTextConservation({
+        allRegions: [orderedRegions[0], head, orderedRegions[1]],
+        orderedRegions,
+        paper,
+        provenance,
+        visualRelationships: [forgedRelationship],
+        validatedVisualRelationships: [],
+        lineBoundaryDecisions: [],
+        sourceSemanticFlowBoundaryDecisions: [decision],
+      })
+
+      expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
+    })
+
+    it('rejects a canonical cross-page paragraph with no boundary decision', () => {
+      const { paper, provenance, orderedRegions } = crossPageFixture({
+        runningHeadIsFurniture: true,
+      })
+
+      const result = provenanceTextConservation({
+        allRegions: orderedRegions,
+        orderedRegions,
+        paper,
+        provenance,
+        lineBoundaryDecisions: [],
+        sourceSemanticFlowBoundaryDecisions: [],
+      })
+
+      expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
+      expect(result.semanticTextViolationNodeIds).toContain('cross-page-node')
+    })
   })
 
   it('validates uncased-script same-page-column decisions from layout', () => {

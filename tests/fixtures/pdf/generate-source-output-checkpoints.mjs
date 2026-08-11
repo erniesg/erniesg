@@ -21,24 +21,73 @@ function imageObject() {
 }
 
 const content = [
-  textLine('Source/output checkpoint fixture', 72, 730, 20, 'F2'),
+  textLine('Source/output checkpoint fixture', 72, 760, 9),
+  textLine('Continuous prose checkpoint paper', 72, 720, 20, 'F2'),
   textLine('Figure 1. Source flowchart', 72, 680),
-  textLine('The result sentence continues across a column break.', 72, 640),
   textLine('Pseudocode', 72, 580, 14, 'F2'),
   textLine('for each source line:', 90, 550),
   textLine('compare source and rendition', 108, 528),
   textLine('keep the named property visible', 108, 506),
   'q\n360 0 0 160 126 300 cm\n/Im1 Do\nQ',
   textLine('Figure 1 caption stays below the source flowchart.', 72, 250, 10),
+  textLine('A second result sentence runs off the bottom of', 72, 104),
+  textLine('this page and', 72, 82),
+].join('\n')
+
+// Page two carries the halves of the sentence, the word, and the literal text
+// that issue 043's page-join, hyphen-resolution, and markup non-promotion
+// checkpoints name. The running head repeats page one's title so that furniture
+// exclusion has something to exclude between the two halves.
+const secondPageContent = [
+  textLine('Source/output checkpoint fixture', 72, 760, 9),
+  textLine('continues at the top of the next one without losing', 72, 700),
+  textLine('its clause.', 72, 680),
+  textLine('The high-resolution source photo-', 72, 620),
+  textLine('graph remains clear.', 72, 600),
+  textLine('A photograph attests the joined form.', 72, 575),
+  textLine('The source preserves the rare-', 72, 540),
+  textLine('fragment compound.', 72, 520),
+  textLine('The rare-fragment spelling is attested.', 72, 495),
+  textLine('## Not a heading and **not bold** and {placeholder}', 72, 470),
+  textLine('stay literal.', 72, 450),
+  textLine('1. Literal numbered syntax stays prose.', 72, 420),
+  textLine('First indented paragraph begins', 90, 370),
+  textLine('and continues on its next line.', 72, 350),
+  textLine('Second indented paragraph begins', 90, 336),
+  textLine('and continues independently.', 72, 316),
+  textLine('A widely spaced source line begins', 72, 270),
+  textLine('and remains source-contiguous despite its spacing.', 72, 244),
+  textLine('Prose before the owned equation remains clean.', 72, 180),
+  textLine('E = m c 2 (1)', 240, 150, 14, 'F2'),
+  textLine('Prose after the owned equation remains clean.', 72, 118),
+].join('\n')
+
+// Page three is deliberately only a two-column body. Keeping its source
+// geometry independent of the spanning visual fixture makes the column-flow
+// proof observable rather than relying on a sentence that merely says it
+// crossed a column.
+const thirdPageContent = [
+  textLine('Source/output checkpoint fixture', 72, 760, 9),
+  textLine('Left context establishes a column.', 72, 680),
+  textLine('Left evidence preserves source order.', 72, 640),
+  textLine('Left geometry reaches the final line.', 72, 600),
+  textLine('The result continues toward the', 72, 120),
+  textLine('right column with source proof.', 350, 680),
+  textLine('Right evidence preserves source order.', 350, 640),
+  textLine('Right context completes the gutter.', 350, 600),
 ].join('\n')
 
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
-  '<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
+  '<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>',
   '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   imageObject(),
   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> /XObject << /Im1 4 0 R >> >> /Contents 6 0 R >>',
   `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> >> /Contents 8 0 R >>',
+  `<< /Length ${Buffer.byteLength(secondPageContent)} >>\nstream\n${secondPageContent}\nendstream`,
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 3 0 R >> >> /Contents 10 0 R >>',
+  `<< /Length ${Buffer.byteLength(thirdPageContent)} >>\nstream\n${thirdPageContent}\nendstream`,
 ]
 
 let pdf = '%PDF-1.4\n% synthetic fixture owned by erniesg\n'

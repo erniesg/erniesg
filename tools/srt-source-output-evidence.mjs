@@ -40,6 +40,12 @@ const DEFAULT_OUTPUT = resolve(
   '.agent/evidence/srt-checkpoints',
 )
 const TOOL_VERSION = '1.0.0'
+const PDF_RECONSTRUCTION_PROPERTIES = new Set([
+  'prose-continuity',
+  'hyphen-resolution',
+  'markup-non-promotion',
+  'furniture-exclusion',
+])
 
 const IMAGE_OPERATORS = new Set([
   pdfjs.OPS.paintImageMaskXObject,
@@ -388,12 +394,24 @@ async function createFixtureStructDocument({
       evidence: blockEvidence,
     },
   ]
+  // Issue 043 prose claims: a sentence the source split across a page break, a
+  // discretionary hyphen resolved to its attested joined form, and source text
+  // that merely looks like markup and must stay literal.
+  const pageJoinProse =
+    'A second result sentence runs off the bottom of this page and continues at the top of the next one without losing its clause.'
+  const hyphenResolutionProse =
+    'The high-resolution photograph is attested elsewhere as photograph.'
+  const literalMarkupProse =
+    '## Not a heading and **not bold** and {placeholder} stay literal.'
   const textCharacterCount = [
     'Checkpoint paper',
     'The result sentence continues across a column break.',
     'Figure 1. Source flowchart',
     'Table 1. Validated checkpoint values remain structured.',
     'for each source line:\n  compare source and rendition\n  keep the named property visible',
+    pageJoinProse,
+    hyphenResolutionProse,
+    literalMarkupProse,
     ...cells.map(({ text }) => text),
   ].reduce((total, value) => total + value.length, 0)
   const figureEvidence = {
@@ -485,6 +503,36 @@ async function createFixtureStructDocument({
         inline: [],
         evidence: blockEvidence,
       },
+      {
+        id: 'checkpoint-page-join-prose',
+        kind: 'paragraph',
+        text: pageJoinProse,
+        page,
+        order: 5,
+        column: 'single',
+        inline: [],
+        evidence: blockEvidence,
+      },
+      {
+        id: 'checkpoint-hyphen-prose',
+        kind: 'paragraph',
+        text: hyphenResolutionProse,
+        page,
+        order: 6,
+        column: 'single',
+        inline: [],
+        evidence: blockEvidence,
+      },
+      {
+        id: 'checkpoint-markup-prose',
+        kind: 'paragraph',
+        text: literalMarkupProse,
+        page,
+        order: 7,
+        column: 'single',
+        inline: [],
+        evidence: blockEvidence,
+      },
     ],
     assets: [
       {
@@ -514,6 +562,9 @@ async function createFixtureStructDocument({
           'checkpoint-figure',
           'checkpoint-table',
           'checkpoint-code',
+          'checkpoint-page-join-prose',
+          'checkpoint-hyphen-prose',
+          'checkpoint-markup-prose',
         ],
         columns: [
           {
@@ -525,6 +576,9 @@ async function createFixtureStructDocument({
               'checkpoint-figure',
               'checkpoint-table',
               'checkpoint-code',
+              'checkpoint-page-join-prose',
+              'checkpoint-hyphen-prose',
+              'checkpoint-markup-prose',
             ],
           },
         ],
@@ -540,14 +594,14 @@ async function createFixtureStructDocument({
     receipt: {
       schemaVersion: '0.1.0',
       sourceSha256: sourceHash,
-      blockCount: 5,
+      blockCount: 8,
       assetCount: 1,
       relationshipCount: 0,
       diagnosticCount: 0,
       textCharacterCount,
       conservation: {
-        sourceNodeCount: 5,
-        accountedSourceNodeCount: 5,
+        sourceNodeCount: 8,
+        accountedSourceNodeCount: 8,
         sourceRegionCount: 1,
         accountedSourceRegionCount: 1,
         sourceAnnotationCount: 0,
@@ -559,7 +613,7 @@ async function createFixtureStructDocument({
         sourceDiagnosticCount: 0,
         accountedSourceDiagnosticCount: 0,
         sourceTextCharacterCount: textCharacterCount,
-        structBlockCount: 5,
+        structBlockCount: 8,
         structAssetCount: 1,
         structRelationshipCount: 0,
         structDiagnosticCount: 0,
@@ -616,10 +670,14 @@ async function renderRendition({
   buildEpub,
   profile,
   document,
+  renditionSource,
   browser,
   root,
 }) {
-  const epub = await buildEpub(document)
+  const epub =
+    renditionSource === 'pdf-reconstruction'
+      ? await buildEpub(document, profile)
+      : await buildEpub(document)
   const archive = unzipSync(epub.bytes)
   const unpacked = await mkdtemp(join(root, 'rendition-'))
   await writeArchive(archive, unpacked)
@@ -679,12 +737,13 @@ async function createViteModules() {
     server: { middlewareMode: true, watch: null },
   })
   try {
-    const [checkpoints, struct, targets] = await Promise.all([
+    const [checkpoints, pdf, struct, targets] = await Promise.all([
       vite.ssrLoadModule('/src/research/source-output-checkpoints.ts'),
+      vite.ssrLoadModule('/src/research/pdf.ts'),
       vite.ssrLoadModule('/src/research/epub.ts'),
       vite.ssrLoadModule('/src/research/targets.ts'),
     ])
-    return { vite, checkpoints, struct, targets }
+    return { vite, checkpoints, pdf, struct, targets }
   } catch (error) {
     await vite.close()
     throw error
@@ -789,6 +848,16 @@ async function run(options) {
       sourceBytes,
       basename(options.document),
     )
+    const reconstruction = privacy.defaultFixture
+      ? await modules.pdf.reconstructPdf(
+          new File([sourceBytes], basename(options.document), {
+            type: 'application/pdf',
+            lastModified: 0,
+          }),
+          undefined,
+          { language: 'en-US' },
+        )
+      : null
     browser = await chromium.launch({ headless: true })
     const browserRoot = await mkdtemp(join(tmpdir(), 'srt-source-output-'))
     const byPair = new Map()
@@ -799,7 +868,12 @@ async function run(options) {
       await mkdir(join(options.output, 'pairs'), { recursive: true })
       for (const checkpoint of checkpoints) {
         const profile = modules.targets.getTargetProfile(checkpoint.profile)
-        const pairKey = `${checkpoint.page}\0${checkpoint.profile}`
+        const renditionSource =
+          reconstruction &&
+          PDF_RECONSTRUCTION_PROPERTIES.has(checkpoint.property)
+            ? 'pdf-reconstruction'
+            : 'struct-document'
+        const pairKey = `${checkpoint.page}\0${checkpoint.profile}\0${renditionSource}`
         let pair = byPair.get(pairKey)
         if (!pair) {
           const source = await renderSourcePage(
@@ -810,7 +884,11 @@ async function run(options) {
           const rendition = await renderRendition({
             buildEpub: modules.struct.buildEpub,
             profile,
-            document,
+            document:
+              renditionSource === 'pdf-reconstruction'
+                ? reconstruction.paper
+                : document,
+            renditionSource,
             browser,
             root: browserRoot,
           })
@@ -825,12 +903,27 @@ async function run(options) {
               text: pair.source.text,
               hasVisual: pair.source.hasVisual,
               furnitureContaminationCount:
-                document.receipt?.conservation?.furnitureContaminationCount,
+                renditionSource === 'pdf-reconstruction'
+                  ? reconstruction.completeness.furnitureContaminationCount
+                  : document.receipt?.conservation
+                      ?.furnitureContaminationCount,
             },
             rendition: {
               profile: checkpoint.profile,
               width: pair.rendition.width,
               html: pair.rendition.html,
+              semanticFlowBoundaryLedgerValid:
+                renditionSource === 'pdf-reconstruction'
+                  ? !reconstruction.diagnostics.some(
+                      (diagnostic) =>
+                        diagnostic.code ===
+                        'INVALID_SOURCE_SEMANTIC_FLOW_BOUNDARY_LEDGER',
+                    )
+                  : undefined,
+              semanticFlowBoundaryDecisions:
+                renditionSource === 'pdf-reconstruction'
+                  ? reconstruction.sourceSemanticFlowBoundaryDecisions
+                  : undefined,
             },
           },
         )
@@ -881,6 +974,7 @@ async function run(options) {
           criterion: checkpoint.criterion,
           sourceExpectation: checkpoint.source,
           outputExpectation: checkpoint.output,
+          renditionSource,
           sourceArtifact: `pairs/${sourceName}`,
           outputArtifact: `pairs/${outputName}`,
           conclusion: reviewerConclusion(checkpoint, result),

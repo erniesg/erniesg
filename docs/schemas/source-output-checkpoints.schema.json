@@ -40,6 +40,8 @@
             "figure-present",
             "caption-boundary",
             "prose-continuity",
+            "hyphen-resolution",
+            "markup-non-promotion",
             "heading-level",
             "table-structure",
             "code-block-structure",
@@ -73,7 +75,20 @@
           "enum": ["figure", "caption", "prose", "heading", "table", "code"]
         },
         "text": { "type": "string", "minLength": 1 },
-        "level": { "type": "integer", "minimum": 1, "maximum": 6 }
+        "level": { "type": "integer", "minimum": 1, "maximum": 6 },
+        "semanticFlow": { "$ref": "#/$defs/semanticFlowExpectation" }
+      }
+    },
+    "semanticFlowExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topology", "fromPage", "outcome"],
+      "properties": {
+        "topology": {
+          "enum": ["same-page-column", "cross-page-column"]
+        },
+        "fromPage": { "type": "integer", "minimum": 1 },
+        "outcome": { "enum": ["space", "no-space"] }
       }
     }
   }

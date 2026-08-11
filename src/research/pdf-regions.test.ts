@@ -4723,15 +4723,21 @@ describe('deterministic scholarly page regions', () => {
           8,
           0.011,
         ),
-      ]),
+      ].map((sourceRun, sourceSequenceIndex) => ({
+        ...sourceRun,
+        sourceSequenceIndex,
+      }))),
       page(2, [
-        run(
-          2,
-          'vibrant research continues without intervening page furniture.',
-          0.094,
-          0.14,
-          0.72,
-        ),
+        {
+          ...run(
+            2,
+            'vibrant research continues without intervening page furniture.',
+            0.094,
+            0.14,
+            0.72,
+          ),
+          sourceSequenceIndex: 0,
+        },
       ]),
     ])
 

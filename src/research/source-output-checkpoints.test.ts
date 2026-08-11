@@ -208,6 +208,11 @@ describe('source/output checkpoints', () => {
           output: {
             feature: 'prose',
             text: 'The result sentence continues across a column break.',
+            semanticFlow: {
+              topology: 'same-page-column',
+              fromPage: 2,
+              outcome: 'space',
+            },
           },
         },
       ],
@@ -230,6 +235,168 @@ describe('source/output checkpoints', () => {
       checkpointId: 'prose-continuity',
       status: 'failed',
     })
+  })
+
+  it('rejects a page-break sentence left split across two paragraphs', () => {
+    const checkpoint = parseSourceOutputCheckpointSet({
+      schemaVersion: '1.0.0',
+      checkpoints: [
+        {
+          ...base,
+          id: 'page-break-continuity',
+          property: 'prose-continuity',
+          source: { feature: 'text', text: 'continues at the top' },
+          output: {
+            feature: 'prose',
+            text: 'runs off the bottom of this page and continues at the top of the next one',
+            semanticFlow: {
+              topology: 'cross-page-column',
+              fromPage: 1,
+              outcome: 'space',
+            },
+          },
+        },
+      ],
+    }).checkpoints[0]
+    const source = {
+      page: 2,
+      text: 'continues at the top of the next one',
+      hasVisual: false,
+    }
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>runs off the bottom of this page and</p><p>continues at the top of the next one</p>',
+        },
+      }),
+    ).toMatchObject({ checkpointId: 'page-break-continuity', status: 'failed' })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>runs off the bottom of this page and continues at the top of the next one without losing its clause.</p>',
+        },
+      }),
+    ).toMatchObject({
+      checkpointId: 'page-break-continuity',
+      status: 'failed',
+      reason: expect.stringContaining('semantic-flow boundary ledger'),
+    })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>runs off the bottom of this page and continues at the top of the next one without losing its clause.</p>',
+          semanticFlowBoundaryLedgerValid: true,
+          semanticFlowBoundaryDecisions: [
+            {
+              page: 1,
+              topology: 'cross-page-column',
+              outcome: 'space',
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ checkpointId: 'page-break-continuity', status: 'passed' })
+  })
+
+  it('rejects a rendition that still carries the printed line-end hyphen', () => {
+    const checkpoint = parseSourceOutputCheckpointSet({
+      schemaVersion: '1.0.0',
+      checkpoints: [
+        {
+          ...base,
+          id: 'hyphen-resolution',
+          property: 'hyphen-resolution',
+          source: { feature: 'text', text: 'photo-' },
+          output: {
+            feature: 'prose',
+            text: 'photograph is attested elsewhere as photograph.',
+          },
+        },
+      ],
+    }).checkpoints[0]
+    const source = {
+      page: 2,
+      text: 'The high-resolution photo- graph is attested elsewhere as photograph.',
+      hasVisual: false,
+    }
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>photo- graph is attested elsewhere as photograph. photograph is attested elsewhere as photograph.</p>',
+        },
+      }),
+    ).toMatchObject({
+      status: 'failed',
+      reason: expect.stringContaining('hyphen fragment'),
+    })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>The high-resolution photograph is attested elsewhere as photograph.</p>',
+        },
+      }),
+    ).toMatchObject({ checkpointId: 'hyphen-resolution', status: 'passed' })
+  })
+
+  it('rejects markup-shaped source text promoted to structure', () => {
+    const checkpoint = parseSourceOutputCheckpointSet({
+      schemaVersion: '1.0.0',
+      checkpoints: [
+        {
+          ...base,
+          id: 'markup-non-promotion',
+          property: 'markup-non-promotion',
+          source: { feature: 'text', text: '## Not a heading' },
+          output: {
+            feature: 'prose',
+            text: '## Not a heading and **not bold** and {placeholder} stay literal.',
+          },
+        },
+      ],
+    }).checkpoints[0]
+    const source = {
+      page: 2,
+      text: '## Not a heading and **not bold** and {placeholder} stay literal.',
+      hasVisual: false,
+    }
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>## Not a heading and **not bold** and {placeholder} stay literal.</p><h2>## Not a heading and **not bold** and {placeholder} stay literal.</h2>',
+        },
+      }),
+    ).toMatchObject({
+      status: 'failed',
+      reason: expect.stringContaining('<h2>'),
+    })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>## Not a heading and **not bold** and {placeholder} stay literal.</p>',
+        },
+      }),
+    ).toMatchObject({ checkpointId: 'markup-non-promotion', status: 'passed' })
   })
 
   it('rejects pseudocode flattened into running prose', () => {

@@ -48,6 +48,36 @@ function privateFixture() {
 }
 
 describe('source/output evidence privacy boundary', () => {
+  it('renders repository prose checkpoints from the PDF reconstruction path', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'srt-checkpoint-test-'))
+    temporaryDirectories.push(directory)
+    const output = join(directory, 'evidence')
+    const result = spawnSync(
+      process.execPath,
+      [tool, '--output', output],
+      { cwd: root, encoding: 'utf8' },
+    )
+
+    expect(result.status).toBe(0)
+    const manifest = JSON.parse(
+      readFileSync(join(output, 'checkpoint-manifest.json'), 'utf8'),
+    )
+    expect(manifest.result).toBe('passed')
+    expect(
+      manifest.checkpoints
+        .filter(({ property }) =>
+          [
+            'prose-continuity',
+            'hyphen-resolution',
+            'markup-non-promotion',
+          ].includes(property),
+        )
+        .every(
+          ({ renditionSource }) => renditionSource === 'pdf-reconstruction',
+        ),
+    ).toBe(true)
+  }, 30_000)
+
   it('does not fabricate a private rendition without caller-provided STRUCT', () => {
     const paths = privateFixture()
     const result = spawnSync(

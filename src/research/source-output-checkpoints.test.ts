@@ -639,6 +639,20 @@ describe('source/output checkpoints', () => {
         },
       }),
     ).toEqual({ checkpointId: 'marker-to-body', status: 'passed' })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>A numeric claim <a id="noteref-1" href="notes.xhtml#note-1" epub:type="noteref" role="doc-noteref"><sup>1</sup></a></p>',
+          packagedDocuments: {
+            'notes.xhtml':
+              '<aside id="note-1" epub:type="footnote" role="doc-footnote">Numeric footnote body. <a href="content.xhtml#noteref-1" class="note-backlink">↩</a></aside>',
+          },
+        },
+      }),
+    ).toEqual({ checkpointId: 'marker-to-body', status: 'passed' })
     const repeatedMarkerHtml =
       '<p>An earlier claim <a id="noteref-other-1" href="#note-other-1" epub:type="noteref" role="doc-noteref"><sup>1</sup></a></p>' +
       '<aside id="note-other-1" epub:type="footnote" role="doc-footnote">A different note body. <a href="#noteref-other-1" class="note-backlink">↩</a></aside>' +
@@ -711,6 +725,23 @@ describe('source/output checkpoints', () => {
           html:
             citation +
             '<ol data-numbering-id="references"><li id="reference-2024">Example, A. (2024). Repository-owned author-year evidence.</li></ol>',
+        },
+      }),
+    ).toEqual({ checkpointId: 'citation-to-entry', status: 'passed' })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: citation.replace(
+            '#reference-2024',
+            'references.xhtml#reference-2024',
+          ),
+          packagedDocuments: {
+            'references.xhtml':
+              '<ol data-numbering-id="references"><li id="reference-2024">Example, A. (2024). Repository-owned author-year evidence.</li></ol>',
+          },
         },
       }),
     ).toEqual({ checkpointId: 'citation-to-entry', status: 'passed' })
@@ -973,6 +1004,20 @@ describe('source/output checkpoints', () => {
         checkpointId: 'dangling-link-verifier',
         status: 'failed',
         reason: expect.stringContaining('packaged document'),
+      })
+    }
+    for (const [href, packagedDocument] of [
+      ['supplement.xhtml/', 'supplement.xhtml'],
+      ['chapters//supplement.xhtml', 'chapters/supplement.xhtml'],
+    ]) {
+      expect(
+        evaluateRelative(`<p><a href="${href}">Broken alias</a></p>`, {
+          [packagedDocument]: '<section>Different path</section>',
+        }),
+      ).toMatchObject({
+        checkpointId: 'dangling-link-verifier',
+        status: 'failed',
+        reason: expect.stringContaining(`packaged document ${href}`),
       })
     }
   })

@@ -2479,11 +2479,6 @@ function renderResearchPublicationXhtml(
     visualAssets?: Map<string, PublicationAsset>
   } = {},
 ) {
-  assertPublicationIntegrity(
-    paper,
-    options.reconstruction?.noteRelationships,
-    noteRelationshipSourceEvidence(options.reconstruction),
-  )
   const duplicateVisualOwner = duplicateVisualRelationshipNodeOwnership(
     options.reconstruction?.visualRelationships ?? [],
   )
@@ -2644,6 +2639,12 @@ function renderResearchPublicationXhtml(
         ? [nodeId]
         : [],
     ),
+  )
+  assertPublicationIntegrity(
+    paper,
+    options.reconstruction?.noteRelationships,
+    noteRelationshipSourceEvidence(options.reconstruction),
+    { renderedSemanticTableNodeIds },
   )
   const renderedNoteReferenceOwnerNodes = [
     ...renderableNodes,

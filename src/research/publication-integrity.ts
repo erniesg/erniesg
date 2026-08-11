@@ -15,6 +15,10 @@ export type NoteRelationshipSourceEvidence = {
   provenance: Readonly<Record<string, NodeSourceEvidence>>
 }
 
+export type PublicationIntegrityRenderContext = {
+  renderedSemanticTableNodeIds: ReadonlySet<string>
+}
+
 export type CanonicalTextIntegrityIssue = {
   code: 'EPUB_TEXT_SANITIZATION_LOSS'
   nodeId: string
@@ -187,7 +191,10 @@ type RenderedNoteReference =
       author: string
     }
 
-function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
+function renderedNoteReferences(
+  paper: ResearchPaper,
+  renderContext?: PublicationIntegrityRenderContext,
+): RenderedNoteReference[] {
   return [
     ...renderableAuthorNoteReferences(paper).map((reference) => ({
       kind: 'author' as const,
@@ -212,7 +219,10 @@ function renderedNoteReferences(paper: ResearchPaper): RenderedNoteReference[] {
               end: reference.end,
             }))
         : []),
-      ...(node.type === 'figure' && node.table
+      ...(node.type === 'figure' &&
+      node.table &&
+      (!renderContext ||
+        renderContext.renderedSemanticTableNodeIds.has(node.id))
         ? node.table.rows.flatMap((row, rowIndex) =>
             row.cells.flatMap((cell, cellIndex) =>
               (cell.noteReferences ?? [])
@@ -619,10 +629,11 @@ export function internalReferenceIntegrityIssues(
   paper: ResearchPaper,
   noteRelationships?: readonly PdfNoteRelationship[],
   sourceEvidence?: NoteRelationshipSourceEvidence,
+  renderContext?: PublicationIntegrityRenderContext,
 ): InternalReferenceIntegrityIssue[] {
   const issues: InternalReferenceIntegrityIssue[] = []
   const nodesById = new Map(paper.nodes.map((node) => [node.id, node]))
-  const renderedReferences = renderedNoteReferences(paper)
+  const renderedReferences = renderedNoteReferences(paper, renderContext)
   const referencesById = groupById(renderedReferences)
 
   for (const node of paper.nodes) {
@@ -684,6 +695,24 @@ export function internalReferenceIntegrityIssues(
     if (node.type === 'figure' && node.table) {
       for (const cell of node.table.rows.flatMap((row) => row.cells)) {
         for (const run of cell.inlineRuns ?? []) {
+          if (
+            run.semanticRole === 'cross-reference' &&
+            run.relationshipId &&
+            run.start >= 0 &&
+            run.start < run.end &&
+            run.end <= cell.text.length &&
+            !isBoundedScholarlyReferenceText(
+              cell.text.slice(run.start, run.end),
+            )
+          ) {
+            issues.push({
+              code: 'DANGLING_EPUB_INTERNAL_REFERENCE',
+              sourceId: run.relationshipId,
+              targetId: run.targetIds?.[0] ?? cell.id ?? node.id,
+              relationship: 'semantic-reference-text',
+              detail: 'unbounded-scholarly-reference-text',
+            })
+          }
           if (
             (run.semanticRole !== 'citation' &&
               run.semanticRole !== 'cross-reference') ||
@@ -817,6 +846,7 @@ export function assertPublicationIntegrity(
   paper: ResearchPaper,
   noteRelationships?: readonly PdfNoteRelationship[],
   sourceEvidence?: NoteRelationshipSourceEvidence,
+  renderContext?: PublicationIntegrityRenderContext,
 ) {
   const textIssues = canonicalTextIntegrityIssues(paper)
   if (textIssues.length > 0) {
@@ -829,6 +859,7 @@ export function assertPublicationIntegrity(
     paper,
     noteRelationships,
     sourceEvidence,
+    renderContext,
   )
   if (referenceIssues.length > 0) {
     const first = referenceIssues[0]

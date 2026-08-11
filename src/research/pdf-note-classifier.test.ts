@@ -2968,6 +2968,39 @@ describe('scholarly note-marker taxonomy', () => {
     expect(citationRun?.targetIds).toHaveLength(3)
   })
 
+  it('retains an unresolved citation obligation when a range exceeds the 32-target receipt bound', async () => {
+    const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
+    fixture.pages[0].runs[2].text =
+      'Prior work [1–33] exceeds the bounded citation target receipt.'
+    fixture.pages[0].runs[3].text = 'Later work confirms the result.'
+
+    const result = await reconstruct(fixture, '4')
+
+    expect(result.citationRelationships).toEqual([
+      expect.objectContaining({
+        status: 'unresolved',
+        targetNodeIds: [],
+        evidence: expect.arrayContaining(['citation-target-limit-exceeded']),
+      }),
+    ])
+    expect(result.citationRelationships[0].labels.length).toBeLessThanOrEqual(
+      32,
+    )
+    expect(
+      result.citationRelationships[0].candidateNodeIds?.length ?? 0,
+    ).toBeLessThanOrEqual(32)
+    expect(result.completeness.expectedInlineSpanCount).toBe(1)
+    expect(result.completeness.mappedInlineSpanCount).toBe(1)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'UNRESOLVED_CITATION_REFERENCE',
+          relationshipId: result.citationRelationships[0].id,
+        }),
+      ]),
+    )
+  })
+
   it('keeps a numeric citation range blocked when its middle target is missing', async () => {
     const fixture = structuredClone(decisiveNoteMarkerFixtures[0])
     fixture.pages[0].runs[2].text =

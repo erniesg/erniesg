@@ -13,6 +13,7 @@ import { MAX_CITATION_TARGETS_PER_RELATIONSHIP } from './pdf-citation-surface'
 export const PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD = 0.85
 export const PDF_NOTE_CITATION_DENSITY_THRESHOLD = 2
 const PDF_MINIMUM_SEMANTIC_MARKER_FONT_SIZE = 5
+const CITATION_TARGET_LIMIT_EXCEEDED = 'citation-target-limit-exceeded'
 
 type MarkerSyntax =
   | 'explicit-note-language'
@@ -418,15 +419,15 @@ function markerCandidates(
     syntax: MarkerSyntax,
     box = sourceBox(region),
   ) => {
-    const labels = rawLabels.map(normalizedNoteLabel).filter(Boolean)
-    if (
-      labels.length === 0 ||
-      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP ||
-      start < 0 ||
-      end <= start
-    ) {
+    const normalizedLabels = rawLabels.map(normalizedNoteLabel).filter(Boolean)
+    if (normalizedLabels.length === 0 || start < 0 || end <= start) {
       return
     }
+    const targetLimitExceeded =
+      normalizedLabels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    const labels = targetLimitExceeded
+      ? [CITATION_TARGET_LIMIT_EXCEEDED]
+      : normalizedLabels
     const overlappingIndex = found.findIndex(
       (candidate) =>
         Math.max(candidate.start, start) < Math.min(candidate.end, end),
@@ -450,6 +451,7 @@ function markerCandidates(
       end,
       syntax,
       sourceBox: box,
+      evidence: targetLimitExceeded ? [CITATION_TARGET_LIMIT_EXCEEDED] : [],
     })
   }
 
@@ -901,23 +903,26 @@ function authorYearMarkerCandidates(
     end: number,
     evidence: string[] = [],
   ) => {
-    if (
-      labels.length === 0 ||
-      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP ||
-      start < 0 ||
-      end <= start
-    ) {
+    if (labels.length === 0 || start < 0 || end <= start) {
       return
     }
+    const targetLimitExceeded =
+      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    const boundedLabels = targetLimitExceeded
+      ? [CITATION_TARGET_LIMIT_EXCEEDED]
+      : labels
     found.push({
-      label: labels.join(','),
-      labels,
+      label: boundedLabels.join(','),
+      labels: boundedLabels,
       region,
       start,
       end,
       syntax: 'author-year-syntax',
       sourceBox: sourceBox(region),
-      evidence,
+      evidence: [
+        ...evidence,
+        ...(targetLimitExceeded ? [CITATION_TARGET_LIMIT_EXCEEDED] : []),
+      ],
     })
   }
   const comparisonKey = (
@@ -1063,7 +1068,13 @@ function classification(
     confidence: rounded(confidence),
     threshold: PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
     accepted: confidence >= PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
-    evidence: [...new Set([candidate.syntax, ...evidence])],
+    evidence: [
+      ...new Set([
+        candidate.syntax,
+        ...(candidate.evidence ?? []),
+        ...evidence,
+      ]),
+    ],
     sourceBox: candidate.sourceBox,
   }
 }
@@ -1452,13 +1463,17 @@ export function classifyPdfNoteMarkers(
       bibliographyLabelCounts.get(candidate.labels[0]) === 1
     const citationDensityThresholdMet =
       citationMarkerDensity >= PDF_NOTE_CITATION_DENSITY_THRESHOLD
+    const citationTargetLimitExceeded =
+      'evidence' in candidate &&
+      candidate.evidence?.includes(CITATION_TARGET_LIMIT_EXCEEDED) === true
     const citationEvidence =
       referenceHeadingIndex >= 0 &&
-      (citationDensityThresholdMet ||
-        uniqueExactSingletonBibliographyCitation) &&
-      (matchingBodies.length === 0 ||
-        multiLabelBracketedCitation ||
-        exactBracketedBibliographyCitation)
+      (citationTargetLimitExceeded ||
+        ((citationDensityThresholdMet ||
+          uniqueExactSingletonBibliographyCitation) &&
+          (matchingBodies.length === 0 ||
+            multiLabelBracketedCitation ||
+            exactBracketedBibliographyCitation)))
     if (citationEvidence && candidate.syntax === 'bracketed-numeric-syntax') {
       return classification(
         candidate,
@@ -1467,14 +1482,16 @@ export function classifyPdfNoteMarkers(
         0.98,
         [
           'reference-list-section-detected',
-          ...(citationDensityThresholdMet
-            ? [
-                `citation-marker-density-at-least-${PDF_NOTE_CITATION_DENSITY_THRESHOLD}`,
-              ]
-            : [
-                'unique-exact-bibliography-label-target',
-                'singleton-citation-density-bypass',
-              ]),
+          ...(citationTargetLimitExceeded
+            ? [CITATION_TARGET_LIMIT_EXCEEDED]
+            : citationDensityThresholdMet
+              ? [
+                  `citation-marker-density-at-least-${PDF_NOTE_CITATION_DENSITY_THRESHOLD}`,
+                ]
+              : [
+                  'unique-exact-bibliography-label-target',
+                  'singleton-citation-density-bypass',
+                ]),
           ...(matchingBodies.length === 0
             ? ['no-footnote-band', 'no-matching-note-body']
             : exactBracketedBibliographyCitation

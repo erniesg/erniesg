@@ -775,6 +775,7 @@ function canonicalMacOSTemporaryPath(value) {
 }
 
 function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
+  if (String(excludedPath).split(/[\\/]+/u).includes('..')) return undefined
   const repositoryIdentity = canonicalMacOSTemporaryPath(repositoryRoot)
   const candidate = resolve(excludedPath)
   const candidateIdentity = canonicalMacOSTemporaryPath(candidate)

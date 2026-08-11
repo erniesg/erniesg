@@ -1005,6 +1005,11 @@ describe('publication staging and publish helpers', () => {
       expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
         true,
       )
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      await writeFile(resolve(temporaryRoot, 'unrelated-output.txt'), 'dirty\n')
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        true,
+      )
     } finally {
       process.chdir(previousDirectory)
       await rm(temporaryRoot, { recursive: true, force: true })
@@ -1094,6 +1099,42 @@ describe('publication staging and publish helpers', () => {
       process.chdir(previousDirectory)
       await rm(temporaryRoot, { recursive: true, force: true })
       await rm(externalRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('does not normalize traversal into an owned staging exclusion', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-traversal-exclusion-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      const nestedDirectory = resolve(temporaryRoot, 'nested')
+      await mkdir(nestedDirectory)
+      execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const staging = resolve(temporaryRoot, '.publication-staging-owned')
+      await mkdir(staging)
+      await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+      process.chdir(temporaryRoot)
+
+      expect(
+        publicationRepositoryForCurrentCheckout([
+          `${nestedDirectory}/../.publication-staging-owned`,
+        ]).dirty,
+      ).toBe(true)
+    } finally {
+      process.chdir(previousDirectory)
+      await rm(temporaryRoot, { recursive: true, force: true })
     }
   })
 })

@@ -9,6 +9,7 @@ import {
   assertPublicationIntegrity,
   internalReferenceIntegrityIssues,
   isBoundedScholarlyReferenceText,
+  validMatchedSemanticNoteRelationshipIds,
 } from './publication-integrity'
 import { assessPdfCompleteness } from './pdf-quality'
 import type { ResearchPaper } from './schema'
@@ -258,6 +259,73 @@ describe('exact semantic note-anchor integrity', () => {
       ),
     ).toEqual([])
   })
+
+  it.each([
+    { marker: '[1; 2]', label: '1,2' },
+    { marker: '[1–3]', label: '1,2,3' },
+    { marker: '†', label: '†' },
+    { marker: '¹˒²', label: '1,2' },
+  ])('accepts the fully bounded note marker $marker', ({ marker, label }) => {
+    const paper = paperFixture()
+    const claim = paper.nodes[0]
+    const note = paper.nodes[1]
+    if (claim.type !== 'paragraph' || note.type !== 'footnote') {
+      throw new Error('missing canonical note fixture')
+    }
+    claim.text = `A${label} B`
+    claim.noteReferences![0].label = label
+    claim.noteReferences![0].start = 1
+    claim.noteReferences![0].end = 1 + label.length
+    note.label = label
+
+    const { relationships, sourceEvidence } = sourceEvidenceFixture()
+    const relationship = relationships[0]
+    relationship.label = label
+    relationship.referenceStart = 0
+    relationship.referenceEnd = marker.length
+    relationship.canonicalAnchor = {
+      kind: 'node',
+      nodeId: 'claim',
+      start: 1,
+      end: 1 + label.length,
+    }
+    const claimRegion = sourceEvidence.regions[0]
+    claimRegion.text = marker
+    claimRegion.lines[0].text = marker
+    claimRegion.lines[0].runs[0].text = marker
+
+    expect(
+      internalReferenceIntegrityIssues(paper, relationships, sourceEvidence),
+    ).toEqual([])
+  })
+
+  it.each(['[1] trailing prose', 'leading prose [1]'])(
+    'rejects a source span containing prose around marker %s',
+    (marker) => {
+      const { relationships, sourceEvidence } = sourceEvidenceFixture()
+      const claimRegion = sourceEvidence.regions[0]
+      claimRegion.text = marker
+      claimRegion.lines[0].text = marker
+      claimRegion.lines[0].runs[0].text = marker
+      relationships[0].referenceStart = 0
+      relationships[0].referenceEnd = marker.length
+
+      expect(
+        internalReferenceIntegrityIssues(
+          paperFixture(),
+          relationships,
+          sourceEvidence,
+        ).map((issue) => issue.detail),
+      ).toContain('invalid-source-note-anchor')
+      expect(
+        validMatchedSemanticNoteRelationshipIds(
+          paperFixture(),
+          relationships,
+          sourceEvidence,
+        ).has(relationships[0].id),
+      ).toBe(false)
+    },
+  )
 
   it('rejects matched note evidence whose source region does not exist', () => {
     const { relationships, sourceEvidence } = sourceEvidenceFixture()

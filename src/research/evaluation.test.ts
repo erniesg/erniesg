@@ -171,6 +171,61 @@ describe('SRT engineering evaluation', () => {
     }
   })
 
+  it('preserves repeated table-cell note edges to the same target', () => {
+    const repeated = structuredClone(paperWithTableCellNote())
+    const figure = repeated.nodes.find((node) => node.type === 'figure')
+    const note = repeated.nodes.find((node) => node.id === 'cell-note')
+    if (
+      !figure ||
+      figure.type !== 'figure' ||
+      !figure.table ||
+      !note ||
+      note.type !== 'footnote'
+    ) {
+      throw new Error('Fixture lacks a table-cell note topology')
+    }
+    figure.table.rows[0].cells.push({
+      id: 'cell-metric-repeat',
+      text: 'Repeat1',
+      headerScope: null,
+      columnSpan: 1,
+      rowSpan: 1,
+      noteReferences: [
+        {
+          id: 'cell-note-reference-repeat',
+          label: '1',
+          target: note.id,
+          start: 6,
+          end: 7,
+          confidence: 1,
+        },
+      ],
+    })
+    note.relationships.backlinks.push('cell-note-reference-repeat')
+    const repeatedPaper = researchPaperSchema.parse(repeated)
+    const repeatedManifest = buildLayoutManifest(repeatedPaper)
+    const baseline = evaluate()
+    const result = evaluatePaper(repeatedPaper, repeatedManifest)
+
+    for (const rendition of repeatedManifest.renditions) {
+      expect(
+        rendition.entries.find((entry) => entry.canonicalId === figure.id)
+          ?.relationships.noteTargets,
+      ).toEqual([note.id, note.id])
+    }
+    expect(result.subject.canonicalRelationships).toBe(
+      baseline.subject.canonicalRelationships + 4,
+    )
+    for (const [index, target] of result.targets.entries()) {
+      expect(target.relationshipPreservation).toEqual({
+        preserved:
+          baseline.targets[index].relationshipPreservation.preserved + 4,
+        expected: baseline.targets[index].relationshipPreservation.expected + 4,
+        ratio: 1,
+      })
+    }
+  })
+
   it('reports measured browser failures rather than hiding them', () => {
     const evidence = geometry()
     evidence.targets[0].clippedContent.push('p-proposition-1#fragment-1')

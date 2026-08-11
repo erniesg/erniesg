@@ -88,10 +88,15 @@ function ambiguousReconstruction() {
   })
 }
 
-async function unresolvedLineJoinReconstruction() {
+async function unresolvedLineJoinReconstruction(withNoteMarker = false) {
   const runs = [
     run('This source contains a scenar-', 0.1, 0.2, 0.24),
-    run('io that remains continuous prose.', 0.1, 0.225, 0.48),
+    run(
+      `io that remains continuous prose${withNoteMarker ? ' 1' : ''}.`,
+      0.1,
+      0.225,
+      0.48,
+    ),
   ]
   const page: PdfPageAnalysis = {
     page: 1,
@@ -1250,13 +1255,13 @@ describe('human adjudication decision records', () => {
   })
 
   it('shifts canonical note, citation, and scholarly-reference offsets after removing a wrap hyphen', async () => {
-    const base = await unresolvedLineJoinReconstruction()
+    const base = await unresolvedLineJoinReconstruction(true)
     const region = base.regions[0]
     const paragraph = base.paper.nodes[0]
     if (paragraph.type !== 'paragraph') {
       throw new Error('Expected a paragraph fixture')
     }
-    const noteStart = paragraph.text.indexOf('continuous')
+    const noteStart = paragraph.text.indexOf('1')
     const citationStart = paragraph.text.indexOf('remains')
     expect(noteStart).toBeGreaterThan(0)
     expect(citationStart).toBeGreaterThan(0)

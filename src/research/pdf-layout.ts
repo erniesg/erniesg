@@ -4827,10 +4827,20 @@ export async function mergeProseContinuations(
         continuation?.type === 'paragraph' &&
         blockSourceSegments(target).at(-1)?.region.page ===
           blockSourceSegments(continuation)[0]?.region.page
+      const crossPageContinuation =
+        continuation?.type === 'paragraph' && !samePageContinuation
+      const sourceProvenCrossPageJoin =
+        sourceProvenCrossPageColumnFlow ||
+        sourceProvenFloatBoundary ||
+        sourceProvenCitationBoundary ||
+        (lowercaseHyphenContinuation &&
+          sourceProvenHyphenDecision &&
+          hyphenJoin.hyphenBoundary !== null)
       if (
         continuation?.type !== 'paragraph' ||
         continuation.list ||
         (samePageContinuation && !sourceBoundaryProven) ||
+        (crossPageContinuation && !sourceProvenCrossPageJoin) ||
         (crossesOwnedFloat && !sourceProvenFloatBoundary) ||
         (citationYearContinuation && !sourceProvenCitationBoundary) ||
         !sourceProvenHyphenDecision ||

@@ -1089,18 +1089,23 @@ describe('PDF semantic reconstruction', () => {
 
     it('refuses to prove a page-break join across unaccounted source text', async () => {
       // The same page-two text, this time with no furniture evidence, is body
-      // source order the sentence would have to jump over. The prose may still
-      // be joined by the weaker unmarked-continuation heuristic, but nothing is
-      // written to the ledger, so the join is never claimed as proven.
+      // source order the sentence would have to jump over. With no validated
+      // boundary record, the weaker unmarked-continuation heuristic must not
+      // mutate the paragraph topology.
       const { target, continuation } = pageBreakPair('unaccounted-page-break')
       const head = runningHead('unaccounted-page-break')
-      const { sourceSemanticFlowBoundaryDecisions } =
+      const { blocks, sourceSemanticFlowBoundaryDecisions } =
         await joinAcrossPageBreak(target, continuation, [
           target,
           head,
           continuation,
         ])
 
+      expect(blocks).toHaveLength(2)
+      expect(blocks.map((block) => block.text)).toEqual([
+        target.text,
+        continuation.text,
+      ])
       expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(0)
     })
 
@@ -1115,12 +1120,17 @@ describe('PDF semantic reconstruction', () => {
           runs: line.runs.map((sourceRun) => ({ ...sourceRun, y: 0.2 })),
         })),
       }
-      const { sourceSemanticFlowBoundaryDecisions } =
+      const { blocks, sourceSemanticFlowBoundaryDecisions } =
         await joinAcrossPageBreak(midPageTail, continuation, [
           midPageTail,
           continuation,
         ])
 
+      expect(blocks).toHaveLength(2)
+      expect(blocks.map((block) => block.text)).toEqual([
+        midPageTail.text,
+        continuation.text,
+      ])
       expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(0)
     })
   })
@@ -5737,33 +5747,60 @@ describe('PDF semantic reconstruction', () => {
     const result = await reconstructPageAnalyses({
       pages: [
         page(1, [
-          run(1, 'A Scholarly Paper', 0.1, 0.06, 0.72, 18),
-          run(1, '1 INTRODUCTION', 0.1, 0.12, 0.3, 14),
-          run(
-            1,
-            'We point out the following benefits: (1) exact scoring is available,',
-            0.1,
-            0.2,
-            0.72,
-          ),
-          run(
-            1,
-            'the first claim is exact, while (2) diverse inputs are available,',
-            0.1,
-            0.22,
-            0.72,
-          ),
-          run(1, '(3) contamination is unlikely,', 0.1, 0.24, 0.72),
-          run(1, 'and (4) the sequence length can increase', 0.1, 0.26, 0.72),
+          {
+            ...run(1, 'A Scholarly Paper', 0.1, 0.06, 0.72, 18),
+            sourceSequenceIndex: 0,
+          },
+          {
+            ...run(1, '1 INTRODUCTION', 0.1, 0.12, 0.3, 14),
+            sourceSequenceIndex: 1,
+          },
+          {
+            ...run(
+              1,
+              'We point out the following benefits: (1) exact scoring is available,',
+              0.1,
+              0.74,
+              0.72,
+            ),
+            sourceSequenceIndex: 2,
+          },
+          {
+            ...run(
+              1,
+              'the first claim is exact, while (2) diverse inputs are available,',
+              0.1,
+              0.76,
+              0.72,
+            ),
+            sourceSequenceIndex: 3,
+          },
+          {
+            ...run(1, '(3) contamination is unlikely,', 0.1, 0.78, 0.72),
+            sourceSequenceIndex: 4,
+          },
+          {
+            ...run(
+              1,
+              'and (4) the sequence length can increase',
+              0.1,
+              0.82,
+              0.72,
+            ),
+            sourceSequenceIndex: 5,
+          },
         ]),
         page(2, [
-          run(
-            2,
-            'without changing the task, and (5) strong baselines exist.',
-            0.1,
-            0.12,
-            0.72,
-          ),
+          {
+            ...run(
+              2,
+              'without changing the task, and (5) strong baselines exist.',
+              0.1,
+              0.12,
+              0.72,
+            ),
+            sourceSequenceIndex: 0,
+          },
         ]),
       ],
       sourceHash: 'a'.repeat(64),
@@ -5785,6 +5822,11 @@ describe('PDF semantic reconstruction', () => {
     expect(
       paragraphs.some((node) => node.list?.numberingId.startsWith('pdf-list-')),
     ).toBe(false)
+    expect(result.sourceSemanticFlowBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ topology: 'cross-page-column' }),
+      ]),
+    )
   })
 
   it('keeps a source-flowing suffixed enumeration in prose when its second hypothesis starts a region', async () => {
@@ -6002,23 +6044,32 @@ describe('PDF semantic reconstruction', () => {
     const result = await reconstructPageAnalyses({
       pages: [
         page(1, [
-          run(1, 'A Scholarly Paper', 0.1, 0.08, 0.72, 18),
-          run(
-            1,
-            'Nothing about the relationship felt real, not even the way he looked at her',
-            0.1,
-            0.82,
-            0.72,
-          ),
+          {
+            ...run(1, 'A Scholarly Paper', 0.1, 0.08, 0.72, 18),
+            sourceSequenceIndex: 0,
+          },
+          {
+            ...run(
+              1,
+              'Nothing about the relationship felt real, not even the way he looked at her',
+              0.1,
+              0.82,
+              0.72,
+            ),
+            sourceSequenceIndex: 1,
+          },
         ]),
         page(2, [
-          run(
-            2,
-            '– nothing was real except the fact that he had left.',
-            0.1,
-            0.1,
-            0.72,
-          ),
+          {
+            ...run(
+              2,
+              '– nothing was real except the fact that he had left.',
+              0.1,
+              0.1,
+              0.72,
+            ),
+            sourceSequenceIndex: 0,
+          },
         ]),
       ],
       sourceHash: 'a'.repeat(64),
@@ -6035,6 +6086,9 @@ describe('PDF semantic reconstruction', () => {
       }),
     ])
     expect(paragraphs[0]).not.toHaveProperty('list')
+    expect(result.sourceSemanticFlowBoundaryDecisions).toEqual([
+      expect.objectContaining({ topology: 'cross-page-column' }),
+    ])
   })
 
   it('preserves an isolated dash-delimited scene divider instead of inventing a list', async () => {
@@ -16145,26 +16199,39 @@ describe('PDF semantic reconstruction', () => {
     const citationText =
       'Source-backed systems combine distinct inputs [37, 222] before producing a result.'
     const citationRun = run(1, citationText, 0.1, 0.78, 0.78)
+    citationRun.sourceSequenceIndex = 4
     const labels = ['37', '222']
     const linked = page(1, [
-      run(1, 'Cross-page Citation Link Study', 0.1, 0.04, 0.72, 22),
-      run(1, '1 Introduction', 0.1, 0.14, 0.3, 16),
-      run(
-        1,
-        'The opening sentence establishes ordinary body typography.',
-        0.1,
-        0.72,
-        0.78,
-      ),
-      run(
-        1,
-        'The next sentence provides enough adjacent source flow.',
-        0.1,
-        0.75,
-        0.78,
-      ),
+      {
+        ...run(1, 'Cross-page Citation Link Study', 0.1, 0.04, 0.72, 22),
+        sourceSequenceIndex: 0,
+      },
+      {
+        ...run(1, '1 Introduction', 0.1, 0.14, 0.3, 16),
+        sourceSequenceIndex: 1,
+      },
+      {
+        ...run(
+          1,
+          'The opening sentence establishes ordinary body typography.',
+          0.1,
+          0.72,
+          0.78,
+        ),
+        sourceSequenceIndex: 2,
+      },
+      {
+        ...run(
+          1,
+          'The next sentence provides enough adjacent source flow.',
+          0.1,
+          0.75,
+          0.78,
+        ),
+        sourceSequenceIndex: 3,
+      },
       citationRun,
-      run(1, 'This', 0.1, 0.81, 0.78),
+      { ...run(1, 'This', 0.1, 0.81, 0.78), sourceSequenceIndex: 5 },
     ])
     linked.links = labels.map((label, index) => {
       const start = citationText.indexOf(label)
@@ -16180,13 +16247,16 @@ describe('PDF semantic reconstruction', () => {
       pages: [
         linked,
         page(2, [
-          run(
-            2,
-            'continuation completes the paragraph with source-proven geometry.',
-            0.1,
-            0.08,
-            0.78,
-          ),
+          {
+            ...run(
+              2,
+              'continuation completes the paragraph with source-proven geometry.',
+              0.1,
+              0.08,
+              0.78,
+            ),
+            sourceSequenceIndex: 0,
+          },
         ]),
         page(3, [
           run(3, 'References', 0.1, 0.1, 0.3, 16),
@@ -16224,6 +16294,11 @@ describe('PDF semantic reconstruction', () => {
       ),
     ).toBe(true)
     expect(new Set(linkedRuns.map(({ href }) => href)).size).toBe(2)
+    expect(result.sourceSemanticFlowBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ topology: 'cross-page-column' }),
+      ]),
+    )
     expect(result.completeness).toMatchObject({
       expectedHyperlinkCount: 2,
       mappedHyperlinkCount: 2,

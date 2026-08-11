@@ -196,8 +196,10 @@ function isNormalizedBox(value) {
 }
 
 function normalizedBoxArea(value) {
-  if (!isNormalizedBox(value)) return 0
-  return Math.abs(value[2] - value[0]) * Math.abs(value[3] - value[1])
+  if (!isNormalizedBox(value) || value[2] <= value[0] || value[3] <= value[1]) {
+    return 0
+  }
+  return (value[2] - value[0]) * (value[3] - value[1])
 }
 
 function validateSourceBinding(value, code) {
@@ -1189,6 +1191,7 @@ function hasValidSourceBinding(value) {
   return (
     isRecord(value) &&
     isNormalizedBox(value.box) &&
+    normalizedBoxArea(value.box) > 0 &&
     Array.isArray(value.sourceRegionIds) &&
     value.sourceRegionIds.length > 0 &&
     uniqueBy(value.sourceRegionIds, (id) => id) &&

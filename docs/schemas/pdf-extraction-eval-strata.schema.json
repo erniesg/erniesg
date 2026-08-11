@@ -47,7 +47,7 @@
       "pattern": "^[a-f0-9]{64}$"
     },
     "box": {
-      "$comment": "The four entries are normalized left, top, right, and bottom page endpoints. Bounding every endpoint to [0, 1] makes page containment enforceable in standard JSON Schema; zero-area boxes cannot source-bind for scoring.",
+      "$comment": "The four entries are normalized left, top, right, and bottom page endpoints. Bounding every endpoint to [0, 1] makes page containment enforceable in standard JSON Schema; scoring additionally requires right > left and bottom > top, otherwise the source binding is degenerate.",
       "type": "array",
       "minItems": 4,
       "maxItems": 4,

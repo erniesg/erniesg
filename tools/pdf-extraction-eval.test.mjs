@@ -885,27 +885,40 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       'INVALID_PDF_EXTRACTION_EVAL_SET',
     )
 
-    tableCase.source.groundTruth.tables[0].box = [0.8, 0, 0.8, 0.5]
-    expect(validate(evalSet)).toBe(true)
-    expect(() => validatePdfExtractionEvalSet(evalSet)).not.toThrow()
-    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
-      id: 'candidate-a',
-      kind: 'candidate',
-      version: 'candidate-a-v1',
-    })
-    const output = candidate.cases.find((item) => item.caseId === tableCase.id)
-    output.status = 'scored'
-    output.prediction = {
-      tables: [{ ...tableCase.source.groundTruth.tables[0] }],
+    for (const box of [
+      [0.8, 0, 0.8, 0.5],
+      [0.8, 0.5, 0.2, 0.1],
+    ]) {
+      tableCase.source.groundTruth.tables[0].box = box
+      expect(validate(evalSet)).toBe(true)
+      expect(() => validatePdfExtractionEvalSet(evalSet)).not.toThrow()
+      const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+        id: 'candidate-a',
+        kind: 'candidate',
+        version: 'candidate-a-v1',
+      })
+      const output = candidate.cases.find(
+        (item) => item.caseId === tableCase.id,
+      )
+      output.status = 'scored'
+      output.prediction = {
+        tables: [{ ...tableCase.source.groundTruth.tables[0] }],
+      }
+      output.diagnostics = []
+      const report = comparePdfExtractionProviders(evalSet, [candidate])
+      expect(
+        report.rows.find(
+          (row) =>
+            row.stratum === 'table-structure' &&
+            row.layout === tableCase.layout,
+        ),
+      ).toMatchObject({
+        score: 0,
+        scoredCaseCount: 0,
+        degenerateCaseCount: 1,
+        diagnostics: ['MISSING_TABLE_GEOMETRY_OR_LINEAGE'],
+      })
     }
-    output.diagnostics = []
-    const report = comparePdfExtractionProviders(evalSet, [candidate])
-    expect(
-      report.rows.find(
-        (row) =>
-          row.stratum === 'table-structure' && row.layout === tableCase.layout,
-      ).score,
-    ).toBe(0)
   })
 
   it('refuses regex-only prose continuity evidence', async () => {

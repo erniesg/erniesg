@@ -618,6 +618,79 @@ describe('exact semantic note-anchor integrity', () => {
     expect(internalReferenceIntegrityIssues(paper, [unresolved])).toEqual([])
   })
 
+  it('excludes table-cell notes when their semantic table is not rendered', () => {
+    const paper = paperFixture()
+    paper.status = 'working'
+    paper.authorNotes = undefined
+    paper.nodes = [
+      {
+        id: 'table-with-note',
+        type: 'figure',
+        title: 'Table with note',
+        objectType: 'table',
+        table: {
+          rows: [
+            {
+              cells: [
+                {
+                  id: 'cell-1',
+                  text: 'Value1',
+                  headerScope: null,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                  noteReferences: [
+                    {
+                      id: 'table-note-reference',
+                      label: '1',
+                      target: 'table-note',
+                      start: 5,
+                      end: 6,
+                      confidence: 1,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        relationships: { caption: 'table-caption' },
+        source: 'test',
+      },
+      {
+        id: 'table-caption',
+        type: 'caption',
+        text: 'Table 1.',
+        source: 'test',
+      },
+      {
+        id: 'table-note',
+        type: 'footnote',
+        kind: 'footnote',
+        label: '1',
+        text: 'The table note.',
+        relationships: { backlinks: ['table-note-reference'] },
+        source: 'test',
+      },
+    ]
+
+    expect(
+      internalReferenceIntegrityIssues(paper, undefined, undefined, {
+        renderedSemanticTableNodeIds: new Set(),
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        sourceId: 'table-note',
+        targetId: 'table-note-reference',
+        relationship: 'note-backlink',
+      }),
+    )
+    expect(
+      internalReferenceIntegrityIssues(paper, undefined, undefined, {
+        renderedSemanticTableNodeIds: new Set(['table-with-note']),
+      }),
+    ).toEqual([])
+  })
+
   it('feeds exact note-anchor failures into the publication-readiness gate', () => {
     const relationships = relationshipFixture()
     relationships[0].canonicalAnchor = {
@@ -716,6 +789,70 @@ describe('scholarly cross-reference integrity', () => {
           detail: 'unbounded-scholarly-reference-text',
         }),
       ]),
+    )
+    expect(() => assertPublicationIntegrity(paper)).toThrow(
+      /unbounded-scholarly-reference-text/u,
+    )
+  })
+
+  it('rejects a table-cell cross-reference run that absorbs unrelated prose', () => {
+    const paper = paperFixture()
+    paper.status = 'working'
+    paper.authorNotes = undefined
+    paper.nodes = [
+      {
+        id: 'section-1',
+        type: 'heading',
+        level: 1,
+        text: 'Section 1',
+        source: 'test',
+      },
+      {
+        id: 'table-1',
+        type: 'figure',
+        title: 'Table 1',
+        objectType: 'table',
+        table: {
+          rows: [
+            {
+              cells: [
+                {
+                  text: 'ordinary prose',
+                  headerScope: null,
+                  columnSpan: 1,
+                  rowSpan: 1,
+                  inlineRuns: [
+                    {
+                      start: 0,
+                      end: 14,
+                      semanticRole: 'cross-reference',
+                      relationshipId: 'cross-reference-section-1',
+                      targetIds: ['section-1'],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        relationships: { caption: 'table-1-caption' },
+        source: 'test',
+      },
+      {
+        id: 'table-1-caption',
+        type: 'caption',
+        text: 'Table 1.',
+        source: 'test',
+      },
+    ]
+
+    expect(internalReferenceIntegrityIssues(paper)).toContainEqual(
+      expect.objectContaining({
+        sourceId: 'cross-reference-section-1',
+        targetId: 'section-1',
+        relationship: 'semantic-reference-text',
+        detail: 'unbounded-scholarly-reference-text',
+      }),
     )
     expect(() => assertPublicationIntegrity(paper)).toThrow(
       /unbounded-scholarly-reference-text/u,

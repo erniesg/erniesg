@@ -31,7 +31,12 @@
       "source": { "feature": "text" },
       "output": {
         "feature": "prose",
-        "text": "The result continues toward the right column with source proof."
+        "text": "The result continues toward the right column with source proof.",
+        "semanticFlow": {
+          "topology": "same-page-column",
+          "fromPage": 3,
+          "outcome": "space"
+        }
       }
     },
     {
@@ -47,7 +52,12 @@
       },
       "output": {
         "feature": "prose",
-        "text": "A second result sentence runs off the bottom of this page and continues at the top of the next one without losing its clause."
+        "text": "A second result sentence runs off the bottom of this page and continues at the top of the next one without losing its clause.",
+        "semanticFlow": {
+          "topology": "cross-page-column",
+          "fromPage": 1,
+          "outcome": "space"
+        }
       }
     },
     {

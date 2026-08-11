@@ -912,6 +912,18 @@ async function run(options) {
               profile: checkpoint.profile,
               width: pair.rendition.width,
               html: pair.rendition.html,
+              semanticFlowBoundaryLedgerValid:
+                renditionSource === 'pdf-reconstruction'
+                  ? !reconstruction.diagnostics.some(
+                      (diagnostic) =>
+                        diagnostic.code ===
+                        'INVALID_SOURCE_SEMANTIC_FLOW_BOUNDARY_LEDGER',
+                    )
+                  : undefined,
+              semanticFlowBoundaryDecisions:
+                renditionSource === 'pdf-reconstruction'
+                  ? reconstruction.sourceSemanticFlowBoundaryDecisions
+                  : undefined,
             },
           },
         )

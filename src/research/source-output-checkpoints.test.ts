@@ -208,6 +208,11 @@ describe('source/output checkpoints', () => {
           output: {
             feature: 'prose',
             text: 'The result sentence continues across a column break.',
+            semanticFlow: {
+              topology: 'same-page-column',
+              fromPage: 2,
+              outcome: 'space',
+            },
           },
         },
       ],
@@ -244,6 +249,11 @@ describe('source/output checkpoints', () => {
           output: {
             feature: 'prose',
             text: 'runs off the bottom of this page and continues at the top of the next one',
+            semanticFlow: {
+              topology: 'cross-page-column',
+              fromPage: 1,
+              outcome: 'space',
+            },
           },
         },
       ],
@@ -270,6 +280,28 @@ describe('source/output checkpoints', () => {
           profile: 'paperPro',
           width: 540,
           html: '<p>runs off the bottom of this page and continues at the top of the next one without losing its clause.</p>',
+        },
+      }),
+    ).toMatchObject({
+      checkpointId: 'page-break-continuity',
+      status: 'failed',
+      reason: expect.stringContaining('semantic-flow boundary ledger'),
+    })
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: '<p>runs off the bottom of this page and continues at the top of the next one without losing its clause.</p>',
+          semanticFlowBoundaryLedgerValid: true,
+          semanticFlowBoundaryDecisions: [
+            {
+              page: 1,
+              topology: 'cross-page-column',
+              outcome: 'space',
+            },
+          ],
         },
       }),
     ).toMatchObject({ checkpointId: 'page-break-continuity', status: 'passed' })

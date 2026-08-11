@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { PdfSourceSemanticFlowBoundaryDecision } from './import-types'
 import {
   getTargetProfile,
   TARGET_PROFILE_IDS,
@@ -51,11 +52,20 @@ const sourceExpectationSchema = z
   })
   .strict()
 
+const semanticFlowExpectationSchema = z
+  .object({
+    topology: z.enum(['same-page-column', 'cross-page-column']),
+    fromPage: z.number().int().positive(),
+    outcome: z.enum(['space', 'no-space']),
+  })
+  .strict()
+
 const renditionExpectationSchema = z
   .object({
     feature: z.enum(SOURCE_OUTPUT_RENDITION_FEATURES),
     text: z.string().min(1).optional(),
     level: z.number().int().min(1).max(6).optional(),
+    semanticFlow: semanticFlowExpectationSchema.optional(),
   })
   .strict()
 
@@ -94,6 +104,7 @@ export type CheckpointValidationIssue = {
     | 'duplicate-id'
     | 'property-feature-mismatch'
     | 'property-source-feature-mismatch'
+    | 'missing-semantic-flow-expectation'
   message: string
 }
 
@@ -204,6 +215,18 @@ export function validateSourceOutputCheckpointSet(
         message: `${checkpoint.property} must inspect source feature ${expectedSource}.`,
       })
     }
+
+    if (
+      checkpoint.property === 'prose-continuity' &&
+      checkpoint.output.semanticFlow === undefined
+    ) {
+      issues.push({
+        checkpointId: checkpoint.id,
+        code: 'missing-semantic-flow-expectation',
+        message:
+          'prose-continuity must name the source-proven semantic-flow boundary it expects.',
+      })
+    }
   }
   return issues
 }
@@ -251,6 +274,11 @@ export type RenditionCheckpointObservation = {
   profile: TargetProfileId
   width: number
   html: string
+  semanticFlowBoundaryLedgerValid?: boolean
+  semanticFlowBoundaryDecisions?: readonly Pick<
+    PdfSourceSemanticFlowBoundaryDecision,
+    'page' | 'topology' | 'outcome'
+  >[]
 }
 
 export type SourceOutputCheckpointObservation = {
@@ -531,6 +559,31 @@ export function evaluateSourceOutputCheckpoint(
       checkpointId: checkpoint.id,
       status: 'failed',
       reason: 'The source page does not contain the named source text.',
+    }
+  }
+  if (checkpoint.output.semanticFlow) {
+    if (observation.rendition.semanticFlowBoundaryLedgerValid !== true) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason:
+          'The reconstruction did not provide a valid semantic-flow boundary ledger.',
+      }
+    }
+    const expected = checkpoint.output.semanticFlow
+    const matchingDecision =
+      observation.rendition.semanticFlowBoundaryDecisions?.some(
+        (decision) =>
+          decision.page === expected.fromPage &&
+          decision.topology === expected.topology &&
+          decision.outcome === expected.outcome,
+      ) ?? false
+    if (!matchingDecision) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: `The semantic-flow boundary ledger does not contain ${expected.topology} ${expected.outcome} proof from page ${expected.fromPage}.`,
+      }
     }
   }
   if (checkpoint.property === 'markup-non-promotion') {

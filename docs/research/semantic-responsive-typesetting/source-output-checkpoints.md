@@ -37,7 +37,11 @@ cannot prove them:
 
 `prose-continuity` covers both the column break on page one and the page break
 between pages one and two of the checked-in fixture; a sentence left split
-across two paragraph elements fails it.
+across two paragraph elements fails it. Each prose-continuity checkpoint must
+also name its expected semantic-flow topology, source page, and spacing
+outcome. The pair fails unless the reconstruction reports a valid boundary
+ledger containing that exact decision; final paragraph HTML alone is not
+proof of a safe join.
 
 For an owner-local paper, provide a caller-owned output directory outside the
 repository. Local output is never written to Git or the PR evidence directory:

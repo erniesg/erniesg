@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import Ajv2020 from 'ajv/dist/2020.js'
+import { readFileSync } from 'node:fs'
 import associationCheckpoints from '../../tests/fixtures/pdf/note-citation-associations.json'
 import {
   evaluateSourceOutputCheckpoint,
@@ -23,20 +25,38 @@ describe('source/output checkpoints', () => {
       schemaVersion: associationCheckpoints.schemaVersion,
       checkpoints: associationCheckpoints.checkpoints,
     })
-    expect(
-      parsed.checkpoints.map((checkpoint) => checkpoint.property),
-    ).toEqual([
-      'marker-to-body',
-      'citation-to-entry',
-      'in-float-marker',
-      'in-float-marker',
-      'dangling-link-verifier',
-    ])
+    expect(parsed.checkpoints.map((checkpoint) => checkpoint.property)).toEqual(
+      [
+        'marker-to-body',
+        'citation-to-entry',
+        'in-float-marker',
+        'in-float-marker',
+        'dangling-link-verifier',
+      ],
+    )
     expect(
       parsed.checkpoints.every(
         (checkpoint) =>
           checkpoint.document === 'note-citation-associations.pdf',
       ),
+    ).toBe(true)
+  })
+
+  it('keeps the published JSON schema aligned with association checkpoints', () => {
+    const schema = JSON.parse(
+      readFileSync(
+        'docs/schemas/source-output-checkpoints.schema.json',
+        'utf8',
+      ),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+
+    expect(
+      validate({
+        schemaVersion: associationCheckpoints.schemaVersion,
+        checkpoints: associationCheckpoints.checkpoints,
+      }),
+      JSON.stringify(validate.errors),
     ).toBe(true)
   })
 
@@ -553,9 +573,7 @@ describe('source/output checkpoints', () => {
           },
         ],
       }),
-    ).toEqual([
-      expect.objectContaining({ code: 'relationship-kind-mismatch' }),
-    ])
+    ).toEqual([expect.objectContaining({ code: 'relationship-kind-mismatch' })])
     expect(
       validateSourceOutputCheckpointSet({
         schemaVersion: '1.0.0',

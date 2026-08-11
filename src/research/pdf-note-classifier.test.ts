@@ -20,6 +20,7 @@ import {
   classifyPdfNoteMarkers,
   pdfAlternateAuthorYearKeyFromBoundary,
   PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD,
+  splitPdfCompoundAffiliationNote,
 } from './pdf-note-classifier'
 import { assessPdfCompleteness } from './pdf-quality'
 
@@ -909,6 +910,94 @@ describe('scholarly note-marker taxonomy', () => {
         disposition: 'plain-text',
       },
     ])
+  })
+
+  it('reduces the reviewed six compound-affiliation relationships to four canonical segments', () => {
+    const texts = [
+      '1 Alpha Institute',
+      '2 Beta Laboratory',
+      '3 Gamma University',
+      '4 Delta Center',
+    ]
+    const lines = texts.map((text, index) => {
+      const y = 0.82 + index * 0.018
+      const marker = noteRun(text[0], 0.12, y - 0.003, 0.008, 7, 0.009)
+      const prose = noteRun(text.slice(1), 0.13, y, 0.4, 10, 0.014)
+      return {
+        id: `compound-line-${index + 1}`,
+        text,
+        fontSize: 10,
+        box: {
+          page: 1,
+          x: 0.12,
+          y: y - 0.003,
+          width: 0.41,
+          height: 0.017,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        },
+        runs: [marker, prose],
+      }
+    })
+    const compoundRegion: PdfPageRegion = {
+      id: 'reviewed-compound-affiliations',
+      page: 1,
+      kind: 'footnote',
+      column: 'single',
+      text: texts.join(' '),
+      confidence: 1,
+      box: {
+        page: 1,
+        x: 0.12,
+        y: 0.817,
+        width: 0.41,
+        height: 0.075,
+        rotation: 0,
+        method: 'pdf-text',
+      },
+      lines,
+      nativeObjectIds: [],
+      includedInReadingOrder: true,
+    }
+    const boundaries: PdfLineBoundaryDecision[] = lines
+      .slice(0, -1)
+      .map((line, index) => ({
+        id: `compound-boundary-${index + 1}`,
+        page: 1,
+        regionId: compoundRegion.id,
+        fromLineId: line.id,
+        toLineId: lines[index + 1].id,
+        outcome: 'space',
+        evidence: ['ordinary-wrap'],
+      }))
+
+    const compound = splitPdfCompoundAffiliationNote(compoundRegion, boundaries)
+    expect(compound?.affiliations.map(({ label }) => label)).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+    ])
+
+    const reviewedBefore = [
+      ...compound!.affiliations,
+      compound!.affiliations[1],
+      compound!.affiliations[2],
+    ]
+    expect(reviewedBefore).toHaveLength(6)
+    expect(new Set(reviewedBefore.map(({ label }) => label)).size).toBe(4)
+
+    const classified = classifyPdfNoteMarkers(
+      [compoundRegion],
+      [compoundRegion.id],
+      boundaries,
+    )
+    expect(classified.noteBodyRegionIds).toHaveLength(4)
+    expect(
+      classified.classifications.filter(
+        ({ referenceRegionId }) => referenceRegionId === compoundRegion.id,
+      ),
+    ).toEqual([])
   })
 
   it('recognizes an affiliation declaration line inside a merged author and contact region', () => {

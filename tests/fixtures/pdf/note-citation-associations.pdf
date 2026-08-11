@@ -4,7 +4,7 @@
 << /Type /Catalog /Pages 2 0 R /Lang (en-US) >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [6 0 R 7 0 R 8 0 R 9 0 R 10 0 R] /Count 5 >>
+<< /Type /Pages /Kids [8 0 R 9 0 R 10 0 R 11 0 R 12 0 R] /Count 5 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
@@ -16,22 +16,46 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>
 endobj
 6 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> /XObject << /Im1 16 0 R /Im2 17 0 R >> >> /Contents 11 0 R >>
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 7 0 R >>
 endobj
 7 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> /XObject << /Im1 18 0 R >> >> /Contents 12 0 R >>
+<< /Length 327 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /ArabicIndicOne def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfchar
+<31> <0661>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
 endobj
 8 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>  >> /Contents 13 0 R >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F5 6 0 R >>  >> /Contents 13 0 R >>
 endobj
 9 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>  >> /Contents 14 0 R >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F5 6 0 R >> /XObject << /Im1 18 0 R >> >> /Contents 14 0 R >>
 endobj
 10 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >>  >> /Contents 15 0 R >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F5 6 0 R >>  >> /Contents 15 0 R >>
 endobj
 11 0 obj
-<< /Length 937 >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F5 6 0 R >>  >> /Contents 16 0 R >>
+endobj
+12 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]  /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F5 6 0 R >>  >> /Contents 17 0 R >>
+endobj
+13 0 obj
+<< /Length 646 >>
 stream
 BT
 /F2 20 Tf
@@ -79,33 +103,13 @@ BT
 (.) Tj
 ET
 BT
-/F1 11 Tf
-54 560 Td
-(Arabic-Indic U+0661 note marker appears at right.) Tj
-ET
-BT
-/F1 11 Tf
-82 506 Td
-(Arabic-Indic U+0661 note body marker appears at left.) Tj
+/F1 8 Tf
+240 112 Td
+(1. Numeric footnote body contains nested marker [6]) Tj
 ET
 BT
 /F1 8 Tf
-54 112 Td
-(1. Numeric footnote body contains nested marker) Tj
-ET
-BT
-/F1 6 Tf
-268 116 Td
-(6) Tj
-ET
-BT
-/F1 8 Tf
-273 112 Td
-(.) Tj
-ET
-BT
-/F1 8 Tf
-54 90 Td
+240 90 Td
 (6. Nested footnote body.) Tj
 ET
 BT
@@ -113,17 +117,9 @@ BT
 54 68 Td
 (* Symbol footnote body.) Tj
 ET
-q
-14 0 0 18 330 548 cm
-/Im1 Do
-Q
-q
-14 0 0 18 54 496 cm
-/Im2 Do
-Q
 endstream
 endobj
-12 0 obj
+14 0 obj
 << /Length 852 >>
 stream
 BT
@@ -202,7 +198,67 @@ q
 Q
 endstream
 endobj
-13 0 obj
+15 0 obj
+<< /Length 623 >>
+stream
+BT
+/F2 18 Tf
+54 748 Td
+(Endnotes) Tj
+ET
+BT
+/F1 14 Tf
+54 716 Td
+(Arabic-Indic note association) Tj
+ET
+BT
+/F1 11 Tf
+54 650 Td
+(Arabic-Indic U+0661 note marker appears at right.) Tj
+ET
+BT
+/F5 7 Tf
+297 654 Td
+(1) Tj
+ET
+BT
+/F1 11 Tf
+302 650 Td
+(.) Tj
+ET
+BT
+/F1 8 Tf
+66 72 Td
+(Arabic-Indic note body.) Tj
+ET
+BT
+/F5 8 Tf
+54 72 Td
+(1) Tj
+ET
+BT
+/F1 8 Tf
+60 72 Td
+(.) Tj
+ET
+BT
+/F1 11 Tf
+54 150 Td
+(3. Repository-owned endnote body begins here.) Tj
+ET
+BT
+/F1 11 Tf
+54 125 Td
+(Additional endnote detail preserves complete source evidence.) Tj
+ET
+BT
+/F1 11 Tf
+54 100 Td
+(The note remains local and deterministic for this fixture.) Tj
+ET
+endstream
+endobj
+16 0 obj
 << /Length 535 >>
 stream
 BT
@@ -247,32 +303,7 @@ BT
 ET
 endstream
 endobj
-14 0 obj
-<< /Length 299 >>
-stream
-BT
-/F2 16 Tf
-54 700 Td
-(Endnotes) Tj
-ET
-BT
-/F1 11 Tf
-54 650 Td
-(3. Repository-owned endnote body begins here.) Tj
-ET
-BT
-/F1 11 Tf
-54 625 Td
-(Additional endnote detail preserves complete source evidence.) Tj
-ET
-BT
-/F1 11 Tf
-54 600 Td
-(The note remains local and deterministic for this fixture.) Tj
-ET
-endstream
-endobj
-15 0 obj
+17 0 obj
 << /Length 530 >>
 stream
 BT
@@ -307,18 +338,6 @@ BT
 ET
 endstream
 endobj
-16 0 obj
-<< /Type /XObject /Subtype /Image /Width 90 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length 139 >>
-stream
-789CEDCD311100300C03310AE54F3605E03B2F1D9A410F403F23BD762232995C4032999C605990C9E4F22293C96432994C2693C9643299BC5F4E904C264BD2C72E5AB0D272>
-endstream
-endobj
-17 0 obj
-<< /Type /XObject /Subtype /Image /Width 90 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length 139 >>
-stream
-789CEDCD311100300C03310AE54F3605E03B2F1D9A410F403F23BD762232995C4032999C605990C9E4F22293C96432994C2693C9643299BC5F4E904C264BD2C72E5AB0D272>
-endstream
-endobj
 18 0 obj
 << /Type /XObject /Subtype /Image /Width 420 /Height 120 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length 867 >>
 stream
@@ -330,24 +349,24 @@ xref
 0000000000 65535 f 
 0000000046 00000 n 
 0000000109 00000 n 
-0000000191 00000 n 
-0000000261 00000 n 
-0000000336 00000 n 
-0000000414 00000 n 
-0000000601 00000 n 
-0000000776 00000 n 
-0000000925 00000 n 
-0000001074 00000 n 
-0000001224 00000 n 
-0000002213 00000 n 
-0000003117 00000 n 
-0000003704 00000 n 
-0000004055 00000 n 
-0000004637 00000 n 
-0000004964 00000 n 
-0000005291 00000 n 
+0000000193 00000 n 
+0000000263 00000 n 
+0000000338 00000 n 
+0000000416 00000 n 
+0000000503 00000 n 
+0000000881 00000 n 
+0000001040 00000 n 
+0000001225 00000 n 
+0000001385 00000 n 
+0000001545 00000 n 
+0000001705 00000 n 
+0000002403 00000 n 
+0000003307 00000 n 
+0000003982 00000 n 
+0000004569 00000 n 
+0000005151 00000 n 
 trailer
 << /Size 19 /Root 1 0 R >>
 startxref
-6347
+6207
 %%EOF

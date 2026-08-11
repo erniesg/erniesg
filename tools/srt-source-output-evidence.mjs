@@ -45,7 +45,20 @@ const PDF_RECONSTRUCTION_PROPERTIES = new Set([
   'hyphen-resolution',
   'markup-non-promotion',
   'furniture-exclusion',
+  'marker-to-body',
+  'citation-to-entry',
+  'in-float-marker',
+  'dangling-link-verifier',
 ])
+
+export function renditionSourceForCheckpoint(
+  property,
+  reconstructionAvailable,
+) {
+  return reconstructionAvailable && PDF_RECONSTRUCTION_PROPERTIES.has(property)
+    ? 'pdf-reconstruction'
+    : 'struct-document'
+}
 
 const IMAGE_OPERATORS = new Set([
   pdfjs.OPS.paintImageMaskXObject,
@@ -868,11 +881,10 @@ async function run(options) {
       await mkdir(join(options.output, 'pairs'), { recursive: true })
       for (const checkpoint of checkpoints) {
         const profile = modules.targets.getTargetProfile(checkpoint.profile)
-        const renditionSource =
-          reconstruction &&
-          PDF_RECONSTRUCTION_PROPERTIES.has(checkpoint.property)
-            ? 'pdf-reconstruction'
-            : 'struct-document'
+        const renditionSource = renditionSourceForCheckpoint(
+          checkpoint.property,
+          Boolean(reconstruction),
+        )
         const pairKey = `${checkpoint.page}\0${checkpoint.profile}\0${renditionSource}`
         let pair = byPair.get(pairKey)
         if (!pair) {
@@ -905,8 +917,7 @@ async function run(options) {
               furnitureContaminationCount:
                 renditionSource === 'pdf-reconstruction'
                   ? reconstruction.completeness.furnitureContaminationCount
-                  : document.receipt?.conservation
-                      ?.furnitureContaminationCount,
+                  : document.receipt?.conservation?.furnitureContaminationCount,
             },
             rendition: {
               profile: checkpoint.profile,

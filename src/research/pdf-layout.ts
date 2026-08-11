@@ -11516,10 +11516,24 @@ function placeMatchedCanonicalNotes(
   for (const ownerNotes of notesAfterOwner.values()) {
     ownerNotes.sort(sourceOrder)
   }
+  const expanded = new Set<string>()
+  const expandNoteTree = (node: ResearchNode): ResearchNode[] => {
+    if (expanded.has(node.id)) return []
+    expanded.add(node.id)
+    return [
+      node,
+      ...(notesAfterOwner.get(node.id) ?? []).flatMap(expandNoteTree),
+    ]
+  }
   const placed = nodes
     .filter((node) => !moved.has(node.id))
-    .flatMap((node) => [node, ...(notesAfterOwner.get(node.id) ?? [])])
-  nodes.splice(0, nodes.length, ...authorNotes, ...placed)
+    .flatMap(expandNoteTree)
+  nodes.splice(
+    0,
+    nodes.length,
+    ...authorNotes.flatMap(expandNoteTree),
+    ...placed,
+  )
 }
 
 function canonicalVisualDraft(
@@ -12818,10 +12832,7 @@ export async function reconstructPageAnalyses({
       semanticTable.rows.forEach((row, rowIndex) => {
         row.cells.forEach((cell, cellIndex) => {
           for (const run of cell.inlineRuns ?? []) {
-            if (
-              run.semanticRole !== 'citation' ||
-              !run.relationshipId
-            ) {
+            if (run.semanticRole !== 'citation' || !run.relationshipId) {
               continue
             }
             const citation = citationRelationships.find(

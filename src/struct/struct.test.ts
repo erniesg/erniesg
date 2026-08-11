@@ -692,6 +692,203 @@ describe('STRUCT canonical document graph', () => {
     },
   )
 
+  it.each(['note', 'citation', 'cross-reference'] as const)(
+    'keeps pre-concatenation-aliasing table-cell %s identities distinct',
+    async (kind) => {
+      const reconstruction =
+        (await structuredDocx()) as unknown as PdfReconstruction
+      delete (reconstruction.source as { format?: string }).format
+      reconstruction.citationRelationships = []
+      reconstruction.crossReferenceRelationships = []
+      reconstruction.visualRelationships = []
+      const firstTable = reconstruction.paper.nodes.find(
+        (node) => node.type === 'figure' && node.table,
+      )
+      const targetNode = reconstruction.paper.nodes.find(
+        (node) => node.type === 'heading',
+      )
+      const noteTemplate = reconstruction.noteRelationships.find(
+        (relationship) =>
+          relationship.status === 'matched' && relationship.targetNoteId,
+      )
+      if (!firstTable || firstTable.type !== 'figure' || !firstTable.table) {
+        throw new Error('The structured DOCX fixture must contain a table')
+      }
+      if (!targetNode) {
+        throw new Error('The structured DOCX fixture must contain a heading')
+      }
+      if (kind === 'note' && !noteTemplate?.targetNoteId) {
+        throw new Error(
+          'The structured DOCX fixture must contain a matched note',
+        )
+      }
+
+      const originalTableId = firstTable.id
+      const secondTable = structuredClone(firstTable)
+      firstTable.id = 'a'
+      secondTable.id = 'a:table:b'
+      reconstruction.paper.nodes.push(secondTable)
+      const originalProvenance = reconstruction.provenance[originalTableId]
+      delete reconstruction.provenance[originalTableId]
+      reconstruction.provenance[firstTable.id] =
+        structuredClone(originalProvenance)
+      reconstruction.provenance[secondTable.id] =
+        structuredClone(originalProvenance)
+
+      const specifications = [
+        {
+          table: firstTable,
+          cellId: 'b:table:c',
+          relationshipId: `pre-concatenation-${kind}-one`,
+        },
+        {
+          table: secondTable,
+          cellId: 'c',
+          relationshipId: `pre-concatenation-${kind}-two`,
+        },
+      ].map(({ table, cellId, relationshipId }, index) => {
+        const cell = table.table!.rows[1].cells[0]
+        cell.id = cellId
+        cell.text = '1'
+        const canonicalAnchorId = `${table.id}:table:${cellId}`
+        const sourceBox = {
+          page: 1,
+          x: 0.1,
+          y: 0.2 + index * 0.1,
+          width: 0.1,
+          height: 0.02,
+          rotation: 0,
+          method: 'pdf-text' as const,
+        }
+        if (kind === 'note') {
+          cell.noteReferences = [
+            {
+              id: relationshipId,
+              label: '1',
+              target: noteTemplate!.targetNoteId!,
+              start: 0,
+              end: 1,
+              confidence: 1,
+            },
+          ]
+        } else {
+          cell.inlineRuns = [
+            {
+              start: 0,
+              end: 1,
+              relationshipId,
+              semanticRole: kind,
+              targetIds: [targetNode.id],
+            },
+          ]
+        }
+        return { canonicalAnchorId, relationshipId, sourceBox }
+      })
+
+      if (kind === 'note') {
+        reconstruction.noteRelationships.push(
+          ...specifications.map(
+            ({ canonicalAnchorId, relationshipId, sourceBox }) => ({
+              ...noteTemplate!,
+              id: relationshipId,
+              label: '1',
+              referenceStart: 0,
+              referenceEnd: 1,
+              canonicalAnchor: {
+                kind: 'node' as const,
+                nodeId: canonicalAnchorId,
+                start: 0,
+                end: 1,
+              },
+              sourceBoxes: [sourceBox],
+            }),
+          ),
+        )
+      } else if (kind === 'citation') {
+        reconstruction.citationRelationships = specifications.map(
+          ({ canonicalAnchorId, relationshipId, sourceBox }) => ({
+            id: relationshipId,
+            label: '1',
+            labels: ['1'],
+            referenceRegionId: `${relationshipId}-region`,
+            referenceStart: 0,
+            referenceEnd: 1,
+            taxonomy: 'bracketed-bibliography-citation',
+            targetNodeIds: [targetNode.id],
+            status: 'matched',
+            canonicalAnchor: {
+              nodeId: canonicalAnchorId,
+              start: 0,
+              end: 1,
+            },
+            confidence: 1,
+            evidence: ['fixture'],
+            sourceBoxes: [sourceBox],
+          }),
+        )
+      } else {
+        reconstruction.crossReferenceRelationships = specifications.map(
+          ({ canonicalAnchorId, relationshipId, sourceBox }) => ({
+            id: relationshipId,
+            kind: 'section',
+            text: '1',
+            labels: ['1'],
+            referenceRegionId: `${relationshipId}-region`,
+            referenceStart: 0,
+            referenceEnd: 1,
+            targets: [
+              {
+                kind: 'section',
+                label: '1',
+                referenceStart: 0,
+                referenceEnd: 1,
+                status: 'matched',
+                candidateNodeIds: [targetNode.id],
+                targetNodeId: targetNode.id,
+                evidence: ['fixture'],
+              },
+            ],
+            targetNodeIds: [targetNode.id],
+            status: 'matched',
+            canonicalAnchor: {
+              nodeId: canonicalAnchorId,
+              start: 0,
+              end: 1,
+            },
+            confidence: 1,
+            evidence: ['fixture'],
+            sourceBoxes: [sourceBox],
+          }),
+        )
+      }
+
+      const graph = buildStructDocument(reconstruction)
+      const semanticRole = kind === 'note' ? 'note-reference' : kind
+      const relationshipIds = graph.blocks
+        .filter(
+          (block) =>
+            block.kind === 'table' &&
+            (block.evidence.sourceIds.includes(firstTable.id) ||
+              block.evidence.sourceIds.includes(secondTable.id)),
+        )
+        .map(
+          (block) =>
+            block
+              .table!.cells.find((cell) => cell.row === 1 && cell.column === 0)!
+              .inline.find((run) => run.semanticRole === semanticRole)!
+              .relationshipId!,
+        )
+
+      expect(relationshipIds).toHaveLength(2)
+      expect(new Set(relationshipIds).size).toBe(2)
+      const relationshipOwners = graph.relationships
+        .filter((relationship) => relationshipIds.includes(relationship.id))
+        .map((relationship) => relationship.from)
+      expect(relationshipOwners).toHaveLength(2)
+      expect(new Set(relationshipOwners).size).toBe(2)
+    },
+  )
+
   it('translates STRUCT fragment targets without rewriting explicit external links', async () => {
     const graph = buildStructDocument(await structuredDocx())
     const target = graph.blocks[1]

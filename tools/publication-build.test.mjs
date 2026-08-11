@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import {
   access,
+  chmod,
   link,
   lstat,
   mkdir,
@@ -990,7 +991,7 @@ describe('publication staging and publish helpers', () => {
         cwd: temporaryRoot,
       })
       const staging = resolve(temporaryRoot, '.publication-staging-owned')
-      await mkdir(staging)
+      await mkdir(staging, { mode: 0o700 })
       await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
       process.chdir(nestedDirectory)
 
@@ -1049,7 +1050,7 @@ describe('publication staging and publish helpers', () => {
             cwd: temporaryRoot,
           })
           const staging = resolve(temporaryRoot, '.publication-staging-owned')
-          await mkdir(staging)
+          await mkdir(staging, { mode: 0o700 })
           await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
           process.chdir(temporaryRoot)
 
@@ -1123,7 +1124,7 @@ describe('publication staging and publish helpers', () => {
         cwd: temporaryRoot,
       })
       const staging = resolve(temporaryRoot, '.publication-staging-owned')
-      await mkdir(staging)
+      await mkdir(staging, { mode: 0o700 })
       await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
       process.chdir(temporaryRoot)
 
@@ -1157,7 +1158,7 @@ describe('publication staging and publish helpers', () => {
         cwd: temporaryRoot,
       })
       const staging = resolve(temporaryRoot, '.publication-staging-*')
-      await mkdir(staging)
+      await mkdir(staging, { mode: 0o700 })
       await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
       await writeFile(
         resolve(temporaryRoot, '.publication-staging-unrelated.txt'),
@@ -1171,6 +1172,106 @@ describe('publication staging and publish helpers', () => {
     } finally {
       process.chdir(previousDirectory)
       await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a staging exclusion that is writable by other users', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-shared-exclusion-'),
+    )
+    const previousDirectory = process.cwd()
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync('git', ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync('git', ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      execFileSync('git', ['add', '.'], { cwd: temporaryRoot })
+      execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const staging = resolve(temporaryRoot, '.publication-staging-shared')
+      await mkdir(staging, { mode: 0o700 })
+      await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+      await chmod(staging, 0o777)
+      process.chdir(temporaryRoot)
+
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        true,
+      )
+    } finally {
+      process.chdir(previousDirectory)
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when an owned staging directory changes during status collection', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-identity-change-'),
+    )
+    const wrapperRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-cleanliness-git-wrapper-'),
+    )
+    const previousDirectory = process.cwd()
+    const previousPath = process.env.PATH
+    try {
+      const realGit = execFileSync('sh', ['-c', 'command -v git'], {
+        encoding: 'utf8',
+      }).trim()
+      execFileSync(realGit, ['init', '--quiet'], { cwd: temporaryRoot })
+      execFileSync(realGit, ['config', 'user.email', 'tests@example.invalid'], {
+        cwd: temporaryRoot,
+      })
+      execFileSync(realGit, ['config', 'user.name', 'Publication Tests'], {
+        cwd: temporaryRoot,
+      })
+      await writeFile(resolve(temporaryRoot, 'tracked.txt'), 'tracked\n')
+      execFileSync(realGit, ['add', '.'], { cwd: temporaryRoot })
+      execFileSync(realGit, ['commit', '--quiet', '-m', 'fixture'], {
+        cwd: temporaryRoot,
+      })
+      const staging = resolve(temporaryRoot, '.publication-staging-owned')
+      await mkdir(staging, { mode: 0o700 })
+      await writeFile(resolve(staging, 'candidate.txt'), 'candidate\n')
+      const wrapper = resolve(wrapperRoot, 'git')
+      await writeFile(
+        wrapper,
+        `#!/usr/bin/env node
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
+const args = process.argv.slice(2)
+const staging = process.env.PUBLICATION_TEST_STAGING
+const held = process.env.PUBLICATION_TEST_HELD
+if (args[0] === 'status' && staging && held) {
+  renameSync(staging, held)
+  mkdirSync(staging, { mode: 0o700 })
+  writeFileSync(resolve(staging, 'replacement.txt'), 'must remain visible\\n')
+}
+const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' })
+process.exit(result.status ?? 1)
+`,
+      )
+      await chmod(wrapper, 0o700)
+      process.env.PATH = `${wrapperRoot}:${previousPath}`
+      process.env.PUBLICATION_TEST_STAGING = staging
+      process.env.PUBLICATION_TEST_HELD = resolve(wrapperRoot, 'held')
+      process.chdir(temporaryRoot)
+
+      expect(publicationRepositoryForCurrentCheckout([staging]).dirty).toBe(
+        true,
+      )
+    } finally {
+      process.chdir(previousDirectory)
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+      delete process.env.PUBLICATION_TEST_STAGING
+      delete process.env.PUBLICATION_TEST_HELD
+      await rm(temporaryRoot, { recursive: true, force: true })
+      await rm(wrapperRoot, { recursive: true, force: true })
     }
   })
 })

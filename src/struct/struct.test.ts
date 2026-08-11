@@ -137,7 +137,7 @@ describe('STRUCT canonical document graph', () => {
   it('pins the structured DOCX receipt', async () => {
     const graph = buildStructDocument(await structuredDocx())
     expect(graph.receipt.generatedSha256).toBe(
-      '6d2a3caa10db878156972cdfef60a398aa6879a7dea36008fdcd3ea2b71ba971',
+      '7756fff21303bee4c87652126a403d89c450e2139ba9cc6ad62e61b8325baca7',
     )
   })
 

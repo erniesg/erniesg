@@ -251,6 +251,53 @@ describe('publication source adapter conformance', () => {
     expect(canonicalRuns(left)).toEqual(canonicalRuns(right))
   })
 
+  it('preserves authored order for overlapping vertical-align runs', () => {
+    const base = adaptPayloadLexical({
+      id: 'ordered-vertical-align-runs',
+      title: 'Ordered vertical align runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'xy' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const superscript = {
+      start: 0,
+      end: 2,
+      verticalAlign: 'superscript',
+    }
+    const subscript = { start: 0, end: 2, verticalAlign: 'subscript' }
+    const superscriptFirst = withRuns([superscript, subscript])
+    const subscriptFirst = withRuns([subscript, superscript])
+
+    expect(
+      comparePublicationSemanticSubset(superscriptFirst, subscriptFirst),
+    ).toBe(false)
+    expect(canonicalPublicationSubsetSha256(superscriptFirst)).not.toBe(
+      canonicalPublicationSubsetSha256(subscriptFirst),
+    )
+    const canonicalRuns = (graph: typeof superscriptFirst) => {
+      const paragraph = canonicalPublicationSubset(graph).nodes.find(
+        (node) => node.type === 'paragraph',
+      )
+      return paragraph?.inlineRuns
+    }
+    expect(canonicalRuns(superscriptFirst)).toEqual([superscript, subscript])
+    expect(canonicalRuns(subscriptFirst)).toEqual([subscript, superscript])
+  })
+
   it('folds adjacent equivalent runs even when an overlapping style separates them', () => {
     const base = adaptPayloadLexical({
       id: 'interleaved-inline-runs',

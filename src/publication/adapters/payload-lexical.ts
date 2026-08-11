@@ -1044,7 +1044,7 @@ function mergedUploadReference(raw: JsonObject, id: string, indexed: JsonObject,
   for (const group of UPLOAD_REFERENCE_FIELD_GROUPS) {
     if (group.some((key) => raw[key] !== undefined)) for (const key of group) delete base[key]
   }
-  return { ...base, ...raw }
+  return { ...base, ...raw, id }
 }
 
 function uploadFor(state: AdapterState, node: LexicalNode, path: string): JsonObject | undefined {

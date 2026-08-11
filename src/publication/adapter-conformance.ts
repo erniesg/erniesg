@@ -122,11 +122,16 @@ function canonicalInlineRuns(
   runs: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
   // The renderer evaluates active styles by range, so equivalent graphs may
-  // store the same effective intervals in different array orders. Group equal
-  // semantics before adjacency folding so an overlapping style cannot split
-  // a mergeable run, then restore interval order for deterministic output.
+  // store the same effective intervals in different array orders. Group
+  // order-independent semantics before adjacency folding so an overlapping
+  // style cannot split a mergeable run, then restore interval order for
+  // deterministic output. The renderer selects the first active vertical-
+  // align run, so those runs remain in authored order and are never folded.
   // Links, hard breaks, and relationship anchors keep authored boundaries.
-  const ordered = [...runs].sort((left, right) => {
+  const orderDependent = runs
+    .filter((run) => Boolean(run.verticalAlign))
+    .map((run) => ({ ...run }))
+  const ordered = runs.filter((run) => !run.verticalAlign).sort((left, right) => {
     const semanticOrder = codeUnitCompare(
       stableJson(canonicalInlineRunSemantics(left)),
       stableJson(canonicalInlineRunSemantics(right)),
@@ -157,7 +162,7 @@ function canonicalInlineRuns(
     }
     result.push({ ...run })
   }
-  return result.sort((left, right) => {
+  const orderIndependent = result.sort((left, right) => {
     const startOrder = Number(left.start) - Number(right.start)
     if (startOrder) return startOrder
     const endOrder = Number(left.end) - Number(right.end)
@@ -167,6 +172,7 @@ function canonicalInlineRuns(
       stableJson(canonicalInlineRunSemantics(right)),
     )
   })
+  return [...orderIndependent, ...orderDependent]
 }
 
 /**

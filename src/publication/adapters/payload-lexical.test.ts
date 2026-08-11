@@ -1651,6 +1651,29 @@ describe('Payload Lexical publication adapter', () => {
     }
   })
 
+  it('canonicalizes value and target upload references to the indexed map id', () => {
+    const uploads = {
+      pic: {
+        mimeType: 'image/png',
+        data: 'AQIDBA==',
+        alt: 'Mapped picture',
+      },
+    }
+
+    for (const value of [{ value: 'pic' }, { target: 'pic' }]) {
+      const result = adaptPayloadLexical(
+        strictFixture([{ type: 'upload', value }], { uploads }),
+      )
+      expect(result.diagnostics).toEqual([])
+      expect(result.assetBundle.descriptor.assets).toHaveLength(1)
+      expect(result.graph.nodes[0]).toMatchObject({
+        type: 'figure',
+        assetIds: [expect.any(String)],
+        accessibility: { alternativeText: 'Mapped picture' },
+      })
+    }
+  })
+
   it('rejects direct media types that conflict with indexed filename inference', () => {
     expect(() =>
       adaptPayloadLexical(

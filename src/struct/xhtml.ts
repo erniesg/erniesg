@@ -227,10 +227,11 @@ function renderInline(
         const firstSegment = !emittedRelationshipIds.has(relationshipId)
         emittedRelationshipIds.add(relationshipId)
         const id = firstSegment ? ` id="${attribute(relationshipId)}"` : ''
-        const targets =
-          relationship?.status === 'matched'
+        const targets = relationship
+          ? relationship.status === 'matched'
             ? relationship.to.map(stableId)
             : []
+          : (semanticRun.targetIds ?? []).map(stableId)
         const semanticAttributes = ` data-semantic-role="${attribute(semanticRun.semanticRole)}" data-relationship-id="${attribute(relationshipId)}"${targets.length > 0 ? ` data-target-ids="${attribute(targets.join(' '))}"` : ''}`
         if (targets.length === 0) {
           rendered = `<span${id}${semanticAttributes}>${rendered}</span>`

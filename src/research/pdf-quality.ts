@@ -3212,14 +3212,17 @@ function relationshipCounts(
     paper.nodes.flatMap((node) =>
       node.type === 'figure' && node.table
         ? node.table.rows.flatMap((row, rowIndex) =>
-            row.cells.map((cell, cellIndex) => [
-              `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`,
-              {
-                text: cell.text,
-                inlineRuns: cell.inlineRuns,
-                provenanceNodeId: node.id,
-              },
-            ] as const),
+            row.cells.map(
+              (cell, cellIndex) =>
+                [
+                  `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}` as string,
+                  {
+                    text: cell.text,
+                    inlineRuns: cell.inlineRuns,
+                    provenanceNodeId: node.id,
+                  },
+                ] as const,
+            ),
           )
         : [],
     ),

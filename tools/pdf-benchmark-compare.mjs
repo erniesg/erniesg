@@ -515,7 +515,7 @@ function validCitationRelationshipGraph(value) {
           'sourceBoxes',
         ]) &&
         SHA256_PATTERN.test(String(relationship.id ?? '')) &&
-        ['matched', 'unresolved'].includes(relationship.status) &&
+        ['matched', 'ambiguous', 'unresolved'].includes(relationship.status) &&
         [
           'bracketed-bibliography-citation',
           'author-year-bibliography-citation',

@@ -3204,16 +3204,18 @@ function relationshipCounts(
         : []),
     ]),
   ]
-  const validNoteRelationshipIds = noteRelationships
-    ? validMatchedSemanticNoteRelationshipIds(paper, noteRelationships, {
-        regions: regions ?? [],
-        provenance: provenance ?? {},
-      })
-    : new Set<string>()
+  const validNoteRelationshipIds =
+    noteRelationships === undefined
+      ? null
+      : validMatchedSemanticNoteRelationshipIds(paper, noteRelationships, {
+          regions: regions ?? [],
+          provenance: provenance ?? {},
+        })
   const resolvedNoteReferences = noteReferences.filter(
     (reference) =>
       noteIds.has(reference.target) &&
-      validNoteRelationshipIds.has(reference.id),
+      (validNoteRelationshipIds === null ||
+        validNoteRelationshipIds.has(reference.id)),
   )
   const resolvedNotes = new Set(
     resolvedNoteReferences.map((reference) => reference.target),

@@ -45,6 +45,12 @@ export function normalizedNoteLabel(value: string) {
 }
 
 const NOTE_TOKEN_SOURCE = String.raw`(?:\p{Nd}{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*∗†‡§])`
+const NOTE_SEPARATOR_SOURCE = String.raw`\s*(?:[,;˒]|[–—-])\s*`
+const NOTE_MARKER_BODY_SOURCE = String.raw`${NOTE_TOKEN_SOURCE}(?:${NOTE_SEPARATOR_SOURCE}${NOTE_TOKEN_SOURCE})*`
+const BOUNDED_NOTE_MARKER_PATTERN = new RegExp(
+  String.raw`^(?:\s*${NOTE_MARKER_BODY_SOURCE}\s*|\s*\[\s*${NOTE_MARKER_BODY_SOURCE}\s*\]\s*)$`,
+  'u',
+)
 const MAX_EXPANDED_NOTE_RANGE = 100
 
 export function noteLabelsFromMarkerText(value: string) {
@@ -76,4 +82,10 @@ export function noteLabelsFromMarkerText(value: string) {
     if (last) add(last)
   }
   return labels
+}
+
+export function noteLabelsFromBoundedMarkerText(value: string) {
+  if (!BOUNDED_NOTE_MARKER_PATTERN.test(value)) return null
+  const labels = noteLabelsFromMarkerText(value)
+  return labels.length > 0 ? labels : null
 }

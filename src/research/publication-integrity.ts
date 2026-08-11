@@ -6,7 +6,7 @@ import type {
 } from './import-types'
 import {
   normalizedNoteLabel,
-  noteLabelsFromMarkerText,
+  noteLabelsFromBoundedMarkerText,
 } from './note-label'
 import type { ResearchNode, ResearchPaper } from './schema'
 
@@ -361,14 +361,20 @@ function hasValidNoteRelationshipSourceEvidence(
   const region = sourceEvidence.regions.find(
     (candidate) => candidate.id === relationship.referenceRegionId,
   )
+  const sourceLabels = region
+    ? noteLabelsFromBoundedMarkerText(
+        region.text.slice(
+          relationship.referenceStart,
+          relationship.referenceEnd,
+        ),
+      )
+    : null
   if (
     !region ||
     relationship.referenceStart < 0 ||
     relationship.referenceStart >= relationship.referenceEnd ||
     relationship.referenceEnd > region.text.length ||
-    noteLabelsFromMarkerText(
-      region.text.slice(relationship.referenceStart, relationship.referenceEnd),
-    ).join(',') !== normalizedNoteLabel(relationship.label) ||
+    sourceLabels?.join(',') !== normalizedNoteLabel(relationship.label) ||
     relationship.sourceBoxes.length === 0 ||
     relationship.sourceBoxes.some(
       (box) =>

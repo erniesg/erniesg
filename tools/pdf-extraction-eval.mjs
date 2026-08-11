@@ -15,6 +15,7 @@ import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const PDF_EXTRACTION_EVAL_SCHEMA_VERSION = '1.0.0'
+export const PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION = '1.1.0'
 export const PDF_EXTRACTION_EVAL_REPORT_SCHEMA_VERSION = '1.0.0'
 export const PDF_EXTRACTION_EVAL_PRIVACY =
   'repository-fixture-identities-source-reviewed-no-private-inputs'
@@ -930,35 +931,27 @@ async function validateReviewEvidenceFiles(value, identity) {
       'evalSetId',
       'reviewers',
     ]) ||
-    rosterArtifact.value.schemaVersion !== PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
+    rosterArtifact.value.schemaVersion !==
+      PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION ||
     rosterArtifact.value.kind !== 'pdf-extraction-reviewer-roster' ||
     rosterArtifact.value.evalSetId !== identity.id ||
-    !Array.isArray(rosterArtifact.value.reviewers) ||
-    rosterArtifact.value.reviewers.length < 2 ||
-    !uniqueBy(rosterArtifact.value.reviewers, (reviewer) => reviewer.reviewerId)
+    !isRecord(rosterArtifact.value.reviewers) ||
+    Object.keys(rosterArtifact.value.reviewers).length < 2
   ) {
     invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
   }
-  for (const reviewer of rosterArtifact.value.reviewers) {
+  for (const [identityEvidenceSha256, reviewerId] of Object.entries(
+    rosterArtifact.value.reviewers,
+  )) {
     if (
-      !exactKeys(reviewer, ['reviewerId', 'identityEvidenceSha256']) ||
-      !SAFE_ID.test(reviewer.reviewerId ?? '') ||
-      !SHA256.test(reviewer.identityEvidenceSha256 ?? '')
+      !SHA256.test(identityEvidenceSha256) ||
+      typeof reviewerId !== 'string' ||
+      !SAFE_ID.test(reviewerId ?? '')
     ) {
       invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
     }
   }
-  if (
-    !uniqueBy(
-      rosterArtifact.value.reviewers,
-      (reviewer) => reviewer.identityEvidenceSha256,
-    )
-  ) {
-    invalid('PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH')
-  }
-  const rosterIds = new Set(
-    rosterArtifact.value.reviewers.map((reviewer) => reviewer.reviewerId),
-  )
+  const rosterIds = new Set(Object.keys(rosterArtifact.value.reviewers))
   const decisionArtifact = await readRepositoryJson(
     evidence.decisionPath,
     'PDF_EXTRACTION_REVIEW_DECISION_FILE',
@@ -975,7 +968,7 @@ async function validateReviewEvidenceFiles(value, identity) {
       'decisions',
     ]) ||
     decisionArtifact.value.schemaVersion !==
-      PDF_EXTRACTION_EVAL_SCHEMA_VERSION ||
+      PDF_EXTRACTION_EVAL_REVIEW_SCHEMA_VERSION ||
     decisionArtifact.value.kind !== 'pdf-extraction-source-only-decisions' ||
     decisionArtifact.value.evalSetId !== identity.id ||
     decisionArtifact.value.evalSetSha256 !== identity.evalSetSha256 ||
@@ -1492,7 +1485,11 @@ function relationshipScore(expected, prediction) {
       const expectedReference = expected.references.find(
         (reference) => reference.id === item?.referenceId,
       )
-      return expectedReference && expectedReference.bodyId !== item?.bodyId
+      return (
+        !expectedReference ||
+        expectedReference.bodyId !== item?.bodyId ||
+        expectedReference.marker !== item?.marker
+      )
     })
   ) {
     return degenerateResult('DEGENERATE_SINGLE_FOOTNOTE_OWNER')
@@ -1737,6 +1734,12 @@ export function comparePdfExtractionProviders(evalSet, providers) {
   const reviewBlocksComparison = hasScoredOutput && !reviewsComplete
   if (reviewBlocksComparison) {
     for (const provider of providerSummaries) provider.score = null
+    for (const row of rows) {
+      row.scoredCaseCount = 0
+      row.abstainedCaseCount = 0
+      row.degenerateCaseCount = 0
+      row.score = null
+    }
   }
   const reportWithoutHash = {
     schemaVersion: PDF_EXTRACTION_EVAL_REPORT_SCHEMA_VERSION,

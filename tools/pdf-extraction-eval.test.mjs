@@ -20,8 +20,8 @@ async function readEvalSet() {
 }
 
 async function attachVerifiedReviews(evalSet, directory) {
-  const reviewerA = 'fixture-reviewer-a'
-  const reviewerB = 'fixture-reviewer-b'
+  const reviewerA = 'a'.repeat(64)
+  const reviewerB = 'b'.repeat(64)
   const rosterPath = join(directory, 'roster.json')
   const decisionPath = join(directory, 'decisions.json')
   const reviews = [
@@ -40,18 +40,18 @@ async function attachVerifiedReviews(evalSet, directory) {
     }
   }
   const roster = {
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     kind: 'pdf-extraction-reviewer-roster',
     evalSetId: evalSet.id,
-    reviewers: [
-      { reviewerId: reviewerA, identityEvidenceSha256: 'a'.repeat(64) },
-      { reviewerId: reviewerB, identityEvidenceSha256: 'b'.repeat(64) },
-    ],
+    reviewers: {
+      [reviewerA]: 'fixture-reviewer-a',
+      [reviewerB]: 'fixture-reviewer-b',
+    },
   }
   const identity = validatePdfExtractionEvalSet(evalSet)
   const documentById = new Map(evalSet.documents.map((item) => [item.id, item]))
   const decisionArtifact = {
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     kind: 'pdf-extraction-source-only-decisions',
     evalSetId: evalSet.id,
     evalSetSha256: identity.evalSetSha256,
@@ -78,6 +78,15 @@ async function attachVerifiedReviews(evalSet, directory) {
     }
   }
   await validatePdfExtractionEvalSetFiles(evalSet)
+}
+
+async function verifyEvalSet(evalSet) {
+  const directory = await mkdtemp('.tmp-pdf-extraction-verified-')
+  try {
+    await attachVerifiedReviews(evalSet, directory)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 }
 
 describe('source-reviewed PDF extraction strata benchmark', () => {
@@ -195,6 +204,12 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     })
     expect(report.providers[0].score).toBeNull()
     expect(report.summary.scoredProviderCount).toBe(0)
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'table-structure' && row.layout === 'one-column',
+      ),
+    ).toMatchObject({ score: null, scoredCaseCount: 0 })
   })
 
   it('scores abstention above guarded degenerate answers', async () => {
@@ -287,6 +302,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
 
   it('accepts a prediction only when its source geometry and lineage match', async () => {
     const evalSet = await readEvalSet()
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -356,6 +372,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
 
   it('scores boilerplate exclusion against reviewed furniture identities', async () => {
     const evalSet = await readEvalSet()
+    await verifyEvalSet(evalSet)
     const furnitureCase = evalSet.cases.find(
       (item) => item.id === 'diagnostic-overlays.boilerplate-exclusion',
     )
@@ -410,6 +427,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       marker: '1',
       bodyId: 'footnote-1',
     })
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -468,6 +486,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       sourcePage: footnoteCase.source.sourcePage,
       marker: '2',
     })
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -501,6 +520,57 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
           row.layout === footnoteCase.layout,
       ),
     ).toMatchObject({ degenerateCaseCount: 0, scoredCaseCount: 1 })
+  })
+
+  it('keeps unknown collapsed footnote relationships degenerate', async () => {
+    const evalSet = await readEvalSet()
+    const footnoteCase = evalSet.cases.find((item) =>
+      item.id.endsWith('.footnote-resolution'),
+    )
+    footnoteCase.source.groundTruth.bodies.push({
+      id: 'footnote-2',
+      sourcePage: footnoteCase.source.sourcePage,
+      marker: '2',
+    })
+    footnoteCase.source.groundTruth.references.push({
+      id: 'note-reference-2',
+      sourcePage: footnoteCase.source.sourcePage,
+      marker: '2',
+      bodyId: 'footnote-2',
+    })
+    const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
+      id: 'candidate-a',
+      kind: 'candidate',
+      version: 'candidate-a-v1',
+    })
+    const output = candidate.cases.find(
+      (item) => item.caseId === footnoteCase.id,
+    )
+    output.status = 'scored'
+    output.prediction = {
+      relationships: [
+        {
+          referenceId: 'unknown-reference-1',
+          bodyId: 'footnote-1',
+          marker: '1',
+        },
+        {
+          referenceId: 'unknown-reference-2',
+          bodyId: 'footnote-1',
+          marker: '1',
+        },
+      ],
+    }
+    output.diagnostics = []
+
+    const report = comparePdfExtractionProviders(evalSet, [candidate])
+    expect(
+      report.rows.find(
+        (row) =>
+          row.stratum === 'footnote-resolution' &&
+          row.layout === footnoteCase.layout,
+      ),
+    ).toMatchObject({ degenerateCaseCount: 1, scoredCaseCount: 0 })
   })
 
   it('includes abstained rows in sparse provider aggregates', async () => {
@@ -541,6 +611,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
 
   it('matches bounded objects by source binding rather than array order', async () => {
     const evalSet = await readEvalSet()
+    await verifyEvalSet(evalSet)
     const candidate = createAbstainingPdfExtractionCandidate(evalSet, {
       id: 'candidate-a',
       kind: 'candidate',
@@ -659,9 +730,9 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     const directory = await mkdtemp('.tmp-pdf-extraction-review-')
     const rosterPath = join(directory, 'roster.json')
     const decisionPath = join(directory, 'decisions.json')
-    const reviewerA = 'fixture-reviewer-a'
-    const reviewerB = 'fixture-reviewer-b'
-    const reviewerC = 'fixture-reviewer-c'
+    const reviewerA = 'a'.repeat(64)
+    const reviewerB = 'b'.repeat(64)
+    const reviewerC = 'c'.repeat(64)
     try {
       const reviews = [
         ...evalSet.documents.map((item) => item.groundTruthReview),
@@ -684,14 +755,14 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
       })
 
       const roster = {
-        schemaVersion: '1.0.0',
+        schemaVersion: '1.1.0',
         kind: 'pdf-extraction-reviewer-roster',
         evalSetId: evalSet.id,
-        reviewers: [
-          { reviewerId: reviewerA, identityEvidenceSha256: 'a'.repeat(64) },
-          { reviewerId: reviewerB, identityEvidenceSha256: 'b'.repeat(64) },
-          { reviewerId: reviewerC, identityEvidenceSha256: 'c'.repeat(64) },
-        ],
+        reviewers: {
+          [reviewerA]: 'fixture-reviewer-a',
+          [reviewerB]: 'fixture-reviewer-b',
+          [reviewerC]: 'fixture-reviewer-c',
+        },
       }
       const identity = validatePdfExtractionEvalSet(evalSet)
       const documentById = new Map(
@@ -705,7 +776,7 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
         decisionSha256: 'd'.repeat(64),
       }))
       const decisionArtifact = {
-        schemaVersion: '1.0.0',
+        schemaVersion: '1.1.0',
         kind: 'pdf-extraction-source-only-decisions',
         evalSetId: evalSet.id,
         evalSetSha256: identity.evalSetSha256,
@@ -729,22 +800,21 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
         validatePdfExtractionEvalSetFiles(evalSet),
       ).resolves.toMatchObject({ evalSetSha256: identity.evalSetSha256 })
 
-      roster.reviewers[2].identityEvidenceSha256 =
-        roster.reviewers[0].identityEvidenceSha256
-      const duplicateIdentityRosterBytes = Buffer.from(
+      delete roster.reviewers[reviewerC]
+      const missingIdentityRosterBytes = Buffer.from(
         `${JSON.stringify(roster)}\n`,
       )
-      await writeFile(rosterPath, duplicateIdentityRosterBytes)
+      await writeFile(rosterPath, missingIdentityRosterBytes)
       for (const review of reviews) {
         review.reviewEvidence.rosterSha256 = sha256(
-          duplicateIdentityRosterBytes,
+          missingIdentityRosterBytes,
         )
       }
       await expect(validatePdfExtractionEvalSetFiles(evalSet)).rejects.toThrow(
-        'PDF_EXTRACTION_REVIEW_ROSTER_MISMATCH',
+        'PDF_EXTRACTION_REVIEW_DECISION_MISMATCH',
       )
 
-      roster.reviewers[2].identityEvidenceSha256 = 'c'.repeat(64)
+      roster.reviewers[reviewerC] = 'fixture-reviewer-c'
       await writeFile(rosterPath, rosterBytes)
       for (const review of reviews) {
         review.reviewEvidence.rosterSha256 = sha256(rosterBytes)
@@ -864,6 +934,23 @@ describe('source-reviewed PDF extraction strata benchmark', () => {
     expect(validate(candidate)).toBe(false)
     candidate.cases[0].diagnostics = ['UPPERCASE_DIAGNOSTIC_1']
     expect(validate(candidate)).toBe(true)
+  })
+
+  it('publishes distinct reviewer identity evidence in the review schema', async () => {
+    const schema = JSON.parse(
+      await readFile('docs/schemas/pdf-extraction-eval-review.schema.json', 'utf8'),
+    )
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    const roster = {
+      schemaVersion: '1.1.0',
+      kind: 'pdf-extraction-reviewer-roster',
+      evalSetId: 'fixture-eval',
+      reviewers: { ['a'.repeat(64)]: 'reviewer-a' },
+    }
+
+    expect(validate(roster)).toBe(false)
+    roster.reviewers['b'.repeat(64)] = 'reviewer-b'
+    expect(validate(roster)).toBe(true)
   })
 
   it('enforces page-contained endpoint boxes without perfect-scoring zero area', async () => {

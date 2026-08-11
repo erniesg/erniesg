@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ernie.sg/schemas/pdf-extraction-eval-review-1.0.0.json",
+  "$id": "https://ernie.sg/schemas/pdf-extraction-eval-review-1.1.0.json",
   "title": "Source-only extraction evaluation review evidence",
   "description": "Roster and decision artifacts bind reviewer identities and labels without exposing private source content or consulting candidate output.",
   "oneOf": [
@@ -21,22 +21,15 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "kind", "evalSetId", "reviewers"],
       "properties": {
-        "schemaVersion": { "const": "1.0.0" },
+        "schemaVersion": { "const": "1.1.0" },
         "kind": { "const": "pdf-extraction-reviewer-roster" },
         "evalSetId": { "$ref": "#/$defs/id" },
         "reviewers": {
-          "type": "array",
-          "minItems": 2,
-          "uniqueItems": true,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["reviewerId", "identityEvidenceSha256"],
-            "properties": {
-              "reviewerId": { "$ref": "#/$defs/id" },
-              "identityEvidenceSha256": { "$ref": "#/$defs/sha256" }
-            }
-          }
+          "description": "Map from authoritative reviewer identity-evidence hashes to non-authoritative reviewer aliases. Object keys make duplicate identity evidence structurally unrepresentable.",
+          "type": "object",
+          "minProperties": 2,
+          "propertyNames": { "$ref": "#/$defs/sha256" },
+          "additionalProperties": { "$ref": "#/$defs/id" }
         }
       }
     },
@@ -53,7 +46,7 @@
         "decisions"
       ],
       "properties": {
-        "schemaVersion": { "const": "1.0.0" },
+        "schemaVersion": { "const": "1.1.0" },
         "kind": { "const": "pdf-extraction-source-only-decisions" },
         "evalSetId": { "$ref": "#/$defs/id" },
         "evalSetSha256": { "$ref": "#/$defs/sha256" },

@@ -251,6 +251,51 @@ describe('publication source adapter conformance', () => {
     expect(canonicalRuns(left)).toEqual(canonicalRuns(right))
   })
 
+  it('folds adjacent equivalent runs even when an overlapping style separates them', () => {
+    const base = adaptPayloadLexical({
+      id: 'interleaved-inline-runs',
+      title: 'Interleaved inline runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'abcd' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const combined = withRuns([
+      { start: 0, end: 4, bold: true },
+      { start: 0, end: 4, italic: true },
+    ])
+    const segmented = withRuns([
+      { start: 0, end: 2, bold: true },
+      { start: 0, end: 4, italic: true },
+      { start: 2, end: 4, bold: true },
+    ])
+
+    expect(comparePublicationSemanticSubset(segmented, combined)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(segmented)).toBe(
+      canonicalPublicationSubsetSha256(combined),
+    )
+    const paragraph = canonicalPublicationSubset(segmented).nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    expect(paragraph?.inlineRuns).toEqual([
+      { start: 0, end: 4, bold: true },
+      { start: 0, end: 4, italic: true },
+    ])
+  })
+
   it('preserves authored link boundaries through canonical serialization in every profile', () => {
     const canonical = canonicalPublicationSourceResult(
       adaptPayloadLexical({

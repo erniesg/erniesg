@@ -122,19 +122,19 @@ function canonicalInlineRuns(
   runs: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
   // The renderer evaluates active styles by range, so equivalent graphs may
-  // store the same effective intervals in different array orders. Sort by
-  // effective interval and stable semantics before adjacency folding so the
-  // canonical subset never depends on source array order, while links, hard
-  // breaks, and relationship anchors keep their authored boundaries.
+  // store the same effective intervals in different array orders. Group equal
+  // semantics before adjacency folding so an overlapping style cannot split
+  // a mergeable run, then restore interval order for deterministic output.
+  // Links, hard breaks, and relationship anchors keep authored boundaries.
   const ordered = [...runs].sort((left, right) => {
-    const startOrder = Number(left.start) - Number(right.start)
-    if (startOrder) return startOrder
-    const endOrder = Number(left.end) - Number(right.end)
-    if (endOrder) return endOrder
-    return codeUnitCompare(
+    const semanticOrder = codeUnitCompare(
       stableJson(canonicalInlineRunSemantics(left)),
       stableJson(canonicalInlineRunSemantics(right)),
     )
+    if (semanticOrder) return semanticOrder
+    const startOrder = Number(left.start) - Number(right.start)
+    if (startOrder) return startOrder
+    return Number(left.end) - Number(right.end)
   })
   const result: Array<Record<string, unknown>> = []
   for (const run of ordered) {
@@ -157,7 +157,16 @@ function canonicalInlineRuns(
     }
     result.push({ ...run })
   }
-  return result
+  return result.sort((left, right) => {
+    const startOrder = Number(left.start) - Number(right.start)
+    if (startOrder) return startOrder
+    const endOrder = Number(left.end) - Number(right.end)
+    if (endOrder) return endOrder
+    return codeUnitCompare(
+      stableJson(canonicalInlineRunSemantics(left)),
+      stableJson(canonicalInlineRunSemantics(right)),
+    )
+  })
 }
 
 /**

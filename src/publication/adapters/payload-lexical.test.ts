@@ -1568,7 +1568,7 @@ describe('Payload Lexical publication adapter', () => {
           strictFixture([{ type: 'upload', value: conflicting }], { uploads }),
         ),
       ).toThrow(
-        /Payload upload reference (?:identity conflicts with|disagrees with) indexed upload pic.*children\[0\]/,
+        /Payload upload reference (?:identity conflicts with|disagrees with) indexed upload \(sha256:[a-f0-9]{16}\).*children\[0\]/,
       )
     }
 
@@ -1602,6 +1602,72 @@ describe('Payload Lexical publication adapter', () => {
         locale: 'fr',
       }),
     ).toThrow(/Payload locale fr upload pic is missing localized alternative text.*children\[0\]/)
+  })
+
+  it('redacts indexed upload ids from object-reference conflict errors', () => {
+    const unsafeId = 'https://uploads.example/pic?credential=redact-me'
+    let failure: unknown
+    try {
+      adaptPayloadLexical(
+        strictFixture([{ type: 'upload', value: { id: unsafeId, width: 48 } }], {
+          uploads: {
+            [unsafeId]: {
+              filename: 'pic.png',
+              mimeType: 'image/png',
+              data: 'AQIDBA==',
+              width: 24,
+            },
+          },
+        }),
+      )
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(Error)
+    expect(String(failure)).not.toContain(unsafeId)
+    expect(String(failure)).not.toContain('credential=redact-me')
+    expect(String(failure)).toMatch(/indexed upload \(sha256:[a-f0-9]{16}\)/)
+  })
+
+  it('rejects conflicts across value and target upload id aliases', () => {
+    const uploads = {
+      pic: {
+        filename: 'pic.png',
+        mimeType: 'image/png',
+        data: 'AQIDBA==',
+      },
+    }
+
+    for (const value of [
+      { id: 'pic', value: 'other' },
+      { value: 'pic', target: 'other' },
+    ]) {
+      expect(() =>
+        adaptPayloadLexical(
+          strictFixture([{ type: 'upload', value }], { uploads }),
+        ),
+      ).toThrow(/Payload upload reference identity conflicts with indexed upload/)
+    }
+  })
+
+  it('rejects direct media types that conflict with indexed filename inference', () => {
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture(
+          [{ type: 'upload', value: { id: 'pic', mimeType: 'image/jpeg' } }],
+          {
+            uploads: {
+              pic: {
+                filename: 'pic.png',
+                data: 'AQIDBA==',
+                alt: 'Mapped picture',
+              },
+            },
+          },
+        ),
+      ),
+    ).toThrow(/disagrees with indexed upload .* on media type/)
   })
 
   it('fails closed for table and relationship semantics the graph cannot preserve', () => {

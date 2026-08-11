@@ -992,7 +992,7 @@ function rawUploadValue(node: LexicalNode) {
 // ways. When the reference declares any spelling of a family, the indexed
 // spellings are dropped so the reference value deterministically wins.
 const UPLOAD_REFERENCE_FIELD_GROUPS: readonly (readonly string[])[] = [
-  ['id', '_id', 'key'],
+  ['id', '_id', 'key', 'value', 'target'],
   ['mimeType', 'mimetype', 'mediaType'],
   ['focalPoint', 'focalX', 'focalY'],
   ['bytes', 'data', 'buffer', 'base64'],
@@ -1003,7 +1003,12 @@ const UPLOAD_REFERENCE_FIELD_GROUPS: readonly (readonly string[])[] = [
 function uploadReferenceConflicts(raw: JsonObject, indexed: JsonObject, location: string): string[] {
   const conflicts: string[] = []
   const directMediaType = (upload: JsonObject) => upload.mimeType ?? upload.mimetype ?? upload.mediaType
-  if (directMediaType(raw) !== undefined && directMediaType(indexed) !== undefined && mediaTypeFor(raw, location) !== mediaTypeFor(indexed, location)) conflicts.push('media type')
+  const declaresMediaType = (upload: JsonObject) =>
+    directMediaType(upload) !== undefined ||
+    upload.filename !== undefined ||
+    upload.fileName !== undefined ||
+    upload.name !== undefined
+  if (declaresMediaType(raw) && declaresMediaType(indexed) && mediaTypeFor(raw, location) !== mediaTypeFor(indexed, location)) conflicts.push('media type')
   for (const dimension of ['width', 'height'] as const) {
     if (raw[dimension] !== undefined && indexed[dimension] !== undefined && optionalUploadDimension(raw[dimension], dimension, location) !== optionalUploadDimension(indexed[dimension], dimension, location)) conflicts.push(dimension)
   }
@@ -1026,14 +1031,15 @@ function uploadReferenceConflicts(raw: JsonObject, indexed: JsonObject, location
  * intrinsic metadata, or bytes fail closed.
  */
 function mergedUploadReference(raw: JsonObject, id: string, indexed: JsonObject, location: string): JsonObject {
-  for (const key of ['id', '_id', 'key']) {
+  const indexedUpload = `(sha256:${digest(id).slice(0, 16)})`
+  for (const key of ['id', '_id', 'key', 'value', 'target']) {
     const value = raw[key]
     if (value === undefined) continue
     if ((typeof value !== 'string' && typeof value !== 'number') || String(value) !== id)
-      throw new Error(`Payload upload reference identity conflicts with indexed upload ${id} at ${location}`)
+      throw new Error(`Payload upload reference identity conflicts with indexed upload ${indexedUpload} at ${location}`)
   }
   const conflicts = uploadReferenceConflicts(raw, indexed, location)
-  if (conflicts.length) throw new Error(`Payload upload reference disagrees with indexed upload ${id} on ${conflicts.join(', ')} at ${location}`)
+  if (conflicts.length) throw new Error(`Payload upload reference disagrees with indexed upload ${indexedUpload} on ${conflicts.join(', ')} at ${location}`)
   const base = { ...indexed }
   for (const group of UPLOAD_REFERENCE_FIELD_GROUPS) {
     if (group.some((key) => raw[key] !== undefined)) for (const key of group) delete base[key]

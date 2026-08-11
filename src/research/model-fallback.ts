@@ -341,7 +341,8 @@ function candidateIds(candidates: readonly ModelFallbackCandidate[]) {
 function isOpenDecision(point: ModelFallbackDecisionPoint) {
   if (
     point.status === 'sufficient-evidence' ||
-    point.status === 'deterministic'
+    point.status === 'deterministic' ||
+    point.evidenceStatus === 'sufficient'
   )
     return false
   if (point.insufficientEvidence === true) return true

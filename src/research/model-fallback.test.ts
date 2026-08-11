@@ -178,6 +178,25 @@ describe('model fallback consultation gate', () => {
     expect(consult).not.toHaveBeenCalled()
   })
 
+  it('fails closed without consulting when sufficient evidence has no choice', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'order-a-b' }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      model: { identity: modelIdentity, consult },
+    })
+    const point = {
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[2]!,
+      insufficientEvidence: false,
+      evidenceStatus: 'sufficient' as const,
+    }
+
+    const result = await gate.decide(point)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('NO_CANDIDATE_CHOICE')
+    expect(consult).not.toHaveBeenCalled()
+  })
+
   it('retires a class only after its generated ambiguity fixture has a valid rule', async () => {
     const ledger = new ModelFallbackLedger()
     const gate = new ModelConsultationGate({

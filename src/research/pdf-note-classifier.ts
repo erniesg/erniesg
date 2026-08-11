@@ -1228,6 +1228,15 @@ export function classifyPdfNoteMarkers(
       (region.kind === 'footnote' || region.kind === 'endnote') &&
       !bibliographyRegionIds.has(region.id),
   )
+  const compoundNoteDefinitionsByRegionId = new Map(
+    noteBodies.flatMap((region) => {
+      const compound = splitPdfCompoundAffiliationNote(
+        region,
+        lineBoundaryDecisions,
+      )
+      return compound ? [[region.id, compound] as const] : []
+    }),
+  )
   const repeatedNameTokens = repeatedRenderedNameTokens(orderedRegions)
   const ordinaryCandidates = orderedRegions
     .filter((region) =>
@@ -1244,6 +1253,15 @@ export function classifyPdfNoteMarkers(
         if (region.kind !== 'footnote' && region.kind !== 'endnote') {
           return true
         }
+        const compound = compoundNoteDefinitionsByRegionId.get(region.id)
+        const siblingDefinition = compound?.affiliations.some(
+          (segment) =>
+            candidate.start === segment.sourceStart &&
+            candidate.end === segment.sourceStart + segment.markerText.length &&
+            candidate.labels.length === 1 &&
+            candidate.labels[0] === normalizedNoteLabel(segment.label),
+        )
+        if (siblingDefinition) return false
         const definitionLabel = noteLabelFromText(region.text)
         const definitionPrefix = region.text.slice(0, candidate.start)
         return !(

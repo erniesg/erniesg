@@ -790,16 +790,16 @@ function publicationCleanlinessExclusion(repositoryRoot, excludedPath) {
     // Only the root-owned macOS temporary aliases above may change a path's
     // spelling. Any other symlink, missing target, or mount boundary fails
     // closed and remains visible to `git status`.
-    entry = lstatSync(candidate)
-    const privateMode = entry.mode & 0o777
+    entry = lstatSync(candidate, { bigint: true })
+    const privateMode = entry.mode & 0o777n
     const effectiveUserId = currentEffectiveUserId()
     if (
       realpathSync(repositoryRoot) !== repositoryIdentity ||
       realpathSync(candidate) !== candidateIdentity ||
       !entry.isDirectory() ||
-      statSync(repositoryIdentity).dev !== entry.dev ||
+      statSync(repositoryIdentity, { bigint: true }).dev !== entry.dev ||
       (effectiveUserId !== undefined &&
-        (entry.uid !== effectiveUserId || privateMode !== 0o700))
+        (entry.uid !== BigInt(effectiveUserId) || privateMode !== 0o700n))
     )
       return undefined
   } catch {
@@ -833,11 +833,12 @@ function publicationCleanlinessExclusionIsCurrent(exclusion) {
   try {
     if (realpathSync(exclusion.candidate) !== exclusion.candidateIdentity)
       return false
-    const entry = lstatSync(exclusion.candidate)
+    const entry = lstatSync(exclusion.candidate, { bigint: true })
     const effectiveUserId = currentEffectiveUserId()
     return (
       entry.isDirectory() &&
-      (effectiveUserId === undefined || entry.uid === effectiveUserId) &&
+      (effectiveUserId === undefined ||
+        entry.uid === BigInt(effectiveUserId)) &&
       entry.dev === exclusion.identity.dev &&
       entry.ino === exclusion.identity.ino &&
       entry.uid === exclusion.identity.uid &&

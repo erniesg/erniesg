@@ -1255,6 +1255,84 @@ describe('publication staging and publish helpers', () => {
     }
   })
 
+  it('preserves full-width staging identities across status collection', async () => {
+    const originalChildProcess = await import('node:child_process')
+    const originalFs = await import('node:fs')
+    const repositoryRoot = '/Users/publication-cleanliness-bigint'
+    const staging = resolve(repositoryRoot, '.publication-staging-owned')
+    const owner = BigInt(process.geteuid?.() ?? process.getuid?.() ?? 0)
+    const originalIdentity = {
+      dev: 9_007_199_254_740_992n,
+      ino: 9_007_199_254_740_992n,
+    }
+    const replacementIdentity = {
+      dev: 9_007_199_254_740_993n,
+      ino: 9_007_199_254_740_993n,
+    }
+    const identityModes = []
+    let replaced = false
+
+    const stagingStats = (identity, bigint) => ({
+      dev: bigint ? identity.dev : Number(identity.dev),
+      ino: bigint ? identity.ino : Number(identity.ino),
+      uid: bigint ? owner : Number(owner),
+      gid: bigint ? 20n : 20,
+      mode: bigint ? 0o40700n : 0o40700,
+      isDirectory: () => true,
+    })
+
+    vi.resetModules()
+    vi.doMock('node:fs', () => ({
+      ...originalFs,
+      lstatSync: (path, options) => {
+        expect(resolve(path)).toBe(staging)
+        const bigint = options?.bigint === true
+        identityModes.push(bigint)
+        return stagingStats(
+          replaced ? replacementIdentity : originalIdentity,
+          bigint,
+        )
+      },
+      realpathSync: (path) => resolve(path),
+      statSync: (_path, options) => {
+        const bigint = options?.bigint === true
+        return {
+          dev: bigint
+            ? originalIdentity.dev
+            : Number(originalIdentity.dev),
+        }
+      },
+    }))
+    vi.doMock('node:child_process', () => ({
+      ...originalChildProcess,
+      execFileSync: (_command, args) => {
+        if (args[0] === 'rev-parse' && args[1] === '--show-toplevel')
+          return `${repositoryRoot}\n`
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') return 'fixture\n'
+        if (args[0] === 'status') {
+          replaced = true
+          return ''
+        }
+        throw new Error(`Unexpected Git invocation: ${args.join(' ')}`)
+      },
+    }))
+
+    try {
+      const { publicationRepositoryForCurrentCheckout: repositoryReceipt } =
+        await import('./publication-build.mjs')
+
+      expect(repositoryReceipt([staging])).toEqual({
+        commit: 'fixture',
+        dirty: true,
+      })
+      expect(identityModes).toEqual([true, true])
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.doUnmock('node:fs')
+      vi.resetModules()
+    }
+  })
+
   it('fails closed when an owned staging directory changes during status collection', async () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-cleanliness-identity-change-'),

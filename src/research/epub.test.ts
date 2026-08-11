@@ -2998,7 +2998,7 @@ describe('EPUB 3 export', () => {
     expect(content).not.toContain('href="#suppressed-caption-note-reference-6"')
   })
 
-  it('omits a table-cell note backlink when an unresolved visual suppresses its reference anchor', () => {
+  it('omits a table-cell note backlink whenever its semantic table is not rendered', () => {
     const notePaper = structuredClone(paper)
     notePaper.nodes = [
       {
@@ -3086,6 +3086,83 @@ describe('EPUB 3 export', () => {
     )
     expect(content).not.toContain('id="suppressed-table-cell-note-reference-6"')
     expect(content).not.toContain(
+      'href="#suppressed-table-cell-note-reference-6"',
+    )
+
+    const mixedRenditionContent = renderPublicationXhtml(notePaper, {
+      reconstruction: {
+        readiness: { ready: false },
+        visualRelationships: [
+          {
+            id: 'preformatted-table-visual',
+            kind: 'table',
+            semanticKind: 'code',
+            label: 'Table 1',
+            captionRegionId: 'source-table-caption-region',
+            sourceRegionIds: ['source-table-region'],
+            sourceLineIds: ['source-table-line'],
+            sourceObjectIds: [],
+            assetIds: ['semantic-table-asset'],
+            status: 'matched',
+            confidence: 1,
+            evidence: ['source-preformatted-block'],
+            preformatted: {
+              status: 'proved',
+              evidence: ['exact-single-run-line-text'],
+              lines: [
+                {
+                  text: 'Value6',
+                  sourceRegionId: 'source-table-region',
+                  sourceLineId: 'source-table-line',
+                  sourceBox: {
+                    page: 1,
+                    x: 0.1,
+                    y: 0.1,
+                    width: 0.2,
+                    height: 0.02,
+                    rotation: 0,
+                    method: 'pdf-text',
+                  },
+                  sourceRunBoxes: [],
+                },
+              ],
+            },
+            candidates: [],
+            sourceBoxes: [],
+            sourceText: 'Value6',
+            altText: 'Unresolved table with note',
+            altTextSource: 'caption',
+            canonicalNodeId: 'unresolved-table-with-note',
+            captionNodeId: 'unresolved-table-caption',
+          },
+        ],
+        assets: [
+          {
+            id: 'semantic-table-asset',
+            href: 'assets/semantic-table.xhtml',
+            mediaType: 'application/xhtml+xml',
+            kind: 'table',
+            rendition: 'semantic-table',
+            sha256: 'a'.repeat(64),
+            bytes: new Uint8Array([1]),
+            width: 100,
+            height: 40,
+            resolutionDpi: 96,
+            sourceObjectIds: [],
+            sourceBoxes: [],
+          },
+        ],
+      } as unknown as PdfReconstruction,
+    })
+
+    expect(mixedRenditionContent).toContain('class="source-code"')
+    expect(mixedRenditionContent).not.toContain(
+      'class="semantic-table-wrapper"',
+    )
+    expect(mixedRenditionContent).not.toContain(
+      'id="suppressed-table-cell-note-reference-6"',
+    )
+    expect(mixedRenditionContent).not.toContain(
       'href="#suppressed-table-cell-note-reference-6"',
     )
   })

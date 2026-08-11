@@ -147,6 +147,32 @@ function isSemanticTableAsset(asset: PublicationAsset | undefined) {
   return asset?.mediaType === 'application/xhtml+xml' && asset.kind === 'table'
 }
 
+function semanticTableAssetForRenderedNode({
+  node,
+  visual,
+  assets,
+}: {
+  node: ResearchNode | undefined
+  visual: PublicationVisualRelationship
+  assets: ReadonlyMap<string, PublicationAsset>
+}) {
+  const rendersPreformattedLines =
+    visual.preformatted !== undefined &&
+    visual.evidence.includes('source-preformatted-block') &&
+    visual.preformatted.lines.length > 0
+  if (
+    rendersPreformattedLines ||
+    visual.kind !== 'table' ||
+    node?.type !== 'figure' ||
+    !node.table
+  ) {
+    return undefined
+  }
+  return visual.assetIds
+    .map((assetId) => assets.get(assetId))
+    .find(isSemanticTableAsset)
+}
+
 function isDocxReconstruction(
   reconstruction: DocumentReconstruction,
 ): reconstruction is DocxReconstruction {
@@ -2275,7 +2301,11 @@ function renderNode(
         .filter((visualAsset): visualAsset is PublicationAsset =>
           Boolean(visualAsset),
         )
-      const semanticTableAsset = visualAssets.find(isSemanticTableAsset)
+      const semanticTableAsset = semanticTableAssetForRenderedNode({
+        node,
+        visual,
+        assets,
+      })
       const renderedVisualAssets = visualAssets
         .map((visualAsset) => {
           const href = attribute(visualAsset.href)
@@ -2606,10 +2636,11 @@ function renderResearchPublicationXhtml(
   )
   const renderedSemanticTableNodeIds = new Set(
     [...visualRelationships.entries()].flatMap(([nodeId, relationship]) =>
-      relationship.kind === 'table' &&
-      relationship.assetIds.some((assetId) =>
-        isSemanticTableAsset(assets.get(assetId)),
-      )
+      semanticTableAssetForRenderedNode({
+        node: paper.nodes.find((node) => node.id === nodeId),
+        visual: relationship,
+        assets,
+      })
         ? [nodeId]
         : [],
     ),

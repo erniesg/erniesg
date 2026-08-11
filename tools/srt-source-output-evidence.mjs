@@ -40,6 +40,12 @@ const DEFAULT_OUTPUT = resolve(
   '.agent/evidence/srt-checkpoints',
 )
 const TOOL_VERSION = '1.0.0'
+const PDF_RECONSTRUCTION_PROPERTIES = new Set([
+  'prose-continuity',
+  'hyphen-resolution',
+  'markup-non-promotion',
+  'furniture-exclusion',
+])
 
 const IMAGE_OPERATORS = new Set([
   pdfjs.OPS.paintImageMaskXObject,
@@ -664,10 +670,14 @@ async function renderRendition({
   buildEpub,
   profile,
   document,
+  renditionSource,
   browser,
   root,
 }) {
-  const epub = await buildEpub(document)
+  const epub =
+    renditionSource === 'pdf-reconstruction'
+      ? await buildEpub(document, profile)
+      : await buildEpub(document)
   const archive = unzipSync(epub.bytes)
   const unpacked = await mkdtemp(join(root, 'rendition-'))
   await writeArchive(archive, unpacked)
@@ -727,12 +737,13 @@ async function createViteModules() {
     server: { middlewareMode: true, watch: null },
   })
   try {
-    const [checkpoints, struct, targets] = await Promise.all([
+    const [checkpoints, pdf, struct, targets] = await Promise.all([
       vite.ssrLoadModule('/src/research/source-output-checkpoints.ts'),
+      vite.ssrLoadModule('/src/research/pdf.ts'),
       vite.ssrLoadModule('/src/research/epub.ts'),
       vite.ssrLoadModule('/src/research/targets.ts'),
     ])
-    return { vite, checkpoints, struct, targets }
+    return { vite, checkpoints, pdf, struct, targets }
   } catch (error) {
     await vite.close()
     throw error
@@ -837,6 +848,16 @@ async function run(options) {
       sourceBytes,
       basename(options.document),
     )
+    const reconstruction = privacy.defaultFixture
+      ? await modules.pdf.reconstructPdf(
+          new File([sourceBytes], basename(options.document), {
+            type: 'application/pdf',
+            lastModified: 0,
+          }),
+          undefined,
+          { language: 'en-US' },
+        )
+      : null
     browser = await chromium.launch({ headless: true })
     const browserRoot = await mkdtemp(join(tmpdir(), 'srt-source-output-'))
     const byPair = new Map()
@@ -847,7 +868,12 @@ async function run(options) {
       await mkdir(join(options.output, 'pairs'), { recursive: true })
       for (const checkpoint of checkpoints) {
         const profile = modules.targets.getTargetProfile(checkpoint.profile)
-        const pairKey = `${checkpoint.page}\0${checkpoint.profile}`
+        const renditionSource =
+          reconstruction &&
+          PDF_RECONSTRUCTION_PROPERTIES.has(checkpoint.property)
+            ? 'pdf-reconstruction'
+            : 'struct-document'
+        const pairKey = `${checkpoint.page}\0${checkpoint.profile}\0${renditionSource}`
         let pair = byPair.get(pairKey)
         if (!pair) {
           const source = await renderSourcePage(
@@ -858,7 +884,11 @@ async function run(options) {
           const rendition = await renderRendition({
             buildEpub: modules.struct.buildEpub,
             profile,
-            document,
+            document:
+              renditionSource === 'pdf-reconstruction'
+                ? reconstruction.paper
+                : document,
+            renditionSource,
             browser,
             root: browserRoot,
           })
@@ -873,7 +903,10 @@ async function run(options) {
               text: pair.source.text,
               hasVisual: pair.source.hasVisual,
               furnitureContaminationCount:
-                document.receipt?.conservation?.furnitureContaminationCount,
+                renditionSource === 'pdf-reconstruction'
+                  ? reconstruction.completeness.furnitureContaminationCount
+                  : document.receipt?.conservation
+                      ?.furnitureContaminationCount,
             },
             rendition: {
               profile: checkpoint.profile,
@@ -929,6 +962,7 @@ async function run(options) {
           criterion: checkpoint.criterion,
           sourceExpectation: checkpoint.source,
           outputExpectation: checkpoint.output,
+          renditionSource,
           sourceArtifact: `pairs/${sourceName}`,
           outputArtifact: `pairs/${outputName}`,
           conclusion: reviewerConclusion(checkpoint, result),

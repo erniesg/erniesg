@@ -17177,16 +17177,25 @@ describe('PDF semantic reconstruction', () => {
       const figureBox: NormalizedSourceBox = {
         page: 1,
         x: 0.2,
-        y: 0.18,
+        y: 0.32,
         width: 0.6,
-        height: 0.28,
+        height: 0.2,
         rotation: 0,
         method: 'pdf-object',
       }
       const sourcePage = page(1, [
         run(1, 'Visual cross references', 0.1, 0.05, 0.7, 20),
-        run(1, `${figureLabel}. Source-backed result.`, 0.18, 0.49, 0.64, 8),
-        run(1, `See ${figureLabel} for the result.`, 0.1, 0.62, 0.72),
+        run(1, 'Ada Researcher', 0.1, 0.11, 0.3, 11),
+        run(1, 'Abstract', 0.1, 0.17, 0.24, 14),
+        run(
+          1,
+          'This abstract establishes a complete source-backed visual fixture.',
+          0.1,
+          0.22,
+          0.72,
+        ),
+        run(1, `${figureLabel}. Source-backed result.`, 0.18, 0.55, 0.64, 8),
+        run(1, `See ${figureLabel} for the result.`, 0.1, 0.64, 0.72),
       ])
       sourcePage.imageCount = 1
       sourcePage.objects = [
@@ -17224,6 +17233,13 @@ describe('PDF semantic reconstruction', () => {
         (relationship) => relationship.text === figureLabel,
       )
 
+      expect(result.crossReferenceRelationships).toHaveLength(1)
+      expect(
+        result.regions.find(
+          (region) => region.id === crossReference?.referenceRegionId,
+        )?.kind,
+      ).toBe('body')
+
       expect(visual).toMatchObject({
         status: 'matched',
         canonicalNodeId: expect.any(String),
@@ -17253,6 +17269,9 @@ describe('PDF semantic reconstruction', () => {
           }),
         ]),
       )
+      await expect(buildEpub(result.paper, result)).resolves.toMatchObject({
+        mode: 'publication',
+      })
     },
   )
 

@@ -12249,9 +12249,8 @@ export async function reconstructPageAnalyses({
   const crossReferenceRegions = new Map<string, PdfPageRegion>()
   for (const block of canonicalBlocks) {
     if (
-      !['heading', 'paragraph', 'caption', 'footnote'].includes(block.type) ||
-      (block.type === 'paragraph' &&
-        block.list?.numberingId === 'references')
+      block.type !== 'paragraph' ||
+      block.list?.numberingId === 'references'
     ) {
       continue
     }

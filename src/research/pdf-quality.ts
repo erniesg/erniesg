@@ -1030,6 +1030,27 @@ function validatedSourceSemanticFlowBoundaryDecision(
     ...toVisibleRuns.map((run) => run.sourceSequenceIndex!),
   )
   const crossPage = decision.topology === 'cross-page-column'
+  const accountedNonProseRegionIds = new Set(
+    visualRelationships.flatMap((relationship) =>
+      relationship.status === 'matched' && relationship.kind !== 'equation'
+        ? [relationship.captionRegionId, ...relationship.sourceRegionIds]
+        : [],
+    ),
+  )
+  const accountedNonProseBetweenBoundary = [...accountedNonProseRegionIds]
+    .flatMap((regionId) => allRegions.filter((region) => region.id === regionId))
+    .some((region) =>
+      region.lines.some((line) =>
+        line.runs.some(
+          (run) =>
+            run.sourceSequenceIndex !== undefined &&
+            ((run.page === from.run.page &&
+              run.sourceSequenceIndex > decision.from.sourceSequenceIndex) ||
+              (run.page === to.run.page &&
+                run.sourceSequenceIndex < decision.to.sourceSequenceIndex)),
+        ),
+      ),
+    )
   // Independent re-derivation of the page-break adjacency proof: the tail must
   // be the last body text item its page paints and the head the first the next
   // page paints, so only accounted page furniture can sit between them. The
@@ -1038,7 +1059,10 @@ function validatedSourceSemanticFlowBoundaryDecision(
     crossPage &&
     to.run.page === from.run.page + 1 &&
     (() => {
-      const extrema = pdfBodySourceOrderExtremaByPage(allRegions)
+      const extrema = pdfBodySourceOrderExtremaByPage(
+        allRegions,
+        accountedNonProseRegionIds,
+      )
       return (
         extrema.get(from.run.page)?.last ===
           decision.from.sourceSequenceIndex &&
@@ -1102,7 +1126,7 @@ function validatedSourceSemanticFlowBoundaryDecision(
   let expectedEvidence: readonly string[]
   if (crossPage) {
     if (
-      !sourceProvenCrossPageColumnFlowBoundary(
+      !sourceProvenCrossPageColumnGeometryBoundary(
         leftRegion,
         rightRegion,
         from.line,
@@ -1113,11 +1137,47 @@ function validatedSourceSemanticFlowBoundaryDecision(
     ) {
       return null
     }
-    expectedOutcome = pdfSourceColumnFlowJoinOutcome(
-      language,
-      rightRegion.text.trimStart(),
-      to.run,
-    ).outcome
+    const detachedCitationYear = sourceProvenDetachedCitationYearContinuation(
+      leftRegion.text,
+      rightRegion.text,
+    )
+    const scholarlyLabelFloat = sourceProvenScholarlyLabelFloatContinuation(
+      leftRegion.text,
+      rightRegion.text,
+    )
+    if (leftHyphenToken && rightHyphenToken) {
+      const proof = resolvePdfHyphenBoundary({
+        left: leftHyphenToken,
+        right: rightHyphenToken,
+        language,
+        sourceProven: true,
+        hardHyphenLexicon,
+        unhyphenatedLexicon,
+      })
+      const semanticVerdict = sourceSemanticFlowHyphenVerdict(proof)
+      if (semanticVerdict === 'remove') {
+        expectedOutcome = 'discretionary-hyphen-delete'
+      } else if (semanticVerdict === 'preserve') {
+        expectedOutcome = 'hard-hyphen-retain'
+      } else {
+        return null
+      }
+    } else if (
+      detachedCitationYear ||
+      sourceProvenUnmarkedProseContinuation(
+        leftRegion.text,
+        rightRegion.text,
+      ) ||
+      (scholarlyLabelFloat && accountedNonProseBetweenBoundary)
+    ) {
+      expectedOutcome = pdfSourceColumnFlowJoinOutcome(
+        language,
+        rightRegion.text.trimStart(),
+        to.run,
+      ).outcome
+    } else {
+      return null
+    }
     expectedEvidence = PDF_SOURCE_SEMANTIC_FLOW_CROSS_PAGE_EVIDENCE
   } else if (leftHyphenToken && rightHyphenToken) {
     const proof = resolvePdfHyphenBoundary({
@@ -1283,7 +1343,33 @@ function sourceProvenSamePageColumnFlowBoundary(
 const PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR = new Set(['right', 'single', 'span'])
 const PDF_CROSS_PAGE_FLOW_HEAD_COLUMNS_LTR = new Set(['left', 'single', 'span'])
 
-function sourceProvenCrossPageColumnFlowBoundary(
+function sourceProvenDetachedCitationYearContinuation(
+  leftText: string,
+  rightText: string,
+) {
+  return (
+    /\b\p{Lu}[\p{L}'’.-]*(?:\s+et\s+al\.)?,\s*$/u.test(
+      leftText.trimEnd(),
+    ) &&
+    /^(?:18|19|20)\d{2}[a-z]?(?=[,;:)])/u.test(rightText.trimStart())
+  )
+}
+
+function sourceProvenScholarlyLabelFloatContinuation(
+  leftText: string,
+  rightText: string,
+) {
+  return (
+    /\b(?:in|of|to|from|with|by|at|on|as|than|between|for|following)\s*$/iu.test(
+      leftText.trimEnd(),
+    ) &&
+    /^(?:Table|Figure|Equation|Eq\.|Section|Appendix)\s+(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)*)\b/u.test(
+      rightText.trimStart(),
+    )
+  )
+}
+
+function sourceProvenCrossPageColumnGeometryBoundary(
   leftRegion: PdfPageRegion,
   rightRegion: PdfPageRegion,
   fromLine: PdfPageRegion['lines'][number],
@@ -1307,16 +1393,6 @@ function sourceProvenCrossPageColumnFlowBoundary(
     toLine.id === rightRegion.lines.find((line) => line.text.trim())?.id &&
     fromLine.box.y + fromLine.box.height >= 0.65 &&
     toLine.box.y <= 0.35 &&
-    !/[\p{L}\p{N}][-‐‑]$/u.test(leftRegion.text.trimEnd()) &&
-    // A detached citation year has its own boundary topology; a page break must
-    // not be able to claim it as ordinary prose flow.
-    !(
-      /\b\p{Lu}[\p{L}'’.-]*(?:\s+et\s+al\.)?,\s*$/u.test(
-        leftRegion.text.trimEnd(),
-      ) &&
-      /^(?:18|19|20)\d{2}[a-z]?(?=[,;:)])/u.test(rightRegion.text.trimStart())
-    ) &&
-    sourceProvenUnmarkedProseContinuation(leftRegion.text, rightRegion.text) &&
     Math.max(fromLine.fontSize, toLine.fontSize) /
       Math.max(1, Math.min(fromLine.fontSize, toLine.fontSize)) <=
       1.12
@@ -1410,6 +1486,7 @@ function sourceProvenBoundaryTokenText(
   language: string | null,
   regions: readonly PdfPageRegion[] = [],
   sourceSemanticFlowBoundaryLedger?: SourceSemanticFlowBoundaryLedgerAudit,
+  requireCrossPageDecision = false,
 ) {
   let combined = values[0] ?? ''
   for (const [offset, value] of values.slice(1).entries()) {
@@ -1423,6 +1500,14 @@ function sourceProvenBoundaryTokenText(
             ),
           )
         : null
+    if (
+      sourceSemanticFlowBoundaryLedger &&
+      requireCrossPageDecision &&
+      regions[boundaryIndex - 1]?.page !== regions[boundaryIndex]?.page &&
+      !semanticFlowDecision
+    ) {
+      sourceSemanticFlowBoundaryLedger.valid = false
+    }
     if (semanticFlowDecision && sourceSemanticFlowBoundaryLedger) {
       const consumed =
         (sourceSemanticFlowBoundaryLedger.consumptionById.get(
@@ -2429,6 +2514,10 @@ export function provenanceTextConservation({
               paper.language ?? null,
               sourceComponentRegions,
               semanticFlowBoundaryLedger,
+              semanticOutputNodes.length > 0 &&
+                semanticOutputNodes.every(
+                  (node) => node.type === 'paragraph' && !node.list,
+                ),
             )
           : comparableSourceText,
       ) !== meaningPreservingText(comparableOutputText)

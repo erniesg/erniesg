@@ -127,16 +127,15 @@ export const PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE = Object.freeze(
 // A page break is not a source-order adjacency: `sourceSequenceIndex` is the
 // per-page text-item index, so the tail of page N and the head of page N+1 are
 // never numerically adjacent. What the source can prove instead is that the
-// tail is the last body text item its page paints and the continuation is the
-// first body text item the next page paints, with only page furniture between
-// them. Issue 042 already classifies that furniture, so excluding it here is
-// what lets a running head sit between two halves of one sentence without
-// entering the paragraph.
+// tail is the last prose text item its page paints and the continuation is the
+// first prose text item the next page paints, with only independently accounted
+// non-prose between them. That includes issue 042 page furniture and validated
+// visual/table ownership, neither of which may enter the paragraph.
 export const PDF_SOURCE_SEMANTIC_FLOW_CROSS_PAGE_EVIDENCE = Object.freeze(
   [
     'cross-page-column-geometry',
     'explicit-fragment-lineage',
-    'furniture-excluded-page-boundary',
+    'non-prose-excluded-page-boundary',
     'page-head-source-order-extremum',
     'page-tail-source-order-extremum',
   ].sort(),
@@ -146,19 +145,20 @@ export type PdfBodySourceOrderExtremum = { first: number; last: number }
 
 /**
  * Per-page first and last source text-item index over everything that is not
- * accounted page furniture.  Extraction and the independent quality audit both
- * derive the cross-page prose boundary from this map, so they cannot disagree
- * about which runs a page break is allowed to skip.
+ * accounted page furniture or validated non-prose visual content. Extraction
+ * and the independent quality audit both derive the cross-page prose boundary
+ * from this map, so they cannot disagree about which runs a page break may skip.
  */
 export function pdfBodySourceOrderExtremaByPage(
   regions: readonly Pick<
     PdfPageRegion,
-    'page' | 'lines' | 'furniture'
+    'id' | 'page' | 'lines' | 'furniture'
   >[],
+  accountedNonProseRegionIds: ReadonlySet<string> = new Set(),
 ) {
   const extrema = new Map<number, PdfBodySourceOrderExtremum>()
   for (const region of regions) {
-    if (region.furniture) continue
+    if (region.furniture || accountedNonProseRegionIds.has(region.id)) continue
     for (const line of region.lines) {
       for (const run of line.runs) {
         if (!run.text.trim() || run.sourceSequenceIndex === undefined) continue

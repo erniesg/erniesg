@@ -2972,6 +2972,7 @@ function appendBlockContinuation(
     number,
     PdfBodySourceOrderExtremum
   > = new Map(),
+  requireSemanticFlowDecision = false,
 ) {
   const targetTailLine = blockSourceSegments(target).at(-1)?.region.lines.at(-1)
   const continuationHeadLine =
@@ -3027,6 +3028,7 @@ function appendBlockContinuation(
     : 'unresolved'
   const semanticDeletionDecision =
     deletionDecision === null &&
+    requestedTopology !== 'cross-page-column' &&
     hyphenDeletion?.proof.sourceBoundaryProven === true &&
     semanticHyphenVerdict === 'remove'
       ? sourceSemanticFlowBoundaryDecision(
@@ -3055,9 +3057,6 @@ function appendBlockContinuation(
     targetText = targetText.slice(0, -1)
     const tail = targetSegments.at(-1)!
     tail.text = tail.text.slice(0, -1)
-    if (deletionDecision) {
-      hyphenDeletion!.decisions.push(deletionDecision)
-    }
   }
   const semanticFlowOutcome: SourceSemanticFlowBoundaryCandidate['outcome'] =
     deletionApplied
@@ -3073,10 +3072,12 @@ function appendBlockContinuation(
   const continuationLineage = continuationHeadLine?.sourceFragmentLineage
   const inferredTopology:
     SourceSemanticFlowBoundaryCandidate['topology'] | null =
-    semanticFlowOutcome === 'discretionary-hyphen-delete' ||
-    semanticFlowOutcome === 'hard-hyphen-retain'
-      ? 'lexical-hyphen'
-      : targetLineage &&
+    requestedTopology === 'cross-page-column'
+      ? 'cross-page-column'
+      : semanticFlowOutcome === 'discretionary-hyphen-delete' ||
+          semanticFlowOutcome === 'hard-hyphen-retain'
+        ? 'lexical-hyphen'
+        : targetLineage &&
           continuationLineage &&
           targetLineage.sourceLineId === continuationLineage.sourceLineId &&
           (targetLineage.fragment.startsWith('inline-stacked-') ||
@@ -3100,7 +3101,9 @@ function appendBlockContinuation(
     semanticFlowOutcome !== 'unresolved' &&
     (recordableTopology === 'same-page-column' ||
     recordableTopology === 'cross-page-column'
-      ? semanticFlowOutcome === 'space' || semanticFlowOutcome === 'no-space'
+      ? recordableTopology === 'cross-page-column' ||
+        semanticFlowOutcome === 'space' ||
+        semanticFlowOutcome === 'no-space'
       : semanticFlowOutcome !== 'space'
         ? recordableTopology === 'inline-stacked-fragment' ||
           recordableTopology === 'lexical-hyphen'
@@ -3113,6 +3116,12 @@ function appendBlockContinuation(
           bodySourceOrderExtremaByPage,
         )
       : null)
+  if (requireSemanticFlowDecision && semanticFlowDecision === null) {
+    return false
+  }
+  if (deletionApplied && deletionDecision) {
+    hyphenDeletion!.decisions.push(deletionDecision)
+  }
   if (
     semanticFlowDecision &&
     !sourceSemanticFlowBoundaryDecisions.some(
@@ -3142,6 +3151,7 @@ function appendBlockContinuation(
   if (target.list && continuation.region.page > previousMaximumPage) {
     target.list.continuedFromPreviousPage = true
   }
+  return true
 }
 
 type InlineStackedParagraphFragment = {
@@ -4366,6 +4376,38 @@ function sourceProvenCrossPageColumnFlowBoundary(
     PdfBodySourceOrderExtremum
   >,
 ) {
+  if (
+    !sourceProvenCrossPageColumnGeometryBoundary(
+      target,
+      continuation,
+      language,
+      baseDirection,
+    ) ||
+    /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) ||
+    detachedCitationYearContinuation(target.text, continuation.text) ||
+    !likelyUnmarkedCrossPageContinuation(target, continuation, {
+      admitUncasedScripts: true,
+    })
+  ) {
+    return false
+  }
+  return (
+    sourceSemanticFlowBoundaryCandidate(
+      target,
+      continuation,
+      sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space',
+      'cross-page-column',
+      bodySourceOrderExtremaByPage,
+    ) !== null
+  )
+}
+
+function sourceProvenCrossPageColumnGeometryBoundary(
+  target: RegionBlock,
+  continuation: RegionBlock,
+  language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
+) {
   const targetTailSegment = blockSourceSegments(target).at(-1)
   const continuationHeadSegment = blockSourceSegments(continuation)[0]
   const targetTailLine = targetTailSegment?.region.lines
@@ -4398,12 +4440,7 @@ function sourceProvenCrossPageColumnFlowBoundary(
     !tailColumns.has(targetTailSegment.region.column) ||
     !headColumns.has(continuationHeadSegment.region.column) ||
     targetTailLine.box.y + targetTailLine.box.height < 0.65 ||
-    continuationHeadLine.box.y > 0.35 ||
-    /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) ||
-    detachedCitationYearContinuation(target.text, continuation.text) ||
-    !likelyUnmarkedCrossPageContinuation(target, continuation, {
-      admitUncasedScripts: true,
-    })
+    continuationHeadLine.box.y > 0.35
   ) {
     return false
   }
@@ -4413,16 +4450,7 @@ function sourceProvenCrossPageColumnFlowBoundary(
       1,
       Math.min(targetTailLine.fontSize, continuationHeadLine.fontSize),
     )
-  if (fontRatio > 1.12) return false
-  return (
-    sourceSemanticFlowBoundaryCandidate(
-      target,
-      continuation,
-      sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space',
-      'cross-page-column',
-      bodySourceOrderExtremaByPage,
-    ) !== null
-  )
+  return fontRatio <= 1.12
 }
 
 function sourceProvenSamePageParagraphBoundary(
@@ -4806,6 +4834,14 @@ export async function mergeProseContinuations(
           baseDirection,
           bodySourceOrderExtremaByPage,
         )
+      const sourceProvenCrossPageColumnGeometry =
+        continuation?.type === 'paragraph' &&
+        sourceProvenCrossPageColumnGeometryBoundary(
+          target,
+          continuation,
+          language,
+          baseDirection,
+        )
       const samePageColumnFlowJoin =
         (sourceProvenSamePageColumnFlow || sourceProvenCrossPageColumnFlow) &&
         continuation?.type === 'paragraph'
@@ -4886,13 +4922,40 @@ export async function mergeProseContinuations(
           blockSourceSegments(continuation)[0]?.region.page
       const crossPageContinuation =
         continuation?.type === 'paragraph' && !samePageContinuation
+      const crossPageSemanticFlowOutcome =
+        crossPageContinuation && continuation?.type === 'paragraph'
+          ? lowercaseHyphenContinuation && hyphenJoin.hyphenBoundary
+            ? sourceSemanticFlowHyphenVerdict(
+                hyphenJoin.hyphenBoundary.proof,
+              ) === 'remove'
+              ? 'discretionary-hyphen-delete'
+              : sourceSemanticFlowHyphenVerdict(
+                    hyphenJoin.hyphenBoundary.proof,
+                  ) === 'preserve'
+                ? 'hard-hyphen-retain'
+                : null
+            : (sourceColumnFlowJoin(continuation, language)?.outcome ??
+              'space')
+          : null
+      const crossPageSemanticFlowDecision =
+        crossPageContinuation &&
+        continuation?.type === 'paragraph' &&
+        sourceProvenCrossPageColumnGeometry &&
+        crossPageSemanticFlowOutcome !== null &&
+        (sourceProvenCrossPageColumnFlow ||
+          sourceProvenFloatBoundary ||
+          sourceProvenCitationBoundary ||
+          (lowercaseHyphenContinuation && sourceProvenHyphenDecision))
+          ? sourceSemanticFlowBoundaryDecision(
+              target,
+              continuation,
+              crossPageSemanticFlowOutcome,
+              'cross-page-column',
+              bodySourceOrderExtremaByPage,
+            )
+          : null
       const sourceProvenCrossPageJoin =
-        sourceProvenCrossPageColumnFlow ||
-        sourceProvenFloatBoundary ||
-        sourceProvenCitationBoundary ||
-        (lowercaseHyphenContinuation &&
-          sourceProvenHyphenDecision &&
-          hyphenJoin.hyphenBoundary !== null)
+        crossPageSemanticFlowDecision !== null
       if (
         continuation?.type !== 'paragraph' ||
         continuation.list ||
@@ -4947,7 +5010,7 @@ export async function mergeProseContinuations(
           })
         }
       }
-      appendBlockContinuation(
+      const appended = appendBlockContinuation(
         target,
         continuation,
         samePageColumnFlowJoin?.separator ?? hyphenJoin.separator,
@@ -4961,17 +5024,19 @@ export async function mergeProseContinuations(
               }
             : null,
         sourceSemanticFlowBoundaryDecisions,
-        citationYearContinuation
-          ? target.region.column === continuation.region.column
-            ? 'same-column-citation-year'
-            : 'cross-column-citation-year'
-          : sourceProvenSamePageColumnFlow
-            ? 'same-page-column'
-            : sourceProvenCrossPageColumnFlow
-              ? 'cross-page-column'
+        crossPageContinuation
+          ? 'cross-page-column'
+          : citationYearContinuation
+            ? target.region.column === continuation.region.column
+              ? 'same-column-citation-year'
+              : 'cross-column-citation-year'
+            : sourceProvenSamePageColumnFlow
+              ? 'same-page-column'
               : null,
         bodySourceOrderExtremaByPage,
+        crossPageContinuation,
       )
+      if (!appended) break
       blocks.splice(continuationIndex, 1)
     }
   }
@@ -11617,6 +11682,13 @@ export async function reconstructPageAnalyses({
     sourceSemanticFlowBoundaryDecisions,
     bodySourceOrderExtremaByPage: pdfBodySourceOrderExtremaByPage(
       regionResult.regions,
+      new Set(
+        visualResult.relationships.flatMap((relationship) =>
+          relationship.status === 'matched' && relationship.kind !== 'equation'
+            ? [relationship.captionRegionId, ...relationship.sourceRegionIds]
+            : [],
+        ),
+      ),
     ),
   })
   await yieldPdfReconstructionTask(signal)

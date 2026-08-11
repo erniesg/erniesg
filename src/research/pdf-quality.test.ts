@@ -2457,6 +2457,24 @@ describe('PDF semantic signal detection', () => {
 
       expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
     })
+
+    it('rejects a canonical cross-page paragraph with no boundary decision', () => {
+      const { paper, provenance, orderedRegions } = crossPageFixture({
+        runningHeadIsFurniture: true,
+      })
+
+      const result = provenanceTextConservation({
+        allRegions: orderedRegions,
+        orderedRegions,
+        paper,
+        provenance,
+        lineBoundaryDecisions: [],
+        sourceSemanticFlowBoundaryDecisions: [],
+      })
+
+      expect(result.semanticFlowBoundaryLedgerValid).toBe(false)
+      expect(result.semanticTextViolationNodeIds).toContain('cross-page-node')
+    })
   })
 
   it('validates uncased-script same-page-column decisions from layout', () => {

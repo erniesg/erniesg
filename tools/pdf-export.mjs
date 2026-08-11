@@ -33,6 +33,7 @@ import {
   PDF_CORPUS_REPORT_SCHEMA_VERSION,
   pdfPaths,
   serializeCorpusReport,
+  validPdfCitationRelationshipTargetState,
 } from './pdf-corpus-audit-lib.mjs'
 import { safeAuditDiagnostic } from './pdf-corpus-audit-safety.mjs'
 import { bindCorpusContractPaths } from './pdf-corpus-contract.mjs'
@@ -496,16 +497,57 @@ export async function createPdfCorpusReportValidator() {
       provenanceValidator,
     ],
   ])
+  const validCurrentCitationState = (document) =>
+    document?.structure?.schemaVersion !== '1.7.0' ||
+    (Array.isArray(document.structure.citationRelationshipGraph) &&
+      document.structure.citationRelationshipGraph.every(
+        validPdfCitationRelationshipTargetState,
+      ))
   const validate = (report) => {
     const validator = validators.get(
       `${String(report?.schemaVersion)}\0${String(report?.reportSchema)}`,
     )
-    const valid = validator ? validator(report) : false
-    validate.errors = validator?.errors ?? null
+    const schemaValid = validator ? validator(report) : false
+    const citationStateValid =
+      !schemaValid ||
+      report.documents.every(
+        (document) =>
+          !document.structure || validCurrentCitationState(document),
+      )
+    const valid = schemaValid && citationStateValid
+    validate.errors = !schemaValid
+      ? (validator?.errors ?? null)
+      : citationStateValid
+        ? null
+        : [
+            {
+              keyword: 'citationTargetState',
+              message:
+                'matched citation targets must correspond one-to-one with bounded labels',
+            },
+          ]
     return valid
   }
   validate.errors = null
-  validate.document = (document) => documentValidator(document)
+  const validateDocument = (document) => {
+    const schemaValid = documentValidator(document)
+    const citationStateValid =
+      !schemaValid || validCurrentCitationState(document)
+    validateDocument.errors = !schemaValid
+      ? (documentValidator.errors ?? null)
+      : citationStateValid
+        ? null
+        : [
+            {
+              keyword: 'citationTargetState',
+              message:
+                'matched citation targets must correspond one-to-one with bounded labels',
+            },
+          ]
+    return schemaValid && citationStateValid
+  }
+  validateDocument.errors = null
+  validate.document = validateDocument
   return validate
 }
 

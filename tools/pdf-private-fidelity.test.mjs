@@ -2197,35 +2197,24 @@ describe('private PDF fidelity runner', () => {
     const malformed = structuredClone(baseline)
     malformed.runs[0].reconstruction.structure.citationRelationshipGraph[0].canonicalAnchor =
       { nodeId: '', start: 7, end: 4 }
-    const staleAmbiguousTarget = fidelityReceipt({
-      transformReconstruction(value) {
-        value.citationRelationships = [
-          citationRelationship({
-            status: 'ambiguous',
-            candidateNodeIds: [
-              'bibliography-private-1',
-              'bibliography-private-2',
-            ],
-          }),
-        ]
-        return value
-      },
-    })
-    const staleUnresolvedTarget = fidelityReceipt({
-      transformReconstruction(value) {
-        value.citationRelationships = [
-          citationRelationship({ status: 'unresolved' }),
-        ]
-        return value
-      },
-    })
-
-    for (const invalid of [
-      missing,
-      malformed,
-      staleAmbiguousTarget,
-      staleUnresolvedTarget,
+    for (const staleRelationship of [
+      citationRelationship({
+        status: 'ambiguous',
+        candidateNodeIds: ['bibliography-private-1', 'bibliography-private-2'],
+      }),
+      citationRelationship({ status: 'unresolved' }),
     ]) {
+      expect(() =>
+        fidelityReceipt({
+          transformReconstruction(value) {
+            value.citationRelationships = [staleRelationship]
+            return value
+          },
+        }),
+      ).toThrow('Citation relationship receipt state is invalid.')
+    }
+
+    for (const invalid of [missing, malformed]) {
       expect(() =>
         comparePrivateFidelityReceipts(
           invalid,

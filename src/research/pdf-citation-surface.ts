@@ -7,7 +7,7 @@ export type PdfCitationSurface = {
   }>
 }
 
-const MAX_CITATION_RANGE_TARGETS = 32
+export const MAX_CITATION_TARGETS_PER_RELATIONSHIP = 32
 const CITATION_RANGE_CONNECTOR = /^\s*([-\u2013\u2014])\s*/u
 const CITATION_LIST_CONNECTOR = /^(?:\s*[,;]\s*|\s+(?:and|or)\s+)/iu
 
@@ -88,7 +88,7 @@ export function parsePdfCitationSurface(
         !Number.isSafeInteger(start) ||
         !Number.isSafeInteger(finish) ||
         count < 2 ||
-        count > MAX_CITATION_RANGE_TARGETS
+        count > MAX_CITATION_TARGETS_PER_RELATIONSHIP
       ) {
         return null
       }
@@ -96,6 +96,12 @@ export function parsePdfCitationSurface(
         String(start + index),
       )
       consumedEnd = last.consumedEnd
+    }
+    if (
+      identities.length + groupIdentities.length >
+      MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    ) {
+      return null
     }
     identities.push(...groupIdentities)
     links.push({ start: first.start, end: first.end, identityIndex })

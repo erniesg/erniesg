@@ -41,6 +41,7 @@ export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION = '1.10.0'
 export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH =
   'docs/schemas/pdf-corpus-audit-v1.10.schema.json'
 export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.7.0'
+export const PDF_CITATION_TARGETS_PER_RELATIONSHIP_LIMIT = 32
 export const PDF_HYPHEN_LEXICAL_MODEL_RECEIPT = Object.freeze({
   id: 'scowl-2020.12.07+ushyphmax-2005-05-30',
   language: 'en-US',
@@ -987,40 +988,84 @@ function opaqueStructuralId(kind, value) {
     .digest('hex')
 }
 
+export function validPdfCitationRelationshipTargetState(relationship) {
+  const labels = relationship?.labels
+  const targetNodeIds = relationship?.targetNodeIds
+  const candidateNodeIds = relationship?.candidateNodeIds
+  const validIdentifierArray = (value) =>
+    Array.isArray(value) &&
+    value.every((item) => typeof item === 'string' && item.length > 0) &&
+    new Set(value).size === value.length
+  if (
+    !validIdentifierArray(labels) ||
+    labels.length === 0 ||
+    labels.length > PDF_CITATION_TARGETS_PER_RELATIONSHIP_LIMIT ||
+    !validIdentifierArray(targetNodeIds) ||
+    !validIdentifierArray(candidateNodeIds)
+  ) {
+    return false
+  }
+  if (relationship.status === 'matched') {
+    return (
+      targetNodeIds.length === labels.length && candidateNodeIds.length === 0
+    )
+  }
+  if (relationship.status === 'ambiguous') {
+    return targetNodeIds.length === 0 && candidateNodeIds.length > 1
+  }
+  return relationship.status === 'unresolved' && targetNodeIds.length === 0
+}
+
 function normalizedCitationRelationships(relationships) {
-  return relationships.map((relationship) => ({
-    id: opaqueStructuralId('citation-relationship', relationship.id),
-    status: relationship.status,
-    taxonomy: relationship.taxonomy,
-    referenceRegionId: opaqueStructuralId(
-      'region',
-      relationship.referenceRegionId,
-    ),
-    referenceStart: relationship.referenceStart,
-    referenceEnd: relationship.referenceEnd,
-    labels: (relationship.labels ?? []).map((label) =>
-      opaqueStructuralId('citation-label', label),
-    ),
-    targetNodeIds: (relationship.targetNodeIds ?? []).map((nodeId) =>
-      opaqueStructuralId('node', nodeId),
-    ),
-    candidateNodeIds: (relationship.candidateNodeIds ?? []).map((nodeId) =>
-      opaqueStructuralId('node', nodeId),
-    ),
-    canonicalAnchor: relationship.canonicalAnchor
-      ? {
-          ...relationship.canonicalAnchor,
-          nodeId: opaqueStructuralId(
-            'node',
-            relationship.canonicalAnchor.nodeId,
-          ),
-        }
-      : null,
-    evidenceSha256s: [...new Set(relationship.evidence ?? [])].map((evidence) =>
-      opaqueStructuralId('citation-evidence', evidence),
-    ),
-    sourceBoxes: (relationship.sourceBoxes ?? []).map((box) => ({ ...box })),
-  }))
+  return relationships.map((relationship) => {
+    const normalizedState = {
+      status: relationship.status,
+      labels: relationship.labels ?? [],
+      targetNodeIds: relationship.targetNodeIds ?? [],
+      candidateNodeIds: relationship.candidateNodeIds ?? [],
+    }
+    const evidence = [...new Set(relationship.evidence ?? [])]
+    if (
+      !validPdfCitationRelationshipTargetState(normalizedState) ||
+      evidence.length === 0 ||
+      evidence.some((item) => typeof item !== 'string' || item.length === 0)
+    ) {
+      throw new Error('Citation relationship receipt state is invalid.')
+    }
+    return {
+      id: opaqueStructuralId('citation-relationship', relationship.id),
+      status: relationship.status,
+      taxonomy: relationship.taxonomy,
+      referenceRegionId: opaqueStructuralId(
+        'region',
+        relationship.referenceRegionId,
+      ),
+      referenceStart: relationship.referenceStart,
+      referenceEnd: relationship.referenceEnd,
+      labels: (relationship.labels ?? []).map((label) =>
+        opaqueStructuralId('citation-label', label),
+      ),
+      targetNodeIds: (relationship.targetNodeIds ?? []).map((nodeId) =>
+        opaqueStructuralId('node', nodeId),
+      ),
+      candidateNodeIds: (relationship.candidateNodeIds ?? []).map((nodeId) =>
+        opaqueStructuralId('node', nodeId),
+      ),
+      canonicalAnchor: relationship.canonicalAnchor
+        ? {
+            ...relationship.canonicalAnchor,
+            nodeId: opaqueStructuralId(
+              'node',
+              relationship.canonicalAnchor.nodeId,
+            ),
+          }
+        : null,
+      evidenceSha256s: evidence.map((item) =>
+        opaqueStructuralId('citation-evidence', item),
+      ),
+      sourceBoxes: (relationship.sourceBoxes ?? []).map((box) => ({ ...box })),
+    }
+  })
 }
 
 function normalizedCrossReferenceTarget(target) {

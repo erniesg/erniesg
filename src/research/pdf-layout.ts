@@ -33,7 +33,10 @@ import {
   sourceSemanticFlowHyphenVerdict,
   type CanonicalFloatScopeEvidence,
 } from './pdf-quality'
-import { parsePdfCitationSurface } from './pdf-citation-surface'
+import {
+  MAX_CITATION_TARGETS_PER_RELATIONSHIP,
+  parsePdfCitationSurface,
+} from './pdf-citation-surface'
 import {
   classifyPdfNoteMarkers,
   pdfAlternateAuthorYearKeyFromBoundary,
@@ -7359,6 +7362,12 @@ function buildCitationRelationships(
     if (!classification.accepted || classification.disposition !== 'citation')
       return []
     const labels = classification.label.split(',').filter(Boolean)
+    if (
+      labels.length === 0 ||
+      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    ) {
+      return []
+    }
     if (classification.taxonomy === 'author-year-bibliography-citation') {
       let normalizedBoundaryKey = false
       const candidates = labels.map((label) => {

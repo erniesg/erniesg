@@ -6,11 +6,9 @@ import type {
   PdfPageRegion,
 } from './import-types'
 import { replayPdfRegionLineRanges } from './pdf-lines'
-import {
-  normalizedNoteLabel,
-  noteLabelsFromMarkerText,
-} from './note-label'
+import { normalizedNoteLabel, noteLabelsFromMarkerText } from './note-label'
 import { noteLabelFromText } from './pdf-regions'
+import { MAX_CITATION_TARGETS_PER_RELATIONSHIP } from './pdf-citation-surface'
 
 export const PDF_NOTE_MARKER_CLASSIFICATION_THRESHOLD = 0.85
 export const PDF_NOTE_CITATION_DENSITY_THRESHOLD = 2
@@ -421,7 +419,14 @@ function markerCandidates(
     box = sourceBox(region),
   ) => {
     const labels = rawLabels.map(normalizedNoteLabel).filter(Boolean)
-    if (labels.length === 0 || start < 0 || end <= start) return
+    if (
+      labels.length === 0 ||
+      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP ||
+      start < 0 ||
+      end <= start
+    ) {
+      return
+    }
     const overlappingIndex = found.findIndex(
       (candidate) =>
         Math.max(candidate.start, start) < Math.min(candidate.end, end),
@@ -896,7 +901,14 @@ function authorYearMarkerCandidates(
     end: number,
     evidence: string[] = [],
   ) => {
-    if (labels.length === 0 || start < 0 || end <= start) return
+    if (
+      labels.length === 0 ||
+      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP ||
+      start < 0 ||
+      end <= start
+    ) {
+      return
+    }
     found.push({
       label: labels.join(','),
       labels,

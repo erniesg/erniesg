@@ -36,6 +36,7 @@ import {
   PDF_HYPHEN_REMOVAL_FORBIDDEN_EVIDENCE_SHA256S,
   PDF_HYPHEN_REMOVAL_REQUIRED_EVIDENCE_SHA256S,
   PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION,
+  validPdfCitationRelationshipTargetState,
 } from './pdf-corpus-audit-lib.mjs'
 
 export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.9.0'
@@ -1950,13 +1951,7 @@ function validPrivateCitationGraph(value, legacy = false) {
         (legacy ||
           (validPrivateHashArray(relationship.candidateNodeIds) &&
             validPrivateHashArray(relationship.evidenceSha256s, true) &&
-            (relationship.status === 'matched'
-              ? relationship.targetNodeIds.length ===
-                  relationship.labels.length &&
-                relationship.candidateNodeIds.length === 0
-              : relationship.targetNodeIds.length === 0 &&
-                (relationship.status !== 'ambiguous' ||
-                  relationship.candidateNodeIds.length > 1)))) &&
+            validPdfCitationRelationshipTargetState(relationship))) &&
         (relationship.canonicalAnchor === null ||
           (hasExactKeys(relationship.canonicalAnchor, [
             'nodeId',

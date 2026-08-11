@@ -9,6 +9,7 @@ import {
   OWNER_EQUATION_TRANSCRIPT_EVIDENCE,
 } from './equation-transcript-adjudication'
 import { assessPdfCompleteness } from './pdf-quality'
+import { MAX_CITATION_TARGETS_PER_RELATIONSHIP } from './pdf-citation-surface'
 import {
   buildPdfLineJoinReviewContext,
   replayPdfRegionLineRanges,
@@ -711,10 +712,16 @@ function updateNoteRelationship(
     relationship.evidence = [...candidate.evidence, 'human-adjudication']
     relationship.sourceBoxes = [...candidate.sourceBoxes]
   } else if (decision.resolution.type === 'reclassify-citation') {
+    const labels = relationship.label.split(',').filter(Boolean)
+    if (
+      labels.length === 0 ||
+      labels.length > MAX_CITATION_TARGETS_PER_RELATIONSHIP
+    ) {
+      return false
+    }
     relationship.targetNoteId = null
     relationship.status = 'citation'
     relationship.evidence = [...relationship.evidence, 'human-adjudication']
-    const labels = relationship.label.split(',').filter(Boolean)
     const bibliographyTargets = new Map<string, string>()
     for (const node of reconstruction.paper.nodes) {
       if (
@@ -843,8 +850,10 @@ function updateNoteRelationship(
     const existing = referenceNode.inlineRuns?.find(
       (run) => run.start === semanticRun.start && run.end === semanticRun.end,
     )
-    if (existing) Object.assign(existing, semanticRun)
-    else {
+    if (existing) {
+      Object.assign(existing, semanticRun)
+      if (!citationTargetIds?.length) delete existing.targetIds
+    } else {
       referenceNode.inlineRuns = [
         ...(referenceNode.inlineRuns ?? []),
         semanticRun,

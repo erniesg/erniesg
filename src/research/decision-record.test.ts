@@ -1386,6 +1386,26 @@ describe('human adjudication decision records', () => {
       const partialCitationTargetId = 'partial-bibliography-target'
       if (resolution === 'reclassify-citation') {
         base.noteRelationships[0].label = '3,4'
+        const relationship = base.noteRelationships[0]
+        const referenceNode = base.paper.nodes.find(
+          (node) =>
+            (node.type === 'heading' ||
+              node.type === 'paragraph' ||
+              node.type === 'quote') &&
+            base.provenance[node.id]?.regionIds.includes(
+              relationship.referenceRegionId,
+            ),
+        )
+        if (!referenceNode) throw new Error('Missing citation reference node')
+        referenceNode.inlineRuns = [
+          {
+            start: relationship.referenceStart,
+            end: relationship.referenceEnd,
+            semanticRole: 'cross-reference',
+            relationshipId: relationship.id,
+            targetIds: ['stale-selected-target'],
+          },
+        ]
         base.paper.nodes.push({
           id: partialCitationTargetId,
           type: 'paragraph',

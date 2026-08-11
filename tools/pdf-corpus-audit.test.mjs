@@ -1506,6 +1506,16 @@ describe('local PDF corpus audit', () => {
       `${schema.$id}#/$defs/structuralReceipt`,
     )
     expect(receiptValidator(receipt), receiptValidator.errors).toBe(true)
+    const partialMatchedReceipt = structuredClone(receipt)
+    partialMatchedReceipt.citationRelationshipGraph[0].labels.push(
+      'f'.repeat(64),
+    )
+    expect(receiptValidator(partialMatchedReceipt)).toBe(false)
+    const partialMatchedReconstruction = structuredClone(reconstruction)
+    partialMatchedReconstruction.citationRelationships[0].labels = ['1', '2']
+    expect(() =>
+      createPdfStructuralReceipt(partialMatchedReconstruction),
+    ).toThrow('Citation relationship receipt state is invalid.')
     const ambiguousRelationship = {
       ...reconstruction.citationRelationships[0],
       status: 'ambiguous',

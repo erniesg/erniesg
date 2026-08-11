@@ -74,7 +74,7 @@ test('the executable audit emits five passing checkpoints and exact before/after
   })
 })
 
-test('agent evidence requires the audit and embeds its exact receipt', () => {
+test('agent evidence requires the audit and embeds the exact receipt', () => {
   const evidence = spawnSync(
     'scripts/agent-evidence',
     ['--only', 'association-audit'],

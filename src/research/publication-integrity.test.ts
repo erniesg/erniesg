@@ -857,6 +857,11 @@ describe('scholarly cross-reference integrity', () => {
     expect(() => assertPublicationIntegrity(paper)).toThrow(
       /unbounded-scholarly-reference-text/u,
     )
+    expect(
+      internalReferenceIntegrityIssues(paper, undefined, undefined, {
+        renderedSemanticTableNodeIds: new Set(),
+      }),
+    ).toEqual([])
   })
 
   it('accepts an exact scholarly range token as one bounded semantic run', () => {

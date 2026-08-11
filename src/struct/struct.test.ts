@@ -438,7 +438,7 @@ describe('STRUCT canonical document graph', () => {
     })
   })
 
-  it('keeps equal table-cell note markers on distinct relationships', async () => {
+  it('keeps delimiter-bearing table-cell note identities distinct', async () => {
     const reconstruction = await structuredDocx()
     const tableNode = reconstruction.paper.nodes.find(
       (node) => node.type === 'figure' && node.table,
@@ -455,32 +455,51 @@ describe('STRUCT canonical document graph', () => {
     }
 
     const tableCellNotes = [
-      { row: 1, column: 0, id: 'table-cell-note-one' },
-      { row: 2, column: 0, id: 'table-cell-note-two' },
-    ].map(({ row, column, id }) => {
+      {
+        row: 1,
+        column: 0,
+        id: 'table-cell-note-one',
+        cellId: 'x',
+        text: '6:xy',
+        start: 0,
+        end: 4,
+        label: '6:xy',
+      },
+      {
+        row: 2,
+        column: 0,
+        id: 'table-cell-note-two',
+        cellId: 'x:0',
+        text: '....xy',
+        start: 4,
+        end: 6,
+        label: 'xy',
+      },
+    ].map(({ row, column, id, cellId, text, start, end, label }) => {
       const cell = tableNode.table!.rows[row].cells[column]
-      cell.text = '1'
+      cell.id = cellId
+      cell.text = text
       cell.noteReferences = [
         {
           id,
-          label: '1',
+          label,
           target: noteTemplate.targetNoteId!,
-          start: 0,
-          end: 1,
+          start,
+          end,
           confidence: 1,
         },
       ]
       return {
         ...noteTemplate,
         id,
-        label: '1',
-        referenceStart: 0,
-        referenceEnd: 1,
+        label,
+        referenceStart: start,
+        referenceEnd: end,
         canonicalAnchor: {
           kind: 'node' as const,
-          nodeId: `${tableNode.id}:table:${cell.id ?? `${row}:${column}`}`,
-          start: 0,
-          end: 1,
+          nodeId: `${tableNode.id}:table:${cellId}`,
+          start,
+          end,
         },
       }
     })
@@ -515,7 +534,7 @@ describe('STRUCT canonical document graph', () => {
   })
 
   it.each(['citation', 'cross-reference'] as const)(
-    'keeps equal table-cell %s markers on distinct relationships',
+    'keeps delimiter-bearing table-cell %s identities distinct',
     async (kind) => {
       const reconstruction =
         (await structuredDocx()) as unknown as PdfReconstruction
@@ -536,17 +555,35 @@ describe('STRUCT canonical document graph', () => {
       }
 
       const relationships = [
-        { row: 1, column: 0, id: `table-cell-${kind}-one` },
-        { row: 2, column: 0, id: `table-cell-${kind}-two` },
-      ].map(({ row, column, id }) => {
+        {
+          row: 1,
+          column: 0,
+          id: `table-cell-${kind}-one`,
+          cellId: 'x',
+          text: '6:xy',
+          start: 0,
+          end: 4,
+          marker: '6:xy',
+        },
+        {
+          row: 2,
+          column: 0,
+          id: `table-cell-${kind}-two`,
+          cellId: 'x:0',
+          text: '....xy',
+          start: 4,
+          end: 6,
+          marker: 'xy',
+        },
+      ].map(({ row, column, id, cellId, text, start, end, marker }) => {
         const cell = tableNode.table!.rows[row].cells[column]
-        const marker = kind === 'citation' ? '[1]' : 'Fig'
-        const cellAnchorId = `${tableNode.id}:table:${cell.id ?? `${row}:${column}`}`
-        cell.text = marker
+        cell.id = cellId
+        const cellAnchorId = `${tableNode.id}:table:${cellId}`
+        cell.text = text
         cell.inlineRuns = [
           {
-            start: 0,
-            end: marker.length,
+            start,
+            end,
             relationshipId: id,
             semanticRole: kind,
             targetIds: [targetNode.id],
@@ -556,6 +593,8 @@ describe('STRUCT canonical document graph', () => {
           id,
           cellAnchorId,
           marker,
+          start,
+          end,
           sourceBox: {
             page: 1,
             x: 0.1,
@@ -569,20 +608,20 @@ describe('STRUCT canonical document graph', () => {
       })
       if (kind === 'citation') {
         reconstruction.citationRelationships = relationships.map(
-          ({ id, cellAnchorId, marker, sourceBox }) => ({
+          ({ id, cellAnchorId, marker, start, end, sourceBox }) => ({
             id,
             label: marker,
-            labels: ['1'],
+            labels: [marker],
             referenceRegionId: `${id}-region`,
-            referenceStart: 0,
-            referenceEnd: marker.length,
+            referenceStart: start,
+            referenceEnd: end,
             taxonomy: 'bracketed-bibliography-citation',
             targetNodeIds: [targetNode.id],
             status: 'matched',
             canonicalAnchor: {
               nodeId: cellAnchorId,
-              start: 0,
-              end: marker.length,
+              start,
+              end,
             },
             confidence: 1,
             evidence: ['fixture'],
@@ -591,20 +630,20 @@ describe('STRUCT canonical document graph', () => {
         )
       } else {
         reconstruction.crossReferenceRelationships = relationships.map(
-          ({ id, cellAnchorId, marker, sourceBox }) => ({
+          ({ id, cellAnchorId, marker, start, end, sourceBox }) => ({
             id,
             kind: 'section',
             text: marker,
             labels: [marker],
             referenceRegionId: `${id}-region`,
-            referenceStart: 0,
-            referenceEnd: marker.length,
+            referenceStart: start,
+            referenceEnd: end,
             targets: [
               {
                 kind: 'section',
                 label: marker,
-                referenceStart: 0,
-                referenceEnd: marker.length,
+                referenceStart: start,
+                referenceEnd: end,
                 status: 'matched',
                 candidateNodeIds: [targetNode.id],
                 targetNodeId: targetNode.id,
@@ -615,8 +654,8 @@ describe('STRUCT canonical document graph', () => {
             status: 'matched',
             canonicalAnchor: {
               nodeId: cellAnchorId,
-              start: 0,
-              end: marker.length,
+              start,
+              end,
             },
             confidence: 1,
             evidence: ['fixture'],

@@ -387,26 +387,38 @@ export function buildStructDocument(
     canonicalAnchor: { nodeId: string } | null | undefined,
     fallbackId: string,
   ) => resolveEndpoint(canonicalAnchor?.nodeId ?? fallbackId)
-  const relationshipIdentityOwner = (
-    canonicalAnchor: { nodeId: string } | null | undefined,
-    fallbackId: string,
-  ) => {
+  const relationshipIdentity = ({
+    kind,
+    canonicalAnchor,
+    fallbackId,
+    start,
+    end,
+    label,
+  }: {
+    kind: 'note' | 'citation' | 'cross-reference'
+    canonicalAnchor: { nodeId: string } | null | undefined
+    fallbackId: string
+    start: number
+    end: number
+    label: string
+  }) => {
     const owner = relationshipOwner(canonicalAnchor, fallbackId)
     return canonicalAnchor && tableCellAnchorIds.has(canonicalAnchor.nodeId)
-      ? `${owner}:${canonicalAnchor.nodeId}`
-      : owner
+      ? JSON.stringify([
+          reconstruction.source.sha256,
+          kind,
+          owner,
+          canonicalAnchor.nodeId,
+          start,
+          end,
+          label,
+        ])
+      : `${reconstruction.source.sha256}:${kind}:${owner}:${start}:${end}:${label}`
   }
   const noteOwner = (
     note: DocumentReconstruction['noteRelationships'][number],
   ) =>
     relationshipOwner(
-      note.canonicalAnchor?.kind === 'node' ? note.canonicalAnchor : null,
-      note.referenceRegionId,
-    )
-  const noteIdentityOwner = (
-    note: DocumentReconstruction['noteRelationships'][number],
-  ) =>
-    relationshipIdentityOwner(
       note.canonicalAnchor?.kind === 'node' ? note.canonicalAnchor : null,
       note.referenceRegionId,
     )
@@ -416,34 +428,48 @@ export function buildStructDocument(
       note.id,
       structId(
         'relationship',
-        `${reconstruction.source.sha256}:note:${noteIdentityOwner(note)}:${note.referenceStart}:${note.referenceEnd}:${note.label}`,
+        relationshipIdentity({
+          kind: 'note',
+          canonicalAnchor:
+            note.canonicalAnchor?.kind === 'node' ? note.canonicalAnchor : null,
+          fallbackId: note.referenceRegionId,
+          start: note.referenceStart,
+          end: note.referenceEnd,
+          label: note.label,
+        }),
       ),
     )
   }
   if (pdf) {
     for (const citation of reconstruction.citationRelationships) {
-      const owner = relationshipIdentityOwner(
-        citation.canonicalAnchor,
-        citation.referenceRegionId,
-      )
       sourceRelationshipIds.set(
         citation.id,
         structId(
           'relationship',
-          `${reconstruction.source.sha256}:citation:${owner}:${citation.referenceStart}:${citation.referenceEnd}:${citation.label}`,
+          relationshipIdentity({
+            kind: 'citation',
+            canonicalAnchor: citation.canonicalAnchor,
+            fallbackId: citation.referenceRegionId,
+            start: citation.referenceStart,
+            end: citation.referenceEnd,
+            label: citation.label,
+          }),
         ),
       )
     }
     for (const crossReference of reconstruction.crossReferenceRelationships) {
-      const owner = relationshipIdentityOwner(
-        crossReference.canonicalAnchor,
-        crossReference.referenceRegionId,
-      )
       sourceRelationshipIds.set(
         crossReference.id,
         structId(
           'relationship',
-          `${reconstruction.source.sha256}:cross-reference:${owner}:${crossReference.referenceStart}:${crossReference.referenceEnd}:${crossReference.text}`,
+          relationshipIdentity({
+            kind: 'cross-reference',
+            canonicalAnchor: crossReference.canonicalAnchor,
+            fallbackId: crossReference.referenceRegionId,
+            start: crossReference.referenceStart,
+            end: crossReference.referenceEnd,
+            label: crossReference.text,
+          }),
         ),
       )
     }

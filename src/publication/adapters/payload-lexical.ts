@@ -229,7 +229,14 @@ function contributorName(value: unknown, location: string) {
   if (typeof value === 'string' && value.trim()) return value.trim()
   if (isObject(value)) {
     const candidates = ['name', 'fullName', 'displayName'].filter((key) => value[key] !== undefined).map((key) => value[key])
-    if (candidates.length === 1 && typeof candidates[0] === 'string' && candidates[0].trim()) return candidates[0].trim()
+    // Payload collections commonly retain redundant canonical and display
+    // name fields; accept them only when every populated value agrees after
+    // trimming, and keep rejecting conflicts, empty values, and non-strings.
+    const names = new Set(candidates.map((candidate) => (typeof candidate === 'string' ? candidate.trim() : undefined)))
+    if (candidates.length && names.size === 1) {
+      const [name] = names
+      if (name) return name
+    }
   }
   throw new Error(`Payload author must be a non-empty string or named author object at ${location}`)
 }

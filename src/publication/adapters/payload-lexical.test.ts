@@ -324,6 +324,31 @@ describe('Payload Lexical publication adapter', () => {
     })
   })
 
+  it('accepts redundant author name fields whose trimmed values agree', () => {
+    const body = [
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Author body' }],
+      },
+    ]
+    const agreed = adaptPayloadLexical(
+      strictFixture(body, {
+        authors: [{ name: 'Ada', displayName: ' Ada ', fullName: 'Ada' }],
+      }),
+    )
+    expect(agreed.graph.metadata.contributors).toEqual(['Ada'])
+    for (const conflicting of [
+      { name: 'Ada', displayName: 'Grace' },
+      { name: 'Ada', fullName: 'Ada', displayName: '   ' },
+      { name: 'Ada', fullName: 42 },
+      { displayName: '' },
+    ]) {
+      expect(() =>
+        adaptPayloadLexical(strictFixture(body, { authors: [conflicting] })),
+      ).toThrow(/Payload author must be a non-empty string or named author object at authors\[0\]/)
+    }
+  })
+
   it('preserves quote attribution', () => {
     const result = adaptPayloadLexical({
       id: 'attributed-quote',

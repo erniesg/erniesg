@@ -164,6 +164,7 @@ function citationRelationship(overrides = {}) {
     labels: ['private-label-1'],
     targetNodeIds: ['bibliography-private-1'],
     canonicalAnchor: { nodeId: 'paragraph-private-1', start: 4, end: 7 },
+    evidence: ['private-citation-evidence'],
     sourceBoxes: [
       {
         page: 1,
@@ -638,7 +639,7 @@ describe('private PDF fidelity runner', () => {
       fidelityReceipt(),
       canonicalDerivedAffixHyphenDeletionRecord,
     )
-    expect(valid.schemaVersion).toBe('1.8.0')
+    expect(valid.schemaVersion).toBe('1.9.0')
     expect(
       comparePrivateFidelityReceipts(
         valid,
@@ -1754,7 +1755,7 @@ describe('private PDF fidelity runner', () => {
       epubCheckRequired: true,
     })
 
-    expect(checked.schemaVersion).toBe('1.8.0')
+    expect(checked.schemaVersion).toBe('1.9.0')
     expect(checked.execution).toMatchObject({
       epubCheckRequired: true,
       epubCheckPassedCount: 6,
@@ -2065,7 +2066,7 @@ describe('private PDF fidelity runner', () => {
       [expect.stringMatching(/^[a-f0-9]{64}$/)],
     )
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.6.0',
+      schemaVersion: '1.7.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraphSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -2103,7 +2104,14 @@ describe('private PDF fidelity runner', () => {
     const baseline = fidelityReceipt({
       transformReconstruction(value) {
         value.citationRelationships = [
-          citationRelationship({ status: 'ambiguous' }),
+          citationRelationship({
+            status: 'ambiguous',
+            targetNodeIds: [],
+            candidateNodeIds: [
+              'bibliography-private-1',
+              'bibliography-private-2',
+            ],
+          }),
         ]
         return value
       },
@@ -2112,6 +2120,18 @@ describe('private PDF fidelity runner', () => {
     expect(baseline.runs[0].reconstruction.structure).toMatchObject({
       citationRelationshipCount: 1,
       citationRelationshipCounts: { ambiguous: 1 },
+      citationRelationshipGraph: [
+        expect.objectContaining({
+          candidateNodeIds: [
+            expect.stringMatching(/^[a-f0-9]{64}$/),
+            expect.stringMatching(/^[a-f0-9]{64}$/),
+          ],
+          evidenceSha256s: expect.arrayContaining([
+            expect.stringMatching(/^[a-f0-9]{64}$/),
+          ]),
+          targetNodeIds: [],
+        }),
+      ],
     })
     expect(() =>
       comparePrivateFidelityReceipts(
@@ -2120,6 +2140,49 @@ describe('private PDF fidelity runner', () => {
         acceptedBaselineSha256(baseline),
       ),
     ).not.toThrow()
+    const changedCandidates = fidelityReceipt({
+      transformReconstruction(value) {
+        value.citationRelationships = [
+          citationRelationship({
+            status: 'ambiguous',
+            targetNodeIds: [],
+            candidateNodeIds: [
+              'bibliography-private-1',
+              'bibliography-private-3',
+            ],
+          }),
+        ]
+        return value
+      },
+    })
+    const changedEvidence = fidelityReceipt({
+      transformReconstruction(value) {
+        value.citationRelationships = [
+          citationRelationship({
+            status: 'ambiguous',
+            targetNodeIds: [],
+            candidateNodeIds: [
+              'bibliography-private-1',
+              'bibliography-private-2',
+            ],
+            evidence: ['private-citation-evidence-changed'],
+          }),
+        ]
+        return value
+      },
+    })
+    expect(
+      changedCandidates.runs[0].reconstruction.structure
+        .citationRelationshipGraphSha256,
+    ).not.toBe(
+      baseline.runs[0].reconstruction.structure.citationRelationshipGraphSha256,
+    )
+    expect(
+      changedEvidence.runs[0].reconstruction.structure
+        .citationRelationshipGraphSha256,
+    ).not.toBe(
+      baseline.runs[0].reconstruction.structure.citationRelationshipGraphSha256,
+    )
   })
 
   it('rejects missing or malformed private citation graph evidence', () => {
@@ -2134,8 +2197,35 @@ describe('private PDF fidelity runner', () => {
     const malformed = structuredClone(baseline)
     malformed.runs[0].reconstruction.structure.citationRelationshipGraph[0].canonicalAnchor =
       { nodeId: '', start: 7, end: 4 }
+    const staleAmbiguousTarget = fidelityReceipt({
+      transformReconstruction(value) {
+        value.citationRelationships = [
+          citationRelationship({
+            status: 'ambiguous',
+            candidateNodeIds: [
+              'bibliography-private-1',
+              'bibliography-private-2',
+            ],
+          }),
+        ]
+        return value
+      },
+    })
+    const staleUnresolvedTarget = fidelityReceipt({
+      transformReconstruction(value) {
+        value.citationRelationships = [
+          citationRelationship({ status: 'unresolved' }),
+        ]
+        return value
+      },
+    })
 
-    for (const invalid of [missing, malformed]) {
+    for (const invalid of [
+      missing,
+      malformed,
+      staleAmbiguousTarget,
+      staleUnresolvedTarget,
+    ]) {
       expect(() =>
         comparePrivateFidelityReceipts(
           invalid,
@@ -2180,7 +2270,7 @@ describe('private PDF fidelity runner', () => {
       evidence.structure.crossReferenceRelationshipGraph[0].sourceBoxes,
     ).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)])
     expect(evidence.structure).toMatchObject({
-      schemaVersion: '1.6.0',
+      schemaVersion: '1.7.0',
       crossReferenceRelationshipCount: 1,
       crossReferenceRelationshipCounts: { 'figure:matched': 1 },
       crossReferenceRelationshipGraphSha256:
@@ -2333,7 +2423,7 @@ describe('private PDF fidelity runner', () => {
       profiles,
     })
 
-    expect(receipt.schemaVersion).toBe('1.8.0')
+    expect(receipt.schemaVersion).toBe('1.9.0')
     expect(receipt.execution.localValidationPassed).toBe(true)
     expect(receipt.baselineComparison).toEqual({
       status: 'not-configured',
@@ -3082,7 +3172,7 @@ appendFileSync(process.env.EPUBCHECK_ARGUMENTS_LOG, JSON.stringify(process.argv.
 
       expect(result.status, result.stderr).toBe(1)
       expect(receipt).toMatchObject({
-        schemaVersion: '1.8.0',
+        schemaVersion: '1.9.0',
         execution: {
           epubCheckRequired: true,
           epubCheckPassedCount: 2,

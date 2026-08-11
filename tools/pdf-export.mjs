@@ -446,6 +446,7 @@ export async function createPdfCorpusReportValidator() {
     ocrSchema,
     previousProvenanceSchema,
     previousExactHeadSchema,
+    previousCurrentSchema,
     provenanceSchema,
   ] = await Promise.all(
     [
@@ -453,6 +454,7 @@ export async function createPdfCorpusReportValidator() {
       PDF_CORPUS_REPORT_OCR_SCHEMA_PATH,
       'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
       'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+      'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
       PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH,
     ].map(async (path) =>
       JSON.parse(
@@ -465,6 +467,7 @@ export async function createPdfCorpusReportValidator() {
   const ocrValidator = ajv.compile(ocrSchema)
   ajv.addSchema(previousProvenanceSchema)
   const previousExactHeadValidator = ajv.compile(previousExactHeadSchema)
+  const previousCurrentValidator = ajv.compile(previousCurrentSchema)
   const provenanceValidator = ajv.compile(provenanceSchema)
   const documentValidator = ajv.compile({
     $schema: provenanceSchema.$schema,
@@ -483,6 +486,10 @@ export async function createPdfCorpusReportValidator() {
     [
       '1.8.0\0docs/schemas/pdf-corpus-audit-v1.8.schema.json',
       previousExactHeadValidator,
+    ],
+    [
+      '1.9.0\0docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+      previousCurrentValidator,
     ],
     [
       `${PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION}\0${PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH}`,

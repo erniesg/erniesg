@@ -38,7 +38,7 @@ import {
   PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION,
 } from './pdf-corpus-audit-lib.mjs'
 
-export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.8.0'
+export const PDF_PRIVATE_FIDELITY_SCHEMA_VERSION = '1.9.0'
 const PDF_PRIVATE_FIDELITY_PRIVACY =
   'public-id-hash-aggregate-counters-artifact-hashes-only'
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -888,6 +888,9 @@ function sanitizedCitationRelationshipGraph(relationships) {
     targetNodeIds: relationship.targetNodeIds.map((nodeId) =>
       opaqueTopologyId('node', nodeId),
     ),
+    candidateNodeIds: relationship.candidateNodeIds.map((nodeId) =>
+      opaqueTopologyId('node', nodeId),
+    ),
     canonicalAnchor: relationship.canonicalAnchor
       ? {
           nodeId: opaqueTopologyId('node', relationship.canonicalAnchor.nodeId),
@@ -895,6 +898,9 @@ function sanitizedCitationRelationshipGraph(relationships) {
           end: relationship.canonicalAnchor.end,
         }
       : null,
+    evidenceSha256s: relationship.evidenceSha256s.map((evidenceSha256) =>
+      opaqueTopologyId('citation-evidence-digest', evidenceSha256),
+    ),
     sourceBoxes: relationship.sourceBoxes.map((box) =>
       canonicalJsonHash({ kind: 'citation-source-box', box }),
     ),
@@ -1903,25 +1909,31 @@ function validPrivateHashArray(value, nonempty = false) {
   )
 }
 
-function validPrivateCitationGraph(value) {
+function validPrivateCitationGraph(value, legacy = false) {
+  const keys = [
+    'id',
+    'status',
+    'taxonomy',
+    'referenceRegionId',
+    'referenceStart',
+    'referenceEnd',
+    'labels',
+    'targetNodeIds',
+    ...(legacy ? [] : ['candidateNodeIds']),
+    'canonicalAnchor',
+    ...(legacy ? [] : ['evidenceSha256s']),
+    'sourceBoxes',
+  ]
   return (
     Array.isArray(value) &&
     value.every(
       (relationship) =>
-        hasExactKeys(relationship, [
-          'id',
-          'status',
-          'taxonomy',
-          'referenceRegionId',
-          'referenceStart',
-          'referenceEnd',
-          'labels',
-          'targetNodeIds',
-          'canonicalAnchor',
-          'sourceBoxes',
-        ]) &&
+        hasExactKeys(relationship, keys) &&
         SHA256_PATTERN.test(relationship.id) &&
-        ['matched', 'ambiguous', 'unresolved'].includes(relationship.status) &&
+        (legacy
+          ? ['matched', 'unresolved']
+          : ['matched', 'ambiguous', 'unresolved']
+        ).includes(relationship.status) &&
         [
           'bracketed-bibliography-citation',
           'author-year-bibliography-citation',
@@ -1935,6 +1947,16 @@ function validPrivateCitationGraph(value) {
         relationship.referenceEnd > relationship.referenceStart &&
         validPrivateHashArray(relationship.labels, true) &&
         validPrivateHashArray(relationship.targetNodeIds) &&
+        (legacy ||
+          (validPrivateHashArray(relationship.candidateNodeIds) &&
+            validPrivateHashArray(relationship.evidenceSha256s, true) &&
+            (relationship.status === 'matched'
+              ? relationship.targetNodeIds.length ===
+                  relationship.labels.length &&
+                relationship.candidateNodeIds.length === 0
+              : relationship.targetNodeIds.length === 0 &&
+                (relationship.status !== 'ambiguous' ||
+                  relationship.candidateNodeIds.length > 1)))) &&
         (relationship.canonicalAnchor === null ||
           (hasExactKeys(relationship.canonicalAnchor, [
             'nodeId',
@@ -2403,6 +2425,7 @@ function validCanonicalHyphenDeletionLedger(structure, legacy = false) {
 
 function validStructure(value, allowHistoricalV14 = false) {
   const current = value?.schemaVersion === PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION
+  const legacyV16 = allowHistoricalV14 && value?.schemaVersion === '1.6.0'
   const legacyV15 = allowHistoricalV14 && value?.schemaVersion === '1.5.0'
   const historical = allowHistoricalV14 && value?.schemaVersion === '1.4.0'
   const canonicalHyphenDeletionFields = [
@@ -2447,9 +2470,11 @@ function validStructure(value, allowHistoricalV14 = false) {
       'lineTransitionLedgerSha256',
       'unresolvedCorruptingJoinCount',
       'structurallyConsumedLineBoundaryCount',
-      ...(current || legacyV15 ? canonicalHyphenDeletionFields : []),
+      ...(current || legacyV16 || legacyV15
+        ? canonicalHyphenDeletionFields
+        : []),
     ]) ||
-    (!current && !legacyV15 && !historical) ||
+    (!current && !legacyV16 && !legacyV15 && !historical) ||
     [
       'canonicalNodeCount',
       'visualRelationshipCount',
@@ -2485,7 +2510,7 @@ function validStructure(value, allowHistoricalV14 = false) {
       'crossReferenceRelationshipCounts',
       'assetCounts',
     ].some((key) => !validCountMap(value[key])) ||
-    !validPrivateCitationGraph(value.citationRelationshipGraph) ||
+    !validPrivateCitationGraph(value.citationRelationshipGraph, !current) ||
     value.citationRelationshipGraph.length !==
       value.citationRelationshipCount ||
     canonicalJsonHash(value.citationRelationshipGraph) !==
@@ -2507,6 +2532,7 @@ function validStructure(value, allowHistoricalV14 = false) {
       ) ||
     typeof value.lineTransitionLedgerAvailable !== 'boolean' ||
     (current && !validCanonicalHyphenDeletionLedger(value)) ||
+    (legacyV16 && !validCanonicalHyphenDeletionLedger(value)) ||
     (legacyV15 && !validCanonicalHyphenDeletionLedger(value, true))
   ) {
     return false
@@ -2662,7 +2688,7 @@ function invalidPrivateFidelityBaseline() {
 function validatePrivateFidelityReceipt(receipt, requireAcceptedBaseline) {
   try {
     const legacySchema =
-      requireAcceptedBaseline && receipt?.schemaVersion === '1.7.0'
+      requireAcceptedBaseline && receipt?.schemaVersion === '1.8.0'
     if (
       !hasExactKeys(receipt, [
         'schemaVersion',

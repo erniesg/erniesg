@@ -243,8 +243,8 @@ describe('headless local OCR', () => {
     expect(first.stdout).toBe(second.stdout)
     const report = JSON.parse(first.stdout)
     expect(report).toMatchObject({
-      schemaVersion: '1.9.0',
-      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+      schemaVersion: '1.10.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
       summary: {
         documents: 1,
         reviewRequired: 1,
@@ -276,6 +276,7 @@ describe('headless local OCR', () => {
       ocrSchema,
       previousProvenanceSchema,
       previousExactHeadSchema,
+      previousCurrentSchema,
       provenanceSchema,
     ] = await Promise.all(
       [
@@ -284,6 +285,7 @@ describe('headless local OCR', () => {
         'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
         'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
         'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
       ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
     )
     const ajv = new Ajv2020({ strict: false })
@@ -292,6 +294,7 @@ describe('headless local OCR', () => {
       ocrSchema,
       previousProvenanceSchema,
       previousExactHeadSchema,
+      previousCurrentSchema,
       provenanceSchema,
     ]) {
       ajv.addSchema(schema)

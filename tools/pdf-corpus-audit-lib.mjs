@@ -37,10 +37,10 @@ export const PDF_CORPUS_REPORT_SCHEMA_PATH =
   'docs/schemas/pdf-corpus-audit.schema.json'
 export const PDF_CORPUS_REPORT_OCR_SCHEMA_PATH =
   'docs/schemas/pdf-corpus-audit-v1.6.schema.json'
-export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION = '1.9.0'
+export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_VERSION = '1.10.0'
 export const PDF_CORPUS_REPORT_PROVENANCE_SCHEMA_PATH =
-  'docs/schemas/pdf-corpus-audit-v1.9.schema.json'
-export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.6.0'
+  'docs/schemas/pdf-corpus-audit-v1.10.schema.json'
+export const PDF_STRUCTURAL_RECEIPT_SCHEMA_VERSION = '1.7.0'
 export const PDF_HYPHEN_LEXICAL_MODEL_RECEIPT = Object.freeze({
   id: 'scowl-2020.12.07+ushyphmax-2005-05-30',
   language: 'en-US',
@@ -1004,6 +1004,9 @@ function normalizedCitationRelationships(relationships) {
     targetNodeIds: (relationship.targetNodeIds ?? []).map((nodeId) =>
       opaqueStructuralId('node', nodeId),
     ),
+    candidateNodeIds: (relationship.candidateNodeIds ?? []).map((nodeId) =>
+      opaqueStructuralId('node', nodeId),
+    ),
     canonicalAnchor: relationship.canonicalAnchor
       ? {
           ...relationship.canonicalAnchor,
@@ -1013,6 +1016,9 @@ function normalizedCitationRelationships(relationships) {
           ),
         }
       : null,
+    evidenceSha256s: [...new Set(relationship.evidence ?? [])].map((evidence) =>
+      opaqueStructuralId('citation-evidence', evidence),
+    ),
     sourceBoxes: (relationship.sourceBoxes ?? []).map((box) => ({ ...box })),
   }))
 }

@@ -753,21 +753,31 @@ describe('local PDF corpus audit', () => {
     const legacySchema = JSON.parse(
       await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
     )
+    const supportingSchemas = await Promise.all(
+      [
+        'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+      ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
+    )
     const schema = JSON.parse(
-      await readFile('docs/schemas/pdf-corpus-audit-v1.9.schema.json', 'utf8'),
+      await readFile('docs/schemas/pdf-corpus-audit-v1.10.schema.json', 'utf8'),
     )
     const ajv = new Ajv2020({ strict: false })
     ajv.addSchema(legacySchema)
+    for (const supportingSchema of supportingSchemas) {
+      ajv.addSchema(supportingSchema)
+    }
+    ajv.addSchema(schema)
     const completenessValidator = ajv.compile({
       $schema: legacySchema.$schema,
       $defs: legacySchema.$defs,
       ...legacySchema.$defs.completeness,
     })
-    const receiptValidator = ajv.compile({
-      $schema: schema.$schema,
-      $defs: schema.$defs,
-      ...schema.$defs.structuralReceipt,
-    })
+    const receiptValidator = ajv.getSchema(
+      `${schema.$id}#/$defs/structuralReceipt`,
+    )
     const reconstruction = {
       paper: {
         id: 'paper-1',
@@ -804,9 +814,12 @@ describe('local PDF corpus audit', () => {
       'https://ernie.sg/schemas/pdf-corpus-audit-1.5.0.json',
     )
     expect(legacySchema.properties.schemaVersion.const).toBe('1.5.0')
-    expect(schema.properties.schemaVersion.const).toBe('1.9.0')
+    expect(supportingSchemas.at(-1).properties.schemaVersion.const).toBe(
+      '1.9.0',
+    )
+    expect(schema.properties.schemaVersion.const).toBe('1.10.0')
     expect(schema.$defs.structuralReceipt.properties.schemaVersion.const).toBe(
-      '1.6.0',
+      '1.7.0',
     )
     expect(schema.$defs.structuralReceipt.required).toContain(
       'canonicalNodeProvenanceSha256',
@@ -822,7 +835,7 @@ describe('local PDF corpus audit', () => {
     expect(legacySchema.$defs.crossReferenceRelationship).toBeDefined()
     expect(legacySchema.$defs.crossReferenceTarget).toBeDefined()
     expect(receipt).toMatchObject({
-      schemaVersion: '1.6.0',
+      schemaVersion: '1.7.0',
       canonicalNodeProvenanceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       lineTransitionCount: 2,
       unresolvedCorruptingJoinCount: 1,
@@ -939,269 +952,261 @@ describe('local PDF corpus audit', () => {
   })
 
   // Heavy structuredClone/receipt churn; the default 5s trips on cold CI runners.
-  it('persists deterministic privacy-safe canonical hyphen deletion records and rejects incomplete or duplicate proof', { timeout: 30_000 }, async () => {
-    const reconstruction = canonicalHyphenDeletionReconstruction()
-    const receipt = createPdfStructuralReceipt(reconstruction)
+  it(
+    'persists deterministic privacy-safe canonical hyphen deletion records and rejects incomplete or duplicate proof',
+    { timeout: 30_000 },
+    async () => {
+      const reconstruction = canonicalHyphenDeletionReconstruction()
+      const receipt = createPdfStructuralReceipt(reconstruction)
 
-    expect(receipt).toMatchObject({
-      schemaVersion: '1.6.0',
-      canonicalHyphenDeletionLedgerAvailable: true,
-      canonicalHyphenDeletionCount: 1,
-      canonicalHyphenDeletionContextCounts: {
-        'canonical-flow-continuation': 1,
-      },
-      canonicalHyphenDeletionLedger: [
-        {
-          id: expect.stringMatching(/^[a-f0-9]{64}$/),
-          context: 'canonical-flow-continuation',
-          outcome: 'removed-discretionary-hyphen',
-          fromRegionId: expect.stringMatching(/^[a-f0-9]{64}$/),
-          fromLineId: expect.stringMatching(/^[a-f0-9]{64}$/),
-          toRegionId: expect.stringMatching(/^[a-f0-9]{64}$/),
-          toLineId: expect.stringMatching(/^[a-f0-9]{64}$/),
-          geometry: {
-            from: sourceBox({ page: 1, y: 0.8, width: 0.4 }),
-            to: sourceBox({ page: 2, y: 0.1, width: 0.4 }),
-          },
-          proof: expect.objectContaining({
-            tier: 'exact-same-document',
-            sourceBoundaryProven: true,
-            pinnedWordSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-            pinnedSplit: {
-              leftSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-              rightSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-              index: 5,
-            },
-            exactSameDocumentJoinedFormSha256:
-              expect.stringMatching(/^[a-f0-9]{64}$/),
-            hardHyphenFormSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-            hardHyphenCounterproof: null,
-            model:
-              reconstruction.canonicalHyphenBoundaryDecisions[0].proof.model,
-            evidenceSha256s: expect.arrayContaining([
-              expect.stringMatching(/^[a-f0-9]{64}$/),
-            ]),
-          }),
+      expect(receipt).toMatchObject({
+        schemaVersion: '1.7.0',
+        canonicalHyphenDeletionLedgerAvailable: true,
+        canonicalHyphenDeletionCount: 1,
+        canonicalHyphenDeletionContextCounts: {
+          'canonical-flow-continuation': 1,
         },
-      ],
-      canonicalHyphenDeletionLedgerSha256:
-        expect.stringMatching(/^[a-f0-9]{64}$/),
-    })
-    expect(receipt.canonicalHyphenDeletionLedgerSha256).toBe(
-      canonicalJsonHash(receipt.canonicalHyphenDeletionLedger),
-    )
-    expect(JSON.stringify(receipt.canonicalHyphenDeletionLedger)).not.toContain(
-      'Representation',
-    )
-    expect(JSON.stringify(receipt.canonicalHyphenDeletionLedger)).not.toContain(
-      'language-scope:en-US->en-US',
-    )
-    expect(
-      receipt.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s,
-    ).toEqual(
-      [
-        ...receipt.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s,
-      ].sort(),
-    )
-
-    const reorderedEvidence = structuredClone(reconstruction)
-    reorderedEvidence.canonicalHyphenBoundaryDecisions[0].proof.evidence.reverse()
-    expect(
-      createPdfStructuralReceipt(reorderedEvidence)
-        .canonicalHyphenDeletionLedgerSha256,
-    ).toBe(receipt.canonicalHyphenDeletionLedgerSha256)
-
-    const secondRegions = structuredClone(reconstruction.regions).map(
-      (region) => ({
-        ...region,
-        id: `second-${region.id}`,
-        lines: region.lines.map((line) => ({
-          ...line,
-          id: `second-${line.id}`,
-        })),
-      }),
-    )
-    const secondDecision = structuredClone(
-      reconstruction.canonicalHyphenBoundaryDecisions[0],
-    )
-    secondDecision.context = 'bibliography-continuation'
-    secondDecision.fromRegionId = secondRegions[0].id
-    secondDecision.fromLineId = secondRegions[0].lines[0].id
-    secondDecision.toRegionId = secondRegions[1].id
-    secondDecision.toLineId = secondRegions[1].lines[0].id
-    secondDecision.id = `canonical-hyphen-boundary:${secondDecision.context}:${secondDecision.fromRegionId}:${secondDecision.fromLineId}->${secondDecision.toRegionId}:${secondDecision.toLineId}`
-    const twoDecisions = {
-      ...structuredClone(reconstruction),
-      regions: [...structuredClone(reconstruction.regions), ...secondRegions],
-      canonicalHyphenBoundaryDecisions: [
-        structuredClone(reconstruction.canonicalHyphenBoundaryDecisions[0]),
-        secondDecision,
-      ],
-      canonicalHyphenBoundaryDecisionCount: 2,
-    }
-    const reversedDecisions = structuredClone(twoDecisions)
-    reversedDecisions.canonicalHyphenBoundaryDecisions.reverse()
-    reversedDecisions.canonicalHyphenBoundaryDecisions.forEach((decision) =>
-      decision.proof.evidence.reverse(),
-    )
-    expect(
-      createPdfStructuralReceipt(twoDecisions)
-        .canonicalHyphenDeletionLedgerSha256,
-    ).toBe(
-      createPdfStructuralReceipt(reversedDecisions)
-        .canonicalHyphenDeletionLedgerSha256,
-    )
-
-    const legacySchema = JSON.parse(
-      await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
-    )
-    const v18Schema = JSON.parse(
-      await readFile('docs/schemas/pdf-corpus-audit-v1.8.schema.json', 'utf8'),
-    )
-    const schema = JSON.parse(
-      await readFile('docs/schemas/pdf-corpus-audit-v1.9.schema.json', 'utf8'),
-    )
-    const ajv = new Ajv2020({ strict: false })
-    ajv.addSchema(legacySchema)
-    ajv.addSchema(v18Schema)
-    const validate = ajv.compile({
-      $schema: schema.$schema,
-      $defs: schema.$defs,
-      ...schema.$defs.structuralReceipt,
-    })
-    expect(validate(receipt), validate.errors).toBe(true)
-    const historicalReceipt = structuredClone(receipt)
-    historicalReceipt.schemaVersion = '1.5.0'
-    for (const record of historicalReceipt.canonicalHyphenDeletionLedger) {
-      delete record.proof.tier
-    }
-    historicalReceipt.canonicalHyphenDeletionLedgerSha256 = canonicalJsonHash(
-      historicalReceipt.canonicalHyphenDeletionLedger,
-    )
-    const validateV18Receipt = ajv.compile({
-      $schema: v18Schema.$schema,
-      $defs: v18Schema.$defs,
-      ...v18Schema.$defs.structuralReceipt,
-    })
-    expect(
-      validateV18Receipt(historicalReceipt),
-      validateV18Receipt.errors,
-    ).toBe(true)
-    const schemaMissingMandatoryEvidence = structuredClone(receipt)
-    schemaMissingMandatoryEvidence.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s =
-      ['a'.repeat(64)]
-    expect(validate(schemaMissingMandatoryEvidence)).toBe(false)
-    const schemaForbiddenCounterproof = structuredClone(receipt)
-    schemaForbiddenCounterproof.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s.push(
-      createHash('sha256')
-        .update(
-          'canonical-hyphen-evidence\0hard-hyphen-form-valid:same-document',
-        )
-        .digest('hex'),
-    )
-    schemaForbiddenCounterproof.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s.sort()
-    expect(validate(schemaForbiddenCounterproof)).toBe(false)
-
-    const fullReportResult = spawnSync(
-      process.execPath,
-      [
-        'tools/pdf-corpus-audit.mjs',
-        '--report-only',
-        'tests/fixtures/pdf/born-digital.pdf',
-      ],
-      { encoding: 'utf8', timeout: 120_000 },
-    )
-    expect(fullReportResult.status, fullReportResult.stderr).toBe(0)
-    const fullReport = JSON.parse(fullReportResult.stdout)
-    Object.assign(fullReport.documents[0].structure, {
-      canonicalHyphenDeletionLedgerAvailable:
-        receipt.canonicalHyphenDeletionLedgerAvailable,
-      canonicalHyphenDeletionCount: receipt.canonicalHyphenDeletionCount,
-      canonicalHyphenDeletionContextCounts:
-        receipt.canonicalHyphenDeletionContextCounts,
-      canonicalHyphenDeletionLedger: receipt.canonicalHyphenDeletionLedger,
-      canonicalHyphenDeletionLedgerSha256:
-        receipt.canonicalHyphenDeletionLedgerSha256,
-    })
-    const versionedSchemas = await Promise.all(
-      [
-        'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
-        'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
-      ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
-    )
-    const fullAjv = new Ajv2020({ strict: false })
-    for (const candidate of [
-      legacySchema,
-      ...versionedSchemas,
-      v18Schema,
-      schema,
-    ]) {
-      fullAjv.addSchema(candidate)
-    }
-    const validateFullReport = fullAjv.getSchema(schema.$id)
-    expect(validateFullReport(fullReport), validateFullReport.errors).toBe(true)
-
-    const malformed = structuredClone(reconstruction)
-    malformed.canonicalHyphenBoundaryDecisions[0].proof.pinnedSplit.index += 1
-    const duplicate = structuredClone(reconstruction)
-    duplicate.canonicalHyphenBoundaryDecisions.push(
-      structuredClone(duplicate.canonicalHyphenBoundaryDecisions[0]),
-    )
-    duplicate.canonicalHyphenBoundaryDecisionCount = 2
-    const unknownField = structuredClone(reconstruction)
-    unknownField.canonicalHyphenBoundaryDecisions[0].volatile = true
-    const wrongModel = structuredClone(reconstruction)
-    wrongModel.canonicalHyphenBoundaryDecisions[0].proof.model.id =
-      'fake-compatible-shape'
-    const uncheckedString = structuredClone(reconstruction)
-    uncheckedString.canonicalHyphenBoundaryDecisions[0].proof.pinnedWord = {
-      normalize: 'not-callable',
-    }
-    const missingMandatoryEvidence = structuredClone(reconstruction)
-    missingMandatoryEvidence.canonicalHyphenBoundaryDecisions[0].proof.evidence =
-      missingMandatoryEvidence.canonicalHyphenBoundaryDecisions[0].proof.evidence.filter(
-        (evidence) => evidence !== 'joined-form-valid:pinned-lexicon',
+        canonicalHyphenDeletionLedger: [
+          {
+            id: expect.stringMatching(/^[a-f0-9]{64}$/),
+            context: 'canonical-flow-continuation',
+            outcome: 'removed-discretionary-hyphen',
+            fromRegionId: expect.stringMatching(/^[a-f0-9]{64}$/),
+            fromLineId: expect.stringMatching(/^[a-f0-9]{64}$/),
+            toRegionId: expect.stringMatching(/^[a-f0-9]{64}$/),
+            toLineId: expect.stringMatching(/^[a-f0-9]{64}$/),
+            geometry: {
+              from: sourceBox({ page: 1, y: 0.8, width: 0.4 }),
+              to: sourceBox({ page: 2, y: 0.1, width: 0.4 }),
+            },
+            proof: expect.objectContaining({
+              tier: 'exact-same-document',
+              sourceBoundaryProven: true,
+              pinnedWordSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+              pinnedSplit: {
+                leftSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+                rightSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+                index: 5,
+              },
+              exactSameDocumentJoinedFormSha256:
+                expect.stringMatching(/^[a-f0-9]{64}$/),
+              hardHyphenFormSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+              hardHyphenCounterproof: null,
+              model:
+                reconstruction.canonicalHyphenBoundaryDecisions[0].proof.model,
+              evidenceSha256s: expect.arrayContaining([
+                expect.stringMatching(/^[a-f0-9]{64}$/),
+              ]),
+            }),
+          },
+        ],
+        canonicalHyphenDeletionLedgerSha256:
+          expect.stringMatching(/^[a-f0-9]{64}$/),
+      })
+      expect(receipt.canonicalHyphenDeletionLedgerSha256).toBe(
+        canonicalJsonHash(receipt.canonicalHyphenDeletionLedger),
       )
-    const caseOnlyHardHyphenCounterproof = structuredClone(reconstruction)
-    const collisionRegion = structuredClone(
-      caseOnlyHardHyphenCounterproof.regions[2],
-    )
-    collisionRegion.id = 'case-only-hard-hyphen-counterproof-region'
-    collisionRegion.text = 'REPRE-sentation is source text.'
-    collisionRegion.lines[0].id = `${collisionRegion.id}-line`
-    collisionRegion.lines[0].text = collisionRegion.text
-    caseOnlyHardHyphenCounterproof.regions.push(collisionRegion)
-    for (const invalid of [
-      {
+      expect(
+        JSON.stringify(receipt.canonicalHyphenDeletionLedger),
+      ).not.toContain('Representation')
+      expect(
+        JSON.stringify(receipt.canonicalHyphenDeletionLedger),
+      ).not.toContain('language-scope:en-US->en-US')
+      expect(
+        receipt.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s,
+      ).toEqual(
+        [
+          ...receipt.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s,
+        ].sort(),
+      )
+
+      const reorderedEvidence = structuredClone(reconstruction)
+      reorderedEvidence.canonicalHyphenBoundaryDecisions[0].proof.evidence.reverse()
+      expect(
+        createPdfStructuralReceipt(reorderedEvidence)
+          .canonicalHyphenDeletionLedgerSha256,
+      ).toBe(receipt.canonicalHyphenDeletionLedgerSha256)
+
+      const secondRegions = structuredClone(reconstruction.regions).map(
+        (region) => ({
+          ...region,
+          id: `second-${region.id}`,
+          lines: region.lines.map((line) => ({
+            ...line,
+            id: `second-${line.id}`,
+          })),
+        }),
+      )
+      const secondDecision = structuredClone(
+        reconstruction.canonicalHyphenBoundaryDecisions[0],
+      )
+      secondDecision.context = 'bibliography-continuation'
+      secondDecision.fromRegionId = secondRegions[0].id
+      secondDecision.fromLineId = secondRegions[0].lines[0].id
+      secondDecision.toRegionId = secondRegions[1].id
+      secondDecision.toLineId = secondRegions[1].lines[0].id
+      secondDecision.id = `canonical-hyphen-boundary:${secondDecision.context}:${secondDecision.fromRegionId}:${secondDecision.fromLineId}->${secondDecision.toRegionId}:${secondDecision.toLineId}`
+      const twoDecisions = {
         ...structuredClone(reconstruction),
-        canonicalHyphenBoundaryDecisions: undefined,
-      },
-      malformed,
-      duplicate,
-      unknownField,
-      wrongModel,
-      uncheckedString,
-      missingMandatoryEvidence,
-      caseOnlyHardHyphenCounterproof,
-    ]) {
-      expect(() => createPdfStructuralReceipt(invalid)).toThrow(
-        /Canonical hyphen deletion/u,
+        regions: [...structuredClone(reconstruction.regions), ...secondRegions],
+        canonicalHyphenBoundaryDecisions: [
+          structuredClone(reconstruction.canonicalHyphenBoundaryDecisions[0]),
+          secondDecision,
+        ],
+        canonicalHyphenBoundaryDecisionCount: 2,
+      }
+      const reversedDecisions = structuredClone(twoDecisions)
+      reversedDecisions.canonicalHyphenBoundaryDecisions.reverse()
+      reversedDecisions.canonicalHyphenBoundaryDecisions.forEach((decision) =>
+        decision.proof.evidence.reverse(),
       )
-    }
-    const missingBoth = structuredClone(reconstruction)
-    delete missingBoth.canonicalHyphenBoundaryDecisions
-    delete missingBoth.canonicalHyphenBoundaryDecisionCount
-    expect(() => createRawPdfStructuralReceipt(missingBoth)).toThrow(
-      /ledger and count are required/u,
-    )
-  })
+      expect(
+        createPdfStructuralReceipt(twoDecisions)
+          .canonicalHyphenDeletionLedgerSha256,
+      ).toBe(
+        createPdfStructuralReceipt(reversedDecisions)
+          .canonicalHyphenDeletionLedgerSha256,
+      )
+
+      const schemas = await Promise.all(
+        [
+          'docs/schemas/pdf-corpus-audit.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+          'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
+        ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
+      )
+      const [, , , v18Schema, , schema] = schemas
+      const ajv = new Ajv2020({ strict: false })
+      for (const candidateSchema of schemas) ajv.addSchema(candidateSchema)
+      const validate = ajv.getSchema(`${schema.$id}#/$defs/structuralReceipt`)
+      expect(validate(receipt), validate.errors).toBe(true)
+      const historicalReceipt = structuredClone(receipt)
+      historicalReceipt.schemaVersion = '1.5.0'
+      for (const record of historicalReceipt.canonicalHyphenDeletionLedger) {
+        delete record.proof.tier
+      }
+      historicalReceipt.canonicalHyphenDeletionLedgerSha256 = canonicalJsonHash(
+        historicalReceipt.canonicalHyphenDeletionLedger,
+      )
+      const validateV18Receipt = ajv.compile({
+        $schema: v18Schema.$schema,
+        $defs: v18Schema.$defs,
+        ...v18Schema.$defs.structuralReceipt,
+      })
+      expect(
+        validateV18Receipt(historicalReceipt),
+        validateV18Receipt.errors,
+      ).toBe(true)
+      const schemaMissingMandatoryEvidence = structuredClone(receipt)
+      schemaMissingMandatoryEvidence.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s =
+        ['a'.repeat(64)]
+      expect(validate(schemaMissingMandatoryEvidence)).toBe(false)
+      const schemaForbiddenCounterproof = structuredClone(receipt)
+      schemaForbiddenCounterproof.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s.push(
+        createHash('sha256')
+          .update(
+            'canonical-hyphen-evidence\0hard-hyphen-form-valid:same-document',
+          )
+          .digest('hex'),
+      )
+      schemaForbiddenCounterproof.canonicalHyphenDeletionLedger[0].proof.evidenceSha256s.sort()
+      expect(validate(schemaForbiddenCounterproof)).toBe(false)
+
+      const fullReportResult = spawnSync(
+        process.execPath,
+        [
+          'tools/pdf-corpus-audit.mjs',
+          '--report-only',
+          'tests/fixtures/pdf/born-digital.pdf',
+        ],
+        { encoding: 'utf8', timeout: 120_000 },
+      )
+      expect(fullReportResult.status, fullReportResult.stderr).toBe(0)
+      const fullReport = JSON.parse(fullReportResult.stdout)
+      Object.assign(fullReport.documents[0].structure, {
+        canonicalHyphenDeletionLedgerAvailable:
+          receipt.canonicalHyphenDeletionLedgerAvailable,
+        canonicalHyphenDeletionCount: receipt.canonicalHyphenDeletionCount,
+        canonicalHyphenDeletionContextCounts:
+          receipt.canonicalHyphenDeletionContextCounts,
+        canonicalHyphenDeletionLedger: receipt.canonicalHyphenDeletionLedger,
+        canonicalHyphenDeletionLedgerSha256:
+          receipt.canonicalHyphenDeletionLedgerSha256,
+      })
+      const fullAjv = new Ajv2020({ strict: false })
+      for (const candidate of schemas) {
+        fullAjv.addSchema(candidate)
+      }
+      const validateFullReport = fullAjv.getSchema(schema.$id)
+      expect(validateFullReport(fullReport), validateFullReport.errors).toBe(
+        true,
+      )
+
+      const malformed = structuredClone(reconstruction)
+      malformed.canonicalHyphenBoundaryDecisions[0].proof.pinnedSplit.index += 1
+      const duplicate = structuredClone(reconstruction)
+      duplicate.canonicalHyphenBoundaryDecisions.push(
+        structuredClone(duplicate.canonicalHyphenBoundaryDecisions[0]),
+      )
+      duplicate.canonicalHyphenBoundaryDecisionCount = 2
+      const unknownField = structuredClone(reconstruction)
+      unknownField.canonicalHyphenBoundaryDecisions[0].volatile = true
+      const wrongModel = structuredClone(reconstruction)
+      wrongModel.canonicalHyphenBoundaryDecisions[0].proof.model.id =
+        'fake-compatible-shape'
+      const uncheckedString = structuredClone(reconstruction)
+      uncheckedString.canonicalHyphenBoundaryDecisions[0].proof.pinnedWord = {
+        normalize: 'not-callable',
+      }
+      const missingMandatoryEvidence = structuredClone(reconstruction)
+      missingMandatoryEvidence.canonicalHyphenBoundaryDecisions[0].proof.evidence =
+        missingMandatoryEvidence.canonicalHyphenBoundaryDecisions[0].proof.evidence.filter(
+          (evidence) => evidence !== 'joined-form-valid:pinned-lexicon',
+        )
+      const caseOnlyHardHyphenCounterproof = structuredClone(reconstruction)
+      const collisionRegion = structuredClone(
+        caseOnlyHardHyphenCounterproof.regions[2],
+      )
+      collisionRegion.id = 'case-only-hard-hyphen-counterproof-region'
+      collisionRegion.text = 'REPRE-sentation is source text.'
+      collisionRegion.lines[0].id = `${collisionRegion.id}-line`
+      collisionRegion.lines[0].text = collisionRegion.text
+      caseOnlyHardHyphenCounterproof.regions.push(collisionRegion)
+      for (const invalid of [
+        {
+          ...structuredClone(reconstruction),
+          canonicalHyphenBoundaryDecisions: undefined,
+        },
+        malformed,
+        duplicate,
+        unknownField,
+        wrongModel,
+        uncheckedString,
+        missingMandatoryEvidence,
+        caseOnlyHardHyphenCounterproof,
+      ]) {
+        expect(() => createPdfStructuralReceipt(invalid)).toThrow(
+          /Canonical hyphen deletion/u,
+        )
+      }
+      const missingBoth = structuredClone(reconstruction)
+      delete missingBoth.canonicalHyphenBoundaryDecisions
+      delete missingBoth.canonicalHyphenBoundaryDecisionCount
+      expect(() => createRawPdfStructuralReceipt(missingBoth)).toThrow(
+        /ledger and count are required/u,
+      )
+    },
+  )
 
   it('persists a privacy-safe derived-affix receipt and rejects coordinated proof tampering', () => {
     const reconstruction = canonicalDerivedAffixHyphenDeletionReconstruction()
     const receipt = createPdfStructuralReceipt(reconstruction)
 
     expect(receipt).toMatchObject({
-      schemaVersion: '1.6.0',
+      schemaVersion: '1.7.0',
       canonicalHyphenDeletionCount: 1,
       canonicalHyphenDeletionLedger: [
         {
@@ -1317,6 +1322,7 @@ describe('local PDF corpus audit', () => {
           labels: ['1'],
           targetNodeIds: ['bibliography-1'],
           canonicalAnchor: { nodeId: 'node-1', start: 4, end: 7 },
+          evidence: ['fixture-citation-evidence'],
           sourceBoxes: [
             {
               page: 1,
@@ -1396,7 +1402,7 @@ describe('local PDF corpus audit', () => {
     })
 
     expect(receipt).toMatchObject({
-      schemaVersion: '1.6.0',
+      schemaVersion: '1.7.0',
       citationRelationshipCount: 1,
       citationRelationshipCounts: { matched: 1 },
       citationRelationshipGraph: [
@@ -1405,11 +1411,13 @@ describe('local PDF corpus audit', () => {
           referenceRegionId: expect.stringMatching(/^[a-f0-9]{64}$/),
           labels: [expect.stringMatching(/^[a-f0-9]{64}$/)],
           targetNodeIds: [expect.stringMatching(/^[a-f0-9]{64}$/)],
+          candidateNodeIds: [],
           canonicalAnchor: expect.objectContaining({
             nodeId: expect.stringMatching(/^[a-f0-9]{64}$/),
             start: 4,
             end: 7,
           }),
+          evidenceSha256s: [expect.stringMatching(/^[a-f0-9]{64}$/)],
           sourceBoxes: reconstruction.citationRelationships[0].sourceBoxes,
         }),
       ],
@@ -1477,17 +1485,68 @@ describe('local PDF corpus audit', () => {
     const legacySchema = JSON.parse(
       await readFile('docs/schemas/pdf-corpus-audit.schema.json', 'utf8'),
     )
+    const supportingSchemas = await Promise.all(
+      [
+        'docs/schemas/pdf-corpus-audit-v1.6.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+      ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
+    )
     const schema = JSON.parse(
-      await readFile('docs/schemas/pdf-corpus-audit-v1.9.schema.json', 'utf8'),
+      await readFile('docs/schemas/pdf-corpus-audit-v1.10.schema.json', 'utf8'),
     )
     const ajv = new Ajv2020({ strict: false })
     ajv.addSchema(legacySchema)
-    const receiptValidator = ajv.compile({
-      $schema: schema.$schema,
-      $defs: schema.$defs,
-      ...schema.$defs.structuralReceipt,
-    })
+    for (const supportingSchema of supportingSchemas) {
+      ajv.addSchema(supportingSchema)
+    }
+    ajv.addSchema(schema)
+    const receiptValidator = ajv.getSchema(
+      `${schema.$id}#/$defs/structuralReceipt`,
+    )
     expect(receiptValidator(receipt), receiptValidator.errors).toBe(true)
+    const ambiguousRelationship = {
+      ...reconstruction.citationRelationships[0],
+      status: 'ambiguous',
+      targetNodeIds: [],
+      candidateNodeIds: ['bibliography-1', 'bibliography-2'],
+      evidence: [
+        ...reconstruction.citationRelationships[0].evidence,
+        'bibliography-label-target-ambiguous',
+      ],
+    }
+    const ambiguousReceipt = createPdfStructuralReceipt({
+      ...reconstruction,
+      citationRelationships: [ambiguousRelationship],
+    })
+    expect(receiptValidator(ambiguousReceipt), receiptValidator.errors).toBe(
+      true,
+    )
+    const changedCandidates = createPdfStructuralReceipt({
+      ...reconstruction,
+      citationRelationships: [
+        {
+          ...ambiguousRelationship,
+          candidateNodeIds: ['bibliography-1', 'bibliography-3'],
+        },
+      ],
+    })
+    expect(changedCandidates.citationRelationshipGraphSha256).not.toBe(
+      ambiguousReceipt.citationRelationshipGraphSha256,
+    )
+    const changedEvidence = createPdfStructuralReceipt({
+      ...reconstruction,
+      citationRelationships: [
+        {
+          ...ambiguousRelationship,
+          evidence: [...ambiguousRelationship.evidence, 'geometry-tie'],
+        },
+      ],
+    })
+    expect(changedEvidence.citationRelationshipGraphSha256).not.toBe(
+      ambiguousReceipt.citationRelationshipGraphSha256,
+    )
     const invalidCrossReferenceState = structuredClone(receipt)
     invalidCrossReferenceState.crossReferenceRelationshipGraph[0].targets[0] = {
       ...invalidCrossReferenceState.crossReferenceRelationshipGraph[0]
@@ -2163,17 +2222,18 @@ describe('local PDF corpus audit', () => {
         'docs/schemas/pdf-corpus-audit-v1.7.schema.json',
         'docs/schemas/pdf-corpus-audit-v1.8.schema.json',
         'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+        'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
       ].map(async (path) => JSON.parse(await readFile(path, 'utf8'))),
     )
     const ajv = new Ajv2020({ strict: false })
     for (const schema of schemas) ajv.addSchema(schema)
     const reportValidator = ajv.getSchema(
-      'https://ernie.sg/schemas/pdf-corpus-audit-1.9.0.json',
+      'https://ernie.sg/schemas/pdf-corpus-audit-1.10.0.json',
     )
     expect(reportValidator(report), reportValidator.errors).toBe(true)
     expect(report).toMatchObject({
-      schemaVersion: '1.9.0',
-      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.9.schema.json',
+      schemaVersion: '1.10.0',
+      reportSchema: 'docs/schemas/pdf-corpus-audit-v1.10.schema.json',
       privacy: 'basenames-hashes-metrics-diagnostics-only',
       executionProvenance: {
         schemaVersion: '1.1.0',
@@ -2231,7 +2291,7 @@ describe('local PDF corpus audit', () => {
     expect(
       report.documents.every(
         (document) =>
-          document.structure?.schemaVersion === '1.6.0' &&
+          document.structure?.schemaVersion === '1.7.0' &&
           document.structure.canonicalHyphenDeletionLedgerAvailable === true &&
           document.structure.canonicalHyphenDeletionCount ===
             document.structure.canonicalHyphenDeletionLedger.length &&
@@ -2325,46 +2385,50 @@ describe('local PDF corpus audit', () => {
     }
   }, 15_000)
 
-  it('streams multiple opt-in private overlays outside the repository without widening the report', { timeout: 30_000 }, async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'pdf-corpus-overlays-'))
-    try {
-      const result = spawnSync(
-        process.execPath,
-        [
-          'tools/pdf-corpus-audit.mjs',
-          '--report-only',
-          '--overlay-output',
-          directory,
-          'tests/fixtures/pdf/diagnostic-overlays.pdf',
-          'tests/fixtures/pdf/born-digital.pdf',
-        ],
-        { encoding: 'utf8', timeout: 120_000 },
-      )
+  it(
+    'streams multiple opt-in private overlays outside the repository without widening the report',
+    { timeout: 30_000 },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'pdf-corpus-overlays-'))
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            'tools/pdf-corpus-audit.mjs',
+            '--report-only',
+            '--overlay-output',
+            directory,
+            'tests/fixtures/pdf/diagnostic-overlays.pdf',
+            'tests/fixtures/pdf/born-digital.pdf',
+          ],
+          { encoding: 'utf8', timeout: 120_000 },
+        )
 
-      expect(result.status, result.stderr).toBe(0)
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        privacy: 'basenames-hashes-metrics-diagnostics-only',
-        summary: { documents: 2, ready: 1, reviewRequired: 1 },
-      })
-      const artifacts = await readdir(directory)
-      expect(artifacts).toHaveLength(2)
-      const diagnosticArtifact = artifacts.find((artifact) =>
-        artifact.startsWith('diagnostic-overlays-'),
-      )
-      expect(diagnosticArtifact).toMatch(
-        /^diagnostic-overlays-[a-f0-9]{16}\.diagnostics\.html$/,
-      )
-      const html = await readFile(join(directory, diagnosticArtifact), 'utf8')
-      expect(html).toContain('pdf-diagnostic-overlay__svg')
-      expect(html).toContain('Candidate A · left column then right column')
-      expect(result.stdout).not.toContain(directory)
-      expect(result.stdout).not.toContain(
-        'This deliberately wide source region',
-      )
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
+        expect(result.status, result.stderr).toBe(0)
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          privacy: 'basenames-hashes-metrics-diagnostics-only',
+          summary: { documents: 2, ready: 1, reviewRequired: 1 },
+        })
+        const artifacts = await readdir(directory)
+        expect(artifacts).toHaveLength(2)
+        const diagnosticArtifact = artifacts.find((artifact) =>
+          artifact.startsWith('diagnostic-overlays-'),
+        )
+        expect(diagnosticArtifact).toMatch(
+          /^diagnostic-overlays-[a-f0-9]{16}\.diagnostics\.html$/,
+        )
+        const html = await readFile(join(directory, diagnosticArtifact), 'utf8')
+        expect(html).toContain('pdf-diagnostic-overlay__svg')
+        expect(html).toContain('Candidate A · left column then right column')
+        expect(result.stdout).not.toContain(directory)
+        expect(result.stdout).not.toContain(
+          'This deliberately wide source region',
+        )
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('refuses corpus overlay output anywhere inside the repository', () => {
     const result = spawnSync(

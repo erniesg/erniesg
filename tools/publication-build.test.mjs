@@ -43,6 +43,19 @@ import * as publicationBuildTools from './publication-build.mjs'
 
 const SENTINEL = 'sentinel-untouched\n'
 
+function macOSTemporaryAliasCases(processTemporaryDirectory) {
+  const aliases = [['/tmp', '/private/tmp']]
+  if (
+    processTemporaryDirectory === '/var' ||
+    processTemporaryDirectory.startsWith('/var/')
+  )
+    aliases.unshift([
+      processTemporaryDirectory,
+      `/private${processTemporaryDirectory}`,
+    ])
+  return aliases
+}
+
 function payloadBuildArgs(output) {
   return [
     '--adapter',
@@ -1021,10 +1034,15 @@ describe('publication staging and publish helpers', () => {
     'canonicalizes root-owned /var and /tmp aliases for the repository and staging root',
     async () => {
       const previousDirectory = process.cwd()
-      for (const [aliasRoot, canonicalRoot] of [
-        [tmpdir(), `/private${tmpdir()}`],
+      expect(macOSTemporaryAliasCases('/private/var/folders/custom')).toEqual([
         ['/tmp', '/private/tmp'],
-      ]) {
+      ])
+      expect(macOSTemporaryAliasCases('/Users/custom/tmp')).toEqual([
+        ['/tmp', '/private/tmp'],
+      ])
+      for (const [aliasRoot, canonicalRoot] of macOSTemporaryAliasCases(
+        tmpdir(),
+      )) {
         const temporaryRoot = await mkdtemp(
           resolve(aliasRoot, 'publication-cleanliness-macos-alias-'),
         )

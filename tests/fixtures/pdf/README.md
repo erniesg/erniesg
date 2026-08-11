@@ -33,11 +33,18 @@ source-glyph equation raster, and bibliography entries. Its
 text and visual content were written for this repository and do not reduce or
 copy any external paper.
 
-`source-output-checkpoints.pdf` is the small source/output review fixture. It
-contains a source flowchart, a caption, a sentence explicitly labelled as
-continuing across a column break, and a pseudocode listing. The paired evidence
-command uses this page only; it never renders owner-local papers into the
-repository. Its named furniture-exclusion checkpoint also requires the
+`source-output-checkpoints.pdf` is the small source/output review fixture. Page
+one contains a source flowchart, a caption, a pseudocode listing, and the
+opening half of a sentence that runs off the bottom of the page. Page two
+repeats page one's running head and then carries that sentence's
+continuation, attested removable and hard-preserved line-end hyphens, literal
+Markdown, template-placeholder and numbered-list-shaped prose, two indented
+paragraphs, a widely spaced continuation, and prose adjacent to an equation.
+Page three is a dedicated two-column body with a sentence physically split
+from the bottom of its left column to the top of its right column.
+The paired
+evidence command uses these pages only; it never renders owner-local papers into
+the repository. Its named furniture-exclusion checkpoint also requires the
 reconstruction's per-document contamination counter.
 
 `sparse-embedded-text.pdf` is a title/divider page with no image content. It

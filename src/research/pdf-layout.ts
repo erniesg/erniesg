@@ -81,8 +81,11 @@ import {
   canonicalPdfSourceSemanticFlowEvidence,
   PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE,
+  PDF_SOURCE_SEMANTIC_FLOW_CROSS_PAGE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE,
   PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE,
+  pdfBodySourceOrderExtremaByPage,
+  type PdfBodySourceOrderExtremum,
   pdfSourceColumnFlowJoinOutcome,
   pdfSourceColumnFlowStartsWithCjkNumericContinuation,
   pdfSourceFragmentId,
@@ -2074,6 +2077,131 @@ function parsedOrderedListMarker(value: string) {
   }
 }
 
+type SourceMarkupShape = {
+  heading: boolean
+  emphasis: boolean
+  template: boolean
+  orderedList: boolean
+}
+
+function sourceMarkupShape(value: string): SourceMarkupShape {
+  const trimmed = value.trim()
+  return {
+    heading: /^#{1,6}\s+/u.test(trimmed),
+    emphasis: /^(?:\*\*(?=\S)[\s\S]*\*\*|__(?=\S)[\s\S]*__)$/u.test(
+      trimmed,
+    ),
+    template: /^\{[A-Za-z_][A-Za-z0-9_.-]*\}$/u.test(trimmed),
+    orderedList:
+      /^(?:(?:\d+(?:\.\d+){0,3})[.)]|\(\s*\d{1,3}\s*\)|\[\s*\d{1,4}\s*\])\s+\S/u.test(
+        trimmed,
+      ),
+  }
+}
+
+function orderedMarkerHasIndependentEvidence(
+  blockIndex: number,
+  blocks: readonly RegionBlock[],
+  marker: NonNullable<ReturnType<typeof parsedOrderedListMarker>>,
+  bodySize: number,
+) {
+  const block = blocks[blockIndex]
+  if (!block) return false
+  const visibleRuns = block.region.lines.flatMap((line) =>
+    line.runs.filter((run) => run.text.trim()),
+  )
+  const firstLine = block.region.lines.find((line) => line.text.trim())
+  const firstLineRuns = firstLine?.runs.filter((run) => run.text.trim()) ?? []
+  const markerRunSeparated = Boolean(
+    firstLineRuns.length > 1 &&
+    firstLineRuns[0].text.trim() === marker.markerText,
+  )
+  const largestFont = Math.max(
+    ...block.region.lines.map((line) => line.fontSize),
+    bodySize,
+  )
+  const emphasizedShare =
+    visibleRuns.reduce(
+      (total, run) =>
+        total +
+        (run.bold || fontNameIndicatesEmphasizedFace(run.fontName)
+          ? run.text.trim().length
+          : 0),
+      0,
+    ) /
+    Math.max(
+      1,
+      visibleRuns.reduce((total, run) => total + run.text.trim().length, 0),
+    )
+  if (
+    markerRunSeparated ||
+    largestFont >= bodySize * 1.12 ||
+    emphasizedShare >= 0.6
+  ) {
+    return true
+  }
+
+  const preceding = blocks[blockIndex - 1]
+  if (preceding?.type === 'paragraph' && preceding.list?.ordered) {
+    return true
+  }
+  if (
+    preceding?.type === 'paragraph' &&
+    /:\s*$/u.test(preceding.text.trimEnd()) &&
+    block.region.box.x > preceding.region.box.x + 0.012
+  ) {
+    return true
+  }
+  if (
+    preceding?.type === 'paragraph' &&
+    block.region.page >= preceding.region.page &&
+    block.region.box.x >= preceding.region.box.x + 0.05
+  ) {
+    return true
+  }
+
+  return blocks.some((candidate, candidateIndex) => {
+    if (candidateIndex === blockIndex || candidate.type !== 'paragraph') {
+      return false
+    }
+    const parsedPeer = parsedOrderedListMarker(candidate.text)
+    const peer =
+      parsedPeer ??
+      (candidate.list?.ordered &&
+      candidate.list.markerText &&
+      candidate.list.ordinal !== undefined
+        ? {
+            markerText: candidate.list.markerText,
+            markerStyle: candidate.list.markerStyle,
+            ordinal: candidate.list.ordinal,
+          }
+        : null)
+    if (!peer) return false
+    const samePage = candidate.region.page === block.region.page
+    const adjacentPage =
+      candidate.region.page + 1 === block.region.page &&
+      candidate.region.column === block.region.column &&
+      Math.abs(candidate.region.box.x - block.region.box.x) <= 0.05
+    if (!samePage && !adjacentPage) return false
+    const sameStyle = peer.markerStyle === marker.markerStyle
+    const ordinalSequence =
+      sameStyle &&
+      Math.abs(peer.ordinal - marker.ordinal) === 1 &&
+      (adjacentPage ||
+        (candidate.region.column === block.region.column &&
+          Math.abs(candidate.region.box.x - block.region.box.x) <= 0.05 &&
+          Math.abs(candidate.region.box.y - block.region.box.y) <= 0.2))
+    const oppositeColumnRow =
+      candidate.region.column !== block.region.column &&
+      Math.abs(candidate.region.box.y - block.region.box.y) <= 0.035
+    const nestedGeometry =
+      candidate.region.column === block.region.column &&
+      candidate.region.box.x > block.region.box.x + 0.012 &&
+      Math.abs(candidate.region.box.y - block.region.box.y) <= 0.12
+    return ordinalSequence || oppositeColumnRow || nestedGeometry
+  })
+}
+
 function ambiguousParenthesizedRomanListMarker(
   marker: ReturnType<typeof parsedOrderedListMarker>,
 ) {
@@ -2550,7 +2678,12 @@ function sourceSemanticFlowBoundaryCandidate(
   continuation: RegionBlock,
   outcome: SourceSemanticFlowBoundaryCandidate['outcome'],
   topology: SourceSemanticFlowBoundaryCandidate['topology'],
+  bodySourceOrderExtremaByPage: ReadonlyMap<
+    number,
+    PdfBodySourceOrderExtremum
+  > = new Map(),
 ): SourceSemanticFlowBoundaryCandidate | null {
+  const crossPage = topology === 'cross-page-column'
   const targetTailSegment = blockSourceSegments(target).at(-1)
   const continuationHeadSegment = blockSourceSegments(continuation)[0]
   const targetEvidenceRegion =
@@ -2635,10 +2768,21 @@ function sourceSemanticFlowBoundaryCandidate(
   }
   const from = fromCandidates[0]
   const to = toCandidates[0]
-  const exactSourceAdjacency =
-    minimumToSequence === maximumFromSequence + 1 ||
-    (to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
-      to.run.sourceWhitespacePredecessorIndex === maximumFromSequence)
+  // Across a page break the two indexes belong to different per-page sequences,
+  // so adjacency is proved by extremity instead: the tail is the last body item
+  // its page paints and the head is the first body item the next page paints.
+  const crossPageSourceAdjacency = Boolean(
+    crossPage &&
+    to.run.page === from.run.page + 1 &&
+    bodySourceOrderExtremaByPage.get(from.run.page)?.last ===
+      maximumFromSequence &&
+    bodySourceOrderExtremaByPage.get(to.run.page)?.first === minimumToSequence,
+  )
+  const exactSourceAdjacency = crossPage
+    ? crossPageSourceAdjacency
+    : minimumToSequence === maximumFromSequence + 1 ||
+      (to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
+        to.run.sourceWhitespacePredecessorIndex === maximumFromSequence)
   const fromFragmentId = pdfSourceFragmentId(fromLine)
   const toFragmentId = pdfSourceFragmentId(toLine)
   const fromMetrics = dominantSemanticFlowLineMetrics(fromLine)
@@ -2649,7 +2793,9 @@ function sourceSemanticFlowBoundaryCandidate(
     !toFragmentId ||
     !fromMetrics ||
     !toMetrics ||
-    from.run.page !== to.run.page ||
+    (crossPage
+      ? to.run.page !== from.run.page + 1
+      : from.run.page !== to.run.page) ||
     from.run.rotation !== to.run.rotation ||
     from.run.method !== to.run.method ||
     (from.run.method !== 'pdf-text' && from.run.method !== 'ocr')
@@ -2663,6 +2809,7 @@ function sourceSemanticFlowBoundaryCandidate(
   if (
     fontRatio > 1.5 ||
     (topology !== 'same-page-column' &&
+      !crossPage &&
       baselineGap >
         Math.max(0.06, Math.max(fromMetrics.height, toMetrics.height) * 4))
   ) {
@@ -2675,28 +2822,30 @@ function sourceSemanticFlowBoundaryCandidate(
       toLine.sourceFragmentLineage.sourceLineId &&
     /^[,.;:!?%)}\]]/u.test(continuation.text.trimStart()),
   )
-  const noSpaceSamePageColumnTransition =
-    topology === 'same-page-column' &&
+  const noSpaceColumnFlowTransition =
+    (topology === 'same-page-column' || crossPage) &&
     outcome === 'no-space' &&
     to.run.sourceWhitespaceBefore !== 'pdf-text-item'
   if (
     (outcome === 'no-space' &&
       !exactStackedPunctuationTransition &&
-      !noSpaceSamePageColumnTransition) ||
+      !noSpaceColumnFlowTransition) ||
     (outcome === 'space' && exactStackedPunctuationTransition)
   ) {
     return null
   }
   const evidence = canonicalPdfSourceSemanticFlowEvidence(
-    topology === 'same-page-column'
-      ? PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE
-      : exactStackedPunctuationTransition
-        ? PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
-        : outcome === 'space' &&
-            to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
-            to.run.sourceWhitespacePredecessorIndex === maximumFromSequence
-          ? PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE
-          : PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
+    crossPage
+      ? PDF_SOURCE_SEMANTIC_FLOW_CROSS_PAGE_EVIDENCE
+      : topology === 'same-page-column'
+        ? PDF_SOURCE_SEMANTIC_FLOW_COLUMN_EVIDENCE
+        : exactStackedPunctuationTransition
+          ? PDF_SOURCE_SEMANTIC_FLOW_NO_SPACE_EVIDENCE
+          : outcome === 'space' &&
+              to.run.sourceWhitespaceBefore === 'pdf-text-item' &&
+              to.run.sourceWhitespacePredecessorIndex === maximumFromSequence
+            ? PDF_SOURCE_SEMANTIC_FLOW_SPACE_WHITESPACE_EVIDENCE
+            : PDF_SOURCE_SEMANTIC_FLOW_BASE_EVIDENCE,
   )
   const decision: SourceSemanticFlowBoundaryCandidate = {
     page: from.run.page,
@@ -2730,12 +2879,17 @@ function sourceSemanticFlowBoundaryDecision(
   continuation: RegionBlock,
   outcome: PdfSourceSemanticFlowBoundaryDecision['outcome'],
   topology: PdfSourceSemanticFlowBoundaryDecision['topology'],
+  bodySourceOrderExtremaByPage: ReadonlyMap<
+    number,
+    PdfBodySourceOrderExtremum
+  > = new Map(),
 ): PdfSourceSemanticFlowBoundaryDecision | null {
   const decision = sourceSemanticFlowBoundaryCandidate(
     target,
     continuation,
     outcome,
     topology,
+    bodySourceOrderExtremaByPage,
   )
   if (!decision) return null
   const canonicalDecision: Omit<PdfSourceSemanticFlowBoundaryDecision, 'id'> = {
@@ -2757,6 +2911,10 @@ function appendBlockContinuation(
   sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] = [],
   requestedTopology:
     SourceSemanticFlowBoundaryCandidate['topology'] | null = null,
+  bodySourceOrderExtremaByPage: ReadonlyMap<
+    number,
+    PdfBodySourceOrderExtremum
+  > = new Map(),
 ) {
   const targetTailLine = blockSourceSegments(target).at(-1)?.region.lines.at(-1)
   const continuationHeadLine =
@@ -2875,14 +3033,16 @@ function appendBlockContinuation(
   const recordableTopology =
     inferredTopology === 'inline-stacked-fragment' ||
     inferredTopology === 'lexical-hyphen' ||
-    inferredTopology === 'same-page-column'
+    inferredTopology === 'same-page-column' ||
+    inferredTopology === 'cross-page-column'
       ? inferredTopology
       : null
   const semanticFlowDecision =
     semanticDeletionDecision ??
     (recordableTopology &&
     semanticFlowOutcome !== 'unresolved' &&
-    (recordableTopology === 'same-page-column'
+    (recordableTopology === 'same-page-column' ||
+    recordableTopology === 'cross-page-column'
       ? semanticFlowOutcome === 'space' || semanticFlowOutcome === 'no-space'
       : semanticFlowOutcome !== 'space'
         ? recordableTopology === 'inline-stacked-fragment' ||
@@ -2893,6 +3053,7 @@ function appendBlockContinuation(
           continuation,
           semanticFlowOutcome,
           recordableTopology,
+          bodySourceOrderExtremaByPage,
         )
       : null)
   if (
@@ -4125,6 +4286,88 @@ function sourceProvenSamePageColumnFlowBoundary(
   return candidate !== null
 }
 
+const PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR = new Set(['right', 'single', 'span'])
+const PDF_CROSS_PAGE_FLOW_HEAD_COLUMNS_LTR = new Set(['left', 'single', 'span'])
+
+/**
+ * A sentence that runs off the bottom of one page and resumes at the top of the
+ * next.  Everything asserted here is readable from the source: the two blocks
+ * are consecutive pages, the tail sits in the bottom band of the last column
+ * and the head in the top band of the first, typography matches, and the
+ * continuation carries language-agnostic unfinished-sentence evidence.  The
+ * remaining proof — that only page furniture was painted between them — lives
+ * in `sourceSemanticFlowBoundaryCandidate`, which needs the per-page body
+ * source-order extrema to establish it.
+ */
+function sourceProvenCrossPageColumnFlowBoundary(
+  target: RegionBlock,
+  continuation: RegionBlock,
+  language: string | null,
+  baseDirection: ResearchPaper['baseDirection'] | null,
+  bodySourceOrderExtremaByPage: ReadonlyMap<
+    number,
+    PdfBodySourceOrderExtremum
+  >,
+) {
+  const targetTailSegment = blockSourceSegments(target).at(-1)
+  const continuationHeadSegment = blockSourceSegments(continuation)[0]
+  const targetTailLine = targetTailSegment?.region.lines
+    .filter((line) => line.text.trim())
+    .at(-1)
+  const continuationHeadLine = continuationHeadSegment?.region.lines.find(
+    (line) => line.text.trim(),
+  )
+  if (
+    !targetTailSegment ||
+    !continuationHeadSegment ||
+    !targetTailLine ||
+    !continuationHeadLine ||
+    continuationHeadSegment.region.page !== targetTailSegment.region.page + 1
+  ) {
+    return false
+  }
+  const rtl =
+    baseDirection === 'rtl' ||
+    (baseDirection !== 'ltr' &&
+      baseDirection !== 'unknown' &&
+      (language ? rtlLanguage(language) : false))
+  const tailColumns = rtl
+    ? PDF_CROSS_PAGE_FLOW_HEAD_COLUMNS_LTR
+    : PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR
+  const headColumns = rtl
+    ? PDF_CROSS_PAGE_FLOW_TAIL_COLUMNS_LTR
+    : PDF_CROSS_PAGE_FLOW_HEAD_COLUMNS_LTR
+  if (
+    !tailColumns.has(targetTailSegment.region.column) ||
+    !headColumns.has(continuationHeadSegment.region.column) ||
+    targetTailLine.box.y + targetTailLine.box.height < 0.65 ||
+    continuationHeadLine.box.y > 0.35 ||
+    /[\p{L}\p{N}][-‐‑]$/u.test(target.text.trimEnd()) ||
+    detachedCitationYearContinuation(target.text, continuation.text) ||
+    !likelyUnmarkedCrossPageContinuation(target, continuation, {
+      admitUncasedScripts: true,
+    })
+  ) {
+    return false
+  }
+  const fontRatio =
+    Math.max(targetTailLine.fontSize, continuationHeadLine.fontSize) /
+    Math.max(
+      1,
+      Math.min(targetTailLine.fontSize, continuationHeadLine.fontSize),
+    )
+  if (fontRatio > 1.12) return false
+  return (
+    sourceSemanticFlowBoundaryCandidate(
+      target,
+      continuation,
+      sourceColumnFlowJoin(continuation, language)?.outcome ?? 'space',
+      'cross-page-column',
+      bodySourceOrderExtremaByPage,
+    ) !== null
+  )
+}
+
 function sourceProvenSamePageParagraphBoundary(
   target: RegionBlock,
   continuation: RegionBlock,
@@ -4375,6 +4618,7 @@ export async function mergeProseContinuations(
     canonicalFloatScopes = [],
     canonicalHyphenBoundaryDecisions = [],
     sourceSemanticFlowBoundaryDecisions = [],
+    bodySourceOrderExtremaByPage = new Map(),
   }: {
     ownedFloatCaptionRegionIds?: ReadonlySet<string>
     hardHyphenLexicon?: ReadonlySet<string>
@@ -4385,6 +4629,10 @@ export async function mergeProseContinuations(
     canonicalFloatScopes?: CanonicalFloatScopeEvidence[]
     canonicalHyphenBoundaryDecisions?: PdfCanonicalHyphenBoundaryDecision[]
     sourceSemanticFlowBoundaryDecisions?: PdfSourceSemanticFlowBoundaryDecision[]
+    bodySourceOrderExtremaByPage?: ReadonlyMap<
+      number,
+      PdfBodySourceOrderExtremum
+    >
   } = {},
 ) {
   for (let index = 0; index < blocks.length; index += 1) {
@@ -4491,8 +4739,19 @@ export async function mergeProseContinuations(
           language,
           baseDirection,
         )
+      const sourceProvenCrossPageColumnFlow =
+        continuation?.type === 'paragraph' &&
+        interveningOwnedCaptions.length === 0 &&
+        sourceProvenCrossPageColumnFlowBoundary(
+          target,
+          continuation,
+          language,
+          baseDirection,
+          bodySourceOrderExtremaByPage,
+        )
       const samePageColumnFlowJoin =
-        sourceProvenSamePageColumnFlow && continuation?.type === 'paragraph'
+        (sourceProvenSamePageColumnFlow || sourceProvenCrossPageColumnFlow) &&
+        continuation?.type === 'paragraph'
           ? sourceColumnFlowJoin(continuation, language)
           : null
       const sourceProvenFloatBoundary =
@@ -4641,7 +4900,10 @@ export async function mergeProseContinuations(
             : 'cross-column-citation-year'
           : sourceProvenSamePageColumnFlow
             ? 'same-page-column'
-            : null,
+            : sourceProvenCrossPageColumnFlow
+              ? 'cross-page-column'
+              : null,
+        bodySourceOrderExtremaByPage,
       )
       blocks.splice(continuationIndex, 1)
     }
@@ -6027,10 +6289,20 @@ async function blocksFromRegions(
           /^[A-Z](?:\.\d+)+\.?\s+\p{Lu}/u.test(region.text.trim()) ||
           sequencedLetteredHeadingRegions.has(region) ||
           namedSectionPrefix)
+      const markup = sourceMarkupShape(region.text)
+      const sourceMarkupHasIndependentEvidence =
+        !Object.values(markup).some(Boolean) ||
+        representativeFontSize >= bodySize * 1.12 ||
+        emphasizedCharacters >= Math.max(1, visibleCharacters * 0.6) ||
+        sourceStyledLetteredHeading ||
+        sourceStyledNamedBoundaryHeading ||
+        sequencedNumberedHeadingRegions.has(region) ||
+        sequencedLetteredHeadingRegions.has(region)
       const heading =
         !probableFirstPageAuthorLine &&
         !appendixContentsEntry &&
         !probableTabularColumnHeader &&
+        sourceMarkupHasIndependentEvidence &&
         headingBoundaryEvidence &&
         (namedSectionHeading ||
           numberedSectionHeading ||
@@ -6276,6 +6548,17 @@ async function blocksFromRegions(
       activeList = undefined
       lastListBlock = undefined
       continue
+    }
+    if (
+      ordered &&
+      !orderedMarkerHasIndependentEvidence(
+        blockIndex,
+        blocks,
+        ordered,
+        bodySize,
+      )
+    ) {
+      ordered = null
     }
     if (!activeList && ambiguousParenthesizedRomanListMarker(ordered)) {
       const nextBlock = blocks[blockIndex + 1]
@@ -11265,6 +11548,9 @@ export async function reconstructPageAnalyses({
     canonicalFloatScopes,
     canonicalHyphenBoundaryDecisions,
     sourceSemanticFlowBoundaryDecisions,
+    bodySourceOrderExtremaByPage: pdfBodySourceOrderExtremaByPage(
+      regionResult.regions,
+    ),
   })
   await yieldPdfReconstructionTask(signal)
   noteNodeIds(blocks)

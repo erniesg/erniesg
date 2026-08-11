@@ -22,16 +22,71 @@
       "output": { "feature": "caption", "text": "Figure 1. Source flowchart" }
     },
     {
-      "id": "fidelity-page-1-prose-continuity",
+      "id": "fidelity-page-3-prose-continuity",
       "document": "source-output-checkpoints.pdf",
-      "page": 1,
+      "page": 3,
       "profile": "paperPro",
       "property": "prose-continuity",
       "criterion": "The result sentence remains one continuous prose block in the rendition.",
       "source": { "feature": "text" },
       "output": {
         "feature": "prose",
-        "text": "The result sentence continues across a column break."
+        "text": "The result continues toward the right column with source proof."
+      }
+    },
+    {
+      "id": "fidelity-page-2-prose-continuity",
+      "document": "source-output-checkpoints.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "prose-continuity",
+      "criterion": "The sentence split by the page break is one continuous prose block in the rendition.",
+      "source": {
+        "feature": "text",
+        "text": "continues at the top of the next one"
+      },
+      "output": {
+        "feature": "prose",
+        "text": "A second result sentence runs off the bottom of this page and continues at the top of the next one without losing its clause."
+      }
+    },
+    {
+      "id": "fidelity-page-2-hyphen-resolution",
+      "document": "source-output-checkpoints.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "hyphen-resolution",
+      "criterion": "The discretionary line-end hyphen resolves to the attested joined word and the printed fragment never reaches the reader.",
+      "source": { "feature": "text", "text": "photo-" },
+      "output": {
+        "feature": "prose",
+        "text": "The high-resolution source photograph remains clear."
+      }
+    },
+    {
+      "id": "fidelity-page-2-markup-non-promotion",
+      "document": "source-output-checkpoints.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "markup-non-promotion",
+      "criterion": "Source text that merely looks like Markdown stays prose characters and is never promoted to heading, emphasis, or list structure.",
+      "source": { "feature": "text", "text": "## Not a heading" },
+      "output": {
+        "feature": "prose",
+        "text": "## Not a heading and **not bold** and {placeholder} stay literal."
+      }
+    },
+    {
+      "id": "fidelity-page-2-numbered-markup-non-promotion",
+      "document": "source-output-checkpoints.pdf",
+      "page": 2,
+      "profile": "paperPro",
+      "property": "markup-non-promotion",
+      "criterion": "Numbered-list-shaped source text stays prose when no independent source styling proves a list or heading.",
+      "source": { "feature": "text", "text": "1. Literal numbered syntax stays prose." },
+      "output": {
+        "feature": "prose",
+        "text": "1. Literal numbered syntax stays prose."
       }
     },
     {
@@ -45,9 +100,9 @@
       "output": { "feature": "code" }
     },
     {
-      "id": "fidelity-page-1-furniture-exclusion",
+      "id": "fidelity-page-3-furniture-exclusion",
       "document": "source-output-checkpoints.pdf",
-      "page": 1,
+      "page": 3,
       "profile": "paperPro",
       "property": "furniture-exclusion",
       "criterion": "The source/output pair records zero furniture contamination in canonical prose.",
@@ -57,7 +112,7 @@
       },
       "output": {
         "feature": "prose",
-        "text": "The result sentence continues across a column break."
+        "text": "The result continues toward the right column with source proof."
       }
     }
   ]

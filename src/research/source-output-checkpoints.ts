@@ -16,6 +16,8 @@ export const SOURCE_OUTPUT_CHECKPOINT_PROPERTIES = [
   'figure-present',
   'caption-boundary',
   'prose-continuity',
+  'hyphen-resolution',
+  'markup-non-promotion',
   'heading-level',
   'table-structure',
   'code-block-structure',
@@ -111,6 +113,8 @@ function expectedRenditionFeature(
     case 'caption-boundary':
       return 'caption'
     case 'prose-continuity':
+    case 'hyphen-resolution':
+    case 'markup-non-promotion':
       return 'prose'
     case 'heading-level':
       return 'heading'
@@ -131,6 +135,8 @@ function expectedSourceFeature(
     case 'caption-boundary':
       return 'visual'
     case 'prose-continuity':
+    case 'hyphen-resolution':
+    case 'markup-non-promotion':
       return 'text'
     case 'heading-level':
     case 'table-structure':
@@ -375,6 +381,54 @@ function hasProse(checkpoint: SourceOutputCheckpoint, html: string) {
   )
 }
 
+const MARKUP_PROMOTION_TAGS = [
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'strong',
+  'b',
+  'em',
+  'i',
+  'li',
+] as const
+
+/**
+ * Text that merely looks like markup must reach the reader as the characters
+ * the source printed. Finding the named text inside a heading, an emphasis run,
+ * or a list item proves the opposite: the rendition promoted it to structure
+ * the source never carried.
+ */
+function promotedMarkupStructure(
+  checkpoint: SourceOutputCheckpoint,
+  html: string,
+) {
+  const expected = normalizedText(checkpoint.output.text ?? '')
+  if (!expected) return null
+  return (
+    MARKUP_PROMOTION_TAGS.find((tag) =>
+      tagContents(html, tag).some((content) =>
+        normalizedText(content).includes(expected),
+      ),
+    ) ?? null
+  )
+}
+
+/**
+ * A discretionary line-end hyphen is resolved only when the split form no
+ * longer reaches the reader. The printed fragment is the source expectation, so
+ * its survival anywhere in the rendition is the failure the checkpoint names.
+ */
+function unresolvedHyphenFragment(
+  checkpoint: SourceOutputCheckpoint,
+  html: string,
+) {
+  const fragment = normalizedText(checkpoint.source.text ?? '')
+  return Boolean(fragment && normalizedText(html).includes(fragment))
+}
+
 function outputFeaturePresent(
   checkpoint: SourceOutputCheckpoint,
   html: string,
@@ -477,6 +531,30 @@ export function evaluateSourceOutputCheckpoint(
       checkpointId: checkpoint.id,
       status: 'failed',
       reason: 'The source page does not contain the named source text.',
+    }
+  }
+  if (checkpoint.property === 'markup-non-promotion') {
+    const promoted = promotedMarkupStructure(
+      checkpoint,
+      observation.rendition.html,
+    )
+    if (promoted) {
+      return {
+        checkpointId: checkpoint.id,
+        status: 'failed',
+        reason: `Markup-shaped source text was promoted to <${promoted}> without source evidence.`,
+      }
+    }
+  }
+  if (
+    checkpoint.property === 'hyphen-resolution' &&
+    unresolvedHyphenFragment(checkpoint, observation.rendition.html)
+  ) {
+    return {
+      checkpointId: checkpoint.id,
+      status: 'failed',
+      reason:
+        'The rendition still carries the printed line-end hyphen fragment.',
     }
   }
   return { checkpointId: checkpoint.id, status: 'passed' }

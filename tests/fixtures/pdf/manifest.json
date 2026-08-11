@@ -81,12 +81,21 @@
     },
     {
       "file": "source-output-checkpoints.pdf",
-      "sha256": "2265f0d49304011feb8c972bf24bf5b93db099180d4fa270826e19df23c2de30",
+      "sha256": "f31fdc50a8216f80599644b51ff619a778d8e97268edadd457c3f556d1df03e9",
       "features": [
         "source-output-checkpoints",
         "source-flowchart",
         "caption-boundary",
         "prose-continuity",
+        "cross-column-prose-continuity",
+        "cross-page-prose-continuity",
+        "hyphen-resolution",
+        "unattested-hyphen-preservation",
+        "markup-non-promotion",
+        "numbered-markup-non-promotion",
+        "paragraph-indentation",
+        "paragraph-spacing",
+        "adjacent-owned-equation",
         "pseudocode-block",
         "furniture-exclusion"
       ]

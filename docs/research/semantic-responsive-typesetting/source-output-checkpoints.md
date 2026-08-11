@@ -24,6 +24,21 @@ pair fails when the source page is missing readable/visual evidence, the
 profile is wrong, the rendition is empty, or the named structure is absent. An
 image file by itself never passes a checkpoint.
 
+Two properties additionally carry a negative claim, because presence alone
+cannot prove them:
+
+- `hyphen-resolution` fails when the printed line-end fragment named by
+  `source.text` still appears anywhere in the rendition. A resolved
+  discretionary hyphen means the reader never receives the split form.
+- `markup-non-promotion` fails when the prose named by `output.text` also
+  appears inside a heading, an emphasis run, or a list item. Source text that
+  merely looks like Markdown must reach the reader as characters, not as
+  structure the source never carried.
+
+`prose-continuity` covers both the column break on page one and the page break
+between pages one and two of the checked-in fixture; a sentence left split
+across two paragraph elements fails it.
+
 For an owner-local paper, provide a caller-owned output directory outside the
 repository. Local output is never written to Git or the PR evidence directory:
 

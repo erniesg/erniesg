@@ -1,5 +1,6 @@
 import { strFromU8 } from 'fflate'
-import { describe, expect, it } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   buildEpub,
   buildReadableEpub,
@@ -34,6 +35,8 @@ import {
   synthesizeRecoveredBibliographyClassifications,
 } from './pdf-layout'
 import { PDF_HYPHEN_LEXICAL_MODEL } from './pdf-hyphenation'
+import { reconstructPdf } from './pdf'
+import { pdfBodySourceOrderExtremaByPage } from './pdf-regions'
 import { assessPdfCompleteness } from './pdf-quality'
 import {
   canonicalTextIntegrityIssues,
@@ -45,6 +48,128 @@ import {
   createSourcePageCropAsset,
 } from './visual-assets'
 import type { ResearchNode } from './schema'
+
+describe('generated continuous-prose PDF fixture', () => {
+  let result: Awaited<ReturnType<typeof reconstructPdf>>
+
+  beforeAll(async () => {
+    const bytes = await readFile(
+      new URL(
+        '../../tests/fixtures/pdf/source-output-checkpoints.pdf',
+        import.meta.url,
+      ),
+    )
+    result = await reconstructPdf(
+      new File([bytes], 'source-output-checkpoints.pdf', {
+        type: 'application/pdf',
+      }),
+      undefined,
+      { language: 'en-US' },
+    )
+  }, 30_000)
+
+  const paragraphTexts = () =>
+    result.paper.nodes.flatMap((node) =>
+      node.type === 'paragraph' ? [node.text] : [],
+    )
+  const hasParagraphText = (expected: string) =>
+    paragraphTexts().some((text) => text.includes(expected))
+
+  it('proves the physical column and page joins in the semantic-flow ledger', () => {
+    expect(
+      hasParagraphText(
+        'The result continues toward the right column with source proof.',
+      ),
+    ).toBe(true)
+    expect(
+      hasParagraphText(
+        'A second result sentence runs off the bottom of this page and continues at the top of the next one without losing its clause.',
+      ),
+    ).toBe(true)
+    expect(result.sourceSemanticFlowBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ topology: 'same-page-column' }),
+        expect.objectContaining({ topology: 'cross-page-column' }),
+      ]),
+    )
+    expect(paragraphTexts().join(' ')).not.toContain(
+      'page and Source/output checkpoint fixture continues',
+    )
+  })
+
+  it('resolves only the source-attested discretionary hyphen', () => {
+    expect(
+      hasParagraphText('The high-resolution source photograph remains clear.'),
+    ).toBe(true)
+    expect(
+      hasParagraphText('The source preserves the rare-fragment compound.'),
+    ).toBe(true)
+    expect(result.lineBoundaryDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcome: 'removed-discretionary-hyphen',
+          evidence: expect.arrayContaining([
+            'same-document-unhyphenated-word',
+          ]),
+        }),
+        expect.objectContaining({
+          outcome: 'preserved-lexical-hyphen',
+          evidence: expect.arrayContaining([
+            'hard-hyphen-form-valid:same-document',
+          ]),
+        }),
+      ]),
+    )
+  })
+
+  it('keeps literal Markdown, placeholders, and ordered markers as prose', () => {
+    const literal =
+      '## Not a heading and **not bold** and {placeholder} stay literal.'
+    const ordered = '1. Literal numbered syntax stays prose.'
+    expect(hasParagraphText(literal)).toBe(true)
+    expect(hasParagraphText(ordered)).toBe(true)
+    expect(
+      result.paper.nodes.filter(
+        (node) =>
+          'text' in node &&
+          (node.text === literal || node.text === ordered) &&
+          (node.type === 'heading' ||
+            (node.type === 'paragraph' && node.list !== undefined)),
+      ),
+    ).toEqual([])
+  })
+
+  it('honors indentation and source continuity rather than raw gap size', () => {
+    expect(
+      hasParagraphText(
+        'First indented paragraph begins and continues on its next line.',
+      ),
+    ).toBe(true)
+    expect(
+      hasParagraphText(
+        'Second indented paragraph begins and continues independently.',
+      ),
+    ).toBe(true)
+    expect(
+      hasParagraphText(
+        'A widely spaced source line begins and remains source-contiguous despite its spacing.',
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps adjacent equation ownership out of canonical prose', () => {
+    expect(result.visualRelationships).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'equation' })]),
+    )
+    expect(paragraphTexts()).toEqual(
+      expect.arrayContaining([
+        'Prose before the owned equation remains clean.',
+        'Prose after the owned equation remains clean.',
+      ]),
+    )
+    expect(paragraphTexts().join(' ')).not.toContain('E = m c 2 (1)')
+  })
+})
 
 function visualOrderHeading(
   id: string,
@@ -835,6 +960,168 @@ describe('PDF semantic reconstruction', () => {
         'exact-source-sequence-adjacency',
         'same-page-column-flow',
       ]),
+    })
+  })
+
+  describe('cross-page prose continuity', () => {
+    const onPage = (region: PdfPageRegion, page: number): PdfPageRegion => ({
+      ...region,
+      page,
+      box: { ...region.box, page },
+      lines: region.lines.map((line) => ({
+        ...line,
+        box: { ...line.box, page },
+        runs: line.runs.map((sourceRun) => ({ ...sourceRun, page })),
+      })),
+    })
+    const pageBreakPair = (label: string, tailSequence = 40) => ({
+      target: onPage(
+        sourceFlowRegion({
+          id: `${label}-target`,
+          column: 'right',
+          text: 'The measured drift therefore continues toward the',
+          x: 0.515,
+          y: 0.82,
+          sourceSequenceIndex: tailSequence,
+        }),
+        1,
+      ),
+      continuation: onPage(
+        sourceFlowRegion({
+          id: `${label}-continuation`,
+          column: 'left',
+          text: 'stationary regime described in the next section.',
+          x: 0.09,
+          y: 0.1,
+          sourceSequenceIndex: 1,
+        }),
+        2,
+      ),
+    })
+    const runningHead = (label: string) =>
+      onPage(
+        sourceFlowRegion({
+          id: `${label}-running-head`,
+          column: 'left',
+          text: 'Continuous prose reconstruction',
+          x: 0.09,
+          y: 0.03,
+          sourceSequenceIndex: 0,
+        }),
+        2,
+      )
+    const asFurniture = (region: PdfPageRegion): PdfPageRegion => ({
+      ...region,
+      column: 'span',
+      furniture: {
+        classification: 'repeated-text',
+        band: 'top',
+        pages: [1, 2],
+        boxes: [{ ...region.box }],
+        evidence: ['repeated-normalized-text'],
+      },
+    })
+    const joinAcrossPageBreak = async (
+      target: PdfPageRegion,
+      continuation: PdfPageRegion,
+      sourceRegions: PdfPageRegion[],
+    ) => {
+      const blocks = [target, continuation].map((region) => ({
+        type: 'paragraph' as const,
+        region,
+        text: region.text,
+        confidence: 1,
+      }))
+      const sourceSemanticFlowBoundaryDecisions: PdfSourceSemanticFlowBoundaryDecision[] =
+        []
+      await mergeProseContinuations(blocks, {
+        sourceSemanticFlowBoundaryDecisions,
+        bodySourceOrderExtremaByPage:
+          pdfBodySourceOrderExtremaByPage(sourceRegions),
+      })
+      return { blocks, sourceSemanticFlowBoundaryDecisions }
+    }
+
+    it('records a proven page-break join in the semantic-flow ledger', async () => {
+      const { target, continuation } = pageBreakPair('proven-page-break')
+      const { blocks, sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(target, continuation, [target, continuation])
+
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].text).toBe(
+        'The measured drift therefore continues toward the stationary regime described in the next section.',
+      )
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+      expect(sourceSemanticFlowBoundaryDecisions[0]).toMatchObject({
+        page: 1,
+        topology: 'cross-page-column',
+        outcome: 'space',
+        evidence: [
+          'cross-page-column-geometry',
+          'explicit-fragment-lineage',
+          'furniture-excluded-page-boundary',
+          'page-head-source-order-extremum',
+          'page-tail-source-order-extremum',
+        ],
+      })
+    })
+
+    it('keeps an intervening running head out of the joined paragraph', async () => {
+      // Issue 042 classifies the running head as furniture, so it is not body
+      // source order. The sentence therefore stays adjacent across the page
+      // break and the head never enters the paragraph.
+      const { target, continuation } = pageBreakPair('furniture-page-break')
+      const head = runningHead('furniture-page-break')
+      const { blocks, sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(target, continuation, [
+          target,
+          asFurniture(head),
+          continuation,
+        ])
+
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].text).not.toContain('Continuous prose reconstruction')
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(1)
+      expect(sourceSemanticFlowBoundaryDecisions[0].topology).toBe(
+        'cross-page-column',
+      )
+    })
+
+    it('refuses to prove a page-break join across unaccounted source text', async () => {
+      // The same page-two text, this time with no furniture evidence, is body
+      // source order the sentence would have to jump over. The prose may still
+      // be joined by the weaker unmarked-continuation heuristic, but nothing is
+      // written to the ledger, so the join is never claimed as proven.
+      const { target, continuation } = pageBreakPair('unaccounted-page-break')
+      const head = runningHead('unaccounted-page-break')
+      const { sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(target, continuation, [
+          target,
+          head,
+          continuation,
+        ])
+
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(0)
+    })
+
+    it('refuses to prove a page-break join from a mid-page tail', async () => {
+      const { target, continuation } = pageBreakPair('mid-page-tail')
+      const midPageTail: PdfPageRegion = {
+        ...target,
+        box: { ...target.box, y: 0.2 },
+        lines: target.lines.map((line) => ({
+          ...line,
+          box: { ...line.box, y: 0.2 },
+          runs: line.runs.map((sourceRun) => ({ ...sourceRun, y: 0.2 })),
+        })),
+      }
+      const { sourceSemanticFlowBoundaryDecisions } =
+        await joinAcrossPageBreak(midPageTail, continuation, [
+          midPageTail,
+          continuation,
+        ])
+
+      expect(sourceSemanticFlowBoundaryDecisions).toHaveLength(0)
     })
   })
 
@@ -5367,6 +5654,83 @@ describe('PDF semantic reconstruction', () => {
     expect(
       result.paper.nodes.filter((node) => node.type === 'heading'),
     ).toEqual([])
+  })
+
+  it('keeps markup-shaped body prose as literal text without independent evidence', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(
+            1,
+            'Ordinary body prose establishes the source typography.',
+            0.1,
+            0.1,
+            0.72,
+          ),
+          run(1, '# Literal heading syntax stays prose.', 0.1, 0.2, 0.72),
+          run(1, '** Literal emphasis syntax stays prose. **', 0.1, 0.3, 0.72),
+          run(1, '{placeholder}', 0.1, 0.4, 0.24),
+          run(1, '1. Literal numbered syntax stays prose.', 0.1, 0.5, 0.72),
+        ]),
+      ],
+      sourceHash: 'm'.repeat(64),
+      fileName: 'literal-markup-prose.pdf',
+      byteLength: 4096,
+    })
+
+    const prose = result.paper.nodes.filter(
+      (node): node is Extract<ResearchNode, { type: 'paragraph' }> =>
+        node.type === 'paragraph',
+    )
+    expect(result.paper.nodes.some((node) => node.type === 'heading')).toBe(
+      false,
+    )
+    expect(prose.map((node) => node.text)).toEqual([
+      'Ordinary body prose establishes the source typography.',
+      '# Literal heading syntax stays prose.',
+      '** Literal emphasis syntax stays prose. **',
+      '{placeholder}',
+      '1. Literal numbered syntax stays prose.',
+    ])
+    expect(prose.every((node) => node.list === undefined)).toBe(true)
+  })
+
+  it('does not promote a markup-shaped section phrase without source styling', async () => {
+    const result = await reconstructPageAnalyses({
+      pages: [
+        page(1, [
+          run(
+            1,
+            'Ordinary body prose establishes the source typography.',
+            0.1,
+            0.1,
+            0.72,
+          ),
+          run(
+            1,
+            '1. Introduction',
+            0.1,
+            0.2,
+            0.72,
+          ),
+        ]),
+      ],
+      sourceHash: 'n'.repeat(64),
+      fileName: 'literal-markup-section-prose.pdf',
+      byteLength: 4096,
+    })
+
+    expect(result.paper.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'paragraph',
+          text: '1. Introduction',
+        }),
+      ]),
+    )
+    expect(result.paper.nodes.some((node) => node.type === 'heading')).toBe(
+      false,
+    )
   })
 
   it('keeps a flowing parenthesized enumeration as prose when only a wrapped middle marker starts a region', async () => {

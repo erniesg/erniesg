@@ -598,10 +598,32 @@ function lexicalRoot(value: unknown): LexicalNode[] {
 function relationId(value: unknown): string | undefined {
   if (typeof value === 'string' || typeof value === 'number') return String(value)
   if (isObject(value)) {
-    const id = value.id ?? value._id ?? value.key ?? value.value ?? value.target
+    const id = value.id ?? value._id ?? value.value ?? value.target
     return typeof id === 'string' || typeof id === 'number' ? String(id) : undefined
   }
   return undefined
+}
+
+const UPLOAD_REFERENCE_ID_ALIASES = [
+  'id',
+  '_id',
+  'key',
+  'value',
+  'target',
+] as const
+
+function uploadReferenceId(value: unknown, location: string): string | undefined {
+  if (!isObject(value)) return relationId(value)
+  const ids = UPLOAD_REFERENCE_ID_ALIASES.flatMap((key) => {
+    const candidate = value[key]
+    if (candidate === undefined) return []
+    if (typeof candidate !== 'string' && typeof candidate !== 'number')
+      throw new Error(`Payload upload reference has invalid ${key} identity at ${location}`)
+    return [String(candidate)]
+  })
+  if (new Set(ids).size > 1)
+    throw new Error(`Payload upload reference identity aliases conflict at ${location}`)
+  return ids[0]
 }
 
 function graphSafeRelationshipTarget(target: string, location: string) {
@@ -996,7 +1018,7 @@ function rawUploadValue(node: LexicalNode) {
 // ways. When the reference declares any spelling of a family, the indexed
 // spellings are dropped so the reference value deterministically wins.
 const UPLOAD_REFERENCE_FIELD_GROUPS: readonly (readonly string[])[] = [
-  ['id', '_id', 'key', 'value', 'target'],
+  UPLOAD_REFERENCE_ID_ALIASES,
   ['mimeType', 'mimetype', 'mediaType'],
   ['focalPoint', 'focalX', 'focalY'],
   ['bytes', 'data', 'buffer', 'base64'],
@@ -1037,7 +1059,7 @@ function uploadReferenceConflicts(raw: JsonObject, indexed: JsonObject, location
  */
 function mergedUploadReference(raw: JsonObject, id: string, indexed: JsonObject, location: string): JsonObject {
   const indexedUpload = `(sha256:${digest(id).slice(0, 16)})`
-  for (const key of ['id', '_id', 'key', 'value', 'target']) {
+  for (const key of UPLOAD_REFERENCE_ID_ALIASES) {
     const value = raw[key]
     if (value === undefined) continue
     if ((typeof value !== 'string' && typeof value !== 'number') || String(value) !== id)
@@ -1054,7 +1076,8 @@ function mergedUploadReference(raw: JsonObject, id: string, indexed: JsonObject,
 
 function uploadFor(state: AdapterState, node: LexicalNode, path: string): JsonObject | undefined {
   const raw = rawUploadValue(node)
-  const id = relationId(raw)
+  const location = sourceLocation(state.sourceId, path)
+  const id = uploadReferenceId(raw, location)
   const indexed = id ? state.uploads.get(id) : undefined
   const localized =
     indexed && state.variantUploadIds !== undefined && !state.variantUploadIds.has(String(id))
@@ -1062,7 +1085,7 @@ function uploadFor(state: AdapterState, node: LexicalNode, path: string): JsonOb
       : indexed
   if (isObject(raw)) {
     if (!localized || !id) return raw
-    return mergedUploadReference(raw, id, localized, sourceLocation(state.sourceId, path))
+    return mergedUploadReference(raw, id, localized, location)
   }
   return localized
 }

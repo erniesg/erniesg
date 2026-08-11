@@ -294,8 +294,8 @@ describe('publication source adapter conformance', () => {
       )
       return paragraph?.inlineRuns
     }
-    expect(canonicalRuns(superscriptFirst)).toEqual([superscript, subscript])
-    expect(canonicalRuns(subscriptFirst)).toEqual([subscript, superscript])
+    expect(canonicalRuns(superscriptFirst)).toEqual([superscript])
+    expect(canonicalRuns(subscriptFirst)).toEqual([subscript])
   })
 
   it('canonicalizes non-overlapping vertical-align runs independently of array order', () => {
@@ -345,6 +345,48 @@ describe('publication source adapter conformance', () => {
     expect(canonicalRuns(superscriptFirst)).toEqual(
       canonicalRuns(subscriptFirst),
     )
+  })
+
+  it('folds adjacent equivalent vertical-align runs', () => {
+    const base = adaptPayloadLexical({
+      id: 'adjacent-vertical-align-runs',
+      title: 'Adjacent vertical align runs',
+      content: {
+        root: {
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'ab' }],
+            },
+          ],
+        },
+      },
+    }).graph
+    const withRuns = (runs: Array<Record<string, unknown>>) => {
+      const clone = structuredClone(base)
+      for (const node of clone.nodes)
+        if (node.type === 'paragraph')
+          node.inlineRuns = runs as typeof node.inlineRuns
+      return publicationGraphSchema.parse(clone)
+    }
+    const combined = withRuns([
+      { start: 0, end: 2, verticalAlign: 'superscript' },
+    ])
+    const segmented = withRuns([
+      { start: 0, end: 1, verticalAlign: 'superscript' },
+      { start: 1, end: 2, verticalAlign: 'superscript' },
+    ])
+
+    expect(comparePublicationSemanticSubset(segmented, combined)).toBe(true)
+    expect(canonicalPublicationSubsetSha256(segmented)).toBe(
+      canonicalPublicationSubsetSha256(combined),
+    )
+    const paragraph = canonicalPublicationSubset(segmented).nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    expect(paragraph?.inlineRuns).toEqual([
+      { start: 0, end: 2, verticalAlign: 'superscript' },
+    ])
   })
 
   it('folds adjacent equivalent runs even when an overlapping style separates them', () => {

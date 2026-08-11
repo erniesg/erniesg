@@ -1568,7 +1568,7 @@ describe('Payload Lexical publication adapter', () => {
           strictFixture([{ type: 'upload', value: conflicting }], { uploads }),
         ),
       ).toThrow(
-        /Payload upload reference (?:identity conflicts with|disagrees with) indexed upload \(sha256:[a-f0-9]{16}\).*children\[0\]/,
+        /Payload upload reference (?:identity aliases conflict|(?:identity conflicts with|disagrees with) indexed upload \(sha256:[a-f0-9]{16}\)).*children\[0\]/,
       )
     }
 
@@ -1647,8 +1647,32 @@ describe('Payload Lexical publication adapter', () => {
         adaptPayloadLexical(
           strictFixture([{ type: 'upload', value }], { uploads }),
         ),
-      ).toThrow(/Payload upload reference identity conflicts with indexed upload/)
+      ).toThrow(/Payload upload reference identity (?:aliases conflict|conflicts with indexed upload)/)
     }
+  })
+
+  it('validates conflicting upload aliases before selecting an indexed record', () => {
+    expect(() =>
+      adaptPayloadLexical(
+        strictFixture(
+          [
+            {
+              type: 'upload',
+              value: { id: 'not-indexed', value: 'pic' },
+            },
+          ],
+          {
+            uploads: {
+              pic: {
+                mimeType: 'image/png',
+                data: 'AQIDBA==',
+                alt: 'Mapped picture',
+              },
+            },
+          },
+        ),
+      ),
+    ).toThrow(/Payload upload reference identity aliases conflict.*children\[0\]/)
   })
 
   it('canonicalizes value and target upload references to the indexed map id', () => {
@@ -2439,6 +2463,26 @@ describe('Payload Lexical publication adapter', () => {
     )
     expect(result.graph.nodes.map((node) => node.type)).toEqual(['aside', 'table', 'reference', 'reference'])
     expect(result.graph.nodes.find((node) => node.type === 'reference')).toMatchObject({ href: '#target-1' })
+  })
+
+  it('keeps upload-only key aliases out of relationship target resolution', () => {
+    const result = adaptPayloadLexical(
+      strictFixture([
+        {
+          type: 'citation',
+          value: { key: 'lexical-key', value: 'target-1' },
+          label: 'A citation',
+        },
+      ]),
+      { relationships: { citation: { role: 'cross-reference' } } },
+    )
+
+    expect(result.graph.nodes.find((node) => node.type === 'reference')).toMatchObject({
+      href: '#target-1',
+    })
+    expect(result.graph.nodes.some((node) => node.id === 'lexical-key')).toBe(
+      false,
+    )
   })
 
   it('maps Payload LinkFeature document targets before requiring an external URL', () => {

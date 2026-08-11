@@ -135,37 +135,28 @@ function canonicalInlineRunOrder(
 function canonicalVerticalAlignRuns(
   runs: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
-  const entries = runs.map((run, index) => ({ run: { ...run }, index }))
-  const successors = entries.map(() => [] as number[])
-  const indegree = entries.map(() => 0)
-  for (let left = 0; left < entries.length; left += 1) {
-    for (let right = left + 1; right < entries.length; right += 1) {
-      const leftRun = entries[left].run
-      const rightRun = entries[right].run
-      const overlaps =
-        Number(leftRun.start) < Number(rightRun.end) &&
-        Number(rightRun.start) < Number(leftRun.end)
-      if (!overlaps || leftRun.verticalAlign === rightRun.verticalAlign) continue
-      // The renderer selects the first active vertical-align run, so authored
-      // order is a semantic constraint only for overlapping, competing runs.
-      successors[left].push(right)
-      indegree[right] += 1
-    }
-  }
-
-  const ready = entries.filter(({ index }) => indegree[index] === 0)
+  const boundaries = [
+    ...new Set(
+      runs.flatMap((run) => [Number(run.start), Number(run.end)]),
+    ),
+  ].sort((left, right) => left - right)
   const result: Array<Record<string, unknown>> = []
-  while (ready.length) {
-    ready.sort(
-      (left, right) =>
-        canonicalInlineRunOrder(left.run, right.run) || left.index - right.index,
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const start = boundaries[index]
+    const end = boundaries[index + 1]
+    const active = runs.find(
+      (run) => Number(run.start) <= start && Number(run.end) >= end,
     )
-    const next = ready.shift()!
-    result.push(next.run)
-    for (const successor of successors[next.index]) {
-      indegree[successor] -= 1
-      if (indegree[successor] === 0) ready.push(entries[successor])
+    if (!active) continue
+    const previous = result.at(-1)
+    if (
+      previous?.end === start &&
+      previous.verticalAlign === active.verticalAlign
+    ) {
+      previous.end = end
+      continue
     }
+    result.push({ start, end, verticalAlign: active.verticalAlign })
   }
   return result
 }
@@ -178,13 +169,22 @@ function canonicalInlineRuns(
   // order-independent semantics before adjacency folding so an overlapping
   // style cannot split a mergeable run, then restore interval order for
   // deterministic output. The renderer selects the first active vertical-
-  // align run, so only overlapping runs with competing values retain their
-  // authored order; other vertical-align runs canonicalize by interval.
+  // align run. Canonicalize that effective rendered value at each interval,
+  // folding adjacent equal intervals while retaining the first-active winner
+  // where authored overlapping runs compete. Other semantics carried by a
+  // vertical-align run remain in the order-independent stream below.
   // Links, hard breaks, and relationship anchors keep authored boundaries.
   const orderDependent = canonicalVerticalAlignRuns(
     runs.filter((run) => Boolean(run.verticalAlign)),
   )
-  const ordered = runs.filter((run) => !run.verticalAlign).sort((left, right) => {
+  const orderIndependentRuns = runs.flatMap((run) => {
+    if (!run.verticalAlign) return [run]
+    const { verticalAlign: _verticalAlign, ...independent } = run
+    return Object.keys(canonicalInlineRunSemantics(independent)).length
+      ? [independent]
+      : []
+  })
+  const ordered = orderIndependentRuns.sort((left, right) => {
     const semanticOrder = codeUnitCompare(
       stableJson(canonicalInlineRunSemantics(left)),
       stableJson(canonicalInlineRunSemantics(right)),

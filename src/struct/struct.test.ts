@@ -334,7 +334,8 @@ describe('STRUCT canonical document graph', () => {
     const authorYearTargets = authorYearGraph.blocks
       .slice(2, 4)
       .map(({ id }) => id)
-    authorYearSource.text = '(Smith, 2020; Jones, 2021)'
+    authorYearSource.text = '(Smith et al., 2020; Jones, 2021)'
+    const styledAuthorStart = authorYearSource.text.indexOf('et al.')
     authorYearSource.inline = [
       {
         start: 0,
@@ -342,6 +343,11 @@ describe('STRUCT canonical document graph', () => {
         relationshipId: 'author-year-group',
         semanticRole: 'citation',
         targetIds: authorYearTargets,
+      },
+      {
+        start: styledAuthorStart,
+        end: styledAuthorStart + 'et al.'.length,
+        italic: true,
       },
     ]
     authorYearGraph.relationships.push({
@@ -361,6 +367,7 @@ describe('STRUCT canonical document graph', () => {
     expect(authorYearXhtml).toContain(
       `href="#${authorYearTargets[1]}" epub:type="biblioref" role="doc-biblioref">2021</a>`,
     )
+    expect(authorYearXhtml).toContain('<em>et al.</em>')
     expect(authorYearXhtml).not.toContain('Additional citation target')
   })
 

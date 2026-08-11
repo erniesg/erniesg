@@ -639,6 +639,20 @@ describe('source/output checkpoints', () => {
         },
       }),
     ).toEqual({ checkpointId: 'marker-to-body', status: 'passed' })
+    const repeatedMarkerHtml =
+      '<p>An earlier claim <a id="noteref-other-1" href="#note-other-1" epub:type="noteref" role="doc-noteref"><sup>1</sup></a></p>' +
+      '<aside id="note-other-1" epub:type="footnote" role="doc-footnote">A different note body. <a href="#noteref-other-1" class="note-backlink">↩</a></aside>' +
+      validHtml
+    expect(
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: {
+          profile: 'paperPro',
+          width: 540,
+          html: repeatedMarkerHtml,
+        },
+      }),
+    ).toEqual({ checkpointId: 'marker-to-body', status: 'passed' })
     expect(
       evaluateSourceOutputCheckpoint(checkpoint, {
         source,
@@ -895,5 +909,49 @@ describe('source/output checkpoints', () => {
       status: 'failed',
       reason: expect.stringContaining('exactly one'),
     })
+    const evaluateRelative = (
+      html: string,
+      packagedDocuments?: Readonly<Record<string, string>>,
+    ) =>
+      evaluateSourceOutputCheckpoint(checkpoint, {
+        source,
+        rendition: { profile: 'paperPro', width: 540, html, packagedDocuments },
+      })
+    expect(
+      evaluateRelative(
+        '<p id="claim"><a href="content.xhtml#entry">Prior evidence</a></p><p id="entry"><a href="content.xhtml#claim">Entry and backlink</a></p>',
+      ),
+    ).toEqual({ checkpointId: 'dangling-link-verifier', status: 'passed' })
+    expect(
+      evaluateRelative(
+        '<p><a href="supplement.xhtml#entry">Prior evidence</a></p>',
+        {
+          'supplement.xhtml': '<section id="entry">Supplement</section>',
+        },
+      ),
+    ).toEqual({ checkpointId: 'dangling-link-verifier', status: 'passed' })
+    expect(
+      evaluateRelative(
+        '<p><a href="supplement.xhtml#missing">Prior evidence</a></p>',
+        {
+          'supplement.xhtml': '<section id="entry">Supplement</section>',
+        },
+      ),
+    ).toMatchObject({
+      checkpointId: 'dangling-link-verifier',
+      status: 'failed',
+      reason: expect.stringContaining('has no target'),
+    })
+    for (const href of ['supplement.xhtml#missing', 'missing.xhtml']) {
+      expect(
+        evaluateRelative(
+          `<p id="claim"><a href="#entry">Prior evidence</a><a href="${href}">Missing supplement</a></p><p id="entry">Entry</p>`,
+        ),
+      ).toMatchObject({
+        checkpointId: 'dangling-link-verifier',
+        status: 'failed',
+        reason: expect.stringContaining('packaged document'),
+      })
+    }
   })
 })

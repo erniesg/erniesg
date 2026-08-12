@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import type { PdfReconstruction } from './import-types'
@@ -19,6 +20,8 @@ import {
   PDF_CAPTION_UNIQUE_BOUNDED_DISTANCE_RULE_ID,
   modelConsultationReceiptMatchesPdfReconstruction,
   modelDecisionPointsForPdf,
+  pdfModelConsultationSemanticStateSha256,
+  pdfModelDerivedDecisionKeys,
   PRODUCTION_PDF_MODEL_FALLBACK_OPTIONS,
   resolveCaptionAssociationByUniqueBoundedDistance,
   resolvePdfModelFallbacks,
@@ -676,6 +679,179 @@ describe('PDF model fallback production adapter', () => {
     renamedSource.source.fileName = 'same-source-renamed.pdf'
     await expect(resolvePdfModelFallbacks(renamedSource)).resolves.toEqual(
       renamedSource,
+    )
+  })
+
+  it.each(
+    readdirSync(new URL('../../tests/fixtures/pdf', import.meta.url))
+      .filter((name) => name.endsWith('.pdf'))
+      .sort(),
+  )(
+    'attributes nothing to the model layer in a purely deterministic %s',
+    async (name) => {
+      // The reverse-direction check throws when the document carries
+      // model-derived state no receipt claims. Every deterministic
+      // reconstruction must therefore attribute nothing: an ambiguous reading
+      // order whose diagnostic was deduplicated or downgraded to
+      // `SOURCE_ORDER_FLOAT_FALLBACK` would otherwise refuse a legitimate PDF.
+      const reconstruction = await reconstructPdf(await fixtureFile(name))
+      expect(reconstruction).not.toHaveProperty('modelConsultations')
+      expect([
+        ...pdfModelDerivedDecisionKeys(reconstruction as PdfReconstruction),
+      ]).toEqual([])
+      expect(() => buildStructDocument(reconstruction)).not.toThrow()
+    },
+  )
+
+  it('reads model-derived state from a reconstruction that carries no adjudication record', async () => {
+    // `humanAdjudications` is optional on parsed reconstructions (see the EPUB
+    // round-trip shape), so a legacy document reaches STRUCT without one. An
+    // absent record accounts for nothing, which is the fail-closed reading.
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    const expected = pdfModelDerivedDecisionKeys(resolved)
+    expect(expected.size).toBeGreaterThan(0)
+
+    const legacy = structuredClone(resolved)
+    delete (legacy as { humanAdjudications?: unknown }).humanAdjudications
+    expect(pdfModelDerivedDecisionKeys(legacy)).toEqual(expected)
+
+    // The digest spans the whole semantic state, so dropping the record alone
+    // refuses the receipt. Rebind it and the document must verify end to end:
+    // the absent record is a shape this layer reads, not one it chokes on.
+    expect(modelConsultationReceiptMatchesPdfReconstruction(legacy)).toBe(false)
+    legacy.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        legacy,
+        legacy.modelConsultations!,
+      )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(legacy)).toBe(true)
+    expect(() => buildStructDocument(legacy)).not.toThrow()
+
+    // A deterministic document with neither receipt nor adjudication record
+    // still builds: there is no model-derived state to launder.
+    const deterministic = withoutReceipt(
+      structuredClone(visualAdjudicationRequired),
+    ) as PdfReconstruction
+    delete (deterministic as { humanAdjudications?: unknown })
+      .humanAdjudications
+    expect(pdfModelDerivedDecisionKeys(deterministic).size).toBe(0)
+    expect(() => buildStructDocument(deterministic)).not.toThrow()
+  })
+
+  it('refuses a receipt that disclaims model-derived state in the document', async () => {
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      true,
+    )
+
+    // `semanticStateSha256` is an unkeyed digest over public state, so a stale
+    // value is not what makes an erased receipt fail. Recompute it and the
+    // receipt must still be refused: the document still carries
+    // model-consultation evidence that no consultation claims.
+    const erased = structuredClone(resolved)
+    const emptyReceipt = {
+      ...structuredClone(resolved.modelConsultations!),
+      consultations: [],
+      decisions: [],
+      metrics: {
+        totalDecisionCount: 0,
+        totalConsultationCount: 0,
+        consultationRate: 0,
+        byDecisionClass: {},
+      },
+    }
+    erased.modelConsultations = emptyReceipt
+    emptyReceipt.semanticStateSha256 = pdfModelConsultationSemanticStateSha256(
+      erased,
+      emptyReceipt,
+    )
+    expect(validateModelConsultationReceipt(emptyReceipt)).toBe(true)
+    expect(modelConsultationReceiptMatchesPdfReconstruction(erased)).toBe(false)
+    await expect(resolvePdfModelFallbacks(erased)).rejects.toThrow(
+      'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+
+    // Dropping the receipt outright must not silently launder the same state.
+    const stripped = withoutReceipt(
+      structuredClone(resolved),
+    ) as PdfReconstruction
+    expect(modelConsultationReceiptMatchesPdfReconstruction(stripped)).toBe(
+      false,
+    )
+    expect(() => buildStructDocument(stripped)).toThrow(
+      'MISSING_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
+  it('refuses a reading order the deterministic layer never offered', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      true,
+    )
+
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
+    )!
+    const tiedIds = new Set(
+      consultation.candidates.flatMap(
+        ({ region_ids: ids }) => (ids as string[] | undefined) ?? [],
+      ),
+    )
+
+    // `promptHash`/`requestId`/`fixtureId` seal the receipt's candidate list, so
+    // the reachable tampering surface is the reconstruction. Drop the
+    // deterministic resolution that authorized this tie: the receipt still
+    // claims an ordering, but nothing deterministic offers it any more.
+    // `semanticStateSha256` is recomputable, so it cannot be what refuses this.
+    const tampered = structuredClone(resolved)
+    tampered.readingOrder.resolutions =
+      tampered.readingOrder.resolutions.filter(
+        ({ regionIds }) => !regionIds.some((id) => tiedIds.has(id)),
+      )
+    expect(tampered.readingOrder.resolutions.length).toBeLessThan(
+      resolved.readingOrder.resolutions.length,
+    )
+    tampered.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        tampered,
+        tampered.modelConsultations!,
+      )
+
+    expect(validateModelConsultationReceipt(tampered.modelConsultations)).toBe(
+      true,
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+      false,
     )
   })
 

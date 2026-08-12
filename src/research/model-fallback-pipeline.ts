@@ -505,20 +505,120 @@ function acceptedConsultationMatchesReconstruction(
     const chosen = candidate.region_ids
     if (!Array.isArray(chosen) || !chosen.every((id) => typeof id === 'string'))
       return false
-    const targetIds = new Set(
-      consultation.candidates.flatMap(({ region_ids: regionIds }) =>
-        Array.isArray(regionIds)
-          ? regionIds.filter((id): id is string => typeof id === 'string')
-          : [],
-      ),
+    // Anchor on the deterministic resolution that survives the decision, not on
+    // the receipt's own candidate list: a receipt that rewrote both its
+    // candidates and the installed order would otherwise verify against itself.
+    const resolutions = readingOrderResolutionsForDecision(
+      reconstruction,
+      consultation.decisionId,
     )
-    return sameStringList(
-      reconstruction.readingOrder.order.filter((id) => targetIds.has(id)),
-      chosen,
+    if (resolutions.length !== 1) return false
+    const targetIds = new Set(resolutions[0]!.regionIds)
+    const installedOrder = reconstruction.readingOrder.order.filter((id) =>
+      targetIds.has(id),
+    )
+    return (
+      installedOrder.length === targetIds.size &&
+      sameStringList(installedOrder, chosen)
     )
   }
 
   return false
+}
+
+/** Evidence strings `applyVerifiedPdfCandidateResolutions` stamps on model-resolved state. */
+const MODEL_FALLBACK_ORIGINS = Object.freeze([
+  'model-consultation',
+  'deterministic-distillation',
+])
+
+function readingOrderResolutionsForDecision(
+  reconstruction: PdfReconstruction,
+  decisionId: string,
+) {
+  return reconstruction.readingOrder.resolutions.filter(
+    ({ regionIds }) =>
+      stableCandidateId(
+        'reading-order-decision',
+        [...new Set(regionIds)].sort(),
+      ) === decisionId,
+  )
+}
+
+/**
+ * Decision keys for state the document itself attributes to the model fallback
+ * layer. `existingReceiptMatchesReconstruction` verifies receipt -> document;
+ * this is the reverse direction, so a receipt cannot disclaim work the
+ * reconstruction still carries.
+ */
+export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
+  const keys = new Set<string>()
+  const attributed = (evidence: readonly string[]) =>
+    MODEL_FALLBACK_ORIGINS.some((origin) => evidence.includes(origin))
+  // Legacy and round-tripped reconstructions may omit these collections
+  // entirely (`humanAdjudications` is optional on the parsed EPUB shape), and
+  // this runs before STRUCT can reject the document. Reading an absent
+  // collection as empty is the fail-closed direction: it accounts for less, so
+  // it attributes more to the model layer, never less.
+  const list = <T>(value: readonly T[] | undefined): readonly T[] => value ?? []
+
+  for (const relationship of list(reconstruction.noteRelationships)) {
+    if (attributed(relationship.evidence)) {
+      keys.add(
+        decisionKey(
+          MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+          relationship.id,
+        ),
+      )
+    }
+  }
+  for (const relationship of list(reconstruction.visualRelationships)) {
+    if (attributed(relationship.evidence)) {
+      keys.add(
+        decisionKey(
+          MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
+          relationship.id,
+        ),
+      )
+    }
+  }
+  // A reading-order tie leaves no evidence string on the document, but the
+  // deterministic resolution stays `ambiguous` forever. An ambiguous resolution
+  // with no open diagnostic means something resolved it, and that something has
+  // to be accounted for.
+  // A human adjudication accounts for the tie just as a receipt would, so it
+  // must not be mistaken for unclaimed model work.
+  const accountedReadingOrderTargets = [
+    ...list(reconstruction.diagnostics)
+      .filter(({ code }) => code === 'AMBIGUOUS_READING_ORDER')
+      .map((diagnostic) => diagnostic.target?.regionIds ?? []),
+    ...list(reconstruction.humanAdjudications?.applied)
+      .filter(
+        ({ diagnosticCode }) => diagnosticCode === 'AMBIGUOUS_READING_ORDER',
+      )
+      .map(({ target }) => target?.regionIds ?? []),
+  ].filter((regionIds) => regionIds.length > 0)
+  for (const resolution of list(reconstruction.readingOrder?.resolutions)) {
+    if (resolution.status !== 'ambiguous') continue
+    // A diagnostic still targeting these regions means the tie is genuinely
+    // open, whether or not it is model-eligible. Match by containment: the
+    // diagnostic target can be a subset of the resolution's regions.
+    const regionIds = new Set(resolution.regionIds)
+    if (
+      accountedReadingOrderTargets.some((target) =>
+        target.every((id) => regionIds.has(id)),
+      )
+    )
+      continue
+    const decisionId = stableCandidateId(
+      'reading-order-decision',
+      [...regionIds].sort(),
+    )
+    keys.add(
+      decisionKey(MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie, decisionId),
+    )
+  }
+  return keys
 }
 
 function deterministicDecisionMatchesReconstruction(
@@ -575,12 +675,9 @@ function deterministicDecisionMatchesReconstruction(
   if (
     decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie
   ) {
-    const resolutions = reconstruction.readingOrder.resolutions.filter(
-      ({ regionIds }) =>
-        stableCandidateId(
-          'reading-order-decision',
-          [...new Set(regionIds)].sort(),
-        ) === decision.decisionId,
+    const resolutions = readingOrderResolutionsForDecision(
+      reconstruction,
+      decision.decisionId,
     )
     if (resolutions.length !== 1) return false
     const targetIds = new Set(resolutions[0]!.regionIds)
@@ -663,6 +760,16 @@ function existingReceiptMatchesReconstruction(
     decisionsByKey.set(key, history)
   }
   if ([...openBindings.keys()].some((key) => !decisionsByKey.has(key)))
+    return false
+
+  // Reverse direction: state the document attributes to this layer must be
+  // claimed by the receipt. Without this an emptied receipt verifies vacuously,
+  // because a fully resolved document has no open bindings left to check.
+  if (
+    [...pdfModelDerivedDecisionKeys(reconstruction)].some(
+      (key) => !decisionsByKey.has(key),
+    )
+  )
     return false
 
   return [...decisionsByKey].every(([key, history]) => {

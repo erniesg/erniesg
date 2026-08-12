@@ -851,6 +851,8 @@ export class ModelFallbackLedger {
 
   bindDocumentSource(documentId: string, sourceSha256: unknown) {
     if (!boundedId(documentId)) return false
+    // A null/absent source hash is a legitimate state that later checks reject
+    // with SOURCE_SHA256_REQUIRED, so skip binding rather than refuse here.
     if (typeof sourceSha256 !== 'string' || !HASH.test(sourceSha256))
       return true
     const existing = this.documentSources.get(documentId)

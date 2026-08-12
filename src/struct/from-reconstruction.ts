@@ -6,7 +6,10 @@ import type {
 } from '../research/import-types'
 import type { ResearchNode } from '../research/schema'
 import { recoveryDiagnosticInputs } from '../research/recovery-projection'
-import { modelConsultationReceiptMatchesPdfReconstruction } from '../research/model-fallback-pipeline'
+import {
+  modelConsultationReceiptMatchesPdfReconstruction,
+  pdfModelDerivedDecisionKeys,
+} from '../research/model-fallback-pipeline'
 import { structDigest, structId } from './ids'
 import {
   validateModelConsultationReceipt,
@@ -46,7 +49,14 @@ function closedModelConsultations(
 ): ModelFallbackReceipt | undefined {
   if (!isPdf(reconstruction)) return undefined
   const receipt = reconstruction.modelConsultations
-  if (receipt === undefined) return undefined
+  if (receipt === undefined) {
+    // Legacy documents predate the receipt and carry no model-derived state.
+    // A document that does carry it may not launder the provenance away by
+    // dropping the receipt.
+    if (pdfModelDerivedDecisionKeys(reconstruction).size > 0)
+      throw new Error('MISSING_MODEL_CONSULTATION_RECEIPT')
+    return undefined
+  }
   if (!validateModelConsultationReceipt(receipt))
     throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
   if (receipt.consultations.some(({ status }) => status === 'pending'))

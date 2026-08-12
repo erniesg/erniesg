@@ -10,7 +10,7 @@ import { sha256HexSync } from './sha256'
 import { structDigest } from './ids'
 import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
-import type { StructDocument } from './types'
+import { STRUCT_SCHEMA_VERSION, type StructDocument } from './types'
 
 const EPUB_MIMETYPE = 'application/epub+zip' as const
 const ZIP_MTIME = new Date(1980, 0, 1, 0, 0, 0)
@@ -165,9 +165,18 @@ function assertXhtmlHrefIntegrity(
 
 function assertStructReceiptIntegrity(document: StructDocument) {
   const receipt = document.receipt
+  const hasLegacyDocumentBinding =
+    document.documentId === undefined &&
+    receipt.documentId === undefined &&
+    receipt.modelConsultations === undefined
+  const hasBoundDocumentId =
+    typeof document.documentId === 'string' &&
+    document.documentId.length > 0 &&
+    receipt.documentId === document.documentId
   if (
-    receipt.schemaVersion !== document.schemaVersion ||
-    receipt.documentId !== document.documentId ||
+    (!hasLegacyDocumentBinding && !hasBoundDocumentId) ||
+    document.schemaVersion !== STRUCT_SCHEMA_VERSION ||
+    receipt.schemaVersion !== STRUCT_SCHEMA_VERSION ||
     receipt.sourceSha256 !== document.source.sha256 ||
     receipt.blockCount !== document.blocks.length ||
     receipt.assetCount !== document.assets.length ||

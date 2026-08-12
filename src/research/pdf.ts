@@ -491,6 +491,15 @@ async function raceWithAbort<T>(
   })
 }
 
+function effectiveModelFallbackSignal(
+  importSignal?: AbortSignal,
+  fallbackSignal?: AbortSignal,
+) {
+  if (!importSignal) return fallbackSignal
+  if (!fallbackSignal || fallbackSignal === importSignal) return importSignal
+  return AbortSignal.any([importSignal, fallbackSignal])
+}
+
 function countImages(fnArray: number[], imageOps: Set<number>) {
   return fnArray.filter((operator) => imageOps.has(operator)).length
 }
@@ -1562,15 +1571,19 @@ export async function reconstructPdf(
     const adjudicated = options.decisionFile
       ? applyHumanDecisionFile(reconstruction, options.decisionFile)
       : reconstruction
+    const modelFallbackSignal = effectiveModelFallbackSignal(
+      options.signal,
+      options.modelFallback?.signal,
+    )
     const resolved =
       options.modelFallback === undefined
         ? adjudicated
         : await raceWithAbort(
             resolvePdfModelFallbacks(adjudicated, {
               ...options.modelFallback,
-              signal: options.signal,
+              signal: modelFallbackSignal,
             }),
-            options.signal,
+            modelFallbackSignal,
             () => undefined,
           )
     throwIfAborted(options.signal)

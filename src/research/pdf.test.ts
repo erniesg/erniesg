@@ -1872,6 +1872,101 @@ describe('PDF.js browser ingestion', () => {
     ])
   })
 
+  it('preserves cancellation supplied only to model fallback', async () => {
+    const controller = new AbortController()
+    let consultationStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      consultationStarted = resolve
+    })
+    let providerSignal: AbortSignal | undefined
+    const reconstruction = reconstructPdf(
+      await fixtureFile('adjudication-required.pdf'),
+      undefined,
+      {
+        modelFallback: {
+          enabled: true,
+          ownerOptIn: true,
+          signal: controller.signal,
+          model: {
+            identity: {
+              providerId: 'recorded-stub',
+              modelId: 'nested-signal-candidate-picker',
+              modelVersion: '1.0.0',
+              modelDigest: 'b'.repeat(64),
+            },
+            consult: (_request, context) => {
+              providerSignal = context?.signal
+              consultationStarted()
+              return new Promise(() => undefined)
+            },
+          },
+        },
+      },
+    )
+
+    await started
+    controller.abort()
+    const outcome = await Promise.race([
+      reconstruction.catch((error: unknown) => error),
+      new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), 250),
+      ),
+    ])
+
+    expect(providerSignal).toBe(controller.signal)
+    expect(outcome).toMatchObject({ code: 'IMPORT_CANCELLED' })
+  })
+
+  it('combines distinct import and model fallback cancellation signals', async () => {
+    const importController = new AbortController()
+    const fallbackController = new AbortController()
+    let consultationStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      consultationStarted = resolve
+    })
+    let providerSignal: AbortSignal | undefined
+    const reconstruction = reconstructPdf(
+      await fixtureFile('adjudication-required.pdf'),
+      undefined,
+      {
+        signal: importController.signal,
+        modelFallback: {
+          enabled: true,
+          ownerOptIn: true,
+          signal: fallbackController.signal,
+          model: {
+            identity: {
+              providerId: 'recorded-stub',
+              modelId: 'combined-signal-candidate-picker',
+              modelVersion: '1.0.0',
+              modelDigest: 'b'.repeat(64),
+            },
+            consult: (_request, context) => {
+              providerSignal = context?.signal
+              consultationStarted()
+              return new Promise(() => undefined)
+            },
+          },
+        },
+      },
+    )
+
+    await started
+    fallbackController.abort()
+    const outcome = await Promise.race([
+      reconstruction.catch((error: unknown) => error),
+      new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), 250),
+      ),
+    ])
+
+    expect(providerSignal).not.toBe(importController.signal)
+    expect(providerSignal).not.toBe(fallbackController.signal)
+    expect(providerSignal?.aborted).toBe(true)
+    expect(importController.signal.aborted).toBe(false)
+    expect(outcome).toMatchObject({ code: 'IMPORT_CANCELLED' })
+  })
+
   it('does not start more consultations after a cooperative provider aborts', async () => {
     const controller = new AbortController()
     let consultationStarted!: () => void

@@ -255,7 +255,8 @@ export type StructRecovery = {
 
 export type StructReceipt = {
   schemaVersion: typeof STRUCT_SCHEMA_VERSION
-  documentId: string
+  /** Absent only on serialized 0.1.0 documents created before ID binding. */
+  documentId?: string
   sourceSha256: string
   /** Closed, source-bound audit trail for any bounded model decisions. */
   modelConsultations?: ModelFallbackReceipt
@@ -296,7 +297,8 @@ export type StructReceipt = {
 
 export type StructDocument = {
   schemaVersion: typeof STRUCT_SCHEMA_VERSION
-  documentId: string
+  /** Absent only on serialized 0.1.0 documents created before ID binding. */
+  documentId?: string
   source: StructSource
   metadata: StructMetadata
   blocks: StructBlock[]

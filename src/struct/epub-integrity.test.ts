@@ -130,6 +130,27 @@ function documentWithHref(href: string): StructDocument {
   })
 }
 
+function legacyDocumentWithHref(href: string): StructDocument {
+  const current = documentWithHref(href)
+  const {
+    documentId: _documentId,
+    receipt: currentReceipt,
+    ...documentFields
+  } = current
+  const { documentId: _receiptDocumentId, ...legacyReceipt } = currentReceipt
+  const legacy: StructDocument = {
+    ...documentFields,
+    receipt: legacyReceipt,
+  }
+  const { receipt, ...withoutReceipt } = legacy
+  receipt.generatedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: receipt.conservation,
+    assets: legacy.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  })
+  return legacy
+}
+
 describe('STRUCT EPUB href integrity', () => {
   it.each([
     ['same-document fragment', '#target'],
@@ -145,6 +166,70 @@ describe('STRUCT EPUB href integrity', () => {
       mediaType: 'application/epub+zip',
       mode: 'publication',
     })
+  })
+
+  it('accepts serialized legacy 0.1.0 documents without document bindings', async () => {
+    await expect(
+      buildStructEpub(legacyDocumentWithHref('#target')),
+    ).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+      mode: 'publication',
+    })
+  })
+
+  it('rejects partial or invalid document bindings', async () => {
+    const invalidBindings: Array<[string, (document: StructDocument) => void]> =
+      [
+        [
+          'document only',
+          (document) => {
+            delete document.receipt.documentId
+          },
+        ],
+        [
+          'receipt only',
+          (document) => {
+            delete document.documentId
+          },
+        ],
+        [
+          'empty',
+          (document) => {
+            document.documentId = ''
+            document.receipt.documentId = ''
+          },
+        ],
+        [
+          'null',
+          (document) => {
+            Object.assign(document, { documentId: null })
+            Object.assign(document.receipt, { documentId: null })
+          },
+        ],
+        [
+          'mismatched',
+          (document) => {
+            document.receipt.documentId = 'another-document'
+          },
+        ],
+      ]
+    for (const [label, mutate] of invalidBindings) {
+      const document = documentWithHref('#target')
+      mutate(document)
+      await expect(
+        buildStructEpub(document),
+        `${label} bindings must fail closed`,
+      ).rejects.toThrow('STRUCT_RECEIPT_BINDING_MISMATCH')
+    }
+  })
+
+  it('rejects matching unsupported STRUCT versions', async () => {
+    const document = documentWithHref('#target')
+    Object.assign(document, { schemaVersion: '9.9.9' })
+    Object.assign(document.receipt, { schemaVersion: '9.9.9' })
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      'STRUCT_RECEIPT_BINDING_MISMATCH',
+    )
   })
 
   it('packages the hidden-link rule used by expanded semantic groups', async () => {

@@ -148,6 +148,32 @@ describe('model consultation receipt validation', () => {
     expect(validateModelConsultationReceipt(receipt)).toBe(true)
   })
 
+  it('accepts receipts produced for bounded custom deterministic classes', async () => {
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({ ledger })
+    const point = {
+      documentId: 'custom-decision-document',
+      decisionId: 'custom-layout-choice-1',
+      decisionClass: 'custom-layout-choice',
+      sourceSha256: 'a'.repeat(64),
+      inputs: { reason: 'deterministic-fixture' },
+      candidates: [{ id: 'candidate-a' }, { id: 'candidate-b' }],
+      status: 'deterministic' as const,
+      deterministicChoice: { candidateId: 'candidate-a' },
+    }
+
+    await expect(gate.decide(point)).resolves.toMatchObject({
+      status: 'deterministic',
+      decisionClass: point.decisionClass,
+    })
+    const receipt = ledger.receiptFor(point.documentId)
+
+    expect(validateModelConsultationReceipt(receipt)).toBe(true)
+    expect(validateSchema(receipt), JSON.stringify(validateSchema.errors)).toBe(
+      true,
+    )
+  })
+
   it.each(credentialShapedIds)(
     'rejects %s credential-shaped scalar values in an otherwise recommitted receipt',
     async (_name, value) => {

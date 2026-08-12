@@ -50,11 +50,7 @@
       ]
     },
     "decisionClass": {
-      "enum": [
-        "candidate-ambiguous-caption-association",
-        "ambiguous-note-marker-match",
-        "reading-order-tie"
-      ]
+      "$ref": "#/$defs/id"
     },
     "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
     "boundedScore": {
@@ -748,7 +744,8 @@
         "consultationRate": { "type": "number", "minimum": 0, "maximum": 1 },
         "byDecisionClass": {
           "type": "object",
-          "additionalProperties": false,
+          "propertyNames": { "$ref": "#/$defs/decisionClass" },
+          "additionalProperties": { "$ref": "#/$defs/metric" },
           "properties": {
             "candidate-ambiguous-caption-association": {
               "$ref": "#/$defs/metric"

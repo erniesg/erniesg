@@ -14,7 +14,7 @@ const allLanes = [
     "required": true
   },
   {
-    "id": "model-consultation",
+    "id": "unit",
     "command": "node --experimental-strip-types --disable-warning=ExperimentalWarning tools/model-consultation-evidence.ts",
     "required": true
   },
@@ -34,6 +34,9 @@ const allLanes = [
     "required": false
   }
 ];
+// The hosted manifest schema uses the generic `unit` lane id. Keep the public,
+// task-specific selector while emitting that compatibility id in the receipt.
+const laneAliases = new Map([["model-consultation", "unit"]]);
 const invocation = {
   argv: process.argv.slice(2),
   npm_config_e2e: process.env.npm_config_e2e || "",
@@ -96,6 +99,10 @@ function parseSelection(argv) {
     } else {
       unknownArgs.push(arg);
     }
+  }
+
+  for (let index = 0; index < requestedOnly.length; index += 1) {
+    requestedOnly[index] = laneAliases.get(requestedOnly[index]) || requestedOnly[index];
   }
 
   const known = new Set(allLanes.map((lane) => lane.id));
@@ -225,7 +232,6 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
     },
     lanes: [],
     association_audit: null,
-    model_consultation: null,
     artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
     caveats: largeFiles.caveats,
     result: "blocked",
@@ -253,7 +259,7 @@ for (const lane of lanes) {
       output += `\n[agent-evidence] invalid association audit receipt: ${redact(error.message)}\n`;
     }
   }
-  if (lane.id === "model-consultation" && exitCode === 0) {
+  if (lane.id === "unit" && exitCode === 0) {
     try {
       const candidate = JSON.parse(proc.stdout || "");
       if (!validModelConsultationEvidence(candidate)) {
@@ -283,7 +289,7 @@ const endedAt = new Date();
 const modelConsultationArtifact = modelConsultation
   ? [{
       kind: "model-consultation-evidence",
-      path: results.find(({ id }) => id === "model-consultation").log_path,
+      path: results.find(({ id }) => id === "unit").log_path,
     }]
   : [];
 const manifest = {
@@ -306,7 +312,6 @@ const manifest = {
   },
   lanes: results,
   association_audit: associationAudit,
-  model_consultation: modelConsultation,
   artifacts: [
     { kind: "manifest", path: join(outDir, "manifest.json") },
     ...modelConsultationArtifact,

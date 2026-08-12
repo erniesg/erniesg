@@ -159,26 +159,34 @@ describe('model-consultation evidence', () => {
     try {
       expect(removable).toBe(true)
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-      expect(manifest.lanes_run).toEqual(['model-consultation'])
+      expect(manifest.lanes_run).toEqual(['unit'])
       expect(manifest.lanes).toEqual([
-        expect.objectContaining({
-          id: 'model-consultation',
+        {
+          id: 'unit',
+          command:
+            'node --experimental-strip-types --disable-warning=ExperimentalWarning tools/model-consultation-evidence.ts',
           required: true,
           status: 'passed',
-        }),
+          exit_code: 0,
+          duration_ms: expect.any(Number),
+          log_path: expect.any(String),
+        },
       ])
-      expect(validModelConsultationEvidence(manifest.model_consultation)).toBe(
-        true,
-      )
-      const artifact = manifest.artifacts.find(
+      expect(manifest).not.toHaveProperty('model_consultation')
+      const artifacts = manifest.artifacts.filter(
         ({ kind }) => kind === 'model-consultation-evidence',
       )
-      expect(artifact).toEqual({
+      expect(artifacts).toHaveLength(1)
+      expect(artifacts[0]).toEqual({
         kind: 'model-consultation-evidence',
         path: manifest.lanes[0].log_path,
       })
-      expect(JSON.parse(readFileSync(resolve(artifact.path), 'utf8'))).toEqual(
-        manifest.model_consultation,
+      const artifactText = readFileSync(resolve(artifacts[0].path), 'utf8')
+      expect(validModelConsultationEvidence(JSON.parse(artifactText))).toBe(
+        true,
+      )
+      expect(artifactText).not.toMatch(
+        /\.pdf|sourceText|rawText|inputs|candidates|modelIdentity|providerId|modelId|credential|apiKey|accessToken|refreshToken|secret/iu,
       )
     } finally {
       if (removable) rmSync(evidenceDirectory, { recursive: true, force: true })

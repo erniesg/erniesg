@@ -1,7 +1,27 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildStructEpub } from './epub'
+import { structDigest } from './ids'
 import type { StructDocument } from './types'
+
+function refreshReceipt(document: StructDocument) {
+  document.receipt.documentId = document.documentId
+  document.receipt.sourceSha256 = document.source.sha256
+  document.receipt.blockCount = document.blocks.length
+  document.receipt.assetCount = document.assets.length
+  document.receipt.relationshipCount = document.relationships.length
+  document.receipt.diagnosticCount = document.diagnostics.length
+  const { receipt, ...withoutReceipt } = document
+  receipt.generatedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: receipt.conservation,
+    ...(receipt.modelConsultations
+      ? { modelConsultations: receipt.modelConsultations }
+      : {}),
+    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  })
+  return document
+}
 
 function documentWithHref(href: string): StructDocument {
   const evidence = {
@@ -10,8 +30,9 @@ function documentWithHref(href: string): StructDocument {
     boxes: [],
     sourceIds: ['fixture-source'],
   }
-  return {
+  return refreshReceipt({
     schemaVersion: '0.1.0',
+    documentId: 'epub-integrity-document',
     source: {
       format: 'unknown',
       fileName: 'epub-integrity.fixture',
@@ -77,6 +98,7 @@ function documentWithHref(href: string): StructDocument {
     },
     receipt: {
       schemaVersion: '0.1.0',
+      documentId: 'epub-integrity-document',
       sourceSha256: 'a'.repeat(64),
       blockCount: 2,
       assetCount: 0,
@@ -105,7 +127,7 @@ function documentWithHref(href: string): StructDocument {
       },
       generatedSha256: 'b'.repeat(64),
     },
-  }
+  })
 }
 
 describe('STRUCT EPUB href integrity', () => {
@@ -175,7 +197,7 @@ describe('STRUCT EPUB href integrity', () => {
         fallback: 'asset',
       })
 
-      await expect(buildStructEpub(document)).rejects.toThrow(
+      await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
         /dangling internal reference/i,
       )
     },
@@ -211,7 +233,9 @@ describe('STRUCT EPUB href integrity', () => {
       },
       fallback: 'asset',
     })
-    await expect(buildStructEpub(document)).rejects.toThrow(/reserved/i)
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      /reserved/i,
+    )
   })
 
   it('rejects malformed packaged XHTML assets', async () => {
@@ -234,7 +258,7 @@ describe('STRUCT EPUB href integrity', () => {
       },
       fallback: 'asset',
     })
-    await expect(buildStructEpub(document)).rejects.toThrow(
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
       /well-formed XHTML/i,
     )
   })
@@ -261,7 +285,7 @@ describe('STRUCT EPUB href integrity', () => {
       },
       fallback: 'asset',
     })
-    await expect(buildStructEpub(document)).rejects.toThrow(
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
       /dangling internal reference/i,
     )
   })

@@ -20,35 +20,390 @@
     },
     "consultations": {
       "type": "array",
+      "maxItems": 100000,
       "items": { "$ref": "#/$defs/consultation" }
     },
     "decisions": {
       "type": "array",
+      "maxItems": 100000,
       "items": { "$ref": "#/$defs/decision" }
     },
-    "metrics": { "$ref": "#/$defs/metrics" }
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "semanticStateSha256": { "$ref": "#/$defs/sha256" }
   },
   "$defs": {
-    "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+      "not": {
+        "pattern": "^(?:sk-(?:proj-)?[A-Za-z0-9._:-]{8,}|(?:AKIA|ASIA)[A-Z0-9]{12,}|[Bb][Ee][Aa][Rr][Ee][Rr][.:-][A-Za-z0-9._:-]{8,}|eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}|(?:-----)?[Bb][Ee][Gg][Ii][Nn][.:-]?(?:(?:RSA|EC|OPENSSH)[.:-]?)?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][.:-]?[Kk][Ee][Yy]|xox[baprs]-[A-Za-z0-9._:-]{8,})"
+      }
+    },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "choice": {
+      "anyOf": [
+        { "$ref": "#/$defs/idChoice" },
+        { "$ref": "#/$defs/associationChoice" },
+        { "$ref": "#/$defs/orderChoice" }
+      ]
+    },
+    "decisionClass": {
+      "enum": [
+        "candidate-ambiguous-caption-association",
+        "ambiguous-note-marker-match",
+        "reading-order-tie"
+      ]
+    },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "boundedScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "candidateCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "idList": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "nonEmptyIdList": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "idChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidateId"],
+      "properties": {
+        "candidateId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "associationChoice": {
       "type": "object",
       "additionalProperties": false,
       "required": ["candidateId"],
       "properties": {
         "candidateId": { "$ref": "#/$defs/id" },
-        "associationId": { "$ref": "#/$defs/id" },
-        "order": { "type": "number" },
-        "label": { "type": "string" }
+        "associationId": { "$ref": "#/$defs/id" }
       }
     },
-    "candidate": {
+    "orderChoice": {
       "type": "object",
+      "additionalProperties": false,
+      "required": ["candidateId"],
+      "properties": {
+        "candidateId": { "$ref": "#/$defs/id" },
+        "order": { "type": "integer", "minimum": 0, "maximum": 63 }
+      }
+    },
+    "noteEvidenceCodes": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "label-exact",
+          "later-endnote-section-scope",
+          "note-follows-reference",
+          "numbering-sequence-next-adjacency",
+          "numbering-sequence-previous-adjacency",
+          "numbering-sequence-start",
+          "page-wide-note-region",
+          "same-column-geometry",
+          "same-page-scope",
+          "typography-explicit-note-marker",
+          "typography-raised-marker",
+          "typography-superscript-glyph"
+        ]
+      }
+    },
+    "readingOrderEvidenceCodes": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "ambiguous-column-flow",
+          "block-adjacency",
+          "caption-proximity",
+          "column-flow",
+          "column-gutter",
+          "font-metrics",
+          "footnote-band",
+          "indentation-continuity",
+          "margin-note-exclusion",
+          "note-after-body",
+          "page-sequence",
+          "spanning-boundary",
+          "vertical-flow"
+        ]
+      }
+    },
+    "captionEvidenceCodes": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "bounded-distance",
+          "caption-bounded-envelope-proof",
+          "caption-typography",
+          "column-scope",
+          "horizontal-alignment",
+          "label-sequence",
+          "label-sequence-mismatch",
+          "object-above-caption",
+          "object-below-caption",
+          "same-page-scope",
+          "source-cross-reference"
+        ]
+      }
+    },
+    "noteProductionInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diagnostic_code",
+        "relationship_id",
+        "reference_region_id",
+        "confidence",
+        "threshold",
+        "candidate_count"
+      ],
+      "properties": {
+        "diagnostic_code": { "const": "AMBIGUOUS_NOTE_MATCH" },
+        "relationship_id": { "$ref": "#/$defs/id" },
+        "reference_region_id": { "$ref": "#/$defs/id" },
+        "confidence": { "$ref": "#/$defs/ratio" },
+        "threshold": { "$ref": "#/$defs/ratio" },
+        "candidate_count": { "$ref": "#/$defs/candidateCount" }
+      }
+    },
+    "noteProductionCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "associationId",
+        "note_id",
+        "region_id",
+        "score",
+        "evidence_codes"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "associationId": { "$ref": "#/$defs/id" },
+        "note_id": { "$ref": "#/$defs/id" },
+        "region_id": { "$ref": "#/$defs/id" },
+        "score": { "$ref": "#/$defs/boundedScore" },
+        "evidence_codes": { "$ref": "#/$defs/noteEvidenceCodes" }
+      }
+    },
+    "readingOrderProductionInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diagnostic_code",
+        "page",
+        "ambiguity_class",
+        "confidence",
+        "threshold",
+        "candidate_count"
+      ],
+      "properties": {
+        "diagnostic_code": { "const": "AMBIGUOUS_READING_ORDER" },
+        "page": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "ambiguity_class": {
+          "enum": [
+            "two-column-with-spanning-float",
+            "single-column-with-margin-notes",
+            "mixed-single-two-column",
+            "dense-reference-section",
+            "footnote-band",
+            "sparse-column-gutter",
+            "fragmented-inline-cluster",
+            "unspecified"
+          ]
+        },
+        "confidence": { "$ref": "#/$defs/ratio" },
+        "threshold": { "$ref": "#/$defs/ratio" },
+        "candidate_count": { "$ref": "#/$defs/candidateCount" }
+      }
+    },
+    "readingOrderProductionCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "region_ids", "regions", "evidence_codes"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "region_ids": { "$ref": "#/$defs/nonEmptyIdList" },
+        "regions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/readingOrderRegion" }
+        },
+        "evidence_codes": { "$ref": "#/$defs/readingOrderEvidenceCodes" }
+      }
+    },
+    "readingOrderRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "column", "page"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": {
+          "enum": [
+            "body",
+            "spanning",
+            "header",
+            "footer",
+            "page-number",
+            "side",
+            "chart-label",
+            "figure",
+            "equation",
+            "caption",
+            "footnote",
+            "endnote"
+          ]
+        },
+        "column": { "enum": ["single", "left", "right", "span"] },
+        "page": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "captionProductionInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diagnostic_code",
+        "relationship_id",
+        "caption_region_id",
+        "kind",
+        "confidence",
+        "candidate_count"
+      ],
+      "properties": {
+        "diagnostic_code": { "const": "AMBIGUOUS_VISUAL_MATCH" },
+        "relationship_id": { "$ref": "#/$defs/id" },
+        "caption_region_id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["figure", "table", "equation"] },
+        "confidence": { "$ref": "#/$defs/ratio" },
+        "candidate_count": { "$ref": "#/$defs/candidateCount" }
+      }
+    },
+    "captionProductionCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "score",
+        "kind",
+        "region_ids",
+        "line_ids",
+        "object_ids",
+        "asset_ids",
+        "evidence_codes"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "score": { "$ref": "#/$defs/boundedScore" },
+        "kind": { "enum": ["figure", "table", "equation"] },
+        "region_ids": { "$ref": "#/$defs/nonEmptyIdList" },
+        "line_ids": { "$ref": "#/$defs/idList" },
+        "object_ids": { "$ref": "#/$defs/nonEmptyIdList" },
+        "asset_ids": { "$ref": "#/$defs/nonEmptyIdList" },
+        "evidence_codes": { "$ref": "#/$defs/captionEvidenceCodes" }
+      }
+    },
+    "legacyCaptionInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["figureId", "captionRegion"],
+      "properties": {
+        "figureId": { "$ref": "#/$defs/id" },
+        "captionRegion": { "$ref": "#/$defs/id" }
+      }
+    },
+    "legacyCaptionFlatCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "associationId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "associationId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "legacyCaptionAssociation": {
+      "type": "object",
+      "additionalProperties": false,
       "required": ["id"],
       "properties": {
         "id": { "$ref": "#/$defs/id" }
-      },
-      "additionalProperties": true
+      }
+    },
+    "legacyCaptionNestedCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "association"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "association": { "$ref": "#/$defs/legacyCaptionAssociation" }
+      }
+    },
+    "legacyCaptionCandidate": {
+      "oneOf": [
+        { "$ref": "#/$defs/legacyCaptionFlatCandidate" },
+        { "$ref": "#/$defs/legacyCaptionNestedCandidate" }
+      ]
+    },
+    "legacyNoteInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["markerId", "markerOrdinal"],
+      "properties": {
+        "markerId": { "$ref": "#/$defs/id" },
+        "markerOrdinal": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,5}$"
+        }
+      }
+    },
+    "legacyNoteCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "targetId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "targetId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "legacyReadingOrderInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["regionIds"],
+      "properties": {
+        "regionIds": { "$ref": "#/$defs/nonEmptyIdList" }
+      }
+    },
+    "legacyReadingOrderCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "order"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "order": { "type": "integer", "minimum": 0, "maximum": 63 }
+      }
     },
     "model": {
       "type": "object",
@@ -79,6 +434,7 @@
         "candidates",
         "candidateIds",
         "model",
+        "promptTemplateSha256",
         "promptHash",
         "status",
         "choice",
@@ -91,22 +447,25 @@
         "fixtureId": { "$ref": "#/$defs/id" },
         "documentId": { "$ref": "#/$defs/id" },
         "decisionId": { "$ref": "#/$defs/id" },
-        "decisionClass": { "$ref": "#/$defs/id" },
+        "decisionClass": { "$ref": "#/$defs/decisionClass" },
         "sourceSha256": { "$ref": "#/$defs/sha256" },
         "inputs": { "type": "object" },
         "inputsHash": { "$ref": "#/$defs/sha256" },
         "candidates": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/candidate" }
+          "maxItems": 64,
+          "items": { "type": "object" }
         },
         "candidateIds": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 64,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/id" }
         },
         "model": { "$ref": "#/$defs/model" },
+        "promptTemplateSha256": { "$ref": "#/$defs/sha256" },
         "promptHash": { "$ref": "#/$defs/sha256" },
         "status": { "enum": ["pending", "accepted", "rejected", "failed"] },
         "choice": {
@@ -114,11 +473,138 @@
         },
         "costUsd": { "type": "number", "minimum": 0 },
         "latencyMs": {
-          "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }]
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            { "type": "null" }
+          ]
         },
         "failureCode": { "$ref": "#/$defs/id" }
       },
       "allOf": [
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["decisionClass", "inputs", "candidates", "choice"],
+              "properties": {
+                "decisionClass": { "const": "ambiguous-note-marker-match" },
+                "inputs": { "$ref": "#/$defs/noteProductionInputs" },
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": { "$ref": "#/$defs/noteProductionCandidate" }
+                },
+                "choice": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/associationChoice" },
+                    { "type": "null" }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["decisionClass", "inputs", "candidates", "choice"],
+              "properties": {
+                "decisionClass": { "const": "ambiguous-note-marker-match" },
+                "inputs": { "$ref": "#/$defs/legacyNoteInputs" },
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": { "$ref": "#/$defs/legacyNoteCandidate" }
+                },
+                "choice": {
+                  "anyOf": [{ "$ref": "#/$defs/idChoice" }, { "type": "null" }]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["decisionClass", "inputs", "candidates", "choice"],
+              "properties": {
+                "decisionClass": { "const": "reading-order-tie" },
+                "inputs": { "$ref": "#/$defs/readingOrderProductionInputs" },
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": {
+                    "$ref": "#/$defs/readingOrderProductionCandidate"
+                  }
+                },
+                "choice": {
+                  "anyOf": [{ "$ref": "#/$defs/idChoice" }, { "type": "null" }]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["decisionClass", "inputs", "candidates", "choice"],
+              "properties": {
+                "decisionClass": { "const": "reading-order-tie" },
+                "inputs": { "$ref": "#/$defs/legacyReadingOrderInputs" },
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": { "$ref": "#/$defs/legacyReadingOrderCandidate" }
+                },
+                "choice": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/orderChoice" },
+                    { "type": "null" }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["decisionClass", "inputs", "candidates", "choice"],
+              "properties": {
+                "decisionClass": {
+                  "const": "candidate-ambiguous-caption-association"
+                },
+                "inputs": { "$ref": "#/$defs/captionProductionInputs" },
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": { "$ref": "#/$defs/captionProductionCandidate" }
+                },
+                "choice": {
+                  "anyOf": [{ "$ref": "#/$defs/idChoice" }, { "type": "null" }]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["decisionClass", "inputs", "candidates", "choice"],
+              "properties": {
+                "decisionClass": {
+                  "const": "candidate-ambiguous-caption-association"
+                },
+                "inputs": { "$ref": "#/$defs/legacyCaptionInputs" },
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": { "$ref": "#/$defs/legacyCaptionCandidate" }
+                },
+                "choice": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/associationChoice" },
+                    { "type": "null" }
+                  ]
+                }
+              }
+            }
+          ]
+        },
         {
           "if": {
             "properties": { "status": { "const": "accepted" } },
@@ -176,20 +662,66 @@
       "properties": {
         "documentId": { "$ref": "#/$defs/id" },
         "decisionId": { "$ref": "#/$defs/id" },
-        "decisionClass": { "$ref": "#/$defs/id" },
+        "decisionClass": { "$ref": "#/$defs/decisionClass" },
         "outcome": {
           "enum": ["deterministic", "consulted", "review-required"]
         },
-        "consulted": { "type": "boolean" }
-      }
+        "consulted": { "type": "boolean" },
+        "choice": { "$ref": "#/$defs/idChoice" },
+        "deterministicRuleId": { "$ref": "#/$defs/id" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "outcome": { "const": "deterministic" } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "required": ["choice", "deterministicRuleId"],
+            "properties": {
+              "consulted": { "const": false },
+              "choice": { "$ref": "#/$defs/idChoice" },
+              "deterministicRuleId": { "$ref": "#/$defs/id" }
+            }
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                { "required": ["choice"] },
+                { "required": ["deterministicRuleId"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "outcome": { "const": "consulted" } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "properties": { "consulted": { "const": true } }
+          },
+          "else": {
+            "properties": { "consulted": { "const": false } }
+          }
+        }
+      ]
     },
     "metric": {
       "type": "object",
       "additionalProperties": false,
       "required": ["decisionCount", "consultationCount", "consultationRate"],
       "properties": {
-        "decisionCount": { "type": "integer", "minimum": 0 },
-        "consultationCount": { "type": "integer", "minimum": 0 },
+        "decisionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "consultationCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
         "consultationRate": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },
@@ -203,12 +735,27 @@
         "byDecisionClass"
       ],
       "properties": {
-        "totalDecisionCount": { "type": "integer", "minimum": 0 },
-        "totalConsultationCount": { "type": "integer", "minimum": 0 },
+        "totalDecisionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "totalConsultationCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
         "consultationRate": { "type": "number", "minimum": 0, "maximum": 1 },
         "byDecisionClass": {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/metric" }
+          "additionalProperties": false,
+          "properties": {
+            "candidate-ambiguous-caption-association": {
+              "$ref": "#/$defs/metric"
+            },
+            "ambiguous-note-marker-match": { "$ref": "#/$defs/metric" },
+            "reading-order-tie": { "$ref": "#/$defs/metric" }
+          }
         }
       }
     }

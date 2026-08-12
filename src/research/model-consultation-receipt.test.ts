@@ -21,11 +21,25 @@ const schema = JSON.parse(
   ),
 )
 const validateSchema = new Ajv2020({ strict: false }).compile(schema)
+const credentialShapedIds = [
+  ['openai-legacy', ['sk', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
+  ['openai', ['sk', 'proj', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
+  ['aws', ['AKIA', 'IOSFODNN7EXAMPLE'].join('')],
+  ['bearer', ['Bearer', 'FAKEFAKEFAKEFAKE'].join(':')],
+  [
+    'jwt',
+    ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJmYWtlIn0', 'ZmFrZXNpZ25hdHVyZQ'].join(
+      '.',
+    ),
+  ],
+  ['private-key', ['BEGIN', 'PRIVATE', 'KEY', 'FAKEFAKE'].join('-')],
+] as const
 
 async function validReceipt(associationObject = false) {
   const ledger = new ModelFallbackLedger()
   const gate = new ModelConsultationGate({
     enabled: true,
+    ownerOptIn: true,
     ledger,
     model: {
       identity: {
@@ -90,6 +104,7 @@ function recommitConsultation(
     sourceSha256: consultation.sourceSha256,
     inputs: consultation.inputs,
     candidates: consultation.candidates,
+    promptTemplateSha256: consultation.promptTemplateSha256,
   }
   consultation.inputsHash = hash(consultation.inputs)
   consultation.promptHash = hash(prompt)
@@ -118,10 +133,39 @@ describe('model consultation receipt validation', () => {
   it('accepts one internally consistent closed receipt', async () => {
     const receipt = await validReceipt()
 
+    expect(receipt.consultations[0]).toHaveProperty(
+      'promptTemplateSha256',
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
+    )
     expect(validateSchema(receipt), JSON.stringify(validateSchema.errors)).toBe(
       true,
     )
     expect(validateModelConsultationReceipt(receipt)).toBe(true)
+  })
+
+  it.each(credentialShapedIds)(
+    'rejects %s credential-shaped scalar values in an otherwise recommitted receipt',
+    async (_name, value) => {
+      const receipt = await validReceipt()
+      const consultation = receipt.consultations[0]!
+      consultation.model.providerId = value
+      recommitConsultation(consultation)
+
+      expect(validateSchema(receipt)).toBe(false)
+      expect(validateModelConsultationReceipt(receipt)).toBe(false)
+    },
+  )
+
+  it('rejects a credential-shaped document id in an otherwise recommitted receipt', async () => {
+    const receipt = await validReceipt()
+    const value = credentialShapedIds[2][1]
+    receipt.documentId = value
+    receipt.consultations[0]!.documentId = value
+    receipt.decisions[0]!.documentId = value
+    recommitConsultation(receipt.consultations[0]!)
+
+    expect(validateSchema(receipt)).toBe(false)
+    expect(validateModelConsultationReceipt(receipt)).toBe(false)
   })
 
   it('accepts the association object already normalized by the proposal gate', async () => {
@@ -132,6 +176,126 @@ describe('model consultation receipt validation', () => {
     )
     expect(validateModelConsultationReceipt(receipt)).toBe(true)
   })
+
+  it('allows only the bounded marker ordinal used by reference notes', async () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[1]!
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      ledger,
+      model: {
+        identity: {
+          providerId: 'recorded-stub',
+          modelId: 'candidate-picker',
+          modelVersion: '1.0.0',
+          modelDigest: 'd'.repeat(64),
+        },
+        consult: () => ({ candidateId: 'note-body-1' }),
+      },
+    })
+    expect((await gate.decide(point)).status).toBe('consulted')
+    const receipt = ledger.receiptFor(point.documentId)
+
+    expect(validateSchema(receipt), JSON.stringify(validateSchema.errors)).toBe(
+      true,
+    )
+    expect(validateModelConsultationReceipt(receipt)).toBe(true)
+    expect(receipt.consultations[0]!.inputs).toEqual({
+      markerId: 'marker-1',
+      markerOrdinal: '1',
+    })
+  })
+
+  it.each([
+    ['input evidence', 'inputs', 'evidence'],
+    ['candidate payload', 'candidate', 'payload'],
+    ['candidate metadata', 'candidate', 'metadata'],
+    ['candidate value', 'candidate', 'value'],
+  ])(
+    'rejects private data recomitted under an innocuous %s key',
+    async (_name, location, field) => {
+      const receipt = await validReceipt()
+      const consultation = receipt.consultations[0]!
+      if (location === 'inputs')
+        consultation.inputs = { [field]: 'PRIVATE_SOURCE_SENTINEL' }
+      else
+        Object.assign(consultation.candidates[0]!, {
+          [field]: 'PRIVATE_SOURCE_SENTINEL',
+        })
+      recommitConsultation(consultation)
+
+      expect(validateSchema(receipt)).toBe(false)
+      expect(validateModelConsultationReceipt(receipt)).toBe(false)
+    },
+  )
+
+  it.each([
+    {
+      name: 'raw source input',
+      mutate: (
+        consultation: Awaited<
+          ReturnType<typeof validReceipt>
+        >['consultations'][number],
+      ) => {
+        consultation.inputs = {
+          nested: { source_text: 'must-not-persist' },
+        }
+      },
+    },
+    {
+      name: 'credential candidate metadata',
+      mutate: (
+        consultation: Awaited<
+          ReturnType<typeof validReceipt>
+        >['consultations'][number],
+      ) => {
+        Object.assign(consultation.candidates[0]!, {
+          apiKey: 'must-not-persist',
+        })
+      },
+    },
+    {
+      name: 'composite credential candidate metadata',
+      mutate: (
+        consultation: Awaited<
+          ReturnType<typeof validReceipt>
+        >['consultations'][number],
+      ) => {
+        Object.assign(consultation.candidates[0]!, {
+          refreshToken: 'must-not-persist',
+        })
+      },
+    },
+    ...[
+      ['normalized token alias', 'TOKEN'],
+      ['separator-obfuscated token alias', 'to_ken'],
+      ['separator-obfuscated API key', 'a_p_i_k_e_y'],
+      ['non-ASCII credential key', 'ｓｅｃｒｅｔ'],
+      ['separator-obfuscated raw source key', 'source_t_e_x_t'],
+    ].map(([name, field]) => ({
+      name,
+      mutate: (
+        consultation: Awaited<
+          ReturnType<typeof validReceipt>
+        >['consultations'][number],
+      ) => {
+        Object.assign(consultation.candidates[0]!, {
+          [field!]: 'must-not-persist',
+        })
+      },
+    })),
+  ])(
+    'rejects $name even when commitments are recomputed',
+    async ({ mutate }) => {
+      const receipt = await validReceipt()
+      mutate(receipt.consultations[0]!)
+      recommitConsultation(receipt.consultations[0]!)
+
+      expect(validateSchema(receipt)).toBe(false)
+      expect(validateModelConsultationReceipt(receipt)).toBe(false)
+    },
+  )
 
   it.each([
     {
@@ -161,6 +325,30 @@ describe('model consultation receipt validation', () => {
       name: 'accepted consultation without a choice',
       mutate: (receipt: Awaited<ReturnType<typeof validReceipt>>) => {
         receipt.consultations[0]!.choice = null as never
+      },
+    },
+    {
+      name: 'consultation without its prompt-template digest',
+      mutate: (receipt: Awaited<ReturnType<typeof validReceipt>>) => {
+        delete (
+          receipt.consultations[0]! as {
+            promptTemplateSha256?: string
+          }
+        ).promptTemplateSha256
+      },
+    },
+    {
+      name: 'malformed prompt-template digest',
+      mutate: (receipt: Awaited<ReturnType<typeof validReceipt>>) => {
+        receipt.consultations[0]!.promptTemplateSha256 = 'not-a-sha256'
+      },
+    },
+    {
+      name: 'model-authored choice label',
+      mutate: (receipt: Awaited<ReturnType<typeof validReceipt>>) => {
+        Object.assign(receipt.consultations[0]!.choice!, {
+          label: 'must-not-persist',
+        })
       },
     },
     {
@@ -212,6 +400,12 @@ describe('model consultation receipt validation', () => {
       name: 'tampered prompt commitment',
       mutate: (receipt: Awaited<ReturnType<typeof validReceipt>>) => {
         receipt.consultations[0]!.promptHash = 'f'.repeat(64)
+      },
+    },
+    {
+      name: 'tampered prompt-template commitment',
+      mutate: (receipt: Awaited<ReturnType<typeof validReceipt>>) => {
+        receipt.consultations[0]!.promptTemplateSha256 = 'f'.repeat(64)
       },
     },
     {
@@ -289,9 +483,7 @@ describe('model consultation receipt validation', () => {
     })
     recommitConsultation(consultation)
 
-    expect(validateSchema(receipt), JSON.stringify(validateSchema.errors)).toBe(
-      true,
-    )
+    expect(validateSchema(receipt)).toBe(false)
     expect(validateModelConsultationReceipt(receipt)).toBe(false)
     expect(() => serializeModelConsultationReceipt(receipt)).toThrow(
       'INVALID_MODEL_CONSULTATION_RECEIPT',

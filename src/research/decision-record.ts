@@ -370,6 +370,14 @@ export type VisualMatchDecision = Omit<
   >
 }
 
+export type PdfCandidateResolutionOrigin =
+  'model-consultation' | 'deterministic-distillation'
+
+export type VerifiedPdfCandidateResolution = {
+  decision: HumanAdjudicationRecord
+  origin: PdfCandidateResolutionOrigin
+}
+
 const QUALITY_DIAGNOSTIC_CODES = new Set<ReconstructionDiagnostic['code']>([
   'OCR_REQUIRED',
   'UNRESOLVED_EQUATION_TRANSCRIPT',
@@ -675,6 +683,8 @@ function diagnosticForDecision(
 function updateNoteRelationship(
   reconstruction: PdfReconstruction,
   decision: HumanAdjudicationRecord,
+  evidenceOrigin:
+    'human-adjudication' | PdfCandidateResolutionOrigin = 'human-adjudication',
 ) {
   if (
     decision.diagnosticCode !== 'AMBIGUOUS_NOTE_MATCH' &&
@@ -750,11 +760,21 @@ function updateNoteRelationship(
         decision.target.regionIds.includes(item.targetRegionId),
     )
     if (!candidate) return false
+    const targetNote = reconstruction.paper.nodes.find(
+      (node) => node.id === candidate.targetNoteId && node.type === 'footnote',
+    )
+    if (
+      !targetNote ||
+      !referenceNode ||
+      (referenceNode.type === 'figure' && !tableCellAnchor)
+    ) {
+      return false
+    }
     targetNoteId = candidate.targetNoteId
     relationship.targetNoteId = candidate.targetNoteId
     relationship.status = 'matched'
     relationship.confidence = candidate.score
-    relationship.evidence = [...candidate.evidence, 'human-adjudication']
+    relationship.evidence = [...candidate.evidence, evidenceOrigin]
     relationship.sourceBoxes = [...candidate.sourceBoxes]
   } else if (decision.resolution.type === 'reclassify-citation') {
     const labels = relationship.label.split(',').filter(Boolean)
@@ -766,7 +786,7 @@ function updateNoteRelationship(
     }
     relationship.targetNoteId = null
     relationship.status = 'citation'
-    relationship.evidence = [...relationship.evidence, 'human-adjudication']
+    relationship.evidence = [...relationship.evidence, evidenceOrigin]
     const bibliographyTargets = new Map<string, string>()
     for (const node of reconstruction.paper.nodes) {
       if (
@@ -855,7 +875,7 @@ function updateNoteRelationship(
   } else if (decision.resolution.type === 'reclassify-plain-text') {
     relationship.targetNoteId = null
     relationship.status = 'plain-text'
-    relationship.evidence = [...relationship.evidence, 'human-adjudication']
+    relationship.evidence = [...relationship.evidence, evidenceOrigin]
   } else {
     return false
   }
@@ -1566,6 +1586,8 @@ function updateVisualMatch(
   reconstruction: PdfReconstruction,
   diagnostic: ReconstructionDiagnostic,
   decision: HumanAdjudicationRecord,
+  evidenceOrigin:
+    'human-adjudication' | PdfCandidateResolutionOrigin = 'human-adjudication',
 ) {
   if (
     (diagnostic.code !== 'AMBIGUOUS_VISUAL_MATCH' &&
@@ -1645,8 +1667,14 @@ function updateVisualMatch(
     confidence: candidate.score,
     evidence: [
       ...candidate.evidence,
-      'human-adjudicated-visual-match',
-      `human-adjudicated-${diagnostic.code.toLocaleLowerCase()}`,
+      evidenceOrigin === 'human-adjudication'
+        ? 'human-adjudicated-visual-match'
+        : evidenceOrigin,
+      evidenceOrigin === 'human-adjudication'
+        ? `human-adjudicated-${diagnostic.code.toLocaleLowerCase()}`
+        : evidenceOrigin === 'model-consultation'
+          ? `model-consulted-${diagnostic.code.toLocaleLowerCase()}`
+          : `deterministically-distilled-${diagnostic.code.toLocaleLowerCase()}`,
     ],
     sourceBoxes: [
       { ...captionBox },
@@ -1759,6 +1787,102 @@ function updateVisualDecoration(
 
 function legalDismissal(diagnostic: ReconstructionDiagnostic) {
   return diagnostic.severity !== 'error'
+}
+
+export function reassessPdfReconstruction(
+  reconstruction: PdfReconstruction,
+  additionalDiagnostics: ReconstructionDiagnostic[] = [],
+) {
+  const assessment = assessPdfCompleteness({
+    pages: reconstruction.pages,
+    sourceSha256: reconstruction.source.sha256,
+    paper: reconstruction.paper,
+    diagnostics: reconstruction.diagnostics,
+    readingOrder: reconstruction.readingOrder,
+    regions: reconstruction.regions,
+    visualRelationships: reconstruction.visualRelationships,
+    assets: reconstruction.assets,
+    citationRelationships: reconstruction.citationRelationships,
+    noteRelationships: reconstruction.noteRelationships,
+    provenance: reconstruction.provenance,
+    lineBoundaryDecisions: reconstruction.lineBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisions:
+      reconstruction.sourceSemanticFlowBoundaryDecisions,
+    sourceSemanticFlowBoundaryDecisionCount:
+      reconstruction.sourceSemanticFlowBoundaryDecisionCount,
+    canonicalHyphenBoundaryDecisions:
+      reconstruction.canonicalHyphenBoundaryDecisions,
+    canonicalHyphenBoundaryDecisionCount:
+      reconstruction.canonicalHyphenBoundaryDecisionCount,
+    unresolvedCorruptingJoinCount: reconstruction.unresolvedCorruptingJoinCount,
+    structurallyConsumedLineBoundaryCount:
+      reconstruction.structurallyConsumedLineBoundaryCount,
+    inlineSpanLedger: {
+      expected: reconstruction.completeness.expectedInlineSpanCount,
+      mapped: reconstruction.completeness.mappedInlineSpanCount,
+    },
+    policy: reconstruction.readiness.policy,
+    reclassifiedNoteReferenceCount: reconstruction.noteRelationships.filter(
+      (relationship) =>
+        relationship.status === 'citation' ||
+        relationship.status === 'plain-text',
+    ).length,
+    reclassifiedCitationCount: reconstruction.noteRelationships.filter(
+      (relationship) => relationship.status === 'citation',
+    ).length,
+  })
+  reconstruction.semanticSignals = assessment.semanticSignals
+  reconstruction.completeness = assessment.completeness
+  reconstruction.diagnostics = [
+    ...assessment.diagnostics,
+    ...additionalDiagnostics,
+  ]
+  reconstruction.readiness = assessment.readiness
+  return reconstruction
+}
+
+export function applyVerifiedPdfCandidateResolutions(
+  reconstruction: PdfReconstruction,
+  resolutions: readonly VerifiedPdfCandidateResolution[],
+) {
+  const result = structuredClone(reconstruction)
+  const applied: HumanAdjudicationRecord[] = []
+
+  for (const { decision: rawDecision, origin } of resolutions) {
+    const parsed = humanAdjudicationRecordSchema.safeParse(rawDecision)
+    if (!parsed.success) continue
+    const decision = normalizedRecord(parsed.data as HumanAdjudicationRecord)
+    const diagnostic = diagnosticForDecision(result, decision)
+    if (!diagnostic) continue
+
+    const legalModelResolution =
+      (decision.diagnosticCode === 'AMBIGUOUS_NOTE_MATCH' &&
+        decision.resolution.type === 'accept-note-match') ||
+      (decision.diagnosticCode === 'AMBIGUOUS_READING_ORDER' &&
+        decision.resolution.type === 'accept-reading-order') ||
+      (decision.diagnosticCode === 'AMBIGUOUS_VISUAL_MATCH' &&
+        decision.resolution.type === 'accept-visual-match')
+    if (!legalModelResolution) continue
+
+    const appliedLegally =
+      updateNoteRelationship(result, decision, origin) ||
+      updateReadingOrder(result, diagnostic, decision) ||
+      updateVisualMatch(result, diagnostic, decision, origin)
+    if (!appliedLegally) continue
+
+    result.diagnostics = result.diagnostics.filter(
+      (candidate) => candidate !== diagnostic,
+    )
+    applied.push(decision)
+  }
+
+  if (applied.length > 0) {
+    result.diagnostics = result.diagnostics.filter(
+      (diagnostic) => !QUALITY_DIAGNOSTIC_CODES.has(diagnostic.code),
+    )
+    reassessPdfReconstruction(result)
+  }
+  return { reconstruction: result, applied }
 }
 
 export function applyHumanDecisionFile(
@@ -1907,55 +2031,15 @@ export function applyHumanDecisionFile(
     applied.push(decision)
   }
 
-  const assessment = assessPdfCompleteness({
-    pages: result.pages,
-    sourceSha256: result.source.sha256,
-    paper: result.paper,
-    diagnostics: result.diagnostics,
-    readingOrder: result.readingOrder,
-    regions: result.regions,
-    visualRelationships: result.visualRelationships,
-    assets: result.assets,
-    citationRelationships: result.citationRelationships,
-    noteRelationships: result.noteRelationships,
-    provenance: result.provenance,
-    lineBoundaryDecisions: result.lineBoundaryDecisions,
-    sourceSemanticFlowBoundaryDecisions:
-      result.sourceSemanticFlowBoundaryDecisions,
-    sourceSemanticFlowBoundaryDecisionCount:
-      result.sourceSemanticFlowBoundaryDecisionCount,
-    canonicalHyphenBoundaryDecisions: result.canonicalHyphenBoundaryDecisions,
-    canonicalHyphenBoundaryDecisionCount:
-      result.canonicalHyphenBoundaryDecisionCount,
-    unresolvedCorruptingJoinCount: result.unresolvedCorruptingJoinCount,
-    structurallyConsumedLineBoundaryCount:
-      result.structurallyConsumedLineBoundaryCount,
-    inlineSpanLedger: {
-      expected: result.completeness.expectedInlineSpanCount,
-      mapped: result.completeness.mappedInlineSpanCount,
-    },
-    policy: result.readiness.policy,
-    reclassifiedNoteReferenceCount: result.noteRelationships.filter(
-      (relationship) =>
-        relationship.status === 'citation' ||
-        relationship.status === 'plain-text',
-    ).length,
-    reclassifiedCitationCount: result.noteRelationships.filter(
-      (relationship) => relationship.status === 'citation',
-    ).length,
-  })
-  result.semanticSignals = assessment.semanticSignals
-  result.completeness = assessment.completeness
-  result.diagnostics = [
-    ...assessment.diagnostics,
-    ...stale.map<ReconstructionDiagnostic>((decision) => ({
+  reassessPdfReconstruction(
+    result,
+    stale.map<ReconstructionDiagnostic>((decision) => ({
       code: 'STALE_HUMAN_DECISION',
       severity: 'warning',
       message: `A saved ${decision.diagnosticCode} decision is stale (${decision.reason}).`,
       target: { ...decision.target, regionIds: [...decision.target.regionIds] },
     })),
-  ]
-  result.readiness = assessment.readiness
+  )
   const countsByDiagnosticCode = applied.reduce<Record<string, number>>(
     (counts, decision) => {
       counts[decision.diagnosticCode] =
@@ -1974,9 +2058,8 @@ export function applyHumanDecisionFile(
       ? {
           visualDecorationReceipts: visualDecorationReceipts.map((receipt) => ({
             ...receipt,
-            newExpectedObjectDenominator:
-              assessment.completeness.sourceAssetCount,
-            resultingCoverage: assessment.completeness.assetCoverage,
+            newExpectedObjectDenominator: result.completeness.sourceAssetCount,
+            resultingCoverage: result.completeness.assetCoverage,
           })),
         }
       : {}),

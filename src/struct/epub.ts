@@ -6,7 +6,9 @@ import {
   type ZipOptions,
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
+import { validateModelConsultationReceipt } from '../research/model-fallback'
 import { sha256HexSync } from './sha256'
+import { structDigest } from './ids'
 import { renderPublicationXhtml } from './xhtml'
 import type { StructDocument } from './types'
 
@@ -161,8 +163,59 @@ function assertXhtmlHrefIntegrity(
   }
 }
 
+function assertStructReceiptIntegrity(document: StructDocument) {
+  const receipt = document.receipt
+  if (
+    receipt.schemaVersion !== document.schemaVersion ||
+    receipt.documentId !== document.documentId ||
+    receipt.sourceSha256 !== document.source.sha256 ||
+    receipt.blockCount !== document.blocks.length ||
+    receipt.assetCount !== document.assets.length ||
+    receipt.relationshipCount !== document.relationships.length ||
+    receipt.diagnosticCount !== document.diagnostics.length ||
+    receipt.textCharacterCount !== receipt.conservation.sourceTextCharacterCount
+  ) {
+    throw new Error('STRUCT_RECEIPT_BINDING_MISMATCH')
+  }
+
+  const modelConsultations = receipt.modelConsultations
+  if (modelConsultations !== undefined) {
+    if (!validateModelConsultationReceipt(modelConsultations)) {
+      throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
+    }
+    if (
+      modelConsultations.consultations.some(
+        ({ status }) => status === 'pending',
+      )
+    ) {
+      throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
+    }
+    if (
+      document.source.format !== 'pdf' ||
+      modelConsultations.sourceSha256 !== document.source.sha256
+    ) {
+      throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
+    }
+    if (modelConsultations.documentId !== document.documentId) {
+      throw new Error('MODEL_CONSULTATION_DOCUMENT_MISMATCH')
+    }
+  }
+
+  const { receipt: _receipt, ...withoutReceipt } = document
+  const expectedGeneratedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: receipt.conservation,
+    ...(modelConsultations ? { modelConsultations } : {}),
+    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  })
+  if (expectedGeneratedSha256 !== receipt.generatedSha256) {
+    throw new Error('STRUCT_RECEIPT_DIGEST_MISMATCH')
+  }
+}
+
 /** Assemble a deterministic EPUB using only the canonical STRUCT contract. */
 export async function buildStructEpub(document: StructDocument) {
+  assertStructReceiptIntegrity(document)
   const identifier = `urn:sha256:${document.receipt.generatedSha256}`
   const language = document.metadata.language ?? 'und'
   const modified = (

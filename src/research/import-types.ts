@@ -1,4 +1,5 @@
 import type { ResearchPaper } from './schema'
+import type { ModelFallbackReceipt } from './model-fallback'
 import type { TableCandidateReceipt } from './table-candidate-provider'
 
 export const MAX_LOCAL_PDF_BYTES = 50 * 1024 * 1024
@@ -1156,6 +1157,7 @@ export type PdfReconstruction = {
   assets: PdfVisualAsset[]
   provenance: Record<string, NodeSourceEvidence>
   humanAdjudications: HumanAdjudicationProvenance
+  modelConsultations?: ModelFallbackReceipt
   diagnostics: ReconstructionDiagnostic[]
   tableCandidateReceipts?: TableCandidateReceipt[]
   semanticSignals: PdfSemanticSignals

@@ -8,11 +8,61 @@ import { sha256HexSync } from './sha256-sync.ts'
  */
 export const MODEL_FALLBACK_SCHEMA_VERSION = '1.0.0' as const
 export const MODEL_ASSISTANCE_DEFAULT_ENABLED = false as const
+/** SHA-256 of `erniesg:model-fallback-structured-decision-protocol:v1`. */
+export const MODEL_FALLBACK_PROMPT_TEMPLATE_SHA256 =
+  '7a407e0fd700f6b9312677011493ed299dbac5962058b0cedd2f9b0b6890eb76' as const
+const EMBEDDED_DETERMINISTIC_RULE_ID =
+  'embedded-deterministic-choice-v1' as const
 
 export const MODEL_FALLBACK_DECISION_CLASSES = Object.freeze({
   captionAssociation: 'candidate-ambiguous-caption-association',
   noteMarkerMatch: 'ambiguous-note-marker-match',
   readingOrderTie: 'reading-order-tie',
+})
+
+export const MODEL_FALLBACK_EVIDENCE_CODES = Object.freeze({
+  captionAssociation: Object.freeze([
+    'bounded-distance',
+    'caption-bounded-envelope-proof',
+    'caption-typography',
+    'column-scope',
+    'horizontal-alignment',
+    'label-sequence',
+    'label-sequence-mismatch',
+    'object-above-caption',
+    'object-below-caption',
+    'same-page-scope',
+    'source-cross-reference',
+  ]),
+  noteMarkerMatch: Object.freeze([
+    'label-exact',
+    'later-endnote-section-scope',
+    'note-follows-reference',
+    'numbering-sequence-next-adjacency',
+    'numbering-sequence-previous-adjacency',
+    'numbering-sequence-start',
+    'page-wide-note-region',
+    'same-column-geometry',
+    'same-page-scope',
+    'typography-explicit-note-marker',
+    'typography-raised-marker',
+    'typography-superscript-glyph',
+  ]),
+  readingOrderTie: Object.freeze([
+    'ambiguous-column-flow',
+    'block-adjacency',
+    'caption-proximity',
+    'column-flow',
+    'column-gutter',
+    'font-metrics',
+    'footnote-band',
+    'indentation-continuity',
+    'margin-note-exclusion',
+    'note-after-body',
+    'page-sequence',
+    'spanning-boundary',
+    'vertical-flow',
+  ]),
 })
 
 export type ModelFallbackDecisionClass = string
@@ -27,7 +77,6 @@ export type ModelFallbackChoice = {
   candidateId: string
   associationId?: string
   order?: number
-  label?: string
 }
 
 export type ModelFallbackDecisionPoint = {
@@ -79,6 +128,7 @@ export type ModelDecisionRequest = {
   sourceSha256: string
   inputs: Record<string, unknown>
   candidates: readonly ModelFallbackCandidate[]
+  promptTemplateSha256: string
   promptHash: string
 }
 
@@ -90,7 +140,6 @@ export type ModelDecisionProposal =
       associationId?: string
       association?: string | { id?: string }
       order?: number
-      label?: string
     }
 
 export type ModelDecisionResponse =
@@ -130,6 +179,7 @@ export type ModelConsultationRecord = {
   candidates: ModelFallbackCandidate[]
   candidateIds: string[]
   model: NormalizedModelIdentity
+  promptTemplateSha256: string
   promptHash: string
   status: ModelConsultationRecordStatus
   choice: ModelFallbackChoice | null
@@ -144,6 +194,10 @@ export type ModelDecisionMetricEvent = {
   decisionClass: ModelFallbackDecisionClass
   outcome: 'deterministic' | 'consulted' | 'review-required'
   consulted: boolean
+  /** Present only for deterministic outcomes. */
+  choice?: ModelFallbackChoice
+  /** Versioned deterministic rule; present only for deterministic outcomes. */
+  deterministicRuleId?: string
 }
 
 export type ModelConsultationMetric = {
@@ -166,6 +220,8 @@ export type ModelFallbackReceipt = {
   consultations: ModelConsultationRecord[]
   decisions: ModelDecisionMetricEvent[]
   metrics: ModelConsultationMetrics
+  /** PDF adapters bind the receipt to the exact materialized semantic state. */
+  semanticStateSha256?: string
 }
 
 export type ModelDecisionOutcome = {
@@ -216,7 +272,26 @@ type InternalFixture = ModelFallbackFixture & {
 }
 
 const HASH = /^[a-f0-9]{64}$/u
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
+const SAFE_ID_FORMAT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
+const CREDENTIAL_SHAPED_ID_PATTERNS = [
+  /^sk-(?:proj-)?[A-Za-z0-9._:-]{8,}$/iu,
+  /^(?:AKIA|ASIA)[A-Z0-9]{12,}$/u,
+  /^bearer[.:-][A-Za-z0-9._:-]{8,}$/iu,
+  /^eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}$/u,
+  /^(?:-----)?BEGIN[.:-]?(?:(?:RSA|EC|OPENSSH)[.:-]?)?PRIVATE[.:-]?KEY/iu,
+  /^xox[baprs]-[A-Za-z0-9._:-]{8,}$/iu,
+  /^(?:ghp|github_pat)_/iu,
+] as const
+
+function credentialShapedValue(value: string) {
+  return CREDENTIAL_SHAPED_ID_PATTERNS.some((pattern) => pattern.test(value))
+}
+
+const SAFE_ID = {
+  test(value: string) {
+    return SAFE_ID_FORMAT.test(value) && !credentialShapedValue(value)
+  },
+}
 const FORBIDDEN_MODEL_KEYS = new Set([
   'text',
   'content',
@@ -234,31 +309,81 @@ const FORBIDDEN_MODEL_KEYS = new Set([
   'width',
   'height',
 ])
+const FORBIDDEN_MODEL_KEYS_NORMALIZED = new Set([
+  'text',
+  'content',
+  'sourcetext',
+  'generatedtext',
+  'alttext',
+  'html',
+  'markdown',
+  'bytes',
+  'assetbytes',
+  'bounds',
+  'assetbounds',
+  'x',
+  'y',
+  'width',
+  'height',
+])
+const FORBIDDEN_EVIDENCE_KEYS_NORMALIZED = new Set([
+  'text',
+  'content',
+  'sourcetext',
+  'rawtext',
+  'rawcontent',
+  'generatedtext',
+  'alttext',
+  'html',
+  'markdown',
+  'bytes',
+  'assetbytes',
+  'pdfbytes',
+  'apikey',
+  'authorization',
+  'accesstoken',
+  'authtoken',
+  'bearertoken',
+  'password',
+  'secret',
+  'credential',
+  'credentials',
+  'clientsecret',
+  'privatekey',
+])
+const FORBIDDEN_EVIDENCE_KEY_FRAGMENTS = [
+  'apikey',
+  'authorization',
+  'credential',
+  'passphrase',
+  'password',
+  'privatekey',
+  'secret',
+]
 
-function forbiddenModelField(key: string) {
-  const normalized = key
+function normalizedFieldKey(key: string) {
+  return key
     .normalize('NFKC')
     .replace(/[^A-Za-z0-9]/gu, '')
     .toLowerCase()
+}
+
+function forbiddenModelField(key: string) {
   return (
     FORBIDDEN_MODEL_KEYS.has(key) ||
-    new Set([
-      'text',
-      'content',
-      'sourcetext',
-      'generatedtext',
-      'alttext',
-      'html',
-      'markdown',
-      'bytes',
-      'assetbytes',
-      'bounds',
-      'assetbounds',
-      'x',
-      'y',
-      'width',
-      'height',
-    ]).has(normalized)
+    FORBIDDEN_MODEL_KEYS_NORMALIZED.has(normalizedFieldKey(key))
+  )
+}
+
+function forbiddenEvidenceKey(key: string) {
+  const normalized = normalizedFieldKey(key)
+  return (
+    !SAFE_ID.test(key) ||
+    FORBIDDEN_EVIDENCE_KEYS_NORMALIZED.has(normalized) ||
+    normalized.includes('token') ||
+    FORBIDDEN_EVIDENCE_KEY_FRAGMENTS.some((fragment) =>
+      normalized.includes(fragment),
+    )
   )
 }
 
@@ -304,7 +429,7 @@ function finiteNonNegative(value: unknown): value is number {
 }
 
 function boundedId(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 256
+  return typeof value === 'string' && SAFE_ID.test(value)
 }
 
 function ownDataKeys(value: object): string[] | null {
@@ -373,7 +498,44 @@ function isCanonicalJsonValue(
   }
 }
 
+function forbiddenEvidenceField(value: unknown, path = ''): string | null {
+  if (typeof value === 'string' && credentialShapedValue(value))
+    return path || '$'
+  if (Array.isArray(value)) {
+    for (const [index, child] of value.entries()) {
+      const found = forbiddenEvidenceField(child, `${path}[${index}]`)
+      if (found) return found
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  const keys = ownDataKeys(value)
+  if (!keys) return null
+  for (const key of keys) {
+    if (forbiddenEvidenceKey(key)) return `${path}.${key}`
+    const child = Object.getOwnPropertyDescriptor(value, key)?.value
+    const found = forbiddenEvidenceField(child, `${path}.${key}`)
+    if (found) return found
+  }
+  return null
+}
+
 function normalizedIdentity(identity: ModelIdentity | undefined) {
+  if (
+    (identity?.providerId !== undefined &&
+      identity.provider !== undefined &&
+      identity.providerId !== identity.provider) ||
+    (identity?.modelId !== undefined &&
+      identity.id !== undefined &&
+      identity.modelId !== identity.id) ||
+    (identity?.modelVersion !== undefined &&
+      identity.version !== undefined &&
+      identity.modelVersion !== identity.version) ||
+    (identity?.modelDigest !== undefined &&
+      identity.digest !== undefined &&
+      identity.modelDigest !== identity.digest)
+  )
+    throw new Error('CONFLICTING_MODEL_IDENTITY')
   const providerId = identity?.providerId ?? identity?.provider
   const modelId = identity?.modelId ?? identity?.id
   const modelVersion = identity?.modelVersion ?? identity?.version
@@ -426,9 +588,430 @@ function candidateIds(candidates: readonly ModelFallbackCandidate[]) {
   return ids
 }
 
+const MAX_MODEL_CANDIDATES = 64
+const MAX_MODEL_ID_LIST = 256
+const MAX_MODEL_EVIDENCE_CODES = 64
+const PDF_VISUAL_KINDS = new Set(['figure', 'table', 'equation'])
+const PDF_REGION_KINDS = new Set([
+  'body',
+  'spanning',
+  'header',
+  'footer',
+  'page-number',
+  'side',
+  'chart-label',
+  'figure',
+  'equation',
+  'caption',
+  'footnote',
+  'endnote',
+])
+const PDF_REGION_COLUMNS = new Set(['single', 'left', 'right', 'span'])
+const READING_ORDER_AMBIGUITY_CLASSES = new Set([
+  'two-column-with-spanning-float',
+  'single-column-with-margin-notes',
+  'mixed-single-two-column',
+  'dense-reference-section',
+  'footnote-band',
+  'sparse-column-gutter',
+  'fragmented-inline-cluster',
+  'unspecified',
+])
+
+function exactDataObject(value: unknown, keys: readonly string[]) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const actual = ownDataKeys(value)
+  return (
+    actual !== null &&
+    actual.length === keys.length &&
+    keys.every((key) => actual.includes(key))
+  )
+}
+
+function unitInterval(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
+  )
+}
+
+function boundedInteger(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= 1_000_000
+  )
+}
+
+function normalizedIdList(value: unknown, allowEmpty = false) {
+  if (
+    !Array.isArray(value) ||
+    !isCanonicalJsonValue(value) ||
+    value.length > MAX_MODEL_ID_LIST ||
+    (!allowEmpty && value.length === 0) ||
+    !value.every((entry) => typeof entry === 'string' && SAFE_ID.test(entry)) ||
+    new Set(value).size !== value.length
+  )
+    return null
+  return [...value] as string[]
+}
+
+function normalizedEvidenceCodeList(
+  value: unknown,
+  allowedValues: readonly string[],
+) {
+  if (
+    !Array.isArray(value) ||
+    !isCanonicalJsonValue(value) ||
+    value.length > MAX_MODEL_EVIDENCE_CODES ||
+    !value.every((entry) => typeof entry === 'string')
+  )
+    return null
+  const codes = value as string[]
+  const allowed = new Set(allowedValues)
+  if (
+    codes.some((code) => !allowed.has(code)) ||
+    new Set(codes).size !== codes.length ||
+    codes.some((code, index) => index > 0 && codes[index - 1]! >= code)
+  )
+    return null
+  return [...codes]
+}
+
+type NormalizedConsultationEvidence = {
+  inputs: Record<string, unknown>
+  candidates: ModelFallbackCandidate[]
+}
+
+/**
+ * Positive wire codecs are the privacy boundary. Only these freshly projected
+ * fields may reach a provider or a durable receipt.
+ */
+function normalizeConsultationEvidence(
+  point: Pick<
+    ModelFallbackDecisionPoint,
+    'decisionClass' | 'inputs' | 'candidates'
+  >,
+): NormalizedConsultationEvidence | null {
+  if (
+    !Array.isArray(point.candidates) ||
+    point.candidates.length === 0 ||
+    point.candidates.length > MAX_MODEL_CANDIDATES ||
+    !isCanonicalJsonValue(point.inputs) ||
+    !isCanonicalJsonValue(point.candidates)
+  )
+    return null
+
+  if (
+    point.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation
+  ) {
+    if (exactDataObject(point.inputs, ['figureId', 'captionRegion'])) {
+      if (
+        typeof point.inputs.figureId !== 'string' ||
+        !SAFE_ID.test(point.inputs.figureId) ||
+        typeof point.inputs.captionRegion !== 'string' ||
+        !SAFE_ID.test(point.inputs.captionRegion)
+      )
+        return null
+      const candidates: ModelFallbackCandidate[] = []
+      for (const candidate of point.candidates) {
+        if (exactDataObject(candidate, ['id', 'associationId'])) {
+          if (
+            typeof candidate.id !== 'string' ||
+            !SAFE_ID.test(candidate.id) ||
+            typeof candidate.associationId !== 'string' ||
+            !SAFE_ID.test(candidate.associationId)
+          )
+            return null
+          candidates.push({
+            id: candidate.id,
+            associationId: candidate.associationId,
+          })
+          continue
+        }
+        const association = candidate.association as
+          Record<string, unknown> | undefined
+        if (
+          !exactDataObject(candidate, ['id', 'association']) ||
+          typeof candidate.id !== 'string' ||
+          !SAFE_ID.test(candidate.id) ||
+          !exactDataObject(association, ['id']) ||
+          typeof association?.id !== 'string' ||
+          !SAFE_ID.test(association.id)
+        )
+          return null
+        candidates.push({
+          id: candidate.id,
+          association: { id: association.id },
+        })
+      }
+      return {
+        inputs: {
+          figureId: point.inputs.figureId,
+          captionRegion: point.inputs.captionRegion,
+        },
+        candidates,
+      }
+    }
+
+    if (
+      !exactDataObject(point.inputs, [
+        'diagnostic_code',
+        'relationship_id',
+        'caption_region_id',
+        'kind',
+        'confidence',
+        'candidate_count',
+      ]) ||
+      point.inputs.diagnostic_code !== 'AMBIGUOUS_VISUAL_MATCH' ||
+      typeof point.inputs.relationship_id !== 'string' ||
+      !SAFE_ID.test(point.inputs.relationship_id) ||
+      typeof point.inputs.caption_region_id !== 'string' ||
+      !SAFE_ID.test(point.inputs.caption_region_id) ||
+      typeof point.inputs.kind !== 'string' ||
+      !PDF_VISUAL_KINDS.has(point.inputs.kind) ||
+      !unitInterval(point.inputs.confidence) ||
+      !boundedInteger(point.inputs.candidate_count) ||
+      point.inputs.candidate_count !== point.candidates.length
+    )
+      return null
+    const candidates: ModelFallbackCandidate[] = []
+    for (const candidate of point.candidates) {
+      if (
+        !exactDataObject(candidate, [
+          'id',
+          'score',
+          'kind',
+          'region_ids',
+          'line_ids',
+          'object_ids',
+          'asset_ids',
+          'evidence_codes',
+        ]) ||
+        typeof candidate.id !== 'string' ||
+        !SAFE_ID.test(candidate.id) ||
+        !unitInterval(candidate.score) ||
+        candidate.kind !== point.inputs.kind
+      )
+        return null
+      const regionIds = normalizedIdList(candidate.region_ids)
+      const lineIds = normalizedIdList(candidate.line_ids, true)
+      const objectIds = normalizedIdList(candidate.object_ids)
+      const assetIds = normalizedIdList(candidate.asset_ids)
+      const evidenceCodes = normalizedEvidenceCodeList(
+        candidate.evidence_codes,
+        MODEL_FALLBACK_EVIDENCE_CODES.captionAssociation,
+      )
+      if (!regionIds || !lineIds || !objectIds || !assetIds || !evidenceCodes)
+        return null
+      candidates.push({
+        id: candidate.id,
+        score: candidate.score,
+        kind: candidate.kind,
+        region_ids: regionIds,
+        line_ids: lineIds,
+        object_ids: objectIds,
+        asset_ids: assetIds,
+        evidence_codes: evidenceCodes,
+      })
+    }
+    return { inputs: clone(point.inputs), candidates }
+  }
+
+  if (point.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch) {
+    if (exactDataObject(point.inputs, ['markerId', 'markerOrdinal'])) {
+      if (
+        typeof point.inputs.markerId !== 'string' ||
+        !SAFE_ID.test(point.inputs.markerId) ||
+        typeof point.inputs.markerOrdinal !== 'string' ||
+        !/^[1-9][0-9]{0,5}$/u.test(point.inputs.markerOrdinal)
+      )
+        return null
+      const candidates: ModelFallbackCandidate[] = []
+      for (const candidate of point.candidates) {
+        if (
+          !exactDataObject(candidate, ['id', 'targetId']) ||
+          typeof candidate.id !== 'string' ||
+          !SAFE_ID.test(candidate.id) ||
+          typeof candidate.targetId !== 'string' ||
+          !SAFE_ID.test(candidate.targetId)
+        )
+          return null
+        candidates.push({ id: candidate.id, targetId: candidate.targetId })
+      }
+      return { inputs: clone(point.inputs), candidates }
+    }
+
+    if (
+      !exactDataObject(point.inputs, [
+        'diagnostic_code',
+        'relationship_id',
+        'reference_region_id',
+        'confidence',
+        'threshold',
+        'candidate_count',
+      ]) ||
+      point.inputs.diagnostic_code !== 'AMBIGUOUS_NOTE_MATCH' ||
+      typeof point.inputs.relationship_id !== 'string' ||
+      !SAFE_ID.test(point.inputs.relationship_id) ||
+      typeof point.inputs.reference_region_id !== 'string' ||
+      !SAFE_ID.test(point.inputs.reference_region_id) ||
+      !unitInterval(point.inputs.confidence) ||
+      !unitInterval(point.inputs.threshold) ||
+      !boundedInteger(point.inputs.candidate_count) ||
+      point.inputs.candidate_count !== point.candidates.length
+    )
+      return null
+    const candidates: ModelFallbackCandidate[] = []
+    for (const candidate of point.candidates) {
+      if (
+        !exactDataObject(candidate, [
+          'id',
+          'associationId',
+          'note_id',
+          'region_id',
+          'score',
+          'evidence_codes',
+        ]) ||
+        typeof candidate.id !== 'string' ||
+        !SAFE_ID.test(candidate.id) ||
+        typeof candidate.associationId !== 'string' ||
+        !SAFE_ID.test(candidate.associationId) ||
+        candidate.associationId !== candidate.note_id ||
+        typeof candidate.note_id !== 'string' ||
+        !SAFE_ID.test(candidate.note_id) ||
+        typeof candidate.region_id !== 'string' ||
+        !SAFE_ID.test(candidate.region_id) ||
+        !unitInterval(candidate.score)
+      )
+        return null
+      const evidenceCodes = normalizedEvidenceCodeList(
+        candidate.evidence_codes,
+        MODEL_FALLBACK_EVIDENCE_CODES.noteMarkerMatch,
+      )
+      if (!evidenceCodes) return null
+      candidates.push({
+        id: candidate.id,
+        associationId: candidate.associationId,
+        note_id: candidate.note_id,
+        region_id: candidate.region_id,
+        score: candidate.score,
+        evidence_codes: evidenceCodes,
+      })
+    }
+    return { inputs: clone(point.inputs), candidates }
+  }
+
+  if (point.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie) {
+    if (exactDataObject(point.inputs, ['regionIds'])) {
+      const regionIds = normalizedIdList(point.inputs.regionIds)
+      if (!regionIds) return null
+      const candidates: ModelFallbackCandidate[] = []
+      for (const candidate of point.candidates) {
+        if (
+          !exactDataObject(candidate, ['id', 'order']) ||
+          typeof candidate.id !== 'string' ||
+          !SAFE_ID.test(candidate.id) ||
+          !boundedInteger(candidate.order) ||
+          candidate.order > 63
+        )
+          return null
+        candidates.push({ id: candidate.id, order: candidate.order })
+      }
+      return { inputs: { regionIds }, candidates }
+    }
+
+    if (
+      !exactDataObject(point.inputs, [
+        'diagnostic_code',
+        'page',
+        'ambiguity_class',
+        'confidence',
+        'threshold',
+        'candidate_count',
+      ]) ||
+      point.inputs.diagnostic_code !== 'AMBIGUOUS_READING_ORDER' ||
+      !boundedInteger(point.inputs.page) ||
+      typeof point.inputs.ambiguity_class !== 'string' ||
+      !READING_ORDER_AMBIGUITY_CLASSES.has(point.inputs.ambiguity_class) ||
+      !unitInterval(point.inputs.confidence) ||
+      !unitInterval(point.inputs.threshold) ||
+      !boundedInteger(point.inputs.candidate_count) ||
+      point.inputs.candidate_count !== point.candidates.length
+    )
+      return null
+    const candidates: ModelFallbackCandidate[] = []
+    for (const candidate of point.candidates) {
+      if (
+        !exactDataObject(candidate, [
+          'id',
+          'region_ids',
+          'regions',
+          'evidence_codes',
+        ]) ||
+        typeof candidate.id !== 'string' ||
+        !SAFE_ID.test(candidate.id)
+      )
+        return null
+      const regionIds = normalizedIdList(candidate.region_ids)
+      if (
+        !Array.isArray(candidate.regions) ||
+        !isCanonicalJsonValue(candidate.regions) ||
+        candidate.regions.length !== regionIds?.length
+      )
+        return null
+      const regions: Array<{
+        id: string
+        kind: string
+        column: string
+        page: number
+      }> = []
+      for (const [index, region] of candidate.regions.entries()) {
+        const regionRecord = region as Record<string, unknown>
+        if (
+          !exactDataObject(regionRecord, ['id', 'kind', 'column', 'page']) ||
+          typeof regionRecord.id !== 'string' ||
+          !SAFE_ID.test(regionRecord.id) ||
+          regionRecord.id !== regionIds?.[index] ||
+          typeof regionRecord.kind !== 'string' ||
+          !PDF_REGION_KINDS.has(regionRecord.kind) ||
+          typeof regionRecord.column !== 'string' ||
+          !PDF_REGION_COLUMNS.has(regionRecord.column) ||
+          !boundedInteger(regionRecord.page)
+        )
+          return null
+        regions.push({
+          id: regionRecord.id,
+          kind: regionRecord.kind,
+          column: regionRecord.column,
+          page: regionRecord.page,
+        })
+      }
+      const evidenceCodes = normalizedEvidenceCodeList(
+        candidate.evidence_codes,
+        MODEL_FALLBACK_EVIDENCE_CODES.readingOrderTie,
+      )
+      if (!regionIds || !evidenceCodes) return null
+      candidates.push({
+        id: candidate.id,
+        region_ids: regionIds,
+        regions,
+        evidence_codes: evidenceCodes,
+      })
+    }
+    return { inputs: clone(point.inputs), candidates }
+  }
+
+  return null
+}
+
 function normalizedFixturePoint(
   point: ModelFallbackDecisionPoint,
 ): ModelFallbackDecisionPoint {
+  const evidence = normalizeConsultationEvidence(point)
   if (
     !point ||
     typeof point !== 'object' ||
@@ -437,13 +1020,11 @@ function normalizedFixturePoint(
     !boundedId(point.documentId) ||
     !boundedId(point.decisionId) ||
     !boundedId(point.decisionClass) ||
-    !receiptRecord(point.inputs) ||
-    !isCanonicalJsonValue(point.inputs) ||
-    !isCanonicalJsonValue(point.candidates)
+    !evidence
   )
     throw new Error('INVALID_DISTILLATION_FIXTURE')
   try {
-    candidateIds(point.candidates)
+    candidateIds(evidence.candidates)
   } catch {
     throw new Error('INVALID_DISTILLATION_FIXTURE')
   }
@@ -458,8 +1039,8 @@ function normalizedFixturePoint(
     decisionId: point.decisionId,
     decisionClass: point.decisionClass,
     sourceSha256,
-    inputs: clone(point.inputs),
-    candidates: point.candidates.map((candidate) => clone(candidate)),
+    inputs: clone(evidence.inputs),
+    candidates: evidence.candidates.map((candidate) => clone(candidate)),
   }
 }
 
@@ -564,7 +1145,6 @@ function candidateChoice(
             ? {}
             : { associationId: value.associationId }),
           ...(value.order === undefined ? {} : { order: value.order }),
-          ...(value.label === undefined ? {} : { label: value.label }),
         }),
   }
   if (
@@ -582,16 +1162,13 @@ function candidateChoice(
       code: 'MODEL_AUTHORED_ORDER',
       message: 'The model cannot author an order outside the candidate.',
     }
-  if (choice.label !== undefined && choice.label !== candidate.label)
-    return {
-      status: 'rejected',
-      code: 'MODEL_AUTHORED_LABEL',
-      message: 'The model cannot author a label outside the candidate.',
-    }
   return { status: 'accepted', choice }
 }
 
-function forbiddenKey(value: unknown, path = ''): string | null {
+function forbiddenKey(
+  value: unknown,
+  path = '',
+): { key: string; path: string } | null {
   if (Array.isArray(value)) {
     for (const [index, child] of value.entries()) {
       const found = forbiddenKey(child, `${path}[${index}]`)
@@ -603,7 +1180,7 @@ function forbiddenKey(value: unknown, path = ''): string | null {
   const keys = ownDataKeys(value)
   if (!keys) return null
   for (const key of keys) {
-    if (forbiddenModelField(key)) return `${path}.${key}`
+    if (forbiddenModelField(key)) return { key, path: `${path}.${key}` }
     const child = Object.getOwnPropertyDescriptor(value, key)?.value
     const found = forbiddenKey(child, `${path}.${key}`)
     if (found) return found
@@ -688,16 +1265,18 @@ export function verifyModelDecisionProposal(
   }
   const forbidden = forbiddenKey(proposal)
   if (forbidden) {
-    const field = forbidden.split('.').at(-1)
+    const normalizedField = normalizedFieldKey(forbidden.key)
     return {
       status: 'rejected',
       code:
-        field === 'bytes' || field === 'assetBytes'
+        normalizedField === 'bytes' || normalizedField === 'assetbytes'
           ? 'MODEL_AUTHORED_ASSET_BYTES'
-          : field === 'bounds' || field === 'assetBounds'
+          : ['bounds', 'assetbounds', 'x', 'y', 'width', 'height'].includes(
+                normalizedField,
+              )
             ? 'MODEL_AUTHORED_ASSET_BOUNDS'
             : 'MODEL_AUTHORED_TEXT',
-      message: `Model output contains forbidden authored field ${field}.`,
+      message: `Model output contains forbidden authored field ${forbidden.path}.`,
     }
   }
   if (typeof proposal === 'string') return candidateChoice(point, proposal)
@@ -713,7 +1292,6 @@ export function verifyModelDecisionProposal(
     'associationId',
     'association',
     'order',
-    'label',
   ])
   const proposalKeys = ownDataKeys(proposal)
   const unknown = proposalKeys?.find((key) => !allowed.has(key))
@@ -829,34 +1407,36 @@ export function verifyModelDecisionProposal(
       code: 'INVALID_MODEL_PROPOSAL',
       message: 'A candidate order must be finite.',
     }
-  if (proposal.label !== undefined && typeof proposal.label !== 'string')
-    return {
-      status: 'rejected',
-      code: 'INVALID_MODEL_PROPOSAL',
-      message: 'A candidate label must be deterministic text.',
-    }
   return candidateChoice(point, {
     candidateId,
     ...(associationId === undefined ? {} : { associationId }),
     ...(proposal.order === undefined ? {} : { order: proposal.order }),
-    ...(proposal.label === undefined ? {} : { label: proposal.label }),
   })
 }
 
-function modelRequest(point: ModelFallbackDecisionPoint): ModelDecisionRequest {
-  const sourceSha256 = normalizedSourceHash(point)
-  const inputs = clone(point.inputs)
-  const candidates = point.candidates.map((candidate) => clone(candidate))
-  const promptHash = hash({
-    schemaVersion: MODEL_FALLBACK_SCHEMA_VERSION,
-    documentId: point.documentId,
-    decisionId: point.decisionId,
-    decisionClass: point.decisionClass,
-    sourceSha256,
-    inputs,
-    candidates,
+function modelPromptHash(request: Omit<ModelDecisionRequest, 'promptHash'>) {
+  return hash({
+    schemaVersion: request.schemaVersion,
+    documentId: request.documentId,
+    decisionId: request.decisionId,
+    decisionClass: request.decisionClass,
+    sourceSha256: request.sourceSha256,
+    inputs: request.inputs,
+    candidates: request.candidates,
+    promptTemplateSha256: request.promptTemplateSha256,
   })
-  return {
+}
+
+function modelRequest(
+  point: ModelFallbackDecisionPoint,
+  promptTemplateSha256: string,
+): ModelDecisionRequest {
+  const sourceSha256 = normalizedSourceHash(point)
+  const evidence = normalizeConsultationEvidence(point)
+  if (!evidence) throw new Error('UNSAFE_MODEL_DECISION_EVIDENCE')
+  const inputs = clone(evidence.inputs)
+  const candidates = evidence.candidates.map((candidate) => clone(candidate))
+  const request = {
     schemaVersion: MODEL_FALLBACK_SCHEMA_VERSION,
     documentId: point.documentId,
     decisionId: point.decisionId,
@@ -864,7 +1444,11 @@ function modelRequest(point: ModelFallbackDecisionPoint): ModelDecisionRequest {
     sourceSha256,
     inputs,
     candidates,
-    promptHash,
+    promptTemplateSha256,
+  }
+  return {
+    ...request,
+    promptHash: modelPromptHash(request),
   }
 }
 
@@ -939,12 +1523,30 @@ export class DistillationLedger {
     { id: string; rule: ModelFallbackDeterministicRule }
   >()
 
+  private publicFixture(fixture: InternalFixture): ModelFallbackFixture {
+    const { point: _point, ...publicFixture } = fixture
+    return clone(publicFixture)
+  }
+
+  private reopenClass(decisionClass: string, diagnosticCode: string) {
+    this.rules.delete(decisionClass)
+    for (const fixture of this.fixtures.values()) {
+      if (fixture.decisionClass !== decisionClass) continue
+      fixture.resolution = 'model-consulted'
+      delete fixture.deterministicRuleId
+      fixture.rejectionPath = {
+        status: 'review-required',
+        diagnosticCode,
+      }
+    }
+  }
+
   registerFixture(point: ModelFallbackDecisionPoint): ModelFallbackFixture {
     const fixturePoint = normalizedFixturePoint(point)
     const sourceSha256 = fixturePoint.sourceSha256!
     const id = `fixture-${hash(fixturePoint).slice(0, 24)}`
     const existing = this.fixtures.get(id)
-    if (existing) return clone(existing)
+    if (existing) return this.publicFixture(existing)
     const fixture: InternalFixture = {
       schemaVersion: MODEL_FALLBACK_SCHEMA_VERSION,
       id,
@@ -953,9 +1555,7 @@ export class DistillationLedger {
       decisionClass: fixturePoint.decisionClass,
       sourceSha256,
       ambiguity: {
-        reason:
-          point.reason ??
-          'deterministic evidence left multiple candidates open',
+        reason: 'deterministic evidence left multiple candidates open',
         inputs: clone(fixturePoint.inputs),
         candidateIds: fixturePoint.candidates.map(
           ({ id: candidateId }) => candidateId,
@@ -984,7 +1584,10 @@ export class DistillationLedger {
         : verifyModelDecisionProposal(fixture.point, resolved)
       if (!result || result.status !== 'accepted') {
         failureCode ??= `DISTILLATION_RULE_${result?.code ?? 'ERROR'}`
-        this.rules.delete(fixturePoint.decisionClass)
+        this.reopenClass(
+          fixturePoint.decisionClass,
+          'DISTILLATION_RULE_REOPENED',
+        )
         fixture.rejectionPath = {
           status: 'review-required',
           diagnosticCode: failureCode,
@@ -999,12 +1602,14 @@ export class DistillationLedger {
       }
     }
     this.fixtures.set(id, fixture)
-    return clone(fixture)
+    return this.publicFixture(fixture)
   }
 
   recordModelPath(fixtureId: string, choice: ModelFallbackChoice | null) {
     const fixture = this.fixtures.get(fixtureId)
     if (!fixture) return
+    fixture.resolution = 'model-consulted'
+    delete fixture.deterministicRuleId
     fixture.modelPath = { status: 'model-consulted', choice: clone(choice) }
     fixture.rejectionPath = {
       status: 'review-required',
@@ -1017,6 +1622,8 @@ export class DistillationLedger {
   recordRejection(fixtureId: string, diagnosticCode: string) {
     const fixture = this.fixtures.get(fixtureId)
     if (!fixture) return
+    fixture.resolution = 'model-consulted'
+    delete fixture.deterministicRuleId
     fixture.rejectionPath = { status: 'review-required', diagnosticCode }
   }
 
@@ -1039,10 +1646,12 @@ export class DistillationLedger {
     point: ModelFallbackDecisionPoint,
     diagnosticCode: string,
   ) {
+    normalizedFixturePoint(point)
     const installedRule = this.rules.get(point.decisionClass)
     this.rules.delete(point.decisionClass)
     try {
       const fixture = this.registerFixture(point)
+      this.reopenClass(point.decisionClass, 'DISTILLATION_RULE_REOPENED')
       const stored = this.fixtures.get(fixture.id)
       if (stored) {
         stored.resolution = 'model-consulted'
@@ -1052,7 +1661,7 @@ export class DistillationLedger {
           diagnosticCode,
         }
       }
-      return stored ? clone(stored) : fixture
+      return stored ? this.publicFixture(stored) : fixture
     } catch (error) {
       if (installedRule) this.rules.set(point.decisionClass, installedRule)
       throw error
@@ -1067,8 +1676,11 @@ export class DistillationLedger {
   retireClass(
     decisionClass: string,
     rule: ModelFallbackDeterministicRule,
-    ruleId = `rule-${hash({ decisionClass }).slice(0, 16)}`,
+    ruleId: string,
   ) {
+    if (ruleId === undefined) throw new Error('DISTILLATION_RULE_ID_REQUIRED')
+    if (typeof ruleId !== 'string' || !SAFE_ID.test(ruleId))
+      throw new Error('INVALID_DISTILLATION_RULE_ID')
     const fixtures = [...this.fixtures.values()].filter(
       (fixture) => fixture.decisionClass === decisionClass,
     )
@@ -1119,13 +1731,17 @@ export class DistillationLedger {
     return this.rules.get(decisionClass)?.rule
   }
 
+  ruleIdFor(decisionClass: string) {
+    return this.rules.get(decisionClass)?.id
+  }
+
   isRetired(decisionClass: string) {
     return this.rules.has(decisionClass)
   }
 
   fixture(id: string) {
     const fixture = this.fixtures.get(id)
-    return fixture ? clone(fixture) : null
+    return fixture ? this.publicFixture(fixture) : null
   }
 
   fixturesFor(decisionClass?: string) {
@@ -1135,7 +1751,7 @@ export class DistillationLedger {
           ? true
           : fixture.decisionClass === decisionClass,
       )
-      .map((fixture) => clone(fixture))
+      .map((fixture) => this.publicFixture(fixture))
   }
 
   consultationCount(decisionClass?: string) {
@@ -1183,6 +1799,7 @@ export class ModelFallbackLedger {
   private readonly records: ModelConsultationRecord[] = []
   private readonly decisions: ModelDecisionMetricEvent[] = []
   private readonly documentSources = new Map<string, string>()
+  private readonly stableChoices = new Map<string, ModelFallbackChoice>()
   readonly distillation: DistillationLedger
 
   constructor(distillation = new DistillationLedger()) {
@@ -1190,10 +1807,13 @@ export class ModelFallbackLedger {
   }
 
   recordDecision(event: ModelDecisionMetricEvent) {
+    if (!validReceiptDecision(event))
+      throw new Error('INVALID_MODEL_DECISION_METRIC')
     this.decisions.push(clone(event))
   }
 
   bindDocumentSource(documentId: string, sourceSha256: unknown) {
+    if (!boundedId(documentId)) return false
     if (typeof sourceSha256 !== 'string' || !HASH.test(sourceSha256))
       return true
     const existing = this.documentSources.get(documentId)
@@ -1204,10 +1824,62 @@ export class ModelFallbackLedger {
     return existing === sourceSha256
   }
 
+  rememberStableChoices(receipt: ModelFallbackReceipt) {
+    if (
+      !validateModelConsultationReceipt(receipt) ||
+      receipt.consultations.some(({ status }) => status === 'pending')
+    )
+      throw new Error('INVALID_PRIOR_MODEL_CONSULTATION_RECEIPT')
+    if (
+      receipt.sourceSha256 !== null &&
+      !this.bindDocumentSource(receipt.documentId, receipt.sourceSha256)
+    )
+      throw new Error('DOCUMENT_SOURCE_HASH_MISMATCH')
+    for (const consultation of receipt.consultations) {
+      if (consultation.status !== 'accepted' || !consultation.choice) continue
+      const existing = this.stableChoices.get(consultation.requestId)
+      if (existing && stableJson(existing) !== stableJson(consultation.choice))
+        throw new Error('INVALID_PRIOR_MODEL_CONSULTATION_RECEIPT')
+      this.stableChoices.set(consultation.requestId, clone(consultation.choice))
+    }
+  }
+
   beginConsultation(
     request: ModelDecisionRequest,
     model: NormalizedModelIdentity,
   ) {
+    const checkedModel = normalizedIdentity(model)
+    if (!checkedModel || stableJson(checkedModel) !== stableJson(model))
+      throw new Error('INVALID_MODEL_IDENTITY')
+    model = checkedModel
+    const evidence = normalizeConsultationEvidence(
+      decisionPointFromRequest(request),
+    )
+    if (!evidence) throw new Error('UNSAFE_MODEL_DECISION_EVIDENCE')
+    if (
+      typeof request.promptTemplateSha256 !== 'string' ||
+      !HASH.test(request.promptTemplateSha256)
+    )
+      throw new Error('INVALID_PROMPT_TEMPLATE_SHA256')
+    request = {
+      ...request,
+      inputs: evidence.inputs,
+      candidates: evidence.candidates,
+    }
+    if (
+      request.promptHash !==
+      modelPromptHash({
+        schemaVersion: request.schemaVersion,
+        documentId: request.documentId,
+        decisionId: request.decisionId,
+        decisionClass: request.decisionClass,
+        sourceSha256: request.sourceSha256,
+        inputs: request.inputs,
+        candidates: request.candidates,
+        promptTemplateSha256: request.promptTemplateSha256,
+      })
+    )
+      throw new Error('INVALID_MODEL_PROMPT_COMMITMENT')
     if (this.distillation.isRetired(request.decisionClass))
       throw new Error(
         `DISTILLED_CLASS_MAY_NOT_CONSULT:${request.decisionClass}`,
@@ -1237,6 +1909,7 @@ export class ModelFallbackLedger {
       candidates: request.candidates.map((candidate) => clone(candidate)),
       candidateIds: request.candidates.map(({ id }) => id),
       model: clone(model),
+      promptTemplateSha256: request.promptTemplateSha256,
       promptHash: request.promptHash,
       status: 'pending',
       choice: null,
@@ -1260,7 +1933,7 @@ export class ModelFallbackLedger {
         candidate === requestIdValue && status === 'pending',
     )
     if (index < 0) throw new Error('UNKNOWN_MODEL_CONSULTATION_REQUEST')
-    this.records[index] = {
+    const completed = {
       ...this.records[index]!,
       status: patch.status,
       choice: clone(patch.choice),
@@ -1268,7 +1941,10 @@ export class ModelFallbackLedger {
       latencyMs: patch.latencyMs,
       ...(patch.failureCode ? { failureCode: patch.failureCode } : {}),
     }
-    const record = this.records[index]!
+    if (patch.status === 'pending' || !validReceiptConsultation(completed))
+      throw new Error('INVALID_MODEL_CONSULTATION_COMPLETION')
+    this.records[index] = completed
+    const record = completed
     const fixture = this.distillation.fixture(record.fixtureId)
     if (fixture) {
       if (patch.status === 'accepted')
@@ -1312,6 +1988,8 @@ export class ModelFallbackLedger {
     model: NormalizedModelIdentity,
   ) {
     const id = requestId(request, model)
+    const remembered = this.stableChoices.get(id)
+    if (remembered) return clone(remembered)
     const prior = this.records.find(
       (record) => record.requestId === id && record.status === 'accepted',
     )
@@ -1319,10 +1997,13 @@ export class ModelFallbackLedger {
   }
 
   receiptFor(documentId: string): ModelFallbackReceipt {
+    if (!boundedId(documentId)) throw new Error('INVALID_MODEL_DOCUMENT_ID')
     const consultations = this.recordsFor({ documentId })
     const decisions = this.decisionsFor({ documentId })
     const sourceSha256 =
-      consultations[0]?.sourceSha256 ?? (decisions.length > 0 ? null : null)
+      consultations[0]?.sourceSha256 ??
+      this.documentSources.get(documentId) ??
+      null
     return {
       schemaVersion: MODEL_FALLBACK_SCHEMA_VERSION,
       documentId,
@@ -1344,7 +2025,7 @@ export class ModelFallbackLedger {
   retireDecisionClass(
     decisionClass: string,
     rule: ModelFallbackDeterministicRule,
-    ruleId?: string,
+    ruleId: string,
   ) {
     return this.distillation.retireClass(decisionClass, rule, ruleId)
   }
@@ -1364,13 +2045,16 @@ export class ModelFallbackLedger {
 }
 
 export type ModelConsultationGateOptions = {
-  /** False is the safe default; true is explicit owner opt-in for this run. */
+  /** Both flags must be true for explicit owner opt-in on this run. */
   enabled?: boolean
   ownerOptIn?: boolean
   model?: ModelConsultationClient
   modelIdentity?: ModelIdentity
   ledger?: ModelFallbackLedger
   distillation?: DistillationLedger
+  priorReceipt?: ModelFallbackReceipt
+  /** Digest of the exact prompt or structured adapter protocol in use. */
+  promptTemplateSha256?: string
   onRequest?: (request: ModelDecisionRequest) => void
 }
 
@@ -1379,23 +2063,45 @@ export class ModelConsultationGate {
   readonly ledger: ModelFallbackLedger
   private readonly model: ModelConsultationClient | undefined
   private readonly identity: NormalizedModelIdentity | undefined
+  private readonly promptTemplateSha256: string
   private readonly onRequest:
     ((request: ModelDecisionRequest) => void) | undefined
 
   constructor(options: ModelConsultationGateOptions = {}) {
-    this.enabled = options.enabled === true && options.ownerOptIn !== false
+    this.enabled = options.enabled === true && options.ownerOptIn === true
     this.ledger =
       options.ledger ??
       new ModelFallbackLedger(options.distillation ?? new DistillationLedger())
+    if (options.priorReceipt)
+      this.ledger.rememberStableChoices(options.priorReceipt)
     this.model = options.model
-    const identity = options.model?.identity ?? options.modelIdentity
-    this.identity = identity ? normalizedIdentity(identity) : undefined
+    const clientIdentity = options.model?.identity
+      ? normalizedIdentity(options.model.identity)
+      : undefined
+    const pinnedIdentity = options.modelIdentity
+      ? normalizedIdentity(options.modelIdentity)
+      : undefined
+    if (
+      options.model?.identity !== undefined &&
+      options.modelIdentity !== undefined &&
+      (!clientIdentity ||
+        !pinnedIdentity ||
+        stableJson(clientIdentity) !== stableJson(pinnedIdentity))
+    ) {
+      throw new Error('CONFLICTING_MODEL_IDENTITY')
+    }
+    this.identity = clientIdentity ?? pinnedIdentity
+    this.promptTemplateSha256 =
+      options.promptTemplateSha256 ?? MODEL_FALLBACK_PROMPT_TEMPLATE_SHA256
+    if (!HASH.test(this.promptTemplateSha256))
+      throw new Error('INVALID_PROMPT_TEMPLATE_SHA256')
     this.onRequest = options.onRequest
   }
 
   private deterministicOutcome(
     point: ModelFallbackDecisionPoint,
     choice: ModelFallbackChoice,
+    deterministicRuleId: string,
   ): ModelDecisionOutcome {
     this.ledger.recordDecision({
       documentId: point.documentId,
@@ -1403,6 +2109,8 @@ export class ModelConsultationGate {
       decisionClass: point.decisionClass,
       outcome: 'deterministic',
       consulted: false,
+      choice: { candidateId: choice.candidateId },
+      deterministicRuleId,
     })
     return {
       status: 'deterministic',
@@ -1460,13 +2168,33 @@ export class ModelConsultationGate {
     if (!isOpenDecision(point)) {
       const checked = candidateChoice(point, point.deterministicChoice)
       return checked.status === 'accepted'
-        ? this.deterministicOutcome(point, checked.choice)
+        ? this.deterministicOutcome(
+            point,
+            checked.choice,
+            EMBEDDED_DETERMINISTIC_RULE_ID,
+          )
         : this.reviewOutcome(point, checked.code)
     }
 
     const distilled = this.ledger.distillation.ruleFor(point.decisionClass)
     if (distilled) {
-      const distilledPoint = clone(point)
+      if (!receiptRecord(point.inputs) || !isCanonicalJsonValue(point.inputs))
+        return this.reviewOutcome(point, 'INVALID_MODEL_DECISION_INPUTS')
+      if (!validConsultationCandidates(point.candidates))
+        return this.reviewOutcome(point, 'INVALID_MODEL_CANDIDATE_SET')
+      if (
+        forbiddenEvidenceField(point.inputs) !== null ||
+        forbiddenEvidenceField(point.candidates) !== null
+      )
+        return this.reviewOutcome(point, 'UNSAFE_MODEL_DECISION_EVIDENCE')
+      const evidence = normalizeConsultationEvidence(point)
+      if (!evidence)
+        return this.reviewOutcome(point, 'UNSAFE_MODEL_DECISION_EVIDENCE')
+      const distilledPoint = clone({
+        ...point,
+        inputs: evidence.inputs,
+        candidates: evidence.candidates,
+      })
       let distilledChoice: ModelFallbackChoice | string | null
       try {
         distilledChoice = distilled(clone(distilledPoint))
@@ -1483,7 +2211,11 @@ export class ModelConsultationGate {
       }
       const checked = candidateChoice(distilledPoint, distilledChoice)
       if (checked.status === 'accepted')
-        return this.deterministicOutcome(point, checked.choice)
+        return this.deterministicOutcome(
+          point,
+          checked.choice,
+          this.ledger.distillation.ruleIdFor(point.decisionClass)!,
+        )
       const diagnostic = `DISTILLED_RULE_${checked.code}`
       try {
         this.ledger.distillation.recordUncoveredFixture(
@@ -1506,15 +2238,28 @@ export class ModelConsultationGate {
       return this.reviewOutcome(point, 'INVALID_MODEL_DECISION_INPUTS')
     if (!validConsultationCandidates(point.candidates))
       return this.reviewOutcome(point, 'INVALID_MODEL_CANDIDATE_SET')
+    if (
+      forbiddenEvidenceField(point.inputs) !== null ||
+      forbiddenEvidenceField(point.candidates) !== null
+    )
+      return this.reviewOutcome(point, 'UNSAFE_MODEL_DECISION_EVIDENCE')
+    const evidence = normalizeConsultationEvidence(point)
+    if (!evidence)
+      return this.reviewOutcome(point, 'UNSAFE_MODEL_DECISION_EVIDENCE')
+    const consultationPoint = {
+      ...point,
+      inputs: evidence.inputs,
+      candidates: evidence.candidates,
+    }
     try {
-      normalizedSourceHash(point)
+      normalizedSourceHash(consultationPoint)
     } catch (error) {
       return this.reviewOutcome(
         point,
         error instanceof Error ? error.message : 'INVALID_SOURCE_SHA256',
       )
     }
-    const request = modelRequest(point)
+    const request = modelRequest(consultationPoint, this.promptTemplateSha256)
     const requestPoint = decisionPointFromRequest(request)
     let requestIdValue: string
     try {
@@ -1805,7 +2550,7 @@ function exactReceiptKeys(
 }
 
 function receiptId(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 256
+  return typeof value === 'string' && SAFE_ID.test(value)
 }
 
 function receiptHash(value: unknown) {
@@ -1815,11 +2560,7 @@ function receiptHash(value: unknown) {
 function validReceiptChoice(value: unknown) {
   if (!receiptRecord(value)) return false
   if (
-    !exactReceiptKeys(
-      value,
-      ['candidateId'],
-      ['associationId', 'order', 'label'],
-    ) ||
+    !exactReceiptKeys(value, ['candidateId'], ['associationId', 'order']) ||
     !receiptId(value.candidateId)
   )
     return false
@@ -1830,7 +2571,7 @@ function validReceiptChoice(value: unknown) {
     (typeof value.order !== 'number' || !Number.isFinite(value.order))
   )
     return false
-  return !Object.hasOwn(value, 'label') || typeof value.label === 'string'
+  return true
 }
 
 function validReceiptModel(value: unknown) {
@@ -1874,6 +2615,7 @@ function validReceiptConsultation(value: unknown) {
         'candidates',
         'candidateIds',
         'model',
+        'promptTemplateSha256',
         'promptHash',
         'status',
         'choice',
@@ -1894,8 +2636,10 @@ function validReceiptConsultation(value: unknown) {
     !receiptHash(value.sourceSha256) ||
     !receiptRecord(value.inputs) ||
     !isCanonicalJsonValue(value.inputs) ||
+    forbiddenEvidenceField(value.inputs) !== null ||
     !receiptHash(value.inputsHash) ||
     !validReceiptModel(value.model) ||
+    !receiptHash(value.promptTemplateSha256) ||
     !receiptHash(value.promptHash) ||
     !finiteNonNegative(value.costUsd) ||
     (value.latencyMs !== null && !finiteNonNegative(value.latencyMs))
@@ -1903,6 +2647,17 @@ function validReceiptConsultation(value: unknown) {
     return false
 
   if (!Array.isArray(value.candidates) || value.candidates.length === 0)
+    return false
+  const normalizedEvidence = normalizeConsultationEvidence({
+    decisionClass: value.decisionClass as string,
+    inputs: value.inputs,
+    candidates: value.candidates as ModelFallbackCandidate[],
+  })
+  if (
+    !normalizedEvidence ||
+    stableJson(normalizedEvidence.inputs) !== stableJson(value.inputs) ||
+    stableJson(normalizedEvidence.candidates) !== stableJson(value.candidates)
+  )
     return false
   const candidateIdsFromCandidates: string[] = []
   for (const candidate of value.candidates) {
@@ -1915,7 +2670,10 @@ function validReceiptConsultation(value: unknown) {
     candidateIdsFromCandidates.push(candidate.id)
   }
   if (
-    !validConsultationCandidates(value.candidates as ModelFallbackCandidate[])
+    !validConsultationCandidates(
+      value.candidates as ModelFallbackCandidate[],
+    ) ||
+    forbiddenEvidenceField(value.candidates) !== null
   )
     return false
   if (!Array.isArray(value.candidateIds)) return false
@@ -1939,9 +2697,10 @@ function validReceiptConsultation(value: unknown) {
     sourceSha256: value.sourceSha256 as string,
     inputs: value.inputs,
     candidates: value.candidates as ModelFallbackCandidate[],
+    promptTemplateSha256: value.promptTemplateSha256 as string,
     promptHash: value.promptHash as string,
   }
-  const expectedPromptHash = hash({
+  const expectedPromptHash = modelPromptHash({
     schemaVersion: request.schemaVersion,
     documentId: request.documentId,
     decisionId: request.decisionId,
@@ -1949,6 +2708,7 @@ function validReceiptConsultation(value: unknown) {
     sourceSha256: request.sourceSha256,
     inputs: request.inputs,
     candidates: request.candidates,
+    promptTemplateSha256: request.promptTemplateSha256,
   })
   const expectedFixtureId = `fixture-${hash({
     documentId: request.documentId,
@@ -1975,7 +2735,7 @@ function validReceiptConsultation(value: unknown) {
       (item) => (item as Record<string, unknown>).id === choice.candidateId,
     ) as Record<string, unknown> | undefined
     if (!candidate) return false
-    for (const key of ['associationId', 'order', 'label']) {
+    for (const key of ['associationId', 'order']) {
       if (!Object.hasOwn(choice, key)) continue
       const candidateValue =
         key === 'associationId'
@@ -1998,14 +2758,14 @@ function validReceiptConsultation(value: unknown) {
 
 function validReceiptDecision(value: unknown) {
   if (!receiptRecord(value)) return false
+  const baseKeys = [
+    'documentId',
+    'decisionId',
+    'decisionClass',
+    'outcome',
+    'consulted',
+  ] as const
   if (
-    !exactReceiptKeys(value, [
-      'documentId',
-      'decisionId',
-      'decisionClass',
-      'outcome',
-      'consulted',
-    ]) ||
     !receiptId(value.documentId) ||
     !receiptId(value.decisionId) ||
     !receiptId(value.decisionClass) ||
@@ -2013,12 +2773,18 @@ function validReceiptDecision(value: unknown) {
   )
     return false
 
+  if (value.outcome === 'deterministic')
+    return (
+      exactReceiptKeys(value, [...baseKeys, 'choice', 'deterministicRuleId']) &&
+      !value.consulted &&
+      receiptRecord(value.choice) &&
+      exactReceiptKeys(value.choice, ['candidateId']) &&
+      receiptId(value.choice.candidateId) &&
+      receiptId(value.deterministicRuleId)
+    )
+  if (!exactReceiptKeys(value, baseKeys)) return false
   if (value.outcome === 'consulted') return value.consulted
-  return (
-    (value.outcome === 'deterministic' ||
-      value.outcome === 'review-required') &&
-    !value.consulted
-  )
+  return value.outcome === 'review-required' && !value.consulted
 }
 
 function validReceiptMetric(value: unknown) {
@@ -2050,14 +2816,18 @@ export function validateModelConsultationReceipt(
 ): receipt is ModelFallbackReceipt {
   if (!receiptRecord(receipt) || !isCanonicalJsonValue(receipt)) return false
   if (
-    !exactReceiptKeys(receipt, [
-      'schemaVersion',
-      'documentId',
-      'sourceSha256',
-      'consultations',
-      'decisions',
-      'metrics',
-    ]) ||
+    !exactReceiptKeys(
+      receipt,
+      [
+        'schemaVersion',
+        'documentId',
+        'sourceSha256',
+        'consultations',
+        'decisions',
+        'metrics',
+      ],
+      ['semanticStateSha256'],
+    ) ||
     receipt.schemaVersion !== MODEL_FALLBACK_SCHEMA_VERSION ||
     !receiptId(receipt.documentId) ||
     (receipt.sourceSha256 !== null && !receiptHash(receipt.sourceSha256)) ||
@@ -2065,6 +2835,8 @@ export function validateModelConsultationReceipt(
     !receipt.consultations.every(validReceiptConsultation) ||
     !Array.isArray(receipt.decisions) ||
     !receipt.decisions.every(validReceiptDecision) ||
+    (receipt.semanticStateSha256 !== undefined &&
+      !receiptHash(receipt.semanticStateSha256)) ||
     !receiptRecord(receipt.metrics)
   )
     return false
@@ -2204,7 +2976,7 @@ export const MODEL_FALLBACK_REFERENCE_FIXTURES: readonly ModelFallbackDecisionPo
       decisionId: 'note-1',
       decisionClass: MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
       sourceSha256: '2'.repeat(64),
-      inputs: { markerId: 'marker-1', token: '1' },
+      inputs: { markerId: 'marker-1', markerOrdinal: '1' },
       candidates: [
         { id: 'note-body-1', targetId: 'note-1' },
         { id: 'note-body-2', targetId: 'note-2' },

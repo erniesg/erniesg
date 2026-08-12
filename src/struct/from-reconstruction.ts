@@ -6,6 +6,11 @@ import type {
 } from '../research/import-types'
 import type { ResearchNode } from '../research/schema'
 import { recoveryDiagnosticInputs } from '../research/recovery-projection'
+import {
+  validateModelConsultationReceipt,
+  type ModelFallbackReceipt,
+} from '../research/model-fallback'
+import { modelConsultationReceiptMatchesPdfReconstruction } from '../research/model-fallback-pipeline'
 import { structDigest, structId } from './ids'
 import { recoverySummary, toStructDiagnostic } from './recovery'
 import { orderBlocksByLayout, pageLayoutsFromBlocks } from './reading-order'
@@ -34,6 +39,27 @@ function sourceFormat(
   reconstruction: DocumentReconstruction,
 ): StructSourceFormat {
   return reconstruction.source.format === 'docx' ? 'docx' : 'pdf'
+}
+
+function closedModelConsultations(
+  reconstruction: DocumentReconstruction,
+): ModelFallbackReceipt | undefined {
+  if (!isPdf(reconstruction)) return undefined
+  const receipt = reconstruction.modelConsultations
+  if (receipt === undefined) return undefined
+  if (!validateModelConsultationReceipt(receipt))
+    throw new Error('INVALID_MODEL_CONSULTATION_RECEIPT')
+  if (receipt.consultations.some(({ status }) => status === 'pending'))
+    throw new Error('PENDING_MODEL_CONSULTATION_RECEIPT')
+  if (receipt.documentId !== reconstruction.paper.id)
+    throw new Error('MODEL_CONSULTATION_DOCUMENT_MISMATCH')
+  if (receipt.sourceSha256 !== reconstruction.source.sha256)
+    throw new Error('MODEL_CONSULTATION_SOURCE_MISMATCH')
+  if (
+    !modelConsultationReceiptMatchesPdfReconstruction(reconstruction, receipt)
+  )
+    throw new Error('MODEL_CONSULTATION_SEMANTIC_STATE_MISMATCH')
+  return structuredClone(receipt)
 }
 
 function boxEvidence(
@@ -336,6 +362,7 @@ export function buildStructDocument(
   reconstruction: DocumentReconstruction,
 ): StructDocument {
   const pdf = isPdf(reconstruction)
+  const modelConsultations = closedModelConsultations(reconstruction)
   const provenance = reconstruction.provenance ?? {}
   const sourceToStructId = new Map<string, string>()
   const tableCellAnchorsByRelationshipId = new Map<
@@ -1243,6 +1270,7 @@ export function buildStructDocument(
   )
   const withoutReceipt = {
     schemaVersion: '0.1.0' as const,
+    documentId: reconstruction.paper.id,
     source,
     metadata,
     blocks: orderedBlocks,
@@ -1255,13 +1283,16 @@ export function buildStructDocument(
   const generatedSha256 = structDigest({
     ...withoutReceipt,
     conservation,
+    ...(modelConsultations ? { modelConsultations } : {}),
     assets: canonicalAssets.map(({ bytes: _bytes, ...asset }) => asset),
   })
   return {
     ...withoutReceipt,
     receipt: {
       schemaVersion: '0.1.0',
+      documentId: reconstruction.paper.id,
       sourceSha256: source.sha256,
+      ...(modelConsultations ? { modelConsultations } : {}),
       blockCount: orderedBlocks.length,
       assetCount: assets.length,
       relationshipCount: relationships.length,

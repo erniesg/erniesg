@@ -36,6 +36,8 @@ import {
   applyHumanDecisionFile,
   type HumanDecisionFile,
 } from './decision-record'
+import { resolvePdfModelFallbacks } from './model-fallback-pipeline'
+import type { ModelConsultationGateOptions } from './model-fallback'
 import {
   extractPdfLinkAnnotations,
   resolvePdfNamedDestinationEvidence,
@@ -52,6 +54,7 @@ type PdfImportOptions = {
   language?: string
   tableCandidateProvider?: TableCandidateProvider
   allowRemoteTableCandidateProvider?: boolean
+  modelFallback?: ModelConsultationGateOptions
 }
 
 export const MAX_OCR_RASTER_PIXELS = 3_200_000
@@ -1555,9 +1558,15 @@ export async function reconstructPdf(
       },
     })
     throwIfAborted(options.signal)
-    return options.decisionFile
+    const adjudicated = options.decisionFile
       ? applyHumanDecisionFile(reconstruction, options.decisionFile)
       : reconstruction
+    const resolved =
+      options.modelFallback === undefined
+        ? adjudicated
+        : await resolvePdfModelFallbacks(adjudicated, options.modelFallback)
+    throwIfAborted(options.signal)
+    return resolved
   } catch (error) {
     if (options.signal?.aborted) throw cancelledError()
     throw error

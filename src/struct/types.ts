@@ -253,7 +253,10 @@ export type StructRecovery = {
 
 export type StructReceipt = {
   schemaVersion: typeof STRUCT_SCHEMA_VERSION
+  documentId: string
   sourceSha256: string
+  /** Closed, source-bound audit trail for any bounded model decisions. */
+  modelConsultations?: import('../research/model-fallback').ModelFallbackReceipt
   blockCount: number
   assetCount: number
   relationshipCount: number
@@ -291,6 +294,7 @@ export type StructReceipt = {
 
 export type StructDocument = {
   schemaVersion: typeof STRUCT_SCHEMA_VERSION
+  documentId: string
   source: StructSource
   metadata: StructMetadata
   blocks: StructBlock[]

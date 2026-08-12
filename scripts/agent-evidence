@@ -5,11 +5,17 @@ const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { validAssociationAudit } = require("./tools/association-audit-receipt.cjs");
+const { validModelConsultationEvidence } = require("./tools/model-consultation-evidence-receipt.cjs");
 
 const allLanes = [
   {
     "id": "association-audit",
     "command": "node tools/pdf-association-fixture-audit.mjs",
+    "required": true
+  },
+  {
+    "id": "model-consultation",
+    "command": "node --experimental-strip-types --disable-warning=ExperimentalWarning tools/model-consultation-evidence.ts",
     "required": true
   },
   {
@@ -193,6 +199,7 @@ const dirty = sh("git status --short").stdout.trim().length > 0;
 const startedAt = new Date();
 const results = [];
 let associationAudit = null;
+let modelConsultation = null;
 const selection = parseSelection(invocation.argv);
 const largeFiles = largeUntrackedEvidence();
 
@@ -218,6 +225,7 @@ if (selection.error || !selection.lanes || selection.lanes.length === 0) {
     },
     lanes: [],
     association_audit: null,
+    model_consultation: null,
     artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
     caveats: largeFiles.caveats,
     result: "blocked",
@@ -245,6 +253,18 @@ for (const lane of lanes) {
       output += `\n[agent-evidence] invalid association audit receipt: ${redact(error.message)}\n`;
     }
   }
+  if (lane.id === "model-consultation" && exitCode === 0) {
+    try {
+      const candidate = JSON.parse(proc.stdout || "");
+      if (!validModelConsultationEvidence(candidate)) {
+        throw new Error("invalid receipt");
+      }
+      modelConsultation = candidate;
+    } catch (_error) {
+      exitCode = 1;
+      output += "\n[agent-evidence] invalid model-consultation evidence receipt\n";
+    }
+  }
   const logPath = join(outDir, "logs", `${lane.id}.log`);
   writeFileSync(logPath, output);
   results.push({
@@ -260,6 +280,12 @@ const requiredFailures = results
   .filter((lane) => lane.required && lane.exit_code !== 0)
   .map((lane) => lane.id);
 const endedAt = new Date();
+const modelConsultationArtifact = modelConsultation
+  ? [{
+      kind: "model-consultation-evidence",
+      path: results.find(({ id }) => id === "model-consultation").log_path,
+    }]
+  : [];
 const manifest = {
   schema_version: "1",
   run_id: `agent-evidence-${stamp}`,
@@ -280,7 +306,12 @@ const manifest = {
   },
   lanes: results,
   association_audit: associationAudit,
-  artifacts: [{ kind: "manifest", path: join(outDir, "manifest.json") }, ...largeFiles.artifacts],
+  model_consultation: modelConsultation,
+  artifacts: [
+    { kind: "manifest", path: join(outDir, "manifest.json") },
+    ...modelConsultationArtifact,
+    ...largeFiles.artifacts,
+  ],
   caveats: largeFiles.caveats,
   result: requiredFailures.length === 0 ? "passed" : "failed",
   required_failures: requiredFailures,

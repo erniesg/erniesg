@@ -13,6 +13,12 @@ Deploy/IaC hints detected:
 Required secret/env names for deploy contexts:
 - `cloudflare`: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`
 
+Optional non-secret runtime paths:
+
+- `PUBLICATION_BROWSER_SNAPSHOT_ROOT`: absolute executable, disk-backed path
+  for private publication-browser snapshots; defaults beside the repository's
+  `node_modules` directory rather than under the system temporary directory.
+
 Issue ledger:
 
 - Run `rucksack github issues pack --list` to see reusable issue spec packs.

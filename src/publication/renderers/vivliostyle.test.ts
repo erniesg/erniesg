@@ -17,7 +17,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
   PUBLICATION_BROWSER_SNAPSHOT_ROOT,
+  PUBLICATION_BROWSER_CACHE,
   preparePublicationBrowserSnapshot,
+  publicationBrowserSnapshotRootPath,
   publicationBrowserBundleForExecutable,
   publicationPuppeteerBrowserBundleForExecutable,
   publicationPlaywrightPackageIdentityPaths,
@@ -938,6 +940,23 @@ describe('Vivliostyle publication renderer boundary', () => {
           defaultSnapshot.executablePath,
         ),
       ).not.toMatch(/^\.\.(?:\/|$)/u)
+      expect(publicationBrowserSnapshotRootPath({})).toBe(
+        resolve(
+          PUBLICATION_BROWSER_CACHE,
+          '../../..',
+          '.publication-browser-snapshots',
+        ),
+      )
+      expect(
+        publicationBrowserSnapshotRootPath({
+          PUBLICATION_BROWSER_SNAPSHOT_ROOT: resolve(root, 'operator-root'),
+        }),
+      ).toBe(resolve(root, 'operator-root'))
+      expect(() =>
+        publicationBrowserSnapshotRootPath({
+          PUBLICATION_BROWSER_SNAPSHOT_ROOT: 'relative/snapshots',
+        }),
+      ).toThrow(/absolute normalized path/i)
       expect(relative(cache, defaultSnapshot.executablePath)).toMatch(
         /^\.\.(?:\/|$)/u,
       )
@@ -1086,6 +1105,7 @@ describe('Vivliostyle publication renderer boundary', () => {
 
       await writeFile(browser, '#!/bin/sh\necho "changed source cache"\n')
       await expect(prepared.assertUnchanged()).resolves.toBeUndefined()
+      await expect(prepared.verifyUnchanged()).resolves.toBeUndefined()
 
       await chmod(prepared.executablePath, 0o700)
       await writeFile(

@@ -763,6 +763,7 @@ type PreparedPdfRenderer =
       executablePath: string
       publicationBrowser: PublicationBrowserRuntimeEvidence
       assertUnchanged: () => Promise<void>
+      verifyUnchanged: () => Promise<void>
       cleanup: () => Promise<void>
     }
   | {
@@ -770,6 +771,7 @@ type PreparedPdfRenderer =
       executablePath: string
       publicationBrowser: PublicationBrowserRuntimeEvidence
       assertUnchanged: () => Promise<void>
+      verifyUnchanged: () => Promise<void>
       cleanup: () => Promise<void>
     }
 
@@ -1156,6 +1158,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
           await receiptFor(profile, path, pdfRenderer, `${profile}.pdf`),
         )
       }
+      await preparedPdfRenderer.verifyUnchanged()
     } finally {
       await preparedPdfRenderer.cleanup()
     }

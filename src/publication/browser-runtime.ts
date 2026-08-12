@@ -17,12 +17,10 @@ import {
   realpath,
   readdir,
   rmdir,
-  stat,
   symlink,
   unlink,
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
 import {
   basename,
   dirname,
@@ -53,6 +51,7 @@ const PLAYWRIGHT_CORE_BROWSERS_JSON = resolve(
   'browsers.json',
 )
 const NODE_MODULES_ROOT = resolve(dirname(PLAYWRIGHT_PACKAGE_JSON), '..')
+const REPOSITORY_ROOT = resolve(NODE_MODULES_ROOT, '..')
 const PUPPETEER_BROWSERS_PACKAGE_JSON = require.resolve(
   '@puppeteer/browsers/package.json',
 )
@@ -75,10 +74,26 @@ export const PUPPETEER_BROWSER_CACHE = resolve(
   PUBLICATION_BROWSER_CACHE,
   'puppeteer',
 )
-export const PUBLICATION_BROWSER_SNAPSHOT_ROOT = resolve(
-  tmpdir(),
-  `erniesg-publication-browser-snapshots-${process.getuid?.() ?? 'user'}`,
-)
+export function publicationBrowserSnapshotRootPath(
+  environment: { PUBLICATION_BROWSER_SNAPSHOT_ROOT?: string } = process.env,
+) {
+  const configured = environment.PUBLICATION_BROWSER_SNAPSHOT_ROOT
+  if (configured !== undefined) {
+    if (
+      configured.trim() !== configured ||
+      !isAbsolute(configured) ||
+      resolve(configured) !== configured
+    )
+      throw new Error(
+        'PUBLICATION_BROWSER_SNAPSHOT_ROOT must be an absolute normalized path',
+      )
+    return resolve(configured)
+  }
+  return resolve(REPOSITORY_ROOT, '.publication-browser-snapshots')
+}
+
+export const PUBLICATION_BROWSER_SNAPSHOT_ROOT =
+  publicationBrowserSnapshotRootPath()
 // Snapshot isolation protects against ordinary concurrent installer/cache
 // replacement and untrusted child symlinks. The private tree is mode 0700;
 // processes with the same uid (and root) remain inside the trusted VM boundary.
@@ -87,6 +102,7 @@ export type PreparedPublicationPlaywrightRuntime = {
   executablePath: string
   publicationBrowser: PublicationPlaywrightRuntimeEvidence
   assertUnchanged: () => Promise<void>
+  verifyUnchanged: () => Promise<void>
   cleanup: () => Promise<void>
 }
 
@@ -94,6 +110,7 @@ export type PreparedPublicationPuppeteerRuntime = {
   executablePath: string
   publicationBrowser: PublicationPuppeteerRuntimeEvidence
   assertUnchanged: () => Promise<void>
+  verifyUnchanged: () => Promise<void>
   cleanup: () => Promise<void>
 }
 
@@ -708,17 +725,35 @@ export async function preparePublicationBrowserSnapshot(
       snapshot.executablePath,
       expectedVersion,
     )
-    const executable = await stat(snapshot.executablePath)
+    const executable = await lstat(snapshot.executablePath, { bigint: true })
+    if (
+      !executable.isFile() ||
+      executable.size > BigInt(Number.MAX_SAFE_INTEGER)
+    )
+      throw new Error(
+        'Pinned publication browser executable has an invalid size or type',
+      )
     const executableSha256 = await sha256File(snapshot.executablePath)
     await snapshot.assertDirectoryIdentity()
+    // The mode-0700 snapshot treats same-uid/root processes as trusted. Cheap
+    // inode and metadata checks bracket each render; verifyUnchanged performs
+    // the bounded final digest and exact-version verification for the matrix.
     const assertUnchanged = async () => {
       await snapshot.assertDirectoryIdentity()
-      const current = await stat(snapshot.executablePath)
-      const currentSha256 = await sha256File(snapshot.executablePath)
+      const current = await lstat(snapshot.executablePath, { bigint: true })
       if (
-        current.size !== executable.size ||
-        currentSha256 !== executableSha256
+        !current.isFile() ||
+        !sameStableSourceEntry(executable, current)
       )
+        throw new Error(
+          'Pinned publication browser executable changed during rendering',
+        )
+      await snapshot.assertDirectoryIdentity()
+    }
+    const verifyUnchanged = async () => {
+      await assertUnchanged()
+      const currentSha256 = await sha256File(snapshot.executablePath)
+      if (currentSha256 !== executableSha256)
         throw new Error(
           'Pinned publication browser executable changed during rendering',
         )
@@ -726,14 +761,15 @@ export async function preparePublicationBrowserSnapshot(
         snapshot.executablePath,
         expectedVersion,
       )
-      await snapshot.assertDirectoryIdentity()
+      await assertUnchanged()
     }
     return {
       executablePath: snapshot.executablePath,
       observedVersion: publicationBrowserVersion(versionOutput),
       executableSha256,
-      executableByteLength: executable.size,
+      executableByteLength: Number(executable.size),
       assertUnchanged,
+      verifyUnchanged,
       cleanup: snapshot.cleanup,
     }
   } catch (error) {
@@ -813,11 +849,16 @@ export async function preparePublicationPuppeteerRuntime(): Promise<PreparedPubl
           'Pinned publication browser or package identity changed during rendering',
         )
     }
+    const verifyUnchanged = async () => {
+      await snapshot.verifyUnchanged()
+      await assertUnchanged()
+    }
     await assertUnchanged()
     return {
       executablePath: snapshot.executablePath,
       publicationBrowser,
       assertUnchanged,
+      verifyUnchanged,
       cleanup: snapshot.cleanup,
     }
   } catch (error) {
@@ -879,7 +920,14 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
       snapshot.executablePath,
       compatibility.expectedVersion,
     )
-    const executable = await stat(snapshot.executablePath)
+    const executable = await lstat(snapshot.executablePath, { bigint: true })
+    if (
+      !executable.isFile() ||
+      executable.size > BigInt(Number.MAX_SAFE_INTEGER)
+    )
+      throw new Error(
+        'Pinned publication browser executable has an invalid size or type',
+      )
     const [executableSha256, packageIdentity] = await Promise.all([
       sha256File(snapshot.executablePath),
       publicationPlaywrightPackageIdentity(),
@@ -887,20 +935,19 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
     const publicationBrowser = publicationPlaywrightRuntimeEvidenceForPlatform({
       observedVersion: publicationBrowserVersion(versionOutput),
       executableSha256,
-      executableByteLength: executable.size,
+      executableByteLength: Number(executable.size),
       ...packageIdentity,
     })
     await snapshot.assertDirectoryIdentity()
     const assertUnchanged = async () => {
       await snapshot.assertDirectoryIdentity()
-      const current = await stat(snapshot.executablePath)
-      const [currentSha256, currentPackages] = await Promise.all([
-        sha256File(snapshot.executablePath),
+      const [current, currentPackages] = await Promise.all([
+        lstat(snapshot.executablePath, { bigint: true }),
         publicationPlaywrightPackageIdentity(),
       ])
       if (
-        current.size !== publicationBrowser.executableByteLength ||
-        currentSha256 !== publicationBrowser.executableSha256 ||
+        !current.isFile() ||
+        !sameStableSourceEntry(executable, current) ||
         currentPackages.playwrightPackageJsonSha256 !==
           publicationBrowser.playwrightPackageJsonSha256 ||
         currentPackages.playwrightCorePackageJsonSha256 !==
@@ -911,16 +958,26 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
         throw new Error(
           'Pinned publication browser or package identity changed during rendering',
         )
+      await snapshot.assertDirectoryIdentity()
+    }
+    const verifyUnchanged = async () => {
+      await assertUnchanged()
+      const currentSha256 = await sha256File(snapshot.executablePath)
+      if (currentSha256 !== publicationBrowser.executableSha256)
+        throw new Error(
+          'Pinned publication browser or package identity changed during rendering',
+        )
       verifyPublicationBrowserExecutable(
         snapshot.executablePath,
         publicationBrowser.expectedVersion,
       )
-      await snapshot.assertDirectoryIdentity()
+      await assertUnchanged()
     }
     return {
       executablePath: snapshot.executablePath,
       publicationBrowser,
       assertUnchanged,
+      verifyUnchanged,
       cleanup: snapshot.cleanup,
     }
   } catch (error) {
@@ -932,7 +989,7 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
 export async function publicationPlaywrightRuntimeEvidenceForCurrentPlatform() {
   const prepared = await preparePublicationPlaywrightRuntime()
   try {
-    await prepared.assertUnchanged()
+    await prepared.verifyUnchanged()
     return prepared.publicationBrowser
   } finally {
     await prepared.cleanup()
@@ -942,7 +999,7 @@ export async function publicationPlaywrightRuntimeEvidenceForCurrentPlatform() {
 export async function publicationPuppeteerRuntimeEvidenceForCurrentPlatform() {
   const prepared = await preparePublicationPuppeteerRuntime()
   try {
-    await prepared.assertUnchanged()
+    await prepared.verifyUnchanged()
     return prepared.publicationBrowser
   } finally {
     await prepared.cleanup()

@@ -55,6 +55,7 @@ outputs/
 
 # Local rucksack outputs and generated artifacts
 .agent/evidence/
+.publication-browser-snapshots/
 .agent/submissions/
 .agent/harness-backups/
 .agent/harness-runs/

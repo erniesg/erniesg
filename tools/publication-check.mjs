@@ -1146,6 +1146,7 @@ export async function publicationCheck(
     receipt.repository?.dirty === false && !currentDirty,
     'Publication receipt is not bound to a clean checked-out repository',
   )
+  const expectedPdfRenderer = publicationPdfRendererForRuntime()
   const currentPublicationBrowser =
     await publicationBrowserRuntimeEvidenceForCurrentPlatform()
   assertPublicationReceiptRuntime(receipt, currentPublicationBrowser)

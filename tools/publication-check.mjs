@@ -17,14 +17,14 @@ import {
   publicationNodeForProfile,
 } from '../src/publication/renderers/vivliostyle.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
-import { publicationPlaywrightRuntimeEvidenceForCurrentPlatform } from '../src/publication/browser-runtime.ts'
+import { publicationBrowserRuntimeEvidenceForCurrentPlatform } from '../src/publication/browser-runtime.ts'
 import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../src/publication/output-contract.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
 import { serializePublicationGraph } from '../src/publication/schema.ts'
 import {
   publicationPdfRendererForRuntime,
   publicationPlatformKey,
-  publicationPlaywrightRuntimeEvidenceForPlatform,
+  publicationBrowserRuntimeEvidenceForPlatform,
 } from '../src/publication/toolchain.ts'
 import {
   canonicalRouteBodyFingerprint,
@@ -165,26 +165,11 @@ export function assertPublicationReceiptRuntime(
       runtime?.pdfRenderer === expectedPdfRenderer,
     'Publication receipt runtime binding is missing or stale',
   )
-  if (expectedPdfRenderer !== 'playwright-chromium') {
-    assert(
-      runtime.publicationBrowser === null && currentPublicationBrowser === null,
-      'Publication receipt browser runtime binding is invalid for the selected renderer',
-    )
-    return expectedPdfRenderer
-  }
   let normalizedReceiptBrowser
   try {
     const browser = runtime.publicationBrowser
-    normalizedReceiptBrowser = publicationPlaywrightRuntimeEvidenceForPlatform(
-      {
-        observedVersion: browser?.observedVersion,
-        executableSha256: browser?.executableSha256,
-        executableByteLength: browser?.executableByteLength,
-        playwrightPackageJsonSha256: browser?.playwrightPackageJsonSha256,
-        playwrightCorePackageJsonSha256:
-          browser?.playwrightCorePackageJsonSha256,
-        browsersJsonSha256: browser?.browsersJsonSha256,
-      },
+    normalizedReceiptBrowser = publicationBrowserRuntimeEvidenceForPlatform(
+      browser,
       platform,
       architecture,
     )
@@ -1161,11 +1146,8 @@ export async function publicationCheck(
     receipt.repository?.dirty === false && !currentDirty,
     'Publication receipt is not bound to a clean checked-out repository',
   )
-  const expectedPdfRenderer = publicationPdfRendererForRuntime()
   const currentPublicationBrowser =
-    expectedPdfRenderer === 'playwright-chromium'
-      ? await publicationPlaywrightRuntimeEvidenceForCurrentPlatform()
-      : null
+    await publicationBrowserRuntimeEvidenceForCurrentPlatform()
   assertPublicationReceiptRuntime(receipt, currentPublicationBrowser)
   assert(
     receipt.artifacts.length === 4,

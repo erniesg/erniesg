@@ -28,6 +28,23 @@ export type PublicationPlaywrightRuntimeEvidence = {
   browsersJsonSha256: string
 }
 
+export type PublicationPuppeteerRuntimeEvidence = {
+  platformKey: PublicationPlatformKey
+  packageName: string
+  packageVersion: string
+  browserRevision: string
+  expectedVersion: string
+  observedVersion: string
+  executableSha256: string
+  executableByteLength: number
+  puppeteerBrowsersPackageJsonSha256: string
+  vivliostyleCliPackageJsonSha256: string
+}
+
+export type PublicationBrowserRuntimeEvidence =
+  | PublicationPlaywrightRuntimeEvidence
+  | PublicationPuppeteerRuntimeEvidence
+
 type PublicationPlaywrightObservedIdentity = Pick<
   PublicationPlaywrightRuntimeEvidence,
   | 'observedVersion'
@@ -36,6 +53,15 @@ type PublicationPlaywrightObservedIdentity = Pick<
   | 'playwrightPackageJsonSha256'
   | 'playwrightCorePackageJsonSha256'
   | 'browsersJsonSha256'
+>
+
+type PublicationPuppeteerObservedIdentity = Pick<
+  PublicationPuppeteerRuntimeEvidence,
+  | 'observedVersion'
+  | 'executableSha256'
+  | 'executableByteLength'
+  | 'puppeteerBrowsersPackageJsonSha256'
+  | 'vivliostyleCliPackageJsonSha256'
 >
 
 const EXACT_BROWSER_VERSION = /^\d+\.\d+\.\d+\.\d+$/u
@@ -118,6 +144,81 @@ export function publicationPlaywrightRuntimeEvidenceForPlatform(
   }
 }
 
+export function publicationPuppeteerRuntimeEvidenceForPlatform(
+  identity: PublicationPuppeteerObservedIdentity,
+  platform: string = process.platform,
+  architecture: string = process.arch,
+): PublicationPuppeteerRuntimeEvidence {
+  const platformKey = publicationPlatformKey(platform, architecture)
+  if (architecture !== 'x64')
+    throw new Error(
+      `Puppeteer publication browser evidence is unsupported for ${platformKey}`,
+    )
+  const compatibility = {
+    platformKey,
+    packageName: PUBLICATION_TOOLCHAIN.browser.package,
+    packageVersion: PUBLICATION_TOOLCHAIN.browser.version,
+    browserRevision: PUBLICATION_TOOLCHAIN.browser.revision,
+    expectedVersion: PUBLICATION_TOOLCHAIN.browser.browserVersion,
+  }
+  if (
+    !EXACT_BROWSER_VERSION.test(identity.observedVersion) ||
+    identity.observedVersion !== compatibility.expectedVersion
+  )
+    throw new Error(
+      `Observed Puppeteer Chromium ${identity.observedVersion || '(missing)'} does not match expected ${compatibility.expectedVersion} for ${platformKey}`,
+    )
+  for (const [name, value] of [
+    ['executableSha256', identity.executableSha256],
+    [
+      'puppeteerBrowsersPackageJsonSha256',
+      identity.puppeteerBrowsersPackageJsonSha256,
+    ],
+    [
+      'vivliostyleCliPackageJsonSha256',
+      identity.vivliostyleCliPackageJsonSha256,
+    ],
+  ] as const)
+    if (!SHA256.test(value))
+      throw new Error(`Puppeteer Chromium ${name} is not a SHA-256 digest`)
+  if (
+    !Number.isSafeInteger(identity.executableByteLength) ||
+    identity.executableByteLength <= 0
+  )
+    throw new Error(
+      'Puppeteer Chromium executableByteLength must be a positive safe integer',
+    )
+  return {
+    ...compatibility,
+    observedVersion: identity.observedVersion,
+    executableSha256: identity.executableSha256,
+    executableByteLength: identity.executableByteLength,
+    puppeteerBrowsersPackageJsonSha256:
+      identity.puppeteerBrowsersPackageJsonSha256,
+    vivliostyleCliPackageJsonSha256:
+      identity.vivliostyleCliPackageJsonSha256,
+  }
+}
+
+export function publicationBrowserRuntimeEvidenceForPlatform(
+  identity: PublicationBrowserRuntimeEvidence,
+  platform: string = process.platform,
+  architecture: string = process.arch,
+): PublicationBrowserRuntimeEvidence {
+  const renderer = publicationPdfRendererForRuntime(platform, architecture)
+  if (renderer === 'playwright-chromium')
+    return publicationPlaywrightRuntimeEvidenceForPlatform(
+      identity as PublicationPlaywrightRuntimeEvidence,
+      platform,
+      architecture,
+    )
+  return publicationPuppeteerRuntimeEvidenceForPlatform(
+    identity as PublicationPuppeteerRuntimeEvidence,
+    platform,
+    architecture,
+  )
+}
+
 export function publicationPdfRendererForRuntime(
   platform: string = process.platform,
   architecture: string = process.arch,
@@ -135,7 +236,7 @@ export function publicationPdfRendererForRuntime(
 }
 
 export function publicationToolchainForRuntime(
-  publicationBrowser: PublicationPlaywrightRuntimeEvidence | null,
+  publicationBrowser: PublicationBrowserRuntimeEvidence | null,
   platform: string = process.platform,
   architecture: string = process.arch,
 ) {
@@ -144,29 +245,21 @@ export function publicationToolchainForRuntime(
     throw new Error(`Node runtime ${node} is not normalized`)
   const platformKey = publicationPlatformKey(platform, architecture)
   const pdfRenderer = publicationPdfRendererForRuntime(platform, architecture)
-  if (pdfRenderer === 'vivliostyle-cli' && publicationBrowser !== null)
-    throw new Error(
-      `Publication browser evidence is invalid for ${pdfRenderer} on ${platformKey}`,
-    )
-  if (pdfRenderer === 'playwright-chromium' && publicationBrowser === null)
+  if (publicationBrowser === null)
     throw new Error(
       `Publication browser evidence is required for ${pdfRenderer} on ${platformKey}`,
     )
-  if (publicationBrowser !== null) {
-    const normalized = publicationPlaywrightRuntimeEvidenceForPlatform(
-      publicationBrowser,
-      platform,
-      architecture,
-    )
-    const keys = Object.keys(normalized) as Array<keyof typeof normalized>
-    if (
-      Object.keys(publicationBrowser).length !== keys.length ||
-      keys.some((key) => publicationBrowser[key] !== normalized[key])
-    )
-      throw new Error(
-        `Publication browser evidence does not match ${platformKey}`,
-      )
-  }
+  const normalized = publicationBrowserRuntimeEvidenceForPlatform(
+    publicationBrowser,
+    platform,
+    architecture,
+  )
+  const keys = Object.keys(normalized) as Array<keyof typeof normalized>
+  if (
+    Object.keys(publicationBrowser).length !== keys.length ||
+    keys.some((key) => publicationBrowser[key] !== normalized[key])
+  )
+    throw new Error(`Publication browser evidence does not match ${platformKey}`)
   return {
     ...PUBLICATION_TOOLCHAIN,
     node,

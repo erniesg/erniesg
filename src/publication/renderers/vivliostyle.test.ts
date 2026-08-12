@@ -7,14 +7,16 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { basename, dirname, relative, resolve } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
+  PUBLICATION_BROWSER_SNAPSHOT_ROOT,
   preparePublicationBrowserSnapshot,
   publicationBrowserBundleForExecutable,
   publicationPuppeteerBrowserBundleForExecutable,
@@ -926,6 +928,37 @@ describe('Vivliostyle publication renderer boundary', () => {
       ).resolves.toBe('linked resource')
       await snapshot.cleanup()
 
+      const defaultSnapshot = await snapshotPublicationBrowserBundle(selected)
+      const defaultPrivateRoot = dirname(
+        dirname(dirname(defaultSnapshot.executablePath)),
+      )
+      expect(
+        relative(
+          PUBLICATION_BROWSER_SNAPSHOT_ROOT,
+          defaultSnapshot.executablePath,
+        ),
+      ).not.toMatch(/^\.\.(?:\/|$)/u)
+      expect(relative(cache, defaultSnapshot.executablePath)).toMatch(
+        /^\.\.(?:\/|$)/u,
+      )
+      expect((await stat(defaultPrivateRoot)).mode & 0o777).toBe(0o700)
+      await defaultSnapshot.cleanup()
+      await expect(access(defaultPrivateRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+
+      const outsideResource = resolve(root, 'outside-resource')
+      const escapingResource = resolve(bundle, 'chrome-linux/escape')
+      await writeFile(outsideResource, 'must not be copied')
+      await symlink(
+        relative(dirname(escapingResource), outsideResource),
+        escapingResource,
+      )
+      await expect(
+        snapshotPublicationBrowserBundle(selected, resolve(root, 'snapshots')),
+      ).rejects.toThrow(/escaping symlink/i)
+      await rm(escapingResource)
+
       const cleanupSnapshot = await snapshotPublicationBrowserBundle(
         selected,
         resolve(root, 'snapshots'),
@@ -977,6 +1010,53 @@ describe('Vivliostyle publication renderer boundary', () => {
     }
   })
 
+  it('fails closed when a cache file is replaced between inspection and open', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-race-'))
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const originalBrowser = `${browser}.original`
+    const originalFsPromises = await import('node:fs/promises')
+    let replacementInjected = false
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      open: async (path: unknown, ...args: unknown[]) => {
+        if (!replacementInjected && resolve(String(path)) === browser) {
+          replacementInjected = true
+          await originalFsPromises.rename(browser, originalBrowser)
+          await originalFsPromises.writeFile(browser, 'replacement bytes')
+        }
+        return (originalFsPromises.open as (...values: unknown[]) => unknown)(
+          path,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      await expect(
+        runtime.snapshotPublicationBrowserBundle(
+          selected,
+          resolve(root, 'snapshots'),
+        ),
+      ).rejects.toThrow(/cache bundle changed during snapshot creation/i)
+      expect(replacementInjected).toBe(true)
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('prepares an immutable verified Puppeteer browser snapshot', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-puppeteer-'))
     try {
@@ -1016,6 +1096,34 @@ describe('Vivliostyle publication renderer boundary', () => {
         /browser.*changed/i,
       )
       await prepared.cleanup()
+
+      await writeFile(
+        browser,
+        '#!/bin/sh\necho "Google Chrome for Testing 150.0.7871.115"\n',
+      )
+      const identityPrepared = await preparePublicationBrowserSnapshot(
+        selected,
+        '150.0.7871.115',
+        resolve(root, 'snapshots'),
+      )
+      const identityPrivateRoot = dirname(
+        dirname(dirname(identityPrepared.executablePath)),
+      )
+      const movedIdentityPrivateRoot = `${identityPrivateRoot}-moved`
+      const pinnedBrowserBytes = await readFile(identityPrepared.executablePath)
+      await rename(identityPrivateRoot, movedIdentityPrivateRoot)
+      await mkdir(dirname(identityPrepared.executablePath), { recursive: true })
+      await writeFile(identityPrepared.executablePath, pinnedBrowserBytes)
+      await chmod(identityPrepared.executablePath, 0o500)
+      await expect(identityPrepared.assertUnchanged()).rejects.toThrow(
+        /snapshot directory identity changed/i,
+      )
+      await expect(identityPrepared.cleanup()).rejects.toThrow(
+        /cleanup refused.*identity changed/i,
+      )
+      await expect(readFile(identityPrepared.executablePath)).resolves.toEqual(
+        pinnedBrowserBytes,
+      )
 
       const outside = resolve(root, 'outside-browser')
       await writeFile(outside, '#!/bin/sh\necho outside\n')

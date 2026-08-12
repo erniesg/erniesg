@@ -1,29 +1,47 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { constants as fsConstants, createReadStream } from 'node:fs'
+import {
+  constants as fsConstants,
+  createReadStream,
+  type BigIntStats,
+} from 'node:fs'
 import {
   access,
   chmod,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readlink,
   realpath,
   readdir,
-  rm,
+  rmdir,
   stat,
   symlink,
+  unlink,
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { basename, dirname, relative, resolve, sep } from 'node:path'
+import { tmpdir } from 'node:os'
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
+import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import {
   PUBLICATION_TOOLCHAIN,
+  publicationPdfRendererForRuntime,
   publicationPlatformKey,
   publicationPlaywrightCompatibilityForPlatform,
   publicationPlaywrightRuntimeEvidenceForPlatform,
+  publicationPuppeteerRuntimeEvidenceForPlatform,
+  type PublicationBrowserRuntimeEvidence,
   type PublicationPlaywrightRuntimeEvidence,
+  type PublicationPuppeteerRuntimeEvidence,
 } from './toolchain'
 
 const require = createRequire(import.meta.url)
@@ -35,6 +53,12 @@ const PLAYWRIGHT_CORE_BROWSERS_JSON = resolve(
   'browsers.json',
 )
 const NODE_MODULES_ROOT = resolve(dirname(PLAYWRIGHT_PACKAGE_JSON), '..')
+const PUPPETEER_BROWSERS_PACKAGE_JSON = require.resolve(
+  '@puppeteer/browsers/package.json',
+)
+const VIVLIOSTYLE_CLI_PACKAGE_JSON = require.resolve(
+  '@vivliostyle/cli/package.json',
+)
 
 export const PUBLICATION_BROWSER_CACHE = resolve(
   NODE_MODULES_ROOT,
@@ -48,10 +72,24 @@ export const PUPPETEER_BROWSER_CACHE = resolve(
   PUBLICATION_BROWSER_CACHE,
   'puppeteer',
 )
+export const PUBLICATION_BROWSER_SNAPSHOT_ROOT = resolve(
+  tmpdir(),
+  `erniesg-publication-browser-snapshots-${process.getuid?.() ?? 'user'}`,
+)
+// Snapshot isolation protects against ordinary concurrent installer/cache
+// replacement and untrusted child symlinks. The private tree is mode 0700;
+// processes with the same uid (and root) remain inside the trusted VM boundary.
 
 export type PreparedPublicationPlaywrightRuntime = {
   executablePath: string
   publicationBrowser: PublicationPlaywrightRuntimeEvidence
+  assertUnchanged: () => Promise<void>
+  cleanup: () => Promise<void>
+}
+
+export type PreparedPublicationPuppeteerRuntime = {
+  executablePath: string
+  publicationBrowser: PublicationPuppeteerRuntimeEvidence
   assertUnchanged: () => Promise<void>
   cleanup: () => Promise<void>
 }
@@ -266,48 +304,183 @@ export async function publicationPuppeteerBrowserBundleForExecutable(
   }
 }
 
-async function copyRegularTree(
+type FileIdentity = { dev: bigint; ino: bigint }
+
+function sameFileIdentity(left: FileIdentity, right: FileIdentity) {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+function sameStableSourceEntry(
+  left: FileIdentity & {
+    size: bigint
+    mode: bigint
+    mtimeNs: bigint
+    ctimeNs: bigint
+  },
+  right: FileIdentity & {
+    size: bigint
+    mode: bigint
+    mtimeNs: bigint
+    ctimeNs: bigint
+  },
+) {
+  return (
+    sameFileIdentity(left, right) &&
+    left.size === right.size &&
+    left.mode === right.mode &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  )
+}
+
+function publicationBrowserReadFlags(directory = false) {
+  return (
+    fsConstants.O_RDONLY |
+    fsConstants.O_NOFOLLOW |
+    fsConstants.O_NONBLOCK |
+    (directory ? fsConstants.O_DIRECTORY : 0)
+  )
+}
+
+function publicationBrowserSourceChanged() {
+  return new Error(
+    'Pinned publication browser cache bundle changed during snapshot creation',
+  )
+}
+
+async function copyPublicationBrowserFile(
+  source: string,
+  destination: string,
+  sourceEntry: BigIntStats,
+) {
+  const sourceFile = await open(source, publicationBrowserReadFlags())
+  try {
+    const openedSource = await sourceFile.stat({ bigint: true })
+    if (!openedSource.isFile() || !sameFileIdentity(sourceEntry, openedSource))
+      throw publicationBrowserSourceChanged()
+    const destinationFile = await open(
+      destination,
+      fsConstants.O_WRONLY |
+        fsConstants.O_CREAT |
+        fsConstants.O_EXCL |
+        fsConstants.O_NOFOLLOW,
+      0o600,
+    )
+    try {
+      const buffer = Buffer.allocUnsafe(1024 * 1024)
+      let copiedBytes = 0n
+      for (;;) {
+        const { bytesRead } = await sourceFile.read(
+          buffer,
+          0,
+          buffer.length,
+          null,
+        )
+        if (bytesRead === 0) break
+        let written = 0
+        while (written < bytesRead) {
+          const result = await destinationFile.write(
+            buffer,
+            written,
+            bytesRead - written,
+            null,
+          )
+          if (result.bytesWritten === 0)
+            throw new Error(
+              'Pinned publication browser snapshot write made no progress',
+            )
+          written += result.bytesWritten
+        }
+        copiedBytes += BigInt(bytesRead)
+      }
+      await destinationFile.chmod(Number(openedSource.mode & 0o555n))
+      const confirmedSource = await sourceFile.stat({ bigint: true })
+      if (
+        copiedBytes !== openedSource.size ||
+        !sameStableSourceEntry(openedSource, confirmedSource)
+      )
+        throw publicationBrowserSourceChanged()
+    } finally {
+      await destinationFile.close()
+    }
+  } finally {
+    await sourceFile.close()
+  }
+}
+
+async function copyPublicationBrowserTree(
   source: string,
   destination: string,
   sourceBundleRoot: string,
-) {
-  const sourceEntry = await lstat(source)
+  expectedSource?: FileIdentity,
+): Promise<void> {
+  const sourceEntry = await lstat(source, { bigint: true })
+  if (expectedSource && !sameFileIdentity(sourceEntry, expectedSource))
+    throw publicationBrowserSourceChanged()
   if (sourceEntry.isSymbolicLink()) {
     const target = await readlink(source)
     const resolvedTarget = resolve(dirname(source), target)
     if (
-      target.startsWith(sep) ||
-      !pathIsWithin(sourceBundleRoot, resolvedTarget)
+      isAbsolute(target) ||
+      (resolvedTarget !== sourceBundleRoot &&
+        !pathIsWithin(sourceBundleRoot, resolvedTarget))
     )
       throw new Error(
         'Pinned publication browser cache bundle contains an escaping symlink',
       )
     await symlink(target, destination)
+    const [confirmedEntry, confirmedTarget] = await Promise.all([
+      lstat(source, { bigint: true }),
+      readlink(source),
+    ])
+    if (
+      !confirmedEntry.isSymbolicLink() ||
+      !sameStableSourceEntry(sourceEntry, confirmedEntry) ||
+      confirmedTarget !== target
+    )
+      throw publicationBrowserSourceChanged()
     return
   }
-  if (sourceEntry.isDirectory()) {
-    await mkdir(destination, { mode: 0o700 })
-    const entries = (await readdir(source, { withFileTypes: true })).sort(
-      (left, right) => left.name.localeCompare(right.name),
+  if (sourceEntry.isFile()) {
+    await copyPublicationBrowserFile(source, destination, sourceEntry)
+    return
+  }
+  if (!sourceEntry.isDirectory())
+    throw new Error(
+      'Pinned publication browser cache bundles may contain only regular files, directories, and internal symlinks',
     )
-    for (const entry of entries)
-      await copyRegularTree(
-        resolve(source, entry.name),
-        resolve(destination, entry.name),
+
+  const sourceDirectory = await open(source, publicationBrowserReadFlags(true))
+  try {
+    const openedSource = await sourceDirectory.stat({ bigint: true })
+    if (
+      !openedSource.isDirectory() ||
+      !sameFileIdentity(sourceEntry, openedSource)
+    )
+      throw publicationBrowserSourceChanged()
+    await mkdir(destination, { mode: 0o700 })
+    const entries = (await readdir(source)).sort((left, right) =>
+      left.localeCompare(right),
+    )
+    for (const entryName of entries)
+      await copyPublicationBrowserTree(
+        resolve(source, entryName),
+        resolve(destination, entryName),
         sourceBundleRoot,
       )
-    return
-  }
-  if (!sourceEntry.isFile())
-    throw new Error(
-      'Pinned publication browser cache bundles may contain only regular files and directories',
+    const [confirmedHandle, confirmedPath] = await Promise.all([
+      sourceDirectory.stat({ bigint: true }),
+      lstat(source, { bigint: true }),
+    ])
+    if (
+      !confirmedPath.isDirectory() ||
+      !sameStableSourceEntry(openedSource, confirmedHandle) ||
+      !sameStableSourceEntry(openedSource, confirmedPath)
     )
-  await copyFile(
-    source,
-    destination,
-    fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE,
-  )
-  await chmod(destination, sourceEntry.mode & 0o555)
+      throw publicationBrowserSourceChanged()
+  } finally {
+    await sourceDirectory.close()
+  }
 }
 
 async function publicationBrowserSnapshotRoot(
@@ -318,7 +491,7 @@ async function publicationBrowserSnapshotRoot(
   const canonicalParent = await realpath(dirname(requestedRoot))
   const expectedRoot = resolve(canonicalParent, basename(requestedRoot))
   const canonicalBundle = await realpath(bundleRoot)
-  const bundleEntry = await lstat(canonicalBundle)
+  const bundleEntry = await lstat(canonicalBundle, { bigint: true })
   if (!bundleEntry.isDirectory())
     throw new Error(
       'Pinned publication browser source bundle is not a directory',
@@ -333,7 +506,7 @@ async function publicationBrowserSnapshotRoot(
 
   let rootEntry
   try {
-    rootEntry = await lstat(requestedRoot)
+    rootEntry = await lstat(requestedRoot, { bigint: true })
   } catch (error) {
     if ((error as { code?: string }).code !== 'ENOENT') throw error
     try {
@@ -341,22 +514,23 @@ async function publicationBrowserSnapshotRoot(
     } catch (mkdirError) {
       if ((mkdirError as { code?: string }).code !== 'EEXIST') throw mkdirError
     }
-    rootEntry = await lstat(requestedRoot)
+    rootEntry = await lstat(requestedRoot, { bigint: true })
   }
+  const currentUid = process.getuid?.()
   if (
     rootEntry.isSymbolicLink() ||
     !rootEntry.isDirectory() ||
-    (rootEntry.mode & 0o022) !== 0
+    (rootEntry.mode & 0o022n) !== 0n ||
+    (currentUid !== undefined && rootEntry.uid !== BigInt(currentUid))
   )
     throw new Error(
       'Pinned publication browser snapshot root is a symlink, unsafe, or not a directory',
     )
   const canonicalRoot = await realpath(requestedRoot)
-  const confirmedRoot = await lstat(requestedRoot)
+  const confirmedRoot = await lstat(requestedRoot, { bigint: true })
   if (
     canonicalRoot !== expectedRoot ||
-    confirmedRoot.dev !== rootEntry.dev ||
-    confirmedRoot.ino !== rootEntry.ino
+    !sameFileIdentity(confirmedRoot, rootEntry)
   )
     throw new Error(
       'Pinned publication browser snapshot root is redirected by a symlink',
@@ -369,99 +543,135 @@ async function publicationBrowserSnapshotRoot(
   }
 }
 
+async function removePublicationBrowserTree(
+  path: string,
+  expectedEntry: FileIdentity,
+): Promise<void> {
+  const entry = await lstat(path, { bigint: true })
+  if (!sameFileIdentity(entry, expectedEntry))
+    throw new Error(
+      'Pinned publication browser snapshot cleanup refused after an entry identity changed',
+    )
+  if (!entry.isDirectory()) {
+    await unlink(path)
+    return
+  }
+  const entries = (await readdir(path)).sort((left, right) =>
+    left.localeCompare(right),
+  )
+  for (const entryName of entries) {
+    const entryPath = resolve(path, entryName)
+    const childEntry = await lstat(entryPath, { bigint: true })
+    await removePublicationBrowserTree(entryPath, childEntry)
+  }
+  const confirmedEntry = await lstat(path, { bigint: true })
+  if (!confirmedEntry.isDirectory() || !sameFileIdentity(entry, confirmedEntry))
+    throw new Error(
+      'Pinned publication browser snapshot cleanup refused after an entry identity changed',
+    )
+  await rmdir(path)
+}
+
+async function assertPublicationBrowserSnapshotIdentity(
+  canonicalRoot: string,
+  rootEntry: FileIdentity,
+  privateRoot: string,
+  privateEntry: FileIdentity,
+) {
+  const [currentRoot, currentPrivate] = await Promise.all([
+    lstat(canonicalRoot, { bigint: true }),
+    lstat(privateRoot, { bigint: true }),
+  ])
+  const [currentCanonicalRoot, canonicalPrivate] = await Promise.all([
+    realpath(canonicalRoot),
+    realpath(privateRoot),
+  ])
+  const [confirmedRoot, confirmedPrivate] = await Promise.all([
+    lstat(canonicalRoot, { bigint: true }),
+    lstat(privateRoot, { bigint: true }),
+  ])
+  if (
+    !currentRoot.isDirectory() ||
+    !sameFileIdentity(currentRoot, rootEntry) ||
+    !confirmedRoot.isDirectory() ||
+    !sameFileIdentity(confirmedRoot, rootEntry) ||
+    currentCanonicalRoot !== canonicalRoot ||
+    !currentPrivate.isDirectory() ||
+    !sameFileIdentity(currentPrivate, privateEntry) ||
+    !confirmedPrivate.isDirectory() ||
+    !sameFileIdentity(confirmedPrivate, privateEntry) ||
+    canonicalPrivate !== privateRoot ||
+    dirname(privateRoot) !== canonicalRoot
+  )
+    throw new Error(
+      'Pinned publication browser snapshot directory identity changed',
+    )
+}
+
 async function cleanupPublicationBrowserSnapshot(
   canonicalRoot: string,
-  rootEntry: { dev: number; ino: number },
+  rootEntry: FileIdentity,
   privateRoot: string,
-  privateEntry: { dev: number; ino: number },
+  privateEntry: FileIdentity,
 ) {
-  let currentRoot
-  let currentPrivate
-  let currentCanonicalRoot
-  let currentCanonicalPrivate
   try {
-    ;[currentRoot, currentPrivate, currentCanonicalRoot, currentCanonicalPrivate] =
-      await Promise.all([
-        lstat(canonicalRoot),
-        lstat(privateRoot),
-        realpath(canonicalRoot),
-        realpath(privateRoot),
-      ])
+    await assertPublicationBrowserSnapshotIdentity(
+      canonicalRoot,
+      rootEntry,
+      privateRoot,
+      privateEntry,
+    )
   } catch {
     throw new Error(
       'Pinned publication browser snapshot cleanup refused after its directory identity changed',
     )
   }
-  if (
-    !currentRoot.isDirectory() ||
-    currentRoot.dev !== rootEntry.dev ||
-    currentRoot.ino !== rootEntry.ino ||
-    currentCanonicalRoot !== canonicalRoot ||
-    !currentPrivate.isDirectory() ||
-    currentPrivate.dev !== privateEntry.dev ||
-    currentPrivate.ino !== privateEntry.ino ||
-    currentCanonicalPrivate !== privateRoot ||
-    dirname(privateRoot) !== canonicalRoot
-  )
-    throw new Error(
-      'Pinned publication browser snapshot cleanup refused after its directory identity changed',
-    )
-  await rm(privateRoot, { recursive: true, force: true })
+  // The private tree is mode 0700 and processes with the same uid are trusted.
+  // Refuse identity changes and remove entries one at a time without following
+  // symlinks; never hand a mutable pathname to recursive deletion.
+  await removePublicationBrowserTree(privateRoot, privateEntry)
 }
 
 export async function snapshotPublicationBrowserBundle(
   bundle: PublicationBrowserBundle,
-  snapshotRoot = resolve(PLAYWRIGHT_BROWSER_CACHE, '.snapshots'),
+  snapshotRoot = PUBLICATION_BROWSER_SNAPSHOT_ROOT,
 ) {
   const { bundleEntry, canonicalBundle, canonicalRoot, rootEntry } =
     await publicationBrowserSnapshotRoot(snapshotRoot, bundle.bundleRoot)
   const privateRoot = await mkdtemp(resolve(canonicalRoot, 'browser-'))
   const snapshotBundleRoot = resolve(privateRoot, basename(canonicalBundle))
-  const privateEntry = await lstat(privateRoot)
+  const privateEntry = await lstat(privateRoot, { bigint: true })
+  if (
+    !privateEntry.isDirectory() ||
+    (privateEntry.mode & 0o077n) !== 0n
+  )
+    throw new Error(
+      'Pinned publication browser private snapshot directory is unsafe',
+    )
+  let cleanupPromise: Promise<void> | undefined
   const cleanup = () =>
-    cleanupPublicationBrowserSnapshot(
+    (cleanupPromise ??= cleanupPublicationBrowserSnapshot(
+      canonicalRoot,
+      rootEntry,
+      privateRoot,
+      privateEntry,
+    ))
+  const assertDirectoryIdentity = () =>
+    assertPublicationBrowserSnapshotIdentity(
       canonicalRoot,
       rootEntry,
       privateRoot,
       privateEntry,
     )
   try {
-    const [confirmedBundle, confirmedRoot, canonicalPrivateRoot] =
-      await Promise.all([
-        lstat(canonicalBundle),
-        lstat(canonicalRoot),
-        realpath(privateRoot),
-      ])
-    if (
-      !confirmedBundle.isDirectory() ||
-      confirmedBundle.dev !== bundleEntry.dev ||
-      confirmedBundle.ino !== bundleEntry.ino ||
-      !confirmedRoot.isDirectory() ||
-      confirmedRoot.dev !== rootEntry.dev ||
-      confirmedRoot.ino !== rootEntry.ino ||
-      !privateEntry.isDirectory() ||
-      !pathIsWithin(canonicalRoot, canonicalPrivateRoot) ||
-      canonicalPrivateRoot === canonicalBundle ||
-      pathIsWithin(canonicalBundle, canonicalPrivateRoot) ||
-      pathIsWithin(canonicalPrivateRoot, canonicalBundle)
-    )
-      throw new Error(
-        'Pinned publication browser snapshot directory overlaps or escapes its private root',
-      )
-    await copyRegularTree(
+    await assertDirectoryIdentity()
+    await copyPublicationBrowserTree(
       canonicalBundle,
       snapshotBundleRoot,
       canonicalBundle,
+      bundleEntry,
     )
-    const copiedBundle = await lstat(canonicalBundle)
-    if (
-      !copiedBundle.isDirectory() ||
-      copiedBundle.dev !== bundleEntry.dev ||
-      copiedBundle.ino !== bundleEntry.ino
-    )
-      throw new Error(
-        'Pinned publication browser source bundle changed during snapshot creation',
-      )
+    await assertDirectoryIdentity()
     const executablePath = resolve(
       snapshotBundleRoot,
       bundle.executableRelativePath,
@@ -473,6 +683,7 @@ export async function snapshotPublicationBrowserBundle(
       )
     return {
       executablePath,
+      assertDirectoryIdentity,
       cleanup,
     }
   } catch (error) {
@@ -488,11 +699,17 @@ export async function preparePublicationBrowserSnapshot(
 ) {
   const snapshot = await snapshotPublicationBrowserBundle(bundle, snapshotRoot)
   try {
+    await snapshot.assertDirectoryIdentity()
     await chmod(snapshot.executablePath, 0o500)
-    verifyPublicationBrowserExecutable(snapshot.executablePath, expectedVersion)
+    const versionOutput = verifyPublicationBrowserExecutable(
+      snapshot.executablePath,
+      expectedVersion,
+    )
     const executable = await stat(snapshot.executablePath)
     const executableSha256 = await sha256File(snapshot.executablePath)
+    await snapshot.assertDirectoryIdentity()
     const assertUnchanged = async () => {
+      await snapshot.assertDirectoryIdentity()
       const current = await stat(snapshot.executablePath)
       const currentSha256 = await sha256File(snapshot.executablePath)
       if (
@@ -506,9 +723,89 @@ export async function preparePublicationBrowserSnapshot(
         snapshot.executablePath,
         expectedVersion,
       )
+      await snapshot.assertDirectoryIdentity()
     }
     return {
       executablePath: snapshot.executablePath,
+      observedVersion: publicationBrowserVersion(versionOutput),
+      executableSha256,
+      executableByteLength: executable.size,
+      assertUnchanged,
+      cleanup: snapshot.cleanup,
+    }
+  } catch (error) {
+    await snapshot.cleanup()
+    throw error
+  }
+}
+
+async function publicationPuppeteerPackageIdentity() {
+  const [puppeteerBrowsersBytes, vivliostyleCliBytes] = await Promise.all([
+    readFile(PUPPETEER_BROWSERS_PACKAGE_JSON),
+    readFile(VIVLIOSTYLE_CLI_PACKAGE_JSON),
+  ])
+  const puppeteerBrowsers = JSON.parse(puppeteerBrowsersBytes.toString('utf8'))
+  const vivliostyleCli = JSON.parse(vivliostyleCliBytes.toString('utf8'))
+  if (
+    puppeteerBrowsers.name !== PUBLICATION_TOOLCHAIN.browser.package ||
+    puppeteerBrowsers.version !== PUBLICATION_TOOLCHAIN.browser.version ||
+    vivliostyleCli.name !== PUBLICATION_TOOLCHAIN.vivliostyleCli.package ||
+    vivliostyleCli.version !== PUBLICATION_TOOLCHAIN.vivliostyleCli.version
+  )
+    throw new Error(
+      'Loaded Puppeteer or Vivliostyle package identity does not match the publication manifest',
+    )
+  return {
+    puppeteerBrowsersPackageJsonSha256: sha256(puppeteerBrowsersBytes),
+    vivliostyleCliPackageJsonSha256: sha256(vivliostyleCliBytes),
+  }
+}
+
+export async function preparePublicationPuppeteerRuntime(): Promise<PreparedPublicationPuppeteerRuntime> {
+  let executablePath: string
+  try {
+    executablePath = computeExecutablePath({
+      browser: Browser.CHROME,
+      buildId: PUBLICATION_TOOLCHAIN.browser.revision,
+      cacheDir: PUPPETEER_BROWSER_CACHE,
+    })
+    await access(executablePath, fsConstants.R_OK)
+  } catch {
+    throw new Error(
+      'Pinned Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
+    )
+  }
+  const sourceBundle =
+    await publicationPuppeteerBrowserBundleForExecutable(executablePath)
+  const snapshot = await preparePublicationBrowserSnapshot(
+    sourceBundle,
+    PUBLICATION_TOOLCHAIN.browser.browserVersion,
+  )
+  try {
+    const packageIdentity = await publicationPuppeteerPackageIdentity()
+    const publicationBrowser = publicationPuppeteerRuntimeEvidenceForPlatform({
+      observedVersion: snapshot.observedVersion,
+      executableSha256: snapshot.executableSha256,
+      executableByteLength: snapshot.executableByteLength,
+      ...packageIdentity,
+    })
+    const assertUnchanged = async () => {
+      await snapshot.assertUnchanged()
+      const currentPackages = await publicationPuppeteerPackageIdentity()
+      if (
+        currentPackages.puppeteerBrowsersPackageJsonSha256 !==
+          publicationBrowser.puppeteerBrowsersPackageJsonSha256 ||
+        currentPackages.vivliostyleCliPackageJsonSha256 !==
+          publicationBrowser.vivliostyleCliPackageJsonSha256
+      )
+        throw new Error(
+          'Pinned publication browser or package identity changed during rendering',
+        )
+    }
+    await assertUnchanged()
+    return {
+      executablePath: snapshot.executablePath,
+      publicationBrowser,
       assertUnchanged,
       cleanup: snapshot.cleanup,
     }
@@ -566,6 +863,7 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
     await publicationBrowserBundleForExecutable(executablePath)
   const snapshot = await snapshotPublicationBrowserBundle(sourceBundle)
   try {
+    await snapshot.assertDirectoryIdentity()
     const versionOutput = verifyPublicationBrowserExecutable(
       snapshot.executablePath,
       compatibility.expectedVersion,
@@ -581,7 +879,9 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
       executableByteLength: executable.size,
       ...packageIdentity,
     })
+    await snapshot.assertDirectoryIdentity()
     const assertUnchanged = async () => {
+      await snapshot.assertDirectoryIdentity()
       const current = await stat(snapshot.executablePath)
       const [currentSha256, currentPackages] = await Promise.all([
         sha256File(snapshot.executablePath),
@@ -604,6 +904,7 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
         snapshot.executablePath,
         publicationBrowser.expectedVersion,
       )
+      await snapshot.assertDirectoryIdentity()
     }
     return {
       executablePath: snapshot.executablePath,
@@ -625,4 +926,20 @@ export async function publicationPlaywrightRuntimeEvidenceForCurrentPlatform() {
   } finally {
     await prepared.cleanup()
   }
+}
+
+export async function publicationPuppeteerRuntimeEvidenceForCurrentPlatform() {
+  const prepared = await preparePublicationPuppeteerRuntime()
+  try {
+    await prepared.assertUnchanged()
+    return prepared.publicationBrowser
+  } finally {
+    await prepared.cleanup()
+  }
+}
+
+export async function publicationBrowserRuntimeEvidenceForCurrentPlatform(): Promise<PublicationBrowserRuntimeEvidence> {
+  return publicationPdfRendererForRuntime() === 'playwright-chromium'
+    ? publicationPlaywrightRuntimeEvidenceForCurrentPlatform()
+    : publicationPuppeteerRuntimeEvidenceForCurrentPlatform()
 }

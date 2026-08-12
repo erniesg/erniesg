@@ -8,6 +8,7 @@ import {
   publicationPlatformKey,
   publicationPlaywrightCompatibilityForPlatform,
   publicationPlaywrightRuntimeEvidenceForPlatform,
+  publicationPuppeteerRuntimeEvidenceForPlatform,
   publicationToolchainForRuntime,
   verifyPublicationToolchain,
 } from './toolchain'
@@ -18,6 +19,14 @@ const identity = {
   playwrightPackageJsonSha256: 'b'.repeat(64),
   playwrightCorePackageJsonSha256: 'c'.repeat(64),
   browsersJsonSha256: 'd'.repeat(64),
+}
+
+const puppeteerIdentity = {
+  observedVersion: '150.0.7871.115',
+  executableSha256: 'e'.repeat(64),
+  executableByteLength: 456,
+  puppeteerBrowsersPackageJsonSha256: 'f'.repeat(64),
+  vivliostyleCliPackageJsonSha256: '0'.repeat(64),
 }
 
 describe('publication toolchain manifest', () => {
@@ -60,13 +69,28 @@ describe('publication toolchain manifest', () => {
     expect(publicationPdfRendererForRuntime('linux', 'arm64')).toBe(
       'playwright-chromium',
     )
+  })
+
+  it('binds the pinned Puppeteer browser identity for x64 rendering', () => {
+    const browser = publicationPuppeteerRuntimeEvidenceForPlatform(
+      puppeteerIdentity,
+      'linux',
+      'x64',
+    )
+    expect(browser).toMatchObject({
+      platformKey: 'linux-x64',
+      packageName: '@puppeteer/browsers',
+      browserRevision: '150.0.7871.115',
+      expectedVersion: '150.0.7871.115',
+      observedVersion: '150.0.7871.115',
+    })
     expect(
-      publicationToolchainForRuntime(null, process.platform, 'x64').node,
-    ).toBe(process.versions.node)
-    expect(
-      publicationToolchainForRuntime(null, process.platform, 'x64').runtime
-        .node,
-    ).toBe(process.versions.node)
+      publicationToolchainForRuntime(browser, 'linux', 'x64').runtime
+        .publicationBrowser,
+    ).toEqual(browser)
+    expect(() =>
+      publicationToolchainForRuntime(null, 'linux', 'x64'),
+    ).toThrow(/browser evidence is required/i)
   })
 
   it('selects reviewed Playwright identities by OS and architecture', () => {
@@ -160,7 +184,7 @@ describe('publication toolchain manifest', () => {
         'linux',
         'x64',
       ),
-    ).toThrow(/invalid for vivliostyle-cli/)
+    ).toThrow(/does not match expected.*linux-x64/)
   })
 
   it('fails closed when repository toolchain assets are missing or mismatched', async () => {

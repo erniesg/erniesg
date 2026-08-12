@@ -7,7 +7,10 @@ import { describe, expect, it } from 'vitest'
 import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
 import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
-import { publicationPlaywrightRuntimeEvidenceForPlatform } from '../src/publication/toolchain.ts'
+import {
+  publicationPlaywrightRuntimeEvidenceForPlatform,
+  publicationPuppeteerRuntimeEvidenceForPlatform,
+} from '../src/publication/toolchain.ts'
 import {
   publicationGraphSchema,
   serializePublicationGraph,
@@ -124,6 +127,68 @@ describe('publication:check CLI', () => {
       assertPublicationReceiptRuntime(receipt, driftedExecutable, {
         platform: 'linux',
         architecture: 'arm64',
+      }),
+    ).toThrow(/browser runtime binding/i)
+  })
+
+  it('requires the current Puppeteer browser attestation for x64 receipts', () => {
+    const publicationBrowser = publicationPuppeteerRuntimeEvidenceForPlatform(
+      {
+        observedVersion: '150.0.7871.115',
+        executableSha256: 'e'.repeat(64),
+        executableByteLength: 456,
+        puppeteerBrowsersPackageJsonSha256: 'f'.repeat(64),
+        vivliostyleCliPackageJsonSha256: '0'.repeat(64),
+      },
+      'linux',
+      'x64',
+    )
+    const receipt = {
+      toolchain: {
+        node: process.versions.node,
+        runtime: {
+          node: process.versions.node,
+          platformKey: 'linux-x64',
+          pdfRenderer: 'vivliostyle-cli',
+          publicationBrowser,
+        },
+      },
+    }
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, publicationBrowser, {
+        platform: 'linux',
+        architecture: 'x64',
+      }),
+    ).not.toThrow()
+
+    for (const field of [
+      'platformKey',
+      'packageName',
+      'packageVersion',
+      'browserRevision',
+      'expectedVersion',
+      'observedVersion',
+      'executableSha256',
+      'executableByteLength',
+      'puppeteerBrowsersPackageJsonSha256',
+      'vivliostyleCliPackageJsonSha256',
+    ]) {
+      const changed = structuredClone(receipt)
+      delete changed.toolchain.runtime.publicationBrowser[field]
+      expect(() =>
+        assertPublicationReceiptRuntime(changed, publicationBrowser, {
+          platform: 'linux',
+          architecture: 'x64',
+        }),
+      ).toThrow(/browser runtime binding/i)
+    }
+
+    const driftedExecutable = structuredClone(publicationBrowser)
+    driftedExecutable.executableSha256 = '1'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedExecutable, {
+        platform: 'linux',
+        architecture: 'x64',
       }),
     ).toThrow(/browser runtime binding/i)
   })

@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import {
-  access,
   copyFile,
   mkdir,
   readFile,
@@ -11,17 +10,14 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Browser, computeExecutablePath } from '@puppeteer/browsers'
 import JSZip from 'jszip'
 import { PDFDocument } from 'pdf-lib'
 import { chromium } from 'playwright'
 import { canonicalPublicationSubsetSha256 } from '../adapter-conformance'
 import { serializeAssetBundle } from '../asset-bundle'
 import {
-  PUPPETEER_BROWSER_CACHE,
-  preparePublicationBrowserSnapshot,
   preparePublicationPlaywrightRuntime,
-  publicationPuppeteerBrowserBundleForExecutable,
+  preparePublicationPuppeteerRuntime,
 } from '../browser-runtime'
 export {
   publicationBrowserVersionMatches,
@@ -43,7 +39,7 @@ import {
   publicationPdfRendererForRuntime,
   publicationToolchainForRuntime,
   verifyPublicationToolchain,
-  type PublicationPlaywrightRuntimeEvidence,
+  type PublicationBrowserRuntimeEvidence,
 } from '../toolchain'
 
 export const PUBLICATION_PROFILES = [
@@ -765,14 +761,14 @@ type PreparedPdfRenderer =
   | {
       renderer: 'playwright-chromium'
       executablePath: string
-      publicationBrowser: PublicationPlaywrightRuntimeEvidence
+      publicationBrowser: PublicationBrowserRuntimeEvidence
       assertUnchanged: () => Promise<void>
       cleanup: () => Promise<void>
     }
   | {
       renderer: 'vivliostyle-cli'
       executablePath: string
-      publicationBrowser: null
+      publicationBrowser: PublicationBrowserRuntimeEvidence
       assertUnchanged: () => Promise<void>
       cleanup: () => Promise<void>
     }
@@ -784,29 +780,9 @@ async function preparePdfRenderer(): Promise<PreparedPdfRenderer> {
       renderer,
       ...(await preparePublicationPlaywrightRuntime()),
     }
-  let executablePath: string
-  try {
-    executablePath = computeExecutablePath({
-      browser: Browser.CHROME,
-      buildId: PUBLICATION_TOOLCHAIN.browser.revision,
-      cacheDir: PUPPETEER_BROWSER_CACHE,
-    })
-    await access(executablePath, fsConstants.R_OK)
-  } catch {
-    throw new Error(
-      'Pinned Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
-    )
-  }
-  const sourceBundle =
-    await publicationPuppeteerBrowserBundleForExecutable(executablePath)
   return {
     renderer: 'vivliostyle-cli',
-    ...(await preparePublicationBrowserSnapshot(
-      sourceBundle,
-      PUBLICATION_TOOLCHAIN.browser.browserVersion,
-      resolve(PUPPETEER_BROWSER_CACHE, '.snapshots'),
-    )),
-    publicationBrowser: null,
+    ...(await preparePublicationPuppeteerRuntime()),
   }
 }
 

@@ -310,19 +310,158 @@ async function copyRegularTree(
   await chmod(destination, sourceEntry.mode & 0o555)
 }
 
+async function publicationBrowserSnapshotRoot(
+  snapshotRoot: string,
+  bundleRoot: string,
+) {
+  const requestedRoot = resolve(snapshotRoot)
+  const canonicalParent = await realpath(dirname(requestedRoot))
+  const expectedRoot = resolve(canonicalParent, basename(requestedRoot))
+  const canonicalBundle = await realpath(bundleRoot)
+  const bundleEntry = await lstat(canonicalBundle)
+  if (!bundleEntry.isDirectory())
+    throw new Error(
+      'Pinned publication browser source bundle is not a directory',
+    )
+  if (
+    expectedRoot === canonicalBundle ||
+    pathIsWithin(canonicalBundle, expectedRoot)
+  )
+    throw new Error(
+      'Pinned publication browser snapshot directory overlaps its source bundle',
+    )
+
+  let rootEntry
+  try {
+    rootEntry = await lstat(requestedRoot)
+  } catch (error) {
+    if ((error as { code?: string }).code !== 'ENOENT') throw error
+    try {
+      await mkdir(requestedRoot, { mode: 0o700 })
+    } catch (mkdirError) {
+      if ((mkdirError as { code?: string }).code !== 'EEXIST') throw mkdirError
+    }
+    rootEntry = await lstat(requestedRoot)
+  }
+  if (
+    rootEntry.isSymbolicLink() ||
+    !rootEntry.isDirectory() ||
+    (rootEntry.mode & 0o022) !== 0
+  )
+    throw new Error(
+      'Pinned publication browser snapshot root is a symlink, unsafe, or not a directory',
+    )
+  const canonicalRoot = await realpath(requestedRoot)
+  const confirmedRoot = await lstat(requestedRoot)
+  if (
+    canonicalRoot !== expectedRoot ||
+    confirmedRoot.dev !== rootEntry.dev ||
+    confirmedRoot.ino !== rootEntry.ino
+  )
+    throw new Error(
+      'Pinned publication browser snapshot root is redirected by a symlink',
+    )
+  return {
+    bundleEntry,
+    canonicalBundle,
+    canonicalRoot,
+    rootEntry: confirmedRoot,
+  }
+}
+
+async function cleanupPublicationBrowserSnapshot(
+  canonicalRoot: string,
+  rootEntry: { dev: number; ino: number },
+  privateRoot: string,
+  privateEntry: { dev: number; ino: number },
+) {
+  let currentRoot
+  let currentPrivate
+  let currentCanonicalRoot
+  let currentCanonicalPrivate
+  try {
+    ;[currentRoot, currentPrivate, currentCanonicalRoot, currentCanonicalPrivate] =
+      await Promise.all([
+        lstat(canonicalRoot),
+        lstat(privateRoot),
+        realpath(canonicalRoot),
+        realpath(privateRoot),
+      ])
+  } catch {
+    throw new Error(
+      'Pinned publication browser snapshot cleanup refused after its directory identity changed',
+    )
+  }
+  if (
+    !currentRoot.isDirectory() ||
+    currentRoot.dev !== rootEntry.dev ||
+    currentRoot.ino !== rootEntry.ino ||
+    currentCanonicalRoot !== canonicalRoot ||
+    !currentPrivate.isDirectory() ||
+    currentPrivate.dev !== privateEntry.dev ||
+    currentPrivate.ino !== privateEntry.ino ||
+    currentCanonicalPrivate !== privateRoot ||
+    dirname(privateRoot) !== canonicalRoot
+  )
+    throw new Error(
+      'Pinned publication browser snapshot cleanup refused after its directory identity changed',
+    )
+  await rm(privateRoot, { recursive: true, force: true })
+}
+
 export async function snapshotPublicationBrowserBundle(
   bundle: PublicationBrowserBundle,
   snapshotRoot = resolve(PLAYWRIGHT_BROWSER_CACHE, '.snapshots'),
 ) {
-  await mkdir(snapshotRoot, { recursive: true, mode: 0o700 })
-  const privateRoot = await mkdtemp(resolve(snapshotRoot, 'browser-'))
-  const snapshotBundleRoot = resolve(privateRoot, basename(bundle.bundleRoot))
-  try {
-    await copyRegularTree(
-      bundle.bundleRoot,
-      snapshotBundleRoot,
-      bundle.bundleRoot,
+  const { bundleEntry, canonicalBundle, canonicalRoot, rootEntry } =
+    await publicationBrowserSnapshotRoot(snapshotRoot, bundle.bundleRoot)
+  const privateRoot = await mkdtemp(resolve(canonicalRoot, 'browser-'))
+  const snapshotBundleRoot = resolve(privateRoot, basename(canonicalBundle))
+  const privateEntry = await lstat(privateRoot)
+  const cleanup = () =>
+    cleanupPublicationBrowserSnapshot(
+      canonicalRoot,
+      rootEntry,
+      privateRoot,
+      privateEntry,
     )
+  try {
+    const [confirmedBundle, confirmedRoot, canonicalPrivateRoot] =
+      await Promise.all([
+        lstat(canonicalBundle),
+        lstat(canonicalRoot),
+        realpath(privateRoot),
+      ])
+    if (
+      !confirmedBundle.isDirectory() ||
+      confirmedBundle.dev !== bundleEntry.dev ||
+      confirmedBundle.ino !== bundleEntry.ino ||
+      !confirmedRoot.isDirectory() ||
+      confirmedRoot.dev !== rootEntry.dev ||
+      confirmedRoot.ino !== rootEntry.ino ||
+      !privateEntry.isDirectory() ||
+      !pathIsWithin(canonicalRoot, canonicalPrivateRoot) ||
+      canonicalPrivateRoot === canonicalBundle ||
+      pathIsWithin(canonicalBundle, canonicalPrivateRoot) ||
+      pathIsWithin(canonicalPrivateRoot, canonicalBundle)
+    )
+      throw new Error(
+        'Pinned publication browser snapshot directory overlaps or escapes its private root',
+      )
+    await copyRegularTree(
+      canonicalBundle,
+      snapshotBundleRoot,
+      canonicalBundle,
+    )
+    const copiedBundle = await lstat(canonicalBundle)
+    if (
+      !copiedBundle.isDirectory() ||
+      copiedBundle.dev !== bundleEntry.dev ||
+      copiedBundle.ino !== bundleEntry.ino
+    )
+      throw new Error(
+        'Pinned publication browser source bundle changed during snapshot creation',
+      )
     const executablePath = resolve(
       snapshotBundleRoot,
       bundle.executableRelativePath,
@@ -334,10 +473,10 @@ export async function snapshotPublicationBrowserBundle(
       )
     return {
       executablePath,
-      cleanup: () => rm(privateRoot, { recursive: true, force: true }),
+      cleanup,
     }
   } catch (error) {
-    await rm(privateRoot, { recursive: true, force: true })
+    await cleanup()
     throw error
   }
 }

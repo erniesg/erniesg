@@ -5,12 +5,13 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
@@ -924,6 +925,45 @@ describe('Vivliostyle publication renderer boundary', () => {
         readFile(resolve(dirname(snapshot.executablePath), 'resource'), 'utf8'),
       ).resolves.toBe('linked resource')
       await snapshot.cleanup()
+
+      const cleanupSnapshot = await snapshotPublicationBrowserBundle(
+        selected,
+        resolve(root, 'snapshots'),
+      )
+      const cleanupPrivateRoot = dirname(
+        dirname(dirname(cleanupSnapshot.executablePath)),
+      )
+      const movedSnapshots = resolve(root, 'moved-snapshots')
+      await rename(resolve(root, 'snapshots'), movedSnapshots)
+      await mkdir(resolve(root, 'snapshots'))
+      const replacementPrivateRoot = resolve(
+        root,
+        'snapshots',
+        basename(cleanupPrivateRoot),
+      )
+      await mkdir(replacementPrivateRoot)
+      const sentinel = resolve(replacementPrivateRoot, 'do-not-delete')
+      await writeFile(sentinel, 'replacement directory')
+      await expect(cleanupSnapshot.cleanup()).rejects.toThrow(
+        /cleanup refused.*identity changed/i,
+      )
+      await expect(readFile(sentinel, 'utf8')).resolves.toBe(
+        'replacement directory',
+      )
+
+      const outsideSnapshots = resolve(root, 'outside-snapshots')
+      await mkdir(outsideSnapshots)
+      const linkedSnapshots = resolve(root, 'linked-snapshots')
+      await symlink(outsideSnapshots, linkedSnapshots)
+      await expect(
+        snapshotPublicationBrowserBundle(selected, linkedSnapshots),
+      ).rejects.toThrow(/snapshot.*symlink/i)
+      await expect(
+        snapshotPublicationBrowserBundle(
+          selected,
+          resolve(bundle, 'snapshots'),
+        ),
+      ).rejects.toThrow(/snapshot.*overlaps/i)
 
       const outside = resolve(root, 'outside-browser')
       await writeFile(outside, 'outside')

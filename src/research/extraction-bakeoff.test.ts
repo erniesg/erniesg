@@ -160,10 +160,15 @@ describe('extraction architecture bake-off', () => {
 
   it('disqualifies a byte-unstable candidate rather than publishing the first result', async () => {
     let invocation = 0
+    // Vary an identifier rather than the node order: reversing the nodes now
+    // fails verification outright on the cross-node source-order check, which
+    // reports `failed` and would no longer exercise byte-instability at all.
     const unstable = arm('llm-authored', (input) => {
       invocation += 1
       const output = proposal(input)
-      if (invocation % 2 === 0) output.nodes.reverse()
+      if (invocation % 2 === 0) {
+        for (const node of output.nodes) node.id = `${node.id}-alt`
+      }
       return output
     })
     const report = await runExtractionBakeoff({

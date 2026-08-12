@@ -253,4 +253,104 @@ describe('source-backed structured extraction verifier', () => {
     )
     expect(first).toEqual(second)
   })
+
+  it('preserves the preformatted structure of a source-backed code listing', () => {
+    // Prose normalization collapses every run of whitespace to one space. A
+    // code listing that survives that has lost the indentation and line breaks
+    // that make it a listing, so the verified document no longer preserves the
+    // source.
+    const listing = 'function main() {\n  return 42\n}'
+    const base = context()
+    base.sourceRuns.push({ id: 'code-run', text: listing, page: 2, order: 8 })
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'listing',
+      type: 'code',
+      sourceRunIds: ['code-run'],
+      text: listing,
+    })
+
+    const result = verifyStructuredExtraction(base, candidate)
+
+    expect(result.status).toBe('passed')
+    if (result.status === 'passed') {
+      const code = result.output.nodes.find(({ id }) => id === 'listing')!
+      expect(code.text).toBe(listing)
+    }
+  })
+
+  it('rejects a table node that carries no semantic cells', () => {
+    // `verifyNodeTable` returns early when `table` is absent, so a candidate
+    // can label a source span a table, score as one, and publish a table with
+    // no rows, cells, header scopes, or per-cell provenance.
+    const candidate = validProposal()
+    candidate.nodes.push({
+      id: 'table',
+      type: 'table',
+      sourceRunIds: ['table-head', 'table-value'],
+    })
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('invalid-table')
+      expect(result.output).toBeNull()
+    }
+  })
+
+  it('rejects a figure that references no deterministic asset', () => {
+    // `verifyAsset` returns immediately without an `assetId`, so every
+    // figure-specific check — bounded asset, caption, caption-derived alt text
+    // — is skipped for a figure that simply omits one.
+    const candidate = validProposal()
+    delete candidate.nodes[2]!.assetId
+    delete candidate.nodes[2]!.captionNodeId
+    delete candidate.nodes[2]!.altText
+    delete candidate.nodes[2]!.altTextSource
+    candidate.assetIds = []
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unknown-asset')
+      expect(result.output).toBeNull()
+    }
+  })
+
+  it('rejects model-authored alt text on a node that is not a figure', () => {
+    // The alt-text checks are figure-only, but the verified node is built with
+    // an unconditional `altText` copy, so a paragraph can carry invented text
+    // into the supposedly source-backed document.
+    const candidate = validProposal()
+    candidate.nodes[3]!.altText = 'invented'
+    candidate.nodes[3]!.altTextSource = 'model'
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain(
+        'model-authored-alt-text',
+      )
+      expect(result.output).toBeNull()
+    }
+  })
+
+  it('rejects nodes emitted out of source order relative to one another', () => {
+    // Each node's own run IDs stay sorted, so the per-node order check passes
+    // while the document reads back to front.
+    const candidate = validProposal()
+    const [title, caption, figure, body] = candidate.nodes
+    candidate.nodes = [body!, title!, caption!, figure!]
+
+    const result = verifyStructuredExtraction(context(), candidate)
+
+    expect(result.status).toBe('failed')
+    if (result.status === 'failed') {
+      expect(result.issues.map(({ code }) => code)).toContain('unverified-span')
+      expect(result.output).toBeNull()
+    }
+  })
 })

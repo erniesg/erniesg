@@ -481,6 +481,29 @@ function sourceTextForRunIds(
   )
 }
 
+/**
+ * A code listing's whitespace *is* its structure. Prose normalization collapses
+ * every run of whitespace to one space, which republishes a source-backed
+ * listing as a single flattened line, so preformatted nodes keep their source
+ * bytes (NFKC-normalized, like prose) and are joined by line rather than space.
+ */
+const PREFORMATTED_NODE_TYPES: ReadonlySet<StructuredExtractionNodeType> =
+  new Set(['code'])
+
+function nodeTextForRunIds(
+  type: StructuredExtractionNodeType,
+  sourceRunIds: readonly string[],
+  runsById: ReadonlyMap<string, StructuredSourceRun>,
+) {
+  if (!PREFORMATTED_NODE_TYPES.has(type))
+    return sourceTextForRunIds(sourceRunIds, runsById)
+  return sourceRunIds
+    .map((id) => runsById.get(id)?.text ?? '')
+    .filter((text) => text.length > 0)
+    .join('\n')
+    .normalize('NFKC')
+}
+
 function issue(
   code: StructuredExtractionVerificationIssueCode,
   message: string,
@@ -496,7 +519,17 @@ function verifyNodeTable(
   issues: StructuredExtractionVerificationIssue[],
   boilerplate: ReadonlySet<string>,
 ) {
-  if (!node.table || node.type !== 'table') return undefined
+  if (node.type !== 'table') return undefined
+  // A table node without semantic cells publishes no rows, header scopes, or
+  // per-cell provenance, yet would score as a table. It is not a table.
+  if (!node.table) {
+    issues.push(
+      issue('invalid-table', 'A table must carry its semantic cells.', {
+        nodeId: node.id,
+      }),
+    )
+    return undefined
+  }
   if (node.table.rows.length === 0) {
     issues.push(
       issue('invalid-table', 'A table must contain at least one row.', {
@@ -581,7 +614,7 @@ function validateNodeText(
     )
     return ''
   }
-  const text = sourceTextForRunIds(node.sourceRunIds, runsById)
+  const text = nodeTextForRunIds(node.type, node.sourceRunIds, runsById)
   if (!text) {
     issues.push(
       issue('unverified-span', 'A node references no readable source text.', {
@@ -589,7 +622,12 @@ function validateNodeText(
       }),
     )
   }
-  if (node.text !== undefined && normalizedText(node.text) !== text) {
+  const proposedText = PREFORMATTED_NODE_TYPES.has(node.type)
+    ? node.text?.normalize('NFKC')
+    : node.text === undefined
+      ? undefined
+      : normalizedText(node.text)
+  if (node.text !== undefined && proposedText !== text) {
     issues.push(
       issue(
         'source-text-mismatch',
@@ -643,7 +681,21 @@ function verifyAsset(
   nodesById: ReadonlyMap<string, StructuredExtractionNode>,
   issues: StructuredExtractionVerificationIssue[],
 ) {
-  if (!node.assetId) return
+  if (!node.assetId) {
+    // Returning here for a figure skips every figure-specific check, so a
+    // proposal that simply omits `assetId` publishes a figure with no bounded
+    // asset, no caption, and no caption-derived alt text.
+    if (node.type === 'figure') {
+      issues.push(
+        issue(
+          'unknown-asset',
+          `Figure ${node.id} must reference a deterministic asset.`,
+          { nodeId: node.id },
+        ),
+      )
+    }
+    return
+  }
   const asset = assetsById.get(node.assetId)
   if (!asset) {
     issues.push(
@@ -816,7 +868,28 @@ export function verifyStructuredExtraction(
   if (nodesById.size !== proposal.nodes.length) {
     issues.push(issue('invalid-output', 'Node identifiers must be unique.'))
   }
+  // `validateNodeText` only orders the runs *within* one node, so two nodes can
+  // be supplied back to front with each one internally sorted. The proposal
+  // order is what the verified document publishes, so it has to hold across
+  // node boundaries too.
+  let previousNodeOrder: { id: string; order: number } | undefined
   for (const node of proposal.nodes) {
+    const nodeOrders = node.sourceRunIds
+      .map((sourceRunId) => runsById.get(sourceRunId)?.order)
+      .filter((order): order is number => order !== undefined)
+    if (nodeOrders.length > 0) {
+      const first = Math.min(...nodeOrders)
+      if (previousNodeOrder && first < previousNodeOrder.order) {
+        issues.push(
+          issue(
+            'unverified-span',
+            `Node ${node.id} is emitted before ${previousNodeOrder.id} but starts later in source order.`,
+            { nodeId: node.id },
+          ),
+        )
+      }
+      previousNodeOrder = { id: node.id, order: Math.max(...nodeOrders) }
+    }
     if (
       node.type === 'heading' &&
       (node.level === undefined || node.level < 1 || node.level > 6)
@@ -825,6 +898,18 @@ export function verifyStructuredExtraction(
         issue(
           'invalid-heading-level',
           'Headings require a level from 1 through 6.',
+          { nodeId: node.id },
+        ),
+      )
+    }
+    // The alt-text checks below are figure-only, but the verified node copies
+    // `altText` unconditionally. Without this, a paragraph carrying
+    // `altTextSource: 'model'` lands invented text in a source-backed document.
+    if (node.type !== 'figure' && node.altText !== undefined) {
+      issues.push(
+        issue(
+          'model-authored-alt-text',
+          `Only a figure may carry alt text; ${node.id} is a ${node.type}.`,
           { nodeId: node.id },
         ),
       )

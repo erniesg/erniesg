@@ -210,6 +210,56 @@ describe('PDF model fallback production adapter', () => {
     expect(decisionId(reordered)).toBe(decisionId(adjudicationRequired))
   })
 
+  it('keeps a reading-order ambiguity open when no alternate candidate exists', async () => {
+    const singleton = structuredClone(adjudicationRequired)
+    const diagnostic = singleton.diagnostics.find(
+      ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
+    )!
+    diagnostic.target!.regionIds = diagnostic.target!.regionIds.slice(0, 1)
+    singleton.diagnostics = [diagnostic]
+    const consult = vi.fn(() => ({ candidateId: 'not-called' }))
+
+    const result = await resolvePdfModelFallbacks(singleton, {
+      enabled: true,
+      ownerOptIn: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    expect(consult).not.toHaveBeenCalled()
+    expect(
+      modelDecisionPointsForPdf(singleton).filter(
+        ({ decisionClass }) =>
+          decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
+      ),
+    ).toHaveLength(0)
+    expect(result.diagnostics).toContainEqual(diagnostic)
+  })
+
+  it('keeps non-column reading-order obligations out of model consultation', async () => {
+    const nonColumn = structuredClone(adjudicationRequired)
+    const diagnostic = nonColumn.diagnostics.find(
+      ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
+    )!
+    delete diagnostic.readingOrderResolution
+    nonColumn.diagnostics = [diagnostic]
+    const consult = vi.fn(() => ({ candidateId: 'not-called' }))
+
+    const result = await resolvePdfModelFallbacks(nonColumn, {
+      enabled: true,
+      ownerOptIn: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    expect(consult).not.toHaveBeenCalled()
+    expect(
+      modelDecisionPointsForPdf(nonColumn).filter(
+        ({ decisionClass }) =>
+          decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
+      ),
+    ).toHaveLength(0)
+    expect(result.diagnostics).toContainEqual(diagnostic)
+  })
+
   it('binds deterministic reading-order receipts to the installed candidate order', async () => {
     const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
       ({ decisionClass }) =>

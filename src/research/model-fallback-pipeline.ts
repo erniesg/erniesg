@@ -229,7 +229,12 @@ function readingOrderDecisionPoint(
   if (diagnostic.code !== 'AMBIGUOUS_READING_ORDER') return null
   const target = exactTarget(diagnostic)
   const orders = readingOrderCandidates(reconstruction, diagnostic)
-  if (!target || orders.length === 0) return null
+  if (
+    !target ||
+    diagnostic.readingOrderResolution?.status !== 'ambiguous' ||
+    orders.length < 2
+  )
+    return null
   const regionById = new Map(
     reconstruction.regions.map((region) => [region.id, region]),
   )

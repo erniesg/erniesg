@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rename,
   rm,
   stat,
@@ -315,9 +316,16 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'synthetic-publication',
       contentRoot,
     })
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
     const note = bundle.graph.nodes.find((node) => node.type === 'note')
-    if (!paragraph || paragraph.type !== 'paragraph' || !note || note.type !== 'note')
+    if (
+      !paragraph ||
+      paragraph.type !== 'paragraph' ||
+      !note ||
+      note.type !== 'note'
+    )
       throw new Error('missing semantic fixture')
     const graph = {
       ...bundle.graph,
@@ -340,7 +348,12 @@ describe('Vivliostyle publication renderer boundary', () => {
         )
         .concat(
           { ...note, id: 'endnote', noteKind: 'endnote', backlinkIds: [] },
-          { ...note, id: 'author-note', noteKind: 'author-note', backlinkIds: [] },
+          {
+            ...note,
+            id: 'author-note',
+            noteKind: 'author-note',
+            backlinkIds: [],
+          },
         ),
     }
     const html = publicationGraphToHtml(
@@ -393,7 +406,8 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const template = bundle.graph.nodes[0]
-    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
+    if (!template || template.type !== 'figure')
+      throw new Error('missing figure fixture')
     const figure = { ...template, id: 'orphan-figure' } as any
     delete figure.captionId
     const caption = {
@@ -424,8 +438,15 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const figure = bundle.graph.nodes.find((node) => node.type === 'figure')
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
-    if (!figure || !paragraph || figure.type !== 'figure' || paragraph.type !== 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (
+      !figure ||
+      !paragraph ||
+      figure.type !== 'figure' ||
+      paragraph.type !== 'paragraph'
+    )
       throw new Error('missing variant fixture')
     const graph = {
       ...bundle.graph,
@@ -466,7 +487,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     const a5 = publicationGraphToHtml(graph, paths, 'a5-pdf')
     expect(a5).toContain('مختصر')
     const phone = publicationGraphToHtml(graph, paths, 'phone-webpub')
-    expect(phone).toContain(`src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`)
+    expect(phone).toContain(
+      `src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`,
+    )
     expect(phone).not.toContain('مختصر')
   })
 
@@ -493,7 +516,11 @@ describe('Vivliostyle publication renderer boundary', () => {
           parentId: 'equation',
           text: 'Canonical equation caption',
           variants: [
-            { kind: 'compact' as const, text: 'Compact equation caption', reviewed: true },
+            {
+              kind: 'compact' as const,
+              text: 'Compact equation caption',
+              reviewed: true,
+            },
           ],
         },
       ],
@@ -1094,26 +1121,195 @@ describe('Vivliostyle publication renderer boundary', () => {
         selected,
         snapshotRoot,
       )
-      const staleRoot = resolve(snapshotRoot, 'browser-stale-fixture')
-      const staleLease = resolve(staleRoot, '.lease')
-      await mkdir(staleRoot, { mode: 0o700 })
-      await writeFile(staleLease, 'publication browser snapshot lease\n', {
-        mode: 0o600,
-      })
-      await writeFile(resolve(staleRoot, 'orphan'), 'stale browser bytes')
-      await utimes(staleLease, new Date(0), new Date(0))
+      const expired = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      const expiredRoot = dirname(dirname(dirname(expired.executablePath)))
+      await utimes(resolve(expiredRoot, '.lease'), new Date(0), new Date(0))
 
       const current = await snapshotPublicationBrowserBundle(
         selected,
         snapshotRoot,
       )
-      await expect(access(staleRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(access(expiredRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(expired.assertDirectoryIdentity()).rejects.toThrow(
+        /snapshot directory identity changed|lease ownership was lost/i,
+      )
+      await expect(expired.cleanup()).rejects.toThrow(
+        /cleanup refused.*identity changed/i,
+      )
       await expect(readFile(active.executablePath, 'utf8')).resolves.toBe(
         'reviewed browser bytes',
       )
+
+      const quarantines = (await readdir(snapshotRoot)).filter((entry) =>
+        entry.startsWith('reap-'),
+      )
+      expect(quarantines).toHaveLength(1)
+      const expiredQuarantine = resolve(snapshotRoot, quarantines[0])
+      await utimes(expiredQuarantine, new Date(0), new Date(0))
+
+      const leaseGapRoot = resolve(snapshotRoot, 'browser-lease-gap')
+      await mkdir(leaseGapRoot, { mode: 0o700 })
+      await writeFile(resolve(leaseGapRoot, 'orphan'), 'stale browser bytes')
+      await utimes(leaseGapRoot, new Date(0), new Date(0))
+      const reapingResults = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          snapshotPublicationBrowserBundle(selected, snapshotRoot),
+        ),
+      )
+      expect(
+        reapingResults.filter((result) => result.status === 'rejected'),
+      ).toEqual([])
+      const afterReap = reapingResults.map((result) => {
+        if (result.status === 'rejected') throw result.reason
+        return result.value
+      })
+      await expect(access(expiredQuarantine)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(access(leaseGapRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+
+      const gapQuarantines = (await readdir(snapshotRoot)).filter((entry) =>
+        entry.startsWith('reap-'),
+      )
+      expect(gapQuarantines).toHaveLength(1)
+      const gapQuarantine = resolve(snapshotRoot, gapQuarantines[0])
+      await utimes(gapQuarantine, new Date(0), new Date(0))
+      const final = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      await expect(access(gapQuarantine)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await final.cleanup()
+      await Promise.all(afterReap.map((snapshot) => snapshot.cleanup()))
       await current.cleanup()
       await active.cleanup()
     } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('allows concurrent scavengers to finish the same fenced quarantine', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-reap-'))
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const quarantineRoot = resolve(snapshotRoot, 'reap-stale-fixture')
+    const orphan = resolve(quarantineRoot, 'snapshot/orphan')
+    const originalFsPromises = await import('node:fs/promises')
+    let orphanUnlinks = 0
+    let releaseUnlinks: () => void = () => undefined
+    const bothAtUnlink = new Promise<void>((resolveBarrier) => {
+      releaseUnlinks = resolveBarrier
+    })
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      unlink: async (path: unknown, ...args: unknown[]) => {
+        if (resolve(String(path)) === orphan) {
+          orphanUnlinks += 1
+          if (orphanUnlinks === 2) releaseUnlinks()
+          await bothAtUnlink
+        }
+        return (originalFsPromises.unlink as (...values: unknown[]) => unknown)(
+          path,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await mkdir(dirname(orphan), { recursive: true, mode: 0o700 })
+      await writeFile(orphan, 'stale browser bytes')
+      await utimes(quarantineRoot, new Date(0), new Date(0))
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const results = await Promise.allSettled([
+        runtime.snapshotPublicationBrowserBundle(selected, snapshotRoot),
+        runtime.snapshotPublicationBrowserBundle(selected, snapshotRoot),
+      ])
+      expect(orphanUnlinks).toBe(2)
+      expect(results.filter((result) => result.status === 'rejected')).toEqual(
+        [],
+      )
+      const snapshots = results.map((result) => {
+        if (result.status === 'rejected') throw result.reason
+        return result.value
+      })
+      await Promise.all(snapshots.map((snapshot) => snapshot.cleanup()))
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the lease until snapshot payload cleanup finishes', async () => {
+    const root = await mkdtemp(
+      resolve(tmpdir(), 'publication-browser-cleanup-'),
+    )
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const originalFsPromises = await import('node:fs/promises')
+    let payloadPath = ''
+    let leasePath = ''
+    let observedLease = false
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      unlink: async (path: unknown, ...args: unknown[]) => {
+        if (resolve(String(path)) === payloadPath) {
+          const lease = await originalFsPromises.lstat(leasePath)
+          observedLease = lease.isFile()
+        }
+        return (originalFsPromises.unlink as (...values: unknown[]) => unknown)(
+          path,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      payloadPath = snapshot.executablePath
+      const privateRoot = dirname(dirname(dirname(payloadPath)))
+      leasePath = resolve(privateRoot, '.lease')
+      await snapshot.cleanup()
+      expect(observedLease).toBe(true)
+      await expect(access(privateRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
       await rm(root, { recursive: true, force: true })
     }
   })
@@ -1220,7 +1416,9 @@ describe('Vivliostyle publication renderer boundary', () => {
   })
 
   it('refuses to reuse pre-existing WebPub and layout asset directories', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-exclusive-'))
+    const root = await mkdtemp(
+      resolve(tmpdir(), 'publication-webpub-exclusive-'),
+    )
     try {
       const webpub = resolve(root, 'phone-webpub')
       await mkdir(resolve(webpub, 'assets'), { recursive: true })

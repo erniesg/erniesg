@@ -16,6 +16,7 @@ import {
   readlink,
   realpath,
   readdir,
+  rename,
   rmdir,
   symlink,
   unlink,
@@ -54,15 +55,12 @@ const PLAYWRIGHT_CORE_BROWSERS_JSON = resolve(
 )
 const NODE_MODULES_ROOT = resolve(dirname(PLAYWRIGHT_PACKAGE_JSON), '..')
 const REPOSITORY_ROOT = resolve(NODE_MODULES_ROOT, '..')
-const PUPPETEER_BROWSERS_PACKAGE_JSON = require.resolve(
-  '@puppeteer/browsers/package.json',
-)
-const PUPPETEER_CORE_PACKAGE_JSON = require.resolve(
-  'puppeteer-core/package.json',
-)
-const VIVLIOSTYLE_CLI_PACKAGE_JSON = require.resolve(
-  '@vivliostyle/cli/package.json',
-)
+const PUPPETEER_BROWSERS_PACKAGE_JSON =
+  require.resolve('@puppeteer/browsers/package.json')
+const PUPPETEER_CORE_PACKAGE_JSON =
+  require.resolve('puppeteer-core/package.json')
+const VIVLIOSTYLE_CLI_PACKAGE_JSON =
+  require.resolve('@vivliostyle/cli/package.json')
 
 export const PUBLICATION_BROWSER_CACHE = resolve(
   NODE_MODULES_ROOT,
@@ -97,14 +95,15 @@ export function publicationBrowserSnapshotRootPath(
 export const PUBLICATION_BROWSER_SNAPSHOT_ROOT =
   publicationBrowserSnapshotRootPath()
 const PUBLICATION_BROWSER_SNAPSHOT_LEASE = '.lease'
-const PUBLICATION_BROWSER_SNAPSHOT_REAP_CLAIM = '.reap'
+const PUBLICATION_BROWSER_SNAPSHOT_REAP_PREFIX = 'reap-'
 const PUBLICATION_BROWSER_SNAPSHOT_HEARTBEAT_MS = 15_000
 const PUBLICATION_BROWSER_SNAPSHOT_STALE_MS = 120_000
 // Snapshot isolation protects against ordinary concurrent installer/cache
 // replacement and untrusted child symlinks. The private tree is mode 0700;
 // processes with the same uid (and root) remain inside the trusted VM boundary.
-// A heartbeat lease keeps concurrent builds distinct; the next preparation
-// exclusively claims and removes crash orphans after two quiet minutes.
+// A heartbeat lease keeps concurrent builds distinct. A later preparation
+// atomically quarantines crash orphans after two quiet minutes, then waits a
+// second quiet interval before removing the fenced tree.
 
 export type PreparedPublicationPlaywrightRuntime = {
   executablePath: string
@@ -574,78 +573,129 @@ async function publicationBrowserSnapshotRoot(
 async function removePublicationBrowserTree(
   path: string,
   expectedEntry: FileIdentity,
+  tolerateMissing = false,
 ): Promise<void> {
-  const entry = await lstat(path, { bigint: true })
+  let entry
+  try {
+    entry = await lstat(path, { bigint: true })
+  } catch (error) {
+    if (tolerateMissing && (error as { code?: string }).code === 'ENOENT')
+      return
+    throw error
+  }
   if (!sameFileIdentity(entry, expectedEntry))
     throw new Error(
       'Pinned publication browser snapshot cleanup refused after an entry identity changed',
     )
   if (!entry.isDirectory()) {
-    await unlink(path)
+    try {
+      await unlink(path)
+    } catch (error) {
+      if (tolerateMissing && (error as { code?: string }).code === 'ENOENT')
+        return
+      throw error
+    }
     return
   }
-  const entries = (await readdir(path)).sort((left, right) =>
-    left.localeCompare(right),
-  )
+  let entries
+  try {
+    entries = (await readdir(path)).sort((left, right) =>
+      left.localeCompare(right),
+    )
+  } catch (error) {
+    if (tolerateMissing && (error as { code?: string }).code === 'ENOENT')
+      return
+    throw error
+  }
   for (const entryName of entries) {
     const entryPath = resolve(path, entryName)
-    const childEntry = await lstat(entryPath, { bigint: true })
-    await removePublicationBrowserTree(entryPath, childEntry)
+    let childEntry
+    try {
+      childEntry = await lstat(entryPath, { bigint: true })
+    } catch (error) {
+      if (tolerateMissing && (error as { code?: string }).code === 'ENOENT')
+        continue
+      throw error
+    }
+    await removePublicationBrowserTree(entryPath, childEntry, tolerateMissing)
   }
-  const confirmedEntry = await lstat(path, { bigint: true })
+  let confirmedEntry
+  try {
+    confirmedEntry = await lstat(path, { bigint: true })
+  } catch (error) {
+    if (tolerateMissing && (error as { code?: string }).code === 'ENOENT')
+      return
+    throw error
+  }
   if (!confirmedEntry.isDirectory() || !sameFileIdentity(entry, confirmedEntry))
     throw new Error(
       'Pinned publication browser snapshot cleanup refused after an entry identity changed',
     )
-  await rmdir(path)
+  try {
+    await rmdir(path)
+  } catch (error) {
+    if (tolerateMissing && (error as { code?: string }).code === 'ENOENT')
+      return
+    throw error
+  }
 }
 
-function publicationBrowserSnapshotLeaseIsStale(
-  lease: BigIntStats,
+function publicationBrowserSnapshotEntryIsStale(
+  entry: BigIntStats,
   now = Date.now(),
 ) {
   return (
-    BigInt(now) - lease.mtimeMs >
-    BigInt(PUBLICATION_BROWSER_SNAPSHOT_STALE_MS)
+    BigInt(now) - entry.mtimeMs > BigInt(PUBLICATION_BROWSER_SNAPSHOT_STALE_MS)
   )
 }
 
-async function claimStalePublicationBrowserSnapshot(privateRoot: string) {
-  const claim = resolve(
-    privateRoot,
-    PUBLICATION_BROWSER_SNAPSHOT_REAP_CLAIM,
+function publicationBrowserPrivateDirectoryIsSafe(
+  entry: BigIntStats,
+  currentUid: number | undefined,
+) {
+  return (
+    entry.isDirectory() &&
+    (entry.mode & 0o077n) === 0n &&
+    (currentUid === undefined || entry.uid === BigInt(currentUid))
   )
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await writeFile(claim, 'publication browser snapshot reap claim\n', {
-        flag: 'wx',
-        mode: 0o600,
-      })
-      return claim
-    } catch (error) {
-      if ((error as { code?: string }).code === 'ENOENT') return ''
-      if ((error as { code?: string }).code !== 'EEXIST') throw error
-      let existingClaim
+}
+
+async function quarantinePublicationBrowserSnapshot(
+  canonicalRoot: string,
+  privateRoot: string,
+  privateEntry: FileIdentity,
+) {
+  const quarantineRoot = await mkdtemp(
+    resolve(canonicalRoot, PUBLICATION_BROWSER_SNAPSHOT_REAP_PREFIX),
+  )
+  const quarantinedSnapshot = resolve(quarantineRoot, 'snapshot')
+  let fenced = false
+  try {
+    const confirmedPrivate = await lstat(privateRoot, { bigint: true })
+    if (
+      !confirmedPrivate.isDirectory() ||
+      !sameFileIdentity(privateEntry, confirmedPrivate)
+    )
+      return false
+    await rename(privateRoot, quarantinedSnapshot)
+    fenced = true
+    return true
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ENOENT') return false
+    throw error
+  } finally {
+    if (!fenced)
       try {
-        existingClaim = await lstat(claim, { bigint: true })
-      } catch (claimError) {
-        if ((claimError as { code?: string }).code === 'ENOENT') continue
-        throw claimError
+        await rmdir(quarantineRoot)
+      } catch (error) {
+        if (
+          !['ENOENT', 'ENOTEMPTY'].includes(
+            (error as { code?: string }).code ?? '',
+          )
+        )
+          throw error
       }
-      if (
-        !existingClaim.isFile() ||
-        !publicationBrowserSnapshotLeaseIsStale(existingClaim)
-      )
-        return ''
-      try {
-        await unlink(claim)
-      } catch (unlinkError) {
-        if ((unlinkError as { code?: string }).code !== 'ENOENT')
-          throw unlinkError
-      }
-    }
   }
-  return ''
 }
 
 async function scavengePublicationBrowserSnapshots(canonicalRoot: string) {
@@ -654,35 +704,53 @@ async function scavengePublicationBrowserSnapshots(canonicalRoot: string) {
     left.localeCompare(right),
   )
   for (const entryName of entries) {
-    if (!entryName.startsWith('browser-')) continue
-    const privateRoot = resolve(canonicalRoot, entryName)
-    const leasePath = resolve(
-      privateRoot,
-      PUBLICATION_BROWSER_SNAPSHOT_LEASE,
-    )
+    const entryPath = resolve(canonicalRoot, entryName)
     let privateEntry
-    let leaseEntry
     try {
-      ;[privateEntry, leaseEntry] = await Promise.all([
-        lstat(privateRoot, { bigint: true }),
-        lstat(leasePath, { bigint: true }),
-      ])
+      privateEntry = await lstat(entryPath, { bigint: true })
     } catch (error) {
       if ((error as { code?: string }).code === 'ENOENT') continue
       throw error
     }
     if (
-      !privateEntry.isDirectory() ||
-      (privateEntry.mode & 0o077n) !== 0n ||
-      (currentUid !== undefined && privateEntry.uid !== BigInt(currentUid)) ||
-      !leaseEntry.isFile() ||
-      (leaseEntry.mode & 0o077n) !== 0n ||
-      !publicationBrowserSnapshotLeaseIsStale(leaseEntry)
+      entryName.startsWith(PUBLICATION_BROWSER_SNAPSHOT_REAP_PREFIX) &&
+      publicationBrowserPrivateDirectoryIsSafe(privateEntry, currentUid) &&
+      publicationBrowserSnapshotEntryIsStale(privateEntry)
+    ) {
+      // Quarantines are already atomically fenced from their former owner.
+      // Concurrent scavengers may therefore treat another scavenger's removal
+      // as success while still refusing an identity substitution.
+      await removePublicationBrowserTree(entryPath, privateEntry, true)
+      continue
+    }
+    if (
+      !entryName.startsWith('browser-') ||
+      !publicationBrowserPrivateDirectoryIsSafe(privateEntry, currentUid)
     )
       continue
-    const claim = await claimStalePublicationBrowserSnapshot(privateRoot)
-    if (!claim) continue
-    let removed = false
+    const privateRoot = entryPath
+    const leasePath = resolve(privateRoot, PUBLICATION_BROWSER_SNAPSHOT_LEASE)
+    let leaseEntry
+    try {
+      leaseEntry = await lstat(leasePath, { bigint: true })
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ENOENT') {
+        if (publicationBrowserSnapshotEntryIsStale(privateEntry))
+          await quarantinePublicationBrowserSnapshot(
+            canonicalRoot,
+            privateRoot,
+            privateEntry,
+          )
+        continue
+      }
+      throw error
+    }
+    if (
+      !leaseEntry.isFile() ||
+      (leaseEntry.mode & 0o077n) !== 0n ||
+      !publicationBrowserSnapshotEntryIsStale(leaseEntry)
+    )
+      continue
     try {
       const [confirmedPrivate, confirmedLease] = await Promise.all([
         lstat(privateRoot, { bigint: true }),
@@ -693,37 +761,41 @@ async function scavengePublicationBrowserSnapshots(canonicalRoot: string) {
         sameFileIdentity(privateEntry, confirmedPrivate) &&
         confirmedLease.isFile() &&
         sameFileIdentity(leaseEntry, confirmedLease) &&
-        publicationBrowserSnapshotLeaseIsStale(confirmedLease)
-      ) {
-        await removePublicationBrowserTree(privateRoot, confirmedPrivate)
-        removed = true
-      }
+        publicationBrowserSnapshotEntryIsStale(confirmedLease)
+      )
+        await quarantinePublicationBrowserSnapshot(
+          canonicalRoot,
+          privateRoot,
+          confirmedPrivate,
+        )
     } catch (error) {
       if ((error as { code?: string }).code !== 'ENOENT') throw error
-    } finally {
-      if (!removed)
-        try {
-          await unlink(claim)
-        } catch (error) {
-          if ((error as { code?: string }).code !== 'ENOENT') throw error
-        }
     }
   }
 }
 
 function heartbeatPublicationBrowserSnapshot(leasePath: string) {
   let stopped = false
+  let ownershipLost = false
   const timer = setInterval(() => {
     if (stopped) return
     const now = new Date()
     void utimes(leasePath, now, now).catch(() => {
-      // Identity assertions surface a removed or substituted lease root.
+      ownershipLost = true
     })
   }, PUBLICATION_BROWSER_SNAPSHOT_HEARTBEAT_MS)
   timer.unref()
-  return () => {
-    stopped = true
-    clearInterval(timer)
+  return {
+    assertOwned() {
+      if (ownershipLost)
+        throw new Error(
+          'Pinned publication browser snapshot lease ownership was lost',
+        )
+    },
+    stop() {
+      stopped = true
+      clearInterval(timer)
+    },
   }
 }
 
@@ -784,6 +856,7 @@ async function cleanupPublicationBrowserSnapshot(
   privateEntry: FileIdentity,
   leasePath: string,
   leaseEntry: FileIdentity,
+  beforeLeaseRemoval: () => void,
 ) {
   try {
     await assertPublicationBrowserSnapshotIdentity(
@@ -800,9 +873,43 @@ async function cleanupPublicationBrowserSnapshot(
     )
   }
   // The private tree is mode 0700 and processes with the same uid are trusted.
-  // Refuse identity changes and remove entries one at a time without following
-  // symlinks; never hand a mutable pathname to recursive deletion.
-  await removePublicationBrowserTree(privateRoot, privateEntry)
+  // Keep the lease in place until every payload entry is gone so a crash during
+  // cleanup cannot leave a large lease-less tree. Remove entries one at a time
+  // without following symlinks; never hand a mutable pathname to recursive
+  // deletion.
+  const entries = (await readdir(privateRoot))
+    .filter((entryName) => entryName !== PUBLICATION_BROWSER_SNAPSHOT_LEASE)
+    .sort((left, right) => left.localeCompare(right))
+  for (const entryName of entries) {
+    const entryPath = resolve(privateRoot, entryName)
+    const entry = await lstat(entryPath, { bigint: true })
+    await removePublicationBrowserTree(entryPath, entry)
+  }
+  try {
+    await assertPublicationBrowserSnapshotIdentity(
+      canonicalRoot,
+      rootEntry,
+      privateRoot,
+      privateEntry,
+      leasePath,
+      leaseEntry,
+    )
+  } catch {
+    throw new Error(
+      'Pinned publication browser snapshot cleanup refused after its directory identity changed',
+    )
+  }
+  beforeLeaseRemoval()
+  await unlink(leasePath)
+  const confirmedPrivate = await lstat(privateRoot, { bigint: true })
+  if (
+    !confirmedPrivate.isDirectory() ||
+    !sameFileIdentity(privateEntry, confirmedPrivate)
+  )
+    throw new Error(
+      'Pinned publication browser snapshot cleanup refused after its directory identity changed',
+    )
+  await rmdir(privateRoot)
 }
 
 export async function snapshotPublicationBrowserBundle(
@@ -815,17 +922,11 @@ export async function snapshotPublicationBrowserBundle(
   const privateRoot = await mkdtemp(resolve(canonicalRoot, 'browser-'))
   const snapshotBundleRoot = resolve(privateRoot, basename(canonicalBundle))
   const privateEntry = await lstat(privateRoot, { bigint: true })
-  if (
-    !privateEntry.isDirectory() ||
-    (privateEntry.mode & 0o077n) !== 0n
-  )
+  if (!privateEntry.isDirectory() || (privateEntry.mode & 0o077n) !== 0n)
     throw new Error(
       'Pinned publication browser private snapshot directory is unsafe',
     )
-  const leasePath = resolve(
-    privateRoot,
-    PUBLICATION_BROWSER_SNAPSHOT_LEASE,
-  )
+  const leasePath = resolve(privateRoot, PUBLICATION_BROWSER_SNAPSHOT_LEASE)
   await writeFile(leasePath, 'publication browser snapshot lease\n', {
     flag: 'wx',
     mode: 0o600,
@@ -838,22 +939,27 @@ export async function snapshotPublicationBrowserBundle(
       leaseEntry.uid !== BigInt(process.getuid()))
   )
     throw new Error('Pinned publication browser snapshot lease is unsafe')
-  const stopHeartbeat = heartbeatPublicationBrowserSnapshot(leasePath)
+  const heartbeat = heartbeatPublicationBrowserSnapshot(leasePath)
   let cleanupPromise: Promise<void> | undefined
   const cleanup = () =>
     (cleanupPromise ??= (async () => {
-      stopHeartbeat()
-      await cleanupPublicationBrowserSnapshot(
-        canonicalRoot,
-        rootEntry,
-        privateRoot,
-        privateEntry,
-        leasePath,
-        leaseEntry,
-      )
+      try {
+        await cleanupPublicationBrowserSnapshot(
+          canonicalRoot,
+          rootEntry,
+          privateRoot,
+          privateEntry,
+          leasePath,
+          leaseEntry,
+          heartbeat.stop,
+        )
+      } finally {
+        heartbeat.stop()
+      }
     })())
-  const assertDirectoryIdentity = () =>
-    assertPublicationBrowserSnapshotIdentity(
+  const assertDirectoryIdentity = () => {
+    heartbeat.assertOwned()
+    return assertPublicationBrowserSnapshotIdentity(
       canonicalRoot,
       rootEntry,
       privateRoot,
@@ -861,6 +967,7 @@ export async function snapshotPublicationBrowserBundle(
       leasePath,
       leaseEntry,
     )
+  }
   try {
     await assertDirectoryIdentity()
     await copyPublicationBrowserTree(
@@ -919,10 +1026,7 @@ export async function preparePublicationBrowserSnapshot(
     const assertUnchanged = async () => {
       await snapshot.assertDirectoryIdentity()
       const current = await lstat(snapshot.executablePath, { bigint: true })
-      if (
-        !current.isFile() ||
-        !sameStableSourceEntry(executable, current)
-      )
+      if (!current.isFile() || !sameStableSourceEntry(executable, current))
         throw new Error(
           'Pinned publication browser executable changed during rendering',
         )

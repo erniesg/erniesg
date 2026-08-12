@@ -44,6 +44,10 @@ export const PLAYWRIGHT_BROWSER_CACHE = resolve(
   PUBLICATION_BROWSER_CACHE,
   'playwright',
 )
+export const PUPPETEER_BROWSER_CACHE = resolve(
+  PUBLICATION_BROWSER_CACHE,
+  'puppeteer',
+)
 
 export type PreparedPublicationPlaywrightRuntime = {
   executablePath: string
@@ -165,7 +169,7 @@ async function firstAccessiblePath(candidates: string[]) {
   return ''
 }
 
-type PublicationBrowserBundle = {
+export type PublicationBrowserBundle = {
   bundleRoot: string
   executableRelativePath: string
 }
@@ -207,6 +211,58 @@ export async function publicationBrowserBundleForExecutable(
       resolve(canonicalCache, bundleName),
       canonicalExecutable,
     ),
+  }
+}
+
+export async function publicationPuppeteerBrowserBundleForExecutable(
+  executablePath: string,
+  options: {
+    cacheRoot?: string
+    platform?: string
+    architecture?: string
+    buildId?: string
+  } = {},
+): Promise<PublicationBrowserBundle> {
+  const cacheRoot = options.cacheRoot ?? PUPPETEER_BROWSER_CACHE
+  const platform = options.platform ?? process.platform
+  const architecture = options.architecture ?? process.arch
+  const buildId = options.buildId ?? PUBLICATION_TOOLCHAIN.browser.revision
+  const platformKey = publicationPlatformKey(platform, architecture)
+  if (platformKey !== 'linux-x64' && platformKey !== 'mac-x64')
+    throw new Error(
+      `Unsupported Puppeteer publication browser platform: ${platformKey}`,
+    )
+  if (buildId !== PUBLICATION_TOOLCHAIN.browser.revision)
+    throw new Error('Puppeteer publication browser revision is not pinned')
+
+  const [canonicalCache, canonicalExecutable] = await Promise.all([
+    realpath(cacheRoot),
+    realpath(executablePath),
+  ])
+  if (
+    resolve(executablePath) !== canonicalExecutable ||
+    !pathIsWithin(canonicalCache, canonicalExecutable)
+  )
+    throw new Error(
+      'Pinned Puppeteer browser executable is a symlink or outside its repository-local cache',
+    )
+
+  const installationPlatform = platformKey === 'linux-x64' ? 'linux' : 'mac'
+  const bundleRoot = resolve(
+    canonicalCache,
+    'chrome',
+    `${installationPlatform}-${buildId}`,
+  )
+  if (!pathIsWithin(bundleRoot, canonicalExecutable))
+    throw new Error(
+      'Pinned Puppeteer browser executable is outside its expected cache bundle',
+    )
+  const executable = await lstat(canonicalExecutable)
+  if (!executable.isFile())
+    throw new Error('Pinned Puppeteer browser executable is not a regular file')
+  return {
+    bundleRoot,
+    executableRelativePath: relative(bundleRoot, canonicalExecutable),
   }
 }
 
@@ -286,6 +342,43 @@ export async function snapshotPublicationBrowserBundle(
   }
 }
 
+export async function preparePublicationBrowserSnapshot(
+  bundle: PublicationBrowserBundle,
+  expectedVersion: string,
+  snapshotRoot?: string,
+) {
+  const snapshot = await snapshotPublicationBrowserBundle(bundle, snapshotRoot)
+  try {
+    await chmod(snapshot.executablePath, 0o500)
+    verifyPublicationBrowserExecutable(snapshot.executablePath, expectedVersion)
+    const executable = await stat(snapshot.executablePath)
+    const executableSha256 = await sha256File(snapshot.executablePath)
+    const assertUnchanged = async () => {
+      const current = await stat(snapshot.executablePath)
+      const currentSha256 = await sha256File(snapshot.executablePath)
+      if (
+        current.size !== executable.size ||
+        currentSha256 !== executableSha256
+      )
+        throw new Error(
+          'Pinned publication browser executable changed during rendering',
+        )
+      verifyPublicationBrowserExecutable(
+        snapshot.executablePath,
+        expectedVersion,
+      )
+    }
+    return {
+      executablePath: snapshot.executablePath,
+      assertUnchanged,
+      cleanup: snapshot.cleanup,
+    }
+  } catch (error) {
+    await snapshot.cleanup()
+    throw error
+  }
+}
+
 async function publicationPlaywrightPackageIdentity() {
   const paths = publicationPlaywrightPackageIdentityPaths()
   const [playwrightBytes, playwrightCoreBytes, browsersBytes] =
@@ -355,10 +448,6 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
         sha256File(snapshot.executablePath),
         publicationPlaywrightPackageIdentity(),
       ])
-      verifyPublicationBrowserExecutable(
-        snapshot.executablePath,
-        publicationBrowser.expectedVersion,
-      )
       if (
         current.size !== publicationBrowser.executableByteLength ||
         currentSha256 !== publicationBrowser.executableSha256 ||
@@ -372,6 +461,10 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
         throw new Error(
           'Pinned publication browser or package identity changed during rendering',
         )
+      verifyPublicationBrowserExecutable(
+        snapshot.executablePath,
+        publicationBrowser.expectedVersion,
+      )
     }
     return {
       executablePath: snapshot.executablePath,

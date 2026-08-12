@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import {
-  chmod,
+  access,
   copyFile,
   mkdir,
   readFile,
@@ -18,9 +18,10 @@ import { chromium } from 'playwright'
 import { canonicalPublicationSubsetSha256 } from '../adapter-conformance'
 import { serializeAssetBundle } from '../asset-bundle'
 import {
-  PUBLICATION_BROWSER_CACHE,
+  PUPPETEER_BROWSER_CACHE,
+  preparePublicationBrowserSnapshot,
   preparePublicationPlaywrightRuntime,
-  verifyPublicationBrowserExecutable,
+  publicationPuppeteerBrowserBundleForExecutable,
 } from '../browser-runtime'
 export {
   publicationBrowserVersionMatches,
@@ -58,7 +59,6 @@ const FIXED_DATE = new Date('2000-01-01T00:00:00.000Z')
 // pre-existing entry (symlink, hard link, FIFO, or regular file) is never
 // followed, truncated, or blocked on — creation fails closed instead.
 const EXCLUSIVE_WRITE = { flag: 'wx' } as const
-const PUPPETEER_BROWSER_CACHE = resolve(PUBLICATION_BROWSER_CACHE, 'puppeteer')
 const PROFILE_DETAILS = {
   'phone-webpub': {
     dimensions: '390px x continuous',
@@ -791,22 +791,22 @@ async function preparePdfRenderer(): Promise<PreparedPdfRenderer> {
       buildId: PUBLICATION_TOOLCHAIN.browser.revision,
       cacheDir: PUPPETEER_BROWSER_CACHE,
     })
-    await chmod(executablePath, 0o755)
+    await access(executablePath, fsConstants.R_OK)
   } catch {
     throw new Error(
       'Pinned Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
     )
   }
-  verifyPublicationBrowserExecutable(
-    executablePath,
-    PUBLICATION_TOOLCHAIN.browser.browserVersion,
-  )
+  const sourceBundle =
+    await publicationPuppeteerBrowserBundleForExecutable(executablePath)
   return {
     renderer: 'vivliostyle-cli',
-    executablePath,
+    ...(await preparePublicationBrowserSnapshot(
+      sourceBundle,
+      PUBLICATION_TOOLCHAIN.browser.browserVersion,
+      resolve(PUPPETEER_BROWSER_CACHE, '.snapshots'),
+    )),
     publicationBrowser: null,
-    assertUnchanged: async () => undefined,
-    cleanup: async () => undefined,
   }
 }
 
@@ -990,36 +990,41 @@ async function createPdf(
     return
   }
   const cli = resolve('node_modules/.bin/vivliostyle')
-  await run(
-    cli,
-    [
-      'build',
-      htmlPath,
-      '--single-doc',
-      '--output',
-      outputPath,
-      '--format',
-      'pdf',
-      '--size',
-      size,
-      '--executable-browser',
-      prepared.executablePath,
-      '--viewer-param',
-      'allowScripts=false',
-      '--no-vite-config-file',
-      '--no-enable-static-serve',
-      '--log-level',
-      'silent',
-    ],
-    {
-      ...process.env,
-      NO_PROXY: '*',
-      no_proxy: '*',
-      HTTP_PROXY: '',
-      HTTPS_PROXY: '',
-      ALL_PROXY: '',
-    },
-  )
+  await prepared.assertUnchanged()
+  try {
+    await run(
+      cli,
+      [
+        'build',
+        htmlPath,
+        '--single-doc',
+        '--output',
+        outputPath,
+        '--format',
+        'pdf',
+        '--size',
+        size,
+        '--executable-browser',
+        prepared.executablePath,
+        '--viewer-param',
+        'allowScripts=false',
+        '--no-vite-config-file',
+        '--no-enable-static-serve',
+        '--log-level',
+        'silent',
+      ],
+      {
+        ...process.env,
+        NO_PROXY: '*',
+        no_proxy: '*',
+        HTTP_PROXY: '',
+        HTTPS_PROXY: '',
+        ALL_PROXY: '',
+      },
+    )
+  } finally {
+    await prepared.assertUnchanged()
+  }
 }
 
 async function receiptFor(

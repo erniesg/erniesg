@@ -1,5 +1,6 @@
 import {
   access,
+  chmod,
   cp,
   mkdir,
   mkdtemp,
@@ -13,7 +14,9 @@ import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
 import {
+  preparePublicationBrowserSnapshot,
   publicationBrowserBundleForExecutable,
+  publicationPuppeteerBrowserBundleForExecutable,
   publicationPlaywrightPackageIdentityPaths,
   snapshotPublicationBrowserBundle,
 } from '../browser-runtime'
@@ -929,6 +932,63 @@ describe('Vivliostyle publication renderer boundary', () => {
       await expect(
         publicationBrowserBundleForExecutable(linked, cache),
       ).rejects.toThrow(/regular file|outside.*cache/i)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('prepares an immutable verified Puppeteer browser snapshot', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-puppeteer-'))
+    try {
+      const cache = resolve(root, 'cache')
+      const bundle = resolve(cache, 'chrome/linux-150.0.7871.115')
+      const browser = resolve(bundle, 'chrome-linux64/chrome')
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(
+        browser,
+        '#!/bin/sh\necho "Google Chrome for Testing 150.0.7871.115"\n',
+      )
+      const selected = await publicationPuppeteerBrowserBundleForExecutable(
+        browser,
+        {
+          cacheRoot: cache,
+          platform: 'linux',
+          architecture: 'x64',
+          buildId: '150.0.7871.115',
+        },
+      )
+      const prepared = await preparePublicationBrowserSnapshot(
+        selected,
+        '150.0.7871.115',
+        resolve(root, 'snapshots'),
+      )
+      expect(prepared.executablePath).not.toBe(browser)
+
+      await writeFile(browser, '#!/bin/sh\necho "changed source cache"\n')
+      await expect(prepared.assertUnchanged()).resolves.toBeUndefined()
+
+      await chmod(prepared.executablePath, 0o700)
+      await writeFile(
+        prepared.executablePath,
+        '#!/bin/sh\n# changed bytes\necho "Google Chrome for Testing 150.0.7871.115"\n',
+      )
+      await expect(prepared.assertUnchanged()).rejects.toThrow(
+        /browser.*changed/i,
+      )
+      await prepared.cleanup()
+
+      const outside = resolve(root, 'outside-browser')
+      await writeFile(outside, '#!/bin/sh\necho outside\n')
+      const linked = resolve(bundle, 'chrome-linux64/linked-chrome')
+      await symlink(outside, linked)
+      await expect(
+        publicationPuppeteerBrowserBundleForExecutable(linked, {
+          cacheRoot: cache,
+          platform: 'linux',
+          architecture: 'x64',
+          buildId: '150.0.7871.115',
+        }),
+      ).rejects.toThrow(/symlink|outside.*cache/i)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

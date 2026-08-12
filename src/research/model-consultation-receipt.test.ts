@@ -24,6 +24,8 @@ const validateSchema = new Ajv2020({ strict: false }).compile(schema)
 const credentialShapedIds = [
   ['openai-legacy', ['sk', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
   ['openai', ['sk', 'proj', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
+  ['openai-uppercase', ['SK', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
+  ['slack-uppercase', ['XOXB', 'FAKEFAKEFAKEFAKE'].join('-')],
   ['github-classic', ['ghp', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
   [
     'github-fine-grained',
@@ -38,6 +40,10 @@ const credentialShapedIds = [
     ),
   ],
   ['private-key', ['BEGIN', 'PRIVATE', 'KEY', 'FAKEFAKE'].join('-')],
+  [
+    'private-key-lowercase-algorithm',
+    ['begin', 'rsa', 'private', 'key', 'fakefake'].join('-'),
+  ],
 ] as const
 
 async function validReceipt(associationObject = false) {

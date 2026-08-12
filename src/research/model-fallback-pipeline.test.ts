@@ -2,21 +2,29 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import type { PdfReconstruction } from './import-types'
 import {
+  applyHumanDecisionFile,
+  createHumanDecisionFile,
+  upsertHumanDecision,
+} from './decision-record'
+import {
   DistillationLedger,
   MODEL_FALLBACK_DECISION_CLASSES,
   ModelConsultationGate,
+  serializeModelConsultationReceipt,
   type ModelConsultationGateOptions,
   type ModelDecisionRequest,
   validateModelConsultationReceipt,
 } from './model-fallback'
 import {
   PDF_CAPTION_UNIQUE_BOUNDED_DISTANCE_RULE_ID,
+  modelConsultationReceiptMatchesPdfReconstruction,
   modelDecisionPointsForPdf,
   PRODUCTION_PDF_MODEL_FALLBACK_OPTIONS,
   resolveCaptionAssociationByUniqueBoundedDistance,
   resolvePdfModelFallbacks,
 } from './model-fallback-pipeline'
 import { reconstructPdf } from './pdf'
+import { buildStructDocument } from '../struct/from-reconstruction'
 
 const modelIdentity = {
   providerId: 'recorded-stub',
@@ -406,6 +414,9 @@ describe('PDF model fallback production adapter', () => {
     } else {
       expect(priorReceipt.consultations).toEqual([])
     }
+    unresolved.modelConsultations = JSON.parse(
+      serializeModelConsultationReceipt(priorReceipt),
+    )
     const consult = vi.fn((request: ModelDecisionRequest) => ({
       candidateId: request.candidates[0]!.id,
     }))
@@ -445,6 +456,68 @@ describe('PDF model fallback production adapter', () => {
     expect(validateModelConsultationReceipt(resumed.modelConsultations)).toBe(
       true,
     )
+  })
+
+  it('rebinds model receipts after later human adjudication changes semantic state', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      distillation: new DistillationLedger(),
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const priorReceipt = structuredClone(resolved.modelConsultations!)
+
+    const adjudicated = applyHumanDecisionFile(
+      resolved,
+      createHumanDecisionFile(resolved.source.sha256),
+    )
+
+    expect(adjudicated.humanAdjudications.schemaVersion).toBe('1.2.0')
+    expect(adjudicated.modelConsultations?.consultations).toEqual(
+      priorReceipt.consultations,
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+    expect(() => buildStructDocument(adjudicated)).not.toThrow()
+  })
+
+  it('preserves review-required history after human adjudication closes the same decision', async () => {
+    const unresolved = await resolvePdfModelFallbacks(adjudicationRequired, {})
+    const relationship = unresolved.noteRelationships.find(
+      ({ candidates }) => candidates.length > 0,
+    )!
+    const diagnostic = unresolved.diagnostics.find(
+      ({ code, target }) =>
+        code === 'AMBIGUOUS_NOTE_MATCH' && target?.markerId === relationship.id,
+    )!
+    const candidate = relationship.candidates[0]!
+    const decisionFile = upsertHumanDecision(
+      createHumanDecisionFile(unresolved.source.sha256),
+      {
+        diagnosticCode: 'AMBIGUOUS_NOTE_MATCH',
+        target: structuredClone(diagnostic.target!),
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      },
+    )
+
+    const adjudicated = applyHumanDecisionFile(unresolved, decisionFile)
+
+    expect(adjudicated.humanAdjudications.applied).toHaveLength(1)
+    expect(adjudicated.modelConsultations?.decisions).toEqual(
+      unresolved.modelConsultations?.decisions,
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+    expect(() => buildStructDocument(adjudicated)).not.toThrow()
   })
 
   it('scopes receipts to the current invocation when a gate ledger is reused', async () => {

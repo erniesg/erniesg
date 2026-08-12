@@ -22,8 +22,14 @@ import {
   type ModelFallbackReceipt,
   validateModelConsultationReceipt,
 } from './model-fallback'
+import {
+  pdfModelConsultationSemanticStateSha256,
+  stableModelConsultationJson,
+} from './model-consultation-binding'
 import { pdfVisualMatchCandidateId } from './pdf-visuals'
 import { sha256HexSync } from './sha256-sync'
+
+export { pdfModelConsultationSemanticStateSha256 } from './model-consultation-binding'
 
 type BoundPdfDecisionPoint = {
   point: ModelFallbackDecisionPoint
@@ -430,54 +436,6 @@ function appendReceiptHistory(
   }
 }
 
-function stableSemanticStateJson(value: unknown): string {
-  if (value === undefined) return 'null'
-  if (typeof value === 'number' && !Number.isFinite(value)) return 'null'
-  if (typeof value === 'bigint') return JSON.stringify(String(value))
-  if (value instanceof Uint8Array)
-    return JSON.stringify({ sha256: sha256HexSync(value) })
-  if (Array.isArray(value))
-    return `[${value.map(stableSemanticStateJson).join(',')}]`
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value as Record<string, unknown>)
-      .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${stableSemanticStateJson((value as Record<string, unknown>)[key])}`,
-      )
-      .join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-export function pdfModelConsultationSemanticStateSha256(
-  reconstruction: PdfReconstruction,
-  receipt: ModelFallbackReceipt,
-) {
-  const {
-    modelConsultations: _modelConsultations,
-    source,
-    assets,
-    ...semanticState
-  } = reconstruction
-  const { semanticStateSha256: _semanticStateSha256, ...receiptCore } = receipt
-  return sha256HexSync(
-    stableSemanticStateJson({
-      schemaVersion: 'pdf-model-consultation-semantic-state-v1',
-      receipt: receiptCore,
-      reconstruction: {
-        ...semanticState,
-        source: {
-          sha256: source.sha256,
-          byteLength: source.byteLength,
-          pageCount: source.pageCount,
-        },
-        assets: assets.map(({ bytes: _bytes, ...asset }) => asset),
-      },
-    }),
-  )
-}
-
 function sameStringList(left: unknown, right: readonly string[]) {
   return (
     Array.isArray(left) &&
@@ -638,9 +596,48 @@ function sameConsultationEvidence(
   right: ModelConsultationRecord,
 ) {
   return (
-    JSON.stringify(left.inputs) === JSON.stringify(right.inputs) &&
-    JSON.stringify(left.candidates) === JSON.stringify(right.candidates)
+    stableModelConsultationJson(left.inputs) ===
+      stableModelConsultationJson(right.inputs) &&
+    stableModelConsultationJson(left.candidates) ===
+      stableModelConsultationJson(right.candidates)
   )
+}
+
+function humanAdjudicationSupersedesDecision(
+  reconstruction: PdfReconstruction,
+  decision: ModelDecisionMetricEvent,
+) {
+  return reconstruction.humanAdjudications.applied.some((adjudication) => {
+    if (
+      decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch
+    ) {
+      return (
+        adjudication.diagnosticCode === 'AMBIGUOUS_NOTE_MATCH' &&
+        adjudication.target.markerId === decision.decisionId
+      )
+    }
+    if (
+      decision.decisionClass ===
+      MODEL_FALLBACK_DECISION_CLASSES.captionAssociation
+    ) {
+      return (
+        adjudication.diagnosticCode === 'AMBIGUOUS_VISUAL_MATCH' &&
+        adjudication.target.markerId === decision.decisionId
+      )
+    }
+    if (
+      decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie
+    ) {
+      return (
+        adjudication.diagnosticCode === 'AMBIGUOUS_READING_ORDER' &&
+        stableCandidateId(
+          'reading-order-decision',
+          [...new Set(adjudication.target.regionIds)].sort(),
+        ) === decision.decisionId
+      )
+    }
+    return false
+  })
 }
 
 function existingReceiptMatchesReconstruction(
@@ -686,17 +683,19 @@ function existingReceiptMatchesReconstruction(
       if (
         consultations.some(
           (consultation) =>
-            JSON.stringify(consultation.inputs) !==
-              JSON.stringify(binding.point.inputs) ||
-            JSON.stringify(consultation.candidates) !==
-              JSON.stringify(binding.point.candidates),
+            stableModelConsultationJson(consultation.inputs) !==
+              stableModelConsultationJson(binding.point.inputs) ||
+            stableModelConsultationJson(consultation.candidates) !==
+              stableModelConsultationJson(binding.point.candidates),
         )
       )
         return false
       return decision.outcome === 'review-required' || consultations.length > 0
     }
 
-    if (decision.outcome === 'review-required') return false
+    if (decision.outcome === 'review-required') {
+      return humanAdjudicationSupersedesDecision(reconstruction, decision)
+    }
     if (decision.outcome === 'deterministic') {
       if (priorResolved || accepted.length > 0) return false
       const evidence = consultations[0]

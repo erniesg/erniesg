@@ -18,6 +18,7 @@ import {
   materializeCanonicalVisualNode,
   visualCanonicalNodeId,
 } from './pdf-layout'
+import { rebindModelConsultationReceipt } from './model-consultation-binding'
 import {
   pdfVisualMatchCandidateId,
   VISUAL_MATCH_DECISION_SCHEMA_VERSION,
@@ -1905,7 +1906,7 @@ export function applyHumanDecisionFile(
       (diagnostic) => diagnostic.code === 'STALE_HUMAN_DECISION',
     )
   ) {
-    return {
+    return rebindModelConsultationReceipt(reconstruction, {
       ...reconstruction,
       humanAdjudications: {
         schemaVersion: file.schemaVersion,
@@ -1914,7 +1915,7 @@ export function applyHumanDecisionFile(
         stale: [],
         countsByDiagnosticCode: {},
       },
-    }
+    })
   }
   const result = structuredClone(reconstruction)
   const decisionDiagnostics = [...result.diagnostics]
@@ -2064,5 +2065,5 @@ export function applyHumanDecisionFile(
         }
       : {}),
   }
-  return result
+  return rebindModelConsultationReceipt(reconstruction, result)
 }

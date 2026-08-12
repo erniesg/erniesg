@@ -348,6 +348,7 @@ async function createFixtureStructDocument({
   fileName,
   page,
   asset,
+  structDigest,
 }) {
   const figureAsset = await cropFixtureFigure(asset)
   const sourceEvidence = evidence(
@@ -441,8 +442,10 @@ async function createFixtureStructDocument({
     ],
     sourceIds: [`source-figure-${page}`],
   }
-  return {
+  const documentId = `srt-checkpoint-${sourceHash.slice(0, 24)}`
+  const document = {
     schemaVersion: '0.1.0',
+    documentId,
     source: {
       format: 'pdf',
       fileName,
@@ -606,6 +609,7 @@ async function createFixtureStructDocument({
     },
     receipt: {
       schemaVersion: '0.1.0',
+      documentId,
       sourceSha256: sourceHash,
       blockCount: 8,
       assetCount: 1,
@@ -633,9 +637,16 @@ async function createFixtureStructDocument({
         structTextCharacterCount: textCharacterCount,
         furnitureContaminationCount: 0,
       },
-      generatedSha256: sourceHash,
+      generatedSha256: '',
     },
   }
+  const { receipt, ...withoutReceipt } = document
+  receipt.generatedSha256 = structDigest({
+    ...withoutReceipt,
+    conservation: receipt.conservation,
+    assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
+  })
+  return document
 }
 
 async function loadStructDocument(path, fallback) {
@@ -758,13 +769,14 @@ async function createViteModules() {
     server: { middlewareMode: true, watch: null },
   })
   try {
-    const [checkpoints, pdf, struct, targets] = await Promise.all([
+    const [checkpoints, pdf, struct, targets, structIds] = await Promise.all([
       vite.ssrLoadModule('/src/research/source-output-checkpoints.ts'),
       vite.ssrLoadModule('/src/research/pdf.ts'),
       vite.ssrLoadModule('/src/research/epub.ts'),
       vite.ssrLoadModule('/src/research/targets.ts'),
+      vite.ssrLoadModule('/src/struct/ids.ts'),
     ])
-    return { vite, checkpoints, pdf, struct, targets }
+    return { vite, checkpoints, pdf, struct, targets, structIds }
   } catch (error) {
     await vite.close()
     throw error
@@ -860,6 +872,7 @@ async function run(options) {
           fileName: basename(options.document),
           page: checkpoints[0].page,
           asset: sourceAsset,
+          structDigest: modules.structIds.structDigest,
         })
       : null
     const document = await loadStructDocument(options.struct, fallback)

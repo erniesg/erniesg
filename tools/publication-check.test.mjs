@@ -138,6 +138,7 @@ describe('publication:check CLI', () => {
         executableSha256: 'e'.repeat(64),
         executableByteLength: 456,
         puppeteerBrowsersPackageJsonSha256: 'f'.repeat(64),
+        puppeteerCorePackageJsonSha256: '1'.repeat(64),
         vivliostyleCliPackageJsonSha256: '0'.repeat(64),
       },
       'linux',
@@ -171,6 +172,7 @@ describe('publication:check CLI', () => {
       'executableSha256',
       'executableByteLength',
       'puppeteerBrowsersPackageJsonSha256',
+      'puppeteerCorePackageJsonSha256',
       'vivliostyleCliPackageJsonSha256',
     ]) {
       const changed = structuredClone(receipt)

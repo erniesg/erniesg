@@ -38,6 +38,7 @@ export type PublicationPuppeteerRuntimeEvidence = {
   executableSha256: string
   executableByteLength: number
   puppeteerBrowsersPackageJsonSha256: string
+  puppeteerCorePackageJsonSha256: string
   vivliostyleCliPackageJsonSha256: string
 }
 
@@ -61,6 +62,7 @@ type PublicationPuppeteerObservedIdentity = Pick<
   | 'executableSha256'
   | 'executableByteLength'
   | 'puppeteerBrowsersPackageJsonSha256'
+  | 'puppeteerCorePackageJsonSha256'
   | 'vivliostyleCliPackageJsonSha256'
 >
 
@@ -174,6 +176,7 @@ export function publicationPuppeteerRuntimeEvidenceForPlatform(
       'puppeteerBrowsersPackageJsonSha256',
       identity.puppeteerBrowsersPackageJsonSha256,
     ],
+    ['puppeteerCorePackageJsonSha256', identity.puppeteerCorePackageJsonSha256],
     [
       'vivliostyleCliPackageJsonSha256',
       identity.vivliostyleCliPackageJsonSha256,
@@ -195,6 +198,7 @@ export function publicationPuppeteerRuntimeEvidenceForPlatform(
     executableByteLength: identity.executableByteLength,
     puppeteerBrowsersPackageJsonSha256:
       identity.puppeteerBrowsersPackageJsonSha256,
+    puppeteerCorePackageJsonSha256: identity.puppeteerCorePackageJsonSha256,
     vivliostyleCliPackageJsonSha256:
       identity.vivliostyleCliPackageJsonSha256,
   }
@@ -324,6 +328,7 @@ export async function verifyPublicationToolchain(
   const exactPackages = [
     manifest.vivliostyleCli,
     { package: manifest.browser.package, version: manifest.browser.version },
+    manifest.browser.launcher,
     {
       package: manifest.browser.compatibility.package,
       version: manifest.browser.compatibility.version,

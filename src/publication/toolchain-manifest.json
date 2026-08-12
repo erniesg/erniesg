@@ -11,6 +11,10 @@
     "name": "chromium",
     "revision": "150.0.7871.115",
     "browserVersion": "150.0.7871.115",
+    "launcher": {
+      "package": "puppeteer-core",
+      "version": "25.1.0"
+    },
     "compatibility": {
       "package": "playwright",
       "version": "1.61.1",

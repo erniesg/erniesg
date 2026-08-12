@@ -56,6 +56,9 @@ const NODE_MODULES_ROOT = resolve(dirname(PLAYWRIGHT_PACKAGE_JSON), '..')
 const PUPPETEER_BROWSERS_PACKAGE_JSON = require.resolve(
   '@puppeteer/browsers/package.json',
 )
+const PUPPETEER_CORE_PACKAGE_JSON = require.resolve(
+  'puppeteer-core/package.json',
+)
 const VIVLIOSTYLE_CLI_PACKAGE_JSON = require.resolve(
   '@vivliostyle/cli/package.json',
 )
@@ -740,15 +743,20 @@ export async function preparePublicationBrowserSnapshot(
 }
 
 async function publicationPuppeteerPackageIdentity() {
-  const [puppeteerBrowsersBytes, vivliostyleCliBytes] = await Promise.all([
-    readFile(PUPPETEER_BROWSERS_PACKAGE_JSON),
-    readFile(VIVLIOSTYLE_CLI_PACKAGE_JSON),
-  ])
+  const [puppeteerBrowsersBytes, puppeteerCoreBytes, vivliostyleCliBytes] =
+    await Promise.all([
+      readFile(PUPPETEER_BROWSERS_PACKAGE_JSON),
+      readFile(PUPPETEER_CORE_PACKAGE_JSON),
+      readFile(VIVLIOSTYLE_CLI_PACKAGE_JSON),
+    ])
   const puppeteerBrowsers = JSON.parse(puppeteerBrowsersBytes.toString('utf8'))
+  const puppeteerCore = JSON.parse(puppeteerCoreBytes.toString('utf8'))
   const vivliostyleCli = JSON.parse(vivliostyleCliBytes.toString('utf8'))
   if (
     puppeteerBrowsers.name !== PUBLICATION_TOOLCHAIN.browser.package ||
     puppeteerBrowsers.version !== PUBLICATION_TOOLCHAIN.browser.version ||
+    puppeteerCore.name !== PUBLICATION_TOOLCHAIN.browser.launcher.package ||
+    puppeteerCore.version !== PUBLICATION_TOOLCHAIN.browser.launcher.version ||
     vivliostyleCli.name !== PUBLICATION_TOOLCHAIN.vivliostyleCli.package ||
     vivliostyleCli.version !== PUBLICATION_TOOLCHAIN.vivliostyleCli.version
   )
@@ -757,6 +765,7 @@ async function publicationPuppeteerPackageIdentity() {
     )
   return {
     puppeteerBrowsersPackageJsonSha256: sha256(puppeteerBrowsersBytes),
+    puppeteerCorePackageJsonSha256: sha256(puppeteerCoreBytes),
     vivliostyleCliPackageJsonSha256: sha256(vivliostyleCliBytes),
   }
 }
@@ -795,6 +804,8 @@ export async function preparePublicationPuppeteerRuntime(): Promise<PreparedPubl
       if (
         currentPackages.puppeteerBrowsersPackageJsonSha256 !==
           publicationBrowser.puppeteerBrowsersPackageJsonSha256 ||
+        currentPackages.puppeteerCorePackageJsonSha256 !==
+          publicationBrowser.puppeteerCorePackageJsonSha256 ||
         currentPackages.vivliostyleCliPackageJsonSha256 !==
           publicationBrowser.vivliostyleCliPackageJsonSha256
       )

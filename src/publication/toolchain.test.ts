@@ -26,6 +26,7 @@ const puppeteerIdentity = {
   executableSha256: 'e'.repeat(64),
   executableByteLength: 456,
   puppeteerBrowsersPackageJsonSha256: 'f'.repeat(64),
+  puppeteerCorePackageJsonSha256: '1'.repeat(64),
   vivliostyleCliPackageJsonSha256: '0'.repeat(64),
 }
 
@@ -39,6 +40,7 @@ describe('publication toolchain manifest', () => {
       browser: {
         revision: '150.0.7871.115',
         browserVersion: '150.0.7871.115',
+        launcher: { package: 'puppeteer-core', version: '25.1.0' },
         compatibility: {
           platforms: {
             'linux-arm64': {
@@ -83,6 +85,7 @@ describe('publication toolchain manifest', () => {
       browserRevision: '150.0.7871.115',
       expectedVersion: '150.0.7871.115',
       observedVersion: '150.0.7871.115',
+      puppeteerCorePackageJsonSha256: '1'.repeat(64),
     })
     expect(
       publicationToolchainForRuntime(browser, 'linux', 'x64').runtime

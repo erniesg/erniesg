@@ -9,6 +9,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1072,6 +1073,47 @@ describe('Vivliostyle publication renderer boundary', () => {
     } finally {
       vi.doUnmock('node:fs/promises')
       vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reclaims stale browser snapshots without disturbing active snapshots', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-lease-'))
+    try {
+      const cache = resolve(root, 'cache')
+      const bundle = resolve(cache, 'chromium-1228')
+      const browser = resolve(bundle, 'chrome-linux/chrome')
+      const snapshotRoot = resolve(root, 'snapshots')
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      const selected = await publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const active = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      const staleRoot = resolve(snapshotRoot, 'browser-stale-fixture')
+      const staleLease = resolve(staleRoot, '.lease')
+      await mkdir(staleRoot, { mode: 0o700 })
+      await writeFile(staleLease, 'publication browser snapshot lease\n', {
+        mode: 0o600,
+      })
+      await writeFile(resolve(staleRoot, 'orphan'), 'stale browser bytes')
+      await utimes(staleLease, new Date(0), new Date(0))
+
+      const current = await snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      await expect(access(staleRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(active.executablePath, 'utf8')).resolves.toBe(
+        'reviewed browser bytes',
+      )
+      await current.cleanup()
+      await active.cleanup()
+    } finally {
       await rm(root, { recursive: true, force: true })
     }
   })

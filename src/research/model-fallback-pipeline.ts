@@ -532,6 +532,16 @@ const MODEL_FALLBACK_ORIGINS = Object.freeze([
   'deterministic-distillation',
 ])
 
+/**
+ * `materializeVisualRelationship` also stamps a per-diagnostic marker beside
+ * the bare origin. Matching only the bare origin would let a document drop one
+ * string while still declaring its provenance in the next array slot.
+ */
+const MODEL_FALLBACK_ORIGIN_PREFIXES = Object.freeze([
+  'model-consulted-',
+  'deterministically-distilled-',
+])
+
 function readingOrderResolutionsForDecision(
   reconstruction: PdfReconstruction,
   decisionId: string,
@@ -554,7 +564,13 @@ function readingOrderResolutionsForDecision(
 export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
   const keys = new Set<string>()
   const attributed = (evidence: readonly string[]) =>
-    MODEL_FALLBACK_ORIGINS.some((origin) => evidence.includes(origin))
+    evidence.some(
+      (code) =>
+        MODEL_FALLBACK_ORIGINS.includes(code) ||
+        MODEL_FALLBACK_ORIGIN_PREFIXES.some((prefix) =>
+          code.startsWith(prefix),
+        ),
+    )
   // Legacy and round-tripped reconstructions may omit these collections
   // entirely (`humanAdjudications` is optional on the parsed EPUB shape), and
   // this runs before STRUCT can reject the document. Reading an absent
@@ -582,31 +598,69 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
       )
     }
   }
-  // A reading-order tie leaves no evidence string on the document, but the
-  // deterministic resolution stays `ambiguous` forever. An ambiguous resolution
-  // with no open diagnostic means something resolved it, and that something has
-  // to be accounted for.
-  // A human adjudication accounts for the tie just as a receipt would, so it
-  // must not be mistaken for unclaimed model work.
-  const accountedReadingOrderTargets = [
-    ...list(reconstruction.diagnostics)
-      .filter(({ code }) => code === 'AMBIGUOUS_READING_ORDER')
-      .map((diagnostic) => diagnostic.target?.regionIds ?? []),
-    ...list(reconstruction.humanAdjudications?.applied)
+  // A reading-order tie leaves no evidence string on the document. Something
+  // has to have settled a tie that nothing open still accounts for, and that
+  // something has to be claimed.
+  //
+  // Two shapes vouch for an open tie. A diagnostic carrying the ambiguous
+  // resolution is authoritatively about this tie, so its target may be
+  // narrower than the tie itself; a diagnostic without one — the non-column
+  // obligation — must instead name exactly the tied regions. The
+  // `SOURCE_ORDER_FLOAT_FALLBACK` downgrade satisfies neither: it names a
+  // single reference region, carries no resolution, and opens no binding, so
+  // it can no longer speak for a whole tie.
+  // A human adjudication accounts for a tie just as a receipt does, including
+  // once re-applying its decision file has moved it to `stale`, which leaves
+  // the resolution ambiguous and its diagnostic deleted.
+  const readingOrderDiagnostics = list(reconstruction.diagnostics).filter(
+    ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
+  )
+  const regionSets = (targets: readonly (readonly string[] | undefined)[]) =>
+    targets
+      .map((regionIds) => regionIds ?? [])
+      .filter((regionIds) => regionIds.length > 0)
+      .map((regionIds) => new Set(regionIds))
+  const containedTargets = regionSets([
+    ...readingOrderDiagnostics
+      .filter(
+        ({ readingOrderResolution }) =>
+          readingOrderResolution?.status === 'ambiguous',
+      )
+      .map((diagnostic) => diagnostic.target?.regionIds),
+    ...[
+      ...list(reconstruction.humanAdjudications?.applied),
+      ...list(reconstruction.humanAdjudications?.stale),
+    ]
       .filter(
         ({ diagnosticCode }) => diagnosticCode === 'AMBIGUOUS_READING_ORDER',
       )
-      .map(({ target }) => target?.regionIds ?? []),
-  ].filter((regionIds) => regionIds.length > 0)
+      .map(({ target }) => target?.regionIds),
+  ])
+  const exactTargets = regionSets(
+    readingOrderDiagnostics.map((diagnostic) => diagnostic.target?.regionIds),
+  )
   for (const resolution of list(reconstruction.readingOrder?.resolutions)) {
-    if (resolution.status !== 'ambiguous') continue
-    // A diagnostic still targeting these regions means the tie is genuinely
-    // open, whether or not it is model-eligible. Match by containment: the
-    // diagnostic target can be a subset of the resolution's regions.
+    // `status` is a bare enum that nothing cross-checks, so a settled tie can
+    // be relabelled `resolved` in one edit. The resolution's own confidence
+    // still records it as unsettled, and no deterministic resolution in the
+    // corpus sits below its threshold.
+    if (
+      resolution.status !== 'ambiguous' &&
+      !(resolution.confidence < resolution.threshold)
+    )
+      continue
+    // A resolution naming no regions identifies no state to claim, and every
+    // such resolution would collide onto the digest of the empty list.
+    if (resolution.regionIds.length === 0) continue
     const regionIds = new Set(resolution.regionIds)
     if (
-      accountedReadingOrderTargets.some((target) =>
-        target.every((id) => regionIds.has(id)),
+      containedTargets.some((target) =>
+        [...target].every((id) => regionIds.has(id)),
+      ) ||
+      exactTargets.some(
+        (target) =>
+          target.size === regionIds.size &&
+          [...target].every((id) => regionIds.has(id)),
       )
     )
       continue

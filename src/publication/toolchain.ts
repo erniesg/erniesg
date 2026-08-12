@@ -3,20 +3,16 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import manifest from './toolchain-manifest.json'
+import { publicationPlatformKey } from './platform.mjs'
 
 const require = createRequire(import.meta.url)
 
 export const PUBLICATION_TOOLCHAIN = manifest
+export { publicationPlatformKey }
 
 export type PublicationPdfRenderer = 'vivliostyle-cli' | 'playwright-chromium'
 
-export type PublicationPlatformKey =
-  | 'linux-x64'
-  | 'linux-arm64'
-  | 'mac-x64'
-  | 'mac-arm64'
-  | 'win-x64'
-  | 'win-arm64'
+export type PublicationPlatformKey = ReturnType<typeof publicationPlatformKey>
 
 export type PublicationPlaywrightRuntimeEvidence = {
   platformKey: PublicationPlatformKey
@@ -44,25 +40,6 @@ type PublicationPlaywrightObservedIdentity = Pick<
 
 const EXACT_BROWSER_VERSION = /^\d+\.\d+\.\d+\.\d+$/u
 const SHA256 = /^[a-f0-9]{64}$/u
-
-export function publicationPlatformKey(
-  platform: string = process.platform,
-  architecture: string = process.arch,
-): PublicationPlatformKey {
-  if (architecture !== 'x64' && architecture !== 'arm64')
-    throw new Error(`Unsupported publication architecture: ${architecture}`)
-  const operatingSystem =
-    platform === 'linux'
-      ? 'linux'
-      : platform === 'darwin'
-        ? 'mac'
-        : platform === 'win32'
-          ? 'win'
-          : null
-  if (!operatingSystem)
-    throw new Error(`Unsupported publication operating system: ${platform}`)
-  return `${operatingSystem}-${architecture}` as PublicationPlatformKey
-}
 
 export function publicationPlaywrightCompatibilityForPlatform(
   platform: string = process.platform,
@@ -158,7 +135,7 @@ export function publicationPdfRendererForRuntime(
 }
 
 export function publicationToolchainForRuntime(
-  publicationBrowser: PublicationPlaywrightRuntimeEvidence | null = null,
+  publicationBrowser: PublicationPlaywrightRuntimeEvidence | null,
   platform: string = process.platform,
   architecture: string = process.arch,
 ) {
@@ -195,12 +172,6 @@ export function publicationToolchainForRuntime(
     node,
     runtime: { node, platformKey, pdfRenderer, publicationBrowser },
   }
-}
-
-export function publicationPdfRendererForArchitecture(
-  architecture: string = process.arch,
-): PublicationPdfRenderer {
-  return publicationPdfRendererForRuntime(process.platform, architecture)
 }
 
 function sha256(bytes: Uint8Array) {

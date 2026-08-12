@@ -180,11 +180,15 @@ describe('publication:check CLI', () => {
   })
 
   it('scopes A5 page expansion to the canonical Astro corpus', () => {
-    expect(() => assertPublicationPdfPageCountPolicy(2, 1, true)).not.toThrow()
-    expect(() => assertPublicationPdfPageCountPolicy(1, 1, false)).not.toThrow()
-    expect(() => assertPublicationPdfPageCountPolicy(1, 1, true)).toThrow(
-      /A5 profile must produce more pages than A4/,
-    )
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(2, 1, true),
+    ).not.toThrow()
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(1, 1, false),
+    ).not.toThrow()
+    expect(() =>
+      assertPublicationPdfPageCountPolicy(1, 1, true),
+    ).toThrow(/A5 profile must produce more pages than A4/)
   })
 
   it('fails closed on stale renderer, transformation, or checker receipt policies', () => {
@@ -261,9 +265,7 @@ describe('publication:check CLI', () => {
         },
       ],
     }
-    expect(() =>
-      assertPublicationReceiptSourceBinding(receipt, graph),
-    ).not.toThrow()
+    expect(() => assertPublicationReceiptSourceBinding(receipt, graph)).not.toThrow()
     expect(() =>
       assertPublicationReceiptSourceBinding(
         { ...receipt, source: { ...receipt.source, sourceId: 'blog:other' } },
@@ -388,11 +390,7 @@ describe('publication:check CLI', () => {
     ).toEqual(['After punctuation', 'Hard\nBreak'])
     expect(
       orderPdfTextRequirements(
-        [
-          'Section one',
-          'This configured block remains an aside.',
-          'Section one',
-        ],
+        ['Section one', 'This configured block remains an aside.', 'Section one'],
         'Section one This configured block remains an aside. Section one',
       ),
     ).toEqual([
@@ -544,10 +542,9 @@ describe('publication:check CLI', () => {
       ),
     ).not.toThrow()
     expect(() =>
-      assertPdfLinkAnnotations(
-        [{ url: 'https://example.com/' }],
-        ['https://example.com'],
-      ),
+      assertPdfLinkAnnotations([{ url: 'https://example.com/' }], [
+        'https://example.com',
+      ]),
     ).not.toThrow()
     expect(() =>
       assertPdfLinkAnnotations([{ target: 'https://example.com/' }], required),

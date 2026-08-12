@@ -9,7 +9,6 @@ import {
   publicationPlaywrightCompatibilityForPlatform,
   publicationPlaywrightRuntimeEvidenceForPlatform,
   publicationToolchainForRuntime,
-  publicationPdfRendererForArchitecture,
   verifyPublicationToolchain,
 } from './toolchain'
 
@@ -55,8 +54,10 @@ describe('publication toolchain manifest', () => {
         }),
       ]),
     })
-    expect(publicationPdfRendererForArchitecture('x64')).toBe('vivliostyle-cli')
-    expect(publicationPdfRendererForArchitecture('arm64')).toBe(
+    expect(publicationPdfRendererForRuntime('linux', 'x64')).toBe(
+      'vivliostyle-cli',
+    )
+    expect(publicationPdfRendererForRuntime('linux', 'arm64')).toBe(
       'playwright-chromium',
     )
     expect(
@@ -142,9 +143,9 @@ describe('publication toolchain manifest', () => {
     )
     expect(() =>
       publicationPlaywrightCompatibilityForPlatform('win32', 'arm64'),
-    ).toThrow(/no reviewed Playwright Chromium compatibility/i)
+    ).toThrow(/Unsupported publication operating system/i)
     expect(() => publicationPdfRendererForRuntime('win32', 'arm64')).toThrow(
-      /no reviewed Playwright Chromium compatibility/i,
+      /Unsupported publication operating system/i,
     )
     expect(() =>
       publicationToolchainForRuntime(null, 'linux', 'arm64'),

@@ -1,14 +1,12 @@
 import { createHash } from 'node:crypto'
-import { execFileSync, spawn } from 'node:child_process'
-import { constants as fsConstants, createReadStream } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { constants as fsConstants } from 'node:fs'
 import {
-  access,
   chmod,
   copyFile,
   mkdir,
   readFile,
   readdir,
-  stat,
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, relative, resolve, sep } from 'node:path'
@@ -19,6 +17,15 @@ import { PDFDocument } from 'pdf-lib'
 import { chromium } from 'playwright'
 import { canonicalPublicationSubsetSha256 } from '../adapter-conformance'
 import { serializeAssetBundle } from '../asset-bundle'
+import {
+  PUBLICATION_BROWSER_CACHE,
+  preparePublicationPlaywrightRuntime,
+  verifyPublicationBrowserExecutable,
+} from '../browser-runtime'
+export {
+  publicationBrowserVersionMatches,
+  publicationPlaywrightExecutableCandidates,
+} from '../browser-runtime'
 import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../output-contract'
 import type {
   PublicationGraph,
@@ -33,9 +40,6 @@ import type {
 import {
   PUBLICATION_TOOLCHAIN,
   publicationPdfRendererForRuntime,
-  publicationPlatformKey,
-  publicationPlaywrightCompatibilityForPlatform,
-  publicationPlaywrightRuntimeEvidenceForPlatform,
   publicationToolchainForRuntime,
   verifyPublicationToolchain,
   type PublicationPlaywrightRuntimeEvidence,
@@ -54,13 +58,6 @@ const FIXED_DATE = new Date('2000-01-01T00:00:00.000Z')
 // pre-existing entry (symlink, hard link, FIFO, or regular file) is never
 // followed, truncated, or blocked on — creation fails closed instead.
 const EXCLUSIVE_WRITE = { flag: 'wx' } as const
-const PUBLICATION_BROWSER_CACHE = resolve(
-  'node_modules/.cache/publication-browsers',
-)
-const PLAYWRIGHT_BROWSER_CACHE = resolve(
-  PUBLICATION_BROWSER_CACHE,
-  'playwright',
-)
 const PUPPETEER_BROWSER_CACHE = resolve(PUBLICATION_BROWSER_CACHE, 'puppeteer')
 const PROFILE_DETAILS = {
   'phone-webpub': {
@@ -127,12 +124,6 @@ function sha256(value: Uint8Array | string) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-async function sha256File(path: string) {
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(path)) hash.update(chunk)
-  return hash.digest('hex')
-}
-
 function escapeHtml(value: string) {
   return value
     .replaceAll('&', '&amp;')
@@ -159,7 +150,10 @@ function inlineLinkHref(link: PublicationInlineRun) {
   return link.href ?? `#${link.targetIds?.[0] ?? ''}`
 }
 
-function inlineHtmlSegments(text: string, runs: PublicationInlineRun[] = []) {
+function inlineHtmlSegments(
+  text: string,
+  runs: PublicationInlineRun[] = [],
+) {
   for (const run of runs) {
     if (!run.hardBreak) continue
     if (
@@ -253,9 +247,7 @@ function inlineHtml(
         ? [`id="${escapeHtml(link.relationshipId)}"`]
         : []),
       ...(link.semanticRole === 'cross-reference' &&
-      link.targetIds?.some(
-        (targetId) => targetNodes?.get(targetId)?.type === 'note',
-      )
+      link.targetIds?.some((targetId) => targetNodes?.get(targetId)?.type === 'note')
         ? ['role="doc-noteref"']
         : []),
       ...(link.semanticRole === 'citation'
@@ -270,9 +262,7 @@ function inlineHtml(
     ].join(' ')
   let html = ''
   const renderedLinks = new Set<PublicationInlineRun>()
-  for (const segment of groupedInlineHtmlSegments(
-    inlineHtmlSegments(text, runs),
-  )) {
+  for (const segment of groupedInlineHtmlSegments(inlineHtmlSegments(text, runs))) {
     if (!segment.link) {
       html += segment.value
       continue
@@ -338,8 +328,7 @@ function renderNode(
   listStack = new Set<string>(),
 ): string {
   node = publicationNodeForProfile(node, profile)
-  const text =
-    'text' in node ? inlineHtml(node.text, node.inlineRuns, byId) : ''
+  const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns, byId) : ''
   switch (node.type) {
     case 'heading':
       return `<h${node.level} ${nodeAttributes(node, edition)}>${text}</h${node.level}>`
@@ -366,20 +355,13 @@ function renderNode(
                 child?.type === 'list',
             )
             .map((child) =>
-              renderNode(
-                child,
-                byId,
-                assetPaths,
-                profile,
-                edition,
-                nextListStack,
-              ),
+              renderNode(child, byId, assetPaths, profile, edition, nextListStack),
             )
             .join('')
-          const renderedItem = publicationNodeForProfile(
-            item,
-            profile,
-          ) as Extract<PublicationNode, { type: 'list-item' }>
+          const renderedItem = publicationNodeForProfile(item, profile) as Extract<
+            PublicationNode,
+            { type: 'list-item' }
+          >
           return `<li ${nodeAttributes(renderedItem, edition)}>${inlineHtml(renderedItem.text, renderedItem.inlineRuns, byId)}${nested}</li>`
         })
         .join('')
@@ -405,15 +387,16 @@ function renderNode(
           : ''
         return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${renderedCaption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns, byId)}</div>` : ''}</div>`
       }
-    case 'note': {
-      const role =
-        node.noteKind === 'footnote'
-          ? 'doc-footnote'
-          : node.noteKind === 'endnote'
-            ? 'doc-endnote'
-            : 'doc-annotation'
-      return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
-    }
+    case 'note':
+      {
+        const role =
+          node.noteKind === 'footnote'
+            ? 'doc-footnote'
+            : node.noteKind === 'endnote'
+              ? 'doc-endnote'
+              : 'doc-annotation'
+        return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
+      }
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
       const alternativeText = accessibilityLabel(node)
@@ -425,9 +408,7 @@ function renderNode(
         .map((assetId) => {
           const path = assetPaths.get(assetId)
           if (!path)
-            throw new Error(
-              `Figure ${node.id} references an unavailable asset ${assetId}`,
-            )
+            throw new Error(`Figure ${node.id} references an unavailable asset ${assetId}`)
           return `<img src="${escapeHtml(path)}" alt="${escapeHtml(alternativeText)}">`
         })
         .join('')
@@ -450,9 +431,7 @@ function renderNode(
     case 'media': {
       const assetPath = assetPaths.get(node.assetId)
       if (!assetPath)
-        throw new Error(
-          `Media ${node.id} references an unavailable asset ${node.assetId}`,
-        )
+        throw new Error(`Media ${node.id} references an unavailable asset ${node.assetId}`)
       const source = escapeHtml(assetPath)
       const label = accessibilityLabel(node)
       if (node.accessibility.decorative !== true && !label)
@@ -538,7 +517,10 @@ export function publicationGraphToHtml(
   for (const node of graph.nodes) {
     if (node.type !== 'caption') continue
     const parent = byId.get(node.parentId)
-    if (parent && (!('captionId' in parent) || parent.captionId !== node.id))
+    if (
+      parent &&
+      (!('captionId' in parent) || parent.captionId !== node.id)
+    )
       throw new Error(
         `Caption ${node.id} has no reciprocal caption ownership from ${node.parentId}`,
       )
@@ -754,7 +736,8 @@ export function publicationEpubAccessibilityMetadata(graph: PublicationGraph) {
   if (hasText || graph.metadata.title.trim()) accessModes.add('textual')
   for (const node of graph.nodes) {
     const accessibility = node.accessibility
-    if (accessibility.alternativeText?.trim()) features.add('alternativeText')
+    if (accessibility.alternativeText?.trim())
+      features.add('alternativeText')
     if (accessibility.longDescription?.trim()) features.add('longDescription')
     if (accessibility.transcript?.trim()) features.add('transcript')
     if (node.type === 'figure' && node.assetIds.length > 0)
@@ -778,160 +761,29 @@ export function publicationEpubAccessibilityMetadata(graph: PublicationGraph) {
   }
 }
 
-export function publicationPlaywrightExecutableCandidates(
-  revision: string,
-  platform = process.platform,
-  architecture = process.arch,
-) {
-  const platformKey = publicationPlatformKey(platform, architecture)
-  const chromiumPaths: Record<string, string[]> = {
-    'linux-x64': ['chrome-linux64', 'chrome'],
-    'linux-arm64': ['chrome-linux', 'chrome'],
-    'mac-x64': [
-      'chrome-mac-x64',
-      'Google Chrome for Testing.app',
-      'Contents',
-      'MacOS',
-      'Google Chrome for Testing',
-    ],
-    'mac-arm64': [
-      'chrome-mac-arm64',
-      'Google Chrome for Testing.app',
-      'Contents',
-      'MacOS',
-      'Google Chrome for Testing',
-    ],
-    'win-x64': ['chrome-win64', 'chrome.exe'],
-  }
-  const headlessPaths: Record<string, string[]> = {
-    'linux-x64': ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
-    'linux-arm64': ['chrome-linux', 'headless_shell'],
-    'mac-x64': ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
-    'mac-arm64': ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
-    'win-x64': ['chrome-headless-shell-win64', 'chrome-headless-shell.exe'],
-  }
-  if (!chromiumPaths[platformKey] || !headlessPaths[platformKey])
-    throw new Error(
-      `Unsupported Playwright Chromium platform layout: ${platformKey}`,
-    )
-  return [
-    resolve(
-      PLAYWRIGHT_BROWSER_CACHE,
-      `chromium-${revision}`,
-      ...chromiumPaths[platformKey],
-    ),
-    resolve(
-      PLAYWRIGHT_BROWSER_CACHE,
-      `chromium_headless_shell-${revision}`,
-      ...headlessPaths[platformKey],
-    ),
-  ]
-}
-
-export function publicationBrowserVersionMatches(
-  versionOutput: string,
-  expectedVersion: string,
-) {
-  const actual = publicationBrowserVersion(versionOutput)
-  const expected = String(expectedVersion).match(/^(\d+\.\d+\.\d+\.\d+)$/u)?.[1]
-  return Boolean(actual && expected && actual === expected)
-}
-
-export function publicationBrowserVersion(versionOutput: string) {
-  return String(versionOutput).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1] ?? ''
-}
-
-function verifyPublicationBrowserExecutable(
-  executablePath: string,
-  expectedVersion: string,
-) {
-  let versionOutput = ''
-  try {
-    versionOutput = execFileSync(executablePath, ['--version'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-    })
-  } catch (error) {
-    throw new Error(
-      `Pinned publication browser could not report its version: ${String(error)}`,
-    )
-  }
-  if (!publicationBrowserVersionMatches(versionOutput, expectedVersion))
-    throw new Error(
-      `Pinned publication browser version ${versionOutput.trim() || '(missing)'} does not match ${expectedVersion}`,
-    )
-  return versionOutput.trim()
-}
-
 type PreparedPdfRenderer =
   | {
       renderer: 'playwright-chromium'
       executablePath: string
       publicationBrowser: PublicationPlaywrightRuntimeEvidence
+      assertUnchanged: () => Promise<void>
+      cleanup: () => Promise<void>
     }
   | {
       renderer: 'vivliostyle-cli'
       executablePath: string
       publicationBrowser: null
+      assertUnchanged: () => Promise<void>
+      cleanup: () => Promise<void>
     }
-
-async function firstAccessiblePath(candidates: string[]) {
-  for (const candidate of candidates) {
-    try {
-      await access(candidate)
-      return candidate
-    } catch {
-      // Continue through the closed, platform-specific candidate list.
-    }
-  }
-  return ''
-}
-
-async function preparePlaywrightPdfRenderer(): Promise<
-  Extract<PreparedPdfRenderer, { renderer: 'playwright-chromium' }>
-> {
-  const compatibility = publicationPlaywrightCompatibilityForPlatform()
-  const executablePath = await firstAccessiblePath(
-    publicationPlaywrightExecutableCandidates(compatibility.browserRevision),
-  )
-  if (!executablePath)
-    throw new Error(
-      'Pinned Playwright Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
-    )
-  const versionOutput = verifyPublicationBrowserExecutable(
-    executablePath,
-    compatibility.expectedVersion,
-  )
-  const executable = await stat(executablePath)
-  const [
-    executableSha256,
-    playwrightPackageJsonSha256,
-    playwrightCorePackageJsonSha256,
-    browsersJsonSha256,
-  ] = await Promise.all([
-    sha256File(executablePath),
-    sha256File(resolve('node_modules/playwright/package.json')),
-    sha256File(resolve('node_modules/playwright-core/package.json')),
-    sha256File(resolve('node_modules/playwright-core/browsers.json')),
-  ])
-  const publicationBrowser = publicationPlaywrightRuntimeEvidenceForPlatform({
-    observedVersion: publicationBrowserVersion(versionOutput),
-    executableSha256,
-    executableByteLength: executable.size,
-    playwrightPackageJsonSha256,
-    playwrightCorePackageJsonSha256,
-    browsersJsonSha256,
-  })
-  return { renderer: 'playwright-chromium', executablePath, publicationBrowser }
-}
-
-export async function publicationPlaywrightRuntimeEvidenceForCurrentPlatform() {
-  return (await preparePlaywrightPdfRenderer()).publicationBrowser
-}
 
 async function preparePdfRenderer(): Promise<PreparedPdfRenderer> {
   const renderer = publicationPdfRendererForRuntime()
-  if (renderer === 'playwright-chromium') return preparePlaywrightPdfRenderer()
+  if (renderer === 'playwright-chromium')
+    return {
+      renderer,
+      ...(await preparePublicationPlaywrightRuntime()),
+    }
   let executablePath: string
   try {
     executablePath = computeExecutablePath({
@@ -953,6 +805,8 @@ async function preparePdfRenderer(): Promise<PreparedPdfRenderer> {
     renderer: 'vivliostyle-cli',
     executablePath,
     publicationBrowser: null,
+    assertUnchanged: async () => undefined,
+    cleanup: async () => undefined,
   }
 }
 
@@ -1030,7 +884,8 @@ async function createEpub(
     .join('')
   const accessModeSufficientMetadata = accessibility.accessModeSufficient
     .map(
-      (mode) => `<meta property="schema:accessModeSufficient">${mode}</meta>`,
+      (mode) =>
+        `<meta property="schema:accessModeSufficient">${mode}</meta>`,
     )
     .join('')
   const accessibilityFeatureMetadata = accessibility.accessibilityFeatures
@@ -1110,6 +965,7 @@ async function createPdf(
   prepared: PreparedPdfRenderer,
 ): Promise<void> {
   if (prepared.renderer === 'playwright-chromium') {
+    await prepared.assertUnchanged()
     const browser = await chromium.launch({
       executablePath: prepared.executablePath,
       headless: true,
@@ -1129,6 +985,7 @@ async function createPdf(
       })
     } finally {
       await browser.close()
+      await prepared.assertUnchanged()
     }
     return
   }
@@ -1294,27 +1151,32 @@ export const vivliostyleRenderer: PublicationRenderer = {
       )
     const pdfArtifacts: ArtifactReceipt[] = []
     const preparedPdfRenderer = await preparePdfRenderer()
-    for (const [profile, size] of [
-      ['a5-pdf', 'A5'],
-      ['a4-pdf', 'A4'],
-    ] as const) {
-      const htmlPath = resolve(output, `${profile}.html`)
-      await writeFile(
-        htmlPath,
-        publicationGraphToHtml(bundle.graph, layoutAssets, profile),
-        EXCLUSIVE_WRITE,
-      )
-      const path = resolve(output, `${profile}.pdf`)
-      await createPdf(htmlPath, path, size, preparedPdfRenderer)
-      await normalizePdf(path, bundle.graph.metadata.title, preparedPdfRenderer)
-      pdfArtifacts.push(
-        await receiptFor(
-          profile,
+    const pdfRenderer = preparedPdfRenderer.renderer
+    const publicationBrowser = preparedPdfRenderer.publicationBrowser
+    try {
+      for (const [profile, size] of [
+        ['a5-pdf', 'A5'],
+        ['a4-pdf', 'A4'],
+      ] as const) {
+        const htmlPath = resolve(output, `${profile}.html`)
+        await writeFile(
+          htmlPath,
+          publicationGraphToHtml(bundle.graph, layoutAssets, profile),
+          EXCLUSIVE_WRITE,
+        )
+        const path = resolve(output, `${profile}.pdf`)
+        await createPdf(htmlPath, path, size, preparedPdfRenderer)
+        await normalizePdf(
           path,
-          preparedPdfRenderer.renderer,
-          `${profile}.pdf`,
-        ),
-      )
+          bundle.graph.metadata.title,
+          preparedPdfRenderer,
+        )
+        pdfArtifacts.push(
+          await receiptFor(profile, path, pdfRenderer, `${profile}.pdf`),
+        )
+      }
+    } finally {
+      await preparedPdfRenderer.cleanup()
     }
     const artifacts = [
       await receiptForDirectory(
@@ -1343,9 +1205,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
       },
       profiles: PROFILE_DETAILS,
       policyVersions: PUBLICATION_OUTPUT_POLICY_VERSIONS,
-      toolchain: publicationToolchainForRuntime(
-        preparedPdfRenderer.publicationBrowser,
-      ),
+      toolchain: publicationToolchainForRuntime(publicationBrowser),
       repository,
       artifacts,
     }

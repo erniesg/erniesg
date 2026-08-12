@@ -1,8 +1,22 @@
-import { access, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { adaptAstroBlogEntry } from '../adapters/astro'
+import {
+  publicationBrowserBundleForExecutable,
+  publicationPlaywrightPackageIdentityPaths,
+  snapshotPublicationBrowserBundle,
+} from '../browser-runtime'
 import {
   PUBLICATION_PROFILES,
   preparePublicationAssetDirectory,
@@ -292,16 +306,9 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'synthetic-publication',
       contentRoot,
     })
-    const paragraph = bundle.graph.nodes.find(
-      (node) => node.type === 'paragraph',
-    )
+    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
     const note = bundle.graph.nodes.find((node) => node.type === 'note')
-    if (
-      !paragraph ||
-      paragraph.type !== 'paragraph' ||
-      !note ||
-      note.type !== 'note'
-    )
+    if (!paragraph || paragraph.type !== 'paragraph' || !note || note.type !== 'note')
       throw new Error('missing semantic fixture')
     const graph = {
       ...bundle.graph,
@@ -324,12 +331,7 @@ describe('Vivliostyle publication renderer boundary', () => {
         )
         .concat(
           { ...note, id: 'endnote', noteKind: 'endnote', backlinkIds: [] },
-          {
-            ...note,
-            id: 'author-note',
-            noteKind: 'author-note',
-            backlinkIds: [],
-          },
+          { ...note, id: 'author-note', noteKind: 'author-note', backlinkIds: [] },
         ),
     }
     const html = publicationGraphToHtml(
@@ -382,8 +384,7 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const template = bundle.graph.nodes[0]
-    if (!template || template.type !== 'figure')
-      throw new Error('missing figure fixture')
+    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
     const figure = { ...template, id: 'orphan-figure' } as any
     delete figure.captionId
     const caption = {
@@ -414,15 +415,8 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const figure = bundle.graph.nodes.find((node) => node.type === 'figure')
-    const paragraph = bundle.graph.nodes.find(
-      (node) => node.type === 'paragraph',
-    )
-    if (
-      !figure ||
-      !paragraph ||
-      figure.type !== 'figure' ||
-      paragraph.type !== 'paragraph'
-    )
+    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    if (!figure || !paragraph || figure.type !== 'figure' || paragraph.type !== 'paragraph')
       throw new Error('missing variant fixture')
     const graph = {
       ...bundle.graph,
@@ -463,9 +457,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     const a5 = publicationGraphToHtml(graph, paths, 'a5-pdf')
     expect(a5).toContain('مختصر')
     const phone = publicationGraphToHtml(graph, paths, 'phone-webpub')
-    expect(phone).toContain(
-      `src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`,
-    )
+    expect(phone).toContain(`src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`)
     expect(phone).not.toContain('مختصر')
   })
 
@@ -492,11 +484,7 @@ describe('Vivliostyle publication renderer boundary', () => {
           parentId: 'equation',
           text: 'Canonical equation caption',
           variants: [
-            {
-              kind: 'compact' as const,
-              text: 'Compact equation caption',
-              reviewed: true,
-            },
+            { kind: 'compact' as const, text: 'Compact equation caption', reviewed: true },
           ],
         },
       ],
@@ -889,7 +877,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     ])
     expect(() =>
       publicationPlaywrightExecutableCandidates('1228', 'win32', 'arm64'),
-    ).toThrow(/unsupported Playwright Chromium platform/i)
+    ).toThrow(/Unsupported publication operating system/i)
   })
 
   it('requires the pinned browser build before rendering', () => {
@@ -907,10 +895,62 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toBe(false)
   })
 
+  it('rejects cache-escaping browser links and snapshots regular bundles', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-bundle-'))
+    try {
+      const cache = resolve(root, 'cache')
+      const bundle = resolve(cache, 'chromium-1228')
+      const browser = resolve(bundle, 'chrome-linux/chrome')
+      await mkdir(resolve(bundle, 'chrome-linux'), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await writeFile(resolve(bundle, 'resource'), 'linked resource')
+      await symlink('../resource', resolve(bundle, 'chrome-linux/resource'))
+      const selected = await publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await snapshotPublicationBrowserBundle(
+        selected,
+        resolve(root, 'snapshots'),
+      )
+      await writeFile(browser, 'changed source bytes')
+      await expect(readFile(snapshot.executablePath, 'utf8')).resolves.toBe(
+        'reviewed browser bytes',
+      )
+      await expect(
+        readFile(resolve(dirname(snapshot.executablePath), 'resource'), 'utf8'),
+      ).resolves.toBe('linked resource')
+      await snapshot.cleanup()
+
+      const outside = resolve(root, 'outside-browser')
+      await writeFile(outside, 'outside')
+      const linked = resolve(bundle, 'chrome-linux/linked-chrome')
+      await symlink(outside, linked)
+      await expect(
+        publicationBrowserBundleForExecutable(linked, cache),
+      ).rejects.toThrow(/regular file|outside.*cache/i)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves package identity independently of the process working directory', async () => {
+    const before = publicationPlaywrightPackageIdentityPaths()
+    const original = process.cwd()
+    const elsewhere = await mkdtemp(resolve(tmpdir(), 'publication-cwd-'))
+    try {
+      process.chdir(elsewhere)
+      expect(publicationPlaywrightPackageIdentityPaths()).toEqual(before)
+      for (const path of Object.values(before))
+        await expect(access(path)).resolves.toBeUndefined()
+    } finally {
+      process.chdir(original)
+      await rm(elsewhere, { recursive: true, force: true })
+    }
+  })
+
   it('refuses to reuse pre-existing WebPub and layout asset directories', async () => {
-    const root = await mkdtemp(
-      resolve(tmpdir(), 'publication-webpub-exclusive-'),
-    )
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-exclusive-'))
     try {
       const webpub = resolve(root, 'phone-webpub')
       await mkdir(resolve(webpub, 'assets'), { recursive: true })

@@ -15,9 +15,9 @@ import {
   publicationAssetFileExtension,
   publicationInlineLinkTargets,
   publicationNodeForProfile,
-  publicationPlaywrightRuntimeEvidenceForCurrentPlatform,
 } from '../src/publication/renderers/vivliostyle.ts'
 import { serializeAssetBundle } from '../src/publication/asset-bundle.ts'
+import { publicationPlaywrightRuntimeEvidenceForCurrentPlatform } from '../src/publication/browser-runtime.ts'
 import { PUBLICATION_OUTPUT_POLICY_VERSIONS } from '../src/publication/output-contract.ts'
 import { publicationGraphSchema } from '../src/publication/schema.ts'
 import { serializePublicationGraph } from '../src/publication/schema.ts'
@@ -71,9 +71,7 @@ export function publicationReceiptRequiresCanonicalRouteParity(
 
   const isAstro = adapterId === 'astro'
   if (isAstro !== (sourceType === 'astro'))
-    throw new Error(
-      'Publication receipt has an inconsistent Astro source identity',
-    )
+    throw new Error('Publication receipt has an inconsistent Astro source identity')
 
   if (policy === 'adapter-conformance') {
     if (options.context !== 'adapter-conformance')
@@ -88,15 +86,11 @@ export function publicationReceiptRequiresCanonicalRouteParity(
     )
   if (isAstro) {
     if (policy !== 'astro-canonical-route')
-      throw new Error(
-        'Astro publication receipt must require canonical route parity',
-      )
+      throw new Error('Astro publication receipt must require canonical route parity')
     return true
   }
   if (policy !== 'not-applicable')
-    throw new Error(
-      'Non-Astro publication receipt has no recognized route-parity policy',
-    )
+    throw new Error('Non-Astro publication receipt has no recognized route-parity policy')
   return false
 }
 
@@ -1226,8 +1220,10 @@ export async function publicationCheck(
         (node.type === 'reference' && Boolean(node.href)),
     ),
     requiredLinks: publicationPdfLinkRequirementsForProfile(graph, 'a5-pdf'),
-    requiredImageCount: publicationPdfImageAssetRequirements(graph, 'a5-pdf')
-      .length,
+    requiredImageCount: publicationPdfImageAssetRequirements(
+      graph,
+      'a5-pdf',
+    ).length,
     requiredTexts: publicationPdfTextRequirements(graph, 'a5-pdf'),
     widowOrphanTexts: publicationPdfWidowOrphanRequirements(graph, 'a5-pdf'),
   }

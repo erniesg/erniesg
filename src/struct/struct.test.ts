@@ -1152,9 +1152,18 @@ describe('STRUCT canonical document graph', () => {
   })
 
   it('keeps the renderer side of STRUCT independent from research modules', async () => {
-    for (const file of ['types.ts', 'ids.ts', 'reading-order.ts', 'xhtml.ts']) {
+    for (const file of [
+      'types.ts',
+      'ids.ts',
+      'reading-order.ts',
+      'model-consultation-receipt.ts',
+      'xhtml.ts',
+      'epub.ts',
+    ]) {
       const source = await readFile(new URL(file, import.meta.url), 'utf8')
-      expect(source).not.toMatch(/from ['"]\.\.\/research\//)
+      expect(source).not.toMatch(
+        /(?:from\s+|import\s*\()\s*['"][^'"]*\bresearch\//u,
+      )
       expect(source).not.toContain('ResearchPaper')
       expect(source).not.toContain('Astro')
     }

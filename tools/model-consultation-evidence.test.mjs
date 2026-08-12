@@ -159,8 +159,17 @@ describe('model-consultation evidence', () => {
     try {
       expect(removable).toBe(true)
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-      expect(manifest.lanes_run).toEqual(['unit'])
+      expect(manifest.lanes_run).toEqual(['association-audit', 'unit'])
       expect(manifest.lanes).toEqual([
+        {
+          id: 'association-audit',
+          command: 'node tools/pdf-association-fixture-audit.mjs',
+          required: true,
+          status: 'passed',
+          exit_code: 0,
+          duration_ms: expect.any(Number),
+          log_path: expect.any(String),
+        },
         {
           id: 'unit',
           command:
@@ -172,14 +181,20 @@ describe('model-consultation evidence', () => {
           log_path: expect.any(String),
         },
       ])
+      expect(manifest.association_audit).toMatchObject({
+        schemaVersion: '1.0.0',
+        status: 'passed',
+      })
       expect(manifest).not.toHaveProperty('model_consultation')
       const artifacts = manifest.artifacts.filter(
         ({ kind }) => kind === 'model-consultation-evidence',
       )
       expect(artifacts).toHaveLength(1)
+      const unitLane = manifest.lanes.find(({ id }) => id === 'unit')
+      expect(unitLane).toBeDefined()
       expect(artifacts[0]).toEqual({
         kind: 'model-consultation-evidence',
-        path: manifest.lanes[0].log_path,
+        path: unitLane.log_path,
       })
       const artifactText = readFileSync(resolve(artifacts[0].path), 'utf8')
       expect(validModelConsultationEvidence(JSON.parse(artifactText))).toBe(

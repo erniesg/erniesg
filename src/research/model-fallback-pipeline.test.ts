@@ -5,6 +5,7 @@ import {
   DistillationLedger,
   MODEL_FALLBACK_DECISION_CLASSES,
   ModelConsultationGate,
+  type ModelConsultationGateOptions,
   type ModelDecisionRequest,
   validateModelConsultationReceipt,
 } from './model-fallback'
@@ -201,6 +202,39 @@ describe('PDF model fallback production adapter', () => {
     expect(decisionId(reordered)).toBe(decisionId(adjudicationRequired))
   })
 
+  it('binds deterministic reading-order receipts to the installed candidate order', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
+    )
+    expect(point?.candidates).toHaveLength(2)
+    const selected = point!.candidates[1]!
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => selected.id,
+      'reading-order-columns-v1',
+    )
+
+    const result = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+
+    expect(result.modelConsultations?.decisions).toContainEqual(
+      expect.objectContaining({
+        decisionId: point!.decisionId,
+        outcome: 'deterministic',
+        choice: { candidateId: selected.id },
+        deterministicRuleId: 'reading-order-columns-v1',
+      }),
+    )
+    expect(result.diagnostics.map(({ code }) => code)).not.toContain(
+      'AMBIGUOUS_READING_ORDER',
+    )
+  })
+
   it('resolves only the eligible visual ambiguity and keeps private source material out of requests and receipts', async () => {
     const base = structuredClone(visualAdjudicationRequired)
     const sentinel = 'PRIVATE_SOURCE_SENTINEL_8f9c2a'
@@ -301,6 +335,169 @@ describe('PDF model fallback production adapter', () => {
         failureCode: 'OUT_OF_CANDIDATE_SET',
       }),
     ])
+  })
+
+  it.each<{
+    name: string
+    options: ModelConsultationGateOptions
+    expectedConsultationStatus?: 'failed' | 'rejected'
+    expectedFailureCode?: string
+  }>([
+    { name: 'disabled', options: {} },
+    {
+      name: 'provider unavailable before a request',
+      options: { enabled: true, ownerOptIn: true },
+    },
+    {
+      name: 'provider method unavailable',
+      options: {
+        enabled: true,
+        ownerOptIn: true,
+        model: { identity: modelIdentity },
+      },
+      expectedConsultationStatus: 'failed',
+      expectedFailureCode: 'MODEL_PROVIDER_UNAVAILABLE',
+    },
+    {
+      name: 'provider failure',
+      options: {
+        enabled: true,
+        ownerOptIn: true,
+        model: {
+          identity: modelIdentity,
+          consult: () => {
+            throw new Error('provider failed')
+          },
+        },
+      },
+      expectedConsultationStatus: 'failed',
+      expectedFailureCode: 'MODEL_PROVIDER_ERROR',
+    },
+    {
+      name: 'rejected proposal',
+      options: {
+        enabled: true,
+        ownerOptIn: true,
+        model: {
+          identity: modelIdentity,
+          consult: () => ({ candidateId: 'invented-candidate' }),
+        },
+      },
+      expectedConsultationStatus: 'rejected',
+      expectedFailureCode: 'OUT_OF_CANDIDATE_SET',
+    },
+  ])('resumes unresolved decisions after $name', async (priorCase) => {
+    const unresolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      priorCase.options,
+    )
+    const priorReceipt = structuredClone(unresolved.modelConsultations!)
+    expect(withoutReceipt(unresolved)).toEqual(adjudicationRequired)
+    if (priorCase.expectedConsultationStatus) {
+      expect(priorReceipt.consultations).toHaveLength(3)
+      expect(priorReceipt.consultations).toEqual(
+        Array.from({ length: 3 }, () =>
+          expect.objectContaining({
+            status: priorCase.expectedConsultationStatus,
+            failureCode: priorCase.expectedFailureCode,
+          }),
+        ),
+      )
+    } else {
+      expect(priorReceipt.consultations).toEqual([])
+    }
+    const consult = vi.fn((request: ModelDecisionRequest) => ({
+      candidateId: request.candidates[0]!.id,
+    }))
+
+    const resumed = await resolvePdfModelFallbacks(unresolved, {
+      enabled: true,
+      ownerOptIn: true,
+      distillation: new DistillationLedger(),
+      model: { identity: modelIdentity, consult },
+    })
+
+    expect(consult).toHaveBeenCalledTimes(3)
+    expect(resumed.diagnostics.map(({ code }) => code)).not.toEqual(
+      expect.arrayContaining([
+        'AMBIGUOUS_NOTE_MATCH',
+        'AMBIGUOUS_READING_ORDER',
+      ]),
+    )
+    expect(
+      resumed.modelConsultations?.consultations.slice(
+        0,
+        priorReceipt.consultations.length,
+      ),
+    ).toEqual(priorReceipt.consultations)
+    expect(resumed.modelConsultations?.consultations).toHaveLength(
+      priorReceipt.consultations.length + 3,
+    )
+    expect(
+      resumed.modelConsultations?.decisions.slice(
+        0,
+        priorReceipt.decisions.length,
+      ),
+    ).toEqual(priorReceipt.decisions)
+    expect(resumed.modelConsultations?.decisions).toHaveLength(
+      priorReceipt.decisions.length + 3,
+    )
+    expect(validateModelConsultationReceipt(resumed.modelConsultations)).toBe(
+      true,
+    )
+  })
+
+  it('scopes receipts to the current invocation when a gate ledger is reused', async () => {
+    const consult = vi.fn((request: ModelDecisionRequest) => ({
+      candidateId: request.candidates[0]!.id,
+    }))
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    const first = await resolvePdfModelFallbacks(adjudicationRequired, gate)
+    const second = await resolvePdfModelFallbacks(adjudicationRequired, gate)
+
+    expect(first.modelConsultations?.decisions).toHaveLength(3)
+    expect(second.modelConsultations?.decisions).toHaveLength(3)
+    expect(second.modelConsultations?.consultations).toHaveLength(3)
+    expect(
+      gate.ledger.decisionsFor({ documentId: adjudicationRequired.paper.id }),
+    ).toHaveLength(6)
+    expect(consult).toHaveBeenCalledTimes(6)
+  })
+
+  it('isolates receipts for concurrent invocations that share a gate', async () => {
+    let release!: () => void
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const consult = vi.fn(async (request: ModelDecisionRequest) => {
+      await barrier
+      return { candidateId: request.candidates[0]!.id }
+    })
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      model: { identity: modelIdentity, consult },
+    })
+
+    const first = resolvePdfModelFallbacks(adjudicationRequired, gate)
+    const second = resolvePdfModelFallbacks(adjudicationRequired, gate)
+    await vi.waitFor(() => expect(consult).toHaveBeenCalledTimes(2))
+    release()
+    const results = await Promise.all([first, second])
+
+    for (const result of results) {
+      expect(result.modelConsultations?.consultations).toHaveLength(3)
+      expect(result.modelConsultations?.decisions).toHaveLength(3)
+      expect(validateModelConsultationReceipt(result.modelConsultations)).toBe(
+        true,
+      )
+    }
+    expect(consult).toHaveBeenCalledTimes(6)
   })
 
   it('binds an existing receipt to the exact resolved semantic state', async () => {
@@ -611,6 +808,38 @@ describe('PDF model fallback production adapter', () => {
     )
     await expect(resolvePdfModelFallbacks(differentlyResolved)).rejects.toThrow(
       'INVALID_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
+  it('accepts a supplied caption distillation rule id when its choice matches', async () => {
+    const [point] = modelDecisionPointsForPdf(
+      visualAdjudicationRequired,
+    ).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'caption-association-v1',
+    )
+
+    const result = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+
+    expect(result.modelConsultations?.decisions).toEqual([
+      expect.objectContaining({
+        outcome: 'deterministic',
+        choice: { candidateId: point!.candidates[0]!.id },
+        deterministicRuleId: 'caption-association-v1',
+      }),
+    ])
+    expect(result.diagnostics.map(({ code }) => code)).not.toContain(
+      'AMBIGUOUS_VISUAL_MATCH',
     )
   })
 })

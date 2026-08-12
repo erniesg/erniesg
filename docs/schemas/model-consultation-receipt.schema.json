@@ -38,7 +38,7 @@
       "maxLength": 256,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
       "not": {
-        "pattern": "^(?:sk-(?:proj-)?[A-Za-z0-9._:-]{8,}|(?:AKIA|ASIA)[A-Z0-9]{12,}|[Bb][Ee][Aa][Rr][Ee][Rr][.:-][A-Za-z0-9._:-]{8,}|eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}|(?:-----)?[Bb][Ee][Gg][Ii][Nn][.:-]?(?:(?:RSA|EC|OPENSSH)[.:-]?)?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][.:-]?[Kk][Ee][Yy]|xox[baprs]-[A-Za-z0-9._:-]{8,})"
+        "pattern": "^(?:sk-(?:proj-)?[A-Za-z0-9._:-]{8,}|(?:[Gg][Hh][Pp]|[Gg][Ii][Tt][Hh][Uu][Bb]_[Pp][Aa][Tt])_|(?:AKIA|ASIA)[A-Z0-9]{12,}|[Bb][Ee][Aa][Rr][Ee][Rr][.:-][A-Za-z0-9._:-]{8,}|eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}|(?:-----)?[Bb][Ee][Gg][Ii][Nn][.:-]?(?:(?:RSA|EC|OPENSSH)[.:-]?)?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][.:-]?[Kk][Ee][Yy]|xox[baprs]-[A-Za-z0-9._:-]{8,})"
       }
     },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },

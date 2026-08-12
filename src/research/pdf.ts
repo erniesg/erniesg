@@ -476,6 +476,7 @@ async function raceWithAbort<T>(
   if (!signal) return operation
   if (signal.aborted) {
     onAbort()
+    void operation.catch(() => undefined)
     throw cancelledError()
   }
   return new Promise<T>((resolve, reject) => {
@@ -1564,7 +1565,14 @@ export async function reconstructPdf(
     const resolved =
       options.modelFallback === undefined
         ? adjudicated
-        : await resolvePdfModelFallbacks(adjudicated, options.modelFallback)
+        : await raceWithAbort(
+            resolvePdfModelFallbacks(adjudicated, {
+              ...options.modelFallback,
+              signal: options.signal,
+            }),
+            options.signal,
+            () => undefined,
+          )
     throwIfAborted(options.signal)
     return resolved
   } catch (error) {

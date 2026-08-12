@@ -6,9 +6,9 @@ import {
   type ZipOptions,
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
-import { validateModelConsultationReceipt } from '../research/model-fallback'
 import { sha256HexSync } from './sha256'
 import { structDigest } from './ids'
+import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
 import type { StructDocument } from './types'
 

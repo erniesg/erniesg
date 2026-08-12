@@ -1,3 +1,5 @@
+import type { ModelFallbackReceipt } from './model-consultation-receipt'
+
 /**
  * Source-agnostic document structure used between extraction and typesetting.
  *
@@ -256,7 +258,7 @@ export type StructReceipt = {
   documentId: string
   sourceSha256: string
   /** Closed, source-bound audit trail for any bounded model decisions. */
-  modelConsultations?: import('../research/model-fallback').ModelFallbackReceipt
+  modelConsultations?: ModelFallbackReceipt
   blockCount: number
   assetCount: number
   relationshipCount: number

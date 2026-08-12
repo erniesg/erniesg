@@ -24,6 +24,11 @@ const validateSchema = new Ajv2020({ strict: false }).compile(schema)
 const credentialShapedIds = [
   ['openai-legacy', ['sk', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
   ['openai', ['sk', 'proj', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
+  ['github-classic', ['ghp', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  [
+    'github-fine-grained',
+    ['github', 'pat', 'FAKEFAKEFAKE', 'FAKEFAKEFAKE'].join('_'),
+  ],
   ['aws', ['AKIA', 'IOSFODNN7EXAMPLE'].join('')],
   ['bearer', ['Bearer', 'FAKEFAKEFAKEFAKE'].join(':')],
   [

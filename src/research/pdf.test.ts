@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { buildEpub, inspectEpub } from './epub'
 import { PdfImportError } from './import-types'
 import { buildLayoutManifest, validateLayoutManifest } from './manifest'
+import { ModelFallbackLedger } from './model-fallback'
 import {
   createPdfOcrRasterSurface,
   extractPdfLinkAnnotations,
@@ -1812,6 +1813,111 @@ describe('PDF.js browser ingestion', () => {
         { signal: controller.signal },
       ),
     ).rejects.toMatchObject({ code: 'IMPORT_CANCELLED' })
+  })
+
+  it('races a non-cooperative model consultation against cancellation', async () => {
+    const controller = new AbortController()
+    const ledger = new ModelFallbackLedger()
+    let consultationStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      consultationStarted = resolve
+    })
+    let providerSignal: AbortSignal | undefined
+    const reconstruction = reconstructPdf(
+      await fixtureFile('adjudication-required.pdf'),
+      undefined,
+      {
+        signal: controller.signal,
+        modelFallback: {
+          enabled: true,
+          ownerOptIn: true,
+          ledger,
+          model: {
+            identity: {
+              providerId: 'recorded-stub',
+              modelId: 'never-settling-candidate-picker',
+              modelVersion: '1.0.0',
+              modelDigest: 'b'.repeat(64),
+            },
+            consult: (...args: unknown[]) => {
+              providerSignal = (args[1] as { signal?: AbortSignal } | undefined)
+                ?.signal
+              consultationStarted()
+              return new Promise(() => undefined)
+            },
+          },
+        },
+      },
+    )
+
+    await started
+    controller.abort()
+    const outcome = await Promise.race([
+      reconstruction.catch((error: unknown) => error),
+      new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), 250),
+      ),
+    ])
+
+    expect(providerSignal).toBe(controller.signal)
+    expect(outcome).toMatchObject({ code: 'IMPORT_CANCELLED' })
+    expect(ledger.recordsFor()).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        failureCode: 'MODEL_CONSULTATION_ABORTED',
+      }),
+    ])
+    expect(ledger.decisionsFor()).toEqual([
+      expect.objectContaining({ outcome: 'consulted', consulted: true }),
+    ])
+  })
+
+  it('does not start more consultations after a cooperative provider aborts', async () => {
+    const controller = new AbortController()
+    let consultationStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      consultationStarted = resolve
+    })
+    let providerCalls = 0
+    const reconstruction = reconstructPdf(
+      await fixtureFile('adjudication-required.pdf'),
+      undefined,
+      {
+        signal: controller.signal,
+        modelFallback: {
+          enabled: true,
+          ownerOptIn: true,
+          model: {
+            identity: {
+              providerId: 'recorded-stub',
+              modelId: 'abort-aware-candidate-picker',
+              modelVersion: '1.0.0',
+              modelDigest: 'b'.repeat(64),
+            },
+            consult: (_request, context) => {
+              providerCalls += 1
+              consultationStarted()
+              return new Promise((_resolve, reject) =>
+                context?.signal?.addEventListener(
+                  'abort',
+                  () => reject(context.signal?.reason),
+                  { once: true },
+                ),
+              )
+            },
+          },
+        },
+      },
+    )
+
+    await started
+    controller.abort()
+    await expect(reconstruction).rejects.toMatchObject({
+      code: 'IMPORT_CANCELLED',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    expect(providerCalls).toBe(1)
   })
 
   it('retains the published fellowship PDF as non-private local audit evidence', async () => {

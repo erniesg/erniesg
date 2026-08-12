@@ -14,6 +14,7 @@ import {
   DistillationLedger,
   ModelConsultationGate,
   type ModelConsultationGateOptions,
+  type ModelConsultationMetrics,
   type ModelConsultationRecord,
   type ModelDecisionMetricEvent,
   type ModelFallbackChoice,
@@ -369,6 +370,66 @@ function decisionKey(decisionClass: string, decisionId: string) {
   return `${decisionClass}\u0000${decisionId}`
 }
 
+function consultationMetrics(
+  decisions: readonly ModelDecisionMetricEvent[],
+): ModelConsultationMetrics {
+  const metricsByDecisionClass = new Map<
+    string,
+    {
+      decisionCount: number
+      consultationCount: number
+      consultationRate: number
+    }
+  >()
+  for (const decision of decisions) {
+    const current = metricsByDecisionClass.get(decision.decisionClass) ?? {
+      decisionCount: 0,
+      consultationCount: 0,
+      consultationRate: 0,
+    }
+    current.decisionCount += 1
+    if (decision.consulted) current.consultationCount += 1
+    current.consultationRate = current.consultationCount / current.decisionCount
+    metricsByDecisionClass.set(decision.decisionClass, current)
+  }
+  const byDecisionClass = Object.fromEntries(
+    metricsByDecisionClass,
+  ) as ModelConsultationMetrics['byDecisionClass']
+  const totalDecisionCount = decisions.length
+  const totalConsultationCount = Object.values(byDecisionClass).reduce(
+    (sum, metric) => sum + metric.consultationCount,
+    0,
+  )
+  return {
+    totalDecisionCount,
+    totalConsultationCount,
+    consultationRate:
+      totalDecisionCount === 0
+        ? 0
+        : totalConsultationCount / totalDecisionCount,
+    byDecisionClass,
+  }
+}
+
+function appendReceiptHistory(
+  prior: ModelFallbackReceipt,
+  current: ModelFallbackReceipt,
+): ModelFallbackReceipt {
+  const consultations = [
+    ...structuredClone(prior.consultations),
+    ...current.consultations,
+  ]
+  const decisions = [...structuredClone(prior.decisions), ...current.decisions]
+  return {
+    schemaVersion: current.schemaVersion,
+    documentId: current.documentId,
+    sourceSha256: current.sourceSha256,
+    consultations,
+    decisions,
+    metrics: consultationMetrics(decisions),
+  }
+}
+
 function stableSemanticStateJson(value: unknown): string {
   if (value === undefined) return 'null'
   if (typeof value === 'number' && !Number.isFinite(value)) return 'null'
@@ -507,11 +568,6 @@ function deterministicDecisionMatchesReconstruction(
     decision.decisionClass ===
     MODEL_FALLBACK_DECISION_CLASSES.captionAssociation
   ) {
-    if (
-      decision.deterministicRuleId !==
-      PDF_CAPTION_UNIQUE_BOUNDED_DISTANCE_RULE_ID
-    )
-      return false
     const relationship = reconstruction.visualRelationships.find(
       ({ id }) => id === decision.decisionId,
     )
@@ -553,7 +609,38 @@ function deterministicDecisionMatchesReconstruction(
       relationship.evidence.includes('deterministic-distillation'),
     )
   }
+  if (
+    decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie
+  ) {
+    const resolutions = reconstruction.readingOrder.resolutions.filter(
+      ({ regionIds }) =>
+        stableCandidateId(
+          'reading-order-decision',
+          [...new Set(regionIds)].sort(),
+        ) === decision.decisionId,
+    )
+    if (resolutions.length !== 1) return false
+    const targetIds = new Set(resolutions[0]!.regionIds)
+    const installedOrder = reconstruction.readingOrder.order.filter((id) =>
+      targetIds.has(id),
+    )
+    return (
+      installedOrder.length === targetIds.size &&
+      stableCandidateId('reading-order-candidate', installedOrder) ===
+        choice.candidateId
+    )
+  }
   return false
+}
+
+function sameConsultationEvidence(
+  left: ModelConsultationRecord,
+  right: ModelConsultationRecord,
+) {
+  return (
+    JSON.stringify(left.inputs) === JSON.stringify(right.inputs) &&
+    JSON.stringify(left.candidates) === JSON.stringify(right.candidates)
+  )
 }
 
 function existingReceiptMatchesReconstruction(
@@ -566,46 +653,86 @@ function existingReceiptMatchesReconstruction(
       binding,
     ]),
   )
-  const decisions = new Set(
-    receipt.decisions.map(({ decisionClass, decisionId }) =>
-      decisionKey(decisionClass, decisionId),
-    ),
-  )
-  if (decisions.size !== receipt.decisions.length) return false
-  if ([...openBindings.keys()].some((key) => !decisions.has(key))) return false
-
-  return receipt.decisions.every((decision) => {
+  const decisionsByKey = new Map<string, ModelDecisionMetricEvent[]>()
+  for (const decision of receipt.decisions) {
     const key = decisionKey(decision.decisionClass, decision.decisionId)
+    const history = decisionsByKey.get(key) ?? []
+    history.push(decision)
+    decisionsByKey.set(key, history)
+  }
+  if ([...openBindings.keys()].some((key) => !decisionsByKey.has(key)))
+    return false
+
+  return [...decisionsByKey].every(([key, history]) => {
+    const decision = history.at(-1)!
+    const priorResolved = history
+      .slice(0, -1)
+      .some(({ outcome }) => outcome === 'deterministic')
     const binding = openBindings.get(key)
-    if (decision.outcome === 'review-required') return Boolean(binding)
+    const consultations = receipt.consultations.filter(
+      (consultation) =>
+        consultation.decisionClass === decision.decisionClass &&
+        consultation.decisionId === decision.decisionId,
+    )
+    const accepted = consultations.filter(({ status }) => status === 'accepted')
+
+    if (binding) {
+      if (
+        priorResolved ||
+        decision.outcome === 'deterministic' ||
+        accepted.length > 0
+      )
+        return false
+      if (
+        consultations.some(
+          (consultation) =>
+            JSON.stringify(consultation.inputs) !==
+              JSON.stringify(binding.point.inputs) ||
+            JSON.stringify(consultation.candidates) !==
+              JSON.stringify(binding.point.candidates),
+        )
+      )
+        return false
+      return decision.outcome === 'review-required' || consultations.length > 0
+    }
+
+    if (decision.outcome === 'review-required') return false
     if (decision.outcome === 'deterministic') {
-      if (binding) return false
+      if (priorResolved || accepted.length > 0) return false
+      const evidence = consultations[0]
+      if (
+        evidence &&
+        (!consultations.every((item) =>
+          sameConsultationEvidence(item, evidence),
+        ) ||
+          consultations.some(
+            ({ candidates }) =>
+              !candidates.some(({ id }) => id === decision.choice?.candidateId),
+          ))
+      )
+        return false
       return deterministicDecisionMatchesReconstruction(
         reconstruction,
         decision,
       )
     }
 
-    const consultations = receipt.consultations.filter(
-      (consultation) =>
-        consultation.decisionClass === decision.decisionClass &&
-        consultation.decisionId === decision.decisionId,
+    const latestConsultation = consultations.at(-1)
+    if (
+      priorResolved ||
+      accepted.length !== 1 ||
+      !latestConsultation ||
+      latestConsultation.status !== 'accepted'
     )
-    if (consultations.length === 0) return false
-    const accepted = consultations.filter(({ status }) => status === 'accepted')
-    if (accepted.length > 0) {
-      if (binding) return false
-      return accepted.every((consultation) =>
-        acceptedConsultationMatchesReconstruction(reconstruction, consultation),
+      return false
+    if (
+      !consultations.every((consultation) =>
+        sameConsultationEvidence(consultation, latestConsultation),
       )
-    }
-    if (!binding) return false
-    return consultations.every(
-      (consultation) =>
-        JSON.stringify(consultation.inputs) ===
-          JSON.stringify(binding.point.inputs) &&
-        JSON.stringify(consultation.candidates) ===
-          JSON.stringify(binding.point.candidates),
+    )
+      return false
+    return accepted.every((consultation) =>
+      acceptedConsultationMatchesReconstruction(reconstruction, consultation),
     )
   })
 }
@@ -648,10 +775,9 @@ export async function resolvePdfModelFallbacks(
   gateOrOptions: ModelConsultationGate | ModelConsultationGateOptions = {},
 ) {
   const existing = validatedExistingReceipt(reconstruction)
-  if (existing) return existing
-
-  const reconstructionSnapshot = immutableSnapshot(reconstruction)
+  const reconstructionSnapshot = immutableSnapshot(existing ?? reconstruction)
   const bindings = boundModelDecisionPointsForPdf(reconstructionSnapshot)
+  if (existing && bindings.length === 0) return existing
 
   let gate: ModelConsultationGate
   if (gateOrOptions instanceof ModelConsultationGate) {
@@ -689,6 +815,9 @@ export async function resolvePdfModelFallbacks(
     }
     gate = new ModelConsultationGate(options)
   }
+  if (existing?.modelConsultations)
+    gate.ledger.rememberStableChoices(existing.modelConsultations)
+  const invocation = Symbol('pdf-model-fallback-invocation')
   if (
     !gate.ledger.bindDocumentSource(
       reconstructionSnapshot.paper.id,
@@ -700,7 +829,7 @@ export async function resolvePdfModelFallbacks(
 
   const resolutions: VerifiedPdfCandidateResolution[] = []
   for (const binding of bindings) {
-    const outcome = await gate.decide(binding.point)
+    const outcome = await gate.decide(binding.point, invocation)
     if (
       !outcome.choice ||
       (outcome.status !== 'consulted' && outcome.status !== 'deterministic')
@@ -729,7 +858,13 @@ export async function resolvePdfModelFallbacks(
     }
     resolved = replay.reconstruction
   }
-  const receipt = gate.ledger.receiptFor(reconstructionSnapshot.paper.id)
+  const currentReceipt = gate.ledger.receiptForInvocation(
+    reconstructionSnapshot.paper.id,
+    invocation,
+  )
+  const receipt = existing?.modelConsultations
+    ? appendReceiptHistory(existing.modelConsultations, currentReceipt)
+    : currentReceipt
   if (
     !validateModelConsultationReceipt(receipt) ||
     receipt.documentId !== reconstructionSnapshot.paper.id ||

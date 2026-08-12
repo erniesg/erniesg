@@ -6,12 +6,12 @@ import type {
 } from '../research/import-types'
 import type { ResearchNode } from '../research/schema'
 import { recoveryDiagnosticInputs } from '../research/recovery-projection'
+import { modelConsultationReceiptMatchesPdfReconstruction } from '../research/model-fallback-pipeline'
+import { structDigest, structId } from './ids'
 import {
   validateModelConsultationReceipt,
   type ModelFallbackReceipt,
-} from '../research/model-fallback'
-import { modelConsultationReceiptMatchesPdfReconstruction } from '../research/model-fallback-pipeline'
-import { structDigest, structId } from './ids'
+} from './model-consultation-receipt'
 import { recoverySummary, toStructDiagnostic } from './recovery'
 import { orderBlocksByLayout, pageLayoutsFromBlocks } from './reading-order'
 import type {

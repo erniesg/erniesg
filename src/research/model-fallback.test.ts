@@ -21,6 +21,11 @@ const modelIdentity = {
 const credentialShapedIds = [
   ['openai-legacy', ['sk', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
   ['openai', ['sk', 'proj', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
+  ['github-classic', ['ghp', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  [
+    'github-fine-grained',
+    ['github', 'pat', 'FAKEFAKEFAKE', 'FAKEFAKEFAKE'].join('_'),
+  ],
   ['aws', ['AKIA', 'IOSFODNN7EXAMPLE'].join('')],
   ['bearer', ['Bearer', 'FAKEFAKEFAKEFAKE'].join(':')],
   [
@@ -1297,6 +1302,39 @@ describe('model fallback consultation gate', () => {
     ).toBe(true)
   })
 
+  it('rejects imported stable choices that conflict with accepted ledger history', async () => {
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[1]!
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      ledger,
+      model: {
+        identity: modelIdentity,
+        consult: () => ({ candidateId: 'note-body-1' }),
+      },
+    })
+    expect((await gate.decide(point)).status).toBe('consulted')
+
+    const otherLedger = new ModelFallbackLedger()
+    const otherGate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      ledger: otherLedger,
+      model: {
+        identity: modelIdentity,
+        consult: () => ({ candidateId: 'note-body-2' }),
+      },
+    })
+    expect((await otherGate.decide(point)).status).toBe('consulted')
+    const conflicting = otherLedger.receiptFor(point.documentId)
+    expect(validateModelConsultationReceipt(conflicting)).toBe(true)
+
+    expect(() => ledger.rememberStableChoices(conflicting)).toThrow(
+      'INVALID_PRIOR_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
   it('closes both records for concurrent identical consultations', async () => {
     const ledger = new ModelFallbackLedger()
     let release!: () => void
@@ -1506,6 +1544,79 @@ describe('model fallback consultation gate', () => {
     const result = await gate.decide(point)
     expect(result.status).toBe('deterministic')
     expect(consult).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed supplied source hash before a deterministic outcome', async () => {
+    const consult = vi.fn(() => ({ candidateId: 'order-a-b' }))
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      model: { identity: modelIdentity, consult },
+      ledger,
+    })
+
+    const result = await gate.decide({
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[2]!,
+      sourceSha256: 'not-a-source-digest',
+      status: 'deterministic',
+      deterministicChoice: 'order-a-b',
+    })
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_SOURCE_SHA256')
+    expect(consult).not.toHaveBeenCalled()
+    expect(ledger.recordsFor()).toEqual([])
+  })
+
+  it('rejects an accessor-backed source hash without invoking it', async () => {
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({ ledger })
+    const point = {
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[2]!,
+      status: 'deterministic' as const,
+      deterministicChoice: 'order-a-b',
+    }
+    let reads = 0
+    Object.defineProperty(point, 'sourceSha256', {
+      enumerable: true,
+      get() {
+        reads += 1
+        return reads === 1 ? undefined : 'not-a-source-digest'
+      },
+    })
+
+    const result = await gate.decide(point)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_SOURCE_SHA256')
+    expect(reads).toBe(0)
+    expect(ledger.recordsFor()).toEqual([])
+  })
+
+  it('rejects an inherited source hash without invoking the prototype', async () => {
+    const ledger = new ModelFallbackLedger()
+    const gate = new ModelConsultationGate({ ledger })
+    const point = {
+      ...MODEL_FALLBACK_REFERENCE_FIXTURES[2]!,
+      status: 'deterministic' as const,
+      deterministicChoice: 'order-a-b',
+    }
+    delete (point as { sourceSha256?: string }).sourceSha256
+    Object.setPrototypeOf(
+      point,
+      Object.defineProperty({}, 'sourceSha256', {
+        get() {
+          throw new Error('must not invoke an inherited source hash')
+        },
+      }),
+    )
+
+    const result = await gate.decide(point)
+
+    expect(result.status).toBe('review-required')
+    expect(result.diagnostic).toBe('INVALID_SOURCE_SHA256')
+    expect(ledger.recordsFor()).toEqual([])
   })
 
   it('preserves a known source hash on deterministic receipts', async () => {

@@ -1203,7 +1203,7 @@ describe('Vivliostyle publication renderer boundary', () => {
     const bundle = resolve(cache, 'chromium-1228')
     const browser = resolve(bundle, 'chrome-linux/chrome')
     const snapshotRoot = resolve(root, 'snapshots')
-    const quarantineRoot = resolve(snapshotRoot, 'reap-stale-fixture')
+    const quarantineRoot = resolve(snapshotRoot, 'delete-stale-fixture')
     const orphan = resolve(quarantineRoot, 'snapshot/orphan')
     const originalFsPromises = await import('node:fs/promises')
     let orphanUnlinks = 0
@@ -1252,6 +1252,154 @@ describe('Vivliostyle publication renderer boundary', () => {
         return result.value
       })
       await Promise.all(snapshots.map((snapshot) => snapshot.cleanup()))
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('claims an aged quarantine before a paused publisher can populate it', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-claim-'))
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const quarantineRoot = resolve(snapshotRoot, 'reap-paused-publisher')
+    const publisherRoot = resolve(snapshotRoot, 'paused-publisher-payload')
+    const originalFsPromises = await import('node:fs/promises')
+    let deletionRoot = ''
+    let publishError: unknown
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      rename: async (from: unknown, to: unknown, ...args: unknown[]) => {
+        const source = resolve(String(from))
+        const destination = resolve(String(to))
+        const result = await (
+          originalFsPromises.rename as (...values: unknown[]) => unknown
+        )(from, to, ...args)
+        if (
+          source === quarantineRoot &&
+          basename(destination).startsWith('delete-')
+        ) {
+          deletionRoot = destination
+          try {
+            await originalFsPromises.rename(
+              publisherRoot,
+              resolve(quarantineRoot, 'snapshot'),
+            )
+          } catch (error) {
+            publishError = error
+          }
+        }
+        return result
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await mkdir(snapshotRoot, { mode: 0o700 })
+      await mkdir(quarantineRoot, { mode: 0o700 })
+      await utimes(quarantineRoot, new Date(0), new Date(0))
+      await mkdir(publisherRoot, { mode: 0o700 })
+      await writeFile(resolve(publisherRoot, 'orphan'), 'paused browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      expect(basename(deletionRoot)).toMatch(/^delete-/)
+      expect(publishError).toMatchObject({ code: 'ENOENT' })
+      await expect(
+        readFile(resolve(publisherRoot, 'orphan'), 'utf8'),
+      ).resolves.toBe('paused browser bytes')
+      await expect(access(deletionRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await snapshot.cleanup()
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('grants a second grace interval when a paused publisher wins the claim race', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-grace-'))
+    const cache = resolve(root, 'cache')
+    const bundle = resolve(cache, 'chromium-1228')
+    const browser = resolve(bundle, 'chrome-linux/chrome')
+    const snapshotRoot = resolve(root, 'snapshots')
+    const quarantineRoot = resolve(snapshotRoot, 'reap-publisher-wins')
+    const publisherRoot = resolve(snapshotRoot, 'publisher-winner-payload')
+    const originalFsPromises = await import('node:fs/promises')
+    let deletionRoot = ''
+    let publishedBeforeClaim = false
+
+    vi.resetModules()
+    vi.doMock('node:fs/promises', () => ({
+      ...originalFsPromises,
+      rename: async (from: unknown, to: unknown, ...args: unknown[]) => {
+        const source = resolve(String(from))
+        const destination = resolve(String(to))
+        if (
+          source === quarantineRoot &&
+          basename(destination).startsWith('delete-')
+        ) {
+          await originalFsPromises.rename(
+            publisherRoot,
+            resolve(quarantineRoot, 'snapshot'),
+          )
+          publishedBeforeClaim = true
+          deletionRoot = destination
+        }
+        return (originalFsPromises.rename as (...values: unknown[]) => unknown)(
+          from,
+          to,
+          ...args,
+        )
+      },
+    }))
+
+    try {
+      await mkdir(dirname(browser), { recursive: true })
+      await writeFile(browser, 'reviewed browser bytes')
+      await mkdir(snapshotRoot, { mode: 0o700 })
+      await mkdir(quarantineRoot, { mode: 0o700 })
+      await utimes(quarantineRoot, new Date(0), new Date(0))
+      await mkdir(publisherRoot, { mode: 0o700 })
+      await writeFile(resolve(publisherRoot, 'orphan'), 'paused browser bytes')
+      const runtime = await import('../browser-runtime')
+      const selected = await runtime.publicationBrowserBundleForExecutable(
+        browser,
+        cache,
+      )
+      const snapshot = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      expect(publishedBeforeClaim).toBe(true)
+      await expect(
+        readFile(resolve(deletionRoot, 'snapshot/orphan'), 'utf8'),
+      ).resolves.toBe('paused browser bytes')
+
+      await utimes(deletionRoot, new Date(0), new Date(0))
+      const afterGrace = await runtime.snapshotPublicationBrowserBundle(
+        selected,
+        snapshotRoot,
+      )
+      await expect(access(deletionRoot)).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await afterGrace.cleanup()
+      await snapshot.cleanup()
     } finally {
       vi.doUnmock('node:fs/promises')
       vi.resetModules()

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   constants as fsConstants,
   createReadStream,
@@ -96,6 +96,7 @@ export const PUBLICATION_BROWSER_SNAPSHOT_ROOT =
   publicationBrowserSnapshotRootPath()
 const PUBLICATION_BROWSER_SNAPSHOT_LEASE = '.lease'
 const PUBLICATION_BROWSER_SNAPSHOT_REAP_PREFIX = 'reap-'
+const PUBLICATION_BROWSER_SNAPSHOT_DELETE_PREFIX = 'delete-'
 const PUBLICATION_BROWSER_SNAPSHOT_HEARTBEAT_MS = 15_000
 const PUBLICATION_BROWSER_SNAPSHOT_STALE_MS = 120_000
 // Snapshot isolation protects against ordinary concurrent installer/cache
@@ -103,7 +104,8 @@ const PUBLICATION_BROWSER_SNAPSHOT_STALE_MS = 120_000
 // processes with the same uid (and root) remain inside the trusted VM boundary.
 // A heartbeat lease keeps concurrent builds distinct. A later preparation
 // atomically quarantines crash orphans after two quiet minutes, then waits a
-// second quiet interval before removing the fenced tree.
+// second quiet interval before atomically claiming and removing the fenced
+// tree.
 
 export type PreparedPublicationPlaywrightRuntime = {
   executablePath: string
@@ -698,6 +700,33 @@ async function quarantinePublicationBrowserSnapshot(
   }
 }
 
+async function claimPublicationBrowserQuarantine(
+  canonicalRoot: string,
+  quarantineRoot: string,
+  quarantineEntry: FileIdentity,
+) {
+  const deletionRoot = resolve(
+    canonicalRoot,
+    `${PUBLICATION_BROWSER_SNAPSHOT_DELETE_PREFIX}${randomUUID()}`,
+  )
+  try {
+    const confirmedQuarantine = await lstat(quarantineRoot, { bigint: true })
+    if (
+      !confirmedQuarantine.isDirectory() ||
+      !sameFileIdentity(quarantineEntry, confirmedQuarantine)
+    )
+      return ''
+    // Moving the quarantine out of the publisher-visible reap namespace is the
+    // deletion claim. A publisher paused after mkdtemp can no longer add its
+    // snapshot after this point; its destination path has disappeared.
+    await rename(quarantineRoot, deletionRoot)
+    return deletionRoot
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ENOENT') return ''
+    throw error
+  }
+}
+
 async function scavengePublicationBrowserSnapshots(canonicalRoot: string) {
   const currentUid = process.getuid?.()
   const entries = (await readdir(canonicalRoot)).sort((left, right) =>
@@ -713,14 +742,42 @@ async function scavengePublicationBrowserSnapshots(canonicalRoot: string) {
       throw error
     }
     if (
+      entryName.startsWith(PUBLICATION_BROWSER_SNAPSHOT_DELETE_PREFIX) &&
+      publicationBrowserPrivateDirectoryIsSafe(privateEntry, currentUid) &&
+      publicationBrowserSnapshotEntryIsStale(privateEntry)
+    ) {
+      // Deletion roots can only be created by an atomic rename from the reap
+      // namespace. A prior scavenger may have crashed during traversal.
+      await removePublicationBrowserTree(entryPath, privateEntry, true)
+      continue
+    }
+    if (
       entryName.startsWith(PUBLICATION_BROWSER_SNAPSHOT_REAP_PREFIX) &&
       publicationBrowserPrivateDirectoryIsSafe(privateEntry, currentUid) &&
       publicationBrowserSnapshotEntryIsStale(privateEntry)
     ) {
-      // Quarantines are already atomically fenced from their former owner.
-      // Concurrent scavengers may therefore treat another scavenger's removal
-      // as success while still refusing an identity substitution.
-      await removePublicationBrowserTree(entryPath, privateEntry, true)
+      const deletionRoot = await claimPublicationBrowserQuarantine(
+        canonicalRoot,
+        entryPath,
+        privateEntry,
+      )
+      if (deletionRoot) {
+        let claimedEntry
+        try {
+          claimedEntry = await lstat(deletionRoot, { bigint: true })
+        } catch (error) {
+          if ((error as { code?: string }).code === 'ENOENT') continue
+          throw error
+        }
+        // A paused publisher may win the race immediately before the atomic
+        // claim. Its rename refreshes the directory mtime, so retain the now-
+        // fenced payload for a full second grace interval.
+        if (
+          sameFileIdentity(privateEntry, claimedEntry) &&
+          publicationBrowserSnapshotEntryIsStale(claimedEntry)
+        )
+          await removePublicationBrowserTree(deletionRoot, claimedEntry, true)
+      }
       continue
     }
     if (

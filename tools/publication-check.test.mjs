@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
 import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
 import { PUBLICATION_PROFILES } from '../src/publication/renderers/vivliostyle.ts'
+import { publicationPlaywrightRuntimeEvidenceForPlatform } from '../src/publication/toolchain.ts'
 import {
   publicationGraphSchema,
   serializePublicationGraph,
@@ -24,6 +25,7 @@ import {
   assertPublicationReceiptSourceBinding,
   assertPublicationReceiptMappingVersion,
   assertPublicationReceiptPolicyVersions,
+  assertPublicationReceiptRuntime,
   checkWebPubReceipt,
   normalizePdfSearchableText,
   normalizePdfVerificationText,
@@ -39,6 +41,15 @@ import {
   validateWebPubGraph,
   verifyArtifactReceipt,
 } from './publication-check.mjs'
+
+const browserIdentity = {
+  observedVersion: '149.0.7827.0',
+  executableSha256: 'a'.repeat(64),
+  executableByteLength: 123,
+  playwrightPackageJsonSha256: 'b'.repeat(64),
+  playwrightCorePackageJsonSha256: 'c'.repeat(64),
+  browsersJsonSha256: 'd'.repeat(64),
+}
 
 describe('publication:check CLI', () => {
   it('requires the exact four-output matrix', () => {
@@ -58,6 +69,63 @@ describe('publication:check CLI', () => {
         'phone-webpub,eink-epub',
       ]),
     ).toThrow(/exactly/)
+  })
+
+  it('requires the current platform browser attestation in the receipt', () => {
+    const publicationBrowser = publicationPlaywrightRuntimeEvidenceForPlatform(
+      browserIdentity,
+      'linux',
+      'arm64',
+    )
+    const receipt = {
+      toolchain: {
+        node: process.versions.node,
+        runtime: {
+          node: process.versions.node,
+          platformKey: 'linux-arm64',
+          pdfRenderer: 'playwright-chromium',
+          publicationBrowser,
+        },
+      },
+    }
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, publicationBrowser, {
+        platform: 'linux',
+        architecture: 'arm64',
+      }),
+    ).not.toThrow()
+
+    for (const field of [
+      'platformKey',
+      'packageName',
+      'packageVersion',
+      'browserRevision',
+      'expectedVersion',
+      'observedVersion',
+      'executableSha256',
+      'executableByteLength',
+      'playwrightPackageJsonSha256',
+      'playwrightCorePackageJsonSha256',
+      'browsersJsonSha256',
+    ]) {
+      const changed = structuredClone(receipt)
+      delete changed.toolchain.runtime.publicationBrowser[field]
+      expect(() =>
+        assertPublicationReceiptRuntime(changed, publicationBrowser, {
+          platform: 'linux',
+          architecture: 'arm64',
+        }),
+      ).toThrow(/browser runtime binding/i)
+    }
+
+    const driftedExecutable = structuredClone(publicationBrowser)
+    driftedExecutable.executableSha256 = 'e'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedExecutable, {
+        platform: 'linux',
+        architecture: 'arm64',
+      }),
+    ).toThrow(/browser runtime binding/i)
   })
 
   it('derives canonical Astro route parity from source identity and isolates conformance mode', () => {
@@ -112,15 +180,11 @@ describe('publication:check CLI', () => {
   })
 
   it('scopes A5 page expansion to the canonical Astro corpus', () => {
-    expect(() =>
-      assertPublicationPdfPageCountPolicy(2, 1, true),
-    ).not.toThrow()
-    expect(() =>
-      assertPublicationPdfPageCountPolicy(1, 1, false),
-    ).not.toThrow()
-    expect(() =>
-      assertPublicationPdfPageCountPolicy(1, 1, true),
-    ).toThrow(/A5 profile must produce more pages than A4/)
+    expect(() => assertPublicationPdfPageCountPolicy(2, 1, true)).not.toThrow()
+    expect(() => assertPublicationPdfPageCountPolicy(1, 1, false)).not.toThrow()
+    expect(() => assertPublicationPdfPageCountPolicy(1, 1, true)).toThrow(
+      /A5 profile must produce more pages than A4/,
+    )
   })
 
   it('fails closed on stale renderer, transformation, or checker receipt policies', () => {
@@ -197,7 +261,9 @@ describe('publication:check CLI', () => {
         },
       ],
     }
-    expect(() => assertPublicationReceiptSourceBinding(receipt, graph)).not.toThrow()
+    expect(() =>
+      assertPublicationReceiptSourceBinding(receipt, graph),
+    ).not.toThrow()
     expect(() =>
       assertPublicationReceiptSourceBinding(
         { ...receipt, source: { ...receipt.source, sourceId: 'blog:other' } },
@@ -322,7 +388,11 @@ describe('publication:check CLI', () => {
     ).toEqual(['After punctuation', 'Hard\nBreak'])
     expect(
       orderPdfTextRequirements(
-        ['Section one', 'This configured block remains an aside.', 'Section one'],
+        [
+          'Section one',
+          'This configured block remains an aside.',
+          'Section one',
+        ],
         'Section one This configured block remains an aside. Section one',
       ),
     ).toEqual([
@@ -474,9 +544,10 @@ describe('publication:check CLI', () => {
       ),
     ).not.toThrow()
     expect(() =>
-      assertPdfLinkAnnotations([{ url: 'https://example.com/' }], [
-        'https://example.com',
-      ]),
+      assertPdfLinkAnnotations(
+        [{ url: 'https://example.com/' }],
+        ['https://example.com'],
+      ),
     ).not.toThrow()
     expect(() =>
       assertPdfLinkAnnotations([{ target: 'https://example.com/' }], required),

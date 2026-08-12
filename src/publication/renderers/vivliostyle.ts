@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
-import { constants as fsConstants } from 'node:fs'
+import { constants as fsConstants, createReadStream } from 'node:fs'
 import {
   access,
   chmod,
@@ -8,6 +8,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  stat,
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, relative, resolve, sep } from 'node:path'
@@ -31,9 +32,13 @@ import type {
 } from '../adapter-registry'
 import {
   PUBLICATION_TOOLCHAIN,
+  publicationPdfRendererForRuntime,
+  publicationPlatformKey,
+  publicationPlaywrightCompatibilityForPlatform,
+  publicationPlaywrightRuntimeEvidenceForPlatform,
   publicationToolchainForRuntime,
-  publicationPdfRendererForArchitecture,
   verifyPublicationToolchain,
+  type PublicationPlaywrightRuntimeEvidence,
 } from '../toolchain'
 
 export const PUBLICATION_PROFILES = [
@@ -122,6 +127,12 @@ function sha256(value: Uint8Array | string) {
   return createHash('sha256').update(value).digest('hex')
 }
 
+async function sha256File(path: string) {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll('&', '&amp;')
@@ -148,10 +159,7 @@ function inlineLinkHref(link: PublicationInlineRun) {
   return link.href ?? `#${link.targetIds?.[0] ?? ''}`
 }
 
-function inlineHtmlSegments(
-  text: string,
-  runs: PublicationInlineRun[] = [],
-) {
+function inlineHtmlSegments(text: string, runs: PublicationInlineRun[] = []) {
   for (const run of runs) {
     if (!run.hardBreak) continue
     if (
@@ -245,7 +253,9 @@ function inlineHtml(
         ? [`id="${escapeHtml(link.relationshipId)}"`]
         : []),
       ...(link.semanticRole === 'cross-reference' &&
-      link.targetIds?.some((targetId) => targetNodes?.get(targetId)?.type === 'note')
+      link.targetIds?.some(
+        (targetId) => targetNodes?.get(targetId)?.type === 'note',
+      )
         ? ['role="doc-noteref"']
         : []),
       ...(link.semanticRole === 'citation'
@@ -260,7 +270,9 @@ function inlineHtml(
     ].join(' ')
   let html = ''
   const renderedLinks = new Set<PublicationInlineRun>()
-  for (const segment of groupedInlineHtmlSegments(inlineHtmlSegments(text, runs))) {
+  for (const segment of groupedInlineHtmlSegments(
+    inlineHtmlSegments(text, runs),
+  )) {
     if (!segment.link) {
       html += segment.value
       continue
@@ -326,7 +338,8 @@ function renderNode(
   listStack = new Set<string>(),
 ): string {
   node = publicationNodeForProfile(node, profile)
-  const text = 'text' in node ? inlineHtml(node.text, node.inlineRuns, byId) : ''
+  const text =
+    'text' in node ? inlineHtml(node.text, node.inlineRuns, byId) : ''
   switch (node.type) {
     case 'heading':
       return `<h${node.level} ${nodeAttributes(node, edition)}>${text}</h${node.level}>`
@@ -353,13 +366,20 @@ function renderNode(
                 child?.type === 'list',
             )
             .map((child) =>
-              renderNode(child, byId, assetPaths, profile, edition, nextListStack),
+              renderNode(
+                child,
+                byId,
+                assetPaths,
+                profile,
+                edition,
+                nextListStack,
+              ),
             )
             .join('')
-          const renderedItem = publicationNodeForProfile(item, profile) as Extract<
-            PublicationNode,
-            { type: 'list-item' }
-          >
+          const renderedItem = publicationNodeForProfile(
+            item,
+            profile,
+          ) as Extract<PublicationNode, { type: 'list-item' }>
           return `<li ${nodeAttributes(renderedItem, edition)}>${inlineHtml(renderedItem.text, renderedItem.inlineRuns, byId)}${nested}</li>`
         })
         .join('')
@@ -385,16 +405,15 @@ function renderNode(
           : ''
         return `<div ${nodeAttributes(node, edition, ['class="equation"', 'role="math"', `data-format="${node.format}"`])}>${escapeHtml(node.source)}${label}${renderedCaption?.type === 'caption' ? `<div class="caption" ${nodeAttributes(renderedCaption, edition)}>${inlineHtml(renderedCaption.text, renderedCaption.inlineRuns, byId)}</div>` : ''}</div>`
       }
-    case 'note':
-      {
-        const role =
-          node.noteKind === 'footnote'
-            ? 'doc-footnote'
-            : node.noteKind === 'endnote'
-              ? 'doc-endnote'
-              : 'doc-annotation'
-        return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
-      }
+    case 'note': {
+      const role =
+        node.noteKind === 'footnote'
+          ? 'doc-footnote'
+          : node.noteKind === 'endnote'
+            ? 'doc-endnote'
+            : 'doc-annotation'
+      return `<aside ${nodeAttributes(node, edition, [`role="${role}"`])}><span class="note-label">${escapeHtml(node.label)}</span> ${text}${node.backlinkIds.map((id) => `<a class="backlink" href="#${id}" aria-label="Back to reference">↩</a>`).join('')}</aside>`
+    }
     case 'figure': {
       const caption = node.captionId ? byId.get(node.captionId) : undefined
       const alternativeText = accessibilityLabel(node)
@@ -406,7 +425,9 @@ function renderNode(
         .map((assetId) => {
           const path = assetPaths.get(assetId)
           if (!path)
-            throw new Error(`Figure ${node.id} references an unavailable asset ${assetId}`)
+            throw new Error(
+              `Figure ${node.id} references an unavailable asset ${assetId}`,
+            )
           return `<img src="${escapeHtml(path)}" alt="${escapeHtml(alternativeText)}">`
         })
         .join('')
@@ -429,7 +450,9 @@ function renderNode(
     case 'media': {
       const assetPath = assetPaths.get(node.assetId)
       if (!assetPath)
-        throw new Error(`Media ${node.id} references an unavailable asset ${node.assetId}`)
+        throw new Error(
+          `Media ${node.id} references an unavailable asset ${node.assetId}`,
+        )
       const source = escapeHtml(assetPath)
       const label = accessibilityLabel(node)
       if (node.accessibility.decorative !== true && !label)
@@ -515,10 +538,7 @@ export function publicationGraphToHtml(
   for (const node of graph.nodes) {
     if (node.type !== 'caption') continue
     const parent = byId.get(node.parentId)
-    if (
-      parent &&
-      (!('captionId' in parent) || parent.captionId !== node.id)
-    )
+    if (parent && (!('captionId' in parent) || parent.captionId !== node.id))
       throw new Error(
         `Caption ${node.id} has no reciprocal caption ownership from ${node.parentId}`,
       )
@@ -734,8 +754,7 @@ export function publicationEpubAccessibilityMetadata(graph: PublicationGraph) {
   if (hasText || graph.metadata.title.trim()) accessModes.add('textual')
   for (const node of graph.nodes) {
     const accessibility = node.accessibility
-    if (accessibility.alternativeText?.trim())
-      features.add('alternativeText')
+    if (accessibility.alternativeText?.trim()) features.add('alternativeText')
     if (accessibility.longDescription?.trim()) features.add('longDescription')
     if (accessibility.transcript?.trim()) features.add('transcript')
     if (node.type === 'figure' && node.assetIds.length > 0)
@@ -764,12 +783,7 @@ export function publicationPlaywrightExecutableCandidates(
   platform = process.platform,
   architecture = process.arch,
 ) {
-  const platformKey =
-    platform === 'darwin'
-      ? `mac-${architecture === 'arm64' ? 'arm64' : 'x64'}`
-      : platform === 'win32'
-        ? 'win-x64'
-        : `linux-${architecture === 'arm64' ? 'arm64' : 'x64'}`
+  const platformKey = publicationPlatformKey(platform, architecture)
   const chromiumPaths: Record<string, string[]> = {
     'linux-x64': ['chrome-linux64', 'chrome'],
     'linux-arm64': ['chrome-linux', 'chrome'],
@@ -796,6 +810,10 @@ export function publicationPlaywrightExecutableCandidates(
     'mac-arm64': ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
     'win-x64': ['chrome-headless-shell-win64', 'chrome-headless-shell.exe'],
   }
+  if (!chromiumPaths[platformKey] || !headlessPaths[platformKey])
+    throw new Error(
+      `Unsupported Playwright Chromium platform layout: ${platformKey}`,
+    )
   return [
     resolve(
       PLAYWRIGHT_BROWSER_CACHE,
@@ -814,9 +832,13 @@ export function publicationBrowserVersionMatches(
   versionOutput: string,
   expectedVersion: string,
 ) {
-  const actual = String(versionOutput).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1]
+  const actual = publicationBrowserVersion(versionOutput)
   const expected = String(expectedVersion).match(/^(\d+\.\d+\.\d+\.\d+)$/u)?.[1]
   return Boolean(actual && expected && actual === expected)
+}
+
+export function publicationBrowserVersion(versionOutput: string) {
+  return String(versionOutput).match(/\b(\d+\.\d+\.\d+\.\d+)\b/u)?.[1] ?? ''
 }
 
 function verifyPublicationBrowserExecutable(
@@ -839,6 +861,99 @@ function verifyPublicationBrowserExecutable(
       `Pinned publication browser version ${versionOutput.trim() || '(missing)'} does not match ${expectedVersion}`,
     )
   return versionOutput.trim()
+}
+
+type PreparedPdfRenderer =
+  | {
+      renderer: 'playwright-chromium'
+      executablePath: string
+      publicationBrowser: PublicationPlaywrightRuntimeEvidence
+    }
+  | {
+      renderer: 'vivliostyle-cli'
+      executablePath: string
+      publicationBrowser: null
+    }
+
+async function firstAccessiblePath(candidates: string[]) {
+  for (const candidate of candidates) {
+    try {
+      await access(candidate)
+      return candidate
+    } catch {
+      // Continue through the closed, platform-specific candidate list.
+    }
+  }
+  return ''
+}
+
+async function preparePlaywrightPdfRenderer(): Promise<
+  Extract<PreparedPdfRenderer, { renderer: 'playwright-chromium' }>
+> {
+  const compatibility = publicationPlaywrightCompatibilityForPlatform()
+  const executablePath = await firstAccessiblePath(
+    publicationPlaywrightExecutableCandidates(compatibility.browserRevision),
+  )
+  if (!executablePath)
+    throw new Error(
+      'Pinned Playwright Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
+    )
+  const versionOutput = verifyPublicationBrowserExecutable(
+    executablePath,
+    compatibility.expectedVersion,
+  )
+  const executable = await stat(executablePath)
+  const [
+    executableSha256,
+    playwrightPackageJsonSha256,
+    playwrightCorePackageJsonSha256,
+    browsersJsonSha256,
+  ] = await Promise.all([
+    sha256File(executablePath),
+    sha256File(resolve('node_modules/playwright/package.json')),
+    sha256File(resolve('node_modules/playwright-core/package.json')),
+    sha256File(resolve('node_modules/playwright-core/browsers.json')),
+  ])
+  const publicationBrowser = publicationPlaywrightRuntimeEvidenceForPlatform({
+    observedVersion: publicationBrowserVersion(versionOutput),
+    executableSha256,
+    executableByteLength: executable.size,
+    playwrightPackageJsonSha256,
+    playwrightCorePackageJsonSha256,
+    browsersJsonSha256,
+  })
+  return { renderer: 'playwright-chromium', executablePath, publicationBrowser }
+}
+
+export async function publicationPlaywrightRuntimeEvidenceForCurrentPlatform() {
+  return (await preparePlaywrightPdfRenderer()).publicationBrowser
+}
+
+async function preparePdfRenderer(): Promise<PreparedPdfRenderer> {
+  const renderer = publicationPdfRendererForRuntime()
+  if (renderer === 'playwright-chromium') return preparePlaywrightPdfRenderer()
+  let executablePath: string
+  try {
+    executablePath = computeExecutablePath({
+      browser: Browser.CHROME,
+      buildId: PUBLICATION_TOOLCHAIN.browser.revision,
+      cacheDir: PUPPETEER_BROWSER_CACHE,
+    })
+    await chmod(executablePath, 0o755)
+  } catch {
+    throw new Error(
+      'Pinned Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
+    )
+  }
+  verifyPublicationBrowserExecutable(
+    executablePath,
+    PUBLICATION_TOOLCHAIN.browser.browserVersion,
+  )
+  return {
+    renderer: 'vivliostyle-cli',
+    executablePath,
+    publicationBrowser: null,
+  }
 }
 
 async function createEpub(
@@ -915,8 +1030,7 @@ async function createEpub(
     .join('')
   const accessModeSufficientMetadata = accessibility.accessModeSufficient
     .map(
-      (mode) =>
-        `<meta property="schema:accessModeSufficient">${mode}</meta>`,
+      (mode) => `<meta property="schema:accessModeSufficient">${mode}</meta>`,
     )
     .join('')
   const accessibilityFeatureMetadata = accessibility.accessibilityFeatures
@@ -966,11 +1080,6 @@ async function run(command: string, args: string[], environment = process.env) {
   })
 }
 
-type PdfRenderer = Extract<
-  ArtifactRenderer,
-  'vivliostyle-cli' | 'playwright-chromium'
->
-
 // PDF bytes are first written by the pinned browser or Vivliostyle CLI, which
 // cannot take O_EXCL flags; both only ever target paths inside the fresh
 // invocation-owned render directory created above, and this normalization
@@ -978,16 +1087,16 @@ type PdfRenderer = Extract<
 async function normalizePdf(
   path: string,
   title: string,
-  renderer: PdfRenderer,
+  prepared: PreparedPdfRenderer,
 ) {
   const pdf = await PDFDocument.load(await readFile(path))
   pdf.setTitle(title)
   pdf.setAuthor('')
   pdf.setCreator('ernie.sg publication compiler')
   pdf.setProducer(
-    renderer === 'vivliostyle-cli'
+    prepared.renderer === 'vivliostyle-cli'
       ? `Vivliostyle CLI ${PUBLICATION_TOOLCHAIN.vivliostyleCli.version}`
-      : `Playwright Chromium ${PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion}`,
+      : `Playwright Chromium ${prepared.publicationBrowser.expectedVersion}`,
   )
   pdf.setCreationDate(FIXED_DATE)
   pdf.setModificationDate(FIXED_DATE)
@@ -998,33 +1107,13 @@ async function createPdf(
   htmlPath: string,
   outputPath: string,
   size: 'A4' | 'A5',
-): Promise<PdfRenderer> {
-  const renderer = publicationPdfRendererForArchitecture()
-  if (renderer === 'playwright-chromium') {
-    const revision = PUBLICATION_TOOLCHAIN.browser.compatibility.arm64Revision
-    const candidates = publicationPlaywrightExecutableCandidates(revision)
-    const executablePath = await candidates.reduce<Promise<string>>(
-      async (previous, candidate) => {
-        const found = await previous
-        if (found) return found
-        try {
-          await access(candidate)
-          return candidate
-        } catch {
-          return ''
-        }
-      },
-      Promise.resolve(''),
-    )
-    if (!executablePath)
-      throw new Error(
-        'Pinned Playwright Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
-      )
-    verifyPublicationBrowserExecutable(
-      executablePath,
-      PUBLICATION_TOOLCHAIN.browser.compatibility.arm64BrowserVersion,
-    )
-    const browser = await chromium.launch({ executablePath, headless: true })
+  prepared: PreparedPdfRenderer,
+): Promise<void> {
+  if (prepared.renderer === 'playwright-chromium') {
+    const browser = await chromium.launch({
+      executablePath: prepared.executablePath,
+      headless: true,
+    })
     try {
       const page = await browser.newPage()
       await page.emulateMedia({ media: 'print' })
@@ -1041,27 +1130,8 @@ async function createPdf(
     } finally {
       await browser.close()
     }
-    return 'playwright-chromium'
+    return
   }
-  if (renderer !== 'vivliostyle-cli')
-    throw new Error(`Unsupported PDF renderer policy: ${renderer}`)
-  let browserPath: string
-  try {
-    browserPath = computeExecutablePath({
-      browser: Browser.CHROME,
-      buildId: PUBLICATION_TOOLCHAIN.browser.revision,
-      cacheDir: PUPPETEER_BROWSER_CACHE,
-    })
-    await chmod(browserPath, 0o755)
-  } catch {
-    throw new Error(
-      'Pinned Chromium is not installed in the repository-local publication browser cache. Run `npm ci` before disabling network access.',
-    )
-  }
-  verifyPublicationBrowserExecutable(
-    browserPath,
-    PUBLICATION_TOOLCHAIN.browser.browserVersion,
-  )
   const cli = resolve('node_modules/.bin/vivliostyle')
   await run(
     cli,
@@ -1076,7 +1146,7 @@ async function createPdf(
       '--size',
       size,
       '--executable-browser',
-      browserPath,
+      prepared.executablePath,
       '--viewer-param',
       'allowScripts=false',
       '--no-vite-config-file',
@@ -1093,7 +1163,6 @@ async function createPdf(
       ALL_PROXY: '',
     },
   )
-  return 'vivliostyle-cli'
 }
 
 async function receiptFor(
@@ -1224,6 +1293,7 @@ export const vivliostyleRenderer: PublicationRenderer = {
         fsConstants.COPYFILE_EXCL,
       )
     const pdfArtifacts: ArtifactReceipt[] = []
+    const preparedPdfRenderer = await preparePdfRenderer()
     for (const [profile, size] of [
       ['a5-pdf', 'A5'],
       ['a4-pdf', 'A4'],
@@ -1235,10 +1305,15 @@ export const vivliostyleRenderer: PublicationRenderer = {
         EXCLUSIVE_WRITE,
       )
       const path = resolve(output, `${profile}.pdf`)
-      const renderer = await createPdf(htmlPath, path, size)
-      await normalizePdf(path, bundle.graph.metadata.title, renderer)
+      await createPdf(htmlPath, path, size, preparedPdfRenderer)
+      await normalizePdf(path, bundle.graph.metadata.title, preparedPdfRenderer)
       pdfArtifacts.push(
-        await receiptFor(profile, path, renderer, `${profile}.pdf`),
+        await receiptFor(
+          profile,
+          path,
+          preparedPdfRenderer.renderer,
+          `${profile}.pdf`,
+        ),
       )
     }
     const artifacts = [
@@ -1268,7 +1343,9 @@ export const vivliostyleRenderer: PublicationRenderer = {
       },
       profiles: PROFILE_DETAILS,
       policyVersions: PUBLICATION_OUTPUT_POLICY_VERSIONS,
-      toolchain: publicationToolchainForRuntime(),
+      toolchain: publicationToolchainForRuntime(
+        preparedPdfRenderer.publicationBrowser,
+      ),
       repository,
       artifacts,
     }

@@ -292,9 +292,16 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'synthetic-publication',
       contentRoot,
     })
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
     const note = bundle.graph.nodes.find((node) => node.type === 'note')
-    if (!paragraph || paragraph.type !== 'paragraph' || !note || note.type !== 'note')
+    if (
+      !paragraph ||
+      paragraph.type !== 'paragraph' ||
+      !note ||
+      note.type !== 'note'
+    )
       throw new Error('missing semantic fixture')
     const graph = {
       ...bundle.graph,
@@ -317,7 +324,12 @@ describe('Vivliostyle publication renderer boundary', () => {
         )
         .concat(
           { ...note, id: 'endnote', noteKind: 'endnote', backlinkIds: [] },
-          { ...note, id: 'author-note', noteKind: 'author-note', backlinkIds: [] },
+          {
+            ...note,
+            id: 'author-note',
+            noteKind: 'author-note',
+            backlinkIds: [],
+          },
         ),
     }
     const html = publicationGraphToHtml(
@@ -370,7 +382,8 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const template = bundle.graph.nodes[0]
-    if (!template || template.type !== 'figure') throw new Error('missing figure fixture')
+    if (!template || template.type !== 'figure')
+      throw new Error('missing figure fixture')
     const figure = { ...template, id: 'orphan-figure' } as any
     delete figure.captionId
     const caption = {
@@ -401,8 +414,15 @@ describe('Vivliostyle publication renderer boundary', () => {
       entryId: 'moving-to-cloudflare-with-astro',
     })
     const figure = bundle.graph.nodes.find((node) => node.type === 'figure')
-    const paragraph = bundle.graph.nodes.find((node) => node.type === 'paragraph')
-    if (!figure || !paragraph || figure.type !== 'figure' || paragraph.type !== 'paragraph')
+    const paragraph = bundle.graph.nodes.find(
+      (node) => node.type === 'paragraph',
+    )
+    if (
+      !figure ||
+      !paragraph ||
+      figure.type !== 'figure' ||
+      paragraph.type !== 'paragraph'
+    )
       throw new Error('missing variant fixture')
     const graph = {
       ...bundle.graph,
@@ -443,7 +463,9 @@ describe('Vivliostyle publication renderer boundary', () => {
     const a5 = publicationGraphToHtml(graph, paths, 'a5-pdf')
     expect(a5).toContain('مختصر')
     const phone = publicationGraphToHtml(graph, paths, 'phone-webpub')
-    expect(phone).toContain(`src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`)
+    expect(phone).toContain(
+      `src="assets/${bundle.assetBundle.descriptor.assets[0]?.fileName}"`,
+    )
     expect(phone).not.toContain('مختصر')
   })
 
@@ -470,7 +492,11 @@ describe('Vivliostyle publication renderer boundary', () => {
           parentId: 'equation',
           text: 'Canonical equation caption',
           variants: [
-            { kind: 'compact' as const, text: 'Compact equation caption', reviewed: true },
+            {
+              kind: 'compact' as const,
+              text: 'Compact equation caption',
+              reviewed: true,
+            },
           ],
         },
       ],
@@ -850,17 +876,20 @@ describe('Vivliostyle publication renderer boundary', () => {
 
   it('resolves Playwright executables using each supported host layout', () => {
     expect(
+      publicationPlaywrightExecutableCandidates('1228', 'linux', 'arm64'),
+    ).toEqual([
+      expect.stringContaining('chrome-linux/chrome'),
+      expect.stringContaining('chrome-linux/headless_shell'),
+    ])
+    expect(
       publicationPlaywrightExecutableCandidates('1228', 'darwin', 'arm64'),
     ).toEqual([
       expect.stringContaining('chrome-mac-arm64/Google Chrome for Testing.app'),
       expect.stringContaining('chrome-headless-shell-mac-arm64'),
     ])
-    expect(
+    expect(() =>
       publicationPlaywrightExecutableCandidates('1228', 'win32', 'arm64'),
-    ).toEqual([
-      expect.stringContaining('chrome-win64/chrome.exe'),
-      expect.stringContaining('chrome-headless-shell-win64'),
-    ])
+    ).toThrow(/unsupported Playwright Chromium platform/i)
   })
 
   it('requires the pinned browser build before rendering', () => {
@@ -879,7 +908,9 @@ describe('Vivliostyle publication renderer boundary', () => {
   })
 
   it('refuses to reuse pre-existing WebPub and layout asset directories', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-webpub-exclusive-'))
+    const root = await mkdtemp(
+      resolve(tmpdir(), 'publication-webpub-exclusive-'),
+    )
     try {
       const webpub = resolve(root, 'phone-webpub')
       await mkdir(resolve(webpub, 'assets'), { recursive: true })

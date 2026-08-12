@@ -46,6 +46,25 @@ const credentialShapedIds = [
   ],
 ] as const
 
+// Ids that only share a credential prefix. The runtime patterns anchor the
+// credential body to the end of the value, so these stay valid document ids;
+// the schema must not reject what the runtime accepts.
+const credentialPrefixedSafeIds = [
+  [
+    'aws-prefixed-document',
+    [['AKIA', 'IOSFODNN7EXAMPLE'].join(''), 'page-1'].join('-'),
+  ],
+  [
+    'jwt-prefixed-document',
+    [
+      ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJmYWtlIn0', 'ZmFrZXNpZ25hdHVyZQ'].join(
+        '.',
+      ),
+      'page-1',
+    ].join(':'),
+  ],
+] as const
+
 async function validReceipt(associationObject = false) {
   const ledger = new ModelFallbackLedger()
   const gate = new ModelConsultationGate({
@@ -204,6 +223,23 @@ describe('model consultation receipt validation', () => {
     expect(validateSchema(receipt)).toBe(false)
     expect(validateModelConsultationReceipt(receipt)).toBe(false)
   })
+
+  it.each(credentialPrefixedSafeIds)(
+    'keeps the schema and runtime agreed on %s document ids',
+    async (_name, value) => {
+      const receipt = await validReceipt()
+      receipt.documentId = value
+      receipt.consultations[0]!.documentId = value
+      receipt.decisions[0]!.documentId = value
+      recommitConsultation(receipt.consultations[0]!)
+
+      expect(
+        validateSchema(receipt),
+        JSON.stringify(validateSchema.errors),
+      ).toBe(true)
+      expect(validateModelConsultationReceipt(receipt)).toBe(true)
+    },
+  )
 
   it('accepts the association object already normalized by the proposal gate', async () => {
     const receipt = await validReceipt(true)

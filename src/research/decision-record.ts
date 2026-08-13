@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type {
   HumanAdjudicationRecord,
+  PdfCandidateResolutionOrigin,
   PdfReconstruction,
   ReconstructionDiagnostic,
 } from './import-types'
@@ -29,6 +30,7 @@ export {
   equationTranscriptDecisionBinding,
   type EquationTranscriptDecisionBinding,
 } from './equation-transcript-adjudication'
+export type { PdfCandidateResolutionOrigin } from './import-types'
 
 export const HUMAN_DECISION_SCHEMA_VERSION =
   VISUAL_MATCH_DECISION_SCHEMA_VERSION
@@ -370,9 +372,6 @@ export type VisualMatchDecision = Omit<
     { type: 'accept-visual-match' | 'accept-visual-fallback' }
   >
 }
-
-export type PdfCandidateResolutionOrigin =
-  'model-consultation' | 'deterministic-distillation'
 
 export type VerifiedPdfCandidateResolution = {
   decision: HumanAdjudicationRecord

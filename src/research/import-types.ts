@@ -557,6 +557,9 @@ export type PdfReadingOrderAmbiguityClass =
   | 'sparse-column-gutter'
   | 'fragmented-inline-cluster'
 
+export type PdfCandidateResolutionOrigin =
+  'model-consultation' | 'deterministic-distillation'
+
 export type PdfReadingOrderResolution = {
   policyVersion: '1.0.0'
   page: number

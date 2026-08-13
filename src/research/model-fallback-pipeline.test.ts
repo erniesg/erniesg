@@ -638,6 +638,51 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('binds a deterministic visual decision to the installed source text', async () => {
+    const [point] = modelDecisionPointsForPdf(
+      visualAdjudicationRequired,
+    ).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'caption-source-text-binding-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const relationship = resolved.visualRelationships.find(({ evidence }) =>
+      evidence.includes('deterministic-distillation'),
+    )!
+    // `visualModelCandidateId` hashes each candidate's own text, so rewriting
+    // only the installed text leaves the deterministic choice id unchanged.
+    expect(
+      relationship.candidates.every(
+        ({ sourceText }) => sourceText !== undefined,
+      ),
+    ).toBe(true)
+    relationship.sourceText = `${relationship.sourceText} rewritten`
+    const canonicalNode = resolved.paper.nodes.find(
+      (node) => node.id === relationship.canonicalNodeId,
+    )
+    if (canonicalNode?.type === 'figure')
+      canonicalNode.sourceText = relationship.sourceText
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
   it('binds a custom deterministic visual decision to the complete candidate set', async () => {
     const [point] = modelDecisionPointsForPdf(
       visualAdjudicationRequired,
@@ -1357,6 +1402,75 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('accounts for a human-adjudicated tie whose resolution lists the same regions in another order', async () => {
+    const diagnostic = adjudicationRequired.diagnostics.find(
+      ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
+    )!
+    const [order] = readingOrderCandidates(adjudicationRequired, diagnostic)
+    const decisionFile = upsertHumanDecision(
+      createHumanDecisionFile(adjudicationRequired.source.sha256),
+      {
+        diagnosticCode: 'AMBIGUOUS_READING_ORDER',
+        target: structuredClone(diagnostic.target!),
+        resolution: { type: 'accept-reading-order', regionIds: [...order!] },
+      },
+    )
+    const applied = applyHumanDecisionFile(adjudicationRequired, decisionFile)
+    expect(applied.humanAdjudications.applied).toHaveLength(1)
+    expect(applied.diagnostics.map(({ code }) => code)).not.toContain(
+      'AMBIGUOUS_READING_ORDER',
+    )
+    // `updateReadingOrder` stamps the origin by region set, so a resolution may
+    // legitimately list the tied regions in an order the adjudication target
+    // does not repeat.
+    const tie = applied.readingOrder.resolutions.find(
+      ({ resolutionOrigin }) => resolutionOrigin === 'human-adjudication',
+    )!
+    tie.regionIds = [...tie.regionIds].reverse()
+
+    expect(
+      [...pdfModelDerivedDecisionKeys(applied)].filter((key) =>
+        key.startsWith(MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie),
+      ),
+    ).toEqual([])
+  })
+
+  it('keeps an obligation for a tie the resolution itself marks as model-produced', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const expected = pdfModelDerivedDecisionKeys(resolved)
+    const tieKey = [...expected].find((key) =>
+      key.startsWith(MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie),
+    )!
+    expect(tieKey).toBeDefined()
+
+    const reopened = withoutReceipt(
+      structuredClone(resolved),
+    ) as PdfReconstruction
+    const tie = reopened.readingOrder.resolutions.find(
+      ({ resolutionOrigin }) => resolutionOrigin === 'model-consultation',
+    )!
+    reopened.diagnostics.push({
+      code: 'AMBIGUOUS_READING_ORDER',
+      severity: 'error',
+      page: 1,
+      message: 'reopened obligation over the whole tied region set',
+      sourceBoxes: [],
+      target: { regionIds: [...tie.regionIds], markerId: null },
+    })
+
+    expect(pdfModelDerivedDecisionKeys(reopened)).toContain(tieKey)
+    expect(() => buildStructDocument(reopened)).toThrow(
+      'MISSING_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
   it('does not let a forged applied note decision supersede installed model state', async () => {
     const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
       enabled: true,
@@ -1765,6 +1879,31 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('binds an accepted reading-order receipt to its surviving ambiguity inputs', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const tie = resolved.readingOrder.resolutions.find(
+      ({ resolutionOrigin }) => resolutionOrigin === 'model-consultation',
+    )!
+    expect(tie.ambiguityClass).toBe('sparse-column-gutter')
+    tie.ambiguityClass = 'footnote-band'
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
   it('binds a note consultation to its candidate score and installed confidence', async () => {
     const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
       enabled: true,
@@ -1911,6 +2050,52 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('binds an accepted visual receipt to the installed source text', async () => {
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass, status }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation &&
+        status === 'accepted',
+    )!
+    const relationship = resolved.visualRelationships.find(
+      ({ id }) => id === consultation.decisionId,
+    )!
+    // Every candidate carries its own `sourceText`, so rewriting the installed
+    // text leaves the candidate set — and therefore every candidate id —
+    // untouched.
+    expect(
+      relationship.candidates.every(
+        ({ sourceText }) => sourceText !== undefined,
+      ),
+    ).toBe(true)
+    relationship.sourceText = `${relationship.sourceText} rewritten`
+    const canonicalNode = resolved.paper.nodes.find(
+      (node) => node.id === relationship.canonicalNodeId,
+    )
+    if (canonicalNode?.type === 'figure')
+      canonicalNode.sourceText = relationship.sourceText
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
   it('binds a deterministic note decision to its candidate score', async () => {
     const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
       ({ decisionClass }) =>
@@ -1939,6 +2124,47 @@ describe('PDF model fallback production adapter', () => {
     )!
     selected.score = Math.max(0, selected.score - 0.1)
     relationship.confidence = selected.score
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds a deterministic note decision to the installed candidate evidence', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'note-marker-evidence-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const decision = resolved.modelConsultations!.decisions.find(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )!
+    const relationship = resolved.noteRelationships.find(
+      ({ id }) => id === decision.decisionId,
+    )!
+    // `updateNoteRelationship` installs the selected candidate's evidence
+    // beside the origin marker, and STRUCT publishes it as reader-visible
+    // signals. Dropping one signal leaves candidates and choice untouched.
+    expect(relationship.evidence).toContain('deterministic-distillation')
+    relationship.evidence = relationship.evidence.filter(
+      (code) => code !== 'label-exact',
+    )
     resolved.modelConsultations!.semanticStateSha256 =
       pdfModelConsultationSemanticStateSha256(
         resolved,
@@ -2007,6 +2233,41 @@ describe('PDF model fallback production adapter', () => {
     const selectedIds = point!.candidates[0]!.region_ids as string[]
     const region = resolved.regions.find(({ id }) => id === selectedIds[0])!
     region.column = region.column === 'left' ? 'right' : 'left'
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds a deterministic reading decision to its surviving ambiguity evidence', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'reading-order-ambiguity-evidence-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    // A retired rule may key off the tie's evidence codes, so dropping one
+    // leaves a versioned rule that need not still make this choice.
+    const tie = resolved.readingOrder.resolutions.find(
+      ({ resolutionOrigin }) =>
+        resolutionOrigin === 'deterministic-distillation',
+    )!
+    expect(tie.evidence.length).toBeGreaterThan(1)
+    tie.evidence = tie.evidence.slice(1)
     resolved.modelConsultations!.semanticStateSha256 =
       pdfModelConsultationSemanticStateSha256(
         resolved,

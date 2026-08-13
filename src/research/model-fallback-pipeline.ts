@@ -6,6 +6,7 @@ import {
 } from './decision-record'
 import type {
   HumanAdjudicationRecord,
+  PdfReadingOrderResolution,
   PdfReconstruction,
   PdfVisualMatchCandidate,
   PdfVisualRelationship,
@@ -191,6 +192,26 @@ function visualModelCandidateId(
   ])
 }
 
+/**
+ * The ambiguity inputs a reading-order decision was taken against. The tie's
+ * own resolution survives the decision, so this is reconstructible from the
+ * document long after the diagnostic that opened it is gone.
+ */
+function readingOrderAmbiguityEvidence(
+  resolution: Omit<PdfReadingOrderResolution, 'regionIds'>,
+) {
+  return {
+    page: resolution.page,
+    ambiguity_class: resolution.ambiguityClass,
+    confidence: resolution.confidence,
+    threshold: resolution.threshold,
+    evidence_codes: safeEvidenceCodes(
+      resolution.evidence.map(({ code }) => code),
+      MODEL_FALLBACK_EVIDENCE_CODES.readingOrderTie,
+    ),
+  }
+}
+
 function compareCodeUnits(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0
 }
@@ -326,6 +347,7 @@ function readingOrderDecisionPoint(
   if (orders.some((regionIds) => regionIds.some((id) => !regionById.has(id))))
     return null
   const evidence = diagnostic.readingOrderResolution
+  const ambiguity = readingOrderAmbiguityEvidence(evidence)
   const candidates = orders.map((regionIds) => {
     const regions = regionIds.map((id) => {
       const region = regionById.get(id)!
@@ -337,16 +359,18 @@ function readingOrderDecisionPoint(
       }
     })
     return {
+      // A retired rule may key off any part of the decision point, so the
+      // choice has to commit the whole of it. Committing only the order would
+      // let the surviving ambiguity inputs move under a versioned rule that no
+      // longer makes this choice.
       id: stableCandidateId('reading-order-candidate', [
         ...regionIds,
         stableModelConsultationJson(regions),
+        stableModelConsultationJson(ambiguity),
       ]),
       region_ids: [...regionIds],
       regions,
-      evidence_codes: safeEvidenceCodes(
-        evidence?.evidence.map(({ code }) => code) ?? [],
-        MODEL_FALLBACK_EVIDENCE_CODES.readingOrderTie,
-      ),
+      evidence_codes: [...ambiguity.evidence_codes],
     }
   })
   const regionIdsByCandidateId = new Map(
@@ -363,10 +387,10 @@ function readingOrderDecisionPoint(
       sourceSha256: reconstruction.source.sha256,
       inputs: {
         diagnostic_code: diagnostic.code,
-        page: diagnostic.page ?? evidence?.page ?? 0,
-        ambiguity_class: evidence?.ambiguityClass ?? 'unspecified',
-        confidence: evidence?.confidence ?? 0,
-        threshold: evidence?.threshold ?? 0,
+        page: ambiguity.page,
+        ambiguity_class: ambiguity.ambiguity_class,
+        confidence: ambiguity.confidence,
+        threshold: ambiguity.threshold,
         candidate_count: candidates.length,
       },
       candidates,
@@ -549,6 +573,19 @@ function sameStringList(left: unknown, right: readonly string[]) {
   )
 }
 
+/**
+ * `updateReadingOrder` stamps a resolution's origin by region set, so the
+ * resolution and the adjudication target may legitimately list the same tied
+ * regions in different orders. Accounting has to use the same equality.
+ */
+function sameRegionSet(left: readonly string[], right: readonly string[]) {
+  const target = new Set(right)
+  return (
+    new Set(left).size === target.size &&
+    [...new Set(left)].every((id) => target.has(id))
+  )
+}
+
 function visualInstalledSourceBoxes(
   reconstruction: PdfReconstruction,
   relationship: PdfVisualRelationship,
@@ -683,6 +720,11 @@ function acceptedConsultationMatchesReconstruction(
       sameStringList(candidate.line_ids, relationship.sourceLineIds ?? []) &&
       sameStringList(candidate.object_ids, relationship.sourceObjectIds) &&
       sameStringList(candidate.asset_ids, relationship.assetIds) &&
+      // `materializeVisualRelationship` installs the selected candidate's own
+      // text. A candidate that carries its own text keeps the candidate-set
+      // hash stable across a rewrite of the installed, reader-visible text.
+      (currentCandidate.sourceText === undefined ||
+        relationship.sourceText === currentCandidate.sourceText) &&
       relationship.evidence.includes('model-consultation'),
     )
   }
@@ -720,12 +762,21 @@ function acceptedConsultationMatchesReconstruction(
           }
         : null
     })
+    // The ambiguity the model was asked about survives on the resolution, so
+    // the receipt cannot certify inputs the document no longer carries.
+    const ambiguity = readingOrderAmbiguityEvidence(resolutions[0]!)
     return (
       installedOrder.length === targetIds.size &&
       sameStringList(installedOrder, chosen) &&
       !installedRegionEvidence.includes(null) &&
       stableModelConsultationJson(installedRegionEvidence) ===
-        stableModelConsultationJson(candidate.regions)
+        stableModelConsultationJson(candidate.regions) &&
+      consultation.inputs.page === ambiguity.page &&
+      consultation.inputs.ambiguity_class === ambiguity.ambiguity_class &&
+      consultation.inputs.confidence === ambiguity.confidence &&
+      consultation.inputs.threshold === ambiguity.threshold &&
+      stableModelConsultationJson(candidate.evidence_codes) ===
+        stableModelConsultationJson(ambiguity.evidence_codes)
     )
   }
 
@@ -930,7 +981,7 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
           return false
         const resolution = reconstruction.readingOrder.resolutions.find(
           ({ regionIds }) =>
-            sameStringList(regionIds, adjudication.target.regionIds),
+            sameRegionSet(regionIds, adjudication.target.regionIds),
         )
         if (resolution?.resolutionOrigin !== 'human-adjudication') return false
         const targetIds = new Set(adjudication.target.regionIds)
@@ -955,7 +1006,14 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     // such resolution would collide onto the digest of the empty list.
     if (resolution.regionIds.length === 0) continue
     const regionIds = new Set(resolution.regionIds)
+    // A resolution that names this layer as its own origin proves the
+    // obligation outright. Reopening the diagnostic does not retract the work
+    // already installed, so nothing open may account for it.
+    const selfAttributed =
+      resolution.resolutionOrigin !== undefined &&
+      MODEL_FALLBACK_ORIGINS.includes(resolution.resolutionOrigin)
     if (
+      !selfAttributed &&
       accountedTargets.some(
         (target) =>
           target.size === regionIds.size &&
@@ -1027,6 +1085,11 @@ function deterministicDecisionMatchesReconstruction(
       ) &&
       sameStringList(candidate.sourceObjectIds, relationship.sourceObjectIds) &&
       sameStringList(candidate.assetIds, relationship.assetIds) &&
+      // The rule selected this candidate's own transcript, and
+      // `visualModelCandidateId` hashes that candidate text rather than the
+      // installed text. Bind the reader-visible text the decision installed.
+      (candidate.sourceText === undefined ||
+        relationship.sourceText === candidate.sourceText) &&
       relationship.evidence.includes('deterministic-distillation'),
     )
   }
@@ -1050,7 +1113,13 @@ function deterministicDecisionMatchesReconstruction(
       relationship.confidence === candidate.score &&
       stableModelConsultationJson(relationship.sourceBoxes) ===
         stableModelConsultationJson(candidate.sourceBoxes) &&
-      relationship.evidence.includes('deterministic-distillation'),
+      // `updateNoteRelationship` installs exactly the selected candidate's
+      // evidence beside the origin marker, and STRUCT publishes it as the
+      // relationship's reader-visible signals.
+      stableModelConsultationJson([...relationship.evidence].sort()) ===
+        stableModelConsultationJson(
+          [...candidate.evidence, 'deterministic-distillation'].sort(),
+        ),
     )
   }
   if (
@@ -1079,12 +1148,17 @@ function deterministicDecisionMatchesReconstruction(
           }
         : null
     })
+    // Recomputing the choice id from the surviving resolution binds the
+    // versioned rule to the whole decision point it was replayed against, not
+    // just to the order it installed.
+    const ambiguity = readingOrderAmbiguityEvidence(resolutions[0]!)
     return (
       installedOrder.length === targetIds.size &&
       !installedRegionEvidence.includes(null) &&
       stableCandidateId('reading-order-candidate', [
         ...installedOrder,
         stableModelConsultationJson(installedRegionEvidence),
+        stableModelConsultationJson(ambiguity),
       ]) === choice.candidateId
     )
   }

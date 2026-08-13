@@ -1453,7 +1453,7 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
-  it('binds superseding reading-order adjudications to the installed order', async () => {
+  it('requires human origin for superseding reading-order adjudications', async () => {
     const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
       enabled: true,
       ownerOptIn: true,
@@ -1477,7 +1477,7 @@ describe('PDF model fallback production adapter', () => {
         target: { markerId: null, regionIds: [...tie.regionIds] },
         resolution: {
           type: 'accept-reading-order',
-          regionIds: [...installedOrder].reverse(),
+          regionIds: [...installedOrder],
         },
       },
     ]
@@ -1850,6 +1850,44 @@ describe('PDF model fallback production adapter', () => {
     )!
     selected.score = Math.max(0, selected.score - 0.1)
     relationship.confidence = selected.score
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds a deterministic note decision to the complete candidate set', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'note-complete-candidate-set-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const decision = resolved.modelConsultations!.decisions.find(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )!
+    const relationship = resolved.noteRelationships.find(
+      ({ id }) => id === decision.decisionId,
+    )!
+    const unselected = relationship.candidates.find(
+      ({ targetNoteId }) => targetNoteId !== relationship.targetNoteId,
+    )!
+    unselected.score = Math.max(0, unselected.score - 0.1)
     resolved.modelConsultations!.semanticStateSha256 =
       pdfModelConsultationSemanticStateSha256(
         resolved,

@@ -111,6 +111,41 @@ function stableCandidateId(prefix: string, values: readonly string[]) {
   return `${prefix}-${sha256HexSync(JSON.stringify(values)).slice(0, 24)}`
 }
 
+type PdfNoteCandidate =
+  PdfReconstruction['noteRelationships'][number]['candidates'][number]
+
+function noteCandidateSetSha256(candidates: readonly PdfNoteCandidate[]) {
+  return sha256HexSync(
+    stableModelConsultationJson(
+      candidates.map((candidate) => [
+        candidate.targetNoteId,
+        candidate.targetRegionId,
+        String(candidate.score),
+        stableModelConsultationJson(candidate.sourceBoxes),
+        stableModelConsultationJson(
+          safeEvidenceCodes(
+            candidate.evidence,
+            MODEL_FALLBACK_EVIDENCE_CODES.noteMarkerMatch,
+          ),
+        ),
+      ]),
+    ),
+  )
+}
+
+function noteModelCandidateId(
+  candidate: PdfNoteCandidate,
+  candidateSetSha256: string,
+) {
+  return stableCandidateId('note-candidate', [
+    candidate.targetNoteId,
+    candidate.targetRegionId,
+    String(candidate.score),
+    stableModelConsultationJson(candidate.sourceBoxes),
+    candidateSetSha256,
+  ])
+}
+
 function compareCodeUnits(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0
 }
@@ -168,13 +203,9 @@ function noteDecisionPoint(
   if (!target || !relationship || relationship.candidates.length === 0)
     return null
 
+  const candidateSetSha256 = noteCandidateSetSha256(relationship.candidates)
   const candidates = relationship.candidates.map((candidate) => ({
-    id: stableCandidateId('note-candidate', [
-      candidate.targetNoteId,
-      candidate.targetRegionId,
-      String(candidate.score),
-      stableModelConsultationJson(candidate.sourceBoxes),
-    ]),
+    id: noteModelCandidateId(candidate, candidateSetSha256),
     associationId: candidate.targetNoteId,
     note_id: candidate.targetNoteId,
     region_id: candidate.targetRegionId,
@@ -525,13 +556,11 @@ function acceptedConsultationMatchesReconstruction(
         targetRegionId === candidate.region_id &&
         score === candidate.score,
     )
+    const candidateSetSha256 = relationship
+      ? noteCandidateSetSha256(relationship.candidates)
+      : null
     const currentCandidates = relationship?.candidates.map((item) => ({
-      id: stableCandidateId('note-candidate', [
-        item.targetNoteId,
-        item.targetRegionId,
-        String(item.score),
-        stableModelConsultationJson(item.sourceBoxes),
-      ]),
+      id: noteModelCandidateId(item, candidateSetSha256!),
       associationId: item.targetNoteId,
       note_id: item.targetNoteId,
       region_id: item.targetRegionId,
@@ -551,12 +580,8 @@ function acceptedConsultationMatchesReconstruction(
       currentCandidate !== undefined &&
       stableModelConsultationJson(currentCandidates) ===
         stableModelConsultationJson(consultation.candidates) &&
-      stableCandidateId('note-candidate', [
-        currentCandidate.targetNoteId,
-        currentCandidate.targetRegionId,
-        String(currentCandidate.score),
-        stableModelConsultationJson(currentCandidate.sourceBoxes),
-      ]) === candidate.id &&
+      noteModelCandidateId(currentCandidate, candidateSetSha256!) ===
+        candidate.id &&
       stableModelConsultationJson(relationship.sourceBoxes) ===
         stableModelConsultationJson(currentCandidate.sourceBoxes) &&
       relationship.evidence.includes('model-consultation')
@@ -990,14 +1015,12 @@ function deterministicDecisionMatchesReconstruction(
     const relationship = reconstruction.noteRelationships.find(
       ({ id }) => id === decision.decisionId,
     )
+    const candidateSetSha256 = relationship
+      ? noteCandidateSetSha256(relationship.candidates)
+      : null
     const candidate = relationship?.candidates.find(
-      ({ targetNoteId, targetRegionId, score, sourceBoxes }) =>
-        stableCandidateId('note-candidate', [
-          targetNoteId,
-          targetRegionId,
-          String(score),
-          stableModelConsultationJson(sourceBoxes),
-        ]) === choice.candidateId,
+      (item) =>
+        noteModelCandidateId(item, candidateSetSha256!) === choice.candidateId,
     )
     return Boolean(
       relationship?.status === 'matched' &&
@@ -1148,12 +1171,18 @@ function humanAdjudicationSupersedesDecision(
       const installedOrder = reconstruction.readingOrder.order.filter((id) =>
         targetIds.has(id),
       )
+      const resolutions = readingOrderResolutionsForDecision(
+        reconstruction,
+        decision.decisionId,
+      )
       return (
         adjudication.diagnosticCode === 'AMBIGUOUS_READING_ORDER' &&
         stableCandidateId(
           'reading-order-decision',
           [...new Set(adjudication.target.regionIds)].sort(),
         ) === decision.decisionId &&
+        resolutions.length === 1 &&
+        resolutions[0]!.resolutionOrigin === 'human-adjudication' &&
         installedOrder.length === targetIds.size &&
         sameStringList(adjudication.resolution.regionIds, installedOrder)
       )

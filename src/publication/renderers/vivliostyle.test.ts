@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rename,
   rm,
@@ -931,6 +932,60 @@ describe('Vivliostyle publication renderer boundary', () => {
     ).toBe(false)
   })
 
+  it('accepts regular browser executables beneath an aliased cache ancestor', async () => {
+    const temporaryRoot = await mkdtemp(
+      resolve(tmpdir(), 'publication-browser-cache-alias-'),
+    )
+    const root = await realpath(temporaryRoot)
+    try {
+      const canonicalRoot = resolve(root, 'canonical')
+      const aliasedRoot = resolve(root, 'alias')
+      await mkdir(canonicalRoot)
+      await symlink(canonicalRoot, aliasedRoot, 'dir')
+
+      const playwrightCache = resolve(aliasedRoot, 'playwright')
+      const playwrightBrowser = resolve(
+        playwrightCache,
+        'chromium-1228/chrome-linux/chrome',
+      )
+      await mkdir(dirname(playwrightBrowser), { recursive: true })
+      await writeFile(playwrightBrowser, 'reviewed Playwright browser bytes')
+      await expect(
+        publicationBrowserBundleForExecutable(
+          playwrightBrowser,
+          playwrightCache,
+        ),
+      ).resolves.toEqual({
+        bundleRoot: resolve(canonicalRoot, 'playwright/chromium-1228'),
+        executableRelativePath: 'chrome-linux/chrome',
+      })
+
+      const puppeteerCache = resolve(aliasedRoot, 'puppeteer')
+      const puppeteerBrowser = resolve(
+        puppeteerCache,
+        'chrome/linux-150.0.7871.115/chrome-linux64/chrome',
+      )
+      await mkdir(dirname(puppeteerBrowser), { recursive: true })
+      await writeFile(puppeteerBrowser, 'reviewed Puppeteer browser bytes')
+      await expect(
+        publicationPuppeteerBrowserBundleForExecutable(puppeteerBrowser, {
+          cacheRoot: puppeteerCache,
+          platform: 'linux',
+          architecture: 'x64',
+          buildId: '150.0.7871.115',
+        }),
+      ).resolves.toEqual({
+        bundleRoot: resolve(
+          canonicalRoot,
+          'puppeteer/chrome/linux-150.0.7871.115',
+        ),
+        executableRelativePath: 'chrome-linux64/chrome',
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects cache-escaping browser links and snapshots regular bundles', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-bundle-'))
     try {
@@ -1058,7 +1113,9 @@ describe('Vivliostyle publication renderer boundary', () => {
   })
 
   it('fails closed when a cache file is replaced between inspection and open', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-race-'))
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-race-')),
+    )
     const cache = resolve(root, 'cache')
     const bundle = resolve(cache, 'chromium-1228')
     const browser = resolve(bundle, 'chrome-linux/chrome')
@@ -1198,7 +1255,9 @@ describe('Vivliostyle publication renderer boundary', () => {
   })
 
   it('allows concurrent scavengers to finish the same fenced quarantine', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-reap-'))
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-reap-')),
+    )
     const cache = resolve(root, 'cache')
     const bundle = resolve(cache, 'chromium-1228')
     const browser = resolve(bundle, 'chrome-linux/chrome')
@@ -1260,7 +1319,9 @@ describe('Vivliostyle publication renderer boundary', () => {
   })
 
   it('claims an aged quarantine before a paused publisher can populate it', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-claim-'))
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-claim-')),
+    )
     const cache = resolve(root, 'cache')
     const bundle = resolve(cache, 'chromium-1228')
     const browser = resolve(bundle, 'chrome-linux/chrome')
@@ -1332,7 +1393,9 @@ describe('Vivliostyle publication renderer boundary', () => {
   })
 
   it('grants a second grace interval when a paused publisher wins the claim race', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'publication-browser-grace-'))
+    const root = await realpath(
+      await mkdtemp(resolve(tmpdir(), 'publication-browser-grace-')),
+    )
     const cache = resolve(root, 'cache')
     const bundle = resolve(cache, 'chromium-1228')
     const browser = resolve(bundle, 'chrome-linux/chrome')

@@ -250,12 +250,14 @@ export async function publicationBrowserBundleForExecutable(
   executablePath: string,
   cacheRoot = PLAYWRIGHT_BROWSER_CACHE,
 ): Promise<PublicationBrowserBundle> {
-  const [canonicalCache, canonicalExecutable] = await Promise.all([
-    realpath(cacheRoot),
-    realpath(executablePath),
-  ])
+  const [canonicalCache, canonicalExecutable, requestedExecutable] =
+    await Promise.all([
+      realpath(cacheRoot),
+      realpath(executablePath),
+      lstat(executablePath, { bigint: true }),
+    ])
   if (
-    resolve(executablePath) !== canonicalExecutable ||
+    !requestedExecutable.isFile() ||
     !pathIsWithin(canonicalCache, canonicalExecutable)
   )
     throw new Error(
@@ -267,8 +269,11 @@ export async function publicationBrowserBundleForExecutable(
     throw new Error(
       'Pinned publication browser executable has no recognized cache bundle',
     )
-  const executable = await lstat(canonicalExecutable)
-  if (!executable.isFile())
+  const executable = await lstat(canonicalExecutable, { bigint: true })
+  if (
+    !executable.isFile() ||
+    !sameFileIdentity(requestedExecutable, executable)
+  )
     throw new Error(
       'Pinned publication browser executable is not a regular file',
     )
@@ -302,12 +307,14 @@ export async function publicationPuppeteerBrowserBundleForExecutable(
   if (buildId !== PUBLICATION_TOOLCHAIN.browser.revision)
     throw new Error('Puppeteer publication browser revision is not pinned')
 
-  const [canonicalCache, canonicalExecutable] = await Promise.all([
-    realpath(cacheRoot),
-    realpath(executablePath),
-  ])
+  const [canonicalCache, canonicalExecutable, requestedExecutable] =
+    await Promise.all([
+      realpath(cacheRoot),
+      realpath(executablePath),
+      lstat(executablePath, { bigint: true }),
+    ])
   if (
-    resolve(executablePath) !== canonicalExecutable ||
+    !requestedExecutable.isFile() ||
     !pathIsWithin(canonicalCache, canonicalExecutable)
   )
     throw new Error(
@@ -324,8 +331,11 @@ export async function publicationPuppeteerBrowserBundleForExecutable(
     throw new Error(
       'Pinned Puppeteer browser executable is outside its expected cache bundle',
     )
-  const executable = await lstat(canonicalExecutable)
-  if (!executable.isFile())
+  const executable = await lstat(canonicalExecutable, { bigint: true })
+  if (
+    !executable.isFile() ||
+    !sameFileIdentity(requestedExecutable, executable)
+  )
     throw new Error('Pinned Puppeteer browser executable is not a regular file')
   return {
     bundleRoot,

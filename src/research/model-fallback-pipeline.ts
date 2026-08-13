@@ -888,8 +888,22 @@ function deterministicDecisionMatchesReconstruction(
       relationship && candidate
         ? visualInstalledSourceBoxes(reconstruction, relationship, candidate)
         : null
+    const boundedRuleStillApplies =
+      decision.deterministicRuleId !==
+        PDF_CAPTION_UNIQUE_BOUNDED_DISTANCE_RULE_ID ||
+      (relationship?.candidates.every(({ evidence }) =>
+        evidence.includes('same-page-scope'),
+      ) === true &&
+        relationship.candidates.filter(({ evidence }) =>
+          evidence.includes('bounded-distance'),
+        ).length === 1 &&
+        candidate?.evidence.includes('bounded-distance') === true &&
+        [...CAPTION_DIRECTION_EVIDENCE].filter((code) =>
+          candidate.evidence.includes(code),
+        ).length === 1)
     return Boolean(
       relationship?.status === 'matched' &&
+      boundedRuleStillApplies &&
       candidate &&
       installedBoxes &&
       stableModelConsultationJson(relationship.sourceBoxes) ===

@@ -1958,7 +1958,7 @@ describe('PDF model fallback production adapter', () => {
       distillation.retireClass(
         point!.decisionClass,
         () => point!.candidates[index]!.id,
-        PDF_CAPTION_UNIQUE_BOUNDED_DISTANCE_RULE_ID,
+        'caption-choice-binding-v1',
       )
       return resolvePdfModelFallbacks(
         visualAdjudicationRequired,
@@ -1971,7 +1971,7 @@ describe('PDF model fallback production adapter', () => {
       expect.objectContaining({
         outcome: 'deterministic',
         choice: { candidateId: point!.candidates[0]!.id },
-        deterministicRuleId: PDF_CAPTION_UNIQUE_BOUNDED_DISTANCE_RULE_ID,
+        deterministicRuleId: 'caption-choice-binding-v1',
       }),
     ])
 

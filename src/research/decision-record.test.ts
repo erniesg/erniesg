@@ -2032,8 +2032,24 @@ describe('human adjudication decision records', () => {
         'utf8',
       ),
     )
-    const resolved = applyHumanDecisionFile(base, sidecar)
-    const replay = applyHumanDecisionFile(base, sidecar)
+    const legacy = applyHumanDecisionFile(base, sidecar)
+    expect(legacy.humanAdjudications.applied).toEqual([])
+    expect(legacy.humanAdjudications.stale).toHaveLength(2)
+    const currentSidecar = sidecar.decisions.reduce(
+      (file, decision) =>
+        upsertHumanDecision(
+          file,
+          createVisualMatchDecision(
+            base,
+            decision.resolution.relationshipId,
+            decision.resolution.candidateId,
+            decision.resolution.type,
+          ),
+        ),
+      createHumanDecisionFile(base.source.sha256),
+    )
+    const resolved = applyHumanDecisionFile(base, currentSidecar)
+    const replay = applyHumanDecisionFile(base, currentSidecar)
     expect(resolved.humanAdjudications).toMatchObject({
       stale: [],
       countsByDiagnosticCode: {

@@ -554,33 +554,12 @@ function visualDecisionStillInstalled(
     ({ id }) =>
       id === decision.target.markerId && id === resolution.relationshipId,
   )
-  const candidates = relationship?.candidates.filter((candidate) => {
-    const sourceCandidateId =
-      candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate)
-    return (
-      sourceCandidateId === resolution.candidateId ||
+  const candidates = relationship?.candidates.filter(
+    (candidate) =>
       visualDecisionCandidateId(relationship, candidate) ===
-        resolution.candidateId
-    )
-  })
+      resolution.candidateId,
+  )
   const candidate = candidates?.length === 1 ? candidates[0] : undefined
-  if (relationship && candidate) {
-    const semanticCandidateId = visualDecisionCandidateId(
-      relationship,
-      candidate,
-    )
-    resolution.candidateId = semanticCandidateId
-    existingDecisionCandidate.resolution.candidateId = semanticCandidateId
-    if (
-      !relationship.evidence.includes(
-        `human-adjudicated-visual-kind:${relationship.kind}`,
-      )
-    ) {
-      relationship.evidence.push(
-        `human-adjudicated-visual-kind:${relationship.kind}`,
-      )
-    }
-  }
   const captionBox = relationship
     ? ((relationship.captionNodeId
         ? reconstruction.provenance[relationship.captionNodeId]?.boxes[0]
@@ -776,6 +755,7 @@ export function visualDecisionCandidateId(
       sourceLineIds: candidate.sourceLineIds ?? [],
       sourceObjectIds: candidate.sourceObjectIds,
       assetIds: candidate.assetIds,
+      sourceTextSha256: sha256HexSync(candidate.sourceText ?? ''),
     }),
   )}`
 }
@@ -1786,18 +1766,13 @@ function updateVisualMatch(
   ) {
     return false
   }
-  const candidates = relationship.candidates.filter((candidate) => {
-    const sourceCandidateId =
-      candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate)
-    return (
-      sourceCandidateId === resolution.candidateId ||
+  const candidates = relationship.candidates.filter(
+    (candidate) =>
       visualDecisionCandidateId(relationship, candidate) ===
-        resolution.candidateId
-    )
-  })
+      resolution.candidateId,
+  )
   if (candidates.length !== 1) return false
   const candidate = candidates[0]
-  resolution.candidateId = visualDecisionCandidateId(relationship, candidate)
   if (
     candidate.sourceObjectIds.length === 0 ||
     !completeVisualCandidateAssets(reconstruction, candidate)

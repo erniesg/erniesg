@@ -91,7 +91,10 @@ const COMPACT_RASTER_TABLE_SCROLL_MIN_SOURCE_WIDTH_PX = 1_000
 function isStructDocument(
   input: StructDocument | ResearchPaper,
 ): input is StructDocument {
-  return 'schemaVersion' in input && input.schemaVersion === '0.1.0'
+  return (
+    'schemaVersion' in input &&
+    (input.schemaVersion === '0.1.0' || input.schemaVersion === '0.2.0')
+  )
 }
 
 function duplicateVisualRelationshipNodeOwnership(

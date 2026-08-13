@@ -7,10 +7,14 @@ import {
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { sha256HexSync } from './sha256'
-import { structDigest } from './ids'
+import { legacyStructDigest, structDigest } from './ids'
 import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
-import { STRUCT_SCHEMA_VERSION, type StructDocument } from './types'
+import {
+  LEGACY_STRUCT_SCHEMA_VERSION,
+  STRUCT_SCHEMA_VERSION,
+  type StructDocument,
+} from './types'
 
 const EPUB_MIMETYPE = 'application/epub+zip' as const
 const ZIP_MTIME = new Date(1980, 0, 1, 0, 0, 0)
@@ -173,10 +177,15 @@ function assertStructReceiptIntegrity(document: StructDocument) {
     typeof document.documentId === 'string' &&
     document.documentId.length > 0 &&
     receipt.documentId === document.documentId
+  const hasLegacySchema =
+    document.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION &&
+    receipt.schemaVersion === LEGACY_STRUCT_SCHEMA_VERSION
+  const hasCurrentSchema =
+    document.schemaVersion === STRUCT_SCHEMA_VERSION &&
+    receipt.schemaVersion === STRUCT_SCHEMA_VERSION
   if (
     (!hasLegacyDocumentBinding && !hasBoundDocumentId) ||
-    document.schemaVersion !== STRUCT_SCHEMA_VERSION ||
-    receipt.schemaVersion !== STRUCT_SCHEMA_VERSION ||
+    (!hasLegacySchema && !hasCurrentSchema) ||
     receipt.sourceSha256 !== document.source.sha256 ||
     receipt.blockCount !== document.blocks.length ||
     receipt.assetCount !== document.assets.length ||
@@ -211,13 +220,20 @@ function assertStructReceiptIntegrity(document: StructDocument) {
   }
 
   const { receipt: _receipt, ...withoutReceipt } = document
-  const expectedGeneratedSha256 = structDigest({
+  const digestInput = {
     ...withoutReceipt,
     conservation: receipt.conservation,
     ...(modelConsultations ? { modelConsultations } : {}),
     assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
-  })
-  if (expectedGeneratedSha256 !== receipt.generatedSha256) {
+  }
+  const expectedGeneratedSha256 = structDigest(digestInput)
+  const legacyGeneratedSha256 = hasLegacySchema
+    ? legacyStructDigest(digestInput)
+    : null
+  if (
+    expectedGeneratedSha256 !== receipt.generatedSha256 &&
+    legacyGeneratedSha256 !== receipt.generatedSha256
+  ) {
     throw new Error('STRUCT_RECEIPT_DIGEST_MISMATCH')
   }
 }

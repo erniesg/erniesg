@@ -31,6 +31,7 @@ import type {
   StructTable,
   StructTableCell,
 } from './types'
+import { STRUCT_SCHEMA_VERSION } from './types'
 
 function isPdf(
   reconstruction: DocumentReconstruction,
@@ -1279,7 +1280,7 @@ export function buildStructDocument(
     left.id.localeCompare(right.id),
   )
   const withoutReceipt = {
-    schemaVersion: '0.1.0' as const,
+    schemaVersion: STRUCT_SCHEMA_VERSION,
     documentId: reconstruction.paper.id,
     source,
     metadata,
@@ -1299,7 +1300,7 @@ export function buildStructDocument(
   return {
     ...withoutReceipt,
     receipt: {
-      schemaVersion: '0.1.0',
+      schemaVersion: STRUCT_SCHEMA_VERSION,
       documentId: reconstruction.paper.id,
       sourceSha256: source.sha256,
       ...(modelConsultations ? { modelConsultations } : {}),

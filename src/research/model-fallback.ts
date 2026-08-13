@@ -1057,17 +1057,8 @@ export class ModelFallbackLedger {
     return prior?.choice ? clone(prior.choice) : null
   }
 
-  /**
-   * `latencyMs` and `costUsd` are wall-clock and billing measurements: two runs
-   * of the same PDF against the same model with the same choices report
-   * different numbers. The receipt is embedded in the EPUB and folded into the
-   * STRUCT digest, so persisting them would make the published document
-   * identity change on every run. The live values stay on `this.records` for
-   * `query()` and the metric events; only the persisted receipt is quantised
-   * back to the schema's "no measurement recorded" values.
-   */
   private static persistable(record: ModelConsultationRecord) {
-    return { ...record, costUsd: 0, latencyMs: null }
+    return clone(record)
   }
 
   receiptFor(documentId: string): ModelFallbackReceipt {

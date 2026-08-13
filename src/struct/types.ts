@@ -9,7 +9,10 @@ import type { ModelFallbackReceipt } from './model-consultation-receipt'
  * consume this graph, never the extractor's private implementation details.
  */
 
-export const STRUCT_SCHEMA_VERSION = '0.1.0' as const
+export const LEGACY_STRUCT_SCHEMA_VERSION = '0.1.0' as const
+export const STRUCT_SCHEMA_VERSION = '0.2.0' as const
+export type StructSchemaVersion =
+  typeof LEGACY_STRUCT_SCHEMA_VERSION | typeof STRUCT_SCHEMA_VERSION
 
 export type StructSourceFormat = 'pdf' | 'docx' | 'html' | 'image' | 'unknown'
 
@@ -254,7 +257,7 @@ export type StructRecovery = {
 }
 
 export type StructReceipt = {
-  schemaVersion: typeof STRUCT_SCHEMA_VERSION
+  schemaVersion: StructSchemaVersion
   /** Absent only on serialized 0.1.0 documents created before ID binding. */
   documentId?: string
   sourceSha256: string
@@ -296,7 +299,7 @@ export type StructReceipt = {
 }
 
 export type StructDocument = {
-  schemaVersion: typeof STRUCT_SCHEMA_VERSION
+  schemaVersion: StructSchemaVersion
   /** Absent only on serialized 0.1.0 documents created before ID binding. */
   documentId?: string
   source: StructSource

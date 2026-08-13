@@ -602,13 +602,9 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
   // has to have settled a tie that nothing open still accounts for, and that
   // something has to be claimed.
   //
-  // Two shapes vouch for an open tie. A diagnostic carrying the ambiguous
-  // resolution is authoritatively about this tie, so its target may be
-  // narrower than the tie itself; a diagnostic without one — the non-column
-  // obligation — must instead name exactly the tied regions. The
-  // `SOURCE_ORDER_FLOAT_FALLBACK` downgrade satisfies neither: it names a
-  // single reference region, carries no resolution, and opens no binding, so
-  // it can no longer speak for a whole tie.
+  // Only an obligation over the exact tied region set can account for that
+  // tie. A narrower diagnostic can be appended independently of the
+  // deterministic resolver and therefore cannot vouch for the whole state.
   // A successfully applied human adjudication accounts for a tie just as a
   // receipt does. Stale decisions have not established that provenance.
   const readingOrderDiagnostics = list(reconstruction.diagnostics).filter(
@@ -619,18 +615,6 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
       .map((regionIds) => regionIds ?? [])
       .filter((regionIds) => regionIds.length > 0)
       .map((regionIds) => new Set(regionIds))
-  // Any open `AMBIGUOUS_READING_ORDER` obligation over part of a tie accounts
-  // for the whole tie still being unsettled, so targets match by containment.
-  //
-  // An earlier revision let only a diagnostic carrying the ambiguous
-  // resolution be narrower, on the theory that carrying it made the diagnostic
-  // authoritative about that tie. It does not: the resolution sits one field
-  // away in the same document, so copying it onto a forged one-region
-  // diagnostic reproduced the "authority" exactly. Requiring exactness of
-  // everything instead is not available either — it refuses a legitimate
-  // reconstruction whose obligation covers part of the tie. See #182: target
-  // width cannot separate a forgery from a genuine narrow obligation, and this
-  // check attributes by label rather than by installed state.
   const accountedTargets = regionSets([
     ...readingOrderDiagnostics.map(
       (diagnostic) => diagnostic.target?.regionIds,
@@ -656,8 +640,10 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     if (resolution.regionIds.length === 0) continue
     const regionIds = new Set(resolution.regionIds)
     if (
-      accountedTargets.some((target) =>
-        [...target].every((id) => regionIds.has(id)),
+      accountedTargets.some(
+        (target) =>
+          target.size === regionIds.size &&
+          [...target].every((id) => regionIds.has(id)),
       )
     )
       continue

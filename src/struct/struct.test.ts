@@ -93,7 +93,7 @@ describe('STRUCT canonical document graph', () => {
       reconstruction.noteRelationships.length +
       sourceAnnotationCount
 
-    expect(graph.schemaVersion).toBe('0.1.0')
+    expect(graph.schemaVersion).toBe('0.2.0')
     expect(graph.source.format).toBe('docx')
     expect(graph.source.localOnly).toBe(true)
     expect(graph.blocks.some((block) => block.kind === 'heading')).toBe(true)
@@ -184,7 +184,7 @@ describe('STRUCT canonical document graph', () => {
   it('pins the structured DOCX receipt', async () => {
     const graph = buildStructDocument(await structuredDocx())
     expect(graph.receipt.generatedSha256).toBe(
-      '88defbc7b84c9a120e16f6ddf626e510e2f240bdfbf35847b5b16a1a8ad2fe6c',
+      'fdefd031eb619b48c92f71d6470b96ce91369f8ea41a62e88156fa234e07015f',
     )
   })
 

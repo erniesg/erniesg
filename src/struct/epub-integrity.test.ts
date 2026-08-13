@@ -1,7 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { buildStructEpub } from './epub'
-import { structDigest } from './ids'
+import { legacyStructDigest, structDigest } from './ids'
 import type { StructDocument } from './types'
 
 function refreshReceipt(document: StructDocument) {
@@ -31,7 +31,7 @@ function documentWithHref(href: string): StructDocument {
     sourceIds: ['fixture-source'],
   }
   return refreshReceipt({
-    schemaVersion: '0.1.0',
+    schemaVersion: '0.2.0',
     documentId: 'epub-integrity-document',
     source: {
       format: 'unknown',
@@ -97,7 +97,7 @@ function documentWithHref(href: string): StructDocument {
       issues: [],
     },
     receipt: {
-      schemaVersion: '0.1.0',
+      schemaVersion: '0.2.0',
       documentId: 'epub-integrity-document',
       sourceSha256: 'a'.repeat(64),
       blockCount: 2,
@@ -140,10 +140,11 @@ function legacyDocumentWithHref(href: string): StructDocument {
   const { documentId: _receiptDocumentId, ...legacyReceipt } = currentReceipt
   const legacy: StructDocument = {
     ...documentFields,
-    receipt: legacyReceipt,
+    schemaVersion: '0.1.0',
+    receipt: { ...legacyReceipt, schemaVersion: '0.1.0' },
   }
   const { receipt, ...withoutReceipt } = legacy
-  receipt.generatedSha256 = structDigest({
+  receipt.generatedSha256 = legacyStructDigest({
     ...withoutReceipt,
     conservation: receipt.conservation,
     assets: legacy.assets.map(({ bytes: _bytes, ...asset }) => asset),

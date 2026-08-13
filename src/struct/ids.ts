@@ -37,6 +37,13 @@ export function legacyStructDigests(value: unknown) {
   ])
 }
 
+export function legacyStructDigestMatches(value: unknown, digest: string) {
+  if (legacyStructDigest(value) === digest) return true
+  return Intl.Collator.supportedLocalesOf(legacyLocaleCandidates).some(
+    (locale) => legacyStructDigest(value, locale) === digest,
+  )
+}
+
 function stableSerialize(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`
   if (value && typeof value === 'object') {

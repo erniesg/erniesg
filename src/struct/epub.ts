@@ -7,7 +7,7 @@ import {
 } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 import { sha256HexSync } from './sha256'
-import { legacyStructDigests, structDigest } from './ids'
+import { legacyStructDigestMatches, structDigest } from './ids'
 import { validateModelConsultationReceipt } from './model-consultation-receipt'
 import { renderPublicationXhtml } from './xhtml'
 import {
@@ -227,12 +227,12 @@ function assertStructReceiptIntegrity(document: StructDocument) {
     assets: document.assets.map(({ bytes: _bytes, ...asset }) => asset),
   }
   const expectedGeneratedSha256 = structDigest(digestInput)
-  const legacyGeneratedSha256 = hasLegacySchema
-    ? legacyStructDigests(digestInput)
-    : new Set<string>()
   if (
     expectedGeneratedSha256 !== receipt.generatedSha256 &&
-    !legacyGeneratedSha256.has(receipt.generatedSha256)
+    !(
+      hasLegacySchema &&
+      legacyStructDigestMatches(digestInput, receipt.generatedSha256)
+    )
   ) {
     throw new Error('STRUCT_RECEIPT_DIGEST_MISMATCH')
   }

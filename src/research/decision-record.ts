@@ -554,12 +554,33 @@ function visualDecisionStillInstalled(
     ({ id }) =>
       id === decision.target.markerId && id === resolution.relationshipId,
   )
-  const candidates = relationship?.candidates.filter(
-    (candidate) =>
+  const candidates = relationship?.candidates.filter((candidate) => {
+    const sourceCandidateId =
+      candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate)
+    return (
+      sourceCandidateId === resolution.candidateId ||
       visualDecisionCandidateId(relationship, candidate) ===
-      resolution.candidateId,
-  )
+        resolution.candidateId
+    )
+  })
   const candidate = candidates?.length === 1 ? candidates[0] : undefined
+  if (relationship && candidate) {
+    const semanticCandidateId = visualDecisionCandidateId(
+      relationship,
+      candidate,
+    )
+    resolution.candidateId = semanticCandidateId
+    existingDecisionCandidate.resolution.candidateId = semanticCandidateId
+    if (
+      !relationship.evidence.includes(
+        `human-adjudicated-visual-kind:${relationship.kind}`,
+      )
+    ) {
+      relationship.evidence.push(
+        `human-adjudicated-visual-kind:${relationship.kind}`,
+      )
+    }
+  }
   const captionBox = relationship
     ? ((relationship.captionNodeId
         ? reconstruction.provenance[relationship.captionNodeId]?.boxes[0]
@@ -751,6 +772,10 @@ export function visualDecisionCandidateId(
       kind: relationship.kind,
       score: candidate.score,
       sourceBoxes: candidate.sourceBoxes,
+      sourceRegionIds: candidate.sourceRegionIds,
+      sourceLineIds: candidate.sourceLineIds ?? [],
+      sourceObjectIds: candidate.sourceObjectIds,
+      assetIds: candidate.assetIds,
     }),
   )}`
 }

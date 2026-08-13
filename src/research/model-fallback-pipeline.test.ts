@@ -28,6 +28,7 @@ import {
   resolvePdfModelFallbacks,
 } from './model-fallback-pipeline'
 import { reconstructPdf } from './pdf'
+import { pdfVisualMatchCandidateId } from './pdf-visuals'
 import { buildStructDocument } from '../struct/from-reconstruction'
 
 const modelIdentity = {
@@ -1141,6 +1142,56 @@ describe('PDF model fallback production adapter', () => {
           type: 'accept-note-match',
           targetNoteId: different.targetNoteId,
           targetRegionId: different.targetRegionId,
+        },
+      },
+    ]
+    resolved.modelConsultations = structuredClone(disabled.modelConsultations)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('does not let a forged applied visual decision supersede installed model state', async () => {
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    const disabled = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      { enabled: false },
+    )
+    const installed = resolved.visualRelationships.find(({ evidence }) =>
+      evidence.includes('model-consultation'),
+    )!
+    const selected = installed.candidates.find(
+      ({ score }) => score === installed.confidence,
+    )!
+    const different = installed.candidates.find(
+      (candidate) => candidate !== selected,
+    )!
+    resolved.humanAdjudications.applied = [
+      {
+        diagnosticCode: 'AMBIGUOUS_VISUAL_MATCH',
+        target: { markerId: installed.id, regionIds: [] },
+        resolution: {
+          type: 'accept-visual-match',
+          relationshipId: installed.id,
+          candidateId:
+            different.id ?? pdfVisualMatchCandidateId(installed.id, different),
         },
       },
     ]

@@ -911,9 +911,47 @@ function humanAdjudicationSupersedesDecision(
       decision.decisionClass ===
       MODEL_FALLBACK_DECISION_CLASSES.captionAssociation
     ) {
+      if (adjudication.resolution.type !== 'accept-visual-match') return false
+      const resolution = adjudication.resolution
+      const relationship = reconstruction.visualRelationships.find(
+        ({ id }) => id === decision.decisionId,
+      )
+      const candidates = relationship?.candidates.filter(
+        (candidate) =>
+          (candidate.id ??
+            pdfVisualMatchCandidateId(relationship.id, candidate)) ===
+          resolution.candidateId,
+      )
+      const candidate = candidates?.length === 1 ? candidates[0] : undefined
+      const installedBoxes =
+        relationship && candidate
+          ? visualInstalledSourceBoxes(reconstruction, relationship, candidate)
+          : null
       return (
         adjudication.diagnosticCode === 'AMBIGUOUS_VISUAL_MATCH' &&
-        adjudication.target.markerId === decision.decisionId
+        adjudication.target.markerId === decision.decisionId &&
+        resolution.relationshipId === decision.decisionId &&
+        relationship?.status === 'matched' &&
+        candidate !== undefined &&
+        installedBoxes !== null &&
+        relationship.confidence === candidate.score &&
+        stableModelConsultationJson(relationship.sourceBoxes) ===
+          stableModelConsultationJson(installedBoxes) &&
+        sameStringList(
+          candidate.sourceRegionIds,
+          relationship.sourceRegionIds,
+        ) &&
+        sameStringList(
+          candidate.sourceLineIds ?? [],
+          relationship.sourceLineIds ?? [],
+        ) &&
+        sameStringList(
+          candidate.sourceObjectIds,
+          relationship.sourceObjectIds,
+        ) &&
+        sameStringList(candidate.assetIds, relationship.assetIds) &&
+        (candidate.sourceText === undefined ||
+          relationship.sourceText === candidate.sourceText)
       )
     }
     if (

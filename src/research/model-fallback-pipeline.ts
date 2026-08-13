@@ -891,19 +891,20 @@ function humanAdjudicationSupersedesDecision(
     if (
       decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch
     ) {
+      if (adjudication.resolution.type !== 'accept-note-match') return false
+      const resolution = adjudication.resolution
       const relationship = reconstruction.noteRelationships.find(
         ({ id }) => id === decision.decisionId,
       )
       return (
         adjudication.diagnosticCode === 'AMBIGUOUS_NOTE_MATCH' &&
         adjudication.target.markerId === decision.decisionId &&
-        adjudication.resolution.type === 'accept-note-match' &&
         relationship?.status === 'matched' &&
-        relationship.targetNoteId === adjudication.resolution.targetNoteId &&
+        relationship.targetNoteId === resolution.targetNoteId &&
         relationship.candidates.some(
           ({ targetNoteId, targetRegionId }) =>
-            targetNoteId === adjudication.resolution.targetNoteId &&
-            targetRegionId === adjudication.resolution.targetRegionId,
+            targetNoteId === resolution.targetNoteId &&
+            targetRegionId === resolution.targetRegionId,
         )
       )
     }

@@ -353,6 +353,39 @@ describe('PDF model fallback production adapter', () => {
     }
   })
 
+  it('binds a visual consultation to the selected candidate kind', async () => {
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass, status }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation &&
+        status === 'accepted',
+    )!
+    const relationship = resolved.visualRelationships.find(
+      ({ id }) => id === consultation.decisionId,
+    )!
+    relationship.kind = relationship.kind === 'figure' ? 'table' : 'figure'
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
   it('automatically retires a fully covered caption class for normal strict opt-in options', async () => {
     const consult = vi.fn((request: ModelDecisionRequest) => ({
       candidateId: request.candidates[0]!.id,
@@ -1114,6 +1147,41 @@ describe('PDF model fallback production adapter', () => {
     )!
     const relationship = resolved.noteRelationships.find(
       ({ id }) => id === consultation.decisionId,
+    )!
+    relationship.confidence = Math.max(0, relationship.confidence - 0.1)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds a deterministic note decision to its candidate score', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'note-marker-match-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const decision = resolved.modelConsultations!.decisions.find(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )!
+    const relationship = resolved.noteRelationships.find(
+      ({ id }) => id === decision.decisionId,
     )!
     relationship.confidence = Math.max(0, relationship.confidence - 0.1)
     resolved.modelConsultations!.semanticStateSha256 =

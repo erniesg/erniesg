@@ -492,6 +492,7 @@ function acceptedConsultationMatchesReconstruction(
     )
     return Boolean(
       relationship?.status === 'matched' &&
+      relationship.kind === candidate.kind &&
       relationship.confidence === candidate.score &&
       sameStringList(candidate.region_ids, relationship.sourceRegionIds) &&
       sameStringList(candidate.line_ids, relationship.sourceLineIds ?? []) &&
@@ -718,6 +719,7 @@ function deterministicDecisionMatchesReconstruction(
       relationship?.status === 'matched' &&
       candidate &&
       relationship.targetNoteId === candidate.targetNoteId &&
+      relationship.confidence === candidate.score &&
       relationship.evidence.includes('deterministic-distillation'),
     )
   }

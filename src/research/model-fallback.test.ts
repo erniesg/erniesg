@@ -408,6 +408,18 @@ describe('model fallback consultation gate', () => {
     expect(result.provenance?.status).toBe('rejected')
   })
 
+  it('rejects a non-finite deterministic candidate order before canonicalizing it', () => {
+    const point = structuredClone(MODEL_FALLBACK_REFERENCE_FIXTURES[2]!)
+    point.candidates[0]!.order = Number.NaN
+
+    expect(
+      verifyModelDecisionProposal(point, point.candidates[0]!.id),
+    ).toMatchObject({
+      status: 'rejected',
+      code: 'INVALID_CANDIDATE_ORDER',
+    })
+  })
+
   it.each([
     ['asset_bytes', 'MODEL_AUTHORED_ASSET_BYTES'],
     ['asset_bounds', 'MODEL_AUTHORED_ASSET_BOUNDS'],

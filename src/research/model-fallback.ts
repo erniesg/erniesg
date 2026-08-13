@@ -189,6 +189,15 @@ function candidateChoice(
         'The selected candidate was not produced by the deterministic layer.',
     }
   const candidate = point.candidates.find(({ id }) => id === candidateId)!
+  if (
+    candidate.order !== undefined &&
+    (typeof candidate.order !== 'number' || !Number.isFinite(candidate.order))
+  )
+    return {
+      status: 'rejected',
+      code: 'INVALID_CANDIDATE_ORDER',
+      message: 'The deterministic candidate has an invalid order.',
+    }
   const association = candidateAssociation(candidate)
   if (!association.valid)
     return {

@@ -70,6 +70,27 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('orders fallback decisions by code unit independent of locale collation', () => {
+    const expected = modelDecisionPointsForPdf(adjudicationRequired).map(
+      ({ decisionClass, decisionId }) => `${decisionClass}\u0000${decisionId}`,
+    )
+    const localeCompare = vi
+      .spyOn(String.prototype, 'localeCompare')
+      .mockImplementation(function (other) {
+        return this < String(other) ? 1 : this > String(other) ? -1 : 0
+      })
+    try {
+      expect(
+        modelDecisionPointsForPdf(adjudicationRequired).map(
+          ({ decisionClass, decisionId }) =>
+            `${decisionClass}\u0000${decisionId}`,
+        ),
+      ).toEqual(expected)
+    } finally {
+      localeCompare.mockRestore()
+    }
+  })
+
   it('wires an explicitly disabled gate through reconstructPdf without consulting or resolving', async () => {
     const consult = vi.fn(() => ({ candidateId: 'not-called' }))
     const result = await reconstructPdf(
@@ -1241,7 +1262,7 @@ describe('PDF model fallback production adapter', () => {
     const relationship = resolved.noteRelationships.find(
       ({ id }) => id === consultation.decisionId,
     )!
-    relationship.sourceBoxes = relationship.sourceBoxes.length
+    const replacementBoxes = relationship.sourceBoxes.length
       ? []
       : [
           {
@@ -1254,6 +1275,11 @@ describe('PDF model fallback production adapter', () => {
             method: 'pdf-text',
           },
         ]
+    relationship.sourceBoxes = replacementBoxes
+    const selected = relationship.candidates.find(
+      ({ targetNoteId }) => targetNoteId === relationship.targetNoteId,
+    )!
+    selected.sourceBoxes = structuredClone(replacementBoxes)
     resolved.modelConsultations!.semanticStateSha256 =
       pdfModelConsultationSemanticStateSha256(
         resolved,
@@ -1289,6 +1315,36 @@ describe('PDF model fallback production adapter', () => {
       ({ id }) => id === decision.decisionId,
     )!
     relationship.confidence = Math.max(0, relationship.confidence - 0.1)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds a deterministic reading decision to its region evidence', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'reading-order-region-evidence-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const selectedIds = point!.candidates[0]!.region_ids as string[]
+    const region = resolved.regions.find(({ id }) => id === selectedIds[0])!
+    region.column = region.column === 'left' ? 'right' : 'left'
     resolved.modelConsultations!.semanticStateSha256 =
       pdfModelConsultationSemanticStateSha256(
         resolved,

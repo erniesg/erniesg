@@ -108,6 +108,10 @@ function stableCandidateId(prefix: string, values: readonly string[]) {
   return `${prefix}-${sha256HexSync(JSON.stringify(values)).slice(0, 24)}`
 }
 
+function compareCodeUnits(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
 function immutableSnapshot<T>(
   value: T,
   seen = new WeakMap<object, unknown>(),
@@ -165,6 +169,7 @@ function noteDecisionPoint(
     id: stableCandidateId('note-candidate', [
       candidate.targetNoteId,
       candidate.targetRegionId,
+      stableModelConsultationJson(candidate.sourceBoxes),
     ]),
     associationId: candidate.targetNoteId,
     note_id: candidate.targetNoteId,
@@ -241,10 +246,8 @@ function readingOrderDecisionPoint(
   if (orders.some((regionIds) => regionIds.some((id) => !regionById.has(id))))
     return null
   const evidence = diagnostic.readingOrderResolution
-  const candidates = orders.map((regionIds) => ({
-    id: stableCandidateId('reading-order-candidate', regionIds),
-    region_ids: [...regionIds],
-    regions: regionIds.map((id) => {
+  const candidates = orders.map((regionIds) => {
+    const regions = regionIds.map((id) => {
       const region = regionById.get(id)!
       return {
         id: region.id,
@@ -252,12 +255,20 @@ function readingOrderDecisionPoint(
         column: region.column,
         page: region.page,
       }
-    }),
-    evidence_codes: safeEvidenceCodes(
-      evidence?.evidence.map(({ code }) => code) ?? [],
-      MODEL_FALLBACK_EVIDENCE_CODES.readingOrderTie,
-    ),
-  }))
+    })
+    return {
+      id: stableCandidateId('reading-order-candidate', [
+        ...regionIds,
+        stableModelConsultationJson(regions),
+      ]),
+      region_ids: [...regionIds],
+      regions,
+      evidence_codes: safeEvidenceCodes(
+        evidence?.evidence.map(({ code }) => code) ?? [],
+        MODEL_FALLBACK_EVIDENCE_CODES.readingOrderTie,
+      ),
+    }
+  })
   const regionIdsByCandidateId = new Map(
     candidates.map((candidate, index) => [candidate.id, [...orders[index]!]]),
   )
@@ -381,8 +392,8 @@ function boundModelDecisionPointsForPdf(reconstruction: PdfReconstruction) {
     })
     .sort(
       (left, right) =>
-        left.point.decisionClass.localeCompare(right.point.decisionClass) ||
-        left.point.decisionId.localeCompare(right.point.decisionId),
+        compareCodeUnits(left.point.decisionClass, right.point.decisionClass) ||
+        compareCodeUnits(left.point.decisionId, right.point.decisionId),
     )
 }
 
@@ -495,6 +506,11 @@ function acceptedConsultationMatchesReconstruction(
       relationship.targetNoteId === candidate.note_id &&
       relationship.confidence === candidate.score &&
       currentCandidate !== undefined &&
+      stableCandidateId('note-candidate', [
+        currentCandidate.targetNoteId,
+        currentCandidate.targetRegionId,
+        stableModelConsultationJson(currentCandidate.sourceBoxes),
+      ]) === candidate.id &&
       stableModelConsultationJson(relationship.sourceBoxes) ===
         stableModelConsultationJson(currentCandidate.sourceBoxes) &&
       relationship.evidence.includes('model-consultation')
@@ -747,9 +763,12 @@ function deterministicDecisionMatchesReconstruction(
       ({ id }) => id === decision.decisionId,
     )
     const candidate = relationship?.candidates.find(
-      ({ targetNoteId, targetRegionId }) =>
-        stableCandidateId('note-candidate', [targetNoteId, targetRegionId]) ===
-        choice.candidateId,
+      ({ targetNoteId, targetRegionId, sourceBoxes }) =>
+        stableCandidateId('note-candidate', [
+          targetNoteId,
+          targetRegionId,
+          stableModelConsultationJson(sourceBoxes),
+        ]) === choice.candidateId,
     )
     return Boolean(
       relationship?.status === 'matched' &&
@@ -773,10 +792,27 @@ function deterministicDecisionMatchesReconstruction(
     const installedOrder = reconstruction.readingOrder.order.filter((id) =>
       targetIds.has(id),
     )
+    const regionById = new Map(
+      reconstruction.regions.map((region) => [region.id, region]),
+    )
+    const installedRegionEvidence = installedOrder.map((id) => {
+      const region = regionById.get(id)
+      return region
+        ? {
+            id: region.id,
+            kind: region.kind,
+            column: region.column,
+            page: region.page,
+          }
+        : null
+    })
     return (
       installedOrder.length === targetIds.size &&
-      stableCandidateId('reading-order-candidate', installedOrder) ===
-        choice.candidateId
+      !installedRegionEvidence.includes(null) &&
+      stableCandidateId('reading-order-candidate', [
+        ...installedOrder,
+        stableModelConsultationJson(installedRegionEvidence),
+      ]) === choice.candidateId
     )
   }
   return false

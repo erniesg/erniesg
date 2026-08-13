@@ -935,12 +935,20 @@ describe('PDF model fallback production adapter', () => {
       relationship.evidence = relationship.evidence.filter(
         (code) =>
           code !== 'model-consultation' &&
-          code !== 'deterministic-distillation',
+          code !== 'deterministic-distillation' &&
+          !code.startsWith('model-consulted-') &&
+          !code.startsWith('deterministically-distilled-'),
       )
     }
     expect(
       stripped.visualRelationships.flatMap(({ evidence }) => evidence),
-    ).toContain('deterministically-distilled-ambiguous_visual_match')
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^(?:model-consulted|deterministically-distilled)-/u,
+        ),
+      ]),
+    )
 
     expect(pdfModelDerivedDecisionKeys(stripped).size).toBeGreaterThan(0)
     expect(() =>
@@ -1192,6 +1200,136 @@ describe('PDF model fallback production adapter', () => {
           relationshipId: installed.id,
           candidateId:
             different.id ?? pdfVisualMatchCandidateId(installed.id, different),
+        },
+      },
+    ]
+    resolved.modelConsultations = structuredClone(disabled.modelConsultations)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('requires human-origin visual evidence even when a forged adjudication names the installed candidate', async () => {
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    const disabled = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      { enabled: false },
+    )
+    const installed = resolved.visualRelationships.find(({ evidence }) =>
+      evidence.includes('model-consultation'),
+    )!
+    const selected = installed.candidates.find(
+      ({ score }) => score === installed.confidence,
+    )!
+    resolved.humanAdjudications.applied = [
+      {
+        diagnosticCode: 'AMBIGUOUS_VISUAL_MATCH',
+        target: { markerId: installed.id, regionIds: [] },
+        resolution: {
+          type: 'accept-visual-match',
+          relationshipId: installed.id,
+          candidateId:
+            selected.id ?? pdfVisualMatchCandidateId(installed.id, selected),
+        },
+      },
+    ]
+    resolved.modelConsultations = structuredClone(disabled.modelConsultations)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds superseding note adjudications to installed score and geometry', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const disabled = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: false,
+    })
+    const installed = resolved.noteRelationships.find(({ evidence }) =>
+      evidence.includes('model-consultation'),
+    )!
+    const selected = installed.candidates.find(
+      ({ targetNoteId }) => targetNoteId === installed.targetNoteId,
+    )!
+    resolved.humanAdjudications.applied = [
+      {
+        diagnosticCode: 'AMBIGUOUS_NOTE_MATCH',
+        target: { markerId: installed.id, regionIds: [] },
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: selected.targetNoteId,
+          targetRegionId: selected.targetRegionId,
+        },
+      },
+    ]
+    installed.evidence = [...installed.evidence, 'human-adjudication']
+    installed.confidence = Math.max(0, selected.score - 0.1)
+    resolved.modelConsultations = structuredClone(disabled.modelConsultations)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds superseding reading-order adjudications to the installed order', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const disabled = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: false,
+    })
+    const tie = resolved.readingOrder.resolutions.find(
+      ({ status }) => status === 'ambiguous',
+    )!
+    const installedOrder = resolved.readingOrder.order.filter((id) =>
+      new Set(tie.regionIds).has(id),
+    )
+    resolved.humanAdjudications.applied = [
+      {
+        diagnosticCode: 'AMBIGUOUS_READING_ORDER',
+        target: { markerId: null, regionIds: [...tie.regionIds] },
+        resolution: {
+          type: 'accept-reading-order',
+          regionIds: [...installedOrder].reverse(),
         },
       },
     ]

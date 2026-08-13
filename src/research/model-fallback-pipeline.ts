@@ -677,7 +677,44 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
   const list = <T>(value: readonly T[] | undefined): readonly T[] => value ?? []
 
   for (const relationship of list(reconstruction.noteRelationships)) {
-    if (attributed(relationship.evidence)) {
+    const rankedScores = relationship.candidates
+      .map(({ score }) => score)
+      .sort((left, right) => right - left)
+    const intrinsicallyAmbiguous =
+      rankedScores.length > 1 && rankedScores[0]! - rankedScores[1]! < 0.04
+    const humanAccounted = list(
+      reconstruction.humanAdjudications?.applied,
+    ).some((adjudication) => {
+      if (
+        adjudication.diagnosticCode !== 'AMBIGUOUS_NOTE_MATCH' ||
+        adjudication.target.markerId !== relationship.id ||
+        adjudication.resolution.type !== 'accept-note-match' ||
+        relationship.status !== 'matched' ||
+        !relationship.evidence.includes('human-adjudication')
+      ) {
+        return false
+      }
+      const resolution = adjudication.resolution
+      const candidates = relationship.candidates.filter(
+        ({ targetNoteId, targetRegionId }) =>
+          targetNoteId === resolution.targetNoteId &&
+          targetRegionId === resolution.targetRegionId,
+      )
+      const candidate = candidates.length === 1 ? candidates[0] : undefined
+      return Boolean(
+        candidate &&
+        relationship.targetNoteId === resolution.targetNoteId &&
+        relationship.confidence === candidate.score &&
+        stableModelConsultationJson(relationship.sourceBoxes) ===
+          stableModelConsultationJson(candidate.sourceBoxes),
+      )
+    })
+    if (
+      attributed(relationship.evidence) ||
+      (relationship.status === 'matched' &&
+        intrinsicallyAmbiguous &&
+        !humanAccounted)
+    ) {
       keys.add(
         decisionKey(
           MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
@@ -687,7 +724,59 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     }
   }
   for (const relationship of list(reconstruction.visualRelationships)) {
-    if (attributed(relationship.evidence)) {
+    const humanAccounted = list(
+      reconstruction.humanAdjudications?.applied,
+    ).some((adjudication) => {
+      if (
+        adjudication.diagnosticCode !== 'AMBIGUOUS_VISUAL_MATCH' ||
+        adjudication.target.markerId !== relationship.id ||
+        adjudication.resolution.type !== 'accept-visual-match' ||
+        adjudication.resolution.relationshipId !== relationship.id ||
+        relationship.status !== 'matched' ||
+        !relationship.evidence.includes('human-adjudicated-visual-match')
+      ) {
+        return false
+      }
+      const resolution = adjudication.resolution
+      const candidates = relationship.candidates.filter(
+        (candidate) =>
+          (candidate.id ??
+            pdfVisualMatchCandidateId(relationship.id, candidate)) ===
+          resolution.candidateId,
+      )
+      const candidate = candidates.length === 1 ? candidates[0] : undefined
+      const installedBoxes = candidate
+        ? visualInstalledSourceBoxes(reconstruction, relationship, candidate)
+        : null
+      return Boolean(
+        candidate &&
+        installedBoxes &&
+        relationship.confidence === candidate.score &&
+        stableModelConsultationJson(relationship.sourceBoxes) ===
+          stableModelConsultationJson(installedBoxes) &&
+        sameStringList(
+          candidate.sourceRegionIds,
+          relationship.sourceRegionIds,
+        ) &&
+        sameStringList(
+          candidate.sourceLineIds ?? [],
+          relationship.sourceLineIds ?? [],
+        ) &&
+        sameStringList(
+          candidate.sourceObjectIds,
+          relationship.sourceObjectIds,
+        ) &&
+        sameStringList(candidate.assetIds, relationship.assetIds) &&
+        (candidate.sourceText === undefined ||
+          relationship.sourceText === candidate.sourceText),
+      )
+    })
+    if (
+      attributed(relationship.evidence) ||
+      (relationship.status === 'matched' &&
+        relationship.candidates.length > 1 &&
+        !humanAccounted)
+    ) {
       keys.add(
         decisionKey(
           MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
@@ -896,16 +985,22 @@ function humanAdjudicationSupersedesDecision(
       const relationship = reconstruction.noteRelationships.find(
         ({ id }) => id === decision.decisionId,
       )
+      const candidates = relationship?.candidates.filter(
+        ({ targetNoteId, targetRegionId }) =>
+          targetNoteId === resolution.targetNoteId &&
+          targetRegionId === resolution.targetRegionId,
+      )
+      const candidate = candidates?.length === 1 ? candidates[0] : undefined
       return (
         adjudication.diagnosticCode === 'AMBIGUOUS_NOTE_MATCH' &&
         adjudication.target.markerId === decision.decisionId &&
         relationship?.status === 'matched' &&
+        relationship.evidence.includes('human-adjudication') &&
         relationship.targetNoteId === resolution.targetNoteId &&
-        relationship.candidates.some(
-          ({ targetNoteId, targetRegionId }) =>
-            targetNoteId === resolution.targetNoteId &&
-            targetRegionId === resolution.targetRegionId,
-        )
+        candidate !== undefined &&
+        relationship.confidence === candidate.score &&
+        stableModelConsultationJson(relationship.sourceBoxes) ===
+          stableModelConsultationJson(candidate.sourceBoxes)
       )
     }
     if (
@@ -933,6 +1028,7 @@ function humanAdjudicationSupersedesDecision(
         adjudication.target.markerId === decision.decisionId &&
         resolution.relationshipId === decision.decisionId &&
         relationship?.status === 'matched' &&
+        relationship.evidence.includes('human-adjudicated-visual-match') &&
         candidate !== undefined &&
         installedBoxes !== null &&
         relationship.confidence === candidate.score &&
@@ -958,12 +1054,19 @@ function humanAdjudicationSupersedesDecision(
     if (
       decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie
     ) {
+      if (adjudication.resolution.type !== 'accept-reading-order') return false
+      const targetIds = new Set(adjudication.target.regionIds)
+      const installedOrder = reconstruction.readingOrder.order.filter((id) =>
+        targetIds.has(id),
+      )
       return (
         adjudication.diagnosticCode === 'AMBIGUOUS_READING_ORDER' &&
         stableCandidateId(
           'reading-order-decision',
           [...new Set(adjudication.target.regionIds)].sort(),
-        ) === decision.decisionId
+        ) === decision.decisionId &&
+        installedOrder.length === targetIds.size &&
+        sameStringList(adjudication.resolution.regionIds, installedOrder)
       )
     }
     return false

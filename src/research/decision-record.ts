@@ -536,10 +536,12 @@ function visualDecisionStillInstalled(
   reconstruction: PdfReconstruction,
   decision: HumanAdjudicationRecord,
 ) {
-  if (
-    decision.diagnosticCode !== 'AMBIGUOUS_VISUAL_MATCH' ||
-    decision.resolution.type !== 'accept-visual-match'
-  ) {
+  if (!(
+    (decision.diagnosticCode === 'AMBIGUOUS_VISUAL_MATCH' &&
+      decision.resolution.type === 'accept-visual-match') ||
+    (decision.diagnosticCode === 'UNRESOLVED_VISUAL_OBJECT' &&
+      decision.resolution.type === 'accept-visual-fallback')
+  )) {
     return false
   }
   const resolution = decision.resolution
@@ -547,9 +549,7 @@ function visualDecisionStillInstalled(
     reconstruction.humanAdjudications.applied.find((candidate) =>
       sameDecision(candidate, decision),
     )
-  if (existingDecisionCandidate?.resolution.type !== 'accept-visual-match') {
-    return false
-  }
+  if (!existingDecisionCandidate) return false
   const relationship = reconstruction.visualRelationships.find(
     ({ id }) =>
       id === decision.target.markerId && id === resolution.relationshipId,
@@ -1177,6 +1177,8 @@ function updateReadingOrder(
   reconstruction: PdfReconstruction,
   diagnostic: ReconstructionDiagnostic,
   decision: HumanAdjudicationRecord,
+  resolutionOrigin:
+    'human-adjudication' | PdfCandidateResolutionOrigin = 'human-adjudication',
 ) {
   if (
     decision.diagnosticCode !== 'AMBIGUOUS_READING_ORDER' ||
@@ -1222,6 +1224,11 @@ function updateReadingOrder(
         : edge,
     )
   reconstruction.readingOrder.order = nextOrder
+  for (const resolution of reconstruction.readingOrder.resolutions) {
+    if (sameValues(resolution.regionIds, decision.target.regionIds)) {
+      resolution.resolutionOrigin = resolutionOrigin
+    }
+  }
   const unresolvedEdgeCount = reconstruction.readingOrder.edges.filter(
     (edge) => edge.status === 'candidate',
   ).length
@@ -2030,7 +2037,7 @@ export function applyVerifiedPdfCandidateResolutions(
 
     const appliedLegally =
       updateNoteRelationship(result, decision, origin) ||
-      updateReadingOrder(result, diagnostic, decision) ||
+      updateReadingOrder(result, diagnostic, decision, origin) ||
       updateVisualMatch(result, diagnostic, decision, origin)
     if (!appliedLegally) continue
 

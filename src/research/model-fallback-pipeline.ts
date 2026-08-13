@@ -334,6 +334,7 @@ function visualDecisionPoint(
       relationship.kind,
       String(candidate.score),
       stableModelConsultationJson(candidate.sourceBoxes),
+      sha256HexSync(candidate.sourceText ?? ''),
     ]),
     score: candidate.score,
     kind: relationship.kind,
@@ -520,6 +521,22 @@ function acceptedConsultationMatchesReconstruction(
         targetRegionId === candidate.region_id &&
         score === candidate.score,
     )
+    const currentCandidates = relationship?.candidates.map((item) => ({
+      id: stableCandidateId('note-candidate', [
+        item.targetNoteId,
+        item.targetRegionId,
+        String(item.score),
+        stableModelConsultationJson(item.sourceBoxes),
+      ]),
+      associationId: item.targetNoteId,
+      note_id: item.targetNoteId,
+      region_id: item.targetRegionId,
+      score: item.score,
+      evidence_codes: safeEvidenceCodes(
+        item.evidence,
+        MODEL_FALLBACK_EVIDENCE_CODES.noteMarkerMatch,
+      ),
+    }))
     return (
       relationship?.status === 'matched' &&
       typeof candidate.note_id === 'string' &&
@@ -528,6 +545,8 @@ function acceptedConsultationMatchesReconstruction(
       relationship.targetNoteId === candidate.note_id &&
       relationship.confidence === candidate.score &&
       currentCandidate !== undefined &&
+      stableModelConsultationJson(currentCandidates) ===
+        stableModelConsultationJson(consultation.candidates) &&
       stableCandidateId('note-candidate', [
         currentCandidate.targetNoteId,
         currentCandidate.targetRegionId,
@@ -554,8 +573,28 @@ function acceptedConsultationMatchesReconstruction(
           relationship.kind,
           String(item.score),
           stableModelConsultationJson(item.sourceBoxes),
+          sha256HexSync(item.sourceText ?? ''),
         ]) === candidate.id,
     )
+    const currentCandidates = relationship?.candidates.map((item) => ({
+      id: stableCandidateId('visual-kind-candidate', [
+        item.id ?? pdfVisualMatchCandidateId(relationship.id, item),
+        relationship.kind,
+        String(item.score),
+        stableModelConsultationJson(item.sourceBoxes),
+        sha256HexSync(item.sourceText ?? ''),
+      ]),
+      score: item.score,
+      kind: relationship.kind,
+      region_ids: [...item.sourceRegionIds],
+      line_ids: [...(item.sourceLineIds ?? [])],
+      object_ids: [...item.sourceObjectIds],
+      asset_ids: [...item.assetIds],
+      evidence_codes: safeEvidenceCodes(
+        item.evidence,
+        MODEL_FALLBACK_EVIDENCE_CODES.captionAssociation,
+      ),
+    }))
     const installedBoxes =
       relationship && currentCandidate
         ? visualInstalledSourceBoxes(
@@ -567,6 +606,9 @@ function acceptedConsultationMatchesReconstruction(
     return Boolean(
       relationship?.status === 'matched' &&
       currentCandidate &&
+      currentCandidates &&
+      stableModelConsultationJson(currentCandidates) ===
+        stableModelConsultationJson(consultation.candidates) &&
       relationship.kind === candidate.kind &&
       relationship.confidence === candidate.score &&
       installedBoxes &&
@@ -821,6 +863,11 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
           adjudication.resolution.type !== 'accept-reading-order'
         )
           return false
+        const resolution = reconstruction.readingOrder.resolutions.find(
+          ({ regionIds }) =>
+            sameStringList(regionIds, adjudication.target.regionIds),
+        )
+        if (resolution?.resolutionOrigin !== 'human-adjudication') return false
         const targetIds = new Set(adjudication.target.regionIds)
         const installed = reconstruction.readingOrder.order.filter((id) =>
           targetIds.has(id),
@@ -882,6 +929,7 @@ function deterministicDecisionMatchesReconstruction(
           relationship.kind,
           String(candidate.score),
           stableModelConsultationJson(candidate.sourceBoxes),
+          sha256HexSync(candidate.sourceText ?? ''),
         ]) === choice.candidateId,
     )
     const installedBoxes =

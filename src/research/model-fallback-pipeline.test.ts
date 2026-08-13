@@ -1175,6 +1175,27 @@ describe('PDF model fallback production adapter', () => {
     expect(() => buildStructDocument(forged)).toThrow(
       'MISSING_MODEL_CONSULTATION_RECEIPT',
     )
+
+    const forgedInstalledOrder = withoutReceipt(
+      structuredClone(resolved),
+    ) as PdfReconstruction
+    const installedOrder = forgedInstalledOrder.readingOrder.order.filter(
+      (id) => new Set(tie.regionIds).has(id),
+    )
+    forgedInstalledOrder.humanAdjudications.applied = [
+      {
+        diagnosticCode: 'AMBIGUOUS_READING_ORDER',
+        target: { markerId: null, regionIds: [...tie.regionIds] },
+        resolution: {
+          type: 'accept-reading-order',
+          regionIds: installedOrder,
+        },
+      },
+    ]
+
+    expect(() => buildStructDocument(forgedInstalledOrder)).toThrow(
+      'MISSING_MODEL_CONSULTATION_RECEIPT',
+    )
   })
 
   it('does not let a forged applied note decision supersede installed model state', async () => {
@@ -1649,6 +1670,77 @@ describe('PDF model fallback production adapter', () => {
       ({ targetNoteId }) => targetNoteId === relationship.targetNoteId,
     )!
     selected.sourceBoxes = structuredClone(replacementBoxes)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds an accepted note receipt to the complete current candidate set', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass, status }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch &&
+        status === 'accepted',
+    )!
+    const relationship = resolved.noteRelationships.find(
+      ({ id }) => id === consultation.decisionId,
+    )!
+    const unselected = relationship.candidates.find(
+      ({ targetNoteId }) => targetNoteId !== relationship.targetNoteId,
+    )!
+    unselected.score = Math.max(0, unselected.score - 0.1)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds an accepted visual receipt to every candidate source text', async () => {
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass, status }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation &&
+        status === 'accepted',
+    )!
+    const relationship = resolved.visualRelationships.find(
+      ({ id }) => id === consultation.decisionId,
+    )!
+    const selected = relationship.candidates.find(
+      ({ score }) => score === relationship.confidence,
+    )!
+    const unselected = relationship.candidates.find(
+      (candidate) => candidate !== selected,
+    )!
+    unselected.sourceText = `${unselected.sourceText ?? ''} changed`
     resolved.modelConsultations!.semanticStateSha256 =
       pdfModelConsultationSemanticStateSha256(
         resolved,

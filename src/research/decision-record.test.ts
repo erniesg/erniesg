@@ -2054,6 +2054,7 @@ describe('human adjudication decision records', () => {
     }, createHumanDecisionFile(base.source.sha256))
     const resolved = applyHumanDecisionFile(base, currentSidecar)
     const replay = applyHumanDecisionFile(base, currentSidecar)
+    const reapplied = applyHumanDecisionFile(resolved, currentSidecar)
     expect(resolved.humanAdjudications).toMatchObject({
       stale: [],
       countsByDiagnosticCode: {
@@ -2072,6 +2073,7 @@ describe('human adjudication decision records', () => {
       ]),
     )
     expect(JSON.stringify(replay)).toBe(JSON.stringify(resolved))
+    expect(JSON.stringify(reapplied)).toBe(JSON.stringify(resolved))
     const [firstEpub, replayEpub] = await Promise.all([
       buildEpub(resolved.paper, resolved),
       buildEpub(replay.paper, replay),

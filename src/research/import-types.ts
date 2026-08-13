@@ -566,6 +566,7 @@ export type PdfReadingOrderResolution = {
   threshold: number
   evidence: PdfReadingOrderEvidence[]
   regionIds: string[]
+  resolutionOrigin?: 'human-adjudication' | PdfCandidateResolutionOrigin
 }
 
 export type PdfReadingOrderEdge = {

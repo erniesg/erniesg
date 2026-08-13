@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
-import { structDigest } from './ids'
+import { legacyStructDigest, legacyStructDigests, structDigest } from './ids'
 import { sha256HexSync } from '../research/sha256-sync'
 import { renderPublicationXhtml } from './xhtml'
 import { orderBlocksByLayout } from './reading-order'
@@ -293,6 +293,14 @@ describe('STRUCT canonical document graph', () => {
     // Pin the order itself, not merely that two orderings agree: `{"B":1,"a":2}`
     // is the code-unit serialization, and `{"a":2,"B":1}` the `en-US` one.
     expect(structDigest({ a: 2, B: 1 })).toBe(sha256HexSync('{"B":1,"a":2}'))
+  })
+
+  it('recovers legacy digests from supported three-letter base locales', () => {
+    expect(Intl.Collator.supportedLocalesOf(['haw'])).toEqual(['haw'])
+    const value = { authorAffiliations: 1, abstract: 2 }
+    expect(legacyStructDigests(value)).toContain(
+      legacyStructDigest(value, 'haw'),
+    )
   })
 
   it('refuses to package a document whose blocks no longer match its digest', async () => {

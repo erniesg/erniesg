@@ -1,6 +1,7 @@
 import {
   applyVerifiedPdfCandidateResolutions,
   readingOrderCandidates,
+  visualDecisionCandidateId,
   type VerifiedPdfCandidateResolution,
 } from './decision-record'
 import type {
@@ -348,7 +349,7 @@ function visualDecisionPoint(
   const sourceCandidateIdByDecisionId = new Map(
     candidates.map((candidate, index) => [
       candidate.id,
-      sourceCandidateIds[index]!,
+      visualDecisionCandidateId(relationship, relationship.candidates[index]!),
     ]),
   )
   return {
@@ -738,15 +739,17 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
         adjudication.resolution.type !== 'accept-visual-match' ||
         adjudication.resolution.relationshipId !== relationship.id ||
         relationship.status !== 'matched' ||
-        !relationship.evidence.includes('human-adjudicated-visual-match')
+        !relationship.evidence.includes('human-adjudicated-visual-match') ||
+        !relationship.evidence.includes(
+          `human-adjudicated-visual-kind:${relationship.kind}`,
+        )
       ) {
         return false
       }
       const resolution = adjudication.resolution
       const candidates = relationship.candidates.filter(
         (candidate) =>
-          (candidate.id ??
-            pdfVisualMatchCandidateId(relationship.id, candidate)) ===
+          visualDecisionCandidateId(relationship, candidate) ===
           resolution.candidateId,
       )
       const candidate = candidates.length === 1 ? candidates[0] : undefined
@@ -1019,8 +1022,7 @@ function humanAdjudicationSupersedesDecision(
       )
       const candidates = relationship?.candidates.filter(
         (candidate) =>
-          (candidate.id ??
-            pdfVisualMatchCandidateId(relationship.id, candidate)) ===
+          visualDecisionCandidateId(relationship, candidate) ===
           resolution.candidateId,
       )
       const candidate = candidates?.length === 1 ? candidates[0] : undefined
@@ -1034,6 +1036,9 @@ function humanAdjudicationSupersedesDecision(
         resolution.relationshipId === decision.decisionId &&
         relationship?.status === 'matched' &&
         relationship.evidence.includes('human-adjudicated-visual-match') &&
+        relationship.evidence.includes(
+          `human-adjudicated-visual-kind:${relationship.kind}`,
+        ) &&
         candidate !== undefined &&
         installedBoxes !== null &&
         relationship.confidence === candidate.score &&

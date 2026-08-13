@@ -1727,6 +1727,12 @@ describe('human adjudication decision records', () => {
       targetNoteId: candidate.targetNoteId,
       canonicalAnchor: { kind: 'author', author: 'Ada Example' },
     })
+    expect(result.paper.authorNotes).toContainEqual({
+      id: relationship.id,
+      author: 'Ada Example',
+      label: relationship.label,
+      target: candidate.targetNoteId,
+    })
   })
 
   it.each(['reclassify-citation', 'reclassify-plain-text'] as const)(
@@ -1932,6 +1938,12 @@ describe('human adjudication decision records', () => {
       first.humanAdjudications.applied,
     )
     expect(reapplied.humanAdjudications.stale).toEqual([])
+    const changedKind = structuredClone(first)
+    changedKind.visualRelationships[0]!.kind =
+      changedKind.visualRelationships[0]!.kind === 'figure' ? 'table' : 'figure'
+    const rejectedReapply = applyHumanDecisionFile(changedKind, file)
+    expect(rejectedReapply.humanAdjudications.applied).toEqual([])
+    expect(rejectedReapply.humanAdjudications.stale).toHaveLength(1)
 
     expect(JSON.parse(serialized)).toEqual({
       schemaVersion: '1.3.0',
@@ -1943,7 +1955,7 @@ describe('human adjudication decision records', () => {
           resolution: {
             type: 'accept-visual-match',
             relationshipId: relationship.id,
-            candidateId: candidate.id,
+            candidateId: decision.resolution.candidateId,
           },
         },
       ],

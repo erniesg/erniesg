@@ -543,14 +543,20 @@ function visualDecisionStillInstalled(
     return false
   }
   const resolution = decision.resolution
+  const existingDecisionCandidate =
+    reconstruction.humanAdjudications.applied.find((candidate) =>
+      sameDecision(candidate, decision),
+    )
+  if (existingDecisionCandidate?.resolution.type !== 'accept-visual-match') {
+    return false
+  }
   const relationship = reconstruction.visualRelationships.find(
     ({ id }) =>
       id === decision.target.markerId && id === resolution.relationshipId,
   )
   const candidates = relationship?.candidates.filter(
     (candidate) =>
-      (candidate.id ??
-        pdfVisualMatchCandidateId(relationship.id, candidate)) ===
+      visualDecisionCandidateId(relationship, candidate) ===
       resolution.candidateId,
   )
   const candidate = candidates?.length === 1 ? candidates[0] : undefined
@@ -569,6 +575,9 @@ function visualDecisionStillInstalled(
   return Boolean(
     relationship?.status === 'matched' &&
     relationship.evidence.includes('human-adjudicated-visual-match') &&
+    relationship.evidence.includes(
+      `human-adjudicated-visual-kind:${relationship.kind}`,
+    ) &&
     candidate &&
     installedBoxes &&
     relationship.confidence === candidate.score &&
@@ -722,11 +731,28 @@ export function createVisualMatchDecision(
       'Visual match decision is not legal for the current diagnostic.',
     )
   }
+  const semanticCandidateId = visualDecisionCandidateId(relationship, candidate)
   return humanAdjudicationRecordSchema.parse({
     diagnosticCode: diagnostic.code,
     target: diagnostic.target,
-    resolution: { type, relationshipId, candidateId },
+    resolution: { type, relationshipId, candidateId: semanticCandidateId },
   }) as VisualMatchDecision
+}
+
+export function visualDecisionCandidateId(
+  relationship: PdfReconstruction['visualRelationships'][number],
+  candidate: PdfReconstruction['visualRelationships'][number]['candidates'][number],
+) {
+  const sourceCandidateId =
+    candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate)
+  return `visual-decision-${sha256HexSync(
+    JSON.stringify({
+      sourceCandidateId,
+      kind: relationship.kind,
+      score: candidate.score,
+      sourceBoxes: candidate.sourceBoxes,
+    }),
+  )}`
 }
 
 export function readingOrderCandidates(
@@ -1123,6 +1149,20 @@ function updateNoteRelationship(
       target.relationships.backlinks = [
         ...new Set([...target.relationships.backlinks, relationship.id]),
       ].sort()
+    }
+    if (relationship.canonicalAnchor?.kind === 'author') {
+      const authorNote = {
+        id: relationship.id,
+        author: relationship.canonicalAnchor.author,
+        label: relationship.label,
+        target: targetNoteId,
+      }
+      reconstruction.paper.authorNotes = [
+        ...(reconstruction.paper.authorNotes ?? []).filter(
+          ({ id }) => id !== relationship.id,
+        ),
+        authorNote,
+      ].sort((left, right) => left.id.localeCompare(right.id))
     }
   }
   return true
@@ -1721,14 +1761,18 @@ function updateVisualMatch(
   ) {
     return false
   }
-  const candidates = relationship.candidates.filter(
-    (candidate) =>
-      (candidate.id ??
-        pdfVisualMatchCandidateId(relationship.id, candidate)) ===
-      resolution.candidateId,
-  )
+  const candidates = relationship.candidates.filter((candidate) => {
+    const sourceCandidateId =
+      candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate)
+    return (
+      sourceCandidateId === resolution.candidateId ||
+      visualDecisionCandidateId(relationship, candidate) ===
+        resolution.candidateId
+    )
+  })
   if (candidates.length !== 1) return false
   const candidate = candidates[0]
+  resolution.candidateId = visualDecisionCandidateId(relationship, candidate)
   if (
     candidate.sourceObjectIds.length === 0 ||
     !completeVisualCandidateAssets(reconstruction, candidate)
@@ -1782,6 +1826,9 @@ function updateVisualMatch(
       evidenceOrigin === 'human-adjudication'
         ? 'human-adjudicated-visual-match'
         : evidenceOrigin,
+      ...(evidenceOrigin === 'human-adjudication'
+        ? [`human-adjudicated-visual-kind:${relationship.kind}`]
+        : []),
       evidenceOrigin === 'human-adjudication'
         ? // `toLocaleLowerCase` folds by the runtime's locale: under `tr`/`az`
           // `AMBIGUOUS_VISUAL_MATCH` becomes `ambıguous_vısual_match`, and

@@ -14,11 +14,18 @@ export function legacyStructDigest(value: unknown, locale?: string) {
   return sha256HexSync(legacyStableSerialize(value, locale))
 }
 
-const legacyLocaleCandidates = Array.from({ length: 26 * 26 }, (_, index) => {
-  const left = String.fromCharCode(97 + Math.floor(index / 26))
-  const right = String.fromCharCode(97 + (index % 26))
-  return `${left}${right}`
-})
+const legacyLocaleCandidates = [2, 3].flatMap((length) =>
+  Array.from({ length: 26 ** length }, (_, index) => {
+    let remaining = index
+    return Array.from({ length }, () => {
+      const character = String.fromCharCode(97 + (remaining % 26))
+      remaining = Math.floor(remaining / 26)
+      return character
+    })
+      .reverse()
+      .join('')
+  }),
+)
 
 /** Reproduce every base-language collation supported by this ICU runtime. */
 export function legacyStructDigests(value: unknown) {

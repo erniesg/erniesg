@@ -130,8 +130,13 @@ function documentWithHref(href: string): StructDocument {
   })
 }
 
-function legacyDocumentWithHref(href: string): StructDocument {
+function legacyDocumentWithHref(href: string, locale?: string): StructDocument {
   const current = documentWithHref(href)
+  if (locale) {
+    current.blocks[0]!.evidence.boxes = [
+      { page: 1, x: 0.1, y: 0.2, width: 0.3, height: 0.4, rotation: 0 },
+    ]
+  }
   const {
     documentId: _documentId,
     receipt: currentReceipt,
@@ -144,11 +149,14 @@ function legacyDocumentWithHref(href: string): StructDocument {
     receipt: { ...legacyReceipt, schemaVersion: '0.1.0' },
   }
   const { receipt, ...withoutReceipt } = legacy
-  receipt.generatedSha256 = legacyStructDigest({
-    ...withoutReceipt,
-    conservation: receipt.conservation,
-    assets: legacy.assets.map(({ bytes: _bytes, ...asset }) => asset),
-  })
+  receipt.generatedSha256 = legacyStructDigest(
+    {
+      ...withoutReceipt,
+      conservation: receipt.conservation,
+      assets: legacy.assets.map(({ bytes: _bytes, ...asset }) => asset),
+    },
+    locale,
+  )
   return legacy
 }
 
@@ -173,6 +181,18 @@ describe('STRUCT EPUB href integrity', () => {
     await expect(
       buildStructEpub(legacyDocumentWithHref('#target')),
     ).resolves.toMatchObject({
+      mediaType: 'application/epub+zip',
+      mode: 'publication',
+    })
+  })
+
+  it('accepts a legacy digest created under a different ICU collation', async () => {
+    const lithuanian = legacyDocumentWithHref('#target', 'lt')
+    const english = legacyDocumentWithHref('#target', 'en')
+    expect(lithuanian.receipt.generatedSha256).not.toBe(
+      english.receipt.generatedSha256,
+    )
+    await expect(buildStructEpub(lithuanian)).resolves.toMatchObject({
       mediaType: 'application/epub+zip',
       mode: 'publication',
     })

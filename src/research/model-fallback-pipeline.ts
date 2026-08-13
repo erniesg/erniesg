@@ -6,6 +6,8 @@ import {
 import type {
   HumanAdjudicationRecord,
   PdfReconstruction,
+  PdfVisualMatchCandidate,
+  PdfVisualRelationship,
   ReconstructionDiagnostic,
 } from './import-types'
 import {
@@ -169,6 +171,7 @@ function noteDecisionPoint(
     id: stableCandidateId('note-candidate', [
       candidate.targetNoteId,
       candidate.targetRegionId,
+      String(candidate.score),
       stableModelConsultationJson(candidate.sourceBoxes),
     ]),
     associationId: candidate.targetNoteId,
@@ -328,6 +331,8 @@ function visualDecisionPoint(
     id: stableCandidateId('visual-kind-candidate', [
       sourceCandidateIds[index]!,
       relationship.kind,
+      String(candidate.score),
+      stableModelConsultationJson(candidate.sourceBoxes),
     ]),
     score: candidate.score,
     kind: relationship.kind,
@@ -475,6 +480,22 @@ function sameStringList(left: unknown, right: readonly string[]) {
   )
 }
 
+function visualInstalledSourceBoxes(
+  reconstruction: PdfReconstruction,
+  relationship: PdfVisualRelationship,
+  candidate: PdfVisualMatchCandidate,
+) {
+  const captionBox =
+    (relationship.captionNodeId
+      ? reconstruction.provenance[relationship.captionNodeId]?.boxes[0]
+      : undefined) ??
+    reconstruction.regions.find(({ id }) => id === relationship.captionRegionId)
+      ?.box
+  return captionBox
+    ? [{ ...captionBox }, ...candidate.sourceBoxes.map((box) => ({ ...box }))]
+    : null
+}
+
 function acceptedConsultationMatchesReconstruction(
   reconstruction: PdfReconstruction,
   consultation: ModelConsultationRecord,
@@ -509,6 +530,7 @@ function acceptedConsultationMatchesReconstruction(
       stableCandidateId('note-candidate', [
         currentCandidate.targetNoteId,
         currentCandidate.targetRegionId,
+        String(currentCandidate.score),
         stableModelConsultationJson(currentCandidate.sourceBoxes),
       ]) === candidate.id &&
       stableModelConsultationJson(relationship.sourceBoxes) ===
@@ -524,10 +546,31 @@ function acceptedConsultationMatchesReconstruction(
     const relationship = reconstruction.visualRelationships.find(
       ({ id }) => id === consultation.decisionId,
     )
+    const currentCandidate = relationship?.candidates.find(
+      (item) =>
+        stableCandidateId('visual-kind-candidate', [
+          item.id ?? pdfVisualMatchCandidateId(relationship.id, item),
+          relationship.kind,
+          String(item.score),
+          stableModelConsultationJson(item.sourceBoxes),
+        ]) === candidate.id,
+    )
+    const installedBoxes =
+      relationship && currentCandidate
+        ? visualInstalledSourceBoxes(
+            reconstruction,
+            relationship,
+            currentCandidate,
+          )
+        : null
     return Boolean(
       relationship?.status === 'matched' &&
+      currentCandidate &&
       relationship.kind === candidate.kind &&
       relationship.confidence === candidate.score &&
+      installedBoxes &&
+      stableModelConsultationJson(relationship.sourceBoxes) ===
+        stableModelConsultationJson(installedBoxes) &&
       sameStringList(candidate.region_ids, relationship.sourceRegionIds) &&
       sameStringList(candidate.line_ids, relationship.sourceLineIds ?? []) &&
       sameStringList(candidate.object_ids, relationship.sourceObjectIds) &&
@@ -740,11 +783,20 @@ function deterministicDecisionMatchesReconstruction(
         stableCandidateId('visual-kind-candidate', [
           candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
           relationship.kind,
+          String(candidate.score),
+          stableModelConsultationJson(candidate.sourceBoxes),
         ]) === choice.candidateId,
     )
+    const installedBoxes =
+      relationship && candidate
+        ? visualInstalledSourceBoxes(reconstruction, relationship, candidate)
+        : null
     return Boolean(
       relationship?.status === 'matched' &&
       candidate &&
+      installedBoxes &&
+      stableModelConsultationJson(relationship.sourceBoxes) ===
+        stableModelConsultationJson(installedBoxes) &&
       relationship.confidence === candidate.score &&
       sameStringList(candidate.sourceRegionIds, relationship.sourceRegionIds) &&
       sameStringList(
@@ -763,10 +815,11 @@ function deterministicDecisionMatchesReconstruction(
       ({ id }) => id === decision.decisionId,
     )
     const candidate = relationship?.candidates.find(
-      ({ targetNoteId, targetRegionId, sourceBoxes }) =>
+      ({ targetNoteId, targetRegionId, score, sourceBoxes }) =>
         stableCandidateId('note-candidate', [
           targetNoteId,
           targetRegionId,
+          String(score),
           stableModelConsultationJson(sourceBoxes),
         ]) === choice.candidateId,
     )
@@ -838,9 +891,20 @@ function humanAdjudicationSupersedesDecision(
     if (
       decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch
     ) {
+      const relationship = reconstruction.noteRelationships.find(
+        ({ id }) => id === decision.decisionId,
+      )
       return (
         adjudication.diagnosticCode === 'AMBIGUOUS_NOTE_MATCH' &&
-        adjudication.target.markerId === decision.decisionId
+        adjudication.target.markerId === decision.decisionId &&
+        adjudication.resolution.type === 'accept-note-match' &&
+        relationship?.status === 'matched' &&
+        relationship.targetNoteId === adjudication.resolution.targetNoteId &&
+        relationship.candidates.some(
+          ({ targetNoteId, targetRegionId }) =>
+            targetNoteId === adjudication.resolution.targetNoteId &&
+            targetRegionId === adjudication.resolution.targetRegionId,
+        )
       )
     }
     if (

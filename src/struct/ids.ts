@@ -10,8 +10,24 @@ export function structDigest(value: unknown) {
 }
 
 /** Digest used by serialized STRUCT 0.1.0 documents before ordering was fixed. */
-export function legacyStructDigest(value: unknown) {
-  return sha256HexSync(legacyStableSerialize(value))
+export function legacyStructDigest(value: unknown, locale?: string) {
+  return sha256HexSync(legacyStableSerialize(value, locale))
+}
+
+const legacyLocaleCandidates = Array.from({ length: 26 * 26 }, (_, index) => {
+  const left = String.fromCharCode(97 + Math.floor(index / 26))
+  const right = String.fromCharCode(97 + (index % 26))
+  return `${left}${right}`
+})
+
+/** Reproduce every base-language collation supported by this ICU runtime. */
+export function legacyStructDigests(value: unknown) {
+  return new Set([
+    legacyStructDigest(value),
+    ...Intl.Collator.supportedLocalesOf(legacyLocaleCandidates).map((locale) =>
+      legacyStructDigest(value, locale),
+    ),
+  ])
 }
 
 function stableSerialize(value: unknown): string {
@@ -32,15 +48,15 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value)
 }
 
-function legacyStableSerialize(value: unknown): string {
+function legacyStableSerialize(value: unknown, locale?: string): string {
   if (Array.isArray(value))
-    return `[${value.map(legacyStableSerialize).join(',')}]`
+    return `[${value.map((item) => legacyStableSerialize(item, locale)).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => left.localeCompare(right, locale))
       .map(
         ([key, nested]) =>
-          `${JSON.stringify(key)}:${legacyStableSerialize(nested)}`,
+          `${JSON.stringify(key)}:${legacyStableSerialize(nested, locale)}`,
       )
       .join(',')}}`
   }

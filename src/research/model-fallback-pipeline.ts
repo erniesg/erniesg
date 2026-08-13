@@ -146,6 +146,51 @@ function noteModelCandidateId(
   ])
 }
 
+function visualCandidateSetSha256(
+  relationship: PdfReconstruction['visualRelationships'][number],
+) {
+  return sha256HexSync(
+    stableModelConsultationJson(
+      relationship.candidates.map((candidate) => [
+        candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
+        relationship.kind,
+        String(candidate.score),
+        stableModelConsultationJson(candidate.sourceBoxes),
+        stableModelConsultationJson(candidate.sourceRegionIds),
+        stableModelConsultationJson(candidate.sourceLineIds ?? []),
+        stableModelConsultationJson(candidate.sourceObjectIds),
+        stableModelConsultationJson(candidate.assetIds),
+        sha256HexSync(candidate.sourceText ?? relationship.sourceText ?? ''),
+        stableModelConsultationJson(
+          safeEvidenceCodes(
+            candidate.evidence,
+            MODEL_FALLBACK_EVIDENCE_CODES.captionAssociation,
+          ),
+        ),
+      ]),
+    ),
+  )
+}
+
+function visualModelCandidateId(
+  relationship: PdfReconstruction['visualRelationships'][number],
+  candidate: PdfReconstruction['visualRelationships'][number]['candidates'][number],
+  candidateSetSha256: string,
+) {
+  return stableCandidateId('visual-kind-candidate', [
+    candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
+    relationship.kind,
+    String(candidate.score),
+    stableModelConsultationJson(candidate.sourceBoxes),
+    stableModelConsultationJson(candidate.sourceRegionIds),
+    stableModelConsultationJson(candidate.sourceLineIds ?? []),
+    stableModelConsultationJson(candidate.sourceObjectIds),
+    stableModelConsultationJson(candidate.assetIds),
+    sha256HexSync(candidate.sourceText ?? relationship.sourceText ?? ''),
+    candidateSetSha256,
+  ])
+}
+
 function compareCodeUnits(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0
 }
@@ -355,22 +400,9 @@ function visualDecisionPoint(
   )
   if (!target || !relationship || relationship.candidates.length === 0)
     return null
-  const sourceCandidateIds = relationship.candidates.map(
-    (candidate) =>
-      candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
-  )
-  const candidates = relationship.candidates.map((candidate, index) => ({
-    id: stableCandidateId('visual-kind-candidate', [
-      sourceCandidateIds[index]!,
-      relationship.kind,
-      String(candidate.score),
-      stableModelConsultationJson(candidate.sourceBoxes),
-      stableModelConsultationJson(candidate.sourceRegionIds),
-      stableModelConsultationJson(candidate.sourceLineIds ?? []),
-      stableModelConsultationJson(candidate.sourceObjectIds),
-      stableModelConsultationJson(candidate.assetIds),
-      sha256HexSync(candidate.sourceText ?? relationship.sourceText ?? ''),
-    ]),
+  const candidateSetSha256 = visualCandidateSetSha256(relationship)
+  const candidates = relationship.candidates.map((candidate) => ({
+    id: visualModelCandidateId(relationship, candidate, candidateSetSha256),
     score: candidate.score,
     kind: relationship.kind,
     region_ids: [...candidate.sourceRegionIds],
@@ -580,11 +612,22 @@ function acceptedConsultationMatchesReconstruction(
       currentCandidate !== undefined &&
       stableModelConsultationJson(currentCandidates) ===
         stableModelConsultationJson(consultation.candidates) &&
+      consultation.inputs.relationship_id === relationship.id &&
+      consultation.inputs.reference_region_id ===
+        relationship.referenceRegionId &&
+      consultation.inputs.threshold === relationship.threshold &&
+      consultation.inputs.candidate_count === relationship.candidates.length &&
       noteModelCandidateId(currentCandidate, candidateSetSha256!) ===
         candidate.id &&
       stableModelConsultationJson(relationship.sourceBoxes) ===
         stableModelConsultationJson(currentCandidate.sourceBoxes) &&
-      relationship.evidence.includes('model-consultation')
+      stableModelConsultationJson([...relationship.evidence].sort()) ===
+        stableModelConsultationJson(
+          [
+            ...(candidate.evidence_codes as string[]),
+            'model-consultation',
+          ].sort(),
+        )
     )
   }
 
@@ -595,32 +638,16 @@ function acceptedConsultationMatchesReconstruction(
     const relationship = reconstruction.visualRelationships.find(
       ({ id }) => id === consultation.decisionId,
     )
+    const candidateSetSha256 = relationship
+      ? visualCandidateSetSha256(relationship)
+      : null
     const currentCandidate = relationship?.candidates.find(
       (item) =>
-        stableCandidateId('visual-kind-candidate', [
-          item.id ?? pdfVisualMatchCandidateId(relationship.id, item),
-          relationship.kind,
-          String(item.score),
-          stableModelConsultationJson(item.sourceBoxes),
-          stableModelConsultationJson(item.sourceRegionIds),
-          stableModelConsultationJson(item.sourceLineIds ?? []),
-          stableModelConsultationJson(item.sourceObjectIds),
-          stableModelConsultationJson(item.assetIds),
-          sha256HexSync(item.sourceText ?? relationship.sourceText ?? ''),
-        ]) === candidate.id,
+        visualModelCandidateId(relationship, item, candidateSetSha256!) ===
+        candidate.id,
     )
     const currentCandidates = relationship?.candidates.map((item) => ({
-      id: stableCandidateId('visual-kind-candidate', [
-        item.id ?? pdfVisualMatchCandidateId(relationship.id, item),
-        relationship.kind,
-        String(item.score),
-        stableModelConsultationJson(item.sourceBoxes),
-        stableModelConsultationJson(item.sourceRegionIds),
-        stableModelConsultationJson(item.sourceLineIds ?? []),
-        stableModelConsultationJson(item.sourceObjectIds),
-        stableModelConsultationJson(item.assetIds),
-        sha256HexSync(item.sourceText ?? relationship.sourceText ?? ''),
-      ]),
+      id: visualModelCandidateId(relationship, item, candidateSetSha256!),
       score: item.score,
       kind: relationship.kind,
       region_ids: [...item.sourceRegionIds],
@@ -960,19 +987,13 @@ function deterministicDecisionMatchesReconstruction(
     const relationship = reconstruction.visualRelationships.find(
       ({ id }) => id === decision.decisionId,
     )
+    const candidateSetSha256 = relationship
+      ? visualCandidateSetSha256(relationship)
+      : null
     const candidate = relationship?.candidates.find(
       (candidate) =>
-        stableCandidateId('visual-kind-candidate', [
-          candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
-          relationship.kind,
-          String(candidate.score),
-          stableModelConsultationJson(candidate.sourceBoxes),
-          stableModelConsultationJson(candidate.sourceRegionIds),
-          stableModelConsultationJson(candidate.sourceLineIds ?? []),
-          stableModelConsultationJson(candidate.sourceObjectIds),
-          stableModelConsultationJson(candidate.assetIds),
-          sha256HexSync(candidate.sourceText ?? relationship.sourceText ?? ''),
-        ]) === choice.candidateId,
+        visualModelCandidateId(relationship, candidate, candidateSetSha256!) ===
+        choice.candidateId,
     )
     const installedBoxes =
       relationship && candidate

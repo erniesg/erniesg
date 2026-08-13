@@ -1567,6 +1567,9 @@ describe('human adjudication decision records', () => {
       (item) => item.code === 'AMBIGUOUS_READING_ORDER',
     )!
     targeted(readingDiagnostic)
+    readingDiagnostic.target.regionIds = [...readingDiagnostic.target.regionIds]
+      .sort()
+      .reverse()
 
     let file = createHumanDecisionFile(base.source.sha256)
     for (const [index, relationship] of base.noteRelationships.entries()) {
@@ -1609,6 +1612,13 @@ describe('human adjudication decision records', () => {
       AMBIGUOUS_NOTE_MATCH: 2,
       AMBIGUOUS_READING_ORDER: 1,
     })
+    expect(
+      result.readingOrder.resolutions.find(
+        ({ regionIds }) =>
+          JSON.stringify([...regionIds].sort()) ===
+          JSON.stringify([...readingDiagnostic.target.regionIds].sort()),
+      ),
+    ).toMatchObject({ resolutionOrigin: 'human-adjudication' })
     const reapplied = applyHumanDecisionFile(result, file)
     expect(reapplied.humanAdjudications.applied).toEqual(
       result.humanAdjudications.applied,

@@ -1226,7 +1226,12 @@ function updateReadingOrder(
     )
   reconstruction.readingOrder.order = nextOrder
   for (const resolution of reconstruction.readingOrder.resolutions) {
-    if (sameValues(resolution.regionIds, decision.target.regionIds)) {
+    if (
+      sameValues(
+        [...resolution.regionIds].sort(),
+        [...decision.target.regionIds].sort(),
+      )
+    ) {
       resolution.resolutionOrigin = resolutionOrigin
     }
   }

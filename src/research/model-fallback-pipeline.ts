@@ -470,11 +470,14 @@ function acceptedConsultationMatchesReconstruction(
       relationship?.status === 'matched' &&
       typeof candidate.note_id === 'string' &&
       typeof candidate.region_id === 'string' &&
+      typeof candidate.score === 'number' &&
       relationship.targetNoteId === candidate.note_id &&
+      relationship.confidence === candidate.score &&
       relationship.candidates.some(
-        ({ targetNoteId, targetRegionId }) =>
+        ({ targetNoteId, targetRegionId, score }) =>
           targetNoteId === candidate.note_id &&
-          targetRegionId === candidate.region_id,
+          targetRegionId === candidate.region_id &&
+          score === candidate.score,
       ) &&
       relationship.evidence.includes('model-consultation')
     )
@@ -620,9 +623,18 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
       (diagnostic) => diagnostic.target?.regionIds,
     ),
     ...list(reconstruction.humanAdjudications?.applied)
-      .filter(
-        ({ diagnosticCode }) => diagnosticCode === 'AMBIGUOUS_READING_ORDER',
-      )
+      .filter((adjudication) => {
+        if (
+          adjudication.diagnosticCode !== 'AMBIGUOUS_READING_ORDER' ||
+          adjudication.resolution.type !== 'accept-reading-order'
+        )
+          return false
+        const targetIds = new Set(adjudication.target.regionIds)
+        const installed = reconstruction.readingOrder.order.filter((id) =>
+          targetIds.has(id),
+        )
+        return sameStringList(installed, adjudication.resolution.regionIds)
+      })
       .map(({ target }) => target?.regionIds),
   ])
   for (const resolution of list(reconstruction.readingOrder?.resolutions)) {

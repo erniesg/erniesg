@@ -239,7 +239,10 @@ describe('model fallback consultation gate', () => {
     const result = await gate.decide(MODEL_FALLBACK_REFERENCE_FIXTURES[0]!)
 
     expect(result.status).toBe('consulted')
-    expect(result.choice).toEqual({ candidateId: 'caption-figure-1' })
+    expect(result.choice).toEqual({
+      candidateId: 'caption-figure-1',
+      associationId: 'figure-1',
+    })
   })
 
   it('records the request before consulting and persists candidate-constrained provenance', async () => {
@@ -268,6 +271,7 @@ describe('model fallback consultation gate', () => {
     expect(result.status).toBe('consulted')
     expect(result.choice).toEqual({
       candidateId: 'caption-figure-1',
+      associationId: 'figure-1',
     })
     expect(result.provenance).toMatchObject({
       decisionClass: MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
@@ -1071,6 +1075,36 @@ describe('model fallback consultation gate', () => {
     ).toHaveLength(2)
   })
 
+  it('canonicalizes equivalent provider metadata before stability checks', async () => {
+    const ledger = new ModelFallbackLedger()
+    let invocation = 0
+    const gate = new ModelConsultationGate({
+      enabled: true,
+      ownerOptIn: true,
+      ledger,
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          invocation += 1
+          return invocation === 1
+            ? { candidateId: 'caption-figure-1' }
+            : {
+                candidateId: 'caption-figure-1',
+                associationId: 'figure-1',
+              }
+        },
+      },
+    })
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+
+    expect((await gate.decide(point)).status).toBe('consulted')
+    expect((await gate.decide(point)).status).toBe('consulted')
+    expect(ledger.recordsFor().map(({ choice }) => choice)).toEqual([
+      { candidateId: 'caption-figure-1', associationId: 'figure-1' },
+      { candidateId: 'caption-figure-1', associationId: 'figure-1' },
+    ])
+  })
+
   it('enforces byte stability from a validated prior-run receipt without importing prior metrics', async () => {
     const point = MODEL_FALLBACK_REFERENCE_FIXTURES[1]!
     const priorLedger = new ModelFallbackLedger()
@@ -1653,7 +1687,7 @@ describe('model fallback consultation gate', () => {
     const result = await gate.decide(point)
 
     expect(result.status).toBe('deterministic')
-    expect(result.choice).toEqual({ candidateId: 'order-a-b' })
+    expect(result.choice).toEqual({ candidateId: 'order-a-b', order: 0 })
     expect(consult).not.toHaveBeenCalled()
   })
 
@@ -1739,7 +1773,10 @@ describe('model fallback consultation gate', () => {
       decisionId: 'caption-2',
     })
     expect(future.status).toBe('deterministic')
-    expect(future.choice).toEqual({ candidateId: 'caption-figure-2' })
+    expect(future.choice).toEqual({
+      candidateId: 'caption-figure-2',
+      associationId: 'figure-2',
+    })
     expect(ledger.metrics(point.documentId)).toMatchObject({
       totalConsultationCount: 1,
     })

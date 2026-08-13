@@ -198,25 +198,24 @@ function candidateChoice(
     }
   const choice: ModelFallbackChoice = {
     candidateId,
-    ...(typeof value === 'string'
-      ? {}
-      : {
-          ...(value.associationId === undefined
-            ? {}
-            : { associationId: value.associationId }),
-          ...(value.order === undefined ? {} : { order: value.order }),
-        }),
+    ...(association.id === undefined ? {} : { associationId: association.id }),
+    ...(typeof candidate.order === 'number' ? { order: candidate.order } : {}),
   }
   if (
-    choice.associationId !== undefined &&
-    choice.associationId !== association.id
+    typeof value !== 'string' &&
+    value.associationId !== undefined &&
+    value.associationId !== association.id
   )
     return {
       status: 'rejected',
       code: 'MODEL_AUTHORED_ASSOCIATION',
       message: 'The model cannot author an association outside the candidate.',
     }
-  if (choice.order !== undefined && choice.order !== candidate.order)
+  if (
+    typeof value !== 'string' &&
+    value.order !== undefined &&
+    value.order !== candidate.order
+  )
     return {
       status: 'rejected',
       code: 'MODEL_AUTHORED_ORDER',

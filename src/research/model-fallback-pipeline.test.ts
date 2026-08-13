@@ -916,6 +916,37 @@ describe('PDF model fallback production adapter', () => {
     ).toThrow('MISSING_MODEL_CONSULTATION_RECEIPT')
   })
 
+  it('does not let a forged applied decision account for a model-settled tie', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const tie = resolved.readingOrder.resolutions.find(
+      ({ status }) => status === 'ambiguous',
+    )!
+    const forged = withoutReceipt(
+      structuredClone(resolved),
+    ) as PdfReconstruction
+    forged.humanAdjudications.applied = [
+      {
+        diagnosticCode: 'AMBIGUOUS_READING_ORDER',
+        target: { markerId: null, regionIds: [...tie.regionIds] },
+        resolution: {
+          type: 'accept-reading-order',
+          regionIds: [...tie.regionIds].reverse(),
+        },
+      },
+    ]
+
+    expect(() => buildStructDocument(forged)).toThrow(
+      'MISSING_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
   it('reads model-derived state from a reconstruction that carries no adjudication record', async () => {
     // `humanAdjudications` is optional on parsed reconstructions (see the EPUB
     // round-trip shape), so a legacy document reaches STRUCT without one. An
@@ -1064,6 +1095,34 @@ describe('PDF model fallback production adapter', () => {
       true,
     )
     expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+      false,
+    )
+  })
+
+  it('binds a note consultation to its candidate score and installed confidence', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )!
+    const relationship = resolved.noteRelationships.find(
+      ({ id }) => id === consultation.decisionId,
+    )!
+    relationship.confidence = Math.max(0, relationship.confidence - 0.1)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
       false,
     )
   })

@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
-import type { PdfReconstruction } from './import-types'
+import type { NormalizedSourceBox, PdfReconstruction } from './import-types'
 import {
   applyHumanDecisionFile,
   createHumanDecisionFile,
@@ -76,7 +76,7 @@ describe('PDF model fallback production adapter', () => {
     )
     const localeCompare = vi
       .spyOn(String.prototype, 'localeCompare')
-      .mockImplementation(function (other) {
+      .mockImplementation(function (this: string, other: string) {
         return this < String(other) ? 1 : this > String(other) ? -1 : 0
       })
     try {
@@ -1262,7 +1262,8 @@ describe('PDF model fallback production adapter', () => {
     const relationship = resolved.noteRelationships.find(
       ({ id }) => id === consultation.decisionId,
     )!
-    const replacementBoxes = relationship.sourceBoxes.length
+    const replacementBoxes: NormalizedSourceBox[] = relationship.sourceBoxes
+      .length
       ? []
       : [
           {

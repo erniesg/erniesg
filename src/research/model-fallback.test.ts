@@ -1792,6 +1792,11 @@ describe('model fallback consultation gate', () => {
     expect(ledger.metrics(point.documentId)).toMatchObject({
       totalConsultationCount: 1,
     })
+    expect(ledger.distillation.entry(point.decisionClass)).toMatchObject({
+      retired: true,
+      fixtureCount: 2,
+      consultationCount: 0,
+    })
   })
 
   it('never exposes private decision points through distillation APIs', () => {

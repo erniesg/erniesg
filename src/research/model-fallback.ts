@@ -1434,13 +1434,28 @@ export class ModelConsultationGate {
         )
       }
       const checked = candidateChoice(distilledPoint, distilledChoice)
-      if (checked.status === 'accepted')
+      if (checked.status === 'accepted') {
+        const fixture = this.ledger.distillation.registerFixture(distilledPoint)
+        if (
+          fixture.resolution !== 'deterministic-decided' ||
+          fixture.deterministicRuleId !==
+            this.ledger.distillation.ruleIdFor(point.decisionClass) ||
+          stableJson(fixture.modelPath.choice) !== stableJson(checked.choice)
+        ) {
+          return this.reviewOutcome(
+            point,
+            'DISTILLATION_RULE_REPLAY_MISMATCH',
+            true,
+            invocation,
+          )
+        }
         return this.deterministicOutcome(
           point,
           checked.choice,
           this.ledger.distillation.ruleIdFor(point.decisionClass)!,
           invocation,
         )
+      }
       const diagnostic = `DISTILLED_RULE_${checked.code}`
       try {
         this.ledger.distillation.recordUncoveredFixture(

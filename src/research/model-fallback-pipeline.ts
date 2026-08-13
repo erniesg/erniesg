@@ -334,7 +334,11 @@ function visualDecisionPoint(
       relationship.kind,
       String(candidate.score),
       stableModelConsultationJson(candidate.sourceBoxes),
-      sha256HexSync(candidate.sourceText ?? ''),
+      stableModelConsultationJson(candidate.sourceRegionIds),
+      stableModelConsultationJson(candidate.sourceLineIds ?? []),
+      stableModelConsultationJson(candidate.sourceObjectIds),
+      stableModelConsultationJson(candidate.assetIds),
+      sha256HexSync(candidate.sourceText ?? relationship.sourceText ?? ''),
     ]),
     score: candidate.score,
     kind: relationship.kind,
@@ -573,7 +577,11 @@ function acceptedConsultationMatchesReconstruction(
           relationship.kind,
           String(item.score),
           stableModelConsultationJson(item.sourceBoxes),
-          sha256HexSync(item.sourceText ?? ''),
+          stableModelConsultationJson(item.sourceRegionIds),
+          stableModelConsultationJson(item.sourceLineIds ?? []),
+          stableModelConsultationJson(item.sourceObjectIds),
+          stableModelConsultationJson(item.assetIds),
+          sha256HexSync(item.sourceText ?? relationship.sourceText ?? ''),
         ]) === candidate.id,
     )
     const currentCandidates = relationship?.candidates.map((item) => ({
@@ -582,7 +590,11 @@ function acceptedConsultationMatchesReconstruction(
         relationship.kind,
         String(item.score),
         stableModelConsultationJson(item.sourceBoxes),
-        sha256HexSync(item.sourceText ?? ''),
+        stableModelConsultationJson(item.sourceRegionIds),
+        stableModelConsultationJson(item.sourceLineIds ?? []),
+        stableModelConsultationJson(item.sourceObjectIds),
+        stableModelConsultationJson(item.assetIds),
+        sha256HexSync(item.sourceText ?? relationship.sourceText ?? ''),
       ]),
       score: item.score,
       kind: relationship.kind,
@@ -609,6 +621,7 @@ function acceptedConsultationMatchesReconstruction(
       currentCandidates &&
       stableModelConsultationJson(currentCandidates) ===
         stableModelConsultationJson(consultation.candidates) &&
+      consultation.inputs.caption_region_id === relationship.captionRegionId &&
       relationship.kind === candidate.kind &&
       relationship.confidence === candidate.score &&
       installedBoxes &&
@@ -929,7 +942,11 @@ function deterministicDecisionMatchesReconstruction(
           relationship.kind,
           String(candidate.score),
           stableModelConsultationJson(candidate.sourceBoxes),
-          sha256HexSync(candidate.sourceText ?? ''),
+          stableModelConsultationJson(candidate.sourceRegionIds),
+          stableModelConsultationJson(candidate.sourceLineIds ?? []),
+          stableModelConsultationJson(candidate.sourceObjectIds),
+          stableModelConsultationJson(candidate.assetIds),
+          sha256HexSync(candidate.sourceText ?? relationship.sourceText ?? ''),
         ]) === choice.candidateId,
     )
     const installedBoxes =

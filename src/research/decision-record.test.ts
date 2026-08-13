@@ -13,6 +13,7 @@ import {
   readingOrderCandidates,
   serializeHumanDecisionFile,
   upsertHumanDecision,
+  visualDecisionCandidateId,
 } from './decision-record'
 import { verifyEquationTranscriptAdjudication } from './equation-transcript-adjudication'
 import {
@@ -1992,6 +1993,21 @@ describe('human adjudication decision records', () => {
       ]),
     )
     expect(JSON.stringify(replay)).toBe(JSON.stringify(first))
+  })
+
+  it('binds an inherited visual candidate text in its decision ID', async () => {
+    const base = await ambiguousVisualReconstruction()
+    const relationship = base.visualRelationships[0]
+    const candidate = relationship.candidates[0]
+    candidate.sourceText = undefined
+    relationship.sourceText = 'inherited candidate text alpha'
+    const original = visualDecisionCandidateId(relationship, candidate)
+
+    relationship.sourceText = 'inherited candidate text beta'
+
+    expect(visualDecisionCandidateId(relationship, candidate)).not.toBe(
+      original,
+    )
   })
 
   it('keeps the named visual adjudication fixture review-required with both visual blockers', async () => {

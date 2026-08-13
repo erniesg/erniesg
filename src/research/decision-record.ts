@@ -755,7 +755,9 @@ export function visualDecisionCandidateId(
       sourceLineIds: candidate.sourceLineIds ?? [],
       sourceObjectIds: candidate.sourceObjectIds,
       assetIds: candidate.assetIds,
-      sourceTextSha256: sha256HexSync(candidate.sourceText ?? ''),
+      sourceTextSha256: sha256HexSync(
+        candidate.sourceText ?? relationship.sourceText ?? '',
+      ),
     }),
   )}`
 }

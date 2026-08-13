@@ -184,7 +184,7 @@ function assertStructReceiptIntegrity(document: StructDocument) {
     document.schemaVersion === STRUCT_SCHEMA_VERSION &&
     receipt.schemaVersion === STRUCT_SCHEMA_VERSION
   if (
-    (!hasLegacyDocumentBinding && !hasBoundDocumentId) ||
+    (!(hasLegacySchema && hasLegacyDocumentBinding) && !hasBoundDocumentId) ||
     (!hasLegacySchema && !hasCurrentSchema) ||
     receipt.sourceSha256 !== document.source.sha256 ||
     receipt.blockCount !== document.blocks.length ||

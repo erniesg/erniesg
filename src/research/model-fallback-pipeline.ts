@@ -309,8 +309,15 @@ function visualDecisionPoint(
   )
   if (!target || !relationship || relationship.candidates.length === 0)
     return null
-  const candidates = relationship.candidates.map((candidate) => ({
-    id: candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
+  const sourceCandidateIds = relationship.candidates.map(
+    (candidate) =>
+      candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
+  )
+  const candidates = relationship.candidates.map((candidate, index) => ({
+    id: stableCandidateId('visual-kind-candidate', [
+      sourceCandidateIds[index]!,
+      relationship.kind,
+    ]),
     score: candidate.score,
     kind: relationship.kind,
     region_ids: [...candidate.sourceRegionIds],
@@ -322,6 +329,12 @@ function visualDecisionPoint(
       MODEL_FALLBACK_EVIDENCE_CODES.captionAssociation,
     ),
   }))
+  const sourceCandidateIdByDecisionId = new Map(
+    candidates.map((candidate, index) => [
+      candidate.id,
+      sourceCandidateIds[index]!,
+    ]),
+  )
   return {
     point: {
       documentId: reconstruction.paper.id,
@@ -340,18 +353,20 @@ function visualDecisionPoint(
       status: 'ambiguous',
       insufficientEvidence: true,
     },
-    decisionFor: ({ candidateId }) =>
-      candidates.some(({ id }) => id === candidateId)
+    decisionFor: ({ candidateId }) => {
+      const sourceCandidateId = sourceCandidateIdByDecisionId.get(candidateId)
+      return sourceCandidateId
         ? {
             diagnosticCode: diagnostic.code,
             target,
             resolution: {
               type: 'accept-visual-match',
               relationshipId: relationship.id,
-              candidateId,
+              candidateId: sourceCandidateId,
             },
           }
-        : null,
+        : null
+    },
   }
 }
 
@@ -466,6 +481,12 @@ function acceptedConsultationMatchesReconstruction(
     const relationship = reconstruction.noteRelationships.find(
       ({ id }) => id === consultation.decisionId,
     )
+    const currentCandidate = relationship?.candidates.find(
+      ({ targetNoteId, targetRegionId, score }) =>
+        targetNoteId === candidate.note_id &&
+        targetRegionId === candidate.region_id &&
+        score === candidate.score,
+    )
     return (
       relationship?.status === 'matched' &&
       typeof candidate.note_id === 'string' &&
@@ -473,12 +494,9 @@ function acceptedConsultationMatchesReconstruction(
       typeof candidate.score === 'number' &&
       relationship.targetNoteId === candidate.note_id &&
       relationship.confidence === candidate.score &&
-      relationship.candidates.some(
-        ({ targetNoteId, targetRegionId, score }) =>
-          targetNoteId === candidate.note_id &&
-          targetRegionId === candidate.region_id &&
-          score === candidate.score,
-      ) &&
+      currentCandidate !== undefined &&
+      stableModelConsultationJson(relationship.sourceBoxes) ===
+        stableModelConsultationJson(currentCandidate.sourceBoxes) &&
       relationship.evidence.includes('model-consultation')
     )
   }
@@ -521,9 +539,26 @@ function acceptedConsultationMatchesReconstruction(
     const installedOrder = reconstruction.readingOrder.order.filter((id) =>
       targetIds.has(id),
     )
+    const regionById = new Map(
+      reconstruction.regions.map((region) => [region.id, region]),
+    )
+    const installedRegionEvidence = chosen.map((id) => {
+      const region = regionById.get(id)
+      return region
+        ? {
+            id: region.id,
+            kind: region.kind,
+            column: region.column,
+            page: region.page,
+          }
+        : null
+    })
     return (
       installedOrder.length === targetIds.size &&
-      sameStringList(installedOrder, chosen)
+      sameStringList(installedOrder, chosen) &&
+      !installedRegionEvidence.includes(null) &&
+      stableModelConsultationJson(installedRegionEvidence) ===
+        stableModelConsultationJson(candidate.regions)
     )
   }
 
@@ -686,9 +721,10 @@ function deterministicDecisionMatchesReconstruction(
     )
     const candidate = relationship?.candidates.find(
       (candidate) =>
-        (candidate.id ??
-          pdfVisualMatchCandidateId(relationship.id, candidate)) ===
-        choice.candidateId,
+        stableCandidateId('visual-kind-candidate', [
+          candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
+          relationship.kind,
+        ]) === choice.candidateId,
     )
     return Boolean(
       relationship?.status === 'matched' &&
@@ -720,6 +756,8 @@ function deterministicDecisionMatchesReconstruction(
       candidate &&
       relationship.targetNoteId === candidate.targetNoteId &&
       relationship.confidence === candidate.score &&
+      stableModelConsultationJson(relationship.sourceBoxes) ===
+        stableModelConsultationJson(candidate.sourceBoxes) &&
       relationship.evidence.includes('deterministic-distillation'),
     )
   }

@@ -178,6 +178,16 @@ describe('STRUCT EPUB href integrity', () => {
     })
   })
 
+  it('requires document bindings on current 0.2.0 documents', async () => {
+    const document = documentWithHref('#target')
+    delete document.documentId
+    delete document.receipt.documentId
+
+    await expect(buildStructEpub(refreshReceipt(document))).rejects.toThrow(
+      'STRUCT_RECEIPT_BINDING_MISMATCH',
+    )
+  })
+
   it('rejects partial or invalid document bindings', async () => {
     const invalidBindings: Array<[string, (document: StructDocument) => void]> =
       [

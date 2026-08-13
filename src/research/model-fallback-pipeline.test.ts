@@ -386,6 +386,39 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('binds a deterministic visual decision to its selected kind', async () => {
+    const [point] = modelDecisionPointsForPdf(
+      visualAdjudicationRequired,
+    ).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
+    )
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'caption-kind-binding-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const relationship = resolved.visualRelationships.find(({ evidence }) =>
+      evidence.includes('deterministic-distillation'),
+    )!
+    relationship.kind = relationship.kind === 'figure' ? 'table' : 'figure'
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
   it('automatically retires a fully covered caption class for normal strict opt-in options', async () => {
     const consult = vi.fn((request: ModelDecisionRequest) => ({
       candidateId: request.candidates[0]!.id,
@@ -1132,6 +1165,37 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('binds a reading-order consultation to its recorded region evidence', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass, status }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie &&
+        status === 'accepted',
+    )!
+    const candidate = consultation.candidates.find(
+      ({ id }) => id === consultation.choice!.candidateId,
+    )!
+    const regionId = (candidate.region_ids as string[])[0]!
+    const region = resolved.regions.find(({ id }) => id === regionId)!
+    region.column = region.column === 'left' ? 'right' : 'left'
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
   it('binds a note consultation to its candidate score and installed confidence', async () => {
     const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
       enabled: true,
@@ -1149,6 +1213,47 @@ describe('PDF model fallback production adapter', () => {
       ({ id }) => id === consultation.decisionId,
     )!
     relationship.confidence = Math.max(0, relationship.confidence - 0.1)
+    resolved.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        resolved,
+        resolved.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds a note consultation to the installed candidate source boxes', async () => {
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const consultation = resolved.modelConsultations!.consultations.find(
+      ({ decisionClass, status }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch &&
+        status === 'accepted',
+    )!
+    const relationship = resolved.noteRelationships.find(
+      ({ id }) => id === consultation.decisionId,
+    )!
+    relationship.sourceBoxes = relationship.sourceBoxes.length
+      ? []
+      : [
+          {
+            page: 999,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rotation: 0,
+            method: 'pdf-text',
+          },
+        ]
     resolved.modelConsultations!.semanticStateSha256 =
       pdfModelConsultationSemanticStateSha256(
         resolved,

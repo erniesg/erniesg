@@ -501,6 +501,89 @@ function readingOrderDecisionStillInstalled(
   return sameValues(installed, decision.resolution.regionIds)
 }
 
+function noteDecisionStillInstalled(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+) {
+  if (
+    decision.diagnosticCode !== 'AMBIGUOUS_NOTE_MATCH' ||
+    decision.resolution.type !== 'accept-note-match'
+  ) {
+    return false
+  }
+  const resolution = decision.resolution
+  const relationship = reconstruction.noteRelationships.find(
+    ({ id }) => id === decision.target.markerId,
+  )
+  const candidates = relationship?.candidates.filter(
+    ({ targetNoteId, targetRegionId }) =>
+      targetNoteId === resolution.targetNoteId &&
+      targetRegionId === resolution.targetRegionId,
+  )
+  const candidate = candidates?.length === 1 ? candidates[0] : undefined
+  return Boolean(
+    relationship?.status === 'matched' &&
+    relationship.evidence.includes('human-adjudication') &&
+    candidate &&
+    relationship.targetNoteId === candidate.targetNoteId &&
+    relationship.confidence === candidate.score &&
+    JSON.stringify(relationship.sourceBoxes) ===
+      JSON.stringify(candidate.sourceBoxes),
+  )
+}
+
+function visualDecisionStillInstalled(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+) {
+  if (
+    decision.diagnosticCode !== 'AMBIGUOUS_VISUAL_MATCH' ||
+    decision.resolution.type !== 'accept-visual-match'
+  ) {
+    return false
+  }
+  const resolution = decision.resolution
+  const relationship = reconstruction.visualRelationships.find(
+    ({ id }) =>
+      id === decision.target.markerId && id === resolution.relationshipId,
+  )
+  const candidates = relationship?.candidates.filter(
+    (candidate) =>
+      (candidate.id ??
+        pdfVisualMatchCandidateId(relationship.id, candidate)) ===
+      resolution.candidateId,
+  )
+  const candidate = candidates?.length === 1 ? candidates[0] : undefined
+  const captionBox = relationship
+    ? ((relationship.captionNodeId
+        ? reconstruction.provenance[relationship.captionNodeId]?.boxes[0]
+        : undefined) ??
+      reconstruction.regions.find(
+        ({ id }) => id === relationship.captionRegionId,
+      )?.box)
+    : undefined
+  const installedBoxes =
+    captionBox && candidate
+      ? [{ ...captionBox }, ...candidate.sourceBoxes.map((box) => ({ ...box }))]
+      : null
+  return Boolean(
+    relationship?.status === 'matched' &&
+    relationship.evidence.includes('human-adjudicated-visual-match') &&
+    candidate &&
+    installedBoxes &&
+    relationship.confidence === candidate.score &&
+    JSON.stringify(relationship.sourceBoxes) ===
+      JSON.stringify(installedBoxes) &&
+    sameValues(relationship.sourceRegionIds, candidate.sourceRegionIds) &&
+    sameValues(
+      relationship.sourceLineIds ?? [],
+      candidate.sourceLineIds ?? [],
+    ) &&
+    sameValues(relationship.sourceObjectIds, candidate.sourceObjectIds) &&
+    sameValues(relationship.assetIds, candidate.assetIds),
+  )
+}
+
 export function parseHumanDecisionFile(input: string | unknown) {
   if (
     typeof input === 'string' &&
@@ -791,10 +874,11 @@ function updateNoteRelationship(
     const targetNote = reconstruction.paper.nodes.find(
       (node) => node.id === candidate.targetNoteId && node.type === 'footnote',
     )
+    const authorAnchor = relationship.canonicalAnchor?.kind === 'author'
     if (
       !targetNote ||
-      !referenceNode ||
-      (referenceNode.type === 'figure' && !tableCellAnchor)
+      (!referenceNode && !authorAnchor) ||
+      (referenceNode?.type === 'figure' && !tableCellAnchor)
     ) {
       return false
     }
@@ -990,7 +1074,7 @@ function updateNoteRelationship(
         ),
     )
   }
-  let projectedNoteReference = false
+  let projectedNoteReference = relationship.canonicalAnchor?.kind === 'author'
   if (targetNoteId && referenceNode && referenceNode.type !== 'figure') {
     referenceNode.noteReferences = [
       ...(referenceNode.noteReferences ?? []),
@@ -2021,6 +2105,16 @@ export function applyHumanDecisionFile(
         ? decorationReceipt !== null ||
           updateVisualMatch(result, diagnostic, decision)
         : false
+      if (
+        !diagnostic &&
+        existingAdjudications.applied.some((candidate) =>
+          sameDecision(candidate, decision),
+        ) &&
+        visualDecisionStillInstalled(result, decision)
+      ) {
+        applied.push(decision)
+        continue
+      }
       if (!diagnostic || !appliedLegally) {
         stale.push({
           ...decision,
@@ -2050,7 +2144,8 @@ export function applyHumanDecisionFile(
         existingAdjudications.applied.some((candidate) =>
           sameDecision(candidate, decision),
         ) &&
-        readingOrderDecisionStillInstalled(result, decision)
+        (readingOrderDecisionStillInstalled(result, decision) ||
+          noteDecisionStillInstalled(result, decision))
       ) {
         applied.push(decision)
         continue

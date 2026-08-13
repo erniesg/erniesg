@@ -724,6 +724,11 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     }
   }
   for (const relationship of list(reconstruction.visualRelationships)) {
+    const rankedScores = relationship.candidates
+      .map(({ score }) => score)
+      .sort((left, right) => right - left)
+    const intrinsicallyAmbiguous =
+      rankedScores.length > 1 && rankedScores[0]! - rankedScores[1]! < 0.08
     const humanAccounted = list(
       reconstruction.humanAdjudications?.applied,
     ).some((adjudication) => {
@@ -774,7 +779,7 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     if (
       attributed(relationship.evidence) ||
       (relationship.status === 'matched' &&
-        relationship.candidates.length > 1 &&
+        intrinsicallyAmbiguous &&
         !humanAccounted)
     ) {
       keys.add(
@@ -1139,6 +1144,16 @@ function existingReceiptMatchesReconstruction(
     if (decision.outcome === 'review-required') {
       return humanAdjudicationSupersedesDecision(reconstruction, decision)
     }
+    const latestConsultation = consultations.at(-1)
+    if (
+      decision.outcome === 'consulted' &&
+      accepted.length === 0 &&
+      latestConsultation &&
+      (latestConsultation.status === 'failed' ||
+        latestConsultation.status === 'rejected')
+    ) {
+      return humanAdjudicationSupersedesDecision(reconstruction, decision)
+    }
     if (decision.outcome === 'deterministic') {
       if (priorResolved || accepted.length > 0) return false
       const evidence = consultations[0]
@@ -1159,7 +1174,6 @@ function existingReceiptMatchesReconstruction(
       )
     }
 
-    const latestConsultation = consultations.at(-1)
     if (
       priorResolved ||
       accepted.length !== 1 ||

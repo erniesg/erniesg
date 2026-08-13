@@ -1608,6 +1608,11 @@ describe('human adjudication decision records', () => {
       AMBIGUOUS_NOTE_MATCH: 2,
       AMBIGUOUS_READING_ORDER: 1,
     })
+    const reapplied = applyHumanDecisionFile(result, file)
+    expect(reapplied.humanAdjudications.applied).toEqual(
+      result.humanAdjudications.applied,
+    )
+    expect(reapplied.humanAdjudications.stale).toEqual([])
 
     await expect(buildEpub(result.paper, result)).rejects.toThrow(
       /UNPROVENANCED_RENDERED_UNIT/u,
@@ -1678,6 +1683,50 @@ describe('human adjudication decision records', () => {
       relationships: { backlinks: expect.arrayContaining([relationship.id]) },
     })
     expect(result.humanAdjudications.stale).toEqual([])
+  })
+
+  it('accepts an ambiguous note match owned by an author anchor', async () => {
+    const base = await reconstructPdf(
+      await fixtureFile('adjudication-required.pdf'),
+    )
+    const relationship = base.noteRelationships.find(
+      ({ candidates }) => candidates.length > 0,
+    )!
+    const diagnostic = base.diagnostics.find(
+      ({ code, target }) =>
+        code === 'AMBIGUOUS_NOTE_MATCH' && target?.markerId === relationship.id,
+    )!
+    const candidate = relationship.candidates[0]!
+    relationship.canonicalAnchor = { kind: 'author', author: 'Ada Example' }
+    base.paper.nodes = base.paper.nodes.filter(
+      (node) =>
+        !base.provenance[node.id]?.regionIds.includes(
+          relationship.referenceRegionId,
+        ),
+    )
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(base.source.sha256),
+      {
+        diagnosticCode: diagnostic.code,
+        target: diagnostic.target!,
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      },
+    )
+
+    const result = applyHumanDecisionFile(base, file)
+
+    expect(result.humanAdjudications.applied).toHaveLength(1)
+    expect(
+      result.noteRelationships.find(({ id }) => id === relationship.id),
+    ).toMatchObject({
+      status: 'matched',
+      targetNoteId: candidate.targetNoteId,
+      canonicalAnchor: { kind: 'author', author: 'Ada Example' },
+    })
   })
 
   it.each(['reclassify-citation', 'reclassify-plain-text'] as const)(
@@ -1872,11 +1921,17 @@ describe('human adjudication decision records', () => {
     )
     const serialized = serializeHumanDecisionFile(file)
     const first = applyHumanDecisionFile(base, file)
+    const reapplied = applyHumanDecisionFile(first, file)
     const replay = applyHumanDecisionFile(
       base,
       parseHumanDecisionFile(serialized),
     )
     const resolved = first.visualRelationships[0]
+
+    expect(reapplied.humanAdjudications.applied).toEqual(
+      first.humanAdjudications.applied,
+    )
+    expect(reapplied.humanAdjudications.stale).toEqual([])
 
     expect(JSON.parse(serialized)).toEqual({
       schemaVersion: '1.3.0',

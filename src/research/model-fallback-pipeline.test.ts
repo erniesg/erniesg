@@ -682,6 +682,46 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('lets verified human review supersede a failed consultation', async () => {
+    const failed = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          throw new Error('provider failed')
+        },
+      },
+    })
+    const relationship = failed.noteRelationships.find(
+      ({ candidates }) => candidates.length > 0,
+    )!
+    const diagnostic = failed.diagnostics.find(
+      ({ code, target }) =>
+        code === 'AMBIGUOUS_NOTE_MATCH' && target?.markerId === relationship.id,
+    )!
+    const candidate = relationship.candidates[0]!
+    const file = upsertHumanDecision(
+      createHumanDecisionFile(failed.source.sha256),
+      {
+        diagnosticCode: diagnostic.code,
+        target: structuredClone(diagnostic.target!),
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      },
+    )
+
+    const adjudicated = applyHumanDecisionFile(failed, file)
+
+    expect(adjudicated.humanAdjudications.applied).toHaveLength(1)
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+  })
+
   it('rebinds model receipts after later human adjudication changes semantic state', async () => {
     const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
       enabled: true,
@@ -954,6 +994,23 @@ describe('PDF model fallback production adapter', () => {
     expect(() =>
       buildStructDocument(withoutReceipt(stripped) as PdfReconstruction),
     ).toThrow('MISSING_MODEL_CONSULTATION_RECEIPT')
+  })
+
+  it('does not infer model provenance from a confident multi-candidate visual match', () => {
+    const ordinary = structuredClone(visualAdjudicationRequired)
+    const relationship = ordinary.visualRelationships.find(
+      ({ candidates }) => candidates.length > 1,
+    )!
+    const ranked = [...relationship.candidates].sort(
+      (left, right) => right.score - left.score,
+    )
+    ranked[0]!.score = 0.9
+    ranked[1]!.score = 0.7
+    relationship.status = 'matched'
+    relationship.confidence = ranked[0]!.score
+    relationship.evidence = []
+
+    expect(pdfModelDerivedDecisionKeys(ordinary).size).toBe(0)
   })
 
   it('attributes a settled tie whose own confidence still records it as unsettled', async () => {

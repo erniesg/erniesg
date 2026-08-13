@@ -206,10 +206,15 @@ async function main() {
       ...aggregateReceipt(retiredReceipt, retiredProviderCalls, true),
     )
 
+    // The receipt validator checks records positionally, so this order is
+    // load-bearing for a required gate. Order by code unit rather than by the
+    // runner's ICU collation.
+    const byCodeUnit = (left: string, right: string) =>
+      left < right ? -1 : left > right ? 1 : 0
     records.sort(
       (left, right) =>
-        left.documentIdSha256.localeCompare(right.documentIdSha256) ||
-        left.decisionClass.localeCompare(right.decisionClass) ||
+        byCodeUnit(left.documentIdSha256, right.documentIdSha256) ||
+        byCodeUnit(left.decisionClass, right.decisionClass) ||
         Number(left.retired) - Number(right.retired),
     )
     const evidence = { records }

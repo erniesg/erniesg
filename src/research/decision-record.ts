@@ -474,6 +474,33 @@ function sameTarget(
   )
 }
 
+function sameDecision(
+  left: HumanAdjudicationRecord,
+  right: HumanAdjudicationRecord,
+) {
+  return (
+    JSON.stringify(normalizedRecord(left)) ===
+    JSON.stringify(normalizedRecord(right))
+  )
+}
+
+function readingOrderDecisionStillInstalled(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+) {
+  if (
+    decision.diagnosticCode !== 'AMBIGUOUS_READING_ORDER' ||
+    decision.resolution.type !== 'accept-reading-order'
+  ) {
+    return false
+  }
+  const targetIds = new Set(decision.target.regionIds)
+  const installed = reconstruction.readingOrder.order.filter((regionId) =>
+    targetIds.has(regionId),
+  )
+  return sameValues(installed, decision.resolution.regionIds)
+}
+
 export function parseHumanDecisionFile(input: string | unknown) {
   if (
     typeof input === 'string' &&
@@ -1672,10 +1699,15 @@ function updateVisualMatch(
         ? 'human-adjudicated-visual-match'
         : evidenceOrigin,
       evidenceOrigin === 'human-adjudication'
-        ? `human-adjudicated-${diagnostic.code.toLocaleLowerCase()}`
+        ? // `toLocaleLowerCase` folds by the runtime's locale: under `tr`/`az`
+          // `AMBIGUOUS_VISUAL_MATCH` becomes `ambıguous_vısual_match`, and
+          // these strings are serialized into both the EPUB manifest and the
+          // STRUCT relationships. The published bytes must not depend on the
+          // host's locale.
+          `human-adjudicated-${diagnostic.code.toLowerCase()}`
         : evidenceOrigin === 'model-consultation'
-          ? `model-consulted-${diagnostic.code.toLocaleLowerCase()}`
-          : `deterministically-distilled-${diagnostic.code.toLocaleLowerCase()}`,
+          ? `model-consulted-${diagnostic.code.toLowerCase()}`
+          : `deterministically-distilled-${diagnostic.code.toLowerCase()}`,
     ],
     sourceBoxes: [
       { ...captionBox },
@@ -2014,6 +2046,15 @@ export function applyHumanDecisionFile(
     }
     const diagnostic = diagnosticForDecision(result, decision)
     if (!diagnostic) {
+      if (
+        existingAdjudications.applied.some((candidate) =>
+          sameDecision(candidate, decision),
+        ) &&
+        readingOrderDecisionStillInstalled(result, decision)
+      ) {
+        applied.push(decision)
+        continue
+      }
       stale.push({ ...decision, reason: 'diagnostic-target-missing' })
       continue
     }

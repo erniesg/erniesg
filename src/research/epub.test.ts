@@ -4347,6 +4347,21 @@ describe('EPUB 3 export', () => {
     expect(manifest.modelConsultations).toEqual(modelConsultations)
   })
 
+  it('refuses to publish model-derived state whose receipt was dropped', async () => {
+    // The receipt was validated only when present, so deleting it laundered
+    // the provenance: STRUCT refuses the same document with
+    // MISSING_MODEL_CONSULTATION_RECEIPT, but the research EPUB — a shipping
+    // export path — published it. A guarantee enforceable on one of two exits
+    // is not a guarantee.
+    const laundered = await resolvedVisualModelConsultation()
+    expect(laundered.modelConsultations).toBeDefined()
+    delete (laundered as { modelConsultations?: unknown }).modelConsultations
+
+    await expect(buildReadableEpub(laundered.paper, laundered)).rejects.toThrow(
+      'MISSING_MODEL_CONSULTATION_RECEIPT',
+    )
+  })
+
   it('rejects a same-source receipt for a differently resolved PDF at the direct EPUB boundary', async () => {
     const first = await resolvedVisualModelConsultation(0)
     const differentlyResolved = await resolvedVisualModelConsultation(1)

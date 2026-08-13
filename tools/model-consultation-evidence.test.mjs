@@ -147,16 +147,22 @@ describe('model-consultation evidence', () => {
       },
     )
 
-    expect(evidence.status, evidence.stderr || evidence.stdout).toBe(0)
+    // This lane writes a real manifest under `.agent/evidence/`. Asserting
+    // before the cleanup is armed leaves that manifest behind on failure, and
+    // the workflow then fails with "found 2 manifests" instead of the actual
+    // reason, skipping manifest validation entirely. Arm the cleanup on
+    // anything this run may have written, then assert inside it.
     const manifestMatch = evidence.stdout.match(
       /\[agent-evidence\] passed: (.+\/manifest\.json)\s*$/u,
     )
-    expect(manifestMatch).not.toBeNull()
-    const manifestPath = resolve(manifestMatch[1])
-    const evidenceDirectory = dirname(manifestPath)
     const evidenceRoot = resolve('.agent/evidence')
-    const removable = dirname(evidenceDirectory) === evidenceRoot
+    const manifestPath = manifestMatch ? resolve(manifestMatch[1]) : null
+    const evidenceDirectory = manifestPath ? dirname(manifestPath) : null
+    const removable =
+      evidenceDirectory !== null && dirname(evidenceDirectory) === evidenceRoot
     try {
+      expect(evidence.status, evidence.stderr || evidence.stdout).toBe(0)
+      expect(manifestMatch).not.toBeNull()
       expect(removable).toBe(true)
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
       expect(manifest.lanes_run).toEqual(['association-audit', 'unit'])

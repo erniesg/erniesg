@@ -704,6 +704,48 @@ describe('PDF model fallback production adapter', () => {
     },
   )
 
+  it('keeps the persisted receipt identical when only the provider timing differs', async () => {
+    // `latencyMs` and `costUsd` are wall-clock and billing measurements. The
+    // receipt is embedded in the EPUB and folded into the STRUCT digest, so
+    // persisting them makes the same PDF, same model, and same choices produce
+    // a different document identity on every run against a real provider.
+    const resolveWith = (latencyMs: number, costUsd: number) =>
+      resolvePdfModelFallbacks(adjudicationRequired, {
+        enabled: true,
+        ownerOptIn: true,
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({
+            proposal: { candidateId: request.candidates[0]!.id },
+            latencyMs,
+            costUsd,
+          }),
+        },
+      })
+
+    const [fast, slow] = await Promise.all([
+      resolveWith(11, 0.001),
+      resolveWith(37, 0.009),
+    ])
+
+    expect(slow.modelConsultations).toEqual(fast.modelConsultations)
+    expect(
+      slow.modelConsultations!.consultations.map(
+        ({ latencyMs, costUsd }) => `${latencyMs}:${costUsd}`,
+      ),
+    ).toEqual(
+      fast.modelConsultations!.consultations.map(
+        ({ latencyMs, costUsd }) => `${latencyMs}:${costUsd}`,
+      ),
+    )
+    expect(fast.modelConsultations!.consultations.length).toBeGreaterThan(0)
+    expect(
+      buildStructDocument(slow as PdfReconstruction).receipt.generatedSha256,
+    ).toEqual(
+      buildStructDocument(fast as PdfReconstruction).receipt.generatedSha256,
+    )
+  })
+
   it('attributes model work stamped only by a per-diagnostic evidence marker', async () => {
     // `materializeVisualRelationship` stamps both a bare origin and a
     // per-diagnostic `<origin>-<code>` marker. Matching the bare origin exactly
@@ -764,11 +806,18 @@ describe('PDF model fallback production adapter', () => {
     expect(pdfModelDerivedDecisionKeys(relabelled)).toEqual(expected)
   })
 
-  it('refuses to let a narrower diagnostic account for a whole reading-order tie', async () => {
-    // A genuine open-tie diagnostic targets exactly the tied regions and
-    // carries the ambiguous resolution. Containment matching would let any
-    // single-region diagnostic — including the `SOURCE_ORDER_FLOAT_FALLBACK`
-    // downgrade, which targets one reference region — vouch for the tie.
+  it('accounts for a tie by any open obligation over part of it', async () => {
+    // Target width cannot separate a forgery from a genuine narrow obligation.
+    // A one-region diagnostic vouches for the whole tie here, and so would a
+    // forged one — but requiring exactness refuses a legitimate reconstruction
+    // whose obligation covers only part of the tie (see the singleton-candidate
+    // case above). This check attributes by label, not by installed state; #182
+    // tracks anchoring it on the order the deterministic layer actually offered.
+    //
+    // Only `AMBIGUOUS_READING_ORDER` diagnostics are ever consulted, so the
+    // `SOURCE_ORDER_FLOAT_FALLBACK` downgrade was never eligible to vouch for a
+    // tie in any revision. The commit message that introduced this check said
+    // otherwise, and was wrong.
     const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
       enabled: true,
       ownerOptIn: true,
@@ -780,27 +829,32 @@ describe('PDF model fallback production adapter', () => {
     const expected = pdfModelDerivedDecisionKeys(resolved)
     expect(expected.size).toBeGreaterThan(0)
 
-    const forged = structuredClone(resolved)
-    const tie = forged.readingOrder.resolutions.find(
+    const narrowed = structuredClone(resolved)
+    const tie = narrowed.readingOrder.resolutions.find(
       ({ status }) => status === 'ambiguous',
     )!
-    forged.diagnostics.push({
+    narrowed.diagnostics.push({
       code: 'AMBIGUOUS_READING_ORDER',
       severity: 'error',
       page: 1,
-      message: 'forged narrow target',
+      message: 'obligation over one tied region',
       sourceBoxes: [],
       target: { regionIds: [tie.regionIds[0]!], markerId: null },
     })
 
-    expect(pdfModelDerivedDecisionKeys(forged)).toEqual(expected)
+    const tieKey = [...expected].find((key) =>
+      key.startsWith(MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie),
+    )!
+    expect(tieKey).toBeDefined()
+    expect(pdfModelDerivedDecisionKeys(narrowed)).toEqual(
+      new Set([...expected].filter((key) => key !== tieKey)),
+    )
   })
 
   it('keeps building a deterministic document when a decision file is applied twice', async () => {
-    // `applyHumanDecisionFile` replaces `applied` wholesale, so re-applying the
-    // same file moves the record to `stale` while the resolution stays
-    // ambiguous and its diagnostic stays deleted. No model ever ran here, so
-    // refusing this document would break a purely deterministic flow.
+    // Re-applying an exact prior success preserves its attribution when the
+    // installed reading order still matches. No model ever ran here, so
+    // refusing this document would break the deterministic flow.
     const unresolved = await resolvePdfModelFallbacks(adjudicationRequired, {})
     const diagnostic = unresolved.diagnostics.find(
       ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
@@ -820,12 +874,55 @@ describe('PDF model fallback production adapter', () => {
     expect(pdfModelDerivedDecisionKeys(once).size).toBe(0)
 
     const twice = applyHumanDecisionFile(once, decisionFile)
-    expect(twice.humanAdjudications.applied).toHaveLength(0)
-    expect(twice.humanAdjudications.stale).toHaveLength(1)
+    expect(twice.humanAdjudications.applied).toEqual(
+      once.humanAdjudications.applied,
+    )
+    expect(twice.humanAdjudications.stale).toEqual([])
     expect(pdfModelDerivedDecisionKeys(twice).size).toBe(0)
     expect(() =>
       buildStructDocument(withoutReceipt(twice) as PdfReconstruction),
     ).not.toThrow()
+  })
+
+  it('does not let a never-applied stale decision account for a model-settled tie', async () => {
+    const diagnostic = adjudicationRequired.diagnostics.find(
+      ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
+    )!
+    const [order] = readingOrderCandidates(adjudicationRequired, diagnostic)
+    const decisionFile = upsertHumanDecision(
+      createHumanDecisionFile(adjudicationRequired.source.sha256),
+      {
+        diagnosticCode: 'AMBIGUOUS_READING_ORDER',
+        target: structuredClone(diagnostic.target!),
+        resolution: { type: 'accept-reading-order', regionIds: [...order!] },
+      },
+    )
+    const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+      },
+    })
+    const expected = pdfModelDerivedDecisionKeys(resolved)
+    const tieKey = [...expected].find((key) =>
+      key.startsWith(MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie),
+    )
+    expect(tieKey).toBeDefined()
+
+    const stale = applyHumanDecisionFile(resolved, decisionFile)
+    expect(stale.humanAdjudications.applied).toEqual([])
+    expect(stale.humanAdjudications.stale).toEqual([
+      expect.objectContaining({
+        diagnosticCode: 'AMBIGUOUS_READING_ORDER',
+        reason: 'diagnostic-target-missing',
+      }),
+    ])
+    expect(pdfModelDerivedDecisionKeys(stale)).toEqual(expected)
+    expect(() =>
+      buildStructDocument(withoutReceipt(stale) as PdfReconstruction),
+    ).toThrow('MISSING_MODEL_CONSULTATION_RECEIPT')
   })
 
   it('reads model-derived state from a reconstruction that carries no adjudication record', async () => {

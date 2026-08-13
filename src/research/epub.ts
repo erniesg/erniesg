@@ -30,7 +30,10 @@ import {
   validateModelConsultationReceipt,
   type ModelFallbackReceipt,
 } from './model-fallback'
-import { modelConsultationReceiptMatchesPdfReconstruction } from './model-fallback-pipeline'
+import {
+  modelConsultationReceiptMatchesPdfReconstruction,
+  pdfModelDerivedDecisionKeys,
+} from './model-fallback-pipeline'
 import {
   renderSourceGeometryScriptMathMl,
   verifyRelationshipSourceGeometryScriptTranscript,
@@ -5760,6 +5763,19 @@ async function buildEpubInternal(
       }),
     },
   )
+  // Validating the receipt only when one is present makes dropping it the way
+  // to launder provenance: STRUCT refuses such a document, but this export
+  // exit published it, so the guarantee held on only one of the two. Checked
+  // after the structural assertions above so a malformed document still
+  // reports what is actually wrong with it.
+  if (
+    reconstruction &&
+    !isDocxReconstruction(reconstruction) &&
+    reconstruction.modelConsultations === undefined &&
+    pdfModelDerivedDecisionKeys(reconstruction).size > 0
+  ) {
+    throw new Error('MISSING_MODEL_CONSULTATION_RECEIPT')
+  }
   if (renderReconstruction) {
     const validatedPdfRelationshipIds = isDocxReconstruction(
       renderReconstruction,

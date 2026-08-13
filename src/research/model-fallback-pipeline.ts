@@ -609,9 +609,8 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
   // `SOURCE_ORDER_FLOAT_FALLBACK` downgrade satisfies neither: it names a
   // single reference region, carries no resolution, and opens no binding, so
   // it can no longer speak for a whole tie.
-  // A human adjudication accounts for a tie just as a receipt does, including
-  // once re-applying its decision file has moved it to `stale`, which leaves
-  // the resolution ambiguous and its diagnostic deleted.
+  // A successfully applied human adjudication accounts for a tie just as a
+  // receipt does. Stale decisions have not established that provenance.
   const readingOrderDiagnostics = list(reconstruction.diagnostics).filter(
     ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
   )
@@ -620,25 +619,28 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
       .map((regionIds) => regionIds ?? [])
       .filter((regionIds) => regionIds.length > 0)
       .map((regionIds) => new Set(regionIds))
-  const containedTargets = regionSets([
-    ...readingOrderDiagnostics
-      .filter(
-        ({ readingOrderResolution }) =>
-          readingOrderResolution?.status === 'ambiguous',
-      )
-      .map((diagnostic) => diagnostic.target?.regionIds),
-    ...[
-      ...list(reconstruction.humanAdjudications?.applied),
-      ...list(reconstruction.humanAdjudications?.stale),
-    ]
+  // Any open `AMBIGUOUS_READING_ORDER` obligation over part of a tie accounts
+  // for the whole tie still being unsettled, so targets match by containment.
+  //
+  // An earlier revision let only a diagnostic carrying the ambiguous
+  // resolution be narrower, on the theory that carrying it made the diagnostic
+  // authoritative about that tie. It does not: the resolution sits one field
+  // away in the same document, so copying it onto a forged one-region
+  // diagnostic reproduced the "authority" exactly. Requiring exactness of
+  // everything instead is not available either — it refuses a legitimate
+  // reconstruction whose obligation covers part of the tie. See #182: target
+  // width cannot separate a forgery from a genuine narrow obligation, and this
+  // check attributes by label rather than by installed state.
+  const accountedTargets = regionSets([
+    ...readingOrderDiagnostics.map(
+      (diagnostic) => diagnostic.target?.regionIds,
+    ),
+    ...list(reconstruction.humanAdjudications?.applied)
       .filter(
         ({ diagnosticCode }) => diagnosticCode === 'AMBIGUOUS_READING_ORDER',
       )
       .map(({ target }) => target?.regionIds),
   ])
-  const exactTargets = regionSets(
-    readingOrderDiagnostics.map((diagnostic) => diagnostic.target?.regionIds),
-  )
   for (const resolution of list(reconstruction.readingOrder?.resolutions)) {
     // `status` is a bare enum that nothing cross-checks, so a settled tie can
     // be relabelled `resolved` in one edit. The resolution's own confidence
@@ -654,13 +656,8 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     if (resolution.regionIds.length === 0) continue
     const regionIds = new Set(resolution.regionIds)
     if (
-      containedTargets.some((target) =>
+      accountedTargets.some((target) =>
         [...target].every((id) => regionIds.has(id)),
-      ) ||
-      exactTargets.some(
-        (target) =>
-          target.size === regionIds.size &&
-          [...target].every((id) => regionIds.has(id)),
       )
     )
       continue

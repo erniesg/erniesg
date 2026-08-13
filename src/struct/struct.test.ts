@@ -5,6 +5,7 @@ import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
 import { structDigest } from './ids'
+import { sha256HexSync } from '../research/sha256-sync'
 import { renderPublicationXhtml } from './xhtml'
 import { orderBlocksByLayout } from './reading-order'
 import {
@@ -275,6 +276,41 @@ describe('STRUCT canonical document graph', () => {
     })
     await expect(buildStructEpub(wrongDocument)).rejects.toThrow(
       'MODEL_CONSULTATION_DOCUMENT_MISMATCH',
+    )
+  })
+
+  it('orders digest keys by code unit rather than by collation', () => {
+    // `localeCompare` asks the runtime's ICU collation, which differs by
+    // locale: `en-US` orders `a` before `B`, code units order `B` first, and
+    // Lithuanian collation orders `y` before `w` — which are `StructBox` keys.
+    // Now that the digest is enforced at packaging time, a document built on
+    // one machine could not be packaged on another.
+    expect(structDigest({ B: 1, a: 2 })).toBe(structDigest({ a: 2, B: 1 }))
+    expect(structDigest({ B: 1, a: 2 })).toBe(
+      structDigest(JSON.parse('{"B":1,"a":2}')),
+    )
+    expect(structDigest({ y: 1, w: 2 })).not.toBe(structDigest({ y: 2, w: 1 }))
+    // Pin the order itself, not merely that two orderings agree: `{"B":1,"a":2}`
+    // is the code-unit serialization, and `{"a":2,"B":1}` the `en-US` one.
+    expect(structDigest({ a: 2, B: 1 })).toBe(sha256HexSync('{"B":1,"a":2}'))
+  })
+
+  it('refuses to package a document whose blocks no longer match its digest', async () => {
+    // `assertStructReceiptIntegrity` recomputes `generatedSha256` over the
+    // document. Every other tamper case in this file either recomputes the
+    // digest or trips an earlier check, so nothing pinned this one: deleting
+    // the comparison left the suite green.
+    const graph = buildStructDocument(
+      await resolvePdfModelFallbacks(await modelConsultationPdf()),
+    )
+    const tampered = structuredClone(graph)
+    const block = tampered.blocks.find(
+      ({ text }) => typeof text === 'string' && text.length > 0,
+    )!
+    block.text = `${block.text} appended after the receipt was sealed`
+
+    await expect(buildStructEpub(tampered)).rejects.toThrow(
+      'STRUCT_RECEIPT_DIGEST_MISMATCH',
     )
   })
 

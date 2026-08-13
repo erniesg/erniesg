@@ -13,7 +13,12 @@ function stableSerialize(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      // Order by code unit, never by collation. `localeCompare` asks the
+      // runtime's ICU locale: `en-US` puts `a` before `B` and Lithuanian puts
+      // `y` before `w` — and `w`/`y` are `StructBox` keys. Now that packaging
+      // re-derives this digest, a collation-dependent order means a document
+      // built on one machine cannot be packaged on another.
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(
         ([key, nested]) => `${JSON.stringify(key)}:${stableSerialize(nested)}`,
       )

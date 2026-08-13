@@ -1057,9 +1057,24 @@ export class ModelFallbackLedger {
     return prior?.choice ? clone(prior.choice) : null
   }
 
+  /**
+   * `latencyMs` and `costUsd` are wall-clock and billing measurements: two runs
+   * of the same PDF against the same model with the same choices report
+   * different numbers. The receipt is embedded in the EPUB and folded into the
+   * STRUCT digest, so persisting them would make the published document
+   * identity change on every run. The live values stay on `this.records` for
+   * `query()` and the metric events; only the persisted receipt is quantised
+   * back to the schema's "no measurement recorded" values.
+   */
+  private static persistable(record: ModelConsultationRecord) {
+    return { ...record, costUsd: 0, latencyMs: null }
+  }
+
   receiptFor(documentId: string): ModelFallbackReceipt {
     if (!boundedId(documentId)) throw new Error('INVALID_MODEL_DOCUMENT_ID')
-    const consultations = this.recordsFor({ documentId })
+    const consultations = this.recordsFor({ documentId }).map((record) =>
+      ModelFallbackLedger.persistable(record),
+    )
     const decisions = this.decisionsFor({ documentId })
     const sourceSha256 =
       consultations[0]?.sourceSha256 ??
@@ -1083,7 +1098,7 @@ export class ModelFallbackLedger {
     const consultations = this.records.flatMap((record, index) =>
       record.documentId === documentId &&
       this.recordInvocations[index] === invocation
-        ? [clone(record)]
+        ? [ModelFallbackLedger.persistable(clone(record))]
         : [],
     )
     const decisions = this.decisions.flatMap((decision, index) =>

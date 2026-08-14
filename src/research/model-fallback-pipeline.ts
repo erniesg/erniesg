@@ -30,7 +30,7 @@ import {
   pdfModelConsultationSemanticStateSha256,
   stableModelConsultationJson,
 } from './model-consultation-binding'
-import { pdfVisualMatchCandidateId } from './pdf-visuals'
+import { pdfVisualMatchCandidateId, visualCanonicalNodeId } from './pdf-visuals'
 import { sha256HexSync } from './sha256-sync'
 
 export { pdfModelConsultationSemanticStateSha256 } from './model-consultation-binding'
@@ -123,12 +123,7 @@ function noteCandidateSetSha256(candidates: readonly PdfNoteCandidate[]) {
         candidate.targetRegionId,
         String(candidate.score),
         stableModelConsultationJson(candidate.sourceBoxes),
-        stableModelConsultationJson(
-          safeEvidenceCodes(
-            candidate.evidence,
-            MODEL_FALLBACK_EVIDENCE_CODES.noteMarkerMatch,
-          ),
-        ),
+        stableModelConsultationJson([...candidate.evidence].sort()),
       ]),
     ),
   )
@@ -175,12 +170,7 @@ function visualCandidateSetSha256(
         stableModelConsultationJson(candidate.sourceObjectIds),
         stableModelConsultationJson(candidate.assetIds),
         sha256HexSync(candidate.sourceText ?? relationship.sourceText ?? ''),
-        stableModelConsultationJson(
-          safeEvidenceCodes(
-            candidate.evidence,
-            MODEL_FALLBACK_EVIDENCE_CODES.captionAssociation,
-          ),
-        ),
+        stableModelConsultationJson([...candidate.evidence].sort()),
       ]),
     ),
   )
@@ -628,7 +618,14 @@ function humanNoteSourceAnchorMatches(
   adjudication: HumanAdjudicationRecord,
   relationship: PdfReconstruction['noteRelationships'][number],
 ) {
-  if (adjudication.resolution.type !== 'accept-note-match') return false
+  const resolution = adjudication.resolution
+  if (
+    resolution.type !== 'accept-note-match' &&
+    resolution.type !== 'reclassify-citation' &&
+    resolution.type !== 'reclassify-plain-text'
+  ) {
+    return false
+  }
   const candidateTargetRegionIds = new Set(
     relationship.candidates.map(({ targetRegionId }) => targetRegionId),
   )
@@ -645,14 +642,17 @@ function humanNoteSourceAnchorMatches(
   const anchor = relationship.canonicalAnchor
   if (!anchor) return false
   if (anchor.kind === 'author') {
-    return (
+    if (resolution.type !== 'accept-note-match') {
+      return reconstruction.paper.authors.includes(anchor.author)
+    }
+    return Boolean(
       reconstruction.paper.authorNotes?.filter(
         ({ id, author, label, target }) =>
           id === relationship.id &&
           author === anchor.author &&
           label === relationship.label &&
           target === relationship.targetNoteId,
-      ).length === 1
+      ).length === 1,
     )
   }
   if (
@@ -676,14 +676,68 @@ function humanNoteSourceAnchorMatches(
     reference.end === relationship.referenceEnd &&
     reference.confidence === relationship.confidence
 
+  const projectionMatches = (
+    noteReferences:
+      | readonly {
+          id: string
+          label: string
+          target: string
+          start: number
+          end: number
+          confidence: number
+        }[]
+      | undefined,
+    inlineRuns:
+      | readonly {
+          start: number
+          end: number
+          relationshipId?: string
+          semanticRole?: string
+        }[]
+      | undefined,
+  ) => {
+    if (resolution.type === 'accept-note-match') {
+      return noteReferences?.filter(matchesReference).length === 1
+    }
+    if (resolution.type === 'reclassify-citation') {
+      return (
+        inlineRuns?.filter(
+          ({ start, end, relationshipId, semanticRole }) =>
+            relationshipId === relationship.id &&
+            semanticRole === 'citation' &&
+            start === relationship.referenceStart &&
+            end === relationship.referenceEnd,
+        ).length === 1
+      )
+    }
+    const retainedMarkerRuns =
+      inlineRuns?.filter(
+        ({ relationshipId }) => relationshipId === relationship.id,
+      ) ?? []
+    return (
+      !noteReferences?.some(({ id }) => id === relationship.id) &&
+      (retainedMarkerRuns.length === 0 ||
+        (retainedMarkerRuns.length === 1 &&
+          retainedMarkerRuns[0]!.semanticRole === 'note-reference' &&
+          retainedMarkerRuns[0]!.start === relationship.referenceStart &&
+          retainedMarkerRuns[0]!.end === relationship.referenceEnd))
+    )
+  }
+
   const directOwner = reconstruction.paper.nodes.find(
     ({ id }) => id === anchor.nodeId,
   )
-  if (directOwner && 'noteReferences' in directOwner) {
+  if (directOwner) {
     return Boolean(
       reconstruction.provenance[directOwner.id]?.regionIds.includes(
         relationship.referenceRegionId,
-      ) && directOwner.noteReferences?.filter(matchesReference).length === 1,
+      ) &&
+      projectionMatches(
+        'noteReferences' in directOwner
+          ? directOwner.noteReferences
+          : undefined,
+        'inlineRuns' in directOwner ? directOwner.inlineRuns : undefined,
+      ),
     )
   }
 
@@ -697,7 +751,7 @@ function humanNoteSourceAnchorMatches(
           !reconstruction.provenance[node.id]?.regionIds.includes(
             relationship.referenceRegionId,
           ) ||
-          cell.noteReferences?.filter(matchesReference).length !== 1
+          !projectionMatches(cell.noteReferences, cell.inlineRuns)
         ) {
           return []
         }
@@ -733,13 +787,36 @@ function humanVisualCaptionAnchorMatches(
   const canonicalNode = reconstruction.paper.nodes.find(
     ({ id }) => id === relationship.canonicalNodeId,
   )
+  const captionPage =
+    reconstruction.provenance[captionNode?.id ?? '']?.boxes[0]?.page ??
+    reconstruction.regions.find(({ id }) => id === relationship.captionRegionId)
+      ?.box.page
   return Boolean(
     captionNode?.type === 'caption' &&
     reconstruction.provenance[captionNode.id]?.regionIds.includes(
       relationship.captionRegionId,
     ) &&
     canonicalNode?.type === 'figure' &&
+    captionPage !== undefined &&
+    relationship.canonicalNodeId ===
+      visualCanonicalNodeId(relationship, captionPage) &&
     canonicalNode.relationships.caption === captionNode.id,
+  )
+}
+
+function humanVisualResolutionMatchesDiagnostic(
+  adjudication: HumanAdjudicationRecord,
+): adjudication is HumanAdjudicationRecord & {
+  resolution: Extract<
+    HumanAdjudicationRecord['resolution'],
+    { type: 'accept-visual-match' | 'accept-visual-fallback' }
+  >
+} {
+  return (
+    (adjudication.diagnosticCode === 'AMBIGUOUS_VISUAL_MATCH' &&
+      adjudication.resolution.type === 'accept-visual-match') ||
+    (adjudication.diagnosticCode === 'UNRESOLVED_VISUAL_OBJECT' &&
+      adjudication.resolution.type === 'accept-visual-fallback')
   )
 }
 
@@ -986,8 +1063,11 @@ function acceptedReadingOrderEdgesMatch(
   const expectedPairs = chosen
     .slice(0, -1)
     .map((from, index) => `${from}\u0000${chosen[index + 1]}`)
+  const installedPairs = installed.map(({ from, to }) => `${from}\u0000${to}`)
   return (
     installed.length === expectedPairs.length &&
+    new Set(expectedPairs).size === expectedPairs.length &&
+    new Set(installedPairs).size === installedPairs.length &&
     installed.every(
       ({ from, to, status }) =>
         status === 'accepted' && expectedPairs.includes(`${from}\u0000${to}`),
@@ -1083,9 +1163,8 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
       reconstruction.humanAdjudications?.applied,
     ).some((adjudication) => {
       if (
-        adjudication.diagnosticCode !== 'AMBIGUOUS_VISUAL_MATCH' ||
+        !humanVisualResolutionMatchesDiagnostic(adjudication) ||
         adjudication.target.markerId !== relationship.id ||
-        adjudication.resolution.type !== 'accept-visual-match' ||
         adjudication.resolution.relationshipId !== relationship.id ||
         relationship.status !== 'matched' ||
         relationship.resolutionOrigin !== 'human-adjudication' ||
@@ -1412,6 +1491,15 @@ function humanAdjudicationSupersedesDecision(
       ) {
         return false
       }
+      if (
+        !humanNoteSourceAnchorMatches(
+          reconstruction,
+          adjudication,
+          relationship,
+        )
+      ) {
+        return false
+      }
       if (adjudication.resolution.type === 'reclassify-plain-text') {
         return (
           relationship.status === 'plain-text' &&
@@ -1456,11 +1544,6 @@ function humanAdjudicationSupersedesDecision(
         relationship?.status === 'matched' &&
         relationship.targetNoteId === resolution.targetNoteId &&
         candidate !== undefined &&
-        humanNoteSourceAnchorMatches(
-          reconstruction,
-          adjudication,
-          relationship,
-        ) &&
         relationship.confidence === candidate.score &&
         stableModelConsultationJson(relationship.sourceBoxes) ===
           stableModelConsultationJson(candidate.sourceBoxes)

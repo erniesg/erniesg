@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
-import { legacyStructDigest, legacyStructDigests, structDigest } from './ids'
+import {
+  legacyStructDigest,
+  legacyStructDigestMatches,
+  legacyStructDigests,
+  structDigest,
+} from './ids'
 import { sha256HexSync } from '../research/sha256-sync'
 import { renderPublicationXhtml } from './xhtml'
 import { orderBlocksByLayout } from './reading-order'
@@ -301,6 +306,33 @@ describe('STRUCT canonical document graph', () => {
     expect(legacyStructDigests(value)).toContain(
       legacyStructDigest(value, 'haw'),
     )
+  })
+
+  it('traverses a legacy document once while checking locale orderings', () => {
+    const plain = {
+      wrapper: { authorAffiliations: 1, abstract: 2 },
+    }
+    const hawDigest = legacyStructDigest(plain, 'haw')
+    const instrumented = () => {
+      let wrapperReads = 0
+      return {
+        value: {
+          get wrapper() {
+            wrapperReads += 1
+            return { authorAffiliations: 1, abstract: 2 }
+          },
+        },
+        wrapperReads: () => wrapperReads,
+      }
+    }
+
+    let observed = instrumented()
+    expect(legacyStructDigests(observed.value)).toContain(hawDigest)
+    expect(observed.wrapperReads()).toBe(1)
+
+    observed = instrumented()
+    expect(legacyStructDigestMatches(observed.value, hawDigest)).toBe(true)
+    expect(observed.wrapperReads()).toBe(1)
   })
 
   it('refuses to package a document whose blocks no longer match its digest', async () => {

@@ -465,8 +465,31 @@ describe('PDF model fallback production adapter', () => {
     const relationship = resolved.noteRelationships.find(
       ({ id }) => id === consultation.decisionId,
     )!
+    expect(relationship.canonicalAnchor?.kind).toBe('node')
+    if (relationship.canonicalAnchor?.kind !== 'node') {
+      throw new Error('Expected a canonical node anchor for the note fixture')
+    }
+    const alternateRelationship = resolved.noteRelationships.find(
+      ({ id, canonicalAnchor }) =>
+        id !== relationship.id && canonicalAnchor?.kind === 'node',
+    )
+    expect(alternateRelationship?.canonicalAnchor?.kind).toBe('node')
+    if (alternateRelationship?.canonicalAnchor?.kind !== 'node') {
+      throw new Error('Expected a second canonical note anchor for the fixture')
+    }
+    const alternateAnchor = structuredClone(
+      alternateRelationship.canonicalAnchor,
+    )
 
     for (const mutate of [
+      (copy: typeof resolved) => {
+        const current = copy.noteRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        current.referenceStart = alternateRelationship.referenceStart
+        current.referenceEnd = alternateRelationship.referenceEnd
+        current.canonicalAnchor = structuredClone(alternateAnchor)
+      },
       (copy: typeof resolved) => {
         copy.noteRelationships.find(
           ({ id }) => id === relationship.id,
@@ -2671,6 +2694,55 @@ describe('PDF model fallback production adapter', () => {
           resolutionOrigin === 'deterministic-distillation',
       )!
       tie.resolutionOrigin = replacementOrigin
+      tampered.modelConsultations!.semanticStateSha256 =
+        pdfModelConsultationSemanticStateSha256(
+          tampered,
+          tampered.modelConsultations!,
+        )
+
+      expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+        false,
+      )
+    }
+  })
+
+  it('binds a deterministic reading decision to its installed accepted edges', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.readingOrderTie,
+    )
+    const selected = point!.candidates[0]!
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => selected.id,
+      'reading-order-edge-binding-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const selectedIds = new Set(selected.region_ids as string[])
+    const installedEdge = resolved.readingOrder.edges.find(
+      ({ from, to }) => selectedIds.has(from) && selectedIds.has(to),
+    )!
+    expect(installedEdge.status).toBe('accepted')
+
+    for (const mutate of [
+      (copy: typeof resolved) => {
+        copy.readingOrder.edges = copy.readingOrder.edges.filter(
+          ({ id }) => id !== installedEdge.id,
+        )
+      },
+      (copy: typeof resolved) => {
+        copy.readingOrder.edges.find(
+          ({ id }) => id === installedEdge.id,
+        )!.status = 'candidate'
+      },
+    ]) {
+      const tampered = structuredClone(resolved)
+      mutate(tampered)
       tampered.modelConsultations!.semanticStateSha256 =
         pdfModelConsultationSemanticStateSha256(
           tampered,

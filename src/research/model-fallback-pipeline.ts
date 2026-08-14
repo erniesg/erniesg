@@ -144,6 +144,9 @@ function noteModelCandidateId(
       diagnostic_code: 'AMBIGUOUS_NOTE_MATCH',
       relationship_id: relationship.id,
       reference_region_id: relationship.referenceRegionId,
+      reference_start: relationship.referenceStart,
+      reference_end: relationship.referenceEnd,
+      canonical_anchor: relationship.canonicalAnchor,
       threshold: relationship.threshold,
       candidate_count: relationship.candidates.length,
     }),
@@ -1216,6 +1219,7 @@ function deterministicDecisionMatchesReconstruction(
     return (
       resolutions[0]!.resolutionOrigin === 'deterministic-distillation' &&
       installedOrder.length === targetIds.size &&
+      acceptedReadingOrderEdgesMatch(reconstruction, installedOrder) &&
       !installedRegionEvidence.includes(null) &&
       stableCandidateId('reading-order-candidate', [
         ...installedOrder,

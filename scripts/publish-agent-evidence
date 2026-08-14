@@ -1,0 +1,788 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import hashlib
+import hmac
+import io
+import json
+import math
+import os
+import re
+import stat
+import subprocess
+import time
+import zipfile
+from datetime import date
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Mapping
+from urllib.parse import quote
+
+
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+DIGEST = re.compile(r"^[0-9a-f]{64}$")
+ARTIFACT_DIGEST = re.compile(r"^sha256:([0-9a-f]{64})$")
+REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f\u2028\u2029]")
+RFC3339_TIMESTAMP = re.compile(
+    r"^([1-9][0-9]{3})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
+    r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
+    r"(?:\.[0-9]{1,3})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+)
+MAX_SAFE_INTEGER = 2**53 - 1
+CANONICAL_WORKFLOW_NAME = "agent-evidence"
+CANONICAL_WORKFLOW_PATH = ".github/workflows/agent-evidence.yml"
+CANONICAL_PRODUCER_PATH = "scripts/agent-evidence"
+PUBLISHER_MARKER = re.compile(
+    r"<!-- rucksack-evidence-publisher:v1 "
+    r"head=([0-9a-f]{40}) run=([1-9][0-9]*)"
+    r"(?: attempt=([1-9][0-9]*))? manifest_sha256=([0-9a-f]{64}) -->"
+)
+BOT_LOGINS = {"github-actions", "github-actions[bot]"}
+TOP_LEVEL_REQUIRED = {
+    "schema_version", "run_id", "repo", "branch", "commit", "dirty",
+    "started_at", "ended_at", "duration_ms", "agent_version", "invocation",
+    "lanes_run", "runner", "lanes", "artifacts", "result", "required_failures",
+}
+TOP_LEVEL_OPTIONAL = {"blocked_reason", "blocked_class", "caveats"}
+ALLOWED_LANES = {
+    "lint", "build", "type-check", "unit", "test", "e2e",
+    "rust-check", "rust-test", "python-test",
+}
+
+
+def _record(value: object, location: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{location} must be an object")
+    return value
+
+
+def _text(value: object, location: str, *, empty: bool = False) -> str:
+    if not isinstance(value, str) or (not empty and not value):
+        raise ValueError(f"{location} must be a non-empty string")
+    if CONTROL_CHARACTERS.search(value):
+        raise ValueError(f"{location} contains a control character")
+    if len(value.encode("utf-16-le", errors="surrogatepass")) > 8192 * 2:
+        raise ValueError(f"{location} is too long")
+    return value
+
+
+def _integer(value: object, location: str, *, positive: bool = False) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < (1 if positive else 0):
+        qualifier = "positive" if positive else "non-negative"
+        raise ValueError(f"{location} must be a {qualifier} integer")
+    return value
+
+
+def _safe_integer(value: object, location: str) -> int:
+    result = _integer(value, location)
+    if result > MAX_SAFE_INTEGER:
+        raise ValueError(f"{location} must be a non-negative safe integer")
+    return result
+
+
+def _positive_number(value: object, location: str) -> int | float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(f"{location} must be a positive number")
+    return value
+
+
+def _rfc3339_timestamp(value: object, location: str) -> str:
+    timestamp = _text(value, location)
+    match = RFC3339_TIMESTAMP.fullmatch(timestamp)
+    if match is None:
+        raise ValueError(f"{location} must match the RFC3339 timestamp subset")
+    try:
+        date(*(int(item) for item in match.groups()))
+    except ValueError as error:
+        raise ValueError(f"{location} must match the RFC3339 timestamp subset") from error
+    return timestamp
+
+
+def _reject_control_characters(value: object, location: str) -> None:
+    if isinstance(value, str):
+        _text(value, location, empty=True)
+        return
+    if isinstance(value, list):
+        if len(value) > 200:
+            raise ValueError(f"{location} has too many items")
+        for index, item in enumerate(value):
+            _reject_control_characters(item, f"{location}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_control_characters(key, f"{location} key")
+            _reject_control_characters(item, f"{location}.{key}")
+
+
+def _exact_keys(
+    value: dict[str, Any], required: set[str], optional: set[str], location: str
+) -> None:
+    missing = required - value.keys()
+    extra = value.keys() - required - optional
+    if missing:
+        raise ValueError(f"{location}.{sorted(missing)[0]} is required")
+    if extra:
+        raise ValueError(f"{location}.{sorted(extra)[0]} is not allowed")
+
+
+def _string_list(value: object, location: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{location} must be an array")
+    items = [_text(item, f"{location}[{index}]") for index, item in enumerate(value)]
+    if len(items) != len(set(items)):
+        raise ValueError(f"{location} must not contain duplicates")
+    return items
+
+
+def _relative_path(value: object, location: str) -> str:
+    path = _text(value, location)
+    candidate = PurePosixPath(path)
+    if candidate.is_absolute() or ".." in candidate.parts or "\\" in path:
+        raise ValueError(f"{location} must stay inside the repository")
+    return path
+
+
+def _event_identity(event: object) -> dict[str, object]:
+    root = _record(event, "event")
+    repository = _record(root.get("repository"), "event.repository")
+    repo = _text(repository.get("full_name"), "event.repository.full_name")
+    if not REPOSITORY.fullmatch(repo):
+        raise ValueError("event repository must be OWNER/REPO")
+    run = _record(root.get("workflow_run"), "event.workflow_run")
+    run_id = _integer(run.get("id"), "event.workflow_run.id", positive=True)
+    run_attempt = _integer(
+        run.get("run_attempt"), "event.workflow_run.run_attempt", positive=True
+    )
+    workflow_id = _integer(
+        run.get("workflow_id"), "event.workflow_run.workflow_id", positive=True
+    )
+    if run.get("name") != CANONICAL_WORKFLOW_NAME:
+        raise ValueError("workflow run name does not match the canonical evidence workflow")
+    workflow_path = _text(run.get("path"), "event.workflow_run.path").partition("@")[0]
+    if workflow_path != CANONICAL_WORKFLOW_PATH:
+        raise ValueError("workflow run path does not match the canonical evidence workflow")
+    if run.get("event") != "pull_request":
+        raise ValueError("workflow run must originate from pull_request")
+    if run.get("conclusion") != "success":
+        raise ValueError("workflow run conclusion must be success")
+    head = _text(run.get("head_sha"), "event.workflow_run.head_sha").lower()
+    if not FULL_SHA.fullmatch(head):
+        raise ValueError("workflow run head must be a full commit SHA")
+    branch = _text(run.get("head_branch"), "event.workflow_run.head_branch")
+    head_repo = _text(
+        _record(run.get("head_repository"), "event.workflow_run.head_repository").get("full_name"),
+        "event.workflow_run.head_repository.full_name",
+    )
+    if not REPOSITORY.fullmatch(head_repo):
+        raise ValueError("workflow run head repository must be OWNER/REPO")
+    pull_requests = run.get("pull_requests")
+    if not isinstance(pull_requests, list) or len(pull_requests) != 1:
+        raise ValueError("workflow run must identify exactly one pull request")
+    pr_number = _integer(
+        _record(pull_requests[0], "event.workflow_run.pull_requests[0]").get("number"),
+        "event.workflow_run.pull_requests[0].number",
+        positive=True,
+    )
+    return {
+        "repository": repo,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "workflow_id": workflow_id,
+        "workflow_path": workflow_path,
+        "head": head,
+        "branch": branch,
+        "head_repository": head_repo,
+        "pr_number": pr_number,
+    }
+
+
+def validate_canonical_workflow(
+    workflow: object, identity: dict[str, object]
+) -> None:
+    value = _record(workflow, "canonical workflow")
+    if (
+        _integer(value.get("id"), "canonical workflow id", positive=True)
+        != identity["workflow_id"]
+    ):
+        raise ValueError("workflow run id does not match the canonical evidence workflow")
+    if value.get("name") != CANONICAL_WORKFLOW_NAME:
+        raise ValueError("canonical evidence workflow name does not match")
+    if value.get("path") != CANONICAL_WORKFLOW_PATH:
+        raise ValueError("canonical evidence workflow path does not match")
+    if value.get("state") != "active":
+        raise ValueError("canonical evidence workflow is not active")
+
+
+def _default_branch(repository: object, identity: dict[str, object]) -> str:
+    value = _record(repository, "repository metadata")
+    if _text(value.get("full_name"), "repository metadata full_name") != identity["repository"]:
+        raise ValueError("repository metadata does not match the immutable event repository")
+    return _text(value.get("default_branch"), "repository default branch")
+
+
+def _source_blob_sha(content: object, expected_path: str, location: str) -> str:
+    value = _record(content, location)
+    if value.get("type") != "file" or value.get("path") != expected_path:
+        raise ValueError(f"{location} must identify {expected_path}")
+    _integer(value.get("size"), f"{location} size")
+    blob = _text(value.get("sha"), f"{location} blob sha").lower()
+    if not FULL_SHA.fullmatch(blob):
+        raise ValueError(f"{location} blob sha must be a full Git object SHA")
+    return blob
+
+
+def validate_trusted_workflow_source(
+    trusted_content: object, candidate_content: object
+) -> None:
+    trusted_blob = _source_blob_sha(
+        trusted_content,
+        CANONICAL_WORKFLOW_PATH,
+        "trusted default-branch workflow source",
+    )
+    candidate_blob = _source_blob_sha(
+        candidate_content,
+        CANONICAL_WORKFLOW_PATH,
+        "candidate workflow source",
+    )
+    if not hmac.compare_digest(candidate_blob, trusted_blob):
+        raise ValueError(
+            "candidate workflow source does not match trusted default-branch workflow source"
+        )
+
+
+def validate_trusted_producer_source(
+    trusted_content: object, candidate_content: object
+) -> None:
+    trusted_blob = _source_blob_sha(
+        trusted_content,
+        CANONICAL_PRODUCER_PATH,
+        "trusted default-branch evidence producer source",
+    )
+    candidate_blob = _source_blob_sha(
+        candidate_content,
+        CANONICAL_PRODUCER_PATH,
+        "candidate evidence producer source",
+    )
+    if not hmac.compare_digest(candidate_blob, trusted_blob):
+        raise ValueError(
+            "candidate evidence producer source does not match trusted "
+            "default-branch evidence producer source"
+        )
+
+
+def _validate_pull_request(pr: object, identity: dict[str, object]) -> None:
+    value = _record(pr, "pull request")
+    if _integer(value.get("number"), "pull request number", positive=True) != identity["pr_number"]:
+        raise ValueError("current pull request number does not match workflow run")
+    if value.get("state") != "open":
+        raise ValueError("current pull request is not open")
+    head = _record(value.get("head"), "pull request head")
+    if _text(head.get("sha"), "pull request head sha").lower() != identity["head"]:
+        raise ValueError("current pull request head does not match workflow run")
+    if _text(head.get("ref"), "pull request head ref") != identity["branch"]:
+        raise ValueError("current pull request branch does not match workflow run")
+    head_repo = _record(head.get("repo"), "pull request head repository")
+    if _text(head_repo.get("full_name"), "pull request head repository name") != identity["head_repository"]:
+        raise ValueError("current pull request head repository does not match workflow run")
+
+
+def _validate_manifest(raw: bytes, identity: dict[str, object]) -> tuple[dict[str, Any], str]:
+    if not raw or len(raw) > 1024 * 1024:
+        raise ValueError("manifest must be between 1 byte and 1 MiB")
+    try:
+        manifest = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"manifest is not valid UTF-8 JSON: {error}") from error
+    _reject_control_characters(manifest, "manifest")
+    value = _record(manifest, "manifest")
+    _exact_keys(value, TOP_LEVEL_REQUIRED, TOP_LEVEL_OPTIONAL, "manifest")
+    if value["schema_version"] != "1":
+        raise ValueError("manifest schema_version must be 1")
+    _text(value["run_id"], "manifest.run_id")
+    if _text(value["repo"], "manifest.repo") != identity["repository"]:
+        raise ValueError("manifest repository does not match immutable event repository")
+    if _text(value["branch"], "manifest.branch") != identity["branch"]:
+        raise ValueError("manifest branch does not match immutable event branch")
+    if _text(value["commit"], "manifest.commit").lower() != identity["head"]:
+        raise ValueError("manifest commit does not match immutable event head")
+    if value["dirty"] is not False:
+        raise ValueError("manifest dirty must be false")
+    if value["result"] != "passed":
+        raise ValueError("manifest result must be passed")
+    for field in ("started_at", "ended_at"):
+        _rfc3339_timestamp(value[field], f"manifest.{field}")
+    _integer(value["duration_ms"], "manifest.duration_ms")
+    if not DIGEST.fullmatch(_text(value["agent_version"], "manifest.agent_version").lower()):
+        raise ValueError("manifest.agent_version must be a SHA-256 digest")
+    if "caveats" in value:
+        caveats = _string_list(value["caveats"], "manifest.caveats")
+        if caveats:
+            raise ValueError("passed manifest caveats must be empty")
+    for field in ("blocked_reason", "blocked_class"):
+        if field in value:
+            raise ValueError(f"passed manifest must not contain {field}")
+
+    invocation = _record(value["invocation"], "manifest.invocation")
+    _exact_keys(invocation, {"argv", "npm_config_e2e", "npm_config_only"}, set(), "manifest.invocation")
+    _string_list(invocation["argv"], "manifest.invocation.argv")
+    _text(invocation["npm_config_e2e"], "manifest.invocation.npm_config_e2e", empty=True)
+    _text(invocation["npm_config_only"], "manifest.invocation.npm_config_only", empty=True)
+    runner = _record(value["runner"], "manifest.runner")
+    _exact_keys(runner, {"provider", "os", "node"}, set(), "manifest.runner")
+    for field in ("provider", "os", "node"):
+        _text(runner[field], f"manifest.runner.{field}")
+
+    lanes = value["lanes"]
+    if not isinstance(lanes, list) or not lanes:
+        raise ValueError("passed manifest must contain validation lanes")
+    lane_ids: list[str] = []
+    failed_required: list[str] = []
+    for index, lane_object in enumerate(lanes):
+        lane = _record(lane_object, f"manifest.lanes[{index}]")
+        required = {"id", "command", "required", "status", "exit_code", "duration_ms", "log_path"}
+        _exact_keys(lane, required, set(), f"manifest.lanes[{index}]")
+        lane_id = _text(lane["id"], f"manifest.lanes[{index}].id")
+        if lane_id not in ALLOWED_LANES:
+            raise ValueError(f"manifest.lanes[{index}].id is not allowed")
+        lane_ids.append(lane_id)
+        _text(lane["command"], f"manifest.lanes[{index}].command")
+        if not isinstance(lane["required"], bool):
+            raise ValueError(f"manifest.lanes[{index}].required must be boolean")
+        exit_code = _integer(lane["exit_code"], f"manifest.lanes[{index}].exit_code")
+        status = lane["status"]
+        if status not in {"passed", "failed"}:
+            raise ValueError(f"manifest.lanes[{index}].status is invalid")
+        if (status == "passed") != (exit_code == 0):
+            raise ValueError(
+                f"manifest.lanes[{index}].status does not match its exit code"
+            )
+        if lane["required"] and exit_code != 0:
+            failed_required.append(lane_id)
+        _integer(lane["duration_ms"], f"manifest.lanes[{index}].duration_ms")
+        _relative_path(lane["log_path"], f"manifest.lanes[{index}].log_path")
+    if len(lane_ids) != len(set(lane_ids)):
+        raise ValueError("manifest lane ids must be unique")
+    if _string_list(value["lanes_run"], "manifest.lanes_run") != lane_ids:
+        raise ValueError("manifest lanes_run must exactly match lanes")
+    failures = _string_list(value["required_failures"], "manifest.required_failures")
+    if failures or failures != failed_required:
+        raise ValueError("manifest required failures must be empty")
+
+    artifacts = value["artifacts"]
+    if not isinstance(artifacts, list):
+        raise ValueError("manifest.artifacts must be an array")
+    manifest_paths: list[str] = []
+    for index, artifact_object in enumerate(artifacts):
+        artifact = _record(artifact_object, f"manifest.artifacts[{index}]")
+        _exact_keys(
+            artifact,
+            {"kind", "path"},
+            {"sha256", "size_bytes", "repo_limit_mb", "storage"},
+            f"manifest.artifacts[{index}]",
+        )
+        kind = _text(artifact["kind"], f"manifest.artifacts[{index}].kind")
+        path = _relative_path(artifact["path"], f"manifest.artifacts[{index}].path")
+        if "sha256" in artifact and not DIGEST.fullmatch(
+            _text(artifact["sha256"], f"manifest.artifacts[{index}].sha256").lower()
+        ):
+            raise ValueError(
+                f"manifest.artifacts[{index}].sha256 must be a SHA-256 digest"
+            )
+        if "size_bytes" in artifact:
+            _safe_integer(
+                artifact["size_bytes"], f"manifest.artifacts[{index}].size_bytes"
+            )
+        if "repo_limit_mb" in artifact:
+            _positive_number(
+                artifact["repo_limit_mb"], f"manifest.artifacts[{index}].repo_limit_mb"
+            )
+        if "storage" in artifact:
+            _text(artifact["storage"], f"manifest.artifacts[{index}].storage")
+        if kind == "manifest":
+            manifest_paths.append(path)
+    if len(manifest_paths) != 1:
+        raise ValueError("manifest artifacts must identify exactly one manifest path")
+    return value, manifest_paths[0]
+
+
+def validate_receipt(event: object, pull_request: object, raw_manifest: bytes) -> dict[str, object]:
+    identity = _event_identity(event)
+    _validate_pull_request(pull_request, identity)
+    _manifest, manifest_path = _validate_manifest(raw_manifest, identity)
+    return {
+        **identity,
+        "manifest_path": manifest_path,
+        "manifest_sha256": hashlib.sha256(raw_manifest).hexdigest(),
+    }
+
+
+CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def gh_json(
+    endpoint: str,
+    *,
+    paginate: bool = False,
+    runner: CommandRunner = subprocess.run,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> object:
+    command = ["gh", "api", endpoint]
+    if paginate:
+        command.extend(("--paginate", "--slurp"))
+    for attempt in range(3):
+        completed = runner(command, text=True, capture_output=True, check=False)
+        if completed.returncode == 0:
+            try:
+                return json.loads(completed.stdout)
+            except json.JSONDecodeError as error:
+                raise ValueError("GitHub API returned malformed JSON") from error
+        if attempt < 2:
+            sleeper(0.2 * (2**attempt))
+    raise ValueError("GitHub API read failed after three attempts")
+
+
+def gh_bytes(
+    endpoint: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> bytes:
+    command = ["gh", "api", endpoint]
+    for attempt in range(3):
+        completed = runner(command, capture_output=True, check=False)
+        if completed.returncode == 0:
+            if not completed.stdout:
+                raise ValueError("GitHub API returned an empty artifact")
+            return completed.stdout
+        if attempt < 2:
+            sleeper(0.2 * (2**attempt))
+    raise ValueError("GitHub artifact download failed after three attempts")
+
+
+def gh_mutate(
+    endpoint: str,
+    method: str,
+    body: str,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> bool:
+    if method not in {"POST", "PATCH"}:
+        raise ValueError("unsupported GitHub comment mutation")
+    completed = runner(
+        ["gh", "api", endpoint, "-X", method, "-f", f"body={body}"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def select_manifest_artifact(
+    pages: object,
+    identity: dict[str, object],
+    *,
+    validation_run_id: int | None = None,
+    validation_run_attempt: int = 1,
+    validation_run_head: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(pages, list):
+        raise ValueError("artifact pages must be an array")
+    expected_name = (
+        f"agent-evidence-manifest-{identity['run_id']}"
+        f"-attempt-{identity['run_attempt']}"
+    )
+    expected_artifact_run = int(identity["run_id"])
+    expected_artifact_head = str(identity["head"])
+    if validation_run_id is not None:
+        expected_artifact_run = _integer(
+            validation_run_id, "trusted validation run id", positive=True
+        )
+        validation_run_attempt = _integer(
+            validation_run_attempt, "trusted validation run attempt", positive=True
+        )
+        expected_name += (
+            f"-validated-by-{expected_artifact_run}"
+            f"-attempt-{validation_run_attempt}"
+        )
+        expected_artifact_head = _text(
+            validation_run_head, "trusted validation run head"
+        ).lower()
+        if not FULL_SHA.fullmatch(expected_artifact_head):
+            raise ValueError("trusted validation run head must be a full commit SHA")
+    matches: list[dict[str, Any]] = []
+    for page_index, page_object in enumerate(pages):
+        page = _record(page_object, f"artifact page {page_index}")
+        artifacts = page.get("artifacts")
+        if not isinstance(artifacts, list):
+            raise ValueError(f"artifact page {page_index}.artifacts must be an array")
+        for artifact_object in artifacts:
+            artifact = _record(artifact_object, "artifact")
+            if artifact.get("name") == expected_name:
+                matches.append(artifact)
+    if len(matches) != 1:
+        raise ValueError("workflow run must contain exactly one validated manifest artifact")
+    artifact = matches[0]
+    _integer(artifact.get("id"), "artifact.id", positive=True)
+    if artifact.get("expired") is not False:
+        raise ValueError("manifest artifact is expired or has unknown expiry state")
+    size = _integer(artifact.get("size_in_bytes"), "artifact.size_in_bytes", positive=True)
+    if size > 2 * 1024 * 1024:
+        raise ValueError("manifest artifact archive exceeds 2 MiB")
+    digest = _text(artifact.get("digest"), "artifact.digest")
+    if not ARTIFACT_DIGEST.fullmatch(digest):
+        raise ValueError("artifact.digest must be a canonical SHA-256 digest")
+    run = _record(artifact.get("workflow_run"), "artifact.workflow_run")
+    if _integer(run.get("id"), "artifact workflow run id", positive=True) != expected_artifact_run:
+        raise ValueError("artifact run does not match trusted validation workflow run")
+    if _text(run.get("head_sha"), "artifact workflow run head").lower() != expected_artifact_head:
+        raise ValueError("artifact head does not match trusted validation workflow run")
+    return artifact
+
+
+def manifest_bytes_from_zip(archive: bytes) -> bytes:
+    if not archive or len(archive) > 2 * 1024 * 1024:
+        raise ValueError("manifest artifact archive must be between 1 byte and 2 MiB")
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+            members = bundle.infolist()
+            if len(members) != 1:
+                raise ValueError("manifest artifact archive must contain exactly one file")
+            member = members[0]
+            mode = member.external_attr >> 16
+            file_type = stat.S_IFMT(mode)
+            if (
+                member.filename != "rucksack-agent-evidence-manifest.json"
+                or member.is_dir()
+                or file_type not in (0, stat.S_IFREG)
+            ):
+                raise ValueError("manifest artifact must contain one regular file at the expected name")
+            if member.file_size <= 0 or member.file_size > 1024 * 1024:
+                raise ValueError("manifest file must be between 1 byte and 1 MiB")
+            raw = bundle.read(member)
+    except zipfile.BadZipFile as error:
+        raise ValueError("manifest artifact is not a valid ZIP archive") from error
+    if len(raw) != member.file_size:
+        raise ValueError("manifest artifact size changed during extraction")
+    return raw
+
+
+def render_comment(receipt: dict[str, object]) -> str:
+    repository = str(receipt["repository"])
+    run_id = int(receipt["run_id"])
+    run_attempt = int(receipt["run_attempt"])
+    head = str(receipt["head"])
+    digest = str(receipt["manifest_sha256"])
+    path = str(receipt["manifest_path"])
+    validation_run_id = int(receipt.get("validation_run_id", run_id))
+    validation_run_attempt = int(receipt.get("validation_run_attempt", 1))
+    return (
+        "<!-- rucksack-autopilot-evidence -->\n"
+        f"<!-- rucksack-evidence-publisher:v1 head={head} run={run_id} "
+        f"attempt={run_attempt} manifest_sha256={digest} -->\n"
+        "## Agent evidence\n\n"
+        f"- Run: `https://github.com/{repository}/actions/runs/{run_id}"
+        f"/attempts/{run_attempt}`\n"
+        f"- Trusted validation: `https://github.com/{repository}/actions/runs/"
+        f"{validation_run_id}/attempts/{validation_run_attempt}`\n"
+        f"- Commit: `{head}`\n"
+        "- Dirty: `false`\n"
+        f"- Manifest: `{path}` (sha256 `{digest}`)\n"
+        "- Result: `passed`\n"
+        "- Required failures: `(none)`\n"
+    )
+
+
+def _bot_comment(comment: object) -> bool:
+    value = _record(comment, "comment")
+    user = _record(value.get("user"), "comment.user")
+    return user.get("type") == "Bot" and str(user.get("login") or "").lower() in BOT_LOGINS
+
+
+def comment_action(
+    pages: object, receipt: dict[str, object], expected_body: str
+) -> tuple[str, int | None]:
+    if not isinstance(pages, list):
+        raise ValueError("comment pages must be an array")
+    comments: list[dict[str, Any]] = []
+    for page_index, page in enumerate(pages):
+        if not isinstance(page, list):
+            raise ValueError(f"comment page {page_index} must be an array")
+        comments.extend(_record(item, "comment") for item in page)
+    head = str(receipt["head"])
+    run_id = int(receipt["run_id"])
+    run_attempt = int(receipt["run_attempt"])
+    digest = str(receipt["manifest_sha256"])
+    exact: list[dict[str, Any]] = []
+    same_head: list[dict[str, Any]] = []
+    for comment in comments:
+        body = str(comment.get("body") or "")
+        match = PUBLISHER_MARKER.search(body)
+        if match is None or not _bot_comment(comment):
+            continue
+        if match.group(1) == head:
+            same_head.append(comment)
+        if match.groups() == (head, str(run_id), str(run_attempt), digest):
+            exact.append(comment)
+    if len(exact) > 1 or len(same_head) > 1:
+        raise ValueError("duplicate trusted evidence publisher comments")
+    if exact:
+        comment = exact[0]
+        if comment.get("body") != expected_body:
+            raise ValueError("exact-key evidence publisher comment was tampered")
+        return "noop", _integer(comment.get("id"), "comment.id", positive=True)
+    if same_head:
+        return "update", _integer(same_head[0].get("id"), "comment.id", positive=True)
+    return "create", None
+
+
+def publish_event(
+    event: object,
+    *,
+    validation_run_id: int | None = None,
+    validation_run_attempt: int = 1,
+    validation_run_head: str | None = None,
+    json_reader: Callable[..., object] = gh_json,
+    artifact_reader: Callable[[str], bytes] = gh_bytes,
+    mutator: Callable[[str, str, str], bool] = gh_mutate,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> str:
+    identity = _event_identity(event)
+    repository = str(identity["repository"])
+    run_id = int(identity["run_id"])
+    pr_number = int(identity["pr_number"])
+    workflow = json_reader(
+        f"repos/{repository}/actions/workflows/agent-evidence.yml"
+    )
+    validate_canonical_workflow(workflow, identity)
+    trusted_run_id = (
+        run_id
+        if validation_run_id is None
+        else _integer(validation_run_id, "trusted validation run id", positive=True)
+    )
+    trusted_run_attempt = _integer(
+        validation_run_attempt, "trusted validation run attempt", positive=True
+    )
+    artifact_pages = json_reader(
+        f"repos/{repository}/actions/runs/{trusted_run_id}/artifacts?per_page=100",
+        paginate=True,
+    )
+    artifact = select_manifest_artifact(
+        artifact_pages,
+        identity,
+        validation_run_id=validation_run_id,
+        validation_run_attempt=trusted_run_attempt,
+        validation_run_head=validation_run_head,
+    )
+    archive = artifact_reader(
+        f"repos/{repository}/actions/artifacts/{int(artifact['id'])}/zip"
+    )
+    if len(archive) != int(artifact["size_in_bytes"]):
+        raise ValueError("downloaded artifact size does not match GitHub artifact metadata")
+    expected_archive_digest = ARTIFACT_DIGEST.fullmatch(str(artifact["digest"]))
+    if expected_archive_digest is None or not hmac.compare_digest(
+        hashlib.sha256(archive).hexdigest(), expected_archive_digest.group(1)
+    ):
+        raise ValueError("downloaded artifact does not match GitHub artifact digest")
+    raw_manifest = manifest_bytes_from_zip(archive)
+    pull_request = json_reader(f"repos/{repository}/pulls/{pr_number}")
+    receipt = {
+        **validate_receipt(event, pull_request, raw_manifest),
+        "validation_run_id": trusted_run_id,
+        "validation_run_attempt": trusted_run_attempt,
+    }
+    body = render_comment(receipt)
+    comments_endpoint = f"repos/{repository}/issues/{pr_number}/comments?per_page=100"
+    pages = json_reader(comments_endpoint, paginate=True)
+    action, comment_id = comment_action(pages, receipt, body)
+    if action == "noop":
+        return "already-published"
+    if action == "create":
+        mutation_endpoint = f"repos/{repository}/issues/{pr_number}/comments"
+        method = "POST"
+    else:
+        mutation_endpoint = f"repos/{repository}/issues/comments/{comment_id}"
+        method = "PATCH"
+
+    mutation_attempts = 1 if method == "POST" else 3
+    for attempt in range(mutation_attempts):
+        if mutator(mutation_endpoint, method, body):
+            if method == "POST":
+                current_pages = json_reader(comments_endpoint, paginate=True)
+                current_action, current_id = comment_action(
+                    current_pages, receipt, body
+                )
+                if current_action != "noop" or current_id is None:
+                    raise ValueError(
+                        "successful comment creation did not reconcile to one exact receipt"
+                    )
+            return "published"
+        # A timed-out write can have committed at GitHub. Reconcile before any
+        # retry so an ambiguous POST can never create a duplicate receipt.
+        for reconciliation in range(3):
+            current_pages = json_reader(comments_endpoint, paginate=True)
+            current_action, current_id = comment_action(current_pages, receipt, body)
+            if current_action == "noop":
+                return "published"
+            if current_action != action or current_id != comment_id:
+                raise ValueError("comment state changed while reconciling an ambiguous write")
+            if reconciliation < 2:
+                sleeper(0.2 * (2**reconciliation))
+        if method == "POST":
+            raise ValueError("GitHub comment creation outcome remained ambiguous; refusing retry")
+        if attempt < mutation_attempts - 1:
+            sleeper(0.2 * (2**attempt))
+    raise ValueError("GitHub comment mutation failed after three reconciled attempts")
+
+
+def main(
+    *,
+    environ: Mapping[str, str] = os.environ,
+    publisher: Callable[..., str] = publish_event,
+) -> int:
+    event_path_text = str(environ.get("GITHUB_EVENT_PATH") or "").strip()
+    if not event_path_text:
+        raise ValueError("GITHUB_EVENT_PATH is required")
+    validation_run_id = _integer(
+        int(str(environ.get("GITHUB_RUN_ID") or "0")),
+        "GITHUB_RUN_ID",
+        positive=True,
+    )
+    validation_run_attempt = _integer(
+        int(str(environ.get("GITHUB_RUN_ATTEMPT") or "0")),
+        "GITHUB_RUN_ATTEMPT",
+        positive=True,
+    )
+    validation_run_head = _text(environ.get("GITHUB_SHA"), "GITHUB_SHA").lower()
+    if not FULL_SHA.fullmatch(validation_run_head):
+        raise ValueError("GITHUB_SHA must be a full commit SHA")
+    try:
+        raw_event = Path(event_path_text).read_bytes()
+    except OSError as error:
+        raise ValueError("GITHUB_EVENT_PATH could not be read") from error
+    if not raw_event or len(raw_event) > 2 * 1024 * 1024:
+        raise ValueError("workflow event must be between 1 byte and 2 MiB")
+    try:
+        event = json.loads(raw_event.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("workflow event is not valid UTF-8 JSON") from error
+    print(
+        publisher(
+            event,
+            validation_run_id=validation_run_id,
+            validation_run_attempt=validation_run_attempt,
+            validation_run_head=validation_run_head,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except ValueError as error:
+        raise SystemExit(f"evidence publisher refused: {error}") from error

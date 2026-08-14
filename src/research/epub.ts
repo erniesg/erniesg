@@ -4005,6 +4005,8 @@ function manifestHumanAdjudications(reconstruction: PdfReconstruction) {
       reconstruction.humanAdjudications.countsByDiagnosticCode,
     appliedReceiptSha256: sha256Sync(strToU8(JSON.stringify(applied))),
     applied,
+    noteSourceAnchorReceipts:
+      reconstruction.humanAdjudications.noteSourceAnchorReceipts,
     visualDecorationReceipts:
       reconstruction.humanAdjudications.visualDecorationReceipts,
   }

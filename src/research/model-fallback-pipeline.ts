@@ -30,6 +30,7 @@ import {
   pdfModelConsultationSemanticStateSha256,
   stableModelConsultationJson,
 } from './model-consultation-binding'
+import { materializeCanonicalVisualNode } from './pdf-layout'
 import { pdfVisualMatchCandidateId, visualCanonicalNodeId } from './pdf-visuals'
 import { sha256HexSync } from './sha256-sync'
 
@@ -626,6 +627,22 @@ function humanNoteSourceAnchorMatches(
   ) {
     return false
   }
+  const sourceAnchorReceipts =
+    reconstruction.humanAdjudications?.noteSourceAnchorReceipts?.filter(
+      ({ relationshipId }) => relationshipId === relationship.id,
+    ) ?? []
+  if (sourceAnchorReceipts.length !== 1) return false
+  const sourceAnchorReceipt = sourceAnchorReceipts[0]!
+  if (
+    sourceAnchorReceipt.label !== relationship.label ||
+    sourceAnchorReceipt.referenceRegionId !== relationship.referenceRegionId ||
+    sourceAnchorReceipt.referenceStart !== relationship.referenceStart ||
+    sourceAnchorReceipt.referenceEnd !== relationship.referenceEnd ||
+    stableModelConsultationJson(sourceAnchorReceipt.canonicalAnchor) !==
+      stableModelConsultationJson(relationship.canonicalAnchor)
+  ) {
+    return false
+  }
   const candidateTargetRegionIds = new Set(
     relationship.candidates.map(({ targetRegionId }) => targetRegionId),
   )
@@ -766,6 +783,7 @@ function humanVisualCaptionAnchorMatches(
   reconstruction: PdfReconstruction,
   adjudication: HumanAdjudicationRecord,
   relationship: PdfVisualRelationship,
+  candidate: PdfVisualMatchCandidate,
 ) {
   const candidateSourceRegionIds = new Set(
     relationship.candidates.flatMap(({ sourceRegionIds }) => sourceRegionIds),
@@ -787,20 +805,46 @@ function humanVisualCaptionAnchorMatches(
   const canonicalNode = reconstruction.paper.nodes.find(
     ({ id }) => id === relationship.canonicalNodeId,
   )
+  const canonicalProvenance =
+    reconstruction.provenance[relationship.canonicalNodeId]
   const captionPage =
     reconstruction.provenance[captionNode?.id ?? '']?.boxes[0]?.page ??
     reconstruction.regions.find(({ id }) => id === relationship.captionRegionId)
       ?.box.page
-  return Boolean(
-    captionNode?.type === 'caption' &&
-    reconstruction.provenance[captionNode.id]?.regionIds.includes(
+  if (
+    captionNode?.type !== 'caption' ||
+    !reconstruction.provenance[captionNode.id]?.regionIds.includes(
       relationship.captionRegionId,
-    ) &&
-    canonicalNode?.type === 'figure' &&
-    captionPage !== undefined &&
-    relationship.canonicalNodeId ===
-      visualCanonicalNodeId(relationship, captionPage) &&
-    canonicalNode.relationships.caption === captionNode.id,
+    ) ||
+    canonicalNode?.type !== 'figure' ||
+    captionPage === undefined ||
+    relationship.canonicalNodeId !==
+      visualCanonicalNodeId(relationship, captionPage)
+  ) {
+    return false
+  }
+  const expectedNode = materializeCanonicalVisualNode({
+    relationship,
+    id: relationship.canonicalNodeId,
+    captionNodeId: captionNode.id,
+    source: `pdf:${reconstruction.source.sha256.slice(0, 16)}#page=${captionPage}`,
+    sourceText: relationship.sourceText.trim()
+      ? relationship.sourceText
+      : undefined,
+  })
+  const expectedProvenance = {
+    confidence: candidate.score,
+    pages: [...new Set(relationship.sourceBoxes.map(({ page }) => page))],
+    regionIds: [...candidate.sourceRegionIds],
+    boxes: relationship.sourceBoxes.map((box) => ({ ...box })),
+    links: [],
+    relationshipIds: [relationship.id],
+  }
+  return (
+    stableModelConsultationJson(canonicalNode) ===
+      stableModelConsultationJson(expectedNode) &&
+    stableModelConsultationJson(canonicalProvenance) ===
+      stableModelConsultationJson(expectedProvenance)
   )
 }
 
@@ -1192,6 +1236,7 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
           reconstruction,
           adjudication,
           relationship,
+          candidate,
         ) &&
         relationship.confidence === candidate.score &&
         stableModelConsultationJson(relationship.sourceBoxes) ===
@@ -1584,6 +1629,7 @@ function humanAdjudicationSupersedesDecision(
           reconstruction,
           adjudication,
           relationship,
+          candidate,
         ) &&
         relationship.confidence === candidate.score &&
         stableModelConsultationJson(relationship.sourceBoxes) ===

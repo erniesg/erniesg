@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type {
   HumanAdjudicationRecord,
+  HumanNoteSourceAnchorReceipt,
   PdfCandidateResolutionOrigin,
   PdfReconstruction,
   ReconstructionDiagnostic,
@@ -481,6 +482,31 @@ function sameDecision(
     JSON.stringify(normalizedRecord(left)) ===
     JSON.stringify(normalizedRecord(right))
   )
+}
+
+function noteSourceAnchorReceiptForDecision(
+  reconstruction: PdfReconstruction,
+  decision: HumanAdjudicationRecord,
+): HumanNoteSourceAnchorReceipt | null {
+  if (
+    decision.resolution.type !== 'accept-note-match' &&
+    decision.resolution.type !== 'reclassify-citation' &&
+    decision.resolution.type !== 'reclassify-plain-text'
+  ) {
+    return null
+  }
+  const relationship = reconstruction.noteRelationships.find(
+    ({ id }) => id === decision.target.markerId,
+  )
+  if (!relationship) return null
+  return {
+    relationshipId: relationship.id,
+    label: relationship.label,
+    referenceRegionId: relationship.referenceRegionId,
+    referenceStart: relationship.referenceStart,
+    referenceEnd: relationship.referenceEnd,
+    canonicalAnchor: structuredClone(relationship.canonicalAnchor),
+  }
 }
 
 function readingOrderDecisionStillInstalled(
@@ -2116,6 +2142,7 @@ export function applyHumanDecisionFile(
   )
   const applied: HumanAdjudicationRecord[] = []
   const stale: PdfReconstruction['humanAdjudications']['stale'] = []
+  const noteSourceAnchorReceipts: HumanNoteSourceAnchorReceipt[] = []
   const visualDecorationReceipts: Array<{
     relationshipId: string
     sourceObjectIds: string[]
@@ -2221,6 +2248,13 @@ export function applyHumanDecisionFile(
         (readingOrderDecisionStillInstalled(result, decision) ||
           noteDecisionStillInstalled(result, decision))
       ) {
+        const retainedReceipt =
+          existingAdjudications.noteSourceAnchorReceipts?.find(
+            ({ relationshipId }) => relationshipId === decision.target.markerId,
+          )
+        if (retainedReceipt) {
+          noteSourceAnchorReceipts.push(structuredClone(retainedReceipt))
+        }
         applied.push(decision)
         continue
       }
@@ -2228,8 +2262,9 @@ export function applyHumanDecisionFile(
       continue
     }
 
+    const noteApplied = updateNoteRelationship(result, decision)
     const appliedLegally =
-      updateNoteRelationship(result, decision) ||
+      noteApplied ||
       updateReadingOrder(result, diagnostic, decision) ||
       (decision.resolution.type === 'dismiss' && legalDismissal(diagnostic))
     if (!appliedLegally) {
@@ -2239,6 +2274,10 @@ export function applyHumanDecisionFile(
     result.diagnostics = result.diagnostics.filter(
       (candidate) => candidate !== diagnostic,
     )
+    if (noteApplied) {
+      const receipt = noteSourceAnchorReceiptForDecision(result, decision)
+      if (receipt) noteSourceAnchorReceipts.push(receipt)
+    }
     applied.push(decision)
   }
 
@@ -2265,6 +2304,18 @@ export function applyHumanDecisionFile(
     applied,
     stale,
     countsByDiagnosticCode,
+    ...(noteSourceAnchorReceipts.length > 0
+      ? {
+          noteSourceAnchorReceipts: noteSourceAnchorReceipts.sort(
+            (left, right) =>
+              left.relationshipId < right.relationshipId
+                ? -1
+                : left.relationshipId > right.relationshipId
+                  ? 1
+                  : 0,
+          ),
+        }
+      : {}),
     ...(visualDecorationReceipts.length > 0
       ? {
           visualDecorationReceipts: visualDecorationReceipts.map((receipt) => ({

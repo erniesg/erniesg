@@ -1290,6 +1290,51 @@ describe('PDF model fallback production adapter', () => {
           false,
         )
       }
+
+      if (resolutionType === 'reclassify-plain-text') {
+        const zeroRun = structuredClone(adjudicated)
+        const current = zeroRun.noteRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        const anchor = current.canonicalAnchor
+        expect(anchor?.kind).toBe('node')
+        const owner = zeroRun.paper.nodes.find(
+          ({ id }) => anchor?.kind === 'node' && id === anchor.nodeId,
+        )!
+        if ('inlineRuns' in owner && owner.inlineRuns) {
+          owner.inlineRuns = owner.inlineRuns.filter(
+            ({ relationshipId }) => relationshipId !== current.id,
+          )
+          if (owner.inlineRuns.length === 0) delete owner.inlineRuns
+        }
+        zeroRun.modelConsultations!.semanticStateSha256 =
+          pdfModelConsultationSemanticStateSha256(
+            zeroRun,
+            zeroRun.modelConsultations!,
+          )
+        expect(modelConsultationReceiptMatchesPdfReconstruction(zeroRun)).toBe(
+          true,
+        )
+
+        const tampered = structuredClone(zeroRun)
+        const moved = tampered.noteRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        moved.referenceStart += 1
+        moved.referenceEnd += 1
+        if (moved.canonicalAnchor?.kind === 'node') {
+          moved.canonicalAnchor.start = moved.referenceStart
+          moved.canonicalAnchor.end = moved.referenceEnd
+        }
+        tampered.modelConsultations!.semanticStateSha256 =
+          pdfModelConsultationSemanticStateSha256(
+            tampered,
+            tampered.modelConsultations!,
+          )
+        expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+          false,
+        )
+      }
     },
   )
 
@@ -1421,6 +1466,101 @@ describe('PDF model fallback production adapter', () => {
     expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
       false,
     )
+  })
+
+  it('binds human visual supersession to the installed node payload and provenance', async () => {
+    const failed = await resolvePdfModelFallbacks(visualAdjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      distillation: new DistillationLedger(),
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          throw new Error('provider failed')
+        },
+      },
+    })
+    const relationship = failed.visualRelationships.find(
+      ({ status, candidates }) =>
+        status === 'ambiguous' && candidates.length > 0,
+    )!
+    const candidate = relationship.candidates[0]!
+    const adjudicated = applyHumanDecisionFile(
+      failed,
+      upsertHumanDecision(
+        createHumanDecisionFile(failed.source.sha256),
+        createVisualMatchDecision(
+          failed,
+          relationship.id,
+          candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
+        ),
+      ),
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+
+    for (const mutate of [
+      (copy: typeof adjudicated) => {
+        const current = copy.visualRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        const node = copy.paper.nodes.find(
+          ({ id }) => id === current.canonicalNodeId,
+        )!
+        if (node.type === 'figure') node.title = `${node.title}-tampered`
+      },
+      (copy: typeof adjudicated) => {
+        const current = copy.visualRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        const node = copy.paper.nodes.find(
+          ({ id }) => id === current.canonicalNodeId,
+        )!
+        if (node.type === 'figure') node.sourceText = 'tampered source text'
+      },
+      (copy: typeof adjudicated) => {
+        const current = copy.visualRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        const node = copy.paper.nodes.find(
+          ({ id }) => id === current.canonicalNodeId,
+        )!
+        if (node.type === 'figure') {
+          node.objectType = node.objectType === 'figure' ? 'table' : 'figure'
+        }
+      },
+      (copy: typeof adjudicated) => {
+        const current = copy.visualRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        const node = copy.paper.nodes.find(
+          ({ id }) => id === current.canonicalNodeId,
+        )!
+        if (node.type === 'figure') node.relationships.assets = []
+      },
+      (copy: typeof adjudicated) => {
+        const current = copy.visualRelationships.find(
+          ({ id }) => id === relationship.id,
+        )!
+        copy.provenance[current.canonicalNodeId!]!.confidence = Math.max(
+          0,
+          current.confidence - 0.1,
+        )
+      },
+    ]) {
+      const tampered = structuredClone(adjudicated)
+      mutate(tampered)
+      tampered.modelConsultations!.semanticStateSha256 =
+        pdfModelConsultationSemanticStateSha256(
+          tampered,
+          tampered.modelConsultations!,
+        )
+
+      expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+        false,
+      )
+    }
   })
 
   it('accounts for a human unresolved-visual fallback without a model receipt', () => {

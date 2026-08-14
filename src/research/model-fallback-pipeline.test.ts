@@ -5,6 +5,7 @@ import type { NormalizedSourceBox, PdfReconstruction } from './import-types'
 import {
   applyHumanDecisionFile,
   createHumanDecisionFile,
+  createVisualMatchDecision,
   readingOrderCandidates,
   upsertHumanDecision,
 } from './decision-record'
@@ -1092,6 +1093,204 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('binds human note supersession to the adjudicated source marker', async () => {
+    const failed = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          throw new Error('provider failed')
+        },
+      },
+    })
+    const relationship = failed.noteRelationships.find(
+      ({ candidates }) => candidates.length > 0,
+    )!
+    const diagnostic = failed.diagnostics.find(
+      ({ code, target }) =>
+        code === 'AMBIGUOUS_NOTE_MATCH' && target?.markerId === relationship.id,
+    )!
+    const candidate = relationship.candidates[0]!
+    const adjudicated = applyHumanDecisionFile(
+      failed,
+      upsertHumanDecision(createHumanDecisionFile(failed.source.sha256), {
+        diagnosticCode: diagnostic.code,
+        target: structuredClone(diagnostic.target!),
+        resolution: {
+          type: 'accept-note-match',
+          targetNoteId: candidate.targetNoteId,
+          targetRegionId: candidate.targetRegionId,
+        },
+      }),
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+
+    const mutations = [
+      (current: typeof relationship) => {
+        current.referenceRegionId = 'retargeted-note-reference-region'
+      },
+      (current: typeof relationship) => {
+        current.referenceStart += 1
+      },
+      (current: typeof relationship) => {
+        current.referenceEnd += 1
+      },
+      (current: typeof relationship) => {
+        current.canonicalAnchor = null
+      },
+    ]
+    for (const mutate of mutations) {
+      const tampered = structuredClone(adjudicated)
+      mutate(
+        tampered.noteRelationships.find(({ id }) => id === relationship.id)!,
+      )
+      tampered.modelConsultations!.semanticStateSha256 =
+        pdfModelConsultationSemanticStateSha256(
+          tampered,
+          tampered.modelConsultations!,
+        )
+
+      expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+        false,
+      )
+    }
+  })
+
+  it('binds human visual supersession to the adjudicated caption anchor', async () => {
+    const failed = await resolvePdfModelFallbacks(visualAdjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      distillation: new DistillationLedger(),
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          throw new Error('provider failed')
+        },
+      },
+    })
+    const relationship = failed.visualRelationships.find(
+      ({ status, candidates }) =>
+        status === 'ambiguous' && candidates.length > 0,
+    )!
+    const candidate = relationship.candidates[0]!
+    const decision = createVisualMatchDecision(
+      failed,
+      relationship.id,
+      candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
+    )
+    const adjudicated = applyHumanDecisionFile(
+      failed,
+      upsertHumanDecision(
+        createHumanDecisionFile(failed.source.sha256),
+        decision,
+      ),
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+
+    const tampered = structuredClone(adjudicated)
+    const current = tampered.visualRelationships.find(
+      ({ id }) => id === relationship.id,
+    )!
+    const originalCaptionNode = tampered.paper.nodes.find(
+      ({ id }) => id === current.captionNodeId,
+    )!
+    const originalCaptionProvenance =
+      tampered.provenance[current.captionNodeId!]!
+    const retargetedCaptionNodeId = `${current.captionNodeId}-retargeted`
+    const retargetedCaptionRegionId = `${current.captionRegionId}-retargeted`
+    tampered.paper.nodes.push({
+      ...structuredClone(originalCaptionNode),
+      id: retargetedCaptionNodeId,
+    })
+    tampered.provenance[retargetedCaptionNodeId] = {
+      ...structuredClone(originalCaptionProvenance),
+      regionIds: [retargetedCaptionRegionId],
+    }
+    current.captionNodeId = retargetedCaptionNodeId
+    current.captionRegionId = retargetedCaptionRegionId
+    const canonicalNode = tampered.paper.nodes.find(
+      ({ id }) => id === current.canonicalNodeId,
+    )
+    if (canonicalNode?.type === 'figure') {
+      canonicalNode.relationships.caption = retargetedCaptionNodeId
+    }
+    tampered.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        tampered,
+        tampered.modelConsultations!,
+      )
+
+    expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+      false,
+    )
+  })
+
+  it('binds human reading-order supersession to installed accepted edges', async () => {
+    const failed = await resolvePdfModelFallbacks(adjudicationRequired, {
+      enabled: true,
+      ownerOptIn: true,
+      model: {
+        identity: modelIdentity,
+        consult: () => {
+          throw new Error('provider failed')
+        },
+      },
+    })
+    const diagnostic = failed.diagnostics.find(
+      ({ code }) => code === 'AMBIGUOUS_READING_ORDER',
+    )!
+    const chosen = readingOrderCandidates(failed, diagnostic)[0]!
+    const adjudicated = applyHumanDecisionFile(
+      failed,
+      upsertHumanDecision(createHumanDecisionFile(failed.source.sha256), {
+        diagnosticCode: diagnostic.code,
+        target: structuredClone(diagnostic.target!),
+        resolution: {
+          type: 'accept-reading-order',
+          regionIds: [...chosen],
+        },
+      }),
+    )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(adjudicated)).toBe(
+      true,
+    )
+    const targetIds = new Set(chosen)
+    const installedEdge = adjudicated.readingOrder.edges.find(
+      ({ from, to, status }) =>
+        targetIds.has(from) && targetIds.has(to) && status === 'accepted',
+    )!
+
+    for (const mutate of [
+      (copy: typeof adjudicated) => {
+        copy.readingOrder.edges = copy.readingOrder.edges.filter(
+          ({ id }) => id !== installedEdge.id,
+        )
+      },
+      (copy: typeof adjudicated) => {
+        copy.readingOrder.edges.find(
+          ({ id }) => id === installedEdge.id,
+        )!.status = 'candidate'
+      },
+    ]) {
+      const tampered = structuredClone(adjudicated)
+      mutate(tampered)
+      tampered.modelConsultations!.semanticStateSha256 =
+        pdfModelConsultationSemanticStateSha256(
+          tampered,
+          tampered.modelConsultations!,
+        )
+
+      expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+        false,
+      )
+    }
+  })
+
   it('rebinds model receipts after later human adjudication changes semantic state', async () => {
     const resolved = await resolvePdfModelFallbacks(adjudicationRequired, {
       enabled: true,
@@ -1433,6 +1632,50 @@ describe('PDF model fallback production adapter', () => {
         'MISSING_MODEL_CONSULTATION_RECEIPT',
       )
     }
+  })
+
+  it('keeps a receipt obligation for a resolved visual after mutable provenance is stripped', async () => {
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      {
+        enabled: true,
+        ownerOptIn: true,
+        distillation: new DistillationLedger(),
+        model: {
+          identity: modelIdentity,
+          consult: (request) => ({ candidateId: request.candidates[0]!.id }),
+        },
+      },
+    )
+    const relationship = resolved.visualRelationships.find(({ evidence }) =>
+      evidence.includes('model-consultation'),
+    )!
+    expect(relationship.resolutionOrigin).toBe('model-consultation')
+
+    const stripped = withoutReceipt(
+      structuredClone(resolved),
+    ) as PdfReconstruction
+    const current = stripped.visualRelationships.find(
+      ({ id }) => id === relationship.id,
+    )!
+    const selected = current.candidates.find(
+      ({ score }) => score === current.confidence,
+    )!
+    current.candidates = [selected]
+    current.evidence = current.evidence.filter(
+      (code) =>
+        code !== 'model-consultation' &&
+        code !== 'deterministic-distillation' &&
+        !code.startsWith('model-consulted-') &&
+        !code.startsWith('deterministically-distilled-'),
+    )
+
+    expect([...pdfModelDerivedDecisionKeys(stripped)]).toContain(
+      `${MODEL_FALLBACK_DECISION_CLASSES.captionAssociation}\u0000${relationship.id}`,
+    )
+    expect(() => buildStructDocument(stripped)).toThrow(
+      'MISSING_MODEL_CONSULTATION_RECEIPT',
+    )
   })
 
   it('attributes a settled tie whose own confidence still records it as unsettled', async () => {

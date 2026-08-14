@@ -623,6 +623,126 @@ function visualInstalledSourceBoxes(
     : null
 }
 
+function humanNoteSourceAnchorMatches(
+  reconstruction: PdfReconstruction,
+  adjudication: HumanAdjudicationRecord,
+  relationship: PdfReconstruction['noteRelationships'][number],
+) {
+  if (adjudication.resolution.type !== 'accept-note-match') return false
+  const candidateTargetRegionIds = new Set(
+    relationship.candidates.map(({ targetRegionId }) => targetRegionId),
+  )
+  const sourceRegionIds = adjudication.target.regionIds.filter(
+    (regionId) => !candidateTargetRegionIds.has(regionId),
+  )
+  if (
+    sourceRegionIds.length !== 1 ||
+    sourceRegionIds[0] !== relationship.referenceRegionId
+  ) {
+    return false
+  }
+
+  const anchor = relationship.canonicalAnchor
+  if (!anchor) return false
+  if (anchor.kind === 'author') {
+    return (
+      reconstruction.paper.authorNotes?.filter(
+        ({ id, author, label, target }) =>
+          id === relationship.id &&
+          author === anchor.author &&
+          label === relationship.label &&
+          target === relationship.targetNoteId,
+      ).length === 1
+    )
+  }
+  if (
+    anchor.start !== relationship.referenceStart ||
+    anchor.end !== relationship.referenceEnd
+  ) {
+    return false
+  }
+  const matchesReference = (reference: {
+    id: string
+    label: string
+    target: string
+    start: number
+    end: number
+    confidence: number
+  }) =>
+    reference.id === relationship.id &&
+    reference.label === relationship.label &&
+    reference.target === relationship.targetNoteId &&
+    reference.start === relationship.referenceStart &&
+    reference.end === relationship.referenceEnd &&
+    reference.confidence === relationship.confidence
+
+  const directOwner = reconstruction.paper.nodes.find(
+    ({ id }) => id === anchor.nodeId,
+  )
+  if (directOwner && 'noteReferences' in directOwner) {
+    return Boolean(
+      reconstruction.provenance[directOwner.id]?.regionIds.includes(
+        relationship.referenceRegionId,
+      ) && directOwner.noteReferences?.filter(matchesReference).length === 1,
+    )
+  }
+
+  const tableCellOwners = reconstruction.paper.nodes.flatMap((node) => {
+    if (node.type !== 'figure' || !node.table) return []
+    return node.table.rows.flatMap((row, rowIndex) =>
+      row.cells.flatMap((cell, cellIndex) => {
+        const cellNodeId = `${node.id}:table:${cell.id ?? `${rowIndex}:${cellIndex}`}`
+        if (
+          cellNodeId !== anchor.nodeId ||
+          !reconstruction.provenance[node.id]?.regionIds.includes(
+            relationship.referenceRegionId,
+          ) ||
+          cell.noteReferences?.filter(matchesReference).length !== 1
+        ) {
+          return []
+        }
+        return [cellNodeId]
+      }),
+    )
+  })
+  return tableCellOwners.length === 1
+}
+
+function humanVisualCaptionAnchorMatches(
+  reconstruction: PdfReconstruction,
+  adjudication: HumanAdjudicationRecord,
+  relationship: PdfVisualRelationship,
+) {
+  const candidateSourceRegionIds = new Set(
+    relationship.candidates.flatMap(({ sourceRegionIds }) => sourceRegionIds),
+  )
+  const captionTargetRegionIds = adjudication.target.regionIds.filter(
+    (regionId) => !candidateSourceRegionIds.has(regionId),
+  )
+  if (
+    captionTargetRegionIds.length !== 1 ||
+    captionTargetRegionIds[0] !== relationship.captionRegionId ||
+    !relationship.captionNodeId ||
+    !relationship.canonicalNodeId
+  ) {
+    return false
+  }
+  const captionNode = reconstruction.paper.nodes.find(
+    ({ id }) => id === relationship.captionNodeId,
+  )
+  const canonicalNode = reconstruction.paper.nodes.find(
+    ({ id }) => id === relationship.canonicalNodeId,
+  )
+  return Boolean(
+    captionNode?.type === 'caption' &&
+    reconstruction.provenance[captionNode.id]?.regionIds.includes(
+      relationship.captionRegionId,
+    ) &&
+    canonicalNode?.type === 'figure' &&
+    canonicalNode.relationships.caption === captionNode.id,
+  )
+}
+
 function acceptedConsultationMatchesReconstruction(
   reconstruction: PdfReconstruction,
   consultation: ModelConsultationRecord,
@@ -734,6 +854,7 @@ function acceptedConsultationMatchesReconstruction(
         : null
     return Boolean(
       relationship?.status === 'matched' &&
+      relationship.resolutionOrigin === 'model-consultation' &&
       typeof relationship.resolutionInputConfidence === 'number' &&
       currentCandidate &&
       currentCandidates &&
@@ -925,6 +1046,11 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
       const candidate = candidates.length === 1 ? candidates[0] : undefined
       return Boolean(
         candidate &&
+        humanNoteSourceAnchorMatches(
+          reconstruction,
+          adjudication,
+          relationship,
+        ) &&
         relationship.targetNoteId === resolution.targetNoteId &&
         relationship.confidence === candidate.score &&
         stableModelConsultationJson(relationship.sourceBoxes) ===
@@ -962,6 +1088,7 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
         adjudication.resolution.type !== 'accept-visual-match' ||
         adjudication.resolution.relationshipId !== relationship.id ||
         relationship.status !== 'matched' ||
+        relationship.resolutionOrigin !== 'human-adjudication' ||
         !relationship.evidence.includes('human-adjudicated-visual-match') ||
         !relationship.evidence.includes(
           `human-adjudicated-visual-kind:${relationship.kind}`,
@@ -982,6 +1109,11 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
       return Boolean(
         candidate &&
         installedBoxes &&
+        humanVisualCaptionAnchorMatches(
+          reconstruction,
+          adjudication,
+          relationship,
+        ) &&
         relationship.confidence === candidate.score &&
         stableModelConsultationJson(relationship.sourceBoxes) ===
           stableModelConsultationJson(installedBoxes) &&
@@ -1004,6 +1136,8 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     })
     if (
       attributed(relationship.evidence) ||
+      (relationship.resolutionOrigin !== undefined &&
+        MODEL_FALLBACK_ORIGINS.includes(relationship.resolutionOrigin)) ||
       (relationship.status === 'matched' &&
         intrinsicallyAmbiguous &&
         !humanAccounted)
@@ -1053,7 +1187,10 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
         const installed = reconstruction.readingOrder.order.filter((id) =>
           targetIds.has(id),
         )
-        return sameStringList(installed, adjudication.resolution.regionIds)
+        return (
+          sameStringList(installed, adjudication.resolution.regionIds) &&
+          acceptedReadingOrderEdgesMatch(reconstruction, installed)
+        )
       })
       .map(({ target }) => target?.regionIds),
   ])
@@ -1137,6 +1274,7 @@ function deterministicDecisionMatchesReconstruction(
         ).length === 1)
     return Boolean(
       relationship?.status === 'matched' &&
+      relationship.resolutionOrigin === 'deterministic-distillation' &&
       typeof relationship.resolutionInputConfidence === 'number' &&
       boundedRuleStillApplies &&
       candidate &&
@@ -1318,6 +1456,11 @@ function humanAdjudicationSupersedesDecision(
         relationship?.status === 'matched' &&
         relationship.targetNoteId === resolution.targetNoteId &&
         candidate !== undefined &&
+        humanNoteSourceAnchorMatches(
+          reconstruction,
+          adjudication,
+          relationship,
+        ) &&
         relationship.confidence === candidate.score &&
         stableModelConsultationJson(relationship.sourceBoxes) ===
           stableModelConsultationJson(candidate.sourceBoxes)
@@ -1347,12 +1490,18 @@ function humanAdjudicationSupersedesDecision(
         adjudication.target.markerId === decision.decisionId &&
         resolution.relationshipId === decision.decisionId &&
         relationship?.status === 'matched' &&
+        relationship.resolutionOrigin === 'human-adjudication' &&
         relationship.evidence.includes('human-adjudicated-visual-match') &&
         relationship.evidence.includes(
           `human-adjudicated-visual-kind:${relationship.kind}`,
         ) &&
         candidate !== undefined &&
         installedBoxes !== null &&
+        humanVisualCaptionAnchorMatches(
+          reconstruction,
+          adjudication,
+          relationship,
+        ) &&
         relationship.confidence === candidate.score &&
         stableModelConsultationJson(relationship.sourceBoxes) ===
           stableModelConsultationJson(installedBoxes) &&
@@ -1394,7 +1543,8 @@ function humanAdjudicationSupersedesDecision(
         resolutions.length === 1 &&
         resolutions[0]!.resolutionOrigin === 'human-adjudication' &&
         installedOrder.length === targetIds.size &&
-        sameStringList(adjudication.resolution.regionIds, installedOrder)
+        sameStringList(adjudication.resolution.regionIds, installedOrder) &&
+        acceptedReadingOrderEdgesMatch(reconstruction, installedOrder)
       )
     }
     return false

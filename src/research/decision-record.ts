@@ -1842,6 +1842,7 @@ function updateVisualMatch(
     assetIds: [...candidate.assetIds],
     status: 'matched' as const,
     confidence: candidate.score,
+    resolutionOrigin: evidenceOrigin,
     evidence: [
       ...candidate.evidence,
       evidenceOrigin === 'human-adjudication'

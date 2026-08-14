@@ -861,6 +861,7 @@ export type PdfVisualRelationship = {
   assetIds: string[]
   status: 'matched' | 'ambiguous' | 'unresolved'
   confidence: number
+  resolutionOrigin?: 'human-adjudication' | PdfCandidateResolutionOrigin
   /** Ambiguity confidence presented to the rule before its choice was installed. */
   resolutionInputConfidence?: number
   evidence: string[]

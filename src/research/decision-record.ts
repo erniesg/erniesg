@@ -1023,6 +1023,7 @@ function updateNoteRelationship(
   } else {
     return false
   }
+  relationship.resolutionOrigin = evidenceOrigin
 
   for (const node of reconstruction.paper.nodes) {
     if ('noteReferences' in node && node.noteReferences) {

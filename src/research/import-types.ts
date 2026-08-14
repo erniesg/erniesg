@@ -667,6 +667,7 @@ export type PdfNoteRelationship = {
   referenceEnd: number
   targetNoteId: string | null
   status: 'matched' | 'ambiguous' | 'unresolved' | 'citation' | 'plain-text'
+  resolutionOrigin?: 'human-adjudication' | PdfCandidateResolutionOrigin
   canonicalAnchor: PdfNoteCanonicalAnchor
   confidence: number
   threshold: number

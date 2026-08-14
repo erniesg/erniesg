@@ -187,6 +187,12 @@ function visualModelCandidateId(
   candidateSetSha256: string,
 ) {
   return stableCandidateId('visual-kind-candidate', [
+    stableModelConsultationJson({
+      diagnostic_code: 'AMBIGUOUS_VISUAL_MATCH',
+      relationship_id: relationship.id,
+      caption_region_id: relationship.captionRegionId,
+      candidate_count: relationship.candidates.length,
+    }),
     candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
     relationship.kind,
     String(candidate.score),
@@ -649,6 +655,7 @@ function acceptedConsultationMatchesReconstruction(
     }))
     return (
       relationship?.status === 'matched' &&
+      relationship.resolutionOrigin === 'model-consultation' &&
       typeof candidate.note_id === 'string' &&
       typeof candidate.region_id === 'string' &&
       typeof candidate.score === 'number' &&
@@ -789,6 +796,7 @@ function acceptedConsultationMatchesReconstruction(
       resolutions[0]!.resolutionOrigin === 'model-consultation' &&
       installedOrder.length === targetIds.size &&
       sameStringList(installedOrder, chosen) &&
+      acceptedReadingOrderEdgesMatch(reconstruction, chosen) &&
       !installedRegionEvidence.includes(null) &&
       stableModelConsultationJson(installedRegionEvidence) ===
         stableModelConsultationJson(candidate.regions) &&
@@ -833,6 +841,26 @@ function readingOrderResolutionsForDecision(
   )
 }
 
+function acceptedReadingOrderEdgesMatch(
+  reconstruction: PdfReconstruction,
+  chosen: readonly string[],
+) {
+  const targetIds = new Set(chosen)
+  const installed = reconstruction.readingOrder.edges.filter(
+    ({ from, to }) => targetIds.has(from) && targetIds.has(to),
+  )
+  const expectedPairs = chosen
+    .slice(0, -1)
+    .map((from, index) => `${from}\u0000${chosen[index + 1]}`)
+  return (
+    installed.length === expectedPairs.length &&
+    installed.every(
+      ({ from, to, status }) =>
+        status === 'accepted' && expectedPairs.includes(`${from}\u0000${to}`),
+    )
+  )
+}
+
 /**
  * Decision keys for state the document itself attributes to the model fallback
  * layer. `existingReceiptMatchesReconstruction` verifies receipt -> document;
@@ -870,6 +898,7 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
         adjudication.target.markerId !== relationship.id ||
         adjudication.resolution.type !== 'accept-note-match' ||
         relationship.status !== 'matched' ||
+        relationship.resolutionOrigin !== 'human-adjudication' ||
         !relationship.evidence.includes('human-adjudication')
       ) {
         return false
@@ -891,6 +920,8 @@ export function pdfModelDerivedDecisionKeys(reconstruction: PdfReconstruction) {
     })
     if (
       attributed(relationship.evidence) ||
+      (relationship.resolutionOrigin !== undefined &&
+        MODEL_FALLBACK_ORIGINS.includes(relationship.resolutionOrigin)) ||
       (relationship.status === 'matched' &&
         intrinsicallyAmbiguous &&
         !humanAccounted)
@@ -1111,7 +1142,14 @@ function deterministicDecisionMatchesReconstruction(
       // installed text. Bind the reader-visible text the decision installed.
       (candidate.sourceText === undefined ||
         relationship.sourceText === candidate.sourceText) &&
-      relationship.evidence.includes('deterministic-distillation'),
+      stableModelConsultationJson([...relationship.evidence].sort()) ===
+        stableModelConsultationJson(
+          [
+            ...candidate.evidence,
+            'deterministic-distillation',
+            'deterministically-distilled-ambiguous_visual_match',
+          ].sort(),
+        ),
     )
   }
   if (
@@ -1130,6 +1168,7 @@ function deterministicDecisionMatchesReconstruction(
     )
     return Boolean(
       relationship?.status === 'matched' &&
+      relationship.resolutionOrigin === 'deterministic-distillation' &&
       candidate &&
       relationship.targetNoteId === candidate.targetNoteId &&
       relationship.confidence === candidate.score &&
@@ -1175,6 +1214,7 @@ function deterministicDecisionMatchesReconstruction(
     // just to the order it installed.
     const ambiguity = readingOrderAmbiguityEvidence(resolutions[0]!)
     return (
+      resolutions[0]!.resolutionOrigin === 'deterministic-distillation' &&
       installedOrder.length === targetIds.size &&
       !installedRegionEvidence.includes(null) &&
       stableCandidateId('reading-order-candidate', [
@@ -1207,11 +1247,51 @@ function humanAdjudicationSupersedesDecision(
     if (
       decision.decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch
     ) {
-      if (adjudication.resolution.type !== 'accept-note-match') return false
-      const resolution = adjudication.resolution
       const relationship = reconstruction.noteRelationships.find(
         ({ id }) => id === decision.decisionId,
       )
+      if (
+        adjudication.diagnosticCode !== 'AMBIGUOUS_NOTE_MATCH' ||
+        adjudication.target.markerId !== decision.decisionId ||
+        relationship?.resolutionOrigin !== 'human-adjudication' ||
+        !relationship.evidence.includes('human-adjudication')
+      ) {
+        return false
+      }
+      if (adjudication.resolution.type === 'reclassify-plain-text') {
+        return (
+          relationship.status === 'plain-text' &&
+          relationship.targetNoteId === null &&
+          !reconstruction.citationRelationships.some(
+            ({ id }) => id === relationship.id,
+          )
+        )
+      }
+      if (adjudication.resolution.type === 'reclassify-citation') {
+        const citation = reconstruction.citationRelationships.find(
+          ({ id }) => id === relationship.id,
+        )
+        return Boolean(
+          relationship.status === 'citation' &&
+          relationship.targetNoteId === null &&
+          citation?.taxonomy === 'human-reclassified-citation' &&
+          citation.label === relationship.label &&
+          sameStringList(
+            citation.labels,
+            relationship.label.split(',').filter(Boolean),
+          ) &&
+          citation.referenceRegionId === relationship.referenceRegionId &&
+          citation.referenceStart === relationship.referenceStart &&
+          citation.referenceEnd === relationship.referenceEnd &&
+          citation.confidence === relationship.confidence &&
+          stableModelConsultationJson(citation.evidence) ===
+            stableModelConsultationJson(relationship.evidence) &&
+          stableModelConsultationJson(citation.sourceBoxes) ===
+            stableModelConsultationJson(relationship.sourceBoxes),
+        )
+      }
+      if (adjudication.resolution.type !== 'accept-note-match') return false
+      const resolution = adjudication.resolution
       const candidates = relationship?.candidates.filter(
         ({ targetNoteId, targetRegionId }) =>
           targetNoteId === resolution.targetNoteId &&
@@ -1219,10 +1299,7 @@ function humanAdjudicationSupersedesDecision(
       )
       const candidate = candidates?.length === 1 ? candidates[0] : undefined
       return (
-        adjudication.diagnosticCode === 'AMBIGUOUS_NOTE_MATCH' &&
-        adjudication.target.markerId === decision.decisionId &&
         relationship?.status === 'matched' &&
-        relationship.evidence.includes('human-adjudication') &&
         relationship.targetNoteId === resolution.targetNoteId &&
         candidate !== undefined &&
         relationship.confidence === candidate.score &&

@@ -133,6 +133,26 @@ async function sha256File(path: string) {
   return hash.digest('hex')
 }
 
+type PublicationBrowserBundleIdentity = {
+  bundleSha256: string
+  bundleByteLength: number
+  bundleEntryCount: number
+}
+
+type PublicationBrowserBundleManifestEntry =
+  | {
+      path: string
+      type: 'file'
+      mode: number
+      byteLength: number
+      sha256: string
+    }
+  | {
+      path: string
+      type: 'symlink'
+      target: string
+    }
+
 export function publicationPlaywrightPackageIdentityPaths() {
   return {
     playwrightPackageJson: PLAYWRIGHT_PACKAGE_JSON,
@@ -384,6 +404,160 @@ function publicationBrowserReadFlags(directory = false) {
 function publicationBrowserSourceChanged() {
   return new Error(
     'Pinned publication browser cache bundle changed during snapshot creation',
+  )
+}
+
+async function publicationBrowserRegularFileManifestEntry(
+  bundleRoot: string,
+  path: string,
+  sourceEntry: BigIntStats,
+): Promise<PublicationBrowserBundleManifestEntry> {
+  const sourceFile = await open(path, publicationBrowserReadFlags())
+  try {
+    const openedSource = await sourceFile.stat({ bigint: true })
+    if (
+      !openedSource.isFile() ||
+      !sameFileIdentity(sourceEntry, openedSource) ||
+      openedSource.size > BigInt(Number.MAX_SAFE_INTEGER)
+    )
+      throw new Error('Pinned publication browser bundle file is unsafe')
+    const hash = createHash('sha256')
+    const buffer = Buffer.allocUnsafe(1024 * 1024)
+    let byteLength = 0n
+    for (;;) {
+      const { bytesRead } = await sourceFile.read(
+        buffer,
+        0,
+        buffer.length,
+        null,
+      )
+      if (bytesRead === 0) break
+      hash.update(buffer.subarray(0, bytesRead))
+      byteLength += BigInt(bytesRead)
+    }
+    const confirmedSource = await sourceFile.stat({ bigint: true })
+    if (
+      byteLength !== openedSource.size ||
+      !sameStableSourceEntry(openedSource, confirmedSource)
+    )
+      throw new Error(
+        'Pinned publication browser bundle changed during attestation',
+      )
+    return {
+      path: relative(bundleRoot, path).split(sep).join('/'),
+      type: 'file',
+      mode: Number(openedSource.mode & 0o777n),
+      byteLength: Number(byteLength),
+      sha256: hash.digest('hex'),
+    }
+  } finally {
+    await sourceFile.close()
+  }
+}
+
+async function publicationBrowserBundleManifest(
+  bundleRoot: string,
+  path: string,
+  entries: PublicationBrowserBundleManifestEntry[],
+): Promise<void> {
+  const sourceEntry = await lstat(path, { bigint: true })
+  if (sourceEntry.isSymbolicLink()) {
+    const target = await readlink(path)
+    const confirmedSource = await lstat(path, { bigint: true })
+    const confirmedTarget = await readlink(path)
+    if (
+      !confirmedSource.isSymbolicLink() ||
+      !sameStableSourceEntry(sourceEntry, confirmedSource) ||
+      confirmedTarget !== target
+    )
+      throw new Error(
+        'Pinned publication browser bundle changed during attestation',
+      )
+    entries.push({
+      path: relative(bundleRoot, path).split(sep).join('/'),
+      type: 'symlink',
+      target,
+    })
+    return
+  }
+  if (sourceEntry.isFile()) {
+    entries.push(
+      await publicationBrowserRegularFileManifestEntry(
+        bundleRoot,
+        path,
+        sourceEntry,
+      ),
+    )
+    return
+  }
+  if (!sourceEntry.isDirectory())
+    throw new Error(
+      'Pinned publication browser bundle contains an unsupported entry',
+    )
+  const sourceDirectory = await open(path, publicationBrowserReadFlags(true))
+  try {
+    const openedSource = await sourceDirectory.stat({ bigint: true })
+    if (
+      !openedSource.isDirectory() ||
+      !sameFileIdentity(sourceEntry, openedSource)
+    )
+      throw new Error(
+        'Pinned publication browser bundle changed during attestation',
+      )
+    const names = (await readdir(path)).sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    )
+    for (const name of names)
+      await publicationBrowserBundleManifest(
+        bundleRoot,
+        resolve(path, name),
+        entries,
+      )
+    const [confirmedHandle, confirmedPath] = await Promise.all([
+      sourceDirectory.stat({ bigint: true }),
+      lstat(path, { bigint: true }),
+    ])
+    if (
+      !confirmedPath.isDirectory() ||
+      !sameStableSourceEntry(openedSource, confirmedHandle) ||
+      !sameStableSourceEntry(openedSource, confirmedPath)
+    )
+      throw new Error(
+        'Pinned publication browser bundle changed during attestation',
+      )
+  } finally {
+    await sourceDirectory.close()
+  }
+}
+
+async function publicationBrowserBundleIdentity(
+  bundleRoot: string,
+): Promise<PublicationBrowserBundleIdentity> {
+  const entries: PublicationBrowserBundleManifestEntry[] = []
+  await publicationBrowserBundleManifest(bundleRoot, bundleRoot, entries)
+  const bundleByteLength = entries.reduce(
+    (total, entry) =>
+      entry.type === 'file' ? total + entry.byteLength : total,
+    0,
+  )
+  if (!Number.isSafeInteger(bundleByteLength))
+    throw new Error('Pinned publication browser bundle is too large')
+  const manifest = `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`
+  return {
+    bundleSha256: sha256(manifest),
+    bundleByteLength,
+    bundleEntryCount: entries.length,
+  }
+}
+
+function samePublicationBrowserBundleIdentity(
+  left: PublicationBrowserBundleIdentity,
+  right: PublicationBrowserBundleIdentity,
+) {
+  return (
+    left.bundleSha256 === right.bundleSha256 &&
+    left.bundleByteLength === right.bundleByteLength &&
+    left.bundleEntryCount === right.bundleEntryCount
   )
 }
 
@@ -1054,6 +1228,7 @@ export async function snapshotPublicationBrowserBundle(
         'Pinned publication browser snapshot executable is not a regular file',
       )
     return {
+      bundleRoot: snapshotBundleRoot,
       executablePath,
       assertDirectoryIdentity,
       cleanup,
@@ -1086,6 +1261,9 @@ export async function preparePublicationBrowserSnapshot(
         'Pinned publication browser executable has an invalid size or type',
       )
     const executableSha256 = await sha256File(snapshot.executablePath)
+    const bundleIdentity = await publicationBrowserBundleIdentity(
+      snapshot.bundleRoot,
+    )
     await snapshot.assertDirectoryIdentity()
     // The mode-0700 snapshot treats same-uid/root processes as trusted. Cheap
     // inode and metadata checks bracket each render; verifyUnchanged performs
@@ -1101,10 +1279,19 @@ export async function preparePublicationBrowserSnapshot(
     }
     const verifyUnchanged = async () => {
       await assertUnchanged()
-      const currentSha256 = await sha256File(snapshot.executablePath)
-      if (currentSha256 !== executableSha256)
+      const [currentSha256, currentBundleIdentity] = await Promise.all([
+        sha256File(snapshot.executablePath),
+        publicationBrowserBundleIdentity(snapshot.bundleRoot),
+      ])
+      if (
+        currentSha256 !== executableSha256 ||
+        !samePublicationBrowserBundleIdentity(
+          bundleIdentity,
+          currentBundleIdentity,
+        )
+      )
         throw new Error(
-          'Pinned publication browser executable changed during rendering',
+          'Pinned publication browser bundle changed during rendering',
         )
       verifyPublicationBrowserExecutable(
         snapshot.executablePath,
@@ -1117,6 +1304,7 @@ export async function preparePublicationBrowserSnapshot(
       observedVersion: publicationBrowserVersion(versionOutput),
       executableSha256,
       executableByteLength: Number(executable.size),
+      ...bundleIdentity,
       assertUnchanged,
       verifyUnchanged,
       cleanup: snapshot.cleanup,
@@ -1181,6 +1369,9 @@ export async function preparePublicationPuppeteerRuntime(): Promise<PreparedPubl
       observedVersion: snapshot.observedVersion,
       executableSha256: snapshot.executableSha256,
       executableByteLength: snapshot.executableByteLength,
+      bundleSha256: snapshot.bundleSha256,
+      bundleByteLength: snapshot.bundleByteLength,
+      bundleEntryCount: snapshot.bundleEntryCount,
       ...packageIdentity,
     })
     const assertUnchanged = async () => {
@@ -1277,14 +1468,17 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
       throw new Error(
         'Pinned publication browser executable has an invalid size or type',
       )
-    const [executableSha256, packageIdentity] = await Promise.all([
-      sha256File(snapshot.executablePath),
-      publicationPlaywrightPackageIdentity(),
-    ])
+    const [executableSha256, bundleIdentity, packageIdentity] =
+      await Promise.all([
+        sha256File(snapshot.executablePath),
+        publicationBrowserBundleIdentity(snapshot.bundleRoot),
+        publicationPlaywrightPackageIdentity(),
+      ])
     const publicationBrowser = publicationPlaywrightRuntimeEvidenceForPlatform({
       observedVersion: publicationBrowserVersion(versionOutput),
       executableSha256,
       executableByteLength: Number(executable.size),
+      ...bundleIdentity,
       ...packageIdentity,
     })
     await snapshot.assertDirectoryIdentity()
@@ -1311,10 +1505,19 @@ export async function preparePublicationPlaywrightRuntime(): Promise<PreparedPub
     }
     const verifyUnchanged = async () => {
       await assertUnchanged()
-      const currentSha256 = await sha256File(snapshot.executablePath)
-      if (currentSha256 !== publicationBrowser.executableSha256)
+      const [currentSha256, currentBundleIdentity] = await Promise.all([
+        sha256File(snapshot.executablePath),
+        publicationBrowserBundleIdentity(snapshot.bundleRoot),
+      ])
+      if (
+        currentSha256 !== publicationBrowser.executableSha256 ||
+        !samePublicationBrowserBundleIdentity(
+          publicationBrowser,
+          currentBundleIdentity,
+        )
+      )
         throw new Error(
-          'Pinned publication browser or package identity changed during rendering',
+          'Pinned publication browser bundle or package identity changed during rendering',
         )
       verifyPublicationBrowserExecutable(
         snapshot.executablePath,

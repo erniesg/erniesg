@@ -23,6 +23,9 @@ export type PublicationPlaywrightRuntimeEvidence = {
   observedVersion: string
   executableSha256: string
   executableByteLength: number
+  bundleSha256: string
+  bundleByteLength: number
+  bundleEntryCount: number
   playwrightPackageJsonSha256: string
   playwrightCorePackageJsonSha256: string
   browsersJsonSha256: string
@@ -37,6 +40,9 @@ export type PublicationPuppeteerRuntimeEvidence = {
   observedVersion: string
   executableSha256: string
   executableByteLength: number
+  bundleSha256: string
+  bundleByteLength: number
+  bundleEntryCount: number
   puppeteerBrowsersPackageJsonSha256: string
   puppeteerCorePackageJsonSha256: string
   vivliostyleCliPackageJsonSha256: string
@@ -51,6 +57,9 @@ type PublicationPlaywrightObservedIdentity = Pick<
   | 'observedVersion'
   | 'executableSha256'
   | 'executableByteLength'
+  | 'bundleSha256'
+  | 'bundleByteLength'
+  | 'bundleEntryCount'
   | 'playwrightPackageJsonSha256'
   | 'playwrightCorePackageJsonSha256'
   | 'browsersJsonSha256'
@@ -61,6 +70,9 @@ type PublicationPuppeteerObservedIdentity = Pick<
   | 'observedVersion'
   | 'executableSha256'
   | 'executableByteLength'
+  | 'bundleSha256'
+  | 'bundleByteLength'
+  | 'bundleEntryCount'
   | 'puppeteerBrowsersPackageJsonSha256'
   | 'puppeteerCorePackageJsonSha256'
   | 'vivliostyleCliPackageJsonSha256'
@@ -119,6 +131,7 @@ export function publicationPlaywrightRuntimeEvidenceForPlatform(
     )
   for (const [name, value] of [
     ['executableSha256', identity.executableSha256],
+    ['bundleSha256', identity.bundleSha256],
     ['playwrightPackageJsonSha256', identity.playwrightPackageJsonSha256],
     [
       'playwrightCorePackageJsonSha256',
@@ -135,11 +148,23 @@ export function publicationPlaywrightRuntimeEvidenceForPlatform(
     throw new Error(
       'Playwright Chromium executableByteLength must be a positive safe integer',
     )
+  if (
+    !Number.isSafeInteger(identity.bundleByteLength) ||
+    identity.bundleByteLength <= 0 ||
+    !Number.isSafeInteger(identity.bundleEntryCount) ||
+    identity.bundleEntryCount <= 0
+  )
+    throw new Error(
+      'Playwright Chromium bundle size and entry count must be positive safe integers',
+    )
   return {
     ...compatibility,
     observedVersion: identity.observedVersion,
     executableSha256: identity.executableSha256,
     executableByteLength: identity.executableByteLength,
+    bundleSha256: identity.bundleSha256,
+    bundleByteLength: identity.bundleByteLength,
+    bundleEntryCount: identity.bundleEntryCount,
     playwrightPackageJsonSha256: identity.playwrightPackageJsonSha256,
     playwrightCorePackageJsonSha256: identity.playwrightCorePackageJsonSha256,
     browsersJsonSha256: identity.browsersJsonSha256,
@@ -172,6 +197,7 @@ export function publicationPuppeteerRuntimeEvidenceForPlatform(
     )
   for (const [name, value] of [
     ['executableSha256', identity.executableSha256],
+    ['bundleSha256', identity.bundleSha256],
     [
       'puppeteerBrowsersPackageJsonSha256',
       identity.puppeteerBrowsersPackageJsonSha256,
@@ -191,11 +217,23 @@ export function publicationPuppeteerRuntimeEvidenceForPlatform(
     throw new Error(
       'Puppeteer Chromium executableByteLength must be a positive safe integer',
     )
+  if (
+    !Number.isSafeInteger(identity.bundleByteLength) ||
+    identity.bundleByteLength <= 0 ||
+    !Number.isSafeInteger(identity.bundleEntryCount) ||
+    identity.bundleEntryCount <= 0
+  )
+    throw new Error(
+      'Puppeteer Chromium bundle size and entry count must be positive safe integers',
+    )
   return {
     ...compatibility,
     observedVersion: identity.observedVersion,
     executableSha256: identity.executableSha256,
     executableByteLength: identity.executableByteLength,
+    bundleSha256: identity.bundleSha256,
+    bundleByteLength: identity.bundleByteLength,
+    bundleEntryCount: identity.bundleEntryCount,
     puppeteerBrowsersPackageJsonSha256:
       identity.puppeteerBrowsersPackageJsonSha256,
     puppeteerCorePackageJsonSha256: identity.puppeteerCorePackageJsonSha256,

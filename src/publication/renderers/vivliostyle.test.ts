@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   symlink,
+  unlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -1532,6 +1533,12 @@ describe('Vivliostyle publication renderer boundary', () => {
       const bundle = resolve(cache, 'chrome/linux-150.0.7871.115')
       const browser = resolve(bundle, 'chrome-linux64/chrome')
       await mkdir(dirname(browser), { recursive: true })
+      await writeFile(resolve(dirname(browser), 'icudtl.dat'), 'icu-data-v1')
+      await writeFile(
+        resolve(dirname(browser), 'icudtl-alt.dat'),
+        'icu-data-v1',
+      )
+      await symlink('icudtl.dat', resolve(dirname(browser), 'icudtl-link.dat'))
       await writeFile(
         browser,
         '#!/bin/sh\necho "Google Chrome for Testing 150.0.7871.115"\n',
@@ -1555,6 +1562,34 @@ describe('Vivliostyle publication renderer boundary', () => {
       await writeFile(browser, '#!/bin/sh\necho "changed source cache"\n')
       await expect(prepared.assertUnchanged()).resolves.toBeUndefined()
       await expect(prepared.verifyUnchanged()).resolves.toBeUndefined()
+      expect(prepared).toMatchObject({
+        bundleSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        bundleByteLength: expect.any(Number),
+        bundleEntryCount: expect.any(Number),
+      })
+
+      const pinnedResource = resolve(
+        dirname(prepared.executablePath),
+        'icudtl.dat',
+      )
+      await chmod(pinnedResource, 0o600)
+      await writeFile(pinnedResource, 'icu-data-v2')
+      await expect(prepared.verifyUnchanged()).rejects.toThrow(
+        /browser.*bundle.*changed/i,
+      )
+
+      await writeFile(pinnedResource, 'icu-data-v1')
+      await chmod(pinnedResource, 0o444)
+      await expect(prepared.verifyUnchanged()).resolves.toBeUndefined()
+      const pinnedLink = resolve(
+        dirname(prepared.executablePath),
+        'icudtl-link.dat',
+      )
+      await unlink(pinnedLink)
+      await symlink('icudtl-alt.dat', pinnedLink)
+      await expect(prepared.verifyUnchanged()).rejects.toThrow(
+        /browser.*bundle.*changed/i,
+      )
 
       await chmod(prepared.executablePath, 0o700)
       await writeFile(

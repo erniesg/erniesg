@@ -49,6 +49,9 @@ const browserIdentity = {
   observedVersion: '149.0.7827.0',
   executableSha256: 'a'.repeat(64),
   executableByteLength: 123,
+  bundleSha256: '2'.repeat(64),
+  bundleByteLength: 1_234,
+  bundleEntryCount: 12,
   playwrightPackageJsonSha256: 'b'.repeat(64),
   playwrightCorePackageJsonSha256: 'c'.repeat(64),
   browsersJsonSha256: 'd'.repeat(64),
@@ -107,6 +110,9 @@ describe('publication:check CLI', () => {
       'observedVersion',
       'executableSha256',
       'executableByteLength',
+      'bundleSha256',
+      'bundleByteLength',
+      'bundleEntryCount',
       'playwrightPackageJsonSha256',
       'playwrightCorePackageJsonSha256',
       'browsersJsonSha256',
@@ -129,6 +135,15 @@ describe('publication:check CLI', () => {
         architecture: 'arm64',
       }),
     ).toThrow(/browser runtime binding/i)
+
+    const driftedBundle = structuredClone(publicationBrowser)
+    driftedBundle.bundleSha256 = '4'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedBundle, {
+        platform: 'linux',
+        architecture: 'arm64',
+      }),
+    ).toThrow(/browser runtime binding/i)
   })
 
   it('requires the current Puppeteer browser attestation for x64 receipts', () => {
@@ -137,6 +152,9 @@ describe('publication:check CLI', () => {
         observedVersion: '150.0.7871.115',
         executableSha256: 'e'.repeat(64),
         executableByteLength: 456,
+        bundleSha256: '3'.repeat(64),
+        bundleByteLength: 4_567,
+        bundleEntryCount: 23,
         puppeteerBrowsersPackageJsonSha256: 'f'.repeat(64),
         puppeteerCorePackageJsonSha256: '1'.repeat(64),
         vivliostyleCliPackageJsonSha256: '0'.repeat(64),
@@ -171,6 +189,9 @@ describe('publication:check CLI', () => {
       'observedVersion',
       'executableSha256',
       'executableByteLength',
+      'bundleSha256',
+      'bundleByteLength',
+      'bundleEntryCount',
       'puppeteerBrowsersPackageJsonSha256',
       'puppeteerCorePackageJsonSha256',
       'vivliostyleCliPackageJsonSha256',
@@ -189,6 +210,15 @@ describe('publication:check CLI', () => {
     driftedExecutable.executableSha256 = '1'.repeat(64)
     expect(() =>
       assertPublicationReceiptRuntime(receipt, driftedExecutable, {
+        platform: 'linux',
+        architecture: 'x64',
+      }),
+    ).toThrow(/browser runtime binding/i)
+
+    const driftedBundle = structuredClone(publicationBrowser)
+    driftedBundle.bundleSha256 = '4'.repeat(64)
+    expect(() =>
+      assertPublicationReceiptRuntime(receipt, driftedBundle, {
         platform: 'linux',
         architecture: 'x64',
       }),

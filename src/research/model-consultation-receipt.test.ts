@@ -10,6 +10,7 @@ import {
   serializeModelConsultationReceipt,
   validateModelConsultationReceipt,
 } from './model-fallback'
+import { validReceiptMetric } from '../struct/model-consultation-receipt'
 
 const schema = JSON.parse(
   readFileSync(
@@ -27,6 +28,10 @@ const credentialShapedIds = [
   ['openai-uppercase', ['SK', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
   ['slack-uppercase', ['XOXB', 'FAKEFAKEFAKEFAKE'].join('-')],
   ['github-classic', ['ghp', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-oauth', ['gho', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-user', ['ghu', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-app', ['ghs', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-refresh', ['ghr', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
   [
     'github-fine-grained',
     ['github', 'pat', 'FAKEFAKEFAKE', 'FAKEFAKEFAKE'].join('_'),
@@ -57,9 +62,11 @@ const credentialPrefixedSafeIds = [
   [
     'jwt-prefixed-document',
     [
-      ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJmYWtlIn0', 'ZmFrZXNpZ25hdHVyZQ'].join(
-        '.',
-      ),
+      [
+        'eyJhbGciOiJIUzI1NiJ9',
+        'eyJzdWIiOiJmYWtlIn0',
+        'ZmFrZXNpZ25hdHVyZQ',
+      ].join('.'),
       'page-1',
     ].join(':'),
   ],
@@ -524,6 +531,28 @@ describe('model consultation receipt validation', () => {
         receipt.documentId,
       ),
     ).toThrow('INVALID_MODEL_CONSULTATION_RECEIPT')
+  })
+
+  it('enforces the published receipt history and metric limits at runtime', async () => {
+    const ledger = new ModelFallbackLedger()
+    const point = MODEL_FALLBACK_REFERENCE_FIXTURES[0]!
+    await new ModelConsultationGate({ ledger }).decide(point)
+    const receipt = ledger.receiptFor(point.documentId)
+    const overLimit = 100_001
+    receipt.decisions = new Array(overLimit).fill(receipt.decisions[0]!)
+    receipt.metrics.totalDecisionCount = overLimit
+    const metric = Object.values(receipt.metrics.byDecisionClass)[0]!
+    metric.decisionCount = overLimit
+
+    expect(validateSchema(receipt)).toBe(false)
+    expect(validateModelConsultationReceipt(receipt)).toBe(false)
+    expect(
+      validReceiptMetric({
+        decisionCount: overLimit,
+        consultationCount: overLimit,
+        consultationRate: 1,
+      }),
+    ).toBe(false)
   })
 
   it('rejects divergent accepted choices for one stable request id', async () => {

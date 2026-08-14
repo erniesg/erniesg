@@ -587,6 +587,62 @@ describe('PDF model fallback production adapter', () => {
     )
   })
 
+  it('binds a deterministic visual decision to its pre-resolution confidence', async () => {
+    const [point] = modelDecisionPointsForPdf(
+      visualAdjudicationRequired,
+    ).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.captionAssociation,
+    )
+    const originalConfidence = point!.inputs.confidence as number
+    const changed = structuredClone(visualAdjudicationRequired)
+    changed.visualRelationships.find(
+      ({ id }) => id === point!.decisionId,
+    )!.confidence = originalConfidence === 0 ? 0.01 : originalConfidence - 0.01
+    const changedPoint = modelDecisionPointsForPdf(changed).find(
+      ({ decisionId }) => decisionId === point!.decisionId,
+    )!
+
+    expect(changedPoint.inputs.confidence).not.toBe(originalConfidence)
+    expect(changedPoint.candidates.map(({ id }) => id)).not.toEqual(
+      point!.candidates.map(({ id }) => id),
+    )
+
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'caption-input-confidence-binding-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      visualAdjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const relationship = resolved.visualRelationships.find(({ evidence }) =>
+      evidence.includes('deterministic-distillation'),
+    )!
+
+    expect(relationship.resolutionInputConfidence).toBe(originalConfidence)
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      true,
+    )
+
+    const tampered = structuredClone(resolved)
+    tampered.visualRelationships.find(
+      ({ id }) => id === relationship.id,
+    )!.resolutionInputConfidence =
+      originalConfidence === 0 ? 0.01 : originalConfidence - 0.01
+    tampered.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        tampered,
+        tampered.modelConsultations!,
+      )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
+      false,
+    )
+  })
+
   it('binds a deterministic visual decision to the complete installed evidence', async () => {
     const [point] = modelDecisionPointsForPdf(
       visualAdjudicationRequired,
@@ -2468,6 +2524,64 @@ describe('PDF model fallback production adapter', () => {
       )
 
     expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      false,
+    )
+  })
+
+  it('binds a deterministic note decision to its pre-resolution confidence', async () => {
+    const [point] = modelDecisionPointsForPdf(adjudicationRequired).filter(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )
+    const originalConfidence = point!.inputs.confidence as number
+    const changed = structuredClone(adjudicationRequired)
+    changed.noteRelationships.find(
+      ({ id }) => id === point!.decisionId,
+    )!.confidence = originalConfidence === 0 ? 0.01 : originalConfidence - 0.01
+    const changedPoint = modelDecisionPointsForPdf(changed).find(
+      ({ decisionId }) => decisionId === point!.decisionId,
+    )!
+
+    expect(changedPoint.inputs.confidence).not.toBe(originalConfidence)
+    expect(changedPoint.candidates.map(({ id }) => id)).not.toEqual(
+      point!.candidates.map(({ id }) => id),
+    )
+
+    const distillation = new DistillationLedger()
+    distillation.registerFixture(point!)
+    distillation.retireClass(
+      point!.decisionClass,
+      () => point!.candidates[0]!.id,
+      'note-input-confidence-binding-v1',
+    )
+    const resolved = await resolvePdfModelFallbacks(
+      adjudicationRequired,
+      new ModelConsultationGate({ distillation }),
+    )
+    const decision = resolved.modelConsultations!.decisions.find(
+      ({ decisionClass }) =>
+        decisionClass === MODEL_FALLBACK_DECISION_CLASSES.noteMarkerMatch,
+    )!
+    const relationship = resolved.noteRelationships.find(
+      ({ id }) => id === decision.decisionId,
+    )!
+
+    expect(relationship.resolutionInputConfidence).toBe(originalConfidence)
+    expect(modelConsultationReceiptMatchesPdfReconstruction(resolved)).toBe(
+      true,
+    )
+
+    const tampered = structuredClone(resolved)
+    tampered.noteRelationships.find(
+      ({ id }) => id === relationship.id,
+    )!.resolutionInputConfidence =
+      originalConfidence === 0 ? 0.01 : originalConfidence - 0.01
+    tampered.modelConsultations!.semanticStateSha256 =
+      pdfModelConsultationSemanticStateSha256(
+        tampered,
+        tampered.modelConsultations!,
+      )
+    expect(modelConsultationReceiptMatchesPdfReconstruction(tampered)).toBe(
       false,
     )
   })

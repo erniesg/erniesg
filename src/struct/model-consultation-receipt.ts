@@ -224,6 +224,7 @@ export type ModelFallbackReceipt = {
 }
 
 export const HASH = /^[a-f0-9]{64}$/u
+export const MAX_RECEIPT_HISTORY_ITEMS = 100_000
 export const SAFE_ID_FORMAT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 export const CREDENTIAL_SHAPED_ID_PATTERNS = [
   /^sk-(?:proj-)?[A-Za-z0-9._:-]{8,}$/iu,
@@ -232,7 +233,7 @@ export const CREDENTIAL_SHAPED_ID_PATTERNS = [
   /^eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}$/u,
   /^(?:-----)?BEGIN[.:-]?(?:(?:RSA|EC|OPENSSH)[.:-]?)?PRIVATE[.:-]?KEY/iu,
   /^xox[baprs]-[A-Za-z0-9._:-]{8,}$/iu,
-  /^(?:ghp|github_pat)_/iu,
+  /^(?:gh[pousr]|github_pat)_/iu,
 ] as const
 
 export function credentialShapedValue(value: string) {
@@ -1333,8 +1334,10 @@ export function validReceiptMetric(value: unknown) {
     ]) ||
     !Number.isInteger(value.decisionCount) ||
     (value.decisionCount as number) < 0 ||
+    (value.decisionCount as number) > MAX_RECEIPT_HISTORY_ITEMS ||
     !Number.isInteger(value.consultationCount) ||
     (value.consultationCount as number) < 0 ||
+    (value.consultationCount as number) > MAX_RECEIPT_HISTORY_ITEMS ||
     (value.consultationCount as number) > (value.decisionCount as number) ||
     typeof value.consultationRate !== 'number' ||
     !Number.isFinite(value.consultationRate)
@@ -1350,7 +1353,15 @@ export function validReceiptMetric(value: unknown) {
 export function validateModelConsultationReceipt(
   receipt: unknown,
 ): receipt is ModelFallbackReceipt {
-  if (!receiptRecord(receipt) || !isCanonicalJsonValue(receipt)) return false
+  if (!receiptRecord(receipt)) return false
+  if (
+    !Array.isArray(receipt.consultations) ||
+    receipt.consultations.length > MAX_RECEIPT_HISTORY_ITEMS ||
+    !Array.isArray(receipt.decisions) ||
+    receipt.decisions.length > MAX_RECEIPT_HISTORY_ITEMS ||
+    !isCanonicalJsonValue(receipt)
+  )
+    return false
   if (
     !exactReceiptKeys(
       receipt,
@@ -1367,9 +1378,7 @@ export function validateModelConsultationReceipt(
     receipt.schemaVersion !== MODEL_FALLBACK_SCHEMA_VERSION ||
     !receiptId(receipt.documentId) ||
     (receipt.sourceSha256 !== null && !receiptHash(receipt.sourceSha256)) ||
-    !Array.isArray(receipt.consultations) ||
     !receipt.consultations.every(validReceiptConsultation) ||
-    !Array.isArray(receipt.decisions) ||
     !receipt.decisions.every(validReceiptDecision) ||
     (receipt.semanticStateSha256 !== undefined &&
       !receiptHash(receipt.semanticStateSha256)) ||
@@ -1443,8 +1452,10 @@ export function validateModelConsultationReceipt(
     ]) ||
     !Number.isInteger(metrics.totalDecisionCount) ||
     (metrics.totalDecisionCount as number) < 0 ||
+    (metrics.totalDecisionCount as number) > MAX_RECEIPT_HISTORY_ITEMS ||
     !Number.isInteger(metrics.totalConsultationCount) ||
     (metrics.totalConsultationCount as number) < 0 ||
+    (metrics.totalConsultationCount as number) > MAX_RECEIPT_HISTORY_ITEMS ||
     typeof metrics.consultationRate !== 'number' ||
     !Number.isFinite(metrics.consultationRate) ||
     !receiptRecord(metrics.byDecisionClass)

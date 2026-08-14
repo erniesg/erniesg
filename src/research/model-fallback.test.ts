@@ -22,6 +22,10 @@ const credentialShapedIds = [
   ['openai-legacy', ['sk', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
   ['openai', ['sk', 'proj', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('-')],
   ['github-classic', ['ghp', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-oauth', ['gho', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-user', ['ghu', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-app', ['ghs', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
+  ['github-refresh', ['ghr', 'FAKEFAKEFAKEFAKEFAKEFAKE'].join('_')],
   [
     'github-fine-grained',
     ['github', 'pat', 'FAKEFAKEFAKE', 'FAKEFAKEFAKE'].join('_'),

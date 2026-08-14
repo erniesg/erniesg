@@ -845,6 +845,7 @@ function updateNoteRelationship(
   ) {
     return false
   }
+  const resolutionInputConfidence = relationship.confidence
 
   const referenceNode = reconstruction.paper.nodes.find((node) =>
     reconstruction.provenance[node.id]?.regionIds.includes(
@@ -1024,6 +1025,11 @@ function updateNoteRelationship(
     return false
   }
   relationship.resolutionOrigin = evidenceOrigin
+  if (evidenceOrigin === 'human-adjudication') {
+    delete relationship.resolutionInputConfidence
+  } else {
+    relationship.resolutionInputConfidence = resolutionInputConfidence
+  }
 
   for (const node of reconstruction.paper.nodes) {
     if ('noteReferences' in node && node.noteReferences) {
@@ -1780,6 +1786,7 @@ function updateVisualMatch(
   ) {
     return false
   }
+  const resolutionInputConfidence = relationship.confidence
   const candidates = relationship.candidates.filter(
     (candidate) =>
       visualDecisionCandidateId(relationship, candidate) ===
@@ -1868,6 +1875,11 @@ function updateVisualMatch(
     return false
   }
   Object.assign(relationship, materializedRelationship, { canonicalNodeId })
+  if (evidenceOrigin === 'human-adjudication') {
+    delete relationship.resolutionInputConfidence
+  } else {
+    relationship.resolutionInputConfidence = resolutionInputConfidence
+  }
   const canonicalNode = materializeCanonicalVisualNode({
     relationship,
     id: canonicalNodeId,

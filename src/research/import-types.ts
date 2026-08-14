@@ -668,6 +668,8 @@ export type PdfNoteRelationship = {
   targetNoteId: string | null
   status: 'matched' | 'ambiguous' | 'unresolved' | 'citation' | 'plain-text'
   resolutionOrigin?: 'human-adjudication' | PdfCandidateResolutionOrigin
+  /** Ambiguity confidence presented to the rule before its choice was installed. */
+  resolutionInputConfidence?: number
   canonicalAnchor: PdfNoteCanonicalAnchor
   confidence: number
   threshold: number
@@ -859,6 +861,8 @@ export type PdfVisualRelationship = {
   assetIds: string[]
   status: 'matched' | 'ambiguous' | 'unresolved'
   confidence: number
+  /** Ambiguity confidence presented to the rule before its choice was installed. */
+  resolutionInputConfidence?: number
   evidence: string[]
   candidates: PdfVisualMatchCandidate[]
   sourceBoxes: NormalizedSourceBox[]

@@ -147,6 +147,8 @@ function noteModelCandidateId(
       reference_start: relationship.referenceStart,
       reference_end: relationship.referenceEnd,
       canonical_anchor: relationship.canonicalAnchor,
+      confidence:
+        relationship.resolutionInputConfidence ?? relationship.confidence,
       threshold: relationship.threshold,
       candidate_count: relationship.candidates.length,
     }),
@@ -194,6 +196,8 @@ function visualModelCandidateId(
       diagnostic_code: 'AMBIGUOUS_VISUAL_MATCH',
       relationship_id: relationship.id,
       caption_region_id: relationship.captionRegionId,
+      confidence:
+        relationship.resolutionInputConfidence ?? relationship.confidence,
       candidate_count: relationship.candidates.length,
     }),
     candidate.id ?? pdfVisualMatchCandidateId(relationship.id, candidate),
@@ -659,6 +663,7 @@ function acceptedConsultationMatchesReconstruction(
     return (
       relationship?.status === 'matched' &&
       relationship.resolutionOrigin === 'model-consultation' &&
+      typeof relationship.resolutionInputConfidence === 'number' &&
       typeof candidate.note_id === 'string' &&
       typeof candidate.region_id === 'string' &&
       typeof candidate.score === 'number' &&
@@ -670,6 +675,8 @@ function acceptedConsultationMatchesReconstruction(
       consultation.inputs.relationship_id === relationship.id &&
       consultation.inputs.reference_region_id ===
         relationship.referenceRegionId &&
+      consultation.inputs.confidence ===
+        relationship.resolutionInputConfidence &&
       consultation.inputs.threshold === relationship.threshold &&
       consultation.inputs.candidate_count === relationship.candidates.length &&
       noteModelCandidateId(
@@ -727,11 +734,14 @@ function acceptedConsultationMatchesReconstruction(
         : null
     return Boolean(
       relationship?.status === 'matched' &&
+      typeof relationship.resolutionInputConfidence === 'number' &&
       currentCandidate &&
       currentCandidates &&
       stableModelConsultationJson(currentCandidates) ===
         stableModelConsultationJson(consultation.candidates) &&
       consultation.inputs.caption_region_id === relationship.captionRegionId &&
+      consultation.inputs.confidence ===
+        relationship.resolutionInputConfidence &&
       relationship.kind === candidate.kind &&
       relationship.confidence === candidate.score &&
       installedBoxes &&
@@ -1127,6 +1137,7 @@ function deterministicDecisionMatchesReconstruction(
         ).length === 1)
     return Boolean(
       relationship?.status === 'matched' &&
+      typeof relationship.resolutionInputConfidence === 'number' &&
       boundedRuleStillApplies &&
       candidate &&
       installedBoxes &&
@@ -1172,6 +1183,7 @@ function deterministicDecisionMatchesReconstruction(
     return Boolean(
       relationship?.status === 'matched' &&
       relationship.resolutionOrigin === 'deterministic-distillation' &&
+      typeof relationship.resolutionInputConfidence === 'number' &&
       candidate &&
       relationship.targetNoteId === candidate.targetNoteId &&
       relationship.confidence === candidate.score &&

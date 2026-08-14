@@ -46,6 +46,7 @@ risk:
     - ".agent/autopilot.yaml"
     - ".agent/deploy.yaml"
     - "scripts/agent-evidence"
+    - "scripts/publish-agent-evidence"
     - "infra/**"
     - "deploy/**"
     - "migrations/**"

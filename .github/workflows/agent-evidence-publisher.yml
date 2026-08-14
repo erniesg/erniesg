@@ -1005,12 +1005,10 @@ jobs:
           readonly install_source
 
           set +e
-          "$producer_node" 3<<<"$producer_source" 4<<<"$install_source" <<'RUCKSACK_TRUSTED_LAUNCHER'
+          "$producer_node" --experimental-vm-modules 3<<<"$producer_source" 4<<<"$install_source" <<'RUCKSACK_TRUSTED_LAUNCHER'
           const fs = require("node:fs");
           const { spawnSync } = require("node:child_process");
           const { createHash } = require("node:crypto");
-          const Module = require("node:module");
-          const { builtinModules, createRequire } = Module;
           const path = require("node:path");
 
           function fail(message) {
@@ -1067,6 +1065,8 @@ jobs:
           const pinnedGit = pinnedRegularFile(candidateGit, "trusted git executable");
           const pinnedRunner = pinnedRegularFile(candidateRunner, "trusted candidate runner");
           const pinnedSudo = pinnedRegularFile(trustedSudo, "trusted sudo executable");
+          const producerNode = fs.realpathSync(process.execPath);
+          const pinnedProducerNode = pinnedRegularFile(producerNode, "trusted producer runtime");
           let candidateGitLink = "";
           let pinnedCandidateGitLink = null;
 
@@ -1089,6 +1089,7 @@ jobs:
           if (candidateCanWrite(pinnedGit)) fail("candidate can write trusted git executable");
           if (candidateCanWrite(pinnedRunner)) fail("candidate can write trusted candidate runner");
           if (candidateCanWrite(pinnedSudo)) fail("candidate can write trusted sudo executable");
+          if (candidateCanWrite(pinnedProducerNode)) fail("candidate can write trusted producer runtime");
           const trustedProducerRoot = fs.realpathSync(trustedProducerRootInput);
           const trustedProducerRootStats = fs.lstatSync(trustedProducerRoot);
           if (
@@ -1098,12 +1099,24 @@ jobs:
           ) {
             fail("trusted producer root must be one candidate-immutable directory");
           }
-          const trustedProducerRequire = createRequire(
-            path.join(trustedProducerRoot, "rucksack-trusted-producer.cjs"),
+          const trustedProducerPath = fs.realpathSync(
+            path.join(trustedProducerRoot, "scripts", "agent-evidence"),
           );
-          const builtinModuleNames = new Set(
-            builtinModules.flatMap((name) => [name, name.startsWith("node:") ? name.slice(5) : `node:${name}`]),
+          if (!trustedProducerPath.startsWith(`${trustedProducerRoot}${path.sep}`)) {
+            fail("trusted evidence producer escaped the trusted default-branch checkout");
+          }
+          const pinnedTrustedProducer = pinnedRegularFile(
+            trustedProducerPath,
+            "trusted evidence producer",
           );
+          if (candidateCanWrite(pinnedTrustedProducer)) {
+            fail("candidate can write trusted evidence producer");
+          }
+          const trustedProducerSource = fs.readFileSync(trustedProducerPath, "utf8").replace(/\n$/, "");
+          if (producerSource !== trustedProducerSource) {
+            fail("trusted evidence producer descriptor does not match the pinned default-branch file");
+          }
+          commandEnvironment.RUCKSACK_PRODUCER_NODE = producerNode;
 
           function assertCandidateCannotWriteTree(target, stage) {
             const stats = fs.lstatSync(target);
@@ -1154,6 +1167,13 @@ jobs:
             assertPinnedRegularFile(candidateGit, pinnedGit, "trusted git executable", stage);
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", stage);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", stage);
+            assertPinnedRegularFile(producerNode, pinnedProducerNode, "trusted producer runtime", stage);
+            assertPinnedRegularFile(
+              trustedProducerPath,
+              pinnedTrustedProducer,
+              "trusted evidence producer",
+              stage,
+            );
             if (!candidateGitLink || pinnedCandidateGitLink === null) {
               fail(`${stage}: candidate Git link is not initialized`);
             }
@@ -1177,6 +1197,13 @@ jobs:
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", stage);
             assertPinnedRegularFile(candidateGit, pinnedGit, "trusted git executable", stage);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", stage);
+            assertPinnedRegularFile(producerNode, pinnedProducerNode, "trusted producer runtime", stage);
+            assertPinnedRegularFile(
+              trustedProducerPath,
+              pinnedTrustedProducer,
+              "trusted evidence producer",
+              stage,
+            );
             assertPinnedRegularFile(
               candidateGitLink,
               pinnedCandidateGitLink,
@@ -2128,6 +2155,7 @@ jobs:
           }
 
           assertCandidateState("before dependency installation");
+          assertCandidateCannotWriteTree(trustedProducerRoot, "trusted producer source");
           immutableTrackedState = captureTrackedState("before dependency installation");
           assertCandidateCannotWriteTree("..", "before dependency installation");
           assertCandidateCannotWriteTree(".", "before dependency installation");
@@ -2188,147 +2216,69 @@ jobs:
           fs.mkdirSync(".agent/evidence", { recursive: true, mode: 0o700 });
           sealCandidateWritableDirectory(".agent/evidence", "candidate evidence directory");
 
-          const opener = "<<'NODE'\n";
-          const openerIndex = producerSource.indexOf(opener);
-          const terminator = "\nNODE";
-          if (openerIndex < 0 || !producerSource.endsWith(terminator)) {
-            fail("producer must contain one terminal NODE heredoc");
+          function isolatedProducerMain() {
+            const fs = require("node:fs");
+            const { createRequire } = require("node:module");
+            const path = require("node:path");
+
+            function refuse(message) {
+              console.error(`isolated evidence producer refused: ${message}`);
+              process.exit(125);
+            }
+
+            const trustedProducerPath = String(process.argv[1] || "");
+            if (!trustedProducerPath.startsWith("/")) {
+              refuse("trusted producer path must be absolute");
+            }
+            let source;
+            try {
+              source = fs.readFileSync(trustedProducerPath, "utf8").replace(/\n$/, "");
+            } catch (error) {
+              refuse(`trusted producer is unreadable: ${error.message}`);
+            }
+            const opener = "<<'NODE'\n";
+            const openerIndex = source.indexOf(opener);
+            const terminator = "\nNODE";
+            if (openerIndex < 0 || !source.endsWith(terminator)) {
+              refuse("producer must contain one terminal NODE heredoc");
+            }
+            const producerBody = source.slice(
+              openerIndex + opener.length,
+              source.length - terminator.length,
+            );
+            process.env.RUCKSACK_PRODUCER_NODE = process.execPath;
+            process.argv = [process.execPath, "-"];
+            try {
+              const trustedProducerRoot = path.dirname(path.dirname(trustedProducerPath));
+              const execute = new Function(
+                "require",
+                "process",
+                "__filename",
+                "__dirname",
+                producerBody,
+              );
+              execute(
+                createRequire(path.join(trustedProducerRoot, "rucksack-trusted-producer.cjs")),
+                process,
+                trustedProducerPath,
+                trustedProducerRoot,
+              );
+            } catch (error) {
+              refuse(`producer failed: ${error && error.stack ? error.stack : error}`);
+            }
           }
-          const producerBody = producerSource.slice(
-            openerIndex + opener.length,
-            producerSource.length - terminator.length,
+
+          const isolatedProducerSource = `(${isolatedProducerMain.toString()})()`;
+          const produced = candidateSpawnSync(
+            producerNode,
+            ["-e", isolatedProducerSource, trustedProducerPath],
+            { stdio: "inherit", timeout: 900000 },
+            "trusted evidence producer",
           );
-          for (const name of ["GITHUB_OUTPUT", "GITHUB_ENV", "GITHUB_PATH", "GITHUB_STEP_SUMMARY"]) {
-            delete process.env[name];
+          if (!Number.isInteger(produced.status) || produced.status < 0 || produced.status > 255) {
+            fail("trusted evidence producer returned an invalid exit status");
           }
-          process.env.RUCKSACK_PRODUCER_NODE = process.execPath;
-          process.argv = [process.execPath, "-"];
-          class ProducerExit {
-            constructor(status) {
-              this.status = status;
-            }
-          }
-          const producerProcess = new Proxy(process, {
-            get(target, property) {
-              if (property === "exit") {
-                return (status = 0) => {
-                  throw new ProducerExit(Number.isInteger(status) ? status : 1);
-                };
-              }
-              if (property === "getBuiltinModule") return trustedGetBuiltinModule;
-              return Reflect.get(target, property, target);
-            },
-            set(target, property, value) {
-              return Reflect.set(target, property, value, target);
-            },
-          });
-          let producerStatus = 0;
-          const originalModuleLoad = Module._load;
-          const childProcessCreationExports = new Set([
-            "ChildProcess",
-            "_forkChild",
-            "exec",
-            "execFile",
-            "execFileSync",
-            "execSync",
-            "fork",
-            "spawn",
-          ]);
-          function mediatedChildProcessModule(parent, isMain) {
-            const original = originalModuleLoad.call(Module, "node:child_process", parent, isMain);
-            const mediated = { ...original, spawnSync: candidateSpawnSync };
-            for (const name of childProcessCreationExports) {
-              mediated[name] = function rejectedChildProcessApi() {
-                fail(`trusted producer child_process.${name} is unsupported; use spawnSync`);
-              };
-            }
-            return Object.freeze(mediated);
-          }
-          function trustedModuleLoad(specifier, parent, isMain) {
-            if (typeof specifier !== "string" || !specifier || specifier.includes("\0")) {
-              fail("trusted producer require specifier is invalid");
-            }
-            if (specifier === "child_process" || specifier === "node:child_process") {
-              return mediatedChildProcessModule(parent, isMain);
-            }
-            if (specifier === "process" || specifier === "node:process") {
-              return producerProcess;
-            }
-            if (builtinModuleNames.has(specifier)) {
-              return originalModuleLoad.call(Module, specifier, parent, isMain);
-            }
-            if (
-              !path.isAbsolute(specifier) &&
-              !specifier.startsWith("./") &&
-              !specifier.startsWith("../")
-            ) {
-              fail(`trusted producer require is unsupported: ${specifier}`);
-            }
-            let resolved;
-            try {
-              resolved = fs.realpathSync(Module._resolveFilename(specifier, parent, isMain));
-            } catch (error) {
-              fail(`trusted producer require could not be resolved: ${error.message}`);
-            }
-            if (resolved === trustedProducerRoot || !resolved.startsWith(`${trustedProducerRoot}${path.sep}`)) {
-              fail("trusted producer require escaped the trusted default-branch checkout");
-            }
-            const pinnedModule = pinnedRegularFile(resolved, "trusted producer module");
-            if (candidateCanWrite(pinnedModule)) fail("candidate can write trusted producer module");
-            return originalModuleLoad.call(Module, resolved, parent, isMain);
-          }
-          function trustedGetBuiltinModule(specifier) {
-            if (typeof specifier !== "string" || !specifier || specifier.includes("\0")) {
-              fail("trusted producer builtin module specifier is invalid");
-            }
-            if (!builtinModuleNames.has(specifier)) return undefined;
-            return trustedModuleLoad(specifier, null, false);
-          }
-          const trustedRequire = (specifier) => {
-            if (typeof specifier !== "string" || !specifier || specifier.includes("\0")) {
-              fail("trusted producer require specifier is invalid");
-            }
-            if (builtinModuleNames.has(specifier)) {
-              return trustedModuleLoad(specifier, null, false);
-            }
-            if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
-              fail(`trusted producer require is unsupported: ${specifier}`);
-            }
-            let resolved;
-            try {
-              resolved = trustedProducerRequire.resolve(specifier);
-            } catch (error) {
-              fail(`trusted producer require could not be resolved: ${error.message}`);
-            }
-            return trustedModuleLoad(resolved, null, false);
-          };
-          Module._load = trustedModuleLoad;
-          Object.defineProperty(process, "getBuiltinModule", {
-            configurable: false,
-            enumerable: true,
-            value: trustedGetBuiltinModule,
-            writable: false,
-          });
-          try {
-            const execute = new Function(
-              "require",
-              "process",
-              "__filename",
-              "__dirname",
-              producerBody,
-            );
-            execute(
-              trustedRequire,
-              producerProcess,
-              path.join(trustedProducerRoot, "scripts", "agent-evidence"),
-              trustedProducerRoot,
-            );
-          } catch (error) {
-            if (error instanceof ProducerExit) producerStatus = error.status;
-            else fail(`producer failed: ${error && error.stack ? error.stack : error}`);
-          } finally {
-            Module._load = originalModuleLoad;
-          }
+          const producerStatus = produced.status;
           assertCandidateState("after producer execution");
 
           function copyTrustedEvidence(source, target, budget = { remaining: 64 * 1024 * 1024 }) {

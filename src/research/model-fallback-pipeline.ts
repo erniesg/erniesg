@@ -135,10 +135,18 @@ function noteCandidateSetSha256(candidates: readonly PdfNoteCandidate[]) {
 }
 
 function noteModelCandidateId(
+  relationship: PdfReconstruction['noteRelationships'][number],
   candidate: PdfNoteCandidate,
   candidateSetSha256: string,
 ) {
   return stableCandidateId('note-candidate', [
+    stableModelConsultationJson({
+      diagnostic_code: 'AMBIGUOUS_NOTE_MATCH',
+      relationship_id: relationship.id,
+      reference_region_id: relationship.referenceRegionId,
+      threshold: relationship.threshold,
+      candidate_count: relationship.candidates.length,
+    }),
     candidate.targetNoteId,
     candidate.targetRegionId,
     String(candidate.score),
@@ -271,7 +279,7 @@ function noteDecisionPoint(
 
   const candidateSetSha256 = noteCandidateSetSha256(relationship.candidates)
   const candidates = relationship.candidates.map((candidate) => ({
-    id: noteModelCandidateId(candidate, candidateSetSha256),
+    id: noteModelCandidateId(relationship, candidate, candidateSetSha256),
     associationId: candidate.targetNoteId,
     note_id: candidate.targetNoteId,
     region_id: candidate.targetRegionId,
@@ -629,7 +637,7 @@ function acceptedConsultationMatchesReconstruction(
       ? noteCandidateSetSha256(relationship.candidates)
       : null
     const currentCandidates = relationship?.candidates.map((item) => ({
-      id: noteModelCandidateId(item, candidateSetSha256!),
+      id: noteModelCandidateId(relationship, item, candidateSetSha256!),
       associationId: item.targetNoteId,
       note_id: item.targetNoteId,
       region_id: item.targetRegionId,
@@ -654,8 +662,11 @@ function acceptedConsultationMatchesReconstruction(
         relationship.referenceRegionId &&
       consultation.inputs.threshold === relationship.threshold &&
       consultation.inputs.candidate_count === relationship.candidates.length &&
-      noteModelCandidateId(currentCandidate, candidateSetSha256!) ===
-        candidate.id &&
+      noteModelCandidateId(
+        relationship,
+        currentCandidate,
+        candidateSetSha256!,
+      ) === candidate.id &&
       stableModelConsultationJson(relationship.sourceBoxes) ===
         stableModelConsultationJson(currentCandidate.sourceBoxes) &&
       stableModelConsultationJson([...relationship.evidence].sort()) ===
@@ -725,7 +736,16 @@ function acceptedConsultationMatchesReconstruction(
       // hash stable across a rewrite of the installed, reader-visible text.
       (currentCandidate.sourceText === undefined ||
         relationship.sourceText === currentCandidate.sourceText) &&
-      relationship.evidence.includes('model-consultation'),
+      stableModelConsultationJson([...relationship.evidence].sort()) ===
+        stableModelConsultationJson(
+          [
+            ...currentCandidate.evidence,
+            'model-consultation',
+            `model-consulted-${String(
+              consultation.inputs.diagnostic_code,
+            ).toLowerCase()}`,
+          ].sort(),
+        ),
     )
   }
 
@@ -766,6 +786,7 @@ function acceptedConsultationMatchesReconstruction(
     // the receipt cannot certify inputs the document no longer carries.
     const ambiguity = readingOrderAmbiguityEvidence(resolutions[0]!)
     return (
+      resolutions[0]!.resolutionOrigin === 'model-consultation' &&
       installedOrder.length === targetIds.size &&
       sameStringList(installedOrder, chosen) &&
       !installedRegionEvidence.includes(null) &&
@@ -1104,7 +1125,8 @@ function deterministicDecisionMatchesReconstruction(
       : null
     const candidate = relationship?.candidates.find(
       (item) =>
-        noteModelCandidateId(item, candidateSetSha256!) === choice.candidateId,
+        noteModelCandidateId(relationship, item, candidateSetSha256!) ===
+        choice.candidateId,
     )
     return Boolean(
       relationship?.status === 'matched' &&
